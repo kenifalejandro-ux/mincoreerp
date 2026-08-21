@@ -165,7 +165,7 @@ jobs:
         # Codecov no debe tumbar este job ni bloquear producción. El gate
         # duro de cobertura sigue siendo el threshold de vitest.config.mts
         # en el step de arriba, que si falla sí corta el job.
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
