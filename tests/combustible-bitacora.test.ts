@@ -77,6 +77,8 @@ describe("combustible: bitácora del tenant y aviso de aflojamiento", () => {
       umbral_descuadre_pct: t.umbral_descuadre_pct === null ? null : Number(t.umbral_descuadre_pct),
       umbral_descuadre_ciclo_pct:
         t.umbral_descuadre_ciclo_pct === null ? null : Number(t.umbral_descuadre_ciclo_pct),
+      umbral_descuadre_ventana_pct:
+        t.umbral_descuadre_ventana_pct === null ? null : Number(t.umbral_descuadre_ventana_pct),
       ...cambios,
     };
   }

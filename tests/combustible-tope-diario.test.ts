@@ -73,6 +73,7 @@ describe("combustible: tope diario por actor (migración 0079)", () => {
     ag.put("/api/erp/combustible/config").send({
       ventana_gracia_horas: 72,
       dias_sin_medir: 3,
+      dias_ventana_descuadre: 30,
       llenados_por_dia_max: null,
       tope_diario_sin_capacidad_l: null,
       ...extra,

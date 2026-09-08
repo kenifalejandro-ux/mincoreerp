@@ -391,6 +391,49 @@ export async function enviarCorreoTopeDiario(
   });
 }
 
+/** El acumulado de la ventana deslizante pasó su umbral (migración 0080).
+ *
+ *  El correo tiene que explicar por qué esto aparece "de la nada" cuando
+ *  ningún control anterior dijo nada: justamente porque ninguna medición
+ *  suelta era sospechosa. El promedio por tramo es el dato que lo aterriza. */
+export async function enviarCorreoAlertaDescuadreVentana(
+  destinatarios: Destinatario[],
+  params: {
+    tanqueNombre: string;
+    unidad: string;
+    diasVentana: number;
+    tramos: number;
+    descuadreLitros: number;
+    sentido: "falta" | "sobra";
+    promedioPorTramo: number;
+    umbralPct: number;
+    toleradoLitros: number;
+  }
+) {
+  const verbo = params.sentido === "falta" ? "faltan" : "sobran";
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: descuadre acumulado en ${params.tanqueNombre}`,
+    titulo:
+      `En ${params.tanqueNombre} ${verbo} ${Math.abs(params.descuadreLitros)} ` +
+      `${params.unidad} acumulados en ${params.diasVentana} días`,
+    lineas: [
+      `Son ${params.tramos} mediciones, un promedio de ` +
+        `${Math.abs(params.promedioPorTramo)} ${params.unidad} por medición.`,
+      `El umbral es ${params.umbralPct}% de la capacidad (${params.toleradoLitros} ${params.unidad}).`,
+      "Ninguna medición suelta llamaba la atención -- por eso no hubo alertas antes. " +
+        "Lo que se ve acá es la suma, y a diferencia del acumulado del ciclo, esta " +
+        "cuenta NO se reinicia cuando llega una recepción.",
+      params.sentido === "falta"
+        ? "Un faltante parejo y sostenido no es error de varilla: el error de medición " +
+          "se cancela solo con el tiempo. Revisar despachos, accesos al tanque y turnos " +
+          "del período."
+        : "Un sobrante sostenido suele ser combustible que entró sin registrarse o " +
+          "despachos anotados de más. Revisar recepciones y vales del período.",
+    ],
+  });
+}
+
 /** Un vale que sí se había registrado se anuló -- a diferencia del hueco,
  *  esto siempre tiene un motivo escrito por quien lo anuló, pero necesita
  *  revisión: "todo tiene que tener sustento". */

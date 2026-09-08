@@ -82,6 +82,10 @@ describe("combustible: endurecimiento de auditoría y cierre (migración 0077)",
         tanque.umbral_descuadre_ciclo_pct === null
           ? null
           : Number(tanque.umbral_descuadre_ciclo_pct),
+      umbral_descuadre_ventana_pct:
+        tanque.umbral_descuadre_ventana_pct === null
+          ? null
+          : Number(tanque.umbral_descuadre_ventana_pct),
       ...cambios,
     };
   }

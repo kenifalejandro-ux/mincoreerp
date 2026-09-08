@@ -41,6 +41,9 @@ export const crearTanqueCombustibleSchema = z.object({
   // el ruido de la varilla se suma a lo largo del ciclo: el mismo número
   // para los dos haría que este alertara todos los días.
   umbral_descuadre_ciclo_pct: z.number().min(0).max(100).nullable().default(null),
+  // El acumulado de la ventana deslizante (0080): el único que no se
+  // reinicia con una recepción, y por eso el que atrapa el robo de a poco.
+  umbral_descuadre_ventana_pct: z.number().min(0).max(100).nullable().default(null),
   /** Qué eligió la persona en el alta: "recomendado" | "personalizado" |
    *  "sin_vigilar". NO se guarda en la tabla -- los umbrales ya dicen cómo
    *  quedó configurado el tanque. Existe para la AUDITORÍA: distingue "eligió
@@ -78,6 +81,7 @@ export const actualizarTanqueCombustibleSchema = z.object({
   umbral_diferencia_pct: z.number().min(0).max(100).nullable(),
   umbral_descuadre_pct: z.number().min(0).max(100).nullable(),
   umbral_descuadre_ciclo_pct: z.number().min(0).max(100).nullable(),
+  umbral_descuadre_ventana_pct: z.number().min(0).max(100).nullable(),
   /** Obligatorio SOLO si el cambio AFLOJA una vigilancia (subir un umbral,
    *  apagarlo poniéndolo en null, o dejar de exigir documento). No se puede
    *  validar acá porque depende de los valores actuales del tanque, que Zod
@@ -411,6 +415,9 @@ export const configCombustibleSchema = z.object({
   // dejar de medir apaga las dos detecciones de una, y eso es exactamente
   // lo que esta alerta vigila.
   dias_sin_medir: z.number().int().min(1).max(365),
+  // Cuántos días mira para atrás el acumulado de 0080. BAJARLO afloja: con 7
+  // días en vez de 30 el que roba de a poco nunca junta lo suficiente.
+  dias_ventana_descuadre: z.number().int().min(7).max(365),
   // Los dos topes diarios de la migración 0079. Nullable con la misma
   // semántica que los umbrales del tanque desde 0075: null = sin configurar
   // = no alerta. No se les pone default -- un techo inventado o alerta por
