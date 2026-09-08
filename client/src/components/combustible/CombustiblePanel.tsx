@@ -281,7 +281,8 @@ interface AlertaCombustible {
     | "descuadre_ciclo"
     | "tanque_sin_medir"
     | "vale_fuera_de_orden"
-    | "lectura_retroactiva";
+    | "lectura_retroactiva"
+    | "tope_diario_excedido";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -310,6 +311,7 @@ const TIPOS_CRITICOS = new Set([
   "descuadre_ciclo",
   "vale_fuera_de_orden",
   "lectura_retroactiva",
+  "tope_diario_excedido",
   "tanque_sin_medir",
 ]);
 const esCritica = (tipo: string) => TIPOS_CRITICOS.has(tipo);
@@ -427,6 +429,7 @@ const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   tanque_sin_medir: "Tanque sin medir",
   vale_fuera_de_orden: "Vale fuera de orden",
   lectura_retroactiva: "Lectura fuera de orden",
+  tope_diario_excedido: "Tope diario excedido",
 };
 
 /** El `detalle` es JSONB libre y cada tipo de alerta guarda cosas
@@ -465,6 +468,20 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     return (
       `Despachó ${cantidad} ${unidadDespacho ?? ""} a un tanque de ` +
       `${capacidad} ${unidadCapacidad ?? ""} (+${excesoPct ?? "?"}%)`
+    );
+  }
+  if (a.tipo === "tope_diario_excedido") {
+    const { acumuladoL, topeL, valesEnLaVentana, base } = a.detalle as {
+      acumuladoL?: number;
+      topeL?: number;
+      valesEnLaVentana?: number;
+      base?: string;
+    };
+    // El dato que hace entendible la alerta es el REPARTO: ningún vale por
+    // separado llamaba la atención, el problema es la suma.
+    return (
+      `${acumuladoL ?? "?"} L en 24 h contra un tope de ${topeL ?? "?"} L ` +
+      `(${base ?? "sin base"}), repartidos en ${valesEnLaVentana ?? "?"} vale(s)`
     );
   }
   if (a.tipo === "tanque_sin_medir") {
@@ -840,6 +857,11 @@ export default function CombustiblePanel() {
   // Plazo sin varilla (migración 0076). Comparte el mismo formulario y el
   // mismo PUT que la ventana de gracia: las dos son política del tenant.
   const [diasSinMedir, setDiasSinMedir] = useState("3");
+  // Los dos topes diarios (0079). Vacío = sin configurar = no alerta, y por
+  // eso arrancan en "" y no en un número: no hay default razonable para
+  // "cuánto combustible es normal", eso lo sabe la operación, no el sistema.
+  const [llenadosPorDia, setLlenadosPorDia] = useState("");
+  const [topeSinCapacidad, setTopeSinCapacidad] = useState("");
   /** Hallazgos críticos SIN RESOLVER -- distinto de "sin leer": una alerta
    *  leída sigue abierta hasta que alguien la revisa y la cierra. */
   const [criticasAbiertas, setCriticasAbiertas] = useState(0);
@@ -1837,6 +1859,16 @@ export default function CombustiblePanel() {
       if (bodyConfig?.dias_sin_medir !== undefined) {
         setDiasSinMedir(String(bodyConfig.dias_sin_medir));
       }
+      // null llega como "sin configurar" y tiene que verse como campo vacío,
+      // no como "null" escrito adentro del input.
+      setLlenadosPorDia(
+        bodyConfig?.llenados_por_dia_max == null ? "" : String(bodyConfig.llenados_por_dia_max)
+      );
+      setTopeSinCapacidad(
+        bodyConfig?.tope_diario_sin_capacidad_l == null
+          ? ""
+          : String(bodyConfig.tope_diario_sin_capacidad_l)
+      );
     } finally {
       setCargandoAlertas(false);
     }
@@ -1869,10 +1901,29 @@ export default function CombustiblePanel() {
     if (!Number.isInteger(dias) || dias < 1 || dias > 365) return;
     setGuardandoVentana(true);
     try {
+      // Campo vacío = null = sin configurar. Number("") es 0, que acá
+      // significaría "nadie puede recibir nada" -- de ahí el trim() antes.
+      const aNumeroOVacio = (v: string) => (v.trim() === "" ? null : Number(v));
+      const llenados = aNumeroOVacio(llenadosPorDia);
+      const topeSC = aNumeroOVacio(topeSinCapacidad);
+      if (llenados !== null && (!Number.isFinite(llenados) || llenados < 0.1 || llenados > 50)) {
+        setMensajeVentana("Los llenados por día van entre 0,1 y 50 (o vacío para no vigilar).");
+        return;
+      }
+      if (topeSC !== null && (!Number.isFinite(topeSC) || topeSC <= 0)) {
+        setMensajeVentana("El tope diario tiene que ser mayor a cero (o vacío para no vigilar).");
+        return;
+      }
+
       const res = await apiFetch("/api/erp/combustible/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ventana_gracia_horas: horas, dias_sin_medir: dias }),
+        body: JSON.stringify({
+          ventana_gracia_horas: horas,
+          dias_sin_medir: dias,
+          llenados_por_dia_max: llenados,
+          tope_diario_sin_capacidad_l: topeSC,
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -4405,6 +4456,51 @@ export default function CombustiblePanel() {
                 }}
               />
               <span className="text-sm text-slate-500">días</span>
+
+              {/* Los dos topes diarios (0079). Se cargan acá, junto al resto
+                  de la vigilancia, porque son la misma decisión: cuánto
+                  tolera la empresa antes de querer enterarse. Vacío = sin
+                  configurar = no alerta, igual que los umbrales del tanque. */}
+              <label
+                htmlFor="llenados-por-dia"
+                className="text-xs font-bold text-slate-500 uppercase ml-2"
+              >
+                Llenados por día
+              </label>
+              <input
+                id="llenados-por-dia"
+                type="number"
+                min={0.1}
+                max={50}
+                step={0.5}
+                placeholder="—"
+                className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
+                value={llenadosPorDia}
+                onChange={(e) => {
+                  setLlenadosPorDia(e.target.value);
+                  setMensajeVentana(null);
+                }}
+              />
+              <label
+                htmlFor="tope-sin-capacidad"
+                className="text-xs font-bold text-slate-500 uppercase ml-2"
+              >
+                Tope diario sin capacidad
+              </label>
+              <input
+                id="tope-sin-capacidad"
+                type="number"
+                min={1}
+                placeholder="—"
+                className="w-28 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
+                value={topeSinCapacidad}
+                onChange={(e) => {
+                  setTopeSinCapacidad(e.target.value);
+                  setMensajeVentana(null);
+                }}
+              />
+              <span className="text-sm text-slate-500">L</span>
+
               <button
                 onClick={handleGuardarVentana}
                 disabled={guardandoVentana}
@@ -4422,9 +4518,16 @@ export default function CombustiblePanel() {
                 </span>
               )}
               <p className="text-[11px] text-slate-400 flex-1 min-w-[240px]">
-                Tiempo que un hueco tiene para explicarse solo (un vale que sincroniza sin señal,
-                uno que se anula) antes de congelarse como anomalía permanente. Pasado ese plazo se
-                congela <strong>solo</strong>, sin que nadie tenga que revisarlo.
+                <strong>Ventana de gracia:</strong> tiempo que un hueco tiene para explicarse solo
+                (un vale que sincroniza sin señal, uno que se anula) antes de congelarse como
+                anomalía permanente. Pasado ese plazo se congela <strong>solo</strong>, sin que
+                nadie tenga que revisarlo.
+                <br />
+                <strong>Llenados por día:</strong> cuántas veces puede llenarse el tanque de un
+                equipo en 24 h. El techo sale de multiplicarlo por la capacidad cargada en la ficha
+                del equipo, así que solo vigila a los equipos que la tengan.{" "}
+                <strong>Tope diario sin capacidad:</strong> litros en 24 h para lo demás — planta,
+                reserva en cubeta y los equipos sin capacidad cargada. Los dos vacíos = sin vigilar.
               </p>
             </div>
 

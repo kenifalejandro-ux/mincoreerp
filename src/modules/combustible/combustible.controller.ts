@@ -20,6 +20,7 @@ import {
   enviarCorreoAlertaDescuadre,
   enviarCorreoAlertaDescuadreCiclo,
   enviarCorreoVigilanciaReducida,
+  enviarCorreoTopeDiario,
   enviarCorreoLecturaRetroactiva,
 } from "./combustibleAlertas.mailer";
 import type {
@@ -686,7 +687,7 @@ export class CombustibleController {
     const serieTalonario = data.serie_talonario;
     const nVale = data.n_vale;
     try {
-      const { huecos, exceso, medidor, fueraDeOrden, admins } = await withTenant(
+      const { huecos, exceso, medidor, fueraDeOrden, tope, admins } = await withTenant(
         tenantId,
         async (client) => {
           // El vale que acaba de llegar puede estar llenando un hueco ya
@@ -758,6 +759,17 @@ export class CombustibleController {
               })
             : null;
 
+          // Tope diario por actor (0079): lo que le faltaba al sobredespacho,
+          // que mira UN vale. Acá el problema es la SUMA de 24 h, así que
+          // aplica también a los destinos sin equipo -- planta y reserva no
+          // tenían ningún techo hasta ahora.
+          const tope = await service.evaluarTopeDiario(client, tenantId, {
+            despachoId,
+            equipoId: data.equipo_id ?? null,
+            tipoDestino: data.tipo_destino,
+            despachadoEn: data.despachado_en ?? new Date().toISOString(),
+          });
+
           const nuevas = [
             ...huecos.map((n) => ({
               tipo: "hueco_detectado" as const,
@@ -774,6 +786,17 @@ export class CombustibleController {
                     nVale,
                     despachoId,
                     detalle: { ...exceso, equipoId: data.equipo_id } as Record<string, unknown>,
+                  },
+                ]
+              : []),
+            ...(tope
+              ? [
+                  {
+                    tipo: "tope_diario_excedido" as const,
+                    serieTalonario,
+                    nVale,
+                    despachoId,
+                    detalle: { ...tope } as Record<string, unknown>,
                   },
                 ]
               : []),
@@ -820,13 +843,14 @@ export class CombustibleController {
               exceso,
               medidor,
               fueraDeOrden,
+              tope,
               admins: [] as { email: string; nombre: string }[],
             };
           }
 
           await service.crearAlertas(client, tenantId, nuevas);
           const admins = await service.findAdminsConCombustibleHabilitado(client, tenantId);
-          return { huecos, exceso, medidor, fueraDeOrden, admins };
+          return { huecos, exceso, medidor, fueraDeOrden, tope, admins };
         }
       );
 
@@ -859,6 +883,23 @@ export class CombustibleController {
       if (fueraDeOrden !== null) {
         await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
           tipo: "vale_fuera_de_orden",
+          serieTalonario,
+          nVale,
+        });
+      }
+
+      if (tope) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "tope_diario_excedido",
+          serieTalonario,
+          nVale,
+        });
+        await enviarCorreoTopeDiario(admins, {
+          actor: tope.equipoId ? `El equipo #${tope.equipoId}` : `El destino "${tope.tipoDestino}"`,
+          acumuladoL: tope.acumuladoL,
+          topeL: tope.topeL,
+          vales: tope.valesEnLaVentana,
+          base: tope.base,
           serieTalonario,
           nVale,
         });
@@ -1299,27 +1340,65 @@ export class CombustibleController {
   async guardarConfig(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
-      const { ventana_gracia_horas, dias_sin_medir } = req.validatedBody as ConfigCombustibleInput;
+      const nueva = req.validatedBody as ConfigCombustibleInput;
 
-      const guardada = await withTenant(tenantId, (client) =>
-        service.guardarConfig(
+      // Qué se afloja hay que medirlo ANTES de guardar, contra lo que había.
+      // Subir la ventana o los días sin medir, y subir o apagar cualquiera de
+      // los dos topes de 0079, debilitan la vigilancia sin tocar un solo vale
+      // ni un solo tanque -- que era la forma más cómoda de robar que quedaba.
+      const { guardada, aflojados } = await withTenant(tenantId, async (client) => {
+        const antes = await service.getConfig(client, tenantId);
+        const aflojados = service.evaluarAflojamientoConfig(antes, nueva);
+        const guardada = await service.guardarConfig(
           client,
           tenantId,
-          ventana_gracia_horas,
-          dias_sin_medir,
+          {
+            ventanaGraciaHoras: nueva.ventana_gracia_horas,
+            diasSinMedir: nueva.dias_sin_medir,
+            llenadosPorDiaMax: nueva.llenados_por_dia_max,
+            topeSinCapacidadL: nueva.tope_diario_sin_capacidad_l,
+          },
           req.usuario!.id
-        )
-      );
+        );
+        return { guardada, aflojados };
+      });
 
       await registrarAuditoria({
-        accion: "combustible.config_actualizar",
+        // Misma distinción que en el tanque (#143): una acción propia para
+        // "acá se redujo la vigilancia" hace que buscar quién apagó un
+        // control no obligue a leer todos los cambios de config uno por uno.
+        accion:
+          aflojados.length > 0
+            ? "combustible.config_vigilancia_reducida"
+            : "combustible.config_actualizar",
         tenantId,
         usuarioId: req.usuario!.id,
-        detalle: { ventanaGraciaHoras: ventana_gracia_horas },
+        detalle:
+          aflojados.length > 0
+            ? { ...nueva, aflojados }
+            : { ventanaGraciaHoras: nueva.ventana_gracia_horas },
         contexto: contextoAuditoriaModulo(req),
       });
+
+      if (aflojados.length > 0) {
+        // Nunca bloquea: el cambio ya está guardado y auditado (mismo
+        // criterio que el aflojamiento del tanque).
+        try {
+          const admins = await withTenant(tenantId, (client) =>
+            service.findAdminsConCombustibleHabilitado(client, tenantId)
+          );
+          await enviarCorreoVigilanciaReducida(admins, {
+            quien: req.usuario!.nombre ?? req.usuario!.email ?? "Un administrador",
+            objeto: "la configuración del módulo de combustible",
+            motivo: "",
+            cambios: aflojados,
+          });
+        } catch (err) {
+          logger.warn({ err, tenantId }, "No se pudo avisar del aflojamiento de configuración");
+        }
+      }
       await publicarEventoTenant(tenantId, "combustible.config_actualizada", {
-        ventanaGraciaHoras: ventana_gracia_horas,
+        ventanaGraciaHoras: nueva.ventana_gracia_horas,
       });
       res.json(guardada);
     } catch {

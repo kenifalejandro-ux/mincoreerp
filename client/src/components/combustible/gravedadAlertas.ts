@@ -43,6 +43,7 @@ const CRITICAS = new Set([
   "descuadre_ciclo",
   "vale_fuera_de_orden",
   "lectura_retroactiva",
+  "tope_diario_excedido",
   "tanque_sin_medir",
 ]);
 

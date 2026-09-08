@@ -155,7 +155,15 @@ describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)
 
     const guardada = await agente
       .put("/api/erp/combustible/config")
-      .send({ ventana_gracia_horas: 5, dias_sin_medir: 3 });
+      // El PUT reemplaza la fila entera: desde 0079 lleva también los dos
+      // topes diarios. Omitirlos NO significa "dejalos como están" -- eso
+      // apagaría un control sin que nadie lo pidiera.
+      .send({
+        ventana_gracia_horas: 5,
+        dias_sin_medir: 3,
+        llenados_por_dia_max: null,
+        tope_diario_sin_capacidad_l: null,
+      });
     expect(guardada.status).toBe(200);
     expect(guardada.body.ventana_gracia_horas).toBe(5);
 
@@ -170,9 +178,12 @@ describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)
     expect(anomalias[0].ventana_horas).toBe(5);
 
     // Se restaura para no contaminar los tests que siguen.
-    await agente
-      .put("/api/erp/combustible/config")
-      .send({ ventana_gracia_horas: 72, dias_sin_medir: 3 });
+    await agente.put("/api/erp/combustible/config").send({
+      ventana_gracia_horas: 72,
+      dias_sin_medir: 3,
+      llenados_por_dia_max: null,
+      tope_diario_sin_capacidad_l: null,
+    });
   });
 
   it("un vale que llega DESPUÉS de congelarse no resucita la anomalía: entra como despacho_tardio", async () => {

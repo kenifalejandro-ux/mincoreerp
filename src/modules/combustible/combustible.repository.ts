@@ -23,7 +23,8 @@ export type TipoAlertaCombustible =
   | "descuadre_ciclo"
   | "tanque_sin_medir"
   | "vale_fuera_de_orden"
-  | "lectura_retroactiva";
+  | "lectura_retroactiva"
+  | "tope_diario_excedido";
 
 /** Una alerta por crear. Las anclas son todas opcionales en el tipo, pero
  *  el CHECK de la base exige al menos una (vale, tanque o recepción). */
@@ -927,9 +928,32 @@ export class CombustibleRepository {
     return Number(result.rows[0].dias_sin_medir);
   }
 
+  /** Los dos techos diarios (migración 0079). SIN COALESCE, a diferencia de
+   *  la ventana y los días sin medir: acá NULL no es "todavía no lo tocó",
+   *  es el valor real y significa "sin configurar, no alerta". Inventarles
+   *  un default sería inventar un límite operativo que nadie declaró. */
+  async getTopesDiarios(client: PoolClient, tenantId: string) {
+    const result = await client.query<{
+      llenados_por_dia_max: string | null;
+      tope_diario_sin_capacidad_l: string | null;
+    }>(
+      `SELECT llenados_por_dia_max, tope_diario_sin_capacidad_l
+         FROM combustible_config WHERE tenant_id = $1`,
+      [tenantId]
+    );
+    const fila = result.rows[0];
+    return {
+      llenadosPorDiaMax: fila?.llenados_por_dia_max ? Number(fila.llenados_por_dia_max) : null,
+      topeSinCapacidadL: fila?.tope_diario_sin_capacidad_l
+        ? Number(fila.tope_diario_sin_capacidad_l)
+        : null,
+    };
+  }
+
   async getConfig(client: PoolClient, tenantId: string) {
     const ventana = await this.getVentanaGraciaHoras(client, tenantId);
     const diasSinMedir = await this.getDiasSinMedir(client, tenantId);
+    const topes = await this.getTopesDiarios(client, tenantId);
     const result = await client.query(
       `SELECT actualizado_en, actualizado_por FROM combustible_config WHERE tenant_id = $1`,
       [tenantId]
@@ -937,6 +961,8 @@ export class CombustibleRepository {
     return {
       ventana_gracia_horas: ventana,
       dias_sin_medir: diasSinMedir,
+      llenados_por_dia_max: topes.llenadosPorDiaMax,
+      tope_diario_sin_capacidad_l: topes.topeSinCapacidadL,
       actualizado_en: result.rows[0]?.actualizado_en ?? null,
       actualizado_por: result.rows[0]?.actualizado_por ?? null,
     };
@@ -947,31 +973,58 @@ export class CombustibleRepository {
   async guardarConfig(
     client: PoolClient,
     tenantId: string,
-    ventanaGraciaHoras: number,
-    diasSinMedir: number,
+    valores: {
+      ventanaGraciaHoras: number;
+      diasSinMedir: number;
+      llenadosPorDiaMax: number | null;
+      topeSinCapacidadL: number | null;
+    },
     usuarioId: string
   ) {
     const result = await client.query(
       `
       INSERT INTO combustible_config
-        (tenant_id, ventana_gracia_horas, dias_sin_medir, actualizado_por)
-      VALUES ($1, $2, $3, $4)
+        (tenant_id, ventana_gracia_horas, dias_sin_medir,
+         llenados_por_dia_max, tope_diario_sin_capacidad_l, actualizado_por)
+      VALUES ($1, $2, $3, $4, $5, $6)
       ON CONFLICT (tenant_id) DO UPDATE
         SET ventana_gracia_horas = EXCLUDED.ventana_gracia_horas,
             dias_sin_medir = EXCLUDED.dias_sin_medir,
+            llenados_por_dia_max = EXCLUDED.llenados_por_dia_max,
+            tope_diario_sin_capacidad_l = EXCLUDED.tope_diario_sin_capacidad_l,
             actualizado_por = EXCLUDED.actualizado_por,
             actualizado_en = now()
-      RETURNING ventana_gracia_horas, dias_sin_medir, actualizado_en, actualizado_por
+      RETURNING ventana_gracia_horas, dias_sin_medir, llenados_por_dia_max,
+                tope_diario_sin_capacidad_l, actualizado_en, actualizado_por
       `,
-      [tenantId, ventanaGraciaHoras, diasSinMedir, usuarioId]
+      [
+        tenantId,
+        valores.ventanaGraciaHoras,
+        valores.diasSinMedir,
+        valores.llenadosPorDiaMax,
+        valores.topeSinCapacidadL,
+        usuarioId,
+      ]
     );
-    return result.rows[0];
+    const fila = result.rows[0];
+    return {
+      ...fila,
+      // El driver devuelve NUMERIC como string; el resto de la respuesta de
+      // config son números, y la pantalla los mete directo en un input.
+      llenados_por_dia_max: fila.llenados_por_dia_max ? Number(fila.llenados_por_dia_max) : null,
+      tope_diario_sin_capacidad_l: fila.tope_diario_sin_capacidad_l
+        ? Number(fila.tope_diario_sin_capacidad_l)
+        : null,
+    };
   }
 
   /** Las alertas que ya pasaron su ventana sin explicarse. Los tipos que
    *  se congelan son los FALTANTES -- lo que nadie pudo explicar:
-   *  `hueco_detectado`, `sobredespacho`, `diferencia_recepcion` y
-   *  `medidor_inconsistente`.
+   *  `hueco_detectado`, `sobredespacho`, `diferencia_recepcion`,
+   *  `medidor_inconsistente` y `tope_diario_excedido` -- este último por el
+   *  mismo motivo que el sobredespacho: si en la ventana de gracia nadie
+   *  explicó por qué un equipo recibió tres veces su tanque en un día, eso
+   *  deja de ser una duda y pasa a ser un hallazgo.
    *
    *  Quedan afuera los avisos que alguien revisa y cierra: `vale_anulado`
    *  (TIENE explicación, el motivo que se escribió), `despacho_tardio` (la
@@ -995,7 +1048,7 @@ export class CombustibleRepository {
        WHERE tenant_id = $1
          AND tipo IN ('hueco_detectado', 'sobredespacho', 'diferencia_recepcion',
                       'medidor_inconsistente', 'descuadre_inventario',
-                      'descuadre_ciclo')
+                      'descuadre_ciclo', 'tope_diario_excedido')
          AND resuelta_en IS NULL
          AND congelada_en IS NULL
          AND creado_en < now() - make_interval(hours => $2)
@@ -1535,6 +1588,55 @@ export class CombustibleRepository {
     return result.rows[0] ?? null;
   }
 
+  /** Lo despachado a UN mismo actor en la ventana móvil de 24 h que termina
+   *  en `hasta` (migración 0079). "Actor" es el equipo si el destino es un
+   *  equipo, y el tipo de destino cuando no lo hay -- todos los vales a
+   *  planta suman juntos, porque planta es una sola.
+   *
+   *  Convierte cada fila a litros con la unidad de SU tanque: un tenant
+   *  puede tener un tanque en galones y otro en litros, y sumarlos crudos
+   *  daría un número sin sentido. En `compra_externa` no hay tanque y por lo
+   *  tanto no hay unidad -- se asume litros, que es lo que usa la operación
+   *  real (ver la planilla de vale de Cushuro). Si algún día aparece un
+   *  tenant que compra en galones afuera, esto los cuenta de menos, que es
+   *  el lado seguro: hace falta una unidad en el despacho para arreglarlo
+   *  bien, no una adivinanza acá.
+   *
+   *  Excluye los vales anulados (0067) y, opcionalmente, un despacho por id
+   *  -- lo usa evaluarTopeDiario para saber cuánto había ANTES de este vale
+   *  y alertar solo en el que cruza la línea. */
+  async findAcumuladoDiario(
+    client: PoolClient,
+    tenantId: string,
+    actor: { equipoId: number } | { tipoDestino: string },
+    hasta: string,
+    excluirDespachoId?: number
+  ) {
+    const porEquipo = "equipoId" in actor;
+    const result = await client.query<{ total_l: string | null; vales: string }>(
+      `
+      SELECT
+        COALESCE(SUM(
+          d.cantidad * CASE WHEN c.unidad = 'gal' THEN 3.785411784 ELSE 1 END
+        ), 0) AS total_l,
+        COUNT(*) AS vales
+      FROM combustible_despachos d
+      LEFT JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = $1
+      WHERE d.tenant_id = $1
+        AND d.anulada_en IS NULL
+        AND d.despachado_en <= $3::timestamptz
+        AND d.despachado_en > $3::timestamptz - INTERVAL '24 hours'
+        AND ($4::int IS NULL OR d.id <> $4::int)
+        AND ${porEquipo ? "d.equipo_id = $2::int" : "(d.equipo_id IS NULL AND d.tipo_destino = $2::text)"}
+      `,
+      [tenantId, porEquipo ? actor.equipoId : actor.tipoDestino, hasta, excluirDespachoId ?? null]
+    );
+    return {
+      totalL: Number(result.rows[0].total_l),
+      vales: Number(result.rows[0].vales),
+    };
+  }
+
   /** El ancla de una alerta: sobre QUÉ es. Un vale (los tipos que salen de
    *  un despacho), un tanque (nivel bajo) o una recepción (diferencia).
    *  Al menos una tiene que venir -- lo garantiza también el CHECK
@@ -1656,6 +1758,7 @@ export class CombustibleRepository {
     "descuadre_ciclo",
     "vale_fuera_de_orden",
     "lectura_retroactiva",
+    "tope_diario_excedido",
   ];
 
   /** El motivo se guarda dentro de `detalle` y no en una columna propia: es

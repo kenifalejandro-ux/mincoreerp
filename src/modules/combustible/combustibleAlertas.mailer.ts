@@ -362,6 +362,35 @@ export async function enviarCorreoVigilanciaReducida(
   });
 }
 
+/** El acumulado de 24 h de un actor pasó su techo (migración 0079). A
+ *  diferencia del sobredespacho, que es sobre UN vale, acá el problema es la
+ *  suma: ningún vale por separado llama la atención. */
+export async function enviarCorreoTopeDiario(
+  destinatarios: Destinatario[],
+  params: {
+    actor: string;
+    acumuladoL: number;
+    topeL: number;
+    vales: number;
+    base: string;
+    serieTalonario: string;
+    nVale: number;
+  }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: ${params.actor} pasó su tope diario`,
+    titulo: `${params.actor} recibió ${params.acumuladoL} L en 24 horas`,
+    lineas: [
+      `Su tope es ${params.topeL} L (${params.base}).`,
+      `Se repartió en ${params.vales} vale(s); el que cruzó la línea es el ` +
+        `${params.serieTalonario}-${String(params.nVale).padStart(5, "0")}.`,
+      "Ningún vale por separado excede nada -- el problema es la suma. " +
+        "Revisar contra el trabajo real de ese equipo o destino en el período.",
+    ],
+  });
+}
+
 /** Un vale que sí se había registrado se anuló -- a diferencia del hueco,
  *  esto siempre tiene un motivo escrito por quien lo anuló, pero necesita
  *  revisión: "todo tiene que tener sustento". */

@@ -471,17 +471,81 @@ export class CombustibleService {
   guardarConfig(
     client: PoolClient,
     tenantId: string,
-    ventanaGraciaHoras: number,
-    diasSinMedir: number,
+    valores: {
+      ventanaGraciaHoras: number;
+      diasSinMedir: number;
+      llenadosPorDiaMax: number | null;
+      topeSinCapacidadL: number | null;
+    },
     usuarioId: string
   ) {
-    return this.repository.guardarConfig(
-      client,
-      tenantId,
-      ventanaGraciaHoras,
-      diasSinMedir,
-      usuarioId
-    );
+    return this.repository.guardarConfig(client, tenantId, valores, usuarioId);
+  }
+
+  /** Qué cambios de la configuración del tenant AFLOJAN la vigilancia.
+   *
+   *  Hermano de evaluarAflojamiento(), que hace lo mismo con el tanque. La
+   *  diferencia es qué significa "más débil" en cada campo: en la ventana de
+   *  gracia y los días sin medir, subir afloja (los hallazgos tardan más en
+   *  congelarse, se mide menos seguido); en los dos topes de 0079, aflojan
+   *  tanto subirlos como apagarlos.
+   *
+   *  Existe porque los topes nuevos son, si nadie los mira, la forma más
+   *  cómoda de robar que quedaba: no hace falta tocar ningún tanque ni
+   *  ningún vale, alcanza con subir un número en una pantalla de
+   *  configuración. Igual que con el tanque: no se bloquea el cambio, se
+   *  deja escrito quién lo hizo y se le avisa al resto de los admins. */
+  evaluarAflojamientoConfig(
+    antes: {
+      ventana_gracia_horas: number;
+      dias_sin_medir: number;
+      llenados_por_dia_max: number | null;
+      tope_diario_sin_capacidad_l: number | null;
+    },
+    ahora: {
+      ventana_gracia_horas: number;
+      dias_sin_medir: number;
+      llenados_por_dia_max: number | null;
+      tope_diario_sin_capacidad_l: number | null;
+    }
+  ) {
+    const cambios: { control: string; de: string; a: string }[] = [];
+
+    const subir = [
+      ["Ventana de gracia", antes.ventana_gracia_horas, ahora.ventana_gracia_horas, "h"],
+      ["Días sin medir tolerados", antes.dias_sin_medir, ahora.dias_sin_medir, " días"],
+    ] as const;
+
+    for (const [control, viejo, nuevo, sufijo] of subir) {
+      if (nuevo > viejo) {
+        cambios.push({ control, de: `${viejo}${sufijo}`, a: `${nuevo}${sufijo}` });
+      }
+    }
+
+    const topes = [
+      ["Llenados por día por equipo", antes.llenados_por_dia_max, ahora.llenados_por_dia_max, ""],
+      [
+        "Tope diario sin capacidad",
+        antes.tope_diario_sin_capacidad_l,
+        ahora.tope_diario_sin_capacidad_l,
+        " L",
+      ],
+    ] as const;
+
+    for (const [control, viejo, nuevo, sufijo] of topes) {
+      if (viejo === nuevo) continue;
+      // Encenderlo (null -> número) endurece; apagarlo o subirlo afloja.
+      const afloja = nuevo === null ? viejo !== null : viejo !== null && nuevo > viejo;
+      if (afloja) {
+        cambios.push({
+          control,
+          de: viejo === null ? "sin configurar" : `${viejo}${sufijo}`,
+          a: nuevo === null ? "sin configurar (no alerta)" : `${nuevo}${sufijo}`,
+        });
+      }
+    }
+
+    return cambios;
   }
 
   listarAnomalias(client: PoolClient, tenantId: string, paginacion: Paginacion) {
@@ -971,6 +1035,94 @@ export class CombustibleService {
       capacidad,
       unidadCapacidad: datos.capacidad_tanque_unidad,
       excesoPct: Number((((despachadoL - capacidadL) / capacidadL) * 100).toFixed(1)),
+    };
+  }
+
+  /** Tope diario por actor (migración 0079): cuánto puede recibir UNO en las
+   *  últimas 24 horas, sin importar en cuántos vales venga repartido.
+   *
+   *  Es el control que le faltaba a `evaluarSobredespacho`, que mira UN vale
+   *  contra la capacidad del equipo. En la simulación alcanzó con partir el
+   *  robo en tres vales de 400 L a un volquete de tanque 500: ninguno
+   *  excedía solo. Y `planta`/`reserva_cubeta` directamente no tenían techo.
+   *
+   *  Devuelve null en el caso normal, que es la enorme mayoría:
+   *  - El tope que le corresponde a este actor está sin configurar (NULL).
+   *  - El acumulado no llega al techo.
+   *  - El techo YA estaba superado antes de este vale. Ahí la alerta ya se
+   *    creó en el vale que cruzó la línea; repetirla en cada vale posterior
+   *    del mismo día sería el ruido que hace que nadie las mire. */
+  async evaluarTopeDiario(
+    client: PoolClient,
+    tenantId: string,
+    despacho: {
+      despachoId: number;
+      equipoId: number | null;
+      tipoDestino: string;
+      despachadoEn: string;
+    }
+  ) {
+    const topes = await this.repository.getTopesDiarios(client, tenantId);
+    if (topes.llenadosPorDiaMax === null && topes.topeSinCapacidadL === null) return null;
+
+    const actor = despacho.equipoId
+      ? ({ equipoId: despacho.equipoId } as const)
+      : ({ tipoDestino: despacho.tipoDestino } as const);
+
+    // Qué techo le toca a este actor. El del equipo solo existe si el equipo
+    // tiene capacidad cargada -- hoy están todas en NULL a propósito: sin el
+    // dato no se inventa un límite (mismo criterio que el sobredespacho).
+    let topeL: number | null = null;
+    let base: string;
+
+    if (despacho.equipoId && topes.llenadosPorDiaMax !== null) {
+      const datos = await this.repository.findDatosSobredespacho(
+        client,
+        tenantId,
+        despacho.equipoId,
+        null
+      );
+      if (datos?.capacidad_tanque && datos.capacidad_tanque_unidad) {
+        const capacidad = Number(datos.capacidad_tanque);
+        const capacidadL =
+          datos.capacidad_tanque_unidad === "gal" ? capacidad * 3.785411784 : capacidad;
+        topeL = capacidadL * topes.llenadosPorDiaMax;
+        base = `${topes.llenadosPorDiaMax} llenado(s) de ${capacidad} ${datos.capacidad_tanque_unidad}`;
+      }
+    }
+
+    // Sin capacidad cargada, o destino sin equipo: cae al techo absoluto.
+    if (topeL === null) {
+      if (topes.topeSinCapacidadL === null) return null;
+      topeL = topes.topeSinCapacidadL;
+      base = despacho.equipoId
+        ? "tope diario para equipos sin capacidad cargada"
+        : `tope diario para destino "${despacho.tipoDestino}"`;
+    }
+
+    const [conEste, sinEste] = await Promise.all([
+      this.repository.findAcumuladoDiario(client, tenantId, actor, despacho.despachadoEn),
+      this.repository.findAcumuladoDiario(
+        client,
+        tenantId,
+        actor,
+        despacho.despachadoEn,
+        despacho.despachoId
+      ),
+    ]);
+
+    if (conEste.totalL <= topeL) return null;
+    if (sinEste.totalL > topeL) return null; // Ya estaba pasado: no es un hallazgo nuevo.
+
+    return {
+      acumuladoL: Number(conEste.totalL.toFixed(2)),
+      topeL: Number(topeL.toFixed(2)),
+      excesoL: Number((conEste.totalL - topeL).toFixed(2)),
+      valesEnLaVentana: conEste.vales,
+      base: base!,
+      ventanaHoras: 24,
+      equipoId: despacho.equipoId,
+      tipoDestino: despacho.tipoDestino,
     };
   }
 

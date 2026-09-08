@@ -411,6 +411,14 @@ export const configCombustibleSchema = z.object({
   // dejar de medir apaga las dos detecciones de una, y eso es exactamente
   // lo que esta alerta vigila.
   dias_sin_medir: z.number().int().min(1).max(365),
+  // Los dos topes diarios de la migración 0079. Nullable con la misma
+  // semántica que los umbrales del tanque desde 0075: null = sin configurar
+  // = no alerta. No se les pone default -- un techo inventado o alerta por
+  // trabajo normal (y entonces se ignora) o queda tan alto que no atrapa
+  // nada. El mínimo de 0.1 en los llenados es a propósito: 0 acá no
+  // significa "estricto", significa "nadie puede recibir nada".
+  llenados_por_dia_max: z.number().min(0.1).max(50).nullable(),
+  tope_diario_sin_capacidad_l: z.number().positive().max(9_999_999).nullable(),
 });
 
 export type ConfigCombustibleInput = z.infer<typeof configCombustibleSchema>;

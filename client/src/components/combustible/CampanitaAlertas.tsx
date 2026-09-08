@@ -24,6 +24,7 @@ const ETIQUETA_TIPO: Record<string, string> = {
   tanque_sin_medir: "Tanque sin medir",
   vale_fuera_de_orden: "Vale fuera de orden",
   lectura_retroactiva: "Lectura fuera de orden",
+  tope_diario_excedido: "Tope diario excedido",
 };
 
 /** No toda alerta es sobre un vale (migración 0073): las de nivel bajo van
