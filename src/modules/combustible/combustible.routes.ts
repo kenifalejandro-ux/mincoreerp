@@ -163,6 +163,17 @@ router.get(
 router.get("/:id", asyncHandler(controller.getById.bind(controller)));
 router.get("/:id/lecturas", asyncHandler(controller.getLecturas.bind(controller)));
 
+// Estado de la vigilancia DURANTE un período, no el de hoy. Es el control
+// que atrapa el apagón temporal: bajar un umbral el viernes, sacar el sábado
+// y reponerlo el domingo deja la ficha impecable el lunes, pero no puede
+// borrar el registro.
+router.get(
+  "/reportes/controles",
+  requireRole("admin"),
+  validateQuery(kardexCombustibleSchema),
+  asyncHandler(controller.getReporteControles.bind(controller))
+);
+
 // Kardex del tanque: las tres historias (despachos, recepciones, lecturas)
 // en UNA línea de tiempo con saldo corriente. Solo admin -- es visibilidad
 // de gerencia y la herramienta del auditor, no trabajo de cancha.

@@ -1831,6 +1831,56 @@ export class CombustibleRepository {
     return r.rows[0].hay;
   }
 
+  /** Cuánto salió de un tanque entre dos instantes. Es la segunda mitad del
+   *  reporte de controles: un aflojamiento por sí solo es una anécdota
+   *  ("alguien subió el umbral el viernes"); lo que lo vuelve un hallazgo es
+   *  el número que va al lado ("y en esa ventana salieron 14.000 L").
+   *
+   *  Sin `combustibleId` --hay aflojamientos que son de configuración del
+   *  tenant, no de un tanque-- suma TODOS los tanques. */
+  async findDespachadoEntre(
+    client: PoolClient,
+    tenantId: string,
+    desde: string,
+    hasta: string,
+    combustibleId?: number | null
+  ) {
+    const r = await client.query<{ litros: string; vales: string }>(
+      `
+      SELECT COALESCE(SUM(
+               d.cantidad * CASE WHEN c.unidad = 'gal' THEN 3.785411784 ELSE 1 END
+             ), 0) AS litros,
+             COUNT(*) AS vales
+        FROM combustible_despachos d
+        LEFT JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = $1
+       WHERE d.tenant_id = $1
+         AND d.anulada_en IS NULL
+         AND d.despachado_en > $2::timestamptz
+         AND d.despachado_en <= $3::timestamptz
+         AND ($4::int IS NULL OR d.combustible_id = $4::int)
+      `,
+      [tenantId, desde, hasta, combustibleId ?? null]
+    );
+    return { litros: Number(r.rows[0].litros), vales: Number(r.rows[0].vales) };
+  }
+
+  /** El estado de vigilancia de cada tanque HOY: qué controles tiene
+   *  apagados. Es la foto que acompaña a la película de los eventos. */
+  async findEstadoVigilancia(client: PoolClient, tenantId: string) {
+    const r = await client.query(
+      `
+      SELECT id, codigo, tanque_nombre, activo,
+             umbral_descuadre_pct, umbral_descuadre_ciclo_pct,
+             umbral_descuadre_ventana_pct, umbral_diferencia_pct
+        FROM combustible
+       WHERE tenant_id = $1
+       ORDER BY activo DESC, codigo
+      `,
+      [tenantId]
+    );
+    return r.rows;
+  }
+
   /** El ancla de una alerta: sobre QUÉ es. Un vale (los tipos que salen de
    *  un despacho), un tanque (nivel bajo) o una recepción (diferencia).
    *  Al menos una tiene que venir -- lo garantiza también el CHECK
@@ -1960,24 +2010,59 @@ export class CombustibleRepository {
    *  el único dato de la revisión, la tabla ya tiene el JSONB para lo que
    *  varía por tipo, y agregarle una columna a `combustible_alertas` que solo
    *  se llena en la mitad de las filas es peor forma que esto. */
+  /** Quién CARGÓ el movimiento sobre el que se abrió esta alerta.
+   *
+   *  Sirve para una sola pregunta, la de segregación de funciones: ¿el que
+   *  está cerrando la alerta es el mismo que hizo el movimiento que la
+   *  disparó? Un auditor la hace siempre, y hasta la tercera auditoría
+   *  adversaria el sistema no la podía contestar -- se cerraron 2 de 2
+   *  alertas propias con un "ok revisado" y no quedó registro de que el
+   *  revisor y el revisado fueran la misma persona.
+   *
+   *  Devuelve null cuando no hay a quién señalar: alertas de tanque (nivel
+   *  bajo, sin medir) que no cuelgan de un movimiento de nadie, o filas de
+   *  antes de que se guardara el usuario. */
+  async findAutorDelMovimiento(client: PoolClient, tenantId: string, alertaId: number) {
+    const r = await client.query<{ autor: string | null }>(
+      `
+      SELECT COALESCE(d.usuario_id, rec.usuario_id) AS autor
+        FROM combustible_alertas a
+        LEFT JOIN combustible_despachos d
+               ON d.id = a.despacho_id AND d.tenant_id = $1
+        LEFT JOIN combustible_recepciones rec
+               ON rec.id = a.recepcion_id AND rec.tenant_id = $1
+       WHERE a.id = $2 AND a.tenant_id = $1
+      `,
+      [tenantId, alertaId]
+    );
+    return r.rows[0]?.autor ?? null;
+  }
+
   async resolverAlertaManual(
     client: PoolClient,
     tenantId: string,
     alertaId: number,
     usuarioId: string,
-    motivo: string
+    motivo: string,
+    autorevision: boolean
   ) {
     const result = await client.query(
       `
       UPDATE combustible_alertas
       SET resuelta_en = now(),
           resuelta_por = $1,
-          detalle = detalle || jsonb_build_object('motivo_revision', $4::text)
+          detalle = detalle || jsonb_build_object(
+            'motivo_revision', $4::text,
+            -- Queda EN LA FILA y no solo en la auditoría: la alerta es lo que
+            -- alguien va a mirar dentro de seis meses, y "esto lo cerró el
+            -- mismo que lo hizo" es parte del hallazgo, no un metadato.
+            'autorevision', $6::boolean
+          )
       WHERE id = $2 AND tenant_id = $3
         AND tipo = ANY($5::text[]) AND resuelta_en IS NULL
       RETURNING id, tipo, serie_talonario, n_vale, despacho_id, detalle, creado_en, leida_en, resuelta_en, resuelta_por
       `,
-      [usuarioId, alertaId, tenantId, motivo, CombustibleRepository.TIPOS_REVISABLES]
+      [usuarioId, alertaId, tenantId, motivo, CombustibleRepository.TIPOS_REVISABLES, autorevision]
     );
     return result.rows[0] ?? null;
   }

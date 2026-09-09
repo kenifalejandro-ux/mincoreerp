@@ -99,10 +99,54 @@ export class CombustibleController {
             descuadre: data.umbral_descuadre_pct,
             ciclo: data.umbral_descuadre_ciclo_pct,
             diferencia: data.umbral_diferencia_pct,
+            ventana: data.umbral_descuadre_ventana_pct,
           },
         },
         contexto: contextoAuditoriaModulo(req),
       });
+
+      // UN TANQUE QUE NACE CIEGO AVISA, igual que aflojar uno existente.
+      //
+      // La tercera auditoría encontró la asimetría: bajar un umbral de un
+      // tanque vigilado exige motivo y despierta a todos los admins por
+      // correo, pero dar de alta un tanque nuevo SIN NINGÚN umbral --que deja
+      // exactamente el mismo agujero, y es más fácil-- solo quedaba en un
+      // log. Se comprobó en la simulación: se despacharon 5.000 L de un
+      // tanque nuevo cuya varilla decía que faltaban 10.000, y no saltó nada.
+      //
+      // No se bloquea el alta: "sin vigilar por ahora" es una decisión
+      // legítima (un tanque recién instalado todavía no tiene historial con
+      // el que calibrar los umbrales). Lo que no puede ser es silenciosa.
+      const sinVigilancia =
+        data.umbral_descuadre_pct === null &&
+        data.umbral_descuadre_ciclo_pct === null &&
+        data.umbral_descuadre_ventana_pct === null;
+
+      if (sinVigilancia) {
+        try {
+          const admins = await withTenant(tenantId, (client) =>
+            service.findAdminsConCombustibleHabilitado(client, tenantId)
+          );
+          await enviarCorreoVigilanciaReducida(admins, {
+            quien: req.usuario!.nombre ?? req.usuario!.email ?? "Un administrador",
+            objeto: `el tanque nuevo ${nuevo.codigo} — ${nuevo.tanque_nombre}`,
+            motivo: `Se dio de alta con la vigilancia en "${data.modo_vigilancia ?? "sin definir"}"`,
+            cambios: [
+              {
+                control: "Umbrales de descuadre (tramo, ciclo y ventana)",
+                de: "—",
+                a: "sin configurar (no alerta)",
+              },
+            ],
+          });
+        } catch (err) {
+          logger.warn(
+            { err, tenantId, combustibleId: nuevo.id },
+            "No se pudo avisar del alta de un tanque sin vigilancia"
+          );
+        }
+      }
+
       await publicarEventoTenant(tenantId, "combustible.tanque_creado", {
         combustibleId: nuevo.id,
       });
@@ -625,6 +669,7 @@ export class CombustibleController {
           err.message.includes("no tiene tipo de medidor configurado") ||
           err.message.includes("se mide por") ||
           err.message.includes("está desactivado y no puede despachar") ||
+          err.message.includes("y el vale dice") ||
           // Grifo del rol equivocado (migrations/0065).
           err.message.includes("no está marcado como"))
       ) {
@@ -1319,6 +1364,30 @@ export class CombustibleController {
           .json({ error: "Alerta no encontrada, ya revisada, o no es de tipo revisable" });
         return;
       }
+
+      // CERRAR UNA ALERTA NO SE AUDITABA. Quedaba el `resuelta_por` en la
+      // propia fila, pero nada en la bitácora -- así que "¿quién dio por
+      // revisados los faltantes de agosto?" no se podía contestar desde la
+      // pantalla que existe para contestar justamente eso.
+      //
+      // Y cuando el que cierra es el mismo que cargó el movimiento, va con
+      // acción propia: es el hallazgo de segregación de funciones, y tiene
+      // que poder filtrarse sin leer todos los cierres uno por uno.
+      await registrarAuditoria({
+        accion: resuelta.autorevision
+          ? "combustible.alerta_autorevisada"
+          : "combustible.alerta_resuelta",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          alertaId,
+          tipo: resuelta.tipo,
+          motivo,
+          autorevision: resuelta.autorevision,
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+
       res.json(resuelta);
     } catch {
       res.status(500).json({ error: "Error al resolver la alerta" });
@@ -1596,6 +1665,121 @@ export class CombustibleController {
       res.send(csv);
     } catch {
       res.status(500).json({ error: "Error al exportar el kardex" });
+    }
+  }
+
+  /** GET /reportes/controles?desde=&hasta= -- ESTADO DE LA VIGILANCIA
+   *  DURANTE EL PERÍODO, que no es lo mismo que su estado de hoy.
+   *
+   *  Sale de la conversación sobre qué hace un auditor. El correo de
+   *  aflojamiento avisa en el momento, pero se esquiva eligiendo la hora:
+   *  bajar el umbral un viernes a la noche, sacar el sábado, reponerlo el
+   *  domingo. El lunes la ficha del tanque se ve impecable y nadie tiene por
+   *  qué sospechar.
+   *
+   *  Lo que el ladrón NO puede hacer es reescribir el registro. Este reporte
+   *  lee esa historia y le pone al lado el número que la vuelve un hallazgo:
+   *  cuánto combustible salió DESPUÉS de cada aflojamiento, dentro del
+   *  período. "Alguien subió el umbral el viernes" es una anécdota; "y en esa
+   *  ventana salieron 14.000 L" es una pregunta que alguien tiene que
+   *  contestar.
+   *
+   *  Dos mitades:
+   *  - La PELÍCULA: cada evento que redujo la vigilancia en el período, con
+   *    quién, qué control, de cuánto a cuánto, el motivo declarado, y los
+   *    litros que se movieron después.
+   *  - La FOTO: cómo está cada tanque HOY. Un control apagado hoy no aparece
+   *    como evento si se apagó antes del período. */
+  async getReporteControles(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const { desde, hasta } = req.validatedQuery as KardexCombustibleQuery;
+
+      // Se reusa el servicio de auditoría por el mismo motivo que la
+      // bitácora: `platform_audit_log` NO tiene RLS, y ese servicio ya
+      // resuelve el filtrado por tenant y los nombres de usuario.
+      const pagina = await listarAuditoriaService({
+        tenantId,
+        accionPrefijo: "combustible.",
+        accionesExtra: ["equipos.capacidad_tanque_ampliada"],
+        desde,
+        hasta,
+        limit: 200,
+      });
+
+      const ACCIONES_QUE_AFLOJAN = new Set([
+        "combustible.tanque_vigilancia_reducida",
+        "combustible.config_vigilancia_reducida",
+        "combustible.alerta_autorevisada",
+        "equipos.capacidad_tanque_ampliada",
+      ]);
+
+      const crudos = pagina.entradas.filter((e) => ACCIONES_QUE_AFLOJAN.has(e.accion));
+
+      const { eventos, tanques } = await withTenant(tenantId, async (client) => {
+        const eventos = [];
+        for (const e of crudos) {
+          const d = (e.detalle ?? {}) as Record<string, unknown>;
+          const combustibleId = typeof d.combustibleId === "number" ? d.combustibleId : null;
+          // Desde el instante del aflojamiento hasta el fin del período: la
+          // ventana en la que el control estuvo debilitado, salvo que se haya
+          // repuesto antes (eso se ve mirando el evento siguiente).
+          const movimiento = await service.findDespachadoEntre(
+            client,
+            tenantId,
+            new Date(e.creadoEn).toISOString(),
+            hasta,
+            combustibleId
+          );
+          eventos.push({
+            cuando: e.creadoEn,
+            accion: e.accion,
+            quien: e.usuarioId ? (e.usuarioEmail ?? "Usuario eliminado") : "Sistema",
+            combustible_id: combustibleId,
+            motivo: (d.motivo as string) ?? null,
+            aflojados:
+              (d.aflojados as unknown[]) ??
+              (d.de ? [{ control: "Capacidad de tanque del equipo", de: d.de, a: d.a }] : []),
+            detalle: d,
+            despachado_despues_l: Number(movimiento.litros.toFixed(2)),
+            vales_despues: movimiento.vales,
+          });
+        }
+        const tanques = await service.findEstadoVigilancia(client, tenantId);
+        return { eventos, tanques };
+      });
+
+      res.json({
+        periodo: { desde, hasta },
+        eventos,
+        // La foto de hoy: qué controles tiene apagados cada tanque. `activo`
+        // incluido -- un tanque desactivado sale del aviso por falta de
+        // medición, así que su estado es parte de la respuesta.
+        tanques: tanques.map((t: Record<string, unknown>) => {
+          const apagados: string[] = [];
+          if (t.umbral_descuadre_pct === null) apagados.push("descuadre entre varillas");
+          if (t.umbral_descuadre_ciclo_pct === null) apagados.push("acumulado del ciclo");
+          if (t.umbral_descuadre_ventana_pct === null) apagados.push("acumulado de la ventana");
+          if (t.umbral_diferencia_pct === null) apagados.push("diferencia con la factura");
+          return {
+            id: t.id,
+            codigo: t.codigo,
+            tanque_nombre: t.tanque_nombre,
+            activo: t.activo,
+            controles_apagados: apagados,
+            vigilancia:
+              apagados.length === 0 ? "completa" : apagados.length === 4 ? "ninguna" : "parcial",
+          };
+        }),
+        resumen: {
+          eventos: eventos.length,
+          litros_bajo_vigilancia_reducida: Number(
+            eventos.reduce((a, e) => a + e.despachado_despues_l, 0).toFixed(2)
+          ),
+        },
+      });
+    } catch {
+      res.status(500).json({ error: "Error al armar el reporte de controles" });
     }
   }
 

@@ -252,6 +252,8 @@ const ETIQUETA_ACCION: Record<string, string> = {
   "combustible.tanque_vigilancia_reducida": "⚠ Vigilancia reducida",
   "combustible.config_vigilancia_reducida": "⚠ Vigilancia reducida (configuración)",
   "equipos.capacidad_tanque_ampliada": "⚠ Se amplió el techo de un equipo",
+  "combustible.alerta_resuelta": "Alerta dada por revisada",
+  "combustible.alerta_autorevisada": "⚠ Alerta cerrada por quien la generó",
   "combustible.tanques_carga_masiva": "Importación de tanques",
   "combustible.registrar_lectura": "Lectura de varilla",
   "combustible.actualizar_nivel": "Nivel actualizado",
@@ -274,6 +276,9 @@ const ACCIONES_QUE_AFLOJAN = new Set([
   "combustible.tanque_vigilancia_reducida",
   "combustible.config_vigilancia_reducida",
   "equipos.capacidad_tanque_ampliada",
+  // No afloja un umbral, pero es la misma familia: el control lo cerró la
+  // persona controlada. Un auditor lo mira igual que un aflojamiento.
+  "combustible.alerta_autorevisada",
 ]);
 
 /** Las tres sugerencias vienen juntas del mismo endpoint: salen del mismo

@@ -130,7 +130,15 @@ describe("combustible: la vigilancia del tanque es una decisión, no un descuido
     // Sin esto, un tanque que nace ciego es indistinguible en el log de uno
     // bien configurado, y "nadie lo vigilaba" no se puede responder después.
     expect(detalle.modoVigilancia).toBe("sin_vigilar");
-    expect(detalle.umbrales).toEqual({ descuadre: null, ciclo: null, diferencia: null });
+    // El umbral de la ventana deslizante (0080) entró tarde a este detalle:
+    // el alta lo guardaba sin él, así que un tanque que nacía ciego de ESE
+    // control se veía igual que uno configurado.
+    expect(detalle.umbrales).toEqual({
+      descuadre: null,
+      ciclo: null,
+      diferencia: null,
+      ventana: null,
+    });
   });
 
   it("elegir 'recomendado' queda en la auditoría con los valores aplicados", async () => {
