@@ -838,6 +838,8 @@ export class CombustibleController {
           const retro = await service.evaluarDespachoRetroactivo(
             client,
             tenantId,
+            data.combustible_id ?? null,
+            despachoId,
             data.despachado_en ?? new Date().toISOString()
           );
 

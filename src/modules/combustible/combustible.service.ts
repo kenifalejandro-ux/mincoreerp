@@ -1396,12 +1396,50 @@ export class CombustibleService {
    *
    *  Devuelve null en el caso normal, que es la enorme mayoría: el vale se
    *  carga el mismo día o al día siguiente. */
-  async evaluarDespachoRetroactivo(client: PoolClient, tenantId: string, despachadoEn: string) {
+  async evaluarDespachoRetroactivo(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number | null,
+    despachoId: number,
+    despachadoEn: string
+  ) {
     const dias = await this.repository.getDiasCargaRetroactiva(client, tenantId);
     const atraso = (Date.now() - Date.parse(despachadoEn)) / 864e5;
     if (!Number.isFinite(atraso) || atraso <= dias) return null;
 
+    // ── La segunda condición, que es la que saca el ruido ────────────────
+    //
+    // La primera versión solo miraba los días de atraso, y eso confundía dos
+    // cosas distintas. Se vio corriendo la simulación contra el ERP real: de
+    // 33 vales, 29 dispararon la alerta -- porque una operación cargada desde
+    // el papel tiene TODOS los vales viejos, y son todos legítimos.
+    //
+    // Un control que se enciende con la carga inicial de cualquier cliente
+    // nuevo se ignora en una semana, y ahí se pierde también el día que
+    // importaba. Misma lección que dejó "marcar todas leídas".
+    //
+    // Lo que separa la carga inicial del vale metido atrás NO es la edad del
+    // vale: es si el tanque YA TIENE movimiento más reciente. Cargando el
+    // historial en orden, cada vale es el más nuevo y no hay nada detrás de
+    // qué esconderse. Metiendo uno de hace tres semanas entre el tráfico de
+    // hoy, sí lo hay.
+    //
+    // Es exactamente el criterio de `lectura_retroactiva` (0078), que nunca
+    // alertó por ser vieja sino por estar insertada detrás de algo.
+    if (!combustibleId) return null;
+    const ultimo = await this.repository.findUltimoMovimiento(
+      client,
+      tenantId,
+      combustibleId,
+      despachoId
+    );
+    if (!ultimo) return null;
+    if (new Date(ultimo).getTime() <= Date.parse(despachadoEn) + dias * 864e5) return null;
+
     return {
+      // Contra qué se lo comparó: el movimiento que ya estaba y es más nuevo.
+      // Sin ese dato la alerta no se puede evaluar sin abrir el historial.
+      ultimoMovimientoPrevio: new Date(ultimo).toISOString(),
       diasDeAtraso: Number(atraso.toFixed(1)),
       diasTolerados: dias,
       despachadoEn,

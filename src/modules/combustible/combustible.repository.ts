@@ -1968,6 +1968,43 @@ export class CombustibleRepository {
     return r.rows;
   }
 
+  /** El movimiento MÁS RECIENTE del tanque, sin contar el despacho que se
+   *  acaba de crear. Distingue las dos cosas que `despacho_retroactivo`
+   *  confundía:
+   *
+   *  - CARGA INICIAL del historial (un tenant que sube los vales del mes
+   *    pasado desde el papel): cada vale es más nuevo que el anterior, así
+   *    que nunca hay nada más reciente y no alerta.
+   *  - VALE METIDO ATRÁS entre tráfico actual: el tanque ya tiene movimiento
+   *    de hoy y aparece un vale de hace tres semanas. Eso sí es señal.
+   *
+   *  Mira despachos Y lecturas: un tanque puede estar midiéndose al día sin
+   *  haber despachado nada. */
+  async findUltimoMovimiento(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    excluirDespachoId: number
+  ): Promise<Date | null> {
+    const r = await client.query<{ ultimo: Date | null }>(
+      `SELECT GREATEST(
+                (SELECT MAX(d.despachado_en) FROM combustible_despachos d
+                  WHERE d.tenant_id = $1 AND d.combustible_id = $2
+                    AND d.anulada_en IS NULL AND d.id <> $3),
+                (SELECT MAX(l.leido_en) FROM combustible_lecturas l
+                  WHERE l.tenant_id = $1 AND l.combustible_id = $2
+                    AND l.anulada_en IS NULL
+                    -- La lectura del alta se estampa con NOW(), así que en un
+                    -- tanque recién creado sería siempre "el movimiento más
+                    -- reciente" y cualquier vale con fecha anterior alertaría.
+                    -- Mismo motivo por el que la excluye detectarLecturaRetroactiva.
+                    AND l.origen <> 'inicial')
+              ) AS ultimo`,
+      [tenantId, combustibleId, excluirDespachoId]
+    );
+    return r.rows[0]?.ultimo ?? null;
+  }
+
   /** Las anulaciones previas de un número de vale (migración 0081).
    *
    *  La unicidad de 0067 es PARCIAL a propósito: un 00022 anulado más un
