@@ -1724,10 +1724,26 @@ export class CombustibleController {
           // Desde el instante del aflojamiento hasta el fin del período: la
           // ventana en la que el control estuvo debilitado, salvo que se haya
           // repuesto antes (eso se ve mirando el evento siguiente).
+          const desdeEvento = new Date(e.creadoEn).toISOString();
           const movimiento = await service.findDespachadoEntre(
             client,
             tenantId,
-            new Date(e.creadoEn).toISOString(),
+            desdeEvento,
+            hasta,
+            combustibleId
+          );
+
+          // LO QUE DICE LA VARILLA, que es la mitad que faltaba. Un red team
+          // subió los tres umbrales a 60 %, sacó 3.000 L sin emitir vale, y
+          // este reporte informó "0 L": contaba despachos DECLARADOS, y
+          // aflojar el umbral sirve justamente para no declarar.
+          //
+          // Se calcula ignorando el umbral configurado. El umbral decide si
+          // se ALERTA en el momento; nunca si el número existe después.
+          const medido = await service.findDescuadreEntre(
+            client,
+            tenantId,
+            desdeEvento,
             hasta,
             combustibleId
           );
@@ -1743,6 +1759,11 @@ export class CombustibleController {
             detalle: d,
             despachado_despues_l: Number(movimiento.litros.toFixed(2)),
             vales_despues: movimiento.vales,
+            // null y no 0 cuando no hubo mediciones: "no se midió" y "cuadra"
+            // no son lo mismo, y confundirlos sería repetir el error que este
+            // arreglo corrige.
+            descuadre_medido_l: medido.tramos === 0 ? null : Number(medido.descuadre.toFixed(2)),
+            mediciones_despues: medido.tramos,
           });
         }
         const tanques = await service.findEstadoVigilancia(client, tenantId);
@@ -1776,6 +1797,17 @@ export class CombustibleController {
           litros_bajo_vigilancia_reducida: Number(
             eventos.reduce((a, e) => a + e.despachado_despues_l, 0).toFixed(2)
           ),
+          // El número que un auditor copia al informe: cuánto NO se puede
+          // explicar de lo que pasó mientras la vigilancia estuvo baja. Se
+          // toma el peor evento y no la suma, porque las ventanas de dos
+          // eventos se superponen y sumarlas contaría el mismo faltante dos
+          // veces.
+          peor_descuadre_medido_l: eventos.reduce<number | null>((peor, e) => {
+            if (e.descuadre_medido_l === null) return peor;
+            if (peor === null) return e.descuadre_medido_l;
+            return Math.abs(e.descuadre_medido_l) > Math.abs(peor) ? e.descuadre_medido_l : peor;
+          }, null),
+          sin_mediciones: eventos.filter((e) => e.descuadre_medido_l === null).length,
         },
       });
     } catch {

@@ -45,6 +45,16 @@ export class CombustibleService {
     return this.repository.findSegregacion(client, tenantId, desde, hasta);
   }
 
+  findDescuadreEntre(
+    client: PoolClient,
+    tenantId: string,
+    desde: string,
+    hasta: string,
+    combustibleId?: number | null
+  ) {
+    return this.repository.findDescuadreEntre(client, tenantId, desde, hasta, combustibleId);
+  }
+
   findEstadoVigilancia(client: PoolClient, tenantId: string) {
     return this.repository.findEstadoVigilancia(client, tenantId);
   }

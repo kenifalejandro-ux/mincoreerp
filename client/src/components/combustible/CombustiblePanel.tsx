@@ -212,6 +212,8 @@ interface EventoControl {
   aflojados: { control: string; de: string; a: string }[];
   despachado_despues_l: number;
   vales_despues: number;
+  descuadre_medido_l: number | null;
+  mediciones_despues: number;
 }
 
 interface TanqueVigilado {
@@ -226,7 +228,12 @@ interface TanqueVigilado {
 interface ReporteControles {
   eventos: EventoControl[];
   tanques: TanqueVigilado[];
-  resumen: { eventos: number; litros_bajo_vigilancia_reducida: number };
+  resumen: {
+    eventos: number;
+    litros_bajo_vigilancia_reducida: number;
+    peor_descuadre_medido_l: number | null;
+    sin_mediciones: number;
+  };
 }
 
 interface FilaSegregacion {
@@ -4885,10 +4892,44 @@ export default function CombustiblePanel() {
                     </h4>
                     <p className="text-xs text-slate-500 mb-3">
                       Cada vez que alguien redujo un control, y{" "}
-                      <strong>cuánto combustible salió después</strong>. Un umbral que se baja un
-                      viernes y se repone el domingo deja la ficha impecable el lunes — pero no
-                      borra estas filas.
+                      <strong>cuánto faltaba en el tanque después</strong>. Ojo con las dos columnas
+                      de la derecha: bajar un umbral sirve justamente para sacar{" "}
+                      <em>sin emitir vale</em>, así que “declarado” puede decir cero mientras el
+                      tanque se vacía. La que cuenta es el faltante medido.
                     </p>
+
+                    {repControles && repControles.resumen.eventos > 0 && (
+                      <p className="text-sm mb-3">
+                        {repControles.resumen.peor_descuadre_medido_l === null ? (
+                          <span className="text-slate-500">
+                            Nadie tomó varilla después de estos cambios — no hay con qué medir qué
+                            pasó.
+                          </span>
+                        ) : (
+                          <>
+                            El peor faltante medido con la vigilancia baja fue{" "}
+                            <strong
+                              className={
+                                repControles.resumen.peor_descuadre_medido_l < 0
+                                  ? "text-red-600"
+                                  : "text-slate-900"
+                              }
+                            >
+                              {repControles.resumen.peor_descuadre_medido_l} L
+                            </strong>
+                            .
+                          </>
+                        )}
+                        {repControles.resumen.sin_mediciones > 0 &&
+                          repControles.resumen.peor_descuadre_medido_l !== null && (
+                            <span className="text-slate-500">
+                              {" "}
+                              · {repControles.resumen.sin_mediciones} cambio(s) sin varilla
+                              posterior
+                            </span>
+                          )}
+                      </p>
+                    )}
 
                     {!repControles || repControles.eventos.length === 0 ? (
                       <p className="text-sm text-emerald-700 bg-emerald-50 rounded-xl p-3">
@@ -4902,7 +4943,13 @@ export default function CombustiblePanel() {
                             <th className="p-2">Quién</th>
                             <th className="p-2">Qué se aflojó</th>
                             <th className="p-2">Motivo</th>
-                            <th className="p-2 text-right">Salió después</th>
+                            <th className="p-2 text-right">Declarado</th>
+                            <th
+                              className="p-2 text-right"
+                              title="Lo que dice la varilla, calculado sin mirar el umbral. Es lo que el aflojamiento habilita: sacar sin emitir vale."
+                            >
+                              Faltante medido
+                            </th>
                           </tr>
                         </thead>
                         <tbody>
@@ -4936,6 +4983,27 @@ export default function CombustiblePanel() {
                                     {e.vales_despues} vale(s)
                                   </span>
                                 )}
+                              </td>
+                              {/* La columna que importa. Un aflojamiento sirve
+                                  para sacar SIN vale, así que "declarado"
+                                  puede ser cero mientras el tanque se vacía. */}
+                              <td
+                                className={`p-2 text-right font-bold ${
+                                  e.descuadre_medido_l === null
+                                    ? "text-slate-400"
+                                    : e.descuadre_medido_l < 0
+                                      ? "text-red-600"
+                                      : e.descuadre_medido_l > 0
+                                        ? "text-amber-600"
+                                        : "text-emerald-600"
+                                }`}
+                              >
+                                {e.descuadre_medido_l === null
+                                  ? "sin medir"
+                                  : `${e.descuadre_medido_l} L`}
+                                <span className="block text-[11px] font-normal text-slate-400">
+                                  {e.mediciones_despues} varilla(s)
+                                </span>
                               </td>
                             </tr>
                           ))}
