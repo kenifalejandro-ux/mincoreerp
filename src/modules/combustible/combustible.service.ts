@@ -31,6 +31,10 @@ export class CombustibleService {
     return this.repository.create(client, tenantId, data);
   }
 
+  tieneMovimientos(client: PoolClient, tenantId: string, id: number) {
+    return this.repository.tieneMovimientos(client, tenantId, id);
+  }
+
   async update(
     client: PoolClient,
     tenantId: string,
@@ -87,6 +91,89 @@ export class CombustibleService {
     }
   }
 
+  /** TODO cambio de ficha, con sus valores. La otra mitad de la regla.
+   *
+   *  ── Por qué existe ────────────────────────────────────────────────────
+   *
+   *  `evaluarAflojamiento` mantiene A MANO la lista de qué campo es un
+   *  control. Eso funcionó mientras la lista estuvo completa, pero las tres
+   *  auditorías adversarias encontraron lo mismo tres veces: un campo que
+   *  nadie había clasificado como control, y que por eso se editaba dejando
+   *  `{ combustibleId }` en la auditoría -- ni qué cambió, ni de cuánto a
+   *  cuánto. Pasó con la capacidad del tanque, con la unidad, con la
+   *  tolerancia y con `activo`.
+   *
+   *  El problema no era la lista: era el DEFECTO. Un campo sin clasificar
+   *  nacía invisible.
+   *
+   *  Acá se invierte: **la visibilidad es automática, la escalada es
+   *  declarada.** Todo campo que cambia queda registrado con su valor viejo y
+   *  nuevo, sin que nadie tenga que acordarse. Los que además exigen motivo y
+   *  mandan correo siguen siendo una lista explícita
+   *  (`evaluarAflojamiento`) -- eso SÍ tiene que decidirlo una persona,
+   *  porque frenar un formulario y despertar a gerencia no puede ser
+   *  automático.
+   *
+   *  Consecuencia práctica: el próximo campo que se le agregue al tanque
+   *  nace auditado con sus valores. Si además es un control, hay que
+   *  clasificarlo; si nadie lo hace, al menos se ve QUÉ cambió. */
+  diffFicha(
+    antes: Record<string, unknown>,
+    ahora: ActualizarTanqueCombustibleInput
+  ): { campo: string; de: string; a: string }[] {
+    // `nivel_actual` no está: no se edita por acá (va por /lecturas).
+    // `motivo_ajuste` tampoco: es el motivo del cambio, no un dato del tanque.
+    const CAMPOS = [
+      "codigo",
+      "tanque_nombre",
+      "tipo_combustible",
+      "unidad",
+      "tipo_punto",
+      "ubicacion",
+      "capacidad_total",
+      "nivel_minimo",
+      "moneda",
+      "activo",
+      "tolerancia_capacidad_pct",
+      "requiere_documento",
+      "umbral_diferencia_pct",
+      "umbral_descuadre_pct",
+      "umbral_descuadre_ciclo_pct",
+      "umbral_descuadre_ventana_pct",
+    ] as const;
+
+    const cambios: { campo: string; de: string; a: string }[] = [];
+
+    for (const campo of CAMPOS) {
+      const viejo = (antes as Record<string, unknown>)[campo];
+      const nuevo = (ahora as unknown as Record<string, unknown>)[campo];
+
+      // NUMERIC vuelve de Postgres como string ("20000.00"), así que
+      // comparar crudo marcaría como cambio lo que no cambió. Se comparan
+      // como números cuando los dos lo son.
+      const numViejo = viejo === null || viejo === "" ? null : Number(viejo);
+      const numNuevo = nuevo === null || nuevo === undefined ? null : Number(nuevo);
+      const sonNumeros =
+        numViejo !== null &&
+        numNuevo !== null &&
+        !Number.isNaN(numViejo) &&
+        !Number.isNaN(numNuevo);
+
+      const iguales = sonNumeros
+        ? numViejo === numNuevo
+        : (viejo ?? null) === (nuevo ?? null) || String(viejo ?? "") === String(nuevo ?? "");
+      if (iguales) continue;
+
+      cambios.push({
+        campo,
+        de: viejo === null || viejo === undefined ? "(vacío)" : String(viejo),
+        a: nuevo === null || nuevo === undefined ? "(vacío)" : String(nuevo),
+      });
+    }
+
+    return cambios;
+  }
+
   /** Compara la vigilancia ANTES y DESPUÉS de un PUT de tanque y devuelve
    *  qué controles se aflojan, con el valor viejo y el nuevo.
    *
@@ -114,8 +201,16 @@ export class CombustibleService {
       requiere_documento: boolean;
       capacidad_total: string;
       nivel_minimo: string;
+      tolerancia_capacidad_pct: string;
+      activo: boolean;
+      tipo_combustible: string;
     },
-    ahora: ActualizarTanqueCombustibleInput
+    ahora: ActualizarTanqueCombustibleInput,
+    /** Si el tanque ya tiene historial. Lo resuelve el controlador porque es
+     *  una consulta y esto es una comparación pura. Solo cambia el criterio
+     *  del tipo de combustible: en un tanque vacío y sin usar, cambiarlo es
+     *  terminar de darlo de alta. */
+    tieneMovimientos = false
   ) {
     const cambios: { control: string; de: string; a: string }[] = [];
 
@@ -193,6 +288,47 @@ export class CombustibleService {
         control: "Nivel mínimo (avisa más tarde)",
         de: `${minimoAntes}`,
         a: `${ahora.nivel_minimo}`,
+      });
+    }
+
+    // SUBIR LA TOLERANCIA DE CAPACIDAD. No es cosmética: es el techo real
+    // para aceptar una recepción (ver validarFormaRecepcion). Con 90%,
+    // alguien puede declarar que entraron 38.000 L en un tanque de 20.000.
+    // La 3ª auditoría la encontró pasando como edición común.
+    const toleranciaAntes = Number(antes.tolerancia_capacidad_pct);
+    if (ahora.tolerancia_capacidad_pct > toleranciaAntes) {
+      cambios.push({
+        control: "Tolerancia de capacidad (acepta recepciones más grandes)",
+        de: `${toleranciaAntes}%`,
+        a: `${ahora.tolerancia_capacidad_pct}%`,
+      });
+    }
+
+    // DESACTIVAR EL TANQUE POR PUT. El DELETE exige motivo y avisa desde el
+    // PR de las fechas y la baja; `activo` es además un campo del PUT, y por
+    // ahí no pedía nada. Mismo acto, misma consecuencia --el tanque sale del
+    // aviso por falta de medición-- así que mismo trato, entre por donde
+    // entre.
+    if (antes.activo && !ahora.activo) {
+      cambios.push({
+        control: "Tanque activo (sale de la vigilancia por falta de medición)",
+        de: "activo",
+        a: "desactivado",
+      });
+    }
+
+    // CAMBIAR EL TIPO DE COMBUSTIBLE DE UN TANQUE CON HISTORIAL. A diferencia
+    // de la unidad --que se BLOQUEA porque multiplica por 3,785 todas las
+    // bandas-- esto no mueve ningún número: el despacho guarda su propio
+    // tipo. Lo que rompe es el significado del registro: quedan vales de
+    // diésel colgando de un tanque que ahora dice gasolina, y el kardex suma
+    // entradas y salidas a través del cambio como si nada. Por eso escala en
+    // vez de bloquear.
+    if (tieneMovimientos && antes.tipo_combustible !== ahora.tipo_combustible) {
+      cambios.push({
+        control: "Tipo de combustible (el tanque ya tiene movimientos)",
+        de: antes.tipo_combustible,
+        a: ahora.tipo_combustible,
       });
     }
 
