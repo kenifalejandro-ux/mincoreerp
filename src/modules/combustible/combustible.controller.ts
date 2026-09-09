@@ -200,9 +200,21 @@ export class CombustibleController {
 
       const cambios = service.diffFicha(antes, data);
 
-      const actualizado = await withTenant(tenantId, (client) =>
-        service.update(client, tenantId, id, data)
-      );
+      const actualizado = await withTenant(tenantId, async (client) => {
+        const fila = await service.update(client, tenantId, id, data);
+        // Si este PUT configuró algún umbral de descuadre, el tanque dejó de
+        // estar ciego: la alerta que lo reportaba se cierra sola, igual que
+        // "sin medir" cuando llega una lectura. El problema dejó de existir,
+        // no lo revisó nadie.
+        if (
+          data.umbral_descuadre_pct !== null ||
+          data.umbral_descuadre_ciclo_pct !== null ||
+          data.umbral_descuadre_ventana_pct !== null
+        ) {
+          await service.resolverSinVigilanciaSiExiste(client, tenantId, id);
+        }
+        return fila;
+      });
 
       if (!actualizado) {
         return res.status(404).json({ error: "No encontrado" });
@@ -838,6 +850,8 @@ export class CombustibleController {
           const retro = await service.evaluarDespachoRetroactivo(
             client,
             tenantId,
+            data.combustible_id ?? null,
+            despachoId,
             data.despachado_en ?? new Date().toISOString()
           );
 
@@ -1556,6 +1570,7 @@ export class CombustibleController {
             diasSinMedir: nueva.dias_sin_medir,
             diasVentanaDescuadre: nueva.dias_ventana_descuadre,
             diasCargaRetroactiva: nueva.dias_carga_retroactiva,
+            diasSinVigilancia: nueva.dias_sin_vigilancia,
             llenadosPorDiaMax: nueva.llenados_por_dia_max,
             topeSinCapacidadL: nueva.tope_diario_sin_capacidad_l,
           },

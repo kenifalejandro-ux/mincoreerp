@@ -46,6 +46,7 @@ const CRITICAS = new Set([
   "tope_diario_excedido",
   "descuadre_ventana",
   "vale_recargado",
+  "tanque_sin_vigilancia",
   "tanque_sin_medir",
 ]);
 

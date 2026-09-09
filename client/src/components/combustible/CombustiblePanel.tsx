@@ -387,7 +387,8 @@ interface AlertaCombustible {
     | "tope_diario_excedido"
     | "descuadre_ventana"
     | "despacho_retroactivo"
-    | "vale_recargado";
+    | "vale_recargado"
+    | "tanque_sin_vigilancia";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -419,6 +420,7 @@ const TIPOS_CRITICOS = new Set([
   "tope_diario_excedido",
   "descuadre_ventana",
   "vale_recargado",
+  "tanque_sin_vigilancia",
   "tanque_sin_medir",
 ]);
 const esCritica = (tipo: string) => TIPOS_CRITICOS.has(tipo);
@@ -486,12 +488,12 @@ function SugerenciaCompacta({
   cargando: boolean;
   onUsar: (valor: number) => void;
 }) {
-  if (cargando) return <p className="text-[11px] text-slate-400">Calculando sugerencia...</p>;
+  if (cargando) return <p className="text-xs text-slate-600">Calculando sugerencia...</p>;
   if (!sugerencia) return null;
 
   if (!sugerencia.muestraSuficiente) {
     return (
-      <p className="text-[11px] text-slate-400">
+      <p className="text-xs text-slate-600">
         Sugerencia automática: faltan mediciones ({sugerencia.tamanioMuestra}/
         {sugerencia.minimoRequerido}). Hasta entonces, el valor de arriba es provisional.
       </p>
@@ -499,7 +501,7 @@ function SugerenciaCompacta({
   }
 
   return (
-    <p className="text-[11px] text-slate-500">
+    <p className="text-xs text-slate-600">
       Sugerencia: <strong>{sugerencia.sugerido}%</strong> ({sugerencia.tamanioMuestra} mediciones,
       promedio {sugerencia.promedio}% ± {sugerencia.desviacion}%){" "}
       <button
@@ -545,6 +547,7 @@ const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   descuadre_ventana: "Descuadre acumulado",
   despacho_retroactivo: "Vale cargado con atraso",
   vale_recargado: "Vale recargado con otra cantidad",
+  tanque_sin_vigilancia: "Tanque despachando sin vigilancia",
 };
 
 /** El `detalle` es JSONB libre y cada tipo de alerta guarda cosas
@@ -583,6 +586,20 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     return (
       `Despachó ${cantidad} ${unidadDespacho ?? ""} a un tanque de ` +
       `${capacidad} ${unidadCapacidad ?? ""} (+${excesoPct ?? "?"}%)`
+    );
+  }
+  if (a.tipo === "tanque_sin_vigilancia") {
+    const { litrosEnLaVentana, valesEnLaVentana, unidad, plazoDias } = a.detalle as {
+      litrosEnLaVentana?: number;
+      valesEnLaVentana?: number;
+      unidad?: string;
+      plazoDias?: number;
+    };
+    // El número, no el reproche: "falta configurar" se posterga, "salieron
+    // 12.000 L sin que nada los mirara" no.
+    return (
+      `Despachó ${litrosEnLaVentana ?? "?"} ${unidad ?? ""} en ${valesEnLaVentana ?? "?"} vale(s) ` +
+      `con los tres umbrales apagados (plazo: ${plazoDias ?? "?"} días)`
     );
   }
   if (a.tipo === "vale_recargado") {
@@ -1016,6 +1033,7 @@ export default function CombustiblePanel() {
   // "cuánto combustible es normal", eso lo sabe la operación, no el sistema.
   const [diasVentanaDescuadre, setDiasVentanaDescuadre] = useState("30");
   const [diasCargaRetro, setDiasCargaRetro] = useState("3");
+  const [diasSinVig, setDiasSinVig] = useState("7");
   const [llenadosPorDia, setLlenadosPorDia] = useState("");
   const [topeSinCapacidad, setTopeSinCapacidad] = useState("");
   /** Hallazgos críticos SIN RESOLVER -- distinto de "sin leer": una alerta
@@ -2127,6 +2145,9 @@ export default function CombustiblePanel() {
       if (bodyConfig?.dias_carga_retroactiva !== undefined) {
         setDiasCargaRetro(String(bodyConfig.dias_carga_retroactiva));
       }
+      if (bodyConfig?.dias_sin_vigilancia !== undefined) {
+        setDiasSinVig(String(bodyConfig.dias_sin_vigilancia));
+      }
       // null llega como "sin configurar" y tiene que verse como campo vacío,
       // no como "null" escrito adentro del input.
       setLlenadosPorDia(
@@ -2167,10 +2188,12 @@ export default function CombustiblePanel() {
     const dias = Number(diasSinMedir);
     const diasVentana = Number(diasVentanaDescuadre);
     const diasRetro = Number(diasCargaRetro);
+    const diasVig = Number(diasSinVig);
     if (guardandoVentana || !Number.isInteger(horas) || horas < 1 || horas > 8760) return;
     if (!Number.isInteger(dias) || dias < 1 || dias > 365) return;
     if (!Number.isInteger(diasVentana) || diasVentana < 7 || diasVentana > 365) return;
     if (!Number.isInteger(diasRetro) || diasRetro < 1 || diasRetro > 90) return;
+    if (!Number.isInteger(diasVig) || diasVig < 1 || diasVig > 90) return;
     setGuardandoVentana(true);
     try {
       // Campo vacío = null = sin configurar. Number("") es 0, que acá
@@ -2195,6 +2218,7 @@ export default function CombustiblePanel() {
           dias_sin_medir: dias,
           dias_ventana_descuadre: diasVentana,
           dias_carga_retroactiva: diasRetro,
+          dias_sin_vigilancia: diasVig,
           llenados_por_dia_max: llenados,
           tope_diario_sin_capacidad_l: topeSC,
         }),
@@ -2727,7 +2751,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="tanque-codigo"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Código
                   </label>
@@ -2745,7 +2769,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="tanque-nombre"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Nombre
                   </label>
@@ -2765,7 +2789,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="tanque-tipo-combustible"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Combustible
                   </label>
@@ -2790,7 +2814,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="tanque-unidad"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Unidad
                   </label>
@@ -2809,7 +2833,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="tanque-tipo-punto"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Punto
                   </label>
@@ -2836,7 +2860,7 @@ export default function CombustiblePanel() {
               <div className="space-y-1">
                 <label
                   htmlFor="tanque-ubicacion"
-                  className="text-xs font-bold text-slate-500 uppercase"
+                  className="text-xs font-bold text-slate-700 uppercase"
                 >
                   Ubicación (opcional)
                 </label>
@@ -2855,7 +2879,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="tanque-capacidad"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Capacidad total
                   </label>
@@ -2873,7 +2897,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="tanque-nivel-minimo"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Nivel mínimo (alerta)
                   </label>
@@ -2896,7 +2920,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="tanque-nivel-actual"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Nivel inicial
                   </label>
@@ -2997,7 +3021,7 @@ export default function CombustiblePanel() {
                   <div className="space-y-1">
                     <label
                       htmlFor="tanque-moneda"
-                      className="text-xs font-bold text-slate-500 uppercase"
+                      className="text-xs font-bold text-slate-700 uppercase"
                     >
                       Moneda
                     </label>
@@ -3018,7 +3042,7 @@ export default function CombustiblePanel() {
                   <div className="space-y-1">
                     <label
                       htmlFor="tanque-tolerancia"
-                      className="text-xs font-bold text-slate-500 uppercase"
+                      className="text-xs font-bold text-slate-700 uppercase"
                     >
                       Tolerancia de capacidad (%)
                     </label>
@@ -3034,7 +3058,7 @@ export default function CombustiblePanel() {
                         setFormData({ ...formData, tolerancia_capacidad_pct: e.target.value })
                       }
                     />
-                    <p className="text-[11px] text-slate-400">
+                    <p className="text-xs text-slate-600">
                       Margen sobre la capacidad antes de rechazar una recepción. 0 = estricto.
                     </p>
                   </div>
@@ -3048,7 +3072,7 @@ export default function CombustiblePanel() {
                       <div className="space-y-1 col-span-2">
                         <label
                           htmlFor="tanque-umbral-diferencia"
-                          className="text-xs font-bold text-slate-500 uppercase"
+                          className="text-xs font-bold text-slate-700 uppercase"
                         >
                           Umbral de diferencia (%)
                         </label>
@@ -3064,7 +3088,7 @@ export default function CombustiblePanel() {
                             setFormData({ ...formData, umbral_diferencia_pct: e.target.value })
                           }
                         />
-                        <p className="text-[11px] text-slate-400">
+                        <p className="text-xs text-slate-600">
                           Desde cuánta diferencia entre lo facturado y lo medido con varilla se
                           marca una recepción como sospechosa.{" "}
                           <strong>Vacío = no alertar todavía</strong>, conviene dejarlo así hasta
@@ -3152,7 +3176,7 @@ export default function CombustiblePanel() {
                       <div className="space-y-1 col-span-2">
                         <label
                           htmlFor="tanque-umbral-descuadre"
-                          className="text-xs font-bold text-slate-500 uppercase"
+                          className="text-xs font-bold text-slate-700 uppercase"
                         >
                           Umbral de descuadre (%)
                         </label>
@@ -3168,7 +3192,7 @@ export default function CombustiblePanel() {
                             setFormData({ ...formData, umbral_descuadre_pct: e.target.value })
                           }
                         />
-                        <p className="text-[11px] text-slate-400">
+                        <p className="text-xs text-slate-600">
                           Cuánto puede diferir el nivel medido de lo que los vales y recepciones
                           explican, antes de alertar. Se mide sobre la capacidad del tanque: 1% de
                           20,000 L son 200 L. <strong>Vacío = no alertar todavía</strong>, hasta
@@ -3188,7 +3212,7 @@ export default function CombustiblePanel() {
                       <div className="space-y-1 col-span-2">
                         <label
                           htmlFor="tanque-umbral-ciclo"
-                          className="text-xs font-bold text-slate-500 uppercase"
+                          className="text-xs font-bold text-slate-700 uppercase"
                         >
                           Umbral acumulado del ciclo (%)
                         </label>
@@ -3204,7 +3228,7 @@ export default function CombustiblePanel() {
                             setFormData({ ...formData, umbral_descuadre_ciclo_pct: e.target.value })
                           }
                         />
-                        <p className="text-[11px] text-slate-400">
+                        <p className="text-xs text-slate-600">
                           Igual que el anterior, pero sumando <strong>todo el ciclo</strong> desde
                           que el tanque se cargó, no solo entre dos varillas. Atrapa el faltante
                           repartido en porciones chicas, que medición por medición parece normal.
@@ -3224,7 +3248,7 @@ export default function CombustiblePanel() {
                       <div className="space-y-1 col-span-2">
                         <label
                           htmlFor="tanque-umbral-ventana"
-                          className="text-xs font-bold text-slate-500 uppercase"
+                          className="text-xs font-bold text-slate-700 uppercase"
                         >
                           Umbral acumulado de la ventana (%)
                         </label>
@@ -3243,7 +3267,7 @@ export default function CombustiblePanel() {
                             })
                           }
                         />
-                        <p className="text-[11px] text-slate-400">
+                        <p className="text-xs text-slate-600">
                           El único acumulado que <strong>no se reinicia con una recepción</strong>.
                           El del ciclo vuelve a cero cada vez que llega el camión, y ahí se esconde
                           el robo de a poco: 50 L por día no alertan nunca si el tanque se carga
@@ -3265,7 +3289,7 @@ export default function CombustiblePanel() {
                   />
                   <span>
                     Exigir factura o guía de remisión al registrar una recepción
-                    <span className="block text-[11px] text-slate-400">
+                    <span className="block text-xs text-slate-600">
                       Desactivalo si el papel del proveedor no siempre está a mano al descargar.
                     </span>
                   </span>
@@ -3449,7 +3473,7 @@ export default function CombustiblePanel() {
               <div className="space-y-1">
                 <label
                   htmlFor="motivo-anulacion"
-                  className="text-xs font-bold text-slate-500 uppercase"
+                  className="text-xs font-bold text-slate-700 uppercase"
                 >
                   Motivo (obligatorio)
                 </label>
@@ -3529,7 +3553,7 @@ export default function CombustiblePanel() {
               <div className="space-y-1">
                 <label
                   htmlFor="combustible-nivel"
-                  className="text-xs font-bold text-slate-500 uppercase"
+                  className="text-xs font-bold text-slate-700 uppercase"
                 >
                   Nivel medido ahora ({tanqueLectura.unidad})
                 </label>
@@ -3547,7 +3571,7 @@ export default function CombustiblePanel() {
               <div className="space-y-1">
                 <label
                   htmlFor="combustible-leido-en"
-                  className="text-xs font-bold text-slate-500 uppercase"
+                  className="text-xs font-bold text-slate-700 uppercase"
                 >
                   Fecha y hora de la lectura
                 </label>
@@ -3593,7 +3617,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="despacho-origen"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Origen
                   </label>
@@ -3615,7 +3639,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="despacho-tipo-combustible"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Combustible
                   </label>
@@ -3644,7 +3668,7 @@ export default function CombustiblePanel() {
                   <div className="space-y-1">
                     <label
                       htmlFor="despacho-tanque"
-                      className="text-xs font-bold text-slate-500 uppercase"
+                      className="text-xs font-bold text-slate-700 uppercase"
                     >
                       Tanque
                     </label>
@@ -3673,7 +3697,7 @@ export default function CombustiblePanel() {
                     <div className="space-y-1">
                       <label
                         htmlFor="despacho-cantidad"
-                        className="text-xs font-bold text-slate-500 uppercase"
+                        className="text-xs font-bold text-slate-700 uppercase"
                       >
                         Cantidad despachada
                       </label>
@@ -3693,7 +3717,7 @@ export default function CombustiblePanel() {
                     <div className="space-y-1">
                       <label
                         htmlFor="despacho-contometro"
-                        className="text-xs font-bold text-slate-500 uppercase"
+                        className="text-xs font-bold text-slate-700 uppercase"
                       >
                         Lectura del contómetro
                       </label>
@@ -3718,7 +3742,7 @@ export default function CombustiblePanel() {
                   <div className="space-y-1">
                     <label
                       htmlFor="despacho-tipo-destino"
-                      className="text-xs font-bold text-slate-500 uppercase"
+                      className="text-xs font-bold text-slate-700 uppercase"
                     >
                       Destino
                     </label>
@@ -3745,7 +3769,7 @@ export default function CombustiblePanel() {
                     <div className="space-y-1">
                       <label
                         htmlFor="despacho-equipo"
-                        className="text-xs font-bold text-slate-500 uppercase"
+                        className="text-xs font-bold text-slate-700 uppercase"
                       >
                         Unidad
                       </label>
@@ -3775,7 +3799,7 @@ export default function CombustiblePanel() {
                   <div className="space-y-1">
                     <label
                       htmlFor="despacho-grifo"
-                      className="text-xs font-bold text-slate-500 uppercase"
+                      className="text-xs font-bold text-slate-700 uppercase"
                     >
                       Grifo
                     </label>
@@ -3810,7 +3834,7 @@ export default function CombustiblePanel() {
                   <div className="space-y-1">
                     <label
                       htmlFor="despacho-equipo-externo"
-                      className="text-xs font-bold text-slate-500 uppercase"
+                      className="text-xs font-bold text-slate-700 uppercase"
                     >
                       Unidad
                     </label>
@@ -3843,7 +3867,7 @@ export default function CombustiblePanel() {
                     <div className="space-y-1">
                       <label
                         htmlFor="despacho-cantidad-externa"
-                        className="text-xs font-bold text-slate-500 uppercase"
+                        className="text-xs font-bold text-slate-700 uppercase"
                       >
                         Cantidad despachada
                       </label>
@@ -3864,7 +3888,7 @@ export default function CombustiblePanel() {
                       <div className="space-y-1">
                         <label
                           htmlFor="despacho-odometro"
-                          className="text-xs font-bold text-slate-500 uppercase"
+                          className="text-xs font-bold text-slate-700 uppercase"
                         >
                           Lectura odómetro
                         </label>
@@ -3885,7 +3909,7 @@ export default function CombustiblePanel() {
                       <div className="space-y-1">
                         <label
                           htmlFor="despacho-horometro"
-                          className="text-xs font-bold text-slate-500 uppercase"
+                          className="text-xs font-bold text-slate-700 uppercase"
                         >
                           Lectura horómetro
                         </label>
@@ -3908,7 +3932,7 @@ export default function CombustiblePanel() {
                   <div className="space-y-1">
                     <label
                       htmlFor="despacho-horas-abastecidas"
-                      className="text-xs font-bold text-slate-500 uppercase"
+                      className="text-xs font-bold text-slate-700 uppercase"
                     >
                       Horas abastecidas (desde la carga anterior)
                     </label>
@@ -3932,7 +3956,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="despacho-costo-unitario"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     C.U (costo por galón)
                   </label>
@@ -3951,7 +3975,7 @@ export default function CombustiblePanel() {
                   />
                 </div>
                 <div className="space-y-1">
-                  <span className="text-xs font-bold text-slate-500 uppercase">C.TOTAL</span>
+                  <span className="text-xs font-bold text-slate-700 uppercase">C.TOTAL</span>
                   <div className="w-full border border-slate-200 bg-slate-50 rounded-xl p-3 text-slate-600">
                     {costoTotalCalculado === null
                       ? "—"
@@ -3970,7 +3994,7 @@ export default function CombustiblePanel() {
               <div className="space-y-1">
                 <label
                   htmlFor="despacho-observaciones"
-                  className="text-xs font-bold text-slate-500 uppercase"
+                  className="text-xs font-bold text-slate-700 uppercase"
                 >
                   Observaciones (opcional)
                 </label>
@@ -3990,7 +4014,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="despacho-serie"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Serie del talonario
                   </label>
@@ -4009,7 +4033,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="despacho-n-vale"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     N° de vale
                   </label>
@@ -4028,7 +4052,7 @@ export default function CombustiblePanel() {
               <div className="space-y-1">
                 <label
                   htmlFor="despacho-fecha"
-                  className="text-xs font-bold text-slate-500 uppercase"
+                  className="text-xs font-bold text-slate-700 uppercase"
                 >
                   Fecha y hora del despacho
                 </label>
@@ -4212,7 +4236,7 @@ export default function CombustiblePanel() {
             <form onSubmit={handleCrearGrifo} className="p-6 space-y-3 border-b">
               <label
                 htmlFor="grifo-nombre-nuevo"
-                className="text-xs font-bold text-slate-500 uppercase"
+                className="text-xs font-bold text-slate-700 uppercase"
               >
                 Nuevo grifo o proveedor
               </label>
@@ -4257,7 +4281,7 @@ export default function CombustiblePanel() {
                   />
                   Abastece el tanque (cisterna)
                 </label>
-                <p className="text-[11px] text-slate-400">
+                <p className="text-xs text-slate-600">
                   Marcá los dos si el mismo proveedor te vende en ruta y a granel.
                 </p>
               </div>
@@ -4335,7 +4359,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="precio-tipo-combustible"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Combustible
                   </label>
@@ -4363,7 +4387,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1 col-span-2">
                   <label
                     htmlFor="precio-aplica-a"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Tipo de precio
                   </label>
@@ -4394,7 +4418,7 @@ export default function CombustiblePanel() {
                 </div>
               </div>
 
-              <p className="text-[11px] text-slate-400 -mt-1">
+              <p className="text-xs text-slate-600 -mt-1">
                 Acá no va el costo de las cisternas que llenan el tanque: ese se carga en cada
                 recepción, desde su factura.
               </p>
@@ -4403,7 +4427,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="precio-tanque"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Tanque
                   </label>
@@ -4430,7 +4454,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="precio-grifo"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Grifo
                   </label>
@@ -4457,7 +4481,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="precio-valor"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Precio por galón
                   </label>
@@ -4477,7 +4501,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="precio-vigente-desde"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Vigente desde
                   </label>
@@ -4502,7 +4526,7 @@ export default function CombustiblePanel() {
             </form>
 
             <div className="p-6 space-y-2">
-              <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Historial</h4>
+              <h4 className="text-xs font-bold text-slate-700 uppercase mb-2">Historial</h4>
               {precios.length === 0 ? (
                 <p className="text-sm text-slate-400 text-center">
                   Todavía no hay precios cargados.
@@ -4525,7 +4549,7 @@ export default function CombustiblePanel() {
                         {/* Sin esto, dos filas del historial se ven idénticas
                             y no hay forma de saber si el número es de venta o
                             de compra -- misma ambigüedad que el selector. */}
-                        <span className="ml-2 text-[11px] font-normal text-slate-400">
+                        <span className="ml-2 text-[11px] font-normal text-slate-500">
                           {p.combustible_id !== null ? "venta interna" : "compra en ruta"}
                         </span>
                       </span>
@@ -4583,7 +4607,7 @@ export default function CombustiblePanel() {
               <div className="space-y-1">
                 <label
                   htmlFor="motivo-anulacion-precio"
-                  className="text-xs font-bold text-slate-500 uppercase"
+                  className="text-xs font-bold text-slate-700 uppercase"
                 >
                   Motivo (obligatorio)
                 </label>
@@ -4648,7 +4672,7 @@ export default function CombustiblePanel() {
               <div>
                 <label
                   htmlFor="kardex-desde"
-                  className="block text-xs font-bold text-slate-500 uppercase mb-1"
+                  className="block text-xs font-bold text-slate-700 uppercase mb-1"
                 >
                   Desde
                 </label>
@@ -4663,7 +4687,7 @@ export default function CombustiblePanel() {
               <div>
                 <label
                   htmlFor="kardex-hasta"
-                  className="block text-xs font-bold text-slate-500 uppercase mb-1"
+                  className="block text-xs font-bold text-slate-700 uppercase mb-1"
                 >
                   Hasta
                 </label>
@@ -4734,7 +4758,7 @@ export default function CombustiblePanel() {
               ) : (
                 <table className="w-full text-sm border-collapse">
                   <thead>
-                    <tr className="text-left text-xs font-bold text-slate-500 uppercase border-b">
+                    <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
                       <th className="p-2">Fecha</th>
                       <th className="p-2">Movimiento</th>
                       <th className="p-2">Documento</th>
@@ -4836,7 +4860,7 @@ export default function CombustiblePanel() {
               )}
 
               {kardex && kardex.resumen.anulados > 0 && (
-                <p className="text-[11px] text-slate-400 mt-4">
+                <p className="text-xs text-slate-600 mt-4">
                   Las filas tachadas están anuladas: se muestran porque son evidencia, pero no suman
                   al saldo.
                 </p>
@@ -4876,7 +4900,7 @@ export default function CombustiblePanel() {
               <div>
                 <label
                   htmlFor="aud-desde"
-                  className="block text-xs font-bold text-slate-500 uppercase mb-1"
+                  className="block text-xs font-bold text-slate-700 uppercase mb-1"
                 >
                   Desde
                 </label>
@@ -4891,7 +4915,7 @@ export default function CombustiblePanel() {
               <div>
                 <label
                   htmlFor="aud-hasta"
-                  className="block text-xs font-bold text-slate-500 uppercase mb-1"
+                  className="block text-xs font-bold text-slate-700 uppercase mb-1"
                 >
                   Hasta
                 </label>
@@ -4970,7 +4994,7 @@ export default function CombustiblePanel() {
                     ) : (
                       <table className="w-full text-sm border-collapse">
                         <thead>
-                          <tr className="text-left text-xs font-bold text-slate-500 uppercase border-b">
+                          <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
                             <th className="p-2">Cuándo</th>
                             <th className="p-2">Quién</th>
                             <th className="p-2">Qué se aflojó</th>
@@ -5011,7 +5035,7 @@ export default function CombustiblePanel() {
                               >
                                 {e.despachado_despues_l > 0 ? `${e.despachado_despues_l} L` : "—"}
                                 {e.vales_despues > 0 && (
-                                  <span className="block text-[11px] font-normal text-slate-400">
+                                  <span className="block text-[11px] font-normal text-slate-500">
                                     {e.vales_despues} vale(s)
                                   </span>
                                 )}
@@ -5033,7 +5057,7 @@ export default function CombustiblePanel() {
                                 {e.descuadre_medido_l === null
                                   ? "sin medir"
                                   : `${e.descuadre_medido_l} L`}
-                                <span className="block text-[11px] font-normal text-slate-400">
+                                <span className="block text-[11px] font-normal text-slate-500">
                                   {e.mediciones_despues} varilla(s)
                                 </span>
                               </td>
@@ -5101,7 +5125,7 @@ export default function CombustiblePanel() {
                     ) : (
                       <table className="w-full text-sm border-collapse">
                         <thead>
-                          <tr className="text-left text-xs font-bold text-slate-500 uppercase border-b">
+                          <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
                             <th className="p-2">Persona</th>
                             <th className="p-2 text-right">Vales</th>
                             <th className="p-2 text-right">Recepciones</th>
@@ -5190,7 +5214,7 @@ export default function CombustiblePanel() {
               ) : (
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="text-left text-xs font-bold text-slate-500 uppercase border-b">
+                    <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
                       <th className="p-3">Cuándo</th>
                       <th className="p-3">Quién</th>
                       <th className="p-3">Qué hizo</th>
@@ -5281,7 +5305,7 @@ export default function CombustiblePanel() {
             <div className="px-6 py-4 bg-slate-50 border-b flex flex-wrap items-center gap-3 shrink-0">
               <label
                 htmlFor="ventana-gracia"
-                className="text-xs font-bold text-slate-500 uppercase"
+                className="text-xs font-bold text-slate-700 uppercase"
               >
                 Ventana de gracia
               </label>
@@ -5303,7 +5327,7 @@ export default function CombustiblePanel() {
               <span className="text-sm text-slate-500">horas</span>
               <label
                 htmlFor="dias-sin-medir"
-                className="text-xs font-bold text-slate-500 uppercase ml-2"
+                className="text-xs font-bold text-slate-700 uppercase ml-2"
               >
                 Avisar si no se mide en
               </label>
@@ -5326,7 +5350,7 @@ export default function CombustiblePanel() {
                   para atrás-- no una propiedad del recipiente. */}
               <label
                 htmlFor="dias-ventana"
-                className="text-xs font-bold text-slate-500 uppercase ml-2"
+                className="text-xs font-bold text-slate-700 uppercase ml-2"
               >
                 Acumulado de los últimos
               </label>
@@ -5344,11 +5368,33 @@ export default function CombustiblePanel() {
               />
               <span className="text-sm text-slate-500">días</span>
 
+              {/* Cuánto puede despachar un tanque con los umbrales apagados
+                  antes de que el sistema insista (0082). */}
+              <label
+                htmlFor="dias-sin-vig"
+                className="text-xs font-bold text-slate-700 uppercase ml-2"
+              >
+                Insistir si opera ciego
+              </label>
+              <input
+                id="dias-sin-vig"
+                type="number"
+                min={1}
+                max={90}
+                className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
+                value={diasSinVig}
+                onChange={(e) => {
+                  setDiasSinVig(e.target.value);
+                  setMensajeVentana(null);
+                }}
+              />
+              <span className="text-sm text-slate-500">días</span>
+
               {/* Cuánto atraso se tolera entre la fecha del vale y su carga
                   (0081). El límite lo pone la cola offline, no la operación. */}
               <label
                 htmlFor="dias-retro"
-                className="text-xs font-bold text-slate-500 uppercase ml-2"
+                className="text-xs font-bold text-slate-700 uppercase ml-2"
               >
                 Vale cargado hasta
               </label>
@@ -5372,7 +5418,7 @@ export default function CombustiblePanel() {
                   configurar = no alerta, igual que los umbrales del tanque. */}
               <label
                 htmlFor="llenados-por-dia"
-                className="text-xs font-bold text-slate-500 uppercase ml-2"
+                className="text-xs font-bold text-slate-700 uppercase ml-2"
               >
                 Llenados por día
               </label>
@@ -5392,7 +5438,7 @@ export default function CombustiblePanel() {
               />
               <label
                 htmlFor="tope-sin-capacidad"
-                className="text-xs font-bold text-slate-500 uppercase ml-2"
+                className="text-xs font-bold text-slate-700 uppercase ml-2"
               >
                 Tope diario sin capacidad
               </label>
@@ -5426,7 +5472,7 @@ export default function CombustiblePanel() {
                   {mensajeVentana}
                 </span>
               )}
-              <p className="text-[11px] text-slate-400 flex-1 min-w-[240px]">
+              <p className="text-xs text-slate-600 flex-1 min-w-[240px]">
                 <strong>Ventana de gracia:</strong> tiempo que un hueco tiene para explicarse solo
                 (un vale que sincroniza sin señal, uno que se anula) antes de congelarse como
                 anomalía permanente. Pasado ese plazo se congela <strong>solo</strong>, sin que
@@ -5613,7 +5659,7 @@ export default function CombustiblePanel() {
               <div className="space-y-1">
                 <label
                   htmlFor="motivo-anulacion-despacho"
-                  className="text-xs font-bold text-slate-500 uppercase"
+                  className="text-xs font-bold text-slate-700 uppercase"
                 >
                   Motivo de la anulación *
                 </label>
@@ -5670,7 +5716,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="recepcion-tanque"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Tanque *
                   </label>
@@ -5696,7 +5742,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="recepcion-grifo"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Proveedor / grifo *
                   </label>
@@ -5721,7 +5767,7 @@ export default function CombustiblePanel() {
                   {/* El catálogo es obligatorio a propósito: el alta va
                       primero, para que el gasto por proveedor se pueda
                       agrupar de verdad (ver migrations/0063). */}
-                  <p className="text-[11px] text-slate-400">
+                  <p className="text-xs text-slate-600">
                     ¿No está en la lista? Cargalo primero en{" "}
                     <button
                       type="button"
@@ -5742,7 +5788,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="recepcion-cantidad"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Cantidad recibida * {tanqueRecepcion ? `(${tanqueRecepcion.unidad})` : ""}
                   </label>
@@ -5762,7 +5808,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="recepcion-costo"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Costo unitario *
                   </label>
@@ -5833,7 +5879,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="recepcion-tipo-doc"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     Documento {tanqueRecepcion?.requiere_documento !== false ? "*" : "(opcional)"}
                   </label>
@@ -5855,7 +5901,7 @@ export default function CombustiblePanel() {
                 <div className="space-y-1">
                   <label
                     htmlFor="recepcion-num-doc"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-slate-700 uppercase"
                   >
                     N° de documento{" "}
                     {tanqueRecepcion?.requiere_documento !== false ? "*" : "(opcional)"}
@@ -5881,7 +5927,7 @@ export default function CombustiblePanel() {
               <div className="space-y-1">
                 <label
                   htmlFor="recepcion-fecha"
-                  className="text-xs font-bold text-slate-500 uppercase"
+                  className="text-xs font-bold text-slate-700 uppercase"
                 >
                   Fecha y hora de recepción
                 </label>
@@ -5895,7 +5941,7 @@ export default function CombustiblePanel() {
                     setHoraRecepcionEditadaAMano(true);
                   }}
                 />
-                <p className="text-[11px] text-slate-400">
+                <p className="text-xs text-slate-600">
                   Cuándo entró el combustible, no cuándo se carga al sistema. Define contra qué
                   lectura se calcula el costo promedio.
                 </p>
@@ -6127,7 +6173,7 @@ export default function CombustiblePanel() {
               <div className="space-y-1">
                 <label
                   htmlFor="motivo-anulacion-recepcion"
-                  className="text-xs font-bold text-slate-500 uppercase"
+                  className="text-xs font-bold text-slate-700 uppercase"
                 >
                   Motivo de la anulación *
                 </label>

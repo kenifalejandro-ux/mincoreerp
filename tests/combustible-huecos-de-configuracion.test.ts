@@ -46,6 +46,7 @@ describe("combustible: huecos de configuración (3ª auditoría adversaria)", ()
       dias_sin_medir: 2,
       dias_ventana_descuadre: 30,
       dias_carga_retroactiva: 3,
+      dias_sin_vigilancia: 7,
       llenados_por_dia_max: 1,
       tope_diario_sin_capacidad_l: 500,
     });

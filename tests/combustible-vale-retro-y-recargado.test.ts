@@ -49,6 +49,7 @@ describe("combustible: vale retro-fechado y vale recargado (migración 0081)", (
       dias_sin_medir: 30,
       dias_ventana_descuadre: 30,
       dias_carga_retroactiva: 3,
+      dias_sin_vigilancia: 7,
       llenados_por_dia_max: null,
       tope_diario_sin_capacidad_l: null,
     });
@@ -70,6 +71,41 @@ describe("combustible: vale retro-fechado y vale recargado (migración 0081)", (
     await borrarTenantDePrueba(tenantId);
     await closeDatabase();
   });
+
+  /** Un tanque recién creado. La regla de `despacho_retroactivo` mira el
+   *  último movimiento DEL TANQUE, así que los tests que prueban "no hay
+   *  nada más reciente" necesitan uno limpio -- el compartido arrastra
+   *  despachos de hoy de los casos anteriores. */
+  const tanqueLimpio = async () => {
+    const r = await ag.post("/api/erp/combustible").send({
+      codigo: idUnico("TQ"),
+      tanque_nombre: "T",
+      tipo_combustible: "diesel_b5",
+      unidad: "L",
+      tipo_punto: "fijo",
+      capacidad_total: 50000,
+      nivel_actual: 40000,
+      nivel_minimo: 1000,
+      modo_vigilancia: "sin_vigilar",
+    });
+    expect(r.status).toBe(201);
+    return r.body.id as number;
+  };
+
+  const despacharEn = (tanque: number, s: string, n: number, cantidad: number, cuando: string) =>
+    ag.post("/api/erp/combustible/despachos").send({
+      origen: "tanque_propio",
+      combustible_id: tanque,
+      tipo_combustible: "diesel_b5",
+      tipo_destino: "equipo",
+      equipo_id: equipoId,
+      serie_talonario: s,
+      n_vale: n,
+      cantidad,
+      lectura_contometro: cantidad,
+      costo_unitario: 16,
+      despachado_en: cuando,
+    });
 
   const despachar = (s: string, n: number, cantidad: number, cuando: string) =>
     ag.post("/api/erp/combustible/despachos").send({
@@ -95,9 +131,12 @@ describe("combustible: vale retro-fechado y vale recargado (migración 0081)", (
 
   // ── 2. El vale retro-fechado ──────────────────────────────────────────
 
-  it("un vale cargado 20 días después de su fecha alerta, sin bloquear", async () => {
+  it("un vale viejo METIDO ATRÁS entre tráfico actual alerta, sin bloquear", async () => {
     const s = serie();
-    const r = await despachar(s, 1, 300, hace(20));
+    // Primero, movimiento de hoy: es lo que el vale viejo va a quedar atrás.
+    expect((await despachar(s, 1, 200, new Date().toISOString())).status).toBe(201);
+
+    const r = await despachar(s, 2, 300, hace(20));
     // No bloquea: perder un vale real de cancha sería peor.
     expect(r.status).toBe(201);
 
@@ -105,10 +144,38 @@ describe("combustible: vale retro-fechado y vale recargado (migración 0081)", (
     expect(al).toHaveLength(1);
     expect(Number(al[0].detalle.diasDeAtraso)).toBeGreaterThan(19);
     expect(Number(al[0].detalle.diasTolerados)).toBe(3);
+    // Contra qué se lo comparó, para poder evaluarlo sin abrir el historial.
+    expect(al[0].detalle.ultimoMovimientoPrevio).toBeDefined();
+  });
+
+  it("CARGAR EL HISTORIAL desde el papel NO enciende la bandeja", async () => {
+    // Lo destapó la simulación contra el ERP real: de 33 vales, 29 dispararon
+    // la alerta. Una operación que sube el mes pasado desde el talonario
+    // tiene TODOS los vales viejos, y son todos legítimos. Un control que se
+    // enciende con la carga inicial de cualquier cliente nuevo se ignora en
+    // una semana, y ahí se pierde también el día que importaba.
+    //
+    // Lo que los separa no es la edad del vale: es si hay algo más reciente
+    // detrás de lo cual esconderse. En orden cronológico, nunca lo hay.
+    const s = serie();
+    const tanque = await tanqueLimpio();
+    for (let i = 0; i < 6; i++) {
+      const r = await despacharEn(tanque, s, i + 1, 250, hace(30 - i * 4));
+      expect(r.status).toBe(201);
+    }
+    expect(await alertasDe("despacho_retroactivo", s)).toHaveLength(0);
+  });
+
+  it("el primer vale de un tanque nunca alerta: no hay contra qué compararlo", async () => {
+    const s = serie();
+    const tanque = await tanqueLimpio();
+    expect((await despacharEn(tanque, s, 1, 300, hace(40))).status).toBe(201);
+    expect(await alertasDe("despacho_retroactivo", s)).toHaveLength(0);
   });
 
   it("un vale del día no alerta: es el caso normal", async () => {
     const s = serie();
+    await despachar(s, 9, 100, hace(1));
     expect((await despachar(s, 1, 300, new Date().toISOString())).status).toBe(201);
     expect(await alertasDe("despacho_retroactivo", s)).toHaveLength(0);
   });
@@ -117,6 +184,7 @@ describe("combustible: vale retro-fechado y vale recargado (migración 0081)", (
     // Un tanque sin señal sincroniza cuando el operador vuelve a base. Si eso
     // alertara, el control saltaría con el trabajo normal y se ignoraría.
     const s = serie();
+    await despachar(s, 9, 100, new Date().toISOString());
     expect((await despachar(s, 1, 300, hace(2))).status).toBe(201);
     expect(await alertasDe("despacho_retroactivo", s)).toHaveLength(0);
   });
@@ -195,6 +263,7 @@ describe("combustible: vale retro-fechado y vale recargado (migración 0081)", (
       ventana_gracia_horas: 72,
       dias_sin_medir: 30,
       dias_ventana_descuadre: 30,
+      dias_sin_vigilancia: 7,
       llenados_por_dia_max: null,
       tope_diario_sin_capacidad_l: null,
     };

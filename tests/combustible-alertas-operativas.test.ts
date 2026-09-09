@@ -116,7 +116,7 @@ describe("combustible: alertas operativas (migración 0073)", () => {
     const grifo = await crearGrifo();
     const recepcion = await recepcionConDiferencia(tanque.id, grifo.id, 1000, -50);
 
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
 
     const alertas = await alertasDeTipo("diferencia_recepcion");
     const propia = alertas.find((a: { recepcion_id: number }) => a.recepcion_id === recepcion.id);
@@ -135,7 +135,7 @@ describe("combustible: alertas operativas (migración 0073)", () => {
     const grifo = await crearGrifo();
     const recepcion = await recepcionConDiferencia(tanque.id, grifo.id, 1000, -50);
 
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
 
     const alertas = await alertasDeTipo("diferencia_recepcion");
     expect(alertas.some((a: { recepcion_id: number }) => a.recepcion_id === recepcion.id)).toBe(
@@ -149,7 +149,7 @@ describe("combustible: alertas operativas (migración 0073)", () => {
     const grifo = await crearGrifo();
     const recepcion = await recepcionConDiferencia(tanque.id, grifo.id, 1000, -500);
 
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
 
     const alertas = await alertasDeTipo("diferencia_recepcion");
     expect(alertas.some((a: { recepcion_id: number }) => a.recepcion_id === recepcion.id)).toBe(
@@ -165,7 +165,7 @@ describe("combustible: alertas operativas (migración 0073)", () => {
     const grifo = await crearGrifo();
     const recepcion = await recepcionConDiferencia(tanque.id, grifo.id, 1000, -1);
 
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
 
     const alertas = await alertasDeTipo("diferencia_recepcion");
     const propia = alertas.find((a: { recepcion_id: number }) => a.recepcion_id === recepcion.id);
@@ -178,9 +178,9 @@ describe("combustible: alertas operativas (migración 0073)", () => {
     const grifo = await crearGrifo();
     const recepcion = await recepcionConDiferencia(tanque.id, grifo.id, 1000, -80);
 
-    await correrConciliacion();
-    await correrConciliacion();
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
+    await correrConciliacion(tenantId);
+    await correrConciliacion(tenantId);
 
     const alertas = await alertasDeTipo("diferencia_recepcion");
     const propias = alertas.filter(
@@ -198,7 +198,7 @@ describe("combustible: alertas operativas (migración 0073)", () => {
       .patch(`/api/erp/combustible/recepciones/${recepcion.id}/anular`)
       .send({ motivo: "cargada por error" });
 
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
 
     const alertas = await alertasDeTipo("diferencia_recepcion");
     expect(alertas.some((a: { recepcion_id: number }) => a.recepcion_id === recepcion.id)).toBe(
@@ -438,7 +438,7 @@ describe("combustible: alertas operativas (migración 0073)", () => {
       )
     );
 
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
 
     const res = await agente.get("/api/erp/combustible/anomalias").query({ pageSize: 200 });
     expect(

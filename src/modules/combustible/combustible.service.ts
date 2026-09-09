@@ -735,6 +735,7 @@ export class CombustibleService {
       diasSinMedir: number;
       diasVentanaDescuadre: number;
       diasCargaRetroactiva: number;
+      diasSinVigilancia: number;
       llenadosPorDiaMax: number | null;
       topeSinCapacidadL: number | null;
     },
@@ -762,6 +763,7 @@ export class CombustibleService {
       dias_sin_medir: number;
       dias_ventana_descuadre: number;
       dias_carga_retroactiva: number;
+      dias_sin_vigilancia: number;
       llenados_por_dia_max: number | null;
       tope_diario_sin_capacidad_l: number | null;
     },
@@ -770,6 +772,7 @@ export class CombustibleService {
       dias_sin_medir: number;
       dias_ventana_descuadre: number;
       dias_carga_retroactiva: number;
+      dias_sin_vigilancia: number;
       llenados_por_dia_max: number | null;
       tope_diario_sin_capacidad_l: number | null;
     }
@@ -787,6 +790,16 @@ export class CombustibleService {
     // SUBIR los días de carga retroactiva afloja: se toleran vales fechados
     // más atrás sin que nadie se entere. Va con los de arriba, no con la
     // ventana de descuadre, porque acá subir es lo que debilita.
+    // Subir los días sin vigilancia deja al tanque ciego más tiempo antes de
+    // que el sistema insista.
+    if (ahora.dias_sin_vigilancia > antes.dias_sin_vigilancia) {
+      cambios.push({
+        control: "Días tolerados sin vigilancia",
+        de: `${antes.dias_sin_vigilancia} días`,
+        a: `${ahora.dias_sin_vigilancia} días`,
+      });
+    }
+
     if (ahora.dias_carga_retroactiva > antes.dias_carga_retroactiva) {
       cambios.push({
         control: "Días de carga retroactiva tolerados",
@@ -1306,6 +1319,53 @@ export class CombustibleService {
    *  Es la evasión más simple del módulo entero, y no requiere entender
    *  nada: sin lecturas no hay descuadre que calcular ni diferencia de
    *  recepción que comparar. Las dos detecciones se apagan solas. */
+  /** El tanque que OPERA ciego (migración 0082).
+   *
+   *  Nació de una propuesta de Kenif --"que no se pueda crear el tanque sin
+   *  umbrales"-- y de por qué eso sale peor: el número correcto no existe el
+   *  día uno, así que obligarlo obliga a inventarlo, y un umbral inventado o
+   *  alerta con el trabajo normal (y se ignora) o no atrapa nada pero deja el
+   *  tanque figurando como configurado. Eso último es peor que la etiqueta
+   *  roja, que al menos dice la verdad.
+   *
+   *  El hueco real no estaba en el alta --que ya obliga a elegir y avisa por
+   *  correo si nace ciego-- sino en que después nadie insiste. Un tanque
+   *  puede despachar miles de litros durante meses con los tres umbrales en
+   *  NULL, y lo único que lo dice es una etiqueta pasiva.
+   *
+   *  Para cuando esta alerta salta, el tanque YA TIENE historial: el
+   *  asistente de calibración puede sugerir el número de verdad. */
+  async evaluarTanquesSinVigilancia(client: PoolClient, tenantId: string) {
+    const dias = await this.repository.getDiasSinVigilancia(client, tenantId);
+    const tanques = await this.repository.findTanquesOperandoSinVigilancia(client, tenantId, dias);
+    if (tanques.length === 0) return { alertas: [], dias };
+
+    await this.repository.crearAlertas(
+      client,
+      tenantId,
+      tanques.map((t) => ({
+        tipo: "tanque_sin_vigilancia" as const,
+        combustibleId: t.id,
+        detalle: {
+          tanqueNombre: t.tanque_nombre,
+          codigo: t.codigo,
+          unidad: t.unidad,
+          // El daño ya hecho, que es lo que convierte el aviso en un número:
+          // no es "falta configurar", es "salieron 12.000 L sin que nada los
+          // vigilara".
+          valesEnLaVentana: Number(t.vales),
+          litrosEnLaVentana: Number(t.litros),
+          plazoDias: dias,
+        },
+      }))
+    );
+    return { alertas: tanques, dias };
+  }
+
+  resolverSinVigilanciaSiExiste(client: PoolClient, tenantId: string, combustibleId: number) {
+    return this.repository.resolverSinVigilanciaSiExiste(client, tenantId, combustibleId);
+  }
+
   async evaluarTanquesSinMedir(client: PoolClient, tenantId: string) {
     const dias = await this.repository.getDiasSinMedir(client, tenantId);
     const tanques = await this.repository.findTanquesSinMedir(client, tenantId, dias);
@@ -1396,12 +1456,50 @@ export class CombustibleService {
    *
    *  Devuelve null en el caso normal, que es la enorme mayoría: el vale se
    *  carga el mismo día o al día siguiente. */
-  async evaluarDespachoRetroactivo(client: PoolClient, tenantId: string, despachadoEn: string) {
+  async evaluarDespachoRetroactivo(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number | null,
+    despachoId: number,
+    despachadoEn: string
+  ) {
     const dias = await this.repository.getDiasCargaRetroactiva(client, tenantId);
     const atraso = (Date.now() - Date.parse(despachadoEn)) / 864e5;
     if (!Number.isFinite(atraso) || atraso <= dias) return null;
 
+    // ── La segunda condición, que es la que saca el ruido ────────────────
+    //
+    // La primera versión solo miraba los días de atraso, y eso confundía dos
+    // cosas distintas. Se vio corriendo la simulación contra el ERP real: de
+    // 33 vales, 29 dispararon la alerta -- porque una operación cargada desde
+    // el papel tiene TODOS los vales viejos, y son todos legítimos.
+    //
+    // Un control que se enciende con la carga inicial de cualquier cliente
+    // nuevo se ignora en una semana, y ahí se pierde también el día que
+    // importaba. Misma lección que dejó "marcar todas leídas".
+    //
+    // Lo que separa la carga inicial del vale metido atrás NO es la edad del
+    // vale: es si el tanque YA TIENE movimiento más reciente. Cargando el
+    // historial en orden, cada vale es el más nuevo y no hay nada detrás de
+    // qué esconderse. Metiendo uno de hace tres semanas entre el tráfico de
+    // hoy, sí lo hay.
+    //
+    // Es exactamente el criterio de `lectura_retroactiva` (0078), que nunca
+    // alertó por ser vieja sino por estar insertada detrás de algo.
+    if (!combustibleId) return null;
+    const ultimo = await this.repository.findUltimoMovimiento(
+      client,
+      tenantId,
+      combustibleId,
+      despachoId
+    );
+    if (!ultimo) return null;
+    if (new Date(ultimo).getTime() <= Date.parse(despachadoEn) + dias * 864e5) return null;
+
     return {
+      // Contra qué se lo comparó: el movimiento que ya estaba y es más nuevo.
+      // Sin ese dato la alerta no se puede evaluar sin abrir el historial.
+      ultimoMovimientoPrevio: new Date(ultimo).toISOString(),
       diasDeAtraso: Number(atraso.toFixed(1)),
       diasTolerados: dias,
       despachadoEn,

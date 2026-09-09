@@ -28,6 +28,7 @@ const ETIQUETA_TIPO: Record<string, string> = {
   descuadre_ventana: "Descuadre acumulado",
   despacho_retroactivo: "Vale cargado con atraso",
   vale_recargado: "Vale recargado con otra cantidad",
+  tanque_sin_vigilancia: "Tanque despachando sin vigilancia",
 };
 
 /** No toda alerta es sobre un vale (migración 0073): las de nivel bajo van

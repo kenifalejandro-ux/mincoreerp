@@ -468,6 +468,35 @@ export async function enviarCorreoValeRecargado(
   });
 }
 
+/** Un tanque lleva días despachando con los tres umbrales apagados (0082).
+ *  El aviso lleva los LITROS que salieron sin vigilancia: "falta configurar"
+ *  se posterga, "salieron 12.000 L sin que nada los mirara" no. */
+export async function enviarCorreoSinVigilancia(
+  destinatarios: Destinatario[],
+  params: {
+    codigo: string;
+    tanqueNombre: string;
+    unidad: string;
+    valesEnLaVentana: number;
+    litrosEnLaVentana: number;
+    plazoDias: number;
+  }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: ${params.codigo} está despachando sin vigilancia`,
+    titulo: `${params.codigo} — ${params.tanqueNombre} lleva ${params.plazoDias} días operando sin umbrales`,
+    lineas: [
+      `En ese período salieron ${params.litrosEnLaVentana} ${params.unidad} en ` +
+        `${params.valesEnLaVentana} vale(s), y ningún control los revisó.`,
+      "Con los tres umbrales de descuadre sin configurar, el sistema NO puede detectar " +
+        "un faltante en este tanque: ni entre dos varillas, ni acumulado, ni en el mes.",
+      "El tanque ya tiene historial suficiente para calibrar: en su ficha, el asistente " +
+        "sugiere los umbrales a partir de sus propias mediciones en vez de un número inventado.",
+    ],
+  });
+}
+
 /** Un vale que sí se había registrado se anuló -- a diferencia del hueco,
  *  esto siempre tiene un motivo escrito por quien lo anuló, pero necesita
  *  revisión: "todo tiene que tener sustento". */

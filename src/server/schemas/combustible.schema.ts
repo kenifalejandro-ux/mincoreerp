@@ -422,6 +422,9 @@ export const configCombustibleSchema = z.object({
   // los umbrales, acá SÍ hay default: el límite lo pone la tecnología (cuánto
   // tarda una cola offline en sincronizar), no la operación.
   dias_carga_retroactiva: z.number().int().min(1).max(90),
+  // Días que un tanque puede despachar con los tres umbrales apagados antes
+  // de que el sistema insista (0082). Default 7.
+  dias_sin_vigilancia: z.number().int().min(1).max(90),
   // Los dos topes diarios de la migración 0079. Nullable con la misma
   // semántica que los umbrales del tanque desde 0075: null = sin configurar
   // = no alerta. No se les pone default -- un techo inventado o alerta por

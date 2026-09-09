@@ -28,7 +28,8 @@ export type TipoAlertaCombustible =
   | "tope_diario_excedido"
   | "descuadre_ventana"
   | "despacho_retroactivo"
-  | "vale_recargado";
+  | "vale_recargado"
+  | "tanque_sin_vigilancia";
 
 /** Una alerta por crear. Las anclas son todas opcionales en el tipo, pero
  *  el CHECK de la base exige al menos una (vale, tanque o recepción). */
@@ -978,6 +979,7 @@ export class CombustibleRepository {
     const diasSinMedir = await this.getDiasSinMedir(client, tenantId);
     const diasVentana = await this.getDiasVentanaDescuadre(client, tenantId);
     const diasCargaRetro = await this.getDiasCargaRetroactiva(client, tenantId);
+    const diasSinVig = await this.getDiasSinVigilancia(client, tenantId);
     const topes = await this.getTopesDiarios(client, tenantId);
     const result = await client.query(
       `SELECT actualizado_en, actualizado_por FROM combustible_config WHERE tenant_id = $1`,
@@ -988,6 +990,7 @@ export class CombustibleRepository {
       dias_sin_medir: diasSinMedir,
       dias_ventana_descuadre: diasVentana,
       dias_carga_retroactiva: diasCargaRetro,
+      dias_sin_vigilancia: diasSinVig,
       llenados_por_dia_max: topes.llenadosPorDiaMax,
       tope_diario_sin_capacidad_l: topes.topeSinCapacidadL,
       actualizado_en: result.rows[0]?.actualizado_en ?? null,
@@ -1005,6 +1008,7 @@ export class CombustibleRepository {
       diasSinMedir: number;
       diasVentanaDescuadre: number;
       diasCargaRetroactiva: number;
+      diasSinVigilancia: number;
       llenadosPorDiaMax: number | null;
       topeSinCapacidadL: number | null;
     },
@@ -1014,20 +1018,22 @@ export class CombustibleRepository {
       `
       INSERT INTO combustible_config
         (tenant_id, ventana_gracia_horas, dias_sin_medir, dias_ventana_descuadre,
-         dias_carga_retroactiva, llenados_por_dia_max, tope_diario_sin_capacidad_l,
-         actualizado_por)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         dias_carga_retroactiva, dias_sin_vigilancia, llenados_por_dia_max,
+         tope_diario_sin_capacidad_l, actualizado_por)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       ON CONFLICT (tenant_id) DO UPDATE
         SET ventana_gracia_horas = EXCLUDED.ventana_gracia_horas,
             dias_sin_medir = EXCLUDED.dias_sin_medir,
             dias_ventana_descuadre = EXCLUDED.dias_ventana_descuadre,
             dias_carga_retroactiva = EXCLUDED.dias_carga_retroactiva,
+            dias_sin_vigilancia = EXCLUDED.dias_sin_vigilancia,
             llenados_por_dia_max = EXCLUDED.llenados_por_dia_max,
             tope_diario_sin_capacidad_l = EXCLUDED.tope_diario_sin_capacidad_l,
             actualizado_por = EXCLUDED.actualizado_por,
             actualizado_en = now()
       RETURNING ventana_gracia_horas, dias_sin_medir, dias_ventana_descuadre,
-                dias_carga_retroactiva, llenados_por_dia_max, tope_diario_sin_capacidad_l,
+                dias_carga_retroactiva, dias_sin_vigilancia, llenados_por_dia_max,
+                tope_diario_sin_capacidad_l,
                 actualizado_en, actualizado_por
       `,
       [
@@ -1036,6 +1042,7 @@ export class CombustibleRepository {
         valores.diasSinMedir,
         valores.diasVentanaDescuadre,
         valores.diasCargaRetroactiva,
+        valores.diasSinVigilancia,
         valores.llenadosPorDiaMax,
         valores.topeSinCapacidadL,
         usuarioId,
@@ -1396,6 +1403,98 @@ export class CombustibleRepository {
    *  La deduplicación va acá y no en el llamador por el mismo motivo que en
    *  `nivel_bajo`: sin ella, cada corrida del worker generaría una alerta
    *  nueva del mismo tanque y el control moriría por ruidoso. */
+  /** Tanques que ESTÁN OPERANDO con los tres umbrales de descuadre en NULL
+   *  (migración 0082).
+   *
+   *  Las dos condiciones importan por igual:
+   *
+   *  - Los TRES en NULL. Con uno solo configurado el tanque ya no es ciego, y
+   *    para "vigilancia parcial" alcanza la etiqueta ámbar de la lista. La
+   *    alerta es para el estado en que NINGÚN faltante es detectable.
+   *    `umbral_diferencia_pct` queda afuera: vigila la factura del proveedor,
+   *    no el faltante del tanque.
+   *  - Con despachos reales en la ventana. Un tanque recién dado de alta que
+   *    todavía no despachó nada no tiene qué vigilar, y alertarlo el primer
+   *    día sería el ruido que hace que nadie mire las alertas.
+   *
+   *  Sin duplicar: si ya hay una abierta para ese tanque, no se crea otra --
+   *  es un ESTADO que persiste, no un evento que se repite. */
+  async findTanquesOperandoSinVigilancia(client: PoolClient, tenantId: string, dias: number) {
+    const result = await client.query<{
+      id: number;
+      tanque_nombre: string;
+      codigo: string;
+      unidad: string;
+      vales: string;
+      litros: string;
+      primer_despacho: Date;
+    }>(
+      `
+      SELECT c.id, c.tanque_nombre, c.codigo, c.unidad,
+             mov.vales::text AS vales, mov.litros::text AS litros,
+             mov.primero AS primer_despacho
+      FROM combustible c
+      JOIN LATERAL (
+        SELECT COUNT(*) AS vales,
+               COALESCE(SUM(d.cantidad), 0) AS litros,
+               MIN(d.despachado_en) AS primero
+        FROM combustible_despachos d
+        WHERE d.tenant_id = $1 AND d.combustible_id = c.id
+          AND d.anulada_en IS NULL
+      ) mov ON mov.vales > 0
+      WHERE c.tenant_id = $1 AND c.activo = true
+        AND c.umbral_descuadre_pct IS NULL
+        AND c.umbral_descuadre_ciclo_pct IS NULL
+        AND c.umbral_descuadre_ventana_pct IS NULL
+        -- El plazo se cuenta desde que el tanque EMPEZÓ A DESPACHAR, no desde
+        -- que se dio de alta. Es la medida que importa: un tanque instalado
+        -- hace meses pero que recién arranca no tiene historial con el que
+        -- calibrar, y exigirle un umbral obligaría a inventarlo.
+        -- La tabla combustible viene de la migración 0002 y no tiene creado_en,
+        -- así que tampoco había de dónde sacar la fecha del alta.
+        AND mov.primero < now() - make_interval(days => $2)
+        AND NOT EXISTS (
+          SELECT 1 FROM combustible_alertas a
+          WHERE a.tenant_id = $1 AND a.combustible_id = c.id
+            AND a.tipo = 'tanque_sin_vigilancia' AND a.resuelta_en IS NULL
+        )
+      ORDER BY c.id
+      `,
+      [tenantId, dias]
+    );
+    return result.rows;
+  }
+
+  /** Cuántos días puede un tanque despachar sin umbrales antes de que el
+   *  sistema empiece a insistir (0082). */
+  async getDiasSinVigilancia(client: PoolClient, tenantId: string): Promise<number> {
+    const r = await client.query<{ dias: number }>(
+      `SELECT COALESCE(
+         (SELECT dias_sin_vigilancia FROM combustible_config WHERE tenant_id = $1),
+         7
+       ) AS dias`,
+      [tenantId]
+    );
+    return Number(r.rows[0].dias);
+  }
+
+  /** La alerta se cierra sola cuando alguien configura un umbral: el problema
+   *  que reportaba dejó de existir. Misma mecánica que `tanque_sin_medir`
+   *  cuando llega una lectura -- `resuelta_por` queda NULL porque no lo
+   *  resolvió una persona revisando, lo resolvió el hecho. */
+  async resolverSinVigilanciaSiExiste(client: PoolClient, tenantId: string, combustibleId: number) {
+    await client.query(
+      `UPDATE combustible_alertas
+          SET resuelta_en = now(),
+              detalle = detalle || jsonb_build_object(
+                'motivo_revision', 'Se configuró la vigilancia del tanque'
+              )
+        WHERE tenant_id = $1 AND combustible_id = $2
+          AND tipo = 'tanque_sin_vigilancia' AND resuelta_en IS NULL`,
+      [tenantId, combustibleId]
+    );
+  }
+
   async findTanquesSinMedir(client: PoolClient, tenantId: string, dias: number) {
     const result = await client.query<{
       id: number;
@@ -1966,6 +2065,43 @@ export class CombustibleRepository {
       [tenantId, desde, hasta]
     );
     return r.rows;
+  }
+
+  /** El movimiento MÁS RECIENTE del tanque, sin contar el despacho que se
+   *  acaba de crear. Distingue las dos cosas que `despacho_retroactivo`
+   *  confundía:
+   *
+   *  - CARGA INICIAL del historial (un tenant que sube los vales del mes
+   *    pasado desde el papel): cada vale es más nuevo que el anterior, así
+   *    que nunca hay nada más reciente y no alerta.
+   *  - VALE METIDO ATRÁS entre tráfico actual: el tanque ya tiene movimiento
+   *    de hoy y aparece un vale de hace tres semanas. Eso sí es señal.
+   *
+   *  Mira despachos Y lecturas: un tanque puede estar midiéndose al día sin
+   *  haber despachado nada. */
+  async findUltimoMovimiento(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    excluirDespachoId: number
+  ): Promise<Date | null> {
+    const r = await client.query<{ ultimo: Date | null }>(
+      `SELECT GREATEST(
+                (SELECT MAX(d.despachado_en) FROM combustible_despachos d
+                  WHERE d.tenant_id = $1 AND d.combustible_id = $2
+                    AND d.anulada_en IS NULL AND d.id <> $3),
+                (SELECT MAX(l.leido_en) FROM combustible_lecturas l
+                  WHERE l.tenant_id = $1 AND l.combustible_id = $2
+                    AND l.anulada_en IS NULL
+                    -- La lectura del alta se estampa con NOW(), así que en un
+                    -- tanque recién creado sería siempre "el movimiento más
+                    -- reciente" y cualquier vale con fecha anterior alertaría.
+                    -- Mismo motivo por el que la excluye detectarLecturaRetroactiva.
+                    AND l.origen <> 'inicial')
+              ) AS ultimo`,
+      [tenantId, combustibleId, excluirDespachoId]
+    );
+    return r.rows[0]?.ultimo ?? null;
   }
 
   /** Las anulaciones previas de un número de vale (migración 0081).
