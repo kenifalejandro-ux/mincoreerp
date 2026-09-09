@@ -934,6 +934,7 @@ export default function CombustiblePanel() {
   // ya razona la operación (cierre, factura, planilla de vales).
   const [modalKardexAbierto, setModalKardexAbierto] = useState(false);
   const [cargandoKardex, setCargandoKardex] = useState(false);
+  const [descargandoKardex, setDescargandoKardex] = useState(false);
   const [kardex, setKardex] = useState<Kardex | null>(null);
   const [errorKardex, setErrorKardex] = useState<string | null>(null);
   const [kardexTanqueId, setKardexTanqueId] = useState<number | null>(null);
@@ -1101,6 +1102,40 @@ export default function CombustiblePanel() {
       setKardex(await res.json());
     } finally {
       setCargandoKardex(false);
+    }
+  };
+
+  /** Descarga el kardex del período que está en pantalla.
+   *
+   *  Va por `apiFetch` y blob, no por un <a href> directo: la respuesta
+   *  necesita la sesión y un link plano no manda las credenciales ni deja
+   *  mostrar el error si el servidor rechaza. Mismo patrón que la descarga
+   *  de comprobantes en FacturacionView. */
+  const descargarKardexCsv = async () => {
+    if (kardexTanqueId === null || descargandoKardex) return;
+    setDescargandoKardex(true);
+    setErrorKardex(null);
+    try {
+      const desde = new Date(`${kardexDesde}T00:00:00`).toISOString();
+      const hasta = new Date(`${kardexHasta}T23:59:59`).toISOString();
+      const res = await apiFetch(
+        `/api/erp/combustible/${kardexTanqueId}/kardex/csv?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`
+      );
+      if (!res.ok) {
+        setErrorKardex("No se pudo exportar el kardex.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `kardex-${kardex?.tanque.codigo ?? "tanque"}-${kardexDesde}-a-${kardexHasta}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setDescargandoKardex(false);
     }
   };
 
@@ -4512,6 +4547,14 @@ export default function CombustiblePanel() {
                 className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50"
               >
                 {cargandoKardex ? "Armando..." : "Ver período"}
+              </button>
+              <button
+                onClick={descargarKardexCsv}
+                disabled={descargandoKardex || !kardex || kardex.filas.length === 0}
+                className="px-4 py-2 border border-slate-300 text-slate-700 text-sm font-medium rounded-lg hover:bg-white disabled:opacity-40"
+                title="Descargar en CSV — se abre en Excel"
+              >
+                {descargandoKardex ? "Exportando..." : "⬇ Excel (CSV)"}
               </button>
               {errorKardex && (
                 <span className="text-xs font-semibold text-red-600">{errorKardex}</span>

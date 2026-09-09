@@ -45,6 +45,8 @@ import type {
   ConfigCombustibleInput,
   KardexCombustibleQuery,
 } from "../../server/schemas/combustible.schema";
+import { armarCsv } from "../../server/shared/utils/csv.util";
+import { sanearNombreArchivo } from "../../server/services/documentStorage";
 import { CombustibleService } from "./combustible.service";
 
 const service = new CombustibleService();
@@ -1482,6 +1484,101 @@ export class CombustibleController {
       res.json(kardex);
     } catch {
       res.status(500).json({ error: "Error al armar el kardex del tanque" });
+    }
+  }
+
+  /** GET /:id/kardex/csv -- el mismo kardex, para llevárselo.
+   *
+   *  Reusa `armarKardex` entero: el archivo y la pantalla no pueden salir de
+   *  dos cálculos distintos, o el día que difieran nadie va a saber cuál
+   *  creer. Acá solo se serializa.
+   *
+   *  El .xlsx con formato queda pendiente (Kenif lo pidió como segunda
+   *  opción). Cuando llegue, se le enchufa otro serializador a estos mismos
+   *  datos -- por eso el armado vive en el service y no acá. */
+  async getKardexCsv(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const id = Number(req.params.id);
+      const { desde, hasta } = req.validatedQuery as KardexCombustibleQuery;
+
+      const kardex = await withTenant(tenantId, (client) =>
+        service.armarKardex(client, tenantId, id, desde, hasta)
+      );
+      if (!kardex) {
+        res.status(404).json({ error: "Tanque no encontrado" });
+        return;
+      }
+
+      const u = kardex.tanque.unidad;
+      const csv = armarCsv(
+        [
+          "Fecha",
+          "Movimiento",
+          "Documento",
+          "Detalle",
+          `Entrada (${u})`,
+          `Salida (${u})`,
+          `Saldo teórico (${u})`,
+          `Medido (${u})`,
+          `Dif. tramo (${u})`,
+          `Dif. acumulada (${u})`,
+          "Quién",
+          "Anulado",
+          "Motivo de anulación",
+        ],
+        kardex.filas.map((f) => [
+          // Fecha local y no ISO: con el ISO, Excel trata la columna como
+          // texto y el auditor no puede ordenar por fecha, que es lo primero
+          // que hace.
+          new Date(f.ocurrido_en).toLocaleString("es-PE", { timeZone: "America/Lima" }),
+          f.tipo === "recepcion" ? "Recepción" : f.tipo === "despacho" ? "Despacho" : "Varilla",
+          f.documento,
+          f.detalle,
+          f.entrada || "",
+          f.salida || "",
+          f.saldo_teorico,
+          f.nivel_medido,
+          f.dif_tramo,
+          f.dif_acumulada,
+          f.usuario,
+          f.anulada ? "SÍ" : "",
+          f.motivo_anulacion,
+        ])
+      );
+
+      // Se audita ANTES de entregar el archivo, no después. Dos motivos: es
+      // la convención del módulo entero (auditar y recién ahí responder), y
+      // acá además importa el orden -- si el registro se escribiera después
+      // del `send`, la respuesta ya salió y una falla del registro dejaría
+      // el dato afuera sin rastro de quién se lo llevó.
+      //
+      // Llevarse el movimiento del tanque ES una acción de auditoría, no una
+      // consulta más: si mañana ese archivo aparece circulando, el registro
+      // dice de dónde salió.
+      await registrarAuditoria({
+        accion: "combustible.kardex_exportar",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          combustibleId: id,
+          codigo: kardex.tanque.codigo,
+          desde,
+          hasta,
+          filas: kardex.filas.length,
+          descuadreFinal: kardex.resumen.descuadre_final,
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+
+      const archivo = sanearNombreArchivo(
+        `kardex-${kardex.tanque.codigo}-${desde.slice(0, 10)}-a-${hasta.slice(0, 10)}.csv`
+      );
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${archivo}"`);
+      res.send(csv);
+    } catch {
+      res.status(500).json({ error: "Error al exportar el kardex" });
     }
   }
 
