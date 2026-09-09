@@ -198,7 +198,7 @@ describe("combustible: saldo del ciclo y tanque sin medir (migración 0076)", ()
     );
   }
 
-  /** `correrConciliacion()` es la variante SIN advisory lock -- existe para
+  /** `correrConciliacion(tenantId)` es la variante SIN advisory lock -- existe para
    *  tests y corridas manuales; la de producción
    *  (`correrConciliacionCoordinada`) toma un lock por tenant. Como recorre
    *  TODOS los tenants, dos archivos de test corriendo en paralelo la
@@ -216,7 +216,7 @@ describe("combustible: saldo del ciclo y tanque sin medir (migración 0076)", ()
     await leer(tq, 20000, new Date().toISOString());
     await envejecerLecturas(tq, 10); // el plazo por defecto son 3 días
 
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
 
     const al = await alertasDe(tq, "tanque_sin_medir");
     expect(al.length).toBeGreaterThanOrEqual(1);
@@ -229,9 +229,9 @@ describe("combustible: saldo del ciclo y tanque sin medir (migración 0076)", ()
     await leer(tq, 20000, new Date().toISOString());
     await envejecerLecturas(tq, 10);
 
-    await correrConciliacion();
-    await correrConciliacion();
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
+    await correrConciliacion(tenantId);
+    await correrConciliacion(tenantId);
 
     expect(await alertasDe(tq, "tanque_sin_medir")).toHaveLength(1);
   });
@@ -240,7 +240,7 @@ describe("combustible: saldo del ciclo y tanque sin medir (migración 0076)", ()
     const tq = await crearTanque();
     await leer(tq, 20000, new Date().toISOString());
     await envejecerLecturas(tq, 10);
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
     expect(await alertasDe(tq, "tanque_sin_medir")).toHaveLength(1);
 
     await leer(tq, 19000, new Date().toISOString());
@@ -260,7 +260,7 @@ describe("combustible: saldo del ciclo y tanque sin medir (migración 0076)", ()
       c.query(`UPDATE combustible_lecturas SET anulada_en = now() WHERE combustible_id = $1`, [tq])
     );
 
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
 
     const al = await alertasDe(tq, "tanque_sin_medir");
     expect(al).toHaveLength(1);
@@ -274,7 +274,7 @@ describe("combustible: saldo del ciclo y tanque sin medir (migración 0076)", ()
     await envejecerLecturas(tq, 10);
     await agente.delete(`/api/erp/combustible/${tq}`).send({ motivo: "Tanque fuera de servicio" });
 
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
 
     expect(await alertasDe(tq, "tanque_sin_medir")).toHaveLength(0);
   });

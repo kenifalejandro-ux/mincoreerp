@@ -40,7 +40,10 @@ import { env } from "../config/env";
 import { runSiPrimero, LOCK_IDS } from "../shared/utils/advisoryLock";
 import { capturarError } from "../config/sentry";
 import { CombustibleService } from "../../modules/combustible/combustible.service";
-import { enviarCorreoAlertaSinMedir } from "../../modules/combustible/combustibleAlertas.mailer";
+import {
+  enviarCorreoSinVigilancia,
+  enviarCorreoAlertaSinMedir,
+} from "../../modules/combustible/combustibleAlertas.mailer";
 import { publicarEventoTenant } from "./realtimeEvents.service";
 
 const service = new CombustibleService();
@@ -56,7 +59,20 @@ async function idsDeTenants(): Promise<string[]> {
 /** Uso directo, sin coordinación entre instancias -- para tests y una
  *  corrida manual. Mismo par que limpiarEventosTiempoRealViejos()/
  *  correrRetencionEventosCoordinada() en el worker de retención. */
-export async function correrConciliacion(): Promise<{ congeladas: number }> {
+export async function correrConciliacion(
+  /** Limita la corrida a UN tenant. Existe para los tests, y no es un
+   *  detalle: esta variante no toma advisory lock --el de producción sí, uno
+   *  por tenant-- así que dos archivos de test que la corran a la vez se
+   *  pisan sobre los MISMOS tenants. La deduplicación de alertas es un
+   *  `NOT EXISTS`, no una restricción de base, y dos corridas simultáneas
+   *  pueden pasar las dos por ese chequeo e insertar duplicados.
+   *
+   *  Eso hacía fallar de forma intermitente los tests de "no duplica la
+   *  alerta aunque el worker corra varias veces" -- de a uno pasaban, juntos
+   *  no. No era un bug de producción, pero sí ruido que se comía corridas
+   *  enteras. Pasando el tenant propio, cada archivo se queda en su corral. */
+  soloTenantId?: string
+): Promise<{ congeladas: number }> {
   let total = 0;
   // Se juntan y salen después del COMMIT -- ver avisarSinMedir().
   const avisosSinMedir: {
@@ -68,8 +84,21 @@ export async function correrConciliacion(): Promise<{ congeladas: number }> {
     }[];
     dias: number;
   }[] = [];
+  // Tanques que despachan con los tres umbrales apagados (0082). Mismo
+  // criterio que los de arriba: se juntan y salen después del COMMIT.
+  const avisosSinVigilancia: {
+    tenantId: string;
+    alertas: {
+      codigo: string;
+      tanque_nombre: string;
+      unidad: string;
+      vales: string;
+      litros: string;
+    }[];
+    dias: number;
+  }[] = [];
 
-  for (const tenantId of await idsDeTenants()) {
+  for (const tenantId of soloTenantId ? [soloTenantId] : await idsDeTenants()) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
@@ -83,9 +112,13 @@ export async function correrConciliacion(): Promise<{ congeladas: number }> {
       // evento que no ocurre no dispara ningún handler. Se avisa por correo
       // fuera de la transacción, junto con el resto.
       const sinMedir = await service.evaluarTanquesSinMedir(client, tenantId);
+      const sinVigilancia = await service.evaluarTanquesSinVigilancia(client, tenantId);
       const { congeladas } = await service.congelarAlertasVencidas(client, tenantId);
       if (sinMedir.alertas.length > 0) {
         avisosSinMedir.push({ tenantId, ...sinMedir });
+      }
+      if (sinVigilancia.alertas.length > 0) {
+        avisosSinVigilancia.push({ tenantId, ...sinVigilancia });
       }
       await client.query("COMMIT");
       total += congeladas;
@@ -100,8 +133,47 @@ export async function correrConciliacion(): Promise<{ congeladas: number }> {
   for (const aviso of avisosSinMedir) {
     await avisarSinMedir(aviso.tenantId, aviso.alertas, aviso.dias);
   }
+  for (const aviso of avisosSinVigilancia) {
+    await avisarSinVigilancia(aviso.tenantId, aviso.alertas, aviso.dias);
+  }
 
   return { congeladas: total };
+}
+
+/** Correo de los tanques que operan ciegos. Mismo contrato que
+ *  avisarSinMedir(): fuera de la transacción, uno por tanque, y nunca lanza. */
+async function avisarSinVigilancia(
+  tenantId: string,
+  tanques: {
+    codigo: string;
+    tanque_nombre: string;
+    unidad: string;
+    vales: string;
+    litros: string;
+  }[],
+  plazoDias: number
+): Promise<void> {
+  try {
+    const admins = await withTenant(tenantId, (client) =>
+      service.findAdminsConCombustibleHabilitado(client, tenantId)
+    );
+    for (const t of tanques) {
+      await enviarCorreoSinVigilancia(admins, {
+        codigo: t.codigo,
+        tanqueNombre: t.tanque_nombre,
+        unidad: t.unidad,
+        valesEnLaVentana: Number(t.vales),
+        litrosEnLaVentana: Number(t.litros),
+        plazoDias,
+      });
+      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+        tipo: "tanque_sin_vigilancia",
+        codigo: t.codigo,
+      });
+    }
+  } catch (err) {
+    logger.warn({ err, tenantId }, "No se pudo avisar de los tanques sin vigilancia");
+  }
 }
 
 /** Correo + evento de los tanques sin medir. Lo usan los DOS caminos (la
@@ -155,14 +227,22 @@ async function correrConciliacionCoordinada(): Promise<void> {
       // dejaría la detección viva únicamente en los tests -- que es
       // exactamente la clase de hueco que esta entrega vino a cerrar.
       const sinMedir = await service.evaluarTanquesSinMedir(client, tenantId);
+      const sinVigilancia = await service.evaluarTanquesSinVigilancia(client, tenantId);
       const congelado = await service.congelarAlertasVencidas(client, tenantId);
-      return { ...congelado, sinMedir };
+      return { ...congelado, sinMedir, sinVigilancia };
     });
     // undefined = otra instancia tiene el lock; se salta este tenant, la
     // próxima corrida lo agarra.
     if (resultado === undefined) continue;
     total += resultado.congeladas;
     ultimaVentana = resultado.ventanaHoras;
+    if (resultado.sinVigilancia.alertas.length > 0) {
+      await avisarSinVigilancia(
+        tenantId,
+        resultado.sinVigilancia.alertas,
+        resultado.sinVigilancia.dias
+      );
+    }
     if (resultado.sinMedir.alertas.length > 0) {
       await avisarSinMedir(tenantId, resultado.sinMedir.alertas, resultado.sinMedir.dias);
     }

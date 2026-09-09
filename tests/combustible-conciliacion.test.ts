@@ -104,7 +104,7 @@ describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)
     await crearHueco(serie);
     await envejecerAlertas(serie, 100); // más que las 72h por default
 
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
 
     const anomalias = await anomaliasDeSerie(serie);
     expect(anomalias).toHaveLength(1);
@@ -121,7 +121,7 @@ describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)
     await crearHueco(serie);
     await envejecerAlertas(serie, 10); // muy por debajo de 72h
 
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
 
     expect(await anomaliasDeSerie(serie)).toHaveLength(0);
   });
@@ -133,7 +133,7 @@ describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)
     await agente.post("/api/erp/combustible/despachos").send(payloadVale(serie, 2));
     await envejecerAlertas(serie, 500);
 
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
 
     expect(await anomaliasDeSerie(serie)).toHaveLength(0);
   });
@@ -143,9 +143,9 @@ describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)
     await crearHueco(serie);
     await envejecerAlertas(serie, 100);
 
-    await correrConciliacion();
-    await correrConciliacion();
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
+    await correrConciliacion(tenantId);
+    await correrConciliacion(tenantId);
 
     expect(await anomaliasDeSerie(serie)).toHaveLength(1);
   });
@@ -163,6 +163,7 @@ describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)
         dias_sin_medir: 3,
         dias_ventana_descuadre: 30,
         dias_carga_retroactiva: 3,
+        dias_sin_vigilancia: 7,
         llenados_por_dia_max: null,
         tope_diario_sin_capacidad_l: null,
       });
@@ -173,7 +174,7 @@ describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)
     // 10h: dentro de las 72h del default, pero MÁS que las 5h configuradas.
     await envejecerAlertas(serie, 10);
 
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
 
     const anomalias = await anomaliasDeSerie(serie);
     expect(anomalias).toHaveLength(1);
@@ -185,6 +186,7 @@ describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)
       dias_sin_medir: 3,
       dias_ventana_descuadre: 30,
       dias_carga_retroactiva: 3,
+      dias_sin_vigilancia: 7,
       llenados_por_dia_max: null,
       tope_diario_sin_capacidad_l: null,
     });
@@ -194,7 +196,7 @@ describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)
     const serie = serieUnica();
     await crearHueco(serie);
     await envejecerAlertas(serie, 100);
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
 
     expect(await anomaliasDeSerie(serie)).toHaveLength(1);
 
@@ -249,7 +251,7 @@ describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)
     const serie = serieUnica();
     await crearHueco(serie);
     await envejecerAlertas(serie, 100);
-    await correrConciliacion();
+    await correrConciliacion(tenantId);
 
     const otro = await crearTenantDePrueba(password);
     const agenteOtro = request.agent(app);

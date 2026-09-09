@@ -49,6 +49,7 @@ describe("combustible: vale retro-fechado y vale recargado (migración 0081)", (
       dias_sin_medir: 30,
       dias_ventana_descuadre: 30,
       dias_carga_retroactiva: 3,
+      dias_sin_vigilancia: 7,
       llenados_por_dia_max: null,
       tope_diario_sin_capacidad_l: null,
     });
@@ -262,6 +263,7 @@ describe("combustible: vale retro-fechado y vale recargado (migración 0081)", (
       ventana_gracia_horas: 72,
       dias_sin_medir: 30,
       dias_ventana_descuadre: 30,
+      dias_sin_vigilancia: 7,
       llenados_por_dia_max: null,
       tope_diario_sin_capacidad_l: null,
     };

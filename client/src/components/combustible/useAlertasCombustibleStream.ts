@@ -32,7 +32,8 @@ export interface AlertaCombustible {
     | "tope_diario_excedido"
     | "descuadre_ventana"
     | "despacho_retroactivo"
-    | "vale_recargado";
+    | "vale_recargado"
+    | "tanque_sin_vigilancia";
   // Nullable desde la migración 0073: las alertas de recepción y de nivel
   // no son sobre un vale, así que se anclan al tanque o a la recepción.
   serie_talonario: string | null;
