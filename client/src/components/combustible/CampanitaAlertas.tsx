@@ -26,6 +26,8 @@ const ETIQUETA_TIPO: Record<string, string> = {
   lectura_retroactiva: "Lectura fuera de orden",
   tope_diario_excedido: "Tope diario excedido",
   descuadre_ventana: "Descuadre acumulado",
+  despacho_retroactivo: "Vale cargado con atraso",
+  vale_recargado: "Vale recargado con otra cantidad",
 };
 
 /** No toda alerta es sobre un vale (migración 0073): las de nivel bajo van

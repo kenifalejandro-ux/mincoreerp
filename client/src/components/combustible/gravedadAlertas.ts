@@ -45,6 +45,7 @@ const CRITICAS = new Set([
   "lectura_retroactiva",
   "tope_diario_excedido",
   "descuadre_ventana",
+  "vale_recargado",
   "tanque_sin_medir",
 ]);
 

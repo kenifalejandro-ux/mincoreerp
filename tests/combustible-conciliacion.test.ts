@@ -162,6 +162,7 @@ describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)
         ventana_gracia_horas: 5,
         dias_sin_medir: 3,
         dias_ventana_descuadre: 30,
+        dias_carga_retroactiva: 3,
         llenados_por_dia_max: null,
         tope_diario_sin_capacidad_l: null,
       });
@@ -183,6 +184,7 @@ describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)
       ventana_gracia_horas: 72,
       dias_sin_medir: 3,
       dias_ventana_descuadre: 30,
+      dias_carga_retroactiva: 3,
       llenados_por_dia_max: null,
       tope_diario_sin_capacidad_l: null,
     });

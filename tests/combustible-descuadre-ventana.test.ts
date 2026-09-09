@@ -39,6 +39,7 @@ describe("combustible: descuadre acumulado en ventana deslizante (migración 008
       ventana_gracia_horas: 72,
       dias_sin_medir: 3,
       dias_ventana_descuadre: 30,
+      dias_carga_retroactiva: 3,
       llenados_por_dia_max: null,
       tope_diario_sin_capacidad_l: null,
     });
@@ -211,6 +212,7 @@ describe("combustible: descuadre acumulado en ventana deslizante (migración 008
     const base = {
       ventana_gracia_horas: 72,
       dias_sin_medir: 3,
+      dias_carga_retroactiva: 3,
       llenados_por_dia_max: null,
       tope_diario_sin_capacidad_l: null,
     };

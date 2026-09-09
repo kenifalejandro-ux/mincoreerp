@@ -385,7 +385,9 @@ interface AlertaCombustible {
     | "vale_fuera_de_orden"
     | "lectura_retroactiva"
     | "tope_diario_excedido"
-    | "descuadre_ventana";
+    | "descuadre_ventana"
+    | "despacho_retroactivo"
+    | "vale_recargado";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -416,6 +418,7 @@ const TIPOS_CRITICOS = new Set([
   "lectura_retroactiva",
   "tope_diario_excedido",
   "descuadre_ventana",
+  "vale_recargado",
   "tanque_sin_medir",
 ]);
 const esCritica = (tipo: string) => TIPOS_CRITICOS.has(tipo);
@@ -540,6 +543,8 @@ const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   lectura_retroactiva: "Lectura fuera de orden",
   tope_diario_excedido: "Tope diario excedido",
   descuadre_ventana: "Descuadre acumulado",
+  despacho_retroactivo: "Vale cargado con atraso",
+  vale_recargado: "Vale recargado con otra cantidad",
 };
 
 /** El `detalle` es JSONB libre y cada tipo de alerta guarda cosas
@@ -579,6 +584,26 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
       `Despachó ${cantidad} ${unidadDespacho ?? ""} a un tanque de ` +
       `${capacidad} ${unidadCapacidad ?? ""} (+${excesoPct ?? "?"}%)`
     );
+  }
+  if (a.tipo === "vale_recargado") {
+    const { cantidadAnulada, cantidadNueva, diferencia, anulacionesPrevias } = a.detalle as {
+      cantidadAnulada?: number;
+      cantidadNueva?: number;
+      diferencia?: number;
+      anulacionesPrevias?: number;
+    };
+    return (
+      `Se anuló con ${cantidadAnulada ?? "?"} y volvió con ${cantidadNueva ?? "?"} ` +
+      `(${(diferencia ?? 0) > 0 ? "+" : ""}${diferencia ?? "?"}), ` +
+      `${anulacionesPrevias ?? "?"} anulación(es) en ese número`
+    );
+  }
+  if (a.tipo === "despacho_retroactivo") {
+    const { diasDeAtraso, diasTolerados } = a.detalle as {
+      diasDeAtraso?: number;
+      diasTolerados?: number;
+    };
+    return `Cargado ${diasDeAtraso ?? "?"} días después de su fecha (se toleran ${diasTolerados ?? "?"})`;
   }
   if (a.tipo === "descuadre_ventana") {
     const { descuadreLitros, sentido, unidad, diasVentana, tramos, promedioPorTramo } =
@@ -990,6 +1015,7 @@ export default function CombustiblePanel() {
   // eso arrancan en "" y no en un número: no hay default razonable para
   // "cuánto combustible es normal", eso lo sabe la operación, no el sistema.
   const [diasVentanaDescuadre, setDiasVentanaDescuadre] = useState("30");
+  const [diasCargaRetro, setDiasCargaRetro] = useState("3");
   const [llenadosPorDia, setLlenadosPorDia] = useState("");
   const [topeSinCapacidad, setTopeSinCapacidad] = useState("");
   /** Hallazgos críticos SIN RESOLVER -- distinto de "sin leer": una alerta
@@ -2098,6 +2124,9 @@ export default function CombustiblePanel() {
       if (bodyConfig?.dias_ventana_descuadre !== undefined) {
         setDiasVentanaDescuadre(String(bodyConfig.dias_ventana_descuadre));
       }
+      if (bodyConfig?.dias_carga_retroactiva !== undefined) {
+        setDiasCargaRetro(String(bodyConfig.dias_carga_retroactiva));
+      }
       // null llega como "sin configurar" y tiene que verse como campo vacío,
       // no como "null" escrito adentro del input.
       setLlenadosPorDia(
@@ -2137,9 +2166,11 @@ export default function CombustiblePanel() {
     const horas = Number(ventanaGraciaHoras);
     const dias = Number(diasSinMedir);
     const diasVentana = Number(diasVentanaDescuadre);
+    const diasRetro = Number(diasCargaRetro);
     if (guardandoVentana || !Number.isInteger(horas) || horas < 1 || horas > 8760) return;
     if (!Number.isInteger(dias) || dias < 1 || dias > 365) return;
     if (!Number.isInteger(diasVentana) || diasVentana < 7 || diasVentana > 365) return;
+    if (!Number.isInteger(diasRetro) || diasRetro < 1 || diasRetro > 90) return;
     setGuardandoVentana(true);
     try {
       // Campo vacío = null = sin configurar. Number("") es 0, que acá
@@ -2163,6 +2194,7 @@ export default function CombustiblePanel() {
           ventana_gracia_horas: horas,
           dias_sin_medir: dias,
           dias_ventana_descuadre: diasVentana,
+          dias_carga_retroactiva: diasRetro,
           llenados_por_dia_max: llenados,
           tope_diario_sin_capacidad_l: topeSC,
         }),
@@ -5311,6 +5343,28 @@ export default function CombustiblePanel() {
                 }}
               />
               <span className="text-sm text-slate-500">días</span>
+
+              {/* Cuánto atraso se tolera entre la fecha del vale y su carga
+                  (0081). El límite lo pone la cola offline, no la operación. */}
+              <label
+                htmlFor="dias-retro"
+                className="text-xs font-bold text-slate-500 uppercase ml-2"
+              >
+                Vale cargado hasta
+              </label>
+              <input
+                id="dias-retro"
+                type="number"
+                min={1}
+                max={90}
+                className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
+                value={diasCargaRetro}
+                onChange={(e) => {
+                  setDiasCargaRetro(e.target.value);
+                  setMensajeVentana(null);
+                }}
+              />
+              <span className="text-sm text-slate-500">días después</span>
 
               {/* Los dos topes diarios (0079). Se cargan acá, junto al resto
                   de la vigilancia, porque son la misma decisión: cuánto

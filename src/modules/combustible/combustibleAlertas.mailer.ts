@@ -405,6 +405,69 @@ export async function enviarCorreoAlertaDescuadreVentana(
   });
 }
 
+/** El vale llegó fechado muy atrás (0081). La cola offline produce horas; un
+ *  vale con semanas de atraso es alguien eligiendo una fecha. */
+export async function enviarCorreoValeRetroactivo(
+  destinatarios: Destinatario[],
+  params: {
+    serieTalonario: string;
+    nVale: number;
+    diasDeAtraso: number;
+    diasTolerados: number;
+    despachadoEn: string;
+  }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: vale cargado ${params.diasDeAtraso} días después de su fecha`,
+    titulo:
+      `El vale ${params.serieTalonario}-${String(params.nVale).padStart(5, "0")} se cargó ` +
+      `${params.diasDeAtraso} días después de la fecha que declara`,
+    lineas: [
+      `Fecha declarada del despacho: ${new Date(params.despachadoEn).toLocaleString("es-PE")}.`,
+      `Se tolera hasta ${params.diasTolerados} día(s) de atraso, que es lo que puede tardar un ` +
+        "equipo sin señal en sincronizar.",
+      "No se bloqueó: perder un vale real de cancha sería peor. Pero una fecha vieja saca al " +
+        "vale de las cuentas del período en que se cargó -- conviene confirmar con el papel.",
+    ],
+  });
+}
+
+/** Un número de vale anulado volvió con OTRA cantidad (0081). */
+export async function enviarCorreoValeRecargado(
+  destinatarios: Destinatario[],
+  params: {
+    serieTalonario: string;
+    nVale: number;
+    anulacionesPrevias: number;
+    cantidadAnulada: number;
+    cantidadNueva: number;
+    diferencia: number;
+    sentido: "declara_menos" | "declara_mas";
+  }
+) {
+  const vale = `${params.serieTalonario}-${String(params.nVale).padStart(5, "0")}`;
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: el vale ${vale} volvió con otra cantidad`,
+    titulo: `El vale ${vale} se anuló y se volvió a cargar con una cantidad distinta`,
+    lineas: [
+      `Antes: ${params.cantidadAnulada}. Ahora: ${params.cantidadNueva}. ` +
+        `Diferencia: ${params.diferencia}.`,
+      params.anulacionesPrevias > 1
+        ? `Ese número ya lleva ${params.anulacionesPrevias} anulaciones.`
+        : "Es la primera anulación de ese número.",
+      params.sentido === "declara_menos"
+        ? "Se está declarando MENOS combustible del que decía el vale original. Si el papel " +
+          "dice la cantidad vieja, hay litros que salieron del tanque y ya no están en el sistema."
+        : "Se está declarando más que antes. Suele ser una corrección real, pero conviene que " +
+          "el papel lo respalde.",
+      "Corregir un vale mal tipeado es legítimo y por eso no se bloquea. Lo que hay que mirar " +
+        "es si el patrón se repite.",
+    ],
+  });
+}
+
 /** Un vale que sí se había registrado se anuló -- a diferencia del hueco,
  *  esto siempre tiene un motivo escrito por quien lo anuló, pero necesita
  *  revisión: "todo tiene que tener sustento". */
