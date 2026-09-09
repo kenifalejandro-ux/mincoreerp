@@ -26,7 +26,9 @@ export type TipoAlertaCombustible =
   | "vale_fuera_de_orden"
   | "lectura_retroactiva"
   | "tope_diario_excedido"
-  | "descuadre_ventana";
+  | "descuadre_ventana"
+  | "despacho_retroactivo"
+  | "vale_recargado";
 
 /** Una alerta por crear. Las anclas son todas opcionales en el tipo, pero
  *  el CHECK de la base exige al menos una (vale, tanque o recepción). */
@@ -975,6 +977,7 @@ export class CombustibleRepository {
     const ventana = await this.getVentanaGraciaHoras(client, tenantId);
     const diasSinMedir = await this.getDiasSinMedir(client, tenantId);
     const diasVentana = await this.getDiasVentanaDescuadre(client, tenantId);
+    const diasCargaRetro = await this.getDiasCargaRetroactiva(client, tenantId);
     const topes = await this.getTopesDiarios(client, tenantId);
     const result = await client.query(
       `SELECT actualizado_en, actualizado_por FROM combustible_config WHERE tenant_id = $1`,
@@ -984,6 +987,7 @@ export class CombustibleRepository {
       ventana_gracia_horas: ventana,
       dias_sin_medir: diasSinMedir,
       dias_ventana_descuadre: diasVentana,
+      dias_carga_retroactiva: diasCargaRetro,
       llenados_por_dia_max: topes.llenadosPorDiaMax,
       tope_diario_sin_capacidad_l: topes.topeSinCapacidadL,
       actualizado_en: result.rows[0]?.actualizado_en ?? null,
@@ -1000,6 +1004,7 @@ export class CombustibleRepository {
       ventanaGraciaHoras: number;
       diasSinMedir: number;
       diasVentanaDescuadre: number;
+      diasCargaRetroactiva: number;
       llenadosPorDiaMax: number | null;
       topeSinCapacidadL: number | null;
     },
@@ -1009,18 +1014,20 @@ export class CombustibleRepository {
       `
       INSERT INTO combustible_config
         (tenant_id, ventana_gracia_horas, dias_sin_medir, dias_ventana_descuadre,
-         llenados_por_dia_max, tope_diario_sin_capacidad_l, actualizado_por)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+         dias_carga_retroactiva, llenados_por_dia_max, tope_diario_sin_capacidad_l,
+         actualizado_por)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       ON CONFLICT (tenant_id) DO UPDATE
         SET ventana_gracia_horas = EXCLUDED.ventana_gracia_horas,
             dias_sin_medir = EXCLUDED.dias_sin_medir,
             dias_ventana_descuadre = EXCLUDED.dias_ventana_descuadre,
+            dias_carga_retroactiva = EXCLUDED.dias_carga_retroactiva,
             llenados_por_dia_max = EXCLUDED.llenados_por_dia_max,
             tope_diario_sin_capacidad_l = EXCLUDED.tope_diario_sin_capacidad_l,
             actualizado_por = EXCLUDED.actualizado_por,
             actualizado_en = now()
       RETURNING ventana_gracia_horas, dias_sin_medir, dias_ventana_descuadre,
-                llenados_por_dia_max, tope_diario_sin_capacidad_l,
+                dias_carga_retroactiva, llenados_por_dia_max, tope_diario_sin_capacidad_l,
                 actualizado_en, actualizado_por
       `,
       [
@@ -1028,6 +1035,7 @@ export class CombustibleRepository {
         valores.ventanaGraciaHoras,
         valores.diasSinMedir,
         valores.diasVentanaDescuadre,
+        valores.diasCargaRetroactiva,
         valores.llenadosPorDiaMax,
         valores.topeSinCapacidadL,
         usuarioId,
@@ -1076,7 +1084,7 @@ export class CombustibleRepository {
          AND tipo IN ('hueco_detectado', 'sobredespacho', 'diferencia_recepcion',
                       'medidor_inconsistente', 'descuadre_inventario',
                       'descuadre_ciclo', 'tope_diario_excedido',
-                      'descuadre_ventana')
+                      'descuadre_ventana', 'vale_recargado')
          AND resuelta_en IS NULL
          AND congelada_en IS NULL
          AND creado_en < now() - make_interval(hours => $2)
@@ -1960,6 +1968,50 @@ export class CombustibleRepository {
     return r.rows;
   }
 
+  /** Las anulaciones previas de un número de vale (migración 0081).
+   *
+   *  La unicidad de 0067 es PARCIAL a propósito: un 00022 anulado más un
+   *  00022 nuevo es la corrección de un tipeo, y prohibirla borraría del
+   *  sistema un despacho que sí ocurrió. Esa misma migración anticipó que el
+   *  patrón --un número con varias anulaciones-- sería en sí mismo la señal.
+   *  Esto lo consulta.
+   *
+   *  Devuelve las cantidades anuladas y sus motivos, porque lo que importa no
+   *  es que el número se reutilice sino QUE LA CANTIDAD CAMBIE. */
+  async findAnulacionesDelVale(
+    client: PoolClient,
+    tenantId: string,
+    serieTalonario: string,
+    nVale: number
+  ) {
+    const r = await client.query<{ cantidad: string; motivo_anulacion: string | null }>(
+      `SELECT d.cantidad, d.motivo_anulacion
+         FROM combustible_despachos d
+        WHERE d.tenant_id = $1 AND d.serie_talonario = $2 AND d.n_vale = $3
+          AND d.anulada_en IS NOT NULL
+        ORDER BY d.anulada_en`,
+      [tenantId, serieTalonario, nVale]
+    );
+    return r.rows.map((f) => ({
+      cantidad: Number(f.cantidad),
+      motivo: f.motivo_anulacion,
+    }));
+  }
+
+  /** Cada cuántos días de distancia entre la fecha del vale y su carga se
+   *  considera retro-fechado (0081). Mismo COALESCE que el resto de la
+   *  config: un tenant que nunca la tocó usa el default. */
+  async getDiasCargaRetroactiva(client: PoolClient, tenantId: string): Promise<number> {
+    const r = await client.query<{ dias: number }>(
+      `SELECT COALESCE(
+         (SELECT dias_carga_retroactiva FROM combustible_config WHERE tenant_id = $1),
+         3
+       ) AS dias`,
+      [tenantId]
+    );
+    return Number(r.rows[0].dias);
+  }
+
   /** El ancla de una alerta: sobre QUÉ es. Un vale (los tipos que salen de
    *  un despacho), un tanque (nivel bajo) o una recepción (diferencia).
    *  Al menos una tiene que venir -- lo garantiza también el CHECK
@@ -2083,6 +2135,8 @@ export class CombustibleRepository {
     "lectura_retroactiva",
     "tope_diario_excedido",
     "descuadre_ventana",
+    "despacho_retroactivo",
+    "vale_recargado",
   ];
 
   /** El motivo se guarda dentro de `detalle` y no en una columna propia: es

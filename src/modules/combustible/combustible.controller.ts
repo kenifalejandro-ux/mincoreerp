@@ -22,6 +22,8 @@ import {
   enviarCorreoVigilanciaReducida,
   enviarCorreoTopeDiario,
   enviarCorreoAlertaDescuadreVentana,
+  enviarCorreoValeRetroactivo,
+  enviarCorreoValeRecargado,
   enviarCorreoLecturaRetroactiva,
 } from "./combustibleAlertas.mailer";
 import type {
@@ -754,9 +756,8 @@ export class CombustibleController {
     const serieTalonario = data.serie_talonario;
     const nVale = data.n_vale;
     try {
-      const { huecos, exceso, medidor, fueraDeOrden, tope, admins } = await withTenant(
-        tenantId,
-        async (client) => {
+      const { huecos, exceso, medidor, fueraDeOrden, tope, retro, recargado, admins } =
+        await withTenant(tenantId, async (client) => {
           // El vale que acaba de llegar puede estar llenando un hueco ya
           // alertado (offline que sincronizó) -- esto corre siempre, sin
           // condicionar, y no hace nada si no había ninguna alerta abierta.
@@ -830,6 +831,27 @@ export class CombustibleController {
           // que mira UN vale. Acá el problema es la SUMA de 24 h, así que
           // aplica también a los destinos sin equipo -- planta y reserva no
           // tenían ningún techo hasta ahora.
+          // El vale fechado muy atrás (0081): la cola offline produce horas,
+          // no semanas. Un vale con tres semanas de atraso no es
+          // sincronización, es alguien eligiendo una fecha -- el red team lo
+          // usó para sacar un despacho del reporte de controles.
+          const retro = await service.evaluarDespachoRetroactivo(
+            client,
+            tenantId,
+            data.despachado_en ?? new Date().toISOString()
+          );
+
+          // El número de vale que vuelve con OTRA cantidad (0081). Reutilizar
+          // el número es la corrección de un tipeo funcionando; que la
+          // cantidad cambie es lo que hay que mirar.
+          const recargado = await service.evaluarValeRecargado(
+            client,
+            tenantId,
+            serieTalonario,
+            nVale,
+            data.cantidad
+          );
+
           const tope = await service.evaluarTopeDiario(client, tenantId, {
             despachoId,
             equipoId: data.equipo_id ?? null,
@@ -864,6 +886,28 @@ export class CombustibleController {
                     nVale,
                     despachoId,
                     detalle: { ...tope } as Record<string, unknown>,
+                  },
+                ]
+              : []),
+            ...(retro
+              ? [
+                  {
+                    tipo: "despacho_retroactivo" as const,
+                    serieTalonario,
+                    nVale,
+                    despachoId,
+                    detalle: { ...retro } as Record<string, unknown>,
+                  },
+                ]
+              : []),
+            ...(recargado
+              ? [
+                  {
+                    tipo: "vale_recargado" as const,
+                    serieTalonario,
+                    nVale,
+                    despachoId,
+                    detalle: { ...recargado } as Record<string, unknown>,
                   },
                 ]
               : []),
@@ -911,15 +955,16 @@ export class CombustibleController {
               medidor,
               fueraDeOrden,
               tope,
+              retro,
+              recargado,
               admins: [] as { email: string; nombre: string }[],
             };
           }
 
           await service.crearAlertas(client, tenantId, nuevas);
           const admins = await service.findAdminsConCombustibleHabilitado(client, tenantId);
-          return { huecos, exceso, medidor, fueraDeOrden, tope, admins };
-        }
-      );
+          return { huecos, exceso, medidor, fueraDeOrden, tope, retro, recargado, admins };
+        });
 
       if (huecos.length > 0) {
         await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
@@ -953,6 +998,24 @@ export class CombustibleController {
           serieTalonario,
           nVale,
         });
+      }
+
+      if (retro) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "despacho_retroactivo",
+          serieTalonario,
+          nVale,
+        });
+        await enviarCorreoValeRetroactivo(admins, { serieTalonario, nVale, ...retro });
+      }
+
+      if (recargado) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "vale_recargado",
+          serieTalonario,
+          nVale,
+        });
+        await enviarCorreoValeRecargado(admins, { serieTalonario, nVale, ...recargado });
       }
 
       if (tope) {
@@ -1492,6 +1555,7 @@ export class CombustibleController {
             ventanaGraciaHoras: nueva.ventana_gracia_horas,
             diasSinMedir: nueva.dias_sin_medir,
             diasVentanaDescuadre: nueva.dias_ventana_descuadre,
+            diasCargaRetroactiva: nueva.dias_carga_retroactiva,
             llenadosPorDiaMax: nueva.llenados_por_dia_max,
             topeSinCapacidadL: nueva.tope_diario_sin_capacidad_l,
           },

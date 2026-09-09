@@ -191,6 +191,7 @@ describe("combustible: reporte de estado de los controles del período", () => {
       ventana_gracia_horas: 24,
       dias_sin_medir: 3,
       dias_ventana_descuadre: 30,
+      dias_carga_retroactiva: 3,
       llenados_por_dia_max: 2,
       tope_diario_sin_capacidad_l: 500,
     });
@@ -198,6 +199,7 @@ describe("combustible: reporte de estado de los controles del período", () => {
       ventana_gracia_horas: 8760,
       dias_sin_medir: 3,
       dias_ventana_descuadre: 30,
+      dias_carga_retroactiva: 3,
       llenados_por_dia_max: 2,
       tope_diario_sin_capacidad_l: 500,
     });

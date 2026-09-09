@@ -734,6 +734,7 @@ export class CombustibleService {
       ventanaGraciaHoras: number;
       diasSinMedir: number;
       diasVentanaDescuadre: number;
+      diasCargaRetroactiva: number;
       llenadosPorDiaMax: number | null;
       topeSinCapacidadL: number | null;
     },
@@ -760,6 +761,7 @@ export class CombustibleService {
       ventana_gracia_horas: number;
       dias_sin_medir: number;
       dias_ventana_descuadre: number;
+      dias_carga_retroactiva: number;
       llenados_por_dia_max: number | null;
       tope_diario_sin_capacidad_l: number | null;
     },
@@ -767,6 +769,7 @@ export class CombustibleService {
       ventana_gracia_horas: number;
       dias_sin_medir: number;
       dias_ventana_descuadre: number;
+      dias_carga_retroactiva: number;
       llenados_por_dia_max: number | null;
       tope_diario_sin_capacidad_l: number | null;
     }
@@ -781,6 +784,17 @@ export class CombustibleService {
     // BAJAR la ventana deslizante afloja, al revés que los de arriba: mirar
     // 7 días para atrás en vez de 30 le devuelve al que roba de a poco casi
     // todo lo que 0080 le sacó -- el acumulado nunca junta lo suficiente.
+    // SUBIR los días de carga retroactiva afloja: se toleran vales fechados
+    // más atrás sin que nadie se entere. Va con los de arriba, no con la
+    // ventana de descuadre, porque acá subir es lo que debilita.
+    if (ahora.dias_carga_retroactiva > antes.dias_carga_retroactiva) {
+      cambios.push({
+        control: "Días de carga retroactiva tolerados",
+        de: `${antes.dias_carga_retroactiva} días`,
+        a: `${ahora.dias_carga_retroactiva} días`,
+      });
+    }
+
     if (ahora.dias_ventana_descuadre < antes.dias_ventana_descuadre) {
       cambios.push({
         control: "Ventana de descuadre acumulado",
@@ -1365,6 +1379,79 @@ export class CombustibleService {
       capacidad,
       unidadCapacidad: datos.capacidad_tanque_unidad,
       excesoPct: Number((((despachadoL - capacidadL) / capacidadL) * 100).toFixed(1)),
+    };
+  }
+
+  /** EL VALE RETRO-FECHADO (migración 0081).
+   *
+   *  `despachado_en` lo escribe quien carga; `creado_en` lo pone el servidor.
+   *  La distancia entre los dos es el dato: la cola offline produce horas, a
+   *  veces un par de días --un tanque sin señal sincroniza cuando el operador
+   *  vuelve a base-- pero un vale cargado tres semanas después de su fecha no
+   *  es sincronización, es alguien eligiendo una fecha.
+   *
+   *  El red team lo usó para sacar un despacho de la cuenta de "lo que se
+   *  movió con la vigilancia baja": fechándolo antes del aflojamiento, salía
+   *  del filtro del reporte de controles.
+   *
+   *  Devuelve null en el caso normal, que es la enorme mayoría: el vale se
+   *  carga el mismo día o al día siguiente. */
+  async evaluarDespachoRetroactivo(client: PoolClient, tenantId: string, despachadoEn: string) {
+    const dias = await this.repository.getDiasCargaRetroactiva(client, tenantId);
+    const atraso = (Date.now() - Date.parse(despachadoEn)) / 864e5;
+    if (!Number.isFinite(atraso) || atraso <= dias) return null;
+
+    return {
+      diasDeAtraso: Number(atraso.toFixed(1)),
+      diasTolerados: dias,
+      despachadoEn,
+      cargadoEn: new Date().toISOString(),
+    };
+  }
+
+  /** EL VALE QUE SE VUELVE A CARGAR (migración 0081).
+   *
+   *  La unicidad de 0067 es parcial a propósito: anular un vale mal tipeado y
+   *  volver a cargarlo con el número correcto es la corrección, y prohibirla
+   *  borraría del sistema un despacho que sí ocurrió. Esa migración anticipó
+   *  que el patrón sería la señal; esto es el detector que faltaba.
+   *
+   *  Lo que importa NO es que el número se reutilice --eso es la corrección
+   *  funcionando-- sino QUE LA CANTIDAD CAMBIE. Cargar 900 L, anular con
+   *  "error de tipeo" y volver a cargar 240 deja el talonario impecable y 660
+   *  L fuera del sistema.
+   *
+   *  Por eso una recarga con la MISMA cantidad no alerta: ahí se corrigió
+   *  otra cosa (el equipo, la hora, el contómetro) y el combustible declarado
+   *  no se movió. */
+  async evaluarValeRecargado(
+    client: PoolClient,
+    tenantId: string,
+    serieTalonario: string,
+    nVale: number,
+    cantidadNueva: number
+  ) {
+    const previas = await this.repository.findAnulacionesDelVale(
+      client,
+      tenantId,
+      serieTalonario,
+      nVale
+    );
+    if (previas.length === 0) return null;
+
+    const ultima = previas[previas.length - 1];
+    if (ultima.cantidad === cantidadNueva) return null;
+
+    const diferencia = Number((cantidadNueva - ultima.cantidad).toFixed(2));
+    return {
+      anulacionesPrevias: previas.length,
+      cantidadAnulada: ultima.cantidad,
+      cantidadNueva,
+      diferencia,
+      // La dirección importa: recargar por MENOS es declarar que salió menos
+      // combustible del que el vale original decía.
+      sentido: diferencia < 0 ? ("declara_menos" as const) : ("declara_mas" as const),
+      motivosPrevios: previas.map((p) => p.motivo).filter(Boolean),
     };
   }
 

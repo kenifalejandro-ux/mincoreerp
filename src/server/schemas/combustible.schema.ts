@@ -418,6 +418,10 @@ export const configCombustibleSchema = z.object({
   // Cuántos días mira para atrás el acumulado de 0080. BAJARLO afloja: con 7
   // días en vez de 30 el que roba de a poco nunca junta lo suficiente.
   dias_ventana_descuadre: z.number().int().min(7).max(365),
+  // Días tolerados entre la fecha del vale y su carga (0081). A diferencia de
+  // los umbrales, acá SÍ hay default: el límite lo pone la tecnología (cuánto
+  // tarda una cola offline en sincronizar), no la operación.
+  dias_carga_retroactiva: z.number().int().min(1).max(90),
   // Los dos topes diarios de la migración 0079. Nullable con la misma
   // semántica que los umbrales del tanque desde 0075: null = sin configurar
   // = no alerta. No se les pone default -- un techo inventado o alerta por
