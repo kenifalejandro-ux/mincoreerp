@@ -31,6 +31,20 @@ export class CombustibleService {
     return this.repository.create(client, tenantId, data);
   }
 
+  findDespachadoEntre(
+    client: PoolClient,
+    tenantId: string,
+    desde: string,
+    hasta: string,
+    combustibleId?: number | null
+  ) {
+    return this.repository.findDespachadoEntre(client, tenantId, desde, hasta, combustibleId);
+  }
+
+  findEstadoVigilancia(client: PoolClient, tenantId: string) {
+    return this.repository.findEstadoVigilancia(client, tenantId);
+  }
+
   tieneMovimientos(client: PoolClient, tenantId: string, id: number) {
     return this.repository.tieneMovimientos(client, tenantId, id);
   }
@@ -529,6 +543,26 @@ export class CombustibleService {
           `el tanque ${tanque.codigo} está desactivado y no puede despachar -- reactivalo si sigue en uso`
         );
       }
+
+      // DE UN TANQUE DE DIÉSEL NO SALE GASOLINA. Suena a perogrullada y el
+      // sistema lo aceptaba: el vale guardaba su propio `tipo_combustible` y
+      // nadie lo comparaba contra el del tanque. Lo encontró la tercera
+      // auditoría adversaria.
+      //
+      // No es una fuga por sí solo --la cantidad igual se descuenta del
+      // tanque-- pero rompe lo único que hace auditable un vale: que diga la
+      // verdad. Un puñado de vales de "gasolina" saliendo del tanque de
+      // diésel es una explicación lista para cualquier faltante, y el kardex
+      // los suma igual sin poder distinguirlos.
+      //
+      // BLOQUEA, no alerta: acá no hay caso legítimo que perder. El operador
+      // eligió mal en un desplegable y el mensaje se lo dice.
+      if (tanque && tanque.tipo_combustible !== data.tipo_combustible) {
+        throw new Error(
+          `el tanque ${tanque.codigo} es de ${tanque.tipo_combustible} y el vale dice ` +
+            `${data.tipo_combustible} -- corregí el tipo o elegí el tanque correcto`
+        );
+      }
       return;
     }
 
@@ -638,14 +672,35 @@ export class CombustibleService {
     return this.repository.marcarAlertasLeidas(client, tenantId, ids);
   }
 
-  resolverAlertaManual(
+  /** Cerrar una alerta a mano. Devuelve además si fue AUTORREVISIÓN: el que
+   *  cierra es el mismo que cargó el movimiento que la disparó.
+   *
+   *  No se BLOQUEA. En una operación chica puede haber un solo admin, y un
+   *  sistema que no deja cerrar nada es un sistema que se apaga. Lo que sí
+   *  hace falta es que quede dicho: la segregación de funciones no se
+   *  resuelve con una validación, se resuelve mostrándosela a quien audita. */
+  async resolverAlertaManual(
     client: PoolClient,
     tenantId: string,
     alertaId: number,
     usuarioId: string,
     motivo: string
   ) {
-    return this.repository.resolverAlertaManual(client, tenantId, alertaId, usuarioId, motivo);
+    // ¿El que cierra es el mismo que cargó el movimiento? Se resuelve ACÁ y
+    // no en el controlador porque la respuesta tiene que viajar con el
+    // UPDATE: si se preguntara después, ya no se sabría contra qué fila.
+    const autor = await this.repository.findAutorDelMovimiento(client, tenantId, alertaId);
+    const autorevision = autor !== null && autor === usuarioId;
+
+    const fila = await this.repository.resolverAlertaManual(
+      client,
+      tenantId,
+      alertaId,
+      usuarioId,
+      motivo,
+      autorevision
+    );
+    return fila ? { ...fila, autorevision } : null;
   }
 
   findAdminsConCombustibleHabilitado(client: PoolClient, tenantId: string) {
