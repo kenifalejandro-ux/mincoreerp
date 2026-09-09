@@ -130,7 +130,12 @@ export class CombustibleController {
         return res.status(404).json({ error: "No encontrado" });
       }
 
-      const aflojados = service.evaluarAflojamiento(antes, data);
+      // El tipo de combustible solo escala si el tanque YA tiene historial
+      // (en uno recién creado, cambiarlo es terminar de darlo de alta).
+      const conHistorial = await withTenant(tenantId, (client) =>
+        service.tieneMovimientos(client, tenantId, id)
+      );
+      const aflojados = service.evaluarAflojamiento(antes, data, conHistorial);
       if (aflojados.length > 0 && !data.motivo_ajuste) {
         // 400 y no un guardado silencioso: aflojar un control anti-fraude es
         // una acción correctiva, y el módulo ya exige motivo para las otras
@@ -146,6 +151,8 @@ export class CombustibleController {
           aflojados,
         });
       }
+
+      const cambios = service.diffFicha(antes, data);
 
       const actualizado = await withTenant(tenantId, (client) =>
         service.update(client, tenantId, id, data)
@@ -166,10 +173,15 @@ export class CombustibleController {
         // distinta (`tanque_vigilancia_reducida`) además la hace filtrable:
         // buscar quién apagó un control ya no obliga a leer todos los
         // cambios de tanque uno por uno.
+        // `cambios` va SIEMPRE: todo campo que se movió, con su valor viejo
+        // y nuevo. Antes una edición no clasificada como aflojamiento dejaba
+        // solo `{ combustibleId }` -- y las tres auditorías adversarias
+        // encontraron huecos exactamente ahí. La visibilidad es automática;
+        // lo que escala (motivo + correo) sigue siendo una lista declarada.
         detalle:
           aflojados.length > 0
-            ? { combustibleId: id, aflojados, motivo: data.motivo_ajuste }
-            : { combustibleId: id },
+            ? { combustibleId: id, cambios, aflojados, motivo: data.motivo_ajuste }
+            : { combustibleId: id, cambios },
         contexto: contextoAuditoriaModulo(req),
       });
       if (aflojados.length > 0) {
