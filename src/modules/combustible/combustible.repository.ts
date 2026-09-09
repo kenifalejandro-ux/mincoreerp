@@ -1881,6 +1881,85 @@ export class CombustibleRepository {
     return r.rows;
   }
 
+  /** SEGREGACIÓN DE FUNCIONES: quién hace y quién controla.
+   *
+   *  Es la pregunta que un auditor hace siempre y que el módulo no podía
+   *  contestar: ¿la misma persona que despacha es la que anula, corrige y da
+   *  por revisados los faltantes? En una operación chica la respuesta suele
+   *  ser "sí", y eso NO es un delito -- es un riesgo que hay que conocer y
+   *  compensar (que alguien más revise el reporte, por ejemplo).
+   *
+   *  Por eso el reporte no acusa: cuenta. Una fila por persona, y adentro la
+   *  distinción que importa: no es lo mismo anular el vale de otro --que deja
+   *  dos personas en la historia-- que anular el propio, donde el que se
+   *  equivoca y el que corrige son el mismo y nadie más se entera.
+   *
+   *  Todo en el período, para que el número sea comparable entre meses. */
+  async findSegregacion(client: PoolClient, tenantId: string, desde: string, hasta: string) {
+    const r = await client.query(
+      `
+      WITH movimientos AS (
+        -- Lo que cada uno CARGÓ.
+        SELECT d.usuario_id AS usuario, 'despacho' AS que, 'carga' AS accion,
+               NULL::uuid AS autor_original
+          FROM combustible_despachos d
+         WHERE d.tenant_id = $1 AND d.despachado_en BETWEEN $2::timestamptz AND $3::timestamptz
+        UNION ALL
+        SELECT r.usuario_id, 'recepcion', 'carga', NULL::uuid
+          FROM combustible_recepciones r
+         WHERE r.tenant_id = $1 AND r.recibido_en BETWEEN $2::timestamptz AND $3::timestamptz
+        UNION ALL
+        SELECT l.usuario_id, 'lectura', 'carga', NULL::uuid
+          FROM combustible_lecturas l
+         WHERE l.tenant_id = $1 AND l.leido_en BETWEEN $2::timestamptz AND $3::timestamptz
+           AND l.origen <> 'inicial'
+
+        UNION ALL
+
+        -- Lo que cada uno ANULÓ, y de quién era.
+        SELECT d.anulada_por, 'despacho', 'anulacion', d.usuario_id
+          FROM combustible_despachos d
+         WHERE d.tenant_id = $1 AND d.anulada_en BETWEEN $2::timestamptz AND $3::timestamptz
+        UNION ALL
+        SELECT r.anulada_por, 'recepcion', 'anulacion', r.usuario_id
+          FROM combustible_recepciones r
+         WHERE r.tenant_id = $1 AND r.anulada_en BETWEEN $2::timestamptz AND $3::timestamptz
+        UNION ALL
+        SELECT l.anulada_por, 'lectura', 'anulacion', l.usuario_id
+          FROM combustible_lecturas l
+         WHERE l.tenant_id = $1 AND l.anulada_en BETWEEN $2::timestamptz AND $3::timestamptz
+
+        UNION ALL
+
+        -- Lo que cada uno DIO POR REVISADO. La marca de autorrevision la pone
+        -- el propio cierre (ver resolverAlertaManual): aca solo se cuenta.
+        SELECT a.resuelta_por, 'alerta', 'revision',
+               CASE WHEN (a.detalle->>'autorevision')::boolean THEN a.resuelta_por END
+          FROM combustible_alertas a
+         WHERE a.tenant_id = $1 AND a.resuelta_en BETWEEN $2::timestamptz AND $3::timestamptz
+      )
+      SELECT COALESCE(u.nombre, u.email, 'Sistema') AS persona,
+             m.usuario AS usuario_id,
+             COUNT(*) FILTER (WHERE m.accion = 'carga' AND m.que = 'despacho') AS vales_cargados,
+             COUNT(*) FILTER (WHERE m.accion = 'carga' AND m.que = 'recepcion') AS recepciones_cargadas,
+             COUNT(*) FILTER (WHERE m.accion = 'carga' AND m.que = 'lectura') AS lecturas_cargadas,
+             COUNT(*) FILTER (WHERE m.accion = 'anulacion') AS anulaciones,
+             COUNT(*) FILTER (WHERE m.accion = 'anulacion' AND m.autor_original = m.usuario)
+               AS anulaciones_propias,
+             COUNT(*) FILTER (WHERE m.accion = 'revision') AS alertas_revisadas,
+             COUNT(*) FILTER (WHERE m.accion = 'revision' AND m.autor_original IS NOT NULL)
+               AS autorevisiones
+        FROM movimientos m
+        LEFT JOIN usuarios u ON u.id = m.usuario AND u.tenant_id = $1
+       WHERE m.usuario IS NOT NULL
+       GROUP BY u.nombre, u.email, m.usuario
+       ORDER BY 3 DESC, 1
+      `,
+      [tenantId, desde, hasta]
+    );
+    return r.rows;
+  }
+
   /** El ancla de una alerta: sobre QUÉ es. Un vale (los tipos que salen de
    *  un despacho), un tanque (nivel bajo) o una recepción (diferencia).
    *  Al menos una tiene que venir -- lo garantiza también el CHECK
