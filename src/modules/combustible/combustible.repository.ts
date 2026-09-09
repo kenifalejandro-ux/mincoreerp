@@ -1,6 +1,7 @@
 /**src/modules/combutible/combustible.repository.ts */
 
 import type { PoolClient } from "pg";
+import { findAdminsConModulo } from "../../server/shared/utils/adminsDeModulo";
 import type {
   CrearTanqueCombustibleInput,
   ActualizarTanqueCombustibleInput,
@@ -1807,6 +1808,29 @@ export class CombustibleRepository {
     return result.rows;
   }
 
+  /** ¿Este tanque ya tiene historial? Cuenta despachos, recepciones y
+   *  lecturas REALES -- la `inicial` del alta no cuenta, porque la crea el
+   *  propio sistema y no es un movimiento de nadie.
+   *
+   *  Existe para una sola decisión: si cambiar la UNIDAD del tanque (L <-> gal)
+   *  es reversible o destructivo. Ver validarCambioDeUnidad. */
+  async tieneMovimientos(client: PoolClient, tenantId: string, combustibleId: number) {
+    const r = await client.query<{ hay: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM combustible_despachos
+          WHERE tenant_id = $1 AND combustible_id = $2
+         UNION ALL
+         SELECT 1 FROM combustible_recepciones
+          WHERE tenant_id = $1 AND combustible_id = $2
+         UNION ALL
+         SELECT 1 FROM combustible_lecturas
+          WHERE tenant_id = $1 AND combustible_id = $2 AND origen <> 'inicial'
+       ) AS hay`,
+      [tenantId, combustibleId]
+    );
+    return r.rows[0].hay;
+  }
+
   /** El ancla de una alerta: sobre QUÉ es. Un vale (los tipos que salen de
    *  un despacho), un tanque (nivel bajo) o una recepción (diferencia).
    *  Al menos una tiene que venir -- lo garantiza también el CHECK
@@ -1963,18 +1987,10 @@ export class CombustibleRepository {
    *  el módulo combustible habilitado, mismo criterio que
    *  obtenerModulosPermitidos() en auth.service.ts pero a la inversa (de
    *  módulo a lista de usuarios, no de usuario a lista de módulos). */
+  /** Delega en el helper compartido: la consulta no tenía nada de
+   *  combustible salvo el nombre del módulo escrito a mano. */
   async findAdminsConCombustibleHabilitado(client: PoolClient, tenantId: string) {
-    const result = await client.query<{ id: string; email: string; nombre: string }>(
-      `
-      SELECT u.id, u.email, u.nombre
-      FROM usuarios u
-      JOIN usuario_modulos um ON um.usuario_id = u.id AND um.modulo = 'combustible'
-      JOIN tenant_modulos tm ON tm.tenant_id = u.tenant_id AND tm.modulo = 'combustible'
-      WHERE u.tenant_id = $1 AND u.rol = 'admin' AND u.activo = true AND tm.estado = 'habilitado'
-      `,
-      [tenantId]
-    );
-    return result.rows;
+    return findAdminsConModulo(client, tenantId, "combustible");
   }
 
   // ── Grifos externos (migrations/0063) ────────────────────────────────

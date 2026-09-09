@@ -196,6 +196,12 @@ export interface FiltrosAuditoria {
   /** Prefijo de acción, para pedir "todo lo de un módulo" sin enumerar cada
    *  acción. Lo usa la bitácora que ve el propio tenant en Combustible. */
   accionPrefijo?: string;
+  /** Acciones sueltas que se suman al prefijo, en OR. Nació porque la
+   *  bitácora de combustible tiene que mostrar `equipos.capacidad_tanque_
+   *  ampliada`: un control de combustible que se afloja desde OTRO módulo, y
+   *  que con el prefijo solo quedaba invisible justo para quien tiene que
+   *  verlo. */
+  accionesExtra?: string[];
   resultado?: ResultadoAuditoria;
   sessionId?: string;
   actorId?: string;
@@ -225,7 +231,13 @@ export async function listarAuditoriaService(filtros: FiltrosAuditoria): Promise
   }
   if (filtros.accionPrefijo) {
     params.push(filtros.accionPrefijo);
-    condiciones.push(`a.accion LIKE $${params.length} || '%'`);
+    const porPrefijo = `a.accion LIKE $${params.length} || '%'`;
+    if (filtros.accionesExtra?.length) {
+      params.push(filtros.accionesExtra);
+      condiciones.push(`(${porPrefijo} OR a.accion = ANY($${params.length}::text[]))`);
+    } else {
+      condiciones.push(porPrefijo);
+    }
   }
   if (filtros.resultado) {
     params.push(filtros.resultado);
