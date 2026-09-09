@@ -41,6 +41,10 @@ export class CombustibleService {
     return this.repository.findDespachadoEntre(client, tenantId, desde, hasta, combustibleId);
   }
 
+  findSegregacion(client: PoolClient, tenantId: string, desde: string, hasta: string) {
+    return this.repository.findSegregacion(client, tenantId, desde, hasta);
+  }
+
   findEstadoVigilancia(client: PoolClient, tenantId: string) {
     return this.repository.findEstadoVigilancia(client, tenantId);
   }

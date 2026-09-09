@@ -203,6 +203,54 @@ interface SugerenciaUmbral {
 
 /** Un renglón de la bitácora del módulo. `detalle` es JSONB libre y cambia
  *  según la acción, igual que en las alertas. */
+interface EventoControl {
+  cuando: string;
+  accion: string;
+  quien: string;
+  combustible_id: number | null;
+  motivo: string | null;
+  aflojados: { control: string; de: string; a: string }[];
+  despachado_despues_l: number;
+  vales_despues: number;
+}
+
+interface TanqueVigilado {
+  id: number;
+  codigo: string;
+  tanque_nombre: string;
+  activo: boolean;
+  controles_apagados: string[];
+  vigilancia: "completa" | "parcial" | "ninguna";
+}
+
+interface ReporteControles {
+  eventos: EventoControl[];
+  tanques: TanqueVigilado[];
+  resumen: { eventos: number; litros_bajo_vigilancia_reducida: number };
+}
+
+interface FilaSegregacion {
+  persona: string;
+  usuario_id: string;
+  vales_cargados: number;
+  recepciones_cargadas: number;
+  lecturas_cargadas: number;
+  anulaciones: number;
+  anulaciones_propias: number;
+  alertas_revisadas: number;
+  autorevisiones: number;
+}
+
+interface ReporteSegregacion {
+  personas: FilaSegregacion[];
+  resumen: {
+    personas: number;
+    concentracion_pct: number | null;
+    anulaciones_propias: number;
+    autorevisiones: number;
+  };
+}
+
 interface FilaKardex {
   ocurrido_en: string;
   tipo: "recepcion" | "despacho" | "lectura";
@@ -946,6 +994,14 @@ export default function CombustiblePanel() {
   const [alertaResaltadaId, setAlertaResaltadaId] = useState<number | null>(null);
   // Kardex: el período arranca 30 días atrás porque es el ciclo con el que
   // ya razona la operación (cierre, factura, planilla de vales).
+  // Los dos reportes de auditoría comparten período y modal: se leen juntos
+  // (uno dice qué control se aflojó, el otro quién controla a quién) y
+  // separarlos en dos pantallas obligaría a elegir dos veces las fechas.
+  const [modalAuditoriaAbierto, setModalAuditoriaAbierto] = useState(false);
+  const [cargandoAuditoria, setCargandoAuditoria] = useState(false);
+  const [repControles, setRepControles] = useState<ReporteControles | null>(null);
+  const [repSegregacion, setRepSegregacion] = useState<ReporteSegregacion | null>(null);
+
   const [modalKardexAbierto, setModalKardexAbierto] = useState(false);
   const [cargandoKardex, setCargandoKardex] = useState(false);
   const [descargandoKardex, setDescargandoKardex] = useState(false);
@@ -1150,6 +1206,24 @@ export default function CombustiblePanel() {
       URL.revokeObjectURL(url);
     } finally {
       setDescargandoKardex(false);
+    }
+  };
+
+  const abrirModalAuditoria = async () => {
+    setModalAuditoriaAbierto(true);
+    setCargandoAuditoria(true);
+    try {
+      const desde = new Date(`${kardexDesde}T00:00:00`).toISOString();
+      const hasta = new Date(`${kardexHasta}T23:59:59`).toISOString();
+      const q = `desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`;
+      const [rc, rs] = await Promise.all([
+        apiFetch(`/api/erp/combustible/reportes/controles?${q}`),
+        apiFetch(`/api/erp/combustible/reportes/segregacion?${q}`),
+      ]);
+      setRepControles(rc.ok ? await rc.json() : null);
+      setRepSegregacion(rs.ok ? await rs.json() : null);
+    } finally {
+      setCargandoAuditoria(false);
     }
   };
 
@@ -2340,6 +2414,13 @@ export default function CombustiblePanel() {
             className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
           >
             🔔 Alertas
+          </button>
+          <button
+            onClick={abrirModalAuditoria}
+            className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
+            title="Estado de la vigilancia del período y quién controla a quién"
+          >
+            🔍 Auditoría
           </button>
           <button
             onClick={abrirModalBitacora}
@@ -4720,6 +4801,257 @@ export default function CombustiblePanel() {
                   Las filas tachadas están anuladas: se muestran porque son evidencia, pero no suman
                   al saldo.
                 </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* AUDITORÍA: los dos reportes que contestan lo que un auditor pregunta.
+
+          El primero es el control fuerte contra el apagón temporal: el correo
+          de aflojamiento se esquiva eligiendo la hora (bajar el umbral un
+          viernes, sacar el sábado, reponerlo el domingo), pero el registro no
+          se puede reescribir. El segundo mide algo distinto y previo: si una
+          sola persona hace y controla, ningún control interno alcanza. */}
+      {modalAuditoriaAbierto && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl max-h-[92vh] flex flex-col">
+            <div className="p-6 border-b flex justify-between items-start shrink-0">
+              <div>
+                <h3 className="text-xl font-bold">Auditoría del período</h3>
+                <p className="text-sm text-slate-500">
+                  Qué controles estuvieron flojos mientras salía combustible, y quién revisa a
+                  quién.
+                </p>
+              </div>
+              <button
+                onClick={() => setModalAuditoriaAbierto(false)}
+                className="text-slate-400 hover:text-slate-600 text-2xl leading-none"
+                aria-label="Cerrar"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="px-6 py-4 bg-slate-50 border-b flex flex-wrap items-end gap-3 shrink-0">
+              <div>
+                <label
+                  htmlFor="aud-desde"
+                  className="block text-xs font-bold text-slate-500 uppercase mb-1"
+                >
+                  Desde
+                </label>
+                <input
+                  id="aud-desde"
+                  type="date"
+                  className="border border-slate-200 rounded-lg p-2"
+                  value={kardexDesde}
+                  onChange={(e) => setKardexDesde(e.target.value)}
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="aud-hasta"
+                  className="block text-xs font-bold text-slate-500 uppercase mb-1"
+                >
+                  Hasta
+                </label>
+                <input
+                  id="aud-hasta"
+                  type="date"
+                  className="border border-slate-200 rounded-lg p-2"
+                  value={kardexHasta}
+                  onChange={(e) => setKardexHasta(e.target.value)}
+                />
+              </div>
+              <button
+                onClick={abrirModalAuditoria}
+                disabled={cargandoAuditoria}
+                className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50"
+              >
+                {cargandoAuditoria ? "Armando..." : "Ver período"}
+              </button>
+            </div>
+
+            <div className="overflow-auto p-6 space-y-8">
+              {cargandoAuditoria ? (
+                <p className="text-slate-400 text-center py-8">Armando los reportes...</p>
+              ) : (
+                <>
+                  {/* ── 1. La vigilancia durante el período ── */}
+                  <section>
+                    <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">
+                      Vigilancia durante el período
+                    </h4>
+                    <p className="text-xs text-slate-500 mb-3">
+                      Cada vez que alguien redujo un control, y{" "}
+                      <strong>cuánto combustible salió después</strong>. Un umbral que se baja un
+                      viernes y se repone el domingo deja la ficha impecable el lunes — pero no
+                      borra estas filas.
+                    </p>
+
+                    {!repControles || repControles.eventos.length === 0 ? (
+                      <p className="text-sm text-emerald-700 bg-emerald-50 rounded-xl p-3">
+                        Nadie redujo ningún control en este período.
+                      </p>
+                    ) : (
+                      <table className="w-full text-sm border-collapse">
+                        <thead>
+                          <tr className="text-left text-xs font-bold text-slate-500 uppercase border-b">
+                            <th className="p-2">Cuándo</th>
+                            <th className="p-2">Quién</th>
+                            <th className="p-2">Qué se aflojó</th>
+                            <th className="p-2">Motivo</th>
+                            <th className="p-2 text-right">Salió después</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {repControles.eventos.map((e, i) => (
+                            <tr key={`${e.cuando}-${i}`} className="border-b">
+                              <td className="p-2 whitespace-nowrap">
+                                {new Date(e.cuando).toLocaleString("es-PE", {
+                                  day: "2-digit",
+                                  month: "2-digit",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </td>
+                              <td className="p-2">{e.quien}</td>
+                              <td className="p-2">
+                                {e.aflojados.map((a, j) => (
+                                  <span key={j} className="block text-xs">
+                                    <strong>{a.control}</strong>: {a.de} → {a.a}
+                                  </span>
+                                ))}
+                              </td>
+                              <td className="p-2 text-xs text-slate-500">{e.motivo ?? "—"}</td>
+                              <td
+                                className={`p-2 text-right font-bold ${
+                                  e.despachado_despues_l > 0 ? "text-red-600" : "text-slate-400"
+                                }`}
+                              >
+                                {e.despachado_despues_l > 0 ? `${e.despachado_despues_l} L` : "—"}
+                                {e.vales_despues > 0 && (
+                                  <span className="block text-[11px] font-normal text-slate-400">
+                                    {e.vales_despues} vale(s)
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+
+                    {/* La FOTO de hoy: un control apagado ANTES del período no
+                        genera ningún evento arriba, y sin esto sería invisible. */}
+                    {repControles && repControles.tanques.length > 0 && (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {repControles.tanques.map((t) => (
+                          <span
+                            key={t.id}
+                            className={`text-xs px-2 py-1 rounded-lg border ${
+                              t.vigilancia === "completa"
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                : t.vigilancia === "ninguna"
+                                  ? "border-red-200 bg-red-50 text-red-700"
+                                  : "border-amber-200 bg-amber-50 text-amber-700"
+                            }`}
+                            title={
+                              t.controles_apagados.length
+                                ? `Apagados: ${t.controles_apagados.join(", ")}`
+                                : "Los cuatro controles configurados"
+                            }
+                          >
+                            {t.codigo} · {t.vigilancia}
+                            {!t.activo && " (desactivado)"}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* ── 2. Quién hace y quién controla ── */}
+                  <section>
+                    <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">
+                      Quién hace y quién controla
+                    </h4>
+                    <p className="text-xs text-slate-500 mb-3">
+                      No acusa a nadie: cuenta. Si una sola persona carga, anula y da por revisado,
+                      ningún control interno alcanza — y eso se compensa con otra persona mirando,
+                      no con más software.
+                    </p>
+
+                    {repSegregacion && repSegregacion.resumen.concentracion_pct !== null && (
+                      <p className="text-sm mb-3">
+                        <strong>{repSegregacion.resumen.concentracion_pct}%</strong> de los
+                        movimientos los cargó una sola persona
+                        {repSegregacion.resumen.autorevisiones > 0 && (
+                          <span className="text-red-600">
+                            {" "}
+                            · {repSegregacion.resumen.autorevisiones} alerta(s) cerrada(s) por quien
+                            la generó
+                          </span>
+                        )}
+                      </p>
+                    )}
+
+                    {!repSegregacion || repSegregacion.personas.length === 0 ? (
+                      <p className="text-sm text-slate-400">Sin movimientos en este período.</p>
+                    ) : (
+                      <table className="w-full text-sm border-collapse">
+                        <thead>
+                          <tr className="text-left text-xs font-bold text-slate-500 uppercase border-b">
+                            <th className="p-2">Persona</th>
+                            <th className="p-2 text-right">Vales</th>
+                            <th className="p-2 text-right">Recepciones</th>
+                            <th className="p-2 text-right">Varillas</th>
+                            <th className="p-2 text-right">Anulaciones</th>
+                            <th
+                              className="p-2 text-right"
+                              title="Anuló algo que había cargado él mismo"
+                            >
+                              …propias
+                            </th>
+                            <th className="p-2 text-right">Alertas cerradas</th>
+                            <th
+                              className="p-2 text-right"
+                              title="Cerró una alerta que generó su propio movimiento"
+                            >
+                              …propias
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {repSegregacion.personas.map((p) => (
+                            <tr key={p.usuario_id} className="border-b">
+                              <td className="p-2 font-medium">{p.persona}</td>
+                              <td className="p-2 text-right">{p.vales_cargados}</td>
+                              <td className="p-2 text-right">{p.recepciones_cargadas}</td>
+                              <td className="p-2 text-right">{p.lecturas_cargadas}</td>
+                              <td className="p-2 text-right">{p.anulaciones}</td>
+                              <td
+                                className={`p-2 text-right font-bold ${
+                                  p.anulaciones_propias > 0 ? "text-amber-600" : "text-slate-300"
+                                }`}
+                              >
+                                {p.anulaciones_propias}
+                              </td>
+                              <td className="p-2 text-right">{p.alertas_revisadas}</td>
+                              <td
+                                className={`p-2 text-right font-bold ${
+                                  p.autorevisiones > 0 ? "text-red-600" : "text-slate-300"
+                                }`}
+                              >
+                                {p.autorevisiones}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </section>
+                </>
               )}
             </div>
           </div>

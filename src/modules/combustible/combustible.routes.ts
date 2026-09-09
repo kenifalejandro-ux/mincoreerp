@@ -163,6 +163,15 @@ router.get(
 router.get("/:id", asyncHandler(controller.getById.bind(controller)));
 router.get("/:id/lecturas", asyncHandler(controller.getLecturas.bind(controller)));
 
+// Quién hace y quién controla. No acusa: cuenta, para que el riesgo de
+// concentración se pueda ver y compensar.
+router.get(
+  "/reportes/segregacion",
+  requireRole("admin"),
+  validateQuery(kardexCombustibleSchema),
+  asyncHandler(controller.getReporteSegregacion.bind(controller))
+);
+
 // Estado de la vigilancia DURANTE un período, no el de hoy. Es el control
 // que atrapa el apagón temporal: bajar un umbral el viernes, sacar el sábado
 // y reponerlo el domingo deja la ficha impecable el lunes, pero no puede

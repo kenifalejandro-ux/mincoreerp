@@ -1783,6 +1783,81 @@ export class CombustibleController {
     }
   }
 
+  /** GET /reportes/segregacion?desde=&hasta= -- QUIÉN HACE Y QUIÉN CONTROLA.
+   *
+   *  El último de los cuatro reportes que salieron de la charla sobre el rol
+   *  del auditor. La pregunta que contesta es la que un auditor hace siempre:
+   *  ¿la misma persona que despacha es la que anula, corrige y da por
+   *  revisados los faltantes?
+   *
+   *  NO ACUSA, CUENTA. En una operación chica la respuesta suele ser "sí", y
+   *  eso no es un delito -- es un riesgo que hay que conocer para
+   *  compensarlo (que alguien más revise el reporte, por ejemplo). Un
+   *  reporte que gritara "fraude" cada vez que hay un solo operador se
+   *  ignoraría en una semana, que es como mueren los controles.
+   *
+   *  La distinción que importa está en las dos columnas de "propias": no es
+   *  lo mismo anular el vale de otro --que deja dos personas en la
+   *  historia-- que anular el propio, donde el que se equivoca y el que
+   *  corrige son la misma persona y nadie más se entera. */
+  async getReporteSegregacion(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const { desde, hasta } = req.validatedQuery as KardexCombustibleQuery;
+
+      const filas = await withTenant(tenantId, (client) =>
+        service.findSegregacion(client, tenantId, desde, hasta)
+      );
+
+      const personas = filas.map((f: Record<string, unknown>) => ({
+        persona: f.persona,
+        usuario_id: f.usuario_id,
+        vales_cargados: Number(f.vales_cargados),
+        recepciones_cargadas: Number(f.recepciones_cargadas),
+        lecturas_cargadas: Number(f.lecturas_cargadas),
+        anulaciones: Number(f.anulaciones),
+        anulaciones_propias: Number(f.anulaciones_propias),
+        alertas_revisadas: Number(f.alertas_revisadas),
+        autorevisiones: Number(f.autorevisiones),
+      }));
+
+      const totalCargas = personas.reduce(
+        (a, p) => a + p.vales_cargados + p.recepciones_cargadas + p.lecturas_cargadas,
+        0
+      );
+
+      res.json({
+        periodo: { desde, hasta },
+        personas,
+        resumen: {
+          personas: personas.length,
+          // Si UNA sola persona hizo todo, no hay segregación posible: es el
+          // dato que ordena la conversación, mucho antes que cualquier
+          // sospecha puntual.
+          concentracion_pct:
+            totalCargas === 0
+              ? null
+              : Number(
+                  (
+                    (Math.max(
+                      ...personas.map(
+                        (p) => p.vales_cargados + p.recepciones_cargadas + p.lecturas_cargadas
+                      ),
+                      0
+                    ) /
+                      totalCargas) *
+                    100
+                  ).toFixed(1)
+                ),
+          anulaciones_propias: personas.reduce((a, p) => a + p.anulaciones_propias, 0),
+          autorevisiones: personas.reduce((a, p) => a + p.autorevisiones, 0),
+        },
+      });
+    } catch {
+      res.status(500).json({ error: "Error al armar el reporte de segregación" });
+    }
+  }
+
   /** GET /anomalias -- los hallazgos ya congelados. Solo lectura: la tabla
    *  es append-only a propósito (ver migrations/0072), no hay endpoint para
    *  editarlas ni borrarlas. */
