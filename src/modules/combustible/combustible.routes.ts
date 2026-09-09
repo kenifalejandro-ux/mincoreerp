@@ -173,6 +173,15 @@ router.get(
   asyncHandler(controller.getKardex.bind(controller))
 );
 
+// El mismo kardex, descargable. Va como ruta aparte y no como ?formato=csv
+// para que el navegador reciba un archivo y no un JSON con otro header.
+router.get(
+  "/:id/kardex/csv",
+  requireRole("admin"),
+  validateQuery(kardexCombustibleSchema),
+  asyncHandler(controller.getKardexCsv.bind(controller))
+);
+
 // Asistente de calibración del umbral (Fase D, entrega 3) -- solo admin,
 // es una decisión de configuración, no trabajo de cancha.
 router.get(
