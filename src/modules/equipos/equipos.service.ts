@@ -30,6 +30,13 @@ export const EquiposService = {
     });
   },
 
+  /** Lo usa el controlador para saber cómo estaba el equipo ANTES del PUT:
+   *  sin eso no se puede distinguir si el cambio amplió o estrechó el techo
+   *  diario de combustible (ver detectarAmpliacionDeTecho). */
+  getById(client: PoolClient, tenantId: string, id: number) {
+    return EquiposRepository.findById(client, tenantId, id);
+  },
+
   update(client: PoolClient, tenantId: string, id: number, data: EquipoPayload) {
     return EquiposRepository.update(client, tenantId, id, data);
   },

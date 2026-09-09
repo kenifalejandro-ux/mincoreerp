@@ -5,43 +5,14 @@
  * auth.service.ts -- un fallo de SMTP no puede tumbar la mutación que lo
  * originó (crear un despacho, anular un vale), solo se loguea.
  */
-import { emailConfigured, env } from "../../server/config/env";
-import { transporter } from "../../server/config/mailer";
-import { logger } from "../../server/config/logger";
-import { escapeHtml } from "../../server/shared/utils/html";
+// El primitivo que arma y manda el correo vive en shared desde que Equipos
+// también tuvo que avisar (ver alertaMailer.ts). Acá quedan los MENSAJES,
+// que sí son de combustible.
+import { enviarCorreoAlerta } from "../../server/shared/utils/alertaMailer";
 
 interface Destinatario {
   email: string;
   nombre: string;
-}
-
-async function enviarCorreoAlerta(params: {
-  destinatarios: Destinatario[];
-  asunto: string;
-  titulo: string;
-  lineas: string[];
-}) {
-  if (!transporter || !emailConfigured || params.destinatarios.length === 0) return;
-
-  const text = [params.titulo, "", ...params.lineas].join("\n");
-  const html = `
-    <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
-      <h2 style="margin-bottom: 16px;">${escapeHtml(params.titulo)}</h2>
-      ${params.lineas.map((l) => `<p>${escapeHtml(l)}</p>`).join("\n")}
-    </div>
-  `;
-
-  try {
-    await transporter.sendMail({
-      from: `"MinCore ERP" <${env.emailUser}>`,
-      to: params.destinatarios.map((d) => d.email),
-      subject: params.asunto,
-      text,
-      html,
-    });
-  } catch (err) {
-    logger.error({ err }, "No se pudo enviar el correo de alerta de combustible");
-  }
 }
 
 /** Un vale más allá reveló que uno o más números anteriores nunca se

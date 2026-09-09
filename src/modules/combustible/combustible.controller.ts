@@ -198,7 +198,8 @@ export class CombustibleController {
     } catch (err) {
       if (
         err instanceof Error &&
-        err.message.includes("supera la capacidad que estás por guardar")
+        (err.message.includes("supera la capacidad que estás por guardar") ||
+          err.message.includes("no se puede cambiar la unidad"))
       ) {
         res.status(400).json({ error: err.message });
         return;
@@ -1342,6 +1343,10 @@ export class CombustibleController {
       const pagina = await listarAuditoriaService({
         tenantId,
         accionPrefijo: "combustible.",
+        // Vive en el módulo de Equipos pero afloja un control de combustible
+        // (el techo diario por equipo), así que tiene que verse acá: es la
+        // pantalla donde gerencia busca quién tocó qué de la vigilancia.
+        accionesExtra: ["equipos.capacidad_tanque_ampliada"],
         desde,
         hasta,
         limit: paginacion.pageSize,

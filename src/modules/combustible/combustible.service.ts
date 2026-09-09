@@ -37,7 +37,54 @@ export class CombustibleService {
     id: number,
     data: ActualizarTanqueCombustibleInput
   ) {
+    await this.validarCambioDeUnidad(client, tenantId, id, data.unidad);
     return this.repository.update(client, tenantId, id, data);
+  }
+
+  /** CAMBIAR LA UNIDAD DE UN TANQUE CON HISTORIAL NO SE PERMITE.
+   *
+   *  Es el hallazgo más potente de la tercera auditoría adversaria, y el que
+   *  menos parecía un control. Pasar un tanque de `L` a `gal` con un PUT
+   *  devolvía 200, no se auditaba como aflojamiento y no avisaba a nadie --
+   *  pero:
+   *
+   *  1. La capacidad no se convierte: el 20.000 que significaba litros pasa a
+   *     significar GALONES, o sea 75.708 L. Y como los cuatro umbrales son
+   *     porcentaje de la capacidad, TODAS las bandas se multiplican por
+   *     3,785 de golpe. Un umbral del 1% pasa de tolerar 200 L a tolerar 757.
+   *  2. Todo el historial se reinterpreta. Los despachos guardados en litros
+   *     se leen como galones al convertir (ver findAcumuladoDiario), así que
+   *     el techo diario también se ensancha ×3,785.
+   *
+   *  Comprobado en la simulación: con el techo en 500 L, después de cambiar
+   *  la unidad se despacharon 400 "gal" (1.514 L reales) sin una sola alerta.
+   *
+   *  Por qué se BLOQUEA en vez de pedir motivo, que es lo que se hizo con los
+   *  umbrales: porque no hay un cambio legítimo que hacer. Cambiar la unidad
+   *  no CONVIERTE nada -- reinterpreta miles de filas ya escritas, y la única
+   *  conversión correcta sería reescribir el historial, que es justo lo que
+   *  un módulo anti-fraude nunca debe hacer. Si de verdad se cargó el tanque
+   *  con la unidad equivocada, el camino es un tanque nuevo bien cargado.
+   *
+   *  Mientras el tanque NO tiene movimientos sí se puede: ahí es corregir un
+   *  tipeo recién hecho, no reinterpretar nada. */
+  private async validarCambioDeUnidad(
+    client: PoolClient,
+    tenantId: string,
+    id: number,
+    unidadNueva: string
+  ) {
+    const actual = await this.repository.findById(client, tenantId, id);
+    if (!actual || actual.unidad === unidadNueva) return;
+
+    if (await this.repository.tieneMovimientos(client, tenantId, id)) {
+      throw new Error(
+        `no se puede cambiar la unidad de ${actual.unidad} a ${unidadNueva}: el tanque ya tiene ` +
+          `movimientos registrados en ${actual.unidad} y cambiarla reinterpretaría todo ese ` +
+          `historial (capacidad, umbrales y topes incluidos). Si la unidad quedó mal cargada, ` +
+          `dá de alta el tanque de nuevo con la unidad correcta.`
+      );
+    }
   }
 
   /** Compara la vigilancia ANTES y DESPUÉS de un PUT de tanque y devuelve

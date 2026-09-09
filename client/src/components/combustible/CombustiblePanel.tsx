@@ -250,6 +250,8 @@ const ETIQUETA_ACCION: Record<string, string> = {
   "combustible.tanque_actualizar": "Tanque editado",
   "combustible.tanque_eliminar": "Tanque desactivado",
   "combustible.tanque_vigilancia_reducida": "⚠ Vigilancia reducida",
+  "combustible.config_vigilancia_reducida": "⚠ Vigilancia reducida (configuración)",
+  "equipos.capacidad_tanque_ampliada": "⚠ Se amplió el techo de un equipo",
   "combustible.tanques_carga_masiva": "Importación de tanques",
   "combustible.registrar_lectura": "Lectura de varilla",
   "combustible.actualizar_nivel": "Nivel actualizado",
@@ -265,7 +267,14 @@ const ETIQUETA_ACCION: Record<string, string> = {
   "combustible.config_actualizar": "Configuración del módulo",
 };
 
-const ACCIONES_QUE_AFLOJAN = new Set(["combustible.tanque_vigilancia_reducida"]);
+// Las tres formas de aflojar que el sistema conoce. La última vive en el
+// módulo de Equipos pero ensancha un control de combustible, así que se
+// marca en rojo igual que las otras dos.
+const ACCIONES_QUE_AFLOJAN = new Set([
+  "combustible.tanque_vigilancia_reducida",
+  "combustible.config_vigilancia_reducida",
+  "equipos.capacidad_tanque_ampliada",
+]);
 
 /** Las tres sugerencias vienen juntas del mismo endpoint: salen del mismo
  *  historial del tanque, y partirlas en tres requests haría tres pasadas
