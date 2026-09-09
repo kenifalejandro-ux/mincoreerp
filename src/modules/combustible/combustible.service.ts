@@ -63,6 +63,7 @@ export class CombustibleService {
       umbral_diferencia_pct: string | null;
       umbral_descuadre_pct: string | null;
       umbral_descuadre_ciclo_pct: string | null;
+      umbral_descuadre_ventana_pct: string | null;
       requiere_documento: boolean;
       capacidad_total: string;
       nivel_minimo: string;
@@ -89,6 +90,12 @@ export class CombustibleService {
         "Umbral acumulado del ciclo",
         antes.umbral_descuadre_ciclo_pct,
         ahora.umbral_descuadre_ciclo_pct,
+      ],
+      [
+        "umbral_descuadre_ventana_pct",
+        "Umbral acumulado de la ventana",
+        antes.umbral_descuadre_ventana_pct,
+        ahora.umbral_descuadre_ventana_pct,
       ],
     ] as const;
 
@@ -474,6 +481,7 @@ export class CombustibleService {
     valores: {
       ventanaGraciaHoras: number;
       diasSinMedir: number;
+      diasVentanaDescuadre: number;
       llenadosPorDiaMax: number | null;
       topeSinCapacidadL: number | null;
     },
@@ -499,12 +507,14 @@ export class CombustibleService {
     antes: {
       ventana_gracia_horas: number;
       dias_sin_medir: number;
+      dias_ventana_descuadre: number;
       llenados_por_dia_max: number | null;
       tope_diario_sin_capacidad_l: number | null;
     },
     ahora: {
       ventana_gracia_horas: number;
       dias_sin_medir: number;
+      dias_ventana_descuadre: number;
       llenados_por_dia_max: number | null;
       tope_diario_sin_capacidad_l: number | null;
     }
@@ -515,6 +525,17 @@ export class CombustibleService {
       ["Ventana de gracia", antes.ventana_gracia_horas, ahora.ventana_gracia_horas, "h"],
       ["Días sin medir tolerados", antes.dias_sin_medir, ahora.dias_sin_medir, " días"],
     ] as const;
+
+    // BAJAR la ventana deslizante afloja, al revés que los de arriba: mirar
+    // 7 días para atrás en vez de 30 le devuelve al que roba de a poco casi
+    // todo lo que 0080 le sacó -- el acumulado nunca junta lo suficiente.
+    if (ahora.dias_ventana_descuadre < antes.dias_ventana_descuadre) {
+      cambios.push({
+        control: "Ventana de descuadre acumulado",
+        de: `${antes.dias_ventana_descuadre} días`,
+        a: `${ahora.dias_ventana_descuadre} días`,
+      });
+    }
 
     for (const [control, viejo, nuevo, sufijo] of subir) {
       if (nuevo > viejo) {
@@ -923,6 +944,63 @@ export class CombustibleService {
       umbralPct,
       toleradoLitros,
       lecturaId,
+    };
+  }
+
+  /** Descuadre acumulado en la ventana deslizante (migración 0080).
+   *
+   *  El hermano que le faltaba a evaluarDescuadreCiclo, y el que de verdad
+   *  cierra el robo de a poco: el del ciclo se reinicia en cada recepción,
+   *  así que 50 L/día en un tanque que se carga seguido nunca acumulaban
+   *  nada. Esta ventana no se reinicia con nada -- solo se corre con el
+   *  tiempo.
+   *
+   *  Devuelve null en el caso normal: sin umbral configurado, sin tramos
+   *  todavía, o con el acumulado dentro de la tolerancia. */
+  async evaluarDescuadreVentana(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    leidoEn: string
+  ) {
+    const dias = await this.repository.getDiasVentanaDescuadre(client, tenantId);
+    const datos = await this.repository.findDescuadreVentana(
+      client,
+      tenantId,
+      combustibleId,
+      leidoEn,
+      dias
+    );
+    if (!datos) return null;
+    if (datos.umbral_descuadre_ventana_pct === null) return null;
+
+    const tramos = Number(datos.tramos);
+    // Un solo tramo no es una ventana: sería el descuadre entre dos varillas
+    // con otro nombre, y ese control ya existe (0074). El acumulado dice algo
+    // recién cuando hay varias mediciones para que el ruido se cancele.
+    if (tramos < 2) return null;
+
+    const umbralPct = Number(datos.umbral_descuadre_ventana_pct);
+    const capacidad = Number(datos.capacidad_total);
+    const descuadre = Number(datos.descuadre_total);
+    const toleradoLitros = (capacidad * umbralPct) / 100;
+
+    if (Math.abs(descuadre) <= toleradoLitros) return null;
+
+    return {
+      tanqueNombre: datos.tanque_nombre,
+      unidad: datos.unidad,
+      diasVentana: dias,
+      desde: datos.desde_en ? new Date(datos.desde_en).toISOString() : null,
+      tramos,
+      descuadreLitros: Number(descuadre.toFixed(2)),
+      sentido: descuadre < 0 ? ("falta" as const) : ("sobra" as const),
+      umbralPct,
+      toleradoLitros: Number(toleradoLitros.toFixed(2)),
+      // El promedio por tramo es el número que hace entendible el hallazgo:
+      // "se fueron 1.500 L" asusta, "50 L por medición durante un mes"
+      // explica QUÉ pasó y por qué ningún control por tramo lo vio.
+      promedioPorTramo: Number((descuadre / tramos).toFixed(2)),
     };
   }
 

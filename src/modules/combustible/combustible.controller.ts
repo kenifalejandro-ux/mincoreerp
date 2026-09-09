@@ -21,6 +21,7 @@ import {
   enviarCorreoAlertaDescuadreCiclo,
   enviarCorreoVigilanciaReducida,
   enviarCorreoTopeDiario,
+  enviarCorreoAlertaDescuadreVentana,
   enviarCorreoLecturaRetroactiva,
 } from "./combustibleAlertas.mailer";
 import type {
@@ -527,6 +528,11 @@ export class CombustibleController {
         data.combustible_id,
         Number(fila!.lectura.id),
         data.nivel,
+        new Date(fila!.lectura.leido_en).toISOString()
+      );
+      await this.procesarAlertaDescuadreVentana(
+        tenantId,
+        data.combustible_id,
         new Date(fila!.lectura.leido_en).toISOString()
       );
       res.status(201).json(fila);
@@ -1060,6 +1066,47 @@ export class CombustibleController {
     }
   }
 
+  /** Descuadre acumulado de la ventana deslizante (migración 0080). Se
+   *  evalúa en cada lectura, igual que los otros dos descuadres, pero mira
+   *  N días para atrás sin cortar en ninguna recepción -- es el único
+   *  acumulado del módulo que no se reinicia con nada. */
+  private async procesarAlertaDescuadreVentana(
+    tenantId: string,
+    combustibleId: number,
+    leidoEn: string
+  ) {
+    try {
+      const { ventana, admins } = await withTenant(tenantId, async (client) => {
+        const ventana = await service.evaluarDescuadreVentana(
+          client,
+          tenantId,
+          combustibleId,
+          leidoEn
+        );
+        if (!ventana) return { ventana, admins: [] as { email: string; nombre: string }[] };
+
+        await service.crearAlertas(client, tenantId, [
+          { tipo: "descuadre_ventana", combustibleId, detalle: { ...ventana } },
+        ]);
+        const admins = await service.findAdminsConCombustibleHabilitado(client, tenantId);
+        return { ventana, admins };
+      });
+
+      if (!ventana) return;
+
+      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+        tipo: "descuadre_ventana",
+        combustibleId,
+      });
+      await enviarCorreoAlertaDescuadreVentana(admins, ventana);
+    } catch (err) {
+      logger.warn(
+        { err, tenantId, combustibleId },
+        "No se pudo procesar la alerta de descuadre de la ventana"
+      );
+    }
+  }
+
   /** Varilla cargada hacia atrás (migración 0078). Mismo contrato "nunca
    *  lanza" que el resto: la lectura ya se guardó y se respondió 201. */
   private async procesarAlertaLecturaRetroactiva(
@@ -1355,6 +1402,7 @@ export class CombustibleController {
           {
             ventanaGraciaHoras: nueva.ventana_gracia_horas,
             diasSinMedir: nueva.dias_sin_medir,
+            diasVentanaDescuadre: nueva.dias_ventana_descuadre,
             llenadosPorDiaMax: nueva.llenados_por_dia_max,
             topeSinCapacidadL: nueva.tope_diario_sin_capacidad_l,
           },

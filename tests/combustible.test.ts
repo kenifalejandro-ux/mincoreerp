@@ -80,6 +80,7 @@ function payloadTanque(overrides: Partial<Record<string, unknown>> = {}) {
     umbral_diferencia_pct: null,
     umbral_descuadre_pct: null,
     umbral_descuadre_ciclo_pct: null,
+    umbral_descuadre_ventana_pct: null,
     ...overrides,
   };
 }
@@ -363,6 +364,7 @@ describe("combustible: ABM de tanques (Fase A)", () => {
       umbral_diferencia_pct: null,
       umbral_descuadre_pct: null,
       umbral_descuadre_ciclo_pct: null,
+      umbral_descuadre_ventana_pct: null,
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("supera la capacidad que estás por guardar");
@@ -389,6 +391,7 @@ describe("combustible: ABM de tanques (Fase A)", () => {
       umbral_diferencia_pct: null,
       umbral_descuadre_pct: null,
       umbral_descuadre_ciclo_pct: null,
+      umbral_descuadre_ventana_pct: null,
     });
     expect(res.status).toBe(200);
     expect(res.body.tanque_nombre).toBe("Editado");

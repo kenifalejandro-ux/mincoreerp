@@ -25,6 +25,7 @@ const ETIQUETA_TIPO: Record<string, string> = {
   vale_fuera_de_orden: "Vale fuera de orden",
   lectura_retroactiva: "Lectura fuera de orden",
   tope_diario_excedido: "Tope diario excedido",
+  descuadre_ventana: "Descuadre acumulado",
 };
 
 /** No toda alerta es sobre un vale (migración 0073): las de nivel bajo van

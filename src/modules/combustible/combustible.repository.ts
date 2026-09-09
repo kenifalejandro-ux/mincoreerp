@@ -24,7 +24,8 @@ export type TipoAlertaCombustible =
   | "tanque_sin_medir"
   | "vale_fuera_de_orden"
   | "lectura_retroactiva"
-  | "tope_diario_excedido";
+  | "tope_diario_excedido"
+  | "descuadre_ventana";
 
 /** Una alerta por crear. Las anclas son todas opcionales en el tipo, pero
  *  el CHECK de la base exige al menos una (vale, tanque o recepción). */
@@ -60,6 +61,7 @@ const COLUMNAS_TANQUE = `
   c.costo_promedio, c.moneda, c.activo,
   c.tolerancia_capacidad_pct, c.requiere_documento, c.umbral_diferencia_pct,
   c.umbral_descuadre_pct, c.umbral_descuadre_ciclo_pct,
+  c.umbral_descuadre_ventana_pct,
   ultima.nivel AS nivel_actual,
   ultima.leido_en AS fecha_actualizacion,
   ROUND((ultima.nivel / c.capacidad_total) * 100, 2) AS porcentaje
@@ -131,9 +133,10 @@ export class CombustibleRepository {
         tenant_id, codigo, tanque_nombre, tipo_combustible, unidad, tipo_punto,
         ubicacion, capacidad_total, nivel_minimo, moneda,
         tolerancia_capacidad_pct, requiere_documento, umbral_diferencia_pct,
-        umbral_descuadre_pct, umbral_descuadre_ciclo_pct
+        umbral_descuadre_pct, umbral_descuadre_ciclo_pct,
+        umbral_descuadre_ventana_pct
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
       RETURNING id
       `,
       [
@@ -152,6 +155,7 @@ export class CombustibleRepository {
         data.umbral_diferencia_pct,
         data.umbral_descuadre_pct,
         data.umbral_descuadre_ciclo_pct,
+        data.umbral_descuadre_ventana_pct,
       ]
     );
 
@@ -212,8 +216,9 @@ export class CombustibleRepository {
         requiere_documento = $12,
         umbral_diferencia_pct = $13,
         umbral_descuadre_pct = $14,
-        umbral_descuadre_ciclo_pct = $15
-      WHERE id = $16 AND tenant_id = $17
+        umbral_descuadre_ciclo_pct = $15,
+        umbral_descuadre_ventana_pct = $16
+      WHERE id = $17 AND tenant_id = $18
       RETURNING id
       `,
       [
@@ -232,6 +237,7 @@ export class CombustibleRepository {
         data.umbral_diferencia_pct,
         data.umbral_descuadre_pct,
         data.umbral_descuadre_ciclo_pct,
+        data.umbral_descuadre_ventana_pct,
         id,
         tenantId,
       ]
@@ -950,9 +956,24 @@ export class CombustibleRepository {
     };
   }
 
+  /** Cuántos días mira para atrás la ventana deslizante (0080). Mismo
+   *  COALESCE que los otros dos: un tenant que nunca tocó su configuración
+   *  no tiene fila propia y usa el default. */
+  async getDiasVentanaDescuadre(client: PoolClient, tenantId: string): Promise<number> {
+    const result = await client.query<{ dias_ventana_descuadre: number }>(
+      `SELECT COALESCE(
+         (SELECT dias_ventana_descuadre FROM combustible_config WHERE tenant_id = $1),
+         30
+       ) AS dias_ventana_descuadre`,
+      [tenantId]
+    );
+    return Number(result.rows[0].dias_ventana_descuadre);
+  }
+
   async getConfig(client: PoolClient, tenantId: string) {
     const ventana = await this.getVentanaGraciaHoras(client, tenantId);
     const diasSinMedir = await this.getDiasSinMedir(client, tenantId);
+    const diasVentana = await this.getDiasVentanaDescuadre(client, tenantId);
     const topes = await this.getTopesDiarios(client, tenantId);
     const result = await client.query(
       `SELECT actualizado_en, actualizado_por FROM combustible_config WHERE tenant_id = $1`,
@@ -961,6 +982,7 @@ export class CombustibleRepository {
     return {
       ventana_gracia_horas: ventana,
       dias_sin_medir: diasSinMedir,
+      dias_ventana_descuadre: diasVentana,
       llenados_por_dia_max: topes.llenadosPorDiaMax,
       tope_diario_sin_capacidad_l: topes.topeSinCapacidadL,
       actualizado_en: result.rows[0]?.actualizado_en ?? null,
@@ -976,6 +998,7 @@ export class CombustibleRepository {
     valores: {
       ventanaGraciaHoras: number;
       diasSinMedir: number;
+      diasVentanaDescuadre: number;
       llenadosPorDiaMax: number | null;
       topeSinCapacidadL: number | null;
     },
@@ -984,23 +1007,26 @@ export class CombustibleRepository {
     const result = await client.query(
       `
       INSERT INTO combustible_config
-        (tenant_id, ventana_gracia_horas, dias_sin_medir,
+        (tenant_id, ventana_gracia_horas, dias_sin_medir, dias_ventana_descuadre,
          llenados_por_dia_max, tope_diario_sin_capacidad_l, actualizado_por)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       ON CONFLICT (tenant_id) DO UPDATE
         SET ventana_gracia_horas = EXCLUDED.ventana_gracia_horas,
             dias_sin_medir = EXCLUDED.dias_sin_medir,
+            dias_ventana_descuadre = EXCLUDED.dias_ventana_descuadre,
             llenados_por_dia_max = EXCLUDED.llenados_por_dia_max,
             tope_diario_sin_capacidad_l = EXCLUDED.tope_diario_sin_capacidad_l,
             actualizado_por = EXCLUDED.actualizado_por,
             actualizado_en = now()
-      RETURNING ventana_gracia_horas, dias_sin_medir, llenados_por_dia_max,
-                tope_diario_sin_capacidad_l, actualizado_en, actualizado_por
+      RETURNING ventana_gracia_horas, dias_sin_medir, dias_ventana_descuadre,
+                llenados_por_dia_max, tope_diario_sin_capacidad_l,
+                actualizado_en, actualizado_por
       `,
       [
         tenantId,
         valores.ventanaGraciaHoras,
         valores.diasSinMedir,
+        valores.diasVentanaDescuadre,
         valores.llenadosPorDiaMax,
         valores.topeSinCapacidadL,
         usuarioId,
@@ -1048,7 +1074,8 @@ export class CombustibleRepository {
        WHERE tenant_id = $1
          AND tipo IN ('hueco_detectado', 'sobredespacho', 'diferencia_recepcion',
                       'medidor_inconsistente', 'descuadre_inventario',
-                      'descuadre_ciclo', 'tope_diario_excedido')
+                      'descuadre_ciclo', 'tope_diario_excedido',
+                      'descuadre_ventana')
          AND resuelta_en IS NULL
          AND congelada_en IS NULL
          AND creado_en < now() - make_interval(hours => $2)
@@ -1759,6 +1786,7 @@ export class CombustibleRepository {
     "vale_fuera_de_orden",
     "lectura_retroactiva",
     "tope_diario_excedido",
+    "descuadre_ventana",
   ];
 
   /** El motivo se guarda dentro de `detalle` y no en una columna propia: es
@@ -2447,6 +2475,83 @@ export class CombustibleRepository {
    *  El desempate `(leido_en, id)` es el mismo del resto del módulo: dos
    *  lecturas del mismo minuto tienen que ordenarse siempre igual, o la
    *  muestra cambiaría entre corridas. */
+  /** El descuadre acumulado de los últimos N días (migración 0080). Suma
+   *  todos los tramos de la ventana SIN cortar en ninguna recepción -- que
+   *  es la diferencia entera con findSaldoCiclo, donde cada recepción
+   *  reinicia la cuenta y por eso robar de a poco salía gratis.
+   *
+   *  Suma CON SIGNO. Un faltante y un sobrante se cancelan, y eso es lo
+   *  buscado: el error de varilla es aleatorio y se anula en un mes; el robo
+   *  es sistemático y se acumula. Ver el encabezado de la migración.
+   *
+   *  Las recepciones y los despachos SÍ entran en la cuenta de cada tramo
+   *  (son movimiento legítimo declarado); lo que no hacen es cortar la
+   *  ventana. */
+  async findDescuadreVentana(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    hasta: string,
+    dias: number
+  ) {
+    const result = await client.query<{
+      descuadre_total: string;
+      tramos: string;
+      desde_en: Date | null;
+      tanque_nombre: string;
+      unidad: string;
+      capacidad_total: string;
+      umbral_descuadre_ventana_pct: string | null;
+    }>(
+      `
+      WITH lecturas AS (
+        SELECT l.nivel, l.leido_en, l.id,
+               LAG(l.nivel) OVER (ORDER BY l.leido_en, l.id) AS nivel_anterior,
+               LAG(l.leido_en) OVER (ORDER BY l.leido_en, l.id) AS leido_en_anterior
+        FROM combustible_lecturas l
+        WHERE l.tenant_id = $1 AND l.combustible_id = $2
+          AND l.anulada_en IS NULL
+          AND l.leido_en <= $3::timestamptz
+      ),
+      -- El tramo entra si su lectura FINAL cae en la ventana. Un tramo que
+      -- arranca antes del corte cuenta entero: partirlo pediría prorratear
+      -- despachos por tiempo, que sería inventar dónde ocurrió el consumo.
+      tramos AS (
+        SELECT
+          (le.nivel - (le.nivel_anterior + COALESCE(rec.total, 0) - COALESCE(des.total, 0)))
+            AS descuadre,
+          le.leido_en_anterior
+        FROM lecturas le
+        LEFT JOIN LATERAL (
+          SELECT SUM(d.cantidad) AS total
+          FROM combustible_despachos d
+          WHERE d.tenant_id = $1 AND d.combustible_id = $2 AND d.anulada_en IS NULL
+            AND d.despachado_en > le.leido_en_anterior AND d.despachado_en <= le.leido_en
+        ) des ON true
+        LEFT JOIN LATERAL (
+          SELECT SUM(r.cantidad) AS total
+          FROM combustible_recepciones r
+          WHERE r.tenant_id = $1 AND r.combustible_id = $2 AND r.anulada_en IS NULL
+            AND r.recibido_en > le.leido_en_anterior AND r.recibido_en <= le.leido_en
+        ) rec ON true
+        WHERE le.nivel_anterior IS NOT NULL
+          AND le.leido_en > $3::timestamptz - make_interval(days => $4)
+      )
+      SELECT COALESCE(SUM(t.descuadre), 0) AS descuadre_total,
+             COUNT(t.descuadre) AS tramos,
+             MIN(t.leido_en_anterior) AS desde_en,
+             c.tanque_nombre, c.unidad, c.capacidad_total,
+             c.umbral_descuadre_ventana_pct
+      FROM combustible c
+      LEFT JOIN tramos t ON true
+      WHERE c.id = $2 AND c.tenant_id = $1
+      GROUP BY c.tanque_nombre, c.unidad, c.capacidad_total, c.umbral_descuadre_ventana_pct
+      `,
+      [tenantId, combustibleId, hasta, dias]
+    );
+    return result.rows[0] ?? null;
+  }
+
   async findMuestraDescuadresParaCalibracion(
     client: PoolClient,
     tenantId: string,

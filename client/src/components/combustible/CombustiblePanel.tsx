@@ -37,6 +37,7 @@ interface Tanque {
   umbral_diferencia_pct: string | null;
   umbral_descuadre_pct: string | null;
   umbral_descuadre_ciclo_pct: string | null;
+  umbral_descuadre_ventana_pct: string | null;
 }
 
 /** Una fila del historial de recepciones (GET /recepciones, Fase C). A
@@ -68,6 +69,7 @@ interface RecepcionHistorial {
   umbral_diferencia_pct: string;
   umbral_descuadre_pct: string;
   umbral_descuadre_ciclo_pct: string;
+  umbral_descuadre_ventana_pct: string;
 }
 
 const ETIQUETA_TIPO_DOCUMENTO: Record<"factura" | "guia_remision", string> = {
@@ -282,7 +284,8 @@ interface AlertaCombustible {
     | "tanque_sin_medir"
     | "vale_fuera_de_orden"
     | "lectura_retroactiva"
-    | "tope_diario_excedido";
+    | "tope_diario_excedido"
+    | "descuadre_ventana";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -312,6 +315,7 @@ const TIPOS_CRITICOS = new Set([
   "vale_fuera_de_orden",
   "lectura_retroactiva",
   "tope_diario_excedido",
+  "descuadre_ventana",
   "tanque_sin_medir",
 ]);
 const esCritica = (tipo: string) => TIPOS_CRITICOS.has(tipo);
@@ -338,6 +342,7 @@ const esCritica = (tipo: string) => TIPOS_CRITICOS.has(tipo);
 const VIGILANCIA_RECOMENDADA = {
   umbral_descuadre_pct: "2",
   umbral_descuadre_ciclo_pct: "3",
+  umbral_descuadre_ventana_pct: "4",
   umbral_diferencia_pct: "2",
 };
 
@@ -349,6 +354,10 @@ const CONTROLES_VIGILANCIA = [
   {
     campo: "umbral_descuadre_ciclo_pct",
     sinEl: "Sin umbral del ciclo: no se detecta un faltante repartido en porciones chicas.",
+  },
+  {
+    campo: "umbral_descuadre_ventana_pct",
+    sinEl: "Sin umbral de ventana: no se detecta el faltante de a poco que cada recepción borra.",
   },
   {
     campo: "umbral_diferencia_pct",
@@ -430,6 +439,7 @@ const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   vale_fuera_de_orden: "Vale fuera de orden",
   lectura_retroactiva: "Lectura fuera de orden",
   tope_diario_excedido: "Tope diario excedido",
+  descuadre_ventana: "Descuadre acumulado",
 };
 
 /** El `detalle` es JSONB libre y cada tipo de alerta guarda cosas
@@ -468,6 +478,24 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     return (
       `Despachó ${cantidad} ${unidadDespacho ?? ""} a un tanque de ` +
       `${capacidad} ${unidadCapacidad ?? ""} (+${excesoPct ?? "?"}%)`
+    );
+  }
+  if (a.tipo === "descuadre_ventana") {
+    const { descuadreLitros, sentido, unidad, diasVentana, tramos, promedioPorTramo } =
+      a.detalle as {
+        descuadreLitros?: number;
+        sentido?: string;
+        unidad?: string;
+        diasVentana?: number;
+        tramos?: number;
+        promedioPorTramo?: number;
+      };
+    // El promedio por tramo es lo que explica por qué NINGÚN control anterior
+    // dijo nada: medición por medición el número era normal.
+    return (
+      `${sentido === "sobra" ? "Sobran" : "Faltan"} ${Math.abs(descuadreLitros ?? 0)} ` +
+      `${unidad ?? ""} en ${diasVentana ?? "?"} días (${tramos ?? "?"} mediciones, ` +
+      `~${Math.abs(promedioPorTramo ?? 0)} ${unidad ?? ""} por medición)`
     );
   }
   if (a.tipo === "tope_diario_excedido") {
@@ -712,6 +740,7 @@ const FORM_INICIAL = {
   umbral_diferencia_pct: "",
   umbral_descuadre_pct: "",
   umbral_descuadre_ciclo_pct: "",
+  umbral_descuadre_ventana_pct: "",
 };
 
 /** Campo vacío -> null (sin configurar). Cualquier número, incluido el 0,
@@ -860,6 +889,7 @@ export default function CombustiblePanel() {
   // Los dos topes diarios (0079). Vacío = sin configurar = no alerta, y por
   // eso arrancan en "" y no en un número: no hay default razonable para
   // "cuánto combustible es normal", eso lo sabe la operación, no el sistema.
+  const [diasVentanaDescuadre, setDiasVentanaDescuadre] = useState("30");
   const [llenadosPorDia, setLlenadosPorDia] = useState("");
   const [topeSinCapacidad, setTopeSinCapacidad] = useState("");
   /** Hallazgos críticos SIN RESOLVER -- distinto de "sin leer": una alerta
@@ -1102,6 +1132,7 @@ export default function CombustiblePanel() {
       umbral_diferencia_pct: t.umbral_diferencia_pct ?? "",
       umbral_descuadre_pct: t.umbral_descuadre_pct ?? "",
       umbral_descuadre_ciclo_pct: t.umbral_descuadre_ciclo_pct ?? "",
+      umbral_descuadre_ventana_pct: t.umbral_descuadre_ventana_pct ?? "",
     });
     setModalTanqueAbierto(true);
   };
@@ -1137,6 +1168,7 @@ export default function CombustiblePanel() {
             umbral_diferencia_pct: aNumeroONull(formData.umbral_diferencia_pct),
             umbral_descuadre_pct: aNumeroONull(formData.umbral_descuadre_pct),
             umbral_descuadre_ciclo_pct: aNumeroONull(formData.umbral_descuadre_ciclo_pct),
+            umbral_descuadre_ventana_pct: aNumeroONull(formData.umbral_descuadre_ventana_pct),
           }
         : {
             codigo: formData.codigo,
@@ -1154,6 +1186,7 @@ export default function CombustiblePanel() {
             umbral_diferencia_pct: aNumeroONull(formData.umbral_diferencia_pct),
             umbral_descuadre_pct: aNumeroONull(formData.umbral_descuadre_pct),
             umbral_descuadre_ciclo_pct: aNumeroONull(formData.umbral_descuadre_ciclo_pct),
+            umbral_descuadre_ventana_pct: aNumeroONull(formData.umbral_descuadre_ventana_pct),
             // Viaja para la auditoría del alta: distingue "eligió no vigilar"
             // de "configuró umbrales que dan lo mismo".
             modo_vigilancia: modoVigilancia,
@@ -1859,6 +1892,9 @@ export default function CombustiblePanel() {
       if (bodyConfig?.dias_sin_medir !== undefined) {
         setDiasSinMedir(String(bodyConfig.dias_sin_medir));
       }
+      if (bodyConfig?.dias_ventana_descuadre !== undefined) {
+        setDiasVentanaDescuadre(String(bodyConfig.dias_ventana_descuadre));
+      }
       // null llega como "sin configurar" y tiene que verse como campo vacío,
       // no como "null" escrito adentro del input.
       setLlenadosPorDia(
@@ -1897,8 +1933,10 @@ export default function CombustiblePanel() {
   const handleGuardarVentana = async () => {
     const horas = Number(ventanaGraciaHoras);
     const dias = Number(diasSinMedir);
+    const diasVentana = Number(diasVentanaDescuadre);
     if (guardandoVentana || !Number.isInteger(horas) || horas < 1 || horas > 8760) return;
     if (!Number.isInteger(dias) || dias < 1 || dias > 365) return;
+    if (!Number.isInteger(diasVentana) || diasVentana < 7 || diasVentana > 365) return;
     setGuardandoVentana(true);
     try {
       // Campo vacío = null = sin configurar. Number("") es 0, que acá
@@ -1921,6 +1959,7 @@ export default function CombustiblePanel() {
         body: JSON.stringify({
           ventana_gracia_horas: horas,
           dias_sin_medir: dias,
+          dias_ventana_descuadre: diasVentana,
           llenados_por_dia_max: llenados,
           tope_diario_sin_capacidad_l: topeSC,
         }),
@@ -2640,7 +2679,7 @@ export default function CombustiblePanel() {
                     {
                       valor: "recomendado" as const,
                       titulo: "Recomendado",
-                      detalle: `Alerta desde ${VIGILANCIA_RECOMENDADA.umbral_descuadre_pct}% de faltante entre varillas, ${VIGILANCIA_RECOMENDADA.umbral_descuadre_ciclo_pct}% acumulado en el ciclo y ${VIGILANCIA_RECOMENDADA.umbral_diferencia_pct}% contra la factura del proveedor. Valores provisionales: se afinan con el historial del tanque.`,
+                      detalle: `Alerta desde ${VIGILANCIA_RECOMENDADA.umbral_descuadre_pct}% de faltante entre varillas, ${VIGILANCIA_RECOMENDADA.umbral_descuadre_ciclo_pct}% acumulado en el ciclo, ${VIGILANCIA_RECOMENDADA.umbral_descuadre_ventana_pct}% acumulado en la ventana del mes y ${VIGILANCIA_RECOMENDADA.umbral_diferencia_pct}% contra la factura del proveedor. Valores provisionales: se afinan con el historial del tanque.`,
                     },
                     {
                       valor: "personalizado" as const,
@@ -2676,6 +2715,7 @@ export default function CombustiblePanel() {
                               ...f,
                               umbral_descuadre_pct: "",
                               umbral_descuadre_ciclo_pct: "",
+                              umbral_descuadre_ventana_pct: "",
                               umbral_diferencia_pct: "",
                             }));
                           }
@@ -2931,6 +2971,36 @@ export default function CombustiblePanel() {
                             }
                           />
                         )}
+                      </div>
+                      <div className="space-y-1 col-span-2">
+                        <label
+                          htmlFor="tanque-umbral-ventana"
+                          className="text-xs font-bold text-slate-500 uppercase"
+                        >
+                          Umbral acumulado de la ventana (%)
+                        </label>
+                        <input
+                          id="tanque-umbral-ventana"
+                          type="number"
+                          min={0}
+                          max={100}
+                          step="0.01"
+                          className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                          value={formData.umbral_descuadre_ventana_pct}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              umbral_descuadre_ventana_pct: e.target.value,
+                            })
+                          }
+                        />
+                        <p className="text-[11px] text-slate-400">
+                          El único acumulado que <strong>no se reinicia con una recepción</strong>.
+                          El del ciclo vuelve a cero cada vez que llega el camión, y ahí se esconde
+                          el robo de a poco: 50 L por día no alertan nunca si el tanque se carga
+                          seguido. Este suma los últimos 30 días de corrido (se configura en
+                          Alertas). Ponelo más alto que el del ciclo.
+                        </p>
                       </div>
                     </>
                   )}
@@ -4457,6 +4527,29 @@ export default function CombustiblePanel() {
               />
               <span className="text-sm text-slate-500">días</span>
 
+              {/* La ventana del acumulado (0080). Va acá y no en el tanque
+                  porque es política de la empresa --cada cuánto quiere mirar
+                  para atrás-- no una propiedad del recipiente. */}
+              <label
+                htmlFor="dias-ventana"
+                className="text-xs font-bold text-slate-500 uppercase ml-2"
+              >
+                Acumulado de los últimos
+              </label>
+              <input
+                id="dias-ventana"
+                type="number"
+                min={7}
+                max={365}
+                className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
+                value={diasVentanaDescuadre}
+                onChange={(e) => {
+                  setDiasVentanaDescuadre(e.target.value);
+                  setMensajeVentana(null);
+                }}
+              />
+              <span className="text-sm text-slate-500">días</span>
+
               {/* Los dos topes diarios (0079). Se cargan acá, junto al resto
                   de la vigilancia, porque son la misma decisión: cuánto
                   tolera la empresa antes de querer enterarse. Vacío = sin
@@ -4522,6 +4615,10 @@ export default function CombustiblePanel() {
                 (un vale que sincroniza sin señal, uno que se anula) antes de congelarse como
                 anomalía permanente. Pasado ese plazo se congela <strong>solo</strong>, sin que
                 nadie tenga que revisarlo.
+                <br />
+                <strong>Acumulado de los últimos N días:</strong> ventana del descuadre que{" "}
+                <strong>no se reinicia con una recepción</strong> — es la que atrapa el faltante de
+                a poco. Bajarla debilita el control y queda auditado.
                 <br />
                 <strong>Llenados por día:</strong> cuántas veces puede llenarse el tanque de un
                 equipo en 24 h. El techo sale de multiplicarlo por la capacidad cargada en la ficha
