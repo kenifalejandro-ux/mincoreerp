@@ -2810,6 +2810,83 @@ export class CombustibleRepository {
    *  Las recepciones y los despachos SÍ entran en la cuenta de cada tramo
    *  (son movimiento legítimo declarado); lo que no hacen es cortar la
    *  ventana. */
+  /** EL FALTANTE MEDIDO ENTRE DOS INSTANTES, ignorando cualquier umbral.
+   *
+   *  Es la mitad que le faltaba al reporte de controles, y la encontró un red
+   *  team simulando nueve días de operación: se subieron los tres umbrales a
+   *  60 %, se sacaron 3.000 L SIN emitir vale, y el reporte del período dijo
+   *  "0 L bajo vigilancia reducida". El evento de aflojamiento estaba, con
+   *  quién y con el motivo -- pero el número que lo acompañaba contaba solo
+   *  DESPACHOS DECLARADOS.
+   *
+   *  Y aflojar el umbral sirve justamente para sacar combustible sin vale.
+   *  O sea que el reporte medía todo menos lo que el aflojamiento habilita.
+   *
+   *  Acá se calcula lo que dice LA VARILLA: la suma con signo de los
+   *  descuadres de cada tramo del período. Sin mirar el umbral -- el umbral
+   *  decide si se ALERTA, nunca si el número existe. Ese es el punto: durante
+   *  la ventana floja el sistema calla a propósito, y este reporte se lee
+   *  después, cuando lo que hace falta es el número.
+   *
+   *  `combustibleId` NULL suma todos los tanques del tenant: hay
+   *  aflojamientos que son de configuración de la empresa y no cuelgan de un
+   *  tanque.
+   *
+   *  Devuelve `tramos: 0` cuando no hubo mediciones en la ventana. Quien lo
+   *  llama tiene que distinguir eso de un cero real: "no se midió" y "cuadra"
+   *  no son lo mismo, y confundirlos sería repetir el error que este arreglo
+   *  viene a corregir. */
+  async findDescuadreEntre(
+    client: PoolClient,
+    tenantId: string,
+    desde: string,
+    hasta: string,
+    combustibleId?: number | null
+  ) {
+    const result = await client.query<{ descuadre_total: string; tramos: string }>(
+      `
+      WITH lecturas AS (
+        SELECT l.combustible_id, l.nivel, l.leido_en, l.id,
+               LAG(l.nivel) OVER (PARTITION BY l.combustible_id
+                                  ORDER BY l.leido_en, l.id) AS nivel_anterior,
+               LAG(l.leido_en) OVER (PARTITION BY l.combustible_id
+                                     ORDER BY l.leido_en, l.id) AS leido_en_anterior
+          FROM combustible_lecturas l
+         WHERE l.tenant_id = $1
+           AND l.anulada_en IS NULL
+           AND l.leido_en <= $3::timestamptz
+           AND ($4::int IS NULL OR l.combustible_id = $4::int)
+      )
+      SELECT COALESCE(SUM(
+               le.nivel - (le.nivel_anterior + COALESCE(rec.total, 0) - COALESCE(des.total, 0))
+             ), 0) AS descuadre_total,
+             COUNT(*) AS tramos
+        FROM lecturas le
+        LEFT JOIN LATERAL (
+          SELECT SUM(d.cantidad) AS total
+            FROM combustible_despachos d
+           WHERE d.tenant_id = $1 AND d.combustible_id = le.combustible_id
+             AND d.anulada_en IS NULL
+             AND d.despachado_en > le.leido_en_anterior AND d.despachado_en <= le.leido_en
+        ) des ON true
+        LEFT JOIN LATERAL (
+          SELECT SUM(r.cantidad) AS total
+            FROM combustible_recepciones r
+           WHERE r.tenant_id = $1 AND r.combustible_id = le.combustible_id
+             AND r.anulada_en IS NULL
+             AND r.recibido_en > le.leido_en_anterior AND r.recibido_en <= le.leido_en
+        ) rec ON true
+       WHERE le.nivel_anterior IS NOT NULL
+         AND le.leido_en > $2::timestamptz
+      `,
+      [tenantId, desde, hasta, combustibleId ?? null]
+    );
+    return {
+      descuadre: Number(result.rows[0].descuadre_total),
+      tramos: Number(result.rows[0].tramos),
+    };
+  }
+
   async findDescuadreVentana(
     client: PoolClient,
     tenantId: string,
