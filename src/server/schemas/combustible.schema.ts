@@ -428,6 +428,34 @@ export const configCombustibleSchema = z.object({
   tope_diario_sin_capacidad_l: z.number().positive().max(9_999_999).nullable(),
 });
 
+// ── Kardex del tanque ───────────────────────────────────────────────────
+// Las dos fechas son OBLIGATORIAS: un kardex sin período no es un reporte,
+// es un volcado de la tabla. Y el saldo corriente solo significa algo si
+// alguien eligió desde dónde se cuenta.
+
+const MAX_DIAS_KARDEX = 400;
+
+export const kardexCombustibleSchema = z
+  .object({
+    desde: z.string().datetime({ offset: true }),
+    hasta: z.string().datetime({ offset: true }),
+  })
+  .refine((v) => Date.parse(v.desde) <= Date.parse(v.hasta), {
+    message: "La fecha de inicio tiene que ser anterior a la de fin",
+    path: ["desde"],
+  })
+  .refine((v) => Date.parse(v.hasta) - Date.parse(v.desde) <= MAX_DIAS_KARDEX * 24 * 3600 * 1000, {
+    // El kardex NO se pagina a propósito (el saldo corriente pierde
+    // sentido en pedazos), así que el techo del período es lo único que
+    // impide que un tanque con años de historial devuelva una respuesta
+    // enorme. 400 días entran cómodos en un ejercicio contable de 12
+    // meses más el margen de cierre.
+    message: `El período no puede superar los ${MAX_DIAS_KARDEX} días`,
+    path: ["hasta"],
+  });
+
+export type KardexCombustibleQuery = z.infer<typeof kardexCombustibleSchema>;
+
 export type ConfigCombustibleInput = z.infer<typeof configCombustibleSchema>;
 
 // ── Grifos externos (migrations/0063) ───────────────────────────────────

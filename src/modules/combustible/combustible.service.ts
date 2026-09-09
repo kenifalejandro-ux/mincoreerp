@@ -1204,6 +1204,105 @@ export class CombustibleService {
     };
   }
 
+  /** Arma el kardex del tanque a partir de las filas crudas del repositorio.
+   *
+   *  El SQL ya trae el saldo teórico corriente; acá se agregan las DOS
+   *  diferencias, que contestan preguntas distintas y por eso van las dos:
+   *
+   *  - `difTramo`: medido - teórico contra la varilla ANTERIOR. Ubica CUÁNDO
+   *    pasó: aísla el movimiento entre dos mediciones.
+   *  - `difAcumulada`: medido - teórico contra el arranque del período. Dice
+   *    CUÁNTO falta en total, y es el número que va al informe.
+   *
+   *  Las dos solo tienen sentido en las filas de varilla -- en un despacho o
+   *  una recepción no hay nada medido con qué contrastar.
+   *
+   *  Ojo con la varilla ANULADA: no contrasta nada. Su nivel no es un dato
+   *  bueno (por eso se anuló), así que no genera diferencia ni mueve el
+   *  ancla del tramo siguiente. Aparece en la lista como evidencia y nada
+   *  más. */
+  async armarKardex(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    desde: string,
+    hasta: string
+  ) {
+    const tanque = await this.repository.findById(client, tenantId, combustibleId);
+    if (!tanque) return null;
+
+    const crudas = await this.repository.findKardex(client, tenantId, combustibleId, desde, hasta);
+
+    // Diferencia acumulada del período: se mide contra el saldo teórico, que
+    // arrastra desde el ancla sin corregirse nunca (ver findKardex).
+    // La del tramo necesita recordar dónde quedó la última varilla buena.
+    let ultimaDifValida: number | null = null;
+
+    const filas = crudas.map((f) => {
+      const anulada = f.anulada_en !== null;
+      const esLectura = f.tipo === "lectura";
+      const nivelMedido = f.nivel_medido === null ? null : Number(f.nivel_medido);
+      const saldoTeorico = Number(f.saldo_teorico);
+
+      let difAcumulada: number | null = null;
+      let difTramo: number | null = null;
+
+      if (esLectura && !anulada && nivelMedido !== null) {
+        difAcumulada = Number((nivelMedido - saldoTeorico).toFixed(2));
+        difTramo = Number((difAcumulada - (ultimaDifValida ?? 0)).toFixed(2));
+        ultimaDifValida = difAcumulada;
+      }
+
+      return {
+        ocurrido_en: f.ocurrido_en,
+        tipo: f.tipo,
+        referencia_id: f.referencia_id,
+        documento: f.documento,
+        detalle: f.detalle,
+        entrada: Number(f.entrada),
+        salida: Number(f.salida),
+        nivel_medido: nivelMedido,
+        // Un movimiento anulado no mueve el saldo, así que mostrar la columna
+        // sería sugerir que sí participó de la cuenta.
+        saldo_teorico: anulada ? null : saldoTeorico,
+        dif_tramo: difTramo,
+        dif_acumulada: difAcumulada,
+        usuario: f.usuario ?? "Sistema",
+        anulada: anulada,
+        motivo_anulacion: f.motivo_anulacion,
+      };
+    });
+
+    return {
+      tanque: {
+        id: tanque.id,
+        codigo: tanque.codigo,
+        tanque_nombre: tanque.tanque_nombre,
+        unidad: tanque.unidad,
+        capacidad_total: Number(tanque.capacidad_total),
+      },
+      periodo: { desde, hasta },
+      // El saldo con el que arranca la cuenta. Sale del SQL: es el saldo
+      // teórico de la primera fila menos lo que esa fila movió.
+      saldo_inicial:
+        filas.length > 0 && filas[0].saldo_teorico !== null
+          ? Number((filas[0].saldo_teorico - filas[0].entrada + filas[0].salida).toFixed(2))
+          : null,
+      filas,
+      // El cierre del período, que es lo que un auditor copia al informe.
+      resumen: {
+        entradas: Number(filas.reduce((a, f) => a + (f.anulada ? 0 : f.entrada), 0).toFixed(2)),
+        salidas: Number(filas.reduce((a, f) => a + (f.anulada ? 0 : f.salida), 0).toFixed(2)),
+        mediciones: filas.filter((f) => f.tipo === "lectura" && !f.anulada).length,
+        anulados: filas.filter((f) => f.anulada).length,
+        // La última diferencia acumulada del período: el número que hay que
+        // explicar. null si no hubo ninguna varilla -- sin medición no hay
+        // nada que contrastar, y decir "0" sería mentir.
+        descuadre_final: ultimaDifValida,
+      },
+    };
+  }
+
   /** Entrega 3 de Fase D: asistente de calibración de `umbral_diferencia_pct`.
    *
    *  Nunca se aplica solo -- devuelve el número sugerido JUNTO con la

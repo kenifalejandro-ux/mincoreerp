@@ -1664,6 +1664,149 @@ export class CombustibleRepository {
     };
   }
 
+  /** KARDEX DEL TANQUE: las tres historias en UNA sola línea de tiempo.
+   *
+   *  Hasta acá el módulo tenía tres listados separados --despachos,
+   *  recepciones y lecturas-- y ninguno cruzaba con los otros. Es lo primero
+   *  que pide un auditor y no existía.
+   *
+   *  ── Las dos verdades ──────────────────────────────────────────────────
+   *
+   *  El módulo mantiene A PROPÓSITO dos números independientes: el SALDO
+   *  TEÓRICO (lo que dice el papeleo: inicial + recepciones - despachos) y
+   *  el NIVEL MEDIDO (lo que dice la varilla). Un auditor no mira ninguno de
+   *  los dos solo: mira la DISTANCIA entre ellos y cómo evoluciona. Por eso
+   *  esto es una línea de tiempo y no tres listas al lado.
+   *
+   *  ── Por qué el saldo teórico NO se re-ancla en cada varilla ───────────
+   *
+   *  Es la decisión de diseño que define el reporte. Si cada medición
+   *  corrigiera el saldo al nivel real, un robo de 50 L/día en un tanque de
+   *  20.000 se vería como veinte filas de -50 (0,25%, indistinguible de una
+   *  varilla mal leída, nadie lo levanta). Arrastrando, la última fila dice
+   *  -1.000 y eso no se explica con temperatura ni redondeo.
+   *
+   *  Es la misma lección de la migración 0080: un acumulado que se reinicia
+   *  le regala al que roba de a poco el reinicio que necesita. Acá el
+   *  reinicio sería la varilla en vez de la recepción, pero el regalo es el
+   *  mismo.
+   *
+   *  ── Los anulados ─────────────────────────────────────────────────────
+   *
+   *  SE MUESTRAN, con su fecha y su motivo, pero suman 0 al saldo. Un vale
+   *  anulado ES evidencia -- ocultarlo convertiría el kardex en un reporte
+   *  que se maquilla borrando filas, que es exactamente lo contrario de
+   *  para qué existe.
+   *
+   *  ── El orden dentro del mismo instante ───────────────────────────────
+   *
+   *  Recepción (1) y despacho (2) van ANTES que la lectura (3): en la
+   *  realidad se mide DESPUÉS de cargar o despachar, así que la varilla
+   *  tiene que ver el efecto de los movimientos de su mismo timestamp. Si
+   *  fuera al revés, toda recepción registrada a la misma hora que su
+   *  varilla aparecería como un descuadre gigante. */
+  async findKardex(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    desde: string,
+    hasta: string
+  ) {
+    const result = await client.query<{
+      ocurrido_en: Date;
+      tipo: string;
+      referencia_id: string;
+      documento: string | null;
+      detalle: string | null;
+      entrada: string;
+      salida: string;
+      nivel_medido: string | null;
+      saldo_teorico: string;
+      usuario: string | null;
+      anulada_en: Date | null;
+      motivo_anulacion: string | null;
+    }>(
+      `
+      -- El punto de partida: la última varilla VIGENTE anterior al período.
+      -- Es el último número físicamente verificado, no un cálculo. Si no hay
+      -- ninguna (período anterior al alta del tanque), arranca en la primera
+      -- medición de adentro del período.
+      WITH ancla AS (
+        SELECT COALESCE(
+          (SELECT l.nivel FROM combustible_lecturas l
+            WHERE l.tenant_id = $1 AND l.combustible_id = $2
+              AND l.anulada_en IS NULL AND l.leido_en < $3::timestamptz
+            ORDER BY l.leido_en DESC, l.id DESC LIMIT 1),
+          (SELECT l.nivel FROM combustible_lecturas l
+            WHERE l.tenant_id = $1 AND l.combustible_id = $2
+              AND l.anulada_en IS NULL
+              AND l.leido_en >= $3::timestamptz AND l.leido_en <= $4::timestamptz
+            ORDER BY l.leido_en ASC, l.id ASC LIMIT 1),
+          0
+        ) AS nivel
+      ),
+      movimientos AS (
+        SELECT r.recibido_en AS ocurrido_en, 2 AS orden_tipo, 'recepcion' AS tipo,
+               r.id::text AS referencia_id,
+               CONCAT_WS(' ', r.tipo_documento, r.numero_documento) AS documento,
+               g.nombre AS detalle,
+               r.cantidad AS entrada, 0::numeric AS salida,
+               NULL::numeric AS nivel_medido,
+               r.usuario_id, r.anulada_en, r.motivo_anulacion
+          FROM combustible_recepciones r
+          LEFT JOIN combustible_grifos g
+                 ON g.id = r.grifo_id AND g.tenant_id = $1
+         WHERE r.tenant_id = $1 AND r.combustible_id = $2
+           AND r.recibido_en >= $3::timestamptz AND r.recibido_en <= $4::timestamptz
+
+        UNION ALL
+
+        SELECT d.despachado_en, 1, 'despacho',
+               d.id::text,
+               CONCAT(d.serie_talonario, '-', LPAD(d.n_vale::text, 5, '0')),
+               COALESCE(e.placa_codigo, d.tipo_destino),
+               0::numeric, d.cantidad,
+               NULL::numeric,
+               d.usuario_id, d.anulada_en, d.motivo_anulacion
+          FROM combustible_despachos d
+          LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1
+         WHERE d.tenant_id = $1 AND d.combustible_id = $2
+           AND d.despachado_en >= $3::timestamptz AND d.despachado_en <= $4::timestamptz
+
+        UNION ALL
+
+        -- La varilla no mueve el saldo teórico: lo CONTRASTA. Por eso entrada
+        -- y salida en 0 y el nivel aparte.
+        SELECT l.leido_en, 3, 'lectura',
+               l.id::text,
+               NULL,
+               l.origen,
+               0::numeric, 0::numeric,
+               l.nivel,
+               l.usuario_id, l.anulada_en, l.motivo_anulacion
+          FROM combustible_lecturas l
+         WHERE l.tenant_id = $1 AND l.combustible_id = $2
+           AND l.leido_en >= $3::timestamptz AND l.leido_en <= $4::timestamptz
+      )
+      SELECT m.ocurrido_en, m.tipo, m.referencia_id, m.documento, m.detalle,
+             m.entrada, m.salida, m.nivel_medido,
+             -- El saldo corriente. Los anulados aportan 0 (el CASE), así que
+             -- aparecen en la lista sin ensuciar la cuenta.
+             (SELECT a.nivel FROM ancla a) + SUM(
+               CASE WHEN m.anulada_en IS NULL THEN m.entrada - m.salida ELSE 0 END
+             ) OVER (ORDER BY m.ocurrido_en, m.orden_tipo, m.referencia_id
+                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS saldo_teorico,
+             u.nombre AS usuario,
+             m.anulada_en, m.motivo_anulacion
+        FROM movimientos m
+        LEFT JOIN usuarios u ON u.id = m.usuario_id AND u.tenant_id = $1
+       ORDER BY m.ocurrido_en, m.orden_tipo, m.referencia_id
+      `,
+      [tenantId, combustibleId, desde, hasta]
+    );
+    return result.rows;
+  }
+
   /** El ancla de una alerta: sobre QUÉ es. Un vale (los tipos que salen de
    *  un despacho), un tanque (nivel bajo) o una recepción (diferencia).
    *  Al menos una tiene que venir -- lo garantiza también el CHECK

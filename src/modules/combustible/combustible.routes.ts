@@ -1,7 +1,7 @@
 /**src/modules/combutible/combustible.routes.ts */
 
 import { Router } from "express";
-import { validate } from "../../server/middleware/validate";
+import { validate, validateQuery } from "../../server/middleware/validate";
 import { requireRole } from "../../server/shared/middlewares/roles.middleware";
 import { asyncHandler } from "../../server/shared/utils/asyncHandler";
 import {
@@ -21,6 +21,7 @@ import {
   anularDespachoCombustibleSchema,
   marcarAlertasLeidasCombustibleSchema,
   configCombustibleSchema,
+  kardexCombustibleSchema,
   resolverAlertaCombustibleSchema,
   bajaTanqueCombustibleSchema,
 } from "../../server/schemas/combustible.schema";
@@ -161,6 +162,16 @@ router.get(
 
 router.get("/:id", asyncHandler(controller.getById.bind(controller)));
 router.get("/:id/lecturas", asyncHandler(controller.getLecturas.bind(controller)));
+
+// Kardex del tanque: las tres historias (despachos, recepciones, lecturas)
+// en UNA línea de tiempo con saldo corriente. Solo admin -- es visibilidad
+// de gerencia y la herramienta del auditor, no trabajo de cancha.
+router.get(
+  "/:id/kardex",
+  requireRole("admin"),
+  validateQuery(kardexCombustibleSchema),
+  asyncHandler(controller.getKardex.bind(controller))
+);
 
 // Asistente de calibración del umbral (Fase D, entrega 3) -- solo admin,
 // es una decisión de configuración, no trabajo de cancha.
