@@ -43,6 +43,7 @@ import type {
   BajaTanqueCombustibleInput,
   ResolverAlertaCombustibleInput,
   ConfigCombustibleInput,
+  KardexCombustibleQuery,
 } from "../../server/schemas/combustible.schema";
 import { CombustibleService } from "./combustible.service";
 
@@ -1451,6 +1452,36 @@ export class CombustibleController {
       res.json(guardada);
     } catch {
       res.status(500).json({ error: "Error al guardar la configuración de combustible" });
+    }
+  }
+
+  /** GET /:id/kardex?desde=&hasta= -- el movimiento del tanque en UNA línea
+   *  de tiempo, con saldo corriente. Es lo primero que pide un auditor y
+   *  hasta ahora el módulo solo tenía tres historiales separados.
+   *
+   *  Solo admin, igual que la bitácora y las alertas: es visibilidad de
+   *  gerencia, no trabajo de cancha.
+   *
+   *  Sin paginar a propósito. Un kardex paginado no sirve: el saldo corriente
+   *  y el descuadre acumulado solo tienen sentido si se ve el período
+   *  entero. El período se acota con las fechas, no con páginas -- por eso
+   *  el schema exige las dos y limita el rango. */
+  async getKardex(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const id = Number(req.params.id);
+      const { desde, hasta } = req.validatedQuery as KardexCombustibleQuery;
+
+      const kardex = await withTenant(tenantId, (client) =>
+        service.armarKardex(client, tenantId, id, desde, hasta)
+      );
+      if (!kardex) {
+        res.status(404).json({ error: "Tanque no encontrado" });
+        return;
+      }
+      res.json(kardex);
+    } catch {
+      res.status(500).json({ error: "Error al armar el kardex del tanque" });
     }
   }
 

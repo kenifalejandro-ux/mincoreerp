@@ -203,6 +203,37 @@ interface SugerenciaUmbral {
 
 /** Un renglón de la bitácora del módulo. `detalle` es JSONB libre y cambia
  *  según la acción, igual que en las alertas. */
+interface FilaKardex {
+  ocurrido_en: string;
+  tipo: "recepcion" | "despacho" | "lectura";
+  referencia_id: string;
+  documento: string | null;
+  detalle: string | null;
+  entrada: number;
+  salida: number;
+  nivel_medido: number | null;
+  saldo_teorico: number | null;
+  dif_tramo: number | null;
+  dif_acumulada: number | null;
+  usuario: string;
+  anulada: boolean;
+  motivo_anulacion: string | null;
+}
+
+interface Kardex {
+  tanque: { codigo: string; tanque_nombre: string; unidad: string };
+  periodo: { desde: string; hasta: string };
+  saldo_inicial: number | null;
+  filas: FilaKardex[];
+  resumen: {
+    entradas: number;
+    salidas: number;
+    mediciones: number;
+    anulados: number;
+    descuadre_final: number | null;
+  };
+}
+
 interface EventoBitacora {
   id: string;
   accion: string;
@@ -899,6 +930,18 @@ export default function CombustiblePanel() {
    *  resaltarla. La notificación es un PUNTERO: su trabajo es dejarte
    *  parado sobre el hallazgo, no reemplazar a la bandeja donde se actúa. */
   const [alertaResaltadaId, setAlertaResaltadaId] = useState<number | null>(null);
+  // Kardex: el período arranca 30 días atrás porque es el ciclo con el que
+  // ya razona la operación (cierre, factura, planilla de vales).
+  const [modalKardexAbierto, setModalKardexAbierto] = useState(false);
+  const [cargandoKardex, setCargandoKardex] = useState(false);
+  const [kardex, setKardex] = useState<Kardex | null>(null);
+  const [errorKardex, setErrorKardex] = useState<string | null>(null);
+  const [kardexTanqueId, setKardexTanqueId] = useState<number | null>(null);
+  const [kardexDesde, setKardexDesde] = useState(() =>
+    new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10)
+  );
+  const [kardexHasta, setKardexHasta] = useState(() => new Date().toISOString().slice(0, 10));
+
   const [modalBitacoraAbierto, setModalBitacoraAbierto] = useState(false);
   const [cargandoBitacora, setCargandoBitacora] = useState(false);
   const [bitacora, setBitacora] = useState<EventoBitacora[]>([]);
@@ -1036,6 +1079,36 @@ export default function CombustiblePanel() {
   }, [cargarTanques]);
 
   // --- Alta / edición ---
+
+  const cargarKardex = async (tanqueId: number) => {
+    setCargandoKardex(true);
+    setErrorKardex(null);
+    try {
+      // El input date da solo el día; el backend pide un instante con zona.
+      // `hasta` se estira al final del día para que un movimiento de las
+      // 17:00 del último día no quede afuera del informe.
+      const desde = new Date(`${kardexDesde}T00:00:00`).toISOString();
+      const hasta = new Date(`${kardexHasta}T23:59:59`).toISOString();
+      const res = await apiFetch(
+        `/api/erp/combustible/${tanqueId}/kardex?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setErrorKardex(body.errors?.[0]?.message || body.error || "No se pudo armar el kardex.");
+        setKardex(null);
+        return;
+      }
+      setKardex(await res.json());
+    } finally {
+      setCargandoKardex(false);
+    }
+  };
+
+  const abrirModalKardex = async (tanqueId: number) => {
+    setKardexTanqueId(tanqueId);
+    setModalKardexAbierto(true);
+    await cargarKardex(tanqueId);
+  };
 
   const abrirModalBitacora = async () => {
     setModalBitacoraAbierto(true);
@@ -2435,6 +2508,13 @@ export default function CombustiblePanel() {
                         title="Registrar lectura"
                       >
                         ⛽
+                      </button>
+                      <button
+                        onClick={() => abrirModalKardex(t.id)}
+                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                        title="Kardex: movimiento del tanque con saldo corriente"
+                      >
+                        📒
                       </button>
                       <button
                         onClick={() => abrirModalEditar(t)}
@@ -4363,6 +4443,231 @@ export default function CombustiblePanel() {
       {/* Modal: alertas (migrations/0068) -- pantalla completa a la que
           lleva la campanita del Header. Hueco de talonario se resuelve
           solo; vale anulado necesita revisión manual de gerencia. */}
+      {/* KARDEX DEL TANQUE: las tres historias en una sola línea de tiempo.
+
+          Es lo primero que pide un auditor y el módulo no lo tenía: había
+          tres listados (despachos, recepciones, lecturas) que nunca se
+          cruzaban, y la pregunta del auditor --"¿cuánto falta y desde
+          cuándo?"-- no se contesta con ninguno de los tres por separado.
+
+          La columna que importa es la última: el saldo teórico NO se corrige
+          con la varilla, así que la diferencia ARRASTRA. Un faltante de 50 L
+          por medición es invisible; los 1.000 L del final no. */}
+      {modalKardexAbierto && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-white w-full max-w-6xl rounded-3xl shadow-2xl max-h-[92vh] flex flex-col">
+            <div className="p-6 border-b flex justify-between items-start shrink-0">
+              <div>
+                <h3 className="text-xl font-bold">
+                  Kardex{kardex ? ` — ${kardex.tanque.codigo}` : ""}
+                </h3>
+                <p className="text-sm text-slate-500">
+                  Todo el movimiento del tanque en una sola línea de tiempo, con el saldo que
+                  debería haber al lado del que se midió.
+                </p>
+              </div>
+              <button
+                onClick={() => setModalKardexAbierto(false)}
+                className="text-slate-400 hover:text-slate-600 text-2xl leading-none"
+                aria-label="Cerrar"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="px-6 py-4 bg-slate-50 border-b flex flex-wrap items-end gap-3 shrink-0">
+              <div>
+                <label
+                  htmlFor="kardex-desde"
+                  className="block text-xs font-bold text-slate-500 uppercase mb-1"
+                >
+                  Desde
+                </label>
+                <input
+                  id="kardex-desde"
+                  type="date"
+                  className="border border-slate-200 rounded-lg p-2"
+                  value={kardexDesde}
+                  onChange={(e) => setKardexDesde(e.target.value)}
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="kardex-hasta"
+                  className="block text-xs font-bold text-slate-500 uppercase mb-1"
+                >
+                  Hasta
+                </label>
+                <input
+                  id="kardex-hasta"
+                  type="date"
+                  className="border border-slate-200 rounded-lg p-2"
+                  value={kardexHasta}
+                  onChange={(e) => setKardexHasta(e.target.value)}
+                />
+              </div>
+              <button
+                onClick={() => kardexTanqueId !== null && cargarKardex(kardexTanqueId)}
+                disabled={cargandoKardex}
+                className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50"
+              >
+                {cargandoKardex ? "Armando..." : "Ver período"}
+              </button>
+              {errorKardex && (
+                <span className="text-xs font-semibold text-red-600">{errorKardex}</span>
+              )}
+
+              {/* El cierre del período: lo que un auditor copia al informe. */}
+              {kardex && (
+                <div className="flex flex-wrap gap-4 ml-auto text-sm">
+                  <span className="text-slate-500">
+                    Entradas <strong className="text-slate-900">{kardex.resumen.entradas}</strong>
+                  </span>
+                  <span className="text-slate-500">
+                    Salidas <strong className="text-slate-900">{kardex.resumen.salidas}</strong>
+                  </span>
+                  <span className="text-slate-500">
+                    Mediciones{" "}
+                    <strong className="text-slate-900">{kardex.resumen.mediciones}</strong>
+                  </span>
+                  <span
+                    className={
+                      kardex.resumen.descuadre_final === null
+                        ? "text-slate-400"
+                        : kardex.resumen.descuadre_final < 0
+                          ? "text-red-600 font-bold"
+                          : kardex.resumen.descuadre_final > 0
+                            ? "text-amber-600 font-bold"
+                            : "text-emerald-600 font-bold"
+                    }
+                  >
+                    {kardex.resumen.descuadre_final === null
+                      ? "Sin varilla en el período"
+                      : `Descuadre ${kardex.resumen.descuadre_final} ${kardex.tanque.unidad}`}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="overflow-auto p-6">
+              {cargandoKardex ? (
+                <p className="text-slate-400 text-center py-8">Armando el kardex...</p>
+              ) : !kardex || kardex.filas.length === 0 ? (
+                <p className="text-slate-400 text-center py-8">Sin movimientos en este período.</p>
+              ) : (
+                <table className="w-full text-sm border-collapse">
+                  <thead>
+                    <tr className="text-left text-xs font-bold text-slate-500 uppercase border-b">
+                      <th className="p-2">Fecha</th>
+                      <th className="p-2">Movimiento</th>
+                      <th className="p-2">Documento</th>
+                      <th className="p-2 text-right">Entrada</th>
+                      <th className="p-2 text-right">Salida</th>
+                      <th className="p-2 text-right">Saldo teórico</th>
+                      <th className="p-2 text-right">Medido</th>
+                      <th
+                        className="p-2 text-right"
+                        title="Contra la varilla anterior: ubica CUÁNDO pasó"
+                      >
+                        Dif. tramo
+                      </th>
+                      <th
+                        className="p-2 text-right"
+                        title="Contra el inicio del período: CUÁNTO falta en total"
+                      >
+                        Dif. acumulada
+                      </th>
+                      <th className="p-2">Quién</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {kardex.saldo_inicial !== null && (
+                      <tr className="border-b bg-slate-50 text-slate-500">
+                        <td className="p-2 italic" colSpan={5}>
+                          Saldo al inicio del período (última varilla anterior)
+                        </td>
+                        <td className="p-2 text-right font-bold">{kardex.saldo_inicial}</td>
+                        <td className="p-2" colSpan={4}></td>
+                      </tr>
+                    )}
+                    {kardex.filas.map((f) => {
+                      const etiqueta =
+                        f.tipo === "recepcion"
+                          ? "Recepción"
+                          : f.tipo === "despacho"
+                            ? "Despacho"
+                            : "Varilla";
+                      return (
+                        <tr
+                          key={`${f.tipo}-${f.referencia_id}`}
+                          className={`border-b ${f.anulada ? "text-slate-400 line-through bg-slate-50/60" : ""}`}
+                        >
+                          <td className="p-2 whitespace-nowrap">
+                            {new Date(f.ocurrido_en).toLocaleString("es-PE", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "2-digit",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </td>
+                          <td className="p-2">
+                            {etiqueta}
+                            {f.detalle && (
+                              <span className="text-slate-400 text-xs"> · {f.detalle}</span>
+                            )}
+                            {/* El motivo va SIN tachar: es lo único que
+                                distingue un error de tipeo de un borrado
+                                conveniente, así que tiene que leerse. */}
+                            {f.anulada && f.motivo_anulacion && (
+                              <span className="block text-[11px] text-red-500 no-underline">
+                                Anulado: {f.motivo_anulacion}
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-2 font-mono text-xs">{f.documento ?? "—"}</td>
+                          <td className="p-2 text-right text-emerald-700">
+                            {f.entrada > 0 ? f.entrada : ""}
+                          </td>
+                          <td className="p-2 text-right text-slate-700">
+                            {f.salida > 0 ? f.salida : ""}
+                          </td>
+                          <td className="p-2 text-right font-semibold">{f.saldo_teorico ?? "—"}</td>
+                          <td className="p-2 text-right font-semibold">{f.nivel_medido ?? ""}</td>
+                          <td className="p-2 text-right">
+                            {f.dif_tramo === null ? "" : f.dif_tramo}
+                          </td>
+                          <td
+                            className={`p-2 text-right font-bold ${
+                              f.dif_acumulada === null
+                                ? ""
+                                : f.dif_acumulada < 0
+                                  ? "text-red-600"
+                                  : f.dif_acumulada > 0
+                                    ? "text-amber-600"
+                                    : "text-emerald-600"
+                            }`}
+                          >
+                            {f.dif_acumulada === null ? "" : f.dif_acumulada}
+                          </td>
+                          <td className="p-2 text-slate-500 text-xs">{f.usuario}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+
+              {kardex && kardex.resumen.anulados > 0 && (
+                <p className="text-[11px] text-slate-400 mt-4">
+                  Las filas tachadas están anuladas: se muestran porque son evidencia, pero no suman
+                  al saldo.
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {/* Bitácora: quién cambió qué en el módulo.
 
           Antes esto solo lo veía el dueño del software desde el panel de

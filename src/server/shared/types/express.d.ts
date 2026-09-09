@@ -5,6 +5,7 @@ declare module "express-serve-static-core" {
   interface Request {
     id?: string;
     validatedBody?: unknown;
+    validatedQuery?: unknown;
     log?: Logger;
     usuario?: UsuarioPayload;
     tenantId?: string;
