@@ -16,6 +16,11 @@ const UNIDADES_CAPACIDAD = ["gal", "L"] as const;
 const camposCapacidadTanque = {
   capacidad_tanque: z.number().positive().max(99999999).optional(),
   capacidad_tanque_unidad: z.enum(UNIDADES_CAPACIDAD).optional(),
+  // El conductor asignado (migración 0083). Nombre completo en un campo
+  // porque así viene en el vale de papel ("CONDUCTOR"); partirlo obligaría a
+  // decidir dónde termina el nombre en cada carga.
+  conductor_nombre: z.string().trim().min(1).max(150).optional(),
+  conductor_dni: z.string().trim().min(6).max(15).optional(),
 };
 
 /** Espejo en Zod del CHECK `equipos_capacidad_tanque_check` de la migración

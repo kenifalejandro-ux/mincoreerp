@@ -556,6 +556,7 @@ export class CombustibleRepository {
     lectura_contometro, lectura_horometro, lectura_odometro, horas_abastecidas,
     costo_unitario, (cantidad * costo_unitario) AS costo_total, observaciones,
     usuario_id, despachado_en, creado_en,
+    conductor_nombre, conductor_dni,
     anulada_en, anulada_por, motivo_anulacion
   `;
 
@@ -599,9 +600,19 @@ export class CombustibleRepository {
           tenant_id, origen, combustible_id, grifo_id, tipo_combustible,
           tipo_destino, equipo_id, serie_talonario, n_vale, cantidad,
           lectura_contometro, lectura_horometro, lectura_odometro, horas_abastecidas,
-          costo_unitario, observaciones, usuario_id, despachado_en
+          costo_unitario, observaciones, usuario_id, despachado_en,
+          conductor_nombre, conductor_dni
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+        -- El conductor se COPIA del equipo en este mismo INSERT (0083). Nadie
+        -- lo tipea, y no se resuelve después con un JOIN a propósito: los
+        -- conductores rotan, y un JOIN devolvería el chofer de HOY para un
+        -- vale de hace tres meses. El vale guarda quién manejaba cuando el
+        -- combustible salió, que es lo único que hace confiable el reporte de
+        -- consumo por conductor.
+        SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
+               e.conductor_nombre, e.conductor_dni
+          FROM (SELECT 1) dummy
+          LEFT JOIN equipos e ON e.id = $7::int AND e.tenant_id = $1
         RETURNING ${CombustibleRepository.COLUMNAS_DESPACHO}
         `,
         [
