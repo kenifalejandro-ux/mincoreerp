@@ -1017,6 +1017,12 @@ function NuevoUsuarioForm({ tenantId, onCreado }: { tenantId: string; onCreado: 
         <option value="admin">admin</option>
         <option value="operador">operador</option>
         <option value="lectura">lectura</option>
+        {/* Roles de cancha (0085). Se listan acá para no dejar el panel corto
+            frente al ERP, pero el alta de esta gente la hace el admin del
+            tenant desde su propia pantalla de Usuarios: son decenas de
+            personas que rotan, no altas de plataforma. */}
+        <option value="grifero">grifero</option>
+        <option value="conductor_ruta">conductor de ruta</option>
       </select>
 
       {error && (

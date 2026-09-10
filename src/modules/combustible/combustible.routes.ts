@@ -40,9 +40,16 @@ router.get("/", asyncHandler(controller.getAll.bind(controller)));
 // (mismo motivo que /lecturas más abajo).
 router.get("/despachos", asyncHandler(controller.listarDespachos.bind(controller)));
 router.get("/despachos/huecos", asyncHandler(controller.getHuecosTalonario.bind(controller)));
+// Los cuatro roles pueden POSTear acá, pero NO lo mismo: este endpoint sirve
+// dos flujos distintos (el vale del tanque propio y la compra en grifo de
+// ruta) que se distinguen por el campo `origen` del body. requireRole decide
+// por RUTA, así que no alcanza -- sin el chequeo que hace el service, un
+// conductor de ruta podría despachar del tanque de la empresa pasando por
+// esta misma URL, y el rol parecería restringido sin serlo. Ver
+// validarOrigenPermitidoParaRol() en combustible.service.ts.
 router.post(
   "/despachos",
-  requireRole("admin", "operador"),
+  requireRole("admin", "operador", "grifero", "conductor_ruta"),
   validate(crearDespachoCombustibleSchema),
   asyncHandler(controller.crearDespacho.bind(controller))
 );
@@ -51,6 +58,16 @@ router.post(
 // pueden registrarlo: el punto 3 del documento es literalmente sobre el
 // grifero que arruina un vale en cancha y necesita rendirlo ahí mismo, sin
 // depender de nadie (mismo criterio que anular una lectura).
+//
+// El rol `grifero` (0085) queda AFUERA a propósito, y sí, contradice el
+// párrafo de arriba: cuando se escribió, "grifero" era una persona con rol
+// `operador`, y la comodidad de rendir el vale en el momento pesaba más.
+// Ahora que es un rol propio, pesa más lo otro. Anular es la maniobra de
+// fraude más limpia que existe -- se despachan 200 L de verdad, se anula el
+// vale, el combustible salió y el papel dice que no -- y si el que despacha
+// es el mismo que anula, no hay segregación, hay autopsia. Decisión de Kenif
+// (2026-09-10): "el grifero no anula sus vales, que dependa del admin".
+// El costo es real: un vale mal tipeado le cuesta un llamado al admin.
 router.patch(
   "/despachos/:despachoId/anular",
   requireRole("admin", "operador"),
@@ -94,15 +111,26 @@ router.patch(
 // Recepciones (Fase C, migrations/0064) -- segmentos literales, mismo
 // motivo que /despachos y /grifos: tienen que ir ANTES de /:id.
 //
-// Crear una recepción es admin únicamente, a diferencia de un despacho
-// (admin+operador): recibir combustible de un proveedor es un acto
-// administrativo con sustento tributario de por medio (factura/guía), y lo
-// que registra define cómo se valoriza TODO el inventario del tanque -- no
-// es trabajo de cancha. Mismo criterio que los precios (0063).
+// Crear una recepción era admin únicamente: recibir combustible de un
+// proveedor es un acto administrativo con sustento tributario de por medio
+// (factura/guía) y define cómo se valoriza TODO el inventario del tanque.
+//
+// Desde 0085 el `grifero` también puede, por una razón operativa simple: es
+// quien está parado ahí cuando llega la cisterna, y hacer que la carga espere
+// a que un administrativo esté disponible garantiza que se cargue de memoria
+// horas después -- o que no se cargue. Lo que lo hace tolerable es que el
+// sistema ya exige varilla previa para aceptar una recepción: el grifero no
+// puede inflar el ingreso sin dejar antes la medición que lo va a contradecir.
+//
+// Decisión de Kenif (2026-09-10): "el grifero registra la recepción, el admin
+// lo valida". Esa validación --una constancia del admin contra la guía de
+// remisión-- es un flujo aparte, todavía sin implementar: el combustible de
+// una recepción sin validar SÍ cuenta desde que se registra (entró de
+// verdad), si no la próxima varilla mostraría un excedente inexistente.
 router.get("/recepciones", asyncHandler(controller.listarRecepciones.bind(controller)));
 router.post(
   "/recepciones",
-  requireRole("admin"),
+  requireRole("admin", "grifero"),
   validate(crearRecepcionCombustibleSchema),
   asyncHandler(controller.crearRecepcion.bind(controller))
 );
@@ -248,9 +276,16 @@ router.post(
 // Ruta literal, sin `:id` -- el combustible_id viaja en el body a propósito
 // (ver el comentario en el controller). Definida antes de /:id/nivel por
 // legibilidad; no hay ambigüedad real porque los métodos HTTP son distintos.
+// El `grifero` entra acá pero de forma CONDICIONAL: si puede o no tomar
+// varilla lo decide `grifero_registra_varilla` de la config del tenant
+// (0085), y eso no se puede resolver con requireRole, que no lee la base.
+// El middleware lo deja pasar y el controller consulta la política. Default
+// true, porque es lo que hace hoy la mayoría: la varilla la toma el mismo
+// que despacha, y separar quien mide de quien despacha es una política que
+// solo puede permitirse una empresa con gente de sobra.
 router.post(
   "/lecturas",
-  requireRole("admin", "operador"),
+  requireRole("admin", "operador", "grifero"),
   validate(registrarLecturaCombustibleSchema),
   asyncHandler(controller.registrarLectura.bind(controller))
 );
@@ -258,7 +293,9 @@ router.post(
 // 🚫 anular una lectura mal cargada -- admin y operador, los mismos que
 // pueden registrarla: quien se equivoca al tipear tiene que poder
 // corregirlo en el momento, sin depender de nadie más (ver el punto 3 de
-// docs/architecture/control-de-combustible.md). Va ANTES de /:id/nivel
+// docs/architecture/control-de-combustible.md). El `grifero` queda afuera por
+// el mismo motivo que en el vale: una varilla que se puede anular es una
+// varilla que se puede hacer coincidir con lo que uno ya declaró. Va ANTES de /:id/nivel
 // porque "lecturas" es un segmento literal: si /:id lo capturara primero,
 // nunca llegaría acá.
 router.patch(

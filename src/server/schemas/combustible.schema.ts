@@ -433,6 +433,20 @@ export const configCombustibleSchema = z.object({
   // significa "estricto", significa "nadie puede recibir nada".
   llenados_por_dia_max: z.number().min(0.1).max(50).nullable(),
   tope_diario_sin_capacidad_l: z.number().positive().max(9_999_999).nullable(),
+  // Si el rol `grifero` (0085) puede tomar varilla. Decisión de Kenif: en la
+  // operación real de este cliente la toma el mismo que despacha, así que la
+  // separación entre quien mide y quien despacha es una POLÍTICA que cada
+  // empresa elige, no una regla que el sistema imponga.
+  //
+  // .default(true) y no requerido: es el ÚNICO campo opcional de este schema,
+  // a propósito. Agregarlo como requerido rompía todo llamador existente del
+  // PUT --incluida la pantalla vieja que siga abierta en un navegador-- y el
+  // default coincide con el comportamiento que ya había. El riesgo conocido
+  // es el inverso: un cliente viejo que mande la config SIN este campo se lo
+  // vuelve a poner en true sin que nadie lo pida. Por eso pasar de false a
+  // true cuenta como aflojamiento y queda auditado (ver
+  // evaluarAflojamientoConfig).
+  grifero_registra_varilla: z.boolean().default(true),
 });
 
 // ── Kardex del tanque ───────────────────────────────────────────────────
