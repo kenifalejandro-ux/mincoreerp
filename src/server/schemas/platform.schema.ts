@@ -89,12 +89,28 @@ export const actualizarModuloGlobalSchema = z
 
 export type ActualizarModuloGlobalInput = z.infer<typeof actualizarModuloGlobalSchema>;
 
-export const crearUsuarioEnTenantSchema = z.object({
-  nombre: z.string().trim().min(1, "Nombre requerido").max(100),
-  email: z.string().trim().toLowerCase().email("Correo inválido").max(150),
-  password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres").max(200),
-  rol: z.enum(["admin", "operador", "lectura"]).optional(),
-});
+/** Desde 0084 el correo es OPCIONAL y puede reemplazarse por un DNI: el
+ *  grifero y los conductores de ruta no tienen correo corporativo, y exigirles
+ *  uno significa inventarlo -- un correo inventado no recibe nada, así que la
+ *  recuperación de contraseña no funcionaría, solo lo parecería.
+ *
+ *  Al menos uno de los dos tiene que venir: un usuario sin correo NI DNI no
+ *  podría entrar nunca. El mismo CHECK existe a nivel de base. */
+export const crearUsuarioEnTenantSchema = z
+  .object({
+    nombre: z.string().trim().min(1, "Nombre requerido").max(100),
+    email: z.string().trim().toLowerCase().email("Correo inválido").max(150).optional(),
+    // Sin formato fijo: el DNI peruano son 8 dígitos, pero un extranjero usa
+    // carné de extranjería y un tercero puede tener pasaporte. Validar "8
+    // dígitos" dejaría afuera gente que trabaja en la mina.
+    dni: z.string().trim().min(6, "DNI demasiado corto").max(15).optional(),
+    password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres").max(200),
+    rol: z.enum(["admin", "operador", "lectura"]).optional(),
+  })
+  .refine((v) => Boolean(v.email) || Boolean(v.dni), {
+    message: "Indicá un correo o un DNI: sin ninguno de los dos no podría entrar",
+    path: ["email"],
+  });
 
 export type CrearUsuarioEnTenantInput = z.infer<typeof crearUsuarioEnTenantSchema>;
 

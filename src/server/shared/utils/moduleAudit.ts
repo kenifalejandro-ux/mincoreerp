@@ -45,6 +45,11 @@ export function contextoAuditoriaModulo(req: Request): ContextoAuditoria {
     // Quién fue va en `usuario_id` (FK contra usuarios, columna que existe
     // desde la migración 0012 y que estos call sites ya llenaban) y su
     // email en actor_label. No hace falta ninguna columna nueva.
-    actorLabel: usuario.email,
+    //
+    // Desde 0084 el email puede ser NULL: un usuario de cancha entra con DNI.
+    // Sin el fallback, la bitácora mostraría vacío justo para los usuarios
+    // cuyas acciones más interesa poder atribuir -- el grifero que despacha.
+    // El orden es correo, DNI, nombre: del más único al más ambiguo.
+    actorLabel: usuario.email ?? usuario.dni ?? usuario.nombre,
   };
 }

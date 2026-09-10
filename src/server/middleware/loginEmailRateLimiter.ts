@@ -25,10 +25,13 @@ export default crearLimitador({
   prefijoClave: "login-email",
   windowMs: env.loginEmailRateLimitWindowMs,
   maxRequests: env.loginEmailRateLimitMaxRequests,
-  mensaje: "Demasiados intentos con este correo. Esperá un momento antes de volver a intentar.",
+  mensaje: "Demasiados intentos con esta cuenta. Esperá un momento antes de volver a intentar.",
   extraerClave: (req: Request) => {
+    // Desde 0084 el identificador puede ser un correo o un DNI. La protección
+    // es la misma --frenar la fuerza bruta contra UNA cuenta-- y la clave se
+    // arma igual con lo que haya venido.
     const body = req.validatedBody as LoginInput | undefined;
-    if (!body?.tenantSlug || !body?.email) return undefined;
-    return `${body.tenantSlug}:${body.email}`;
+    if (!body?.tenantSlug || !body?.identificador) return undefined;
+    return `${body.tenantSlug}:${body.identificador.toLowerCase()}`;
   },
 });

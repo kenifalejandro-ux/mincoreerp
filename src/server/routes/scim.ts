@@ -158,7 +158,12 @@ export function createScimRouter() {
           usuarioAScim({
             id: usuario.id,
             nombre: usuario.nombre,
-            email: usuario.email,
+            // SCIM sincroniza desde un IdP corporativo, así que el correo
+            // siempre viene. El `?? ""` es solo para el tipo, que desde 0084
+            // admite null por los usuarios de cancha -- que nunca llegan
+            // por acá.
+            email: usuario.email ?? "",
+            dni: usuario.dni ?? null,
             rol: usuario.rol,
             activo: true,
           })
