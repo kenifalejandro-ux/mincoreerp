@@ -18,12 +18,15 @@ export type EquipoPayload = {
   // configurar, y entonces el sobredespacho no se evalúa para este equipo.
   capacidad_tanque?: number;
   capacidad_tanque_unidad?: string;
+  conductor_nombre?: string;
+  conductor_dni?: string;
 };
 
 // Todas las columnas devueltas por el ABM -- centralizadas para que agregar
 // una no obligue a tocar cuatro queries y olvidarse de la quinta.
 const COLUMNAS_EQUIPO = `id, placa_codigo, tipo, marca, modelo, tipo_medidor,
-  capacidad_tanque, capacidad_tanque_unidad, activo, creado_en`;
+  capacidad_tanque, capacidad_tanque_unidad,
+  conductor_nombre, conductor_dni, activo, creado_en`;
 
 export const EquiposRepository = {
   async findAll(client: PoolClient, tenantId: string, { pageSize, offset }: Paginacion) {
@@ -56,8 +59,8 @@ export const EquiposRepository = {
 
     const result = await client.query(
       `INSERT INTO equipos (tenant_id, placa_codigo, tipo, marca, modelo, tipo_medidor,
-         capacidad_tanque, capacidad_tanque_unidad)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         capacidad_tanque, capacidad_tanque_unidad, conductor_nombre, conductor_dni)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING ${COLUMNAS_EQUIPO}`,
       [
         tenantId,
@@ -68,6 +71,8 @@ export const EquiposRepository = {
         tipo_medidor ?? null,
         data.capacidad_tanque ?? null,
         data.capacidad_tanque_unidad ?? null,
+        data.conductor_nombre ?? null,
+        data.conductor_dni ?? null,
       ]
     );
 
@@ -85,8 +90,10 @@ export const EquiposRepository = {
         modelo = $4,
         tipo_medidor = $5,
         capacidad_tanque = $6,
-        capacidad_tanque_unidad = $7
-      WHERE id = $8 AND tenant_id = $9
+        capacidad_tanque_unidad = $7,
+        conductor_nombre = $8,
+        conductor_dni = $9
+      WHERE id = $10 AND tenant_id = $11
       RETURNING ${COLUMNAS_EQUIPO}`,
       [
         placa_codigo,
@@ -96,6 +103,8 @@ export const EquiposRepository = {
         tipo_medidor ?? null,
         data.capacidad_tanque ?? null,
         data.capacidad_tanque_unidad ?? null,
+        data.conductor_nombre ?? null,
+        data.conductor_dni ?? null,
         id,
         tenantId,
       ]

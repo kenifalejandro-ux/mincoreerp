@@ -21,6 +21,8 @@ interface Equipo {
   // a propósito: un dato inventado sería peor que ninguno.
   capacidad_tanque: string | null;
   capacidad_tanque_unidad: "gal" | "L" | null;
+  conductor_nombre: string | null;
+  conductor_dni: string | null;
   activo: boolean;
   creado_en: string;
 }
@@ -85,6 +87,8 @@ export default function EquiposTable() {
     tipo_medidor: "" as "" | "horometro" | "odometro",
     capacidad_tanque: "",
     capacidad_tanque_unidad: "L" as "gal" | "L",
+    conductor_nombre: "",
+    conductor_dni: "",
   });
 
   const fetchEquipos = useCallback(async (paginaAConsultar: number) => {
@@ -126,6 +130,8 @@ export default function EquiposTable() {
       modelo: e.modelo ?? "",
       tipo_medidor: e.tipo_medidor ?? "",
       capacidad_tanque: e.capacidad_tanque ?? "",
+      conductor_nombre: e.conductor_nombre ?? "",
+      conductor_dni: e.conductor_dni ?? "",
       capacidad_tanque_unidad: e.capacidad_tanque_unidad ?? "L",
     });
     setIsModalOpen(true);
@@ -162,6 +168,10 @@ export default function EquiposTable() {
       tipo_medidor: formData.tipo_medidor === "" ? undefined : formData.tipo_medidor,
       capacidad_tanque: capacidadCargada ? Number(formData.capacidad_tanque) : undefined,
       capacidad_tanque_unidad: capacidadCargada ? formData.capacidad_tanque_unidad : undefined,
+      // Vacío = sin cargar, no se manda: el schema los tiene opcionales y un
+      // string vacío fallaría el min(1).
+      conductor_nombre: formData.conductor_nombre.trim() || undefined,
+      conductor_dni: formData.conductor_dni.trim() || undefined,
     };
     // cliente_uuid solo viaja al crear -- editar no pasa por
     // idempotentInsert() del lado del servidor.
@@ -188,6 +198,8 @@ export default function EquiposTable() {
         tipo_medidor: "",
         capacidad_tanque: "",
         capacidad_tanque_unidad: "L",
+        conductor_nombre: "",
+        conductor_dni: "",
       });
 
       // 202 = no había red y quedó en la cola del dispositivo (ver
@@ -238,6 +250,8 @@ export default function EquiposTable() {
               tipo_medidor: "",
               capacidad_tanque: "",
               capacidad_tanque_unidad: "L",
+              conductor_nombre: "",
+              conductor_dni: "",
             });
             // Se regenera en cada apertura: si no, el segundo equipo
             // legítimo que se registre reusaría la clave del primero y el
@@ -487,6 +501,48 @@ export default function EquiposTable() {
                   Bambamarca). Un volquete se mide por horómetro, un tráiler por odómetro.
                 </p>
               </div>
+              {/* El conductor asignado (0083). Se copia al vale en el momento
+                  del despacho, así el consumo por conductor no se reescribe
+                  cuando la unidad cambia de chofer. */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label
+                    htmlFor="equipo-conductor"
+                    className="text-xs font-bold text-slate-700 uppercase"
+                  >
+                    Conductor
+                  </label>
+                  <input
+                    id="equipo-conductor"
+                    type="text"
+                    placeholder="Nombre y apellidos"
+                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    value={formData.conductor_nombre}
+                    onChange={(e) => setFormData({ ...formData, conductor_nombre: e.target.value })}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label
+                    htmlFor="equipo-dni"
+                    className="text-xs font-bold text-slate-700 uppercase"
+                  >
+                    DNI
+                  </label>
+                  <input
+                    id="equipo-dni"
+                    type="text"
+                    placeholder="Ej: 12345678"
+                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    value={formData.conductor_dni}
+                    onChange={(e) => setFormData({ ...formData, conductor_dni: e.target.value })}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-slate-600 -mt-2">
+                Queda copiado en cada vale que se despache a esta unidad, así el consumo por
+                conductor sigue siendo correcto aunque después cambie de chofer.
+              </p>
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
