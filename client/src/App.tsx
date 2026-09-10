@@ -17,9 +17,40 @@ const FacturacionView = lazy(() => import("./components/facturacion/FacturacionV
 // muestra si no sos admin, y el backend la rechaza igual (requireRole).
 const UsuariosView = lazy(() => import("./components/usuarios/UsuariosView"));
 
+type UsuarioDeSesion = { rol: string; modulosPermitidos: string[] } | null;
+
+/** Si esta pestaña existe PARA ESTE usuario. Las dos que no son módulos van
+ *  primero: Facturación la ve cualquiera, Usuarios solo el admin. */
+function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
+  if (tab === "facturacion") return true;
+  if (tab === "usuarios") return usuario?.rol === "admin";
+  return (usuario?.modulosPermitidos ?? []).includes(tab);
+}
+
+/** Con qué abre la app: el dashboard si lo tiene, y si no el primer módulo
+ *  que sí, en el orden del menú. */
+function primeraPestania(usuario: UsuarioDeSesion): string {
+  const permitidos = usuario?.modulosPermitidos ?? [];
+  if (permitidos.includes("dashboard")) return "dashboard";
+  return MODULOS_CLIENTE.find((m) => permitidos.includes(m.id))?.id ?? "dashboard";
+}
+
 function App() {
-  const [activeTab, setActiveTab] = useState("dashboard");
   const { usuario, cargando, estaAutenticado, login } = useAuth();
+  const [activeTab, setActiveTab] = useState("dashboard");
+
+  // "dashboard" fijo dejaba la pantalla EN BLANCO a cualquiera que no tuviera
+  // ese módulo: el Sidebar no le dibuja el botón, activeTab queda apuntando a
+  // un módulo que no está en su lista y no se renderiza nada. Era latente
+  // --hasta ahora todo usuario tenía todos los módulos-- y dejó de serlo con
+  // los roles de cancha (0085), que solo ven Combustible.
+  //
+  // Se corrige DERIVANDO en cada render en vez de con un efecto que corrija
+  // el estado: el usuario llega asincrónicamente (AuthContext pregunta al
+  // backend), así que en el primer render todavía es null y cualquier valor
+  // inicial calculado ahí sería el equivocado. Derivar no tiene ese problema
+  // ni pinta un frame en blanco antes de acomodarse.
+  const tabActiva = pestaniaDisponible(activeTab, usuario) ? activeTab : primeraPestania(usuario);
 
   if (cargando) {
     return (
@@ -47,16 +78,16 @@ function App() {
   // El componente de cada módulo viaja al navegador recién cuando se abre
   // (React.lazy, ver modules/registry.tsx) — agregar un módulo nuevo no
   // infla el chunk inicial de los que ya existen.
-  const moduloActivo = MODULOS_CLIENTE.find((m) => m.id === activeTab);
+  const moduloActivo = MODULOS_CLIENTE.find((m) => m.id === tabActiva);
   const ComponenteActivo =
-    activeTab === "facturacion"
+    tabActiva === "facturacion"
       ? FacturacionView
-      : activeTab === "usuarios" && usuario!.rol === "admin"
+      : tabActiva === "usuarios"
         ? UsuariosView
         : moduloActivo?.componente;
 
   return (
-    <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
+    <Layout activeTab={tabActiva} setActiveTab={setActiveTab}>
       <Suspense fallback={<div className="p-20 text-center text-slate-500">Cargando...</div>}>
         {ComponenteActivo && <ComponenteActivo />}
       </Suspense>

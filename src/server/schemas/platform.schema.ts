@@ -105,7 +105,9 @@ export const crearUsuarioEnTenantSchema = z
     // dígitos" dejaría afuera gente que trabaja en la mina.
     dni: z.string().trim().min(6, "DNI demasiado corto").max(15).optional(),
     password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres").max(200),
-    rol: z.enum(["admin", "operador", "lectura"]).optional(),
+    // grifero / conductor_ruta: los roles de cancha (0085). Se aceptan acá
+    // igual que los de oficina -- el alta pasa por el mismo endpoint.
+    rol: z.enum(["admin", "operador", "lectura", "grifero", "conductor_ruta"]).optional(),
   })
   .refine((v) => Boolean(v.email) || Boolean(v.dni), {
     message: "Indicá un correo o un DNI: sin ninguno de los dos no podría entrar",

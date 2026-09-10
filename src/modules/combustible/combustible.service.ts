@@ -12,6 +12,7 @@ import type {
   CrearGrifoCombustibleInput,
   ActualizarGrifoCombustibleInput,
 } from "../../server/schemas/combustible.schema";
+import type { UsuarioPayload } from "../../server/services/auth.service";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { CombustibleRepository } from "./combustible.repository";
 import { EquiposRepository } from "../equipos/equipos.repository";
@@ -459,6 +460,37 @@ export class CombustibleService {
 
   // ── Despachos (Fase B) ───────────────────────────────────────────────
 
+  /** Qué tipo de despacho puede registrar cada rol (migración 0085).
+   *
+   *  Existe porque `requireRole` no alcanza: el vale del tanque propio y la
+   *  compra en grifo de ruta entran por el MISMO endpoint
+   *  (POST /despachos) y se distinguen por el campo `origen` del body.
+   *  Un middleware que decide por ruta no puede separarlos, así que sin esto
+   *  el `conductor_ruta` --que solo debería poder cargar en grifos externos--
+   *  podría despachar del tanque de la empresa, y el rol parecería
+   *  restringido sin serlo.
+   *
+   *  Es una función pura y sin acceso a base a propósito: se ejecuta ANTES de
+   *  abrir la transacción, y así se puede probar el reparto de permisos sin
+   *  levantar medio módulo.
+   *
+   *  Los roles de oficina (admin, operador) pueden los dos orígenes: son los
+   *  que cargan lo que llega en papel desde cualquiera de los dos circuitos.
+   *
+   *  Devuelve el motivo del rechazo, o null si está permitido. */
+  motivoOrigenNoPermitido(
+    rol: UsuarioPayload["rol"],
+    origen: "tanque_propio" | "compra_externa"
+  ): string | null {
+    if (rol === "grifero" && origen !== "tanque_propio") {
+      return "Tu usuario registra vales del tanque, no compras en grifos de ruta";
+    }
+    if (rol === "conductor_ruta" && origen !== "compra_externa") {
+      return "Tu usuario registra compras en grifos de ruta, no despachos del tanque";
+    }
+    return null;
+  }
+
   /** Valida lo que el schema Zod no puede (necesita consultar otras filas)
    *  y crea el despacho envuelto en idempotentInsert -- mismo `modulo:
    *  "combustible"` que registrarLectura(), así un reintento con el mismo
@@ -727,6 +759,11 @@ export class CombustibleService {
     return this.repository.getConfig(client, tenantId);
   }
 
+  /** Política del tenant: si el rol `grifero` puede tomar varilla (0085). */
+  grifieroRegistraVarilla(client: PoolClient, tenantId: string) {
+    return this.repository.getGrifieroRegistraVarilla(client, tenantId);
+  }
+
   guardarConfig(
     client: PoolClient,
     tenantId: string,
@@ -738,6 +775,7 @@ export class CombustibleService {
       diasSinVigilancia: number;
       llenadosPorDiaMax: number | null;
       topeSinCapacidadL: number | null;
+      grifieroRegistraVarilla: boolean;
     },
     usuarioId: string
   ) {
@@ -766,6 +804,7 @@ export class CombustibleService {
       dias_sin_vigilancia: number;
       llenados_por_dia_max: number | null;
       tope_diario_sin_capacidad_l: number | null;
+      grifero_registra_varilla: boolean;
     },
     ahora: {
       ventana_gracia_horas: number;
@@ -775,9 +814,24 @@ export class CombustibleService {
       dias_sin_vigilancia: number;
       llenados_por_dia_max: number | null;
       tope_diario_sin_capacidad_l: number | null;
+      grifero_registra_varilla: boolean;
     }
   ) {
     const cambios: { control: string; de: string; a: string }[] = [];
+
+    // Devolverle la varilla al grifero afloja: el que despacha vuelve a ser
+    // el que mide, y la medición deja de ser un control independiente del
+    // despacho. No se bloquea --es una decisión legítima de la empresa, y de
+    // hecho es el default-- pero apagarla y volver a prenderla no puede pasar
+    // en silencio: es exactamente el movimiento que haría alguien que necesita
+    // que la varilla "cuadre" con lo que declaró.
+    if (ahora.grifero_registra_varilla && !antes.grifero_registra_varilla) {
+      cambios.push({
+        control: "Varilla a cargo del grifero",
+        de: "solo admin y operador",
+        a: "también el grifero",
+      });
+    }
 
     const subir = [
       ["Ventana de gracia", antes.ventana_gracia_horas, ahora.ventana_gracia_horas, "h"],

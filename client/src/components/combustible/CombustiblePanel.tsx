@@ -1034,6 +1034,9 @@ export default function CombustiblePanel() {
   const [diasVentanaDescuadre, setDiasVentanaDescuadre] = useState("30");
   const [diasCargaRetro, setDiasCargaRetro] = useState("3");
   const [diasSinVig, setDiasSinVig] = useState("7");
+  // Política de quién toma varilla (0085). Arranca en true porque es el
+  // default del servidor: es lo que hace hoy la mayoría.
+  const [grifieroVarilla, setGrifieroVarilla] = useState(true);
   const [llenadosPorDia, setLlenadosPorDia] = useState("");
   const [topeSinCapacidad, setTopeSinCapacidad] = useState("");
   /** Hallazgos críticos SIN RESOLVER -- distinto de "sin leer": una alerta
@@ -2148,6 +2151,9 @@ export default function CombustiblePanel() {
       if (bodyConfig?.dias_sin_vigilancia !== undefined) {
         setDiasSinVig(String(bodyConfig.dias_sin_vigilancia));
       }
+      if (bodyConfig?.grifero_registra_varilla !== undefined) {
+        setGrifieroVarilla(Boolean(bodyConfig.grifero_registra_varilla));
+      }
       // null llega como "sin configurar" y tiene que verse como campo vacío,
       // no como "null" escrito adentro del input.
       setLlenadosPorDia(
@@ -2221,6 +2227,7 @@ export default function CombustiblePanel() {
           dias_sin_vigilancia: diasVig,
           llenados_por_dia_max: llenados,
           tope_diario_sin_capacidad_l: topeSC,
+          grifero_registra_varilla: grifieroVarilla,
         }),
       });
       if (!res.ok) {
@@ -5456,6 +5463,24 @@ export default function CombustiblePanel() {
               />
               <span className="text-sm text-slate-500">L</span>
 
+              {/* Quién toma varilla (0085). Es lo único de este bloque que no
+                  es un número: no gradúa cuánto se tolera, decide QUIÉN mide.
+                  Va acá igual porque es la misma pregunta de fondo -- cuánta
+                  vigilancia quiere la empresa. */}
+              <label className="flex items-center gap-2 ml-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={grifieroVarilla}
+                  onChange={(e) => {
+                    setGrifieroVarilla(e.target.checked);
+                    setMensajeVentana(null);
+                  }}
+                />
+                <span className="text-xs font-bold text-slate-700 uppercase">
+                  El grifero toma varilla
+                </span>
+              </label>
+
               <button
                 onClick={handleGuardarVentana}
                 disabled={guardandoVentana}
@@ -5487,6 +5512,12 @@ export default function CombustiblePanel() {
                 del equipo, así que solo vigila a los equipos que la tengan.{" "}
                 <strong>Tope diario sin capacidad:</strong> litros en 24 h para lo demás — planta,
                 reserva en cubeta y los equipos sin capacidad cargada. Los dos vacíos = sin vigilar.
+                <br />
+                <strong>El grifero toma varilla:</strong> destildalo solo si tenés a alguien
+                distinto para medir. Mientras esté tildado, el que despacha es también el que mide,
+                así que la varilla <strong>no es un control independiente</strong> del despacho — es
+                cómo trabaja la mayoría, y por eso viene tildado. Destildarlo se la deja a los
+                administradores y operadores.
               </p>
             </div>
 

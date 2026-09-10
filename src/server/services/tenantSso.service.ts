@@ -266,7 +266,7 @@ async function resolverUsuarioSso(
     email: fila.email,
     dni: fila.dni,
     rol: fila.rol,
-    modulosPermitidos: await obtenerModulosPermitidos(fila.id, fila.tenant_id),
+    modulosPermitidos: await obtenerModulosPermitidos(fila.id, fila.tenant_id, fila.rol),
     tokenVersion: fila.token_version,
     debeCambiarPassword: fila.debe_cambiar_password,
   };

@@ -31,8 +31,15 @@ import {
 } from "../../services/usuariosApi";
 
 /** El texto importa más que la etiqueta: quien elige acá es el jefe de
- *  operaciones, no un administrador de sistemas. */
-const ROLES: { valor: RolUsuario; titulo: string; detalle: string }[] = [
+ *  operaciones, no un administrador de sistemas.
+ *
+ *  Van separados en dos grupos porque no son una escalera. Oficina sí lo es
+ *  --admin puede todo lo que puede operador, y operador todo lo de lectura--
+ *  pero los de cancha son recortes laterales, en direcciones distintas entre
+ *  sí: el grifero puede lo del tanque y nada de ruta, el conductor al revés.
+ *  Mostrarlos en una sola lista invitaría a leerlos como "menos que lectura",
+ *  que es falso: un conductor de ruta registra compras, y el de lectura no. */
+const ROLES: { valor: RolUsuario; titulo: string; detalle: string; cancha?: boolean }[] = [
   {
     valor: "operador",
     titulo: "Operador",
@@ -47,6 +54,19 @@ const ROLES: { valor: RolUsuario; titulo: string; detalle: string }[] = [
     valor: "admin",
     titulo: "Administrador",
     detalle: "Todo lo anterior, más los umbrales, las alertas y esta misma pantalla.",
+  },
+  {
+    valor: "grifero",
+    titulo: "Grifero",
+    detalle:
+      "Solo Combustible: vales del tanque, recepción del camión y varilla. No anula ni ve alertas.",
+    cancha: true,
+  },
+  {
+    valor: "conductor_ruta",
+    titulo: "Conductor de ruta",
+    detalle: "Solo Combustible: cargas en grifos externos. Nada del tanque de la empresa.",
+    cancha: true,
   },
 ];
 
@@ -383,28 +403,19 @@ function ModalAlta({
           <legend className="text-xs font-bold text-slate-700 uppercase mb-1">
             Qué puede hacer
           </legend>
-          {ROLES.map((r) => (
-            <label
-              key={r.valor}
-              className={`flex gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
-                rol === r.valor
-                  ? "border-slate-900 bg-slate-50"
-                  : "border-slate-200 hover:border-slate-300"
-              }`}
-            >
-              <input
-                type="radio"
-                name="rol"
-                className="mt-1"
-                checked={rol === r.valor}
-                onChange={() => setRol(r.valor)}
-              />
-              <span>
-                <span className="block text-sm font-bold text-slate-800">{r.titulo}</span>
-                <span className="block text-xs text-slate-600">{r.detalle}</span>
-              </span>
-            </label>
-          ))}
+          <OpcionesDeRol
+            titulo="En la oficina"
+            opciones={ROLES.filter((r) => !r.cancha)}
+            elegido={rol}
+            onElegir={setRol}
+          />
+          <OpcionesDeRol
+            titulo="En cancha"
+            ayuda="Solo ven Combustible. No hace falta que les saques los demás módulos a mano."
+            opciones={ROLES.filter((r) => r.cancha)}
+            elegido={rol}
+            onElegir={setRol}
+          />
         </fieldset>
 
         <Campo
@@ -706,6 +717,49 @@ function Campo({
       </label>
       {children}
       {ayuda && <p className="text-xs text-slate-600">{ayuda}</p>}
+    </div>
+  );
+}
+
+function OpcionesDeRol({
+  titulo,
+  ayuda,
+  opciones,
+  elegido,
+  onElegir,
+}: {
+  titulo: string;
+  ayuda?: string;
+  opciones: (typeof ROLES)[number][];
+  elegido: RolUsuario;
+  onElegir: (rol: RolUsuario) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider pt-1">{titulo}</p>
+      {ayuda && <p className="text-xs text-slate-600 -mt-1">{ayuda}</p>}
+      {opciones.map((r) => (
+        <label
+          key={r.valor}
+          className={`flex gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+            elegido === r.valor
+              ? "border-slate-900 bg-slate-50"
+              : "border-slate-200 hover:border-slate-300"
+          }`}
+        >
+          <input
+            type="radio"
+            name="rol"
+            className="mt-1"
+            checked={elegido === r.valor}
+            onChange={() => onElegir(r.valor)}
+          />
+          <span>
+            <span className="block text-sm font-bold text-slate-800">{r.titulo}</span>
+            <span className="block text-xs text-slate-600">{r.detalle}</span>
+          </span>
+        </label>
+      ))}
     </div>
   );
 }

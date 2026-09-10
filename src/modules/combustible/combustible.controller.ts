@@ -554,6 +554,23 @@ export class CombustibleController {
     try {
       const tenantId = getTenantId(req);
       const data = req.validatedBody as RegistrarLecturaCombustibleInput;
+
+      // Si el grifero toma varilla o no lo decide cada empresa (0085), así
+      // que no se puede resolver con requireRole: hay que leer la config.
+      // Solo se consulta cuando el que llama es grifero -- para admin y
+      // operador la respuesta es siempre sí, y no vale una query por lectura.
+      if (req.usuario!.rol === "grifero") {
+        const puede = await withTenant(tenantId, (client) =>
+          service.grifieroRegistraVarilla(client, tenantId)
+        );
+        if (!puede) {
+          res.status(403).json({
+            error: "En esta empresa la varilla la toman el administrador o un operador",
+          });
+          return;
+        }
+      }
+
       const { fila, creado } = await withTenant(tenantId, (client) =>
         service.registrarLectura(client, tenantId, req.usuario!.id, data)
       );
@@ -640,6 +657,18 @@ export class CombustibleController {
     try {
       const tenantId = getTenantId(req);
       const data = req.validatedBody as CrearDespachoCombustibleInput;
+
+      // Los roles de cancha (0085) comparten este endpoint con los de
+      // oficina, pero cada uno tiene UN solo origen permitido -- y eso
+      // depende del body, no de la ruta, así que requireRole no puede
+      // verlo. Antes de tocar la base: un permiso que se evalúa después de
+      // escribir no es un permiso.
+      const noPermitido = service.motivoOrigenNoPermitido(req.usuario!.rol, data.origen);
+      if (noPermitido) {
+        res.status(403).json({ error: noPermitido });
+        return;
+      }
+
       const { fila, creado } = await withTenant(tenantId, (client) =>
         service.crearDespacho(client, tenantId, req.usuario!.id, data)
       );
@@ -1573,6 +1602,7 @@ export class CombustibleController {
             diasSinVigilancia: nueva.dias_sin_vigilancia,
             llenadosPorDiaMax: nueva.llenados_por_dia_max,
             topeSinCapacidadL: nueva.tope_diario_sin_capacidad_l,
+            grifieroRegistraVarilla: nueva.grifero_registra_varilla,
           },
           req.usuario!.id
         );

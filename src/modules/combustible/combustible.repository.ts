@@ -992,6 +992,7 @@ export class CombustibleRepository {
     const diasCargaRetro = await this.getDiasCargaRetroactiva(client, tenantId);
     const diasSinVig = await this.getDiasSinVigilancia(client, tenantId);
     const topes = await this.getTopesDiarios(client, tenantId);
+    const grifieroVarilla = await this.getGrifieroRegistraVarilla(client, tenantId);
     const result = await client.query(
       `SELECT actualizado_en, actualizado_por FROM combustible_config WHERE tenant_id = $1`,
       [tenantId]
@@ -1004,6 +1005,7 @@ export class CombustibleRepository {
       dias_sin_vigilancia: diasSinVig,
       llenados_por_dia_max: topes.llenadosPorDiaMax,
       tope_diario_sin_capacidad_l: topes.topeSinCapacidadL,
+      grifero_registra_varilla: grifieroVarilla,
       actualizado_en: result.rows[0]?.actualizado_en ?? null,
       actualizado_por: result.rows[0]?.actualizado_por ?? null,
     };
@@ -1022,6 +1024,7 @@ export class CombustibleRepository {
       diasSinVigilancia: number;
       llenadosPorDiaMax: number | null;
       topeSinCapacidadL: number | null;
+      grifieroRegistraVarilla: boolean;
     },
     usuarioId: string
   ) {
@@ -1030,8 +1033,8 @@ export class CombustibleRepository {
       INSERT INTO combustible_config
         (tenant_id, ventana_gracia_horas, dias_sin_medir, dias_ventana_descuadre,
          dias_carga_retroactiva, dias_sin_vigilancia, llenados_por_dia_max,
-         tope_diario_sin_capacidad_l, actualizado_por)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         tope_diario_sin_capacidad_l, grifero_registra_varilla, actualizado_por)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       ON CONFLICT (tenant_id) DO UPDATE
         SET ventana_gracia_horas = EXCLUDED.ventana_gracia_horas,
             dias_sin_medir = EXCLUDED.dias_sin_medir,
@@ -1040,11 +1043,12 @@ export class CombustibleRepository {
             dias_sin_vigilancia = EXCLUDED.dias_sin_vigilancia,
             llenados_por_dia_max = EXCLUDED.llenados_por_dia_max,
             tope_diario_sin_capacidad_l = EXCLUDED.tope_diario_sin_capacidad_l,
+            grifero_registra_varilla = EXCLUDED.grifero_registra_varilla,
             actualizado_por = EXCLUDED.actualizado_por,
             actualizado_en = now()
       RETURNING ventana_gracia_horas, dias_sin_medir, dias_ventana_descuadre,
                 dias_carga_retroactiva, dias_sin_vigilancia, llenados_por_dia_max,
-                tope_diario_sin_capacidad_l,
+                tope_diario_sin_capacidad_l, grifero_registra_varilla,
                 actualizado_en, actualizado_por
       `,
       [
@@ -1056,6 +1060,7 @@ export class CombustibleRepository {
         valores.diasSinVigilancia,
         valores.llenadosPorDiaMax,
         valores.topeSinCapacidadL,
+        valores.grifieroRegistraVarilla,
         usuarioId,
       ]
     );
@@ -1487,6 +1492,24 @@ export class CombustibleRepository {
       [tenantId]
     );
     return Number(r.rows[0].dias);
+  }
+
+  /** Si el rol `grifero` puede tomar varilla en este tenant (0085).
+   *
+   *  El COALESCE a `true` cubre el tenant que nunca tocó la config y por lo
+   *  tanto no tiene fila -- mismo criterio que los demás getters de acá: el
+   *  default del getter tiene que coincidir con el DEFAULT de la columna, si
+   *  no el sistema se comporta distinto según si alguien pasó por la pantalla
+   *  de configuración alguna vez. */
+  async getGrifieroRegistraVarilla(client: PoolClient, tenantId: string): Promise<boolean> {
+    const r = await client.query<{ puede: boolean }>(
+      `SELECT COALESCE(
+         (SELECT grifero_registra_varilla FROM combustible_config WHERE tenant_id = $1),
+         true
+       ) AS puede`,
+      [tenantId]
+    );
+    return r.rows[0].puede;
   }
 
   /** La alerta se cierra sola cuando alguien configura un umbral: el problema

@@ -44,7 +44,11 @@ export interface UsuarioPayload {
    *  tiene correo. Todo lo que le mande un mail tiene que contemplarlo. */
   email: string | null;
   dni?: string | null;
-  rol: "admin" | "operador" | "lectura";
+  /** admin > operador > lectura es una escalera; `grifero` y
+   *  `conductor_ruta` (migración 0085) NO están en esa escalera -- son
+   *  recortes laterales, en direcciones distintas entre sí. Por eso
+   *  requireRole recibe una LISTA de roles y no un nivel mínimo. */
+  rol: "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta";
   /** Intersección de tenant_modulos (habilitados para la empresa) y
    *  usuario_modulos (asignados a este usuario) al momento del login/
    *  refresh — ver obtenerModulosPermitidos(). Igual que `rol`, un cambio
@@ -99,9 +103,26 @@ export function enBucketDeRollout(
  *  migrations/0008), así que aceptar el `client` de una transacción
  *  withTenant() en curso es solo por eficiencia (reusar la misma
  *  conexión), nunca un requisito de RLS. */
+/** Módulos a los que un ROL da acceso, cuando el rol acota. Los roles de
+ *  oficina (admin/operador/lectura) no aparecen acá: para ellos manda solo
+ *  lo que el tenant y el panel de plataforma les hayan asignado.
+ *
+ *  Los de cancha sí acotan, y a propósito no se resuelve desmarcando módulos
+ *  usuario por usuario: un grifero nuevo entra cada tanto, y si el alta
+ *  dependiera de que alguien se acuerde de desmarcarle seis módulos, el
+ *  primer olvido le da acceso a IPERC y a Órdenes de Trabajo. El rol lo dice
+ *  una vez y vale para todos. */
+const MODULOS_POR_ROL: Partial<Record<UsuarioPayload["rol"], string[]>> = {
+  grifero: ["combustible"],
+  conductor_ruta: ["combustible"],
+};
+
 export async function obtenerModulosPermitidos(
   usuarioId: string,
   tenantId: string,
+  /** Sin el rol, un grifero recibiría los mismos módulos que un operador:
+   *  `crearUsuarioService` le asigna TODOS los del tenant al darlo de alta. */
+  rol: UsuarioPayload["rol"],
   db: Pool | PoolClient = pool
 ): Promise<string[]> {
   const result = await db.query(
@@ -112,8 +133,13 @@ export async function obtenerModulosPermitidos(
     [usuarioId, tenantId]
   );
 
+  const permitidosPorRol = MODULOS_POR_ROL[rol];
+
   return result.rows
     .filter((fila) => {
+      // El rol RECORTA, nunca agrega: si el tenant no tiene el módulo
+      // habilitado, ningún rol lo trae de vuelta.
+      if (permitidosPorRol && !permitidosPorRol.includes(fila.modulo)) return false;
       if (fila.estado === "habilitado") return true;
       if (fila.estado === "deshabilitado") return false;
       return enBucketDeRollout(tenantId, fila.modulo, usuarioId, fila.rolloutPorcentaje ?? 0);
@@ -304,7 +330,7 @@ export async function loginService(
     email: fila.email,
     dni: fila.dni,
     rol: fila.rol,
-    modulosPermitidos: await obtenerModulosPermitidos(fila.id, fila.tenant_id),
+    modulosPermitidos: await obtenerModulosPermitidos(fila.id, fila.tenant_id, fila.rol),
     tokenVersion: fila.token_version,
     debeCambiarPassword: fila.debe_cambiar_password,
   };
@@ -370,7 +396,7 @@ export async function googleLoginService(
     email: fila.email,
     dni: fila.dni,
     rol: fila.rol,
-    modulosPermitidos: await obtenerModulosPermitidos(fila.id, fila.tenant_id),
+    modulosPermitidos: await obtenerModulosPermitidos(fila.id, fila.tenant_id, fila.rol),
     tokenVersion: fila.token_version,
     debeCambiarPassword: fila.debe_cambiar_password,
   };
@@ -445,7 +471,11 @@ export async function refrescarTokenService(
     email: filaUsuario.email,
     dni: filaUsuario.dni,
     rol: filaUsuario.rol,
-    modulosPermitidos: await obtenerModulosPermitidos(filaToken.usuario_id, filaToken.tenant_id),
+    modulosPermitidos: await obtenerModulosPermitidos(
+      filaToken.usuario_id,
+      filaToken.tenant_id,
+      filaUsuario.rol
+    ),
     tokenVersion: filaUsuario.token_version,
     debeCambiarPassword: filaUsuario.debe_cambiar_password,
   };
@@ -622,6 +652,14 @@ export async function crearUsuarioService(
     );
   }
 
+  // Las filas de usuario_modulos se insertan para TODOS los módulos del
+  // tenant, incluso para un rol de cancha: si mañana el admin lo pasa a
+  // operador, la asignación ya está y no hay que reconstruirla. El recorte
+  // por rol se aplica al LEER (ver obtenerModulosPermitidos) -- y acá también,
+  // para que la respuesta del alta no le prometa al grifero ocho módulos que
+  // no va a ver en su primer login.
+  const permitidosPorRol = MODULOS_POR_ROL[fila.rol as UsuarioPayload["rol"]];
+
   return {
     id: fila.id,
     tenantId: fila.tenant_id,
@@ -629,7 +667,9 @@ export async function crearUsuarioService(
     email: fila.email,
     dni: fila.dni,
     rol: fila.rol,
-    modulosPermitidos: modulosHabilitados,
+    modulosPermitidos: permitidosPorRol
+      ? modulosHabilitados.filter((m) => permitidosPorRol.includes(m))
+      : modulosHabilitados,
     tokenVersion: fila.token_version,
     debeCambiarPassword: fila.debe_cambiar_password,
   };

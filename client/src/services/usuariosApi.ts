@@ -24,7 +24,7 @@ export interface UsuarioDelTenant {
   activo: boolean;
 }
 
-export type RolUsuario = "admin" | "operador" | "lectura";
+export type RolUsuario = "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta";
 
 async function leerRespuesta(res: Response) {
   const data = await res.json().catch(() => ({}));
