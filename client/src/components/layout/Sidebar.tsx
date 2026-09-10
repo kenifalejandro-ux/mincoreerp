@@ -1,4 +1,4 @@
-import { Receipt } from "lucide-react";
+import { Receipt, Users } from "lucide-react";
 
 import { useAuth } from "../../context/AuthContext";
 import { MODULOS_CLIENTE } from "../../modules/registry";
@@ -45,6 +45,28 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
         })}
 
         <div className="my-2 mx-6 h-px bg-slate-100" />
+
+        {/* Solo para el admin del tenant: dar de alta a alguien es dar acceso
+            al sistema. El backend lo exige igual (requireRole("admin")), esto
+            es para no mostrar una puerta que va a estar cerrada. */}
+        {usuario?.rol === "admin" && (
+          <button
+            onClick={() => setActiveTab("usuarios")}
+            className={`w-full text-left px-6 py-3.5 flex items-center gap-3 transition-all relative ${
+              activeTab === "usuarios"
+                ? "bg-slate-50 text-[#0A1014] font-semibold"
+                : "text-slate-500 hover:bg-slate-50 hover:text-[#0A1014] font-medium"
+            }`}
+          >
+            {activeTab === "usuarios" && (
+              <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-[#DDF500]" />
+            )}
+            <span className={`${activeTab === "usuarios" ? "text-[#0A1014]" : "text-slate-400"}`}>
+              <Users size={20} strokeWidth={2} />
+            </span>
+            <span className="tracking-tight">Usuarios</span>
+          </button>
+        )}
 
         <button
           onClick={() => setActiveTab("facturacion")}

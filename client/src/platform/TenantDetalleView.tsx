@@ -120,7 +120,11 @@ export default function TenantDetalleView({
       {usuarioParaCambiarEstado && (
         <CambiarEstadoDialog
           activarA={!usuarioParaCambiarEstado.activo}
-          entidadNombre={usuarioParaCambiarEstado.email}
+          entidadNombre={
+            usuarioParaCambiarEstado.email ??
+            usuarioParaCambiarEstado.dni ??
+            usuarioParaCambiarEstado.nombre
+          }
           onConfirmar={async (motivo) => {
             await cambiarEstadoUsuarioApi(
               tenant.id,
@@ -190,7 +194,7 @@ export default function TenantDetalleView({
               <div>
                 <p className="text-sm text-slate-200">{u.nombre}</p>
                 <p className="text-xs text-slate-500">
-                  {u.email} · {u.rol}
+                  {u.email ?? u.dni ?? "sin identificador"} · {u.rol}
                 </p>
               </div>
               <div className="flex items-center gap-3">
