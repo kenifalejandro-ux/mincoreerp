@@ -6,7 +6,10 @@ export interface UsuarioPayload {
   id: string;
   tenantId: string;
   nombre: string;
-  email: string;
+  /** null desde 0084: el personal de cancha entra con DNI y no tiene correo.
+   *  Al menos uno de los dos siempre está. */
+  email: string | null;
+  dni?: string | null;
   rol: "admin" | "operador" | "lectura";
   modulosPermitidos: string[];
   debeCambiarPassword: boolean;

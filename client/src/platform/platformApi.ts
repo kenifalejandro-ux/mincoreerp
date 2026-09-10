@@ -246,7 +246,10 @@ export async function actualizarModuloGlobalApi(
 export interface UsuarioPlataforma {
   id: string;
   nombre: string;
-  email: string;
+  /** Puede ser null desde 0084 (usuarios que entran con DNI). Sin esto la
+   *  lista del panel mostraba "null · operador" para el personal de cancha. */
+  email: string | null;
+  dni: string | null;
   rol: string;
   activo: boolean;
 }

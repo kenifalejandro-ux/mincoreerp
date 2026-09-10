@@ -7,9 +7,11 @@
 
 import { useState, type FormEvent } from "react";
 
+import { useAuth } from "../context/AuthContext";
 import { cambiarMiPasswordApi } from "../services/authApi";
 
 export default function CambiarPasswordObligatoria({ onListo }: { onListo: () => void }) {
+  const { logout } = useAuth();
   const [passwordActual, setPasswordActual] = useState("");
   const [passwordNueva, setPasswordNueva] = useState("");
   const [confirmacion, setConfirmacion] = useState("");
@@ -128,6 +130,21 @@ export default function CambiarPasswordObligatoria({ onListo }: { onListo: () =>
             {enviando ? "Guardando..." : "Guardar y continuar"}
           </button>
         </form>
+
+        {/* La única salida de esta pantalla que no sea cambiar la clave.
+            Hasta acá no había ninguna: quien entraba con una clave temporal
+            que no era suya --la tablet compartida de planta, el admin
+            probando la clave que acaba de dictar-- quedaba encerrado sin más
+            opción que borrar las cookies del navegador. Dejó de ser un caso
+            raro cuando el personal de cancha empezó a entrar con DNI: cada
+            alta pasa por esta pantalla. */}
+        <button
+          type="button"
+          onClick={() => void logout()}
+          className="w-full mt-4 text-sm font-light text-zinc-800 hover:text-zinc-900 underline underline-offset-2"
+        >
+          No sos vos? Cerrar sesión
+        </button>
       </div>
     </div>
   );

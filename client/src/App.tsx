@@ -11,6 +11,12 @@ import LoginPage from "./pages/LoginPage";
 // aparte, no vía MODULOS_CLIENTE.find().
 const FacturacionView = lazy(() => import("./components/facturacion/FacturacionView"));
 
+// Usuarios tampoco: la gente de la empresa no se contrata ni se factura, y un
+// tenant sin ningún módulo habilitado igual tiene que poder dar de alta a su
+// personal. Es la única pestaña que además depende del ROL -- el Sidebar no la
+// muestra si no sos admin, y el backend la rechaza igual (requireRole).
+const UsuariosView = lazy(() => import("./components/usuarios/UsuariosView"));
+
 function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const { usuario, cargando, estaAutenticado, login } = useAuth();
@@ -42,7 +48,12 @@ function App() {
   // (React.lazy, ver modules/registry.tsx) — agregar un módulo nuevo no
   // infla el chunk inicial de los que ya existen.
   const moduloActivo = MODULOS_CLIENTE.find((m) => m.id === activeTab);
-  const ComponenteActivo = activeTab === "facturacion" ? FacturacionView : moduloActivo?.componente;
+  const ComponenteActivo =
+    activeTab === "facturacion"
+      ? FacturacionView
+      : activeTab === "usuarios" && usuario!.rol === "admin"
+        ? UsuariosView
+        : moduloActivo?.componente;
 
   return (
     <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
