@@ -343,19 +343,24 @@ export default function LoginPage() {
               </div>
             )}
 
+            {/* Correo O DNI en el mismo campo (migración 0084): el grifero y
+                los conductores de ruta no tienen correo corporativo. `type`
+                pasa de "email" a "text" -- si no, el navegador rechaza un DNI
+                antes de que el formulario llegue a enviarse. */}
             <div>
               <label className="block text-sm  font-light text-slate-100 mb-1.5" htmlFor="email">
-                Correo
+                Correo o DNI
               </label>
               <input
                 id="email"
-                type="email"
+                type="text"
                 required
-                autoComplete="email"
+                autoComplete="username"
+                inputMode="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400"
-                placeholder="tu@empresa.com"
+                placeholder="tu@empresa.com  ·  o tu DNI"
               />
             </div>
 

@@ -40,7 +40,10 @@ export interface UsuarioPayload {
   id: string;
   tenantId: string;
   nombre: string;
-  email: string;
+  /** Puede ser null desde 0084: un usuario de cancha entra con DNI y no
+   *  tiene correo. Todo lo que le mande un mail tiene que contemplarlo. */
+  email: string | null;
+  dni?: string | null;
   rol: "admin" | "operador" | "lectura";
   /** Intersección de tenant_modulos (habilitados para la empresa) y
    *  usuario_modulos (asignados a este usuario) al momento del login/
@@ -248,7 +251,8 @@ export async function loginService(
         id: string;
         tenant_id: string;
         nombre: string;
-        email: string;
+        email: string | null;
+        dni: string | null;
         password_hash: string;
         rol: UsuarioPayload["rol"];
         token_version: number;
@@ -258,11 +262,21 @@ export async function loginService(
   if (tenant) {
     try {
       fila = await withTenant(tenant.id, async (client) => {
+        // Correo o DNI, en el mismo campo (migración 0084). Lo que decide es
+        // la presencia de "@": un DNI nunca lo tiene y un correo siempre sí,
+        // así que no hay ambigüedad posible entre los dos.
+        //
+        // Se busca por UNA de las dos columnas, no por las dos en OR: buscar
+        // por ambas dejaría que alguien entre con un DNI escrito en el campo
+        // de correo de otra persona, y encima haría inútil el índice.
+        const esCorreo = input.identificador.includes("@");
         const result = await client.query(
-          `SELECT id, tenant_id, nombre, email, password_hash, rol, token_version,
+          `SELECT id, tenant_id, nombre, email, dni, password_hash, rol, token_version,
                   debe_cambiar_password
-           FROM usuarios WHERE tenant_id = $1 AND email = $2 AND activo = true`,
-          [tenant.id, input.email.toLowerCase()]
+           FROM usuarios
+            WHERE tenant_id = $1 AND activo = true
+              AND ${esCorreo ? "email = $2" : "dni = $2"}`,
+          [tenant.id, esCorreo ? input.identificador.toLowerCase() : input.identificador]
         );
         return result.rows[0];
       });
@@ -288,6 +302,7 @@ export async function loginService(
     tenantId: fila.tenant_id,
     nombre: fila.nombre,
     email: fila.email,
+    dni: fila.dni,
     rol: fila.rol,
     modulosPermitidos: await obtenerModulosPermitidos(fila.id, fila.tenant_id),
     tokenVersion: fila.token_version,
@@ -333,7 +348,7 @@ export async function googleLoginService(
   const fila = tenant
     ? await withTenant(tenant.id, async (client) => {
         const result = await client.query(
-          `SELECT id, tenant_id, nombre, email, rol, token_version, debe_cambiar_password
+          `SELECT id, tenant_id, nombre, email, dni, rol, token_version, debe_cambiar_password
            FROM usuarios WHERE tenant_id = $1 AND email = $2 AND activo = true`,
           [tenant.id, email]
         );
@@ -353,6 +368,7 @@ export async function googleLoginService(
     tenantId: fila.tenant_id,
     nombre: fila.nombre,
     email: fila.email,
+    dni: fila.dni,
     rol: fila.rol,
     modulosPermitidos: await obtenerModulosPermitidos(fila.id, fila.tenant_id),
     tokenVersion: fila.token_version,
@@ -411,7 +427,7 @@ export async function refrescarTokenService(
   // Paso 2: ahora sí, con tenant_id ya conocido, leer el usuario bajo RLS.
   const filaUsuario = await withTenant(filaToken.tenant_id, async (client) => {
     const result = await client.query(
-      `SELECT nombre, email, rol, token_version, activo, debe_cambiar_password
+      `SELECT nombre, email, dni, rol, token_version, activo, debe_cambiar_password
        FROM usuarios WHERE id = $1 AND tenant_id = $2`,
       [filaToken.usuario_id, filaToken.tenant_id]
     );
@@ -427,6 +443,7 @@ export async function refrescarTokenService(
     tenantId: filaToken.tenant_id,
     nombre: filaUsuario.nombre,
     email: filaUsuario.email,
+    dni: filaUsuario.dni,
     rol: filaUsuario.rol,
     modulosPermitidos: await obtenerModulosPermitidos(filaToken.usuario_id, filaToken.tenant_id),
     tokenVersion: filaUsuario.token_version,
@@ -534,7 +551,9 @@ export async function crearUsuarioService(
   input: {
     tenantId: string;
     nombre: string;
-    email: string;
+    /** Opcional desde 0084: puede venir DNI en su lugar. */
+    email?: string;
+    dni?: string;
     password: string;
     rol?: UsuarioPayload["rol"];
   },
@@ -556,16 +575,24 @@ export async function crearUsuarioService(
     // contraseña a otra persona (panel o SCIM), nunca es la propia del
     // usuario -- mismo criterio que crearPlatformAdminService.
     result = await db.query(
-      `INSERT INTO usuarios (tenant_id, nombre, email, password_hash, rol, debe_cambiar_password)
-       VALUES ($1, $2, $3, $4, COALESCE($5::rol_usuario, 'operador'), true)
-       RETURNING id, tenant_id, nombre, email, rol, token_version, debe_cambiar_password`,
-      [input.tenantId, input.nombre, input.email.toLowerCase(), passwordHash, input.rol ?? null]
+      `INSERT INTO usuarios (tenant_id, nombre, email, dni, password_hash, rol, debe_cambiar_password)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6::rol_usuario, 'operador'), true)
+       RETURNING id, tenant_id, nombre, email, dni, rol, token_version, debe_cambiar_password`,
+      [
+        input.tenantId,
+        input.nombre,
+        input.email?.toLowerCase() ?? null,
+        input.dni ?? null,
+        passwordHash,
+        input.rol ?? null,
+      ]
     );
   } catch (err) {
     // Mismo criterio que loginService: nunca reenviar el error crudo de la
     // BD al cliente (podría filtrar nombres de tabla/constraint).
     if (esViolacionUnicidad(err)) {
-      throw new AppError(409, "Ya existe un usuario con ese correo en este tenant");
+      // Puede ser el correo O el DNI: los dos tienen unicidad por tenant.
+      throw new AppError(409, "Ya existe un usuario con ese correo o DNI en este tenant");
     }
     logger.error({ err }, "Error de BD al crear usuario");
     throw new AppError(500, "No se pudo crear el usuario");
@@ -600,6 +627,7 @@ export async function crearUsuarioService(
     tenantId: fila.tenant_id,
     nombre: fila.nombre,
     email: fila.email,
+    dni: fila.dni,
     rol: fila.rol,
     modulosPermitidos: modulosHabilitados,
     tokenVersion: fila.token_version,
@@ -773,6 +801,45 @@ export async function restablecerPasswordService(input: ResetPasswordInput): Pro
   await pool.query(`UPDATE reset_tokens SET usado_en = now() WHERE token_hash = $1`, [hash]);
 
   await revocarSesionesService(fila.usuario_id, fila.tenant_id);
+}
+
+/** El admin del tenant le pone una clave temporal a alguien de su empresa.
+ *
+ *  Hace falta porque desde la migración 0084 hay gente que entra con DNI y
+ *  NO TIENE CORREO: el flujo de "olvidé mi contraseña" les manda un enlace a
+ *  ninguna parte. Sin esto, un grifero que se olvida la clave queda afuera
+ *  hasta que alguien toque la base a mano.
+ *
+ *  Deja `debe_cambiar_password = true` a propósito: la clave que tipeó el
+ *  admin sirve UNA vez, para entrar, y el sistema obliga a cambiarla ahí
+ *  mismo -- así el admin no termina sabiendo la contraseña con la que su
+ *  empleado firma vales. Es el mismo mecanismo del alta (#113/#114).
+ *
+ *  Y revoca las sesiones: resetear la clave sin cerrar sesiones dejaría
+ *  adentro a quien la supiera, que es justo el caso del que uno se está
+ *  defendiendo cuando resetea. */
+export async function resetearClaveUsuarioService(
+  tenantId: string,
+  usuarioId: string,
+  passwordNueva: string
+): Promise<{ id: string; nombre: string; email: string | null; dni: string | null }> {
+  const passwordHash = await bcrypt.hash(passwordNueva, 12);
+
+  const fila = await withTenant(tenantId, async (client) => {
+    const result = await client.query(
+      `UPDATE usuarios
+          SET password_hash = $1, debe_cambiar_password = true, actualizado_en = now()
+        WHERE id = $2 AND tenant_id = $3
+        RETURNING id, nombre, email, dni`,
+      [passwordHash, usuarioId, tenantId]
+    );
+    return result.rows[0];
+  });
+  if (!fila) throw new AppError(404, "Usuario no encontrado");
+
+  await revocarSesionesService(usuarioId, tenantId);
+
+  return fila;
 }
 
 /** Cambia la propia contraseña de un usuario de tenant ya autenticado --

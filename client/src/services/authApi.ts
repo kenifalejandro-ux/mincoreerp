@@ -20,15 +20,18 @@ async function parseOrThrow(res: Response) {
   return data;
 }
 
+/** `identificador` puede ser un correo o un DNI (migración 0084): el grifero
+ *  y los conductores de ruta no tienen correo corporativo. El servidor decide
+ *  por cuál buscar según tenga "@" o no. */
 export async function loginApi(
   tenantSlug: string,
-  email: string,
+  identificador: string,
   password: string
 ): Promise<UsuarioPayload> {
   const res = await apiFetch("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tenantSlug, email, password }),
+    body: JSON.stringify({ tenantSlug, identificador, password }),
   });
   const data = await parseOrThrow(res);
   return data.usuario;

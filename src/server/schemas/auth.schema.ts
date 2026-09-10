@@ -12,11 +12,32 @@ const tenantSlugSchema = z
   .max(60)
   .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "Identificador de empresa inválido");
 
-export const loginSchema = z.object({
-  tenantSlug: tenantSlugSchema,
-  email: z.string().trim().toLowerCase().email("Correo inválido").max(150),
-  password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres").max(200),
-});
+/** El campo se llama `identificador` porque puede ser un correo O un DNI
+ *  (migración 0084): el grifero y los conductores de ruta no tienen correo
+ *  corporativo.
+ *
+ *  `email` se sigue aceptando como alias para no romper a nadie que ya esté
+ *  mandando ese nombre --la cola offline, un script, una pestaña abierta con
+ *  el bundle viejo. Los dos caen en el mismo campo.
+ *
+ *  NO se valida como correo: un DNI no lo es. Lo que decide cómo se busca es
+ *  la presencia de "@", en el servicio de login. */
+export const loginSchema = z
+  .object({
+    tenantSlug: tenantSlugSchema,
+    identificador: z.string().trim().min(1).max(150).optional(),
+    email: z.string().trim().min(1).max(150).optional(),
+    password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres").max(200),
+  })
+  .transform((v) => ({
+    tenantSlug: v.tenantSlug,
+    password: v.password,
+    identificador: (v.identificador ?? v.email ?? "").trim(),
+  }))
+  .refine((v) => v.identificador.length > 0, {
+    message: "Indicá tu correo o tu DNI",
+    path: ["identificador"],
+  });
 
 export type LoginInput = z.infer<typeof loginSchema>;
 

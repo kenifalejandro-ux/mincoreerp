@@ -9,6 +9,7 @@ import { requireModulo } from "../shared/middlewares/modulo.middleware";
 import { requireCuota } from "../shared/middlewares/cuota.middleware";
 import erpRateLimiter from "../middleware/erpRateLimiter";
 import { tenantMetricsMiddleware } from "../shared/middlewares/tenantMetrics.middleware";
+import { createUsuariosTenantRouter } from "./usuariosTenant";
 // Se activa solo con importarse (setInterval + .unref()). Va acá y no en
 // las rutas de plataforma porque quien LLENA idempotency_keys son los
 // módulos de negocio que se montan abajo (migración 0044).
@@ -30,6 +31,13 @@ export function createApiRouter() {
   // porque frena por FRECUENCIA — un abuso no debe llegar siquiera a
   // resolver la cuota de volumen ni a tocar la base.
   router.use(erpRateLimiter);
+
+  // La gente de la empresa NO es un módulo: no se contrata ni se factura,
+  // y un tenant sin ningún módulo habilitado igual tiene que poder dar de
+  // alta y de baja a su personal. Por eso va antes del loop y fuera de
+  // requireModulo/requireCuota -- pero adentro de authMiddleware,
+  // tenantMiddleware y el rate limit, como cualquier ruta de negocio.
+  router.use("/usuarios", createUsuariosTenantRouter());
 
   // Cada módulo se monta bajo /<id> — agregar un módulo nuevo es agregarlo
   // al registry (ver docs/adr/0002-contrato-de-modulo.md), no tocar este

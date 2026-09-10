@@ -234,7 +234,7 @@ async function resolverUsuarioSso(
 
   const fila = await withTenant(tenantId, async (dbClient) => {
     const porSubject = await dbClient.query(
-      `SELECT id, tenant_id, nombre, email, rol, token_version, debe_cambiar_password
+      `SELECT id, tenant_id, nombre, email, dni, rol, token_version, debe_cambiar_password
        FROM usuarios WHERE tenant_id = $1 AND sso_provider = $2 AND sso_subject = $3 AND activo = true`,
       [tenantId, proveedor, claims.sub]
     );
@@ -264,6 +264,7 @@ async function resolverUsuarioSso(
     tenantId: fila.tenant_id,
     nombre: fila.nombre,
     email: fila.email,
+    dni: fila.dni,
     rol: fila.rol,
     modulosPermitidos: await obtenerModulosPermitidos(fila.id, fila.tenant_id),
     tokenVersion: fila.token_version,

@@ -344,7 +344,11 @@ export async function actualizarModuloGlobalService(
 export interface UsuarioListado {
   id: string;
   nombre: string;
-  email: string;
+  /** Puede ser null desde 0084: el personal de cancha entra con DNI y muchos
+   *  no tienen correo de empresa. Al menos uno de los dos siempre está
+   *  (CHECK usuarios_email_o_dni_check). */
+  email: string | null;
+  dni: string | null;
   rol: string;
   activo: boolean;
 }
@@ -359,7 +363,7 @@ export async function listarUsuariosTenantService(tenantId: string): Promise<Usu
 
   return withTenant(tenantId, async (client) => {
     const result = await client.query(
-      `SELECT id, nombre, email, rol, activo FROM usuarios WHERE tenant_id = $1 ORDER BY nombre`,
+      `SELECT id, nombre, email, dni, rol, activo FROM usuarios WHERE tenant_id = $1 ORDER BY nombre`,
       [tenantId]
     );
     return result.rows;
@@ -447,7 +451,7 @@ export async function cambiarEstadoUsuarioService(
 
     const actualizado = await client.query(
       `UPDATE usuarios SET activo = $1 WHERE id = $2 AND tenant_id = $3
-       RETURNING id, nombre, email, rol, activo`,
+       RETURNING id, nombre, email, dni, rol, activo`,
       [activo, usuarioId, tenantId]
     );
 
