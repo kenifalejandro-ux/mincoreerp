@@ -15,6 +15,7 @@ import type {
 import type { UsuarioPayload } from "../../server/services/auth.service";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { CombustibleRepository } from "./combustible.repository";
+import type { PeriodoHistorial } from "./combustible.repository";
 import { EquiposRepository } from "../equipos/equipos.repository";
 
 export class CombustibleService {
@@ -401,9 +402,10 @@ export class CombustibleService {
     client: PoolClient,
     tenantId: string,
     combustibleId: number,
-    paginacion: Paginacion
+    paginacion: Paginacion,
+    periodo: PeriodoHistorial = {}
   ) {
-    return this.repository.findLecturas(client, tenantId, combustibleId, paginacion);
+    return this.repository.findLecturas(client, tenantId, combustibleId, paginacion, periodo);
   }
 
   /** Devuelve `creado: false` cuando esta lectura ya se había registrado con
@@ -640,7 +642,7 @@ export class CombustibleService {
   listarDespachos(
     client: PoolClient,
     tenantId: string,
-    filtros: { equipoId?: number; serieTalonario?: string },
+    filtros: { equipoId?: number; serieTalonario?: string } & PeriodoHistorial,
     paginacion: Paginacion
   ) {
     return this.repository.findDespachos(client, tenantId, filtros, paginacion);
@@ -2200,7 +2202,7 @@ export class CombustibleService {
   listarRecepciones(
     client: PoolClient,
     tenantId: string,
-    filtros: { combustibleId?: number },
+    filtros: { combustibleId?: number } & PeriodoHistorial,
     paginacion: Paginacion
   ) {
     return this.repository.findRecepciones(client, tenantId, filtros, paginacion);

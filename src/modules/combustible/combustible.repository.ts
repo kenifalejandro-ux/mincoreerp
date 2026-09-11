@@ -9,6 +9,43 @@ import type {
 import type { Paginacion } from "../../server/shared/utils/pagination";
 import { esViolacionUnicidad, esViolacionForeignKey } from "../../server/shared/utils/pgError";
 
+/** El período con el que se acota un historial. Las dos puntas son
+ *  opcionales y se pueden usar sueltas: "de marzo en adelante" y "hasta
+ *  marzo" son consultas tan válidas como el rango cerrado. Sin ninguna de
+ *  las dos, el listado se comporta como antes de que existiera el filtro. */
+export interface PeriodoHistorial {
+  desde?: string;
+  hasta?: string;
+}
+
+/** Agrega al WHERE las condiciones del período, sobre la columna que
+ *  corresponda a cada historial (`leido_en`, `despachado_en`,
+ *  `recibido_en`).
+ *
+ *  La columna la elige el llamador y NUNCA viene del request: se concatena
+ *  al SQL, así que si saliera de la query string sería una inyección. Las
+ *  fechas sí vienen del usuario, y por eso van como parámetros.
+ *
+ *  El filtro usa la misma columna por la que el listado ordena, y eso
+ *  importa: filtrar por `creado_en` mientras se ordena por `leido_en`
+ *  dejaría afuera justamente los vales cargados en diferido desde la
+ *  cancha, que es lo que el filtro tiene que poder mostrar. */
+function agregarPeriodo(
+  condiciones: string[],
+  valores: unknown[],
+  columna: string,
+  periodo: PeriodoHistorial
+) {
+  if (periodo.desde !== undefined) {
+    valores.push(periodo.desde);
+    condiciones.push(`${columna} >= $${valores.length}::timestamptz`);
+  }
+  if (periodo.hasta !== undefined) {
+    valores.push(periodo.hasta);
+    condiciones.push(`${columna} <= $${valores.length}::timestamptz`);
+  }
+}
+
 /** Los siete tipos de alerta del módulo (migraciones 0068, 0070, 0072, 0073).
  *  Los cuatro primeros salen de un despacho y llevan vale; los tres últimos
  *  no -- ver el encabezado de 0073. */
@@ -375,8 +412,14 @@ export class CombustibleRepository {
     client: PoolClient,
     tenantId: string,
     combustibleId: number,
-    { pageSize, offset }: Paginacion
+    { pageSize, offset }: Paginacion,
+    periodo: PeriodoHistorial = {}
   ) {
+    const condiciones: string[] = ["l.combustible_id = $1", "l.tenant_id = $2"];
+    const valores: unknown[] = [combustibleId, tenantId];
+    agregarPeriodo(condiciones, valores, "l.leido_en", periodo);
+    valores.push(pageSize, offset);
+
     const result = await client.query(
       `
       SELECT l.id, l.combustible_id, l.nivel, l.leido_en, l.usuario_id, l.origen,
@@ -396,11 +439,11 @@ export class CombustibleRepository {
       -- módulo anti-fuga, "¿quién anotó esta lectura rara?" es justamente
       -- la pregunta que hay que poder responder.
       LEFT JOIN usuarios autor ON autor.id = l.usuario_id
-      WHERE l.combustible_id = $1 AND l.tenant_id = $2
+      WHERE ${condiciones.join(" AND ")}
       ORDER BY l.leido_en DESC
-      LIMIT $3 OFFSET $4
+      LIMIT $${valores.length - 1} OFFSET $${valores.length}
       `,
-      [combustibleId, tenantId, pageSize, offset]
+      valores
     );
 
     return result.rows;
@@ -701,7 +744,7 @@ export class CombustibleRepository {
   async findDespachos(
     client: PoolClient,
     tenantId: string,
-    filtros: { equipoId?: number; serieTalonario?: string },
+    filtros: { equipoId?: number; serieTalonario?: string } & PeriodoHistorial,
     { pageSize, offset }: Paginacion
   ) {
     const condiciones: string[] = ["tenant_id = $1"];
@@ -715,6 +758,7 @@ export class CombustibleRepository {
       valores.push(filtros.serieTalonario);
       condiciones.push(`serie_talonario = $${valores.length}`);
     }
+    agregarPeriodo(condiciones, valores, "despachado_en", filtros);
 
     valores.push(pageSize, offset);
     const result = await client.query(
@@ -2845,7 +2889,7 @@ export class CombustibleRepository {
   async findRecepciones(
     client: PoolClient,
     tenantId: string,
-    filtros: { combustibleId?: number },
+    filtros: { combustibleId?: number } & PeriodoHistorial,
     { pageSize, offset }: Paginacion
   ) {
     const condiciones: string[] = ["r.tenant_id = $1"];
@@ -2855,6 +2899,7 @@ export class CombustibleRepository {
       valores.push(filtros.combustibleId);
       condiciones.push(`r.combustible_id = $${valores.length}`);
     }
+    agregarPeriodo(condiciones, valores, "r.recibido_en", filtros);
 
     valores.push(pageSize, offset);
     const result = await client.query(

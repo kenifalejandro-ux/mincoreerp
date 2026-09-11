@@ -46,6 +46,7 @@ import type {
   ResolverAlertaCombustibleInput,
   ConfigCombustibleInput,
   KardexCombustibleQuery,
+  PeriodoHistorialCombustibleQuery,
 } from "../../server/schemas/combustible.schema";
 import { armarCsv } from "../../server/shared/utils/csv.util";
 import { sanearNombreArchivo } from "../../server/services/documentStorage";
@@ -375,7 +376,8 @@ export class CombustibleController {
 
   /** GET /:id/lecturas -- el histórico de aforos del tanque, que hasta acá
    *  era dato muerto (se guardaba en cada lectura pero no había forma de
-   *  consultarlo salvo entrar a la base directo). */
+   *  consultarlo salvo entrar a la base directo). Acepta período opcional
+   *  (`?desde=&hasta=`), igual que los otros dos historiales. */
   async getLecturas(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
@@ -387,8 +389,9 @@ export class CombustibleController {
       }
 
       const paginacion = parsePaginacion(req.query);
+      const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
       const filas = await withTenant(tenantId, (client) =>
-        service.getLecturas(client, tenantId, id, paginacion)
+        service.getLecturas(client, tenantId, id, paginacion, { desde, hasta })
       );
       res.json(armarRespuestaPaginada(filas, paginacion));
     } catch {
@@ -1367,8 +1370,9 @@ export class CombustibleController {
     }
   }
 
-  /** GET /despachos -- listado paginado, con filtro opcional por equipo o
-   *  serie de talonario. Sin conciliación ni anomalías acá: eso es Fase D. */
+  /** GET /despachos -- listado paginado, con filtro opcional por equipo,
+   *  serie de talonario y período. Sin conciliación ni anomalías acá: eso
+   *  es Fase D. */
   async listarDespachos(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
@@ -1380,9 +1384,15 @@ export class CombustibleController {
           : undefined;
       const serieTalonario =
         typeof req.query.serie_talonario === "string" ? req.query.serie_talonario : undefined;
+      const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
 
       const filas = await withTenant(tenantId, (client) =>
-        service.listarDespachos(client, tenantId, { equipoId, serieTalonario }, paginacion)
+        service.listarDespachos(
+          client,
+          tenantId,
+          { equipoId, serieTalonario, desde, hasta },
+          paginacion
+        )
       );
       res.json(armarRespuestaPaginada(filas, paginacion));
     } catch {
@@ -2285,8 +2295,9 @@ export class CombustibleController {
     }
   }
 
-  /** GET /recepciones -- historial paginado, con filtro opcional por
-   *  tanque. Incluye las anuladas (marcadas): son evidencia, no ruido. */
+  /** GET /recepciones -- historial paginado, con filtro opcional por tanque
+   *  y por período. Incluye las anuladas (marcadas): son evidencia, no
+   *  ruido. */
   async listarRecepciones(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
@@ -2297,8 +2308,10 @@ export class CombustibleController {
           ? Number(combustibleIdRaw)
           : undefined;
 
+      const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
+
       const filas = await withTenant(tenantId, (client) =>
-        service.listarRecepciones(client, tenantId, { combustibleId }, paginacion)
+        service.listarRecepciones(client, tenantId, { combustibleId, desde, hasta }, paginacion)
       );
       res.json(armarRespuestaPaginada(filas, paginacion));
     } catch {

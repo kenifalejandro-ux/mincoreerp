@@ -22,6 +22,7 @@ import {
   marcarAlertasLeidasCombustibleSchema,
   configCombustibleSchema,
   kardexCombustibleSchema,
+  periodoHistorialCombustibleSchema,
   resolverAlertaCombustibleSchema,
   bajaTanqueCombustibleSchema,
 } from "../../server/schemas/combustible.schema";
@@ -38,7 +39,11 @@ router.get("/", asyncHandler(controller.getAll.bind(controller)));
 // Despachos (Fase B) -- segmentos literales, van ANTES de /:id: si /:id
 // los capturara primero, "despachos" quedaría interpretado como un id
 // (mismo motivo que /lecturas más abajo).
-router.get("/despachos", asyncHandler(controller.listarDespachos.bind(controller)));
+router.get(
+  "/despachos",
+  validateQuery(periodoHistorialCombustibleSchema),
+  asyncHandler(controller.listarDespachos.bind(controller))
+);
 router.get("/despachos/huecos", asyncHandler(controller.getHuecosTalonario.bind(controller)));
 // Los cuatro roles pueden POSTear acá, pero NO lo mismo: este endpoint sirve
 // dos flujos distintos (el vale del tanque propio y la compra en grifo de
@@ -127,7 +132,11 @@ router.patch(
 // remisión-- es un flujo aparte, todavía sin implementar: el combustible de
 // una recepción sin validar SÍ cuenta desde que se registra (entró de
 // verdad), si no la próxima varilla mostraría un excedente inexistente.
-router.get("/recepciones", asyncHandler(controller.listarRecepciones.bind(controller)));
+router.get(
+  "/recepciones",
+  validateQuery(periodoHistorialCombustibleSchema),
+  asyncHandler(controller.listarRecepciones.bind(controller))
+);
 router.post(
   "/recepciones",
   requireRole("admin", "grifero"),
@@ -189,7 +198,11 @@ router.get(
 );
 
 router.get("/:id", asyncHandler(controller.getById.bind(controller)));
-router.get("/:id/lecturas", asyncHandler(controller.getLecturas.bind(controller)));
+router.get(
+  "/:id/lecturas",
+  validateQuery(periodoHistorialCombustibleSchema),
+  asyncHandler(controller.getLecturas.bind(controller))
+);
 
 // Quién hace y quién controla. No acusa: cuenta, para que el riesgo de
 // concentración se pueda ver y compensar.
