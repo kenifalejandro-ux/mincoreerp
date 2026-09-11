@@ -4979,15 +4979,31 @@ export default function CombustiblePanel() {
             )}
           </div>
 
-          <div className="flex-1 min-h-0 overflow-auto p-6">
+          {/* `px-6 pb-6` y no `p-6`: el padding SUPERIOR scrollea junto
+              con el contenido, así que dejaba una franja de 24px por encima
+              del encabezado fijo en la que se veían desfilar las filas.
+              Sin ese padding, el encabezado se pega al borde de verdad. */}
+          <div className="flex-1 min-h-0 overflow-auto px-6 pb-6">
             {cargandoKardex ? (
               <p className="text-slate-400 text-center py-8">Armando el kardex...</p>
             ) : !kardex || kardex.filas.length === 0 ? (
               <p className="text-slate-400 text-center py-8">Sin movimientos en este período.</p>
             ) : (
               <table className="w-full text-sm border-collapse">
+                {/* El encabezado queda fijo al scrollear: el kardex se lee
+                    comparando "saldo teórico" contra "medido" columna por
+                    columna, y a la fila treinta ya nadie se acuerda de cuál
+                    era cuál.
+
+                    El `sticky` va en los <th> y no en el <thead> porque la
+                    tabla es `border-collapse`, y ahí el navegador pinta los
+                    bordes a nivel de tabla: el `border-b` del <tr>
+                    desaparecía apenas el encabezado se despegaba. Por eso la
+                    línea de abajo es una sombra INTERIOR de la celda, que sí
+                    viaja con ella. El fondo opaco es lo que hace que las
+                    filas pasen por detrás en vez de encimarse. */}
                 <thead>
-                  <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
+                  <tr className="text-left text-xs font-bold text-slate-700 uppercase [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-white [&>th]:shadow-[inset_0_-1px_0_#e2e8f0]">
                     <th className="p-2">Fecha</th>
                     <th className="p-2">Movimiento</th>
                     <th className="p-2">Documento</th>
