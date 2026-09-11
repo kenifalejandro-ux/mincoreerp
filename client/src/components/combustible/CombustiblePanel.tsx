@@ -5510,7 +5510,7 @@ export default function CombustiblePanel() {
                 una pantalla de configuración aparte: es el número que
                 decide cuándo una alerta de abajo se vuelve una anomalía, y
                 verlos juntos es lo que hace entendible el mecanismo. */}
-          <div className="px-6 py-4 bg-slate-50 border-b flex flex-wrap items-center gap-3 shrink-0">
+          <div className="px-6 py-4 bg-slate-50 border-b flex flex-wrap items-center gap-3 shrink-0 max-h-[50%] overflow-y-auto">
             <label htmlFor="ventana-gracia" className="text-xs font-bold text-slate-700 uppercase">
               Ventana de gracia
             </label>
@@ -5692,28 +5692,41 @@ export default function CombustiblePanel() {
                 {mensajeVentana}
               </span>
             )}
-            <p className="text-xs text-slate-600 flex-1 min-w-[240px]">
-              <strong>Ventana de gracia:</strong> tiempo que un hueco tiene para explicarse solo (un
-              vale que sincroniza sin señal, uno que se anula) antes de congelarse como anomalía
-              permanente. Pasado ese plazo se congela <strong>solo</strong>, sin que nadie tenga que
-              revisarlo.
-              <br />
-              <strong>Acumulado de los últimos N días:</strong> ventana del descuadre que{" "}
-              <strong>no se reinicia con una recepción</strong> — es la que atrapa el faltante de a
-              poco. Bajarla debilita el control y queda auditado.
-              <br />
-              <strong>Llenados por día:</strong> cuántas veces puede llenarse el tanque de un equipo
-              en 24 h. El techo sale de multiplicarlo por la capacidad cargada en la ficha del
-              equipo, así que solo vigila a los equipos que la tengan.{" "}
-              <strong>Tope diario sin capacidad:</strong> litros en 24 h para lo demás — planta,
-              reserva en cubeta y los equipos sin capacidad cargada. Los dos vacíos = sin vigilar.
-              <br />
-              <strong>El grifero toma varilla:</strong> destildalo solo si tenés a alguien distinto
-              para medir. Mientras esté tildado, el que despacha es también el que mide, así que la
-              varilla <strong>no es un control independiente</strong> del despacho — es cómo trabaja
-              la mayoría, y por eso viene tildado. Destildarlo se la deja a los administradores y
-              operadores.
-            </p>
+            {/* La explicación de los números va PLEGADA. Estaba siempre
+                abierta y ocupaba unos 350px fijos de la barra, que es
+                `shrink-0`: en un panel de 640 de alto la lista de alertas
+                --lo que el usuario vino a ver-- quedaba en una franja de
+                dos dedos. Como referencia se lee una vez y después estorba,
+                pero sacarla del panel sería peor: es lo que explica por qué
+                un número de acá arriba convierte una alerta de abajo en
+                anomalía. */}
+            <details className="w-full">
+              <summary className="cursor-pointer text-xs font-medium text-slate-600 hover:text-slate-900">
+                ¿Qué significa cada número?
+              </summary>
+              <p className="mt-2 text-xs text-slate-600">
+                <strong>Ventana de gracia:</strong> tiempo que un hueco tiene para explicarse solo
+                (un vale que sincroniza sin señal, uno que se anula) antes de congelarse como
+                anomalía permanente. Pasado ese plazo se congela <strong>solo</strong>, sin que
+                nadie tenga que revisarlo.
+                <br />
+                <strong>Acumulado de los últimos N días:</strong> ventana del descuadre que{" "}
+                <strong>no se reinicia con una recepción</strong> — es la que atrapa el faltante de
+                a poco. Bajarla debilita el control y queda auditado.
+                <br />
+                <strong>Llenados por día:</strong> cuántas veces puede llenarse el tanque de un
+                equipo en 24 h. El techo sale de multiplicarlo por la capacidad cargada en la ficha
+                del equipo, así que solo vigila a los equipos que la tengan.{" "}
+                <strong>Tope diario sin capacidad:</strong> litros en 24 h para lo demás — planta,
+                reserva en cubeta y los equipos sin capacidad cargada. Los dos vacíos = sin vigilar.
+                <br />
+                <strong>El grifero toma varilla:</strong> destildalo solo si tenés a alguien
+                distinto para medir. Mientras esté tildado, el que despacha es también el que mide,
+                así que la varilla <strong>no es un control independiente</strong> del despacho — es
+                cómo trabaja la mayoría, y por eso viene tildado. Destildarlo se la deja a los
+                administradores y operadores.
+              </p>
+            </details>
           </div>
 
           <div className="flex-1 min-h-0 overflow-auto p-6">
