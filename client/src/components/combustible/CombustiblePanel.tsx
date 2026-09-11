@@ -5,6 +5,11 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { ahoraParaInputLocal } from "../../utils/fechaLocal";
+import VentanaFlotante from "../comunes/VentanaFlotante";
+import {
+  buscarElementoEnPaneles,
+  enfocarPaginaPrincipal,
+} from "../comunes/ventanasFlotantesEstado";
 
 interface Tanque {
   id: number;
@@ -1156,7 +1161,9 @@ export default function CombustiblePanel() {
    *  alerta que vino a ver puede estar veinte filas más abajo. */
   useEffect(() => {
     if (alertaResaltadaId === null || cargandoAlertas) return;
-    const fila = document.getElementById(`alerta-${alertaResaltadaId}`);
+    // `document.getElementById` no alcanza: si la bandeja de alertas está
+    // desprendida a otra ventana, la fila no está en ESTE documento.
+    const fila = buscarElementoEnPaneles(`alerta-${alertaResaltadaId}`);
     fila?.scrollIntoView({ block: "center", behavior: "smooth" });
   }, [alertaResaltadaId, cargandoAlertas, alertasCombustible]);
 
@@ -2252,6 +2259,8 @@ export default function CombustiblePanel() {
   const handleResolverAlerta = async (alertaId: number) => {
     if (resolviendoAlertaId !== null) return;
 
+    // El prompt del navegador sale en la página, no en el panel desprendido.
+    enfocarPaginaPrincipal();
     const motivo = window.prompt(
       "¿Por qué se da por revisada esta alerta?\n\nQueda registrado con tu nombre.",
       ""
@@ -3325,127 +3334,131 @@ export default function CombustiblePanel() {
           </div>
         </div>
       )}
-      {/* Modal: historial de lecturas (solo lectura) */}
+      {/* Los cinco paneles flotantes del módulo. El resto de las pantallas
+          -- altas, ediciones, registros y anulaciones -- siguen siendo
+          modales con fondo oscuro, y la diferencia es de criterio, no de
+          gusto: en un formulario hay algo a medio cargar que se pierde si
+          el usuario se distrae, así que bloquear la pantalla lo protege.
+          Estas cinco son CONSULTAS: mientras se las mira hay que poder
+          seguir trabajando atrás, y a veces mirar dos a la vez (el kardex
+          contra el historial de despachos es exactamente la comparación que
+          hace un auditor). Ver components/comunes/VentanaFlotante.tsx. */}
+      {/* Panel: historial de lecturas (solo lectura) */}
       {tanqueHistorial && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl max-h-[85vh] flex flex-col">
-            <div className="p-6 border-b flex justify-between items-center shrink-0">
-              <div>
-                <h3 className="text-xl font-bold">Historial — {tanqueHistorial.tanque_nombre}</h3>
-                <p className="text-sm text-slate-500">
-                  Lecturas registradas, de la más reciente a la más antigua
-                </p>
-              </div>
-              <button
-                onClick={() => setTanqueHistorial(null)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="p-6 overflow-y-auto">
-              {cargandoLecturas ? (
-                <p className="text-center text-slate-500 py-8">Cargando historial...</p>
-              ) : lecturas.length === 0 ? (
-                <p className="text-center text-slate-500 py-8">
-                  Este tanque todavía no tiene lecturas registradas.
-                </p>
-              ) : (
-                <table className="w-full text-left border-collapse">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Fecha de la lectura
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                        Nivel
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                        Variación
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                        Acciones
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {lecturas.map((l) => {
-                      const anulada = l.anulada_en !== null;
-                      const variacion = variacionPorLectura.get(l.id) ?? null;
-                      return (
-                        <tr key={l.id} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="p-3 text-sm text-slate-600">
-                            <span className={anulada ? "line-through text-slate-400" : ""}>
-                              {formatearFecha(l.leido_en)}
-                            </span>
-                            {l.origen !== "manual" && (
-                              <span className="ml-2 text-xs text-slate-400">({l.origen})</span>
-                            )}
-                            {/* Quién tomó la medición. Va SIEMPRE visible,
+        <VentanaFlotante
+          id="combustible-historial-lecturas"
+          titulo={`Historial — ${tanqueHistorial.tanque_nombre}`}
+          subtitulo="Lecturas registradas, de la más reciente a la más antigua"
+          onCerrar={() => setTanqueHistorial(null)}
+          anchoInicial={720}
+          altoInicial={560}
+        >
+          <div className="flex-1 min-h-0 overflow-y-auto p-6">
+            {cargandoLecturas ? (
+              <p className="text-center text-slate-500 py-8">Cargando historial...</p>
+            ) : lecturas.length === 0 ? (
+              <p className="text-center text-slate-500 py-8">
+                Este tanque todavía no tiene lecturas registradas.
+              </p>
+            ) : (
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Fecha de la lectura
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                      Nivel
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                      Variación
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                      Acciones
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {lecturas.map((l) => {
+                    const anulada = l.anulada_en !== null;
+                    const variacion = variacionPorLectura.get(l.id) ?? null;
+                    return (
+                      <tr key={l.id} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="p-3 text-sm text-slate-600">
+                          <span className={anulada ? "line-through text-slate-400" : ""}>
+                            {formatearFecha(l.leido_en)}
+                          </span>
+                          {l.origen !== "manual" && (
+                            <span className="ml-2 text-xs text-slate-400">({l.origen})</span>
+                          )}
+                          {/* Quién tomó la medición. Va SIEMPRE visible,
                                 incluso en las anuladas: si una lectura
                                 resultó estar mal, quién la cargó es parte
                                 de lo que hay que poder ver. */}
-                            <p className="text-xs text-slate-500 mt-0.5">
-                              {l.registrada_por_nombre
-                                ? `Registró: ${l.registrada_por_nombre}`
-                                : "Registró: —"}
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            {l.registrada_por_nombre
+                              ? `Registró: ${l.registrada_por_nombre}`
+                              : "Registró: —"}
+                          </p>
+                          {anulada && (
+                            <p className="text-xs text-amber-700 mt-0.5">
+                              Anulada: {l.motivo_anulacion}
+                              {l.anulada_por_nombre && ` — ${l.anulada_por_nombre}`}
                             </p>
-                            {anulada && (
-                              <p className="text-xs text-amber-700 mt-0.5">
-                                Anulada: {l.motivo_anulacion}
-                                {l.anulada_por_nombre && ` — ${l.anulada_por_nombre}`}
-                              </p>
-                            )}
-                          </td>
-                          <td
-                            className={`p-3 text-sm font-semibold text-right ${
-                              anulada ? "line-through text-slate-400" : "text-slate-800"
-                            }`}
-                          >
-                            {Number(l.nivel).toLocaleString("es-PE")} {tanqueHistorial.unidad}
-                          </td>
-                          <td className="p-3 text-sm text-right">
-                            {variacion === null ? (
-                              <span className="text-slate-300">—</span>
-                            ) : (
-                              <span
-                                className={
-                                  variacion < 0
-                                    ? "text-red-500 font-medium"
-                                    : variacion > 0
-                                      ? "text-emerald-600 font-medium"
-                                      : "text-slate-400"
-                                }
-                              >
-                                {variacion > 0 ? "+" : ""}
-                                {variacion.toLocaleString("es-PE")} {tanqueHistorial.unidad}
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-3 text-sm text-right">
-                            {!anulada && (
-                              <button
-                                onClick={() => {
-                                  setLecturaAAnular(l);
-                                  setMotivoAnulacion("");
-                                }}
-                                className="px-2 py-1 text-xs text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition-all"
-                                title="Anular esta lectura"
-                              >
-                                Anular
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
+                          )}
+                        </td>
+                        <td
+                          className={`p-3 text-sm font-semibold text-right ${
+                            anulada ? "line-through text-slate-400" : "text-slate-800"
+                          }`}
+                        >
+                          {Number(l.nivel).toLocaleString("es-PE")} {tanqueHistorial.unidad}
+                        </td>
+                        <td className="p-3 text-sm text-right">
+                          {variacion === null ? (
+                            <span className="text-slate-300">—</span>
+                          ) : (
+                            <span
+                              className={
+                                variacion < 0
+                                  ? "text-red-500 font-medium"
+                                  : variacion > 0
+                                    ? "text-emerald-600 font-medium"
+                                    : "text-slate-400"
+                              }
+                            >
+                              {variacion > 0 ? "+" : ""}
+                              {variacion.toLocaleString("es-PE")} {tanqueHistorial.unidad}
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3 text-sm text-right">
+                          {!anulada && (
+                            <button
+                              onClick={() => {
+                                // El modal que pide el motivo se abre en la
+                                // página, no acá adentro: si este panel está
+                                // desprendido, hay que ir a buscar la
+                                // ventana principal o parece no pasar nada.
+                                enfocarPaginaPrincipal();
+                                setLecturaAAnular(l);
+                                setMotivoAnulacion("");
+                              }}
+                              className="px-2 py-1 text-xs text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition-all"
+                              title="Anular esta lectura"
+                            >
+                              Anular
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
-        </div>
+        </VentanaFlotante>
       )}
       {/* Modal: anular lectura (motivo obligatorio) -- se monta por encima
           del historial, que queda abierto detrás. */}
@@ -4087,140 +4100,131 @@ export default function CombustiblePanel() {
           </div>
         </div>
       )}
-      {/* Modal: historial de despachos (solo lectura) */}
+      {/* Panel: historial de despachos (solo lectura) */}
       {modalHistorialDespachosAbierto && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white w-full max-w-4xl rounded-3xl shadow-2xl max-h-[85vh] flex flex-col">
-            <div className="p-6 border-b flex justify-between items-center shrink-0">
-              <div>
-                <h3 className="text-xl font-bold">Historial de despachos</h3>
-                <p className="text-sm text-slate-500">
-                  Últimos 100 vales registrados, del más reciente al más antiguo
-                </p>
-              </div>
-              <button
-                onClick={() => setModalHistorialDespachosAbierto(false)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="p-6 overflow-y-auto overflow-x-auto">
-              {cargandoHistorialDespachos ? (
-                <p className="text-center text-slate-500 py-8">Cargando historial...</p>
-              ) : historialDespachos.length === 0 ? (
-                <p className="text-center text-slate-500 py-8">
-                  Todavía no hay despachos registrados.
-                </p>
-              ) : (
-                <table className="w-full text-left border-collapse">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Vale
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Fecha
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Origen
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Tanque / Grifo
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Unidad
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                        Cantidad
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                        C.U
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                        C.TOTAL
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                        Acciones
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {historialDespachos.map((d) => {
-                      const tanque = tanques.find((t) => t.id === d.combustible_id);
-                      const grifo = grifos.find((g) => g.id === d.grifo_id);
-                      const equipo = equipos.find((eq) => eq.id === d.equipo_id);
-                      const anulado = d.anulada_en !== null;
-                      return (
-                        <tr
-                          key={d.id}
-                          className={`transition-colors align-top ${
-                            anulado ? "bg-slate-50/60 text-slate-400" : "hover:bg-slate-50/50"
-                          }`}
-                        >
-                          <td className="p-3 text-sm font-mono">
-                            <span className={anulado ? "line-through" : "text-slate-800"}>
-                              {d.serie_talonario}-{d.n_vale}
+        <VentanaFlotante
+          id="combustible-historial-despachos"
+          titulo="Historial de despachos"
+          subtitulo="Últimos 100 vales registrados, del más reciente al más antiguo"
+          onCerrar={() => setModalHistorialDespachosAbierto(false)}
+          anchoInicial={980}
+          altoInicial={600}
+        >
+          <div className="flex-1 min-h-0 overflow-auto p-6">
+            {cargandoHistorialDespachos ? (
+              <p className="text-center text-slate-500 py-8">Cargando historial...</p>
+            ) : historialDespachos.length === 0 ? (
+              <p className="text-center text-slate-500 py-8">
+                Todavía no hay despachos registrados.
+              </p>
+            ) : (
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Vale
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Fecha
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Origen
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Tanque / Grifo
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Unidad
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                      Cantidad
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                      C.U
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                      C.TOTAL
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                      Acciones
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {historialDespachos.map((d) => {
+                    const tanque = tanques.find((t) => t.id === d.combustible_id);
+                    const grifo = grifos.find((g) => g.id === d.grifo_id);
+                    const equipo = equipos.find((eq) => eq.id === d.equipo_id);
+                    const anulado = d.anulada_en !== null;
+                    return (
+                      <tr
+                        key={d.id}
+                        className={`transition-colors align-top ${
+                          anulado ? "bg-slate-50/60 text-slate-400" : "hover:bg-slate-50/50"
+                        }`}
+                      >
+                        <td className="p-3 text-sm font-mono">
+                          <span className={anulado ? "line-through" : "text-slate-800"}>
+                            {d.serie_talonario}-{d.n_vale}
+                          </span>
+                        </td>
+                        <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
+                          {formatearFecha(d.despachado_en)}
+                        </td>
+                        <td className="p-3 text-sm text-slate-600">
+                          {ETIQUETA_ORIGEN_DESPACHO[d.origen]}
+                        </td>
+                        <td className="p-3 text-sm text-slate-600">
+                          {tanque?.tanque_nombre ?? grifo?.nombre ?? "—"}
+                        </td>
+                        <td className="p-3 text-sm text-slate-600">
+                          {equipo ? `${equipo.placa_codigo} — ${equipo.tipo}` : "—"}
+                          {d.observaciones && (
+                            <p className="text-xs text-slate-400 mt-0.5">{d.observaciones}</p>
+                          )}
+                        </td>
+                        <td className="p-3 text-sm text-right text-slate-800 font-semibold whitespace-nowrap">
+                          {Number(d.cantidad).toLocaleString("es-PE")}{" "}
+                          {ETIQUETA_TIPO_COMBUSTIBLE[d.tipo_combustible]}
+                        </td>
+                        <td className="p-3 text-sm text-right text-slate-600 whitespace-nowrap">
+                          S/ {Number(d.costo_unitario).toLocaleString("es-PE")}
+                        </td>
+                        <td className="p-3 text-sm text-right text-slate-800 font-semibold whitespace-nowrap">
+                          S/ {Number(d.costo_total).toLocaleString("es-PE")}
+                        </td>
+                        <td className="p-3 text-sm text-right whitespace-nowrap">
+                          {anulado ? (
+                            // La anulada NO se esconde: es la evidencia de
+                            // que el vale se rindió, y lo que evita que el
+                            // hueco de talonario dispare (punto 3).
+                            <span
+                              className="text-xs text-red-400"
+                              title={d.motivo_anulacion ?? undefined}
+                            >
+                              Anulado
                             </span>
-                          </td>
-                          <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
-                            {formatearFecha(d.despachado_en)}
-                          </td>
-                          <td className="p-3 text-sm text-slate-600">
-                            {ETIQUETA_ORIGEN_DESPACHO[d.origen]}
-                          </td>
-                          <td className="p-3 text-sm text-slate-600">
-                            {tanque?.tanque_nombre ?? grifo?.nombre ?? "—"}
-                          </td>
-                          <td className="p-3 text-sm text-slate-600">
-                            {equipo ? `${equipo.placa_codigo} — ${equipo.tipo}` : "—"}
-                            {d.observaciones && (
-                              <p className="text-xs text-slate-400 mt-0.5">{d.observaciones}</p>
-                            )}
-                          </td>
-                          <td className="p-3 text-sm text-right text-slate-800 font-semibold whitespace-nowrap">
-                            {Number(d.cantidad).toLocaleString("es-PE")}{" "}
-                            {ETIQUETA_TIPO_COMBUSTIBLE[d.tipo_combustible]}
-                          </td>
-                          <td className="p-3 text-sm text-right text-slate-600 whitespace-nowrap">
-                            S/ {Number(d.costo_unitario).toLocaleString("es-PE")}
-                          </td>
-                          <td className="p-3 text-sm text-right text-slate-800 font-semibold whitespace-nowrap">
-                            S/ {Number(d.costo_total).toLocaleString("es-PE")}
-                          </td>
-                          <td className="p-3 text-sm text-right whitespace-nowrap">
-                            {anulado ? (
-                              // La anulada NO se esconde: es la evidencia de
-                              // que el vale se rindió, y lo que evita que el
-                              // hueco de talonario dispare (punto 3).
-                              <span
-                                className="text-xs text-red-400"
-                                title={d.motivo_anulacion ?? undefined}
-                              >
-                                Anulado
-                              </span>
-                            ) : (
-                              <button
-                                onClick={() => {
-                                  setDespachoAAnular(d);
-                                  setMotivoAnulacionDespacho("");
-                                }}
-                                className="text-xs text-red-500 hover:text-red-700 hover:underline"
-                              >
-                                Anular
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                enfocarPaginaPrincipal();
+                                setDespachoAAnular(d);
+                                setMotivoAnulacionDespacho("");
+                              }}
+                              className="text-xs text-red-500 hover:text-red-700 hover:underline"
+                            >
+                              Anular
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
-        </div>
+        </VentanaFlotante>
       )}
       {/* Modal: Grifos externos (migrations/0063) */}
       {modalGrifosAbierto && (
@@ -4640,9 +4644,6 @@ export default function CombustiblePanel() {
           </div>
         </div>
       )}
-      {/* Modal: alertas (migrations/0068) -- pantalla completa a la que
-          lleva la campanita del Header. Hueco de talonario se resuelve
-          solo; vale anulado necesita revisión manual de gerencia. */}
       {/* KARDEX DEL TANQUE: las tres historias en una sola línea de tiempo.
 
           Es lo primero que pide un auditor y el módulo no lo tenía: había
@@ -4654,227 +4655,212 @@ export default function CombustiblePanel() {
           con la varilla, así que la diferencia ARRASTRA. Un faltante de 50 L
           por medición es invisible; los 1.000 L del final no. */}
       {modalKardexAbierto && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white w-full max-w-6xl rounded-3xl shadow-2xl max-h-[92vh] flex flex-col">
-            <div className="p-6 border-b flex justify-between items-start shrink-0">
-              <div>
-                <h3 className="text-xl font-bold">
-                  Kardex{kardex ? ` — ${kardex.tanque.codigo}` : ""}
-                </h3>
-                <p className="text-sm text-slate-500">
-                  Todo el movimiento del tanque en una sola línea de tiempo, con el saldo que
-                  debería haber al lado del que se midió.
-                </p>
-              </div>
-              <button
-                onClick={() => setModalKardexAbierto(false)}
-                className="text-slate-400 hover:text-slate-600 text-2xl leading-none"
-                aria-label="Cerrar"
+        <VentanaFlotante
+          id="combustible-kardex"
+          titulo={`Kardex${kardex ? ` — ${kardex.tanque.codigo}` : ""}`}
+          subtitulo="Todo el movimiento del tanque en una sola línea de tiempo, con el saldo que debería haber al lado del que se midió."
+          onCerrar={() => setModalKardexAbierto(false)}
+          anchoInicial={1120}
+          altoInicial={660}
+        >
+          <div className="px-6 py-4 bg-slate-50 border-b flex flex-wrap items-end gap-3 shrink-0">
+            <div>
+              <label
+                htmlFor="kardex-desde"
+                className="block text-xs font-bold text-slate-700 uppercase mb-1"
               >
-                ×
-              </button>
+                Desde
+              </label>
+              <input
+                id="kardex-desde"
+                type="date"
+                className="border border-slate-200 rounded-lg p-2"
+                value={kardexDesde}
+                onChange={(e) => setKardexDesde(e.target.value)}
+              />
             </div>
-
-            <div className="px-6 py-4 bg-slate-50 border-b flex flex-wrap items-end gap-3 shrink-0">
-              <div>
-                <label
-                  htmlFor="kardex-desde"
-                  className="block text-xs font-bold text-slate-700 uppercase mb-1"
-                >
-                  Desde
-                </label>
-                <input
-                  id="kardex-desde"
-                  type="date"
-                  className="border border-slate-200 rounded-lg p-2"
-                  value={kardexDesde}
-                  onChange={(e) => setKardexDesde(e.target.value)}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="kardex-hasta"
-                  className="block text-xs font-bold text-slate-700 uppercase mb-1"
-                >
-                  Hasta
-                </label>
-                <input
-                  id="kardex-hasta"
-                  type="date"
-                  className="border border-slate-200 rounded-lg p-2"
-                  value={kardexHasta}
-                  onChange={(e) => setKardexHasta(e.target.value)}
-                />
-              </div>
-              <button
-                onClick={() => kardexTanqueId !== null && cargarKardex(kardexTanqueId)}
-                disabled={cargandoKardex}
-                className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50"
+            <div>
+              <label
+                htmlFor="kardex-hasta"
+                className="block text-xs font-bold text-slate-700 uppercase mb-1"
               >
-                {cargandoKardex ? "Armando..." : "Ver período"}
-              </button>
-              <button
-                onClick={descargarKardexCsv}
-                disabled={descargandoKardex || !kardex || kardex.filas.length === 0}
-                className="px-4 py-2 border border-slate-300 text-slate-700 text-sm font-medium rounded-lg hover:bg-white disabled:opacity-40"
-                title="Descargar en CSV — se abre en Excel"
-              >
-                {descargandoKardex ? "Exportando..." : "⬇ Excel (CSV)"}
-              </button>
-              {errorKardex && (
-                <span className="text-xs font-semibold text-red-600">{errorKardex}</span>
-              )}
-
-              {/* El cierre del período: lo que un auditor copia al informe. */}
-              {kardex && (
-                <div className="flex flex-wrap gap-4 ml-auto text-sm">
-                  <span className="text-slate-500">
-                    Entradas <strong className="text-slate-900">{kardex.resumen.entradas}</strong>
-                  </span>
-                  <span className="text-slate-500">
-                    Salidas <strong className="text-slate-900">{kardex.resumen.salidas}</strong>
-                  </span>
-                  <span className="text-slate-500">
-                    Mediciones{" "}
-                    <strong className="text-slate-900">{kardex.resumen.mediciones}</strong>
-                  </span>
-                  <span
-                    className={
-                      kardex.resumen.descuadre_final === null
-                        ? "text-slate-400"
-                        : kardex.resumen.descuadre_final < 0
-                          ? "text-red-600 font-bold"
-                          : kardex.resumen.descuadre_final > 0
-                            ? "text-amber-600 font-bold"
-                            : "text-emerald-600 font-bold"
-                    }
-                  >
-                    {kardex.resumen.descuadre_final === null
-                      ? "Sin varilla en el período"
-                      : `Descuadre ${kardex.resumen.descuadre_final} ${kardex.tanque.unidad}`}
-                  </span>
-                </div>
-              )}
+                Hasta
+              </label>
+              <input
+                id="kardex-hasta"
+                type="date"
+                className="border border-slate-200 rounded-lg p-2"
+                value={kardexHasta}
+                onChange={(e) => setKardexHasta(e.target.value)}
+              />
             </div>
+            <button
+              onClick={() => kardexTanqueId !== null && cargarKardex(kardexTanqueId)}
+              disabled={cargandoKardex}
+              className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50"
+            >
+              {cargandoKardex ? "Armando..." : "Ver período"}
+            </button>
+            <button
+              onClick={descargarKardexCsv}
+              disabled={descargandoKardex || !kardex || kardex.filas.length === 0}
+              className="px-4 py-2 border border-slate-300 text-slate-700 text-sm font-medium rounded-lg hover:bg-white disabled:opacity-40"
+              title="Descargar en CSV — se abre en Excel"
+            >
+              {descargandoKardex ? "Exportando..." : "⬇ Excel (CSV)"}
+            </button>
+            {errorKardex && (
+              <span className="text-xs font-semibold text-red-600">{errorKardex}</span>
+            )}
 
-            <div className="overflow-auto p-6">
-              {cargandoKardex ? (
-                <p className="text-slate-400 text-center py-8">Armando el kardex...</p>
-              ) : !kardex || kardex.filas.length === 0 ? (
-                <p className="text-slate-400 text-center py-8">Sin movimientos en este período.</p>
-              ) : (
-                <table className="w-full text-sm border-collapse">
-                  <thead>
-                    <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
-                      <th className="p-2">Fecha</th>
-                      <th className="p-2">Movimiento</th>
-                      <th className="p-2">Documento</th>
-                      <th className="p-2 text-right">Entrada</th>
-                      <th className="p-2 text-right">Salida</th>
-                      <th className="p-2 text-right">Saldo teórico</th>
-                      <th className="p-2 text-right">Medido</th>
-                      <th
-                        className="p-2 text-right"
-                        title="Contra la varilla anterior: ubica CUÁNDO pasó"
-                      >
-                        Dif. tramo
-                      </th>
-                      <th
-                        className="p-2 text-right"
-                        title="Contra el inicio del período: CUÁNTO falta en total"
-                      >
-                        Dif. acumulada
-                      </th>
-                      <th className="p-2">Quién</th>
+            {/* El cierre del período: lo que un auditor copia al informe. */}
+            {kardex && (
+              <div className="flex flex-wrap gap-4 ml-auto text-sm">
+                <span className="text-slate-500">
+                  Entradas <strong className="text-slate-900">{kardex.resumen.entradas}</strong>
+                </span>
+                <span className="text-slate-500">
+                  Salidas <strong className="text-slate-900">{kardex.resumen.salidas}</strong>
+                </span>
+                <span className="text-slate-500">
+                  Mediciones <strong className="text-slate-900">{kardex.resumen.mediciones}</strong>
+                </span>
+                <span
+                  className={
+                    kardex.resumen.descuadre_final === null
+                      ? "text-slate-400"
+                      : kardex.resumen.descuadre_final < 0
+                        ? "text-red-600 font-bold"
+                        : kardex.resumen.descuadre_final > 0
+                          ? "text-amber-600 font-bold"
+                          : "text-emerald-600 font-bold"
+                  }
+                >
+                  {kardex.resumen.descuadre_final === null
+                    ? "Sin varilla en el período"
+                    : `Descuadre ${kardex.resumen.descuadre_final} ${kardex.tanque.unidad}`}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-auto p-6">
+            {cargandoKardex ? (
+              <p className="text-slate-400 text-center py-8">Armando el kardex...</p>
+            ) : !kardex || kardex.filas.length === 0 ? (
+              <p className="text-slate-400 text-center py-8">Sin movimientos en este período.</p>
+            ) : (
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
+                    <th className="p-2">Fecha</th>
+                    <th className="p-2">Movimiento</th>
+                    <th className="p-2">Documento</th>
+                    <th className="p-2 text-right">Entrada</th>
+                    <th className="p-2 text-right">Salida</th>
+                    <th className="p-2 text-right">Saldo teórico</th>
+                    <th className="p-2 text-right">Medido</th>
+                    <th
+                      className="p-2 text-right"
+                      title="Contra la varilla anterior: ubica CUÁNDO pasó"
+                    >
+                      Dif. tramo
+                    </th>
+                    <th
+                      className="p-2 text-right"
+                      title="Contra el inicio del período: CUÁNTO falta en total"
+                    >
+                      Dif. acumulada
+                    </th>
+                    <th className="p-2">Quién</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {kardex.saldo_inicial !== null && (
+                    <tr className="border-b bg-slate-50 text-slate-500">
+                      <td className="p-2 italic" colSpan={5}>
+                        Saldo al inicio del período (última varilla anterior)
+                      </td>
+                      <td className="p-2 text-right font-bold">{kardex.saldo_inicial}</td>
+                      <td className="p-2" colSpan={4}></td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {kardex.saldo_inicial !== null && (
-                      <tr className="border-b bg-slate-50 text-slate-500">
-                        <td className="p-2 italic" colSpan={5}>
-                          Saldo al inicio del período (última varilla anterior)
+                  )}
+                  {kardex.filas.map((f) => {
+                    const etiqueta =
+                      f.tipo === "recepcion"
+                        ? "Recepción"
+                        : f.tipo === "despacho"
+                          ? "Despacho"
+                          : "Varilla";
+                    return (
+                      <tr
+                        key={`${f.tipo}-${f.referencia_id}`}
+                        className={`border-b ${f.anulada ? "text-slate-400 line-through bg-slate-50/60" : ""}`}
+                      >
+                        <td className="p-2 whitespace-nowrap">
+                          {new Date(f.ocurrido_en).toLocaleString("es-PE", {
+                            day: "2-digit",
+                            month: "2-digit",
+                            year: "2-digit",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
                         </td>
-                        <td className="p-2 text-right font-bold">{kardex.saldo_inicial}</td>
-                        <td className="p-2" colSpan={4}></td>
-                      </tr>
-                    )}
-                    {kardex.filas.map((f) => {
-                      const etiqueta =
-                        f.tipo === "recepcion"
-                          ? "Recepción"
-                          : f.tipo === "despacho"
-                            ? "Despacho"
-                            : "Varilla";
-                      return (
-                        <tr
-                          key={`${f.tipo}-${f.referencia_id}`}
-                          className={`border-b ${f.anulada ? "text-slate-400 line-through bg-slate-50/60" : ""}`}
-                        >
-                          <td className="p-2 whitespace-nowrap">
-                            {new Date(f.ocurrido_en).toLocaleString("es-PE", {
-                              day: "2-digit",
-                              month: "2-digit",
-                              year: "2-digit",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </td>
-                          <td className="p-2">
-                            {etiqueta}
-                            {f.detalle && (
-                              <span className="text-slate-400 text-xs"> · {f.detalle}</span>
-                            )}
-                            {/* El motivo va SIN tachar: es lo único que
+                        <td className="p-2">
+                          {etiqueta}
+                          {f.detalle && (
+                            <span className="text-slate-400 text-xs"> · {f.detalle}</span>
+                          )}
+                          {/* El motivo va SIN tachar: es lo único que
                                 distingue un error de tipeo de un borrado
                                 conveniente, así que tiene que leerse. */}
-                            {f.anulada && f.motivo_anulacion && (
-                              <span className="block text-[11px] text-red-500 no-underline">
-                                Anulado: {f.motivo_anulacion}
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-2 font-mono text-xs">{f.documento ?? "—"}</td>
-                          <td className="p-2 text-right text-emerald-700">
-                            {f.entrada > 0 ? f.entrada : ""}
-                          </td>
-                          <td className="p-2 text-right text-slate-700">
-                            {f.salida > 0 ? f.salida : ""}
-                          </td>
-                          <td className="p-2 text-right font-semibold">{f.saldo_teorico ?? "—"}</td>
-                          <td className="p-2 text-right font-semibold">{f.nivel_medido ?? ""}</td>
-                          <td className="p-2 text-right">
-                            {f.dif_tramo === null ? "" : f.dif_tramo}
-                          </td>
-                          <td
-                            className={`p-2 text-right font-bold ${
-                              f.dif_acumulada === null
-                                ? ""
-                                : f.dif_acumulada < 0
-                                  ? "text-red-600"
-                                  : f.dif_acumulada > 0
-                                    ? "text-amber-600"
-                                    : "text-emerald-600"
-                            }`}
-                          >
-                            {f.dif_acumulada === null ? "" : f.dif_acumulada}
-                          </td>
-                          <td className="p-2 text-slate-500 text-xs">{f.usuario}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
+                          {f.anulada && f.motivo_anulacion && (
+                            <span className="block text-[11px] text-red-500 no-underline">
+                              Anulado: {f.motivo_anulacion}
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-2 font-mono text-xs">{f.documento ?? "—"}</td>
+                        <td className="p-2 text-right text-emerald-700">
+                          {f.entrada > 0 ? f.entrada : ""}
+                        </td>
+                        <td className="p-2 text-right text-slate-700">
+                          {f.salida > 0 ? f.salida : ""}
+                        </td>
+                        <td className="p-2 text-right font-semibold">{f.saldo_teorico ?? "—"}</td>
+                        <td className="p-2 text-right font-semibold">{f.nivel_medido ?? ""}</td>
+                        <td className="p-2 text-right">
+                          {f.dif_tramo === null ? "" : f.dif_tramo}
+                        </td>
+                        <td
+                          className={`p-2 text-right font-bold ${
+                            f.dif_acumulada === null
+                              ? ""
+                              : f.dif_acumulada < 0
+                                ? "text-red-600"
+                                : f.dif_acumulada > 0
+                                  ? "text-amber-600"
+                                  : "text-emerald-600"
+                          }`}
+                        >
+                          {f.dif_acumulada === null ? "" : f.dif_acumulada}
+                        </td>
+                        <td className="p-2 text-slate-500 text-xs">{f.usuario}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
 
-              {kardex && kardex.resumen.anulados > 0 && (
-                <p className="text-xs text-slate-600 mt-4">
-                  Las filas tachadas están anuladas: se muestran porque son evidencia, pero no suman
-                  al saldo.
-                </p>
-              )}
-            </div>
+            {kardex && kardex.resumen.anulados > 0 && (
+              <p className="text-xs text-slate-600 mt-4">
+                Las filas tachadas están anuladas: se muestran porque son evidencia, pero no suman
+                al saldo.
+              </p>
+            )}
           </div>
-        </div>
+        </VentanaFlotante>
       )}
       {/* AUDITORÍA: los dos reportes que contestan lo que un auditor pregunta.
 
@@ -4884,309 +4870,296 @@ export default function CombustiblePanel() {
           se puede reescribir. El segundo mide algo distinto y previo: si una
           sola persona hace y controla, ningún control interno alcanza. */}
       {modalAuditoriaAbierto && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl max-h-[92vh] flex flex-col">
-            <div className="p-6 border-b flex justify-between items-start shrink-0">
-              <div>
-                <h3 className="text-xl font-bold">Auditoría del período</h3>
-                <p className="text-sm text-slate-500">
-                  Qué controles estuvieron flojos mientras salía combustible, y quién revisa a
-                  quién.
-                </p>
-              </div>
-              <button
-                onClick={() => setModalAuditoriaAbierto(false)}
-                className="text-slate-400 hover:text-slate-600 text-2xl leading-none"
-                aria-label="Cerrar"
+        <VentanaFlotante
+          id="combustible-auditoria"
+          titulo="Auditoría del período"
+          subtitulo="Qué controles estuvieron flojos mientras salía combustible, y quién revisa a quién."
+          onCerrar={() => setModalAuditoriaAbierto(false)}
+          anchoInicial={1040}
+          altoInicial={660}
+        >
+          <div className="px-6 py-4 bg-slate-50 border-b flex flex-wrap items-end gap-3 shrink-0">
+            <div>
+              <label
+                htmlFor="aud-desde"
+                className="block text-xs font-bold text-slate-700 uppercase mb-1"
               >
-                ×
-              </button>
+                Desde
+              </label>
+              <input
+                id="aud-desde"
+                type="date"
+                className="border border-slate-200 rounded-lg p-2"
+                value={kardexDesde}
+                onChange={(e) => setKardexDesde(e.target.value)}
+              />
             </div>
-
-            <div className="px-6 py-4 bg-slate-50 border-b flex flex-wrap items-end gap-3 shrink-0">
-              <div>
-                <label
-                  htmlFor="aud-desde"
-                  className="block text-xs font-bold text-slate-700 uppercase mb-1"
-                >
-                  Desde
-                </label>
-                <input
-                  id="aud-desde"
-                  type="date"
-                  className="border border-slate-200 rounded-lg p-2"
-                  value={kardexDesde}
-                  onChange={(e) => setKardexDesde(e.target.value)}
-                />
-              </div>
-              <div>
-                <label
-                  htmlFor="aud-hasta"
-                  className="block text-xs font-bold text-slate-700 uppercase mb-1"
-                >
-                  Hasta
-                </label>
-                <input
-                  id="aud-hasta"
-                  type="date"
-                  className="border border-slate-200 rounded-lg p-2"
-                  value={kardexHasta}
-                  onChange={(e) => setKardexHasta(e.target.value)}
-                />
-              </div>
-              <button
-                onClick={abrirModalAuditoria}
-                disabled={cargandoAuditoria}
-                className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50"
+            <div>
+              <label
+                htmlFor="aud-hasta"
+                className="block text-xs font-bold text-slate-700 uppercase mb-1"
               >
-                {cargandoAuditoria ? "Armando..." : "Ver período"}
-              </button>
+                Hasta
+              </label>
+              <input
+                id="aud-hasta"
+                type="date"
+                className="border border-slate-200 rounded-lg p-2"
+                value={kardexHasta}
+                onChange={(e) => setKardexHasta(e.target.value)}
+              />
             </div>
+            <button
+              onClick={abrirModalAuditoria}
+              disabled={cargandoAuditoria}
+              className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50"
+            >
+              {cargandoAuditoria ? "Armando..." : "Ver período"}
+            </button>
+          </div>
 
-            <div className="overflow-auto p-6 space-y-8">
-              {cargandoAuditoria ? (
-                <p className="text-slate-400 text-center py-8">Armando los reportes...</p>
-              ) : (
-                <>
-                  {/* ── 1. La vigilancia durante el período ── */}
-                  <section>
-                    <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">
-                      Vigilancia durante el período
-                    </h4>
-                    <p className="text-xs text-slate-500 mb-3">
-                      Cada vez que alguien redujo un control, y{" "}
-                      <strong>cuánto faltaba en el tanque después</strong>. Ojo con las dos columnas
-                      de la derecha: bajar un umbral sirve justamente para sacar{" "}
-                      <em>sin emitir vale</em>, así que “declarado” puede decir cero mientras el
-                      tanque se vacía. La que cuenta es el faltante medido.
-                    </p>
+          <div className="flex-1 min-h-0 space-y-8 overflow-auto p-6">
+            {cargandoAuditoria ? (
+              <p className="text-slate-400 text-center py-8">Armando los reportes...</p>
+            ) : (
+              <>
+                {/* ── 1. La vigilancia durante el período ── */}
+                <section>
+                  <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">
+                    Vigilancia durante el período
+                  </h4>
+                  <p className="text-xs text-slate-500 mb-3">
+                    Cada vez que alguien redujo un control, y{" "}
+                    <strong>cuánto faltaba en el tanque después</strong>. Ojo con las dos columnas
+                    de la derecha: bajar un umbral sirve justamente para sacar{" "}
+                    <em>sin emitir vale</em>, así que “declarado” puede decir cero mientras el
+                    tanque se vacía. La que cuenta es el faltante medido.
+                  </p>
 
-                    {repControles && repControles.resumen.eventos > 0 && (
-                      <p className="text-sm mb-3">
-                        {repControles.resumen.peor_descuadre_medido_l === null ? (
-                          <span className="text-slate-500">
-                            Nadie tomó varilla después de estos cambios — no hay con qué medir qué
-                            pasó.
-                          </span>
-                        ) : (
-                          <>
-                            El peor faltante medido con la vigilancia baja fue{" "}
-                            <strong
-                              className={
-                                repControles.resumen.peor_descuadre_medido_l < 0
-                                  ? "text-red-600"
-                                  : "text-slate-900"
-                              }
-                            >
-                              {repControles.resumen.peor_descuadre_medido_l} L
-                            </strong>
-                            .
-                          </>
-                        )}
-                        {repControles.resumen.sin_mediciones > 0 &&
-                          repControles.resumen.peor_descuadre_medido_l !== null && (
-                            <span className="text-slate-500">
-                              {" "}
-                              · {repControles.resumen.sin_mediciones} cambio(s) sin varilla
-                              posterior
-                            </span>
-                          )}
-                      </p>
-                    )}
-
-                    {!repControles || repControles.eventos.length === 0 ? (
-                      <p className="text-sm text-emerald-700 bg-emerald-50 rounded-xl p-3">
-                        Nadie redujo ningún control en este período.
-                      </p>
-                    ) : (
-                      <table className="w-full text-sm border-collapse">
-                        <thead>
-                          <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
-                            <th className="p-2">Cuándo</th>
-                            <th className="p-2">Quién</th>
-                            <th className="p-2">Qué se aflojó</th>
-                            <th className="p-2">Motivo</th>
-                            <th className="p-2 text-right">Declarado</th>
-                            <th
-                              className="p-2 text-right"
-                              title="Lo que dice la varilla, calculado sin mirar el umbral. Es lo que el aflojamiento habilita: sacar sin emitir vale."
-                            >
-                              Faltante medido
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {repControles.eventos.map((e, i) => (
-                            <tr key={`${e.cuando}-${i}`} className="border-b">
-                              <td className="p-2 whitespace-nowrap">
-                                {new Date(e.cuando).toLocaleString("es-PE", {
-                                  day: "2-digit",
-                                  month: "2-digit",
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                })}
-                              </td>
-                              <td className="p-2">{e.quien}</td>
-                              <td className="p-2">
-                                {e.aflojados.map((a, j) => (
-                                  <span key={j} className="block text-xs">
-                                    <strong>{a.control}</strong>: {a.de} → {a.a}
-                                  </span>
-                                ))}
-                              </td>
-                              <td className="p-2 text-xs text-slate-500">{e.motivo ?? "—"}</td>
-                              <td
-                                className={`p-2 text-right font-bold ${
-                                  e.despachado_despues_l > 0 ? "text-red-600" : "text-slate-400"
-                                }`}
-                              >
-                                {e.despachado_despues_l > 0 ? `${e.despachado_despues_l} L` : "—"}
-                                {e.vales_despues > 0 && (
-                                  <span className="block text-[11px] font-normal text-slate-500">
-                                    {e.vales_despues} vale(s)
-                                  </span>
-                                )}
-                              </td>
-                              {/* La columna que importa. Un aflojamiento sirve
-                                  para sacar SIN vale, así que "declarado"
-                                  puede ser cero mientras el tanque se vacía. */}
-                              <td
-                                className={`p-2 text-right font-bold ${
-                                  e.descuadre_medido_l === null
-                                    ? "text-slate-400"
-                                    : e.descuadre_medido_l < 0
-                                      ? "text-red-600"
-                                      : e.descuadre_medido_l > 0
-                                        ? "text-amber-600"
-                                        : "text-emerald-600"
-                                }`}
-                              >
-                                {e.descuadre_medido_l === null
-                                  ? "sin medir"
-                                  : `${e.descuadre_medido_l} L`}
-                                <span className="block text-[11px] font-normal text-slate-500">
-                                  {e.mediciones_despues} varilla(s)
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-
-                    {/* La FOTO de hoy: un control apagado ANTES del período no
-                        genera ningún evento arriba, y sin esto sería invisible. */}
-                    {repControles && repControles.tanques.length > 0 && (
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        {repControles.tanques.map((t) => (
-                          <span
-                            key={t.id}
-                            className={`text-xs px-2 py-1 rounded-lg border ${
-                              t.vigilancia === "completa"
-                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                : t.vigilancia === "ninguna"
-                                  ? "border-red-200 bg-red-50 text-red-700"
-                                  : "border-amber-200 bg-amber-50 text-amber-700"
-                            }`}
-                            title={
-                              t.controles_apagados.length
-                                ? `Apagados: ${t.controles_apagados.join(", ")}`
-                                : "Los cuatro controles configurados"
+                  {repControles && repControles.resumen.eventos > 0 && (
+                    <p className="text-sm mb-3">
+                      {repControles.resumen.peor_descuadre_medido_l === null ? (
+                        <span className="text-slate-500">
+                          Nadie tomó varilla después de estos cambios — no hay con qué medir qué
+                          pasó.
+                        </span>
+                      ) : (
+                        <>
+                          El peor faltante medido con la vigilancia baja fue{" "}
+                          <strong
+                            className={
+                              repControles.resumen.peor_descuadre_medido_l < 0
+                                ? "text-red-600"
+                                : "text-slate-900"
                             }
                           >
-                            {t.codigo} · {t.vigilancia}
-                            {!t.activo && " (desactivado)"}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </section>
-
-                  {/* ── 2. Quién hace y quién controla ── */}
-                  <section>
-                    <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">
-                      Quién hace y quién controla
-                    </h4>
-                    <p className="text-xs text-slate-500 mb-3">
-                      No acusa a nadie: cuenta. Si una sola persona carga, anula y da por revisado,
-                      ningún control interno alcanza — y eso se compensa con otra persona mirando,
-                      no con más software.
-                    </p>
-
-                    {repSegregacion && repSegregacion.resumen.concentracion_pct !== null && (
-                      <p className="text-sm mb-3">
-                        <strong>{repSegregacion.resumen.concentracion_pct}%</strong> de los
-                        movimientos los cargó una sola persona
-                        {repSegregacion.resumen.autorevisiones > 0 && (
-                          <span className="text-red-600">
+                            {repControles.resumen.peor_descuadre_medido_l} L
+                          </strong>
+                          .
+                        </>
+                      )}
+                      {repControles.resumen.sin_mediciones > 0 &&
+                        repControles.resumen.peor_descuadre_medido_l !== null && (
+                          <span className="text-slate-500">
                             {" "}
-                            · {repSegregacion.resumen.autorevisiones} alerta(s) cerrada(s) por quien
-                            la generó
+                            · {repControles.resumen.sin_mediciones} cambio(s) sin varilla posterior
                           </span>
                         )}
-                      </p>
-                    )}
+                    </p>
+                  )}
 
-                    {!repSegregacion || repSegregacion.personas.length === 0 ? (
-                      <p className="text-sm text-slate-400">Sin movimientos en este período.</p>
-                    ) : (
-                      <table className="w-full text-sm border-collapse">
-                        <thead>
-                          <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
-                            <th className="p-2">Persona</th>
-                            <th className="p-2 text-right">Vales</th>
-                            <th className="p-2 text-right">Recepciones</th>
-                            <th className="p-2 text-right">Varillas</th>
-                            <th className="p-2 text-right">Anulaciones</th>
-                            <th
-                              className="p-2 text-right"
-                              title="Anuló algo que había cargado él mismo"
+                  {!repControles || repControles.eventos.length === 0 ? (
+                    <p className="text-sm text-emerald-700 bg-emerald-50 rounded-xl p-3">
+                      Nadie redujo ningún control en este período.
+                    </p>
+                  ) : (
+                    <table className="w-full text-sm border-collapse">
+                      <thead>
+                        <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
+                          <th className="p-2">Cuándo</th>
+                          <th className="p-2">Quién</th>
+                          <th className="p-2">Qué se aflojó</th>
+                          <th className="p-2">Motivo</th>
+                          <th className="p-2 text-right">Declarado</th>
+                          <th
+                            className="p-2 text-right"
+                            title="Lo que dice la varilla, calculado sin mirar el umbral. Es lo que el aflojamiento habilita: sacar sin emitir vale."
+                          >
+                            Faltante medido
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {repControles.eventos.map((e, i) => (
+                          <tr key={`${e.cuando}-${i}`} className="border-b">
+                            <td className="p-2 whitespace-nowrap">
+                              {new Date(e.cuando).toLocaleString("es-PE", {
+                                day: "2-digit",
+                                month: "2-digit",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </td>
+                            <td className="p-2">{e.quien}</td>
+                            <td className="p-2">
+                              {e.aflojados.map((a, j) => (
+                                <span key={j} className="block text-xs">
+                                  <strong>{a.control}</strong>: {a.de} → {a.a}
+                                </span>
+                              ))}
+                            </td>
+                            <td className="p-2 text-xs text-slate-500">{e.motivo ?? "—"}</td>
+                            <td
+                              className={`p-2 text-right font-bold ${
+                                e.despachado_despues_l > 0 ? "text-red-600" : "text-slate-400"
+                              }`}
                             >
-                              …propias
-                            </th>
-                            <th className="p-2 text-right">Alertas cerradas</th>
-                            <th
-                              className="p-2 text-right"
-                              title="Cerró una alerta que generó su propio movimiento"
+                              {e.despachado_despues_l > 0 ? `${e.despachado_despues_l} L` : "—"}
+                              {e.vales_despues > 0 && (
+                                <span className="block text-[11px] font-normal text-slate-500">
+                                  {e.vales_despues} vale(s)
+                                </span>
+                              )}
+                            </td>
+                            {/* La columna que importa. Un aflojamiento sirve
+                                  para sacar SIN vale, así que "declarado"
+                                  puede ser cero mientras el tanque se vacía. */}
+                            <td
+                              className={`p-2 text-right font-bold ${
+                                e.descuadre_medido_l === null
+                                  ? "text-slate-400"
+                                  : e.descuadre_medido_l < 0
+                                    ? "text-red-600"
+                                    : e.descuadre_medido_l > 0
+                                      ? "text-amber-600"
+                                      : "text-emerald-600"
+                              }`}
                             >
-                              …propias
-                            </th>
+                              {e.descuadre_medido_l === null
+                                ? "sin medir"
+                                : `${e.descuadre_medido_l} L`}
+                              <span className="block text-[11px] font-normal text-slate-500">
+                                {e.mediciones_despues} varilla(s)
+                              </span>
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {repSegregacion.personas.map((p) => (
-                            <tr key={p.usuario_id} className="border-b">
-                              <td className="p-2 font-medium">{p.persona}</td>
-                              <td className="p-2 text-right">{p.vales_cargados}</td>
-                              <td className="p-2 text-right">{p.recepciones_cargadas}</td>
-                              <td className="p-2 text-right">{p.lecturas_cargadas}</td>
-                              <td className="p-2 text-right">{p.anulaciones}</td>
-                              <td
-                                className={`p-2 text-right font-bold ${
-                                  p.anulaciones_propias > 0 ? "text-amber-600" : "text-slate-300"
-                                }`}
-                              >
-                                {p.anulaciones_propias}
-                              </td>
-                              <td className="p-2 text-right">{p.alertas_revisadas}</td>
-                              <td
-                                className={`p-2 text-right font-bold ${
-                                  p.autorevisiones > 0 ? "text-red-600" : "text-slate-300"
-                                }`}
-                              >
-                                {p.autorevisiones}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </section>
-                </>
-              )}
-            </div>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+
+                  {/* La FOTO de hoy: un control apagado ANTES del período no
+                        genera ningún evento arriba, y sin esto sería invisible. */}
+                  {repControles && repControles.tanques.length > 0 && (
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {repControles.tanques.map((t) => (
+                        <span
+                          key={t.id}
+                          className={`text-xs px-2 py-1 rounded-lg border ${
+                            t.vigilancia === "completa"
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : t.vigilancia === "ninguna"
+                                ? "border-red-200 bg-red-50 text-red-700"
+                                : "border-amber-200 bg-amber-50 text-amber-700"
+                          }`}
+                          title={
+                            t.controles_apagados.length
+                              ? `Apagados: ${t.controles_apagados.join(", ")}`
+                              : "Los cuatro controles configurados"
+                          }
+                        >
+                          {t.codigo} · {t.vigilancia}
+                          {!t.activo && " (desactivado)"}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </section>
+
+                {/* ── 2. Quién hace y quién controla ── */}
+                <section>
+                  <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">
+                    Quién hace y quién controla
+                  </h4>
+                  <p className="text-xs text-slate-500 mb-3">
+                    No acusa a nadie: cuenta. Si una sola persona carga, anula y da por revisado,
+                    ningún control interno alcanza — y eso se compensa con otra persona mirando, no
+                    con más software.
+                  </p>
+
+                  {repSegregacion && repSegregacion.resumen.concentracion_pct !== null && (
+                    <p className="text-sm mb-3">
+                      <strong>{repSegregacion.resumen.concentracion_pct}%</strong> de los
+                      movimientos los cargó una sola persona
+                      {repSegregacion.resumen.autorevisiones > 0 && (
+                        <span className="text-red-600">
+                          {" "}
+                          · {repSegregacion.resumen.autorevisiones} alerta(s) cerrada(s) por quien
+                          la generó
+                        </span>
+                      )}
+                    </p>
+                  )}
+
+                  {!repSegregacion || repSegregacion.personas.length === 0 ? (
+                    <p className="text-sm text-slate-400">Sin movimientos en este período.</p>
+                  ) : (
+                    <table className="w-full text-sm border-collapse">
+                      <thead>
+                        <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
+                          <th className="p-2">Persona</th>
+                          <th className="p-2 text-right">Vales</th>
+                          <th className="p-2 text-right">Recepciones</th>
+                          <th className="p-2 text-right">Varillas</th>
+                          <th className="p-2 text-right">Anulaciones</th>
+                          <th
+                            className="p-2 text-right"
+                            title="Anuló algo que había cargado él mismo"
+                          >
+                            …propias
+                          </th>
+                          <th className="p-2 text-right">Alertas cerradas</th>
+                          <th
+                            className="p-2 text-right"
+                            title="Cerró una alerta que generó su propio movimiento"
+                          >
+                            …propias
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {repSegregacion.personas.map((p) => (
+                          <tr key={p.usuario_id} className="border-b">
+                            <td className="p-2 font-medium">{p.persona}</td>
+                            <td className="p-2 text-right">{p.vales_cargados}</td>
+                            <td className="p-2 text-right">{p.recepciones_cargadas}</td>
+                            <td className="p-2 text-right">{p.lecturas_cargadas}</td>
+                            <td className="p-2 text-right">{p.anulaciones}</td>
+                            <td
+                              className={`p-2 text-right font-bold ${
+                                p.anulaciones_propias > 0 ? "text-amber-600" : "text-slate-300"
+                              }`}
+                            >
+                              {p.anulaciones_propias}
+                            </td>
+                            <td className="p-2 text-right">{p.alertas_revisadas}</td>
+                            <td
+                              className={`p-2 text-right font-bold ${
+                                p.autorevisiones > 0 ? "text-red-600" : "text-slate-300"
+                              }`}
+                            >
+                              {p.autorevisiones}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </section>
+              </>
+            )}
           </div>
-        </div>
+        </VentanaFlotante>
       )}
       {/* Bitácora: quién cambió qué en el módulo.
 
@@ -5286,382 +5259,366 @@ export default function CombustiblePanel() {
           </div>
         </div>
       )}
+      {/* Panel: alertas (migrations/0068) -- a donde lleva la campanita del
+          Header. Hueco de talonario se resuelve solo; vale anulado necesita
+          revisión manual de gerencia. */}
       {modalAlertasAbierto && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white w-full max-w-4xl rounded-3xl shadow-2xl max-h-[85vh] flex flex-col">
-            <div className="p-6 border-b flex justify-between items-center shrink-0">
-              <div>
-                <h3 className="text-xl font-bold">Alertas de combustible</h3>
-                <p className="text-sm text-slate-500">
-                  Huecos de talonario, vales anulados, sobredespachos y despachos tardíos, del más
-                  reciente al más antiguo
-                </p>
-              </div>
-              <button
-                onClick={cerrarModalAlertas}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
-              >
-                ×
-              </button>
-            </div>
-
-            {/* La ventana de gracia (migrations/0071). Va acá arriba y no en
+        <VentanaFlotante
+          id="combustible-alertas"
+          titulo="Alertas de combustible"
+          subtitulo="Huecos de talonario, vales anulados, sobredespachos y despachos tardíos, del más reciente al más antiguo"
+          onCerrar={cerrarModalAlertas}
+          anchoInicial={980}
+          altoInicial={640}
+        >
+          {/* La ventana de gracia (migrations/0071). Va acá arriba y no en
                 una pantalla de configuración aparte: es el número que
                 decide cuándo una alerta de abajo se vuelve una anomalía, y
                 verlos juntos es lo que hace entendible el mecanismo. */}
-            <div className="px-6 py-4 bg-slate-50 border-b flex flex-wrap items-center gap-3 shrink-0">
-              <label
-                htmlFor="ventana-gracia"
-                className="text-xs font-bold text-slate-700 uppercase"
-              >
-                Ventana de gracia
-              </label>
-              <input
-                id="ventana-gracia"
-                type="number"
-                min={1}
-                max={8760}
-                className="w-24 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
-                value={ventanaGraciaHoras}
-                onChange={(e) => {
-                  setVentanaGraciaHoras(e.target.value);
-                  // Editar invalida la confirmación anterior: si no, un
-                  // "Guardado: 72 horas" viejo seguiría al lado de un valor
-                  // nuevo todavía sin guardar.
-                  setMensajeVentana(null);
-                }}
-              />
-              <span className="text-sm text-slate-500">horas</span>
-              <label
-                htmlFor="dias-sin-medir"
-                className="text-xs font-bold text-slate-700 uppercase ml-2"
-              >
-                Avisar si no se mide en
-              </label>
-              <input
-                id="dias-sin-medir"
-                type="number"
-                min={1}
-                max={365}
-                className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
-                value={diasSinMedir}
-                onChange={(e) => {
-                  setDiasSinMedir(e.target.value);
-                  setMensajeVentana(null);
-                }}
-              />
-              <span className="text-sm text-slate-500">días</span>
+          <div className="px-6 py-4 bg-slate-50 border-b flex flex-wrap items-center gap-3 shrink-0">
+            <label htmlFor="ventana-gracia" className="text-xs font-bold text-slate-700 uppercase">
+              Ventana de gracia
+            </label>
+            <input
+              id="ventana-gracia"
+              type="number"
+              min={1}
+              max={8760}
+              className="w-24 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
+              value={ventanaGraciaHoras}
+              onChange={(e) => {
+                setVentanaGraciaHoras(e.target.value);
+                // Editar invalida la confirmación anterior: si no, un
+                // "Guardado: 72 horas" viejo seguiría al lado de un valor
+                // nuevo todavía sin guardar.
+                setMensajeVentana(null);
+              }}
+            />
+            <span className="text-sm text-slate-500">horas</span>
+            <label
+              htmlFor="dias-sin-medir"
+              className="text-xs font-bold text-slate-700 uppercase ml-2"
+            >
+              Avisar si no se mide en
+            </label>
+            <input
+              id="dias-sin-medir"
+              type="number"
+              min={1}
+              max={365}
+              className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
+              value={diasSinMedir}
+              onChange={(e) => {
+                setDiasSinMedir(e.target.value);
+                setMensajeVentana(null);
+              }}
+            />
+            <span className="text-sm text-slate-500">días</span>
 
-              {/* La ventana del acumulado (0080). Va acá y no en el tanque
+            {/* La ventana del acumulado (0080). Va acá y no en el tanque
                   porque es política de la empresa --cada cuánto quiere mirar
                   para atrás-- no una propiedad del recipiente. */}
-              <label
-                htmlFor="dias-ventana"
-                className="text-xs font-bold text-slate-700 uppercase ml-2"
-              >
-                Acumulado de los últimos
-              </label>
-              <input
-                id="dias-ventana"
-                type="number"
-                min={7}
-                max={365}
-                className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
-                value={diasVentanaDescuadre}
-                onChange={(e) => {
-                  setDiasVentanaDescuadre(e.target.value);
-                  setMensajeVentana(null);
-                }}
-              />
-              <span className="text-sm text-slate-500">días</span>
+            <label
+              htmlFor="dias-ventana"
+              className="text-xs font-bold text-slate-700 uppercase ml-2"
+            >
+              Acumulado de los últimos
+            </label>
+            <input
+              id="dias-ventana"
+              type="number"
+              min={7}
+              max={365}
+              className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
+              value={diasVentanaDescuadre}
+              onChange={(e) => {
+                setDiasVentanaDescuadre(e.target.value);
+                setMensajeVentana(null);
+              }}
+            />
+            <span className="text-sm text-slate-500">días</span>
 
-              {/* Cuánto puede despachar un tanque con los umbrales apagados
+            {/* Cuánto puede despachar un tanque con los umbrales apagados
                   antes de que el sistema insista (0082). */}
-              <label
-                htmlFor="dias-sin-vig"
-                className="text-xs font-bold text-slate-700 uppercase ml-2"
-              >
-                Insistir si opera ciego
-              </label>
-              <input
-                id="dias-sin-vig"
-                type="number"
-                min={1}
-                max={90}
-                className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
-                value={diasSinVig}
-                onChange={(e) => {
-                  setDiasSinVig(e.target.value);
-                  setMensajeVentana(null);
-                }}
-              />
-              <span className="text-sm text-slate-500">días</span>
+            <label
+              htmlFor="dias-sin-vig"
+              className="text-xs font-bold text-slate-700 uppercase ml-2"
+            >
+              Insistir si opera ciego
+            </label>
+            <input
+              id="dias-sin-vig"
+              type="number"
+              min={1}
+              max={90}
+              className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
+              value={diasSinVig}
+              onChange={(e) => {
+                setDiasSinVig(e.target.value);
+                setMensajeVentana(null);
+              }}
+            />
+            <span className="text-sm text-slate-500">días</span>
 
-              {/* Cuánto atraso se tolera entre la fecha del vale y su carga
+            {/* Cuánto atraso se tolera entre la fecha del vale y su carga
                   (0081). El límite lo pone la cola offline, no la operación. */}
-              <label
-                htmlFor="dias-retro"
-                className="text-xs font-bold text-slate-700 uppercase ml-2"
-              >
-                Vale cargado hasta
-              </label>
-              <input
-                id="dias-retro"
-                type="number"
-                min={1}
-                max={90}
-                className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
-                value={diasCargaRetro}
-                onChange={(e) => {
-                  setDiasCargaRetro(e.target.value);
-                  setMensajeVentana(null);
-                }}
-              />
-              <span className="text-sm text-slate-500">días después</span>
+            <label htmlFor="dias-retro" className="text-xs font-bold text-slate-700 uppercase ml-2">
+              Vale cargado hasta
+            </label>
+            <input
+              id="dias-retro"
+              type="number"
+              min={1}
+              max={90}
+              className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
+              value={diasCargaRetro}
+              onChange={(e) => {
+                setDiasCargaRetro(e.target.value);
+                setMensajeVentana(null);
+              }}
+            />
+            <span className="text-sm text-slate-500">días después</span>
 
-              {/* Los dos topes diarios (0079). Se cargan acá, junto al resto
+            {/* Los dos topes diarios (0079). Se cargan acá, junto al resto
                   de la vigilancia, porque son la misma decisión: cuánto
                   tolera la empresa antes de querer enterarse. Vacío = sin
                   configurar = no alerta, igual que los umbrales del tanque. */}
-              <label
-                htmlFor="llenados-por-dia"
-                className="text-xs font-bold text-slate-700 uppercase ml-2"
-              >
-                Llenados por día
-              </label>
-              <input
-                id="llenados-por-dia"
-                type="number"
-                min={0.1}
-                max={50}
-                step={0.5}
-                placeholder="—"
-                className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
-                value={llenadosPorDia}
-                onChange={(e) => {
-                  setLlenadosPorDia(e.target.value);
-                  setMensajeVentana(null);
-                }}
-              />
-              <label
-                htmlFor="tope-sin-capacidad"
-                className="text-xs font-bold text-slate-700 uppercase ml-2"
-              >
-                Tope diario sin capacidad
-              </label>
-              <input
-                id="tope-sin-capacidad"
-                type="number"
-                min={1}
-                placeholder="—"
-                className="w-28 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
-                value={topeSinCapacidad}
-                onChange={(e) => {
-                  setTopeSinCapacidad(e.target.value);
-                  setMensajeVentana(null);
-                }}
-              />
-              <span className="text-sm text-slate-500">L</span>
+            <label
+              htmlFor="llenados-por-dia"
+              className="text-xs font-bold text-slate-700 uppercase ml-2"
+            >
+              Llenados por día
+            </label>
+            <input
+              id="llenados-por-dia"
+              type="number"
+              min={0.1}
+              max={50}
+              step={0.5}
+              placeholder="—"
+              className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
+              value={llenadosPorDia}
+              onChange={(e) => {
+                setLlenadosPorDia(e.target.value);
+                setMensajeVentana(null);
+              }}
+            />
+            <label
+              htmlFor="tope-sin-capacidad"
+              className="text-xs font-bold text-slate-700 uppercase ml-2"
+            >
+              Tope diario sin capacidad
+            </label>
+            <input
+              id="tope-sin-capacidad"
+              type="number"
+              min={1}
+              placeholder="—"
+              className="w-28 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
+              value={topeSinCapacidad}
+              onChange={(e) => {
+                setTopeSinCapacidad(e.target.value);
+                setMensajeVentana(null);
+              }}
+            />
+            <span className="text-sm text-slate-500">L</span>
 
-              {/* Quién toma varilla (0085). Es lo único de este bloque que no
+            {/* Quién toma varilla (0085). Es lo único de este bloque que no
                   es un número: no gradúa cuánto se tolera, decide QUIÉN mide.
                   Va acá igual porque es la misma pregunta de fondo -- cuánta
                   vigilancia quiere la empresa. */}
-              <label className="flex items-center gap-2 ml-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={grifieroVarilla}
-                  onChange={(e) => {
-                    setGrifieroVarilla(e.target.checked);
-                    setMensajeVentana(null);
-                  }}
-                />
-                <span className="text-xs font-bold text-slate-700 uppercase">
-                  El grifero toma varilla
-                </span>
-              </label>
+            <label className="flex items-center gap-2 ml-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={grifieroVarilla}
+                onChange={(e) => {
+                  setGrifieroVarilla(e.target.checked);
+                  setMensajeVentana(null);
+                }}
+              />
+              <span className="text-xs font-bold text-slate-700 uppercase">
+                El grifero toma varilla
+              </span>
+            </label>
 
-              <button
-                onClick={handleGuardarVentana}
-                disabled={guardandoVentana}
-                className="px-3 py-2 bg-slate-900 text-white text-xs font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50"
+            <button
+              onClick={handleGuardarVentana}
+              disabled={guardandoVentana}
+              className="px-3 py-2 bg-slate-900 text-white text-xs font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50"
+            >
+              {guardandoVentana ? "Guardando..." : "Guardar"}
+            </button>
+            {mensajeVentana && (
+              <span
+                className={`text-xs font-semibold ${
+                  mensajeVentana.startsWith("Guardado") ? "text-emerald-600" : "text-red-600"
+                }`}
               >
-                {guardandoVentana ? "Guardando..." : "Guardar"}
-              </button>
-              {mensajeVentana && (
-                <span
-                  className={`text-xs font-semibold ${
-                    mensajeVentana.startsWith("Guardado") ? "text-emerald-600" : "text-red-600"
-                  }`}
-                >
-                  {mensajeVentana}
-                </span>
-              )}
-              <p className="text-xs text-slate-600 flex-1 min-w-[240px]">
-                <strong>Ventana de gracia:</strong> tiempo que un hueco tiene para explicarse solo
-                (un vale que sincroniza sin señal, uno que se anula) antes de congelarse como
-                anomalía permanente. Pasado ese plazo se congela <strong>solo</strong>, sin que
-                nadie tenga que revisarlo.
-                <br />
-                <strong>Acumulado de los últimos N días:</strong> ventana del descuadre que{" "}
-                <strong>no se reinicia con una recepción</strong> — es la que atrapa el faltante de
-                a poco. Bajarla debilita el control y queda auditado.
-                <br />
-                <strong>Llenados por día:</strong> cuántas veces puede llenarse el tanque de un
-                equipo en 24 h. El techo sale de multiplicarlo por la capacidad cargada en la ficha
-                del equipo, así que solo vigila a los equipos que la tengan.{" "}
-                <strong>Tope diario sin capacidad:</strong> litros en 24 h para lo demás — planta,
-                reserva en cubeta y los equipos sin capacidad cargada. Los dos vacíos = sin vigilar.
-                <br />
-                <strong>El grifero toma varilla:</strong> destildalo solo si tenés a alguien
-                distinto para medir. Mientras esté tildado, el que despacha es también el que mide,
-                así que la varilla <strong>no es un control independiente</strong> del despacho — es
-                cómo trabaja la mayoría, y por eso viene tildado. Destildarlo se la deja a los
-                administradores y operadores.
-              </p>
-            </div>
+                {mensajeVentana}
+              </span>
+            )}
+            <p className="text-xs text-slate-600 flex-1 min-w-[240px]">
+              <strong>Ventana de gracia:</strong> tiempo que un hueco tiene para explicarse solo (un
+              vale que sincroniza sin señal, uno que se anula) antes de congelarse como anomalía
+              permanente. Pasado ese plazo se congela <strong>solo</strong>, sin que nadie tenga que
+              revisarlo.
+              <br />
+              <strong>Acumulado de los últimos N días:</strong> ventana del descuadre que{" "}
+              <strong>no se reinicia con una recepción</strong> — es la que atrapa el faltante de a
+              poco. Bajarla debilita el control y queda auditado.
+              <br />
+              <strong>Llenados por día:</strong> cuántas veces puede llenarse el tanque de un equipo
+              en 24 h. El techo sale de multiplicarlo por la capacidad cargada en la ficha del
+              equipo, así que solo vigila a los equipos que la tengan.{" "}
+              <strong>Tope diario sin capacidad:</strong> litros en 24 h para lo demás — planta,
+              reserva en cubeta y los equipos sin capacidad cargada. Los dos vacíos = sin vigilar.
+              <br />
+              <strong>El grifero toma varilla:</strong> destildalo solo si tenés a alguien distinto
+              para medir. Mientras esté tildado, el que despacha es también el que mide, así que la
+              varilla <strong>no es un control independiente</strong> del despacho — es cómo trabaja
+              la mayoría, y por eso viene tildado. Destildarlo se la deja a los administradores y
+              operadores.
+            </p>
+          </div>
 
-            <div className="p-6 overflow-y-auto overflow-x-auto">
-              {/* Anomalías: los hallazgos ya congelados. Van ARRIBA de las
+          <div className="flex-1 min-h-0 overflow-auto p-6">
+            {/* Anomalías: los hallazgos ya congelados. Van ARRIBA de las
                   alertas porque son las que de verdad importan -- una fila
                   acá es un faltante que nadie explicó en su plazo. */}
-              {anomalias.length > 0 && (
-                <div className="mb-8">
-                  <h4 className="text-sm font-bold text-red-700 uppercase tracking-wide mb-1">
-                    Anomalías congeladas ({anomalias.length})
-                  </h4>
-                  <p className="text-xs text-slate-500 mb-3">
-                    Pasaron su ventana de gracia sin explicación. No se pueden editar ni borrar: son
-                    evidencia.
-                  </p>
-                  <table className="w-full text-left border-collapse">
-                    <thead className="bg-red-50">
-                      <tr>
-                        <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
-                          Tipo
-                        </th>
-                        <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
-                          Vale
-                        </th>
-                        <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
-                          Detectada
-                        </th>
-                        <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
-                          Congelada
-                        </th>
-                        <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest text-right">
-                          Sin explicar
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-red-100">
-                      {anomalias.map((a) => (
-                        <tr key={a.id} className="align-top">
-                          <td className="p-3 text-sm text-slate-800">
-                            {ETIQUETA_TIPO_ALERTA[a.tipo]}
-                          </td>
-                          <td className="p-3 text-sm text-slate-800 font-mono">
-                            {referenciaAlerta(a)}
-                          </td>
-                          <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
-                            {new Date(a.detectada_en).toLocaleString("es-PE")}
-                          </td>
-                          <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
-                            {new Date(a.congelada_en).toLocaleString("es-PE")}
-                          </td>
-                          <td className="p-3 text-sm text-right text-red-600 font-semibold whitespace-nowrap">
-                            {a.ventana_horas} h
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {anomalias.length > 0 && (
-                <h4 className="text-sm font-bold text-slate-500 uppercase tracking-wide mb-3">
-                  Alertas activas
+            {anomalias.length > 0 && (
+              <div className="mb-8">
+                <h4 className="text-sm font-bold text-red-700 uppercase tracking-wide mb-1">
+                  Anomalías congeladas ({anomalias.length})
                 </h4>
-              )}
-
-              {cargandoAlertas ? (
-                <p className="text-center text-slate-500 py-8">Cargando alertas...</p>
-              ) : alertasCombustible.length === 0 ? (
-                <p className="text-center text-slate-500 py-8">No hay alertas registradas.</p>
-              ) : (
+                <p className="text-xs text-slate-500 mb-3">
+                  Pasaron su ventana de gracia sin explicación. No se pueden editar ni borrar: son
+                  evidencia.
+                </p>
                 <table className="w-full text-left border-collapse">
-                  <thead className="bg-slate-50">
+                  <thead className="bg-red-50">
                     <tr>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
                         Tipo
                       </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
                         Vale
                       </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Detalle
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
                         Detectada
                       </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Estado
+                      <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
+                        Congelada
                       </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                        Acciones
+                      <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest text-right">
+                        Sin explicar
                       </th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {alertasCombustible.map((a) => (
-                      <tr
-                        key={a.id}
-                        id={`alerta-${a.id}`}
-                        className={
-                          a.id === alertaResaltadaId
-                            ? "align-top bg-amber-50 ring-2 ring-inset ring-amber-400 transition-colors"
-                            : "align-top hover:bg-slate-50/50 transition-colors"
-                        }
-                      >
+                  <tbody className="divide-y divide-red-100">
+                    {anomalias.map((a) => (
+                      <tr key={a.id} className="align-top">
                         <td className="p-3 text-sm text-slate-800">
                           {ETIQUETA_TIPO_ALERTA[a.tipo]}
                         </td>
                         <td className="p-3 text-sm text-slate-800 font-mono">
                           {referenciaAlerta(a)}
                         </td>
-                        <td className="p-3 text-sm text-slate-600">{describirDetalleAlerta(a)}</td>
                         <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
-                          {new Date(a.creado_en).toLocaleString("es-PE")}
+                          {new Date(a.detectada_en).toLocaleString("es-PE")}
                         </td>
-                        <td className="p-3 text-sm">
-                          {a.resuelta_en ? (
-                            <span className="text-emerald-600 font-medium">
-                              {a.resuelta_por ? "Revisada" : "Resuelta sola"}
-                            </span>
-                          ) : (
-                            <span className="text-amber-600 font-medium">Pendiente</span>
-                          )}
+                        <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
+                          {new Date(a.congelada_en).toLocaleString("es-PE")}
                         </td>
-                        <td className="p-3 text-sm text-right whitespace-nowrap">
-                          {a.tipo !== "hueco_detectado" && !a.resuelta_en && (
-                            <button
-                              onClick={() => handleResolverAlerta(a.id)}
-                              disabled={resolviendoAlertaId === a.id}
-                              className="text-xs text-slate-500 hover:text-slate-900 hover:underline disabled:opacity-50"
-                            >
-                              {resolviendoAlertaId === a.id ? "Marcando..." : "Marcar revisado"}
-                            </button>
-                          )}
+                        <td className="p-3 text-sm text-right text-red-600 font-semibold whitespace-nowrap">
+                          {a.ventana_horas} h
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              )}
-            </div>
+              </div>
+            )}
+
+            {anomalias.length > 0 && (
+              <h4 className="text-sm font-bold text-slate-500 uppercase tracking-wide mb-3">
+                Alertas activas
+              </h4>
+            )}
+
+            {cargandoAlertas ? (
+              <p className="text-center text-slate-500 py-8">Cargando alertas...</p>
+            ) : alertasCombustible.length === 0 ? (
+              <p className="text-center text-slate-500 py-8">No hay alertas registradas.</p>
+            ) : (
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Tipo
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Vale
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Detalle
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Detectada
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Estado
+                    </th>
+                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                      Acciones
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {alertasCombustible.map((a) => (
+                    <tr
+                      key={a.id}
+                      id={`alerta-${a.id}`}
+                      className={
+                        a.id === alertaResaltadaId
+                          ? "align-top bg-amber-50 ring-2 ring-inset ring-amber-400 transition-colors"
+                          : "align-top hover:bg-slate-50/50 transition-colors"
+                      }
+                    >
+                      <td className="p-3 text-sm text-slate-800">{ETIQUETA_TIPO_ALERTA[a.tipo]}</td>
+                      <td className="p-3 text-sm text-slate-800 font-mono">
+                        {referenciaAlerta(a)}
+                      </td>
+                      <td className="p-3 text-sm text-slate-600">{describirDetalleAlerta(a)}</td>
+                      <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
+                        {new Date(a.creado_en).toLocaleString("es-PE")}
+                      </td>
+                      <td className="p-3 text-sm">
+                        {a.resuelta_en ? (
+                          <span className="text-emerald-600 font-medium">
+                            {a.resuelta_por ? "Revisada" : "Resuelta sola"}
+                          </span>
+                        ) : (
+                          <span className="text-amber-600 font-medium">Pendiente</span>
+                        )}
+                      </td>
+                      <td className="p-3 text-sm text-right whitespace-nowrap">
+                        {a.tipo !== "hueco_detectado" && !a.resuelta_en && (
+                          <button
+                            onClick={() => handleResolverAlerta(a.id)}
+                            disabled={resolviendoAlertaId === a.id}
+                            className="text-xs text-slate-500 hover:text-slate-900 hover:underline disabled:opacity-50"
+                          >
+                            {resolviendoAlertaId === a.id ? "Marcando..." : "Marcar revisado"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
-        </div>
+        </VentanaFlotante>
       )}
       {/* Modal: anular despacho -- la válvula de escape del punto 3. El motivo
           es obligatorio: es lo único que distingue "se mojó con diésel" de
