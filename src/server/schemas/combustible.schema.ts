@@ -477,6 +477,31 @@ export const kardexCombustibleSchema = z
 
 export type KardexCombustibleQuery = z.infer<typeof kardexCombustibleSchema>;
 
+// ── Período de los historiales (lecturas, despachos, recepciones) ────────
+// Acá las dos fechas son OPCIONALES, al revés que en el kardex, y no es una
+// inconsistencia: el kardex arma un saldo corriente, que sin período no
+// significa nada. Estos tres son listados paginados, y "sin filtro" --
+// últimos N registros, del más reciente al más antiguo -- es exactamente lo
+// que hacían hasta ahora y sigue siendo una consulta sana.
+//
+// Que sean opcionales es lo que hace que agregar el filtro no rompa a
+// ningún llamador que ya exista, incluida una pantalla vieja abierta en un
+// navegador que nunca mandó estas fechas.
+//
+// Tampoco llevan el techo de días del kardex: el que acota el tamaño de la
+// respuesta acá es `pageSize`, que ya existe y se aplica siempre.
+export const periodoHistorialCombustibleSchema = z
+  .object({
+    desde: z.string().datetime({ offset: true }).optional(),
+    hasta: z.string().datetime({ offset: true }).optional(),
+  })
+  .refine((v) => !v.desde || !v.hasta || Date.parse(v.desde) <= Date.parse(v.hasta), {
+    message: "La fecha de inicio tiene que ser anterior a la de fin",
+    path: ["desde"],
+  });
+
+export type PeriodoHistorialCombustibleQuery = z.infer<typeof periodoHistorialCombustibleSchema>;
+
 export type ConfigCombustibleInput = z.infer<typeof configCombustibleSchema>;
 
 // ── Grifos externos (migrations/0063) ───────────────────────────────────

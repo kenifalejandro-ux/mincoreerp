@@ -520,6 +520,120 @@ function SugerenciaCompacta({
   );
 }
 
+/** El filtro de período de los tres historiales (lecturas, despachos,
+ *  recepciones).
+ *
+ *  Es un componente y no el mismo JSX copiado tres veces porque los tres
+ *  tienen que interpretar el período IGUAL: si uno tomara el "hasta" como
+ *  medianoche y otro como fin del día, cruzar un historial contra otro --
+ *  que es exactamente para lo que se usan -- dejaría de cerrar, y la
+ *  diferencia se vería como un vale faltante.
+ *
+ *  El aviso de la derecha no es decorativo: sin él, un historial recortado
+ *  en el techo se ve idéntico a uno completo, y el usuario concluye que no
+ *  hay nada más que ver. */
+function BarraDePeriodo({
+  idBase,
+  desde,
+  hasta,
+  onCambiarDesde,
+  onCambiarHasta,
+  onVerPeriodo,
+  onLimpiar,
+  cargando,
+  error,
+  mostrados,
+  total,
+  queSeCuenta,
+}: {
+  idBase: string;
+  desde: string;
+  hasta: string;
+  onCambiarDesde: (v: string) => void;
+  onCambiarHasta: (v: string) => void;
+  onVerPeriodo: () => void;
+  onLimpiar: () => void;
+  cargando: boolean;
+  error: string | null;
+  mostrados: number;
+  total: number;
+  queSeCuenta: string;
+}) {
+  const hayFiltro = desde !== "" || hasta !== "";
+  const recortado = total > mostrados;
+
+  return (
+    <div className="px-6 py-4 bg-slate-50 border-b flex flex-wrap items-end gap-3 shrink-0">
+      <div>
+        <label
+          htmlFor={`${idBase}-desde`}
+          className="block text-xs font-bold text-slate-700 uppercase mb-1"
+        >
+          Desde
+        </label>
+        <input
+          id={`${idBase}-desde`}
+          type="date"
+          // El `max`/`min` cruzado hace que el calendario no deje elegir un
+          // rango al revés. El backend igual lo rechaza, pero es mejor que
+          // no se pueda armar el error que explicarlo después.
+          max={hasta || undefined}
+          className="border border-slate-200 rounded-lg p-2"
+          value={desde}
+          onChange={(e) => onCambiarDesde(e.target.value)}
+        />
+      </div>
+      <div>
+        <label
+          htmlFor={`${idBase}-hasta`}
+          className="block text-xs font-bold text-slate-700 uppercase mb-1"
+        >
+          Hasta
+        </label>
+        <input
+          id={`${idBase}-hasta`}
+          type="date"
+          min={desde || undefined}
+          className="border border-slate-200 rounded-lg p-2"
+          value={hasta}
+          onChange={(e) => onCambiarHasta(e.target.value)}
+        />
+      </div>
+      <button
+        onClick={onVerPeriodo}
+        disabled={cargando}
+        className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50"
+      >
+        {cargando ? "Buscando..." : "Ver período"}
+      </button>
+      {hayFiltro && (
+        <button
+          onClick={onLimpiar}
+          disabled={cargando}
+          className="px-4 py-2 border border-slate-300 text-slate-700 text-sm font-medium rounded-lg hover:bg-white disabled:opacity-40"
+          title="Volver a ver todo el historial"
+        >
+          Limpiar
+        </button>
+      )}
+
+      {error ? (
+        <p className="text-sm font-medium text-red-600">{error}</p>
+      ) : recortado ? (
+        <p className="text-xs text-amber-700">
+          Se muestran {mostrados} de {total} — acotá el período para ver el resto.
+        </p>
+      ) : (
+        <p className="text-xs text-slate-500">
+          {hayFiltro
+            ? `${total} ${queSeCuenta} en el período`
+            : `Sin filtro: hasta ${TECHO_HISTORIAL} ${queSeCuenta}, de lo más reciente`}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function vigilanciaDe(t: Tanque): {
   nivel: "sin" | "parcial" | "completa";
   apagados: string[];
@@ -795,6 +909,38 @@ const ETIQUETA_TIPO_PUNTO: Record<Tanque["tipo_punto"], string> = {
  *  salte alguien lo lea: un "¿estás seguro?" en cada registro se clickea en
  *  automático a la semana y deja de servir (mismo criterio que el punto 4
  *  de docs/architecture/control-de-combustible.md sobre el ruido). */
+/** Cuántos registros trae cada historial de una. Los tres comparten techo
+ *  desde que existen; el filtro por período es lo que permite llegar a lo
+ *  que queda debajo de ese techo. */
+const TECHO_HISTORIAL = 100;
+
+/** Traduce los dos `<input type="date">` del filtro a lo que espera el
+ *  backend.
+ *
+ *  El día "desde" cuenta desde su 00:00 y el "hasta" hasta su 23:59:59.999,
+ *  los dos en la hora LOCAL del navegador -- que es la de la operación, no
+ *  UTC. Sin el final del día, pedir "del 1 al 30" perdía todo lo del 30
+ *  salvo la medianoche exacta, que es justo el error que no se nota hasta
+ *  que falta un vale.
+ *
+ *  Cada punta se manda solo si el usuario la eligió: las dos son opcionales
+ *  del lado del servidor, y sin ninguna el historial responde como siempre.
+ *  Mismo criterio de armado que el kardex. */
+function paramsDePeriodo(desde: string, hasta: string): URLSearchParams {
+  const params = new URLSearchParams({ pageSize: String(TECHO_HISTORIAL) });
+  if (desde) params.set("desde", new Date(`${desde}T00:00:00`).toISOString());
+  if (hasta) params.set("hasta", new Date(`${hasta}T23:59:59.999`).toISOString());
+  return params;
+}
+
+/** Qué decirle al usuario cuando el historial no se pudo traer. El 400 es
+ *  casi siempre el rango al revés, y merece un mensaje que diga qué tocar. */
+function mensajeDeFalloDeHistorial(status: number): string {
+  return status === 400
+    ? "Revisá las fechas: la de inicio tiene que ser anterior a la de fin."
+    : "No se pudo cargar el historial.";
+}
+
 const FRACCION_SALTO_SOSPECHOSO = 0.5;
 
 /** Decide si una lectura merece confirmarse antes de mandarla, comparándola
@@ -940,6 +1086,17 @@ export default function CombustiblePanel() {
 
   // --- Historial de lecturas (solo lectura, GET /:id/lecturas) ---
   const [tanqueHistorial, setTanqueHistorial] = useState<Tanque | null>(null);
+  // El período de cada historial. Arrancan vacíos = sin filtro = lo de
+  // siempre (los últimos 100), y se conservan al cambiar de tanque: revisar
+  // el mismo mes en varios tanques es el uso normal, y tener que volver a
+  // tipear las fechas en cada uno sería trabajo de más.
+  const [lecturasDesde, setLecturasDesde] = useState("");
+  const [lecturasHasta, setLecturasHasta] = useState("");
+  const [errorLecturas, setErrorLecturas] = useState<string | null>(null);
+  // Cuántas hay EN TOTAL en el período pedido. Se muestra solo cuando son
+  // más de las que entran: sin ese aviso, un historial recortado en 100 se
+  // ve idéntico a uno completo, y el usuario concluye que no hay más.
+  const [lecturasTotal, setLecturasTotal] = useState(0);
   const [lecturas, setLecturas] = useState<Lectura[]>([]);
   const [cargandoLecturas, setCargandoLecturas] = useState(false);
   // Lectura que se está por anular (null = nadie). El motivo va en su propio
@@ -1012,6 +1169,10 @@ export default function CombustiblePanel() {
   // --- Historial de despachos (solo lectura, GET /despachos) ---
   const [modalHistorialDespachosAbierto, setModalHistorialDespachosAbierto] = useState(false);
   const [historialDespachos, setHistorialDespachos] = useState<DespachoHistorial[]>([]);
+  const [despachosDesde, setDespachosDesde] = useState("");
+  const [despachosHasta, setDespachosHasta] = useState("");
+  const [errorHistorialDespachos, setErrorHistorialDespachos] = useState<string | null>(null);
+  const [despachosTotal, setDespachosTotal] = useState(0);
   const [cargandoHistorialDespachos, setCargandoHistorialDespachos] = useState(false);
   const [despachoAAnular, setDespachoAAnular] = useState<DespachoHistorial | null>(null);
   const [motivoAnulacionDespacho, setMotivoAnulacionDespacho] = useState("");
@@ -1105,6 +1266,10 @@ export default function CombustiblePanel() {
   const [clienteUuidRecepcion, setClienteUuidRecepcion] = useState("");
   const [modalHistorialRecepcionesAbierto, setModalHistorialRecepcionesAbierto] = useState(false);
   const [historialRecepciones, setHistorialRecepciones] = useState<RecepcionHistorial[]>([]);
+  const [recepcionesDesde, setRecepcionesDesde] = useState("");
+  const [recepcionesHasta, setRecepcionesHasta] = useState("");
+  const [errorHistorialRecepciones, setErrorHistorialRecepciones] = useState<string | null>(null);
+  const [recepcionesTotal, setRecepcionesTotal] = useState(0);
   const [cargandoHistorialRecepciones, setCargandoHistorialRecepciones] = useState(false);
   const [recepcionAAnular, setRecepcionAAnular] = useState<RecepcionHistorial | null>(null);
   const [motivoAnulacionRecepcion, setMotivoAnulacionRecepcion] = useState("");
@@ -1616,18 +1781,28 @@ export default function CombustiblePanel() {
     return porId;
   }, [lecturas]);
 
-  const cargarLecturas = useCallback(async (tanqueId: number) => {
+  /** El período va por parámetro y no leído del estado: este callback es
+   *  estable (`[]`), así que leerlo de adentro lo dejaría viendo siempre las
+   *  fechas del primer render. */
+  const cargarLecturas = useCallback(async (tanqueId: number, desde: string, hasta: string) => {
     setCargandoLecturas(true);
+    setErrorLecturas(null);
     try {
-      const res = await apiFetch(`/api/erp/combustible/${tanqueId}/lecturas?pageSize=100`);
+      const params = paramsDePeriodo(desde, hasta);
+      const res = await apiFetch(`/api/erp/combustible/${tanqueId}/lecturas?${params}`);
       if (!res.ok) {
         setLecturas([]);
+        setLecturasTotal(0);
+        setErrorLecturas(mensajeDeFalloDeHistorial(res.status));
         return;
       }
       const body = await res.json();
       setLecturas(Array.isArray(body.data) ? body.data : []);
+      setLecturasTotal(Number(body?.pagination?.total ?? 0));
     } catch {
       setLecturas([]);
+      setLecturasTotal(0);
+      setErrorLecturas("No se pudo cargar el historial.");
     } finally {
       setCargandoLecturas(false);
     }
@@ -1636,7 +1811,7 @@ export default function CombustiblePanel() {
   const abrirModalHistorial = async (t: Tanque) => {
     setTanqueHistorial(t);
     setLecturas([]);
-    await cargarLecturas(t.id);
+    await cargarLecturas(t.id, lecturasDesde, lecturasHasta);
   };
 
   const handleAnularLectura = async (e: React.FormEvent) => {
@@ -1661,7 +1836,7 @@ export default function CombustiblePanel() {
       // Se recargan las DOS cosas: el historial (para ver la fila tachada) y
       // la tabla de tanques -- anular puede hacer retroceder el nivel, así
       // que la fila de afuera queda desactualizada si no se refresca.
-      await cargarLecturas(tanqueHistorial.id);
+      await cargarLecturas(tanqueHistorial.id, lecturasDesde, lecturasHasta);
       await cargarTanques();
     } finally {
       setAnulando(false);
@@ -2083,18 +2258,28 @@ export default function CombustiblePanel() {
 
   // --- Historial de despachos (solo lectura) ---
 
-  const abrirModalHistorialDespachos = async () => {
-    setModalHistorialDespachosAbierto(true);
+  const cargarHistorialDespachos = useCallback(async (desde: string, hasta: string) => {
     setCargandoHistorialDespachos(true);
+    setErrorHistorialDespachos(null);
     try {
-      // pageSize=100, mismo techo que el historial de lecturas -- ver
-      // pending_calidad_e2e_a11y (filtro por fecha queda para después).
-      const res = await apiFetch("/api/erp/combustible/despachos?pageSize=100");
+      const res = await apiFetch(`/api/erp/combustible/despachos?${paramsDePeriodo(desde, hasta)}`);
       const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setHistorialDespachos([]);
+        setDespachosTotal(0);
+        setErrorHistorialDespachos(mensajeDeFalloDeHistorial(res.status));
+        return;
+      }
       setHistorialDespachos(Array.isArray(body?.data) ? body.data : []);
+      setDespachosTotal(Number(body?.pagination?.total ?? 0));
     } finally {
       setCargandoHistorialDespachos(false);
     }
+  }, []);
+
+  const abrirModalHistorialDespachos = async () => {
+    setModalHistorialDespachosAbierto(true);
+    await cargarHistorialDespachos(despachosDesde, despachosHasta);
   };
 
   /** Anula un vale (punto 3 del documento). Recarga el historial: la fila no
@@ -2116,7 +2301,7 @@ export default function CombustiblePanel() {
       }
       setDespachoAAnular(null);
       setMotivoAnulacionDespacho("");
-      await abrirModalHistorialDespachos();
+      await cargarHistorialDespachos(despachosDesde, despachosHasta);
     } finally {
       setAnulandoDespacho(false);
     }
@@ -2379,13 +2564,22 @@ export default function CombustiblePanel() {
     }
   };
 
-  const cargarHistorialRecepciones = useCallback(async () => {
+  const cargarHistorialRecepciones = useCallback(async (desde: string, hasta: string) => {
     setCargandoHistorialRecepciones(true);
+    setErrorHistorialRecepciones(null);
     try {
-      // pageSize=100, mismo techo que los otros dos historiales.
-      const res = await apiFetch("/api/erp/combustible/recepciones?pageSize=100");
+      const res = await apiFetch(
+        `/api/erp/combustible/recepciones?${paramsDePeriodo(desde, hasta)}`
+      );
       const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setHistorialRecepciones([]);
+        setRecepcionesTotal(0);
+        setErrorHistorialRecepciones(mensajeDeFalloDeHistorial(res.status));
+        return;
+      }
       setHistorialRecepciones(Array.isArray(body?.data) ? body.data : []);
+      setRecepcionesTotal(Number(body?.pagination?.total ?? 0));
     } finally {
       setCargandoHistorialRecepciones(false);
     }
@@ -2393,7 +2587,7 @@ export default function CombustiblePanel() {
 
   const abrirModalHistorialRecepciones = async () => {
     setModalHistorialRecepcionesAbierto(true);
-    await cargarHistorialRecepciones();
+    await cargarHistorialRecepciones(recepcionesDesde, recepcionesHasta);
   };
 
   const handleAnularRecepcion = async () => {
@@ -2414,7 +2608,10 @@ export default function CombustiblePanel() {
       setMotivoAnulacionRecepcion("");
       // El costo promedio del tanque se recalculó sin esta fila -- hay que
       // recargar las dos cosas.
-      await Promise.all([cargarHistorialRecepciones(), cargarTanques()]);
+      await Promise.all([
+        cargarHistorialRecepciones(recepcionesDesde, recepcionesHasta),
+        cargarTanques(),
+      ]);
     } finally {
       setAnulandoRecepcion(false);
     }
@@ -3351,8 +3548,27 @@ export default function CombustiblePanel() {
           subtitulo="Lecturas registradas, de la más reciente a la más antigua"
           onCerrar={() => setTanqueHistorial(null)}
           anchoInicial={720}
-          altoInicial={560}
+          altoInicial={600}
         >
+          <BarraDePeriodo
+            idBase="lecturas"
+            desde={lecturasDesde}
+            hasta={lecturasHasta}
+            onCambiarDesde={setLecturasDesde}
+            onCambiarHasta={setLecturasHasta}
+            onVerPeriodo={() => cargarLecturas(tanqueHistorial.id, lecturasDesde, lecturasHasta)}
+            onLimpiar={() => {
+              setLecturasDesde("");
+              setLecturasHasta("");
+              cargarLecturas(tanqueHistorial.id, "", "");
+            }}
+            cargando={cargandoLecturas}
+            error={errorLecturas}
+            mostrados={lecturas.length}
+            total={lecturasTotal}
+            queSeCuenta="lecturas"
+          />
+
           <div className="flex-1 min-h-0 overflow-y-auto p-6">
             {cargandoLecturas ? (
               <p className="text-center text-slate-500 py-8">Cargando historial...</p>
@@ -4105,11 +4321,30 @@ export default function CombustiblePanel() {
         <VentanaFlotante
           id="combustible-historial-despachos"
           titulo="Historial de despachos"
-          subtitulo="Últimos 100 vales registrados, del más reciente al más antiguo"
+          subtitulo="Vales registrados, del más reciente al más antiguo"
           onCerrar={() => setModalHistorialDespachosAbierto(false)}
           anchoInicial={980}
-          altoInicial={600}
+          altoInicial={640}
         >
+          <BarraDePeriodo
+            idBase="despachos"
+            desde={despachosDesde}
+            hasta={despachosHasta}
+            onCambiarDesde={setDespachosDesde}
+            onCambiarHasta={setDespachosHasta}
+            onVerPeriodo={() => cargarHistorialDespachos(despachosDesde, despachosHasta)}
+            onLimpiar={() => {
+              setDespachosDesde("");
+              setDespachosHasta("");
+              cargarHistorialDespachos("", "");
+            }}
+            cargando={cargandoHistorialDespachos}
+            error={errorHistorialDespachos}
+            mostrados={historialDespachos.length}
+            total={despachosTotal}
+            queSeCuenta="vales"
+          />
+
           <div className="flex-1 min-h-0 overflow-auto p-6">
             {cargandoHistorialDespachos ? (
               <p className="text-center text-slate-500 py-8">Cargando historial...</p>
@@ -5954,7 +6189,7 @@ export default function CombustiblePanel() {
               <div>
                 <h3 className="text-xl font-bold">Historial de recepciones</h3>
                 <p className="text-sm text-slate-500">
-                  Últimas 100 entradas de combustible, de la más reciente a la más antigua
+                  Entradas de combustible, de la más reciente a la más antigua
                 </p>
               </div>
               <button
@@ -5964,6 +6199,25 @@ export default function CombustiblePanel() {
                 ×
               </button>
             </div>
+
+            <BarraDePeriodo
+              idBase="recepciones"
+              desde={recepcionesDesde}
+              hasta={recepcionesHasta}
+              onCambiarDesde={setRecepcionesDesde}
+              onCambiarHasta={setRecepcionesHasta}
+              onVerPeriodo={() => cargarHistorialRecepciones(recepcionesDesde, recepcionesHasta)}
+              onLimpiar={() => {
+                setRecepcionesDesde("");
+                setRecepcionesHasta("");
+                cargarHistorialRecepciones("", "");
+              }}
+              cargando={cargandoHistorialRecepciones}
+              error={errorHistorialRecepciones}
+              mostrados={historialRecepciones.length}
+              total={recepcionesTotal}
+              queSeCuenta="recepciones"
+            />
 
             <div className="p-6 overflow-y-auto overflow-x-auto">
               {cargandoHistorialRecepciones ? (
