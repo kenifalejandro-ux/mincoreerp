@@ -140,6 +140,33 @@ describe("combustible: kardex exportable a CSV", () => {
     expect(res.text).not.toContain("'se tipeó");
   });
 
+  it("un faltante NO se escapa: un número negativo no es una fórmula", async () => {
+    // El bug: escapar todo lo que arranca con "-" convertía cada faltante en
+    // texto ('-300), y en Excel la columna del descuadre no sumaba. Es la
+    // columna que el auditor se lleva la planilla para mirar.
+    const tq = await tanque(10000);
+    await despachar(tq, 500, hace(10));
+    // Teórico 9.500, medido 9.200: faltan 300 L en el tramo.
+    expect((await leer(tq, 9200, hace(5))).status).toBe(201);
+
+    const res = await exportar(tq);
+    expect(res.status).toBe(200);
+
+    expect(res.text).toMatch(/,-300(,|\r\n)/);
+    expect(res.text).not.toContain("'-300");
+  });
+
+  it("pero un texto que arranca con - y NO es un número sigue escapado", async () => {
+    // La contracara: aflojar el escape para los números no puede abrirle la
+    // puerta a una fórmula disfrazada de número.
+    const tq = await tanque(10000);
+    const d = await despachar(tq, 100, hace(10));
+    await ag.patch(`/api/erp/combustible/despachos/${d.body.id}/anular`).send({ motivo: "-1+1" });
+
+    const res = await exportar(tq);
+    expect(res.text).toContain("'-1+1");
+  });
+
   it("una celda con coma o comillas no rompe las columnas", async () => {
     const tq = await tanque(10000);
     const d = await despachar(tq, 100, hace(10));

@@ -49,10 +49,250 @@ import type {
   PeriodoHistorialCombustibleQuery,
 } from "../../server/schemas/combustible.schema";
 import { armarCsv } from "../../server/shared/utils/csv.util";
+import {
+  armarXlsx,
+  CONTENT_TYPE_XLSX,
+  type CeldaXlsx,
+  type HojaXlsx,
+} from "../../server/shared/utils/xlsx.util";
 import { sanearNombreArchivo } from "../../server/services/documentStorage";
 import { CombustibleService } from "./combustible.service";
 
 const service = new CombustibleService();
+
+// ====================== DETALLE DE CALIBRACIÓN (.xlsx) ======================
+
+interface OpcionesHojaCalibracion {
+  nombre: string;
+  titulo: string;
+  cabecera: { codigo: string; nombre: string; capacidad: number; unidad: string };
+  umbralHoy: string | number | null;
+  columnaContexto: string;
+  /** La unidad EN LA QUE SE HACE LA CUENTA: litros/galones, o "%" cuando el
+   *  denominador cambia por fila (el umbral de diferencia). */
+  unidadValor: string;
+  filas: { contexto: string | number; valor: number; extra?: number }[];
+  columnaExtra?: string;
+  nota: string;
+}
+
+/** Una hoja del detalle de calibración: la muestra fila por fila y, abajo, los
+ *  números de la etiqueta de la pantalla como FÓRMULAS.
+ *
+ *  Fórmulas y no números calculados acá, a propósito: el objetivo del archivo
+ *  es que se vea de dónde sale cada cifra, y que quien lo abre pueda borrar
+ *  una fila sospechosa y mirar cómo se mueve la sugerencia. Un número pegado
+ *  no muestra nada de eso.
+ *
+ *  Reproduce EXACTAMENTE `CombustibleService.calibrar`: valor absoluto,
+ *  promedio, varianza con n−1, promedio + 2 desviaciones, y el piso de 1 % con
+ *  tope de 100 %. Si el archivo y la pantalla dieran números distintos, el
+ *  archivo no serviría para explicar la pantalla. */
+function hojaDeCalibracion(o: OpcionesHojaCalibracion): HojaXlsx {
+  const conExtra = Boolean(o.columnaExtra);
+  // Posiciones de columna: con columna extra todo se corre uno a la derecha.
+  const iValor = conExtra ? 3 : 2;
+  const cValor = conExtra ? "D" : "C";
+  const cAbs = conExtra ? "E" : "D";
+  const cCuad = conExtra ? "F" : "E";
+  const enPorcentaje = o.unidadValor === "%";
+
+  /** Una fila de etiqueta: el texto en A y el valor alineado con la columna
+   *  de valores, para que la vista quede en una sola columna legible. */
+  const etiqueta = (texto: string, celda: CeldaXlsx, negrita = false): CeldaXlsx[] => {
+    const fila: CeldaXlsx[] = [{ valor: texto, negrita }];
+    fila[iValor] = celda;
+    return fila;
+  };
+
+  const n = o.filas.length;
+  const umbralHoy = o.umbralHoy === null ? null : Number(o.umbralHoy);
+
+  const FILA_CAPACIDAD = 5;
+  const FILA_ENCABEZADOS = 8;
+  const PRIMERA = FILA_ENCABEZADOS + 1;
+  const ULTIMA = PRIMERA + n - 1;
+
+  const filas: CeldaXlsx[][] = [
+    [{ valor: o.titulo, negrita: true }],
+    [o.nota],
+    [],
+    etiqueta("Tanque", `${o.cabecera.codigo} -- ${o.cabecera.nombre}`),
+    etiqueta(`Capacidad (${o.cabecera.unidad})`, o.cabecera.capacidad),
+    etiqueta(
+      "Umbral configurado hoy (%)",
+      // Vacío y no 0 cuando no está configurado: 0 es tolerancia cero de
+      // verdad (alerta por cualquier litro), y NULL es "no vigila".
+      umbralHoy ?? "sin configurar"
+    ),
+    [],
+  ];
+
+  const encabezados: CeldaXlsx[] = [
+    { valor: "#", negrita: true },
+    { valor: o.columnaContexto, negrita: true },
+  ];
+  if (conExtra) encabezados.push({ valor: o.columnaExtra!, negrita: true });
+  encabezados.push(
+    { valor: `Valor (${o.unidadValor})`, negrita: true },
+    { valor: "Valor absoluto", negrita: true },
+    { valor: "(absoluto − promedio)²", negrita: true }
+  );
+  filas.push(encabezados);
+
+  if (n === 0) {
+    filas.push([], ["Todavía no hay mediciones para calcular nada."]);
+    return { nombre: o.nombre, filas, anchos: [34, 22, 16, 16, 16, 20] };
+  }
+
+  // Filas del bloque de resultados, calculadas de antemano porque la columna
+  // de cuadrados necesita apuntar a la celda del promedio, que queda abajo.
+  const R = ULTIMA + 2;
+  const FILA_N = R + 1;
+  const FILA_PROMEDIO = R + 2;
+  const FILA_SUMA = R + 3;
+  const FILA_VARIANZA = R + 4;
+  const FILA_DESVIACION = R + 5;
+  const FILA_SUGERENCIA = R + 6;
+  const FILA_SUGERENCIA_PCT = enPorcentaje ? FILA_SUGERENCIA : R + 7;
+
+  o.filas.forEach((f, i) => {
+    const fila = PRIMERA + i;
+    const celdas: CeldaXlsx[] = [i + 1, f.contexto];
+    if (conExtra) celdas.push(f.extra ?? null);
+    celdas.push(
+      f.valor,
+      { formula: `ABS(${cValor}${fila})` },
+      { formula: `(${cAbs}${fila}-$${cValor}$${FILA_PROMEDIO})^2` }
+    );
+    filas.push(celdas);
+  });
+
+  const rAbs = `${cAbs}${PRIMERA}:${cAbs}${ULTIMA}`;
+  const rCuad = `${cCuad}${PRIMERA}:${cCuad}${ULTIMA}`;
+  const u = o.unidadValor;
+
+  filas.push([], [{ valor: "RESULTADOS", negrita: true }]);
+  filas.push(etiqueta("n -- cantidad de mediciones", { formula: `COUNT(${rAbs})` }));
+  filas.push(etiqueta(`Promedio (${u})`, { formula: `AVERAGE(${rAbs})` }, true));
+  filas.push(etiqueta("Suma de los cuadrados", { formula: `SUM(${rCuad})` }));
+  filas.push(
+    etiqueta("Varianza = suma ÷ (n − 1)", {
+      // Con una sola medición no hay dispersión que calcular: n − 1 = 0.
+      formula: `IF(${cValor}${FILA_N}>1,${cValor}${FILA_SUMA}/(${cValor}${FILA_N}-1),"")`,
+    })
+  );
+  filas.push(
+    etiqueta(
+      `Desviación = √varianza (${u})`,
+      { formula: `IF(${cValor}${FILA_N}>1,SQRT(${cValor}${FILA_VARIANZA}),"")` },
+      true
+    )
+  );
+  filas.push(
+    etiqueta(
+      `Sugerencia = promedio + 2 × desviación (${u})`,
+      {
+        formula: `IF(${cValor}${FILA_N}>1,${cValor}${FILA_PROMEDIO}+2*${cValor}${FILA_DESVIACION},"")`,
+      },
+      true
+    )
+  );
+  if (!enPorcentaje) {
+    filas.push(
+      etiqueta("Sugerencia en % de la capacidad", {
+        formula: `IF(${cValor}${FILA_N}>1,${cValor}${FILA_SUGERENCIA}/$${cValor}$${FILA_CAPACIDAD}*100,"")`,
+      })
+    );
+  }
+  filas.push(
+    etiqueta(
+      "Sugerencia final (%) -- con piso de 1 % y tope de 100 %",
+      {
+        // El mismo recorte que hace el sistema: por debajo del 1 % el umbral
+        // alertaría por la dilatación térmica del combustible.
+        formula: `IF(${cValor}${FILA_N}>1,ROUND(MAX(1,MIN(100,${cValor}${FILA_SUGERENCIA_PCT})),1),"")`,
+      },
+      true
+    )
+  );
+  filas.push(
+    etiqueta("Mínimo de mediciones para que el sistema sugiera", 10),
+    etiqueta("¿El sistema muestra la sugerencia?", {
+      formula: `IF(${cValor}${FILA_N}>=10,"Sí","No -- faltan mediciones")`,
+    })
+  );
+
+  return {
+    nombre: o.nombre,
+    filas,
+    anchos: conExtra ? [48, 22, 18, 16, 16, 20] : [48, 22, 16, 16, 20],
+  };
+}
+
+/** La explicación en palabras, dentro del mismo archivo. Existe porque la
+ *  etiqueta de la pantalla le costó media hora de preguntas al desarrollador
+ *  del sistema: si a él no le alcanzó, al administrador de la mina tampoco. */
+const HOJA_COMO_LEERLO: HojaXlsx = {
+  nombre: "Cómo leerlo",
+  anchos: [30, 100],
+  filas: [
+    [{ valor: "Cómo leer este archivo", negrita: true }],
+    [],
+    [
+      { valor: "Qué es la sugerencia", negrita: true },
+      "El sistema mira cuánto se desajustó este tanque en el pasado y propone un umbral un poco " +
+        "por encima de lo normal, para no alertar por el error propio de la varilla.",
+    ],
+    [],
+    [
+      { valor: "n (mediciones)", negrita: true },
+      "Cuántas filas se miraron. Con menos de 10, el sistema no muestra ninguna sugerencia.",
+    ],
+    [
+      { valor: "Promedio", negrita: true },
+      "Cuánto se desajusta el tanque por vez, en promedio. Se toma sin signo: un sobrante de " +
+        "500 L revela la misma imprecisión que un faltante de 500 L.",
+    ],
+    [
+      { valor: "Desviación (±)", negrita: true },
+      "Qué tan parecidos son los desajustes entre sí. Chica = el tanque se comporta parejo. " +
+        "Grande = hay mediciones muy distintas del resto.",
+    ],
+    [
+      { valor: "Sugerencia", negrita: true },
+      "Promedio + 2 desviaciones. Con datos normales, alrededor del 95 % de las mediciones " +
+        "queda por debajo de esa raya.",
+    ],
+    [],
+    [
+      { valor: "LA ADVERTENCIA", negrita: true },
+      "La sugerencia aprende de la historia del tanque. Si en esa historia hubo un robo o un " +
+        "error de registro, la fórmula lo toma como comportamiento normal y PROPONE TOLERARLO.",
+    ],
+    [],
+    [
+      { valor: "Cómo revisarlo", negrita: true },
+      "1) Ordená la hoja por la columna 'Valor absoluto', de mayor a menor.",
+    ],
+    [
+      null,
+      "2) Si los primeros uno o dos valores son mucho más grandes que el resto, son episodios " +
+        "(un robo, un error de carga), no el comportamiento del tanque.",
+    ],
+    [
+      null,
+      "3) Borrá esas filas. Las fórmulas de RESULTADOS se recalculan solas y muestran la " +
+        "sugerencia sin ellas.",
+    ],
+    [],
+    [
+      { valor: "Señal rápida", negrita: true },
+      "Si la desviación es varias veces más grande que el promedio, la muestra tiene casos " +
+        "raros adentro. No aceptes la sugerencia sin mirar la muestra primero.",
+    ],
+  ],
+};
 
 export class CombustibleController {
   async getAll(req: Request, res: Response) {
@@ -432,6 +672,142 @@ export class CombustibleController {
       res.json({ diferencia, descuadre, ciclo });
     } catch {
       res.status(500).json({ error: "Error al calcular la sugerencia de umbral" });
+    }
+  }
+
+  /** GET /:id/sugerencia-umbral/xlsx -- de dónde sale la sugerencia.
+   *
+   *  Nace de un problema concreto: la etiqueta dice
+   *  `Sugerencia: 14.5% (27 mediciones, promedio 1.93% ± 6.27%)` y al lado
+   *  tiene un botón que la aplica de un clic. Nadie que no sepa estadística
+   *  puede decidir con eso, y el número es peligroso -- se calcula sobre el
+   *  historial del tanque, así que si adentro hubo un robo, la fórmula
+   *  propone tolerarlo.
+   *
+   *  Este archivo abre la caja: la muestra fila por fila, y los cuatro
+   *  números de la etiqueta como FÓRMULAS vivas. Con eso el que decide puede
+   *  ordenar por valor, ver los dos casos raros que inflan todo, borrarlos y
+   *  mirar cómo cambia la sugerencia -- que es exactamente el trabajo que hoy
+   *  hay que hacer a mano para saber si el número sirve. */
+  async getSugerenciaUmbralXlsx(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const id = Number(req.params.id);
+
+      const tanque = await withTenant(tenantId, (client) => service.getById(client, tenantId, id));
+      if (!tanque) {
+        res.status(404).json({ error: "Tanque no encontrado" });
+        return;
+      }
+
+      // En secuencia y no con Promise.all: las tres usan el MISMO cliente de la
+      // transacción, y pg no admite dos consultas a la vez sobre un cliente
+      // (hoy lo avisa con un DeprecationWarning, en pg@9 lo va a rechazar).
+      // `getSugerenciaUmbral` todavía tiene la versión en paralelo.
+      const { diferencia, descuadre, ciclo } = await withTenant(tenantId, async (client) => ({
+        diferencia: await service.sugerirUmbralDiferencia(client, tenantId, id),
+        descuadre: await service.sugerirUmbralDescuadre(client, tenantId, id),
+        ciclo: await service.sugerirUmbralCiclo(client, tenantId, id),
+      }));
+
+      const capacidad = Number(tanque.capacidad_total);
+      const u = tanque.unidad;
+      const cabecera = {
+        codigo: tanque.codigo,
+        nombre: tanque.tanque_nombre,
+        capacidad,
+        unidad: u,
+      };
+
+      const muestraDescuadre = (descuadre.muestra ?? []) as {
+        descuadreLitros: number;
+        leidoEn: string | Date;
+      }[];
+      const muestraCiclo = (ciclo.muestra ?? []) as {
+        descuadreLitros: number;
+        intervalos: number;
+      }[];
+      const muestraDiferencia = (diferencia.muestra ?? []) as {
+        cantidad: number;
+        diferenciaLitros: number;
+        diferenciaPct: number;
+      }[];
+
+      const libro = armarXlsx([
+        hojaDeCalibracion({
+          nombre: "Descuadre por tramo",
+          titulo: "Umbral de descuadre -- de dónde sale la sugerencia",
+          cabecera,
+          umbralHoy: tanque.umbral_descuadre_pct,
+          columnaContexto: "Fecha de la varilla",
+          unidadValor: u,
+          filas: muestraDescuadre.map((m) => ({
+            contexto: new Date(m.leidoEn).toLocaleString("es-PE", { timeZone: "America/Lima" }),
+            valor: m.descuadreLitros,
+          })),
+          nota:
+            "Cada fila es un intervalo entre dos varillas seguidas. 28 varillas dan 27 " +
+            "intervalos: la primera no tiene una anterior contra la cual compararse.",
+        }),
+        hojaDeCalibracion({
+          nombre: "Ciclo",
+          titulo: "Umbral acumulado del ciclo -- de dónde sale la sugerencia",
+          cabecera,
+          umbralHoy: tanque.umbral_descuadre_ciclo_pct,
+          columnaContexto: "Intervalos del ciclo",
+          unidadValor: u,
+          filas: muestraCiclo.map((m) => ({
+            contexto: m.intervalos,
+            valor: m.descuadreLitros,
+          })),
+          nota:
+            "Cada fila es un ciclo cerrado, de una recepción a la siguiente. El ciclo en " +
+            "curso no entra: todavía puede moverse y tiraría la sugerencia para abajo.",
+        }),
+        hojaDeCalibracion({
+          nombre: "Diferencia en recepción",
+          titulo: "Umbral de diferencia -- de dónde sale la sugerencia",
+          cabecera,
+          umbralHoy: tanque.umbral_diferencia_pct,
+          columnaContexto: `Facturado (${u})`,
+          // El único de los tres que se mide en PORCENTAJE y no en litros: su
+          // base es la cantidad de cada entrega, que cambia en cada fila. Con
+          // un denominador distinto por fila, promediar litros daría otra cosa
+          // que lo que calcula el sistema.
+          unidadValor: "%",
+          filas: muestraDiferencia.map((m) => ({
+            contexto: m.cantidad,
+            valor: Number(m.diferenciaPct.toFixed(4)),
+            extra: m.diferenciaLitros,
+          })),
+          columnaExtra: `Diferencia (${u})`,
+          nota:
+            "Este umbral se mide sobre lo FACTURADO en cada entrega, no sobre la capacidad " +
+            "del tanque. Por eso la cuenta va en porcentaje: el denominador cambia en cada fila.",
+        }),
+        HOJA_COMO_LEERLO,
+      ]);
+
+      await registrarAuditoria({
+        accion: "combustible.calibracion_exportar",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          combustibleId: id,
+          codigo: tanque.codigo,
+          tramos: muestraDescuadre.length,
+          ciclos: muestraCiclo.length,
+          recepciones: muestraDiferencia.length,
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+
+      const archivo = sanearNombreArchivo(`calibracion-${tanque.codigo}.xlsx`);
+      res.setHeader("Content-Type", CONTENT_TYPE_XLSX);
+      res.setHeader("Content-Disposition", `attachment; filename="${archivo}"`);
+      res.send(libro);
+    } catch {
+      res.status(500).json({ error: "Error al exportar el detalle de calibración" });
     }
   }
 
@@ -1782,6 +2158,148 @@ export class CombustibleController {
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="${archivo}"`);
       res.send(csv);
+    } catch {
+      res.status(500).json({ error: "Error al exportar el kardex" });
+    }
+  }
+
+  /** GET /:id/kardex/xlsx -- el mismo kardex, en planilla de verdad.
+   *
+   *  Convive con el CSV, no lo reemplaza: el CSV lo abre cualquier cosa y
+   *  sirve para pegar en otro sistema. Lo que agrega el .xlsx es lo que el
+   *  CSV no puede dar por definición -- números que son números (un faltante
+   *  de -300 se SUMA, no es texto), dos hojas, y totales como fórmulas vivas
+   *  que se recalculan si el auditor filtra o borra filas.
+   *
+   *  Sale del mismo `armarKardex` que la pantalla y que el CSV, por la misma
+   *  razón de siempre: tres cálculos distintos para el mismo número es tener
+   *  tres versiones de la verdad. */
+  async getKardexXlsx(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const id = Number(req.params.id);
+      const { desde, hasta } = req.validatedQuery as KardexCombustibleQuery;
+
+      const kardex = await withTenant(tenantId, (client) =>
+        service.armarKardex(client, tenantId, id, desde, hasta)
+      );
+      if (!kardex) {
+        res.status(404).json({ error: "Tanque no encontrado" });
+        return;
+      }
+
+      const u = kardex.tanque.unidad;
+      const encabezados: CeldaXlsx[] = [
+        "Fecha",
+        "Movimiento",
+        "Documento",
+        "Detalle",
+        `Entrada (${u})`,
+        `Salida (${u})`,
+        `Saldo teórico (${u})`,
+        `Medido (${u})`,
+        `Dif. tramo (${u})`,
+        `Dif. acumulada (${u})`,
+        "Quién",
+        "Anulado",
+        "Motivo de anulación",
+      ].map((t) => ({ valor: t, negrita: true }));
+
+      const filas: CeldaXlsx[][] = kardex.filas.map((f) => [
+        new Date(f.ocurrido_en).toLocaleString("es-PE", { timeZone: "America/Lima" }),
+        f.tipo === "recepcion" ? "Recepción" : f.tipo === "despacho" ? "Despacho" : "Varilla",
+        f.documento,
+        f.detalle,
+        f.entrada || null,
+        f.salida || null,
+        f.saldo_teorico,
+        f.nivel_medido,
+        f.dif_tramo,
+        f.dif_acumulada,
+        f.usuario,
+        f.anulada ? "SÍ" : null,
+        f.motivo_anulacion,
+      ]);
+
+      // Los totales del resumen van como FÓRMULA sobre la hoja de detalle, no
+      // como número calculado acá. Así el auditor que filtra o borra filas ve
+      // el total moverse con lo que está mirando -- que es exactamente para lo
+      // que se lleva la planilla.
+      const ultima = filas.length + 1; // +1 por la fila de encabezados
+      const rango = (col: string) =>
+        filas.length > 0 ? `Kardex!${col}2:${col}${ultima}` : `Kardex!${col}2`;
+
+      const resumen: CeldaXlsx[][] = [
+        [
+          {
+            valor: `Kardex ${kardex.tanque.codigo} -- ${kardex.tanque.tanque_nombre}`,
+            negrita: true,
+          },
+        ],
+        [],
+        ["Período desde", desde.slice(0, 10)],
+        ["Período hasta", hasta.slice(0, 10)],
+        [`Capacidad (${u})`, kardex.tanque.capacidad_total],
+        [],
+        [{ valor: "TOTALES DEL PERÍODO", negrita: true }],
+        // Las filas anuladas se SALTEAN (columna L = "SÍ"), igual que en
+        // `armarKardex`. Siguen en la hoja de detalle porque son evidencia,
+        // pero un vale anulado no sacó combustible: sumarlo daba otro total
+        // que el de la pantalla. Lo encontró la verificación contra el tenant
+        // redteam -- 12.170 L en el archivo contra 11.270 en pantalla, y la
+        // diferencia era exactamente el vale de 900 L anulado.
+        [`Entradas (${u})`, { formula: `SUMIFS(${rango("E")},${rango("L")},"<>SÍ")` }],
+        [`Salidas (${u})`, { formula: `SUMIFS(${rango("F")},${rango("L")},"<>SÍ")` }],
+        ["Mediciones (varillas)", { formula: `COUNTIFS(${rango("H")},"<>",${rango("L")},"<>SÍ")` }],
+        [`Saldo al inicio (${u})`, kardex.saldo_inicial],
+        [
+          `Descuadre final (${u})`,
+          // El acumulado de la ÚLTIMA varilla, que es el número que va al
+          // informe. `null` cuando no hubo ninguna medición: decir "0" ahí
+          // sería afirmar que cuadra, y lo cierto es que no se midió.
+          kardex.resumen.descuadre_final,
+        ],
+        [],
+        [{ valor: "SOLO LOS FALTANTES", negrita: true }],
+        [`Suma de los tramos en negativo (${u})`, { formula: `SUMIF(${rango("I")},"<0")` }],
+        ["Tramos con faltante", { formula: `COUNTIF(${rango("I")},"<0")` }],
+      ];
+
+      const libro = armarXlsx([
+        {
+          nombre: "Kardex",
+          filas: [encabezados, ...filas],
+          anchos: [19, 12, 16, 18, 12, 12, 14, 12, 12, 14, 18, 9, 26],
+        },
+        { nombre: "Resumen", filas: resumen, anchos: [34, 18] },
+      ]);
+
+      // Mismo criterio que el CSV: se audita ANTES de entregar el archivo.
+      // Llevarse el movimiento del tanque es una acción de auditoría, no una
+      // consulta -- si mañana ese archivo aparece circulando, el registro
+      // dice de dónde salió.
+      await registrarAuditoria({
+        accion: "combustible.kardex_exportar",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          combustibleId: id,
+          codigo: kardex.tanque.codigo,
+          desde,
+          hasta,
+          filas: kardex.filas.length,
+          descuadreFinal: kardex.resumen.descuadre_final,
+          formato: "xlsx",
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+
+      const archivo = sanearNombreArchivo(
+        `kardex-${kardex.tanque.codigo}-${desde.slice(0, 10)}-a-${hasta.slice(0, 10)}.xlsx`
+      );
+      res.setHeader("Content-Type", CONTENT_TYPE_XLSX);
+      res.setHeader("Content-Disposition", `attachment; filename="${archivo}"`);
+      res.send(libro);
     } catch {
       res.status(500).json({ error: "Error al exportar el kardex" });
     }

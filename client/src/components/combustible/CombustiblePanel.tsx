@@ -327,6 +327,10 @@ const ETIQUETA_ACCION: Record<string, string> = {
   "combustible.grifo_crear": "Proveedor creado",
   "combustible.grifo_actualizar": "Proveedor editado",
   "combustible.config_actualizar": "Configuración del módulo",
+  // Llevarse datos del módulo es una acción de auditoría, no una consulta:
+  // si el archivo aparece circulando, la bitácora dice quién lo sacó.
+  "combustible.kardex_exportar": "Kardex exportado",
+  "combustible.calibracion_exportar": "Detalle de calibración exportado",
 };
 
 // Las tres formas de aflojar que el sistema conoce. La última vive en el
@@ -488,19 +492,45 @@ function SugerenciaCompacta({
   sugerencia,
   cargando,
   onUsar,
+  onDescargarDetalle,
+  descargandoDetalle,
 }: {
   sugerencia: SugerenciaUmbral | undefined;
   cargando: boolean;
   onUsar: (valor: number) => void;
+  /** Baja el .xlsx con la muestra fila por fila y los números como fórmulas.
+   *  Opcional para no obligar a pasarlo en un tanque que se está creando. */
+  onDescargarDetalle?: () => void;
+  descargandoDetalle?: boolean;
 }) {
   if (cargando) return <p className="text-xs text-slate-600">Calculando sugerencia...</p>;
   if (!sugerencia) return null;
+
+  // Aparece también con muestra insuficiente: "todavía no puedo sugerir, pero
+  // esto es lo que llevo medido" sirve. Sin ninguna medición no hay nada que
+  // mostrar y el enlace sería una planilla vacía.
+  const enlaceDetalle =
+    onDescargarDetalle && sugerencia.tamanioMuestra > 0 ? (
+      <>
+        {" · "}
+        <button
+          type="button"
+          onClick={onDescargarDetalle}
+          disabled={descargandoDetalle}
+          className="text-slate-700 underline hover:text-slate-900 disabled:opacity-50"
+          title="Planilla con cada medición y el cálculo paso a paso, con fórmulas"
+        >
+          {descargandoDetalle ? "Descargando..." : "Ver de dónde sale (.xlsx)"}
+        </button>
+      </>
+    ) : null;
 
   if (!sugerencia.muestraSuficiente) {
     return (
       <p className="text-xs text-slate-600">
         Sugerencia automática: faltan mediciones ({sugerencia.tamanioMuestra}/
         {sugerencia.minimoRequerido}). Hasta entonces, el valor de arriba es provisional.
+        {enlaceDetalle}
       </p>
     );
   }
@@ -516,8 +546,23 @@ function SugerenciaCompacta({
       >
         Usar este valor
       </button>
+      {enlaceDetalle}
     </p>
   );
+}
+
+/** Dispara la descarga de un archivo que ya llegó del servidor. El `<a>` se
+ *  agrega al documento antes del clic porque Firefox ignora el clic en un
+ *  enlace que no está en el DOM. */
+function descargarBlob(blob: Blob, nombre: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nombre;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 /** El filtro de período de los tres historiales (lecturas, despachos,
@@ -1225,6 +1270,7 @@ export default function CombustiblePanel() {
   const [modalKardexAbierto, setModalKardexAbierto] = useState(false);
   const [cargandoKardex, setCargandoKardex] = useState(false);
   const [descargandoKardex, setDescargandoKardex] = useState(false);
+  const [descargandoCalibracion, setDescargandoCalibracion] = useState(false);
   const [kardex, setKardex] = useState<Kardex | null>(null);
   const [errorKardex, setErrorKardex] = useState<string | null>(null);
   const [kardexTanqueId, setKardexTanqueId] = useState<number | null>(null);
@@ -1407,7 +1453,10 @@ export default function CombustiblePanel() {
    *  necesita la sesión y un link plano no manda las credenciales ni deja
    *  mostrar el error si el servidor rechaza. Mismo patrón que la descarga
    *  de comprobantes en FacturacionView. */
-  const descargarKardexCsv = async () => {
+  /** Un solo manejador para los dos formatos: la ruta y la extensión son lo
+   *  único que cambia, y duplicarlo haría que un arreglo en uno (el período,
+   *  el nombre del archivo) se olvide en el otro. */
+  const descargarKardex = async (formato: "csv" | "xlsx") => {
     if (kardexTanqueId === null || descargandoKardex) return;
     setDescargandoKardex(true);
     setErrorKardex(null);
@@ -1415,23 +1464,34 @@ export default function CombustiblePanel() {
       const desde = new Date(`${kardexDesde}T00:00:00`).toISOString();
       const hasta = new Date(`${kardexHasta}T23:59:59`).toISOString();
       const res = await apiFetch(
-        `/api/erp/combustible/${kardexTanqueId}/kardex/csv?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`
+        `/api/erp/combustible/${kardexTanqueId}/kardex/${formato}?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`
       );
       if (!res.ok) {
         setErrorKardex("No se pudo exportar el kardex.");
         return;
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `kardex-${kardex?.tanque.codigo ?? "tanque"}-${kardexDesde}-a-${kardexHasta}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      descargarBlob(
+        await res.blob(),
+        `kardex-${kardex?.tanque.codigo ?? "tanque"}-${kardexDesde}-a-${kardexHasta}.${formato}`
+      );
     } finally {
       setDescargandoKardex(false);
+    }
+  };
+
+  /** El detalle de dónde sale la sugerencia de umbral: la muestra fila por
+   *  fila y los números de la etiqueta como fórmulas. Existe porque
+   *  "14.5% (27 mediciones, promedio 1.93% ± 6.27%)" no le alcanza a nadie
+   *  para decidir si aceptarla. */
+  const descargarDetalleCalibracion = async () => {
+    if (editandoId === null || descargandoCalibracion) return;
+    setDescargandoCalibracion(true);
+    try {
+      const res = await apiFetch(`/api/erp/combustible/${editandoId}/sugerencia-umbral/xlsx`);
+      if (!res.ok) return;
+      descargarBlob(await res.blob(), `calibracion-${formData.codigo || "tanque"}.xlsx`);
+    } finally {
+      setDescargandoCalibracion(false);
     }
   };
 
@@ -3419,6 +3479,8 @@ export default function CombustiblePanel() {
                             onUsar={(v) =>
                               setFormData((f) => ({ ...f, umbral_descuadre_pct: String(v) }))
                             }
+                            onDescargarDetalle={descargarDetalleCalibracion}
+                            descargandoDetalle={descargandoCalibracion}
                           />
                         )}
                       </div>
@@ -3455,6 +3517,8 @@ export default function CombustiblePanel() {
                             onUsar={(v) =>
                               setFormData((f) => ({ ...f, umbral_descuadre_ciclo_pct: String(v) }))
                             }
+                            onDescargarDetalle={descargarDetalleCalibracion}
+                            descargandoDetalle={descargandoCalibracion}
                           />
                         )}
                       </div>
@@ -4937,12 +5001,20 @@ export default function CombustiblePanel() {
               {cargandoKardex ? "Armando..." : "Ver período"}
             </button>
             <button
-              onClick={descargarKardexCsv}
+              onClick={() => descargarKardex("xlsx")}
               disabled={descargandoKardex || !kardex || kardex.filas.length === 0}
               className="px-4 py-2 border border-slate-300 text-slate-700 text-sm font-medium rounded-lg hover:bg-white disabled:opacity-40"
-              title="Descargar en CSV — se abre en Excel"
+              title="Planilla con dos hojas: el detalle y un resumen con totales que se recalculan"
             >
-              {descargandoKardex ? "Exportando..." : "⬇ Excel (CSV)"}
+              {descargandoKardex ? "Exportando..." : "⬇ Excel (.xlsx)"}
+            </button>
+            <button
+              onClick={() => descargarKardex("csv")}
+              disabled={descargandoKardex || !kardex || kardex.filas.length === 0}
+              className="px-4 py-2 border border-slate-300 text-slate-500 text-sm font-medium rounded-lg hover:bg-white disabled:opacity-40"
+              title="Texto plano separado por comas, para pegar en otro sistema"
+            >
+              CSV
             </button>
             {errorKardex && (
               <span className="text-xs font-semibold text-red-600">{errorKardex}</span>

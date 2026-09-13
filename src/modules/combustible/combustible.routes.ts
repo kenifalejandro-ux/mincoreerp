@@ -243,12 +243,29 @@ router.get(
   asyncHandler(controller.getKardexCsv.bind(controller))
 );
 
+// El mismo kardex en .xlsx: números que suman, dos hojas y totales como
+// fórmulas. Convive con el CSV, no lo reemplaza.
+router.get(
+  "/:id/kardex/xlsx",
+  requireRole("admin"),
+  validateQuery(kardexCombustibleSchema),
+  asyncHandler(controller.getKardexXlsx.bind(controller))
+);
+
 // Asistente de calibración del umbral (Fase D, entrega 3) -- solo admin,
 // es una decisión de configuración, no trabajo de cancha.
 router.get(
   "/:id/sugerencia-umbral",
   requireRole("admin"),
   asyncHandler(controller.getSugerenciaUmbral.bind(controller))
+);
+
+// De dónde sale la sugerencia: la muestra fila por fila y los números de la
+// etiqueta como fórmulas. Mismo permiso que ver la sugerencia.
+router.get(
+  "/:id/sugerencia-umbral/xlsx",
+  requireRole("admin"),
+  asyncHandler(controller.getSugerenciaUmbralXlsx.bind(controller))
 );
 
 // ➕ crear tanque -- admin únicamente: dar de alta un punto de

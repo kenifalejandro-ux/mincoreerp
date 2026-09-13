@@ -1862,6 +1862,12 @@ export class CombustibleService {
         muestraSuficiente: false as const,
         tamanioMuestra: valoresPct.length,
         minimoRequerido: MINIMO_MUESTRA,
+        // La muestra viaja aunque no alcance para sugerir. No es para la
+        // pantalla -- ahí sigue sin mostrarse ningún número, que es el punto
+        // del mínimo -- sino para que la exportación pueda mostrar las pocas
+        // mediciones que hay. "Todavía no puedo sugerir, pero esto es lo que
+        // llevo medido" es información útil; esconderla no protege de nada.
+        muestra,
       };
     }
 
