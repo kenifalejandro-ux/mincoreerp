@@ -5051,15 +5051,31 @@ export default function CombustiblePanel() {
             )}
           </div>
 
-          <div className="flex-1 min-h-0 overflow-auto p-6">
+          {/* `px-6 pb-6` y no `p-6`: el padding SUPERIOR scrollea junto
+              con el contenido, así que dejaba una franja de 24px por encima
+              del encabezado fijo en la que se veían desfilar las filas.
+              Sin ese padding, el encabezado se pega al borde de verdad. */}
+          <div className="flex-1 min-h-0 overflow-auto px-6 pb-6">
             {cargandoKardex ? (
               <p className="text-slate-400 text-center py-8">Armando el kardex...</p>
             ) : !kardex || kardex.filas.length === 0 ? (
               <p className="text-slate-400 text-center py-8">Sin movimientos en este período.</p>
             ) : (
               <table className="w-full text-sm border-collapse">
+                {/* El encabezado queda fijo al scrollear: el kardex se lee
+                    comparando "saldo teórico" contra "medido" columna por
+                    columna, y a la fila treinta ya nadie se acuerda de cuál
+                    era cuál.
+
+                    El `sticky` va en los <th> y no en el <thead> porque la
+                    tabla es `border-collapse`, y ahí el navegador pinta los
+                    bordes a nivel de tabla: el `border-b` del <tr>
+                    desaparecía apenas el encabezado se despegaba. Por eso la
+                    línea de abajo es una sombra INTERIOR de la celda, que sí
+                    viaja con ella. El fondo opaco es lo que hace que las
+                    filas pasen por detrás en vez de encimarse. */}
                 <thead>
-                  <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
+                  <tr className="text-left text-xs font-bold text-slate-700 uppercase [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-white [&>th]:shadow-[inset_0_-1px_0_#e2e8f0]">
                     <th className="p-2">Fecha</th>
                     <th className="p-2">Movimiento</th>
                     <th className="p-2">Documento</th>
@@ -5582,7 +5598,7 @@ export default function CombustiblePanel() {
                 una pantalla de configuración aparte: es el número que
                 decide cuándo una alerta de abajo se vuelve una anomalía, y
                 verlos juntos es lo que hace entendible el mecanismo. */}
-          <div className="px-6 py-4 bg-slate-50 border-b flex flex-wrap items-center gap-3 shrink-0">
+          <div className="px-6 py-4 bg-slate-50 border-b flex flex-wrap items-center gap-3 shrink-0 max-h-[50%] overflow-y-auto">
             <label htmlFor="ventana-gracia" className="text-xs font-bold text-slate-700 uppercase">
               Ventana de gracia
             </label>
@@ -5764,28 +5780,41 @@ export default function CombustiblePanel() {
                 {mensajeVentana}
               </span>
             )}
-            <p className="text-xs text-slate-600 flex-1 min-w-[240px]">
-              <strong>Ventana de gracia:</strong> tiempo que un hueco tiene para explicarse solo (un
-              vale que sincroniza sin señal, uno que se anula) antes de congelarse como anomalía
-              permanente. Pasado ese plazo se congela <strong>solo</strong>, sin que nadie tenga que
-              revisarlo.
-              <br />
-              <strong>Acumulado de los últimos N días:</strong> ventana del descuadre que{" "}
-              <strong>no se reinicia con una recepción</strong> — es la que atrapa el faltante de a
-              poco. Bajarla debilita el control y queda auditado.
-              <br />
-              <strong>Llenados por día:</strong> cuántas veces puede llenarse el tanque de un equipo
-              en 24 h. El techo sale de multiplicarlo por la capacidad cargada en la ficha del
-              equipo, así que solo vigila a los equipos que la tengan.{" "}
-              <strong>Tope diario sin capacidad:</strong> litros en 24 h para lo demás — planta,
-              reserva en cubeta y los equipos sin capacidad cargada. Los dos vacíos = sin vigilar.
-              <br />
-              <strong>El grifero toma varilla:</strong> destildalo solo si tenés a alguien distinto
-              para medir. Mientras esté tildado, el que despacha es también el que mide, así que la
-              varilla <strong>no es un control independiente</strong> del despacho — es cómo trabaja
-              la mayoría, y por eso viene tildado. Destildarlo se la deja a los administradores y
-              operadores.
-            </p>
+            {/* La explicación de los números va PLEGADA. Estaba siempre
+                abierta y ocupaba unos 350px fijos de la barra, que es
+                `shrink-0`: en un panel de 640 de alto la lista de alertas
+                --lo que el usuario vino a ver-- quedaba en una franja de
+                dos dedos. Como referencia se lee una vez y después estorba,
+                pero sacarla del panel sería peor: es lo que explica por qué
+                un número de acá arriba convierte una alerta de abajo en
+                anomalía. */}
+            <details className="w-full">
+              <summary className="cursor-pointer text-xs font-medium text-slate-600 hover:text-slate-900">
+                ¿Qué significa cada número?
+              </summary>
+              <p className="mt-2 text-xs text-slate-600">
+                <strong>Ventana de gracia:</strong> tiempo que un hueco tiene para explicarse solo
+                (un vale que sincroniza sin señal, uno que se anula) antes de congelarse como
+                anomalía permanente. Pasado ese plazo se congela <strong>solo</strong>, sin que
+                nadie tenga que revisarlo.
+                <br />
+                <strong>Acumulado de los últimos N días:</strong> ventana del descuadre que{" "}
+                <strong>no se reinicia con una recepción</strong> — es la que atrapa el faltante de
+                a poco. Bajarla debilita el control y queda auditado.
+                <br />
+                <strong>Llenados por día:</strong> cuántas veces puede llenarse el tanque de un
+                equipo en 24 h. El techo sale de multiplicarlo por la capacidad cargada en la ficha
+                del equipo, así que solo vigila a los equipos que la tengan.{" "}
+                <strong>Tope diario sin capacidad:</strong> litros en 24 h para lo demás — planta,
+                reserva en cubeta y los equipos sin capacidad cargada. Los dos vacíos = sin vigilar.
+                <br />
+                <strong>El grifero toma varilla:</strong> destildalo solo si tenés a alguien
+                distinto para medir. Mientras esté tildado, el que despacha es también el que mide,
+                así que la varilla <strong>no es un control independiente</strong> del despacho — es
+                cómo trabaja la mayoría, y por eso viene tildado. Destildarlo se la deja a los
+                administradores y operadores.
+              </p>
+            </details>
           </div>
 
           <div className="flex-1 min-h-0 overflow-auto p-6">
