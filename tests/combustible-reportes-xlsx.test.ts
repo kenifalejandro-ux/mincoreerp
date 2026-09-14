@@ -334,6 +334,21 @@ describe("combustible: reportes en .xlsx", () => {
       expect(hoja).not.toContain("COMPARACIÓN: EL UMBRAL DE HOY");
     });
 
+    it("empareja la etiqueta de la pantalla con los números del archivo", async () => {
+      // La pantalla dice "promedio 1.93% ± 6.27%" y la hoja trabaja en litros:
+      // sin este bloque no hay forma de encontrar el 6.27 en el archivo.
+      const tq = await tanque(10000);
+      await despachar(tq, 500, hace(10));
+      await leer(tq, 9200, hace(9));
+
+      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Descuadre por tramo");
+      expect(hoja).toContain("CÓMO LO MUESTRA LA PANTALLA");
+      expect(hoja).toContain("Desviación en % de la capacidad");
+      expect(hoja).toContain("el ± NO significa");
+      // La etiqueta reconstruida con fórmula, con el mismo formato que la pantalla.
+      expect(hoja).toContain("mediciones, promedio ");
+    });
+
     it("muestra los litros con 2 decimales y los conteos enteros", async () => {
       const tq = await tanque(10000);
       await leer(tq, 9900, hace(9));

@@ -391,6 +391,52 @@ function hojaDeCalibracion(o: OpcionesHojaCalibracion): HojaXlsx {
     ]
   );
 
+  // ── Cómo lo muestra la pantalla ───────────────────────────────────────
+  // La pantalla escribe "promedio 1.93% ± 6.27%" y el bloque de arriba trabaja
+  // en litros (385,93 y 1.254,84): sin este puente, quien abre el archivo no
+  // puede emparejar la etiqueta con ningún número. Lo marcó Kenif: "en el
+  // excel no hay ese dato de ± 6.27 %".
+  const P0 = filas.length + 2; // la fila del título queda en P0
+  const FILA_PROM_PCT = P0 + 2;
+  const FILA_DESV_PCT = P0 + 3;
+  const aPct = (fila: number) => (enPorcentaje ? B(fila) : `${B(fila)}/${B(FILA_CAPACIDAD)}*100`);
+  filas.push(
+    [],
+    [titulo("CÓMO LO MUESTRA LA PANTALLA"), null, titulo("QUÉ SIGNIFICA")],
+    [
+      titulo("La etiqueta, tal cual"),
+      {
+        // Primero el mínimo: con menos filas la desviación puede estar vacía y
+        // ROUND("") da error.
+        formula:
+          `IF(${B(FILA_N)}<${B(FILA_MINIMO)},` +
+          `"Sugerencia automática: faltan mediciones ("&${B(FILA_N)}&"/"&${B(FILA_MINIMO)}&")",` +
+          `"Sugerencia: "&ROUND(${B(FILA_FINAL_PCT)},1)&"% ("&${B(FILA_N)}&" mediciones, promedio "` +
+          `&ROUND(${B(FILA_PROM_PCT)},2)&"% ± "&ROUND(${B(FILA_DESV_PCT)},2)&"%)")`,
+      },
+    ],
+    [
+      titulo(enPorcentaje ? "Promedio (%)" : "Promedio en % de la capacidad"),
+      dec({ formula: siHayDos(aPct(FILA_PROMEDIO)) }),
+      enPorcentaje
+        ? "Es el 'promedio' de la etiqueta. En esta hoja la cuenta ya va en porcentaje."
+        : "Es el 'promedio' de la etiqueta: el promedio por fila de arriba, dividido por la capacidad del tanque.",
+    ],
+    [
+      titulo(enPorcentaje ? "Desviación (%)" : "Desviación en % de la capacidad"),
+      dec({ formula: siHayDos(aPct(FILA_DESVIACION)) }),
+      (enPorcentaje
+        ? "Es el número que la etiqueta pone después del '±'. "
+        : "Es el número que la etiqueta pone después del '±': la desviación de arriba, dividida por la capacidad. ") +
+        "OJO: el ± NO significa 'más o menos'. Es la desviación, la misma de arriba, escrita en porcentaje.",
+    ],
+    [
+      titulo("Sugerencia final (%)"),
+      dec({ formula: `IF(${B(FILA_N)}<${B(FILA_MINIMO)},"",${B(FILA_FINAL_PCT)})` }),
+      "Es el primer número de la etiqueta, el que aplica el botón 'Usar este valor'. Vacío mientras falten mediciones: la pantalla no muestra ninguno.",
+    ]
+  );
+
   // ── Comparación ───────────────────────────────────────────────────────
   if (hayUmbral) {
     const C0 = filas.length + 2; // la fila del título queda en C0
@@ -513,7 +559,7 @@ const HOJA_COMO_LEERLO: HojaXlsx = {
     ],
     [
       { valor: "Desviación", negrita: true },
-      "Cuánto suele variar el desajuste de un tramo a otro. Si todos los tramos dieran lo mismo, sería 0.",
+      "Cuánto suele variar el desajuste de un tramo a otro. Si todos los tramos dieran lo mismo, sería 0. La pantalla la muestra en porcentaje después de un '±' (por ejemplo '± 6.27%'): ese ± NO significa 'más o menos', es la desviación.",
     ],
     [
       { valor: "Sugerencia", negrita: true },
