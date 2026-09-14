@@ -75,7 +75,6 @@ export default function LoginPage() {
   // tenant por defecto del propio entorno (dueño de la plataforma) > campo
   // manual como último recurso.
   const slugResuelto = slugDeSubdominio ?? (esDominioDeCliente ? "auto" : null) ?? SLUG_POR_DEFECTO;
-  const [tenantSlug, setTenantSlug] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +88,7 @@ export default function LoginPage() {
   // El callback de Google Identity Services se registra una sola vez (ver
   // useEffect más abajo) — usamos un ref para leer el slug vigente al
   // momento del click, en vez de uno capturado por el closure en el mount.
-  const tenantSlugEfectivo = slugResuelto ?? tenantSlug;
+  const tenantSlugEfectivo = slugResuelto ?? "";
   const tenantSlugRef = useRef(tenantSlugEfectivo);
   useEffect(() => {
     tenantSlugRef.current = tenantSlugEfectivo;
@@ -183,7 +182,7 @@ export default function LoginPage() {
         client_id: googleClientId!,
         callback: async ({ credential }) => {
           if (!tenantSlugRef.current.trim()) {
-            setError("Ingresa primero el identificador de tu empresa");
+            setError("No se pudo identificar tu empresa automáticamente");
             return;
           }
           setError(null);
@@ -245,27 +244,6 @@ export default function LoginPage() {
             onSubmit={handleOlvide}
             className="bg-[#1D2124] border border-slate-200 rounded-xl p-6 space-y-4 shadow-sm"
           >
-            {!slugResuelto && (
-              <div>
-                <label
-                  className="block text-sm font-light text-slate-100 mb-1.5"
-                  htmlFor="tenantSlugOlvide"
-                >
-                  Empresa
-                </label>
-                <input
-                  id="tenantSlugOlvide"
-                  type="text"
-                  required
-                  autoComplete="organization"
-                  value={tenantSlug}
-                  onChange={(e) => setTenantSlug(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400"
-                  placeholder="ej. cushuro"
-                />
-              </div>
-            )}
-
             <div>
               <label
                 className="block text-sm font-light text-slate-100 mb-1.5"
@@ -322,27 +300,6 @@ export default function LoginPage() {
             onSubmit={handleSubmit}
             className="bg-[#1D2124] border border-slate-200 rounded-xl p-6 space-y-4 shadow-sm"
           >
-            {!slugResuelto && (
-              <div>
-                <label
-                  className="block  text-sm font-light text-slate-100 mb-1.5"
-                  htmlFor="tenantSlug"
-                >
-                  Empresa
-                </label>
-                <input
-                  id="tenantSlug"
-                  type="text"
-                  required
-                  autoComplete="organization"
-                  value={tenantSlug}
-                  onChange={(e) => setTenantSlug(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border  border-slate-200 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400"
-                  placeholder="ej. cushuro"
-                />
-              </div>
-            )}
-
             {/* Correo O DNI en el mismo campo (migración 0084): el grifero y
                 los conductores de ruta no tienen correo corporativo. `type`
                 pasa de "email" a "text" -- si no, el navegador rechaza un DNI
