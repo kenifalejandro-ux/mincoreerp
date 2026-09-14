@@ -70,7 +70,11 @@ describe("combustible: reportes en .xlsx", () => {
     await closeDatabase();
   });
 
-  async function tanque(nivelInicial = 10000) {
+  /** Con `recomendado` se mandan los umbrales 2/2/3/4 % explícitos: el modo
+   *  solo queda registrado, los valores los completa el formulario del
+   *  navegador. Hacen falta para que la hoja de calibración arme la
+   *  comparación contra el umbral de hoy. */
+  async function tanque(nivelInicial = 10000, modo: "sin_vigilar" | "recomendado" = "sin_vigilar") {
     const r = await ag.post("/api/erp/combustible").send({
       codigo: idUnico("TQ"),
       tanque_nombre: "Tanque xlsx",
@@ -80,7 +84,15 @@ describe("combustible: reportes en .xlsx", () => {
       capacidad_total: 20000,
       nivel_actual: nivelInicial,
       nivel_minimo: 2000,
-      modo_vigilancia: "sin_vigilar",
+      modo_vigilancia: modo,
+      ...(modo === "recomendado"
+        ? {
+            umbral_diferencia_pct: 2,
+            umbral_descuadre_pct: 2,
+            umbral_descuadre_ciclo_pct: 3,
+            umbral_descuadre_ventana_pct: 4,
+          }
+        : {}),
     });
     expect(r.status).toBe(201);
     const tq = r.body.id as number;
@@ -232,15 +244,15 @@ describe("combustible: reportes en .xlsx", () => {
       ]);
     });
 
-    it("muestra la muestra ENTERA, fila por fila, con los mismos números que la etiqueta", async () => {
+    it("desarma CADA tramo en su cuenta, con fórmulas", async () => {
       const tq = await tanque(10000);
-      // Cuatro tramos: tres que cuadran y uno con faltante.
+      // Tres tramos: dos que cuadran y uno con faltante.
       await despachar(tq, 500, hace(20));
       await leer(tq, 9500, hace(19));
       await despachar(tq, 500, hace(15));
       await leer(tq, 9000, hace(14));
       await despachar(tq, 500, hace(10));
-      await leer(tq, 8200, hace(9)); // faltan 300
+      await leer(tq, 8200, hace(9)); // teórico 8.500, medido 8.200: faltan 300
 
       const sugerencia = await ag.get(`/api/erp/combustible/${tq}/sugerencia-umbral`);
       const n = sugerencia.body.descuadre.tamanioMuestra as number;
@@ -248,17 +260,95 @@ describe("combustible: reportes en .xlsx", () => {
 
       const hoja = hojaPorNombre((await bajar(url(tq))).body, "Descuadre por tramo");
 
-      // Una fila de datos por cada medición de la muestra: el número de la
-      // primera columna llega hasta n.
+      // Una fila por tramo: el número de la primera columna llega hasta n.
       expect(hoja).toContain(`<v>${n}</v>`);
-      // El faltante, como número.
-      expect(hoja).toContain("<v>-300</v>");
-      // Los números de la etiqueta, como fórmulas y no pegados.
+      // Los pasos del tramo con faltante, como datos: nivel anterior y medido.
+      expect(hoja).toContain("<v>9000</v>");
+      expect(hoja).toContain("<v>8200</v>");
+      // Y la cuenta, como fórmula: teórico = anterior − despachos + recepciones,
+      // diferencia = medido − teórico. Nada pegado.
+      expect(hoja).toMatch(/<f>D\d+-E\d+\+F\d+<\/f>/);
+      expect(hoja).toMatch(/<f>H\d+-G\d+<\/f>/);
+      // Los números de la etiqueta, como fórmulas.
       expect(hoja).toContain("<f>AVERAGE(");
       expect(hoja).toContain("SQRT(");
-      expect(hoja).toContain("n − 1");
+      expect(hoja).toContain("MEDIAN(");
       // El mismo recorte que hace el sistema: piso de 1 %, tope de 100 %.
       expect(hoja).toContain("MAX(1,MIN(100,");
+    });
+
+    it("marca la lectura inicial del alta, que no es una medición de cancha", async () => {
+      // El alta del tanque crea una lectura `inicial` con la fecha de hoy. Con
+      // varillas anteriores cargadas, el tramo contra ella es basura: en el
+      // tenant redteam aportaba el 82 % de la varianza.
+      const tq = await tanque(10000);
+      await leer(tq, 9000, hace(9));
+
+      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Descuadre por tramo");
+      expect(hoja).toContain("Lectura inicial del alta del tanque");
+    });
+
+    it("explica cada columna y cada resultado en palabras", async () => {
+      const tq = await tanque(10000);
+      await despachar(tq, 500, hace(10));
+      await leer(tq, 9200, hace(9));
+
+      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Descuadre por tramo");
+      expect(hoja).toContain("CÓMO SE LEE CADA COLUMNA");
+      expect(hoja).toContain("Lo que DEBERÍA haber");
+      expect(hoja).toContain("QUÉ SIGNIFICA");
+      expect(hoja).toContain("LECTURA RÁPIDA");
+    });
+
+    it("pone el umbral de hoy también en litros", async () => {
+      const tq = await tanque(10000, "recomendado");
+      await leer(tq, 9900, hace(9));
+
+      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Descuadre por tramo");
+      // Umbral % (B6) × capacidad (B5) / 100. Con 2 % y 20.000 L son 400 L.
+      expect(hoja).toContain("<f>B6*B5/100</f>");
+    });
+
+    it("compara el umbral de hoy contra la sugerencia, en filas concretas", async () => {
+      const tq = await tanque(10000, "recomendado");
+      await despachar(tq, 500, hace(10));
+      await leer(tq, 9200, hace(9));
+
+      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Descuadre por tramo");
+      expect(hoja).toContain("COMPARACIÓN: EL UMBRAL DE HOY CONTRA LA SUGERENCIA");
+      expect(hoja).toContain("Filas que DEJARÍAN de alertar si se acepta la sugerencia");
+      // Cuenta filas contra una celda: COUNTIF(rango,">"&$B$n).
+      expect(hoja).toMatch(/COUNTIF\([A-Z]+\d+:[A-Z]+\d+,&quot;&gt;&quot;&amp;\$B\$\d+\)/);
+      // Con menos filas que el mínimo, la comparación queda vacía: no hay
+      // sugerencia que aceptar y mostrar un número inventado confunde.
+      expect(hoja).toMatch(/IF\(\$B\$\d+&lt;\$B\$\d+,&quot;&quot;,/);
+    });
+
+    it("sin umbral configurado no inventa la comparación", async () => {
+      const tq = await tanque(10000, "sin_vigilar");
+      await leer(tq, 9900, hace(9));
+
+      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Descuadre por tramo");
+      expect(hoja).toContain("sin configurar");
+      expect(hoja).toContain("sin umbral");
+      expect(hoja).not.toContain("COMPARACIÓN: EL UMBRAL DE HOY");
+    });
+
+    it("muestra los litros con 2 decimales y los conteos enteros", async () => {
+      const tq = await tanque(10000);
+      await leer(tq, 9900, hace(9));
+
+      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Descuadre por tramo");
+      // Estilos del generador: 2/3 = decimal (normal/negrita), 4/5 = entero.
+      expect(hoja).toMatch(/ s="2"/);
+      expect(hoja).toMatch(/ s="4"/);
+    });
+
+    it("en la hoja de recepciones el umbral en litros no aplica", async () => {
+      const tq = await tanque(10000, "recomendado");
+
+      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Diferencia en recepción");
+      expect(hoja).toContain("no aplica");
     });
 
     it("se puede bajar aunque la muestra no alcance para sugerir", async () => {

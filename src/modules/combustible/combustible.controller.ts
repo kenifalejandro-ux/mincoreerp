@@ -52,6 +52,7 @@ import { armarCsv } from "../../server/shared/utils/csv.util";
 import {
   armarXlsx,
   CONTENT_TYPE_XLSX,
+  letraColumna,
   type CeldaXlsx,
   type HojaXlsx,
 } from "../../server/shared/utils/xlsx.util";
@@ -61,235 +62,503 @@ import { CombustibleService } from "./combustible.service";
 const service = new CombustibleService();
 
 // ====================== DETALLE DE CALIBRACIÓN (.xlsx) ======================
+//
+// Lo que tiene que lograr este archivo, en palabras de Kenif: "que sea lo más
+// detallado posible, para que el tenant lo pueda entender". El punto de
+// partida fue una etiqueta -- "Sugerencia: 14.5% (27 mediciones, promedio
+// 1.93% ± 6.27%)" -- que al desarrollador del sistema le costó varios días de
+// preguntas descifrar. Por eso cada hoja:
+//
+//  1. Desarma CADA fila en su cuenta (nivel anterior − despachos + recepciones
+//     = teórico; medido − teórico = diferencia), con fórmulas.
+//  2. Explica cada columna en una leyenda, arriba de la tabla.
+//  3. Pone al lado de cada resultado qué significa, en palabras.
+//  4. Compara el umbral de HOY contra la sugerencia, en tramos concretos: la
+//     pregunta que importa no es "cuánto da la fórmula" sino "qué dejaría de
+//     alertar si la acepto".
+//  5. Termina con un veredicto automático.
+
+type FormatoColumnaCalibracion = "decimal" | "entero" | "texto";
+
+interface ColumnaCalibracion {
+  encabezado: string;
+  explicacion: string;
+  formato: FormatoColumnaCalibracion;
+}
+
+/** Una celda de contexto: dato, o fórmula. En las fórmulas, `{n}` es la celda
+ *  de la columna de contexto n (1 = la primera) en ESTA fila. Así la cuenta de
+ *  cada fila se escribe sin conocer las letras: `{3}-{4}+{5}`. */
+type CeldaContexto = string | number | null | { formula: string };
+
+interface FilaCalibracion {
+  contexto: CeldaContexto[];
+  /** El número que entra en la estadística, o su fórmula (con `{n}`). */
+  valor: number | { formula: string };
+  observacion?: string;
+}
 
 interface OpcionesHojaCalibracion {
   nombre: string;
   titulo: string;
+  queEsCadaFila: string;
   cabecera: { codigo: string; nombre: string; capacidad: number; unidad: string };
-  umbralHoy: string | number | null;
-  columnaContexto: string;
+  umbralHoyPct: string | number | null;
   /** La unidad EN LA QUE SE HACE LA CUENTA: litros/galones, o "%" cuando el
    *  denominador cambia por fila (el umbral de diferencia). */
   unidadValor: string;
-  filas: { contexto: string | number; valor: number; extra?: number }[];
-  columnaExtra?: string;
-  nota: string;
+  columnas: ColumnaCalibracion[];
+  columnaValor: { encabezado: string; explicacion: string };
+  filas: FilaCalibracion[];
 }
 
-/** Una hoja del detalle de calibración: la muestra fila por fila y, abajo, los
- *  números de la etiqueta de la pantalla como FÓRMULAS.
- *
- *  Fórmulas y no números calculados acá, a propósito: el objetivo del archivo
- *  es que se vea de dónde sale cada cifra, y que quien lo abre pueda borrar
- *  una fila sospechosa y mirar cómo se mueve la sugerencia. Un número pegado
- *  no muestra nada de eso.
- *
- *  Reproduce EXACTAMENTE `CombustibleService.calibrar`: valor absoluto,
- *  promedio, varianza con n−1, promedio + 2 desviaciones, y el piso de 1 % con
- *  tope de 100 %. Si el archivo y la pantalla dieran números distintos, el
- *  archivo no serviría para explicar la pantalla. */
+/** Aviso para la fila cuyo tramo termina en la lectura `inicial` del alta.
+ *  Esa lectura no es una medición de cancha: es el número que se escribió al
+ *  registrar el tanque. Si quedó al final de la historia (se cargó historial
+ *  con fecha anterior al alta), el tramo contra ella es basura y puede dominar
+ *  toda la estadística -- en el tenant redteam aportaba el 82 % de la varianza. */
+const OBSERVACION_LECTURA_INICIAL =
+  "Lectura inicial del alta del tanque: es el nivel que se escribió al registrarlo, no una " +
+  "medición de cancha. Si quedó al final de la historia es porque se cargó historial con fecha " +
+  "anterior al alta, y esta fila NO refleja el comportamiento del tanque: conviene eliminarla " +
+  "antes de mirar la sugerencia.";
+
+const fechaLima = (d: string | Date) =>
+  new Date(d).toLocaleString("es-PE", { timeZone: "America/Lima" });
+
+/** Reproduce EXACTAMENTE `CombustibleService.calibrar`: valor absoluto,
+ *  promedio, varianza con n − 1, promedio + 2 desviaciones, piso de 1 % y tope
+ *  de 100 %, redondeo a un decimal. Si el archivo diera otro número que la
+ *  pantalla, no serviría para explicarla. */
 function hojaDeCalibracion(o: OpcionesHojaCalibracion): HojaXlsx {
-  const conExtra = Boolean(o.columnaExtra);
-  // Posiciones de columna: con columna extra todo se corre uno a la derecha.
-  const iValor = conExtra ? 3 : 2;
-  const cValor = conExtra ? "D" : "C";
-  const cAbs = conExtra ? "E" : "D";
-  const cCuad = conExtra ? "F" : "E";
   const enPorcentaje = o.unidadValor === "%";
+  const u = o.unidadValor;
+  const uTanque = o.cabecera.unidad;
+  const k = o.columnas.length;
+  const umbralHoy = o.umbralHoyPct === null ? null : Number(o.umbralHoyPct);
+  const hayUmbral = umbralHoy !== null;
 
-  /** Una fila de etiqueta: el texto en A y el valor alineado con la columna
-   *  de valores, para que la vista quede en una sola columna legible. */
-  const etiqueta = (texto: string, celda: CeldaXlsx, negrita = false): CeldaXlsx[] => {
-    const fila: CeldaXlsx[] = [{ valor: texto, negrita }];
-    fila[iValor] = celda;
-    return fila;
-  };
+  // Columnas: A = #, B.. = contexto, y después las fijas.
+  const cValor = letraColumna(1 + k);
+  const cAbs = letraColumna(2 + k);
+  const cCuad = letraColumna(3 + k);
 
-  const n = o.filas.length;
-  const umbralHoy = o.umbralHoy === null ? null : Number(o.umbralHoy);
+  const dec = (celda: { valor?: number | string | null; formula?: string }, negrita = false) =>
+    ({ ...celda, formato: "decimal", negrita }) as CeldaXlsx;
+  const ent = (celda: { valor?: number | string | null; formula?: string }, negrita = false) =>
+    ({ ...celda, formato: "entero", negrita }) as CeldaXlsx;
+  const titulo = (texto: string): CeldaXlsx => ({ valor: texto, negrita: true });
 
+  // ── Cabecera ──────────────────────────────────────────────────────────
   const FILA_CAPACIDAD = 5;
-  const FILA_ENCABEZADOS = 8;
-  const PRIMERA = FILA_ENCABEZADOS + 1;
-  const ULTIMA = PRIMERA + n - 1;
+  const FILA_UMBRAL_PCT = 6;
+  const FILA_UMBRAL_L = 7;
 
   const filas: CeldaXlsx[][] = [
-    [{ valor: o.titulo, negrita: true }],
-    [o.nota],
+    [titulo(o.titulo)],
+    [o.queEsCadaFila],
     [],
-    etiqueta("Tanque", `${o.cabecera.codigo} -- ${o.cabecera.nombre}`),
-    etiqueta(`Capacidad (${o.cabecera.unidad})`, o.cabecera.capacidad),
-    etiqueta(
-      "Umbral configurado hoy (%)",
-      // Vacío y no 0 cuando no está configurado: 0 es tolerancia cero de
-      // verdad (alerta por cualquier litro), y NULL es "no vigila".
-      umbralHoy ?? "sin configurar"
-    ),
+    [titulo("Tanque"), `${o.cabecera.codigo} -- ${o.cabecera.nombre}`],
+    [
+      titulo(`Capacidad (${uTanque})`),
+      ent({ valor: o.cabecera.capacidad }),
+      "Cuánto le cabe al tanque.",
+    ],
+    [
+      titulo("Umbral configurado hoy (%)"),
+      // Texto y no 0 cuando no hay umbral: 0 es tolerancia cero de verdad
+      // (alerta por cualquier litro), y NULL es "no vigila".
+      hayUmbral ? dec({ valor: umbralHoy }) : "sin configurar",
+      enPorcentaje
+        ? "El que tiene cargado hoy la ficha del tanque. Se mide sobre lo facturado en cada entrega."
+        : "El que tiene cargado hoy la ficha del tanque, en porcentaje de la capacidad.",
+    ],
+    [
+      titulo(`Umbral configurado hoy (${enPorcentaje ? uTanque : u})`),
+      enPorcentaje
+        ? "no aplica"
+        : hayUmbral
+          ? dec({ formula: `B${FILA_UMBRAL_PCT}*B${FILA_CAPACIDAD}/100` })
+          : "sin configurar",
+      enPorcentaje
+        ? "Este umbral no tiene un valor fijo en litros: depende de cuánto se facturó en cada entrega."
+        : "El mismo umbral en litros: un tramo que se desajusta más que esto, hoy alerta.",
+    ],
     [],
   ];
 
-  const encabezados: CeldaXlsx[] = [
-    { valor: "#", negrita: true },
-    { valor: o.columnaContexto, negrita: true },
+  // ── Leyenda de columnas ───────────────────────────────────────────────
+  const leyenda: { encabezado: string; explicacion: string }[] = [
+    { encabezado: "#", explicacion: "Número de fila." },
+    ...o.columnas,
+    o.columnaValor,
+    {
+      encabezado: "Valor absoluto",
+      explicacion:
+        "La diferencia sin signo. Para medir la precisión, un sobrante de 500 revela lo mismo que un faltante de 500.",
+    },
+    {
+      encabezado: "(absoluto − promedio)²",
+      explicacion:
+        "Paso intermedio para la desviación: qué tan lejos queda cada fila del promedio, elevado al cuadrado.",
+    },
+    {
+      encabezado: "¿Alerta con el umbral de hoy?",
+      explicacion: "SÍ si esa fila supera el umbral configurado hoy.",
+    },
+    {
+      encabezado: "¿Alertaría con la sugerencia?",
+      explicacion:
+        "SÍ si esa fila supera la sugerencia final. Las que dicen SÍ en la columna anterior y quedan vacías acá son las que dejarían de alertar.",
+    },
+    { encabezado: "Observación", explicacion: "Avisos sobre filas que merecen atención." },
   ];
-  if (conExtra) encabezados.push({ valor: o.columnaExtra!, negrita: true });
-  encabezados.push(
-    { valor: `Valor (${o.unidadValor})`, negrita: true },
-    { valor: "Valor absoluto", negrita: true },
-    { valor: "(absoluto − promedio)²", negrita: true }
-  );
-  filas.push(encabezados);
+  filas.push([titulo("CÓMO SE LEE CADA COLUMNA")]);
+  for (const c of leyenda) filas.push([titulo(c.encabezado), c.explicacion]);
+  filas.push([]);
+
+  // ── Encabezados de la tabla ───────────────────────────────────────────
+  filas.push([
+    titulo("#"),
+    ...o.columnas.map((c) => titulo(c.encabezado)),
+    titulo(o.columnaValor.encabezado),
+    titulo("Valor absoluto"),
+    titulo("(absoluto − promedio)²"),
+    titulo("¿Alerta con el umbral de hoy?"),
+    titulo("¿Alertaría con la sugerencia?"),
+    titulo("Observación"),
+  ]);
+
+  const n = o.filas.length;
+  const anchos = [
+    46,
+    ...o.columnas.map((c) => (c.formato === "texto" ? 22 : 15)),
+    16,
+    15,
+    20,
+    16,
+    16,
+    70,
+  ];
 
   if (n === 0) {
     filas.push([], ["Todavía no hay mediciones para calcular nada."]);
-    return { nombre: o.nombre, filas, anchos: [34, 22, 16, 16, 16, 20] };
+    return { nombre: o.nombre, filas, anchos };
   }
 
-  // Filas del bloque de resultados, calculadas de antemano porque la columna
-  // de cuadrados necesita apuntar a la celda del promedio, que queda abajo.
+  const PRIMERA = filas.length + 1;
+  const ULTIMA = PRIMERA + n - 1;
+
+  // Filas del bloque de resultados, calculadas de antemano: las columnas de la
+  // tabla apuntan a celdas (promedio, sugerencia) que quedan más abajo.
   const R = ULTIMA + 2;
+  // R+2, R+3 y R+4 son 'cuadraron', 'fila más grande' y 'mediana': informativas,
+  // ninguna fórmula apunta a ellas.
   const FILA_N = R + 1;
-  const FILA_PROMEDIO = R + 2;
-  const FILA_SUMA = R + 3;
-  const FILA_VARIANZA = R + 4;
-  const FILA_DESVIACION = R + 5;
-  const FILA_SUGERENCIA = R + 6;
-  const FILA_SUGERENCIA_PCT = enPorcentaje ? FILA_SUGERENCIA : R + 7;
+  const FILA_PROMEDIO = R + 5;
+  const FILA_SUMA = R + 6;
+  const FILA_VARIANZA = R + 7;
+  const FILA_DESVIACION = R + 8;
+  const FILA_SUGERENCIA = R + 9;
+  const FILA_SUGERENCIA_PCT = enPorcentaje ? FILA_SUGERENCIA : R + 10;
+  const FILA_FINAL_PCT = enPorcentaje ? R + 10 : R + 11;
+  const FILA_FINAL_UNIDAD = enPorcentaje ? FILA_FINAL_PCT : R + 12;
+  // El mínimo va justo después de la sugerencia final, en los dos modos.
+  const FILA_MINIMO = FILA_FINAL_UNIDAD + 1;
+  // Contra qué se compara cada fila: en la misma unidad que el valor absoluto.
+  const FILA_UMBRAL_COMPARABLE = enPorcentaje ? FILA_UMBRAL_PCT : FILA_UMBRAL_L;
+
+  const expandir = (formula: string, fila: number) =>
+    formula.replace(/\{(\d+)\}/g, (_, i: string) => `${letraColumna(Number(i))}${fila}`);
 
   o.filas.forEach((f, i) => {
     const fila = PRIMERA + i;
-    const celdas: CeldaXlsx[] = [i + 1, f.contexto];
-    if (conExtra) celdas.push(f.extra ?? null);
+    const celdas: CeldaXlsx[] = [ent({ valor: i + 1 })];
+
+    f.contexto.forEach((c, j) => {
+      const formato = o.columnas[j].formato;
+      if (c !== null && typeof c === "object") {
+        const conFormula = { formula: expandir(c.formula, fila) };
+        celdas.push(formato === "entero" ? ent(conFormula) : dec(conFormula));
+      } else if (formato === "texto" || typeof c === "string" || c === null) {
+        celdas.push(c);
+      } else {
+        celdas.push(formato === "entero" ? ent({ valor: c }) : dec({ valor: c }));
+      }
+    });
+
     celdas.push(
-      f.valor,
-      { formula: `ABS(${cValor}${fila})` },
-      { formula: `(${cAbs}${fila}-$${cValor}$${FILA_PROMEDIO})^2` }
+      typeof f.valor === "number"
+        ? dec({ valor: f.valor })
+        : dec({ formula: expandir(f.valor.formula, fila) }),
+      dec({ formula: `ABS(${cValor}${fila})` }),
+      dec({ formula: `(${cAbs}${fila}-$B$${FILA_PROMEDIO})^2` }),
+      hayUmbral
+        ? { formula: `IF(${cAbs}${fila}>$B$${FILA_UMBRAL_COMPARABLE},"SÍ","")` }
+        : "sin umbral",
+      {
+        // Con menos filas que el mínimo el sistema no sugiere nada: decir "SÍ,
+        // alertaría" contra un número que la pantalla no muestra confunde.
+        formula: `IF($B$${FILA_N}<$B$${FILA_MINIMO},"",IF(${cAbs}${fila}>$B$${FILA_FINAL_UNIDAD},"SÍ",""))`,
+      },
+      f.observacion ?? null
     );
     filas.push(celdas);
   });
 
   const rAbs = `${cAbs}${PRIMERA}:${cAbs}${ULTIMA}`;
   const rCuad = `${cCuad}${PRIMERA}:${cCuad}${ULTIMA}`;
-  const u = o.unidadValor;
+  const siHayDos = (formula: string) => `IF($B$${FILA_N}>1,${formula},"")`;
+  const B = (fila: number) => `$B$${fila}`;
 
-  filas.push([], [{ valor: "RESULTADOS", negrita: true }]);
-  filas.push(etiqueta("n -- cantidad de mediciones", { formula: `COUNT(${rAbs})` }));
-  filas.push(etiqueta(`Promedio (${u})`, { formula: `AVERAGE(${rAbs})` }, true));
-  filas.push(etiqueta("Suma de los cuadrados", { formula: `SUM(${rCuad})` }));
+  // ── Resultados ────────────────────────────────────────────────────────
+  filas.push([], [titulo("RESULTADOS"), null, titulo("QUÉ SIGNIFICA")]);
   filas.push(
-    etiqueta("Varianza = suma ÷ (n − 1)", {
-      // Con una sola medición no hay dispersión que calcular: n − 1 = 0.
-      formula: `IF(${cValor}${FILA_N}>1,${cValor}${FILA_SUMA}/(${cValor}${FILA_N}-1),"")`,
-    })
-  );
-  filas.push(
-    etiqueta(
-      `Desviación = √varianza (${u})`,
-      { formula: `IF(${cValor}${FILA_N}>1,SQRT(${cValor}${FILA_VARIANZA}),"")` },
-      true
-    )
-  );
-  filas.push(
-    etiqueta(
-      `Sugerencia = promedio + 2 × desviación (${u})`,
-      {
-        formula: `IF(${cValor}${FILA_N}>1,${cValor}${FILA_PROMEDIO}+2*${cValor}${FILA_DESVIACION},"")`,
-      },
-      true
-    )
+    [
+      titulo("Filas analizadas (n)"),
+      ent({ formula: `COUNT(${rAbs})` }),
+      "Cuántas filas entran en el cálculo.",
+    ],
+    [
+      titulo("Filas que cuadraron perfecto (diferencia 0)"),
+      ent({ formula: `COUNTIF(${rAbs},0)` }),
+      "Cuántas no tuvieron ninguna diferencia. Si son la mayoría, lo normal del tanque es cuadrar.",
+    ],
+    [
+      titulo(`Fila más grande (${u})`),
+      dec({ formula: `MAX(${rAbs})` }),
+      "El desajuste más grande de la lista. Si es muchas veces el promedio, es un caso raro que conviene revisar.",
+    ],
+    [
+      titulo(`Mediana (${u})`),
+      dec({ formula: `MEDIAN(${rAbs})` }),
+      "El valor del medio si ordenás las filas de menor a mayor. Si es muy distinta del promedio, pocas filas grandes lo están inflando.",
+    ],
+    [
+      titulo(`Promedio por fila (${u})`),
+      dec({ formula: `AVERAGE(${rAbs})` }, true),
+      "Todo el desajuste repartido en partes iguales entre las filas. Ojo: no es lo que pasa en una fila típica, es un reparto.",
+    ],
+    [
+      titulo("Suma de los cuadrados"),
+      dec({ formula: `SUM(${rCuad})` }),
+      "Paso intermedio: la suma de la columna '(absoluto − promedio)²'.",
+    ],
+    [
+      titulo("Varianza = suma ÷ (n − 1)"),
+      dec({ formula: siHayDos(`${B(FILA_SUMA)}/(${B(FILA_N)}-1)`) }),
+      "Paso intermedio, en unidades al cuadrado: no tiene sentido físico por sí sola.",
+    ],
+    [
+      titulo(`Desviación = √varianza (${u})`),
+      dec({ formula: siHayDos(`SQRT(${B(FILA_VARIANZA)})`) }, true),
+      "Cuánto suele variar el desajuste de una fila a otra. Chica = el tanque se comporta parejo. Mucho mayor que el promedio = hay filas muy distintas del resto.",
+    ],
+    [
+      titulo(`Sugerencia = promedio + 2 × desviación (${u})`),
+      dec({ formula: siHayDos(`${B(FILA_PROMEDIO)}+2*${B(FILA_DESVIACION)}`) }, true),
+      "Lo normal del tanque más un margen de dos veces lo que suele variar, para que la variación normal no haga sonar la alarma.",
+    ]
   );
   if (!enPorcentaje) {
-    filas.push(
-      etiqueta("Sugerencia en % de la capacidad", {
-        formula: `IF(${cValor}${FILA_N}>1,${cValor}${FILA_SUGERENCIA}/$${cValor}$${FILA_CAPACIDAD}*100,"")`,
-      })
-    );
+    filas.push([
+      titulo("Sugerencia en % de la capacidad"),
+      dec({ formula: siHayDos(`${B(FILA_SUGERENCIA)}/${B(FILA_CAPACIDAD)}*100`) }),
+      "La sugerencia de arriba, pasada a porcentaje del tanque.",
+    ]);
+  }
+  filas.push([
+    titulo("Sugerencia final (%) -- la que muestra la pantalla"),
+    dec({ formula: siHayDos(`ROUND(MAX(1,MIN(100,${B(FILA_SUGERENCIA_PCT)})),1)`) }, true),
+    "Con piso de 1 % (por debajo alertaría por la dilatación del combustible con el calor) y tope de 100 %, redondeada a un decimal.",
+  ]);
+  if (!enPorcentaje) {
+    filas.push([
+      titulo(`Sugerencia final (${u})`),
+      dec({ formula: siHayDos(`${B(FILA_FINAL_PCT)}*${B(FILA_CAPACIDAD)}/100`) }, true),
+      "La sugerencia final en litros: el umbral que quedaría si aprietan 'Usar este valor'.",
+    ]);
   }
   filas.push(
-    etiqueta(
-      "Sugerencia final (%) -- con piso de 1 % y tope de 100 %",
-      {
-        // El mismo recorte que hace el sistema: por debajo del 1 % el umbral
-        // alertaría por la dilatación térmica del combustible.
-        formula: `IF(${cValor}${FILA_N}>1,ROUND(MAX(1,MIN(100,${cValor}${FILA_SUGERENCIA_PCT})),1),"")`,
-      },
-      true
-    )
-  );
-  filas.push(
-    etiqueta("Mínimo de mediciones para que el sistema sugiera", 10),
-    etiqueta("¿El sistema muestra la sugerencia?", {
-      formula: `IF(${cValor}${FILA_N}>=10,"Sí","No -- faltan mediciones")`,
-    })
+    [
+      titulo("Mínimo de filas para que el sistema sugiera"),
+      ent({ valor: 10 }),
+      "Con menos, cualquier número sería inventado, y la pantalla no muestra ninguno.",
+    ],
+    [
+      titulo("¿El sistema muestra la sugerencia?"),
+      { formula: `IF(${B(FILA_N)}>=${B(FILA_MINIMO)},"Sí","No -- faltan mediciones")` },
+    ]
   );
 
-  return {
-    nombre: o.nombre,
-    filas,
-    anchos: conExtra ? [48, 22, 18, 16, 16, 20] : [48, 22, 16, 16, 20],
-  };
+  // ── Comparación ───────────────────────────────────────────────────────
+  if (hayUmbral) {
+    const C0 = filas.length + 2; // la fila del título queda en C0
+    const FILA_HOY = C0 + 1;
+    const FILA_SUG = C0 + 2;
+    const FILA_ALERTAN_HOY = C0 + 4;
+    const FILA_ALERTARIAN = C0 + 5;
+    filas.push(
+      [],
+      [titulo("COMPARACIÓN: EL UMBRAL DE HOY CONTRA LA SUGERENCIA"), null, titulo("QUÉ SIGNIFICA")],
+      [
+        titulo(`Umbral de hoy (${u})`),
+        dec({ formula: B(FILA_UMBRAL_COMPARABLE) }),
+        "El que está configurado ahora.",
+      ],
+      [
+        titulo(`Sugerencia final (${u})`),
+        dec({ formula: `IF(${B(FILA_N)}<${B(FILA_MINIMO)},"",${B(FILA_FINAL_UNIDAD)})` }),
+        "El que quedaría si se acepta la sugerencia. Vacío mientras haya menos filas que el mínimo: todavía no hay sugerencia que aceptar.",
+      ],
+      [
+        titulo(`Diferencia (${u})`),
+        dec({ formula: `IF(${B(FILA_SUG)}="","",${B(FILA_SUG)}-${B(FILA_HOY)})` }),
+        "Positiva: la sugerencia es MÁS tolerante que hoy (alerta menos). Negativa: es más estricta.",
+      ],
+      [
+        titulo("Filas de esta lista que alertan con el umbral de hoy"),
+        ent({ formula: `COUNTIF(${rAbs},">"&${B(FILA_HOY)})` }),
+        "Cuántas superan el umbral configurado ahora.",
+      ],
+      [
+        titulo("Filas que alertarían con la sugerencia"),
+        ent({ formula: `IF(${B(FILA_SUG)}="","",COUNTIF(${rAbs},">"&${B(FILA_SUG)}))` }),
+        "Cuántas superarían el umbral sugerido.",
+      ],
+      [
+        titulo("Filas que DEJARÍAN de alertar si se acepta la sugerencia"),
+        ent(
+          {
+            formula: `IF(${B(FILA_ALERTARIAN)}="","",${B(FILA_ALERTAN_HOY)}-${B(FILA_ALERTARIAN)})`,
+          },
+          true
+        ),
+        "Buscalas en la tabla: SÍ en '¿Alerta con el umbral de hoy?' y vacío en '¿Alertaría con la sugerencia?'. Si alguna fue un faltante real, aceptar la sugerencia lo haría invisible.",
+      ]
+    );
+  }
+
+  // ── Lectura rápida ────────────────────────────────────────────────────
+  filas.push(
+    [],
+    [titulo("LECTURA RÁPIDA"), null, titulo("QUÉ SIGNIFICA")],
+    [
+      titulo("Desviación ÷ promedio"),
+      dec({
+        formula: `IF(AND(${B(FILA_N)}>1,${B(FILA_PROMEDIO)}>0),${B(FILA_DESVIACION)}/${B(FILA_PROMEDIO)},"")`,
+      }),
+      "Cuántas veces la variación supera al desajuste promedio. Hasta 1: filas parejas. Más de 2: hay filas muy distintas del resto que inflan la sugerencia.",
+    ],
+    [
+      titulo("Veredicto"),
+      {
+        // Primero el mínimo: con menos de 10 filas la desviación puede estar
+        // vacía, y en Excel un texto vacío comparado contra un número da
+        // VERDADERO -- el veredicto diría CUIDADO sin motivo.
+        formula:
+          `IF(${B(FILA_N)}<${B(FILA_MINIMO)},` +
+          `"Todavía no hay filas suficientes: el sistema no sugiere nada y el umbral de hoy sigue siendo provisional.",` +
+          `IF(AND(${B(FILA_PROMEDIO)}>0,${B(FILA_DESVIACION)}>2*${B(FILA_PROMEDIO)}),` +
+          `"CUIDADO: hay filas muy distintas del resto (ver 'Fila más grande'). Revisalas antes de aceptar la sugerencia: si alguna fue un robo o un error de carga, la sugerencia lo estaría tolerando.",` +
+          `"La muestra es pareja: la sugerencia refleja el comportamiento normal del tanque."))`,
+        negrita: true,
+      },
+    ]
+  );
+
+  return { nombre: o.nombre, filas, anchos };
 }
 
 /** La explicación en palabras, dentro del mismo archivo. Existe porque la
- *  etiqueta de la pantalla le costó media hora de preguntas al desarrollador
- *  del sistema: si a él no le alcanzó, al administrador de la mina tampoco. */
+ *  etiqueta de la pantalla le costó días de preguntas al desarrollador del
+ *  sistema: si a él no le alcanzó, al administrador de la mina tampoco. */
 const HOJA_COMO_LEERLO: HojaXlsx = {
   nombre: "Cómo leerlo",
-  anchos: [30, 100],
+  anchos: [34, 110],
   filas: [
     [{ valor: "Cómo leer este archivo", negrita: true }],
     [],
     [
       { valor: "Qué es la sugerencia", negrita: true },
-      "El sistema mira cuánto se desajustó este tanque en el pasado y propone un umbral un poco " +
-        "por encima de lo normal, para no alertar por el error propio de la varilla.",
+      "El sistema mira cuánto se desajustó este tanque en el pasado y propone un umbral un poco por encima de lo normal, para no alertar por el error propio de la varilla.",
+    ],
+    [
+      null,
+      "No sale del consumo: sale de las DIFERENCIAS entre lo que midió la varilla y lo que explican los vales y las recepciones.",
     ],
     [],
+    [{ valor: "QUÉ HAY EN CADA HOJA", negrita: true }],
     [
-      { valor: "n (mediciones)", negrita: true },
-      "Cuántas filas se miraron. Con menos de 10, el sistema no muestra ninguna sugerencia.",
+      { valor: "Descuadre por tramo", negrita: true },
+      "Cada fila es un tramo: el espacio entre dos varillas seguidas, con los vales y recepciones del medio. 28 varillas dan 27 tramos.",
     ],
+    [
+      { valor: "Ciclo", negrita: true },
+      "Cada fila es un ciclo: desde una recepción hasta la siguiente. Suma las diferencias de todos sus tramos.",
+    ],
+    [
+      { valor: "Diferencia en recepción", negrita: true },
+      "Cada fila es una entrega de combustible: lo facturado contra lo que subió la varilla.",
+    ],
+    [],
+    [{ valor: "LOS NÚMEROS, EN PALABRAS", negrita: true }],
     [
       { valor: "Promedio", negrita: true },
-      "Cuánto se desajusta el tanque por vez, en promedio. Se toma sin signo: un sobrante de " +
-        "500 L revela la misma imprecisión que un faltante de 500 L.",
+      "Todo el desajuste repartido en partes iguales. Ejemplo: 10.420 L en 27 tramos = 386 L por tramo. Ningún tramo tiene por qué haber dado 386: es un reparto.",
     ],
     [
-      { valor: "Desviación (±)", negrita: true },
-      "Qué tan parecidos son los desajustes entre sí. Chica = el tanque se comporta parejo. " +
-        "Grande = hay mediciones muy distintas del resto.",
+      { valor: "Mediana", negrita: true },
+      "El tramo del medio al ordenarlos. Si la mayoría dio 0, la mediana es 0 aunque el promedio dé 386: eso significa que pocos tramos grandes inflan el promedio.",
+    ],
+    [
+      { valor: "Desviación", negrita: true },
+      "Cuánto suele variar el desajuste de un tramo a otro. Si todos los tramos dieran lo mismo, sería 0.",
     ],
     [
       { valor: "Sugerencia", negrita: true },
-      "Promedio + 2 desviaciones. Con datos normales, alrededor del 95 % de las mediciones " +
-        "queda por debajo de esa raya.",
+      "Promedio + 2 desviaciones: lo normal del tanque más un margen, para que la variación normal no alerte.",
     ],
     [],
     [
       { valor: "LA ADVERTENCIA", negrita: true },
-      "La sugerencia aprende de la historia del tanque. Si en esa historia hubo un robo o un " +
-        "error de registro, la fórmula lo toma como comportamiento normal y PROPONE TOLERARLO.",
+      "La sugerencia aprende de la historia del tanque. Si en esa historia hubo un robo o un error de carga, la fórmula lo toma como normal y PROPONE TOLERARLO.",
     ],
     [],
+    [{ valor: "CÓMO REVISARLO", negrita: true }],
     [
-      { valor: "Cómo revisarlo", negrita: true },
-      "1) Ordená la hoja por la columna 'Valor absoluto', de mayor a menor.",
+      { valor: "1", negrita: true },
+      "Mirá el bloque LECTURA RÁPIDA al final de la hoja: el veredicto te dice si la muestra es pareja o tiene casos raros.",
+    ],
+    [
+      { valor: "2", negrita: true },
+      "Mirá 'Filas que DEJARÍAN de alertar si se acepta la sugerencia'. Si es más de 0, buscá cuáles son en la tabla antes de aceptar nada.",
+    ],
+    [
+      { valor: "3", negrita: true },
+      "Ordená la tabla por 'Valor absoluto', de mayor a menor. Si los primeros uno o dos son mucho más grandes que el resto, son episodios, no el comportamiento del tanque.",
+    ],
+    [
+      { valor: "4", negrita: true },
+      "Para ver la sugerencia sin esos casos: ELIMINÁ LA FILA ENTERA (clic derecho sobre el número de fila, a la izquierda -> Eliminar filas). Las fórmulas se recalculan solas.",
     ],
     [
       null,
-      "2) Si los primeros uno o dos valores son mucho más grandes que el resto, son episodios " +
-        "(un robo, un error de carga), no el comportamiento del tanque.",
-    ],
-    [
-      null,
-      "3) Borrá esas filas. Las fórmulas de RESULTADOS se recalculan solas y muestran la " +
-        "sugerencia sin ellas.",
+      "NO borres solo el valor de la celda: una celda vacía cuenta como un tramo que cuadró perfecto, y el resultado queda mal (la cantidad de filas no baja).",
     ],
     [],
+    [{ valor: "SEÑALES RÁPIDAS", negrita: true }],
     [
-      { valor: "Señal rápida", negrita: true },
-      "Si la desviación es varias veces más grande que el promedio, la muestra tiene casos " +
-        "raros adentro. No aceptes la sugerencia sin mirar la muestra primero.",
+      { valor: "Promedio contra mediana", negrita: true },
+      "Si el promedio es mucho mayor que la mediana, hay pocos casos grandes arrastrando todo para arriba.",
+    ],
+    [
+      { valor: "Desviación contra promedio", negrita: true },
+      "Si la desviación es más del doble del promedio, la muestra tiene casos raros. No aceptes la sugerencia sin mirar la tabla.",
+    ],
+    [
+      { valor: "Lectura inicial del alta", negrita: true },
+      "Si una fila dice en Observación que es la lectura inicial del alta, no es una medición de cancha: es el nivel que se escribió al registrar el tanque. Conviene eliminarla antes de calibrar.",
     ],
   ],
 };
@@ -719,71 +988,210 @@ export class CombustibleController {
         unidad: u,
       };
 
-      const muestraDescuadre = (descuadre.muestra ?? []) as {
+      type PuntoDescuadre = {
         descuadreLitros: number;
         leidoEn: string | Date;
-      }[];
-      const muestraCiclo = (ciclo.muestra ?? []) as {
+        leidoEnAnterior: string | Date;
+        nivelAnterior: number;
+        despachos: number;
+        recepciones: number;
+        nivelMedido: number;
+        origen: string;
+      };
+      type PuntoCiclo = {
         descuadreLitros: number;
         intervalos: number;
-      }[];
-      const muestraDiferencia = (diferencia.muestra ?? []) as {
+        desde: string | Date;
+        hasta: string | Date;
+      };
+      type PuntoDiferencia = {
         cantidad: number;
-        diferenciaLitros: number;
-        diferenciaPct: number;
-      }[];
+        recibidoEn: string | Date;
+        documento: string | null;
+        nivelAntes: number;
+        nivelDespues: number;
+        salidas: number;
+      };
+      const muestraDescuadre = (descuadre.muestra ?? []) as PuntoDescuadre[];
+      const muestraCiclo = (ciclo.muestra ?? []) as PuntoCiclo[];
+      const muestraDiferencia = (diferencia.muestra ?? []) as PuntoDiferencia[];
 
       const libro = armarXlsx([
         hojaDeCalibracion({
           nombre: "Descuadre por tramo",
           titulo: "Umbral de descuadre -- de dónde sale la sugerencia",
+          queEsCadaFila:
+            "Cada fila es un TRAMO: el espacio entre dos varillas seguidas, con los vales y " +
+            "recepciones que pasaron en el medio. Con 28 varillas hay 27 tramos: la primera no " +
+            "tiene una anterior contra la cual compararse.",
           cabecera,
-          umbralHoy: tanque.umbral_descuadre_pct,
-          columnaContexto: "Fecha de la varilla",
+          umbralHoyPct: tanque.umbral_descuadre_pct,
           unidadValor: u,
+          columnas: [
+            {
+              encabezado: "Varilla anterior",
+              formato: "texto",
+              explicacion: "Fecha y hora de la varilla con la que se compara.",
+            },
+            {
+              encabezado: "Esta varilla",
+              formato: "texto",
+              explicacion: "Fecha y hora de la varilla de este tramo.",
+            },
+            {
+              encabezado: `Nivel anterior (${u})`,
+              formato: "decimal",
+              explicacion: "Lo que marcó la varilla anterior.",
+            },
+            {
+              encabezado: `Despachos (${u})`,
+              formato: "decimal",
+              explicacion: "Lo que salió por vales entre las dos varillas.",
+            },
+            {
+              encabezado: `Recepciones (${u})`,
+              formato: "decimal",
+              explicacion: "Lo que entró por recepciones entre las dos varillas.",
+            },
+            {
+              encabezado: `Saldo teórico (${u})`,
+              formato: "decimal",
+              explicacion: "Lo que DEBERÍA haber: nivel anterior − despachos + recepciones.",
+            },
+            {
+              encabezado: `Medido (${u})`,
+              formato: "decimal",
+              explicacion: "Lo que marcó esta varilla.",
+            },
+          ],
+          columnaValor: {
+            encabezado: `Diferencia (${u})`,
+            explicacion: "Medido − saldo teórico. Negativo = faltó combustible. Positivo = sobró.",
+          },
           filas: muestraDescuadre.map((m) => ({
-            contexto: new Date(m.leidoEn).toLocaleString("es-PE", { timeZone: "America/Lima" }),
-            valor: m.descuadreLitros,
+            contexto: [
+              fechaLima(m.leidoEnAnterior),
+              fechaLima(m.leidoEn),
+              m.nivelAnterior,
+              m.despachos,
+              m.recepciones,
+              { formula: "{3}-{4}+{5}" },
+              m.nivelMedido,
+            ],
+            valor: { formula: "{7}-{6}" },
+            observacion: m.origen === "inicial" ? OBSERVACION_LECTURA_INICIAL : undefined,
           })),
-          nota:
-            "Cada fila es un intervalo entre dos varillas seguidas. 28 varillas dan 27 " +
-            "intervalos: la primera no tiene una anterior contra la cual compararse.",
         }),
         hojaDeCalibracion({
           nombre: "Ciclo",
           titulo: "Umbral acumulado del ciclo -- de dónde sale la sugerencia",
+          queEsCadaFila:
+            "Cada fila es un CICLO: desde una recepción hasta la siguiente, sumando las " +
+            "diferencias de todos sus tramos. El ciclo en curso no entra: todavía puede moverse.",
           cabecera,
-          umbralHoy: tanque.umbral_descuadre_ciclo_pct,
-          columnaContexto: "Intervalos del ciclo",
+          umbralHoyPct: tanque.umbral_descuadre_ciclo_pct,
           unidadValor: u,
+          columnas: [
+            {
+              encabezado: "Inicio del ciclo",
+              formato: "texto",
+              explicacion: "Primera varilla después de la recepción que abrió el ciclo.",
+            },
+            {
+              encabezado: "Fin del ciclo",
+              formato: "texto",
+              explicacion: "Última varilla antes de la recepción siguiente.",
+            },
+            {
+              encabezado: "Tramos del ciclo",
+              formato: "entero",
+              explicacion: "Cuántos tramos entre varillas se sumaron en ese ciclo.",
+            },
+          ],
+          columnaValor: {
+            encabezado: `Diferencia acumulada del ciclo (${u})`,
+            explicacion:
+              "La suma de las diferencias de todos los tramos del ciclo. Negativo = faltó. Positivo = sobró.",
+          },
           filas: muestraCiclo.map((m) => ({
-            contexto: m.intervalos,
+            contexto: [fechaLima(m.desde), fechaLima(m.hasta), m.intervalos],
             valor: m.descuadreLitros,
           })),
-          nota:
-            "Cada fila es un ciclo cerrado, de una recepción a la siguiente. El ciclo en " +
-            "curso no entra: todavía puede moverse y tiraría la sugerencia para abajo.",
         }),
         hojaDeCalibracion({
           nombre: "Diferencia en recepción",
           titulo: "Umbral de diferencia -- de dónde sale la sugerencia",
+          queEsCadaFila:
+            "Cada fila es una ENTREGA de combustible: lo facturado contra lo que realmente subió " +
+            "la varilla. Solo entran las entregas con varilla antes Y después, y sin otra entrega " +
+            "en el medio.",
           cabecera,
-          umbralHoy: tanque.umbral_diferencia_pct,
-          columnaContexto: `Facturado (${u})`,
-          // El único de los tres que se mide en PORCENTAJE y no en litros: su
-          // base es la cantidad de cada entrega, que cambia en cada fila. Con
-          // un denominador distinto por fila, promediar litros daría otra cosa
+          umbralHoyPct: tanque.umbral_diferencia_pct,
+          // El único de los tres que se mide en PORCENTAJE: su base es la
+          // cantidad de cada entrega, que cambia en cada fila. Con un
+          // denominador distinto por fila, promediar litros daría otra cosa
           // que lo que calcula el sistema.
           unidadValor: "%",
+          columnas: [
+            {
+              encabezado: "Fecha de la entrega",
+              formato: "texto",
+              explicacion: "Cuándo se recibió el combustible.",
+            },
+            {
+              encabezado: "Documento",
+              formato: "texto",
+              explicacion: "Factura o guía de remisión de la entrega.",
+            },
+            {
+              encabezado: `Facturado (${u})`,
+              formato: "decimal",
+              explicacion: "Lo que dice el documento.",
+            },
+            {
+              encabezado: `Varilla antes (${u})`,
+              formato: "decimal",
+              explicacion: "Nivel medido antes de descargar.",
+            },
+            {
+              encabezado: `Varilla después (${u})`,
+              formato: "decimal",
+              explicacion: "Nivel medido después de descargar.",
+            },
+            {
+              encabezado: `Salidas en el medio (${u})`,
+              formato: "decimal",
+              explicacion: "Lo que salió por vales entre las dos varillas.",
+            },
+            {
+              encabezado: `Subió realmente (${u})`,
+              formato: "decimal",
+              explicacion: "Varilla después − varilla antes + salidas en el medio.",
+            },
+            {
+              encabezado: `Diferencia (${u})`,
+              formato: "decimal",
+              explicacion: "Subió realmente − facturado. Negativo = llegó menos de lo facturado.",
+            },
+          ],
+          columnaValor: {
+            encabezado: "Diferencia (%)",
+            explicacion:
+              "Diferencia ÷ facturado × 100. Se mide sobre lo FACTURADO en cada entrega, no sobre la capacidad del tanque.",
+          },
           filas: muestraDiferencia.map((m) => ({
-            contexto: m.cantidad,
-            valor: Number(m.diferenciaPct.toFixed(4)),
-            extra: m.diferenciaLitros,
+            contexto: [
+              fechaLima(m.recibidoEn),
+              m.documento,
+              m.cantidad,
+              m.nivelAntes,
+              m.nivelDespues,
+              m.salidas,
+              { formula: "{5}-{4}+{6}" },
+              { formula: "{7}-{3}" },
+            ],
+            valor: { formula: "{8}/{3}*100" },
           })),
-          columnaExtra: `Diferencia (${u})`,
-          nota:
-            "Este umbral se mide sobre lo FACTURADO en cada entrega, no sobre la capacidad " +
-            "del tanque. Por eso la cuenta va en porcentaje: el denominador cambia en cada fila.",
         }),
         HOJA_COMO_LEERLO,
       ]);
@@ -2205,17 +2613,23 @@ export class CombustibleController {
         "Motivo de anulación",
       ].map((t) => ({ valor: t, negrita: true }));
 
+      // Litros con 2 decimales: sin formato, una planilla muestra los números
+      // como vienen ("17650" o "385.925925925926") y quien la abre no sabe
+      // qué decimales importan.
+      const litros = (v: number | null | undefined): CeldaXlsx =>
+        v === null || v === undefined ? null : { valor: v, formato: "decimal" };
+
       const filas: CeldaXlsx[][] = kardex.filas.map((f) => [
-        new Date(f.ocurrido_en).toLocaleString("es-PE", { timeZone: "America/Lima" }),
+        fechaLima(f.ocurrido_en),
         f.tipo === "recepcion" ? "Recepción" : f.tipo === "despacho" ? "Despacho" : "Varilla",
         f.documento,
         f.detalle,
-        f.entrada || null,
-        f.salida || null,
-        f.saldo_teorico,
-        f.nivel_medido,
-        f.dif_tramo,
-        f.dif_acumulada,
+        litros(f.entrada || null),
+        litros(f.salida || null),
+        litros(f.saldo_teorico),
+        litros(f.nivel_medido),
+        litros(f.dif_tramo),
+        litros(f.dif_acumulada),
         f.usuario,
         f.anulada ? "SÍ" : null,
         f.motivo_anulacion,
@@ -2239,7 +2653,7 @@ export class CombustibleController {
         [],
         ["Período desde", desde.slice(0, 10)],
         ["Período hasta", hasta.slice(0, 10)],
-        [`Capacidad (${u})`, kardex.tanque.capacidad_total],
+        [`Capacidad (${u})`, { valor: kardex.tanque.capacidad_total, formato: "entero" }],
         [],
         [{ valor: "TOTALES DEL PERÍODO", negrita: true }],
         // Las filas anuladas se SALTEAN (columna L = "SÍ"), igual que en
@@ -2248,21 +2662,33 @@ export class CombustibleController {
         // que el de la pantalla. Lo encontró la verificación contra el tenant
         // redteam -- 12.170 L en el archivo contra 11.270 en pantalla, y la
         // diferencia era exactamente el vale de 900 L anulado.
-        [`Entradas (${u})`, { formula: `SUMIFS(${rango("E")},${rango("L")},"<>SÍ")` }],
-        [`Salidas (${u})`, { formula: `SUMIFS(${rango("F")},${rango("L")},"<>SÍ")` }],
-        ["Mediciones (varillas)", { formula: `COUNTIFS(${rango("H")},"<>",${rango("L")},"<>SÍ")` }],
-        [`Saldo al inicio (${u})`, kardex.saldo_inicial],
+        [
+          `Entradas (${u})`,
+          { formula: `SUMIFS(${rango("E")},${rango("L")},"<>SÍ")`, formato: "decimal" },
+        ],
+        [
+          `Salidas (${u})`,
+          { formula: `SUMIFS(${rango("F")},${rango("L")},"<>SÍ")`, formato: "decimal" },
+        ],
+        [
+          "Mediciones (varillas)",
+          { formula: `COUNTIFS(${rango("H")},"<>",${rango("L")},"<>SÍ")`, formato: "entero" },
+        ],
+        [`Saldo al inicio (${u})`, litros(kardex.saldo_inicial)],
         [
           `Descuadre final (${u})`,
           // El acumulado de la ÚLTIMA varilla, que es el número que va al
           // informe. `null` cuando no hubo ninguna medición: decir "0" ahí
           // sería afirmar que cuadra, y lo cierto es que no se midió.
-          kardex.resumen.descuadre_final,
+          litros(kardex.resumen.descuadre_final),
         ],
         [],
         [{ valor: "SOLO LOS FALTANTES", negrita: true }],
-        [`Suma de los tramos en negativo (${u})`, { formula: `SUMIF(${rango("I")},"<0")` }],
-        ["Tramos con faltante", { formula: `COUNTIF(${rango("I")},"<0")` }],
+        [
+          `Suma de los tramos en negativo (${u})`,
+          { formula: `SUMIF(${rango("I")},"<0")`, formato: "decimal" },
+        ],
+        ["Tramos con faltante", { formula: `COUNTIF(${rango("I")},"<0")`, formato: "entero" }],
       ];
 
       const libro = armarXlsx([

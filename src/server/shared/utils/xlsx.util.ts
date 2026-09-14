@@ -28,8 +28,19 @@
 
 import { deflateRawSync } from "zlib";
 
-/** Una celda. El atajo (string/number/null) cubre el 95 % de los casos; el
- *  objeto es para fórmulas y para poner algo en negrita.
+/** Cómo se MUESTRA un número; el valor guardado no cambia.
+ *
+ *  - `decimal`: separador de miles y 2 decimales (litros, porcentajes).
+ *  - `entero`: separador de miles, sin decimales (conteos, capacidades).
+ *
+ *  Existe porque sin formato una fórmula muestra todos los decimales que
+ *  calcula ("2895.601107233") y el usuario no sabe qué parte importa. Son los
+ *  formatos PREDEFINIDOS 4 y 3 del estándar: no hace falta declararlos, y Excel
+ *  y LibreOffice los adaptan al separador del idioma de quien abre el archivo. */
+export type FormatoNumeroXlsx = "decimal" | "entero";
+
+/** Una celda. El atajo (string/number/null) cubre el caso simple; el objeto es
+ *  para fórmulas, negrita y formato de número.
  *
  *  `formula` va SIN el "=" inicial y con los nombres de función en inglés
  *  (AVERAGE, STDEV, SQRT): así se guardan dentro del archivo. Excel y
@@ -43,6 +54,7 @@ export type CeldaXlsx =
       valor?: string | number | null;
       formula?: string;
       negrita?: boolean;
+      formato?: FormatoNumeroXlsx;
     };
 
 export interface HojaXlsx {
@@ -114,7 +126,8 @@ function celdaXml(celda: CeldaXlsx, ref: string): string {
   if (celda === null || celda === undefined || celda === "") return "";
 
   const obj = typeof celda === "object" ? celda : { valor: celda };
-  const estilo = obj.negrita ? ' s="1"' : "";
+  const indice = indiceEstilo(obj.negrita ?? false, obj.formato);
+  const estilo = indice > 0 ? ` s="${indice}"` : "";
 
   if (obj.formula) {
     return `<c r="${ref}"${estilo}><f>${escaparXml(obj.formula)}</f></c>`;
@@ -157,17 +170,31 @@ function hojaXml(hoja: HojaXlsx): string {
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${cols}<sheetData>${filas}</sheetData></worksheet>`;
 }
 
-/** Dos estilos y nada más: el 0 es el normal y el 1 es negrita, que es lo que
- *  usan los encabezados. Los bloques `fonts`/`fills`/`borders`/`cellStyleXfs`
- *  son obligatorios aunque no se usen, y `fills` necesita SÍ o SÍ sus dos
- *  entradas (none y gray125) o Excel considera el archivo inválido. */
+/** Seis estilos, en pares (normal / negrita) por cada formato de número:
+ *
+ *    0 normal            1 negrita
+ *    2 decimal           3 decimal + negrita
+ *    4 entero            5 entero + negrita
+ *
+ *  Los bloques `fonts`/`fills`/`borders`/`cellStyleXfs` son obligatorios
+ *  aunque no se usen, y `fills` necesita SÍ o SÍ sus dos entradas (none y
+ *  gray125) o Excel considera el archivo inválido. */
+function indiceEstilo(negrita: boolean, formato?: FormatoNumeroXlsx): number {
+  const base = formato === "decimal" ? 2 : formato === "entero" ? 4 : 0;
+  return base + (negrita ? 1 : 0);
+}
+
+const xf = (numFmtId: number, fontId: number) =>
+  `<xf numFmtId="${numFmtId}" fontId="${fontId}" fillId="0" borderId="0" xfId="0"` +
+  `${fontId > 0 ? ' applyFont="1"' : ""}${numFmtId > 0 ? ' applyNumberFormat="1"' : ""}/>`;
+
 const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>
 <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
 <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs>
+<cellXfs count="6">${xf(0, 0)}${xf(0, 1)}${xf(4, 0)}${xf(4, 1)}${xf(3, 0)}${xf(3, 1)}</cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
 

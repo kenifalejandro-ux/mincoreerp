@@ -1825,6 +1825,12 @@ export class CombustibleService {
       cantidad: m.cantidad,
       diferenciaLitros: m.diferencia_litros,
       diferenciaPct: (m.diferencia_litros / m.cantidad) * 100,
+      // Los pasos de la cuenta, para la exportación. La pantalla no los usa.
+      recibidoEn: m.recibido_en,
+      documento: m.documento,
+      nivelAntes: m.nivel_antes,
+      nivelDespues: m.nivel_despues,
+      salidas: m.salidas,
     }));
 
     return CombustibleService.calibrar(
@@ -1904,6 +1910,14 @@ export class CombustibleService {
         descuadreLitros: Number(i.descuadre.toFixed(2)),
         descuadrePct: (i.descuadre / i.capacidad) * 100,
         leidoEn: i.leido_en,
+        // Los pasos de la cuenta, para la exportación: con esto cada fila del
+        // archivo muestra de dónde sale su descuadre, no solo el resultado.
+        leidoEnAnterior: i.leido_en_anterior,
+        nivelAnterior: i.nivel_anterior,
+        despachos: i.despachos,
+        recepciones: i.recepciones,
+        nivelMedido: i.nivel,
+        origen: i.origen,
       }));
 
     return CombustibleService.calibrar(
@@ -1930,19 +1944,33 @@ export class CombustibleService {
       combustibleId
     );
 
-    const ciclos: { descuadreLitros: number; capacidad: number; intervalos: number }[] = [];
-    let actual: { descuadreLitros: number; capacidad: number; intervalos: number } | null = null;
+    type Ciclo = {
+      descuadreLitros: number;
+      capacidad: number;
+      intervalos: number;
+      desde: Date;
+      hasta: Date;
+    };
+    const ciclos: Ciclo[] = [];
+    let actual: Ciclo | null = null;
 
     for (const i of intervalos) {
       if (i.recepciones > 0) {
         // Entró combustible: cierra el ciclo anterior y arranca uno nuevo.
         if (actual) ciclos.push(actual);
-        actual = { descuadreLitros: 0, capacidad: i.capacidad, intervalos: 0 };
+        actual = {
+          descuadreLitros: 0,
+          capacidad: i.capacidad,
+          intervalos: 0,
+          desde: i.leido_en,
+          hasta: i.leido_en,
+        };
         continue;
       }
       if (!actual) continue; // Todavía no hubo ninguna recepción: sin ciclo que medir.
       actual.descuadreLitros += i.descuadre;
       actual.intervalos += 1;
+      actual.hasta = i.leido_en;
     }
     // `actual` queda afuera a propósito: es el ciclo en curso.
 
@@ -1952,6 +1980,9 @@ export class CombustibleService {
         descuadreLitros: Number(c.descuadreLitros.toFixed(2)),
         descuadrePct: (c.descuadreLitros / c.capacidad) * 100,
         intervalos: c.intervalos,
+        // Para que la exportación diga QUÉ ciclo es cada fila.
+        desde: c.desde,
+        hasta: c.hasta,
       }));
 
     return CombustibleService.calibrar(

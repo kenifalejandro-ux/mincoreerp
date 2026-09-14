@@ -129,6 +129,34 @@ describe("xlsx.util: las celdas", () => {
     expect(xml).toContain('<c r="B1" t="inlineStr">');
   });
 
+  it("aplica el formato de número pedido, también a una fórmula", () => {
+    // Sin formato, una fórmula muestra "2895.601107233": Kenif lo marcó al
+    // abrir la planilla, y el usuario no sabe qué decimales importan.
+    const xml = hoja([
+      [
+        { valor: 2895.601107233, formato: "decimal" },
+        { formula: "AVERAGE(A1:A1)", formato: "decimal", negrita: true },
+        { valor: 27, formato: "entero" },
+        { valor: 27, formato: "entero", negrita: true },
+      ],
+    ]);
+
+    // El valor guardado queda entero: el formato solo cambia cómo se muestra.
+    expect(xml).toContain('<c r="A1" s="2"><v>2895.601107233</v></c>');
+    expect(xml).toContain('<c r="B1" s="3"><f>AVERAGE(A1:A1)</f></c>');
+    expect(xml).toContain('<c r="C1" s="4"><v>27</v></c>');
+    expect(xml).toContain('<c r="D1" s="5"><v>27</v></c>');
+  });
+
+  it("declara los seis estilos con los formatos predefinidos de 2 y 0 decimales", () => {
+    const estilos = leerEntrada(armarXlsx([{ nombre: "H", filas: [["x"]] }]), "xl/styles.xml");
+
+    expect(estilos).toContain('<cellXfs count="6">');
+    // 4 = "#,##0.00" y 3 = "#,##0" en el estándar: no hace falta declararlos.
+    expect(estilos).toMatch(/numFmtId="4" fontId="0"[^>]*applyNumberFormat="1"/);
+    expect(estilos).toMatch(/numFmtId="3" fontId="1"[^>]*applyFont="1" applyNumberFormat="1"/);
+  });
+
   it("saltea las celdas vacías en vez de escribirlas", () => {
     const xml = hoja([["a", null, "", "d"]]);
 
