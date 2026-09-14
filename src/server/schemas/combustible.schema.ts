@@ -38,8 +38,8 @@ export const crearTanqueCombustibleSchema = z.object({
   umbral_diferencia_pct: z.number().min(0).max(100).nullable().default(null),
   umbral_descuadre_pct: z.number().min(0).max(100).nullable().default(null),
   // El acumulado del ciclo (migración 0076). Va aparte del de tramo porque
-  // el ruido de la varilla se suma a lo largo del ciclo: el mismo número
-  // para los dos haría que este alertara todos los días.
+  // el error del contómetro de cada despacho se suma a lo largo del ciclo (el
+  // de la varilla no: se cancela entre tramos seguidos).
   umbral_descuadre_ciclo_pct: z.number().min(0).max(100).nullable().default(null),
   // El acumulado de la ventana deslizante (0080): el único que no se
   // reinicia con una recepción, y por eso el que atrapa el robo de a poco.

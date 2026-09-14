@@ -4,17 +4,19 @@
 // kardex de combustible, que es el primer reporte que un auditor se lleva
 // para trabajarlo afuera.
 //
-// ── Por qué CSV y no .xlsx ──────────────────────────────────────────────
+// ── CSV y .xlsx ─────────────────────────────────────────────────────────
 //
-// Un .xlsx de verdad necesita una librería, y la popular (SheetJS) arrastra
-// advisories de severidad alta: agregarla dejaría main en rojo contra el gate
-// `npm audit --audit-level=high` de ci.yml. CSV lo genera Node con un join, y
-// el auditor lo abre en Excel y hace exactamente lo mismo: filtrar, ordenar,
-// tabla dinámica. Lo que el .xlsx agrega es FORMATO, no datos.
+// El .xlsx llegó después, en `xlsx.util.ts`, escrito a mano sin dependencias.
+// La razón que figuraba acá para no hacerlo -- que SheetJS rompería el gate de
+// `npm audit` -- resultó no ser cierta para la versión que el cliente ya usa,
+// pero la decisión de no meterla en el backend se sostiene por otro motivo:
+// ver el encabezado de xlsx.util.ts.
 //
-// Kenif pidió que el .xlsx llegue después como segunda opción. Por eso este
-// módulo solo SERIALIZA: quien lo llama arma las filas. El día que se sume
-// el .xlsx, se le enchufa otra función de serialización a los mismos datos.
+// El CSV se queda porque sirve para otra cosa: lo abre cualquier programa y se
+// pega en otro sistema sin conversión. Lo que el .xlsx agrega no es solo
+// formato: son números que suman (ver `neutralizarFormula` abajo) y fórmulas.
+//
+// Este módulo solo SERIALIZA: quien lo llama arma las filas.
 
 /** Excel ejecuta como fórmula cualquier celda que arranque con = + - @, y
  *  también con TAB o CR. Es la inyección de CSV, y acá importa de verdad:
@@ -26,8 +28,21 @@
  *  prefijando una comilla simple, que Excel muestra como texto y no dispara.
  *
  *  No se sanea "limpiando" el contenido: el motivo tiene que llegar TAL CUAL
- *  se escribió (es evidencia). Solo se le antepone el escape. */
+ *  se escribió (es evidencia). Solo se le antepone el escape.
+ *
+ *  UN NÚMERO NEGATIVO NO ES UNA FÓRMULA, y no se toca. La primera versión de
+ *  esto escapaba todo lo que arrancara con "-", y `-300` también arranca con
+ *  "-": cada faltante del kardex salía como TEXTO, y en Excel la columna del
+ *  descuadre -- la única que importa -- no sumaba. Lo encontró Kenif haciendo
+ *  `=SUMAR.SI(...;"<0")` sobre el archivo y obteniendo cero.
+ *
+ *  El chequeo es estricto a propósito: solo un número puro (signo opcional,
+ *  dígitos, decimales, exponente) pasa sin escape. `-1+1`, `-cmd|...` o
+ *  `-HYPERLINK(...)` no son números puros y siguen neutralizados. */
+const NUMERO_PURO = /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i;
+
 function neutralizarFormula(valor: string): string {
+  if (NUMERO_PURO.test(valor)) return valor;
   return /^[=+\-@\t\r]/.test(valor) ? `'${valor}` : valor;
 }
 

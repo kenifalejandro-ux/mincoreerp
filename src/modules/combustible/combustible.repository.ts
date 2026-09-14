@@ -2994,13 +2994,40 @@ export class CombustibleRepository {
     client: PoolClient,
     tenantId: string,
     combustibleId: number
-  ): Promise<Array<{ cantidad: number; diferencia_litros: number }>> {
-    const result = await client.query<{ cantidad: string; diferencia_litros: string }>(
+  ): Promise<
+    Array<{
+      cantidad: number;
+      diferencia_litros: number;
+      recibido_en: Date;
+      documento: string | null;
+      nivel_antes: number;
+      nivel_despues: number;
+      salidas: number;
+    }>
+  > {
+    // Los pasos de la cuenta (nivel antes, nivel después, salidas del medio)
+    // viajan junto al resultado para que la exportación los muestre: una
+    // diferencia sin su cuenta no le dice nada a quien tiene que decidir si
+    // el proveedor vino corto.
+    const result = await client.query<{
+      cantidad: string;
+      diferencia_litros: string;
+      recibido_en: Date;
+      documento: string | null;
+      nivel_antes: string;
+      nivel_despues: string;
+      salidas: string;
+    }>(
       `
-      SELECT r.cantidad, dif.diferencia_litros
+      SELECT r.cantidad, dif.diferencia_litros, r.recibido_en,
+             NULLIF(CONCAT_WS(' ', r.tipo_documento, r.numero_documento), '') AS documento,
+             dif.nivel_antes, dif.nivel_despues, dif.salidas
       FROM combustible_recepciones r
       LEFT JOIN LATERAL (
         SELECT
+          antes.nivel AS nivel_antes,
+          despues.nivel AS nivel_despues,
+          COALESCE(salidas.total, 0) AS salidas,
           CASE
             WHEN antes.nivel IS NULL OR despues.nivel IS NULL THEN NULL
             WHEN otras.cuantas > 0 THEN NULL
@@ -3045,6 +3072,11 @@ export class CombustibleRepository {
     return result.rows.map((f) => ({
       cantidad: Number(f.cantidad),
       diferencia_litros: Number(f.diferencia_litros),
+      recibido_en: f.recibido_en,
+      documento: f.documento,
+      nivel_antes: Number(f.nivel_antes),
+      nivel_despues: Number(f.nivel_despues),
+      salidas: Number(f.salidas),
     }));
   }
 
@@ -3225,16 +3257,38 @@ export class CombustibleRepository {
     client: PoolClient,
     tenantId: string,
     combustibleId: number
-  ): Promise<Array<{ descuadre: number; recepciones: number; capacidad: number; leido_en: Date }>> {
+  ): Promise<
+    Array<{
+      descuadre: number;
+      recepciones: number;
+      capacidad: number;
+      leido_en: Date;
+      leido_en_anterior: Date;
+      nivel_anterior: number;
+      nivel: number;
+      despachos: number;
+      origen: string;
+    }>
+  > {
+    // Además del descuadre, los pasos que lo producen (nivel anterior,
+    // despachos, recepciones, medido) y el origen de la lectura. Los usa la
+    // exportación de calibración para mostrar la cuenta ENTERA de cada tramo,
+    // y el origen deja ver cuándo un tramo termina en la lectura `inicial` del
+    // alta, que no es una medición de cancha.
     const result = await client.query<{
       descuadre: string;
       recepciones: string;
       capacidad_total: string;
       leido_en: Date;
+      leido_en_anterior: Date;
+      nivel_anterior: string;
+      nivel: string;
+      despachos: string;
+      origen: string;
     }>(
       `
       WITH lecturas AS (
-        SELECT l.nivel, l.leido_en,
+        SELECT l.nivel, l.leido_en, l.origen,
                LAG(l.nivel) OVER (ORDER BY l.leido_en, l.id) AS nivel_anterior,
                LAG(l.leido_en) OVER (ORDER BY l.leido_en, l.id) AS leido_en_anterior
         FROM combustible_lecturas l
@@ -3245,7 +3299,12 @@ export class CombustibleRepository {
           AS descuadre,
         COALESCE(rec.total, 0) AS recepciones,
         c.capacidad_total,
-        le.leido_en
+        le.leido_en,
+        le.leido_en_anterior,
+        le.nivel_anterior,
+        le.nivel,
+        COALESCE(des.total, 0) AS despachos,
+        le.origen
       FROM lecturas le
       JOIN combustible c ON c.id = $2 AND c.tenant_id = $1
       LEFT JOIN LATERAL (
@@ -3270,6 +3329,11 @@ export class CombustibleRepository {
       recepciones: Number(f.recepciones),
       capacidad: Number(f.capacidad_total),
       leido_en: f.leido_en,
+      leido_en_anterior: f.leido_en_anterior,
+      nivel_anterior: Number(f.nivel_anterior),
+      nivel: Number(f.nivel),
+      despachos: Number(f.despachos),
+      origen: f.origen,
     }));
   }
 

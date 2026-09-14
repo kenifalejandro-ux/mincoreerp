@@ -1,15 +1,17 @@
 /** tests/combustible-sugerencia-descuadre.test.ts
  *
- * El asistente de calibración extendido a los dos umbrales de descuadre.
+ * El asistente de calibración extendido a los tres umbrales de descuadre:
+ * tramo, ciclo y ventana.
  *
  * Por qué importa: el alta ahora carga valores PROVISIONALES (2% tramo, 3%
- * ciclo), razonados sobre el error típico de una varilla pero no medidos.
- * Esto es lo que los reemplaza por números que salen del tanque real.
+ * ciclo, 4% ventana), razonados sobre el error típico de una varilla pero no
+ * medidos. Esto es lo que los reemplaza por números que salen del tanque real.
  *
- * El estadístico es el mismo de siempre y se comparte en
- * `CombustibleService.calibrar`: promedio de |x| + 2 desvíos, piso 1%,
- * mínimo 10 muestras, nunca se aplica solo. Los valores de estos tests están
- * elegidos a mano, no al azar, para poder comparar contra la cuenta
+ * Tramo y ciclo comparten `CombustibleService.calibrar`: promedio de |x| + 2
+ * desvíos. La ventana usa `calibrarConSigno`: 2 desvíos de la diferencia con
+ * signo, porque el error de cada varilla se cancela entre tramos seguidos. Los
+ * tres: piso 1%, mínimo 10 muestras, nunca se aplica solo. Los valores de estos
+ * tests están elegidos a mano, no al azar, para poder comparar contra la cuenta
  * esperada.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -266,13 +268,85 @@ describe("combustible: calibración de los umbrales de descuadre", () => {
     expect(s.ciclo.muestra[0].intervalos).toBe(2);
   });
 
-  // ── Las tres vienen juntas ────────────────────────────────────────────
+  // ── Umbral de la ventana ──────────────────────────────────────────────
 
-  it("un solo request devuelve las tres sugerencias", async () => {
+  /** Un tanque cuyos tramos dan exactamente `diferencias` (en litros), sin
+   *  vales ni recepciones: cada varilla es la anterior más la diferencia. */
+  async function tanqueConTramos(diferencias: number[], dia: number) {
+    const tq = await crearTanque();
+    let nivel = 9000;
+    expect((await leer(tq, nivel, t(dia, 0))).status).toBe(201);
+    for (const [i, d] of diferencias.entries()) {
+      nivel += d;
+      expect((await leer(tq, nivel, t(dia, i + 1))).status).toBe(201);
+    }
+    return tq;
+  }
+
+  /** 11 tramos que alternan +a y +b, empezando por +a. */
+  const alternando = (a: number, b: number) =>
+    Array.from({ length: 11 }, (_, i) => (i % 2 ? b : a));
+
+  it("con menos de 10 tramos la ventana tampoco sugiere", async () => {
+    const tq = await tanqueConTramos([100, -100, 100], 20);
+
+    const s = await sugerencias(tq);
+    expect(s.ventana.muestraSuficiente).toBe(false);
+    // Mismos tramos que el umbral de descuadre: el mínimo se cuenta igual.
+    expect(s.ventana.tamanioMuestra).toBe(s.descuadre.tamanioMuestra);
+    expect(s.ventana.sugerido).toBeUndefined();
+  });
+
+  it("el error de la varilla NO se multiplica por la cantidad de tramos", async () => {
+    // Una varilla que marca 100 L de más y de menos, alternando: +1 %, −1 %.
+    // Promedio con signo 1/11 = 0,09 %; desviación √(10,909/10) = 1,044 %.
+    // Sugerencia = 2 × 1,044 = 2,1 %.
+    //
+    // Si el código multiplicara por √n (el error de diseño que se descartó),
+    // con 11 tramos daría 2 × 1,044 × √11 = 6,9 %: un umbral que deja pasar
+    // el robo de a poco que la ventana existe para agarrar.
+    const tq = await tanqueConTramos(alternando(100, -100), 21);
+
+    const s = await sugerencias(tq);
+    expect(s.ventana.muestraSuficiente).toBe(true);
+    expect(s.ventana.tamanioMuestra).toBe(11);
+    expect(s.ventana.promedio).toBeCloseTo(0.09, 2);
+    expect(s.ventana.desviacion).toBeCloseTo(1.04, 2);
+    expect(s.ventana.sugerido).toBe(2.1);
+  });
+
+  it("un robo constante corre el promedio pero NO sube la sugerencia", async () => {
+    // El mismo ruido de ±100 L, con 50 L que se van en CADA tramo. La
+    // desviación no cambia (correr todos los valores lo mismo no agranda la
+    // dispersión), así que la sugerencia tiene que ser idéntica a la del
+    // tanque limpio. Si el promedio entrara en la cuenta, el robo subiría el
+    // umbral y se volvería invisible.
+    const limpio = await sugerencias(await tanqueConTramos(alternando(100, -100), 22));
+    const robado = await sugerencias(await tanqueConTramos(alternando(50, -150), 23));
+
+    expect(robado.ventana.promedio).toBeCloseTo(limpio.ventana.promedio - 0.5, 2);
+    expect(robado.ventana.desviacion).toBe(limpio.ventana.desviacion);
+    expect(robado.ventana.sugerido).toBe(limpio.ventana.sugerido);
+    // El umbral por tramo, en cambio, promedia |x|: ese sí se infla con el robo.
+    expect(robado.descuadre.sugerido).toBeGreaterThan(limpio.descuadre.sugerido);
+  });
+
+  it("sin ruido ni robo cae al piso de 1 %, igual que los otros umbrales", async () => {
+    const tq = await tanqueConTramos(Array(11).fill(0), 24);
+
+    const s = await sugerencias(tq);
+    expect(s.ventana.desviacion).toBe(0);
+    expect(s.ventana.sugerido).toBe(1);
+  });
+
+  // ── Las cuatro vienen juntas ──────────────────────────────────────────
+
+  it("un solo request devuelve las cuatro sugerencias", async () => {
     const tq = await crearTanque();
     const s = await sugerencias(tq);
     expect(s).toHaveProperty("diferencia");
     expect(s).toHaveProperty("descuadre");
     expect(s).toHaveProperty("ciclo");
+    expect(s).toHaveProperty("ventana");
   });
 });

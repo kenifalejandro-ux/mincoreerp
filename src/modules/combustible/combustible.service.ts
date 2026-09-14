@@ -18,6 +18,11 @@ import { CombustibleRepository } from "./combustible.repository";
 import type { PeriodoHistorial } from "./combustible.repository";
 import { EquiposRepository } from "../equipos/equipos.repository";
 
+/** Un tramo de la muestra de calibración, tal como lo devuelve el repositorio. */
+type IntervaloCalibracion = Awaited<
+  ReturnType<CombustibleRepository["findMuestraDescuadresParaCalibracion"]>
+>[number];
+
 export class CombustibleService {
   private repository = new CombustibleRepository();
 
@@ -1231,10 +1236,12 @@ export class CombustibleService {
    *  repartido en pedazos chicos, cada uno debajo de la banda, no dispara
    *  nunca. La auditoría lo demostró con 600 L en cuatro tramos de 150.
    *
-   *  Umbral SEPARADO del de tramo a propósito. El ruido de la varilla se
-   *  acumula a lo largo del ciclo, así que reusar el mismo porcentaje haría
-   *  que esto alertara todos los días y muriera por ruidoso -- el riesgo
-   *  que nombra el punto 4 del documento de diseño. */
+   *  Umbral SEPARADO del de tramo a propósito, pero no porque el error de la
+   *  varilla se acumule: no se acumula, se cancela entre tramos seguidos (ver
+   *  `calibrarConSigno`). Lo que sí se acumula es el error del contómetro de
+   *  cada despacho, y el ciclo suma los despachos de varios días. Con el mismo
+   *  porcentaje que el de tramo podría alertar por ruido de medidor y morir por
+   *  ruidoso -- el riesgo que nombra el punto 4 del documento de diseño. */
   async evaluarDescuadreCiclo(
     client: PoolClient,
     tenantId: string,
@@ -1825,6 +1832,12 @@ export class CombustibleService {
       cantidad: m.cantidad,
       diferenciaLitros: m.diferencia_litros,
       diferenciaPct: (m.diferencia_litros / m.cantidad) * 100,
+      // Los pasos de la cuenta, para la exportación. La pantalla no los usa.
+      recibidoEn: m.recibido_en,
+      documento: m.documento,
+      nivelAntes: m.nivel_antes,
+      nivelDespues: m.nivel_despues,
+      salidas: m.salidas,
     }));
 
     return CombustibleService.calibrar(
@@ -1853,28 +1866,42 @@ export class CombustibleService {
    *  -- pero bajarlo solo para ese caso sería inventar un criterio para que
    *  el número aparezca antes, que es exactamente lo que este módulo no
    *  hace. Mientras tanto queda el valor provisional del alta, que protege. */
-  private static calibrar<T>(valoresPct: number[], muestra: T[]) {
-    const MINIMO_MUESTRA = 10;
-    const PISO_PCT = 1;
+  static readonly MINIMO_MUESTRA = 10;
+  static readonly PISO_PCT = 1;
 
-    if (valoresPct.length < MINIMO_MUESTRA) {
-      return {
-        muestraSuficiente: false as const,
-        tamanioMuestra: valoresPct.length,
-        minimoRequerido: MINIMO_MUESTRA,
-      };
+  /** Con menos filas que el mínimo no se calcula ningún número. */
+  private static muestraInsuficiente<T>(tamanio: number, muestra: T[]) {
+    return {
+      muestraSuficiente: false as const,
+      tamanioMuestra: tamanio,
+      minimoRequerido: CombustibleService.MINIMO_MUESTRA,
+      // La muestra viaja aunque no alcance para sugerir. No es para la
+      // pantalla -- ahí sigue sin mostrarse ningún número, que es el punto
+      // del mínimo -- sino para que la exportación pueda mostrar las pocas
+      // mediciones que hay. "Todavía no puedo sugerir, pero esto es lo que
+      // llevo medido" es información útil; esconderla no protege de nada.
+      muestra,
+    };
+  }
+
+  private static calibrar<T>(valoresPct: number[], muestra: T[]) {
+    if (valoresPct.length < CombustibleService.MINIMO_MUESTRA) {
+      return CombustibleService.muestraInsuficiente(valoresPct.length, muestra);
     }
 
     const abs = valoresPct.map((v) => Math.abs(v));
     const promedio = abs.reduce((a, b) => a + b, 0) / abs.length;
     const varianza = abs.reduce((acc, v) => acc + (v - promedio) ** 2, 0) / (abs.length - 1);
     const desviacion = Math.sqrt(varianza);
-    const sugerido = Math.min(100, Math.max(PISO_PCT, promedio + 2 * desviacion));
+    const sugerido = Math.min(
+      100,
+      Math.max(CombustibleService.PISO_PCT, promedio + 2 * desviacion)
+    );
 
     return {
       muestraSuficiente: true as const,
       tamanioMuestra: valoresPct.length,
-      minimoRequerido: MINIMO_MUESTRA,
+      minimoRequerido: CombustibleService.MINIMO_MUESTRA,
       sugerido: Number(sugerido.toFixed(1)),
       promedio: Number(promedio.toFixed(2)),
       desviacion: Number(desviacion.toFixed(2)),
@@ -1882,25 +1909,113 @@ export class CombustibleService {
     };
   }
 
-  /** Umbral de descuadre POR TRAMO: un punto por cada intervalo entre dos
-   *  lecturas consecutivas, medido contra la capacidad del tanque (que es la
-   *  base que usa la alerta en vivo -- ver `evaluarDescuadre`). */
-  async sugerirUmbralDescuadre(client: PoolClient, tenantId: string, combustibleId: number) {
+  /** El estadístico de la VENTANA: 2 desviaciones de la diferencia CON SIGNO,
+   *  sin sumar el promedio y sin multiplicar por la cantidad de tramos.
+   *
+   *  Por qué no se multiplica por √n aunque la ventana sume decenas de tramos:
+   *  los tramos no son independientes. Cada uno arranca en la varilla donde
+   *  terminó el anterior, así que el error de una varilla entra dos veces con
+   *  signo contrario (+e en el tramo que termina en ella, −e en el que arranca)
+   *  y se cancela. La suma de la ventana telescopa a
+   *  `medido_final − medido_inicial − recepciones + despachos`: arrastra el error
+   *  de DOS varillas, igual que un tramo solo. Con √n la sugerencia salía varias
+   *  veces más grande que el ruido real, y un umbral así deja pasar el robo de a
+   *  poco que este control existe para agarrar.
+   *
+   *  Por qué la desviación respecto del promedio CON SIGNO, y no de |x| como los
+   *  otros tres: un robo sistemático (siempre falta lo mismo) corre el promedio
+   *  pero no agranda la desviación, así que no infla la sugerencia. Con |x| el
+   *  robo pasaría por ruido y la fórmula propondría tolerarlo.
+   *
+   *  Lo que NO modela: el error del contómetro o del vale, que no telescopa y sí
+   *  crece con los despachos de la ventana. Sumarlo bien pide la tolerancia real
+   *  del medidor, que es un dato del cliente y no un número para inventar. Hasta
+   *  entonces lo cubre el piso de 1 %. */
+  private static calibrarConSigno<T>(valoresPct: number[], muestra: T[]) {
+    const n = valoresPct.length;
+    if (n < CombustibleService.MINIMO_MUESTRA) {
+      return CombustibleService.muestraInsuficiente(n, muestra);
+    }
+
+    const promedio = valoresPct.reduce((a, b) => a + b, 0) / n;
+    const varianza = valoresPct.reduce((acc, v) => acc + (v - promedio) ** 2, 0) / (n - 1);
+    const desviacion = Math.sqrt(varianza);
+    const sugerido = Math.min(100, Math.max(CombustibleService.PISO_PCT, 2 * desviacion));
+
+    return {
+      muestraSuficiente: true as const,
+      tamanioMuestra: n,
+      minimoRequerido: CombustibleService.MINIMO_MUESTRA,
+      sugerido: Number(sugerido.toFixed(1)),
+      // Con signo: la tendencia por tramo. No entra en la sugerencia, pero lejos
+      // de 0 dice que algo falta (o sobra) siempre para el mismo lado.
+      promedio: Number(promedio.toFixed(2)),
+      desviacion: Number(desviacion.toFixed(2)),
+      muestra,
+    };
+  }
+
+  /** Las cuatro sugerencias del tanque, en secuencia sobre el mismo cliente: pg
+   *  no admite dos consultas a la vez sobre un cliente (hoy lo avisa con un
+   *  DeprecationWarning, en pg@9 lo va a rechazar).
+   *
+   *  Descuadre, ciclo y ventana salen de la MISMA muestra de tramos, así que se
+   *  consulta una sola vez. Antes cada una hacía su propia pasada sobre todo el
+   *  historial de lecturas del tanque. */
+  async sugerirUmbrales(client: PoolClient, tenantId: string, combustibleId: number) {
+    const diferencia = await this.sugerirUmbralDiferencia(client, tenantId, combustibleId);
     const intervalos = await this.repository.findMuestraDescuadresParaCalibracion(
       client,
       tenantId,
       combustibleId
     );
+    const diasVentana = await this.repository.getDiasVentanaDescuadre(client, tenantId);
 
-    const puntos = intervalos
+    return {
+      diferencia,
+      descuadre: CombustibleService.calibrarDescuadre(intervalos),
+      ciclo: CombustibleService.calibrarCiclo(intervalos),
+      // Los días no entran en la cuenta (ver calibrarConSigno): viajan para que
+      // la exportación diga sobre cuántos días suma la alerta.
+      ventana: { ...CombustibleService.calibrarVentana(intervalos), diasVentana },
+    };
+  }
+
+  /** Un punto por tramo, medido contra la capacidad del tanque (la base que usa
+   *  la alerta en vivo). Lo comparten el umbral por tramo y el de la ventana. */
+  private static puntosDeTramo(intervalos: IntervaloCalibracion[]) {
+    return intervalos
       .filter((i) => i.capacidad > 0)
       .map((i) => ({
         descuadreLitros: Number(i.descuadre.toFixed(2)),
         descuadrePct: (i.descuadre / i.capacidad) * 100,
         leidoEn: i.leido_en,
+        // Los pasos de la cuenta, para la exportación: con esto cada fila del
+        // archivo muestra de dónde sale su descuadre, no solo el resultado.
+        leidoEnAnterior: i.leido_en_anterior,
+        nivelAnterior: i.nivel_anterior,
+        despachos: i.despachos,
+        recepciones: i.recepciones,
+        nivelMedido: i.nivel,
+        origen: i.origen,
       }));
+  }
 
+  /** Umbral de descuadre POR TRAMO: un punto por cada intervalo entre dos
+   *  lecturas consecutivas (ver `evaluarDescuadre`). */
+  private static calibrarDescuadre(intervalos: IntervaloCalibracion[]) {
+    const puntos = CombustibleService.puntosDeTramo(intervalos);
     return CombustibleService.calibrar(
+      puntos.map((p) => p.descuadrePct),
+      puntos
+    );
+  }
+
+  /** Umbral acumulado de la VENTANA: los mismos tramos que el de descuadre,
+   *  con otro estadístico (ver `calibrarConSigno`). */
+  private static calibrarVentana(intervalos: IntervaloCalibracion[]) {
+    const puntos = CombustibleService.puntosDeTramo(intervalos);
+    return CombustibleService.calibrarConSigno(
       puntos.map((p) => p.descuadrePct),
       puntos
     );
@@ -1917,26 +2032,34 @@ export class CombustibleService {
    *  El ciclo en curso NO entra en la muestra: todavía puede moverse, y un
    *  ciclo a medias mediría menos acumulación de la que va a terminar
    *  teniendo, tirando la sugerencia para abajo. */
-  async sugerirUmbralCiclo(client: PoolClient, tenantId: string, combustibleId: number) {
-    const intervalos = await this.repository.findMuestraDescuadresParaCalibracion(
-      client,
-      tenantId,
-      combustibleId
-    );
-
-    const ciclos: { descuadreLitros: number; capacidad: number; intervalos: number }[] = [];
-    let actual: { descuadreLitros: number; capacidad: number; intervalos: number } | null = null;
+  private static calibrarCiclo(intervalos: IntervaloCalibracion[]) {
+    type Ciclo = {
+      descuadreLitros: number;
+      capacidad: number;
+      intervalos: number;
+      desde: Date;
+      hasta: Date;
+    };
+    const ciclos: Ciclo[] = [];
+    let actual: Ciclo | null = null;
 
     for (const i of intervalos) {
       if (i.recepciones > 0) {
         // Entró combustible: cierra el ciclo anterior y arranca uno nuevo.
         if (actual) ciclos.push(actual);
-        actual = { descuadreLitros: 0, capacidad: i.capacidad, intervalos: 0 };
+        actual = {
+          descuadreLitros: 0,
+          capacidad: i.capacidad,
+          intervalos: 0,
+          desde: i.leido_en,
+          hasta: i.leido_en,
+        };
         continue;
       }
       if (!actual) continue; // Todavía no hubo ninguna recepción: sin ciclo que medir.
       actual.descuadreLitros += i.descuadre;
       actual.intervalos += 1;
+      actual.hasta = i.leido_en;
     }
     // `actual` queda afuera a propósito: es el ciclo en curso.
 
@@ -1946,6 +2069,9 @@ export class CombustibleService {
         descuadreLitros: Number(c.descuadreLitros.toFixed(2)),
         descuadrePct: (c.descuadreLitros / c.capacidad) * 100,
         intervalos: c.intervalos,
+        // Para que la exportación diga QUÉ ciclo es cada fila.
+        desde: c.desde,
+        hasta: c.hasta,
       }));
 
     return CombustibleService.calibrar(
