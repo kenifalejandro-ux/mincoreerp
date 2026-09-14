@@ -55,3 +55,24 @@ export function hojaPorNombre(zip: Buffer, nombre: string): string {
   if (indice < 0) throw new Error(`No existe la hoja "${nombre}"`);
   return leerEntrada(zip, `xl/worksheets/sheet${indice + 1}.xml`);
 }
+
+/** Las notas (comentarios) de una hoja, como "A5 -> texto". Vacío si la hoja no
+ *  tiene ninguna: el generador solo escribe comments.xml cuando hace falta. */
+export function notasPorNombre(zip: Buffer, nombre: string): Record<string, string> {
+  const indice = nombresDeHojas(zip).indexOf(nombre);
+  if (indice < 0) throw new Error(`No existe la hoja "${nombre}"`);
+  const parte = partes(zip).find((p) => p.nombre === `xl/comments${indice + 1}.xml`);
+  if (!parte) return {};
+  const notas: Record<string, string> = {};
+  for (const m of parte.contenido.matchAll(
+    /<comment ref="([A-Z]+\d+)"[^>]*>.*?<t[^>]*>([^<]*)<\/t>/g
+  )) {
+    notas[m[1]] = m[2]
+      .replace(/&apos;/g, "'")
+      .replace(/&quot;/g, '"')
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&");
+  }
+  return notas;
+}

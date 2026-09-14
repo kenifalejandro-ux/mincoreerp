@@ -167,6 +167,43 @@ describe("xlsx.util: las celdas", () => {
   });
 });
 
+describe("xlsx.util: las notas de celda", () => {
+  it("una hoja sin notas no arrastra partes de comentarios", () => {
+    const zip = armarXlsx([{ nombre: "H", filas: [["a"]] }]);
+    expect(nombresDePartes(zip).some((n) => n.includes("comments"))).toBe(false);
+    expect(leerEntrada(zip, "xl/worksheets/sheet1.xml")).not.toContain("legacyDrawing");
+  });
+
+  it("escribe el texto Y el recuadro: sin el VML, Excel no muestra la nota", () => {
+    const zip = armarXlsx([
+      { nombre: "Sin", filas: [["x"]] },
+      {
+        nombre: "Con",
+        filas: [[null], [{ valor: "Promedio", negrita: true, nota: "Todo <junto> & repartido" }]],
+      },
+    ]);
+    const partes = nombresDePartes(zip);
+
+    // Las partes llevan el número de la hoja que las tiene, no un contador propio.
+    expect(partes).toContain("xl/comments2.xml");
+    expect(partes).toContain("xl/drawings/vmlDrawing2.vml");
+    expect(partes).toContain("xl/worksheets/_rels/sheet2.xml.rels");
+
+    const comentarios = leerEntrada(zip, "xl/comments2.xml");
+    expect(comentarios).toContain('ref="A2"');
+    expect(comentarios).toContain("Todo &lt;junto&gt; &amp; repartido");
+
+    const vml = leerEntrada(zip, "xl/drawings/vmlDrawing2.vml");
+    expect(vml).toContain("<x:Row>1</x:Row><x:Column>0</x:Column>");
+    expect(vml).toContain("visibility:hidden");
+
+    expect(leerEntrada(zip, "xl/worksheets/sheet2.xml")).toContain('<legacyDrawing r:id="rId2"/>');
+    const tipos = leerEntrada(zip, "[Content_Types].xml");
+    expect(tipos).toContain('PartName="/xl/comments2.xml"');
+    expect(tipos).toContain('Extension="vml"');
+  });
+});
+
 describe("xlsx.util: nombres y referencias", () => {
   it("numera las columnas más allá de la Z", () => {
     expect(letraColumna(0)).toBe("A");

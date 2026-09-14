@@ -55,6 +55,11 @@ export type CeldaXlsx =
       formula?: string;
       negrita?: boolean;
       formato?: FormatoNumeroXlsx;
+      /** Nota (comentario) de la celda: el recuadro amarillo que aparece al
+       *  pasar el mouse. Es para las explicaciones: escritas en una columna al
+       *  lado de los números la planilla se ve como un borrador, y en una nota
+       *  están a un clic sin ocupar lugar. */
+      nota?: string;
     };
 
 export interface HojaXlsx {
@@ -149,7 +154,80 @@ function celdaXml(celda: CeldaXlsx, ref: string): string {
   )}</t></is></c>`;
 }
 
-function hojaXml(hoja: HojaXlsx): string {
+interface NotaXlsx {
+  fila: number; // base 0
+  columna: number; // base 0
+  texto: string;
+}
+
+function notasDeHoja(hoja: HojaXlsx): NotaXlsx[] {
+  const notas: NotaXlsx[] = [];
+  hoja.filas.forEach((fila, f) =>
+    fila.forEach((celda, c) => {
+      if (celda !== null && typeof celda === "object" && celda.nota) {
+        notas.push({ fila: f, columna: c, texto: celda.nota });
+      }
+    })
+  );
+  return notas;
+}
+
+const AUTOR_NOTAS = "MinCore ERP";
+
+function comentariosXml(notas: NotaXlsx[]): string {
+  const lista = notas
+    .map(
+      (n) =>
+        `<comment ref="${letraColumna(n.columna)}${n.fila + 1}" authorId="0"><text><r><t xml:space="preserve">${escaparXml(
+          n.texto
+        )}</t></r></text></comment>`
+    )
+    .join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<comments xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><authors><author>${AUTOR_NOTAS}</author></authors><commentList>${lista}</commentList></comments>`;
+}
+
+/** El dibujo de las notas, en VML (el formato viejo de Office).
+ *
+ *  Parece redundante con comments.xml, pero no lo es: comments.xml guarda el
+ *  TEXTO y el VML guarda el RECUADRO. Excel no muestra una nota que no tenga su
+ *  forma en el VML -- la celda ni siquiera lleva el triangulito rojo. LibreOffice
+ *  se arregla con cualquiera de los dos; Excel exige ambos.
+ *
+ *  `idmap` y los ids de las formas tienen que ser únicos en todo el libro, por
+ *  eso se desplazan con el número de hoja (bloques de 1024, como hace Excel). */
+function dibujoNotasVml(notas: NotaXlsx[], numeroHoja: number): string {
+  const formas = notas
+    .map((n, i) => {
+      // Alto aproximado en filas: ~45 caracteres por renglón del recuadro.
+      const renglones = Math.max(2, Math.ceil(n.texto.length / 45) + 1);
+      const anchor = [n.columna + 1, 15, n.fila, 2, n.columna + 4, 15, n.fila + renglones, 2];
+      return (
+        `<v:shape id="_x0000_s${numeroHoja * 1024 + i + 1}" type="#_x0000_t202" ` +
+        `style="position:absolute;margin-left:80pt;margin-top:2pt;width:240pt;height:${renglones * 15}pt;z-index:${i + 1};visibility:hidden" ` +
+        `fillcolor="#ffffe1" o:insetmode="auto">` +
+        `<v:fill color2="#ffffe1"/><v:shadow on="t" color="black" obscured="t"/>` +
+        `<v:path o:connecttype="none"/><v:textbox style="mso-direction-alt:auto"><div style="text-align:left"></div></v:textbox>` +
+        `<x:ClientData ObjectType="Note"><x:MoveWithCells/><x:SizeWithCells/>` +
+        `<x:Anchor>${anchor.join(", ")}</x:Anchor><x:AutoFill>False</x:AutoFill>` +
+        `<x:Row>${n.fila}</x:Row><x:Column>${n.columna}</x:Column></x:ClientData></v:shape>`
+      );
+    })
+    .join("");
+  return `<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+<o:shapelayout v:ext="edit"><o:idmap v:ext="edit" data="${numeroHoja}"/></o:shapelayout>
+<v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" path="m,l,21600r21600,l21600,xe"><v:stroke joinstyle="miter"/><v:path gradientshapeok="t" o:connecttype="rect"/></v:shapetype>
+${formas}
+</xml>`;
+}
+
+const RELS_NOTAS = (numeroHoja: number) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments${numeroHoja}.xml"/>
+<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing${numeroHoja}.vml"/>
+</Relationships>`;
+
+function hojaXml(hoja: HojaXlsx, conNotas: boolean): string {
   const cols =
     hoja.anchos && hoja.anchos.length > 0
       ? `<cols>${hoja.anchos
@@ -167,7 +245,9 @@ function hojaXml(hoja: HojaXlsx): string {
     .join("");
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${cols}<sheetData>${filas}</sheetData></worksheet>`;
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${cols}<sheetData>${filas}</sheetData>${
+    conNotas ? '<legacyDrawing r:id="rId2"/>' : ""
+  }</worksheet>`;
 }
 
 /** Seis estilos, en pares (normal / negrita) por cada formato de número:
@@ -304,17 +384,22 @@ export function armarXlsx(hojas: HojaXlsx[]): Buffer {
   if (hojas.length === 0) throw new Error("Un .xlsx necesita al menos una hoja");
 
   const nombres = hojas.map((h, i) => sanearNombreHoja(h.nombre, i));
+  const notas = hojas.map(notasDeHoja);
 
   const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
 <Default Extension="xml" ContentType="application/xml"/>
+<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>
 <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
 <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 ${hojas
   .map(
     (_, i) =>
-      `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`
+      `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` +
+      (notas[i].length > 0
+        ? `\n<Override PartName="/xl/comments${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>`
+        : "")
   )
   .join("\n")}
 </Types>`;
@@ -351,10 +436,33 @@ ${hojas
     { nombre: "xl/workbook.xml", contenido: Buffer.from(workbook, "utf8") },
     { nombre: "xl/_rels/workbook.xml.rels", contenido: Buffer.from(workbookRels, "utf8") },
     { nombre: "xl/styles.xml", contenido: Buffer.from(STYLES_XML, "utf8") },
-    ...hojas.map((hoja, i) => ({
-      nombre: `xl/worksheets/sheet${i + 1}.xml`,
-      contenido: Buffer.from(hojaXml(hoja), "utf8"),
-    })),
+    ...hojas.flatMap((hoja, i) => {
+      const n = i + 1;
+      const conNotas = notas[i].length > 0;
+      const partes = [
+        {
+          nombre: `xl/worksheets/sheet${n}.xml`,
+          contenido: Buffer.from(hojaXml(hoja, conNotas), "utf8"),
+        },
+      ];
+      if (conNotas) {
+        partes.push(
+          {
+            nombre: `xl/worksheets/_rels/sheet${n}.xml.rels`,
+            contenido: Buffer.from(RELS_NOTAS(n), "utf8"),
+          },
+          {
+            nombre: `xl/comments${n}.xml`,
+            contenido: Buffer.from(comentariosXml(notas[i]), "utf8"),
+          },
+          {
+            nombre: `xl/drawings/vmlDrawing${n}.vml`,
+            contenido: Buffer.from(dibujoNotasVml(notas[i], n), "utf8"),
+          }
+        );
+      }
+      return partes;
+    }),
   ]);
 }
 

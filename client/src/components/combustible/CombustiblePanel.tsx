@@ -345,13 +345,16 @@ const ACCIONES_QUE_AFLOJAN = new Set([
   "combustible.alerta_autorevisada",
 ]);
 
-/** Las tres sugerencias vienen juntas del mismo endpoint: salen del mismo
- *  historial del tanque, y partirlas en tres requests haría tres pasadas
+/** Las sugerencias vienen juntas del mismo endpoint: salen del mismo
+ *  historial del tanque, y partirlas en varios requests haría varias pasadas
  *  sobre lo mismo. */
 interface SugerenciasUmbral {
   diferencia: SugerenciaUmbral;
   descuadre: SugerenciaUmbral;
   ciclo: SugerenciaUmbral;
+  /** Opcional: llegó después que las otras tres. Un backend sin ella (durante
+   *  un deploy) solo apaga esta sugerencia, no las cuatro. */
+  ventana?: SugerenciaUmbral;
 }
 
 // Fase D (migrations/0072) -- el hallazgo YA congelado, a diferencia de
@@ -447,8 +450,11 @@ const esCritica = (tipo: string) => TIPOS_CRITICOS.has(tipo);
  *  cero -- así que preguntar por `!x` estaría mal: un tanque estrictísimo
  *  aparecería como desprotegido. */
 /** Punto de partida RAZONADO, no medido: la varilla de un tanque de 20.000 L
- *  tiene un error honesto del orden de 100-200 L, y el ruido se acumula a lo
- *  largo del ciclo (de ahí que el del ciclo sea más alto que el de tramo).
+ *  tiene un error honesto del orden de 100-200 L. Ese error NO se acumula a lo
+ *  largo del ciclo ni de la ventana -- se cancela entre tramos seguidos, ver
+ *  `calibrarConSigno` en el servicio --, pero el del contómetro de cada
+ *  despacho sí, y ciclo y ventana suman más despachos que un tramo. De ahí la
+ *  escalera 2 / 3 / 4, con escalones chicos.
  *
  *  Se presentan como provisionales en la UI a propósito. Un número inventado
  *  que se muestra como definitivo es peor que ninguno: nadie lo vuelve a
@@ -494,10 +500,16 @@ function SugerenciaCompacta({
   onUsar,
   onDescargarDetalle,
   descargandoDetalle,
+  soloDesviacion = false,
 }: {
   sugerencia: SugerenciaUmbral | undefined;
   cargando: boolean;
   onUsar: (valor: number) => void;
+  /** La ventana calibra con 2 desviaciones de la diferencia CON SIGNO, sin
+   *  sumar el promedio: mostrar "promedio ± desviación" haría pensar que la
+   *  cuenta es la misma que la de los otros umbrales. Si se cambia este texto,
+   *  cambiarlo también en la hoja "Ventana" del .xlsx, que lo reconstruye. */
+  soloDesviacion?: boolean;
   /** Baja el .xlsx con la muestra fila por fila y los números como fórmulas.
    *  Opcional para no obligar a pasarlo en un tanque que se está creando. */
   onDescargarDetalle?: () => void;
@@ -538,7 +550,10 @@ function SugerenciaCompacta({
   return (
     <p className="text-xs text-slate-600">
       Sugerencia: <strong>{sugerencia.sugerido}%</strong> ({sugerencia.tamanioMuestra} mediciones,
-      promedio {sugerencia.promedio}% ± {sugerencia.desviacion}%){" "}
+      {soloDesviacion
+        ? ` desviación ${sugerencia.desviacion}%`
+        : ` promedio ${sugerencia.promedio}% ± ${sugerencia.desviacion}%`}
+      ){" "}
       <button
         type="button"
         onClick={() => onUsar(sugerencia.sugerido ?? 0)}
@@ -1578,7 +1593,11 @@ export default function CombustiblePanel() {
         esSugerencia(body.descuadre) &&
         esSugerencia(body.ciclo);
 
-      setSugerenciasUmbral(formaEsperada ? body : null);
+      setSugerenciasUmbral(
+        formaEsperada
+          ? { ...body, ventana: esSugerencia(body.ventana) ? body.ventana : undefined }
+          : null
+      );
     } finally {
       setCargandoSugerenciaUmbral(false);
     }
@@ -3506,9 +3525,11 @@ export default function CombustiblePanel() {
                         <p className="text-xs text-slate-600">
                           Igual que el anterior, pero sumando <strong>todo el ciclo</strong> desde
                           que el tanque se cargó, no solo entre dos varillas. Atrapa el faltante
-                          repartido en porciones chicas, que medición por medición parece normal.
-                          Ponelo más alto que el de arriba (por ejemplo 1% y 2%): el ruido de la
-                          varilla se acumula a lo largo del ciclo.
+                          repartido en porciones chicas, que medición por medición parece normal. No
+                          hace falta ponerlo mucho más alto que el de arriba: el error de la varilla{" "}
+                          <strong>no se acumula</strong>, porque lo que marca de más en una medición
+                          se descuenta en la siguiente. Lo que sí se va sumando es el error del
+                          contómetro en cada despacho.
                         </p>
                         {editandoId !== null && (
                           <SugerenciaCompacta
@@ -3549,8 +3570,27 @@ export default function CombustiblePanel() {
                           El del ciclo vuelve a cero cada vez que llega el camión, y ahí se esconde
                           el robo de a poco: 50 L por día no alertan nunca si el tanque se carga
                           seguido. Este suma los últimos 30 días de corrido (se configura en
-                          Alertas). Ponelo más alto que el del ciclo.
+                          Alertas). Igual que en el del ciclo, el error de la varilla se descuenta
+                          solo y no crece con los días. Lo que sí crece es el error del contómetro
+                          en cada despacho: puede ir parecido al del ciclo, o un poco más alto si el
+                          tanque despacha mucho. Con historial suficiente, la sugerencia de abajo te
+                          da el número.
                         </p>
+                        {editandoId !== null && (
+                          <SugerenciaCompacta
+                            sugerencia={sugerenciasUmbral?.ventana}
+                            cargando={cargandoSugerenciaUmbral}
+                            onUsar={(v) =>
+                              setFormData((f) => ({
+                                ...f,
+                                umbral_descuadre_ventana_pct: String(v),
+                              }))
+                            }
+                            onDescargarDetalle={descargarDetalleCalibracion}
+                            descargandoDetalle={descargandoCalibracion}
+                            soloDesviacion
+                          />
+                        )}
                       </div>
                     </>
                   )}
