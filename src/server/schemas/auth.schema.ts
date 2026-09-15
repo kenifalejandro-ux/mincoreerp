@@ -91,3 +91,12 @@ export const elegirEmpresaSchema = z.object({
 });
 
 export type ElegirEmpresaInput = z.infer<typeof elegirEmpresaSchema>;
+
+/** Cambiar de empresa ya estando adentro (entrega 2). No lleva token ni
+ *  clave: la sesión abierta es la autorización, y el servidor revalida que el
+ *  perfil de destino siga activo. */
+export const cambiarEmpresaSchema = z.object({
+  tenantId: z.string().uuid("Empresa inválida"),
+});
+
+export type CambiarEmpresaInput = z.infer<typeof cambiarEmpresaSchema>;

@@ -19,7 +19,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, extraerCookie } from "./helpers";
+import { env } from "../src/server/config/env";
 import { closeDatabase, pool, withTenant, withCuenta } from "../src/server/config/database";
 
 const PASSWORD = "ClaveDePrueba123";
@@ -406,7 +407,122 @@ describe("auth: cuentas y perfiles por empresa", () => {
     expect(conLaDelAdmin.status).toBe(401);
   });
 
-  // ── 6. El aislamiento sigue intacto ───────────────────────────────────
+  // ── 6. Cambiar de empresa sin salir ───────────────────────────────────
+
+  describe("cambiar de empresa sin volver a entrar", () => {
+    it("lista las empresas de la persona y marca en cuál está", async () => {
+      const agente = await sesionDe(empresaA.tenant.slug, empresaA.usuario.email);
+      const res = await agente.get("/api/auth/mis-empresas");
+
+      expect(res.status).toBe(200);
+      expect(res.body.empresas).toHaveLength(2);
+      const actual = res.body.empresas.filter((e: { actual: boolean }) => e.actual);
+      expect(actual).toHaveLength(1);
+      expect(actual[0].tenantId).toBe(empresaA.tenant.id);
+    });
+
+    it("cambia la sesión a la otra empresa", async () => {
+      const agente = await sesionDe(empresaA.tenant.slug, empresaA.usuario.email);
+
+      const res = await agente
+        .post("/api/auth/cambiar-empresa")
+        .send({ tenantId: empresaB.tenant.id });
+
+      expect(res.status).toBe(200);
+      expect(res.body.usuario.tenantId).toBe(empresaB.tenant.id);
+      // Y el id del PERFIL cambió: es otra persona-en-otra-empresa, no la
+      // misma fila con otro tenant.
+      expect(res.body.usuario.id).not.toBe(empresaA.usuario.id);
+
+      const yo = await agente.get("/api/auth/me");
+      expect(yo.body.usuario.tenantId).toBe(empresaB.tenant.id);
+    });
+
+    it("la sesión de la empresa anterior queda cerrada", async () => {
+      // Dos navegadores: el que cambia y otro que sigue con la cookie vieja.
+      const queCambia = await sesionDe(empresaA.tenant.slug, empresaA.usuario.email);
+      const cookieVieja = extraerCookie(
+        (
+          await request(app).post("/api/auth/login").send({
+            tenantSlug: empresaA.tenant.slug,
+            email: empresaA.usuario.email,
+            password: PASSWORD,
+          })
+        ).headers["set-cookie"],
+        env.authCookieName
+      );
+
+      await queCambia.post("/api/auth/cambiar-empresa").send({ tenantId: empresaB.tenant.id });
+
+      // La sesión de la OTRA ventana no se toca: se cierra la que cambió, no
+      // todas las de la persona.
+      const otraVentana = await request(app)
+        .get("/api/auth/me")
+        .set("Cookie", `${env.authCookieName}=${cookieVieja}`);
+      expect(otraVentana.status).toBe(200);
+      expect(otraVentana.body.usuario.tenantId).toBe(empresaA.tenant.id);
+    });
+
+    it("no se puede cambiar a una empresa donde no tiene perfil", async () => {
+      const ajena = await crearTenantDePrueba(PASSWORD);
+      try {
+        const agente = await sesionDe(empresaA.tenant.slug, empresaA.usuario.email);
+        const res = await agente
+          .post("/api/auth/cambiar-empresa")
+          .send({ tenantId: ajena.tenant.id });
+        expect(res.status).toBe(403);
+      } finally {
+        await borrarTenantDePrueba(ajena.tenant.id);
+      }
+    });
+
+    it("el personal operativo no tiene a dónde cambiar", async () => {
+      const dniOperativo = "44556677";
+      const claveOperativo = "ClaveOperativa123";
+      const agenteAdmin = await sesionDe(empresaB.tenant.slug, empresaB.usuario.email);
+      const alta = await agenteAdmin.post("/api/erp/usuarios").send({
+        nombre: "Conductor sin correo",
+        dni: dniOperativo,
+        password: claveOperativo,
+        rol: "conductor_ruta",
+      });
+      expect(alta.status).toBe(201);
+
+      const agente = request.agent(app);
+      await agente.post("/api/auth/login").send({
+        tenantSlug: empresaB.tenant.slug,
+        identificador: dniOperativo,
+        password: claveOperativo,
+      });
+
+      const empresas = await agente.get("/api/auth/mis-empresas");
+      expect(empresas.body.empresas).toEqual([]);
+
+      const cambio = await agente
+        .post("/api/auth/cambiar-empresa")
+        .send({ tenantId: empresaA.tenant.id });
+      expect(cambio.status).toBe(403);
+    });
+
+    it("dado de baja en la otra empresa, deja de poder cambiar a ella", async () => {
+      const agenteB = await sesionDe(empresaB.tenant.slug, empresaB.usuario.email);
+      await agenteB
+        .patch(`/api/erp/usuarios/${perfilEnB}/estado`)
+        .send({ activo: false, motivo: "prueba de cambio de empresa" });
+
+      try {
+        const agente = await sesionDe(empresaA.tenant.slug, empresaA.usuario.email);
+        const res = await agente
+          .post("/api/auth/cambiar-empresa")
+          .send({ tenantId: empresaB.tenant.id });
+        expect(res.status).toBe(403);
+      } finally {
+        await agenteB.patch(`/api/erp/usuarios/${perfilEnB}/estado`).send({ activo: true });
+      }
+    });
+  });
+
+  // ── 7. El aislamiento sigue intacto ───────────────────────────────────
 
   it("la política de cuenta deja ver los perfiles de esa cuenta y nada más", async () => {
     const cuentaCompartida = await cuentaDe(empresaA.usuario.email);

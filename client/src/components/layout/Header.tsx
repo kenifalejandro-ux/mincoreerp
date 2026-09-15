@@ -1,5 +1,6 @@
 import { LogOut, User as UserIcon } from "lucide-react";
 
+import SelectorEmpresa from "./SelectorEmpresa";
 import { useAuth } from "../../context/AuthContext";
 import CampanitaAlertas from "../combustible/CampanitaAlertas";
 
@@ -50,6 +51,9 @@ export default function Header({ onIrACombustible }: HeaderProps) {
             </div>
 
             <div className="w-px h-6 bg-slate-700"></div>
+
+            {/* Solo aparece para quien trabaja en más de una empresa. */}
+            <SelectorEmpresa />
 
             <CampanitaAlertas
               activo={puedeVerAlertasCombustible}

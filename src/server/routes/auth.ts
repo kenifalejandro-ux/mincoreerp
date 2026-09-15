@@ -15,11 +15,13 @@ import {
   resetPasswordSchema,
   cambiarMiPasswordSchema,
   elegirEmpresaSchema,
+  cambiarEmpresaSchema,
   type LoginInput,
   type GoogleLoginInput,
   type ForgotPasswordInput,
   type ResetPasswordInput,
   type ElegirEmpresaInput,
+  type CambiarEmpresaInput,
 } from "../schemas/auth.schema";
 import {
   loginService,
@@ -30,6 +32,8 @@ import {
   restablecerPasswordService,
   cambiarMiPasswordUsuarioService,
   elegirEmpresaService,
+  misEmpresasService,
+  cambiarEmpresaService,
   aPublico,
   type ResultadoAutenticacion,
   type EleccionPendiente,
@@ -316,6 +320,39 @@ authRouter.post(
 authRouter.get("/me", rateLimiter, authMiddleware, (req, res) => {
   res.status(200).json({ ok: true, usuario: aPublico(req.usuario!) });
 });
+
+// ── Cambiar de empresa sin salir (entrega 2) ─────────────────────────────
+
+authRouter.get(
+  "/mis-empresas",
+  rateLimiter,
+  authMiddleware,
+  asyncHandler(async (req, res, next) => {
+    try {
+      res.status(200).json({ ok: true, empresas: await misEmpresasService(req.usuario!) });
+    } catch (err) {
+      next(err);
+    }
+  })
+);
+
+authRouter.post(
+  "/cambiar-empresa",
+  rateLimiter,
+  authMiddleware,
+  validate(cambiarEmpresaSchema),
+  asyncHandler(async (req, res, next) => {
+    try {
+      const { tenantId } = req.validatedBody as CambiarEmpresaInput;
+      const result = await cambiarEmpresaService(req.usuario!, tenantId);
+      setCookieSesion(res, result.token);
+      setCookieRefresh(res, result.refreshToken);
+      res.status(200).json({ ok: true, usuario: aPublico(result.usuario) });
+    } catch (err) {
+      next(err);
+    }
+  })
+);
 
 // Cambiar la propia contraseña -- pensado para la pantalla obligatoria del
 // primer login con clave temporal (ver debeCambiarPassword en

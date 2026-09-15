@@ -160,6 +160,35 @@ export function ssoIniciarUrl(tenantSlug: string): string {
   return `/api/auth/sso/iniciar?tenantSlug=${encodeURIComponent(tenantSlug)}`;
 }
 
+/** Una empresa a la que esta persona puede pasar sin volver a entrar. */
+export interface EmpresaDelUsuario {
+  tenantId: string;
+  nombre: string;
+  slug: string;
+  actual: boolean;
+}
+
+/** Vacío para el personal operativo (entra con DNI, su acceso es de UNA
+ *  empresa) y para quien tiene un solo perfil. */
+export async function misEmpresasApi(): Promise<EmpresaDelUsuario[]> {
+  const res = await apiFetch("/api/auth/mis-empresas");
+  const data = await parseOrThrow(res);
+  return data.empresas ?? [];
+}
+
+/** Cambia la sesión a otra empresa. La anterior se cierra del lado del
+ *  servidor, así que después de esto hay que recargar la app entera: lo que
+ *  está en pantalla es de la empresa de la que se viene. */
+export async function cambiarEmpresaApi(tenantId: string): Promise<UsuarioPayload> {
+  const res = await apiFetch("/api/auth/cambiar-empresa", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tenantId }),
+  });
+  const data = await parseOrThrow(res);
+  return data.usuario;
+}
+
 export async function getMeApi(): Promise<UsuarioPayload> {
   // Si el access token ya expiró (usuario dejó la pestaña abierta más de
   // 30 min), apiFetch intenta /api/auth/refresh solo y reintenta antes de

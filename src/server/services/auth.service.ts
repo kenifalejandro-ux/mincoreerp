@@ -858,6 +858,72 @@ export async function logoutService(
   }
 }
 
+// ═══════════════ CAMBIAR DE EMPRESA SIN SALIR (entrega 2) ═══════════════
+
+export interface EmpresaDelUsuario {
+  tenantId: string;
+  nombre: string;
+  slug: string;
+  /** La empresa de la sesión que está abierta ahora mismo. */
+  actual: boolean;
+}
+
+/** Las empresas a las que esta persona puede pasar sin volver a entrar.
+ *
+ *  Devuelve lista vacía para el personal operativo (entra por DNI, no tiene
+ *  cuenta): su acceso es de UNA empresa y no hay a dónde cambiar. El cliente
+ *  usa eso para no mostrar el selector. */
+export async function misEmpresasService(usuario: UsuarioPayload): Promise<EmpresaDelUsuario[]> {
+  if (!usuario.cuentaId) return [];
+
+  const perfiles = await perfilesDeCuenta(usuario.cuentaId);
+  return perfiles.map((perfil) => ({
+    tenantId: perfil.tenantId,
+    nombre: perfil.tenantNombre,
+    slug: perfil.tenantSlug,
+    actual: perfil.tenantId === usuario.tenantId,
+  }));
+}
+
+/** Pasa la sesión a otra de las empresas de esta persona.
+ *
+ *  No hay clave de por medio: la persona ya se autenticó, y lo único que hace
+ *  falta verificar es que el perfil de destino siga existiendo y activo -- se
+ *  revalida contra la base, nunca contra el JWT, porque entre que entró y
+ *  ahora la pudieron dar de baja ahí.
+ *
+ *  La sesión anterior se cierra: una persona tiene UNA sesión abierta por
+ *  navegador, y dejar viva la de la empresa anterior dejaría dos cookies
+ *  compitiendo y, peor, una sesión que nadie ve pero sigue sirviendo. */
+export async function cambiarEmpresaService(
+  usuario: UsuarioPayload,
+  tenantId: string
+): Promise<SesionEmitida> {
+  if (!usuario.cuentaId) {
+    throw new AppError(
+      403,
+      "Tu acceso es de esta empresa. Para entrar a otra, pedile el acceso a su administrador"
+    );
+  }
+  if (tenantId === usuario.tenantId) {
+    throw new AppError(400, "Ya estás en esa empresa");
+  }
+
+  const perfiles = await perfilesDeCuenta(usuario.cuentaId);
+  const destino = perfiles.find((perfil) => perfil.tenantId === tenantId);
+  if (!destino) {
+    // Genérico: no se confirma ni se niega que esa empresa exista.
+    throw new AppError(403, "No tenés acceso a esa empresa");
+  }
+
+  const sesion = await emitirSesionParaPerfil(destino.usuarioId, destino.tenantId);
+  // Después de emitir la nueva, nunca antes: si emitir fallara, la persona se
+  // quedaría sin ninguna sesión y tendría que volver a entrar con su clave.
+  await logoutService(usuario.id, usuario.sessionId);
+
+  return { tipo: "sesion", ...sesion };
+}
+
 /** Devuelve la cuenta de ese correo, creándola si no existía.
  *
  *  Si YA existía -- la persona trabaja en otra empresa -- **no se le toca la
