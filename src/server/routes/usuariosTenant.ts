@@ -26,10 +26,13 @@
  *
  * ── Lo que este router NO hace ─────────────────────────────────────────
  *
- * No expone los módulos por usuario (`usuario_modulos`): qué módulos tiene
- * contratada una empresa es parte del contrato comercial, y sigue siendo
- * decisión de plataforma. El admin del tenant reparte a su gente dentro de
- * lo que ya tiene, no se auto-habilita módulos.
+ * No habilita módulos: qué módulos tiene contratada una empresa es parte del
+ * contrato comercial y sigue siendo decisión de plataforma. Lo que sí hace
+ * desde la entrega 3 es REPARTIR lo que la empresa ya tiene -- las
+ * "autonomías" de Kenif: a quién se le da cada módulo y con qué nivel
+ * (operar / consultas / sin acceso). Un administrador no puede darle a nadie,
+ * ni a sí mismo, un módulo que su empresa no contrató: ver
+ * permisosTenant.service.ts.
  */
 import { Router } from "express";
 import { z } from "zod";
@@ -51,6 +54,10 @@ import {
   crearUsuarioEnTenantSchema,
   type CrearUsuarioEnTenantInput,
 } from "../schemas/platform.schema";
+import {
+  listarPermisosUsuarioService,
+  guardarPermisosUsuarioService,
+} from "../services/permisosTenant.service";
 
 const resetClaveSchema = z.object({
   password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres").max(200),
@@ -63,6 +70,24 @@ const cambiarEstadoSchema = z.object({
    *  correctiva, y el módulo ya exige motivo para todas las demás -- anular
    *  un vale, aflojar un umbral. */
   motivo: z.string().trim().min(1).max(500).optional(),
+});
+
+/** Las autonomías de una persona, tal como las manda la pantalla: la lista
+ *  completa, no un parche. Mandar el estado entero evita el problema clásico
+ *  de los permisos por diferencias -- dos administradores editando a la vez y
+ *  un módulo que queda asignado porque nadie mandó su baja. */
+const guardarPermisosSchema = z.object({
+  rol: z.enum(["admin", "operador", "lectura", "grifero", "conductor_ruta"]).optional(),
+  modulos: z
+    .array(
+      z.object({
+        modulo: z.string().min(1).max(50),
+        asignado: z.boolean(),
+        nivel: z.enum(["operar", "consultas"]),
+      })
+    )
+    .max(50),
+  motivo: z.string().trim().max(500).optional(),
 });
 
 export function createUsuariosTenantRouter() {
@@ -142,6 +167,54 @@ export function createUsuariosTenantRouter() {
         contextoAuditoriaModulo(req)
       );
       res.json(usuario);
+    })
+  );
+
+  // ── Autonomías: qué módulos ve cada persona y con qué nivel ───────────
+
+  router.get(
+    "/:id/permisos",
+    requireRole("admin"),
+    asyncHandler(async (req, res) => {
+      res.json(await listarPermisosUsuarioService(getTenantId(req), req.params.id));
+    })
+  );
+
+  router.put(
+    "/:id/permisos",
+    requireRole("admin"),
+    validate(guardarPermisosSchema),
+    asyncHandler(async (req, res) => {
+      const tenantId = getTenantId(req);
+      const cambio = req.validatedBody as {
+        rol?: "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta";
+        modulos: { modulo: string; asignado: boolean; nivel: "operar" | "consultas" }[];
+        motivo?: string;
+      };
+
+      const resultado = await guardarPermisosUsuarioService(
+        tenantId,
+        req.params.id,
+        cambio,
+        req.usuario!.id
+      );
+
+      await registrarAuditoria({
+        accion: "cambiar_permisos_usuario",
+        tenantId,
+        usuarioId: req.params.id,
+        // El antes y el después completos: sin eso, meses después nadie puede
+        // reconstruir por qué alguien tenía el acceso que tenía.
+        detalle: {
+          motivo: cambio.motivo ?? null,
+          recorta: resultado.recorta,
+          antes: { rol: resultado.antes.rol, modulos: resultado.antes.modulos },
+          despues: { rol: resultado.despues.rol, modulos: resultado.despues.modulos },
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+
+      res.json(resultado);
     })
   );
 

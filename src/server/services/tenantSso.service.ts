@@ -26,7 +26,8 @@ import { registrarAuditoria, type ContextoAuditoria } from "./platformAudit.serv
 import {
   resolverTenantParaRecuperacion,
   construirUrlTenant,
-  obtenerModulosPermitidos,
+  obtenerModulosConNivel,
+  soloConsulta,
   emitirSesionCompleta,
   type UsuarioPayload,
 } from "./auth.service";
@@ -259,6 +260,8 @@ async function resolverUsuarioSso(
     );
   }
 
+  const modulos = await obtenerModulosConNivel(fila.id, fila.tenant_id, fila.rol);
+
   return {
     id: fila.id,
     // El SSO sigue siendo POR EMPRESA (se entra por su dirección): resuelve un
@@ -269,7 +272,8 @@ async function resolverUsuarioSso(
     email: fila.email,
     dni: fila.dni,
     rol: fila.rol,
-    modulosPermitidos: await obtenerModulosPermitidos(fila.id, fila.tenant_id, fila.rol),
+    modulosPermitidos: modulos.map((m) => m.modulo),
+    modulosConsulta: soloConsulta(modulos),
     tokenVersion: fila.token_version,
     debeCambiarPassword: fila.debe_cambiar_password,
   };

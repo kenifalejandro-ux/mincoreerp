@@ -104,7 +104,15 @@ export const crearUsuarioEnTenantSchema = z
     // carné de extranjería y un tercero puede tener pasaporte. Validar "8
     // dígitos" dejaría afuera gente que trabaja en la mina.
     dni: z.string().trim().min(6, "DNI demasiado corto").max(15).optional(),
-    password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres").max(200),
+    // Opcional desde la entrega 3: con correo, la persona define su propia
+    // clave desde la invitación que le llega, y el administrador no elige
+    // ninguna. Sigue siendo obligatoria sin correo (personal de cancha por
+    // DNI), donde no hay a dónde mandar una invitación.
+    password: z
+      .string()
+      .min(8, "La contraseña debe tener al menos 8 caracteres")
+      .max(200)
+      .optional(),
     // grifero / conductor_ruta: los roles de cancha (0085). Se aceptan acá
     // igual que los de oficina -- el alta pasa por el mismo endpoint.
     rol: z.enum(["admin", "operador", "lectura", "grifero", "conductor_ruta"]).optional(),
@@ -112,6 +120,10 @@ export const crearUsuarioEnTenantSchema = z
   .refine((v) => Boolean(v.email) || Boolean(v.dni), {
     message: "Indicá un correo o un DNI: sin ninguno de los dos no podría entrar",
     path: ["email"],
+  })
+  .refine((v) => Boolean(v.email) || Boolean(v.password), {
+    message: "Sin correo hay que ponerle una clave para dictarle",
+    path: ["password"],
   });
 
 export type CrearUsuarioEnTenantInput = z.infer<typeof crearUsuarioEnTenantSchema>;

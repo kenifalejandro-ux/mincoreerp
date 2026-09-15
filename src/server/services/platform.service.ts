@@ -22,6 +22,7 @@ import { logger } from "../config/logger";
 import { AppError } from "../shared/middlewares/error.middleware";
 import {
   crearUsuarioService,
+  invitarAlPerfilService,
   revocarSesionesService,
   aPublico,
   type UsuarioPublico,
@@ -370,11 +371,16 @@ export async function listarUsuariosTenantService(tenantId: string): Promise<Usu
   });
 }
 
+/** Cómo quedó el acceso de la persona recién dada de alta. Lo mira la
+ *  pantalla para saber qué mostrarle al administrador: una clave para dictar,
+ *  o nada, porque la persona la define sola desde su correo. */
+export type ModoAlta = "clave-temporal" | "invitacion-enviada";
+
 export async function crearUsuarioEnTenantService(
   tenantId: string,
   input: CrearUsuarioEnTenantInput,
   contexto: ContextoAuditoria
-): Promise<UsuarioPublico> {
+): Promise<UsuarioPublico & { modo: ModoAlta }> {
   const tenant = await pool.query(`SELECT id FROM tenants WHERE id = $1`, [tenantId]);
   if (tenant.rows.length === 0) {
     throw new AppError(404, "Tenant no encontrado");
@@ -405,15 +411,28 @@ export async function crearUsuarioEnTenantService(
     throw err;
   });
 
+  // Alta por invitación (entrega 3): con correo y sin clave elegida por el
+  // administrador, la persona define la suya desde el enlace que le llega. El
+  // administrador ve lo mismo trabaje o no esa persona en otra empresa -- ver
+  // invitarAlPerfilService.
+  const modo: ModoAlta = usuario.email && !input.password ? "invitacion-enviada" : "clave-temporal";
+  if (modo === "invitacion-enviada") {
+    await invitarAlPerfilService({
+      email: usuario.email!,
+      nombre: usuario.nombre,
+      tenantId,
+    });
+  }
+
   await registrarAuditoria({
     accion: "crear_usuario",
     tenantId,
     usuarioId: usuario.id,
-    detalle: { email: usuario.email, rol: usuario.rol },
+    detalle: { email: usuario.email, rol: usuario.rol, modo },
     contexto,
   });
 
-  return aPublico(usuario);
+  return { ...aPublico(usuario), modo };
 }
 
 /** Verifica que el usuario exista Y pertenezca al tenant indicado — con

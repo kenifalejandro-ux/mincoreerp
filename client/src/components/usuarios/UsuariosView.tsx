@@ -26,6 +26,7 @@ import {
   generarClaveTemporal,
   listarUsuariosApi,
   resetearClaveApi,
+  type ModoAlta,
   type ModoReseteo,
   type RolUsuario,
   type UsuarioDelTenant,
@@ -99,6 +100,12 @@ export default function UsuariosView() {
   // El otro final posible del reseteo: la persona tiene cuenta y elige ella
   // su clave, el admin no la ve (ver ModalResetearClave).
   const [correoEnviadoA, setCorreoEnviadoA] = useState<UsuarioDelTenant | null>(null);
+  // Y el del alta con correo: no hay clave que dictar, se le mandó una
+  // invitación para que defina la suya.
+  const [invitacionEnviadaA, setInvitacionEnviadaA] = useState<{
+    nombre: string;
+    correo: string;
+  } | null>(null);
 
   const cargar = useCallback(async () => {
     try {
@@ -260,7 +267,16 @@ export default function UsuariosView() {
           onCerrar={() => setModalAlta(false)}
           onCreado={async (datos) => {
             setModalAlta(false);
-            setClaveParaDictar({ ...datos, esAlta: true });
+            if (datos.modo === "invitacion-enviada") {
+              setInvitacionEnviadaA({ nombre: datos.nombre, correo: datos.identificador });
+            } else {
+              setClaveParaDictar({
+                nombre: datos.nombre,
+                identificador: datos.identificador,
+                clave: datos.clave,
+                esAlta: true,
+              });
+            }
             await cargar();
           }}
         />
@@ -304,6 +320,13 @@ export default function UsuariosView() {
       {correoEnviadoA && (
         <CorreoEnviado usuario={correoEnviadoA} onCerrar={() => setCorreoEnviadoA(null)} />
       )}
+
+      {invitacionEnviadaA && (
+        <InvitacionEnviada
+          datos={invitacionEnviadaA}
+          onCerrar={() => setInvitacionEnviadaA(null)}
+        />
+      )}
     </div>
   );
 }
@@ -319,6 +342,7 @@ function ModalAlta({
     nombre: string;
     identificador: string;
     clave: string;
+    modo: ModoAlta;
   }) => void | Promise<void>;
 }) {
   // El DNI primero, y el correo abajo marcado como opcional: el caso masivo
@@ -333,6 +357,10 @@ function ModalAlta({
   const [error, setError] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
 
+  // Con correo, la clave la define la persona desde su invitación: no hay
+  // clave que mostrar ni dictar (ver §10 del documento de arquitectura).
+  const porInvitacion = email.trim().length > 0;
+
   const enviar = async (e: React.FormEvent) => {
     e.preventDefault();
     if (enviando) return;
@@ -343,17 +371,21 @@ function ModalAlta({
     setEnviando(true);
     setError(null);
     try {
-      await crearUsuarioApi({
+      // Con correo no se manda clave: la define la persona desde la
+      // invitación que le llega. Mandarla igual, "por las dudas", volvería a
+      // dejar al administrador sabiendo con qué clave firma su gente.
+      const creado = await crearUsuarioApi({
         nombre: nombre.trim(),
         dni: dni.trim() || undefined,
         email: email.trim() || undefined,
-        password: clave,
+        password: porInvitacion ? undefined : clave,
         rol,
       });
       await onCreado({
         nombre: nombre.trim(),
         identificador: email.trim() || dni.trim(),
         clave,
+        modo: creado.modo,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo crear el usuario.");
@@ -430,30 +462,37 @@ function ModalAlta({
           />
         </fieldset>
 
-        <Campo
-          id="usuario-clave"
-          etiqueta="Clave temporal"
-          ayuda="Se la vas a dictar a la persona. El sistema la obliga a cambiarla apenas entre."
-        >
-          <div className="flex gap-2">
-            <input
-              id="usuario-clave"
-              type="text"
-              required
-              minLength={8}
-              className={`${ESTILO_INPUT} font-mono`}
-              value={clave}
-              onChange={(e) => setClave(e.target.value)}
-            />
-            <button
-              type="button"
-              onClick={() => setClave(generarClaveTemporal())}
-              className="px-3 py-2 text-xs font-bold text-slate-700 border border-slate-200 rounded-xl hover:bg-slate-50 whitespace-nowrap"
-            >
-              Otra
-            </button>
-          </div>
-        </Campo>
+        {porInvitacion ? (
+          <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+            No le pongas clave: le llega un correo para que elija la suya. Nadie de la empresa la ve
+            ni la puede elegir por ella — así su firma en un vale significa algo.
+          </p>
+        ) : (
+          <Campo
+            id="usuario-clave"
+            etiqueta="Clave temporal"
+            ayuda="Se la vas a dictar a la persona. El sistema la obliga a cambiarla apenas entre."
+          >
+            <div className="flex gap-2">
+              <input
+                id="usuario-clave"
+                type="text"
+                required
+                minLength={8}
+                className={`${ESTILO_INPUT} font-mono`}
+                value={clave}
+                onChange={(e) => setClave(e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => setClave(generarClaveTemporal())}
+                className="px-3 py-2 text-xs font-bold text-slate-700 border border-slate-200 rounded-xl hover:bg-slate-50 whitespace-nowrap"
+              >
+                Otra
+              </button>
+            </div>
+          </Campo>
+        )}
 
         {error && <p className="text-sm font-semibold text-red-700">{error}</p>}
 
@@ -571,6 +610,42 @@ function ModalResetearClave({
           </BotonPrincipal>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// ── El aviso del alta con correo ─────────────────────────────────────────
+
+function InvitacionEnviada({
+  datos,
+  onCerrar,
+}: {
+  datos: { nombre: string; correo: string };
+  onCerrar: () => void;
+}) {
+  return (
+    <Modal titulo="Usuario creado" onCerrar={onCerrar}>
+      <div className="p-6 space-y-4">
+        <p className="text-sm text-slate-700">
+          <strong className="font-bold text-slate-900">{datos.nombre}</strong> ya figura en tu
+          empresa. Le llegó un correo a{" "}
+          <strong className="font-bold text-slate-900 break-all">{datos.correo}</strong> para que
+          defina su contraseña.
+        </p>
+        <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+          Hasta que lo haga no puede entrar. El enlace vence en 7 días; si se le pasa, entrá acá y
+          resetéale la clave para mandarle uno nuevo.
+        </p>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onCerrar}
+            className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold rounded-xl"
+          >
+            Entendido
+          </button>
+        </div>
+      </div>
     </Modal>
   );
 }
@@ -714,19 +789,6 @@ function ClaveParaDictar({
           Esta clave no se vuelve a mostrar. Si se pierde, se resetea de nuevo — nadie, ni vos ni el
           soporte, puede verla después.
         </p>
-
-        {/* La clave de quien entra con correo es de la PERSONA, no de esta
-            empresa (migración 0087): si ya usa MinCore en otra, la suya
-            sigue siendo la que vale y esta no le sirve. Acá no se puede
-            saber cuál de los dos casos es --averiguarlo sería averiguar
-            dónde más trabaja-- así que se dicen los dos. */}
-        {datos.esAlta && datos.identificador.includes("@") && (
-          <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
-            Si esta persona ya entra a MinCore con ese correo en otra empresa, sigue usando la clave
-            que ya tiene: esta no le hace falta. Si no le funciona ninguna, que entre con
-            “¿Olvidaste tu contraseña?”.
-          </p>
-        )}
 
         <div className="flex justify-end gap-2">
           <button

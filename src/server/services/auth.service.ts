@@ -63,6 +63,12 @@ export interface UsuarioPayload {
    *  hecho desde el panel de plataforma tarda hasta el próximo login/
    *  refresh en reflejarse; no se re-consulta en cada request. */
   modulosPermitidos: string[];
+  /** Los módulos de `modulosPermitidos` en los que este perfil NO puede
+   *  escribir: los ve y los exporta, nada más (migración 0089, las
+   *  "autonomías" que pidió Kenif). Ausente en los JWT emitidos antes de esa
+   *  migración, y ausente significa "puede operar en todos" -- que es lo que
+   *  valía hasta entonces. */
+  modulosConsulta?: string[];
   /** Comparado contra usuarios.token_version en cada request (ver
    *  authMiddleware): incrementar esa columna revoca todos los JWT emitidos
    *  antes del incremento, sin depender de que Redis esté disponible. */
@@ -133,8 +139,27 @@ export async function obtenerModulosPermitidos(
   rol: UsuarioPayload["rol"],
   db: Pool | PoolClient = pool
 ): Promise<string[]> {
+  return (await obtenerModulosConNivel(usuarioId, tenantId, rol, db)).map((m) => m.modulo);
+}
+
+export interface ModuloConNivel {
+  modulo: string;
+  nivel: "operar" | "consultas";
+}
+
+/** Los módulos que este perfil ve, con qué nivel (migración 0089).
+ *
+ *  Es la misma consulta de siempre más la columna `nivel`; `obtenerModulos
+ *  Permitidos` quedó como la vista corta de esto, para no tocar a sus veinte
+ *  llamadores. */
+export async function obtenerModulosConNivel(
+  usuarioId: string,
+  tenantId: string,
+  rol: UsuarioPayload["rol"],
+  db: Pool | PoolClient = pool
+): Promise<ModuloConNivel[]> {
   const result = await db.query(
-    `SELECT um.modulo, tm.estado, tm.rollout_porcentaje AS "rolloutPorcentaje"
+    `SELECT um.modulo, um.nivel, tm.estado, tm.rollout_porcentaje AS "rolloutPorcentaje"
      FROM usuario_modulos um
      JOIN tenant_modulos tm ON tm.tenant_id = $2 AND tm.modulo = um.modulo
      WHERE um.usuario_id = $1`,
@@ -152,7 +177,17 @@ export async function obtenerModulosPermitidos(
       if (fila.estado === "deshabilitado") return false;
       return enBucketDeRollout(tenantId, fila.modulo, usuarioId, fila.rolloutPorcentaje ?? 0);
     })
-    .map((fila) => fila.modulo);
+    .map((fila) => ({
+      modulo: fila.modulo as string,
+      nivel: fila.nivel as "operar" | "consultas",
+    }));
+}
+
+/** Los módulos del perfil en los que solo puede consultar. Va al JWT junto a
+ *  `modulosPermitidos`: quien decide si una escritura pasa es el router del
+ *  ERP, en cada request, sin volver a la base. */
+export function soloConsulta(modulos: ModuloConNivel[]): string[] {
+  return modulos.filter((m) => m.nivel === "consultas").map((m) => m.modulo);
 }
 
 /** Solo para exponer al cliente: nunca se envía tokenVersion ni sessionId
@@ -372,6 +407,8 @@ export async function emitirSesionParaPerfil(
     throw new AppError(401, "Credenciales inválidas");
   }
 
+  const modulos = await obtenerModulosConNivel(fila.id, fila.tenant_id, fila.rol);
+
   const usuario: UsuarioPayload = {
     id: fila.id,
     cuentaId: fila.cuenta_id,
@@ -382,7 +419,8 @@ export async function emitirSesionParaPerfil(
     email: fila.cuenta_email ?? fila.email,
     dni: fila.dni,
     rol: fila.rol,
-    modulosPermitidos: await obtenerModulosPermitidos(fila.id, fila.tenant_id, fila.rol),
+    modulosPermitidos: modulos.map((m) => m.modulo),
+    modulosConsulta: soloConsulta(modulos),
     tokenVersion: fila.token_version,
     debeCambiarPassword: fila.cuenta_id ? fila.cuenta_debe_cambiar : fila.debe_cambiar_password,
   };
@@ -719,6 +757,12 @@ export async function refrescarTokenService(
     throw new AppError(401, "Sesión expirada, inicia sesión nuevamente");
   }
 
+  const modulosDelRefresh = await obtenerModulosConNivel(
+    filaToken.usuario_id,
+    filaToken.tenant_id,
+    filaUsuario.rol
+  );
+
   const usuario: UsuarioPayload = {
     id: filaToken.usuario_id,
     cuentaId: filaUsuario.cuenta_id,
@@ -727,11 +771,8 @@ export async function refrescarTokenService(
     email: filaUsuario.cuenta_email ?? filaUsuario.email,
     dni: filaUsuario.dni,
     rol: filaUsuario.rol,
-    modulosPermitidos: await obtenerModulosPermitidos(
-      filaToken.usuario_id,
-      filaToken.tenant_id,
-      filaUsuario.rol
-    ),
+    modulosPermitidos: modulosDelRefresh.map((m) => m.modulo),
+    modulosConsulta: soloConsulta(modulosDelRefresh),
     tokenVersion: filaUsuario.token_version,
     debeCambiarPassword: filaUsuario.cuenta_id
       ? filaUsuario.cuenta_debe_cambiar
@@ -938,7 +979,10 @@ export async function cambiarEmpresaService(
  *  persona ya estaba en otra empresa). */
 async function asegurarCuenta(
   email: string,
-  passwordHash: string,
+  /** null = alta por invitación: la cuenta queda sin clave y la define la
+   *  persona desde el enlace que le llega. Sin clave no se puede entrar (ver
+   *  loginConCorreo), así que una invitación sin aceptar no es un acceso. */
+  passwordHash: string | null,
   db: Pool | PoolClient = pool
 ): Promise<string> {
   const creada = await db.query(
@@ -961,7 +1005,10 @@ export async function crearUsuarioService(
     /** Opcional desde 0084: puede venir DNI en su lugar. */
     email?: string;
     dni?: string;
-    password: string;
+    /** Opcional desde la entrega 3: con correo, la clave la define la persona
+     *  desde la invitación. Sin correo es obligatoria (lo valida el schema):
+     *  el personal de cancha no tiene a dónde recibir un enlace. */
+    password?: string;
     rol?: UsuarioPayload["rol"];
   },
   // A diferencia de antes, este parámetro dejó de ser opcional en la
@@ -974,8 +1021,15 @@ export async function crearUsuarioService(
   // funcional.
   db: Pool | PoolClient = pool
 ): Promise<UsuarioPayload> {
-  const passwordHash = await bcrypt.hash(input.password, 12);
+  const passwordHash = input.password ? await bcrypt.hash(input.password, 12) : null;
   const emailNormalizado = input.email?.trim().toLowerCase() ?? null;
+
+  if (!passwordHash && !emailNormalizado) {
+    // El schema ya lo impide; acá por si alguna vez se llama al servicio
+    // desde otro lado. Sin clave y sin correo, el alta crearía un acceso que
+    // no sirve para entrar ni se puede recuperar.
+    throw new AppError(400, "Sin correo hay que ponerle una clave para dictarle");
+  }
 
   // Con correo, la clave vive en la CUENTA (0087); el perfil queda sin clave
   // propia. Sin correo (operativo por DNI) sigue como antes: la clave es del
@@ -1146,6 +1200,167 @@ async function enviarCorreoRecuperacion(params: {
     });
   } catch (err) {
     logger.error({ err }, "No se pudo enviar el correo de recuperación de contraseña");
+  }
+}
+
+// ═══════════════ INVITACIÓN AL DAR DE ALTA (entrega 3) ══════════════════
+
+/** Una invitación dura una semana, no una hora como la recuperación: la pide
+ *  un administrador, no la persona, y entre que la da de alta y la persona
+ *  abre su correo puede pasar un fin de semana. */
+const INVITACION_HORAS = 24 * 7;
+
+/** Le avisa a la persona que tiene acceso a una empresa.
+ *
+ *  Dos correos distintos según su situación, y esa diferencia NO le llega al
+ *  administrador, que ve siempre lo mismo: si supiera cuál de los dos se
+ *  mandó, sabría si esa persona ya usa MinCore en otra empresa.
+ *
+ *  - Sin clave todavía (persona nueva): enlace para definirla.
+ *  - Con clave (ya trabaja en otra empresa): aviso, sin enlace y sin token.
+ *    Entra con la clave que ya tiene; mandarle un enlace de cambio de clave
+ *    por un alta ajena sería pedirle que toque la clave de sus otras empresas.
+ */
+export async function invitarAlPerfilService(params: {
+  email: string;
+  nombre: string;
+  tenantId: string;
+}): Promise<void> {
+  try {
+    const cuenta = await buscarCuentaPorEmail(params.email);
+    if (!cuenta || !cuenta.activo) return;
+
+    const tenant = (
+      await pool.query(
+        `SELECT id, nombre, slug, dominio_personalizado AS "dominioPersonalizado"
+           FROM tenants WHERE id = $1`,
+        [params.tenantId]
+      )
+    ).rows[0];
+    if (!tenant) return;
+
+    if (cuenta.password_hash) {
+      await enviarCorreoAccesoNuevo({
+        nombre: params.nombre,
+        email: cuenta.email,
+        tenant,
+      });
+      return;
+    }
+
+    const tokenPlano = randomBytes(48).toString("hex");
+    await pool.query(
+      `INSERT INTO reset_tokens (cuenta_id, token_hash, expira_en)
+       VALUES ($1, $2, now() + ($3 || ' hours')::interval)`,
+      [cuenta.id, hashRefreshToken(tokenPlano), String(INVITACION_HORAS)]
+    );
+
+    await enviarCorreoInvitacion({
+      nombre: params.nombre,
+      email: cuenta.email,
+      tenant,
+      tokenPlano,
+    });
+  } catch (err) {
+    // Un alta no se cae porque el correo no salga: la persona ya tiene su
+    // perfil, y el administrador puede reenviarle la invitación.
+    logger.error({ err }, "No se pudo enviar la invitación al perfil nuevo");
+  }
+}
+
+type TenantConNombre = TenantParaRecuperacion & { nombre: string };
+
+async function enviarCorreoInvitacion(params: {
+  nombre: string;
+  email: string;
+  tenant: TenantConNombre;
+  tokenPlano: string;
+}) {
+  if (!transporter || !emailConfigured) {
+    logger.warn("No se pudo enviar la invitación: SMTP no configurado");
+    return;
+  }
+
+  const link = `${construirUrlTenant(params.tenant)}/reset-password?token=${params.tokenPlano}`;
+  const nombreSeguro = escapeHtml(params.nombre);
+  const empresaSegura = escapeHtml(params.tenant.nombre);
+
+  const text = [
+    `Hola ${params.nombre},`,
+    "",
+    `Te dieron de alta en MinCore ERP para ${params.tenant.nombre}.`,
+    "Definí tu contraseña acá (el enlace vence en 7 días):",
+    link,
+    "",
+    "Tu contraseña es tuya: nadie de la empresa la ve ni la puede elegir por vos.",
+  ].join("\n");
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
+      <h2 style="margin-bottom: 16px;">Te dieron acceso a MinCore ERP</h2>
+      <p>Hola ${nombreSeguro},</p>
+      <p>Te dieron de alta en MinCore ERP para <strong>${empresaSegura}</strong>. Definí tu contraseña acá (el enlace vence en 7 días):</p>
+      <p><a href="${link}" style="color:#0f172a;">${link}</a></p>
+      <p>Tu contraseña es tuya: nadie de la empresa la ve ni la puede elegir por vos.</p>
+    </div>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: `"MinCore ERP" <${env.emailUser}>`,
+      to: params.email,
+      subject: `Definí tu contraseña - ${params.tenant.nombre}`,
+      text,
+      html,
+    });
+  } catch (err) {
+    logger.error({ err }, "No se pudo enviar el correo de invitación");
+  }
+}
+
+/** Para quien YA tiene clave: no se le manda ningún enlace, solo el aviso de
+ *  que ahora también entra a esta empresa. */
+async function enviarCorreoAccesoNuevo(params: {
+  nombre: string;
+  email: string;
+  tenant: TenantConNombre;
+}) {
+  if (!transporter || !emailConfigured) return;
+
+  const url = construirUrlTenant(params.tenant);
+  const nombreSeguro = escapeHtml(params.nombre);
+  const empresaSegura = escapeHtml(params.tenant.nombre);
+
+  const text = [
+    `Hola ${params.nombre},`,
+    "",
+    `Ahora también tenés acceso a ${params.tenant.nombre} en MinCore ERP.`,
+    "Entrá con tu correo y la contraseña que ya usás:",
+    url,
+    "",
+    "Si no esperabas esto, avisale a tu administrador.",
+  ].join("\n");
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; color: #111827; line-height: 1.6;">
+      <h2 style="margin-bottom: 16px;">Tenés acceso a una empresa más</h2>
+      <p>Hola ${nombreSeguro},</p>
+      <p>Ahora también tenés acceso a <strong>${empresaSegura}</strong> en MinCore ERP. Entrá con tu correo y la contraseña que ya usás:</p>
+      <p><a href="${url}" style="color:#0f172a;">${url}</a></p>
+      <p>Si no esperabas esto, avisale a tu administrador.</p>
+    </div>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: `"MinCore ERP" <${env.emailUser}>`,
+      to: params.email,
+      subject: `Tenés acceso a ${params.tenant.nombre} - MinCore ERP`,
+      text,
+      html,
+    });
+  } catch (err) {
+    logger.error({ err }, "No se pudo enviar el aviso de acceso nuevo");
   }
 }
 

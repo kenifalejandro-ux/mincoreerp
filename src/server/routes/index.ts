@@ -5,7 +5,7 @@ import { Router } from "express";
 import { MODULOS } from "../../modules/registry";
 import { authMiddleware } from "../shared/middlewares/auth.middleware";
 import { tenantMiddleware } from "../shared/middlewares/tenant.middleware";
-import { requireModulo } from "../shared/middlewares/modulo.middleware";
+import { requireModulo, requireNivelParaEscribir } from "../shared/middlewares/modulo.middleware";
 import { requireCuota } from "../shared/middlewares/cuota.middleware";
 import erpRateLimiter from "../middleware/erpRateLimiter";
 import { tenantMetricsMiddleware } from "../shared/middlewares/tenantMetrics.middleware";
@@ -48,8 +48,19 @@ export function createApiRouter() {
   // no "te quedaste sin cupo" — el segundo mensaje admitiría que el módulo
   // existe y solo está lleno. Es passthrough para los módulos que no
   // declaran `cuota` en el registry.
+  //
+  // requireNivelParaEscribir va entre los dos: quien tiene el módulo solo
+  // para consultar (migración 0089) pasa requireModulo pero no escribe. Antes
+  // de requireCuota porque una escritura que igual va a ser rechazada no
+  // tiene por qué consumir ni consultar cupo.
   for (const modulo of MODULOS) {
-    router.use(`/${modulo.id}`, requireModulo(modulo.id), requireCuota(modulo.id), modulo.router);
+    router.use(
+      `/${modulo.id}`,
+      requireModulo(modulo.id),
+      requireNivelParaEscribir(modulo.id),
+      requireCuota(modulo.id),
+      modulo.router
+    );
   }
 
   return router;

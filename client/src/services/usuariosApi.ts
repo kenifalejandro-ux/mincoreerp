@@ -44,20 +44,35 @@ export async function listarUsuariosApi(): Promise<UsuarioDelTenant[]> {
   return data.data ?? [];
 }
 
+/** Cómo quedó el acceso de quien se acaba de dar de alta:
+ *
+ *  - `invitacion-enviada`: tiene correo, así que define su propia clave desde
+ *    el enlace que le llega. El administrador no elige ninguna ni la ve.
+ *  - `clave-temporal`: personal de cancha, entra con DNI. La clave se la
+ *    dicta el administrador, porque no hay correo a donde mandar nada. */
+export type ModoAlta = "clave-temporal" | "invitacion-enviada";
+
 export async function crearUsuarioApi(input: {
   nombre: string;
   email?: string;
   dni?: string;
-  password: string;
+  /** Solo para el alta por DNI: con correo, la clave la define la persona. */
+  password?: string;
   rol: RolUsuario;
-}): Promise<UsuarioDelTenant> {
-  return leerRespuesta(
+}): Promise<UsuarioDelTenant & { modo: ModoAlta }> {
+  const creado = await leerRespuesta(
     await apiFetch("/api/erp/usuarios", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(input),
     })
   );
+  // Un servidor viejo (sin la entrega 3) no manda `modo` y siempre pone la
+  // clave que se le mandó.
+  return {
+    ...creado,
+    modo: creado.modo === "invitacion-enviada" ? "invitacion-enviada" : "clave-temporal",
+  };
 }
 
 /** Qué pasó con el reseteo (migración 0087):
