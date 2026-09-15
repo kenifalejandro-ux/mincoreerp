@@ -10,6 +10,7 @@ import { requireCuota } from "../shared/middlewares/cuota.middleware";
 import erpRateLimiter from "../middleware/erpRateLimiter";
 import { tenantMetricsMiddleware } from "../shared/middlewares/tenantMetrics.middleware";
 import { createUsuariosTenantRouter } from "./usuariosTenant";
+import { createAdministracionRouter } from "./administracion";
 // Se activa solo con importarse (setInterval + .unref()). Va acá y no en
 // las rutas de plataforma porque quien LLENA idempotency_keys son los
 // módulos de negocio que se montan abajo (migración 0044).
@@ -38,6 +39,11 @@ export function createApiRouter() {
   // requireModulo/requireCuota -- pero adentro de authMiddleware,
   // tenantMiddleware y el rate limit, como cualquier ruta de negocio.
   router.use("/usuarios", createUsuariosTenantRouter());
+
+  // El menú Administración (log de eventos, órdenes) va por el mismo camino
+  // y por el mismo motivo: administrar la propia gente no es un módulo que se
+  // contrate.
+  router.use("/administracion", createAdministracionRouter());
 
   // Cada módulo se monta bajo /<id> — agregar un módulo nuevo es agregarlo
   // al registry (ver docs/adr/0002-contrato-de-modulo.md), no tocar este

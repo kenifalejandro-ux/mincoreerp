@@ -13,6 +13,8 @@
 
 import { apiFetch } from "./apiClient";
 
+export type EstadoPerfil = "activo" | "inactivo" | "bloqueado";
+
 export interface UsuarioDelTenant {
   id: string;
   nombre: string;
@@ -21,7 +23,13 @@ export interface UsuarioDelTenant {
   email: string | null;
   dni: string | null;
   rol: string;
+  /** La copia booleana de `estado`, que el servidor mantiene al día. */
   activo: boolean;
+  /** activo / inactivo (lo dio de baja un admin) / bloqueado (se le trabó la
+   *  clave por intentos fallidos). Migración 0090. */
+  estado: EstadoPerfil;
+  celular: string | null;
+  bloqueadoEn: string | null;
 }
 
 export type RolUsuario = "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta";
@@ -103,16 +111,68 @@ export async function resetearClaveApi(
   return { modo: data.modo === "correo-enviado" ? "correo-enviado" : "clave-temporal" };
 }
 
+/** El motivo es obligatorio para cualquier estado que no sea 'activo': dejar
+ *  a alguien afuera del sistema se explica. */
 export async function cambiarEstadoUsuarioApi(
   usuarioId: string,
-  activo: boolean,
+  estado: EstadoPerfil,
   motivo?: string
 ): Promise<void> {
   await leerRespuesta(
     await apiFetch(`/api/erp/usuarios/${usuarioId}/estado`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ activo, ...(motivo ? { motivo } : {}) }),
+      body: JSON.stringify({ estado, ...(motivo ? { motivo } : {}) }),
+    })
+  );
+}
+
+/** Nombre y celular. El correo no se edita: es la identidad de la persona en
+ *  toda la plataforma, y cambiarlo sería moverla a otra cuenta. */
+export async function actualizarUsuarioApi(
+  usuarioId: string,
+  cambios: { nombre?: string; celular?: string | null }
+): Promise<UsuarioDelTenant> {
+  return leerRespuesta(
+    await apiFetch(`/api/erp/usuarios/${usuarioId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cambios),
+    })
+  );
+}
+
+// ── Autonomías (Administración → Configuración) ──────────────────────────
+
+export type NivelModulo = "operar" | "consultas";
+
+export interface PermisoDeModulo {
+  modulo: string;
+  asignado: boolean;
+  nivel: NivelModulo;
+}
+
+export interface PermisosDeUsuario {
+  usuarioId: string;
+  nombre: string;
+  rol: RolUsuario;
+  /** Solo los módulos que la empresa tiene contratados. */
+  modulos: PermisoDeModulo[];
+}
+
+export async function permisosDeUsuarioApi(usuarioId: string): Promise<PermisosDeUsuario> {
+  return leerRespuesta(await apiFetch(`/api/erp/usuarios/${usuarioId}/permisos`));
+}
+
+export async function guardarPermisosApi(
+  usuarioId: string,
+  cambio: { rol?: RolUsuario; modulos: PermisoDeModulo[]; motivo?: string }
+): Promise<{ recorta: boolean }> {
+  return leerRespuesta(
+    await apiFetch(`/api/erp/usuarios/${usuarioId}/permisos`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cambio),
     })
   );
 }

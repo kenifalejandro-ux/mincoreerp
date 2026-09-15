@@ -587,7 +587,15 @@ async function loginConDni(input: LoginInput): Promise<ResultadoAutenticacion> {
 
   const tenant = await resolverTenantActivoPorSlug(input.tenantSlug);
 
-  let fila: { id: string; tenant_id: string; password_hash: string | null } | undefined;
+  let fila:
+    | {
+        id: string;
+        tenant_id: string;
+        password_hash: string | null;
+        estado: "activo" | "inactivo" | "bloqueado";
+        intentos_fallidos: number;
+      }
+    | undefined;
   if (tenant) {
     try {
       fila = await withTenant(tenant.id, async (client) => {
@@ -596,9 +604,9 @@ async function loginConDni(input: LoginInput): Promise<ResultadoAutenticacion> {
         // la del DNI usaría la clave vieja del perfil en vez de la de su
         // cuenta.
         const result = await client.query(
-          `SELECT id, tenant_id, password_hash
+          `SELECT id, tenant_id, password_hash, estado, intentos_fallidos
              FROM usuarios
-            WHERE tenant_id = $1 AND activo = true AND dni = $2 AND cuenta_id IS NULL`,
+            WHERE tenant_id = $1 AND dni = $2 AND cuenta_id IS NULL`,
           [tenant.id, input.identificador]
         );
         return result.rows[0];
@@ -611,12 +619,73 @@ async function loginConDni(input: LoginInput): Promise<ResultadoAutenticacion> {
   }
 
   const claveValida = await bcrypt.compare(input.password, fila?.password_hash ?? HASH_SEÑUELO);
-  if (!fila || !claveValida) {
+
+  if (fila && !claveValida) {
+    await contarIntentoFallido(fila);
+  }
+
+  if (!fila || !claveValida || fila.estado !== "activo") {
+    // El mismo 401 esté bloqueado, dado de baja o con la clave mal: decirle
+    // "estás bloqueado" a quien está probando claves le confirma que ese DNI
+    // existe. Quien se bloqueó de verdad lo va a saber por su supervisor,
+    // que es quien lo desbloquea.
     throw new AppError(401, "Credenciales inválidas");
   }
 
+  if (fila.intentos_fallidos > 0) await limpiarIntentosFallidos(fila.id, fila.tenant_id);
+
   const sesion = await emitirSesionParaPerfil(fila.id, fila.tenant_id);
   return { tipo: "sesion", ...sesion };
+}
+
+/** Cuántos errores seguidos de clave bloquean un acceso de cancha.
+ *
+ *  Diez y no tres: el que entra acá es un grifero con las manos sucias en una
+ *  tablet compartida, a las cinco de la mañana. Bloquearlo al tercer intento
+ *  significa que no puede cargar vales hasta que alguien de oficina lo
+ *  desbloquee, y el resultado real de eso no es más seguridad: es que el
+ *  turno cargue todo con el usuario de otro. Diez frena a quien prueba claves
+ *  y no al que se equivoca. */
+const INTENTOS_ANTES_DE_BLOQUEAR = 10;
+
+/** Solo para accesos por DNI. La clave de quien entra con correo es de su
+ *  CUENTA, no de un perfil: contar ahí los errores bloquearía el acceso a una
+ *  empresa por intentos que pueden venir de otra. Para esas, el freno es el
+ *  rate limit por correo (middleware/loginEmailRateLimiter.ts). */
+async function contarIntentoFallido(fila: {
+  id: string;
+  tenant_id: string;
+  intentos_fallidos: number;
+}): Promise<void> {
+  try {
+    await withTenant(fila.tenant_id, (client) =>
+      client.query(
+        `UPDATE usuarios
+            SET intentos_fallidos = intentos_fallidos + 1,
+                estado = CASE WHEN intentos_fallidos + 1 >= $3 THEN 'bloqueado' ELSE estado END,
+                bloqueado_en = CASE WHEN intentos_fallidos + 1 >= $3 THEN now() ELSE bloqueado_en END
+          WHERE id = $1 AND tenant_id = $2 AND estado = 'activo'`,
+        [fila.id, fila.tenant_id, INTENTOS_ANTES_DE_BLOQUEAR]
+      )
+    );
+  } catch (err) {
+    // Contar intentos no puede voltear un login; si falla, el peor caso es
+    // que ese intento no se cuente.
+    logger.warn({ err }, "No se pudo contar el intento fallido de login por DNI");
+  }
+}
+
+async function limpiarIntentosFallidos(usuarioId: string, tenantId: string): Promise<void> {
+  try {
+    await withTenant(tenantId, (client) =>
+      client.query(`UPDATE usuarios SET intentos_fallidos = 0 WHERE id = $1 AND tenant_id = $2`, [
+        usuarioId,
+        tenantId,
+      ])
+    );
+  } catch (err) {
+    logger.warn({ err }, "No se pudieron limpiar los intentos fallidos");
+  }
 }
 
 /** "Continuar con Google": el ID token lo emite Google (GIS en el navegador),

@@ -102,6 +102,7 @@ import {
   listarUsuariosTenantService,
   crearUsuarioEnTenantService,
   cambiarEstadoUsuarioService,
+  estadoDesdeActivo,
   obtenerModulosUsuarioService,
   actualizarModulosUsuarioService,
   type ConfiguracionModulo,
@@ -1771,7 +1772,7 @@ export function createPlatformRouter() {
         const usuario = await cambiarEstadoUsuarioService(
           req.params.tenantId,
           req.params.usuarioId,
-          activo,
+          estadoDesdeActivo(activo),
           motivo,
           contextoDe(req)
         );

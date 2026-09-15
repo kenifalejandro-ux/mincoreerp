@@ -21,6 +21,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "../../context/AuthContext";
 import {
+  actualizarUsuarioApi,
   cambiarEstadoUsuarioApi,
   crearUsuarioApi,
   generarClaveTemporal,
@@ -88,6 +89,7 @@ export default function UsuariosView() {
   const [modalAlta, setModalAlta] = useState(false);
   const [usuarioAResetear, setUsuarioAResetear] = useState<UsuarioDelTenant | null>(null);
   const [usuarioADarDeBaja, setUsuarioADarDeBaja] = useState<UsuarioDelTenant | null>(null);
+  const [usuarioAEditar, setUsuarioAEditar] = useState<UsuarioDelTenant | null>(null);
   const [enviando, setEnviando] = useState(false);
 
   // Lo único que se muestra una vez y no se puede recuperar.
@@ -133,6 +135,8 @@ export default function UsuariosView() {
     );
   });
 
+  const activos = usuarios.filter((u) => u.estado === "activo").length;
+
   if (cargando) return <div className="p-20 text-center text-slate-500">Cargando...</div>;
 
   return (
@@ -140,7 +144,10 @@ export default function UsuariosView() {
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-8">
         <div>
           <h1 className="text-3xl font-bold text-slate-800">Usuarios</h1>
-          <p className="text-slate-600">Quién puede entrar al sistema, y con qué permisos</p>
+          <p className="text-slate-600">
+            {usuarios.length} {usuarios.length === 1 ? "persona" : "personas"} en tu empresa
+            {activos !== usuarios.length && `, ${activos} ${activos === 1 ? "activa" : "activas"}`}
+          </p>
         </div>
         <button
           onClick={() => setModalAlta(true)}
@@ -177,7 +184,10 @@ export default function UsuariosView() {
                 entra con
               </th>
               <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-widest">
-                rol
+                celular
+              </th>
+              <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-widest">
+                tipo de usuario
               </th>
               <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-widest">
                 estado
@@ -204,22 +214,52 @@ export default function UsuariosView() {
                     </span>
                   )}
                 </td>
+                <td className="p-5 text-sm text-slate-600">
+                  {u.celular ? (
+                    <span className="font-mono">{u.celular}</span>
+                  ) : (
+                    <span className="text-slate-400">—</span>
+                  )}
+                </td>
                 <td className="p-5 text-sm font-medium text-slate-700">
                   {ROLES.find((r) => r.valor === u.rol)?.titulo ?? u.rol}
                 </td>
                 <td className="p-5 text-sm">
-                  <span className={`font-bold ${u.activo ? "text-emerald-700" : "text-slate-500"}`}>
-                    {u.activo ? "Activo" : "Dado de baja"}
-                  </span>
+                  <EstadoDelPerfil usuario={u} />
                 </td>
                 <td className="p-5 text-right whitespace-nowrap">
                   <button
                     onClick={() => setUsuarioAResetear(u)}
-                    disabled={!u.activo}
+                    disabled={u.estado === "inactivo"}
                     className="px-3 py-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Resetear clave
                   </button>
+                  <button
+                    onClick={() => setUsuarioAEditar(u)}
+                    className="ml-2 px-3 py-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-all"
+                  >
+                    Editar
+                  </button>
+                  {u.estado === "bloqueado" && (
+                    <button
+                      onClick={async () => {
+                        setEnviando(true);
+                        try {
+                          await cambiarEstadoUsuarioApi(u.id, "activo");
+                          await cargar();
+                        } catch (err) {
+                          setError(err instanceof Error ? err.message : "No se pudo desbloquear.");
+                        } finally {
+                          setEnviando(false);
+                        }
+                      }}
+                      disabled={enviando}
+                      className="ml-2 px-3 py-1.5 text-xs font-bold text-amber-700 hover:bg-amber-50 rounded-lg transition-all disabled:opacity-40"
+                    >
+                      Desbloquear
+                    </button>
+                  )}
                   {u.activo ? (
                     <button
                       onClick={() => setUsuarioADarDeBaja(u)}
@@ -234,7 +274,7 @@ export default function UsuariosView() {
                       onClick={async () => {
                         setEnviando(true);
                         try {
-                          await cambiarEstadoUsuarioApi(u.id, true);
+                          await cambiarEstadoUsuarioApi(u.id, "activo");
                           await cargar();
                         } catch (err) {
                           setError(err instanceof Error ? err.message : "No se pudo reactivar.");
@@ -321,6 +361,17 @@ export default function UsuariosView() {
         <CorreoEnviado usuario={correoEnviadoA} onCerrar={() => setCorreoEnviadoA(null)} />
       )}
 
+      {usuarioAEditar && (
+        <ModalEditarUsuario
+          usuario={usuarioAEditar}
+          onCerrar={() => setUsuarioAEditar(null)}
+          onListo={async () => {
+            setUsuarioAEditar(null);
+            await cargar();
+          }}
+        />
+      )}
+
       {invitacionEnviadaA && (
         <InvitacionEnviada
           datos={invitacionEnviadaA}
@@ -328,6 +379,106 @@ export default function UsuariosView() {
         />
       )}
     </div>
+  );
+}
+
+/** Los tres estados de 0090. El bloqueado se distingue del dado de baja a
+ *  propósito: uno es una decisión de un administrador y el otro es la clave
+ *  que se le trabó a alguien un lunes a la mañana. Mezclarlos deja al
+ *  administrador sin saber cuál de las dos cosas pasó. */
+function EstadoDelPerfil({ usuario }: { usuario: UsuarioDelTenant }) {
+  if (usuario.estado === "bloqueado") {
+    return (
+      <span className="inline-flex flex-col">
+        <span className="font-bold text-amber-700">Bloqueado</span>
+        <span className="text-[11px] text-slate-500">Erró la clave demasiadas veces</span>
+      </span>
+    );
+  }
+  if (usuario.estado === "inactivo") {
+    return <span className="font-bold text-slate-500">Dado de baja</span>;
+  }
+  return <span className="font-bold text-emerald-700">Activo</span>;
+}
+
+// ── Contacto ─────────────────────────────────────────────────────────────
+
+function ModalEditarUsuario({
+  usuario,
+  onCerrar,
+  onListo,
+}: {
+  usuario: UsuarioDelTenant;
+  onCerrar: () => void;
+  onListo: () => void | Promise<void>;
+}) {
+  const [nombre, setNombre] = useState(usuario.nombre);
+  const [celular, setCelular] = useState(usuario.celular ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState(false);
+
+  const enviar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (enviando) return;
+    setEnviando(true);
+    setError(null);
+    try {
+      await actualizarUsuarioApi(usuario.id, {
+        nombre: nombre.trim(),
+        celular: celular.trim() || null,
+      });
+      await onListo();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo guardar.");
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <Modal titulo={`Datos de ${usuario.nombre}`} onCerrar={onCerrar}>
+      <form onSubmit={enviar} className="p-6 space-y-4">
+        <Campo id="editar-nombre" etiqueta="Nombre y apellido">
+          <input
+            id="editar-nombre"
+            type="text"
+            required
+            maxLength={100}
+            className={ESTILO_INPUT}
+            value={nombre}
+            onChange={(e) => setNombre(e.target.value)}
+          />
+        </Campo>
+
+        <Campo
+          id="editar-celular"
+          etiqueta="Celular"
+          ayuda="Para ubicarlo cuando algo de su turno no cierra. Es de esta empresa: no se comparte con otras."
+        >
+          <input
+            id="editar-celular"
+            type="tel"
+            maxLength={30}
+            placeholder="Ej: 987 654 321"
+            className={ESTILO_INPUT}
+            value={celular}
+            onChange={(e) => setCelular(e.target.value)}
+          />
+        </Campo>
+
+        <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+          El correo no se edita: es con lo que esta persona entra a MinCore, acá y en cualquier otra
+          empresa donde trabaje.
+        </p>
+
+        {error && <p className="text-sm font-semibold text-red-700">{error}</p>}
+
+        <div className="flex justify-end gap-2 pt-2">
+          <BotonCancelar onClick={onCerrar} />
+          <BotonPrincipal enviando={enviando}>Guardar</BotonPrincipal>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -703,7 +854,7 @@ function ModalDarDeBaja({
     setEnviando(true);
     setError(null);
     try {
-      await cambiarEstadoUsuarioApi(usuario.id, false, motivo.trim());
+      await cambiarEstadoUsuarioApi(usuario.id, "inactivo", motivo.trim());
       await onListo();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo dar de baja.");

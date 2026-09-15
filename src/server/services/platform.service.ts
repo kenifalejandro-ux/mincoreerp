@@ -351,7 +351,16 @@ export interface UsuarioListado {
   email: string | null;
   dni: string | null;
   rol: string;
+  /** La copia booleana de `estado` que mantiene el trigger de 0090. Se sigue
+   *  devolviendo para no romper a nadie que ya la lea. */
   activo: boolean;
+  /** activo / inactivo (lo dio de baja un admin) / bloqueado (se le trabó la
+   *  clave). Ver migrations/0090. */
+  estado: "activo" | "inactivo" | "bloqueado";
+  /** Del PERFIL, no de la persona: la misma puede tener otro número en otra
+   *  empresa, y es cada empresa la que lo mantiene. */
+  celular: string | null;
+  bloqueadoEn: string | null;
 }
 
 /** Nunca selecciona password_hash — esto lo ve el panel de plataforma, que
@@ -364,7 +373,9 @@ export async function listarUsuariosTenantService(tenantId: string): Promise<Usu
 
   return withTenant(tenantId, async (client) => {
     const result = await client.query(
-      `SELECT id, nombre, email, dni, rol, activo FROM usuarios WHERE tenant_id = $1 ORDER BY nombre`,
+      `SELECT id, nombre, email, dni, rol, activo, estado, celular,
+              bloqueado_en AS "bloqueadoEn"
+         FROM usuarios WHERE tenant_id = $1 ORDER BY nombre`,
       [tenantId]
     );
     return result.rows;
@@ -452,16 +463,32 @@ async function usuarioPerteneceATenant(tenantId: string, usuarioId: string): Pro
  *  igual que cambiarEstadoTenantService hace a nivel de tenant) — nunca
  *  borra la fila: hay historial de negocio (checklists, IPERC, etc.) que
  *  referencia usuarios(id). */
+export type EstadoPerfil = "activo" | "inactivo" | "bloqueado";
+
+/** Para los llamadores que siguen hablando de un booleano -- SCIM (el
+ *  atributo `active` del estándar) y el panel de plataforma. Un booleano no
+ *  puede expresar "bloqueado", así que false es siempre una baja. */
+export function estadoDesdeActivo(activo: boolean): EstadoPerfil {
+  return activo ? "activo" : "inactivo";
+}
+
+/** Cambia el estado de un perfil (0090).
+ *
+ *  `estado` reemplaza al booleano `activo` de antes -- el trigger mantiene los
+ *  dos coherentes, así que quien todavía llame con un booleano sigue
+ *  funcionando. Volver a 'activo' desde 'bloqueado' es el DESBLOQUEO: además
+ *  de cambiar el estado hay que poner en cero los intentos fallidos, o la
+ *  persona se vuelve a bloquear con el primer error. */
 export async function cambiarEstadoUsuarioService(
   tenantId: string,
   usuarioId: string,
-  activo: boolean,
+  estado: EstadoPerfil,
   motivo: string | undefined,
   contexto: ContextoAuditoria
 ): Promise<UsuarioListado> {
   const { fila, before } = await withTenant(tenantId, async (client) => {
     const anterior = await client.query(
-      `SELECT activo FROM usuarios WHERE id = $1 AND tenant_id = $2`,
+      `SELECT estado FROM usuarios WHERE id = $1 AND tenant_id = $2`,
       [usuarioId, tenantId]
     );
     if (anterior.rows.length === 0) {
@@ -469,15 +496,23 @@ export async function cambiarEstadoUsuarioService(
     }
 
     const actualizado = await client.query(
-      `UPDATE usuarios SET activo = $1 WHERE id = $2 AND tenant_id = $3
-       RETURNING id, nombre, email, dni, rol, activo`,
-      [activo, usuarioId, tenantId]
+      // El cast explícito en cada uso: sin él Postgres deduce `text` por las
+      // comparaciones y `estado_perfil` por la asignación, y se niega a
+      // resolver el mismo parámetro con dos tipos.
+      `UPDATE usuarios
+          SET estado = $1::estado_perfil,
+              intentos_fallidos = CASE WHEN $1::estado_perfil = 'activo' THEN 0 ELSE intentos_fallidos END,
+              bloqueado_en = CASE WHEN $1::estado_perfil = 'bloqueado' THEN now() ELSE NULL END
+        WHERE id = $2 AND tenant_id = $3
+       RETURNING id, nombre, email, dni, rol, activo, estado, celular,
+                 bloqueado_en AS "bloqueadoEn"`,
+      [estado, usuarioId, tenantId]
     );
 
-    return { fila: actualizado.rows[0], before: anterior.rows[0].activo };
+    return { fila: actualizado.rows[0], before: anterior.rows[0].estado };
   });
 
-  if (!activo) {
+  if (estado !== "activo") {
     await revocarSesionesService(usuarioId, tenantId);
   }
 
@@ -485,7 +520,48 @@ export async function cambiarEstadoUsuarioService(
     accion: "cambiar_estado_usuario",
     tenantId,
     usuarioId,
-    detalle: { before: { activo: before }, after: { activo }, motivo: motivo ?? null },
+    detalle: { before: { estado: before }, after: { estado }, motivo: motivo ?? null },
+    contexto,
+  });
+
+  return fila;
+}
+
+/** Los datos de contacto del perfil. El nombre y el celular son de la empresa:
+ *  el correo NO se edita acá, porque es la identidad de la persona y cambiarlo
+ *  sería moverla de cuenta (ver §4 del documento de arquitectura). */
+export async function actualizarPerfilUsuarioService(
+  tenantId: string,
+  usuarioId: string,
+  cambios: { nombre?: string; celular?: string | null },
+  contexto: ContextoAuditoria
+): Promise<UsuarioListado> {
+  const fila = await withTenant(tenantId, async (client) => {
+    const actualizado = await client.query(
+      `UPDATE usuarios
+          SET nombre = COALESCE($1, nombre),
+              celular = CASE WHEN $2::boolean THEN $3 ELSE celular END,
+              actualizado_en = now()
+        WHERE id = $4 AND tenant_id = $5
+       RETURNING id, nombre, email, dni, rol, activo, estado, celular,
+                 bloqueado_en AS "bloqueadoEn"`,
+      [
+        cambios.nombre ?? null,
+        cambios.celular !== undefined,
+        cambios.celular ?? null,
+        usuarioId,
+        tenantId,
+      ]
+    );
+    if (actualizado.rows.length === 0) throw new AppError(404, "Usuario no encontrado");
+    return actualizado.rows[0];
+  });
+
+  await registrarAuditoria({
+    accion: "actualizar_usuario",
+    tenantId,
+    usuarioId,
+    detalle: { nombre: cambios.nombre ?? null, celular: cambios.celular ?? null },
     contexto,
   });
 

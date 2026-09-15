@@ -49,6 +49,7 @@ import {
   crearUsuarioEnTenantService,
   listarUsuariosTenantService,
   cambiarEstadoUsuarioService,
+  actualizarPerfilUsuarioService,
 } from "../services/platform.service";
 import {
   crearUsuarioEnTenantSchema,
@@ -63,14 +64,36 @@ const resetClaveSchema = z.object({
   password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres").max(200),
 });
 
-const cambiarEstadoSchema = z.object({
-  activo: z.boolean(),
-  /** Obligatorio al DESACTIVAR (se chequea en el handler, no acá, porque
-   *  depende de `activo`): dejar a alguien afuera del sistema es una acción
-   *  correctiva, y el módulo ya exige motivo para todas las demás -- anular
-   *  un vale, aflojar un umbral. */
-  motivo: z.string().trim().min(1).max(500).optional(),
-});
+/** Desde 0090 el estado tiene tres valores. `activo` se sigue aceptando como
+ *  alias (una pestaña abierta con el bundle viejo, la cola offline) y se
+ *  traduce: false = baja, que es lo único que un booleano puede decir. */
+const cambiarEstadoSchema = z
+  .object({
+    estado: z.enum(["activo", "inactivo", "bloqueado"]).optional(),
+    activo: z.boolean().optional(),
+    /** Obligatorio al DESACTIVAR (se chequea en el handler, no acá, porque
+     *  depende del estado): dejar a alguien afuera del sistema es una acción
+     *  correctiva, y el módulo ya exige motivo para todas las demás -- anular
+     *  un vale, aflojar un umbral. */
+    motivo: z.string().trim().min(1).max(500).optional(),
+  })
+  .transform((v) => ({
+    estado: v.estado ?? (v.activo === false ? ("inactivo" as const) : ("activo" as const)),
+    motivo: v.motivo,
+    /** true si el request no dijo ni una cosa ni la otra. */
+    vacio: v.estado === undefined && v.activo === undefined,
+  }))
+  .refine((v) => !v.vacio, { message: "Indicá el estado", path: ["estado"] });
+
+const actualizarUsuarioSchema = z
+  .object({
+    nombre: z.string().trim().min(1).max(100).optional(),
+    // null = borrarlo. Sin formato fijo: ver el comentario de la migración.
+    celular: z.string().trim().max(30).nullable().optional(),
+  })
+  .refine((v) => v.nombre !== undefined || v.celular !== undefined, {
+    message: "No hay nada que cambiar",
+  });
 
 /** Las autonomías de una persona, tal como las manda la pantalla: la lista
  *  completa, no un parche. Mandar el estado entero evita el problema clásico
@@ -148,10 +171,13 @@ export function createUsuariosTenantRouter() {
     validate(cambiarEstadoSchema),
     asyncHandler(async (req, res) => {
       const tenantId = getTenantId(req);
-      const { activo, motivo } = req.validatedBody as { activo: boolean; motivo?: string };
+      const { estado, motivo } = req.validatedBody as {
+        estado: "activo" | "inactivo" | "bloqueado";
+        motivo?: string;
+      };
 
-      if (!activo && !motivo) {
-        throw new AppError(400, "Indicá el motivo de la baja para dejarlo registrado");
+      if (estado !== "activo" && !motivo) {
+        throw new AppError(400, "Indicá el motivo para dejarlo registrado");
       }
       if (req.params.id === req.usuario?.id) {
         // Sin esto, un admin puede dejarse afuera de su propio tenant y
@@ -162,11 +188,30 @@ export function createUsuariosTenantRouter() {
       const usuario = await cambiarEstadoUsuarioService(
         tenantId,
         req.params.id,
-        activo,
+        estado,
         motivo,
         contextoAuditoriaModulo(req)
       );
       res.json(usuario);
+    })
+  );
+
+  // Nombre y celular. El correo no se edita acá: es la identidad de la
+  // persona, y cambiarlo sería moverla a otra cuenta.
+  router.patch(
+    "/:id",
+    requireRole("admin"),
+    validate(actualizarUsuarioSchema),
+    asyncHandler(async (req, res) => {
+      const cambios = req.validatedBody as { nombre?: string; celular?: string | null };
+      res.json(
+        await actualizarPerfilUsuarioService(
+          getTenantId(req),
+          req.params.id,
+          cambios,
+          contextoAuditoriaModulo(req)
+        )
+      );
     })
   );
 
