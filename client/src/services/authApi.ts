@@ -23,41 +23,110 @@ async function parseOrThrow(res: Response) {
   return data;
 }
 
+/** Una de las empresas en las que la persona tiene perfil. */
+export interface EmpresaDeLaCuenta {
+  tenantId: string;
+  nombre: string;
+  slug: string;
+}
+
+/** Entrar puede terminar de dos maneras (migración 0087):
+ *
+ *  - `sesion`: lo normal — una sola empresa, o la dirección por la que entró
+ *    ya dice cuál es.
+ *  - `elegir-empresa`: la persona trabaja en varias. La clave YA se validó;
+ *    falta decir a cuál entra. El `token` dura 2 minutos y reemplaza a la
+ *    clave en el segundo paso, así no vuelve a viajar. */
+export type ResultadoLogin =
+  | { tipo: "sesion"; usuario: UsuarioPayload }
+  | {
+      tipo: "elegir-empresa";
+      token: string;
+      empresas: EmpresaDeLaCuenta[];
+      /** La última en la que entró, para ofrecerla primero. */
+      ultimoTenantId: string | null;
+    };
+
+interface RespuestaLogin {
+  usuario?: UsuarioPayload;
+  elegirEmpresa?: {
+    token: string;
+    empresas: EmpresaDeLaCuenta[];
+    ultimoTenantId: string | null;
+  };
+}
+
+function interpretarLogin(data: RespuestaLogin): ResultadoLogin {
+  if (data.elegirEmpresa) {
+    return {
+      tipo: "elegir-empresa",
+      token: data.elegirEmpresa.token,
+      empresas: data.elegirEmpresa.empresas ?? [],
+      ultimoTenantId: data.elegirEmpresa.ultimoTenantId ?? null,
+    };
+  }
+  return { tipo: "sesion", usuario: data.usuario as UsuarioPayload };
+}
+
+/** El body lleva `tenantSlug` solo cuando de verdad hay uno: mandarlo vacío
+ *  lo rechaza la validación del servidor, y mandarlo cuando no corresponde
+ *  limitaría el login a esa empresa. Sin él, el servidor resuelve la empresa
+ *  por la dirección de la petición o por la cuenta. */
+function conEmpresa(tenantSlug: string | null, resto: Record<string, unknown>) {
+  return JSON.stringify(tenantSlug ? { tenantSlug, ...resto } : resto);
+}
+
 /** `identificador` puede ser un correo o un DNI (migración 0084): el grifero
  *  y los conductores de ruta no tienen correo corporativo. El servidor decide
- *  por cuál buscar según tenga "@" o no. */
+ *  por cuál buscar según tenga "@" o no.
+ *
+ *  `tenantSlug` es opcional desde 0087: con correo, la empresa la resuelve la
+ *  cuenta; con DNI sigue haciendo falta, porque un DNI puede repetirse entre
+ *  empresas. */
 export async function loginApi(
-  tenantSlug: string,
+  tenantSlug: string | null,
   identificador: string,
   password: string
-): Promise<UsuarioPayload> {
+): Promise<ResultadoLogin> {
   const res = await apiFetch("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tenantSlug, identificador, password }),
+    body: conEmpresa(tenantSlug, { identificador, password }),
+  });
+  return interpretarLogin(await parseOrThrow(res));
+}
+
+/** Segundo paso cuando la persona tiene perfil en varias empresas. */
+export async function elegirEmpresaApi(token: string, tenantId: string): Promise<UsuarioPayload> {
+  const res = await apiFetch("/api/auth/elegir-empresa", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, tenantId }),
   });
   const data = await parseOrThrow(res);
   return data.usuario;
 }
 
 export async function googleLoginApi(
-  tenantSlug: string,
+  tenantSlug: string | null,
   credential: string
-): Promise<UsuarioPayload> {
+): Promise<ResultadoLogin> {
   const res = await apiFetch("/api/auth/google", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tenantSlug, credential }),
+    body: conEmpresa(tenantSlug, { credential }),
   });
-  const data = await parseOrThrow(res);
-  return data.usuario;
+  return interpretarLogin(await parseOrThrow(res));
 }
 
-export async function forgotPasswordApi(tenantSlug: string, email: string): Promise<string> {
+/** El `tenantSlug` acá no decide a quién se le manda el correo --la
+ *  recuperación es de la CUENTA, no de una empresa-- solo con qué dirección
+ *  se arma el enlace del correo. */
+export async function forgotPasswordApi(tenantSlug: string | null, email: string): Promise<string> {
   const res = await apiFetch("/api/auth/forgot-password", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tenantSlug, email }),
+    body: conEmpresa(tenantSlug, { email }),
   });
   const data = await parseOrThrow(res);
   return data.message;

@@ -5,11 +5,12 @@
  * el workflow (o quien corra esto en local) con `npm run tenant:create`
  * antes de levantar el server — ver E2E_ADMIN_EMAIL/E2E_ADMIN_PASSWORD.
  *
- * El campo "Empresa" no aparece: el build se genera con
- * VITE_DEFAULT_TENANT_SLUG ya apuntando al tenant sembrado (igual que
- * entraría un cliente real por su propio subdominio), así que el flujo
- * probado es el que usa la enorme mayoría de usuarios, no el de fallback
- * manual que hoy solo usa el dueño de la plataforma.
+ * No hay campo "Empresa" y tampoco hace falta ninguno: desde la migración
+ * 0087 quien entra con correo tiene una cuenta, y con perfil en una sola
+ * empresa la sesión se emite directo. Es el flujo de la enorme mayoría de
+ * usuarios. (VITE_DEFAULT_TENANT_SLUG sigue apuntando al tenant sembrado,
+ * pero ya solo lo usa el login por DNI, que sí necesita empresa -- ver
+ * acceso-por-dni.spec.ts.)
  */
 import { test, expect } from "@playwright/test";
 import { loginPorUI } from "./fixtures/auth";

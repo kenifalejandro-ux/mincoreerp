@@ -14,10 +14,12 @@ import {
   forgotPasswordSchema,
   resetPasswordSchema,
   cambiarMiPasswordSchema,
+  elegirEmpresaSchema,
   type LoginInput,
   type GoogleLoginInput,
   type ForgotPasswordInput,
   type ResetPasswordInput,
+  type ElegirEmpresaInput,
 } from "../schemas/auth.schema";
 import {
   loginService,
@@ -27,7 +29,10 @@ import {
   solicitarRecuperacionService,
   restablecerPasswordService,
   cambiarMiPasswordUsuarioService,
+  elegirEmpresaService,
   aPublico,
+  type ResultadoAutenticacion,
+  type EleccionPendiente,
 } from "../services/auth.service";
 import {
   ssoDisponibleParaTenantService,
@@ -78,6 +83,46 @@ function limpiarCookiesSesion(res: Response) {
   res.clearCookie(REFRESH_COOKIE_NAME, { path: REFRESH_COOKIE_PATH });
 }
 
+/** Cuando la persona tiene perfil en varias empresas, el login no emite
+ *  sesión: devuelve la lista y un token de 2 minutos para elegir. No se
+ *  setea ninguna cookie todavía -- todavía no hay empresa, y una sesión sin
+ *  empresa no existe en este sistema.
+ *
+ *  Devuelve true si ya respondió, para que el handler corte. */
+function responderEleccionPendiente(
+  res: Response,
+  result: ResultadoAutenticacion
+): result is EleccionPendiente {
+  if (result.tipo !== "elegir-empresa") return false;
+  res.status(200).json({
+    ok: true,
+    elegirEmpresa: {
+      token: result.tokenSeleccion,
+      empresas: result.empresas,
+      ultimoTenantId: result.ultimoTenantId,
+    },
+  });
+  return true;
+}
+
+// Paso 2 del login para quien tiene varias empresas. Mismo rate limit que el
+// login: es la otra mitad del mismo intento.
+authRouter.post(
+  "/elegir-empresa",
+  rateLimiter,
+  validate(elegirEmpresaSchema),
+  asyncHandler(async (req, res, next) => {
+    try {
+      const result = await elegirEmpresaService(req.validatedBody as ElegirEmpresaInput);
+      setCookieSesion(res, result.token);
+      setCookieRefresh(res, result.refreshToken);
+      res.status(200).json({ ok: true, usuario: aPublico(result.usuario) });
+    } catch (err) {
+      next(err);
+    }
+  })
+);
+
 authRouter.post(
   "/login",
   rateLimiter,
@@ -88,6 +133,7 @@ authRouter.post(
   asyncHandler(async (req, res, next) => {
     try {
       const result = await loginService(req.validatedBody as LoginInput);
+      if (responderEleccionPendiente(res, result)) return;
       setCookieSesion(res, result.token);
       setCookieRefresh(res, result.refreshToken);
       res.status(200).json({ ok: true, usuario: aPublico(result.usuario) });
@@ -109,6 +155,7 @@ authRouter.post(
   asyncHandler(async (req, res, next) => {
     try {
       const result = await googleLoginService(req.validatedBody as GoogleLoginInput);
+      if (responderEleccionPendiente(res, result)) return;
       setCookieSesion(res, result.token);
       setCookieRefresh(res, result.refreshToken);
       res.status(200).json({ ok: true, usuario: aPublico(result.usuario) });

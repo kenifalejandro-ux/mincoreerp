@@ -5,7 +5,7 @@ import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
 import { randomBytes, randomUUID, createHash } from "crypto";
 import type { Pool, PoolClient } from "pg";
-import { pool, withTenant } from "../config/database";
+import { pool, withTenant, withCuenta } from "../config/database";
 import { env, emailConfigured } from "../config/env";
 import { transporter } from "../config/mailer";
 import { getRedis } from "../config/redis";
@@ -16,6 +16,7 @@ import type {
   GoogleLoginInput,
   ForgotPasswordInput,
   ResetPasswordInput,
+  ElegirEmpresaInput,
 } from "../schemas/auth.schema";
 import { requerirJwtSecret } from "../shared/utils/jwt-secret";
 import { esViolacionUnicidad } from "../shared/utils/pgError";
@@ -37,7 +38,14 @@ const googleClient = env.googleLoginClientId ? new OAuth2Client(env.googleLoginC
 const HASH_SEÑUELO = "$2b$12$CwTycUXWue0Thq9StjUM0uJ8n3g7dCXi/GjQzEr8h5oT5w9Kj0R3W";
 
 export interface UsuarioPayload {
+  /** El id del PERFIL (usuarios.id), no el de la persona. Las sesiones, los
+   *  módulos, la auditoría y la cola offline del cliente cuelgan del perfil, a
+   *  propósito: ver docs/architecture/cuentas-perfiles-y-administracion.md §4. */
   id: string;
+  /** La cuenta (la persona) detrás de este perfil, desde la migración 0087.
+   *  null en los accesos por DNI del personal operativo, que no tienen
+   *  cuenta: su clave vive en el perfil. */
+  cuentaId: string | null;
   tenantId: string;
   nombre: string;
   /** Puede ser null desde 0084: un usuario de cancha entra con DNI y no
@@ -150,9 +158,17 @@ export async function obtenerModulosPermitidos(
 /** Solo para exponer al cliente: nunca se envía tokenVersion ni sessionId
  *  en las respuestas HTTP (login, /me) — son detalles internos de
  *  revocación/sesión, el cliente no necesita saber su propio sessionId (ya
- *  viaja, invisible, dentro de la cookie httpOnly). */
-export function aPublico(usuario: UsuarioPayload) {
-  const { tokenVersion: _tokenVersion, sessionId: _sessionId, ...publico } = usuario;
+ *  viaja, invisible, dentro de la cookie httpOnly). `cuentaId` tampoco sale:
+ *  es el id de la persona detrás del perfil, y ninguna pantalla lo usa. */
+export type UsuarioPublico = Omit<UsuarioPayload, "tokenVersion" | "sessionId" | "cuentaId">;
+
+export function aPublico(usuario: UsuarioPayload): UsuarioPublico {
+  const {
+    tokenVersion: _tokenVersion,
+    sessionId: _sessionId,
+    cuentaId: _cuentaId,
+    ...publico
+  } = usuario;
   return publico;
 }
 
@@ -256,95 +272,324 @@ async function resolverTenantActivoPorSlug(
   return result.rows[0];
 }
 
-export async function loginService(
-  input: LoginInput
-): Promise<{ token: string; usuario: UsuarioPayload; refreshToken: string }> {
-  // Con `usuarios` bajo RLS, resolver el tenant es un paso separado y previo
-  // a poder consultar `usuarios` — antes era un solo JOIN, ahora son dos
-  // pasos secuenciales (ver explicación completa en la respuesta que
-  // acompaña este cambio). Si el tenantSlug no existe (o está inactivo),
-  // no hay transacción que abrir: se sigue igual al flujo de "usuario no
-  // encontrado" de siempre, comparando contra el hash señuelo más abajo —
-  // el mensaje final es idéntico en ambos casos (anti-enumeración de
-  // usuarios). El único residuo aceptado es que esta ruta hace una consulta
-  // menos que la de un tenantSlug válido; no se considera sensible porque
-  // el slug de una empresa no es un dato secreto (es, de hecho, parte de
-  // su propio dominio/subdominio público).
-  const tenant = await resolverTenantActivoPorSlug(input.tenantSlug);
+// ── Cuentas: la persona detrás de los perfiles (migración 0087) ─────────
+//
+// `cuentas` no tiene tenant_id ni RLS -- es anterior a cualquier empresa,
+// igual que `tenants`. Solo la lee y escribe este servicio.
 
-  let fila:
-    | {
-        id: string;
-        tenant_id: string;
-        nombre: string;
-        email: string | null;
-        dni: string | null;
-        password_hash: string;
-        rol: UsuarioPayload["rol"];
-        token_version: number;
-        debe_cambiar_password: boolean;
-      }
-    | undefined;
-  if (tenant) {
-    try {
-      fila = await withTenant(tenant.id, async (client) => {
-        // Correo o DNI, en el mismo campo (migración 0084). Lo que decide es
-        // la presencia de "@": un DNI nunca lo tiene y un correo siempre sí,
-        // así que no hay ambigüedad posible entre los dos.
-        //
-        // Se busca por UNA de las dos columnas, no por las dos en OR: buscar
-        // por ambas dejaría que alguien entre con un DNI escrito en el campo
-        // de correo de otra persona, y encima haría inútil el índice.
-        const esCorreo = input.identificador.includes("@");
-        const result = await client.query(
-          `SELECT id, tenant_id, nombre, email, dni, password_hash, rol, token_version,
-                  debe_cambiar_password
-           FROM usuarios
-            WHERE tenant_id = $1 AND activo = true
-              AND ${esCorreo ? "email = $2" : "dni = $2"}`,
-          [tenant.id, esCorreo ? input.identificador.toLowerCase() : input.identificador]
-        );
-        return result.rows[0];
-      });
-    } catch (err) {
-      // Nunca reenviar al cliente el error crudo de la BD (puede filtrar
-      // credenciales, nombres de tabla, etc.) — se loguea server-side y se
-      // devuelve un mensaje genérico como cualquier otro fallo de login.
-      logger.error({ err }, "Error de BD durante login");
-      throw new AppError(401, "Credenciales inválidas");
-    }
+export interface PerfilDeCuenta {
+  usuarioId: string;
+  tenantId: string;
+  tenantNombre: string;
+  tenantSlug: string;
+  nombre: string;
+  rol: UsuarioPayload["rol"];
+}
+
+interface CuentaFila {
+  id: string;
+  email: string;
+  password_hash: string | null;
+  debe_cambiar_password: boolean;
+  activo: boolean;
+  ultimo_tenant_id: string | null;
+}
+
+async function buscarCuentaPorEmail(email: string): Promise<CuentaFila | undefined> {
+  const result = await pool.query(
+    `SELECT id, email, password_hash, debe_cambiar_password, activo, ultimo_tenant_id
+       FROM cuentas WHERE email = $1`,
+    [email.trim().toLowerCase()]
+  );
+  return result.rows[0];
+}
+
+/** Los perfiles ACTIVOS de una cuenta, en empresas activas.
+ *
+ *  `withCuenta` exige que la cuenta ya esté autenticada (clave verificada,
+ *  token de selección validado o SSO resuelto) -- ver database.ts. */
+export async function perfilesDeCuenta(cuentaId: string): Promise<PerfilDeCuenta[]> {
+  return withCuenta(cuentaId, async (client) => {
+    const result = await client.query(
+      `SELECT u.id, u.tenant_id, u.nombre, u.rol,
+              t.nombre AS tenant_nombre, t.slug AS tenant_slug
+         FROM usuarios u
+         JOIN tenants t ON t.id = u.tenant_id
+        WHERE u.cuenta_id = $1 AND u.activo = true AND t.activo = true
+        ORDER BY t.nombre`,
+      [cuentaId]
+    );
+    return result.rows.map((f) => ({
+      usuarioId: f.id,
+      tenantId: f.tenant_id,
+      tenantNombre: f.tenant_nombre,
+      tenantSlug: f.tenant_slug,
+      nombre: f.nombre,
+      rol: f.rol as UsuarioPayload["rol"],
+    }));
+  });
+}
+
+/** Best-effort: si falla, la persona simplemente no ve preseleccionada su
+ *  última empresa. Nunca debe voltear un login que ya salió bien. */
+async function recordarUltimaEmpresa(cuentaId: string, tenantId: string): Promise<void> {
+  try {
+    await pool.query(
+      `UPDATE cuentas SET ultimo_tenant_id = $2, actualizado_en = now() WHERE id = $1`,
+      [cuentaId, tenantId]
+    );
+  } catch (err) {
+    logger.warn({ err, cuentaId }, "No se pudo recordar la última empresa de la cuenta");
   }
+}
 
-  // Se compara siempre contra un hash (real o señuelo) para que el tiempo de
-  // respuesta sea el mismo exista o no el correo — evita enumeración de
-  // usuarios por timing.
-  const passwordValido = await bcrypt.compare(input.password, fila?.password_hash ?? HASH_SEÑUELO);
-  if (!fila || !passwordValido) {
+/** Arma la sesión de UN perfil concreto, leyendo su estado fresco de la base.
+ *
+ *  Lo comparten el login por correo, la elección de empresa y --en la entrega
+ *  2-- el cambio de empresa sin salir. El mensaje de error es siempre el
+ *  genérico de credenciales: quien llega hasta acá ya se autenticó, y un
+ *  mensaje distinto delataría en qué empresas tiene o no tiene perfil. */
+export async function emitirSesionParaPerfil(
+  usuarioId: string,
+  tenantId: string
+): Promise<{ token: string; usuario: UsuarioPayload; refreshToken: string }> {
+  const fila = await withTenant(tenantId, async (client) => {
+    const result = await client.query(
+      `SELECT u.id, u.tenant_id, u.cuenta_id, u.nombre, u.email, u.dni, u.rol,
+              u.token_version, u.debe_cambiar_password, u.activo,
+              c.email AS cuenta_email,
+              c.debe_cambiar_password AS cuenta_debe_cambiar,
+              c.activo AS cuenta_activa
+         FROM usuarios u
+         LEFT JOIN cuentas c ON c.id = u.cuenta_id
+        WHERE u.id = $1 AND u.tenant_id = $2`,
+      [usuarioId, tenantId]
+    );
+    return result.rows[0];
+  });
+
+  if (!fila || !fila.activo || (fila.cuenta_id && fila.cuenta_activa === false)) {
     throw new AppError(401, "Credenciales inválidas");
   }
 
   const usuario: UsuarioPayload = {
     id: fila.id,
+    cuentaId: fila.cuenta_id,
     tenantId: fila.tenant_id,
     nombre: fila.nombre,
-    email: fila.email,
+    // El correo de la cuenta manda: el del perfil es una copia (ver §4 del
+    // documento de arquitectura).
+    email: fila.cuenta_email ?? fila.email,
     dni: fila.dni,
     rol: fila.rol,
     modulosPermitidos: await obtenerModulosPermitidos(fila.id, fila.tenant_id, fila.rol),
     tokenVersion: fila.token_version,
-    debeCambiarPassword: fila.debe_cambiar_password,
+    debeCambiarPassword: fila.cuenta_id ? fila.cuenta_debe_cambiar : fila.debe_cambiar_password,
   };
+
+  if (fila.cuenta_id) await recordarUltimaEmpresa(fila.cuenta_id, tenantId);
 
   return emitirSesionCompleta(usuario);
 }
 
+// ── Token de selección de empresa ───────────────────────────────────────
+//
+// Cuando la persona tiene perfil en varias empresas, el login valida la clave
+// y devuelve la lista junto a este token, que vale 2 minutos. La clave no
+// vuelve a viajar.
+//
+// Lleva una huella de la clave vigente: si la persona la cambia (o se la
+// resetean) entre el paso 1 y el 2, el token deja de servir sin necesidad de
+// guardarlo en ninguna tabla.
+
+const SELECCION_TTL_SEGUNDOS = 120;
+
+interface TokenSeleccion {
+  tipo: "seleccion-empresa";
+  cuentaId: string;
+  huella: string;
+}
+
+function huellaDeClave(hash: string | null): string {
+  return createHash("sha256")
+    .update(hash ?? "sin-clave")
+    .digest("hex")
+    .slice(0, 16);
+}
+
+function firmarTokenSeleccion(cuenta: CuentaFila): string {
+  const payload: TokenSeleccion = {
+    tipo: "seleccion-empresa",
+    cuentaId: cuenta.id,
+    huella: huellaDeClave(cuenta.password_hash),
+  };
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: SELECCION_TTL_SEGUNDOS });
+}
+
+export interface EleccionPendiente {
+  tipo: "elegir-empresa";
+  tokenSeleccion: string;
+  empresas: { tenantId: string; nombre: string; slug: string }[];
+  ultimoTenantId: string | null;
+}
+
+export interface SesionEmitida {
+  tipo: "sesion";
+  token: string;
+  usuario: UsuarioPayload;
+  refreshToken: string;
+}
+
+export type ResultadoAutenticacion = SesionEmitida | EleccionPendiente;
+
+/** Paso 2 del login: canjea el token de selección por la sesión de una
+ *  empresa. Verifica de nuevo que el perfil exista y esté activo -- entre los
+ *  dos pasos pudo haber cambiado. */
+export async function elegirEmpresaService(input: ElegirEmpresaInput): Promise<SesionEmitida> {
+  let payload: TokenSeleccion;
+  try {
+    payload = jwt.verify(input.token, JWT_SECRET) as TokenSeleccion;
+  } catch {
+    throw new AppError(401, "La elección de empresa expiró, volvé a iniciar sesión");
+  }
+  if (payload.tipo !== "seleccion-empresa") {
+    throw new AppError(401, "La elección de empresa expiró, volvé a iniciar sesión");
+  }
+
+  const cuenta = await pool.query(`SELECT id, password_hash, activo FROM cuentas WHERE id = $1`, [
+    payload.cuentaId,
+  ]);
+  const fila = cuenta.rows[0];
+  if (!fila || !fila.activo || huellaDeClave(fila.password_hash) !== payload.huella) {
+    throw new AppError(401, "La elección de empresa expiró, volvé a iniciar sesión");
+  }
+
+  const perfiles = await perfilesDeCuenta(payload.cuentaId);
+  const elegido = perfiles.find((perfil) => perfil.tenantId === input.tenantId);
+  if (!elegido) {
+    // Genérico a propósito: no se confirma ni se niega que la empresa exista.
+    throw new AppError(401, "Credenciales inválidas");
+  }
+
+  const sesion = await emitirSesionParaPerfil(elegido.usuarioId, elegido.tenantId);
+  return { tipo: "sesion", ...sesion };
+}
+
+/** Entrar. Dos caminos, según lo que se escriba en el campo:
+ *
+ *  - **Correo** (administrativos): la persona tiene UNA cuenta y sus perfiles
+ *    cuelgan de ella. No hace falta decir la empresa: si tiene una, entra
+ *    directo; si tiene varias, las elige DESPUÉS de validar la clave.
+ *  - **DNI** (operativos de cancha): sigue siendo por empresa, y la empresa
+ *    tiene que venir de la dirección por la que entró.
+ *
+ *  Lo que decide es la presencia de "@": un DNI nunca lo tiene y un correo
+ *  siempre sí. */
+export async function loginService(input: LoginInput): Promise<ResultadoAutenticacion> {
+  return input.identificador.includes("@") ? loginConCorreo(input) : loginConDni(input);
+}
+
+async function loginConCorreo(input: LoginInput): Promise<ResultadoAutenticacion> {
+  const cuenta = await buscarCuentaPorEmail(input.identificador);
+
+  // Se compara SIEMPRE contra un hash (real o señuelo) para que el tiempo de
+  // respuesta sea el mismo exista o no el correo -- evita enumeración por
+  // timing, igual que antes de 0087.
+  const claveValida = await bcrypt.compare(input.password, cuenta?.password_hash ?? HASH_SEÑUELO);
+
+  // `password_hash` nulo = invitación todavía sin aceptar (entrega 3): la
+  // cuenta existe pero no tiene clave, así que no puede entrar con una.
+  if (!cuenta || !cuenta.activo || !cuenta.password_hash || !claveValida) {
+    throw new AppError(401, "Credenciales inválidas");
+  }
+
+  let perfiles = await perfilesDeCuenta(cuenta.id);
+
+  // Si el request entró por la dirección de una empresa (subdominio o dominio
+  // propio, ver resolveTenantSubdomain), la sesión es de esa empresa y de
+  // ninguna otra. Sin perfil ahí, el MISMO 401 de siempre: nunca se revela
+  // que la persona tiene perfil en otra.
+  if (input.tenantSlug) {
+    perfiles = perfiles.filter((perfil) => perfil.tenantSlug === input.tenantSlug);
+  }
+
+  if (perfiles.length === 0) {
+    throw new AppError(401, "Credenciales inválidas");
+  }
+
+  if (perfiles.length === 1) {
+    const sesion = await emitirSesionParaPerfil(perfiles[0].usuarioId, perfiles[0].tenantId);
+    return { tipo: "sesion", ...sesion };
+  }
+
+  return {
+    tipo: "elegir-empresa",
+    tokenSeleccion: firmarTokenSeleccion(cuenta),
+    empresas: perfiles.map((perfil) => ({
+      tenantId: perfil.tenantId,
+      nombre: perfil.tenantNombre,
+      slug: perfil.tenantSlug,
+    })),
+    ultimoTenantId: cuenta.ultimo_tenant_id,
+  };
+}
+
+/** El DNI no es único entre empresas: dos mineras pueden tener cargado al
+ *  mismo conductor. Sin la empresa no hay a quién buscar, y como ya no existe
+ *  el campo "Empresa" en el login, la respuesta no es "credenciales
+ *  inválidas" --que mandaría al grifero a probar su clave diez veces-- sino
+ *  decirle por dónde entrar. */
+export const MENSAJE_DNI_SIN_EMPRESA =
+  "Entrá desde la dirección de tu empresa para ingresar con tu DNI";
+
+async function loginConDni(input: LoginInput): Promise<ResultadoAutenticacion> {
+  if (!input.tenantSlug) {
+    throw new AppError(400, MENSAJE_DNI_SIN_EMPRESA);
+  }
+
+  const tenant = await resolverTenantActivoPorSlug(input.tenantSlug);
+
+  let fila: { id: string; tenant_id: string; password_hash: string | null } | undefined;
+  if (tenant) {
+    try {
+      fila = await withTenant(tenant.id, async (client) => {
+        // `cuenta_id IS NULL`: un perfil con cuenta entra por su correo. Sin
+        // esto, alguien administrativo con DNI cargado tendría dos puertas, y
+        // la del DNI usaría la clave vieja del perfil en vez de la de su
+        // cuenta.
+        const result = await client.query(
+          `SELECT id, tenant_id, password_hash
+             FROM usuarios
+            WHERE tenant_id = $1 AND activo = true AND dni = $2 AND cuenta_id IS NULL`,
+          [tenant.id, input.identificador]
+        );
+        return result.rows[0];
+      });
+    } catch (err) {
+      // Nunca reenviar al cliente el error crudo de la BD.
+      logger.error({ err }, "Error de BD durante login por DNI");
+      throw new AppError(401, "Credenciales inválidas");
+    }
+  }
+
+  const claveValida = await bcrypt.compare(input.password, fila?.password_hash ?? HASH_SEÑUELO);
+  if (!fila || !claveValida) {
+    throw new AppError(401, "Credenciales inválidas");
+  }
+
+  const sesion = await emitirSesionParaPerfil(fila.id, fila.tenant_id);
+  return { tipo: "sesion", ...sesion };
+}
+
 /** "Continuar con Google": el ID token lo emite Google (GIS en el navegador),
- *  acá solo se verifica su firma/audiencia y se resuelve a un usuario ya
- *  existente en el tenant indicado — no hay auto-registro, alguien con rol
- *  admin tiene que haber dado de alta el usuario primero. */
-export async function googleLoginService(
-  input: GoogleLoginInput
-): Promise<{ token: string; usuario: UsuarioPayload; refreshToken: string }> {
+ *  acá solo se verifica su firma/audiencia. Que Google confirme el correo
+ *  equivale a validar la clave, así que desde ahí sigue el MISMO camino que
+ *  `loginConCorreo`: se busca la cuenta, se listan sus perfiles y se elige
+ *  empresa si hay varias.
+ *
+ *  No hay auto-registro: si el correo no tiene cuenta, o la cuenta no tiene
+ *  perfil en ninguna empresa (o en la empresa por la que entró), no entra. */
+export async function googleLoginService(input: GoogleLoginInput): Promise<ResultadoAutenticacion> {
   if (!googleClient) {
     throw new AppError(503, "Login con Google no está configurado");
   }
@@ -368,40 +613,37 @@ export async function googleLoginService(
     throw new AppError(401, "Tu cuenta de Google no tiene un email verificado");
   }
 
-  // Mismo orden de dos pasos que loginService — ver comentario ahí.
-  const tenant = await resolverTenantActivoPorSlug(input.tenantSlug);
-
-  const fila = tenant
-    ? await withTenant(tenant.id, async (client) => {
-        const result = await client.query(
-          `SELECT id, tenant_id, nombre, email, dni, rol, token_version, debe_cambiar_password
-           FROM usuarios WHERE tenant_id = $1 AND email = $2 AND activo = true`,
-          [tenant.id, email]
-        );
-        return result.rows[0];
-      })
-    : undefined;
-
-  if (!fila) {
-    // Mismo mensaje genérico sin importar si falló la resolución del
-    // tenant o la búsqueda del usuario dentro de él: no confirmar ni negar
-    // si el correo existe en otro tenant (evita enumeración).
+  const cuenta = await buscarCuentaPorEmail(email);
+  if (!cuenta || !cuenta.activo) {
+    // Mismo mensaje sin importar si la cuenta no existe o no tiene acceso:
+    // no se confirma ni se niega que el correo esté registrado.
     throw new AppError(401, "Esta cuenta de Google no tiene acceso a esta empresa");
   }
 
-  const usuario: UsuarioPayload = {
-    id: fila.id,
-    tenantId: fila.tenant_id,
-    nombre: fila.nombre,
-    email: fila.email,
-    dni: fila.dni,
-    rol: fila.rol,
-    modulosPermitidos: await obtenerModulosPermitidos(fila.id, fila.tenant_id, fila.rol),
-    tokenVersion: fila.token_version,
-    debeCambiarPassword: fila.debe_cambiar_password,
-  };
+  let perfiles = await perfilesDeCuenta(cuenta.id);
+  if (input.tenantSlug) {
+    perfiles = perfiles.filter((perfil) => perfil.tenantSlug === input.tenantSlug);
+  }
 
-  return emitirSesionCompleta(usuario);
+  if (perfiles.length === 0) {
+    throw new AppError(401, "Esta cuenta de Google no tiene acceso a esta empresa");
+  }
+
+  if (perfiles.length === 1) {
+    const sesion = await emitirSesionParaPerfil(perfiles[0].usuarioId, perfiles[0].tenantId);
+    return { tipo: "sesion", ...sesion };
+  }
+
+  return {
+    tipo: "elegir-empresa",
+    tokenSeleccion: firmarTokenSeleccion(cuenta),
+    empresas: perfiles.map((perfil) => ({
+      tenantId: perfil.tenantId,
+      nombre: perfil.tenantNombre,
+      slug: perfil.tenantSlug,
+    })),
+    ultimoTenantId: cuenta.ultimo_tenant_id,
+  };
 }
 
 /** Cambia el access token (30 min) por uno nuevo usando el refresh token de
@@ -453,22 +695,36 @@ export async function refrescarTokenService(
   // Paso 2: ahora sí, con tenant_id ya conocido, leer el usuario bajo RLS.
   const filaUsuario = await withTenant(filaToken.tenant_id, async (client) => {
     const result = await client.query(
-      `SELECT nombre, email, dni, rol, token_version, activo, debe_cambiar_password
-       FROM usuarios WHERE id = $1 AND tenant_id = $2`,
+      `SELECT u.nombre, u.email, u.dni, u.rol, u.token_version, u.activo,
+              u.debe_cambiar_password, u.cuenta_id,
+              c.email AS cuenta_email,
+              c.debe_cambiar_password AS cuenta_debe_cambiar,
+              c.activo AS cuenta_activa
+         FROM usuarios u
+         LEFT JOIN cuentas c ON c.id = u.cuenta_id
+        WHERE u.id = $1 AND u.tenant_id = $2`,
       [filaToken.usuario_id, filaToken.tenant_id]
     );
     return result.rows[0];
   });
 
-  if (!filaUsuario || !filaUsuario.activo) {
+  // Una cuenta desactivada desde plataforma corta también el refresco, no
+  // solo el login: si no, la sesión se seguiría renovando sola hasta que
+  // venza el refresh token.
+  if (
+    !filaUsuario ||
+    !filaUsuario.activo ||
+    (filaUsuario.cuenta_id && filaUsuario.cuenta_activa === false)
+  ) {
     throw new AppError(401, "Sesión expirada, inicia sesión nuevamente");
   }
 
   const usuario: UsuarioPayload = {
     id: filaToken.usuario_id,
+    cuentaId: filaUsuario.cuenta_id,
     tenantId: filaToken.tenant_id,
     nombre: filaUsuario.nombre,
-    email: filaUsuario.email,
+    email: filaUsuario.cuenta_email ?? filaUsuario.email,
     dni: filaUsuario.dni,
     rol: filaUsuario.rol,
     modulosPermitidos: await obtenerModulosPermitidos(
@@ -477,7 +733,9 @@ export async function refrescarTokenService(
       filaUsuario.rol
     ),
     tokenVersion: filaUsuario.token_version,
-    debeCambiarPassword: filaUsuario.debe_cambiar_password,
+    debeCambiarPassword: filaUsuario.cuenta_id
+      ? filaUsuario.cuenta_debe_cambiar
+      : filaUsuario.debe_cambiar_password,
   };
 
   // Reusa emitirSesionCompleta() con el sessionId de la fila que se acaba
@@ -545,6 +803,29 @@ export async function revocarSesionesService(usuarioId: string, tenantId: string
   await borrarTodasLasSesionesRedis(usuarioId);
 }
 
+/** Revoca las sesiones de una cuenta en TODAS sus empresas.
+ *
+ *  Es lo que hace falta cuando cambia algo de la persona y no de una empresa:
+ *  cambio de clave, recuperación, o desactivación de la cuenta desde
+ *  plataforma. Se implementa recorriendo sus perfiles y usando la revocación
+ *  de siempre en cada uno -- así el middleware de autenticación no cambia:
+ *  sigue comparando `token_version` del PERFIL.
+ *
+ *  Incluye los perfiles inactivos a propósito: un perfil que se dio de baja
+ *  hace un minuto todavía puede tener una sesión viva. */
+export async function revocarSesionesDeCuentaService(cuentaId: string): Promise<void> {
+  const perfiles = await withCuenta(cuentaId, async (client) => {
+    const result = await client.query(`SELECT id, tenant_id FROM usuarios WHERE cuenta_id = $1`, [
+      cuentaId,
+    ]);
+    return result.rows as { id: string; tenant_id: string }[];
+  });
+
+  for (const perfil of perfiles) {
+    await revocarSesionesService(perfil.id, perfil.tenant_id);
+  }
+}
+
 /** Cierra SOLO la sesión actual (este dispositivo/navegador) -- las demás
  *  sesiones activas del usuario, si tiene, siguen funcionando. No toca
  *  token_version (eso derrumbaría TODAS las sesiones, ver
@@ -577,6 +858,36 @@ export async function logoutService(
   }
 }
 
+/** Devuelve la cuenta de ese correo, creándola si no existía.
+ *
+ *  Si YA existía -- la persona trabaja en otra empresa -- **no se le toca la
+ *  clave**: cambiársela sería cambiársela en todas sus empresas, y el admin
+ *  que da el alta no puede hacer eso. Por eso `ON CONFLICT DO NOTHING` y no
+ *  `DO UPDATE`: de la cuenta ajena no se escribe ni `actualizado_en`.
+ *
+ *  Consecuencia conocida y transitoria: en ese caso la clave temporal que el
+ *  admin ve NO sirve, porque la persona entra con la suya. La entrega 3 lo
+ *  resuelve reemplazando la clave temporal por una invitación por correo,
+ *  idéntica para los dos casos (así el admin tampoco puede deducir que la
+ *  persona ya estaba en otra empresa). */
+async function asegurarCuenta(
+  email: string,
+  passwordHash: string,
+  db: Pool | PoolClient = pool
+): Promise<string> {
+  const creada = await db.query(
+    `INSERT INTO cuentas (email, password_hash, debe_cambiar_password)
+     VALUES ($1, $2, true)
+     ON CONFLICT (email) DO NOTHING
+     RETURNING id`,
+    [email, passwordHash]
+  );
+  if (creada.rows[0]) return creada.rows[0].id;
+
+  const existente = await db.query(`SELECT id FROM cuentas WHERE email = $1`, [email]);
+  return existente.rows[0].id;
+}
+
 export async function crearUsuarioService(
   input: {
     tenantId: string;
@@ -598,6 +909,14 @@ export async function crearUsuarioService(
   db: Pool | PoolClient = pool
 ): Promise<UsuarioPayload> {
   const passwordHash = await bcrypt.hash(input.password, 12);
+  const emailNormalizado = input.email?.trim().toLowerCase() ?? null;
+
+  // Con correo, la clave vive en la CUENTA (0087); el perfil queda sin clave
+  // propia. Sin correo (operativo por DNI) sigue como antes: la clave es del
+  // perfil, porque no hay cuenta.
+  const cuentaId = emailNormalizado
+    ? await asegurarCuenta(emailNormalizado, passwordHash, db)
+    : null;
 
   let result;
   try {
@@ -605,23 +924,25 @@ export async function crearUsuarioService(
     // contraseña a otra persona (panel o SCIM), nunca es la propia del
     // usuario -- mismo criterio que crearPlatformAdminService.
     result = await db.query(
-      `INSERT INTO usuarios (tenant_id, nombre, email, dni, password_hash, rol, debe_cambiar_password)
-       VALUES ($1, $2, $3, $4, $5, COALESCE($6::rol_usuario, 'operador'), true)
-       RETURNING id, tenant_id, nombre, email, dni, rol, token_version, debe_cambiar_password`,
+      `INSERT INTO usuarios (tenant_id, nombre, email, dni, password_hash, rol, debe_cambiar_password, cuenta_id)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6::rol_usuario, 'operador'), true, $7)
+       RETURNING id, tenant_id, nombre, email, dni, rol, token_version, debe_cambiar_password, cuenta_id`,
       [
         input.tenantId,
         input.nombre,
-        input.email?.toLowerCase() ?? null,
+        emailNormalizado,
         input.dni ?? null,
-        passwordHash,
+        cuentaId ? null : passwordHash,
         input.rol ?? null,
+        cuentaId,
       ]
     );
   } catch (err) {
     // Mismo criterio que loginService: nunca reenviar el error crudo de la
     // BD al cliente (podría filtrar nombres de tabla/constraint).
     if (esViolacionUnicidad(err)) {
-      // Puede ser el correo O el DNI: los dos tienen unicidad por tenant.
+      // El correo (por su cuenta), el DNI, o el índice (tenant_id, cuenta_id)
+      // de 0087: los tres significan lo mismo para quien da el alta.
       throw new AppError(409, "Ya existe un usuario con ese correo o DNI en este tenant");
     }
     logger.error({ err }, "Error de BD al crear usuario");
@@ -662,6 +983,7 @@ export async function crearUsuarioService(
 
   return {
     id: fila.id,
+    cuentaId: fila.cuenta_id,
     tenantId: fila.tenant_id,
     nombre: fila.nombre,
     email: fila.email,
@@ -705,7 +1027,8 @@ export async function resolverTenantParaRecuperacion(
  *  se arma la URL por la que ese tenant entra — dominio propio primero,
  *  subdominio de la plataforma como respaldo, y APP_PUBLIC_URL solo si
  *  ninguno de los dos está configurado (el caso de hoy, en desarrollo). */
-export function construirUrlTenant(tenant: TenantParaRecuperacion): string {
+export function construirUrlTenant(tenant: TenantParaRecuperacion | undefined): string {
+  if (!tenant) return env.appPublicUrl;
   if (tenant.dominioPersonalizado) return `https://${tenant.dominioPersonalizado}`;
   if (env.appApexDomain) return `https://${tenant.slug}.${env.appApexDomain}`;
   return env.appPublicUrl;
@@ -714,7 +1037,9 @@ export function construirUrlTenant(tenant: TenantParaRecuperacion): string {
 async function enviarCorreoRecuperacion(params: {
   nombre: string;
   email: string;
-  tenant: TenantParaRecuperacion;
+  /** Sin empresa (una cuenta recién creada, todavía sin perfiles) el enlace
+   *  va a APP_PUBLIC_URL. */
+  tenant: TenantParaRecuperacion | undefined;
   tokenPlano: string;
 }) {
   if (!transporter || !emailConfigured) {
@@ -758,42 +1083,65 @@ async function enviarCorreoRecuperacion(params: {
   }
 }
 
-/** Siempre responde el mismo mensaje genérico, exista o no el
- *  tenant/usuario — mismo criterio anti-enumeración que loginService. El
- *  trabajo real (buscar usuario, generar token, enviar correo) ocurre
- *  igual dentro de un try/catch que nunca relanza: un fallo de BD o de
- *  SMTP no debe delatar nada distinto de "no existe" al que llama. */
+/** A qué dirección apunta el enlace del correo. La recuperación es de la
+ *  CUENTA, pero el enlace tiene que llevar a alguna dirección concreta: la de
+ *  la empresa por la que pidió, la de su última empresa, o la de la primera
+ *  que tenga. Sin ninguna (cuenta sin perfiles) se usa APP_PUBLIC_URL. */
+async function resolverTenantParaEnlace(
+  tenantSlug: string | undefined,
+  cuenta: CuentaFila,
+  perfiles: PerfilDeCuenta[]
+): Promise<TenantParaRecuperacion | undefined> {
+  if (tenantSlug) {
+    const porSlug = await resolverTenantParaRecuperacion(tenantSlug);
+    if (porSlug) return porSlug;
+  }
+  if (cuenta.ultimo_tenant_id) {
+    const result = await pool.query(
+      `SELECT id, slug, dominio_personalizado AS "dominioPersonalizado"
+         FROM tenants WHERE id = $1 AND activo = true`,
+      [cuenta.ultimo_tenant_id]
+    );
+    if (result.rows[0]) return result.rows[0];
+  }
+  if (perfiles[0]) return resolverTenantParaRecuperacion(perfiles[0].tenantSlug);
+  return undefined;
+}
+
+/** Siempre responde el mismo mensaje genérico, exista o no la cuenta -- mismo
+ *  criterio anti-enumeración que el login. El trabajo real (buscar la cuenta,
+ *  generar el token, enviar el correo) ocurre dentro de un try/catch que nunca
+ *  relanza: un fallo de BD o de SMTP no debe delatar nada distinto de "no
+ *  existe" al que llama.
+ *
+ *  Desde 0087 la recuperación es de la CUENTA: una sola clave para todas sus
+ *  empresas. Por eso no pide empresa, y el token apunta a `cuentas`. */
 export async function solicitarRecuperacionService(
   input: ForgotPasswordInput
 ): Promise<{ message: string }> {
   try {
-    const tenant = await resolverTenantParaRecuperacion(input.tenantSlug);
+    const cuenta = await buscarCuentaPorEmail(input.email);
 
-    if (tenant) {
-      const fila = await withTenant(tenant.id, async (client) => {
-        const result = await client.query(
-          `SELECT id, nombre, email FROM usuarios WHERE tenant_id = $1 AND email = $2 AND activo = true`,
-          [tenant.id, input.email.toLowerCase()]
-        );
-        return result.rows[0];
+    if (cuenta && cuenta.activo) {
+      const tokenPlano = randomBytes(48).toString("hex");
+      const expiraEn = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
+
+      await pool.query(
+        `INSERT INTO reset_tokens (cuenta_id, token_hash, expira_en) VALUES ($1, $2, $3)`,
+        [cuenta.id, hashRefreshToken(tokenPlano), expiraEn]
+      );
+
+      const perfiles = await perfilesDeCuenta(cuenta.id);
+      const tenant = await resolverTenantParaEnlace(input.tenantSlug, cuenta, perfiles);
+
+      await enviarCorreoRecuperacion({
+        // El nombre lo pone el perfil: la cuenta no guarda nombre, cada
+        // empresa tiene el suyo. Sin perfiles, el correo alcanza.
+        nombre: perfiles[0]?.nombre ?? cuenta.email,
+        email: cuenta.email,
+        tenant,
+        tokenPlano,
       });
-
-      if (fila) {
-        const tokenPlano = randomBytes(48).toString("hex");
-        const expiraEn = new Date(Date.now() + 60 * 60 * 1000); // 1 hora
-
-        await pool.query(
-          `INSERT INTO reset_tokens (usuario_id, tenant_id, token_hash, expira_en) VALUES ($1, $2, $3, $4)`,
-          [fila.id, tenant.id, hashRefreshToken(tokenPlano), expiraEn]
-        );
-
-        await enviarCorreoRecuperacion({
-          nombre: fila.nombre,
-          email: fila.email,
-          tenant,
-          tokenPlano,
-        });
-      }
     }
   } catch (err) {
     logger.error({ err }, "Error al procesar solicitud de recuperación de contraseña");
@@ -802,16 +1150,18 @@ export async function solicitarRecuperacionService(
   return { message: MENSAJE_RECUPERACION };
 }
 
-/** El token ya identifica usuario + tenant (ver reset_tokens.tenant_id,
- *  mismo motivo que refresh_tokens.tenant_id) — no hace falta que el
- *  cliente mande tenantSlug de nuevo. Cambiar la contraseña revoca todas
- *  las sesiones activas (mismo criterio que desactivar un usuario, ver
- *  cambiarEstadoUsuarioService en platform.service.ts). */
+/** El token identifica a quién le cambia la clave: desde 0087 apunta a una
+ *  CUENTA (administrativos); los tokens viejos, y los de personal operativo,
+ *  apuntan a un perfil de una empresa. Los dos caminos siguen funcionando.
+ *
+ *  Cambiar la clave revoca todas las sesiones -- de la cuenta, en todas sus
+ *  empresas; o del perfil, si el token era de un perfil. */
 export async function restablecerPasswordService(input: ResetPasswordInput): Promise<void> {
   const hash = hashRefreshToken(input.token);
 
   const tokenResult = await pool.query(
-    `SELECT usuario_id, tenant_id, expira_en, usado_en FROM reset_tokens WHERE token_hash = $1`,
+    `SELECT cuenta_id, usuario_id, tenant_id, expira_en, usado_en
+       FROM reset_tokens WHERE token_hash = $1`,
     [hash]
   );
   const fila = tokenResult.rows[0];
@@ -822,6 +1172,55 @@ export async function restablecerPasswordService(input: ResetPasswordInput): Pro
 
   const passwordHash = await bcrypt.hash(input.newPassword, 12);
 
+  if (fila.cuenta_id) {
+    const actualizado = await pool.query(
+      `UPDATE cuentas
+          SET password_hash = $1, debe_cambiar_password = false, actualizado_en = now()
+        WHERE id = $2 AND activo = true
+        RETURNING id`,
+      [passwordHash, fila.cuenta_id]
+    );
+    // Un UPDATE que no matchea ninguna fila no lanza error en Postgres. Sin
+    // este chequeo, declararía éxito con la clave vieja intacta (el bug que
+    // reportó Kenif: "cambio la clave y el ERP no la reconoce").
+    if (actualizado.rowCount === 0) {
+      throw new AppError(400, "No se pudo actualizar la contraseña, la cuenta ya no existe");
+    }
+
+    await pool.query(`UPDATE reset_tokens SET usado_en = now() WHERE token_hash = $1`, [hash]);
+    await revocarSesionesDeCuentaService(fila.cuenta_id);
+    return;
+  }
+
+  // Token de perfil: puede ser viejo (anterior a 0087) o de personal
+  // operativo. Si ese perfil tiene cuenta, la clave que vale para entrar es la
+  // de la CUENTA -- escribirla en el perfil dejaría la vieja funcionando y el
+  // usuario diría, con razón, "cambié la clave y el ERP no la reconoce".
+  const cuentaDelPerfil = await withTenant(fila.tenant_id, async (client) => {
+    const result = await client.query(
+      `SELECT cuenta_id FROM usuarios WHERE id = $1 AND tenant_id = $2`,
+      [fila.usuario_id, fila.tenant_id]
+    );
+    return result.rows[0]?.cuenta_id as string | null | undefined;
+  });
+
+  if (cuentaDelPerfil) {
+    const actualizado = await pool.query(
+      `UPDATE cuentas
+          SET password_hash = $1, debe_cambiar_password = false, actualizado_en = now()
+        WHERE id = $2 AND activo = true
+        RETURNING id`,
+      [passwordHash, cuentaDelPerfil]
+    );
+    if (actualizado.rowCount === 0) {
+      throw new AppError(400, "No se pudo actualizar la contraseña, la cuenta ya no existe");
+    }
+
+    await pool.query(`UPDATE reset_tokens SET usado_en = now() WHERE token_hash = $1`, [hash]);
+    await revocarSesionesDeCuentaService(cuentaDelPerfil);
+    return;
+  }
+
   const actualizado = await withTenant(fila.tenant_id, (client) =>
     client.query(
       `UPDATE usuarios SET password_hash = $1 WHERE id = $2 AND tenant_id = $3 RETURNING id`,
@@ -829,11 +1228,6 @@ export async function restablecerPasswordService(input: ResetPasswordInput): Pro
     )
   );
 
-  // El UPDATE con WHERE que no matchea ninguna fila no lanza error en
-  // Postgres -- sin este chequeo, un 0-row update seguía de largo,
-  // marcaba el token como usado y revocaba las sesiones, devolviendo
-  // éxito al cliente con la contraseña vieja intacta (bug reportado por
-  // Kenif: "cambio la clave y el ERP no la reconoce").
   if (actualizado.rowCount === 0) {
     throw new AppError(400, "No se pudo actualizar la contraseña, el usuario ya no existe");
   }
@@ -843,26 +1237,58 @@ export async function restablecerPasswordService(input: ResetPasswordInput): Pro
   await revocarSesionesService(fila.usuario_id, fila.tenant_id);
 }
 
-/** El admin del tenant le pone una clave temporal a alguien de su empresa.
+/** El admin de una empresa destraba a alguien que no puede entrar.
  *
- *  Hace falta porque desde la migración 0084 hay gente que entra con DNI y
- *  NO TIENE CORREO: el flujo de "olvidé mi contraseña" les manda un enlace a
- *  ninguna parte. Sin esto, un grifero que se olvida la clave queda afuera
- *  hasta que alguien toque la base a mano.
+ *  Hace DOS cosas distintas según de quién se trate, y la diferencia es de
+ *  seguridad, no de comodidad:
  *
- *  Deja `debe_cambiar_password = true` a propósito: la clave que tipeó el
- *  admin sirve UNA vez, para entrar, y el sistema obliga a cambiarla ahí
- *  mismo -- así el admin no termina sabiendo la contraseña con la que su
- *  empleado firma vales. Es el mismo mecanismo del alta (#113/#114).
+ *  - **Operativo por DNI**: el admin le pone una clave temporal, que sirve una
+ *    vez y obliga a cambiarla al entrar (así el admin no termina sabiendo la
+ *    clave con la que su empleado firma vales). Es el único camino posible:
+ *    esa gente no tiene correo al cual mandarle nada.
+ *  - **Administrativo con cuenta**: NO se le pone ninguna clave. Su clave es
+ *    de la CUENTA y vale para todas las empresas donde trabaja; que el admin
+ *    de una de ellas pudiera cambiarla sería darle acceso a las otras. En vez
+ *    de eso se le envía el correo de recuperación, y la persona elige su
+ *    clave.
  *
- *  Y revoca las sesiones: resetear la clave sin cerrar sesiones dejaría
- *  adentro a quien la supiera, que es justo el caso del que uno se está
- *  defendiendo cuando resetea. */
+ *  Si lo que el admin necesita es cortar el acceso de alguien (cuenta robada,
+ *  renuncia), lo que corresponde es dar de baja el perfil: eso sí es inmediato
+ *  y solo afecta a su empresa. */
 export async function resetearClaveUsuarioService(
   tenantId: string,
   usuarioId: string,
   passwordNueva: string
-): Promise<{ id: string; nombre: string; email: string | null; dni: string | null }> {
+): Promise<{
+  id: string;
+  nombre: string;
+  email: string | null;
+  dni: string | null;
+  modo: "clave-temporal" | "correo-enviado";
+}> {
+  const perfil = await withTenant(tenantId, async (client) => {
+    const result = await client.query(
+      `SELECT u.id, u.nombre, u.email, u.dni, u.cuenta_id, c.email AS cuenta_email
+         FROM usuarios u
+         LEFT JOIN cuentas c ON c.id = u.cuenta_id
+        WHERE u.id = $1 AND u.tenant_id = $2`,
+      [usuarioId, tenantId]
+    );
+    return result.rows[0];
+  });
+  if (!perfil) throw new AppError(404, "Usuario no encontrado");
+
+  if (perfil.cuenta_id) {
+    await solicitarRecuperacionService({ email: perfil.cuenta_email, tenantSlug: undefined });
+    return {
+      id: perfil.id,
+      nombre: perfil.nombre,
+      email: perfil.cuenta_email,
+      dni: perfil.dni,
+      modo: "correo-enviado",
+    };
+  }
+
   const passwordHash = await bcrypt.hash(passwordNueva, 12);
 
   const fila = await withTenant(tenantId, async (client) => {
@@ -877,48 +1303,65 @@ export async function resetearClaveUsuarioService(
   });
   if (!fila) throw new AppError(404, "Usuario no encontrado");
 
+  // Resetear la clave sin cerrar sesiones dejaría adentro a quien la supiera,
+  // que es justo el caso del que uno se defiende al resetear.
   await revocarSesionesService(usuarioId, tenantId);
 
-  return fila;
+  return { ...fila, modo: "clave-temporal" };
 }
 
-/** Cambia la propia contraseña de un usuario de tenant ya autenticado --
- *  mismo patrón que cambiarMiPasswordService de platform_admins, pensado
- *  primero para la pantalla obligatoria del primer login con clave
- *  temporal (ver debeCambiarPassword en UsuarioPayload), pero sirve para
- *  cualquier cambio voluntario después. A diferencia de platform_admins,
- *  `usuarios` tiene RLS: hace falta withTenant(). */
+/** Cambia su propia clave, ya autenticado. Pensado primero para la pantalla
+ *  obligatoria del primer ingreso con clave temporal, y sirve para cualquier
+ *  cambio voluntario después.
+ *
+ *  Con cuenta (administrativo) la clave es de la CUENTA: cambiarla vale para
+ *  todas sus empresas. Sin cuenta (operativo por DNI) sigue siendo del perfil.
+ *
+ *  No revoca sesiones a propósito: quien cambia su clave es la propia persona,
+ *  y tirarle abajo la sesión desde la que la está cambiando sería hostil
+ *  --justo en la pantalla de cambio obligatorio del primer ingreso. */
 export async function cambiarMiPasswordUsuarioService(
   usuarioId: string,
   tenantId: string,
   passwordActual: string,
   passwordNueva: string
 ): Promise<void> {
-  const fila = await withTenant(tenantId, async (client) => {
+  const perfil = await withTenant(tenantId, async (client) => {
     const result = await client.query(
-      `SELECT password_hash FROM usuarios WHERE id = $1 AND tenant_id = $2`,
+      `SELECT u.password_hash, u.cuenta_id, c.password_hash AS cuenta_password_hash
+         FROM usuarios u
+         LEFT JOIN cuentas c ON c.id = u.cuenta_id
+        WHERE u.id = $1 AND u.tenant_id = $2`,
       [usuarioId, tenantId]
     );
     return result.rows[0];
   });
-  if (!fila) throw new AppError(404, "Usuario no encontrado");
+  if (!perfil) throw new AppError(404, "Usuario no encontrado");
 
-  const passwordValido = await bcrypt.compare(passwordActual, fila.password_hash);
-  if (!passwordValido) throw new AppError(401, "Contraseña actual incorrecta");
+  const hashVigente = perfil.cuenta_id ? perfil.cuenta_password_hash : perfil.password_hash;
+  const passwordValido = await bcrypt.compare(passwordActual, hashVigente ?? HASH_SEÑUELO);
+  if (!hashVigente || !passwordValido) throw new AppError(401, "Contraseña actual incorrecta");
 
   const passwordHash = await bcrypt.hash(passwordNueva, 12);
-  const actualizado = await withTenant(tenantId, (client) =>
-    client.query(
-      `UPDATE usuarios SET password_hash = $1, debe_cambiar_password = false
-       WHERE id = $2 AND tenant_id = $3 RETURNING id`,
-      [passwordHash, usuarioId, tenantId]
-    )
-  );
 
-  // Mismo chequeo que ya aplicamos hoy en cambiarMiPasswordService
-  // (platform_admins): un UPDATE con WHERE que no matchea ninguna fila no
-  // lanza error en Postgres -- sin esto, declararía éxito aunque la cuenta
-  // haya sido desactivada/borrada justo entre el SELECT y este UPDATE.
+  const actualizado = perfil.cuenta_id
+    ? await pool.query(
+        `UPDATE cuentas
+            SET password_hash = $1, debe_cambiar_password = false, actualizado_en = now()
+          WHERE id = $2 AND activo = true RETURNING id`,
+        [passwordHash, perfil.cuenta_id]
+      )
+    : await withTenant(tenantId, (client) =>
+        client.query(
+          `UPDATE usuarios SET password_hash = $1, debe_cambiar_password = false
+            WHERE id = $2 AND tenant_id = $3 RETURNING id`,
+          [passwordHash, usuarioId, tenantId]
+        )
+      );
+
+  // Un UPDATE con WHERE que no matchea ninguna fila no lanza error en
+  // Postgres: sin esto declararía éxito aunque la cuenta o el perfil se hayan
+  // desactivado entre el SELECT y este UPDATE.
   if (actualizado.rowCount === 0) {
     throw new AppError(400, "No se pudo actualizar la contraseña, el usuario ya no existe");
   }

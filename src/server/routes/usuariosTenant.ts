@@ -106,8 +106,10 @@ export function createUsuariosTenantRouter() {
         accion: "resetear_clave_usuario",
         tenantId,
         usuarioId: usuario.id,
-        // Nunca la contraseña, obviamente: solo a quién se le cambió.
-        detalle: { identificador: usuario.email ?? usuario.dni },
+        // Nunca la contraseña, obviamente: solo a quién se le cambió y CÓMO.
+        // `correo-enviado` significa que el admin no puso ninguna clave: la
+        // persona tiene cuenta y la elige ella (ver resetearClaveUsuarioService).
+        detalle: { identificador: usuario.email ?? usuario.dni, modo: usuario.modo },
         contexto: contextoAuditoriaModulo(req),
       });
 

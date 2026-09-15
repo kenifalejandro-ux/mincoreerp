@@ -26,6 +26,7 @@ import {
   generarClaveTemporal,
   listarUsuariosApi,
   resetearClaveApi,
+  type ModoReseteo,
   type RolUsuario,
   type UsuarioDelTenant,
 } from "../../services/usuariosApi";
@@ -95,6 +96,9 @@ export default function UsuariosView() {
     clave: string;
     esAlta: boolean;
   } | null>(null);
+  // El otro final posible del reseteo: la persona tiene cuenta y elige ella
+  // su clave, el admin no la ve (ver ModalResetearClave).
+  const [correoEnviadoA, setCorreoEnviadoA] = useState<UsuarioDelTenant | null>(null);
 
   const cargar = useCallback(async () => {
     try {
@@ -266,13 +270,17 @@ export default function UsuariosView() {
         <ModalResetearClave
           usuario={usuarioAResetear}
           onCerrar={() => setUsuarioAResetear(null)}
-          onListo={(clave) => {
-            setClaveParaDictar({
-              nombre: usuarioAResetear.nombre,
-              identificador: identificador(usuarioAResetear),
-              clave,
-              esAlta: false,
-            });
+          onListo={(resultado) => {
+            if (resultado.modo === "correo-enviado") {
+              setCorreoEnviadoA(usuarioAResetear);
+            } else {
+              setClaveParaDictar({
+                nombre: usuarioAResetear.nombre,
+                identificador: identificador(usuarioAResetear),
+                clave: resultado.clave,
+                esAlta: false,
+              });
+            }
             setUsuarioAResetear(null);
           }}
         />
@@ -291,6 +299,10 @@ export default function UsuariosView() {
 
       {claveParaDictar && (
         <ClaveParaDictar datos={claveParaDictar} onCerrar={() => setClaveParaDictar(null)} />
+      )}
+
+      {correoEnviadoA && (
+        <CorreoEnviado usuario={correoEnviadoA} onCerrar={() => setCorreoEnviadoA(null)} />
       )}
     </div>
   );
@@ -463,11 +475,18 @@ function ModalResetearClave({
 }: {
   usuario: UsuarioDelTenant;
   onCerrar: () => void;
-  onListo: (clave: string) => void;
+  onListo: (resultado: { modo: ModoReseteo; clave: string }) => void;
 }) {
   const [clave, setClave] = useState(generarClaveTemporal);
   const [error, setError] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
+
+  // Quien tiene correo tiene CUENTA (migración 0087), y la clave de una
+  // cuenta no es de esta empresa: la misma le sirve en cualquier otra donde
+  // trabaje. Por eso acá el admin no elige ninguna clave -- se le manda un
+  // enlace a la persona y la elige ella. Con DNI no hay correo a donde
+  // mandar nada, así que sigue siendo una clave para dictar por teléfono.
+  const porCorreo = Boolean(usuario.email);
 
   const enviar = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -475,8 +494,10 @@ function ModalResetearClave({
     setEnviando(true);
     setError(null);
     try {
-      await resetearClaveApi(usuario.id, clave);
-      onListo(clave);
+      // La clave viaja siempre; el servidor la usa o la ignora, y lo que
+      // decide qué ve el admin es el `modo` que devuelve.
+      const { modo } = await resetearClaveApi(usuario.id, clave);
+      onListo({ modo, clave });
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo resetear la clave.");
     } finally {
@@ -485,44 +506,100 @@ function ModalResetearClave({
   };
 
   return (
-    <Modal titulo={`Resetear la clave de ${usuario.nombre}`} onCerrar={onCerrar}>
+    <Modal
+      titulo={
+        porCorreo ? `Resetear la clave de ${usuario.nombre}` : `Clave nueva para ${usuario.nombre}`
+      }
+      onCerrar={onCerrar}
+    >
       <form onSubmit={enviar} className="p-6 space-y-4">
-        <p className="text-sm text-slate-700">
-          Se le va a pedir que la cambie apenas entre, y{" "}
-          <strong className="font-bold text-slate-900">
-            se cierran todas las sesiones que tenga abiertas
-          </strong>{" "}
-          en cualquier dispositivo.
-        </p>
+        {porCorreo ? (
+          <>
+            <p className="text-sm text-slate-700">
+              Le llega un enlace a{" "}
+              <strong className="font-bold text-slate-900 break-all">{usuario.email}</strong> para
+              que elija una clave nueva, y{" "}
+              <strong className="font-bold text-slate-900">
+                se cierran todas las sesiones que tenga abiertas
+              </strong>{" "}
+              en cualquier dispositivo.
+            </p>
+            <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+              La clave la elige la persona, no vos: es de ella, no de la empresa. Así nadie acá
+              puede entrar firmando con su nombre.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-slate-700">
+              Se le va a pedir que la cambie apenas entre, y{" "}
+              <strong className="font-bold text-slate-900">
+                se cierran todas las sesiones que tenga abiertas
+              </strong>{" "}
+              en cualquier dispositivo.
+            </p>
 
-        <Campo id="reset-clave" etiqueta="Clave temporal">
-          <div className="flex gap-2">
-            <input
-              id="reset-clave"
-              type="text"
-              required
-              minLength={8}
-              className={`${ESTILO_INPUT} font-mono`}
-              value={clave}
-              onChange={(e) => setClave(e.target.value)}
-            />
-            <button
-              type="button"
-              onClick={() => setClave(generarClaveTemporal())}
-              className="px-3 py-2 text-xs font-bold text-slate-700 border border-slate-200 rounded-xl hover:bg-slate-50 whitespace-nowrap"
-            >
-              Otra
-            </button>
-          </div>
-        </Campo>
+            <Campo id="reset-clave" etiqueta="Clave temporal">
+              <div className="flex gap-2">
+                <input
+                  id="reset-clave"
+                  type="text"
+                  required
+                  minLength={8}
+                  className={`${ESTILO_INPUT} font-mono`}
+                  value={clave}
+                  onChange={(e) => setClave(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setClave(generarClaveTemporal())}
+                  className="px-3 py-2 text-xs font-bold text-slate-700 border border-slate-200 rounded-xl hover:bg-slate-50 whitespace-nowrap"
+                >
+                  Otra
+                </button>
+              </div>
+            </Campo>
+          </>
+        )}
 
         {error && <p className="text-sm font-semibold text-red-700">{error}</p>}
 
         <div className="flex justify-end gap-2 pt-2">
           <BotonCancelar onClick={onCerrar} />
-          <BotonPrincipal enviando={enviando}>Resetear</BotonPrincipal>
+          <BotonPrincipal enviando={enviando}>
+            {porCorreo ? "Enviar el enlace" : "Resetear"}
+          </BotonPrincipal>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// ── El aviso cuando la clave la elige la persona ─────────────────────────
+
+function CorreoEnviado({ usuario, onCerrar }: { usuario: UsuarioDelTenant; onCerrar: () => void }) {
+  return (
+    <Modal titulo="Correo enviado" onCerrar={onCerrar}>
+      <div className="p-6 space-y-4">
+        <p className="text-sm text-slate-700">
+          <strong className="font-bold text-slate-900">{usuario.nombre}</strong> recibió un enlace
+          en <strong className="font-bold text-slate-900 break-all">{usuario.email}</strong> para
+          elegir su clave nueva. Sus sesiones abiertas ya se cerraron.
+        </p>
+        <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+          El enlace vence en una hora. Si no le llega, que mire el correo no deseado o pedí el
+          reseteo de nuevo.
+        </p>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onCerrar}
+            className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold rounded-xl"
+          >
+            Entendido
+          </button>
+        </div>
+      </div>
     </Modal>
   );
 }
@@ -637,6 +714,19 @@ function ClaveParaDictar({
           Esta clave no se vuelve a mostrar. Si se pierde, se resetea de nuevo — nadie, ni vos ni el
           soporte, puede verla después.
         </p>
+
+        {/* La clave de quien entra con correo es de la PERSONA, no de esta
+            empresa (migración 0087): si ya usa MinCore en otra, la suya
+            sigue siendo la que vale y esta no le sirve. Acá no se puede
+            saber cuál de los dos casos es --averiguarlo sería averiguar
+            dónde más trabaja-- así que se dicen los dos. */}
+        {datos.esAlta && datos.identificador.includes("@") && (
+          <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+            Si esta persona ya entra a MinCore con ese correo en otra empresa, sigue usando la clave
+            que ya tiene: esta no le hace falta. Si no le funciona ninguna, que entre con
+            “¿Olvidaste tu contraseña?”.
+          </p>
+        )}
 
         <div className="flex justify-end gap-2">
           <button

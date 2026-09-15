@@ -60,14 +60,32 @@ export async function crearUsuarioApi(input: {
   );
 }
 
-export async function resetearClaveApi(usuarioId: string, password: string): Promise<void> {
-  await leerRespuesta(
+/** Qué pasó con el reseteo (migración 0087):
+ *
+ *  - `clave-temporal`: la clave que mandó el admin quedó puesta. Es el caso
+ *    del personal de cancha, que entra con DNI y no tiene correo.
+ *  - `correo-enviado`: la persona tiene cuenta (entra con correo), así que su
+ *    clave no es de esta empresa -- la misma le sirve en cualquier otra donde
+ *    trabaje. El servidor ignora la clave que se le mandó y le envía un enlace
+ *    para que la elija ella. */
+export type ModoReseteo = "clave-temporal" | "correo-enviado";
+
+/** `password` va siempre, aunque el servidor lo ignore cuando la persona
+ *  tiene cuenta: quién decide es el servidor, no esta pantalla. Lo que se le
+ *  muestra al admin lo manda el `modo` que vuelve. */
+export async function resetearClaveApi(
+  usuarioId: string,
+  password: string
+): Promise<{ modo: ModoReseteo }> {
+  const data = await leerRespuesta(
     await apiFetch(`/api/erp/usuarios/${usuarioId}/clave`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password }),
     })
   );
+  // Un servidor viejo (sin 0087) no manda `modo` y siempre pone la clave.
+  return { modo: data.modo === "correo-enviado" ? "correo-enviado" : "clave-temporal" };
 }
 
 export async function cambiarEstadoUsuarioApi(

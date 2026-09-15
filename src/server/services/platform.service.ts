@@ -24,7 +24,7 @@ import {
   crearUsuarioService,
   revocarSesionesService,
   aPublico,
-  type UsuarioPayload,
+  type UsuarioPublico,
 } from "./auth.service";
 import { MODULOS_ERP } from "../schemas/platform.schema";
 import { verificarCuota, CuotaExcedidaError, RECURSO_USUARIOS } from "./platformCuotas.service";
@@ -60,7 +60,7 @@ export async function crearTenantConAdminService(
   // sea un estado posible, ni siquiera transitorio: si el UPDATE de más
   // abajo fallara, el tenant tampoco queda creado.
   planId?: string
-): Promise<{ tenant: TenantCreado; usuario: Omit<UsuarioPayload, "tokenVersion"> }> {
+): Promise<{ tenant: TenantCreado; usuario: UsuarioPublico }> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -374,7 +374,7 @@ export async function crearUsuarioEnTenantService(
   tenantId: string,
   input: CrearUsuarioEnTenantInput,
   contexto: ContextoAuditoria
-): Promise<Omit<UsuarioPayload, "tokenVersion">> {
+): Promise<UsuarioPublico> {
   const tenant = await pool.query(`SELECT id FROM tenants WHERE id = $1`, [tenantId]);
   if (tenant.rows.length === 0) {
     throw new AppError(404, "Tenant no encontrado");
