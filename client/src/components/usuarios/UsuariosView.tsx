@@ -108,6 +108,9 @@ export default function UsuariosView() {
     nombre: string;
     correo: string;
   } | null>(null);
+  // Con la doble firma encendida no se aplicó nada: quedó una orden esperando
+  // a otro administrador (ver §11 del documento de arquitectura).
+  const [pendienteDeFirma, setPendienteDeFirma] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
     try {
@@ -246,7 +249,8 @@ export default function UsuariosView() {
                       onClick={async () => {
                         setEnviando(true);
                         try {
-                          await cambiarEstadoUsuarioApi(u.id, "activo");
+                          const r = await cambiarEstadoUsuarioApi(u.id, "activo");
+                          if (r.pendiente) setPendienteDeFirma(r.orden.correlativo);
                           await cargar();
                         } catch (err) {
                           setError(err instanceof Error ? err.message : "No se pudo desbloquear.");
@@ -274,7 +278,8 @@ export default function UsuariosView() {
                       onClick={async () => {
                         setEnviando(true);
                         try {
-                          await cambiarEstadoUsuarioApi(u.id, "activo");
+                          const r = await cambiarEstadoUsuarioApi(u.id, "activo");
+                          if (r.pendiente) setPendienteDeFirma(r.orden.correlativo);
                           await cargar();
                         } catch (err) {
                           setError(err instanceof Error ? err.message : "No se pudo reactivar.");
@@ -307,7 +312,9 @@ export default function UsuariosView() {
           onCerrar={() => setModalAlta(false)}
           onCreado={async (datos) => {
             setModalAlta(false);
-            if (datos.modo === "invitacion-enviada") {
+            if (datos.modo === "pendiente-de-firma") {
+              setPendienteDeFirma(datos.correlativo ?? null);
+            } else if (datos.modo === "invitacion-enviada") {
               setInvitacionEnviadaA({ nombre: datos.nombre, correo: datos.identificador });
             } else {
               setClaveParaDictar({
@@ -327,7 +334,9 @@ export default function UsuariosView() {
           usuario={usuarioAResetear}
           onCerrar={() => setUsuarioAResetear(null)}
           onListo={(resultado) => {
-            if (resultado.modo === "correo-enviado") {
+            if (resultado.modo === "pendiente-de-firma") {
+              setPendienteDeFirma(resultado.correlativo ?? null);
+            } else if (resultado.modo === "correo-enviado") {
               setCorreoEnviadoA(usuarioAResetear);
             } else {
               setClaveParaDictar({
@@ -346,8 +355,9 @@ export default function UsuariosView() {
         <ModalDarDeBaja
           usuario={usuarioADarDeBaja}
           onCerrar={() => setUsuarioADarDeBaja(null)}
-          onListo={async () => {
+          onListo={async (correlativoPendiente) => {
             setUsuarioADarDeBaja(null);
+            if (correlativoPendiente) setPendienteDeFirma(correlativoPendiente);
             await cargar();
           }}
         />
@@ -370,6 +380,31 @@ export default function UsuariosView() {
             await cargar();
           }}
         />
+      )}
+
+      {pendienteDeFirma !== null && (
+        <Modal titulo="Queda pendiente de firma" onCerrar={() => setPendienteDeFirma(null)}>
+          <div className="p-6 space-y-4">
+            <p className="text-sm text-slate-700">
+              Tu empresa tiene la doble firma activada, así que esto todavía{" "}
+              <strong className="font-bold text-slate-900">no se aplicó</strong>. Quedó la orden{" "}
+              <strong className="font-mono font-bold text-slate-900">{pendienteDeFirma}</strong>{" "}
+              esperando que la firme otro administrador.
+            </p>
+            <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+              La vas a encontrar en Administración → Órdenes. Vence a las 72 horas sin firma.
+            </p>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setPendienteDeFirma(null)}
+                className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold rounded-xl"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {invitacionEnviadaA && (
@@ -493,7 +528,8 @@ function ModalAlta({
     nombre: string;
     identificador: string;
     clave: string;
-    modo: ModoAlta;
+    modo: ModoAlta | "pendiente-de-firma";
+    correlativo?: string;
   }) => void | Promise<void>;
 }) {
   // El DNI primero, y el correo abajo marcado como opcional: el caso masivo
@@ -536,7 +572,10 @@ function ModalAlta({
         nombre: nombre.trim(),
         identificador: email.trim() || dni.trim(),
         clave,
-        modo: creado.modo,
+        // Con la doble firma encendida todavía no existe nadie: la orden
+        // espera la firma de otro administrador.
+        modo: creado.pendiente ? "pendiente-de-firma" : creado.datos.modo,
+        correlativo: creado.pendiente ? creado.orden.correlativo : undefined,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo crear el usuario.");
@@ -665,7 +704,11 @@ function ModalResetearClave({
 }: {
   usuario: UsuarioDelTenant;
   onCerrar: () => void;
-  onListo: (resultado: { modo: ModoReseteo; clave: string }) => void;
+  onListo: (resultado: {
+    modo: ModoReseteo | "pendiente-de-firma";
+    clave: string;
+    correlativo?: string;
+  }) => void;
 }) {
   const [clave, setClave] = useState(generarClaveTemporal);
   const [error, setError] = useState<string | null>(null);
@@ -686,8 +729,12 @@ function ModalResetearClave({
     try {
       // La clave viaja siempre; el servidor la usa o la ignora, y lo que
       // decide qué ve el admin es el `modo` que devuelve.
-      const { modo } = await resetearClaveApi(usuario.id, clave);
-      onListo({ modo, clave });
+      const resultado = await resetearClaveApi(usuario.id, clave);
+      onListo(
+        resultado.pendiente
+          ? { modo: "pendiente-de-firma", clave, correlativo: resultado.orden.correlativo }
+          : { modo: resultado.datos.modo, clave }
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo resetear la clave.");
     } finally {
@@ -839,7 +886,8 @@ function ModalDarDeBaja({
 }: {
   usuario: UsuarioDelTenant;
   onCerrar: () => void;
-  onListo: () => void | Promise<void>;
+  /** Recibe el correlativo si quedó pendiente de firma en vez de aplicarse. */
+  onListo: (correlativoPendiente?: string) => void | Promise<void>;
 }) {
   // El motivo es obligatorio del lado del servidor también: dejar a alguien
   // afuera del sistema es una acción correctiva, como anular un vale, y las
@@ -854,8 +902,8 @@ function ModalDarDeBaja({
     setEnviando(true);
     setError(null);
     try {
-      await cambiarEstadoUsuarioApi(usuario.id, "inactivo", motivo.trim());
-      await onListo();
+      const resultado = await cambiarEstadoUsuarioApi(usuario.id, "inactivo", motivo.trim());
+      await onListo(resultado.pendiente ? resultado.orden.correlativo : undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo dar de baja.");
     } finally {

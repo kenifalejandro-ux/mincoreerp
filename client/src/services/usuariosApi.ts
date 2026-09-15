@@ -47,6 +47,32 @@ async function leerRespuesta(res: Response) {
   return data;
 }
 
+// ── Órdenes: lo que devuelve cada acción de administración ───────────────
+//
+// Con la doble firma apagada (como arranca cada empresa) la acción se aplica
+// en el acto y la respuesta es la de siempre. Con la doble firma encendida,
+// el servidor responde 202: no se aplicó nada, queda una orden esperando la
+// firma de otro administrador. Ver §11 del documento de arquitectura.
+
+export interface OrdenDeLaAccion {
+  id: string;
+  correlativo: string;
+  tipo: string;
+  estado: string;
+  firmasRequeridas: number;
+}
+
+export type ResultadoDeAccion<T> =
+  | { pendiente: false; datos: T; orden?: OrdenDeLaAccion }
+  | { pendiente: true; orden: OrdenDeLaAccion };
+
+/** Toda respuesta trae `orden`; lo que decide es su estado. */
+function interpretar<T>(data: Record<string, unknown>): ResultadoDeAccion<T> {
+  const orden = data.orden as OrdenDeLaAccion | undefined;
+  if (orden?.estado === "pendiente") return { pendiente: true, orden };
+  return { pendiente: false, datos: data as T, orden };
+}
+
 export async function listarUsuariosApi(): Promise<UsuarioDelTenant[]> {
   const data = await leerRespuesta(await apiFetch("/api/erp/usuarios"));
   return data.data ?? [];
@@ -67,7 +93,7 @@ export async function crearUsuarioApi(input: {
   /** Solo para el alta por DNI: con correo, la clave la define la persona. */
   password?: string;
   rol: RolUsuario;
-}): Promise<UsuarioDelTenant & { modo: ModoAlta }> {
+}): Promise<ResultadoDeAccion<UsuarioDelTenant & { modo: ModoAlta }>> {
   const creado = await leerRespuesta(
     await apiFetch("/api/erp/usuarios", {
       method: "POST",
@@ -75,11 +101,16 @@ export async function crearUsuarioApi(input: {
       body: JSON.stringify(input),
     })
   );
+  const resultado = interpretar<UsuarioDelTenant & { modo: ModoAlta }>(creado);
+  if (resultado.pendiente) return resultado;
   // Un servidor viejo (sin la entrega 3) no manda `modo` y siempre pone la
   // clave que se le mandó.
   return {
-    ...creado,
-    modo: creado.modo === "invitacion-enviada" ? "invitacion-enviada" : "clave-temporal",
+    ...resultado,
+    datos: {
+      ...resultado.datos,
+      modo: creado.modo === "invitacion-enviada" ? "invitacion-enviada" : "clave-temporal",
+    },
   };
 }
 
@@ -99,7 +130,7 @@ export type ModoReseteo = "clave-temporal" | "correo-enviado";
 export async function resetearClaveApi(
   usuarioId: string,
   password: string
-): Promise<{ modo: ModoReseteo }> {
+): Promise<ResultadoDeAccion<{ modo: ModoReseteo }>> {
   const data = await leerRespuesta(
     await apiFetch(`/api/erp/usuarios/${usuarioId}/clave`, {
       method: "PATCH",
@@ -107,8 +138,13 @@ export async function resetearClaveApi(
       body: JSON.stringify({ password }),
     })
   );
+  const resultado = interpretar<{ modo: ModoReseteo }>(data);
+  if (resultado.pendiente) return resultado;
   // Un servidor viejo (sin 0087) no manda `modo` y siempre pone la clave.
-  return { modo: data.modo === "correo-enviado" ? "correo-enviado" : "clave-temporal" };
+  return {
+    ...resultado,
+    datos: { modo: data.modo === "correo-enviado" ? "correo-enviado" : "clave-temporal" },
+  };
 }
 
 /** El motivo es obligatorio para cualquier estado que no sea 'activo': dejar
@@ -117,13 +153,15 @@ export async function cambiarEstadoUsuarioApi(
   usuarioId: string,
   estado: EstadoPerfil,
   motivo?: string
-): Promise<void> {
-  await leerRespuesta(
-    await apiFetch(`/api/erp/usuarios/${usuarioId}/estado`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ estado, ...(motivo ? { motivo } : {}) }),
-    })
+): Promise<ResultadoDeAccion<UsuarioDelTenant>> {
+  return interpretar<UsuarioDelTenant>(
+    await leerRespuesta(
+      await apiFetch(`/api/erp/usuarios/${usuarioId}/estado`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ estado, ...(motivo ? { motivo } : {}) }),
+      })
+    )
   );
 }
 
@@ -167,13 +205,15 @@ export async function permisosDeUsuarioApi(usuarioId: string): Promise<PermisosD
 export async function guardarPermisosApi(
   usuarioId: string,
   cambio: { rol?: RolUsuario; modulos: PermisoDeModulo[]; motivo?: string }
-): Promise<{ recorta: boolean }> {
-  return leerRespuesta(
-    await apiFetch(`/api/erp/usuarios/${usuarioId}/permisos`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(cambio),
-    })
+): Promise<ResultadoDeAccion<{ recorta: boolean }>> {
+  return interpretar<{ recorta: boolean }>(
+    await leerRespuesta(
+      await apiFetch(`/api/erp/usuarios/${usuarioId}/permisos`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cambio),
+      })
+    )
   );
 }
 

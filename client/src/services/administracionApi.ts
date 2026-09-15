@@ -58,3 +58,79 @@ export async function accionesDeBitacoraApi(): Promise<string[]> {
   const data = await leerRespuesta(await apiFetch("/api/erp/administracion/eventos/acciones"));
   return data.acciones ?? [];
 }
+
+// ── Órdenes administrativas y doble firma ────────────────────────────────
+
+export type EstadoDeOrden = "pendiente" | "aplicada" | "rechazada" | "vencida" | "fallida";
+
+export interface OrdenAdministrativa {
+  id: string;
+  correlativo: string;
+  tipo: string;
+  estado: EstadoDeOrden;
+  usuarioId: string | null;
+  usuarioNombre: string | null;
+  payload: Record<string, unknown>;
+  antes: Record<string, unknown> | null;
+  motivo: string;
+  solicitanteId: string;
+  solicitanteNombre: string;
+  firmasRequeridas: number;
+  aprobadorId: string | null;
+  aprobadorNombre: string | null;
+  motivoResolucion: string | null;
+  resueltaEn: string | null;
+  expiraEn: string;
+  error: string | null;
+  creadoEn: string;
+}
+
+export async function listarOrdenesApi(estado?: EstadoDeOrden): Promise<OrdenAdministrativa[]> {
+  const query = estado ? `?estado=${estado}` : "";
+  const data = await leerRespuesta(await apiFetch(`/api/erp/administracion/ordenes${query}`));
+  return data.ordenes ?? [];
+}
+
+export async function aprobarOrdenApi(ordenId: string, motivo?: string): Promise<void> {
+  await leerRespuesta(
+    await apiFetch(`/api/erp/administracion/ordenes/${ordenId}/aprobar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(motivo ? { motivo } : {}),
+    })
+  );
+}
+
+export async function rechazarOrdenApi(ordenId: string, motivo: string): Promise<void> {
+  await leerRespuesta(
+    await apiFetch(`/api/erp/administracion/ordenes/${ordenId}/rechazar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ motivo }),
+    })
+  );
+}
+
+export async function estadoDobleFirmaApi(): Promise<{
+  dobleFirma: boolean;
+  administradoresActivos: number;
+}> {
+  return leerRespuesta(await apiFetch("/api/erp/administracion/doble-firma"));
+}
+
+/** Encenderla se aplica de una (endurecer); apagarla queda pendiente de la
+ *  firma de otro administrador. */
+export async function cambiarDobleFirmaApi(
+  dobleFirma: boolean,
+  motivo: string
+): Promise<{ pendiente: true; orden: OrdenAdministrativa } | { pendiente: false }> {
+  const data = await leerRespuesta(
+    await apiFetch("/api/erp/administracion/doble-firma", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dobleFirma, motivo }),
+    })
+  );
+  const orden = data.orden as OrdenAdministrativa | undefined;
+  return orden?.estado === "pendiente" ? { pendiente: true, orden } : { pendiente: false };
+}

@@ -87,14 +87,24 @@ export default function ConfiguracionView() {
     setError(null);
     setAviso(null);
     try {
-      const { recorta } = await guardarPermisosApi(elegido, {
+      const resultado = await guardarPermisosApi(elegido, {
         modulos,
         motivo: motivo.trim() || undefined,
       });
+
+      // Con la doble firma encendida no se guardó nada todavía: queda una
+      // orden esperando a otro administrador.
+      if (resultado.pendiente) {
+        setAviso(
+          `Queda pendiente de la firma de otro administrador (${resultado.orden.correlativo}). Todavía no se cambió nada.`
+        );
+        return;
+      }
+
       // Se le dice al administrador qué pasó de verdad: quitar acceso echa a
       // la persona de sus sesiones abiertas, darle uno más no.
       setAviso(
-        recorta
+        resultado.datos.recorta
           ? "Guardado. Se le cerraron las sesiones abiertas: cuando vuelva a entrar, entra con estos permisos."
           : "Guardado. Lo nuevo le aparece la próxima vez que la app renueve su sesión."
       );

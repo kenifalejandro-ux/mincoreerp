@@ -183,6 +183,9 @@ export async function borrarTenantDePrueba(tenantId: string) {
     await client.query("DELETE FROM ipercs WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM iperc_lineas_base WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM equipos WHERE tenant_id = $1", [tenantId]);
+    // Las órdenes administrativas (0091) apuntan a usuarios por tres columnas
+    // y solo una tiene ON DELETE SET NULL -- van antes.
+    await client.query("DELETE FROM ordenes_admin WHERE tenant_id = $1", [tenantId]);
     // refresh_tokens/usuario_modulos se borran solos (ON DELETE CASCADE
     // desde usuarios) — borrar usuarios alcanza.
     // Las cuentas (0087) no son de ninguna empresa: hay que juntar las de

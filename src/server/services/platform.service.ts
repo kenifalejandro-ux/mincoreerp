@@ -24,6 +24,7 @@ import {
   crearUsuarioService,
   invitarAlPerfilService,
   revocarSesionesService,
+  revocarSesionesDeCuentaService,
   aPublico,
   type UsuarioPublico,
 } from "./auth.service";
@@ -439,11 +440,111 @@ export async function crearUsuarioEnTenantService(
     accion: "crear_usuario",
     tenantId,
     usuarioId: usuario.id,
-    detalle: { email: usuario.email, rol: usuario.rol, modo },
+    // El número de carta viaja al detalle para que la EMPRESA lo vea en su
+    // log de eventos: es la respuesta a "¿y este usuario de dónde salió?"
+    // cuando el alta la hizo MINCORE (§12).
+    detalle: {
+      email: usuario.email,
+      rol: usuario.rol,
+      modo,
+      ...(input.numeroCarta ? { numeroCarta: input.numeroCarta } : {}),
+    },
     contexto,
   });
 
   return { ...aPublico(usuario), modo };
+}
+
+/** **Break-glass** (§12): MINCORE le cambia el tipo de usuario a alguien de
+ *  una empresa. Existe para un caso y uno solo: la empresa activó la doble
+ *  firma, su segundo administrador se fue, y con uno solo no hay quien firme
+ *  la orden que nombraría al reemplazo. Sin esto, la empresa queda trabada y
+ *  hay que tocarle la base a mano.
+ *
+ *  Por eso NO pasa por una orden: es la salida de emergencia del sistema de
+ *  órdenes. Lo que sí hace es dejar rastro en la bitácora DE LA EMPRESA, con
+ *  motivo obligatorio y el número de carta si lo hay -- sus administradores lo
+ *  ven en su log de eventos, que es lo que convierte una intervención del
+ *  proveedor en algo auditable por el cliente y no en algo que pasó y nadie
+ *  supo. */
+export async function reemplazarAdminService(
+  tenantId: string,
+  usuarioId: string,
+  input: { rol: string; motivo: string; numeroCarta?: string },
+  contexto: ContextoAuditoria
+): Promise<UsuarioListado> {
+  const fila = await withTenant(tenantId, async (client) => {
+    const anterior = await client.query(
+      `SELECT rol FROM usuarios WHERE id = $1 AND tenant_id = $2`,
+      [usuarioId, tenantId]
+    );
+    if (anterior.rows.length === 0) throw new AppError(404, "Usuario no encontrado");
+
+    const actualizado = await client.query(
+      `UPDATE usuarios SET rol = $1::rol_usuario, actualizado_en = now()
+        WHERE id = $2 AND tenant_id = $3
+       RETURNING id, nombre, email, dni, rol, activo, estado, celular,
+                 bloqueado_en AS "bloqueadoEn"`,
+      [input.rol, usuarioId, tenantId]
+    );
+    return { fila: actualizado.rows[0], antes: anterior.rows[0].rol };
+  });
+
+  // El rol viaja en el JWT: sin revocar, el cambio tardaría hasta media hora
+  // en valer, y un break-glass se pide justo cuando no se puede esperar.
+  await revocarSesionesService(usuarioId, tenantId);
+
+  await registrarAuditoria({
+    accion: "plataforma.reemplazar_admin",
+    tenantId,
+    usuarioId,
+    detalle: {
+      antes: { rol: fila.antes },
+      despues: { rol: input.rol },
+      motivo: input.motivo,
+      ...(input.numeroCarta ? { numeroCarta: input.numeroCarta } : {}),
+    },
+    contexto,
+  });
+
+  return fila.fila;
+}
+
+/** Desactivar una CUENTA entera: la persona deja de entrar a TODAS sus
+ *  empresas (fraude, o ella misma lo pidió). Solo MINCORE: una empresa
+ *  desactiva su propio perfil y nada más -- no puede dejar a alguien afuera
+ *  del trabajo que tiene en otra.
+ *
+ *  Queda registrado en la bitácora de cada empresa donde esa persona tenía
+ *  perfil: para ellas, alguien dejó de poder entrar y tienen que poder ver por
+ *  qué. */
+export async function cambiarEstadoCuentaService(
+  cuentaId: string,
+  activo: boolean,
+  motivo: string,
+  contexto: ContextoAuditoria
+): Promise<{ email: string; activo: boolean; perfilesAfectados: number }> {
+  const cuenta = await pool.query(
+    `UPDATE cuentas SET activo = $2, actualizado_en = now() WHERE id = $1 RETURNING email`,
+    [cuentaId, activo]
+  );
+  if (cuenta.rows.length === 0) throw new AppError(404, "Cuenta no encontrada");
+
+  // Los perfiles quedan como están (cada empresa decide sobre el suyo): lo que
+  // se corta es la cuenta, y con ella el login y el refresh.
+  const perfiles = await revocarSesionesDeCuentaService(cuentaId);
+
+  for (const perfil of perfiles) {
+    await registrarAuditoria({
+      accion: activo ? "plataforma.reactivar_cuenta" : "plataforma.desactivar_cuenta",
+      tenantId: perfil.tenantId,
+      usuarioId: perfil.usuarioId,
+      detalle: { email: cuenta.rows[0].email, motivo },
+      contexto,
+    });
+  }
+
+  return { email: cuenta.rows[0].email, activo, perfilesAfectados: perfiles.length };
 }
 
 /** Verifica que el usuario exista Y pertenezca al tenant indicado — con

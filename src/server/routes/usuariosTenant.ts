@@ -34,7 +34,7 @@
  * ni a sí mismo, un módulo que su empresa no contrató: ver
  * permisosTenant.service.ts.
  */
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 
 import { validate } from "../middleware/validate";
@@ -43,22 +43,20 @@ import { requireRole } from "../shared/middlewares/roles.middleware";
 import { asyncHandler } from "../shared/utils/asyncHandler";
 import { contextoAuditoriaModulo } from "../shared/utils/moduleAudit";
 import { getTenantId } from "../shared/utils/request";
-import { resetearClaveUsuarioService } from "../services/auth.service";
-import { registrarAuditoria } from "../services/platformAudit.service";
 import {
-  crearUsuarioEnTenantService,
   listarUsuariosTenantService,
-  cambiarEstadoUsuarioService,
   actualizarPerfilUsuarioService,
 } from "../services/platform.service";
 import {
   crearUsuarioEnTenantSchema,
   type CrearUsuarioEnTenantInput,
 } from "../schemas/platform.schema";
+import { listarPermisosUsuarioService } from "../services/permisosTenant.service";
 import {
-  listarPermisosUsuarioService,
-  guardarPermisosUsuarioService,
-} from "../services/permisosTenant.service";
+  solicitarOrdenService,
+  verificarNoDejaSinFirmantes,
+  type DatosDeLaSolicitud,
+} from "../services/ordenesAdmin.service";
 
 const resetClaveSchema = z.object({
   password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres").max(200),
@@ -113,6 +111,42 @@ const guardarPermisosSchema = z.object({
   motivo: z.string().trim().max(500).optional(),
 });
 
+/** Toda acción de administración pasa por una ORDEN (entrega 5).
+ *
+ *  Con la doble firma apagada --como arranca cada empresa-- la orden se crea y
+ *  se aplica en el acto, y la respuesta es la de siempre: la pantalla no
+ *  cambia. Con la doble firma encendida, lo que vuelve es un 202 con la orden
+ *  pendiente, y no se aplicó nada todavía.
+ *
+ *  El correlativo y el registro quedan en los dos casos: una orden aplicada es
+ *  el respaldo de por qué alguien tiene el acceso que tiene. */
+async function responderConOrden(
+  req: Request,
+  res: Response,
+  solicitud: DatosDeLaSolicitud,
+  /** Qué devolver cuando se aplicó de una. Recibe lo que devolvió la acción. */
+  alAplicar: (resultado: unknown) => { estado: number; cuerpo: unknown }
+) {
+  const { orden, resultado } = await solicitarOrdenService(
+    getTenantId(req),
+    { id: req.usuario!.id, nombre: req.usuario!.nombre },
+    solicitud,
+    contextoAuditoriaModulo(req)
+  );
+
+  if (orden.estado === "pendiente") {
+    return res.status(202).json({
+      orden,
+      message: `Queda pendiente de la firma de otro administrador (${orden.correlativo})`,
+    });
+  }
+
+  const { estado, cuerpo } = alAplicar(resultado);
+  res
+    .status(estado)
+    .json(cuerpo && typeof cuerpo === "object" ? { ...(cuerpo as object), orden } : { orden });
+}
+
 export function createUsuariosTenantRouter() {
   const router = Router();
 
@@ -130,13 +164,17 @@ export function createUsuariosTenantRouter() {
     requireRole("admin"),
     validate(crearUsuarioEnTenantSchema),
     asyncHandler(async (req, res) => {
-      const tenantId = getTenantId(req);
-      const usuario = await crearUsuarioEnTenantService(
-        tenantId,
-        req.validatedBody as CrearUsuarioEnTenantInput,
-        contextoAuditoriaModulo(req)
+      const input = req.validatedBody as CrearUsuarioEnTenantInput;
+      await responderConOrden(
+        req,
+        res,
+        {
+          tipo: "alta_usuario",
+          payload: input as unknown as Record<string, unknown>,
+          motivo: `Alta de ${input.nombre}`,
+        },
+        (resultado) => ({ estado: 201, cuerpo: resultado })
       );
-      res.status(201).json(usuario);
     })
   );
 
@@ -145,23 +183,22 @@ export function createUsuariosTenantRouter() {
     requireRole("admin"),
     validate(resetClaveSchema),
     asyncHandler(async (req, res) => {
-      const tenantId = getTenantId(req);
       const { password } = req.validatedBody as { password: string };
-
-      const usuario = await resetearClaveUsuarioService(tenantId, req.params.id, password);
-
-      await registrarAuditoria({
-        accion: "resetear_clave_usuario",
-        tenantId,
-        usuarioId: usuario.id,
-        // Nunca la contraseña, obviamente: solo a quién se le cambió y CÓMO.
-        // `correo-enviado` significa que el admin no puso ninguna clave: la
-        // persona tiene cuenta y la elige ella (ver resetearClaveUsuarioService).
-        detalle: { identificador: usuario.email ?? usuario.dni, modo: usuario.modo },
-        contexto: contextoAuditoriaModulo(req),
-      });
-
-      res.json(usuario);
+      await responderConOrden(
+        req,
+        res,
+        {
+          tipo: "resetear_clave",
+          usuarioId: req.params.id,
+          // La clave viaja en la orden porque hay que poder aplicarla cuando
+          // la firmen, horas después. Solo la ven los administradores de esta
+          // empresa, que son quienes la escribieron -- y cuando la persona
+          // tiene cuenta el servidor la ignora y le manda un correo.
+          payload: { password },
+          motivo: "Reseteo de clave",
+        },
+        (resultado) => ({ estado: 200, cuerpo: resultado })
+      );
     })
   );
 
@@ -185,14 +222,37 @@ export function createUsuariosTenantRouter() {
         throw new AppError(400, "No podés desactivar tu propia cuenta");
       }
 
-      const usuario = await cambiarEstadoUsuarioService(
-        tenantId,
-        req.params.id,
-        estado,
-        motivo,
-        contextoAuditoriaModulo(req)
+      // Volver a 'activo' desde 'bloqueado' es un DESBLOQUEO, y desde
+      // 'inactivo' es una reactivación: son dos órdenes distintas porque son
+      // dos cosas distintas para quien las firma.
+      const estadoActual = (await listarUsuariosTenantService(tenantId)).find(
+        (u) => u.id === req.params.id
+      )?.estado;
+
+      // Con la doble firma activa no se puede dejar a la empresa con un solo
+      // administrador: nadie podría firmar la orden siguiente.
+      if (estado !== "activo") {
+        await verificarNoDejaSinFirmantes(tenantId, req.params.id);
+      }
+
+      const tipo =
+        estado === "inactivo"
+          ? ("baja_usuario" as const)
+          : estadoActual === "bloqueado"
+            ? ("desbloquear_usuario" as const)
+            : ("reactivar_usuario" as const);
+
+      await responderConOrden(
+        req,
+        res,
+        {
+          tipo,
+          usuarioId: req.params.id,
+          payload: { estado },
+          motivo: motivo ?? (tipo === "desbloquear_usuario" ? "Desbloqueo" : "Reactivación"),
+        },
+        (resultado) => ({ estado: 200, cuerpo: resultado })
       );
-      res.json(usuario);
     })
   );
 
@@ -230,36 +290,23 @@ export function createUsuariosTenantRouter() {
     requireRole("admin"),
     validate(guardarPermisosSchema),
     asyncHandler(async (req, res) => {
-      const tenantId = getTenantId(req);
       const cambio = req.validatedBody as {
         rol?: "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta";
         modulos: { modulo: string; asignado: boolean; nivel: "operar" | "consultas" }[];
         motivo?: string;
       };
 
-      const resultado = await guardarPermisosUsuarioService(
-        tenantId,
-        req.params.id,
-        cambio,
-        req.usuario!.id
-      );
-
-      await registrarAuditoria({
-        accion: "cambiar_permisos_usuario",
-        tenantId,
-        usuarioId: req.params.id,
-        // El antes y el después completos: sin eso, meses después nadie puede
-        // reconstruir por qué alguien tenía el acceso que tenía.
-        detalle: {
-          motivo: cambio.motivo ?? null,
-          recorta: resultado.recorta,
-          antes: { rol: resultado.antes.rol, modulos: resultado.antes.modulos },
-          despues: { rol: resultado.despues.rol, modulos: resultado.despues.modulos },
+      await responderConOrden(
+        req,
+        res,
+        {
+          tipo: "cambiar_permisos",
+          usuarioId: req.params.id,
+          payload: { rol: cambio.rol, modulos: cambio.modulos },
+          motivo: cambio.motivo ?? "Cambio de permisos",
         },
-        contexto: contextoAuditoriaModulo(req),
-      });
-
-      res.json(resultado);
+        (resultado) => ({ estado: 200, cuerpo: resultado })
+      );
     })
   );
 

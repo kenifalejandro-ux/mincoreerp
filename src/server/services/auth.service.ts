@@ -923,7 +923,9 @@ export async function revocarSesionesService(usuarioId: string, tenantId: string
  *
  *  Incluye los perfiles inactivos a propósito: un perfil que se dio de baja
  *  hace un minuto todavía puede tener una sesión viva. */
-export async function revocarSesionesDeCuentaService(cuentaId: string): Promise<void> {
+export async function revocarSesionesDeCuentaService(
+  cuentaId: string
+): Promise<{ usuarioId: string; tenantId: string }[]> {
   const perfiles = await withCuenta(cuentaId, async (client) => {
     const result = await client.query(`SELECT id, tenant_id FROM usuarios WHERE cuenta_id = $1`, [
       cuentaId,
@@ -934,6 +936,10 @@ export async function revocarSesionesDeCuentaService(cuentaId: string): Promise<
   for (const perfil of perfiles) {
     await revocarSesionesService(perfil.id, perfil.tenant_id);
   }
+
+  // Los perfiles que se tocaron: quien desactiva una cuenta necesita saber en
+  // qué empresas tenía acceso esa persona, para dejarlo registrado en cada una.
+  return perfiles.map((p) => ({ usuarioId: p.id, tenantId: p.tenant_id }));
 }
 
 /** Cierra SOLO la sesión actual (este dispositivo/navegador) -- las demás

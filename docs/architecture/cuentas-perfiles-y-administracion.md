@@ -353,3 +353,23 @@ es un día malo. Lo cubre `tests/platform-backup.test.ts` ("un backup anterior a
 | 6 | Seguridad por empresa | `exigir_sso`, desactivar cuenta desde plataforma, contract de la migración |
 
 Cada entrega es un PR que funciona solo y con CI en verde.
+
+**Estado al 2026-09-15:** las entregas 1 a 5 están implementadas. Queda la 6
+(`exigir_sso` por empresa y el *contract* de las migraciones: sacar
+`usuarios.activo`, que hoy sobrevive porque lo leen el login y los avisos
+anti-fraude de combustible).
+
+Tres decisiones que se tomaron al implementar y no estaban en este documento:
+
+- **Bloqueo automático a los 10 intentos, y solo por DNI.** Diez y no tres
+  porque quien entra por DNI es un grifero en una tablet compartida a las
+  cinco de la mañana: bloquearlo al tercer intento no da más seguridad, da que
+  el turno cargue con el usuario de otro. Solo por DNI porque la clave de
+  quien entra con correo es de su CUENTA, y contar esos errores en un perfil
+  bloquearía el acceso a una empresa por intentos que pueden venir de otra.
+- **Encender la doble firma necesita una firma; apagarla, dos.** Endurecer es
+  inmediato, aflojar necesita respaldo -- el mismo criterio que el resto del
+  ERP.
+- **Los cambios de permisos que solo AGREGAN no cierran sesiones.** Lo nuevo
+  aparece en la próxima renovación (media hora como mucho). Los que recortan
+  sí cierran las sesiones en el acto.

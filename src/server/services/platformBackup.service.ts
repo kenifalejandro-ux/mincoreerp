@@ -48,6 +48,16 @@ type MetaTabla = TablaBackupMeta;
 // documentos) pueden ir en cualquier posición relativa.
 const TABLAS_TENANT: MetaTabla[] = [
   { nombre: "usuarios", pk: "uuid" },
+  // Las órdenes administrativas (0091) no son de ningún módulo: son el
+  // registro de POR QUÉ cada persona tiene el acceso que tiene, con sus dos
+  // firmas. Van después de `usuarios` porque apuntan a tres columnas suyas
+  // (sobre quién, quién la pidió, quién la firmó) y antes de los módulos, que
+  // no las referencian.
+  {
+    nombre: "ordenes_admin",
+    pk: "uuid",
+    fks: { usuario_id: "usuarios", solicitante_id: "usuarios", aprobador_id: "usuarios" },
+  },
   ...MODULOS.flatMap((m) => m.tablas),
 ];
 
@@ -56,7 +66,12 @@ const TABLAS_TENANT: MetaTabla[] = [
 // un orden válido de INSERT (padres antes que hijos) siempre da un orden
 // válido de DELETE (hijos antes que padres). usuarios se borra al final,
 // por la misma razón que se inserta primero.
-const RAICES_WIPE: string[] = [...MODULOS.flatMap((m) => m.raices)].reverse();
+const RAICES_WIPE: string[] = [
+  // Antes que nada: apunta a `usuarios`, que se borra al final de todo, y
+  // ningún módulo la referencia.
+  "ordenes_admin",
+  ...[...MODULOS.flatMap((m) => m.raices)].reverse(),
+];
 
 export interface ContenidoBackup {
   /** 1 = antes de las cuentas (0087). 2 = incluye `cuentas`. Un backup
