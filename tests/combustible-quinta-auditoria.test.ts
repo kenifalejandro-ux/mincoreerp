@@ -324,6 +324,41 @@ describe("combustible: los diez huecos de la 5ª auditoría", () => {
     expect(JSON.stringify(r.body)).toMatch(/futura/i);
   });
 
+  it("una recepción fechada hace 10 días, detrás de movimientos ya existentes, alerta", async () => {
+    // El default de días de carga retroactiva es 3. Mismo criterio EXACTO que
+    // el vale retro-fechado: no importa que sea vieja, importa que haya algo
+    // MÁS RECIENTE detrás de lo cual esconderla. La recepción retro necesita
+    // una lectura vigente ANTERIOR a su fecha para poder registrarse (0064):
+    // por eso la varilla más vieja queda 20 días atrás y la retro, 10.
+    const tq = await tanque();
+    await leer(admin, tq.id, 10000, new Date(Date.now() - 20 * 864e5).toISOString());
+    await leer(admin, tq.id, 10500, en(1));
+    await recibir(admin, tq.id, 3000, en(2)); // movimiento reciente ya existente
+    const atras = await recibir(
+      admin,
+      tq.id,
+      1000,
+      new Date(Date.now() - 10 * 864e5).toISOString()
+    );
+    expect(atras.status).toBe(201);
+    expect(tipos(await alertasDe(tq.id))).toContain("recepcion_retroactiva");
+  });
+
+  it("cargar el historial hacia atrás en un tanque SIN movimiento previo no alerta", async () => {
+    // El gemelo de control: sin nada detrás de qué esconderse, no hay nada
+    // sospechoso -- es la carga inicial legítima de cualquier cliente nuevo.
+    const tq = await tanque();
+    await leer(admin, tq.id, 10000, new Date(Date.now() - 20 * 864e5).toISOString());
+    const atras = await recibir(
+      admin,
+      tq.id,
+      1000,
+      new Date(Date.now() - 10 * 864e5).toISOString()
+    );
+    expect(atras.status).toBe(201);
+    expect(tipos(await alertasDe(tq.id))).not.toContain("recepcion_retroactiva");
+  });
+
   it("anular una recepción genera alerta", async () => {
     const tq = await tanque();
     await leer(admin, tq.id, 10000, en(1));
