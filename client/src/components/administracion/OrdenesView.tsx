@@ -10,6 +10,7 @@
 // tiene.
 import { useCallback, useEffect, useState } from "react";
 
+import { useAuth } from "../../context/AuthContext";
 import {
   aprobarOrdenApi,
   cambiarDobleFirmaApi,
@@ -19,7 +20,6 @@ import {
   type EstadoDeOrden,
   type OrdenAdministrativa,
 } from "../../services/administracionApi";
-import { useAuth } from "../../context/AuthContext";
 
 const TIPOS: Record<string, string> = {
   alta_usuario: "Alta de usuario",
@@ -75,9 +75,30 @@ export default function OrdenesView() {
     }
   }, []);
 
+  // La primera carga no pasa por `cargar()`: llamar desde un efecto a algo que
+  // setea estado dispara una cascada de renders (y la regla que la prohíbe).
+  // `cargando` ya arranca en true, así que acá solo hay que traer los datos.
   useEffect(() => {
-    void cargar();
-  }, [cargar]);
+    let cancelado = false;
+    Promise.all([listarOrdenesApi(), estadoDobleFirmaApi()])
+      .then(([lista, estado]) => {
+        if (cancelado) return;
+        setOrdenes(lista);
+        setDobleFirma(estado.dobleFirma);
+        setAdmins(estado.administradoresActivos);
+      })
+      .catch((err) => {
+        if (!cancelado) {
+          setError(err instanceof Error ? err.message : "No se pudieron cargar las órdenes.");
+        }
+      })
+      .finally(() => {
+        if (!cancelado) setCargando(false);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, []);
 
   const resolver = async (orden: OrdenAdministrativa, aprobar: boolean) => {
     if (trabajando) return;
