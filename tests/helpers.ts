@@ -183,9 +183,38 @@ export async function borrarTenantDePrueba(tenantId: string) {
     await client.query("DELETE FROM ipercs WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM iperc_lineas_base WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM equipos WHERE tenant_id = $1", [tenantId]);
+    // Las órdenes administrativas (0091) apuntan a usuarios por tres columnas
+    // y solo una tiene ON DELETE SET NULL -- van antes.
+    await client.query("DELETE FROM ordenes_admin WHERE tenant_id = $1", [tenantId]);
     // refresh_tokens/usuario_modulos se borran solos (ON DELETE CASCADE
     // desde usuarios) — borrar usuarios alcanza.
+    // Las cuentas (0087) no son de ninguna empresa: hay que juntar las de
+    // estos perfiles ANTES de borrarlos, y después borrar solo las que no
+    // quedaron con perfiles en otra empresa. Sin esto, cada tenant de prueba
+    // deja una cuenta suelta para siempre.
+    const cuentas = (
+      await client.query(
+        "SELECT DISTINCT cuenta_id FROM usuarios WHERE tenant_id = $1 AND cuenta_id IS NOT NULL",
+        [tenantId]
+      )
+    ).rows.map((r) => r.cuenta_id as string);
+
     await client.query("DELETE FROM usuarios WHERE tenant_id = $1", [tenantId]);
+
+    for (const cuentaId of cuentas) {
+      // `app.cuenta_id` activa la política de lectura de 0087, que es la única
+      // forma de preguntar "¿le queda algún perfil en OTRA empresa?" sin
+      // apagar RLS. Con app.tenant_id todavía seteado a este tenant, la
+      // consulta vería solo lo de acá y borraría cuentas que siguen en uso.
+      await client.query("SELECT set_config('app.cuenta_id', $1, true)", [cuentaId]);
+      const quedan = await client.query("SELECT 1 FROM usuarios WHERE cuenta_id = $1 LIMIT 1", [
+        cuentaId,
+      ]);
+      if (quedan.rowCount === 0) {
+        await client.query("DELETE FROM cuentas WHERE id = $1", [cuentaId]);
+      }
+    }
+    await client.query("SELECT set_config('app.cuenta_id', '', true)");
     // tenants/tenant_modulos no tienen RLS, pero entran en esta misma
     // transacción igual: es lo que hace que el lock de arriba proteja
     // hasta el final, no solo hasta el COMMIT de un bloque separado.

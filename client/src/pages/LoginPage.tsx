@@ -6,9 +6,11 @@ import { useAuth } from "../context/AuthContext";
 import {
   loginApi,
   googleLoginApi,
+  elegirEmpresaApi,
   forgotPasswordApi,
   ssoDisponibleApi,
   ssoIniciarUrl,
+  type EmpresaDeLaCuenta,
 } from "../services/authApi";
 
 declare global {
@@ -70,17 +72,37 @@ export default function LoginPage() {
   const { login } = useAuth();
   const slugDeSubdominio = useState(resolverSlugDeSubdominio)[0];
   const esDominioDeCliente = useState(esHostDeClienteNoReconocido)[0];
-  // Prioridad: subdominio propio reconocible > dominio de cliente (propio o
-  // subdominio, resuelto por el backend, valor real desconocido acá) >
-  // tenant por defecto del propio entorno (dueño de la plataforma) > campo
-  // manual como último recurso.
-  const slugResuelto = slugDeSubdominio ?? (esDominioDeCliente ? "auto" : null) ?? SLUG_POR_DEFECTO;
+  // La empresa dejó de ser un dato que alguien tipea (migración 0087):
+  //
+  //  - Con CORREO no hace falta ninguna. La persona tiene UNA cuenta y sus
+  //    perfiles cuelgan de ella: con una sola empresa entra directo, con
+  //    varias la elige después de la clave. El slug se manda solo cuando la
+  //    URL lo dice de verdad (subdominio propio) — y ahí la sesión queda
+  //    limitada a esa empresa, sin revelar que tiene perfil en otras.
+  //  - Con DNI sí hace falta, porque un DNI puede repetirse entre empresas.
+  //    Si la URL no la dice, se usa la del entorno — así entra el dueño de
+  //    la plataforma en local (VITE_DEFAULT_TENANT_SLUG).
+  //
+  // En el dominio propio de un cliente (ej. "cushuro.pe") no se manda nada:
+  // el backend resuelve la empresa del Host real y sobreescribe cualquier
+  // cosa que venga en el body (ver resolveTenantSubdomain.ts).
+  const slugDeLaUrl = slugDeSubdominio;
+  const slugDeLaEmpresa = slugDeLaUrl ?? (esDominioDeCliente ? null : SLUG_POR_DEFECTO);
+  // Las dos consultas que necesitan un slug concreto sí o sí (SSO).
+  const tenantSlugEfectivo = slugDeLaEmpresa ?? "";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [modo, setModo] = useState<"login" | "olvide">("login");
   const [mensajeOlvide, setMensajeOlvide] = useState<string | null>(null);
+  // Paso 2, solo para quien trabaja en varias empresas: la clave ya se
+  // validó y el servidor devolvió la lista más un token de 2 minutos.
+  const [eleccion, setEleccion] = useState<{
+    token: string;
+    empresas: EmpresaDeLaCuenta[];
+    ultimoTenantId: string | null;
+  } | null>(null);
 
   const [ssoDisponible, setSsoDisponible] = useState(false);
 
@@ -88,17 +110,15 @@ export default function LoginPage() {
   // El callback de Google Identity Services se registra una sola vez (ver
   // useEffect más abajo) — usamos un ref para leer el slug vigente al
   // momento del click, en vez de uno capturado por el closure en el mount.
-  const tenantSlugEfectivo = slugResuelto ?? "";
-  const tenantSlugRef = useRef(tenantSlugEfectivo);
+  const slugDeLaUrlRef = useRef(slugDeLaUrl);
   useEffect(() => {
-    tenantSlugRef.current = tenantSlugEfectivo;
-  }, [tenantSlugEfectivo]);
+    slugDeLaUrlRef.current = slugDeLaUrl;
+  }, [slugDeLaUrl]);
   const googleClientId = import.meta.env.VITE_GOOGLE_LOGIN_CLIENT_ID as string | undefined;
 
-  // Botón "Iniciar sesión con SSO" — solo se muestra si el tenant resuelto
-  // (por subdominio/dominio propio, o el que el usuario ya tipeó a mano)
-  // tiene tenant_sso_config activo. Se re-chequea cada vez que cambia el
-  // slug efectivo, así el campo manual también lo actualiza en vivo.
+  // Botón "Iniciar sesión con SSO" — solo se muestra si la empresa que dice
+  // la URL tiene tenant_sso_config activo. Sin empresa no hay a quién
+  // preguntarle: el SSO es de una empresa, no de una persona.
   useEffect(() => {
     // Con el slug vacío no hay nada que consultar -- el `false` para ese
     // caso se deriva en el render (ver ssoRealmenteDisponible más abajo),
@@ -116,8 +136,8 @@ export default function LoginPage() {
       cancelado = true;
     };
   }, [tenantSlugEfectivo]);
-  // Evita mostrar un `ssoDisponible` desactualizado si el usuario borra un
-  // slug que antes sí tenía SSO habilitado.
+  // Evita mostrar un `ssoDisponible` desactualizado si el slug queda vacío
+  // después de una consulta que había dicho que sí.
   const ssoRealmenteDisponible = tenantSlugEfectivo.trim() !== "" && ssoDisponible;
 
   // Si el callback de SSO falló y redirigió de vuelta acá con un error
@@ -143,8 +163,17 @@ export default function LoginPage() {
     setError(null);
     setEnviando(true);
     try {
-      const usuario = await loginApi(tenantSlugEfectivo, email, password);
-      login(usuario);
+      // El DNI necesita empresa; el correo la resuelve solo (ver arriba).
+      const esDni = !email.includes("@");
+      const resultado = await loginApi(esDni ? slugDeLaEmpresa : slugDeLaUrl, email, password);
+      if (resultado.tipo === "elegir-empresa") {
+        setEleccion(resultado);
+        // La clave ya cumplió: el token de 2 minutos la reemplaza en el
+        // segundo paso, no tiene por qué seguir en memoria del navegador.
+        setPassword("");
+        return;
+      }
+      login(resultado.usuario);
     } catch (err: any) {
       setError(err.message || "No se pudo iniciar sesión");
     } finally {
@@ -152,17 +181,44 @@ export default function LoginPage() {
     }
   }
 
+  /** Paso 2: canjea el token por la sesión de la empresa elegida. */
+  async function entrarA(tenantId: string) {
+    if (!eleccion) return;
+    setError(null);
+    setEnviando(true);
+    try {
+      login(await elegirEmpresaApi(eleccion.token, tenantId));
+    } catch (err: any) {
+      // El token dura 2 minutos: vencido, se vuelve a pedir la clave. El
+      // mensaje del servidor ya lo explica.
+      setEleccion(null);
+      setError(err.message || "No se pudo entrar a esa empresa");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  // La última empresa en la que entró va primero: es la que va a querer 9 de
+  // cada 10 veces. El resto, por nombre.
+  const empresasOrdenadas = eleccion
+    ? [...eleccion.empresas].sort((a, b) => {
+        if (a.tenantId === eleccion.ultimoTenantId) return -1;
+        if (b.tenantId === eleccion.ultimoTenantId) return 1;
+        return a.nombre.localeCompare(b.nombre, "es");
+      })
+    : [];
+
   async function handleOlvide(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setEnviando(true);
     try {
-      const mensaje = await forgotPasswordApi(tenantSlugEfectivo, email);
+      const mensaje = await forgotPasswordApi(slugDeLaEmpresa, email);
       setMensajeOlvide(mensaje);
     } catch (err: any) {
       // El backend siempre responde el mismo mensaje genérico salvo que
-      // falle la validación (ej. falta el campo Empresa) — ese sí se
-      // muestra tal cual.
+      // falle la validación (ej. el correo mal escrito) — ese sí se muestra
+      // tal cual.
       setError(err.message || "No se pudo procesar la solicitud");
     } finally {
       setEnviando(false);
@@ -181,15 +237,17 @@ export default function LoginPage() {
       window.google.accounts.id.initialize({
         client_id: googleClientId!,
         callback: async ({ credential }) => {
-          if (!tenantSlugRef.current.trim()) {
-            setError("No se pudo identificar tu empresa automáticamente");
-            return;
-          }
           setError(null);
           setEnviando(true);
           try {
-            const usuario = await googleLoginApi(tenantSlugRef.current, credential);
-            login(usuario);
+            // Igual que con el correo: la empresa solo se manda si la URL la
+            // dice; si no, la resuelve la cuenta de Google.
+            const resultado = await googleLoginApi(slugDeLaUrlRef.current, credential);
+            if (resultado.tipo === "elegir-empresa") {
+              setEleccion(resultado);
+              return;
+            }
+            login(resultado.usuario);
           } catch (err: any) {
             setError(err.message || "No se pudo iniciar sesión con Google");
           } finally {
@@ -295,6 +353,61 @@ export default function LoginPage() {
               Volver a iniciar sesión
             </button>
           </form>
+        ) : eleccion ? (
+          /* Paso 2: la clave ya se validó. Esto NO es un formulario -- no
+             hay nada más que escribir, solo decir a cuál de sus empresas
+             entra. */
+          <div className="bg-[#1D2124] border border-slate-200 rounded-xl p-6 space-y-4 shadow-sm">
+            <div>
+              <h2 className="text-sm font-medium text-slate-100">¿A qué empresa entrás?</h2>
+              <p className="text-xs font-light text-slate-400 mt-1">
+                Tu cuenta tiene acceso a más de una.
+              </p>
+            </div>
+
+            {error && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                {error}
+              </p>
+            )}
+
+            <div className="space-y-2">
+              {empresasOrdenadas.map((empresa) => (
+                <button
+                  key={empresa.tenantId}
+                  type="button"
+                  disabled={enviando}
+                  onClick={() => void entrarA(empresa.tenantId)}
+                  className="w-full flex items-center justify-between gap-3 px-4 py-3 rounded-lg border border-slate-600 text-left hover:bg-white/5 disabled:opacity-50 transition-colors"
+                >
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium text-slate-100 truncate">
+                      {empresa.nombre}
+                    </span>
+                    <span className="block text-xs font-light text-slate-400 truncate">
+                      {empresa.slug}
+                    </span>
+                  </span>
+                  {empresa.tenantId === eleccion.ultimoTenantId && (
+                    <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-zinc-900 bg-[#DDF500] rounded-full px-2 py-0.5">
+                      La última vez
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setEleccion(null);
+                setError(null);
+              }}
+              className="w-full text-center text-sm font-light text-slate-300 hover:text-slate-100"
+            >
+              Volver
+            </button>
+          </div>
         ) : (
           <form
             onSubmit={handleSubmit}

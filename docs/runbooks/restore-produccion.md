@@ -114,7 +114,10 @@ curl -s -X POST \
 2. Abre una transacción con `withTenant(targetTenantId, ...)`.
 3. `vaciarDatosDeTenant`: borra TODAS las filas de negocio actuales del
    tenant destino (repuestos, combustible, documentos, equipos,
-   checklists, ipercs — nunca usuarios).
+   checklists, ipercs) **y también sus usuarios**, que el paso 4 vuelve a
+   insertar desde el backup. Las **cuentas** (la persona detrás de cada
+   usuario, migración 0087) nunca se borran: no son de esta empresa, y la
+   misma persona puede estar trabajando en otra.
 4. `restaurarTablas`: inserta las filas del backup, en el orden que
    respeta las FK (`raices`/`tablas` del registry de módulos).
 5. Si el backup restauró usuarios, incrementa `token_version` de todos en
@@ -122,6 +125,11 @@ curl -s -X POST \
    inmediato**, sin importar cuándo expire su JWT. Es intencional: un
    restore es un rollback de estado, un token emitido después del momento
    del backup no debe seguir sirviendo.
+
+   La **clave** de quien entra con correo NO vuelve a la del backup: vive en
+   su cuenta y la cuenta no se toca (si la cambió después del backup, sigue
+   valiendo la nueva). Si la cuenta ya no existía, se recrea desde el backup.
+   Ver `docs/architecture/cuentas-perfiles-y-administracion.md` §13.
 6. Todo en una sola transacción — si cualquier paso falla, `ROLLBACK`
    completo. El tenant nunca queda a medio restaurar.
 

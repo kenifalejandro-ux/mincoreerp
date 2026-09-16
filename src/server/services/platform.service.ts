@@ -22,9 +22,11 @@ import { logger } from "../config/logger";
 import { AppError } from "../shared/middlewares/error.middleware";
 import {
   crearUsuarioService,
+  invitarAlPerfilService,
   revocarSesionesService,
+  revocarSesionesDeCuentaService,
   aPublico,
-  type UsuarioPayload,
+  type UsuarioPublico,
 } from "./auth.service";
 import { MODULOS_ERP } from "../schemas/platform.schema";
 import { verificarCuota, CuotaExcedidaError, RECURSO_USUARIOS } from "./platformCuotas.service";
@@ -60,7 +62,7 @@ export async function crearTenantConAdminService(
   // sea un estado posible, ni siquiera transitorio: si el UPDATE de más
   // abajo fallara, el tenant tampoco queda creado.
   planId?: string
-): Promise<{ tenant: TenantCreado; usuario: Omit<UsuarioPayload, "tokenVersion"> }> {
+): Promise<{ tenant: TenantCreado; usuario: UsuarioPublico }> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -350,7 +352,16 @@ export interface UsuarioListado {
   email: string | null;
   dni: string | null;
   rol: string;
+  /** La copia booleana de `estado` que mantiene el trigger de 0090. Se sigue
+   *  devolviendo para no romper a nadie que ya la lea. */
   activo: boolean;
+  /** activo / inactivo (lo dio de baja un admin) / bloqueado (se le trabó la
+   *  clave). Ver migrations/0090. */
+  estado: "activo" | "inactivo" | "bloqueado";
+  /** Del PERFIL, no de la persona: la misma puede tener otro número en otra
+   *  empresa, y es cada empresa la que lo mantiene. */
+  celular: string | null;
+  bloqueadoEn: string | null;
 }
 
 /** Nunca selecciona password_hash — esto lo ve el panel de plataforma, que
@@ -363,18 +374,25 @@ export async function listarUsuariosTenantService(tenantId: string): Promise<Usu
 
   return withTenant(tenantId, async (client) => {
     const result = await client.query(
-      `SELECT id, nombre, email, dni, rol, activo FROM usuarios WHERE tenant_id = $1 ORDER BY nombre`,
+      `SELECT id, nombre, email, dni, rol, activo, estado, celular,
+              bloqueado_en AS "bloqueadoEn"
+         FROM usuarios WHERE tenant_id = $1 ORDER BY nombre`,
       [tenantId]
     );
     return result.rows;
   });
 }
 
+/** Cómo quedó el acceso de la persona recién dada de alta. Lo mira la
+ *  pantalla para saber qué mostrarle al administrador: una clave para dictar,
+ *  o nada, porque la persona la define sola desde su correo. */
+export type ModoAlta = "clave-temporal" | "invitacion-enviada";
+
 export async function crearUsuarioEnTenantService(
   tenantId: string,
   input: CrearUsuarioEnTenantInput,
   contexto: ContextoAuditoria
-): Promise<Omit<UsuarioPayload, "tokenVersion">> {
+): Promise<UsuarioPublico & { modo: ModoAlta }> {
   const tenant = await pool.query(`SELECT id FROM tenants WHERE id = $1`, [tenantId]);
   if (tenant.rows.length === 0) {
     throw new AppError(404, "Tenant no encontrado");
@@ -405,15 +423,128 @@ export async function crearUsuarioEnTenantService(
     throw err;
   });
 
+  // Alta por invitación (entrega 3): con correo y sin clave elegida por el
+  // administrador, la persona define la suya desde el enlace que le llega. El
+  // administrador ve lo mismo trabaje o no esa persona en otra empresa -- ver
+  // invitarAlPerfilService.
+  const modo: ModoAlta = usuario.email && !input.password ? "invitacion-enviada" : "clave-temporal";
+  if (modo === "invitacion-enviada") {
+    await invitarAlPerfilService({
+      email: usuario.email!,
+      nombre: usuario.nombre,
+      tenantId,
+    });
+  }
+
   await registrarAuditoria({
     accion: "crear_usuario",
     tenantId,
     usuarioId: usuario.id,
-    detalle: { email: usuario.email, rol: usuario.rol },
+    // El número de carta viaja al detalle para que la EMPRESA lo vea en su
+    // log de eventos: es la respuesta a "¿y este usuario de dónde salió?"
+    // cuando el alta la hizo MINCORE (§12).
+    detalle: {
+      email: usuario.email,
+      rol: usuario.rol,
+      modo,
+      ...(input.numeroCarta ? { numeroCarta: input.numeroCarta } : {}),
+    },
     contexto,
   });
 
-  return aPublico(usuario);
+  return { ...aPublico(usuario), modo };
+}
+
+/** **Break-glass** (§12): MINCORE le cambia el tipo de usuario a alguien de
+ *  una empresa. Existe para un caso y uno solo: la empresa activó la doble
+ *  firma, su segundo administrador se fue, y con uno solo no hay quien firme
+ *  la orden que nombraría al reemplazo. Sin esto, la empresa queda trabada y
+ *  hay que tocarle la base a mano.
+ *
+ *  Por eso NO pasa por una orden: es la salida de emergencia del sistema de
+ *  órdenes. Lo que sí hace es dejar rastro en la bitácora DE LA EMPRESA, con
+ *  motivo obligatorio y el número de carta si lo hay -- sus administradores lo
+ *  ven en su log de eventos, que es lo que convierte una intervención del
+ *  proveedor en algo auditable por el cliente y no en algo que pasó y nadie
+ *  supo. */
+export async function reemplazarAdminService(
+  tenantId: string,
+  usuarioId: string,
+  input: { rol: string; motivo: string; numeroCarta?: string },
+  contexto: ContextoAuditoria
+): Promise<UsuarioListado> {
+  const fila = await withTenant(tenantId, async (client) => {
+    const anterior = await client.query(
+      `SELECT rol FROM usuarios WHERE id = $1 AND tenant_id = $2`,
+      [usuarioId, tenantId]
+    );
+    if (anterior.rows.length === 0) throw new AppError(404, "Usuario no encontrado");
+
+    const actualizado = await client.query(
+      `UPDATE usuarios SET rol = $1::rol_usuario, actualizado_en = now()
+        WHERE id = $2 AND tenant_id = $3
+       RETURNING id, nombre, email, dni, rol, activo, estado, celular,
+                 bloqueado_en AS "bloqueadoEn"`,
+      [input.rol, usuarioId, tenantId]
+    );
+    return { fila: actualizado.rows[0], antes: anterior.rows[0].rol };
+  });
+
+  // El rol viaja en el JWT: sin revocar, el cambio tardaría hasta media hora
+  // en valer, y un break-glass se pide justo cuando no se puede esperar.
+  await revocarSesionesService(usuarioId, tenantId);
+
+  await registrarAuditoria({
+    accion: "plataforma.reemplazar_admin",
+    tenantId,
+    usuarioId,
+    detalle: {
+      antes: { rol: fila.antes },
+      despues: { rol: input.rol },
+      motivo: input.motivo,
+      ...(input.numeroCarta ? { numeroCarta: input.numeroCarta } : {}),
+    },
+    contexto,
+  });
+
+  return fila.fila;
+}
+
+/** Desactivar una CUENTA entera: la persona deja de entrar a TODAS sus
+ *  empresas (fraude, o ella misma lo pidió). Solo MINCORE: una empresa
+ *  desactiva su propio perfil y nada más -- no puede dejar a alguien afuera
+ *  del trabajo que tiene en otra.
+ *
+ *  Queda registrado en la bitácora de cada empresa donde esa persona tenía
+ *  perfil: para ellas, alguien dejó de poder entrar y tienen que poder ver por
+ *  qué. */
+export async function cambiarEstadoCuentaService(
+  cuentaId: string,
+  activo: boolean,
+  motivo: string,
+  contexto: ContextoAuditoria
+): Promise<{ email: string; activo: boolean; perfilesAfectados: number }> {
+  const cuenta = await pool.query(
+    `UPDATE cuentas SET activo = $2, actualizado_en = now() WHERE id = $1 RETURNING email`,
+    [cuentaId, activo]
+  );
+  if (cuenta.rows.length === 0) throw new AppError(404, "Cuenta no encontrada");
+
+  // Los perfiles quedan como están (cada empresa decide sobre el suyo): lo que
+  // se corta es la cuenta, y con ella el login y el refresh.
+  const perfiles = await revocarSesionesDeCuentaService(cuentaId);
+
+  for (const perfil of perfiles) {
+    await registrarAuditoria({
+      accion: activo ? "plataforma.reactivar_cuenta" : "plataforma.desactivar_cuenta",
+      tenantId: perfil.tenantId,
+      usuarioId: perfil.usuarioId,
+      detalle: { email: cuenta.rows[0].email, motivo },
+      contexto,
+    });
+  }
+
+  return { email: cuenta.rows[0].email, activo, perfilesAfectados: perfiles.length };
 }
 
 /** Verifica que el usuario exista Y pertenezca al tenant indicado — con
@@ -433,16 +564,32 @@ async function usuarioPerteneceATenant(tenantId: string, usuarioId: string): Pro
  *  igual que cambiarEstadoTenantService hace a nivel de tenant) — nunca
  *  borra la fila: hay historial de negocio (checklists, IPERC, etc.) que
  *  referencia usuarios(id). */
+export type EstadoPerfil = "activo" | "inactivo" | "bloqueado";
+
+/** Para los llamadores que siguen hablando de un booleano -- SCIM (el
+ *  atributo `active` del estándar) y el panel de plataforma. Un booleano no
+ *  puede expresar "bloqueado", así que false es siempre una baja. */
+export function estadoDesdeActivo(activo: boolean): EstadoPerfil {
+  return activo ? "activo" : "inactivo";
+}
+
+/** Cambia el estado de un perfil (0090).
+ *
+ *  `estado` reemplaza al booleano `activo` de antes -- el trigger mantiene los
+ *  dos coherentes, así que quien todavía llame con un booleano sigue
+ *  funcionando. Volver a 'activo' desde 'bloqueado' es el DESBLOQUEO: además
+ *  de cambiar el estado hay que poner en cero los intentos fallidos, o la
+ *  persona se vuelve a bloquear con el primer error. */
 export async function cambiarEstadoUsuarioService(
   tenantId: string,
   usuarioId: string,
-  activo: boolean,
+  estado: EstadoPerfil,
   motivo: string | undefined,
   contexto: ContextoAuditoria
 ): Promise<UsuarioListado> {
   const { fila, before } = await withTenant(tenantId, async (client) => {
     const anterior = await client.query(
-      `SELECT activo FROM usuarios WHERE id = $1 AND tenant_id = $2`,
+      `SELECT estado FROM usuarios WHERE id = $1 AND tenant_id = $2`,
       [usuarioId, tenantId]
     );
     if (anterior.rows.length === 0) {
@@ -450,15 +597,23 @@ export async function cambiarEstadoUsuarioService(
     }
 
     const actualizado = await client.query(
-      `UPDATE usuarios SET activo = $1 WHERE id = $2 AND tenant_id = $3
-       RETURNING id, nombre, email, dni, rol, activo`,
-      [activo, usuarioId, tenantId]
+      // El cast explícito en cada uso: sin él Postgres deduce `text` por las
+      // comparaciones y `estado_perfil` por la asignación, y se niega a
+      // resolver el mismo parámetro con dos tipos.
+      `UPDATE usuarios
+          SET estado = $1::estado_perfil,
+              intentos_fallidos = CASE WHEN $1::estado_perfil = 'activo' THEN 0 ELSE intentos_fallidos END,
+              bloqueado_en = CASE WHEN $1::estado_perfil = 'bloqueado' THEN now() ELSE NULL END
+        WHERE id = $2 AND tenant_id = $3
+       RETURNING id, nombre, email, dni, rol, activo, estado, celular,
+                 bloqueado_en AS "bloqueadoEn"`,
+      [estado, usuarioId, tenantId]
     );
 
-    return { fila: actualizado.rows[0], before: anterior.rows[0].activo };
+    return { fila: actualizado.rows[0], before: anterior.rows[0].estado };
   });
 
-  if (!activo) {
+  if (estado !== "activo") {
     await revocarSesionesService(usuarioId, tenantId);
   }
 
@@ -466,7 +621,48 @@ export async function cambiarEstadoUsuarioService(
     accion: "cambiar_estado_usuario",
     tenantId,
     usuarioId,
-    detalle: { before: { activo: before }, after: { activo }, motivo: motivo ?? null },
+    detalle: { before: { estado: before }, after: { estado }, motivo: motivo ?? null },
+    contexto,
+  });
+
+  return fila;
+}
+
+/** Los datos de contacto del perfil. El nombre y el celular son de la empresa:
+ *  el correo NO se edita acá, porque es la identidad de la persona y cambiarlo
+ *  sería moverla de cuenta (ver §4 del documento de arquitectura). */
+export async function actualizarPerfilUsuarioService(
+  tenantId: string,
+  usuarioId: string,
+  cambios: { nombre?: string; celular?: string | null },
+  contexto: ContextoAuditoria
+): Promise<UsuarioListado> {
+  const fila = await withTenant(tenantId, async (client) => {
+    const actualizado = await client.query(
+      `UPDATE usuarios
+          SET nombre = COALESCE($1, nombre),
+              celular = CASE WHEN $2::boolean THEN $3 ELSE celular END,
+              actualizado_en = now()
+        WHERE id = $4 AND tenant_id = $5
+       RETURNING id, nombre, email, dni, rol, activo, estado, celular,
+                 bloqueado_en AS "bloqueadoEn"`,
+      [
+        cambios.nombre ?? null,
+        cambios.celular !== undefined,
+        cambios.celular ?? null,
+        usuarioId,
+        tenantId,
+      ]
+    );
+    if (actualizado.rows.length === 0) throw new AppError(404, "Usuario no encontrado");
+    return actualizado.rows[0];
+  });
+
+  await registrarAuditoria({
+    accion: "actualizar_usuario",
+    tenantId,
+    usuarioId,
+    detalle: { nombre: cambios.nombre ?? null, celular: cambios.celular ?? null },
     contexto,
   });
 

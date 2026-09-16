@@ -59,6 +59,10 @@ import {
   actualizarModuloGlobalSchema,
   MODULOS_ERP,
   crearUsuarioEnTenantSchema,
+  reemplazarAdminSchema,
+  cambiarEstadoCuentaSchema,
+  type ReemplazarAdminInput,
+  type CambiarEstadoCuentaInput,
   cambiarEstadoUsuarioSchema,
   actualizarDominioSchema,
   platformSesionSchema,
@@ -102,6 +106,9 @@ import {
   listarUsuariosTenantService,
   crearUsuarioEnTenantService,
   cambiarEstadoUsuarioService,
+  estadoDesdeActivo,
+  reemplazarAdminService,
+  cambiarEstadoCuentaService,
   obtenerModulosUsuarioService,
   actualizarModulosUsuarioService,
   type ConfiguracionModulo,
@@ -1755,6 +1762,63 @@ export function createPlatformRouter() {
     })
   );
 
+  // ── Break-glass: nombrar un administrador desde afuera (§12) ─────────
+  //
+  // Para la empresa que activó la doble firma y se quedó con un solo
+  // administrador: con uno solo no hay quien firme la orden que nombraría al
+  // reemplazo. No pasa por órdenes -- es la salida de emergencia del sistema
+  // de órdenes -- pero queda en la bitácora de esa empresa, con motivo.
+  router.patch(
+    "/tenants/:tenantId/usuarios/:usuarioId/rol",
+    validarConAuditoria(reemplazarAdminSchema, "plataforma.reemplazar_admin", (req) => ({
+      tenantId: req.params.tenantId,
+      usuarioId: req.params.usuarioId,
+    })),
+    asyncHandler(async (req, res, next) => {
+      try {
+        res.json({
+          ok: true,
+          usuario: await reemplazarAdminService(
+            req.params.tenantId,
+            req.params.usuarioId,
+            req.validatedBody as ReemplazarAdminInput,
+            contextoDe(req)
+          ),
+        });
+      } catch (err) {
+        next(err);
+      }
+    })
+  );
+
+  // ── Desactivar una CUENTA entera (§12) ───────────────────────────────
+  //
+  // La persona deja de entrar a TODAS sus empresas. Una empresa solo puede
+  // desactivar su propio perfil: no puede dejar a alguien afuera del trabajo
+  // que tiene en otra.
+  router.patch(
+    "/cuentas/:cuentaId/estado",
+    // Sin tenantId: una cuenta no es de ninguna empresa. El rastro por
+    // empresa lo escribe el servicio, una fila por cada perfil que tenía.
+    validarConAuditoria(cambiarEstadoCuentaSchema, "plataforma.cambiar_estado_cuenta", () => ({})),
+    asyncHandler(async (req, res, next) => {
+      try {
+        const { activo, motivo } = req.validatedBody as CambiarEstadoCuentaInput;
+        res.json({
+          ok: true,
+          ...(await cambiarEstadoCuentaService(
+            req.params.cuentaId,
+            activo,
+            motivo,
+            contextoDe(req)
+          )),
+        });
+      } catch (err) {
+        next(err);
+      }
+    })
+  );
+
   // Anidadas bajo su tenant a propósito (no /usuarios/:id/...): usuarios
   // tiene RLS, así que cualquier operación sobre un usuario puntual
   // necesita su tenantId de antemano — ver comentario al inicio de
@@ -1771,7 +1835,7 @@ export function createPlatformRouter() {
         const usuario = await cambiarEstadoUsuarioService(
           req.params.tenantId,
           req.params.usuarioId,
-          activo,
+          estadoDesdeActivo(activo),
           motivo,
           contextoDe(req)
         );

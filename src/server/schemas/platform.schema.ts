@@ -104,14 +104,32 @@ export const crearUsuarioEnTenantSchema = z
     // carné de extranjería y un tercero puede tener pasaporte. Validar "8
     // dígitos" dejaría afuera gente que trabaja en la mina.
     dni: z.string().trim().min(6, "DNI demasiado corto").max(15).optional(),
-    password: z.string().min(8, "La contraseña debe tener al menos 8 caracteres").max(200),
+    // Opcional desde la entrega 3: con correo, la persona define su propia
+    // clave desde la invitación que le llega, y el administrador no elige
+    // ninguna. Sigue siendo obligatoria sin correo (personal de cancha por
+    // DNI), donde no hay a dónde mandar una invitación.
+    password: z
+      .string()
+      .min(8, "La contraseña debe tener al menos 8 caracteres")
+      .max(200)
+      .optional(),
     // grifero / conductor_ruta: los roles de cancha (0085). Se aceptan acá
     // igual que los de oficina -- el alta pasa por el mismo endpoint.
     rol: z.enum(["admin", "operador", "lectura", "grifero", "conductor_ruta"]).optional(),
+    // Solo cuando el alta la hace MINCORE por pedido del cliente: el número
+    // de la carta ES la autorización, y queda en la bitácora de la empresa
+    // para que sus administradores vean por qué apareció ese usuario (ver §12
+    // del documento de arquitectura). El alta hecha por la propia empresa no
+    // lo lleva: ahí la autorización es la orden con su firma.
+    numeroCarta: z.string().trim().min(1).max(60).optional(),
   })
   .refine((v) => Boolean(v.email) || Boolean(v.dni), {
     message: "Indicá un correo o un DNI: sin ninguno de los dos no podría entrar",
     path: ["email"],
+  })
+  .refine((v) => Boolean(v.email) || Boolean(v.password), {
+    message: "Sin correo hay que ponerle una clave para dictarle",
+    path: ["password"],
   });
 
 export type CrearUsuarioEnTenantInput = z.infer<typeof crearUsuarioEnTenantSchema>;
@@ -120,6 +138,28 @@ export const cambiarEstadoUsuarioSchema = z.object({
   activo: z.boolean(),
   motivo: z.string().trim().max(500).optional(),
 });
+
+/** Break-glass (§12): MINCORE nombra a un administrador en una empresa que se
+ *  quedó sin quien firme -- el otro se fue, o los dos perdieron el acceso.
+ *  El motivo es obligatorio y queda en la bitácora de esa empresa: es una
+ *  intervención del proveedor sobre datos del cliente, y el cliente tiene que
+ *  poder verla. */
+export const reemplazarAdminSchema = z.object({
+  rol: z.enum(["admin", "operador", "lectura", "grifero", "conductor_ruta"]),
+  motivo: z.string().trim().min(1, "El motivo es obligatorio").max(500),
+  numeroCarta: z.string().trim().max(60).optional(),
+});
+
+export type ReemplazarAdminInput = z.infer<typeof reemplazarAdminSchema>;
+
+/** Desactivar una CUENTA entera (la persona), no un perfil. Solo MINCORE: una
+ *  empresa desactiva su perfil y nada más. */
+export const cambiarEstadoCuentaSchema = z.object({
+  activo: z.boolean(),
+  motivo: z.string().trim().min(1, "El motivo es obligatorio").max(500),
+});
+
+export type CambiarEstadoCuentaInput = z.infer<typeof cambiarEstadoCuentaSchema>;
 
 export type CambiarEstadoUsuarioInput = z.infer<typeof cambiarEstadoUsuarioSchema>;
 

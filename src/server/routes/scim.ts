@@ -8,6 +8,7 @@
  *
  * Reutiliza los services YA existentes de platform.service.ts
  * (crearUsuarioEnTenantService, cambiarEstadoUsuarioService,
+  estadoDesdeActivo,
  * listarUsuariosTenantService) en vez de duplicar lógica de negocio — este
  * router es solo un adaptador de protocolo: traduce el schema SCIM de/hacia
  * el shape que esos services ya esperan, y pone actor_type='scim' en la
@@ -31,6 +32,7 @@ import {
   listarUsuariosTenantService,
   crearUsuarioEnTenantService,
   cambiarEstadoUsuarioService,
+  estadoDesdeActivo,
   type UsuarioListado,
 } from "../services/platform.service";
 import type { ContextoAuditoria } from "../services/platformAudit.service";
@@ -166,6 +168,9 @@ export function createScimRouter() {
             dni: usuario.dni ?? null,
             rol: usuario.rol,
             activo: true,
+            estado: "activo",
+            celular: null,
+            bloqueadoEn: null,
           })
         );
       } catch (err) {
@@ -186,7 +191,7 @@ export function createScimRouter() {
         const usuario = await cambiarEstadoUsuarioService(
           tenantId,
           req.params.id,
-          activo,
+          estadoDesdeActivo(activo),
           undefined,
           contextoScim(req)
         );
@@ -205,7 +210,7 @@ export function createScimRouter() {
         await cambiarEstadoUsuarioService(
           tenantId,
           req.params.id,
-          false,
+          "inactivo",
           "baja vía SCIM",
           contextoScim(req)
         );
