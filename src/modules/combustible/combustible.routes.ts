@@ -6,7 +6,6 @@ import { requireRole } from "../../server/shared/middlewares/roles.middleware";
 import { asyncHandler } from "../../server/shared/utils/asyncHandler";
 import {
   registrarLecturaCombustibleSchema,
-  actualizarNivelCombustibleSchema,
   crearTanqueCombustibleSchema,
   actualizarTanqueCombustibleSchema,
   cargaMasivaTanquesCombustibleSchema,
@@ -18,6 +17,7 @@ import {
   anularPrecioCombustibleSchema,
   crearRecepcionCombustibleSchema,
   anularRecepcionCombustibleSchema,
+  validarRecepcionCombustibleSchema,
   anularDespachoCombustibleSchema,
   marcarAlertasLeidasCombustibleSchema,
   configCombustibleSchema,
@@ -143,6 +143,20 @@ router.post(
   validate(crearRecepcionCombustibleSchema),
   asyncHandler(controller.crearRecepcion.bind(controller))
 );
+// ✅ VALIDAR la recepción contra la guía (5ª auditoría, migración 0088).
+//
+// SOLO admin, y el reparto es el punto entero del control: el grifero
+// registra lo que descarga la cisterna, administración escribe lo que dice la
+// guía. Con una sola persona escribiendo los dos números no hay control --
+// verificado: registrar 9.000 de una entrega de 10.000 y llevarse la
+// diferencia no disparaba una sola alerta.
+router.patch(
+  "/recepciones/:recepcionId/validar",
+  requireRole("admin"),
+  validate(validarRecepcionCombustibleSchema),
+  asyncHandler(controller.validarRecepcion.bind(controller))
+);
+
 router.patch(
   "/recepciones/:recepcionId/anular",
   requireRole("admin"),
@@ -191,10 +205,27 @@ router.put(
   validate(configCombustibleSchema),
   asyncHandler(controller.guardarConfig.bind(controller))
 );
+// Topes diarios sugeridos desde el historial (respuesta de Kenif 2026-09-14:
+// "guiarnos por el historial para que nos recomiende"). Segmento literal,
+// ANTES de /:id.
+router.get(
+  "/config/sugerencia-topes",
+  requireRole("admin"),
+  asyncHandler(controller.getSugerenciaTopes.bind(controller))
+);
 router.get(
   "/anomalias",
   requireRole("admin"),
   asyncHandler(controller.listarAnomalias.bind(controller))
+);
+
+// Segmento literal: VA ANTES de /:id, o Express lo tomaría como un id.
+// Consumo máximo sugerido para un equipo, desde sus propias cargas. Solo
+// admin: es configuración, igual que el asistente de umbrales del tanque.
+router.get(
+  "/equipos/:equipoId/sugerencia-consumo",
+  requireRole("admin"),
+  asyncHandler(controller.getSugerenciaConsumo.bind(controller))
 );
 
 router.get("/:id", asyncHandler(controller.getById.bind(controller)));
@@ -304,8 +335,7 @@ router.post(
 );
 
 // Ruta literal, sin `:id` -- el combustible_id viaja en el body a propósito
-// (ver el comentario en el controller). Definida antes de /:id/nivel por
-// legibilidad; no hay ambigüedad real porque los métodos HTTP son distintos.
+// (ver el comentario en el controller).
 // El `grifero` entra acá pero de forma CONDICIONAL: si puede o no tomar
 // varilla lo decide `grifero_registra_varilla` de la config del tenant
 // (0085), y eso no se puede resolver con requireRole, que no lee la base.
@@ -325,9 +355,7 @@ router.post(
 // corregirlo en el momento, sin depender de nadie más (ver el punto 3 de
 // docs/architecture/control-de-combustible.md). El `grifero` queda afuera por
 // el mismo motivo que en el vale: una varilla que se puede anular es una
-// varilla que se puede hacer coincidir con lo que uno ya declaró. Va ANTES de /:id/nivel
-// porque "lecturas" es un segmento literal: si /:id lo capturara primero,
-// nunca llegaría acá.
+// varilla que se puede hacer coincidir con lo que uno ya declaró.
 router.patch(
   "/lecturas/:lecturaId/anular",
   requireRole("admin", "operador"),
@@ -335,11 +363,12 @@ router.patch(
   asyncHandler(controller.anularLectura.bind(controller))
 );
 
-router.put(
-  "/:id/nivel",
-  requireRole("admin", "operador"),
-  validate(actualizarNivelCombustibleSchema),
-  asyncHandler(controller.updateNivel.bind(controller))
-);
+// PUT /:id/nivel ya NO existe (5ª auditoría, 2026-09-14). Era la puerta de
+// antes de /lecturas: guardaba la varilla pero no evaluaba ningún descuadre
+// --ni tramo, ni ciclo, ni ventana-- así que un operador podía medir "de
+// verdad" después de sacar 3.000 L y el sistema no decía nada. El frontend ya
+// no la usaba. Una varilla entra por UN solo camino, y ese camino corre
+// todos los controles. Si alguien propone reabrirla "por compatibilidad",
+// que pase por registrarLectura y procesarLecturaRegistrada, no por al lado.
 
 export default router;

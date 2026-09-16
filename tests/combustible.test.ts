@@ -1,7 +1,7 @@
 /** tests/combustible.test.ts
  *
  * Hasta la Fase A (migrations/0057) el módulo no tenía POST de creación
- * (ver combustible.routes.ts: solo GET y PUT /:id/nivel) -- los tanques se
+ * (ver combustible.routes.ts) -- los tanques se
  * cargaban directo en la base. El helper de abajo sigue insertando con
  * withTenant() para los tests de lecturas/nivel (no dependen de la validación
  * Zod del ABM nuevo), pero ya completa las columnas NOT NULL que agregó
@@ -130,23 +130,21 @@ describe("combustible: lectura, actualización de nivel y reglas de negocio", ()
     expect(res.status).toBe(404);
   });
 
-  it("PUT /:id/nivel actualiza nivel_actual y recalcula porcentaje", async () => {
+  it("POST /lecturas actualiza el nivel y recalcula porcentaje", async () => {
     const res = await agentAdmin
-      .put(`/api/erp/combustible/${tanqueId}/nivel`)
-      .send({ nivel_actual: 800 });
-    expect(res.status).toBe(200);
-    expect(Number(res.body.nivel_actual)).toBe(800);
-    expect(Number(res.body.porcentaje)).toBe(80); // 800/1000 * 100
+      .post("/api/erp/combustible/lecturas")
+      .send({ combustible_id: tanqueId, nivel: 800 });
+    expect(res.status).toBe(201);
+    expect(Number(res.body.tanque.nivel_actual)).toBe(800);
+    expect(Number(res.body.tanque.porcentaje)).toBe(80); // 800/1000 * 100
   });
 
-  it("PUT nivel de un tanque inexistente da 404", async () => {
-    const res = await agentAdmin
-      .put("/api/erp/combustible/999999999/nivel")
-      .send({ nivel_actual: 500 });
-    expect(res.status).toBe(404);
-  });
-
-  it("PUT /:id/nivel deja rastro en el historial, no solo sobreescribe nivel_actual", async () => {
+  // 5ª auditoría: la puerta vieja registraba la varilla SIN evaluar ningún
+  // descuadre (ni tramo, ni ciclo, ni ventana). Con ella se sacaron 3.000 L
+  // sin una alerta. El frontend ya no la usaba, así que se eliminó: la única
+  // forma de cargar una varilla es POST /lecturas, que corre todos los
+  // controles.
+  it("PUT /:id/nivel ya no existe: no crea lectura ni cambia el nivel", async () => {
     const antes = await withTenant(tenantId, (client) =>
       client.query(
         `SELECT COUNT(*)::int AS total FROM combustible_lecturas WHERE combustible_id = $1`,
@@ -156,9 +154,8 @@ describe("combustible: lectura, actualización de nivel y reglas de negocio", ()
 
     const res = await agentAdmin
       .put(`/api/erp/combustible/${tanqueId}/nivel`)
-      .send({ nivel_actual: 900 });
-    expect(res.status).toBe(200);
-    expect(Number(res.body.nivel_actual)).toBe(900);
+      .send({ nivel_actual: 100 });
+    expect(res.status).toBe(404);
 
     const despues = await withTenant(tenantId, (client) =>
       client.query(
@@ -166,10 +163,11 @@ describe("combustible: lectura, actualización de nivel y reglas de negocio", ()
         [tanqueId]
       )
     );
-    expect(despues.rows[0].total).toBe(antes.rows[0].total + 1);
+    expect(despues.rows[0].total).toBe(antes.rows[0].total);
+    expect(await nivelEnBase(tenantId, tanqueId)).toBe(800);
   });
 
-  it("un usuario con rol 'lectura' no puede actualizar el nivel (403), pero sí puede leer", async () => {
+  it("un usuario con rol 'lectura' no puede registrar una varilla (403), pero sí puede leer", async () => {
     const email = `lectura-combustible-${Date.now()}@test.local`;
     await withTenant(tenantId, (client) =>
       crearUsuarioService(
@@ -184,10 +182,10 @@ describe("combustible: lectura, actualización de nivel y reglas de negocio", ()
     const lectura = await agentLectura.get("/api/erp/combustible");
     expect(lectura.status).toBe(200);
 
-    const intentoUpdate = await agentLectura
-      .put(`/api/erp/combustible/${tanqueId}/nivel`)
-      .send({ nivel_actual: 100 });
-    expect(intentoUpdate.status).toBe(403);
+    const intento = await agentLectura
+      .post("/api/erp/combustible/lecturas")
+      .send({ combustible_id: tanqueId, nivel: 100 });
+    expect(intento.status).toBe(403);
   });
 });
 
@@ -224,10 +222,10 @@ describe("combustible: aislamiento entre tenants", () => {
     const getDirecto = await agentA.get(`/api/erp/combustible/${tanqueDeB}`);
     expect(getDirecto.status).toBe(404);
 
-    const updateAjeno = await agentA
-      .put(`/api/erp/combustible/${tanqueDeB}/nivel`)
-      .send({ nivel_actual: 0 });
-    expect(updateAjeno.status).toBe(404);
+    const lecturaAjena = await agentA
+      .post("/api/erp/combustible/lecturas")
+      .send({ combustible_id: tanqueDeB, nivel: 0 });
+    expect(lecturaAjena.status).toBe(400);
 
     // El nivel de B no debe haber cambiado a pesar del intento.
     expect(await nivelEnBase(tenantBId, tanqueDeB)).toBe(100);
@@ -473,23 +471,32 @@ describe("combustible: ABM de tanques (Fase A)", () => {
     expect(listado.status).toBe(200);
   });
 
-  it("carga masiva (bulk) inserta varios tanques y reimportar el mismo código actualiza", async () => {
+  // La carga masiva DA DE ALTA. Hasta la 5ª auditoría hacía UPSERT, y con eso
+  // una planilla podía cambiarle a un tanque con historial la unidad (de
+  // litros a galones -- el PUT lo bloquea), la capacidad, la tolerancia y los
+  // umbrales, sin motivo, sin correo y con una auditoría que solo decía
+  // "cantidad: 1". El mismo mecanismo, sin mala intención, borraba los
+  // umbrales al reimportar un Excel que no traía esas columnas.
+  it("carga masiva (bulk) inserta, y reimportar el mismo código NO pisa el tanque", async () => {
     const codigo = idUnico("BULK");
     const primera = await agent
       .post("/api/erp/combustible/bulk")
       .send([payloadTanque({ codigo, tanque_nombre: "Versión 1" })]);
     expect(primera.status).toBe(201);
     expect(primera.body.insertados).toBe(1);
+    expect(primera.body.omitidos).toEqual([]);
 
     const segunda = await agent
       .post("/api/erp/combustible/bulk")
       .send([payloadTanque({ codigo, tanque_nombre: "Versión 2" })]);
     expect(segunda.status).toBe(201);
+    expect(segunda.body.insertados).toBe(0);
+    expect(segunda.body.omitidos).toEqual([codigo]);
 
     const listado = await agent.get("/api/erp/combustible");
     const filasConEseCodigo = listado.body.filter((t: { codigo: string }) => t.codigo === codigo);
     expect(filasConEseCodigo).toHaveLength(1);
-    expect(filasConEseCodigo[0].tanque_nombre).toBe("Versión 2");
+    expect(filasConEseCodigo[0].tanque_nombre).toBe("Versión 1");
   });
 
   it("bulk rechaza un array vacío", async () => {
@@ -566,14 +573,15 @@ describe("combustible: una lectura no puede superar la capacidad del tanque", ()
     expect(res.status).toBe(201);
   });
 
-  it("el endpoint legacy PUT /:id/nivel también bloquea, con 400 y no 404", async () => {
-    // El legacy mapea "no existe en este tenant" a 404 por compatibilidad;
-    // esto NO es eso -- el tanque existe, el dato es imposible.
+  // La puerta vieja (PUT /:id/nivel) se eliminó en la 5ª auditoría: entraba
+  // la varilla sin evaluar ningún descuadre. Ya no hay segundo camino que
+  // pueda tener otras reglas que este.
+  it("el tanque de OTRO tenant no se puede medir (400, y su nivel no cambia)", async () => {
     const res = await agent
-      .put(`/api/erp/combustible/${tanqueId}/nivel`)
-      .send({ nivel_actual: 99999 });
+      .post("/api/erp/combustible/lecturas")
+      .send({ combustible_id: 999999999, nivel: 10 });
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/capacidad/i);
+    expect(res.body.error).toMatch(/no existe en este tenant/i);
   });
 });
 

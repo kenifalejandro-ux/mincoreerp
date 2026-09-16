@@ -16,6 +16,15 @@ const UNIDADES_CAPACIDAD = ["gal", "L"] as const;
 const camposCapacidadTanque = {
   capacidad_tanque: z.number().positive().max(99999999).optional(),
   capacidad_tanque_unidad: z.enum(UNIDADES_CAPACIDAD).optional(),
+  // Consumo máximo tolerado (migración 0088): litros por hora de motor si el
+  // equipo se mide por horómetro, litros por km si es por odómetro. Sin
+  // configurar = no alerta, igual que la capacidad: el número lo sabe la
+  // operación, y el sistema lo sugiere desde el historial del propio equipo.
+  //
+  // Es el ÚNICO control que ve el combustible que sale CON vale pero no llega
+  // a la máquina: el tanque cuadra, lo que no cuadra es el trabajo hecho con
+  // ese combustible.
+  consumo_maximo_l: z.number().positive().max(9999).nullable().optional(),
   // El conductor asignado (migración 0083). Nombre completo en un campo
   // porque así viene en el vale de papel ("CONDUCTOR"); partirlo obligaría a
   // decidir dónde termina el nombre en cada carga.

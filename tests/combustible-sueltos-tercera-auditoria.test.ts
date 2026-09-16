@@ -29,6 +29,10 @@ describe("combustible: los tres sueltos de la 3ª auditoría", () => {
   let equipoId: number;
   const password = "ClaveDePrueba123";
   const ag = request.agent(app);
+  // Una segunda persona: desde la 5ª auditoría las alertas de descuadre saben
+  // QUIÉN tomó la varilla, así que "lo cerró otro" y "lo cerró el mismo" son
+  // dos casos distintos y hay que poder probar los dos.
+  const otro = request.agent(app);
   const hace = (d: number) => new Date(Date.now() - d * 864e5).toISOString();
 
   beforeAll(async () => {
@@ -41,6 +45,15 @@ describe("combustible: los tres sueltos de la 3ª auditoría", () => {
       .post("/api/erp/equipos")
       .send({ placa_codigo: idUnico("VQ"), tipo: "Volquete" });
     equipoId = e.body.id;
+
+    const dni = String(86000000 + Math.floor(Math.random() * 900000));
+    const alta = await ag
+      .post("/api/erp/usuarios")
+      .send({ nombre: "Otra persona", dni, password, rol: "admin" });
+    expect(alta.status).toBe(201);
+    await otro
+      .post("/api/auth/login")
+      .send({ tenantSlug: c.tenant.slug, identificador: dni, password });
   });
 
   afterAll(async () => {
@@ -155,10 +168,14 @@ describe("combustible: los tres sueltos de la 3ª auditoría", () => {
     );
     expect(alerta).toBeDefined();
 
-    const res = await ag
+    // La cierra OTRA persona: la varilla la tomó `ag`, así que si cerrara él
+    // mismo sería autorrevisión y la acción auditada sería la otra (ver el
+    // test siguiente).
+    const res = await otro
       .patch(`/api/erp/combustible/alertas/${alerta.id}/resolver`)
       .send({ motivo: "se recalibró la varilla" });
     expect(res.status).toBe(200);
+    expect(res.body.autorevision).toBe(false);
 
     const log = await ultima("combustible.alerta_resuelta");
     expect(log.rows[0]).toBeDefined();
@@ -190,9 +207,11 @@ describe("combustible: los tres sueltos de la 3ª auditoría", () => {
     }
   });
 
-  it("una alerta de tanque (sin movimiento de nadie) no es autorrevisión", async () => {
-    // Nivel bajo o sin medir no cuelgan de un vale, así que no hay a quién
-    // señalar: marcarlas sería ruido, y el ruido apaga los controles.
+  it("cerrar la alerta de la varilla que uno mismo tomó SÍ es autorrevisión", async () => {
+    // Esto ANTES daba false, y era el agujero: las alertas de descuadre
+    // cuelgan del tanque, no de un vale, así que el sistema no sabía quién
+    // había medido y "lo cerró el mismo que midió" no se podía contestar.
+    // Desde la migración 0086 la alerta guarda su varilla (lectura_id).
     const tq = (await tanque()).body.id;
     await ag
       .post("/api/erp/combustible/lecturas")
@@ -213,6 +232,9 @@ describe("combustible: los tres sueltos de la 3ª auditoría", () => {
       .patch(`/api/erp/combustible/alertas/${deTanque.id}/resolver`)
       .send({ motivo: "medición corregida" });
     expect(res.status).toBe(200);
-    expect(res.body.autorevision).toBe(false);
+    expect(res.body.autorevision).toBe(true);
+
+    const log = await ultima("combustible.alerta_autorevisada");
+    expect(log.rows[0]).toBeDefined();
   });
 });

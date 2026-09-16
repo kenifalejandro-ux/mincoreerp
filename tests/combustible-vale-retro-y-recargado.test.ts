@@ -52,6 +52,7 @@ describe("combustible: vale retro-fechado y vale recargado (migración 0081)", (
       dias_sin_vigilancia: 7,
       llenados_por_dia_max: null,
       tope_diario_sin_capacidad_l: null,
+      motivo_ajuste: "ajuste de prueba",
     });
     const t = await ag.post("/api/erp/combustible").send({
       codigo: idUnico("TQ"),
@@ -270,7 +271,8 @@ describe("combustible: vale retro-fechado y vale recargado (migración 0081)", (
     await ag.put("/api/erp/combustible/config").send({ ...base, dias_carga_retroactiva: 3 });
     const r = await ag
       .put("/api/erp/combustible/config")
-      .send({ ...base, dias_carga_retroactiva: 90 });
+      // Aflojar la config exige motivo desde la 5ª auditoría.
+      .send({ ...base, dias_carga_retroactiva: 90, motivo_ajuste: "ajuste de prueba" });
     expect(r.status).toBe(200);
 
     const bit = await ag.get("/api/erp/combustible/bitacora").query({ pageSize: 50 });

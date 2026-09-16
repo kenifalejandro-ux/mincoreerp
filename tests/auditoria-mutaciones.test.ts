@@ -178,8 +178,17 @@ describe("auditoría de mutaciones: repuestos", () => {
       .put(`/api/erp/repuestos/${id}`)
       .send({ ...repuestoDePrueba("AUD-REP-CRUD"), nombre: "Renombrado" });
     expect(actualizado.status).toBe(200);
+    // El detalle lleva QUÉ cambió, con su valor viejo y el nuevo (5ª
+    // auditoría): "alguien editó el repuesto 12" no permite reconstruir nada.
+    // Es la misma regla que ya regía en combustible (`diffFicha`).
     expect(await auditoriaDe(tenantId, "repuestos.actualizar")).toEqual([
-      { detalle: { repuestoId: id }, resultado: "success" },
+      {
+        detalle: {
+          repuestoId: id,
+          cambios: [{ campo: "nombre", de: "Repuesto AUD-REP-CRUD", a: "Renombrado" }],
+        },
+        resultado: "success",
+      },
     ]);
 
     const eliminado = await agente.delete(`/api/erp/repuestos/${id}`);
@@ -321,21 +330,12 @@ describe("auditoría de mutaciones: combustible", () => {
     ]);
   });
 
-  it("actualizar el nivel por el endpoint legacy también deja rastro", async () => {
-    const res = await agente
-      .put(`/api/erp/combustible/${combustibleId}/nivel`)
-      .send({ nivel_actual: 300 });
-    expect(res.status).toBe(200);
-
-    expect(await auditoriaDe(tenantId, "combustible.actualizar_nivel")).toEqual([
-      { detalle: { combustibleId }, resultado: "success" },
-    ]);
-  });
-
-  it("un tanque inexistente (404) no deja rastro", async () => {
+  it("una varilla sobre un tanque inexistente (400) no deja rastro", async () => {
     const antes = await filasDeAuditoria(tenantId);
-    const res = await agente.put("/api/erp/combustible/999999999/nivel").send({ nivel_actual: 10 });
-    expect(res.status).toBe(404);
+    const res = await agente
+      .post("/api/erp/combustible/lecturas")
+      .send({ combustible_id: 999999999, nivel: 10 });
+    expect(res.status).toBe(400);
     expect(await filasDeAuditoria(tenantId)).toBe(antes);
   });
 });

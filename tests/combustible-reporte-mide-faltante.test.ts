@@ -50,6 +50,7 @@ describe("combustible: el reporte de controles mide el faltante, no solo lo decl
       dias_sin_vigilancia: 7,
       llenados_por_dia_max: 5,
       tope_diario_sin_capacidad_l: 5000,
+      motivo_ajuste: "ajuste de prueba",
     });
   });
 

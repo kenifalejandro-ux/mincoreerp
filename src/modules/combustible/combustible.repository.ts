@@ -46,27 +46,69 @@ function agregarPeriodo(
   }
 }
 
-/** Los siete tipos de alerta del módulo (migraciones 0068, 0070, 0072, 0073).
- *  Los cuatro primeros salen de un despacho y llevan vale; los tres últimos
- *  no -- ver el encabezado de 0073. */
-export type TipoAlertaCombustible =
-  | "hueco_detectado"
-  | "vale_anulado"
-  | "sobredespacho"
-  | "despacho_tardio"
-  | "diferencia_recepcion"
-  | "nivel_bajo"
-  | "medidor_inconsistente"
-  | "descuadre_inventario"
-  | "descuadre_ciclo"
-  | "tanque_sin_medir"
-  | "vale_fuera_de_orden"
-  | "lectura_retroactiva"
-  | "tope_diario_excedido"
-  | "descuadre_ventana"
-  | "despacho_retroactivo"
-  | "vale_recargado"
-  | "tanque_sin_vigilancia";
+/** LA lista de tipos de alerta del módulo. Única fuente de verdad.
+ *
+ *  Hasta la 5ª auditoría la lista vivía escrita a mano en cuatro lugares (el
+ *  CHECK de alertas, el de anomalías, la consulta del worker y los tipos
+ *  revisables) y se desincronizó: el worker congelaba tres tipos que el CHECK
+ *  de anomalías no aceptaba, el INSERT fallaba y la conciliación entera se
+ *  caía -- con ella, la alerta de "tanque sin medir". Ver migración 0086.
+ *
+ *  tests/combustible-tipos-de-alerta-sincronizados.test.ts compara estas tres
+ *  listas contra los CHECK REALES de la base: agregar un tipo acá y no en una
+ *  migración (o al revés) rompe CI. */
+export const TIPOS_ALERTA = [
+  "hueco_detectado",
+  "vale_anulado",
+  "sobredespacho",
+  "despacho_tardio",
+  "diferencia_recepcion",
+  "nivel_bajo",
+  "medidor_inconsistente",
+  "descuadre_inventario",
+  "descuadre_ciclo",
+  "tanque_sin_medir",
+  "vale_fuera_de_orden",
+  "lectura_retroactiva",
+  "tope_diario_excedido",
+  "descuadre_ventana",
+  "despacho_retroactivo",
+  "vale_recargado",
+  "tanque_sin_vigilancia",
+  "recepcion_anulada",
+  "recepcion_discrepante",
+  "recepcion_sin_validar",
+  "recepcion_retroactiva",
+  "consumo_excedido",
+  "varilla_sin_control",
+  "varilla_exacta",
+] as const;
+
+export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];
+
+/** Los ESTADOS: se resuelven solos cuando el problema deja de existir, así
+ *  que ni se congelan ni se cierran a mano. Congelar uno dejaría una anomalía
+ *  permanente de algo que ya se arregló; cerrarlo a mano dejaría a una
+ *  persona tapar algo que el sistema sabe contestar solo. */
+export const TIPOS_ESTADO = [
+  "nivel_bajo",
+  "tanque_sin_medir",
+  "tanque_sin_vigilancia",
+  "recepcion_sin_validar",
+  "varilla_sin_control",
+] as const satisfies readonly TipoAlertaCombustible[];
+
+/** Todo lo que no es estado es un HALLAZGO: si nadie lo explica dentro de la
+ *  ventana de gracia, se congela como anomalía permanente. */
+export const TIPOS_CONGELABLES = TIPOS_ALERTA.filter(
+  (t) => !(TIPOS_ESTADO as readonly string[]).includes(t)
+);
+
+/** Los hallazgos que se cierran A MANO, con motivo. Todos los congelables
+ *  menos el hueco de talonario, que se cierra solo cuando llega el vale que
+ *  faltaba -- dejar que alguien lo cierre a mano sería permitir silenciar un
+ *  hueco que en realidad sigue abierto. */
+export const TIPOS_REVISABLES = TIPOS_CONGELABLES.filter((t) => t !== "hueco_detectado");
 
 /** Una alerta por crear. Las anclas son todas opcionales en el tipo, pero
  *  el CHECK de la base exige al menos una (vale, tanque o recepción). */
@@ -77,6 +119,9 @@ export interface AlertaNueva {
   despachoId?: number | null;
   combustibleId?: number | null;
   recepcionId?: number | null;
+  /** La varilla que disparó la alerta (0086). Es lo que permite saber si
+   *  quien cierra una alerta de descuadre es el mismo que midió. */
+  lecturaId?: number | null;
   detalle: Record<string, unknown>;
 }
 
@@ -124,6 +169,83 @@ const JOIN_ULTIMA_LECTURA = `
     ORDER BY l.leido_en DESC, l.id DESC
     LIMIT 1
   ) ultima ON true
+`;
+
+/** LA cuenta de la diferencia de recepción, compartida por el listado, la
+ *  alerta del worker y la muestra de calibración. Espera la recepción con
+ *  alias `r` y agrega un LATERAL `dif`.
+ *
+ *      diferencia = (nivel_después − nivel_antes) + salidas − lo recibido
+ *
+ *  ── Entregas combinadas (5ª auditoría) ──────────────────────────────────
+ *
+ *  Antes, si entre las dos varillas había OTRA recepción, la diferencia
+ *  quedaba en NULL ("no se puede atribuir a una sola entrega"). Eso era un
+ *  interruptor de apagado: dos recepciones de 1 L metidas entre dos varillas
+ *  dejaban la diferencia en blanco y además reiniciaban el ciclo. Verificado:
+ *  el control del ciclo pasó de 5 alertas a cero. Y dos cisternas el mismo
+ *  día sin varilla en el medio es operación normal (Kenif, 2026-09-14).
+ *
+ *  Ahora las recepciones entre el mismo par de varillas forman UN grupo y la
+ *  diferencia se calcula contra la suma del grupo. No se le atribuye a una
+ *  entrega en particular (eso seguiría siendo inventar): se dice que el grupo
+ *  no cierra, con todas sus entregas a la vista.
+ *
+ *  El propio `r` entra siempre en su grupo, aunque su fecha coincida con la
+ *  de la varilla de antes; las demás, con el mismo corte `> antes, <= después`
+ *  que usa el resto del módulo. */
+/** Cuántos huecos como mucho puede revelar UN vale. Ver el comentario en
+ *  detectarHuecosRevelados: es la red de seguridad del lado de los datos. */
+const MAX_HUECOS_POR_VALE = 500;
+
+const LATERAL_DIFERENCIA_RECEPCION = `
+  LEFT JOIN LATERAL (
+    SELECT
+      antes.nivel AS nivel_antes,
+      despues.nivel AS nivel_despues,
+      COALESCE(salidas.total, 0) AS salidas,
+      grupo.entregas AS entregas_en_grupo,
+      grupo.cantidad AS cantidad_del_grupo,
+      grupo.ids AS recepciones_del_grupo,
+      grupo.ultima_id AS ultima_del_grupo,
+      CASE
+        WHEN antes.nivel IS NULL OR despues.nivel IS NULL THEN NULL
+        WHEN r.anulada_en IS NOT NULL THEN NULL
+        ELSE (despues.nivel - antes.nivel) + COALESCE(salidas.total, 0) - grupo.cantidad
+      END AS diferencia_litros
+    FROM (
+      SELECT l.nivel, l.leido_en FROM combustible_lecturas l
+       WHERE l.combustible_id = r.combustible_id AND l.anulada_en IS NULL
+         AND l.leido_en <= r.recibido_en
+       ORDER BY l.leido_en DESC, l.id DESC LIMIT 1
+    ) antes
+    FULL JOIN (
+      SELECT l.nivel, l.leido_en FROM combustible_lecturas l
+       WHERE l.combustible_id = r.combustible_id AND l.anulada_en IS NULL
+         AND l.leido_en > r.recibido_en
+       ORDER BY l.leido_en ASC, l.id ASC LIMIT 1
+    ) despues ON true
+    -- Lo que SALIÓ del tanque entre las dos lecturas: sin sumarlo de vuelta,
+    -- un despacho hecho en el medio se vería como faltante. Un vale anulado
+    -- no sacó combustible (0067).
+    LEFT JOIN LATERAL (
+      SELECT SUM(d.cantidad) AS total FROM combustible_despachos d
+       WHERE d.combustible_id = r.combustible_id AND d.anulada_en IS NULL
+         AND d.despachado_en > antes.leido_en AND d.despachado_en <= despues.leido_en
+    ) salidas ON true
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) AS entregas,
+             COALESCE(SUM(r2.cantidad), 0) AS cantidad,
+             ARRAY_AGG(r2.id ORDER BY r2.recibido_en, r2.id) AS ids,
+             (ARRAY_AGG(r2.id ORDER BY r2.recibido_en DESC, r2.id DESC))[1] AS ultima_id
+        FROM combustible_recepciones r2
+       WHERE r2.combustible_id = r.combustible_id AND r2.anulada_en IS NULL
+         AND (
+           r2.id = r.id
+           OR (r2.recibido_en > antes.leido_en AND r2.recibido_en <= despues.leido_en)
+         )
+    ) grupo ON true
+  ) dif ON true
 `;
 
 export class CombustibleRepository {
@@ -308,18 +430,64 @@ export class CombustibleRepository {
    *  la práctica un tenant nunca va a acercarse al tamaño de lote (los
    *  tanques son unos pocos por sitio), pero el molde es el mismo por
    *  consistencia y porque el tope real está en el schema (Zod), no acá. */
+  /** La carga masiva DA DE ALTA; no edita lo que ya existe.
+   *
+   *  Antes hacía `ON CONFLICT (tenant_id, codigo) DO UPDATE`, y eso convertía
+   *  la planilla en la puerta de atrás de toda la configuración del módulo: la
+   *  5ª auditoría pasó un tanque con historial de litros a galones (el PUT lo
+   *  bloquea), le multiplicó la capacidad por 10, le subió la tolerancia al
+   *  90 %, le sacó la exigencia de documento y le apagó dos umbrales -- todo
+   *  con un 201 y una sola línea de auditoría que decía `{ cantidad: 1 }`.
+   *  Ni motivo, ni correo, ni valor viejo contra valor nuevo.
+   *
+   *  Y el daño no necesitaba mala intención: reimportar el mismo Excel para
+   *  corregir una ubicación, sin las columnas de umbral, dejaba los umbrales
+   *  en NULL. El tanque quedaba ciego sin que nadie tocara nada.
+   *
+   *  Ahora los códigos que ya existen se OMITEN y se devuelven, para que la
+   *  pantalla lo diga y la auditoría lo registre. Editar un tanque es un acto
+   *  con nombre propio: pasa por el PUT, que compara, pide motivo si afloja y
+   *  avisa a los admins. */
   async createBulk(client: PoolClient, tenantId: string, items: CrearTanqueCombustibleInput[]) {
     const TAMANO_LOTE = 1000;
-    const results: unknown[] = [];
+    const creados: unknown[] = [];
+    const omitidos: string[] = [];
 
     for (let inicio = 0; inicio < items.length; inicio += TAMANO_LOTE) {
       const lote = items.slice(inicio, inicio + TAMANO_LOTE);
 
+      // Dedupe por código DENTRO del lote: dos filas con el mismo código en
+      // la misma sentencia rompen el INSERT ("command cannot affect row a
+      // second time"). Gana la última, que es lo que hacía el loop original.
       const porCodigo = new Map<string, CrearTanqueCombustibleInput>();
       for (const fila of lote) porCodigo.set(fila.codigo, fila);
-      const filasUnicas = [...porCodigo.values()];
 
-      const COLUMNAS_POR_FILA = 13;
+      const preexistentes = await client.query<{ codigo: string }>(
+        `SELECT codigo FROM combustible WHERE tenant_id = $1 AND codigo = ANY($2::varchar[])`,
+        [tenantId, [...porCodigo.keys()]]
+      );
+      const yaExisten = new Set(preexistentes.rows.map((f) => f.codigo));
+      const filasUnicas: CrearTanqueCombustibleInput[] = [];
+      for (const [codigo, fila] of porCodigo) {
+        if (yaExisten.has(codigo)) omitidos.push(codigo);
+        else filasUnicas.push(fila);
+      }
+      if (filasUnicas.length === 0) continue;
+
+      // El mismo techo que create() y que validarRecepcion: un nivel inicial
+      // por encima de la capacidad es una contradicción física, y entrar por
+      // la planilla no la vuelve válida.
+      for (const d of filasUnicas) {
+        const techo = d.capacidad_total * (1 + d.tolerancia_capacidad_pct / 100);
+        if (d.nivel_actual > techo) {
+          throw new Error(
+            `el nivel inicial ${d.nivel_actual} del tanque ${d.codigo} supera la capacidad ` +
+              `(${d.capacidad_total})`
+          );
+        }
+      }
+
+      const COLUMNAS_POR_FILA = 15;
       const placeholders = filasUnicas
         .map((_, i) => {
           const base = i * COLUMNAS_POR_FILA;
@@ -347,48 +515,27 @@ export class CombustibleRepository {
         d.requiere_documento,
         d.umbral_diferencia_pct,
         d.umbral_descuadre_pct,
+        // Los dos que faltaban: una planilla CON los umbrales del ciclo y de
+        // la ventana los perdía en silencio, y el tanque nacía a medias
+        // vigilado creyendo el cliente que los había cargado.
+        d.umbral_descuadre_ciclo_pct,
+        d.umbral_descuadre_ventana_pct,
       ]);
-
-      // Qué códigos YA existían, antes de que el upsert los toque: es la
-      // única forma de distinguir después un alta nueva de una edición, y de
-      // eso depende si corresponde crearle su lectura inicial.
-      const preexistentes = await client.query<{ id: number }>(
-        `SELECT id FROM combustible WHERE tenant_id = $1 AND codigo = ANY($2::varchar[])`,
-        [tenantId, filasUnicas.map((d) => d.codigo)]
-      );
-      const idsPreexistentes = new Set(preexistentes.rows.map((f) => f.id));
 
       const insertados = await client.query<{ id: number; codigo: string }>(
         `INSERT INTO combustible (
            tenant_id, codigo, tanque_nombre, tipo_combustible, unidad, tipo_punto,
            ubicacion, capacidad_total, nivel_minimo,
            tolerancia_capacidad_pct, requiere_documento, umbral_diferencia_pct,
-           umbral_descuadre_pct
+           umbral_descuadre_pct, umbral_descuadre_ciclo_pct, umbral_descuadre_ventana_pct
          )
          VALUES ${placeholders}
-         ON CONFLICT (tenant_id, codigo) DO UPDATE SET
-           tanque_nombre = EXCLUDED.tanque_nombre,
-           tipo_combustible = EXCLUDED.tipo_combustible,
-           unidad = EXCLUDED.unidad,
-           tipo_punto = EXCLUDED.tipo_punto,
-           ubicacion = EXCLUDED.ubicacion,
-           capacidad_total = EXCLUDED.capacidad_total,
-           nivel_minimo = EXCLUDED.nivel_minimo,
-           tolerancia_capacidad_pct = EXCLUDED.tolerancia_capacidad_pct,
-           requiere_documento = EXCLUDED.requiere_documento,
-           umbral_diferencia_pct = EXCLUDED.umbral_diferencia_pct,
-           umbral_descuadre_pct = EXCLUDED.umbral_descuadre_pct
          RETURNING id, codigo`,
         valores
       );
 
-      // Lectura `inicial` solo para los tanques NUEVOS: si el código ya
-      // existía, esto fue un upsert sobre un tanque con historial propio, y
-      // meterle una lectura del Excel le pisaría el nivel real medido en
-      // campo con un número de planilla.
       const nivelPorCodigo = new Map(filasUnicas.map((d) => [d.codigo, d.nivel_actual]));
-      const nuevos = insertados.rows.filter((f) => !idsPreexistentes.has(f.id));
-      for (const fila of nuevos) {
+      for (const fila of insertados.rows) {
         await client.query(
           `INSERT INTO combustible_lecturas (tenant_id, combustible_id, nivel, leido_en, origen)
            VALUES ($1, $2, $3, NOW(), 'inicial')`,
@@ -397,11 +544,11 @@ export class CombustibleRepository {
       }
 
       for (const fila of insertados.rows) {
-        results.push(await this.findById(client, tenantId, fila.id));
+        creados.push(await this.findById(client, tenantId, fila.id));
       }
     }
 
-    return results;
+    return { creados, omitidos };
   }
 
   /** GET /:id/lecturas -- a diferencia de los tanques (pocos, sin
@@ -875,9 +1022,32 @@ export class CombustibleRepository {
     if (maxAnterior === null || maxAnterior === undefined || nuevoNVale <= maxAnterior + 1) {
       return [];
     }
+    // TOPE DURO al tamaño del salto. El service ya rechaza los saltos
+    // grandes (MAX_SALTO_TALONARIO), pero esto corre sobre datos, no sobre un
+    // request: sin el tope, un salto de un vale a 2.000.000.000 --un dígito de
+    // más al tipear-- arma acá un array de dos mil millones de elementos y
+    // tumba el proceso entero, para todos los tenants. Verificado en la 5ª
+    // auditoría: un vale con n=5001 generó 5.000 alertas de una sola carga.
     const revelados: number[] = [];
-    for (let n = maxAnterior + 1; n < nuevoNVale; n++) revelados.push(n);
+    for (let n = maxAnterior + 1; n < nuevoNVale && revelados.length < MAX_HUECOS_POR_VALE; n++) {
+      revelados.push(n);
+    }
     return revelados;
+  }
+
+  /** El mayor número cargado en esta serie, sin importar si está anulado (el
+   *  papel existió igual). Lo usa el tope de salto del talonario. */
+  async findMaxNValeDeSerie(
+    client: PoolClient,
+    tenantId: string,
+    serieTalonario: string
+  ): Promise<number | null> {
+    const r = await client.query<{ maximo: number | null }>(
+      `SELECT MAX(n_vale) AS maximo FROM combustible_despachos
+        WHERE tenant_id = $1 AND serie_talonario = $2`,
+      [tenantId, serieTalonario]
+    );
+    return r.rows[0]?.maximo ?? null;
   }
 
   /** ¿Este vale entró por DEBAJO del máximo de su serie? (migración 0077)
@@ -1041,7 +1211,12 @@ export class CombustibleRepository {
       `SELECT actualizado_en, actualizado_por FROM combustible_config WHERE tenant_id = $1`,
       [tenantId]
     );
+    const politica = await this.getPoliticaValidacionRecepcion(client, tenantId);
+    const diasVarillaControl = await this.getDiasSinVarillaDeControl(client, tenantId);
     return {
+      recepcion_requiere_validacion: politica.requiere,
+      horas_para_validar_recepcion: politica.horas,
+      dias_sin_varilla_de_control: diasVarillaControl,
       ventana_gracia_horas: ventana,
       dias_sin_medir: diasSinMedir,
       dias_ventana_descuadre: diasVentana,
@@ -1069,6 +1244,9 @@ export class CombustibleRepository {
       llenadosPorDiaMax: number | null;
       topeSinCapacidadL: number | null;
       grifieroRegistraVarilla: boolean;
+      recepcionRequiereValidacion: boolean;
+      horasParaValidarRecepcion: number;
+      diasSinVarillaDeControl: number | null;
     },
     usuarioId: string
   ) {
@@ -1077,8 +1255,10 @@ export class CombustibleRepository {
       INSERT INTO combustible_config
         (tenant_id, ventana_gracia_horas, dias_sin_medir, dias_ventana_descuadre,
          dias_carga_retroactiva, dias_sin_vigilancia, llenados_por_dia_max,
-         tope_diario_sin_capacidad_l, grifero_registra_varilla, actualizado_por)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         tope_diario_sin_capacidad_l, grifero_registra_varilla, actualizado_por,
+         recepcion_requiere_validacion, horas_para_validar_recepcion,
+         dias_sin_varilla_de_control)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       ON CONFLICT (tenant_id) DO UPDATE
         SET ventana_gracia_horas = EXCLUDED.ventana_gracia_horas,
             dias_sin_medir = EXCLUDED.dias_sin_medir,
@@ -1088,11 +1268,16 @@ export class CombustibleRepository {
             llenados_por_dia_max = EXCLUDED.llenados_por_dia_max,
             tope_diario_sin_capacidad_l = EXCLUDED.tope_diario_sin_capacidad_l,
             grifero_registra_varilla = EXCLUDED.grifero_registra_varilla,
+            recepcion_requiere_validacion = EXCLUDED.recepcion_requiere_validacion,
+            horas_para_validar_recepcion = EXCLUDED.horas_para_validar_recepcion,
+            dias_sin_varilla_de_control = EXCLUDED.dias_sin_varilla_de_control,
             actualizado_por = EXCLUDED.actualizado_por,
             actualizado_en = now()
       RETURNING ventana_gracia_horas, dias_sin_medir, dias_ventana_descuadre,
                 dias_carga_retroactiva, dias_sin_vigilancia, llenados_por_dia_max,
                 tope_diario_sin_capacidad_l, grifero_registra_varilla,
+                recepcion_requiere_validacion, horas_para_validar_recepcion,
+                dias_sin_varilla_de_control,
                 actualizado_en, actualizado_por
       `,
       [
@@ -1106,6 +1291,9 @@ export class CombustibleRepository {
         valores.topeSinCapacidadL,
         valores.grifieroRegistraVarilla,
         usuarioId,
+        valores.recepcionRequiereValidacion,
+        valores.horasParaValidarRecepcion,
+        valores.diasSinVarillaDeControl,
       ]
     );
     const fila = result.rows[0];
@@ -1141,22 +1329,23 @@ export class CombustibleRepository {
       despacho_id: number | null;
       combustible_id: number | null;
       recepcion_id: number | null;
+      lectura_id: string | null;
       detalle: Record<string, unknown>;
       creado_en: Date;
     }>(
+      // La lista viaja como parámetro desde TIPOS_CONGELABLES en vez de estar
+      // escrita acá: escrita a mano fue justamente como se desincronizó del
+      // CHECK de anomalías (ver migración 0086).
       `SELECT id, tipo, serie_talonario, n_vale, despacho_id, combustible_id,
-              recepcion_id, detalle, creado_en
+              recepcion_id, lectura_id, detalle, creado_en
        FROM combustible_alertas
        WHERE tenant_id = $1
-         AND tipo IN ('hueco_detectado', 'sobredespacho', 'diferencia_recepcion',
-                      'medidor_inconsistente', 'descuadre_inventario',
-                      'descuadre_ciclo', 'tope_diario_excedido',
-                      'descuadre_ventana', 'vale_recargado')
+         AND tipo = ANY($3::text[])
          AND resuelta_en IS NULL
          AND congelada_en IS NULL
          AND creado_en < now() - make_interval(hours => $2)
        ORDER BY creado_en`,
-      [tenantId, ventanaHoras]
+      [tenantId, ventanaHoras, TIPOS_CONGELABLES]
     );
     return result.rows;
   }
@@ -1187,51 +1376,29 @@ export class CombustibleRepository {
       diferencia_litros: string;
       umbral_diferencia_pct: string;
       tanque_nombre: string;
+      entregas_en_grupo: string;
+      cantidad_del_grupo: string;
+      recepciones_del_grupo: string[];
     }>(
       `
       SELECT r.id, r.combustible_id, r.cantidad, c.unidad, c.tanque_nombre,
-             c.umbral_diferencia_pct, dif.diferencia_litros
+             c.umbral_diferencia_pct, dif.diferencia_litros,
+             dif.entregas_en_grupo, dif.cantidad_del_grupo, dif.recepciones_del_grupo
       FROM combustible_recepciones r
       JOIN combustible c ON c.id = r.combustible_id
-      LEFT JOIN LATERAL (
-        SELECT
-          CASE
-            WHEN antes.nivel IS NULL OR despues.nivel IS NULL THEN NULL
-            WHEN otras.cuantas > 0 THEN NULL
-            ELSE (despues.nivel - antes.nivel) + COALESCE(salidas.total, 0) - r.cantidad
-          END AS diferencia_litros
-        FROM (
-          SELECT l.nivel, l.leido_en FROM combustible_lecturas l
-          WHERE l.combustible_id = r.combustible_id AND l.anulada_en IS NULL
-            AND l.leido_en <= r.recibido_en
-          ORDER BY l.leido_en DESC, l.id DESC LIMIT 1
-        ) antes
-        FULL JOIN (
-          SELECT l.nivel, l.leido_en FROM combustible_lecturas l
-          WHERE l.combustible_id = r.combustible_id AND l.anulada_en IS NULL
-            AND l.leido_en > r.recibido_en
-          ORDER BY l.leido_en ASC, l.id ASC LIMIT 1
-        ) despues ON true
-        LEFT JOIN LATERAL (
-          SELECT SUM(d.cantidad) AS total FROM combustible_despachos d
-          WHERE d.combustible_id = r.combustible_id AND d.anulada_en IS NULL
-            AND d.despachado_en > antes.leido_en AND d.despachado_en <= despues.leido_en
-        ) salidas ON true
-        LEFT JOIN LATERAL (
-          SELECT COUNT(*) AS cuantas FROM combustible_recepciones r2
-          WHERE r2.combustible_id = r.combustible_id AND r2.anulada_en IS NULL
-            AND r2.id <> r.id
-            AND r2.recibido_en > antes.leido_en AND r2.recibido_en <= despues.leido_en
-        ) otras ON true
-      ) dif ON true
+      ${LATERAL_DIFERENCIA_RECEPCION}
       WHERE r.tenant_id = $1
         AND r.anulada_en IS NULL
         AND c.umbral_diferencia_pct IS NOT NULL
         AND dif.diferencia_litros IS NOT NULL
-        AND abs(dif.diferencia_litros / NULLIF(r.cantidad, 0)) * 100 > c.umbral_diferencia_pct
+        -- UNA alerta por grupo, anclada a su última entrega.
+        AND dif.ultima_del_grupo = r.id
+        AND abs(dif.diferencia_litros / NULLIF(dif.cantidad_del_grupo, 0)) * 100
+            > c.umbral_diferencia_pct
         AND NOT EXISTS (
           SELECT 1 FROM combustible_alertas a
-          WHERE a.tenant_id = $1 AND a.tipo = 'diferencia_recepcion' AND a.recepcion_id = r.id
+          WHERE a.tenant_id = $1 AND a.tipo = 'diferencia_recepcion'
+            AND a.recepcion_id = ANY(dif.recepciones_del_grupo)
         )
       `,
       [tenantId]
@@ -1411,11 +1578,22 @@ export class CombustibleRepository {
       -- El arranque del ciclo: la lectura vigente inmediatamente POSTERIOR
       -- a la última recepción (el nivel ya con el combustible adentro). Sin
       -- recepciones, la lectura vigente más antigua del tanque.
+      -- SOLO UNA CARGA DE VERDAD ABRE UN CICLO NUEVO.
+      --
+      -- El ancla del ciclo era "la última recepción", cualquiera fuera su
+      -- tamaño, y eso lo volvía un interruptor: dos recepciones de 1 L cada
+      -- dos tramos borraban el acumulado y el control pasaba de cinco alertas
+      -- a cero (5ª auditoría). El ciclo existe porque cargar el tanque cierra
+      -- un período de consumo; una recepción por debajo del 1 % de la
+      -- capacidad --menos que el ruido de la propia varilla-- no cierra nada.
+      -- Su combustible SÍ cuenta como entrada, lo que no hace es reiniciar.
       WITH ultima_recepcion AS (
         SELECT MAX(r.recibido_en) AS recibido_en
         FROM combustible_recepciones r
+        JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = $1
         WHERE r.tenant_id = $1 AND r.combustible_id = $2 AND r.anulada_en IS NULL
           AND r.recibido_en <= $4::timestamptz
+          AND r.cantidad >= c.capacidad_total * 0.01
       ),
       inicio AS (
         SELECT l.id, l.nivel, l.leido_en
@@ -1714,6 +1892,7 @@ export class CombustibleRepository {
       despacho_id: number | null;
       combustible_id: number | null;
       recepcion_id: number | null;
+      lectura_id: string | null;
       detalle: Record<string, unknown>;
       creado_en: Date;
     },
@@ -1723,8 +1902,8 @@ export class CombustibleRepository {
       `
       INSERT INTO combustible_anomalias
         (tenant_id, tipo, serie_talonario, n_vale, despacho_id, combustible_id,
-         recepcion_id, alerta_id, detalle, detectada_en, ventana_horas)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         recepcion_id, alerta_id, detalle, detectada_en, ventana_horas, lectura_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       ON CONFLICT (alerta_id) WHERE alerta_id IS NOT NULL DO NOTHING
       RETURNING id
       `,
@@ -1740,6 +1919,7 @@ export class CombustibleRepository {
         JSON.stringify(alerta.detalle),
         alerta.creado_en,
         ventanaHoras,
+        alerta.lectura_id,
       ]
     );
 
@@ -1761,7 +1941,7 @@ export class CombustibleRepository {
     const result = await client.query(
       `
       SELECT id, tipo, serie_talonario, n_vale, despacho_id, combustible_id,
-             recepcion_id, alerta_id, detalle, detectada_en, congelada_en,
+             recepcion_id, lectura_id, alerta_id, detalle, detectada_en, congelada_en,
              ventana_horas, COUNT(*) OVER() AS total_count
       FROM combustible_anomalias
       WHERE tenant_id = $1
@@ -1801,10 +1981,11 @@ export class CombustibleRepository {
     return result.rows[0] ?? null;
   }
 
-  /** Lo despachado a UN mismo actor en la ventana móvil de 24 h que termina
-   *  en `hasta` (migración 0079). "Actor" es el equipo si el destino es un
-   *  equipo, y el tipo de destino cuando no lo hay -- todos los vales a
-   *  planta suman juntos, porque planta es una sola.
+  /** Lo despachado a UN mismo actor en la PEOR ventana móvil de 24 h que
+   *  contiene a `hasta` (migración 0079, corregida en la 5ª auditoría).
+   *  "Actor" es el equipo si el destino es un equipo, y el tipo de destino
+   *  cuando no lo hay -- todos los vales a planta suman juntos, porque planta
+   *  es una sola.
    *
    *  Convierte cada fila a litros con la unidad de SU tanque: un tenant
    *  puede tener un tanque en galones y otro en litros, y sumarlos crudos
@@ -1826,27 +2007,64 @@ export class CombustibleRepository {
     excluirDespachoId?: number
   ) {
     const porEquipo = "equipoId" in actor;
-    const result = await client.query<{ total_l: string | null; vales: string }>(
+    const result = await client.query<{
+      total_l: string | null;
+      vales: string;
+      desde_en: Date | null;
+      hasta_en: Date | null;
+    }>(
+      // ── La ventana que MÁS suma entre las que contienen a este vale ──────
+      //
+      // Antes esto miraba solo hacia atrás: las 24 h anteriores a
+      // `despachado_en`. Como la fecha del vale la escribe quien carga, la
+      // evasión era de un renglón: fechar cada vale una hora ANTES del
+      // anterior. Cada uno quedaba solo en su propia ventana y el techo no
+      // veía nada. Verificado: 1.200 L a planta con tope de 500, cero alertas.
+      //
+      // Ahora se prueban todas las ventanas de 24 h que CONTIENEN al vale --
+      // las que terminan en él o en cualquier vale posterior dentro de 24 h --
+      // y se toma la peor. Con eso da igual en qué orden se carguen o se
+      // fechen: el vale que completa la suma la ve completa.
       `
-      SELECT
-        COALESCE(SUM(
-          d.cantidad * CASE WHEN c.unidad = 'gal' THEN 3.785411784 ELSE 1 END
-        ), 0) AS total_l,
-        COUNT(*) AS vales
-      FROM combustible_despachos d
-      LEFT JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = $1
-      WHERE d.tenant_id = $1
-        AND d.anulada_en IS NULL
-        AND d.despachado_en <= $3::timestamptz
-        AND d.despachado_en > $3::timestamptz - INTERVAL '24 hours'
-        AND ($4::int IS NULL OR d.id <> $4::int)
-        AND ${porEquipo ? "d.equipo_id = $2::int" : "(d.equipo_id IS NULL AND d.tipo_destino = $2::text)"}
+      WITH vales AS (
+        SELECT d.id, d.despachado_en,
+               d.cantidad * CASE WHEN c.unidad = 'gal' THEN 3.785411784 ELSE 1 END AS litros
+          FROM combustible_despachos d
+          LEFT JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = $1
+         WHERE d.tenant_id = $1
+           AND d.anulada_en IS NULL
+           AND d.despachado_en > $3::timestamptz - INTERVAL '24 hours'
+           AND d.despachado_en < $3::timestamptz + INTERVAL '24 hours'
+           AND ($4::bigint IS NULL OR d.id <> $4::bigint)
+           AND ${porEquipo ? "d.equipo_id = $2::int" : "(d.equipo_id IS NULL AND d.tipo_destino = $2::text)"}
+      ),
+      -- Los finales de ventana posibles: el instante del vale que se está
+      -- evaluando y el de cada vale posterior que todavía lo alcanza.
+      anclas AS (
+        SELECT $3::timestamptz AS fin
+        UNION
+        SELECT v.despachado_en FROM vales v WHERE v.despachado_en >= $3::timestamptz
+      )
+      SELECT COALESCE(SUM(v.litros), 0) AS total_l,
+             COUNT(v.id) AS vales,
+             MIN(v.despachado_en) AS desde_en,
+             a.fin AS hasta_en
+        FROM anclas a
+        LEFT JOIN vales v
+               ON v.despachado_en <= a.fin
+              AND v.despachado_en > a.fin - INTERVAL '24 hours'
+       GROUP BY a.fin
+       ORDER BY total_l DESC, a.fin
+       LIMIT 1
       `,
       [tenantId, porEquipo ? actor.equipoId : actor.tipoDestino, hasta, excluirDespachoId ?? null]
     );
+    const fila = result.rows[0];
     return {
-      totalL: Number(result.rows[0].total_l),
-      vales: Number(result.rows[0].vales),
+      totalL: Number(fila?.total_l ?? 0),
+      vales: Number(fila?.vales ?? 0),
+      desdeEn: fila?.desde_en ?? null,
+      hastaEn: fila?.hasta_en ?? null,
     };
   }
 
@@ -2157,6 +2375,31 @@ export class CombustibleRepository {
    *
    *  Mira despachos Y lecturas: un tanque puede estar midiéndose al día sin
    *  haber despachado nada. */
+  /** El movimiento más reciente del tanque EXCLUYENDO una recepción, para
+   *  saber si una recepción se insertó detrás de algo que ya existía. Mismo
+   *  criterio que findUltimoMovimiento con los despachos. */
+  async findUltimoMovimientoSinRecepcion(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    excluirRecepcionId: number
+  ): Promise<Date | null> {
+    const r = await client.query<{ ultimo: Date | null }>(
+      `SELECT GREATEST(
+                (SELECT MAX(d.despachado_en) FROM combustible_despachos d
+                  WHERE d.tenant_id = $1 AND d.combustible_id = $2 AND d.anulada_en IS NULL),
+                (SELECT MAX(l.leido_en) FROM combustible_lecturas l
+                  WHERE l.tenant_id = $1 AND l.combustible_id = $2 AND l.anulada_en IS NULL
+                    AND l.origen <> 'inicial'),
+                (SELECT MAX(r.recibido_en) FROM combustible_recepciones r
+                  WHERE r.tenant_id = $1 AND r.combustible_id = $2 AND r.anulada_en IS NULL
+                    AND r.id <> $3)
+              ) AS ultimo`,
+      [tenantId, combustibleId, excluirRecepcionId]
+    );
+    return r.rows[0]?.ultimo ?? null;
+  }
+
   async findUltimoMovimiento(
     client: PoolClient,
     tenantId: string,
@@ -2238,17 +2481,17 @@ export class CombustibleRepository {
       despacho_id: f.despachoId ?? null,
       combustible_id: f.combustibleId ?? null,
       recepcion_id: f.recepcionId ?? null,
+      lectura_id: f.lecturaId ?? null,
       detalle: JSON.stringify(f.detalle),
     };
   }
 
   async crearAlertas(client: PoolClient, tenantId: string, filas: AlertaNueva[]) {
     if (filas.length === 0) return [];
-    const COLS = 7; // tenant_id + las 6 de columnasAlerta que van al INSERT
     const valores: unknown[] = [];
-    const placeholders = filas.map((f, i) => {
+    const placeholders = filas.map((f) => {
       const c = CombustibleRepository.columnasAlerta(f);
-      valores.push(
+      const fila = [
         tenantId,
         c.tipo,
         c.serie_talonario,
@@ -2256,18 +2499,21 @@ export class CombustibleRepository {
         c.despacho_id,
         c.combustible_id,
         c.recepcion_id,
-        c.detalle
-      );
-      const base = i * (COLS + 1);
-      return `($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8})`;
+        c.lectura_id,
+        c.detalle,
+      ];
+      const base = valores.length;
+      valores.push(...fila);
+      return `(${fila.map((_, j) => `$${base + j + 1}`).join(",")})`;
     });
     const result = await client.query(
       `
       INSERT INTO combustible_alertas
-        (tenant_id, tipo, serie_talonario, n_vale, despacho_id, combustible_id, recepcion_id, detalle)
+        (tenant_id, tipo, serie_talonario, n_vale, despacho_id, combustible_id, recepcion_id,
+         lectura_id, detalle)
       VALUES ${placeholders.join(",")}
       RETURNING id, tipo, serie_talonario, n_vale, despacho_id, combustible_id, recepcion_id,
-        detalle, creado_en
+        lectura_id, detalle, creado_en
       `,
       valores
     );
@@ -2291,7 +2537,7 @@ export class CombustibleRepository {
     const result = await client.query(
       `
       SELECT id, tipo, serie_talonario, n_vale, despacho_id, combustible_id,
-        recepcion_id, detalle, creado_en, leida_en, resuelta_en, resuelta_por,
+        recepcion_id, lectura_id, detalle, creado_en, leida_en, resuelta_en, resuelta_por,
         congelada_en, COUNT(*) OVER() AS total_count
       FROM combustible_alertas
       WHERE ${condiciones.join(" AND ")}
@@ -2319,70 +2565,52 @@ export class CombustibleRepository {
     );
   }
 
-  /** `vale_anulado` y `sobredespacho` se resuelven A MANO: los dos son
-   *  hechos consumados que alguien tiene que revisar y dar por buenos (el
-   *  motivo de la anulación, el bidón que explica el exceso). El
-   *  `hueco_detectado` NO entra acá porque se resuelve solo cuando llega el
-   *  vale que faltaba (ver resolverAlertaHuecoSiExiste) -- y el filtro por
-   *  tipo del WHERE no es redundante con el controller: es lo que impide
-   *  que alguien silencie a mano un hueco que en realidad sigue abierto. */
-  /** Los tipos que se cierran A MANO, porque alguien tiene que mirarlos.
-   *
-   *  Hasta 0077 la lista tenía solo dos, y los cuatro agregados después
-   *  (0073/0074/0076) habían quedado SIN NINGÚN camino de cierre: se
-   *  acumulaban abiertos para siempre, y lo único que los sacaba de la
-   *  campanita era "marcar todas leídas" -- que no es revisar, es tapar.
-   *
-   *  Los que NO están acá es porque se resuelven solos y meterlos sería
-   *  darle a una persona la posibilidad de cerrar algo que el sistema sabe
-   *  contestar mejor: `hueco_detectado` (llega el vale que faltaba),
-   *  `nivel_bajo` (se repone) y `tanque_sin_medir` (se mide). */
-  private static readonly TIPOS_REVISABLES = [
-    "vale_anulado",
-    "sobredespacho",
-    "despacho_tardio",
-    "diferencia_recepcion",
-    "medidor_inconsistente",
-    "descuadre_inventario",
-    "descuadre_ciclo",
-    "vale_fuera_de_orden",
-    "lectura_retroactiva",
-    "tope_diario_excedido",
-    "descuadre_ventana",
-    "despacho_retroactivo",
-    "vale_recargado",
-  ];
-
-  /** El motivo se guarda dentro de `detalle` y no en una columna propia: es
-   *  el único dato de la revisión, la tabla ya tiene el JSONB para lo que
-   *  varía por tipo, y agregarle una columna a `combustible_alertas` que solo
-   *  se llena en la mitad de las filas es peor forma que esto. */
-  /** Quién CARGÓ el movimiento sobre el que se abrió esta alerta.
+  /** QUIÉNES participaron del hecho sobre el que se abrió esta alerta.
    *
    *  Sirve para una sola pregunta, la de segregación de funciones: ¿el que
-   *  está cerrando la alerta es el mismo que hizo el movimiento que la
-   *  disparó? Un auditor la hace siempre, y hasta la tercera auditoría
-   *  adversaria el sistema no la podía contestar -- se cerraron 2 de 2
-   *  alertas propias con un "ok revisado" y no quedó registro de que el
-   *  revisor y el revisado fueran la misma persona.
+   *  está cerrando la alerta es alguien que participó de lo que la disparó?
+   *  Un auditor la hace siempre.
    *
-   *  Devuelve null cuando no hay a quién señalar: alertas de tanque (nivel
-   *  bajo, sin medir) que no cuelgan de un movimiento de nadie, o filas de
-   *  antes de que se guardara el usuario. */
-  async findAutorDelMovimiento(client: PoolClient, tenantId: string, alertaId: number) {
-    const r = await client.query<{ autor: string | null }>(
+   *  Hasta la 5ª auditoría miraba solo quién cargó el despacho o la recepción,
+   *  y eso dejaba afuera justo las alertas más importantes: las de DESCUADRE
+   *  cuelgan de una varilla, no de un vale, así que cerrar la alerta de la
+   *  varilla propia nunca contaba como autorrevisión. Verificado: el mismo
+   *  admin midió 1.000 L de menos, cerró la alerta con "error de varilla" y
+   *  quedó `autorevision: false`.
+   *
+   *  Ahora cuentan tres participaciones, sobre las tres anclas posibles:
+   *  - quien CARGÓ el movimiento (despacho, recepción o varilla);
+   *  - quien lo ANULÓ, si la alerta es por una anulación: anular el vale ajeno
+   *    y después cerrar uno mismo la alerta de esa anulación es revisarse a sí
+   *    mismo igual;
+   *  - para la recepción, quien la VALIDÓ contra la guía (0087).
+   *
+   *  Devuelve [] cuando no hay a quién señalar: alertas de estado del tanque
+   *  (nivel bajo, sin medir) o filas de antes de que se guardara el usuario. */
+  async findParticipantesDelHecho(
+    client: PoolClient,
+    tenantId: string,
+    alertaId: number
+  ): Promise<string[]> {
+    const r = await client.query<{ participantes: (string | null)[] }>(
       `
-      SELECT COALESCE(d.usuario_id, rec.usuario_id) AS autor
+      SELECT ARRAY[d.usuario_id, d.anulada_por,
+                   rec.usuario_id, rec.anulada_por, rec.validada_por,
+                   l.usuario_id, l.anulada_por]::text[] AS participantes
         FROM combustible_alertas a
         LEFT JOIN combustible_despachos d
                ON d.id = a.despacho_id AND d.tenant_id = $1
         LEFT JOIN combustible_recepciones rec
                ON rec.id = a.recepcion_id AND rec.tenant_id = $1
+        LEFT JOIN combustible_lecturas l
+               ON l.id = a.lectura_id AND l.tenant_id = $1
        WHERE a.id = $2 AND a.tenant_id = $1
       `,
       [tenantId, alertaId]
     );
-    return r.rows[0]?.autor ?? null;
+    const fila = r.rows[0];
+    if (!fila) return [];
+    return [...new Set(fila.participantes.filter((u): u is string => u !== null))];
   }
 
   async resolverAlertaManual(
@@ -2409,7 +2637,7 @@ export class CombustibleRepository {
         AND tipo = ANY($5::text[]) AND resuelta_en IS NULL
       RETURNING id, tipo, serie_talonario, n_vale, despacho_id, detalle, creado_en, leida_en, resuelta_en, resuelta_por
       `,
-      [usuarioId, alertaId, tenantId, motivo, CombustibleRepository.TIPOS_REVISABLES, autorevision]
+      [usuarioId, alertaId, tenantId, motivo, TIPOS_REVISABLES, autorevision]
     );
     return result.rows[0] ?? null;
   }
@@ -2648,7 +2876,8 @@ export class CombustibleRepository {
     id, tenant_id, combustible_id, grifo_id, cantidad, costo_unitario,
     (cantidad * costo_unitario) AS costo_total,
     tipo_documento, numero_documento, recibido_en, usuario_id, creado_en,
-    anulada_en, anulada_por, motivo_anulacion
+    anulada_en, anulada_por, motivo_anulacion,
+    requiere_validacion, cantidad_documento, validada_en, validada_por
   `;
 
   /** Los datos del tanque que la Fase C necesita para validar una recepción
@@ -2814,6 +3043,10 @@ export class CombustibleRepository {
       tipoDocumento: string | null;
       numeroDocumento: string | null;
       recibidoEn: string;
+      /** Política vigente al momento de registrarla (0088). Se estampa en la
+       *  fila y no se consulta después: apagar la política mañana no puede
+       *  borrar las validaciones que hoy se deben. */
+      requiereValidacion: boolean;
     }
   ) {
     try {
@@ -2821,9 +3054,9 @@ export class CombustibleRepository {
         `
         INSERT INTO combustible_recepciones (
           tenant_id, combustible_id, grifo_id, cantidad, costo_unitario,
-          tipo_documento, numero_documento, recibido_en, usuario_id
+          tipo_documento, numero_documento, recibido_en, usuario_id, requiere_validacion
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         RETURNING ${CombustibleRepository.COLUMNAS_RECEPCION}
         `,
         [
@@ -2836,6 +3069,7 @@ export class CombustibleRepository {
           data.numeroDocumento,
           data.recibidoEn,
           usuarioId,
+          data.requiereValidacion,
         ]
       );
       return result.rows[0];
@@ -2908,6 +3142,7 @@ export class CombustibleRepository {
              (r.cantidad * r.costo_unitario) AS costo_total,
              r.tipo_documento, r.numero_documento, r.recibido_en, r.usuario_id,
              r.creado_en, r.anulada_en, r.anulada_por, r.motivo_anulacion,
+             r.requiere_validacion, r.cantidad_documento, r.validada_en, r.validada_por,
              c.tanque_nombre, g.nombre AS grifo_nombre,
              c.umbral_diferencia_pct,
              autor.nombre AS registrada_por_nombre,
@@ -2918,6 +3153,10 @@ export class CombustibleRepository {
              dif.diferencia_litros,
              dif.nivel_antes,
              dif.nivel_despues,
+             -- > 1 = la diferencia es de varias entregas juntas (ver
+             -- LATERAL_DIFERENCIA_RECEPCION): la UI lo tiene que decir.
+             dif.entregas_en_grupo,
+             validador.nombre AS validada_por_nombre,
              COUNT(*) OVER() AS total_count
       FROM combustible_recepciones r
       -- INNER para tanque y grifo (las dos FK son NOT NULL, siempre hay
@@ -2927,54 +3166,8 @@ export class CombustibleRepository {
       JOIN combustible_grifos g ON g.id = r.grifo_id
       LEFT JOIN usuarios autor ON autor.id = r.usuario_id
       LEFT JOIN usuarios anulador ON anulador.id = r.anulada_por
-      LEFT JOIN LATERAL (
-        SELECT
-          antes.nivel AS nivel_antes,
-          despues.nivel AS nivel_despues,
-          CASE
-            -- Sin las dos lecturas no hay nada que comparar. Y si en la misma
-            -- ventana entró OTRA recepción, la diferencia es de las dos
-            -- juntas: atribuírsela a esta sería inventar. En los dos casos
-            -- NULL, y la UI lo muestra como "—".
-            WHEN antes.nivel IS NULL OR despues.nivel IS NULL THEN NULL
-            WHEN otras.cuantas > 0 THEN NULL
-            ELSE (despues.nivel - antes.nivel) + COALESCE(salidas.total, 0) - r.cantidad
-          END AS diferencia_litros
-        FROM (
-          SELECT l.nivel, l.leido_en
-          FROM combustible_lecturas l
-          WHERE l.combustible_id = r.combustible_id AND l.anulada_en IS NULL
-            AND l.leido_en <= r.recibido_en
-          ORDER BY l.leido_en DESC, l.id DESC LIMIT 1
-        ) antes
-        FULL JOIN (
-          SELECT l.nivel, l.leido_en
-          FROM combustible_lecturas l
-          WHERE l.combustible_id = r.combustible_id AND l.anulada_en IS NULL
-            AND l.leido_en > r.recibido_en
-          ORDER BY l.leido_en ASC, l.id ASC LIMIT 1
-        ) despues ON true
-        -- Lo que SALIÓ del tanque entre las dos lecturas: sin sumarlo de
-        -- vuelta, un despacho hecho en el medio se vería como faltante.
-        LEFT JOIN LATERAL (
-          SELECT SUM(d.cantidad) AS total
-          FROM combustible_despachos d
-          WHERE d.combustible_id = r.combustible_id
-            -- Un vale anulado no sacó combustible del tanque: sumarlo
-            -- inventaría un faltante que no existe (migración 0067).
-            AND d.anulada_en IS NULL
-            AND d.despachado_en > antes.leido_en
-            AND d.despachado_en <= despues.leido_en
-        ) salidas ON true
-        LEFT JOIN LATERAL (
-          SELECT COUNT(*) AS cuantas
-          FROM combustible_recepciones r2
-          WHERE r2.combustible_id = r.combustible_id AND r2.anulada_en IS NULL
-            AND r2.id <> r.id
-            AND r2.recibido_en > antes.leido_en
-            AND r2.recibido_en <= despues.leido_en
-        ) otras ON true
-      ) dif ON true
+      LEFT JOIN usuarios validador ON validador.id = r.validada_por
+      ${LATERAL_DIFERENCIA_RECEPCION}
       WHERE ${condiciones.join(" AND ")}
       ORDER BY r.recibido_en DESC, r.id DESC
       LIMIT $${valores.length - 1} OFFSET $${valores.length}
@@ -3023,49 +3216,13 @@ export class CombustibleRepository {
              NULLIF(CONCAT_WS(' ', r.tipo_documento, r.numero_documento), '') AS documento,
              dif.nivel_antes, dif.nivel_despues, dif.salidas
       FROM combustible_recepciones r
-      LEFT JOIN LATERAL (
-        SELECT
-          antes.nivel AS nivel_antes,
-          despues.nivel AS nivel_despues,
-          COALESCE(salidas.total, 0) AS salidas,
-          CASE
-            WHEN antes.nivel IS NULL OR despues.nivel IS NULL THEN NULL
-            WHEN otras.cuantas > 0 THEN NULL
-            ELSE (despues.nivel - antes.nivel) + COALESCE(salidas.total, 0) - r.cantidad
-          END AS diferencia_litros
-        FROM (
-          SELECT l.nivel, l.leido_en
-          FROM combustible_lecturas l
-          WHERE l.combustible_id = r.combustible_id AND l.anulada_en IS NULL
-            AND l.leido_en <= r.recibido_en
-          ORDER BY l.leido_en DESC, l.id DESC LIMIT 1
-        ) antes
-        FULL JOIN (
-          SELECT l.nivel, l.leido_en
-          FROM combustible_lecturas l
-          WHERE l.combustible_id = r.combustible_id AND l.anulada_en IS NULL
-            AND l.leido_en > r.recibido_en
-          ORDER BY l.leido_en ASC, l.id ASC LIMIT 1
-        ) despues ON true
-        LEFT JOIN LATERAL (
-          SELECT SUM(d.cantidad) AS total
-          FROM combustible_despachos d
-          WHERE d.combustible_id = r.combustible_id
-            AND d.anulada_en IS NULL
-            AND d.despachado_en > antes.leido_en
-            AND d.despachado_en <= despues.leido_en
-        ) salidas ON true
-        LEFT JOIN LATERAL (
-          SELECT COUNT(*) AS cuantas
-          FROM combustible_recepciones r2
-          WHERE r2.combustible_id = r.combustible_id AND r2.anulada_en IS NULL
-            AND r2.id <> r.id
-            AND r2.recibido_en > antes.leido_en
-            AND r2.recibido_en <= despues.leido_en
-        ) otras ON true
-      ) dif ON true
+      ${LATERAL_DIFERENCIA_RECEPCION}
       WHERE r.tenant_id = $1 AND r.combustible_id = $2 AND r.anulada_en IS NULL
         AND dif.diferencia_litros IS NOT NULL
+        -- La calibración sigue usando solo entregas SOLAS: el error de una
+        -- entrega combinada mezcla dos cisternas y dos medidores, y meterlo
+        -- en la muestra ensancharía el umbral de todas.
+        AND dif.entregas_en_grupo = 1
       `,
       [tenantId, combustibleId]
     );
@@ -3261,6 +3418,7 @@ export class CombustibleRepository {
     Array<{
       descuadre: number;
       recepciones: number;
+      recepcionesAncla: number;
       capacidad: number;
       leido_en: Date;
       leido_en_anterior: Date;
@@ -3278,6 +3436,7 @@ export class CombustibleRepository {
     const result = await client.query<{
       descuadre: string;
       recepciones: string;
+      recepciones_ancla: string;
       capacidad_total: string;
       leido_en: Date;
       leido_en_anterior: Date;
@@ -3298,6 +3457,10 @@ export class CombustibleRepository {
         (le.nivel - (le.nivel_anterior + COALESCE(rec.total, 0) - COALESCE(des.total, 0)))
           AS descuadre,
         COALESCE(rec.total, 0) AS recepciones,
+        -- Lo que cuenta para CORTAR un ciclo en la muestra de calibración:
+        -- misma regla que el ancla del ciclo en findSaldoCiclo (1 % de la
+        -- capacidad), o la muestra mediría ciclos que la alerta no usa.
+        COALESCE(rec.ancla, 0) AS recepciones_ancla,
         c.capacidad_total,
         le.leido_en,
         le.leido_en_anterior,
@@ -3314,7 +3477,8 @@ export class CombustibleRepository {
           AND d.despachado_en > le.leido_en_anterior AND d.despachado_en <= le.leido_en
       ) des ON true
       LEFT JOIN LATERAL (
-        SELECT SUM(r.cantidad) AS total
+        SELECT SUM(r.cantidad) AS total,
+               SUM(r.cantidad) FILTER (WHERE r.cantidad >= c.capacidad_total * 0.01) AS ancla
         FROM combustible_recepciones r
         WHERE r.tenant_id = $1 AND r.combustible_id = $2 AND r.anulada_en IS NULL
           AND r.recibido_en > le.leido_en_anterior AND r.recibido_en <= le.leido_en
@@ -3327,6 +3491,7 @@ export class CombustibleRepository {
     return result.rows.map((f) => ({
       descuadre: Number(f.descuadre),
       recepciones: Number(f.recepciones),
+      recepcionesAncla: Number(f.recepciones_ancla),
       capacidad: Number(f.capacidad_total),
       leido_en: f.leido_en,
       leido_en_anterior: f.leido_en_anterior,
@@ -3335,6 +3500,409 @@ export class CombustibleRepository {
       despachos: Number(f.despachos),
       origen: f.origen,
     }));
+  }
+
+  // ── Sugerencia de los topes diarios desde el historial ───────────────
+
+  /** Lo despachado POR DÍA a cada actor en los últimos `dias`, en litros.
+   *  Actor = el equipo, o el tipo de destino cuando no hay equipo (planta es
+   *  una sola), igual que el tope en vivo (findAcumuladoDiario). Trae la
+   *  capacidad del equipo pasada a litros para poder sugerir también los
+   *  "llenados por día".
+   *
+   *  Días calendario y no ventana móvil de 24 h: para SUGERIR alcanza, y la
+   *  ventana móvil sobre todo el historial sería una consulta cuadrática. El
+   *  tope en vivo sí usa la ventana móvil. */
+  async findDespachadoPorDiaYActor(client: PoolClient, tenantId: string, dias: number) {
+    const r = await client.query<{
+      actor: string;
+      equipo_id: number | null;
+      capacidad_l: string | null;
+      dia: Date;
+      litros: string;
+    }>(
+      `
+      SELECT COALESCE(e.placa_codigo, d.tipo_destino) AS actor,
+             d.equipo_id,
+             CASE WHEN e.capacidad_tanque IS NULL THEN NULL
+                  ELSE e.capacidad_tanque *
+                       CASE WHEN e.capacidad_tanque_unidad = 'gal' THEN 3.785411784 ELSE 1 END
+             END AS capacidad_l,
+             date_trunc('day', d.despachado_en) AS dia,
+             SUM(d.cantidad * CASE WHEN c.unidad = 'gal' THEN 3.785411784 ELSE 1 END) AS litros
+        FROM combustible_despachos d
+        LEFT JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = $1
+        LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1
+       WHERE d.tenant_id = $1 AND d.anulada_en IS NULL
+         AND d.despachado_en > now() - make_interval(days => $2)
+       GROUP BY 1, 2, 3, 4
+       ORDER BY 1, 4
+      `,
+      [tenantId, dias]
+    );
+    return r.rows.map((f) => ({
+      actor: f.actor,
+      equipoId: f.equipo_id,
+      capacidadL: f.capacidad_l === null ? null : Number(f.capacidad_l),
+      dia: f.dia,
+      litros: Number(f.litros),
+    }));
+  }
+
+  // ── 5ª auditoría: consumo por hora de motor / por km (0088) ──────────
+
+  /** Los últimos vales CON MEDIDOR de un equipo, del más nuevo al más viejo,
+   *  con la unidad del tanque del que salieron (para poder pasar todo a
+   *  litros). Excluye el vale que se está evaluando por id, igual que
+   *  findUltimoMedidorEquipo: corre después del INSERT. */
+  async findValesConMedidor(
+    client: PoolClient,
+    tenantId: string,
+    equipoId: number,
+    excluirDespachoId: number,
+    limite: number
+  ) {
+    const r = await client.query<{
+      id: string;
+      cantidad: string;
+      unidad: string | null;
+      lectura_horometro: string | null;
+      lectura_odometro: string | null;
+      despachado_en: Date;
+    }>(
+      `SELECT d.id, d.cantidad, c.unidad, d.lectura_horometro, d.lectura_odometro,
+              d.despachado_en
+         FROM combustible_despachos d
+         LEFT JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = $1
+        WHERE d.tenant_id = $1 AND d.equipo_id = $2 AND d.anulada_en IS NULL
+          AND d.id <> $3
+          AND (d.lectura_horometro IS NOT NULL OR d.lectura_odometro IS NOT NULL)
+        ORDER BY d.despachado_en DESC, d.id DESC
+        LIMIT $4`,
+      [tenantId, equipoId, excluirDespachoId, limite]
+    );
+    return r.rows;
+  }
+
+  /** Lo cargado a un equipo DESPUÉS de un instante (litros ya convertidos),
+   *  incluyendo el vale recién creado. Es el numerador del consumo. */
+  async findLitrosDesde(
+    client: PoolClient,
+    tenantId: string,
+    equipoId: number,
+    desde: Date
+  ): Promise<number> {
+    const r = await client.query<{ litros: string }>(
+      `SELECT COALESCE(SUM(
+                d.cantidad * CASE WHEN c.unidad = 'gal' THEN 3.785411784 ELSE 1 END
+              ), 0) AS litros
+         FROM combustible_despachos d
+         LEFT JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = $1
+        WHERE d.tenant_id = $1 AND d.equipo_id = $2 AND d.anulada_en IS NULL
+          AND d.despachado_en > $3`,
+      [tenantId, equipoId, desde]
+    );
+    return Number(r.rows[0].litros);
+  }
+
+  async getConsumoMaximoEquipo(client: PoolClient, tenantId: string, equipoId: number) {
+    const r = await client.query<{
+      consumo_maximo_l: string | null;
+      tipo_medidor: string | null;
+      placa_codigo: string;
+    }>(
+      `SELECT consumo_maximo_l, tipo_medidor, placa_codigo
+         FROM equipos WHERE id = $1 AND tenant_id = $2`,
+      [equipoId, tenantId]
+    );
+    const f = r.rows[0];
+    if (!f) return null;
+    return {
+      consumoMaximo: f.consumo_maximo_l === null ? null : Number(f.consumo_maximo_l),
+      tipoMedidor: f.tipo_medidor,
+      placa: f.placa_codigo,
+    };
+  }
+
+  // ── 5ª auditoría: recepciones validadas contra la guía (0088) ────────
+
+  async getPoliticaValidacionRecepcion(
+    client: PoolClient,
+    tenantId: string
+  ): Promise<{ requiere: boolean; horas: number }> {
+    const r = await client.query<{ requiere: boolean; horas: number }>(
+      `SELECT recepcion_requiere_validacion AS requiere, horas_para_validar_recepcion AS horas
+         FROM combustible_config WHERE tenant_id = $1`,
+      [tenantId]
+    );
+    // Sin fila de config: los defaults de la migración, del lado estricto.
+    if (r.rows.length === 0) return { requiere: true, horas: 48 };
+    return { requiere: r.rows[0].requiere, horas: Number(r.rows[0].horas) };
+  }
+
+  /** Recepciones que esperan validación pasado el plazo y todavía no tienen
+   *  alerta abierta por eso. */
+  async findRecepcionesSinValidar(client: PoolClient, tenantId: string, horas: number) {
+    const r = await client.query<{
+      id: number;
+      combustible_id: number;
+      tanque_nombre: string;
+      unidad: string;
+      creado_en: Date;
+      numero_documento: string | null;
+    }>(
+      `SELECT r.id, r.combustible_id, c.tanque_nombre, c.unidad, r.creado_en, r.numero_documento
+         FROM combustible_recepciones r
+         JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = $1
+        WHERE r.tenant_id = $1
+          AND r.requiere_validacion AND r.validada_en IS NULL AND r.anulada_en IS NULL
+          AND r.creado_en < now() - make_interval(hours => $2)
+          AND NOT EXISTS (
+            SELECT 1 FROM combustible_alertas a
+             WHERE a.tenant_id = $1 AND a.recepcion_id = r.id
+               AND a.tipo = 'recepcion_sin_validar' AND a.resuelta_en IS NULL
+          )
+        ORDER BY r.creado_en`,
+      [tenantId, horas]
+    );
+    return r.rows;
+  }
+
+  /** La validación (o la anulación) cierra la alerta de "sin validar". */
+  async resolverRecepcionSinValidarSiExiste(
+    client: PoolClient,
+    tenantId: string,
+    recepcionId: number
+  ): Promise<void> {
+    await client.query(
+      `UPDATE combustible_alertas SET resuelta_en = now()
+        WHERE tenant_id = $1 AND recepcion_id = $2
+          AND tipo = 'recepcion_sin_validar' AND resuelta_en IS NULL`,
+      [tenantId, recepcionId]
+    );
+  }
+
+  /** Valida una recepción: guarda la cantidad de la guía que escribió quien
+   *  valida. `validada_en IS NULL` en el WHERE: dos validaciones simultáneas
+   *  no pueden terminar las dos en 200 (mismo patrón que las anulaciones). */
+  async validarRecepcion(
+    client: PoolClient,
+    tenantId: string,
+    recepcionId: number,
+    usuarioId: string,
+    cantidadDocumento: number
+  ) {
+    const r = await client.query(
+      `UPDATE combustible_recepciones
+          SET cantidad_documento = $1, validada_en = now(), validada_por = $2
+        WHERE id = $3 AND tenant_id = $4
+          AND validada_en IS NULL AND anulada_en IS NULL
+        RETURNING ${CombustibleRepository.COLUMNAS_RECEPCION}`,
+      [cantidadDocumento, usuarioId, recepcionId, tenantId]
+    );
+    return r.rows[0] ?? null;
+  }
+
+  // ── 5ª auditoría: alertas deduplicadas y controles de la varilla ─────
+
+  /** Crea la alerta de un ESTADO ACUMULADO (ciclo, ventana, varillas
+   *  exactas), o actualiza la que ya está abierta para ese tanque.
+   *
+   *  Antes cada varilla creaba una alerta nueva mientras el acumulado siguiera
+   *  pasado: cinco varillas, cinco alertas y cinco correos iguales. El ruido
+   *  es cómo muere un control -- la lección de "marcar todas leídas".
+   *
+   *  Si ya hay una abierta: se reemplaza el detalle por los números al día,
+   *  se cuenta la repetición, se apunta a la varilla más reciente y se vuelve
+   *  a marcar como NO LEÍDA (la situación sigue y puede haber empeorado), pero
+   *  NO se crea otra ni se manda otro correo. `creado_en` no se toca: la
+   *  ventana de gracia corre desde que se detectó por primera vez, no desde
+   *  la última varilla -- si no, medir seguido la postergaría para siempre.
+   *
+   *  `FOR UPDATE` sobre el tanque serializa dos varillas simultáneas del
+   *  mismo tanque: sin eso las dos pasarían por el "¿ya hay una abierta?" y
+   *  crearían dos. */
+  async registrarAlertaDeEstadoAcumulado(
+    client: PoolClient,
+    tenantId: string,
+    fila: AlertaNueva & { combustibleId: number }
+  ): Promise<{ nueva: boolean; id: string }> {
+    await client.query(`SELECT id FROM combustible WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [
+      fila.combustibleId,
+      tenantId,
+    ]);
+    const abierta = await client.query<{ id: string }>(
+      `SELECT id FROM combustible_alertas
+        WHERE tenant_id = $1 AND combustible_id = $2 AND tipo = $3
+          AND resuelta_en IS NULL AND congelada_en IS NULL
+        ORDER BY creado_en DESC, id DESC
+        LIMIT 1`,
+      [tenantId, fila.combustibleId, fila.tipo]
+    );
+    if (abierta.rows[0]) {
+      await client.query(
+        `UPDATE combustible_alertas
+            SET detalle = $1::jsonb || jsonb_build_object(
+                  'repeticiones', COALESCE((detalle->>'repeticiones')::int, 1) + 1,
+                  'primeraDeteccion', COALESCE(detalle->'primeraDeteccion', to_jsonb(creado_en))
+                ),
+                lectura_id = COALESCE($2, lectura_id),
+                leida_en = NULL
+          WHERE id = $3 AND tenant_id = $4`,
+        [JSON.stringify(fila.detalle), fila.lecturaId ?? null, abierta.rows[0].id, tenantId]
+      );
+      return { nueva: false, id: abierta.rows[0].id };
+    }
+    const [creada] = await this.crearAlertas(client, tenantId, [fila]);
+    return { nueva: true, id: String(creada.id) };
+  }
+
+  /** Los últimos `n` tramos del tanque que TERMINAN en esta lectura o antes
+   *  (orden cronológico), con lo que se movió en cada uno. Para el control de
+   *  varillas exactas. La lectura `inicial` del alta no es una medición de
+   *  cancha y no forma tramo. */
+  async findUltimosTramos(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    lecturaId: number,
+    n: number
+  ) {
+    const r = await client.query<{
+      lectura_id: string;
+      descuadre: string;
+      despachos: string;
+      recepciones: string;
+      leido_en: Date;
+    }>(
+      `
+      WITH lecturas AS (
+        SELECT l.id, l.nivel, l.leido_en,
+               LAG(l.nivel) OVER w AS nivel_anterior,
+               LAG(l.leido_en) OVER w AS leido_en_anterior
+          FROM combustible_lecturas l
+         WHERE l.tenant_id = $1 AND l.combustible_id = $2 AND l.anulada_en IS NULL
+           AND l.origen <> 'inicial'
+        WINDOW w AS (ORDER BY l.leido_en, l.id)
+      ),
+      hasta AS (SELECT leido_en, id FROM lecturas WHERE id = $3)
+      SELECT le.id AS lectura_id, le.leido_en,
+             COALESCE(des.total, 0) AS despachos,
+             COALESCE(rec.total, 0) AS recepciones,
+             le.nivel - (le.nivel_anterior + COALESCE(rec.total, 0) - COALESCE(des.total, 0))
+               AS descuadre
+        FROM lecturas le
+        CROSS JOIN hasta h
+        LEFT JOIN LATERAL (
+          SELECT SUM(d.cantidad) AS total FROM combustible_despachos d
+           WHERE d.tenant_id = $1 AND d.combustible_id = $2 AND d.anulada_en IS NULL
+             AND d.despachado_en > le.leido_en_anterior AND d.despachado_en <= le.leido_en
+        ) des ON true
+        LEFT JOIN LATERAL (
+          SELECT SUM(rr.cantidad) AS total FROM combustible_recepciones rr
+           WHERE rr.tenant_id = $1 AND rr.combustible_id = $2 AND rr.anulada_en IS NULL
+             AND rr.recibido_en > le.leido_en_anterior AND rr.recibido_en <= le.leido_en
+        ) rec ON true
+       WHERE le.nivel_anterior IS NOT NULL
+         AND (le.leido_en, le.id) <= (h.leido_en, h.id)
+       ORDER BY le.leido_en DESC, le.id DESC
+       LIMIT $4
+      `,
+      [tenantId, combustibleId, lecturaId, n]
+    );
+    return r.rows.reverse().map((f) => ({
+      lecturaId: Number(f.lectura_id),
+      leidoEn: f.leido_en,
+      descuadre: Number(f.descuadre),
+      despachos: Number(f.despachos),
+      recepciones: Number(f.recepciones),
+    }));
+  }
+
+  /** Una varilla tomada por alguien que NO es grifero cierra la alerta de
+   *  "varilla sin control" del tanque. Lo resolvió el hecho, no una persona. */
+  async resolverVarillaSinControlSiExiste(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number
+  ): Promise<void> {
+    await client.query(
+      `UPDATE combustible_alertas SET resuelta_en = now()
+        WHERE tenant_id = $1 AND combustible_id = $2
+          AND tipo = 'varilla_sin_control' AND resuelta_en IS NULL`,
+      [tenantId, combustibleId]
+    );
+  }
+
+  /** Días tolerados sin una varilla de alguien que no despacha (0088). NULL
+   *  = la empresa decidió no tener ese control. Sin fila de config, 7. */
+  async getDiasSinVarillaDeControl(client: PoolClient, tenantId: string): Promise<number | null> {
+    const r = await client.query<{ dias: number | null }>(
+      `SELECT dias_sin_varilla_de_control AS dias FROM combustible_config WHERE tenant_id = $1`,
+      [tenantId]
+    );
+    if (r.rows.length === 0) return 7;
+    return r.rows[0].dias === null ? null : Number(r.rows[0].dias);
+  }
+
+  /** Tanques activos que en los últimos `dias` se midieron SOLO por griferos
+   *  --los mismos que despachan--, y sin alerta abierta por eso.
+   *
+   *  Tiene que haber varillas en la ventana: un tanque que directamente no se
+   *  mide ya lo cubre `tanque_sin_medir`, y alertarlo dos veces es ruido. Y
+   *  despachos: un tanque parado no tiene nada que controlar.
+   *
+   *  El rol que cuenta es el ACTUAL del usuario. Si alguien pasó de operador a
+   *  grifero, sus varillas viejas dejan de contar como independientes -- el
+   *  lado seguro. */
+  async findTanquesSinVarillaDeControl(client: PoolClient, tenantId: string, dias: number) {
+    const r = await client.query<{
+      id: number;
+      tanque_nombre: string;
+      codigo: string;
+      varillas: string;
+      ultima_de_control: Date | null;
+    }>(
+      `
+      SELECT c.id, c.tanque_nombre, c.codigo,
+             (SELECT COUNT(*) FROM combustible_lecturas l
+               WHERE l.tenant_id = $1 AND l.combustible_id = c.id AND l.anulada_en IS NULL
+                 AND l.origen <> 'inicial'
+                 AND l.leido_en > now() - make_interval(days => $2))::text AS varillas,
+             (SELECT MAX(l.leido_en) FROM combustible_lecturas l
+                JOIN usuarios u ON u.id = l.usuario_id AND u.tenant_id = $1
+               WHERE l.tenant_id = $1 AND l.combustible_id = c.id AND l.anulada_en IS NULL
+                 AND u.rol <> 'grifero') AS ultima_de_control
+        FROM combustible c
+       WHERE c.tenant_id = $1 AND c.activo = true
+         AND EXISTS (
+           SELECT 1 FROM combustible_despachos d
+            WHERE d.tenant_id = $1 AND d.combustible_id = c.id AND d.anulada_en IS NULL
+              AND d.despachado_en > now() - make_interval(days => $2)
+         )
+         AND EXISTS (
+           SELECT 1 FROM combustible_lecturas l
+            WHERE l.tenant_id = $1 AND l.combustible_id = c.id AND l.anulada_en IS NULL
+              AND l.origen <> 'inicial'
+              AND l.leido_en > now() - make_interval(days => $2)
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM combustible_lecturas l
+             JOIN usuarios u ON u.id = l.usuario_id AND u.tenant_id = $1
+            WHERE l.tenant_id = $1 AND l.combustible_id = c.id AND l.anulada_en IS NULL
+              AND l.leido_en > now() - make_interval(days => $2)
+              AND u.rol <> 'grifero'
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM combustible_alertas a
+            WHERE a.tenant_id = $1 AND a.combustible_id = c.id
+              AND a.tipo = 'varilla_sin_control' AND a.resuelta_en IS NULL
+         )
+       ORDER BY c.id
+      `,
+      [tenantId, dias]
+    );
+    return r.rows;
   }
 
   /** Distingue "no existe / es de otro tenant" (404) de "ya estaba anulada"

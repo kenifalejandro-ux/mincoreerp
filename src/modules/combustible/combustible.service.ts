@@ -417,7 +417,7 @@ export class CombustibleService {
    *  el mismo `cliente_uuid` -- el reintento de un envío cuya respuesta se
    *  perdió. El controller usa ese flag para no publicar el evento de nuevo.
    *  Sin `cliente_uuid` en el body, se comporta igual que antes: siempre
-   *  crea (ver PUT /:id/nivel legacy más abajo). */
+   *  crea. */
   registrarLectura(
     client: PoolClient,
     tenantId: string,
@@ -441,28 +441,6 @@ export class CombustibleService {
       },
       recuperar: (filaId) => this.repository.findLecturaConTanque(client, tenantId, filaId),
     });
-  }
-
-  /** PUT /:id/nivel de siempre, mantenido como wrapper mientras existan
-   *  consumidores -- pero ya NUNCA sobreescribe nivel_actual directo: pasa
-   *  por el mismo camino que una lectura nueva (leido_en = now(), sin
-   *  cliente_uuid, así que siempre crea). El historial queda completo
-   *  también para las lecturas cargadas por esta vía. */
-  async actualizarNivelLegacy(
-    client: PoolClient,
-    tenantId: string,
-    usuarioId: string,
-    id: number,
-    nivelActual: number
-  ) {
-    const { tanque } = await this.repository.registrarLectura(client, tenantId, {
-      combustibleId: id,
-      nivel: nivelActual,
-      leidoEn: new Date().toISOString(),
-      usuarioId,
-      metadata: {},
-    });
-    return tanque;
   }
 
   // ── Despachos (Fase B) ───────────────────────────────────────────────
@@ -533,7 +511,33 @@ export class CombustibleService {
           );
         }
 
+        await this.validarSaltoDeTalonario(client, tenantId, data.serie_talonario, data.n_vale);
+
         await this.validarFormaDespacho(client, tenantId, data);
+
+        // EL COSTO DEL VALE DEL TANQUE PROPIO LO PONE EL SERVIDOR.
+        //
+        // Venía tal cual del body, también en tanque_propio, así que cualquiera
+        // podía declarar S/ 0,01 por litro y dejar sin sentido el costo por
+        // equipo, por centro de costo y el kardex valorizado -- sin tocar un
+        // solo litro. El precio de un litro del tanque no es un dato del vale:
+        // es el precio vigente del catálogo o, si no hay, el costo promedio
+        // ponderado del propio tanque (Fase C).
+        //
+        // Si no hay ninguno de los dos (tanque nuevo, sin compras ni catálogo)
+        // se respeta lo que vino: es el único caso en que el cargador sabe
+        // más que el sistema.
+        const costoUnitario =
+          data.origen === "tanque_propio"
+            ? await this.resolverCostoDelTanque(
+                client,
+                tenantId,
+                data.combustible_id!,
+                data.tipo_combustible,
+                data.despachado_en ?? new Date().toISOString(),
+                data.costo_unitario
+              )
+            : data.costo_unitario;
 
         const fila = await this.repository.crearDespacho(client, tenantId, usuarioId, {
           origen: data.origen,
@@ -549,7 +553,7 @@ export class CombustibleService {
           lecturaHorometro: data.lectura_horometro ?? null,
           lecturaOdometro: data.lectura_odometro ?? null,
           horasAbastecidas: data.horas_abastecidas ?? null,
-          costoUnitario: data.costo_unitario,
+          costoUnitario,
           observaciones: data.observaciones ?? null,
           despachadoEn: data.despachado_en ?? new Date().toISOString(),
         });
@@ -557,6 +561,68 @@ export class CombustibleService {
       },
       recuperar: (filaId) => this.repository.findDespachoPorId(client, tenantId, filaId),
     });
+  }
+
+  /** Cuánto puede saltar el número de vale respecto del último de su serie.
+   *
+   *  300 es holgado para la operación real --un talonario tiene 50 o 100
+   *  vales, y dos talonarios de la misma serie usados en paralelo se cruzan
+   *  por decenas-- y corta en seco el error de tipeo que genera miles de
+   *  alertas: un 1234 que se escribe 12340 salta 11.106 números.
+   *
+   *  Por qué acá SÍ se bloquea, si la regla del módulo es "alertar, no
+   *  bloquear": porque el daño no es una alerta de más, es el control entero.
+   *  Cada número salteado genera su propia alerta de hueco, y a las 72 h cada
+   *  una se congela como anomalía permanente. Un dígito de más deja 11.000
+   *  hallazgos que nadie va a revisar -- y entre esos se pierde el hueco real.
+   *  Verificado en la 5ª auditoría: UN vale con n=5001 creó 5.000 alertas.
+   *
+   *  El mensaje dice qué hacer, porque quien lo lee está en cancha: si el
+   *  número es correcto (talonario nuevo que arranca mucho más arriba), la
+   *  serie es otra y se carga como serie nueva. */
+  static readonly MAX_SALTO_TALONARIO = 300;
+
+  private async validarSaltoDeTalonario(
+    client: PoolClient,
+    tenantId: string,
+    serieTalonario: string,
+    nVale: number
+  ) {
+    const maximo = await this.repository.findMaxNValeDeSerie(client, tenantId, serieTalonario);
+    if (maximo === null) return; // Primer vale de la serie: no hay contra qué comparar.
+    const salto = nVale - maximo;
+    if (salto <= CombustibleService.MAX_SALTO_TALONARIO) return;
+    throw new Error(
+      `el vale ${nVale} salta ${salto - 1} números desde el último cargado de la serie ` +
+        `${serieTalonario} (${maximo}). Revisá el número: un dígito de más deja miles de vales ` +
+        `marcados como faltantes. Si el talonario realmente arranca en ${nVale}, cargalo como una ` +
+        `serie nueva`
+    );
+  }
+
+  /** El precio de un litro que sale del tanque propio: catálogo vigente a la
+   *  fecha del vale, si no el costo promedio ponderado del tanque, y si no lo
+   *  declarado. Ver el comentario en crearDespacho. */
+  private async resolverCostoDelTanque(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    tipoCombustible: string,
+    fecha: string,
+    declarado: number
+  ): Promise<number> {
+    const precio = await this.repository.findPrecioVigente(
+      client,
+      tenantId,
+      tipoCombustible,
+      { combustibleId, grifoId: null },
+      fecha
+    );
+    if (precio) return Number(precio.precio_unitario);
+
+    const tanque = await this.repository.findById(client, tenantId, combustibleId);
+    const promedio = tanque ? Number(tanque.costo_promedio) : 0;
+    return promedio > 0 ? promedio : declarado;
   }
 
   /** Reglas que dependen de OTRA fila, así que Zod (que solo ve el body)
@@ -739,11 +805,16 @@ export class CombustibleService {
     usuarioId: string,
     motivo: string
   ) {
-    // ¿El que cierra es el mismo que cargó el movimiento? Se resuelve ACÁ y
-    // no en el controlador porque la respuesta tiene que viajar con el
-    // UPDATE: si se preguntara después, ya no se sabría contra qué fila.
-    const autor = await this.repository.findAutorDelMovimiento(client, tenantId, alertaId);
-    const autorevision = autor !== null && autor === usuarioId;
+    // ¿El que cierra participó del hecho (lo cargó, lo anuló, midió la
+    // varilla o validó la recepción)? Se resuelve ACÁ y no en el controlador
+    // porque la respuesta tiene que viajar con el UPDATE: si se preguntara
+    // después, ya no se sabría contra qué fila.
+    const participantes = await this.repository.findParticipantesDelHecho(
+      client,
+      tenantId,
+      alertaId
+    );
+    const autorevision = participantes.includes(usuarioId);
 
     const fila = await this.repository.resolverAlertaManual(
       client,
@@ -783,6 +854,9 @@ export class CombustibleService {
       llenadosPorDiaMax: number | null;
       topeSinCapacidadL: number | null;
       grifieroRegistraVarilla: boolean;
+      recepcionRequiereValidacion: boolean;
+      horasParaValidarRecepcion: number;
+      diasSinVarillaDeControl: number | null;
     },
     usuarioId: string
   ) {
@@ -812,6 +886,9 @@ export class CombustibleService {
       llenados_por_dia_max: number | null;
       tope_diario_sin_capacidad_l: number | null;
       grifero_registra_varilla: boolean;
+      recepcion_requiere_validacion: boolean;
+      horas_para_validar_recepcion: number;
+      dias_sin_varilla_de_control: number | null;
     },
     ahora: {
       ventana_gracia_horas: number;
@@ -822,6 +899,9 @@ export class CombustibleService {
       llenados_por_dia_max: number | null;
       tope_diario_sin_capacidad_l: number | null;
       grifero_registra_varilla: boolean;
+      recepcion_requiere_validacion: boolean;
+      horas_para_validar_recepcion: number;
+      dias_sin_varilla_de_control: number | null;
     }
   ) {
     const cambios: { control: string; de: string; a: string }[] = [];
@@ -840,9 +920,43 @@ export class CombustibleService {
       });
     }
 
+    // APAGAR LA VALIDACIÓN DE RECEPCIONES es el aflojamiento más caro que
+    // existe en la config: deja otra vez a una sola persona escribiendo el
+    // único número que dice cuánto entró (5ª auditoría).
+    if (antes.recepcion_requiere_validacion && !ahora.recepcion_requiere_validacion) {
+      cambios.push({
+        control: "Validación de recepciones contra la guía",
+        de: "exigida",
+        a: "no exigida",
+      });
+    }
+
+    // Quedarse sin varilla de control: la varilla vuelve a ser cosa de quien
+    // despacha, y deja de poder contradecirlo.
+    if (
+      antes.dias_sin_varilla_de_control !== null &&
+      (ahora.dias_sin_varilla_de_control === null ||
+        ahora.dias_sin_varilla_de_control > antes.dias_sin_varilla_de_control)
+    ) {
+      cambios.push({
+        control: "Días tolerados sin varilla de control",
+        de: `${antes.dias_sin_varilla_de_control} días`,
+        a:
+          ahora.dias_sin_varilla_de_control === null
+            ? "sin configurar (no alerta)"
+            : `${ahora.dias_sin_varilla_de_control} días`,
+      });
+    }
+
     const subir = [
       ["Ventana de gracia", antes.ventana_gracia_horas, ahora.ventana_gracia_horas, "h"],
       ["Días sin medir tolerados", antes.dias_sin_medir, ahora.dias_sin_medir, " días"],
+      [
+        "Plazo para validar una recepción",
+        antes.horas_para_validar_recepcion,
+        ahora.horas_para_validar_recepcion,
+        "h",
+      ],
     ] as const;
 
     // BAJAR la ventana deslizante afloja, al revés que los de arriba: mirar
@@ -924,23 +1038,41 @@ export class CombustibleService {
   async congelarAlertasVencidas(
     client: PoolClient,
     tenantId: string
-  ): Promise<{ congeladas: number; ventanaHoras: number }> {
+  ): Promise<{
+    congeladas: number;
+    ventanaHoras: number;
+    errores: { alertaId: string; tipo: string; error: unknown }[];
+  }> {
     const ventanaHoras = await this.repository.getVentanaGraciaHoras(client, tenantId);
     const vencidas = await this.repository.findAlertasPorCongelar(client, tenantId, ventanaHoras);
 
     let congeladas = 0;
+    const errores: { alertaId: string; tipo: string; error: unknown }[] = [];
     for (const alerta of vencidas) {
-      const anomaliaId = await this.repository.congelarAlerta(
-        client,
-        tenantId,
-        alerta,
-        ventanaHoras
-      );
-      // null = ya estaba congelada (ON CONFLICT DO NOTHING); no la cuento
-      // como trabajo nuevo para que el log no mienta.
-      if (anomaliaId) congeladas++;
+      // UN SAVEPOINT POR ALERTA. Sin esto, una sola alerta que no se pudiera
+      // congelar abortaba la transacción entera -- y con ella todo lo que la
+      // corrida ya había detectado para este tenant. Así pasó con los tres
+      // tipos que el CHECK de anomalías no conocía (5ª auditoría, migración
+      // 0086): una alerta sin revisar apagaba la alerta de "tanque sin medir".
+      // Una falla puntual queda puntual: se reporta y las demás siguen.
+      await client.query("SAVEPOINT congelar_alerta");
+      try {
+        const anomaliaId = await this.repository.congelarAlerta(
+          client,
+          tenantId,
+          alerta,
+          ventanaHoras
+        );
+        await client.query("RELEASE SAVEPOINT congelar_alerta");
+        // null = ya estaba congelada (ON CONFLICT DO NOTHING); no la cuento
+        // como trabajo nuevo para que el log no mienta.
+        if (anomaliaId) congeladas++;
+      } catch (error) {
+        await client.query("ROLLBACK TO SAVEPOINT congelar_alerta");
+        errores.push({ alertaId: alerta.id, tipo: alerta.tipo, error });
+      }
     }
-    return { congeladas, ventanaHoras };
+    return { congeladas, ventanaHoras, errores };
   }
 
   /** Diferencia de recepción (migración 0073): el proveedor facturó más de
@@ -968,7 +1100,11 @@ export class CombustibleService {
       tenantId,
       excedidas.map((r) => {
         const litros = Number(r.diferencia_litros);
-        const cantidad = Number(r.cantidad);
+        // Contra lo recibido por TODO el grupo: con dos cisternas entre las
+        // mismas varillas, la diferencia es de las dos (ver
+        // LATERAL_DIFERENCIA_RECEPCION en el repository).
+        const cantidad = Number(r.cantidad_del_grupo);
+        const entregas = Number(r.entregas_en_grupo);
         return {
           tipo: "diferencia_recepcion" as const,
           recepcionId: r.id,
@@ -976,6 +1112,8 @@ export class CombustibleService {
           detalle: {
             diferenciaLitros: litros,
             cantidadFacturada: cantidad,
+            entregasCombinadas: entregas,
+            recepcionesDelGrupo: r.recepciones_del_grupo.map(Number),
             diferenciaPct: Number(((litros / cantidad) * 100).toFixed(2)),
             umbralPct: Number(r.umbral_diferencia_pct),
             unidad: r.unidad,
@@ -1019,7 +1157,22 @@ export class CombustibleService {
   ) {
     const esHorometro = data.lecturaHorometro !== undefined && data.lecturaHorometro !== null;
     const valorNuevo = esHorometro ? data.lecturaHorometro! : data.lecturaOdometro;
-    if (valorNuevo === undefined || valorNuevo === null) return null;
+
+    // EL VALE SIN MEDIDOR, pudiendo tenerlo (5ª auditoría). Desde 0088 el vale
+    // del tanque propio acepta horómetro, y el formulario lo pide; pero la API
+    // no lo puede exigir sin romper la cola offline de una app vieja, y un
+    // despacho sin registrar es peor que uno marcado. Entonces entra, y queda
+    // dicho: sin la lectura no hay forma de calcular el consumo, que es el
+    // único control del combustible que sale CON vale.
+    if (valorNuevo === undefined || valorNuevo === null) {
+      const equipo = await this.repository.getConsumoMaximoEquipo(client, tenantId, equipoId);
+      if (!equipo?.tipoMedidor) return null;
+      return {
+        medidor: equipo.tipoMedidor as "horometro" | "odometro",
+        motivo: "sin_lectura" as const,
+        equipo: equipo.placa,
+      };
+    }
 
     const anterior = await this.repository.findUltimoMedidorEquipo(
       client,
@@ -1429,6 +1582,144 @@ export class CombustibleService {
     return this.repository.resolverSinVigilanciaSiExiste(client, tenantId, combustibleId);
   }
 
+  // ── 5ª auditoría: controles sobre la varilla y la recepción ────────────
+
+  /** Ver CombustibleRepository.registrarAlertaDeEstadoAcumulado. */
+  registrarAlertaDeEstadoAcumulado(
+    client: PoolClient,
+    tenantId: string,
+    fila: Parameters<CombustibleRepository["registrarAlertaDeEstadoAcumulado"]>[2]
+  ) {
+    return this.repository.registrarAlertaDeEstadoAcumulado(client, tenantId, fila);
+  }
+
+  resolverVarillaSinControlSiExiste(client: PoolClient, tenantId: string, combustibleId: number) {
+    return this.repository.resolverVarillaSinControlSiExiste(client, tenantId, combustibleId);
+  }
+
+  /** Cuántas varillas SEGUIDAS tienen que cuadrar al litro para sospechar que
+   *  se copió el teórico. Cuatro: una varilla se lee en centímetros y se
+   *  convierte con la tabla de aforo, así que aun con el tanque en perfecto
+   *  orden cuadrar exacto una vez es raro, y cuatro veces seguidas con
+   *  movimiento de por medio no pasa midiendo. No es un umbral de la
+   *  operación (lo sabría el cliente): es un límite físico del instrumento,
+   *  por eso es constante y no configuración. */
+  static readonly VARILLAS_EXACTAS_SEGUIDAS = 4;
+  static readonly TOLERANCIA_VARILLA_EXACTA_L = 1;
+
+  /** ¿Las últimas varillas cuadran con el teórico al litro, una detrás de
+   *  otra? (5ª auditoría, V2)
+   *
+   *  El ataque que cierra: el grifero despacha, mide y conoce los vales, así
+   *  que puede anotar como varilla el número que el sistema espera en vez de
+   *  medir. Así los cuatro umbrales ven descuadre cero para siempre, y el robo
+   *  aparece recién cuando mide otra persona.
+   *
+   *  Solo cuentan los tramos con MOVIMIENTO (despacho o recepción): dos
+   *  varillas seguidas sin nada en el medio pueden dar lo mismo con toda
+   *  honestidad -- el tanque no se movió. */
+  async evaluarVarillaExacta(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    lecturaId: number
+  ) {
+    const n = CombustibleService.VARILLAS_EXACTAS_SEGUIDAS;
+    const tramos = await this.repository.findUltimosTramos(
+      client,
+      tenantId,
+      combustibleId,
+      lecturaId,
+      n
+    );
+    if (tramos.length < n) return null;
+    // El último tramo tiene que ser el de ESTA varilla: si la lectura entró
+    // hacia atrás, la racha que se evalúa no es la suya.
+    if (tramos[tramos.length - 1].lecturaId !== lecturaId) return null;
+    const exactos = tramos.every(
+      (t) =>
+        t.despachos + t.recepciones > 0 &&
+        Math.abs(t.descuadre) <= CombustibleService.TOLERANCIA_VARILLA_EXACTA_L
+    );
+    if (!exactos) return null;
+    const tanque = await this.repository.findById(client, tenantId, combustibleId);
+    return {
+      tanqueNombre: tanque?.tanque_nombre ?? "",
+      unidad: tanque?.unidad ?? "",
+      varillasSeguidas: n,
+      toleranciaLitros: CombustibleService.TOLERANCIA_VARILLA_EXACTA_L,
+      tramos: tramos.map((t) => ({
+        leidoEn: new Date(t.leidoEn).toISOString(),
+        descuadreLitros: Number(t.descuadre.toFixed(2)),
+        movidoLitros: Number((t.despachos + t.recepciones).toFixed(2)),
+      })),
+    };
+  }
+
+  /** Los controles del worker que agregó la 5ª auditoría. Devuelve lo que
+   *  creó, para que el worker avise por correo fuera de la transacción.
+   *
+   *  - `recepcion_sin_validar`: la recepción espera la validación contra la
+   *    guía más que el plazo de la política.
+   *  - `varilla_sin_control`: el tanque lleva N días medido solo por los que
+   *    despachan. */
+  async evaluarControlesPeriodicos(client: PoolClient, tenantId: string) {
+    const creadas: {
+      tipo: "recepcion_sin_validar" | "varilla_sin_control";
+      detalle: Record<string, unknown>;
+    }[] = [];
+
+    const politica = await this.repository.getPoliticaValidacionRecepcion(client, tenantId);
+    // Se evalúa aunque la política esté apagada HOY: una recepción que se
+    // registró cuando validar era obligatorio sigue debiendo su validación.
+    // Apagar la política no puede ser la forma de borrar las pendientes.
+    const sinValidar = await this.repository.findRecepcionesSinValidar(
+      client,
+      tenantId,
+      politica.horas
+    );
+    if (sinValidar.length > 0) {
+      const filas = sinValidar.map((r) => ({
+        tipo: "recepcion_sin_validar" as const,
+        recepcionId: r.id,
+        combustibleId: r.combustible_id,
+        detalle: {
+          tanqueNombre: r.tanque_nombre,
+          unidad: r.unidad,
+          registradaEn: new Date(r.creado_en).toISOString(),
+          numeroDocumento: r.numero_documento,
+          plazoHoras: politica.horas,
+        },
+      }));
+      await this.repository.crearAlertas(client, tenantId, filas);
+      creadas.push(...filas);
+    }
+
+    const dias = await this.repository.getDiasSinVarillaDeControl(client, tenantId);
+    if (dias !== null) {
+      const tanques = await this.repository.findTanquesSinVarillaDeControl(client, tenantId, dias);
+      if (tanques.length > 0) {
+        const filas = tanques.map((t) => ({
+          tipo: "varilla_sin_control" as const,
+          combustibleId: t.id,
+          detalle: {
+            tanqueNombre: t.tanque_nombre,
+            codigo: t.codigo,
+            varillasEnLaVentana: Number(t.varillas),
+            ultimaVarillaDeControl: t.ultima_de_control
+              ? new Date(t.ultima_de_control).toISOString()
+              : null,
+            plazoDias: dias,
+          },
+        }));
+        await this.repository.crearAlertas(client, tenantId, filas);
+        creadas.push(...filas);
+      }
+    }
+
+    return { creadas };
+  }
+
   async evaluarTanquesSinMedir(client: PoolClient, tenantId: string) {
     const dias = await this.repository.getDiasSinMedir(client, tenantId);
     const tanques = await this.repository.findTanquesSinMedir(client, tenantId, dias);
@@ -1450,6 +1741,276 @@ export class CombustibleService {
       }))
     );
     return { alertas: tanques, dias };
+  }
+
+  /** Cuántas cargas anteriores se promedian para el consumo. Tres: una sola
+   *  carga mide "lo que entró en este llenado dividido las horas desde el
+   *  anterior", y eso es ruidoso cuando se carga a medio tanque. Tres
+   *  llenados suavizan el llenado parcial sin diluir un robo sostenido. */
+  static readonly CARGAS_PARA_CONSUMO = 3;
+
+  /** CONSUMO POR HORA DE MOTOR (o por km): el control que veía faltar.
+   *
+   *  El robo que sale CON vale --se declaran 400 L, el volquete recibe 380--
+   *  no lo puede ver ningún control del tanque: el tanque cuadra perfecto y
+   *  el papel dice 400. Lo único que no cuadra es el TRABAJO que ese
+   *  combustible debería haber hecho.
+   *
+   *  Hasta la migración 0088 esto era imposible para el tanque propio: el
+   *  vale ni siquiera aceptaba el horómetro. Ahora sí, y acá se compara.
+   *
+   *      consumo = litros cargados desde la lectura base / (medidor actual − base)
+   *
+   *  Devuelve null en el caso normal: sin medidor en este vale, sin
+   *  `consumo_maximo_l` configurado en el equipo (el default), sin cargas
+   *  previas con medidor, o con el consumo dentro del máximo.
+   *
+   *  NO bloquea el vale: la explicación más probable no es robo (una máquina
+   *  trabajando en barro consume más), pero alguien tiene que mirarlo. */
+  async evaluarConsumoExcedido(
+    client: PoolClient,
+    tenantId: string,
+    equipoId: number,
+    data: {
+      despachoId: number;
+      lecturaHorometro?: number | null;
+      lecturaOdometro?: number | null;
+    }
+  ) {
+    const esHorometro = data.lecturaHorometro !== undefined && data.lecturaHorometro !== null;
+    const medidorActual = esHorometro ? data.lecturaHorometro! : data.lecturaOdometro;
+    if (medidorActual === undefined || medidorActual === null) return null;
+
+    const equipo = await this.repository.getConsumoMaximoEquipo(client, tenantId, equipoId);
+    if (!equipo || equipo.consumoMaximo === null) return null;
+
+    const previos = await this.repository.findValesConMedidor(
+      client,
+      tenantId,
+      equipoId,
+      data.despachoId,
+      CombustibleService.CARGAS_PARA_CONSUMO
+    );
+    // La base es la carga más vieja de la ventana que tenga el MISMO medidor:
+    // un equipo al que le cambiaron el tipo de medidor tiene lecturas que no
+    // son comparables entre sí.
+    const comparables = previos.filter((p) =>
+      esHorometro ? p.lectura_horometro !== null : p.lectura_odometro !== null
+    );
+    if (comparables.length === 0) return null;
+    const base = comparables[comparables.length - 1];
+    const medidorBase = Number(esHorometro ? base.lectura_horometro : base.lectura_odometro);
+
+    const recorrido = medidorActual - medidorBase;
+    // Un medidor que no avanzó (o que retrocedió) no permite dividir. El
+    // retroceso ya lo reporta `medidor_inconsistente`, que es su alerta.
+    if (!(recorrido > 0)) return null;
+
+    const litros = await this.repository.findLitrosDesde(
+      client,
+      tenantId,
+      equipoId,
+      base.despachado_en
+    );
+    if (litros <= 0) return null;
+
+    const consumo = litros / recorrido;
+    if (consumo <= equipo.consumoMaximo) return null;
+
+    return {
+      equipo: equipo.placa,
+      medidor: esHorometro ? ("horometro" as const) : ("odometro" as const),
+      unidadMedida: esHorometro ? "h" : "km",
+      consumo: Number(consumo.toFixed(2)),
+      consumoMaximo: equipo.consumoMaximo,
+      litros: Number(litros.toFixed(2)),
+      recorrido: Number(recorrido.toFixed(2)),
+      cargasPromediadas: comparables.length,
+      medidorBase,
+      medidorActual,
+      desdeEn: new Date(base.despachado_en).toISOString(),
+    };
+  }
+
+  /** La sugerencia de `consumo_maximo_l` desde el historial del propio
+   *  equipo, con el MISMO estadístico que los umbrales del tanque (promedio +
+   *  2 desvíos, mínimo 10 muestras) y la misma regla: se muestra con la
+   *  muestra entera y NUNCA se aplica sola. La muestra puede contener robo, y
+   *  eso solo lo puede ver una persona.
+   *
+   *  Kenif (2026-09-14) sobre el tope diario y este: "hay que ponerle un tope
+   *  pero igual hay que guiarnos por el historial luego para que nos
+   *  recomiende". */
+  async sugerirConsumoMaximo(client: PoolClient, tenantId: string, equipoId: number) {
+    const equipo = await this.repository.getConsumoMaximoEquipo(client, tenantId, equipoId);
+    if (!equipo) return null;
+    const esHorometro = equipo.tipoMedidor !== "odometro";
+
+    // Todas las cargas con medidor del equipo, de la más vieja a la más nueva.
+    const vales = (
+      await this.repository.findValesConMedidor(client, tenantId, equipoId, -1, 500)
+    ).reverse();
+
+    const puntos: {
+      desdeEn: string;
+      hastaEn: string;
+      litros: number;
+      recorrido: number;
+      consumo: number;
+    }[] = [];
+    for (let i = 1; i < vales.length; i++) {
+      const anterior = vales[i - 1];
+      const actual = vales[i];
+      const mAnterior = Number(
+        esHorometro ? anterior.lectura_horometro : anterior.lectura_odometro
+      );
+      const mActual = Number(esHorometro ? actual.lectura_horometro : actual.lectura_odometro);
+      if (!Number.isFinite(mAnterior) || !Number.isFinite(mActual)) continue;
+      const recorrido = mActual - mAnterior;
+      if (!(recorrido > 0)) continue;
+      const litros = Number(actual.cantidad) * (actual.unidad === "gal" ? 3.785411784 : 1);
+      puntos.push({
+        desdeEn: new Date(anterior.despachado_en).toISOString(),
+        hastaEn: new Date(actual.despachado_en).toISOString(),
+        litros: Number(litros.toFixed(2)),
+        recorrido: Number(recorrido.toFixed(2)),
+        consumo: Number((litros / recorrido).toFixed(3)),
+      });
+    }
+
+    const consumos = puntos.map((p) => p.consumo);
+    if (consumos.length < CombustibleService.MINIMO_MUESTRA) {
+      return {
+        unidadMedida: esHorometro ? "h" : "km",
+        configurado: equipo.consumoMaximo,
+        ...CombustibleService.muestraInsuficiente(consumos.length, puntos),
+      };
+    }
+    const promedio = consumos.reduce((a, b) => a + b, 0) / consumos.length;
+    const varianza =
+      consumos.reduce((acc, v) => acc + (v - promedio) ** 2, 0) / (consumos.length - 1);
+    const desviacion = Math.sqrt(varianza);
+    return {
+      unidadMedida: esHorometro ? "h" : "km",
+      configurado: equipo.consumoMaximo,
+      muestraSuficiente: true as const,
+      tamanioMuestra: consumos.length,
+      minimoRequerido: CombustibleService.MINIMO_MUESTRA,
+      sugerido: Number((promedio + 2 * desviacion).toFixed(2)),
+      promedio: Number(promedio.toFixed(2)),
+      desviacion: Number(desviacion.toFixed(2)),
+      muestra: puntos,
+    };
+  }
+
+  /** Días de historial que mira la sugerencia de topes. Noventa: suficiente
+   *  para tener los picos de un mes de trabajo fuerte sin arrastrar una
+   *  operación que ya cambió. */
+  static readonly DIAS_HISTORIAL_TOPES = 90;
+
+  /** SUGERENCIA DE LOS DOS TOPES DIARIOS desde el historial del tenant.
+   *
+   *  Kenif (2026-09-14): "hay que ponerle un tope pero igual hay que guiarnos
+   *  por el historial luego para que nos recomiende". Mismo contrato que el
+   *  asistente de umbrales del tanque: promedio + 2 desvíos, mínimo 10 días
+   *  con movimiento, la muestra entera en la respuesta y NUNCA se aplica solo.
+   *
+   *  ── Por qué el tope sin capacidad se calcula POR ACTOR y se toma el mayor ─
+   *
+   *  `tope_diario_sin_capacidad_l` es UN número para todos los actores sin
+   *  capacidad: planta, reserva y cada equipo que no tenga capacidad cargada.
+   *  Mezclar sus días en una sola muestra daría un número entre el consumo de
+   *  planta y el de un equipo chico: planta alertaría todos los días por
+   *  trabajo normal y el control moriría por ruidoso. Se calcula el tope de
+   *  cada actor por separado y se sugiere el del actor que más consume
+   *  legítimamente -- con el aviso de que para los chicos queda holgado.
+   *
+   *  `llenados_por_dia_max` sí se puede juntar: es litros / capacidad, un
+   *  número sin unidades que se compara entre equipos distintos.
+   *
+   *  LA MUESTRA PUEDE TENER ROBO. Si alguien ya venía sacando de más por
+   *  planta, su promedio lo incluye y el tope sugerido lo tolera. Por eso la
+   *  respuesta trae el día máximo de cada actor: un día muy por encima del
+   *  resto es lo primero que una persona tiene que mirar antes de aceptar. */
+  async sugerirTopesDiarios(client: PoolClient, tenantId: string) {
+    const filas = await this.repository.findDespachadoPorDiaYActor(
+      client,
+      tenantId,
+      CombustibleService.DIAS_HISTORIAL_TOPES
+    );
+
+    const estadistico = (valores: number[]) => {
+      const n = valores.length;
+      const promedio = valores.reduce((a, b) => a + b, 0) / n;
+      const varianza = n > 1 ? valores.reduce((a, v) => a + (v - promedio) ** 2, 0) / (n - 1) : 0;
+      return { promedio, desviacion: Math.sqrt(varianza), maximo: Math.max(...valores) };
+    };
+
+    // ── Tope sin capacidad: por actor ─────────────────────────────────────
+    const sinCapacidad = new Map<string, number[]>();
+    for (const f of filas) {
+      if (f.capacidadL !== null) continue;
+      const lista = sinCapacidad.get(f.actor) ?? [];
+      lista.push(f.litros);
+      sinCapacidad.set(f.actor, lista);
+    }
+    const porActor = [...sinCapacidad.entries()].map(([actor, litros]) => {
+      if (litros.length < CombustibleService.MINIMO_MUESTRA) {
+        return { actor, diasConMovimiento: litros.length, muestraSuficiente: false as const };
+      }
+      const e = estadistico(litros);
+      return {
+        actor,
+        diasConMovimiento: litros.length,
+        muestraSuficiente: true as const,
+        promedioL: Number(e.promedio.toFixed(0)),
+        diaMaximoL: Number(e.maximo.toFixed(0)),
+        topeSugeridoL: Number((e.promedio + 2 * e.desviacion).toFixed(0)),
+      };
+    });
+    const conMuestra = porActor.filter((a) => a.muestraSuficiente) as Extract<
+      (typeof porActor)[number],
+      { muestraSuficiente: true }
+    >[];
+    const mayor = conMuestra.sort((a, b) => b.topeSugeridoL - a.topeSugeridoL)[0];
+
+    // ── Llenados por día: juntos, porque es una proporción ────────────────
+    const proporciones = filas
+      .filter((f) => f.capacidadL !== null && f.capacidadL > 0)
+      .map((f) => f.litros / f.capacidadL!);
+    const llenados =
+      proporciones.length < CombustibleService.MINIMO_MUESTRA
+        ? {
+            muestraSuficiente: false as const,
+            tamanioMuestra: proporciones.length,
+            minimoRequerido: CombustibleService.MINIMO_MUESTRA,
+          }
+        : (() => {
+            const e = estadistico(proporciones);
+            return {
+              muestraSuficiente: true as const,
+              tamanioMuestra: proporciones.length,
+              promedio: Number(e.promedio.toFixed(2)),
+              maximoObservado: Number(e.maximo.toFixed(2)),
+              // Nunca por debajo de 1: un equipo tiene que poder llenar su
+              // tanque una vez por día sin que eso sea un hallazgo.
+              sugerido: Number(Math.max(1, e.promedio + 2 * e.desviacion).toFixed(1)),
+            };
+          })();
+
+    return {
+      diasHistorial: CombustibleService.DIAS_HISTORIAL_TOPES,
+      minimoRequerido: CombustibleService.MINIMO_MUESTRA,
+      topeSinCapacidad: {
+        muestraSuficiente: mayor !== undefined,
+        sugeridoL: mayor?.topeSugeridoL ?? null,
+        // A qué actor corresponde el número: el que más consume. Para los
+        // demás el tope queda holgado, y eso se dice.
+        actorQueLoDefine: mayor?.actor ?? null,
+        porActor,
+      },
+      llenadosPorDia: llenados,
+    };
   }
 
   /** Sobredespacho (migraciones 0069/0070): se despachó más de lo que el
@@ -1697,6 +2258,11 @@ export class CombustibleService {
       topeL: Number(topeL.toFixed(2)),
       excesoL: Number((conEste.totalL - topeL).toFixed(2)),
       valesEnLaVentana: conEste.vales,
+      // Qué ventana de 24 h es la que no cierra. Con la ventana simétrica ya
+      // no es "las 24 h antes del vale", así que hay que decirlo o el aviso
+      // no se puede verificar contra el talonario.
+      ventanaDesde: conEste.desdeEn ? new Date(conEste.desdeEn).toISOString() : null,
+      ventanaHasta: conEste.hastaEn ? new Date(conEste.hastaEn).toISOString() : null,
       base: base!,
       ventanaHoras: 24,
       equipoId: despacho.equipoId,
@@ -1870,7 +2436,7 @@ export class CombustibleService {
   static readonly PISO_PCT = 1;
 
   /** Con menos filas que el mínimo no se calcula ningún número. */
-  private static muestraInsuficiente<T>(tamanio: number, muestra: T[]) {
+  static muestraInsuficiente<T>(tamanio: number, muestra: T[]) {
     return {
       muestraSuficiente: false as const,
       tamanioMuestra: tamanio,
@@ -1884,19 +2450,85 @@ export class CombustibleService {
     };
   }
 
+  /** Los valores que están MUY fuera de escala respecto del resto.
+   *
+   *  Por qué hace falta, y es el punto ciego que la 5ª auditoría dejó
+   *  anotado: la muestra con la que se calibra puede contener el robo que se
+   *  quiere detectar, y basta con ensuciar unas pocas mediciones para que el
+   *  desvío se dispare y la sugerencia proponga tolerar justo lo que no hay
+   *  que tolerar. Ya había pasado sin mala intención: en el tenant de pruebas,
+   *  dos mediciones fuera de escala llevaban la sugerencia de 1,8 % a 14,5 %.
+   *
+   *  Se usa la MEDIANA y la desviación absoluta mediana (MAD), no el promedio
+   *  y el desvío: el promedio y el desvío los MUEVEN los propios valores
+   *  atípicos, así que usarlos para detectarlos es pedirle al contaminado que
+   *  se denuncie solo. La mediana casi no se mueve.
+   *
+   *  El 1,4826 convierte la MAD en algo comparable a un desvío estándar
+   *  cuando los datos son normales; el corte en 3 de esos es el criterio
+   *  clásico. Con MAD 0 (casi todas las mediciones idénticas) no se marca
+   *  nada: ahí no hay dispersión contra la cual comparar. */
+  private static detectarAtipicos(valores: number[]): { indices: number[]; corte: number | null } {
+    if (valores.length < CombustibleService.MINIMO_MUESTRA) return { indices: [], corte: null };
+    const mediana = (xs: number[]) => {
+      const o = [...xs].sort((a, b) => a - b);
+      const m = Math.floor(o.length / 2);
+      return o.length % 2 ? o[m] : (o[m - 1] + o[m]) / 2;
+    };
+    const med = mediana(valores);
+    const mad = mediana(valores.map((v) => Math.abs(v - med))) * 1.4826;
+    if (!(mad > 0)) return { indices: [], corte: null };
+    const corte = 3 * mad;
+    const indices = valores
+      .map((v, i) => (Math.abs(v - med) > corte ? i : -1))
+      .filter((i) => i >= 0);
+    return { indices, corte };
+  }
+
+  /** Vuelve a calcular la sugerencia SIN los valores atípicos, y devuelve las
+   *  dos cifras. La pantalla muestra las dos y deja elegir: quien decide tiene
+   *  que ver que hay mediciones fuera de escala ANTES de aceptar un número que
+   *  esas mediciones inflaron. */
+  private static conAtipicos<T>(
+    valoresPct: number[],
+    muestra: T[],
+    calcular: (v: number[]) => number
+  ) {
+    const { indices } = CombustibleService.detectarAtipicos(valoresPct);
+    if (indices.length === 0) return { atipicos: null };
+    const limpios = valoresPct.filter((_, i) => !indices.includes(i));
+    return {
+      atipicos: {
+        cantidad: indices.length,
+        // En porcentaje, que es la unidad de la sugerencia.
+        valoresPct: indices.map((i) => Number(valoresPct[i].toFixed(2))),
+        // Las filas completas, para poder mirarlas sin abrir la planilla.
+        mediciones: indices.map((i) => muestra[i]),
+        sugeridoSinEllos:
+          limpios.length >= CombustibleService.MINIMO_MUESTRA
+            ? Number(calcular(limpios).toFixed(1))
+            : null,
+      },
+    };
+  }
+
   private static calibrar<T>(valoresPct: number[], muestra: T[]) {
     if (valoresPct.length < CombustibleService.MINIMO_MUESTRA) {
       return CombustibleService.muestraInsuficiente(valoresPct.length, muestra);
     }
 
-    const abs = valoresPct.map((v) => Math.abs(v));
-    const promedio = abs.reduce((a, b) => a + b, 0) / abs.length;
-    const varianza = abs.reduce((acc, v) => acc + (v - promedio) ** 2, 0) / (abs.length - 1);
-    const desviacion = Math.sqrt(varianza);
-    const sugerido = Math.min(
-      100,
-      Math.max(CombustibleService.PISO_PCT, promedio + 2 * desviacion)
-    );
+    const formula = (valores: number[]) => {
+      const abs = valores.map((v) => Math.abs(v));
+      const promedio = abs.reduce((a, b) => a + b, 0) / abs.length;
+      const varianza = abs.reduce((acc, v) => acc + (v - promedio) ** 2, 0) / (abs.length - 1);
+      const desviacion = Math.sqrt(varianza);
+      return {
+        promedio,
+        desviacion,
+        sugerido: Math.min(100, Math.max(CombustibleService.PISO_PCT, promedio + 2 * desviacion)),
+      };
+    };
+    const { promedio, desviacion, sugerido } = formula(valoresPct);
 
     return {
       muestraSuficiente: true as const,
@@ -1905,6 +2537,7 @@ export class CombustibleService {
       sugerido: Number(sugerido.toFixed(1)),
       promedio: Number(promedio.toFixed(2)),
       desviacion: Number(desviacion.toFixed(2)),
+      ...CombustibleService.conAtipicos(valoresPct, muestra, (v) => formula(v).sugerido),
       muestra,
     };
   }
@@ -1937,10 +2570,17 @@ export class CombustibleService {
       return CombustibleService.muestraInsuficiente(n, muestra);
     }
 
-    const promedio = valoresPct.reduce((a, b) => a + b, 0) / n;
-    const varianza = valoresPct.reduce((acc, v) => acc + (v - promedio) ** 2, 0) / (n - 1);
-    const desviacion = Math.sqrt(varianza);
-    const sugerido = Math.min(100, Math.max(CombustibleService.PISO_PCT, 2 * desviacion));
+    const formula = (valores: number[]) => {
+      const prom = valores.reduce((a, b) => a + b, 0) / valores.length;
+      const varianza = valores.reduce((acc, v) => acc + (v - prom) ** 2, 0) / (valores.length - 1);
+      const desv = Math.sqrt(varianza);
+      return {
+        promedio: prom,
+        desviacion: desv,
+        sugerido: Math.min(100, Math.max(CombustibleService.PISO_PCT, 2 * desv)),
+      };
+    };
+    const { promedio, desviacion, sugerido } = formula(valoresPct);
 
     return {
       muestraSuficiente: true as const,
@@ -1951,6 +2591,7 @@ export class CombustibleService {
       // de 0 dice que algo falta (o sobra) siempre para el mismo lado.
       promedio: Number(promedio.toFixed(2)),
       desviacion: Number(desviacion.toFixed(2)),
+      ...CombustibleService.conAtipicos(valoresPct, muestra, (v) => formula(v).sugerido),
       muestra,
     };
   }
@@ -2044,7 +2685,9 @@ export class CombustibleService {
     let actual: Ciclo | null = null;
 
     for (const i of intervalos) {
-      if (i.recepciones > 0) {
+      // Solo una carga de verdad abre un ciclo (ver findSaldoCiclo): una
+      // recepción de 1 L no cierra un período de consumo.
+      if (i.recepcionesAncla > 0) {
         // Entró combustible: cierra el ciclo anterior y arranca uno nuevo.
         if (actual) ciclos.push(actual);
         actual = {
@@ -2231,7 +2874,12 @@ export class CombustibleService {
       clienteUuid: data.cliente_uuid,
       insertar: async () => {
         const recibidoEn = data.recibido_en ?? new Date().toISOString();
-        await this.validarRecepcion(client, tenantId, data, recibidoEn);
+        await this.validarDatosDeRecepcion(client, tenantId, data, recibidoEn);
+
+        // La política vigente HOY queda estampada en la fila (0088): si
+        // mañana la empresa apaga la validación, esta recepción sigue
+        // debiendo la suya.
+        const politica = await this.repository.getPoliticaValidacionRecepcion(client, tenantId);
 
         const fila = await this.repository.crearRecepcion(client, tenantId, usuarioId, {
           combustibleId: data.combustible_id,
@@ -2241,6 +2889,7 @@ export class CombustibleService {
           tipoDocumento: data.tipo_documento ?? null,
           numeroDocumento: data.numero_documento ?? null,
           recibidoEn,
+          requiereValidacion: politica.requiere,
         });
 
         await this.repository.recalcularCostoPromedio(client, tenantId, data.combustible_id);
@@ -2263,7 +2912,7 @@ export class CombustibleService {
    *  3. La capacidad, con el margen de tolerancia del tanque. Y para poder
    *     chequearla hace falta saber cuánto había: si no hay lectura vigente
    *     a esa fecha, la recepción se rechaza en vez de adivinar. */
-  private async validarRecepcion(
+  private async validarDatosDeRecepcion(
     client: PoolClient,
     tenantId: string,
     data: CrearRecepcionCombustibleInput,
@@ -2336,6 +2985,105 @@ export class CombustibleService {
 
   getRecepcionPorId(client: PoolClient, tenantId: string, id: number) {
     return this.repository.findRecepcionPorId(client, tenantId, id);
+  }
+
+  /** VALIDAR la recepción contra la guía (5ª auditoría, 0088).
+   *
+   *  El hueco que cierra, verificado atacando la API: el grifero registró
+   *  9.000 L de una entrega de 10.000, se llevó la diferencia antes de medir
+   *  y NO saltó ninguna alerta -- ni la de diferencia, que dio exactamente 0.
+   *  No había forma de que saltara: `cantidad` era a la vez lo que dice la
+   *  guía y lo que entró, y la escribía una sola persona.
+   *
+   *  La validación es el segundo testigo. Devuelve la recepción actualizada y,
+   *  si la cantidad de la guía no coincide con la registrada, el detalle de la
+   *  discrepancia para que el controller cree la alerta.
+   *
+   *  Compara con tolerancia de 0,01 porque son NUMERIC con dos decimales: sin
+   *  eso, 9000 y 9000.00 podrían leerse como distintos.
+   *
+   *  LÍMITE CONOCIDO, y hay que decirlo: si quien valida es el mismo que
+   *  registró, esto no prueba nada -- por eso queda marcado como
+   *  autovalidación y se ve en el reporte de segregación. Ningún software
+   *  resuelve que una sola persona haga las dos puntas. */
+  async validarRecepcion(
+    client: PoolClient,
+    tenantId: string,
+    recepcionId: number,
+    usuarioId: string,
+    cantidadDocumento: number
+  ) {
+    const fila = await this.repository.validarRecepcion(
+      client,
+      tenantId,
+      recepcionId,
+      usuarioId,
+      cantidadDocumento
+    );
+    if (!fila) return null;
+
+    await this.repository.resolverRecepcionSinValidarSiExiste(client, tenantId, recepcionId);
+
+    const cantidadRegistrada = Number(fila.cantidad);
+    const diferencia = Number((cantidadDocumento - cantidadRegistrada).toFixed(2));
+    const autovalidacion = fila.usuario_id !== null && fila.usuario_id === usuarioId;
+
+    return {
+      recepcion: fila,
+      autovalidacion,
+      discrepancia:
+        Math.abs(diferencia) < 0.01
+          ? null
+          : {
+              cantidadRegistrada,
+              cantidadDocumento,
+              diferencia,
+              // La dirección importa: si la guía dice MÁS de lo registrado,
+              // entró combustible que el sistema no cuenta, y ese sobrante se
+              // puede sacar sin que ninguna varilla lo note.
+              sentido:
+                diferencia > 0 ? ("registrada_de_menos" as const) : ("registrada_de_mas" as const),
+            },
+    };
+  }
+
+  /** La recepción fechada hacia atrás, detrás de movimientos que ya existían
+   *  (5ª auditoría). Mismo criterio exacto que `evaluarDespachoRetroactivo`:
+   *  no importa que sea vieja --cargar el historial es legítimo-- sino que
+   *  haya algo MÁS RECIENTE detrás de lo cual esconderla. Una recepción
+   *  insertada atrás mueve el arranque del ciclo y la cuenta de tramos que ya
+   *  se evaluaron. */
+  async evaluarRecepcionRetroactiva(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    recepcionId: number,
+    recibidoEn: string
+  ) {
+    const dias = await this.repository.getDiasCargaRetroactiva(client, tenantId);
+    const atraso = (Date.now() - Date.parse(recibidoEn)) / 864e5;
+    if (!Number.isFinite(atraso) || atraso <= dias) return null;
+
+    const ultimo = await this.repository.findUltimoMovimientoSinRecepcion(
+      client,
+      tenantId,
+      combustibleId,
+      recepcionId
+    );
+    if (!ultimo) return null;
+    if (new Date(ultimo).getTime() <= Date.parse(recibidoEn) + dias * 864e5) return null;
+
+    return {
+      ultimoMovimientoPrevio: new Date(ultimo).toISOString(),
+      diasDeAtraso: Number(atraso.toFixed(1)),
+      diasTolerados: dias,
+      recibidoEn,
+      cargadaEn: new Date().toISOString(),
+    };
+  }
+
+  resolverRecepcionSinValidarSiExiste(client: PoolClient, tenantId: string, recepcionId: number) {
+    return this.repository.resolverRecepcionSinValidarSiExiste(client, tenantId, recepcionId);
   }
 
   /** Devuelve null si la recepción no existe en este tenant o si ya estaba

@@ -18,6 +18,7 @@ export type EquipoPayload = {
   // configurar, y entonces el sobredespacho no se evalúa para este equipo.
   capacidad_tanque?: number;
   capacidad_tanque_unidad?: string;
+  consumo_maximo_l?: number | null;
   conductor_nombre?: string;
   conductor_dni?: string;
 };
@@ -25,7 +26,7 @@ export type EquipoPayload = {
 // Todas las columnas devueltas por el ABM -- centralizadas para que agregar
 // una no obligue a tocar cuatro queries y olvidarse de la quinta.
 const COLUMNAS_EQUIPO = `id, placa_codigo, tipo, marca, modelo, tipo_medidor,
-  capacidad_tanque, capacidad_tanque_unidad,
+  capacidad_tanque, capacidad_tanque_unidad, consumo_maximo_l,
   conductor_nombre, conductor_dni, activo, creado_en`;
 
 export const EquiposRepository = {
@@ -59,8 +60,9 @@ export const EquiposRepository = {
 
     const result = await client.query(
       `INSERT INTO equipos (tenant_id, placa_codigo, tipo, marca, modelo, tipo_medidor,
-         capacidad_tanque, capacidad_tanque_unidad, conductor_nombre, conductor_dni)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         capacidad_tanque, capacidad_tanque_unidad, conductor_nombre, conductor_dni,
+         consumo_maximo_l)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING ${COLUMNAS_EQUIPO}`,
       [
         tenantId,
@@ -73,6 +75,7 @@ export const EquiposRepository = {
         data.capacidad_tanque_unidad ?? null,
         data.conductor_nombre ?? null,
         data.conductor_dni ?? null,
+        data.consumo_maximo_l ?? null,
       ]
     );
 
@@ -92,8 +95,9 @@ export const EquiposRepository = {
         capacidad_tanque = $6,
         capacidad_tanque_unidad = $7,
         conductor_nombre = $8,
-        conductor_dni = $9
-      WHERE id = $10 AND tenant_id = $11
+        conductor_dni = $9,
+        consumo_maximo_l = $10
+      WHERE id = $11 AND tenant_id = $12
       RETURNING ${COLUMNAS_EQUIPO}`,
       [
         placa_codigo,
@@ -105,6 +109,7 @@ export const EquiposRepository = {
         data.capacidad_tanque_unidad ?? null,
         data.conductor_nombre ?? null,
         data.conductor_dni ?? null,
+        data.consumo_maximo_l ?? null,
         id,
         tenantId,
       ]

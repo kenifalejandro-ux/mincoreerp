@@ -231,7 +231,7 @@ describe("combustible: el tanque que OPERA ciego (migración 0082)", () => {
     await ag.put("/api/erp/combustible/config").send({ ...CONFIG, dias_sin_vigilancia: 7 });
     const r = await ag
       .put("/api/erp/combustible/config")
-      .send({ ...CONFIG, dias_sin_vigilancia: 90 });
+      .send({ ...CONFIG, dias_sin_vigilancia: 90, motivo_ajuste: "ajuste de prueba" });
     expect(r.status).toBe(200);
 
     const log = await withTenant(tenantId, (c) =>

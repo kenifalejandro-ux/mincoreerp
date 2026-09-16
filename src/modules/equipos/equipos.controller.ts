@@ -64,6 +64,23 @@ function detectarAmpliacionDeTecho(
   };
 }
 
+/** Subir el consumo máximo, o quitarlo, afloja el control de consumo del
+ *  equipo (migración 0088). Cargarlo por primera vez lo ENCIENDE: eso nunca
+ *  es aflojar -- mismo criterio que la capacidad del tanque. */
+function detectarAflojamientoDeConsumo(
+  antes: { consumo_maximo_l?: string | number | null } | null,
+  ahora: { consumo_maximo_l?: number | null }
+): { de: string; a: string } | null {
+  if (!antes) return null;
+  const viejo = antes.consumo_maximo_l == null ? null : Number(antes.consumo_maximo_l);
+  const nuevo = ahora.consumo_maximo_l ?? null;
+  if (viejo === null) return null;
+  const texto = (v: number | null) => (v === null ? "sin configurar (no alerta)" : `${v} L`);
+  if (nuevo === null) return { de: texto(viejo), a: texto(null) };
+  if (nuevo <= viejo) return null;
+  return { de: texto(viejo), a: texto(nuevo) };
+}
+
 export const EquiposController = {
   async getAll(req: Request, res: Response) {
     try {
@@ -141,21 +158,60 @@ export const EquiposController = {
       }
 
       const ampliacion = detectarAmpliacionDeTecho(antes, data);
+      // Subir (o quitar) el consumo máximo afloja igual que subir la
+      // capacidad: es el techo del único control que ve el combustible que
+      // sale con vale y no llega al equipo (migración 0088).
+      const consumoAflojado = detectarAflojamientoDeConsumo(antes, data);
 
       await registrarAuditoria({
         // Acción propia cuando se amplía, igual que
         // `combustible.tanque_vigilancia_reducida`: buscar quién le levantó
         // el techo a un equipo no puede obligar a leer todas las ediciones
         // de ficha una por una.
-        accion: ampliacion ? "equipos.capacidad_tanque_ampliada" : "equipos.actualizar",
+        accion:
+          ampliacion || consumoAflojado
+            ? ampliacion
+              ? "equipos.capacidad_tanque_ampliada"
+              : "equipos.consumo_maximo_ampliado"
+            : "equipos.actualizar",
         tenantId,
         usuarioId: req.usuario!.id,
         // El detalle lleva los VALORES, no solo el id. Sin el "de cuánto a
         // cuánto" la bitácora dice que algo cambió pero no si eso aflojó un
         // control -- que es exactamente lo que la auditoría encontró.
-        detalle: ampliacion ? { equipoId: id, ...ampliacion } : { equipoId: id },
+        detalle: {
+          equipoId: id,
+          ...(ampliacion ?? {}),
+          ...(consumoAflojado ? { consumo: consumoAflojado } : {}),
+        },
         contexto: contextoAuditoriaModulo(req),
       });
+
+      if (consumoAflojado) {
+        try {
+          const admins = await withTenant(tenantId, (client) =>
+            findAdminsConModulo(client, tenantId, "combustible")
+          );
+          await enviarCorreoAlerta({
+            destinatarios: admins,
+            asunto: `Combustible: se aflojó el consumo máximo de ${actualizado.placa_codigo}`,
+            titulo:
+              `${req.usuario!.nombre ?? req.usuario!.email ?? "Un administrador"} cambió el ` +
+              `consumo máximo de ${actualizado.placa_codigo}`,
+            lineas: [
+              `Consumo máximo: ${consumoAflojado.de} → ${consumoAflojado.a}.`,
+              "Es el techo del control que compara los litros cargados contra el trabajo del " +
+                "equipo (horas de motor o km). Aflojarlo deja pasar vales por más combustible " +
+                "del que la máquina pudo haber consumido.",
+            ],
+          });
+        } catch (err) {
+          logger.warn(
+            { err, tenantId, equipoId: id },
+            "No se pudo avisar del cambio de consumo máximo"
+          );
+        }
+      }
 
       if (ampliacion) {
         // Nunca bloquea: el cambio ya está guardado y auditado. Y se avisa a

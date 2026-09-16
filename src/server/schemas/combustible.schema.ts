@@ -165,14 +165,6 @@ export const anularLecturaCombustibleSchema = z.object({
 
 export type AnularLecturaCombustibleInput = z.infer<typeof anularLecturaCombustibleSchema>;
 
-// Wrapper legacy de PUT /:id/nivel -- mismo shape de body que siempre tuvo
-// (nivel_actual), ahora validado con Zod como el resto de los módulos.
-export const actualizarNivelCombustibleSchema = z.object({
-  nivel_actual: z.number().nonnegative(),
-});
-
-export type ActualizarNivelCombustibleInput = z.infer<typeof actualizarNivelCombustibleSchema>;
-
 // ── Despachos (Fase B, ver docs/architecture/control-de-combustible.md
 // puntos 1, 2 y 5, y migrations/0062) ───────────────────────────────────
 
@@ -289,15 +281,42 @@ export const crearDespachoCombustibleSchema = z
           message: "grifo_id no aplica a 'tanque_propio'",
         });
       }
-      if (
-        data.lectura_horometro !== undefined ||
-        data.lectura_odometro !== undefined ||
-        data.horas_abastecidas !== undefined
-      ) {
+      if (data.horas_abastecidas !== undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["origen"],
-          message: "horómetro/odómetro/horas_abastecidas no aplican a 'tanque_propio'",
+          message: "horas_abastecidas no aplica a 'tanque_propio'",
+        });
+      }
+
+      // EL HORÓMETRO SÍ APLICA AL VALE DEL TANQUE PROPIO desde la 5ª
+      // auditoría (migración 0088). Antes estaba prohibido, y eso dejaba al
+      // canal principal de salida sin ningún control de consumo: el robo que
+      // sale CON vale --se declaran 400 L y el volquete recibe 380-- no lo
+      // puede ver el tanque, porque el tanque cuadra.
+      //
+      // Es OPCIONAL en la API y obligatorio en el formulario. Si fuera
+      // requerido acá, un vale de la cola offline de una app vieja daría 400
+      // para siempre y ese despacho se perdería -- y un despacho sin
+      // registrar es peor que uno marcado (la regla del módulo). Cuando falta,
+      // el service deja la alerta `medidor_inconsistente` con motivo
+      // "sin_lectura": no se pierde el vale, pero tampoco pasa en silencio.
+      if (data.lectura_horometro !== undefined && data.lectura_odometro !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["lectura_horometro"],
+          message: "Mandá el horómetro o el odómetro, nunca los dos en el mismo vale",
+        });
+      }
+      if (
+        data.tipo_destino !== "equipo" &&
+        (data.lectura_horometro !== undefined || data.lectura_odometro !== undefined)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["tipo_destino"],
+          message:
+            "el horómetro/odómetro es una lectura del equipo: no aplica a planta ni a reserva",
         });
       }
     } else {
@@ -447,6 +466,28 @@ export const configCombustibleSchema = z.object({
   // true cuenta como aflojamiento y queda auditado (ver
   // evaluarAflojamientoConfig).
   grifero_registra_varilla: z.boolean().default(true),
+  // ── 5ª auditoría (migración 0088) ──────────────────────────────────────
+  //
+  // Los tres con default DEL LADO ESTRICTO, y eso es lo que los hace seguros
+  // como opcionales: este PUT reemplaza la fila entera, así que un llamador
+  // viejo que no los mande solo puede ENDURECER la vigilancia, nunca aflojarla
+  // en silencio. Es la vuelta al problema que dejó `grifero_registra_varilla`.
+  //
+  // Si la recepción tiene que validarla alguien distinto del que la registró,
+  // contra la guía del proveedor. Es el control que cierra la recepción
+  // sub-declarada: registrar 9.000 de una entrega de 10.000 y llevarse la
+  // diferencia no disparaba NADA, porque el mismo que recibía escribía el
+  // único número que existía.
+  recepcion_requiere_validacion: z.boolean().default(true),
+  horas_para_validar_recepcion: z.number().int().min(1).max(720).default(48),
+  // Días tolerados sin una varilla tomada por alguien que NO despacha. null =
+  // la empresa no tiene a nadie más (queda auditado como aflojamiento).
+  dias_sin_varilla_de_control: z.number().int().min(1).max(90).nullable().default(7),
+  /** Obligatorio SOLO si el cambio AFLOJA algún control, igual que en la
+   *  ficha del tanque. Hasta la 5ª auditoría la config era la excepción:
+   *  apagar un tope o alargar la ventana de gracia se guardaba sin explicar
+   *  nada, aunque el tanque sí lo exigiera. Mismo acto, mismo trato. */
+  motivo_ajuste: z.string().trim().min(1).max(500).optional(),
 });
 
 // ── Kardex del tanque ───────────────────────────────────────────────────
@@ -605,7 +646,19 @@ export const crearRecepcionCombustibleSchema = z
 
     // Cuándo entró físicamente. Opcional: sin dato, el service usa now() --
     // mismo criterio que despachado_en/leido_en/vigente_desde.
-    recibido_en: z.string().datetime().optional(),
+    //
+    // El tope de fecha futura faltaba, y era el único de los tres que no lo
+    // tenía (5ª auditoría: se aceptó una recepción a +400 días). Una entrega
+    // futura sale de todos los tramos hasta que llegue esa fecha y, peor,
+    // deja el ciclo sin punto de arranque. El margen de 1 hora es el mismo de
+    // despachado_en/leido_en: cubre el reloj desfasado del dispositivo.
+    recibido_en: z
+      .string()
+      .datetime()
+      .refine((valor) => new Date(valor).getTime() <= Date.now() + 60 * 60 * 1000, {
+        message: "La fecha de la recepción no puede ser futura",
+      })
+      .optional(),
   })
   .superRefine((data, ctx) => {
     // Espejo del CHECK combustible_recepciones_documento_check (0064): un
@@ -628,6 +681,22 @@ export type CrearRecepcionCombustibleInput = z.infer<typeof crearRecepcionCombus
  *  precios: `motivo` obligatorio, la fila NUNCA se borra ni se edita. Al
  *  anularla, el costo promedio del tanque se recalcula sin ella (ver
  *  CombustibleRepository.recalcularCostoPromedio). */
+/** VALIDAR una recepción contra la guía (5ª auditoría, migración 0088).
+ *
+ *  Lo que se escribe acá es la cantidad que dice el DOCUMENTO del proveedor,
+ *  no la que cargó quien recibió: son dos testigos distintos del mismo hecho,
+ *  y el control existe justamente porque antes había uno solo. El formulario
+ *  no muestra la cantidad registrada hasta después de guardar, para que
+ *  validar sea escribir lo que dice el papel y no confirmar un número.
+ *
+ *  `cantidad_documento` va sin default y sin "confirmar sin número": validar
+ *  sin leer la guía no es validar. */
+export const validarRecepcionCombustibleSchema = z.object({
+  cantidad_documento: z.number().positive(),
+});
+
+export type ValidarRecepcionCombustibleInput = z.infer<typeof validarRecepcionCombustibleSchema>;
+
 export const anularRecepcionCombustibleSchema = z.object({
   motivo: z.string().trim().min(1, "El motivo de la anulación es obligatorio").max(500),
 });

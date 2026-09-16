@@ -15,6 +15,27 @@ import type {
 } from "../../server/schemas/repuestos.schema";
 import { RepuestosService } from "./repuestos.service";
 
+/** Los campos de la ficha que cambiaron, con sus valores. `stock` no está:
+ *  no se edita por la ficha (ver RepuestosRepository.update). */
+function diffFicha(
+  antes: Record<string, unknown> | null,
+  ahora: Record<string, unknown>
+): { campo: string; de: string; a: string }[] {
+  if (!antes) return [];
+  const CAMPOS = ["codigo", "nombre", "categoria", "stock_minimo", "stock_maximo", "precio"];
+  const cambios: { campo: string; de: string; a: string }[] = [];
+  for (const campo of CAMPOS) {
+    const viejo = antes[campo];
+    const nuevo = ahora[campo];
+    // NUMERIC vuelve de Postgres como string ("12.00"): comparar crudo
+    // marcaría como cambio lo que no cambió.
+    if (String(viejo ?? "") === String(nuevo ?? "")) continue;
+    if (Number(viejo) === Number(nuevo) && viejo !== null && nuevo !== null) continue;
+    cambios.push({ campo, de: String(viejo ?? "(vacío)"), a: String(nuevo ?? "(vacío)") });
+  }
+  return cambios;
+}
+
 export const RepuestosController = {
   // =========================
   // 📥 OBTENER TODO (paginado)
@@ -65,20 +86,29 @@ export const RepuestosController = {
       const id = Number(req.params.id);
       const data = req.validatedBody as ActualizarRepuestoInput;
 
-      const actualizado = await withTenant(tenantId, (client) =>
-        RepuestosService.update(client, tenantId, id, data)
-      );
+      const { actualizado, antes } = await withTenant(tenantId, async (client) => {
+        const antes = await RepuestosService.getById(client, tenantId, id);
+        const actualizado = await RepuestosService.update(client, tenantId, id, data);
+        return { actualizado, antes };
+      });
 
       if (!actualizado) {
         res.status(404).json({ message: "Repuesto no encontrado" });
         return;
       }
 
+      // Todo campo que cambió, con su valor viejo y el nuevo. Antes la
+      // bitácora decía `{ repuestoId }` y nada más: "alguien editó el
+      // repuesto 12" no permite reconstruir nada. Misma regla que ya rige en
+      // combustible ("la visibilidad es automática, la escalada es
+      // declarada"), acá aplicada al módulo que guarda existencias.
+      const cambios = diffFicha(antes, actualizado);
+
       await registrarAuditoria({
         accion: "repuestos.actualizar",
         tenantId,
         usuarioId: req.usuario!.id,
-        detalle: { repuestoId: id },
+        detalle: { repuestoId: id, cambios },
         contexto: contextoAuditoriaModulo(req),
       });
       await publicarEventoTenant(tenantId, "repuestos.actualizado", { repuestoId: id });

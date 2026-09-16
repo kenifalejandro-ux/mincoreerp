@@ -166,6 +166,7 @@ describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)
         dias_sin_vigilancia: 7,
         llenados_por_dia_max: null,
         tope_diario_sin_capacidad_l: null,
+        motivo_ajuste: "ajuste de prueba",
       });
     expect(guardada.status).toBe(200);
     expect(guardada.body.ventana_gracia_horas).toBe(5);
@@ -189,6 +190,7 @@ describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)
       dias_sin_vigilancia: 7,
       llenados_por_dia_max: null,
       tope_diario_sin_capacidad_l: null,
+      motivo_ajuste: "ajuste de prueba",
     });
   });
 

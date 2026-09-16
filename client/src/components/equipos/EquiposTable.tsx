@@ -21,6 +21,9 @@ interface Equipo {
   // a propósito: un dato inventado sería peor que ninguno.
   capacidad_tanque: string | null;
   capacidad_tanque_unidad: "gal" | "L" | null;
+  /** Litros por hora de motor (horómetro) o por km (odómetro) que se toleran.
+   *  null = sin configurar, no alerta (migración 0088). */
+  consumo_maximo_l: string | null;
   conductor_nombre: string | null;
   conductor_dni: string | null;
   activo: boolean;
@@ -30,9 +33,14 @@ interface Equipo {
 const TIPOS_COMUNES = [
   "Camioneta",
   "Cargador frontal",
+  "Camión baranda",
+  "Tracto remolcadores",
   "Excavadora",
+  "Retroexcavadora",
   "Volquete",
   "Tráiler",
+  "Carretas",
+  "Bombona",
   "Perforadora",
   "Otro",
 ];
@@ -79,6 +87,10 @@ export default function EquiposTable() {
   // CombustiblePanel.tsx.
   const [clienteUuid, setClienteUuid] = useState("");
 
+  // El texto de la sugerencia de consumo (5ª auditoría). Se muestra, NUNCA
+  // se aplica solo: la muestra puede incluir el robo que se quiere detectar.
+  const [sugerenciaConsumo, setSugerenciaConsumo] = useState<string | null>(null);
+
   const [formData, setFormData] = useState({
     placa_codigo: "",
     tipo: TIPOS_COMUNES[0],
@@ -87,6 +99,7 @@ export default function EquiposTable() {
     tipo_medidor: "" as "" | "horometro" | "odometro",
     capacidad_tanque: "",
     capacidad_tanque_unidad: "L" as "gal" | "L",
+    consumo_maximo_l: "",
     conductor_nombre: "",
     conductor_dni: "",
   });
@@ -121,8 +134,38 @@ export default function EquiposTable() {
     });
   }, [page, fetchEquipos]);
 
+  /** Pide al servidor el consumo sugerido para ESTE equipo, con su muestra.
+   *  Igual que el asistente de umbrales del tanque: propone, no aplica. */
+  const sugerirConsumo = async (equipoId: number) => {
+    setSugerenciaConsumo("Calculando...");
+    try {
+      const res = await apiFetch(`/api/erp/combustible/equipos/${equipoId}/sugerencia-consumo`);
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body) {
+        setSugerenciaConsumo("No se pudo calcular la sugerencia.");
+        return;
+      }
+      if (!body.muestraSuficiente) {
+        setSugerenciaConsumo(
+          `Todavía no alcanza: hay ${body.tamanioMuestra} carga(s) con medidor y hacen falta ` +
+            `${body.minimoRequerido}. Con menos, cualquier número sería inventado.`
+        );
+        return;
+      }
+      setSugerenciaConsumo(
+        `Sugerencia: ${body.sugerido} L/${body.unidadMedida} — calculada con ${body.tamanioMuestra} ` +
+          `cargas de esta unidad (consume ${body.promedio} L/${body.unidadMedida} en promedio). ` +
+          `Si la unidad venía perdiendo combustible, ese consumo ya está adentro del promedio.`
+      );
+      setFormData((previo) => ({ ...previo, consumo_maximo_l: String(body.sugerido) }));
+    } catch {
+      setSugerenciaConsumo("No se pudo calcular la sugerencia.");
+    }
+  };
+
   const openEditModal = (e: Equipo) => {
     setEditingId(e.id);
+    setSugerenciaConsumo(null);
     setFormData({
       placa_codigo: e.placa_codigo,
       tipo: e.tipo,
@@ -130,6 +173,7 @@ export default function EquiposTable() {
       modelo: e.modelo ?? "",
       tipo_medidor: e.tipo_medidor ?? "",
       capacidad_tanque: e.capacidad_tanque ?? "",
+      consumo_maximo_l: e.consumo_maximo_l ?? "",
       conductor_nombre: e.conductor_nombre ?? "",
       conductor_dni: e.conductor_dni ?? "",
       capacidad_tanque_unidad: e.capacidad_tanque_unidad ?? "L",
@@ -167,6 +211,10 @@ export default function EquiposTable() {
       ...formData,
       tipo_medidor: formData.tipo_medidor === "" ? undefined : formData.tipo_medidor,
       capacidad_tanque: capacidadCargada ? Number(formData.capacidad_tanque) : undefined,
+      // Vacío = sin configurar = no alerta. Se manda null explícito (y no
+      // undefined) para poder QUITARLO: el PUT reemplaza la fila entera.
+      consumo_maximo_l:
+        formData.consumo_maximo_l.trim() === "" ? null : Number(formData.consumo_maximo_l),
       capacidad_tanque_unidad: capacidadCargada ? formData.capacidad_tanque_unidad : undefined,
       // Vacío = sin cargar, no se manda: el schema los tiene opcionales y un
       // string vacío fallaría el min(1).
@@ -198,6 +246,7 @@ export default function EquiposTable() {
         tipo_medidor: "",
         capacidad_tanque: "",
         capacidad_tanque_unidad: "L",
+        consumo_maximo_l: "",
         conductor_nombre: "",
         conductor_dni: "",
       });
@@ -233,7 +282,7 @@ export default function EquiposTable() {
   if (loading) return <div className="p-20 text-center text-slate-500">Cargando...</div>;
 
   return (
-    <div className="p-4 lg:p-8 animate-in fade-in duration-500">
+    <div className="p-4 lg:p-8f animate-in fade-in duration-500">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-10">
         <div>
           <h1 className="text-3xl font-bold text-slate-800">Equipos</h1>
@@ -250,6 +299,7 @@ export default function EquiposTable() {
               tipo_medidor: "",
               capacidad_tanque: "",
               capacidad_tanque_unidad: "L",
+              consumo_maximo_l: "",
               conductor_nombre: "",
               conductor_dni: "",
             });
@@ -367,7 +417,7 @@ export default function EquiposTable() {
 
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl animate-in zoom-in duration-200">
+          <div className="bg-white overflow-x-auto  h-full w-full max-w-lg  shadow-2xl animate-in zoom-in duration-200 ">
             <div className="p-6 border-b flex justify-between items-center">
               <h3 className="text-xl font-bold">{editingId ? "Editar Equipo" : "Nuevo Equipo"}</h3>
               <button
@@ -470,6 +520,49 @@ export default function EquiposTable() {
                   número sugerido es de catálogo:{" "}
                   <strong>confirmalo contra la ficha técnica de la unidad</strong>. Si no se conoce,
                   mejor dejarlo vacío que poner uno aproximado.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <label
+                  htmlFor="equipo-consumo-maximo"
+                  className="text-xs font-bold text-slate-500 uppercase"
+                >
+                  Consumo máximo
+                </label>
+                <div className="flex gap-2 items-center">
+                  <input
+                    id="equipo-consumo-maximo"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    placeholder="Dejar vacío si todavía no se sabe"
+                    className="flex-1 border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    value={formData.consumo_maximo_l}
+                    onChange={(e) => setFormData({ ...formData, consumo_maximo_l: e.target.value })}
+                  />
+                  <span className="text-sm text-slate-500">
+                    L / {formData.tipo_medidor === "odometro" ? "km" : "hora"}
+                  </span>
+                  {editingId !== null && (
+                    <button
+                      type="button"
+                      onClick={() => sugerirConsumo(editingId)}
+                      className="text-xs font-semibold text-slate-700 underline"
+                      title="Calculado con las cargas anteriores de ESTA unidad"
+                    >
+                      Sugerir
+                    </button>
+                  )}
+                </div>
+                {sugerenciaConsumo && (
+                  <p className="text-[11px] text-slate-600">{sugerenciaConsumo}</p>
+                )}
+                <p className="text-[11px] text-slate-600">
+                  Compara los litros cargados contra el trabajo que hizo la unidad. Es el único
+                  control que ve el combustible que sale <strong>con vale</strong> y no llega a la
+                  máquina: el tanque cuadra igual. Sin dato no alerta; el número se puede sugerir
+                  desde el historial, pero <strong>mirá la muestra antes de aceptarlo</strong>: si
+                  ya venían robando, el promedio incluye ese robo.
                 </p>
               </div>
               <div className="space-y-1">

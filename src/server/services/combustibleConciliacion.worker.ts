@@ -34,6 +34,7 @@
  * corre dentro de la transacción del lock, así que tomarlo una sola vez
  * para todos los tenants lo mantendría agarrado durante toda la pasada.
  */
+import type { PoolClient } from "pg";
 import { pool, withTenant } from "../config/database";
 import { logger } from "../config/logger";
 import { env } from "../config/env";
@@ -43,6 +44,8 @@ import { CombustibleService } from "../../modules/combustible/combustible.servic
 import {
   enviarCorreoSinVigilancia,
   enviarCorreoAlertaSinMedir,
+  enviarCorreoRecepcionSinValidar,
+  enviarCorreoVarillaSinControl,
 } from "../../modules/combustible/combustibleAlertas.mailer";
 import { publicarEventoTenant } from "./realtimeEvents.service";
 
@@ -74,70 +77,199 @@ export async function correrConciliacion(
   soloTenantId?: string
 ): Promise<{ congeladas: number }> {
   let total = 0;
-  // Se juntan y salen después del COMMIT -- ver avisarSinMedir().
-  const avisosSinMedir: {
-    tenantId: string;
-    alertas: {
-      tanque_nombre: string;
-      dias_sin_medir: string | null;
-      ultima_lectura: Date | null;
-    }[];
-    dias: number;
-  }[] = [];
-  // Tanques que despachan con los tres umbrales apagados (0082). Mismo
-  // criterio que los de arriba: se juntan y salen después del COMMIT.
-  const avisosSinVigilancia: {
-    tenantId: string;
-    alertas: {
-      codigo: string;
-      tanque_nombre: string;
-      unidad: string;
-      vales: string;
-      litros: string;
-    }[];
-    dias: number;
-  }[] = [];
+  const fallas: FallaDeConciliacion[] = [];
 
   for (const tenantId of soloTenantId ? [soloTenantId] : await idsDeTenants()) {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
       await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
-      // El orden importa: primero se crean las alertas, después se congela
-      // lo vencido. Al revés, una alerta recién detectada tendría que
-      // esperar a la corrida siguiente para poder congelarse.
-      await service.alertarDiferenciasDeRecepcion(client, tenantId);
-      // Tanques que dejaron de medirse (migración 0076). Va en el worker y
-      // no event-driven porque el hecho a detectar es que NO pasó nada, y un
-      // evento que no ocurre no dispara ningún handler. Se avisa por correo
-      // fuera de la transacción, junto con el resto.
-      const sinMedir = await service.evaluarTanquesSinMedir(client, tenantId);
-      const sinVigilancia = await service.evaluarTanquesSinVigilancia(client, tenantId);
-      const { congeladas } = await service.congelarAlertasVencidas(client, tenantId);
-      if (sinMedir.alertas.length > 0) {
-        avisosSinMedir.push({ tenantId, ...sinMedir });
-      }
-      if (sinVigilancia.alertas.length > 0) {
-        avisosSinVigilancia.push({ tenantId, ...sinVigilancia });
-      }
+      const resultado = await conciliarTenant(client, tenantId, fallas);
       await client.query("COMMIT");
-      total += congeladas;
+      total += resultado.congeladas;
+      await avisarResultado(tenantId, resultado);
     } catch (err) {
       await client.query("ROLLBACK").catch(() => {});
-      throw err;
+      fallas.push({ tenantId, paso: "transaccion", error: err });
     } finally {
       client.release();
     }
   }
 
-  for (const aviso of avisosSinMedir) {
-    await avisarSinMedir(aviso.tenantId, aviso.alertas, aviso.dias);
-  }
-  for (const aviso of avisosSinVigilancia) {
-    await avisarSinVigilancia(aviso.tenantId, aviso.alertas, aviso.dias);
+  // Esta variante la usan los tests y las corridas manuales: acá una falla
+  // TIENE que hacerse ver. Pero recién al final, después de haber conciliado
+  // todo lo demás -- el mismo criterio que la variante de producción, que
+  // la reporta y sigue.
+  if (fallas.length > 0) {
+    const [primera] = fallas;
+    throw new Error(
+      `La conciliación terminó con ${fallas.length} falla(s); la primera, en el paso ` +
+        `"${primera.paso}" del tenant ${primera.tenantId}: ${mensajeDe(primera.error)}`,
+      { cause: primera.error }
+    );
   }
 
   return { congeladas: total };
+}
+
+interface FallaDeConciliacion {
+  tenantId: string;
+  paso: string;
+  error: unknown;
+}
+
+function mensajeDe(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+type ResultadoTenant = Awaited<ReturnType<typeof conciliarTenant>>;
+
+/** Todo lo que la conciliación hace sobre UN tenant, con el client que ya
+ *  trae `app.tenant_id` seteado y la transacción abierta.
+ *
+ *  ── Cada paso en su propio SAVEPOINT ─────────────────────────────────────
+ *
+ *  La 5ª auditoría encontró que UN paso que fallaba (congelar una alerta de
+ *  un tipo que el CHECK de anomalías no aceptaba) deshacía la corrida entera
+ *  del tenant: la alerta de "tanque sin medir" que se acababa de detectar
+ *  desaparecía con el ROLLBACK. Y "dejar de medir" apaga los cuatro umbrales,
+ *  así que una alerta sin revisar terminaba apagando toda la vigilancia.
+ *
+ *  Los pasos son independientes entre sí --detectar que no se mide no depende
+ *  de poder congelar-- así que una falla en uno no puede llevarse puestos a
+ *  los otros. Se reporta (log + Sentry, y la variante de tests la relanza al
+ *  final) y la corrida sigue.
+ *
+ *  El orden importa: primero se crean las alertas, después se congela lo
+ *  vencido. Al revés, una alerta recién detectada tendría que esperar a la
+ *  corrida siguiente para poder congelarse. */
+async function conciliarTenant(
+  client: PoolClient,
+  tenantId: string,
+  fallas: FallaDeConciliacion[]
+) {
+  async function paso<T>(nombre: string, fn: () => Promise<T>, siFalla: T): Promise<T> {
+    await client.query("SAVEPOINT paso_conciliacion");
+    try {
+      const r = await fn();
+      await client.query("RELEASE SAVEPOINT paso_conciliacion");
+      return r;
+    } catch (error) {
+      await client.query("ROLLBACK TO SAVEPOINT paso_conciliacion");
+      fallas.push({ tenantId, paso: nombre, error });
+      logger.error({ err: error, tenantId, paso: nombre }, "Falla en un paso de la conciliación");
+      capturarError(error, { worker: "combustibleConciliacion", tenantId, paso: nombre });
+      return siFalla;
+    }
+  }
+
+  await paso(
+    "diferencias_de_recepcion",
+    () => service.alertarDiferenciasDeRecepcion(client, tenantId),
+    {
+      creadas: 0,
+    }
+  );
+  // Tanques que dejaron de medirse (migración 0076). Va en el worker y no
+  // event-driven porque el hecho a detectar es que NO pasó nada, y un evento
+  // que no ocurre no dispara ningún handler.
+  const sinMedir = await paso(
+    "tanques_sin_medir",
+    () => service.evaluarTanquesSinMedir(client, tenantId),
+    {
+      alertas: [] as Awaited<ReturnType<CombustibleService["evaluarTanquesSinMedir"]>>["alertas"],
+      dias: 0,
+    }
+  );
+  const sinVigilancia = await paso(
+    "tanques_sin_vigilancia",
+    () => service.evaluarTanquesSinVigilancia(client, tenantId),
+    {
+      alertas: [] as Awaited<
+        ReturnType<CombustibleService["evaluarTanquesSinVigilancia"]>
+      >["alertas"],
+      dias: 0,
+    }
+  );
+  const vigilanciaExtra = await paso(
+    "controles_de_la_quinta_auditoria",
+    () => service.evaluarControlesPeriodicos(client, tenantId),
+    {
+      creadas: [] as Awaited<
+        ReturnType<CombustibleService["evaluarControlesPeriodicos"]>
+      >["creadas"],
+    }
+  );
+  const congelado = await paso(
+    "congelar_vencidas",
+    () => service.congelarAlertasVencidas(client, tenantId),
+    {
+      congeladas: 0,
+      ventanaHoras: 0,
+      errores: [],
+    }
+  );
+  for (const e of congelado.errores) {
+    fallas.push({ tenantId, paso: `congelar_alerta_${e.tipo}_${e.alertaId}`, error: e.error });
+    logger.error(
+      { err: e.error, tenantId, alertaId: e.alertaId },
+      "No se pudo congelar una alerta"
+    );
+    capturarError(e.error, { worker: "combustibleConciliacion", tenantId, alertaId: e.alertaId });
+  }
+
+  return { ...congelado, sinMedir, sinVigilancia, vigilanciaExtra };
+}
+
+/** Los avisos salen FUERA de la transacción: mandarlos adentro la dejaría
+ *  abierta durante todo el SMTP, y un fallo del correo haría rollback de
+ *  alertas que sí corresponde persistir. */
+async function avisarResultado(tenantId: string, r: ResultadoTenant): Promise<void> {
+  if (r.sinVigilancia.alertas.length > 0) {
+    await avisarSinVigilancia(tenantId, r.sinVigilancia.alertas, r.sinVigilancia.dias);
+  }
+  if (r.sinMedir.alertas.length > 0) {
+    await avisarSinMedir(tenantId, r.sinMedir.alertas, r.sinMedir.dias);
+  }
+  if (r.vigilanciaExtra.creadas.length > 0) {
+    await avisarControlesPeriodicos(tenantId, r.vigilanciaExtra.creadas);
+  }
+}
+
+/** Correo + evento de los dos controles que agregó la 5ª auditoría. Mismo
+ *  contrato que los otros avisos: fuera de la transacción y nunca lanza. */
+async function avisarControlesPeriodicos(
+  tenantId: string,
+  creadas: {
+    tipo: "recepcion_sin_validar" | "varilla_sin_control";
+    detalle: Record<string, unknown>;
+  }[]
+): Promise<void> {
+  try {
+    const admins = await withTenant(tenantId, (client) =>
+      service.findAdminsConCombustibleHabilitado(client, tenantId)
+    );
+    for (const alerta of creadas) {
+      const d = alerta.detalle;
+      if (alerta.tipo === "recepcion_sin_validar") {
+        await enviarCorreoRecepcionSinValidar(admins, {
+          tanqueNombre: String(d.tanqueNombre ?? ""),
+          numeroDocumento: (d.numeroDocumento as string | null) ?? null,
+          registradaEn: String(d.registradaEn),
+          plazoHoras: Number(d.plazoHoras),
+        });
+      } else {
+        await enviarCorreoVarillaSinControl(admins, {
+          tanqueNombre: String(d.tanqueNombre ?? ""),
+          plazoDias: Number(d.plazoDias),
+          ultimaVarillaDeControl: (d.ultimaVarillaDeControl as string | null) ?? null,
+        });
+      }
+      await publicarEventoTenant(tenantId, "combustible.alerta_creada", { tipo: alerta.tipo });
+    }
+  } catch (err) {
+    logger.warn({ err, tenantId }, "No se pudieron avisar los controles periódicos");
+  }
 }
 
 /** Correo de los tanques que operan ciegos. Mismo contrato que
@@ -213,38 +345,32 @@ async function avisarSinMedir(
 }
 
 /** Uso del worker periódico: un lock por tenant -- ver el comentario del
- *  archivo. */
+ *  archivo.
+ *
+ *  Un tenant que falla NO corta el recorrido. Antes el error salía de
+ *  `runSiPrimero` y abortaba el `for`: todos los tenants que venían después
+ *  se quedaban sin conciliar, cada hora, mientras el problema del primero
+ *  siguiera ahí. Un cliente con un dato raro no puede dejar ciego a otro. */
 async function correrConciliacionCoordinada(): Promise<void> {
   let total = 0;
   let ultimaVentana = 0;
 
   for (const tenantId of await idsDeTenants()) {
-    const resultado = await runSiPrimero(LOCK_IDS.combustibleConciliacion, async (client) => {
-      await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
-      await service.alertarDiferenciasDeRecepcion(client, tenantId);
-      // Va también acá y no solo en correrConciliacion(): ESTE es el camino
-      // que corre en producción cada hora. Engancharlo solo en el otro
-      // dejaría la detección viva únicamente en los tests -- que es
-      // exactamente la clase de hueco que esta entrega vino a cerrar.
-      const sinMedir = await service.evaluarTanquesSinMedir(client, tenantId);
-      const sinVigilancia = await service.evaluarTanquesSinVigilancia(client, tenantId);
-      const congelado = await service.congelarAlertasVencidas(client, tenantId);
-      return { ...congelado, sinMedir, sinVigilancia };
-    });
-    // undefined = otra instancia tiene el lock; se salta este tenant, la
-    // próxima corrida lo agarra.
-    if (resultado === undefined) continue;
-    total += resultado.congeladas;
-    ultimaVentana = resultado.ventanaHoras;
-    if (resultado.sinVigilancia.alertas.length > 0) {
-      await avisarSinVigilancia(
-        tenantId,
-        resultado.sinVigilancia.alertas,
-        resultado.sinVigilancia.dias
-      );
-    }
-    if (resultado.sinMedir.alertas.length > 0) {
-      await avisarSinMedir(tenantId, resultado.sinMedir.alertas, resultado.sinMedir.dias);
+    const fallas: FallaDeConciliacion[] = [];
+    try {
+      const resultado = await runSiPrimero(LOCK_IDS.combustibleConciliacion, async (client) => {
+        await client.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+        return conciliarTenant(client, tenantId, fallas);
+      });
+      // undefined = otra instancia tiene el lock; se salta este tenant, la
+      // próxima corrida lo agarra.
+      if (resultado === undefined) continue;
+      total += resultado.congeladas;
+      ultimaVentana = resultado.ventanaHoras;
+      await avisarResultado(tenantId, resultado);
+    } catch (err) {
+      logger.error({ err, tenantId }, "La conciliación de combustible falló para un tenant");
+      capturarError(err, { worker: "combustibleConciliacion", tenantId });
     }
   }
 
