@@ -552,7 +552,14 @@ describe("combustible: recepciones y costo ponderado (Fase C)", () => {
     expect(listado.body.data[0].diferencia_litros).toBeNull();
   });
 
-  it("no atribuye la diferencia si hubo otra recepción en la misma ventana", async () => {
+  // Hasta la 5ª auditoría, dos recepciones entre las mismas dos varillas
+  // dejaban la diferencia en NULL ("no se puede atribuir a una sola"). Eso
+  // era un interruptor de apagado: dos recepciones de 1 L bastaban para
+  // borrar el control. Y dos cisternas el mismo día sin varilla en el medio
+  // es operación normal. Ahora la diferencia se calcula contra el GRUPO, y se
+  // dice que son varias entregas: no se acusa a un proveedor, pero el
+  // faltante no desaparece.
+  it("con dos recepciones en la misma ventana, la diferencia es del grupo", async () => {
     const tanqueId = await crearTanque({ nivel_actual: 1000, capacidad_total: 20000 });
 
     await agente
@@ -569,10 +576,12 @@ describe("combustible: recepciones y costo ponderado (Fase C)", () => {
     const listado = await agente
       .get("/api/erp/combustible/recepciones")
       .query({ combustible_id: tanqueId });
-    // Faltan 100 L entre las dos entregas, pero no se puede saber de cuál --
-    // señalar a un proveedor por el faltante del otro sería peor que callar.
+    // Faltan 100 L entre las dos entregas (1000 + 1200 − 2100). No se sabe de
+    // cuál de las dos, y por eso la alerta las nombra a las dos; lo que ya no
+    // pasa es que el faltante se pierda.
     for (const fila of listado.body.data) {
-      expect(fila.diferencia_litros).toBeNull();
+      expect(Number(fila.diferencia_litros)).toBe(-100);
+      expect(Number(fila.entregas_en_grupo)).toBe(2);
     }
   });
 

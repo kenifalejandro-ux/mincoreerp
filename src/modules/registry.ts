@@ -138,6 +138,8 @@ export const MODULOS: ModuloDefinicion[] = [
           grifo_id: "combustible_grifos",
           usuario_id: "usuarios",
           anulada_por: "usuarios",
+          // Quién validó contra la guía (0088).
+          validada_por: "usuarios",
         },
       },
       // Fase D (migrations/0068) -- el aviso vivo: hueco de talonario, vale
@@ -152,8 +154,15 @@ export const MODULOS: ModuloDefinicion[] = [
       {
         nombre: "combustible_alertas",
         pk: "serial",
+        // Las anclas van TODAS: al clonar un backup a otro tenant los ids se
+        // regeneran, y una FK que no esté acá se queda apuntando a la fila
+        // del tenant de ORIGEN. Faltaban `combustible_id` y `recepcion_id`
+        // desde 0073 (lo encontró la 5ª auditoría); `lectura_id` es de 0086.
         fks: {
           despacho_id: "combustible_despachos",
+          combustible_id: "combustible",
+          recepcion_id: "combustible_recepciones",
+          lectura_id: "combustible_lecturas",
           resuelta_por: "usuarios",
         },
       },
@@ -168,6 +177,9 @@ export const MODULOS: ModuloDefinicion[] = [
         pk: "serial",
         fks: {
           despacho_id: "combustible_despachos",
+          combustible_id: "combustible",
+          recepcion_id: "combustible_recepciones",
+          lectura_id: "combustible_lecturas",
           alerta_id: "combustible_alertas",
         },
       },

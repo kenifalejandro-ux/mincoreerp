@@ -9,6 +9,9 @@ interface FilaEstadoCambiado {
   estado: string;
   aprobado_por: string;
   aprobado_en: string;
+  /** Quién lo redactó. Solo lo devuelve el IPERC (no la línea base): sirve
+   *  para marcar la autoaprobación. */
+  usuario_id?: string | null;
 }
 
 /** Resultado de cambiarEstado()/cambiarEstadoLineaBase(): distingue "no
@@ -165,7 +168,11 @@ export const IpercRepository = {
     const result = await client.query<FilaEstadoCambiado>(
       `UPDATE ipercs SET estado = $1, aprobado_por = $2, aprobado_en = now()
        WHERE id = $3 AND tenant_id = $4 AND estado = 'borrador'
-       RETURNING id, estado, aprobado_por, aprobado_en`,
+       -- usuario_id (quién lo redactó) viaja de vuelta para poder marcar la
+       -- AUTOAPROBACIÓN: que el mismo que evaluó el riesgo sea el que lo
+       -- aprueba no se bloquea --en una operación chica puede no haber otro--
+       -- pero tiene que quedar dicho, que es de lo que se trata el control.
+       RETURNING id, estado, aprobado_por, aprobado_en, usuario_id`,
       [estado, aprobadoPor, id, tenantId]
     );
     if (result.rows[0]) return { ok: true, fila: result.rows[0] };
@@ -178,12 +185,38 @@ export const IpercRepository = {
     return { ok: false, motivo: "ya_procesado", estadoActual: actual.rows[0].estado };
   },
 
-  async eliminar(client: PoolClient, tenantId: string, id: number) {
-    const result = await client.query(`DELETE FROM ipercs WHERE id = $1 AND tenant_id = $2`, [
-      id,
-      tenantId,
-    ]);
-    return (result.rowCount ?? 0) > 0;
+  /** Borrar un IPERC SOLO si sigue en borrador.
+   *
+   *  Un IPERC aprobado es el registro de que alguien evaluó el riesgo de una
+   *  tarea y lo autorizó: es el documento que se presenta ante una
+   *  fiscalización o después de un accidente. Hasta la 5ª auditoría un admin
+   *  podía borrarlo con un DELETE real --la fila desaparecía-- y en la
+   *  bitácora quedaba "se eliminó el IPERC #12", sin su contenido.
+   *
+   *  Devuelve la fila borrada (para que la auditoría guarde de QUÉ se trataba)
+   *  o el motivo del rechazo. */
+  async eliminar(
+    client: PoolClient,
+    tenantId: string,
+    id: number
+  ): Promise<
+    | { ok: true; fila: Record<string, unknown> }
+    | { ok: false; motivo: "no_encontrado" | "aprobado"; estadoActual?: string }
+  > {
+    const result = await client.query<Record<string, unknown>>(
+      `DELETE FROM ipercs WHERE id = $1 AND tenant_id = $2 AND estado = 'borrador'
+       RETURNING id, tipo, area_frente, turno, equipo_id, linea_base_id, tarea_especifica,
+                 usuario_id, estado, creado_en`,
+      [id, tenantId]
+    );
+    if (result.rows[0]) return { ok: true, fila: result.rows[0] };
+
+    const actual = await client.query<{ estado: string }>(
+      `SELECT estado FROM ipercs WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+    if (actual.rows.length === 0) return { ok: false, motivo: "no_encontrado" };
+    return { ok: false, motivo: "aprobado", estadoActual: actual.rows[0].estado };
   },
 
   // ── Línea Base ───────────────────────────────────────────────────────
@@ -282,11 +315,32 @@ export const IpercRepository = {
     return { ok: false, motivo: "ya_procesado", estadoActual: actual.rows[0].estado };
   },
 
-  async eliminarLineaBase(client: PoolClient, tenantId: string, id: number) {
-    const result = await client.query(
-      `DELETE FROM iperc_lineas_base WHERE id = $1 AND tenant_id = $2`,
+  /** Mismo criterio que `eliminar` para el IPERC: una línea base APROBADA es
+   *  el catálogo de peligros con el que se evalúan las tareas, y los IPERC
+   *  ya emitidos la referencian. Borrarla deja esos IPERC hablando de una
+   *  línea base que no existe. Solo se borra la que sigue en borrador, y la
+   *  fila borrada vuelve para que la auditoría guarde su contenido. */
+  async eliminarLineaBase(
+    client: PoolClient,
+    tenantId: string,
+    id: number
+  ): Promise<
+    | { ok: true; fila: Record<string, unknown> }
+    | { ok: false; motivo: "no_encontrado" | "aprobado"; estadoActual?: string }
+  > {
+    const result = await client.query<Record<string, unknown>>(
+      `DELETE FROM iperc_lineas_base
+        WHERE id = $1 AND tenant_id = $2 AND estado = 'borrador'
+        RETURNING *`,
       [id, tenantId]
     );
-    return (result.rowCount ?? 0) > 0;
+    if (result.rows[0]) return { ok: true, fila: result.rows[0] };
+
+    const actual = await client.query<{ estado: string }>(
+      `SELECT estado FROM iperc_lineas_base WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+    if (actual.rows.length === 0) return { ok: false, motivo: "no_encontrado" };
+    return { ok: false, motivo: "aprobado", estadoActual: actual.rows[0].estado };
   },
 };

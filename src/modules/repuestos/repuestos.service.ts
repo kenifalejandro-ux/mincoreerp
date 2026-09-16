@@ -23,6 +23,10 @@ export const RepuestosService = {
   },
 
   // ✏️ actualizar
+  getById(client: PoolClient, tenantId: string, id: number) {
+    return RepuestosRepository.findById(client, tenantId, id);
+  },
+
   update(client: PoolClient, tenantId: string, id: number, data: ActualizarRepuestoInput) {
     return RepuestosRepository.update(client, tenantId, id, data);
   },

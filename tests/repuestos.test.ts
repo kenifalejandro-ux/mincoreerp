@@ -67,6 +67,10 @@ describe("repuestos: CRUD y carga masiva", () => {
     expect(res.status).toBe(200);
     expect(res.body.nombre).toBe("Editado");
     expect(res.body.categoria).toBe("Frenos");
+    // El stock del body se IGNORA: la ficha no mueve existencias, eso es un
+    // movimiento (5ª auditoría). Editar la ficha no puede ser la forma de
+    // cuadrar un faltante sin dejar rastro.
+    expect(res.body.stock).toBe(10);
   });
 
   it("carga masiva (bulk) inserta varios repuestos de una vez", async () => {
@@ -122,13 +126,18 @@ describe("repuestos: CRUD y carga masiva", () => {
 
     // Mismo código: no crea una segunda fila, solo actualiza la que ya
     // existía (ON CONFLICT DO UPDATE, comportamiento preexistente).
+    //
+    // Con una excepción desde la 5ª auditoría: el STOCK no se pisa. La
+    // existencia de un repuesto que ya existe sale de sus movimientos, no de
+    // una planilla -- si no, reimportar un Excel viejo "corrige" el
+    // inventario a un número que nadie contó.
     const despues = await agent.get("/api/erp/repuestos?pageSize=1");
     expect(despues.body.pagination.total).toBe(totalAntes + 1);
 
     const listado = await agent.get(`/api/erp/repuestos?pageSize=200`);
     const fila = listado.body.data.find((r: { codigo: string }) => r.codigo === codigo);
     expect(fila.nombre).toBe("Versión 2");
-    expect(fila.stock).toBe(99);
+    expect(fila.stock).toBe(10);
   });
 
   it("un código repetido DENTRO del mismo lote no revienta la importación -- se queda con la última fila", async () => {

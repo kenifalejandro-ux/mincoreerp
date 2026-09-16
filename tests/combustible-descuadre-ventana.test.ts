@@ -43,6 +43,7 @@ describe("combustible: descuadre acumulado en ventana deslizante (migración 008
       dias_sin_vigilancia: 7,
       llenados_por_dia_max: null,
       tope_diario_sin_capacidad_l: null,
+      motivo_ajuste: "ajuste de prueba",
     });
   });
 
@@ -221,7 +222,8 @@ describe("combustible: descuadre acumulado en ventana deslizante (migración 008
     await ag.put("/api/erp/combustible/config").send({ ...base, dias_ventana_descuadre: 30 });
     const res = await ag
       .put("/api/erp/combustible/config")
-      .send({ ...base, dias_ventana_descuadre: 7 });
+      // Aflojar la config exige motivo desde la 5ª auditoría.
+      .send({ ...base, dias_ventana_descuadre: 7, motivo_ajuste: "ajuste de prueba" });
     expect(res.status).toBe(200);
 
     const bitacora = await ag.get("/api/erp/combustible/bitacora").query({ pageSize: 50 });

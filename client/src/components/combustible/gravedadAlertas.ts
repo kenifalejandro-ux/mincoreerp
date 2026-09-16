@@ -48,6 +48,15 @@ const CRITICAS = new Set([
   "vale_recargado",
   "tanque_sin_vigilancia",
   "tanque_sin_medir",
+  // 5ª auditoría: las tres de recepción son sospecha de combustible que entró
+  // y no quedó en los papeles; el consumo y la varilla exacta son las dos
+  // únicas señales del robo que NO deja rastro en el tanque.
+  "recepcion_anulada",
+  "recepcion_discrepante",
+  "recepcion_retroactiva",
+  "consumo_excedido",
+  "varilla_exacta",
+  "varilla_sin_control",
 ]);
 
 export function gravedadDe(tipo: string): GravedadAlerta {

@@ -66,11 +66,33 @@ export const RepuestosRepository = {
     return result.rows[0];
   },
 
+  /** Una fila por id, para poder auditar QUÉ cambió en una edición. */
+  async findById(client: PoolClient, tenantId: string, id: number) {
+    const result = await client.query(`SELECT * FROM repuestos WHERE id = $1 AND tenant_id = $2`, [
+      id,
+      tenantId,
+    ]);
+    return result.rows[0] ?? null;
+  },
+
   // =========================================================
   // ✏️ ACTUALIZAR REPUESTO (solo si pertenece al tenant activo)
   // =========================================================
+  /** EL STOCK NO SE EDITA POR ACÁ. Se mueve con movimientos, que dejan quién,
+   *  cuándo, cuánto y por qué (POST /movimientos).
+   *
+   *  Hasta la 5ª auditoría este UPDATE escribía `stock` directo: un operador
+   *  podía dejar la existencia en el número que quisiera y la auditoría
+   *  guardaba `{ repuestoId }` -- ni el valor viejo, ni el nuevo, ni motivo.
+   *  Con eso, el inventario de repuestos no podía delatar un faltante: se
+   *  corregía la ficha y listo. Es la misma lección que el módulo de
+   *  combustible ya había aprendido con el nivel del tanque (migración 0059):
+   *  un saldo que se puede sobrescribir a mano no es un saldo, es una opinión.
+   *
+   *  Los demás campos de la ficha (nombre, categoría, mínimos, precio) sí se
+   *  editan: no son existencias. */
   async update(client: PoolClient, tenantId: string, id: number, data: ActualizarRepuestoInput) {
-    const { codigo, nombre, categoria, stock, stock_minimo, stock_maximo, precio } = data;
+    const { codigo, nombre, categoria, stock_minimo, stock_maximo, precio } = data;
 
     const result = await client.query(
       `
@@ -78,14 +100,13 @@ export const RepuestosRepository = {
         codigo = $1,
         nombre = $2,
         categoria = $3,
-        stock = $4,
-        stock_minimo = $5,
-        stock_maximo = $6,
-        precio = $7
-      WHERE id = $8 AND tenant_id = $9
+        stock_minimo = $4,
+        stock_maximo = $5,
+        precio = $6
+      WHERE id = $7 AND tenant_id = $8
       RETURNING *
       `,
-      [codigo, nombre, categoria, stock, stock_minimo, stock_maximo, precio, id, tenantId]
+      [codigo, nombre, categoria, stock_minimo, stock_maximo, precio, id, tenantId]
     );
 
     return result.rows[0] ?? null;
@@ -158,7 +179,10 @@ export const RepuestosRepository = {
          ON CONFLICT (tenant_id, codigo) DO UPDATE SET
            nombre = EXCLUDED.nombre,
            categoria = EXCLUDED.categoria,
-           stock = EXCLUDED.stock,
+           -- stock NO se pisa al reimportar: la existencia de un repuesto
+           -- que ya existe sale de sus movimientos, no de una planilla (ver
+           -- el comentario de update()). En el alta sí entra, que es el
+           -- inventario inicial.
            stock_minimo = EXCLUDED.stock_minimo,
            stock_maximo = EXCLUDED.stock_maximo,
            precio = EXCLUDED.precio

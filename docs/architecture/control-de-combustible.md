@@ -15,12 +15,12 @@ El módulo resuelve un problema concreto: un grifero despacha combustible en cam
 
 Surtidor "Grifo Cantera", grifero Juan, equipos EX-04 (excavadora), VQ-12 (volquete), CG-02 (cargador). El contómetro se resetea a 0,0 antes de cada despacho. Juan tiene el block de vales serie A, numerados 00021 a 00050.
 
-| Vale | Equipo | Contómetro | Cantidad |
-|---|---|---|---|
-| 00021 | EX-04 | 0,0 → 35,0 | 35 gal |
-| 00022 | VQ-12 | 0,0 → 28,0 | 28 gal |
-| 00023 | CG-02 | 0,0 → 35,0 | 35 gal |
-| 00024 | VQ-12 | 0,0 → 22,0 | 22 gal |
+| Vale  | Equipo | Contómetro | Cantidad |
+| ----- | ------ | ---------- | -------- |
+| 00021 | EX-04  | 0,0 → 35,0 | 35 gal   |
+| 00022 | VQ-12  | 0,0 → 28,0 | 28 gal   |
+| 00023 | CG-02  | 0,0 → 35,0 | 35 gal   |
+| 00024 | VQ-12  | 0,0 → 22,0 | 22 gal   |
 
 Contómetro y Cantidad muestran el mismo número a propósito: como el aparato siempre arranca en 0,0, el cierre del contómetro y la cantidad declarada son el mismo dato, tipeado dos veces por la misma persona — de ahí sale el chequeo del punto 5.
 
@@ -54,10 +54,10 @@ Para verificar continuidad hay que ordenar los vales. Ninguno de los dos relojes
 
 **El reloj del dispositivo tampoco**: se resetea, cambia de zona horaria, nadie lo nota. Ejemplo: la tablet de Juan tiene el reloj 4 horas adelantado.
 
-| Vale | Hora real | Hora que graba la tablet |
-|---|---|---|
-| 00023 | 10:00 | 14:00 ❌ |
-| 00024 | 12:00 | 12:00 ✓ |
+| Vale  | Hora real | Hora que graba la tablet |
+| ----- | --------- | ------------------------ |
+| 00023 | 10:00     | 14:00 ❌                 |
+| 00024 | 12:00     | 12:00 ✓                  |
 
 Si se ordena por hora de despacho: 00024 (12:00) antes que 00023 (14:00) → el N°VALE retrocedió del 24 al 23. Imposible, el talonario se llena en orden a mano.
 
@@ -120,12 +120,12 @@ Mismo martes, tres momentos:
 
 ## Hoja de ruta
 
-| Fase | Qué entra |
-|---|---|
-| **A** | Fundación: tanques/puntos de abastecimiento como entidad completa (ABM real, hoy solo existe `PUT /:id/nivel`). Ver prompt de ejecución en la rama `feat/combustible-tanques-crud`. |
+| Fase  | Qué entra                                                                                                                                                                                        |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **A** | Fundación: tanques/puntos de abastecimiento como entidad completa (ABM real, hoy solo existe `PUT /:id/nivel`). Ver prompt de ejecución en la rama `feat/combustible-tanques-crud`.              |
 | **B** | `combustible_despachos` + extensión de equipos + N°VALE (talonario) como secuencia + cola offline + validación síncrona del registro (puntos 1, 2 y 5 de este documento). El corazón del módulo. |
-| **C** | `combustible_recepciones` + costo ponderado (`costo_promedio`, reservado desde la Fase A pero sin lógica hasta acá). Ver el detalle abajo. |
-| **D** | Conciliación de período, `combustible_anomalias`, reportes, y talonarios con anulación (puntos 3 y 4) si se decide que entran. |
+| **C** | `combustible_recepciones` + costo ponderado (`costo_promedio`, reservado desde la Fase A pero sin lógica hasta acá). Ver el detalle abajo.                                                       |
+| **D** | Conciliación de período, `combustible_anomalias`, reportes, y talonarios con anulación (puntos 3 y 4) si se decide que entran.                                                                   |
 
 Cada fase depende de que la anterior esté en `main` — en particular, B no arranca sin que el ABM de tanques (A) esté completo, porque el talonario (N°VALE, punto 2) se administra por punto de abastecimiento, no por despacho aislado.
 
@@ -139,7 +139,7 @@ Una recepción es "llegó la cisterna y cargó el tanque X con Y galones a Z de 
 
 ### No hay talonario acá
 
-El N°VALE (punto 2) existe para detectar combustible que *sale* sin quedar declarado. Una recepción es el movimiento opuesto: la fuga sería combustible que entra y no se registra, y eso ninguna secuencia propia lo detecta — se detecta cruzando el nivel medido contra lo esperado, que es conciliación (Fase D).
+El N°VALE (punto 2) existe para detectar combustible que _sale_ sin quedar declarado. Una recepción es el movimiento opuesto: la fuga sería combustible que entra y no se registra, y eso ninguna secuencia propia lo detecta — se detecta cruzando el nivel medido contra lo esperado, que es conciliación (Fase D).
 
 ### Una recepción no mueve el nivel
 
@@ -168,9 +168,38 @@ El promedio ponderado es secuencial: cada recepción se apoya en el promedio que
 
 ### Dos cosas configurables por tanque
 
-| Columna | Qué hace | Default |
-|---|---|---|
-| `tolerancia_capacidad_pct` | Margen sobre `capacidad_total` antes de rechazar la recepción. Porcentaje y no litros fijos porque escala solo con el tamaño del tanque. Va por tanque porque el error de la varilla es una propiedad física de *ese* tanque. | `0` (estricto) |
-| `requiere_documento` | Si exige factura/guía de remisión. En Perú el consumo de combustible casi siempre se sustenta con factura, pero el papel no siempre está a mano al descargar. Por eso `tipo_documento`/`numero_documento` son **nullable en la base**: un `NOT NULL` haría imposible desactivar la exigencia. | `true` |
+| Columna                    | Qué hace                                                                                                                                                                                                                                                                                      | Default        |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `tolerancia_capacidad_pct` | Margen sobre `capacidad_total` antes de rechazar la recepción. Porcentaje y no litros fijos porque escala solo con el tamaño del tanque. Va por tanque porque el error de la varilla es una propiedad física de _ese_ tanque.                                                                 | `0` (estricto) |
+| `requiere_documento`       | Si exige factura/guía de remisión. En Perú el consumo de combustible casi siempre se sustenta con factura, pero el papel no siempre está a mano al descargar. Por eso `tipo_documento`/`numero_documento` son **nullable en la base**: un `NOT NULL` haría imposible desactivar la exigencia. | `true`         |
 
 Las dos las administra el cliente desde el ABM de tanques, sin tocar código. El bloqueo por capacidad sí es duro (`400`): a diferencia del sobredespacho, no hay forma física de que entre más combustible del que cabe — el dato se contradice a sí mismo, como el punto 5.
+
+---
+
+## La 5ª auditoría (2026-09-14): los controles sobre lo que el tanque NO puede ver
+
+Las cuatro rondas anteriores endurecieron el balance del tanque (varilla contra papeles). La quinta atacó por fuera de ese balance y encontró que **los cuatro umbrales son la misma cuenta**:
+
+```
+medido − (varilla anterior + recepciones declaradas − despachos declarados)
+```
+
+Quien controla uno de los términos declarados, o la propia medición, los esquiva a los cuatro a la vez. Por eso los controles nuevos no son un quinto umbral: son **testigos independientes** de cada término.
+
+| Vector verificado                                                           | Por qué el tanque no lo veía                                                                                               | Control nuevo                                                                                                                                                                 |
+| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| El grifero registra 9.000 de una entrega de 10.000 y se lleva la diferencia | `cantidad` era a la vez "lo que dice la guía" y "lo que entró", y lo escribía una sola persona. La varilla cuadra perfecto | **Validación de la recepción** (0088): administración escribe la cantidad de la guía sin ver la registrada. `recepcion_discrepante` / `recepcion_sin_validar`                 |
+| Se declaran 400 L y el volquete recibe 380                                  | El combustible SÍ salió del tanque: el balance cierra. Lo que no cierra es el trabajo hecho con ese combustible            | **Consumo por hora de motor o por km** (0088). El vale del tanque propio ahora acepta horómetro; `consumo_excedido`                                                           |
+| El que despacha anota como varilla el nivel que el sistema espera           | La medición deja de ser independiente del papel: el descuadre da cero para siempre                                         | `varilla_exacta` (cuatro mediciones seguidas exactas al litro no pasan midiendo) y `varilla_sin_control` (N días medido solo por quien despacha)                              |
+| Una alerta sin revisar rompía la conciliación de todos los tenants          | El CHECK de anomalías se quedó con seis tipos mientras el worker congelaba nueve                                           | Las listas de tipos viven en el código (`TIPOS_ALERTA`, `TIPOS_CONGELABLES`) y un test las compara contra los CHECK reales. Cada paso del worker corre en su propio SAVEPOINT |
+
+### Los tres caminos que se saltaban los controles
+
+1. **`PUT /:id/nivel`** (eliminado). Registraba la varilla sin evaluar ningún descuadre. Hoy una varilla entra por un solo camino, y ese camino corre todos los controles (`procesarLecturaRegistrada`).
+2. **La carga masiva de tanques**. Hacía UPSERT: cambiaba unidad, capacidad, tolerancia y umbrales de un tanque con historial, sin motivo ni aviso. Ahora **solo da de alta**; los códigos que ya existen se omiten y se informan.
+3. **Fechar hacia atrás**. El tope diario miraba solo las 24 h anteriores al vale, así que fechar cada vale una hora antes del anterior lo dejaba solo en su ventana. Ahora se evalúa **la peor ventana de 24 h que contiene al vale**.
+
+### El límite, que hay que decirlo
+
+Ninguno de estos controles resuelve que **una sola persona haga las dos puntas**. La validación de la recepción sirve si la hace alguien distinto del que recibió; la varilla de control, si mide alguien que no despacha. Cuando no hay segunda persona, el sistema no previene: **deja constancia** (autorrevisión, autovalidación, bitácora, reporte de segregación). Esa constancia es lo que sirve ante un socio, un auditor o un juez — no es lo mismo que prevención, y presentarlo como tal sería mentir.

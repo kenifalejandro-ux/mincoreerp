@@ -25,10 +25,14 @@ import {
   enviarCorreoValeRetroactivo,
   enviarCorreoValeRecargado,
   enviarCorreoLecturaRetroactiva,
+  enviarCorreoVarillaExacta,
+  enviarCorreoRecepcionAnulada,
+  enviarCorreoRecepcionDiscrepante,
+  enviarCorreoRecepcionRetroactiva,
+  enviarCorreoConsumoExcedido,
 } from "./combustibleAlertas.mailer";
 import type {
   RegistrarLecturaCombustibleInput,
-  ActualizarNivelCombustibleInput,
   CrearTanqueCombustibleInput,
   ActualizarTanqueCombustibleInput,
   CargaMasivaTanquesCombustibleInput,
@@ -40,6 +44,7 @@ import type {
   AnularPrecioCombustibleInput,
   CrearRecepcionCombustibleInput,
   AnularRecepcionCombustibleInput,
+  ValidarRecepcionCombustibleInput,
   AnularDespachoCombustibleInput,
   MarcarAlertasLeidasCombustibleInput,
   BajaTanqueCombustibleInput,
@@ -1273,7 +1278,7 @@ export class CombustibleController {
     try {
       const tenantId = getTenantId(req);
       const rows = req.validatedBody as CargaMasivaTanquesCombustibleInput;
-      const result = await withTenant(tenantId, (client) =>
+      const { creados, omitidos } = await withTenant(tenantId, (client) =>
         service.createBulk(client, tenantId, rows)
       );
       // La carga masiva es la puerta de atrás del alta: el formulario obliga
@@ -1282,11 +1287,17 @@ export class CombustibleController {
       // pedir tres porcentajes por fila en un Excel garantiza que se llenen
       // con cualquier cosa -- pero SÍ se cuenta y se devuelve, para que el
       // cliente lo diga en pantalla y quede en la auditoría.
+      //
+      // Los TRES de descuadre, que son los que dejan el tanque ciego.
+      // `umbral_diferencia_pct` no cuenta: vigila la factura del proveedor,
+      // no el faltante (mismo criterio que la alerta de 0082). Antes miraba
+      // ese en lugar del de la ventana y contaba mal.
       const sinVigilancia = rows.filter(
         (f) =>
+          !omitidos.includes(f.codigo) &&
           f.umbral_descuadre_pct === null &&
           f.umbral_descuadre_ciclo_pct === null &&
-          f.umbral_diferencia_pct === null
+          f.umbral_descuadre_ventana_pct === null
       ).length;
 
       // UNA fila de auditoría con el conteo, no una por tanque -- mismo
@@ -1295,14 +1306,57 @@ export class CombustibleController {
         accion: "combustible.tanques_carga_masiva",
         tenantId,
         usuarioId: req.usuario!.id,
-        detalle: { cantidad: result.length, sinVigilancia },
+        // Los omitidos van con nombre y apellido: "la planilla no cambió el
+        // tanque TQ-01" es exactamente lo que alguien va a preguntar cuando
+        // vea que su corrección no se aplicó.
+        detalle: { cantidad: creados.length, sinVigilancia, omitidos },
         contexto: contextoAuditoriaModulo(req),
       });
+
+      // Un tanque que nace ciego avisa, igual que por el formulario (#156):
+      // entrar por Excel no puede ser la forma de esquivar el aviso.
+      if (sinVigilancia > 0) {
+        try {
+          const admins = await withTenant(tenantId, (client) =>
+            service.findAdminsConCombustibleHabilitado(client, tenantId)
+          );
+          await enviarCorreoVigilanciaReducida(admins, {
+            quien: req.usuario!.nombre ?? req.usuario!.email ?? "Un administrador",
+            objeto: `${sinVigilancia} tanque(s) importados por planilla`,
+            motivo: "Se importaron sin ningún umbral de descuadre configurado",
+            cambios: [
+              {
+                control: "Umbrales de descuadre (tramo, ciclo y ventana)",
+                de: "—",
+                a: "sin configurar (no alerta)",
+              },
+            ],
+          });
+        } catch (err) {
+          logger.warn(
+            { err, tenantId },
+            "No se pudo avisar de los tanques importados sin vigilancia"
+          );
+        }
+      }
+
       await publicarEventoTenant(tenantId, "combustible.tanques_carga_masiva", {
-        cantidad: result.length,
+        cantidad: creados.length,
       });
-      res.status(201).json({ insertados: result.length, sinVigilancia, data: result });
-    } catch {
+      res.status(201).json({
+        insertados: creados.length,
+        sinVigilancia,
+        // Lo que la planilla NO tocó, y por qué. La carga masiva da de alta;
+        // editar un tanque existente pasa por su ficha, que compara los
+        // valores, pide motivo si el cambio afloja un control y avisa.
+        omitidos,
+        data: creados,
+      });
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("supera la capacidad")) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
       res.status(500).json({ error: "Error en importación masiva" });
     }
   }
@@ -1377,6 +1431,41 @@ export class CombustibleController {
    *  ordenar por valor, ver los dos casos raros que inflan todo, borrarlos y
    *  mirar cómo cambia la sugerencia -- que es exactamente el trabajo que hoy
    *  hay que hacer a mano para saber si el número sirve. */
+  /** GET /config/sugerencia-topes -- los dos topes diarios sugeridos desde el
+   *  historial. Propone, no aplica: ver CombustibleService.sugerirTopesDiarios. */
+  async getSugerenciaTopes(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const sugerencia = await withTenant(tenantId, (client) =>
+        service.sugerirTopesDiarios(client, tenantId)
+      );
+      res.json(sugerencia);
+    } catch {
+      res.status(500).json({ error: "Error al calcular la sugerencia de topes" });
+    }
+  }
+
+  /** GET /equipos/:equipoId/sugerencia-consumo -- el consumo máximo sugerido
+   *  desde el historial del propio equipo. Mismo contrato que la sugerencia
+   *  de umbrales del tanque: devuelve la muestra entera y nunca aplica nada.
+   *  Vive en Combustible y no en Equipos porque la muestra son los vales. */
+  async getSugerenciaConsumo(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const equipoId = Number(req.params.equipoId);
+      const sugerencia = await withTenant(tenantId, (client) =>
+        service.sugerirConsumoMaximo(client, tenantId, equipoId)
+      );
+      if (!sugerencia) {
+        res.status(404).json({ error: "Equipo no encontrado" });
+        return;
+      }
+      res.json(sugerencia);
+    } catch {
+      res.status(500).json({ error: "Error al calcular la sugerencia de consumo" });
+    }
+  }
+
   async getSugerenciaUmbralXlsx(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
@@ -1728,55 +1817,6 @@ export class CombustibleController {
     }
   }
 
-  /** Legacy: mismo contrato de siempre (body `{ nivel_actual }`, responde el
-   *  tanque). Ya no sobreescribe `nivel_actual` directo por dentro -- ver
-   *  `CombustibleService.actualizarNivelLegacy`. */
-  async updateNivel(req: Request, res: Response) {
-    try {
-      const tenantId = getTenantId(req);
-      const id = Number(req.params.id);
-      const { nivel_actual } = req.validatedBody as ActualizarNivelCombustibleInput;
-
-      const updated = await withTenant(tenantId, (client) =>
-        service.actualizarNivelLegacy(client, tenantId, req.usuario!.id, id, nivel_actual)
-      );
-
-      if (!updated) {
-        return res.status(404).json({ error: "No encontrado" });
-      }
-
-      await registrarAuditoria({
-        accion: "combustible.actualizar_nivel",
-        tenantId,
-        usuarioId: req.usuario!.id,
-        detalle: { combustibleId: id },
-        contexto: contextoAuditoriaModulo(req),
-      });
-      await publicarEventoTenant(tenantId, "combustible.nivel_actualizado", {
-        combustibleId: id,
-        nivelActual: nivel_actual,
-      });
-      res.json(updated);
-    } catch (err) {
-      // El tanque no existe en este tenant -- mismo motivo que el 404 de
-      // siempre (`updated` null), solo que acá llega como excepción porque
-      // registrarLectura() valida la FK antes de insertar. Se preserva el
-      // 404 histórico de este endpoint, NO el 400 del endpoint nuevo (ver
-      // registrarLectura más abajo) -- no romper el contrato existente.
-      if (err instanceof Error && err.message.includes("no existe en este tenant")) {
-        res.status(404).json({ error: "No encontrado" });
-        return;
-      }
-      // Este SÍ es 400 incluso en el endpoint legacy: no es "no encontrado",
-      // es un dato imposible para un tanque que sí existe.
-      if (err instanceof Error && err.message.includes("supera la capacidad del tanque")) {
-        res.status(400).json({ error: err.message });
-        return;
-      }
-      res.status(500).json({ error: "Error al actualizar nivel" });
-    }
-  }
-
   /** POST /combustible/lecturas -- crea una lectura histórica y, si es la
    *  más reciente, actualiza `nivel_actual` (ver
    *  CombustibleRepository.registrarLectura). Único endpoint de Combustible
@@ -1829,36 +1869,16 @@ export class CombustibleController {
         combustibleId: data.combustible_id,
         nivel: data.nivel,
       });
-      await this.procesarAlertaNivelBajo(tenantId, data.combustible_id, data.nivel);
-      await this.procesarAlertaDescuadre(
-        tenantId,
-        data.combustible_id,
-        Number(fila!.lectura.id),
-        data.nivel,
+      await this.procesarLecturaRegistrada(tenantId, {
+        combustibleId: data.combustible_id,
+        lecturaId: Number(fila!.lectura.id),
+        nivel: data.nivel,
         // pg devuelve TIMESTAMPTZ como Date; el balance necesita el mismo
         // instante exacto que quedó guardado (no `data.leido_en`, que es
         // opcional en el body y puede venir sin definir).
-        new Date(fila!.lectura.leido_en).toISOString()
-      );
-      await this.procesarAlertaDescuadreCiclo(
-        tenantId,
-        data.combustible_id,
-        Number(fila!.lectura.id),
-        data.nivel,
-        new Date(fila!.lectura.leido_en).toISOString()
-      );
-      await this.procesarAlertaLecturaRetroactiva(
-        tenantId,
-        data.combustible_id,
-        Number(fila!.lectura.id),
-        data.nivel,
-        new Date(fila!.lectura.leido_en).toISOString()
-      );
-      await this.procesarAlertaDescuadreVentana(
-        tenantId,
-        data.combustible_id,
-        new Date(fila!.lectura.leido_en).toISOString()
-      );
+        leidoEn: new Date(fila!.lectura.leido_en).toISOString(),
+        rolQueMidio: req.usuario!.rol,
+      });
       res.status(201).json(fila);
     } catch (err) {
       // Los dos casos van con 400: son datos que se contradicen a sí mismos
@@ -1947,7 +1967,9 @@ export class CombustibleController {
           err.message.includes("está desactivado y no puede despachar") ||
           err.message.includes("y el vale dice") ||
           // Grifo del rol equivocado (migrations/0065).
-          err.message.includes("no está marcado como"))
+          err.message.includes("no está marcado como") ||
+          // Salto de numeración imposible de tipeo (5ª auditoría).
+          err.message.includes("salta"))
       ) {
         // Todos estos son datos que se contradicen a sí mismos o a una
         // fila que el propio request referenció mal -- 400, corregible ahí
@@ -2030,7 +2052,7 @@ export class CombustibleController {
     const serieTalonario = data.serie_talonario;
     const nVale = data.n_vale;
     try {
-      const { huecos, exceso, medidor, fueraDeOrden, tope, retro, recargado, admins } =
+      const { huecos, exceso, medidor, fueraDeOrden, tope, retro, recargado, consumo, admins } =
         await withTenant(tenantId, async (client) => {
           // El vale que acaba de llegar puede estar llenando un hueco ya
           // alertado (offline que sincronizó) -- esto corre siempre, sin
@@ -2128,6 +2150,16 @@ export class CombustibleController {
             data.cantidad
           );
 
+          // Consumo por hora de motor / por km (0088). Es el único control que
+          // ve el combustible que sale CON vale y no llega a la máquina.
+          const consumo = data.equipo_id
+            ? await service.evaluarConsumoExcedido(client, tenantId, data.equipo_id, {
+                despachoId,
+                lecturaHorometro: data.lectura_horometro ?? null,
+                lecturaOdometro: data.lectura_odometro ?? null,
+              })
+            : null;
+
           const tope = await service.evaluarTopeDiario(client, tenantId, {
             despachoId,
             equipoId: data.equipo_id ?? null,
@@ -2136,6 +2168,17 @@ export class CombustibleController {
           });
 
           const nuevas = [
+            ...(consumo
+              ? [
+                  {
+                    tipo: "consumo_excedido" as const,
+                    serieTalonario,
+                    nVale,
+                    despachoId,
+                    detalle: { ...consumo, equipoId: data.equipo_id } as Record<string, unknown>,
+                  },
+                ]
+              : []),
             ...huecos.map((n) => ({
               tipo: "hueco_detectado" as const,
               serieTalonario,
@@ -2233,13 +2276,14 @@ export class CombustibleController {
               tope,
               retro,
               recargado,
+              consumo,
               admins: [] as { email: string; nombre: string }[],
             };
           }
 
           await service.crearAlertas(client, tenantId, nuevas);
           const admins = await service.findAdminsConCombustibleHabilitado(client, tenantId);
-          return { huecos, exceso, medidor, fueraDeOrden, tope, retro, recargado, admins };
+          return { huecos, exceso, medidor, fueraDeOrden, tope, retro, recargado, consumo, admins };
         });
 
       if (huecos.length > 0) {
@@ -2311,6 +2355,15 @@ export class CombustibleController {
         });
       }
 
+      if (consumo) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "consumo_excedido",
+          serieTalonario,
+          nVale,
+        });
+        await enviarCorreoConsumoExcedido(admins, { ...consumo, serieTalonario, nVale });
+      }
+
       if (medidor) {
         await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
           tipo: "medidor_inconsistente",
@@ -2323,6 +2376,98 @@ export class CombustibleController {
       logger.warn(
         { err, tenantId, despachoId },
         "No se pudieron procesar las alertas del despacho creado"
+      );
+    }
+  }
+
+  /** TODO lo que tiene que pasar después de que una varilla queda guardada.
+   *
+   *  Existe como método único por la 5ª auditoría: había DOS caminos para
+   *  cargar una varilla (POST /lecturas y el viejo PUT /:id/nivel) y solo uno
+   *  corría los controles. Por el otro se registró una varilla después de
+   *  sacar 3.000 L y no saltó nada. El viejo se eliminó; esto garantiza que si
+   *  mañana aparece otra entrada (una importación, una integración), tenga UN
+   *  lugar que llamar en vez de copiar la mitad de la lista.
+   *
+   *  Cada control mantiene su contrato "nunca lanza": la lectura ya se guardó
+   *  y se respondió, y un fallo en uno no puede impedir que corran los demás. */
+  private async procesarLecturaRegistrada(
+    tenantId: string,
+    l: {
+      combustibleId: number;
+      lecturaId: number;
+      nivel: number;
+      leidoEn: string;
+      rolQueMidio: string;
+    }
+  ) {
+    await this.procesarAlertaNivelBajo(tenantId, l.combustibleId, l.nivel);
+    await this.procesarAlertaDescuadre(tenantId, l.combustibleId, l.lecturaId, l.nivel, l.leidoEn);
+    await this.procesarAlertaDescuadreCiclo(
+      tenantId,
+      l.combustibleId,
+      l.lecturaId,
+      l.nivel,
+      l.leidoEn
+    );
+    await this.procesarAlertaLecturaRetroactiva(
+      tenantId,
+      l.combustibleId,
+      l.lecturaId,
+      l.nivel,
+      l.leidoEn
+    );
+    await this.procesarAlertaDescuadreVentana(tenantId, l.combustibleId, l.lecturaId, l.leidoEn);
+    await this.procesarControlesDeVarilla(tenantId, l.combustibleId, l.lecturaId, l.rolQueMidio);
+  }
+
+  /** Los dos controles sobre QUIÉN y CÓMO se mide (5ª auditoría).
+   *
+   *  - Una varilla tomada por alguien que NO despacha (no grifero) cierra la
+   *    alerta de "varilla sin control": ese es el hecho que la alerta pedía.
+   *  - Varillas que cuadran con el teórico AL LITRO varias veces seguidas: una
+   *    varilla real no da exacto (se lee en una regla y se convierte con la
+   *    tabla de aforo), así que es la huella de alguien que copia el número
+   *    que el sistema espera en vez de medir. */
+  private async procesarControlesDeVarilla(
+    tenantId: string,
+    combustibleId: number,
+    lecturaId: number,
+    rolQueMidio: string
+  ) {
+    try {
+      const { exacta, admins } = await withTenant(tenantId, async (client) => {
+        if (rolQueMidio !== "grifero") {
+          await service.resolverVarillaSinControlSiExiste(client, tenantId, combustibleId);
+        }
+        const exacta = await service.evaluarVarillaExacta(
+          client,
+          tenantId,
+          combustibleId,
+          lecturaId
+        );
+        if (!exacta) return { exacta, admins: [] as { email: string; nombre: string }[] };
+        const { nueva } = await service.registrarAlertaDeEstadoAcumulado(client, tenantId, {
+          tipo: "varilla_exacta",
+          combustibleId,
+          lecturaId,
+          detalle: { ...exacta },
+        });
+        const admins = nueva
+          ? await service.findAdminsConCombustibleHabilitado(client, tenantId)
+          : [];
+        return { exacta: nueva ? exacta : null, admins };
+      });
+      if (!exacta) return;
+      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+        tipo: "varilla_exacta",
+        combustibleId,
+      });
+      await enviarCorreoVarillaExacta(admins, exacta);
+    } catch (err) {
+      logger.warn(
+        { err, tenantId, combustibleId },
+        "No se pudieron evaluar los controles de varilla"
       );
     }
   }
@@ -2395,6 +2540,7 @@ export class CombustibleController {
           {
             tipo: "descuadre_inventario",
             combustibleId,
+            lecturaId,
             detalle: { ...descuadre },
           },
         ]);
@@ -2444,9 +2590,18 @@ export class CombustibleController {
         );
         if (!ciclo) return { ciclo, admins: [] as { email: string; nombre: string }[] };
 
-        await service.crearAlertas(client, tenantId, [
-          { tipo: "descuadre_ciclo", combustibleId, detalle: { ...ciclo } },
-        ]);
+        // UNA alerta abierta por tanque, no una por varilla (5ª auditoría):
+        // mientras el acumulado siga pasado, cada varilla nueva actualiza la
+        // misma alerta con los números al día y la vuelve a marcar como no
+        // leída, pero no manda otro correo. Cinco varillas eran cinco alertas
+        // y cinco correos iguales -- el ruido que hace que nadie las mire.
+        const { nueva } = await service.registrarAlertaDeEstadoAcumulado(client, tenantId, {
+          tipo: "descuadre_ciclo",
+          combustibleId,
+          lecturaId,
+          detalle: { ...ciclo },
+        });
+        if (!nueva) return { ciclo: null, admins: [] as { email: string; nombre: string }[] };
         const admins = await service.findAdminsConCombustibleHabilitado(client, tenantId);
         return { ciclo, admins };
       });
@@ -2473,6 +2628,7 @@ export class CombustibleController {
   private async procesarAlertaDescuadreVentana(
     tenantId: string,
     combustibleId: number,
+    lecturaId: number,
     leidoEn: string
   ) {
     try {
@@ -2485,9 +2641,14 @@ export class CombustibleController {
         );
         if (!ventana) return { ventana, admins: [] as { email: string; nombre: string }[] };
 
-        await service.crearAlertas(client, tenantId, [
-          { tipo: "descuadre_ventana", combustibleId, detalle: { ...ventana } },
-        ]);
+        // Misma deduplicación que el ciclo: una alerta abierta por tanque.
+        const { nueva } = await service.registrarAlertaDeEstadoAcumulado(client, tenantId, {
+          tipo: "descuadre_ventana",
+          combustibleId,
+          lecturaId,
+          detalle: { ...ventana },
+        });
+        if (!nueva) return { ventana: null, admins: [] as { email: string; nombre: string }[] };
         const admins = await service.findAdminsConCombustibleHabilitado(client, tenantId);
         return { ventana, admins };
       });
@@ -2533,6 +2694,7 @@ export class CombustibleController {
           {
             tipo: "lectura_retroactiva",
             combustibleId,
+            lecturaId,
             detalle: {
               tanqueNombre: tanque?.tanque_nombre ?? "",
               unidad: tanque?.unidad ?? "",
@@ -2828,6 +2990,26 @@ export class CombustibleController {
       // Subir la ventana o los días sin medir, y subir o apagar cualquiera de
       // los dos topes de 0079, debilitan la vigilancia sin tocar un solo vale
       // ni un solo tanque -- que era la forma más cómoda de robar que quedaba.
+      // Qué se afloja se decide ANTES de guardar, y si afloja sin motivo no se
+      // guarda nada: mismo trato que la ficha del tanque. Hasta la 5ª
+      // auditoría la config era la excepción -- apagar un tope o alargar la
+      // ventana de gracia se guardaba sin explicar nada.
+      const antesDeGuardar = await withTenant(tenantId, (client) =>
+        service.getConfig(client, tenantId)
+      );
+      const aflojaSinMotivo = service.evaluarAflojamientoConfig(antesDeGuardar, nueva);
+      if (aflojaSinMotivo.length > 0 && !nueva.motivo_ajuste) {
+        const detalle = aflojaSinMotivo.map((c) => `${c.control}: ${c.de} → ${c.a}`).join("; ");
+        res.status(400).json({
+          error:
+            `Este cambio reduce la vigilancia del módulo (${detalle}). ` +
+            `Indicá el motivo para dejarlo registrado.`,
+          requiere_motivo: true,
+          aflojados: aflojaSinMotivo,
+        });
+        return;
+      }
+
       const { guardada, aflojados } = await withTenant(tenantId, async (client) => {
         const antes = await service.getConfig(client, tenantId);
         const aflojados = service.evaluarAflojamientoConfig(antes, nueva);
@@ -2843,6 +3025,9 @@ export class CombustibleController {
             llenadosPorDiaMax: nueva.llenados_por_dia_max,
             topeSinCapacidadL: nueva.tope_diario_sin_capacidad_l,
             grifieroRegistraVarilla: nueva.grifero_registra_varilla,
+            recepcionRequiereValidacion: nueva.recepcion_requiere_validacion,
+            horasParaValidarRecepcion: nueva.horas_para_validar_recepcion,
+            diasSinVarillaDeControl: nueva.dias_sin_varilla_de_control,
           },
           req.usuario!.id
         );
@@ -2861,7 +3046,7 @@ export class CombustibleController {
         usuarioId: req.usuario!.id,
         detalle:
           aflojados.length > 0
-            ? { ...nueva, aflojados }
+            ? { ...nueva, aflojados, motivo: nueva.motivo_ajuste }
             : { ventanaGraciaHoras: nueva.ventana_gracia_horas },
         contexto: contextoAuditoriaModulo(req),
       });
@@ -2876,7 +3061,7 @@ export class CombustibleController {
           await enviarCorreoVigilanciaReducida(admins, {
             quien: req.usuario!.nombre ?? req.usuario!.email ?? "Un administrador",
             objeto: "la configuración del módulo de combustible",
-            motivo: "",
+            motivo: nueva.motivo_ajuste ?? "",
             cambios: aflojados,
           });
         } catch (err) {
@@ -3664,6 +3849,12 @@ export class CombustibleController {
         recepcionId: fila!.id,
         combustibleId: data.combustible_id,
       });
+      await this.procesarAlertaRecepcionRetroactiva(
+        tenantId,
+        data.combustible_id,
+        Number(fila!.id),
+        new Date(fila!.recibido_en).toISOString()
+      );
       res.status(201).json(fila);
     } catch (err) {
       if (
@@ -3682,6 +3873,219 @@ export class CombustibleController {
         return;
       }
       res.status(500).json({ error: "Error al registrar la recepción" });
+    }
+  }
+
+  /** PATCH /recepciones/:recepcionId/validar -- el segundo testigo de la
+   *  entrega (5ª auditoría, migración 0088).
+   *
+   *  Quien valida escribe la cantidad que dice la GUÍA, no confirma la que
+   *  cargó el que recibió: la pantalla no se la muestra hasta después de
+   *  guardar. Si no coinciden, queda la alerta con los dos números.
+   *
+   *  404 si no existe, 409 si ya estaba validada o anulada -- mismo criterio
+   *  que las anulaciones, para no pisar quién validó primero y con qué. */
+  async validarRecepcion(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const recepcionId = Number(req.params.recepcionId);
+      const { cantidad_documento } = req.validatedBody as ValidarRecepcionCombustibleInput;
+
+      const resultado = await withTenant(tenantId, async (client) => {
+        const validada = await service.validarRecepcion(
+          client,
+          tenantId,
+          recepcionId,
+          req.usuario!.id,
+          cantidad_documento
+        );
+        if (validada) return { estado: "validada" as const, ...validada };
+        const existente = await service.getRecepcionPorId(client, tenantId, recepcionId);
+        return existente ? { estado: "no_aplicable" as const } : { estado: "inexistente" as const };
+      });
+
+      if (resultado.estado === "inexistente") {
+        res.status(404).json({ error: "Recepción no encontrada" });
+        return;
+      }
+      if (resultado.estado === "no_aplicable") {
+        res.status(409).json({ error: "Esta recepción ya estaba validada o fue anulada" });
+        return;
+      }
+
+      await registrarAuditoria({
+        // Acción propia cuando valida el MISMO que registró: no se bloquea
+        // --una empresa chica puede tener una sola persona-- pero el auditor
+        // tiene que poder encontrarlo sin leer validación por validación.
+        accion: resultado.autovalidacion
+          ? "combustible.recepcion_autovalidada"
+          : "combustible.recepcion_validar",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          recepcionId,
+          cantidadDocumento: cantidad_documento,
+          cantidadRegistrada: Number(resultado.recepcion.cantidad),
+          coincide: resultado.discrepancia === null,
+          autovalidacion: resultado.autovalidacion,
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+
+      if (resultado.discrepancia) {
+        await this.procesarAlertaRecepcionDiscrepante(
+          tenantId,
+          resultado.recepcion,
+          resultado.discrepancia
+        );
+      }
+
+      await publicarEventoTenant(tenantId, "combustible.recepcion_validada", { recepcionId });
+      res.json({ recepcion: resultado.recepcion, discrepancia: resultado.discrepancia });
+    } catch {
+      res.status(500).json({ error: "Error al validar la recepción" });
+    }
+  }
+
+  /** Mismo contrato best-effort que el resto de los procesar*. */
+  private async procesarAlertaRecepcionDiscrepante(
+    tenantId: string,
+    recepcion: { id: number; combustible_id: number; cantidad: string },
+    discrepancia: {
+      cantidadRegistrada: number;
+      cantidadDocumento: number;
+      diferencia: number;
+      sentido: string;
+    }
+  ) {
+    try {
+      const { admins, tanque } = await withTenant(tenantId, async (client) => {
+        const tanque = await service.getById(client, tenantId, recepcion.combustible_id);
+        await service.crearAlertas(client, tenantId, [
+          {
+            tipo: "recepcion_discrepante",
+            recepcionId: recepcion.id,
+            combustibleId: recepcion.combustible_id,
+            detalle: {
+              ...discrepancia,
+              tanqueNombre: tanque?.tanque_nombre ?? "",
+              unidad: tanque?.unidad ?? "",
+            },
+          },
+        ]);
+        return {
+          admins: await service.findAdminsConCombustibleHabilitado(client, tenantId),
+          tanque,
+        };
+      });
+      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+        tipo: "recepcion_discrepante",
+        recepcionId: recepcion.id,
+      });
+      await enviarCorreoRecepcionDiscrepante(admins, {
+        tanqueNombre: tanque?.tanque_nombre ?? "",
+        unidad: tanque?.unidad ?? "",
+        cantidadRegistrada: discrepancia.cantidadRegistrada,
+        cantidadDocumento: discrepancia.cantidadDocumento,
+        diferencia: discrepancia.diferencia,
+      });
+    } catch (err) {
+      logger.warn({ err, tenantId }, "No se pudo procesar la alerta de recepción discrepante");
+    }
+  }
+
+  private async procesarAlertaRecepcionAnulada(
+    tenantId: string,
+    recepcion: { id: number; combustible_id: number; cantidad: string },
+    motivo: string,
+    req: Request
+  ) {
+    try {
+      const { admins, tanque } = await withTenant(tenantId, async (client) => {
+        const tanque = await service.getById(client, tenantId, recepcion.combustible_id);
+        await service.crearAlertas(client, tenantId, [
+          {
+            tipo: "recepcion_anulada",
+            recepcionId: recepcion.id,
+            combustibleId: recepcion.combustible_id,
+            detalle: {
+              motivo,
+              cantidad: Number(recepcion.cantidad),
+              tanqueNombre: tanque?.tanque_nombre ?? "",
+              unidad: tanque?.unidad ?? "",
+            },
+          },
+        ]);
+        // La recepción anulada ya no espera validación: el hecho que esa
+        // alerta reportaba dejó de existir.
+        await service.resolverRecepcionSinValidarSiExiste(client, tenantId, recepcion.id);
+        return {
+          admins: await service.findAdminsConCombustibleHabilitado(client, tenantId),
+          tanque,
+        };
+      });
+      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+        tipo: "recepcion_anulada",
+        recepcionId: recepcion.id,
+      });
+      await enviarCorreoRecepcionAnulada(admins, {
+        tanqueNombre: tanque?.tanque_nombre ?? "",
+        unidad: tanque?.unidad ?? "",
+        cantidad: Number(recepcion.cantidad),
+        motivo,
+        quien: req.usuario!.nombre ?? req.usuario!.email ?? "Un usuario",
+      });
+    } catch (err) {
+      logger.warn({ err, tenantId }, "No se pudo procesar la alerta de recepción anulada");
+    }
+  }
+
+  private async procesarAlertaRecepcionRetroactiva(
+    tenantId: string,
+    combustibleId: number,
+    recepcionId: number,
+    recibidoEn: string
+  ) {
+    try {
+      const { retro, admins, tanque } = await withTenant(tenantId, async (client) => {
+        const retro = await service.evaluarRecepcionRetroactiva(
+          client,
+          tenantId,
+          combustibleId,
+          recepcionId,
+          recibidoEn
+        );
+        if (!retro) {
+          return { retro, admins: [] as { email: string; nombre: string }[], tanque: null };
+        }
+        const tanque = await service.getById(client, tenantId, combustibleId);
+        await service.crearAlertas(client, tenantId, [
+          {
+            tipo: "recepcion_retroactiva",
+            recepcionId,
+            combustibleId,
+            detalle: { ...retro, tanqueNombre: tanque?.tanque_nombre ?? "" },
+          },
+        ]);
+        return {
+          retro,
+          admins: await service.findAdminsConCombustibleHabilitado(client, tenantId),
+          tanque,
+        };
+      });
+      if (!retro) return;
+      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+        tipo: "recepcion_retroactiva",
+        recepcionId,
+      });
+      await enviarCorreoRecepcionRetroactiva(admins, {
+        tanqueNombre: tanque?.tanque_nombre ?? "",
+        recibidoEn,
+        diasDeAtraso: retro.diasDeAtraso,
+        diasTolerados: retro.diasTolerados,
+      });
+    } catch (err) {
+      logger.warn({ err, tenantId }, "No se pudo procesar la alerta de recepción retroactiva");
     }
   }
 
@@ -3752,6 +4156,11 @@ export class CombustibleController {
       await publicarEventoTenant(tenantId, "combustible.recepcion_anulada", {
         recepcionId,
       });
+      // ANULAR UNA RECEPCIÓN NO AVISABA A NADIE, al revés que anular un vale.
+      // Y es la maniobra más rentable de las dos: si la entrega sí ocurrió,
+      // anularla deja ese combustible fuera de los papeles -- el tanque tiene
+      // más de lo que el sistema cree y el sobrante sale sin que falte nada.
+      await this.procesarAlertaRecepcionAnulada(tenantId, resultado.recepcion, motivo, req);
       res.json({ recepcion: resultado.recepcion, tanque: resultado.tanque });
     } catch {
       res.status(500).json({ error: "Error al anular la recepción" });

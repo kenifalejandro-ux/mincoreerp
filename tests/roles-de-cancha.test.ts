@@ -248,7 +248,14 @@ describe("combustible: roles de cancha (migración 0085)", () => {
     expect(actual.status).toBe(200);
     const res = await admin
       .put("/api/erp/combustible/config")
-      .send({ ...actual.body, grifero_registra_varilla: puede });
+      // Devolverle la varilla al grifero AFLOJA (el que despacha vuelve a ser
+      // el que mide), y desde la 5ª auditoría aflojar la config exige motivo,
+      // igual que aflojar la ficha de un tanque.
+      .send({
+        ...actual.body,
+        grifero_registra_varilla: puede,
+        motivo_ajuste: "ajuste de prueba",
+      });
     expect(res.status).toBe(200);
   }
 

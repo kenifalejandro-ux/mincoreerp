@@ -78,23 +78,29 @@ export async function enviarCorreoAlertaMedidor(
     serieTalonario: string;
     nVale: number;
     medidor: "horometro" | "odometro";
-    motivo: "retroceso" | "excede_calendario";
-    valorAnterior: number;
-    valorNuevo: number;
+    motivo: "retroceso" | "excede_calendario" | "sin_lectura";
+    valorAnterior?: number;
+    valorNuevo?: number;
     horasDeclaradas?: number;
     horasCalendario?: number;
+    equipo?: string;
   }
 ) {
   const nombreMedidor = params.medidor === "horometro" ? "horómetro" : "odómetro";
   const vale = String(params.nVale).padStart(5, "0");
 
   const explicacion =
-    params.motivo === "retroceso"
-      ? `El ${nombreMedidor} marcó ${params.valorNuevo}, MENOS que los ${params.valorAnterior} ` +
-        `del despacho anterior de esa unidad. Un medidor no vuelve atrás.`
-      : `El horómetro sumó ${params.horasDeclaradas} horas de motor, pero desde el despacho ` +
-        `anterior solo pasaron ${params.horasCalendario} horas de reloj. Una máquina no puede ` +
-        `acumular más horas de motor que las que pasaron.`;
+    params.motivo === "sin_lectura"
+      ? `El vale salió sin la lectura del ${nombreMedidor}` +
+        `${params.equipo ? ` de ${params.equipo}` : ""}. Sin ese número no se puede calcular el ` +
+        `consumo del equipo, que es el único control que ve el combustible que sale con vale y ` +
+        `no llega a la máquina.`
+      : params.motivo === "retroceso"
+        ? `El ${nombreMedidor} marcó ${params.valorNuevo}, MENOS que los ${params.valorAnterior} ` +
+          `del despacho anterior de esa unidad. Un medidor no vuelve atrás.`
+        : `El horómetro sumó ${params.horasDeclaradas} horas de motor, pero desde el despacho ` +
+          `anterior solo pasaron ${params.horasCalendario} horas de reloj. Una máquina no puede ` +
+          `acumular más horas de motor que las que pasaron.`;
 
   await enviarCorreoAlerta({
     destinatarios,
@@ -511,6 +517,172 @@ export async function enviarCorreoAlertaAnulacion(
     lineas: [
       `El vale ${String(params.nVale).padStart(5, "0")} fue anulado. Motivo: "${params.motivo}".`,
       "Revisar en el ERP y marcarlo como revisado si el motivo es válido.",
+    ],
+  });
+}
+
+// ── 5ª auditoría (red team técnico, 2026-09-14) ────────────────────────────
+
+/** Varillas que cuadran con el teórico AL LITRO una detrás de otra. Una
+ *  varilla real no da exacto: la huella es la de alguien que anota el número
+ *  que el sistema espera en vez de medir. */
+export async function enviarCorreoVarillaExacta(
+  destinatarios: Destinatario[],
+  params: {
+    tanqueNombre: string;
+    unidad: string;
+    varillasSeguidas: number;
+    toleranciaLitros: number;
+  }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: varillas que cuadran al litro en ${params.tanqueNombre}`,
+    titulo: `${params.varillasSeguidas} varillas seguidas exactas en ${params.tanqueNombre}`,
+    lineas: [
+      `Las últimas ${params.varillasSeguidas} mediciones, con despachos o recepciones de por medio, ` +
+        `coinciden con lo que el sistema esperaba con una diferencia de ${params.toleranciaLitros} ` +
+        `${params.unidad} o menos.`,
+      "Una varilla medida de verdad casi nunca da exacto: se lee en centímetros y se convierte " +
+        "con la tabla de aforo. Varias seguidas exactas son la señal de que se está anotando el " +
+        "nivel que el sistema calcula en vez de medirlo, y así ningún control puede ver un faltante.",
+      "Recomendación: que alguien que no despacha tome la varilla sin aviso y compare.",
+    ],
+  });
+}
+
+/** Recepción que espera la validación contra la guía pasado el plazo. */
+export async function enviarCorreoRecepcionSinValidar(
+  destinatarios: Destinatario[],
+  params: {
+    tanqueNombre: string;
+    numeroDocumento: string | null;
+    registradaEn: string;
+    plazoHoras: number;
+  }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: recepción sin validar en ${params.tanqueNombre}`,
+    titulo: `Recepción pendiente de validación en ${params.tanqueNombre}`,
+    lineas: [
+      `La recepción${params.numeroDocumento ? ` con documento ${params.numeroDocumento}` : ""} ` +
+        `registrada el ${new Date(params.registradaEn).toLocaleString("es-PE")} sigue sin validar ` +
+        `después de ${params.plazoHoras} horas.`,
+      "Validarla es escribir la cantidad que dice la guía o la factura. Es el único control que " +
+        "detecta una recepción registrada por menos de lo que entró: la varilla no lo puede ver, " +
+        "porque cuadra con lo registrado.",
+    ],
+  });
+}
+
+/** Administración escribió en la validación otra cantidad que la registrada. */
+export async function enviarCorreoRecepcionDiscrepante(
+  destinatarios: Destinatario[],
+  params: {
+    tanqueNombre: string;
+    unidad: string;
+    cantidadRegistrada: number;
+    cantidadDocumento: number;
+    diferencia: number;
+  }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: la guía no coincide con la recepción en ${params.tanqueNombre}`,
+    titulo: `Recepción con cantidad distinta a la guía en ${params.tanqueNombre}`,
+    lineas: [
+      `Se registró una recepción de ${params.cantidadRegistrada} ${params.unidad}, pero al validarla ` +
+        `la guía dice ${params.cantidadDocumento} ${params.unidad} ` +
+        `(${params.diferencia > 0 ? "+" : ""}${params.diferencia} ${params.unidad}).`,
+      "Si la guía dice MÁS de lo registrado, el combustible de la diferencia entró al tanque sin " +
+        "quedar en el sistema: la varilla va a cuadrar igual, y por eso nada más lo detecta.",
+    ],
+  });
+}
+
+/** Se anuló una recepción. Antes no avisaba a nadie. */
+export async function enviarCorreoRecepcionAnulada(
+  destinatarios: Destinatario[],
+  params: { tanqueNombre: string; unidad: string; cantidad: number; motivo: string; quien: string }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: recepción anulada en ${params.tanqueNombre}`,
+    titulo: `Recepción de ${params.cantidad} ${params.unidad} anulada en ${params.tanqueNombre}`,
+    lineas: [
+      `${params.quien} anuló una recepción de ${params.cantidad} ${params.unidad}. Motivo: ${params.motivo}`,
+      "Anular una recepción que sí entró deja ese combustible fuera de los papeles: el tanque " +
+        "tiene más de lo que el sistema cree, y ese sobrante se puede sacar sin que falte nada.",
+    ],
+  });
+}
+
+/** Recepción fechada hacia atrás, detrás de movimientos que ya existían. */
+export async function enviarCorreoRecepcionRetroactiva(
+  destinatarios: Destinatario[],
+  params: { tanqueNombre: string; recibidoEn: string; diasDeAtraso: number; diasTolerados: number }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: recepción cargada con atraso en ${params.tanqueNombre}`,
+    titulo: `Recepción fechada ${params.diasDeAtraso} días atrás en ${params.tanqueNombre}`,
+    lineas: [
+      `Se registró una recepción con fecha ${new Date(params.recibidoEn).toLocaleString("es-PE")}, ` +
+        `${params.diasDeAtraso} días antes de su carga (se toleran ${params.diasTolerados}), ` +
+        "cuando el tanque ya tenía movimientos posteriores.",
+      "Una recepción insertada atrás cambia el punto de partida del ciclo y la cuenta de los " +
+        "tramos ya evaluados.",
+    ],
+  });
+}
+
+/** El equipo consumió por hora (o por km) más que su máximo configurado. */
+export async function enviarCorreoConsumoExcedido(
+  destinatarios: Destinatario[],
+  params: {
+    equipo: string;
+    consumo: number;
+    consumoMaximo: number;
+    unidadMedida: string;
+    litros: number;
+    recorrido: number;
+    serieTalonario: string;
+    nVale: number;
+  }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: consumo excedido en ${params.equipo}`,
+    titulo: `${params.equipo} consumió ${params.consumo} L/${params.unidadMedida}`,
+    lineas: [
+      `Desde las cargas anteriores el equipo recibió ${params.litros} L para ${params.recorrido} ` +
+        `${params.unidadMedida} de trabajo: ${params.consumo} L/${params.unidadMedida}, contra un ` +
+        `máximo de ${params.consumoMaximo} L/${params.unidadMedida}. Lo detectó el vale ` +
+        `${params.serieTalonario}-${String(params.nVale).padStart(5, "0")}.`,
+      "Es el control que ve el combustible que sale CON vale pero no llega al equipo: el tanque " +
+        "cuadra perfecto, lo que no cuadra es el trabajo que ese combustible debería haber hecho.",
+    ],
+  });
+}
+
+/** El tanque lleva N días medido solo por los que despachan. */
+export async function enviarCorreoVarillaSinControl(
+  destinatarios: Destinatario[],
+  params: { tanqueNombre: string; plazoDias: number; ultimaVarillaDeControl: string | null }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: ${params.tanqueNombre} sin varilla de control`,
+    titulo: `${params.tanqueNombre}: ${params.plazoDias} días medido solo por quien despacha`,
+    lineas: [
+      `En los últimos ${params.plazoDias} días todas las varillas las tomó personal de grifo. ` +
+        (params.ultimaVarillaDeControl
+          ? `La última medición de alguien que no despacha fue el ${new Date(params.ultimaVarillaDeControl).toLocaleDateString("es-PE")}.`
+          : "Nunca midió alguien que no despacha."),
+      "Cuando mide el mismo que despacha, la varilla deja de ser un control: puede anotar lo que " +
+        "el sistema espera. Una medición sin aviso de otra persona (la encargada de combustible, " +
+        "un supervisor) cierra esta alerta sola.",
     ],
   });
 }

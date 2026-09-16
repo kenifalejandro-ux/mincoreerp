@@ -195,6 +195,7 @@ describe("combustible: reporte de estado de los controles del período", () => {
       dias_sin_vigilancia: 7,
       llenados_por_dia_max: 2,
       tope_diario_sin_capacidad_l: 500,
+      motivo_ajuste: "ajuste de prueba",
     });
     await ag.put("/api/erp/combustible/config").send({
       ventana_gracia_horas: 8760,
@@ -204,6 +205,7 @@ describe("combustible: reporte de estado de los controles del período", () => {
       dias_sin_vigilancia: 7,
       llenados_por_dia_max: 2,
       tope_diario_sin_capacidad_l: 500,
+      motivo_ajuste: "ajuste de prueba",
     });
 
     const res = await reporte();

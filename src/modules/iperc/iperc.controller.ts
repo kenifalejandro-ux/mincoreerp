@@ -110,11 +110,19 @@ export const IpercController = {
         });
         return;
       }
+      // ¿Aprobó el mismo que lo redactó? No se bloquea --una operación chica
+      // puede tener un solo admin-- pero un IPERC aprobado por su propio
+      // autor no es una revisión, y el que audita tiene que poder encontrarlo
+      // sin abrir uno por uno (mismo criterio que la autorrevisión de
+      // alertas de combustible).
+      const autoaprobado =
+        resultado.fila.usuario_id != null && resultado.fila.usuario_id === req.usuario!.id;
+
       await registrarAuditoria({
-        accion: "iperc.cambiar_estado",
+        accion: autoaprobado ? "iperc.autoaprobado" : "iperc.cambiar_estado",
         tenantId,
         usuarioId: req.usuario!.id,
-        detalle: { ipercId: id, estado },
+        detalle: { ipercId: id, estado, autoaprobado },
         contexto: contextoAuditoriaModulo(req),
       });
       await publicarEventoTenant(tenantId, "iperc.estado_cambiado", { ipercId: id, estado });
@@ -128,18 +136,32 @@ export const IpercController = {
     try {
       const tenantId = getTenantId(req);
       const id = Number(req.params.id);
-      const eliminado = await withTenant(tenantId, (client) =>
+      const resultado = await withTenant(tenantId, (client) =>
         IpercService.eliminar(client, tenantId, id)
       );
-      if (!eliminado) {
-        res.status(404).json({ message: "IPERC no encontrado" });
+      if (!resultado.ok) {
+        if (resultado.motivo === "no_encontrado") {
+          res.status(404).json({ message: "IPERC no encontrado" });
+          return;
+        }
+        // Un IPERC aprobado es el registro de que alguien evaluó y autorizó
+        // el riesgo de una tarea: es lo que se presenta en una fiscalización
+        // o después de un accidente. No se borra.
+        res.status(409).json({
+          message:
+            `Este IPERC está ${resultado.estadoActual} y no se puede eliminar. ` +
+            `Solo se eliminan los que siguen en borrador.`,
+        });
         return;
       }
       await registrarAuditoria({
         accion: "iperc.eliminar",
         tenantId,
         usuarioId: req.usuario!.id,
-        detalle: { ipercId: id },
+        // El CONTENIDO de lo que se borró, no solo el id: un DELETE deja la
+        // fila fuera de la base para siempre, y "se eliminó el IPERC #12" no
+        // le sirve a nadie seis meses después.
+        detalle: { ipercId: id, eliminado: resultado.fila },
         contexto: contextoAuditoriaModulo(req),
       });
       await publicarEventoTenant(tenantId, "iperc.eliminado", { ipercId: id });
@@ -243,18 +265,28 @@ export const IpercController = {
     try {
       const tenantId = getTenantId(req);
       const id = Number(req.params.id);
-      const eliminado = await withTenant(tenantId, (client) =>
+      const resultado = await withTenant(tenantId, (client) =>
         IpercService.eliminarLineaBase(client, tenantId, id)
       );
-      if (!eliminado) {
-        res.status(404).json({ message: "Línea base no encontrada" });
+      if (!resultado.ok) {
+        if (resultado.motivo === "no_encontrado") {
+          res.status(404).json({ message: "Línea base no encontrada" });
+          return;
+        }
+        res.status(409).json({
+          message:
+            `Esta línea base está ${resultado.estadoActual} y no se puede eliminar. ` +
+            `Los IPERC emitidos con ella la referencian.`,
+        });
         return;
       }
       await registrarAuditoria({
         accion: "iperc.eliminar_linea_base",
         tenantId,
         usuarioId: req.usuario!.id,
-        detalle: { lineaBaseId: id },
+        // El contenido, no solo el id: un DELETE la saca de la base para
+        // siempre (mismo criterio que el IPERC).
+        detalle: { lineaBaseId: id, eliminada: resultado.fila },
         contexto: contextoAuditoriaModulo(req),
       });
       await publicarEventoTenant(tenantId, "iperc.linea_base_eliminada", { lineaBaseId: id });

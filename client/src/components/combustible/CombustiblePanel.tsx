@@ -69,8 +69,16 @@ interface RecepcionHistorial {
   // vuelta. null = no se puede comparar (falta una lectura, o hubo otra
   // recepción en la misma ventana). Ver findRecepciones en el repository.
   diferencia_litros: string | null;
+  // > 1 = la diferencia es de varias entregas entre las mismas dos varillas.
+  // No se le puede atribuir a una sola, pero ya no se pierde (5ª auditoría).
+  entregas_en_grupo: string | null;
   nivel_antes: string | null;
   nivel_despues: string | null;
+  // Validación contra la guía (migración 0088).
+  requiere_validacion: boolean;
+  cantidad_documento: string | null;
+  validada_en: string | null;
+  validada_por_nombre: string | null;
   umbral_diferencia_pct: string;
   umbral_descuadre_pct: string;
   umbral_descuadre_ciclo_pct: string;
@@ -204,6 +212,15 @@ interface SugerenciaUmbral {
   promedio?: number;
   desviacion?: number;
   muestra?: Array<{ cantidad: number; diferenciaLitros: number; diferenciaPct: number }>;
+  /** Mediciones muy fuera de escala respecto del resto (5ª auditoría). La
+   *  muestra con la que se calibra puede contener el robo que se quiere
+   *  detectar: unas pocas mediciones sucias disparan el desvío y la
+   *  sugerencia termina proponiendo tolerar justo eso. null = no hay. */
+  atipicos?: {
+    cantidad: number;
+    valoresPct: number[];
+    sugeridoSinEllos: number | null;
+  } | null;
 }
 
 /** Un renglón de la bitácora del módulo. `detalle` es JSONB libre y cambia
@@ -400,7 +417,14 @@ interface AlertaCombustible {
     | "descuadre_ventana"
     | "despacho_retroactivo"
     | "vale_recargado"
-    | "tanque_sin_vigilancia";
+    | "tanque_sin_vigilancia"
+    | "recepcion_anulada"
+    | "recepcion_discrepante"
+    | "recepcion_sin_validar"
+    | "recepcion_retroactiva"
+    | "consumo_excedido"
+    | "varilla_sin_control"
+    | "varilla_exacta";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -434,6 +458,12 @@ const TIPOS_CRITICOS = new Set([
   "vale_recargado",
   "tanque_sin_vigilancia",
   "tanque_sin_medir",
+  "recepcion_anulada",
+  "recepcion_discrepante",
+  "recepcion_retroactiva",
+  "consumo_excedido",
+  "varilla_exacta",
+  "varilla_sin_control",
 ]);
 const esCritica = (tipo: string) => TIPOS_CRITICOS.has(tipo);
 
@@ -547,22 +577,51 @@ function SugerenciaCompacta({
     );
   }
 
+  const atipicos = sugerencia.atipicos;
+
   return (
-    <p className="text-xs text-slate-600">
-      Sugerencia: <strong>{sugerencia.sugerido}%</strong> ({sugerencia.tamanioMuestra} mediciones,
-      {soloDesviacion
-        ? ` desviación ${sugerencia.desviacion}%`
-        : ` promedio ${sugerencia.promedio}% ± ${sugerencia.desviacion}%`}
-      ){" "}
-      <button
-        type="button"
-        onClick={() => onUsar(sugerencia.sugerido ?? 0)}
-        className="text-slate-700 underline hover:text-slate-900"
-      >
-        Usar este valor
-      </button>
-      {enlaceDetalle}
-    </p>
+    <div className="text-xs text-slate-600 space-y-1">
+      <p>
+        Sugerencia: <strong>{sugerencia.sugerido}%</strong> ({sugerencia.tamanioMuestra} mediciones,
+        {soloDesviacion
+          ? ` desviación ${sugerencia.desviacion}%`
+          : ` promedio ${sugerencia.promedio}% ± ${sugerencia.desviacion}%`}
+        ){" "}
+        <button
+          type="button"
+          onClick={() => onUsar(sugerencia.sugerido ?? 0)}
+          className="text-slate-700 underline hover:text-slate-900"
+        >
+          Usar este valor
+        </button>
+        {enlaceDetalle}
+      </p>
+      {/* El aviso que faltaba: el número de arriba puede estar inflado por unas
+          pocas mediciones fuera de escala -- y si esas mediciones son el robo,
+          aceptar la sugerencia es tolerarlo de acá en adelante. */}
+      {atipicos && (
+        <p className="text-amber-700">
+          ⚠ {atipicos.cantidad} {atipicos.cantidad === 1 ? "medición está" : "mediciones están"} muy
+          fuera de escala ({atipicos.valoresPct.map((v) => `${v}%`).join(", ")}) y{" "}
+          {atipicos.cantidad === 1 ? "es la que infla" : "son las que inflan"} el número. Miralas
+          antes de aceptarlo: si ahí hubo un faltante real, este umbral lo va a tolerar.
+          {atipicos.sugeridoSinEllos !== null && (
+            <>
+              {" "}
+              Sin {atipicos.cantidad === 1 ? "esa medición" : "esas mediciones"} la sugerencia sería{" "}
+              <strong>{atipicos.sugeridoSinEllos}%</strong>{" "}
+              <button
+                type="button"
+                onClick={() => onUsar(atipicos.sugeridoSinEllos ?? 0)}
+                className="text-slate-700 underline hover:text-slate-900"
+              >
+                Usar {atipicos.sugeridoSinEllos}%
+              </button>
+            </>
+          )}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -727,6 +786,13 @@ const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   despacho_retroactivo: "Vale cargado con atraso",
   vale_recargado: "Vale recargado con otra cantidad",
   tanque_sin_vigilancia: "Tanque despachando sin vigilancia",
+  recepcion_anulada: "Recepción anulada",
+  recepcion_discrepante: "La guía no coincide con la recepción",
+  recepcion_sin_validar: "Recepción sin validar",
+  recepcion_retroactiva: "Recepción cargada con atraso",
+  consumo_excedido: "Consumo por encima del máximo",
+  varilla_sin_control: "Solo mide quien despacha",
+  varilla_exacta: "Varillas que cuadran al litro",
 };
 
 /** El `detalle` es JSONB libre y cada tipo de alerta guarda cosas
@@ -792,6 +858,71 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
       `Se anuló con ${cantidadAnulada ?? "?"} y volvió con ${cantidadNueva ?? "?"} ` +
       `(${(diferencia ?? 0) > 0 ? "+" : ""}${diferencia ?? "?"}), ` +
       `${anulacionesPrevias ?? "?"} anulación(es) en ese número`
+    );
+  }
+  if (a.tipo === "recepcion_discrepante") {
+    const { cantidadRegistrada, cantidadDocumento, diferencia, unidad } = a.detalle as {
+      cantidadRegistrada?: number;
+      cantidadDocumento?: number;
+      diferencia?: number;
+      unidad?: string;
+    };
+    return (
+      `Se registraron ${cantidadRegistrada ?? "?"} ${unidad ?? ""} y la guía dice ` +
+      `${cantidadDocumento ?? "?"} (${(diferencia ?? 0) > 0 ? "+" : ""}${diferencia ?? "?"})`
+    );
+  }
+  if (a.tipo === "recepcion_sin_validar") {
+    const { plazoHoras, numeroDocumento } = a.detalle as {
+      plazoHoras?: number;
+      numeroDocumento?: string | null;
+    };
+    return (
+      `Sin validar contra la guía${numeroDocumento ? ` ${numeroDocumento}` : ""} ` +
+      `después de ${plazoHoras ?? "?"} horas`
+    );
+  }
+  if (a.tipo === "recepcion_anulada") {
+    const { cantidad, unidad, motivo } = a.detalle as {
+      cantidad?: number;
+      unidad?: string;
+      motivo?: string;
+    };
+    return `Se anuló una entrega de ${cantidad ?? "?"} ${unidad ?? ""}. Motivo: ${motivo ?? "—"}`;
+  }
+  if (a.tipo === "consumo_excedido") {
+    const { consumo, consumoMaximo, unidadMedida, litros, recorrido } = a.detalle as {
+      consumo?: number;
+      consumoMaximo?: number;
+      unidadMedida?: string;
+      litros?: number;
+      recorrido?: number;
+    };
+    return (
+      `${litros ?? "?"} L para ${recorrido ?? "?"} ${unidadMedida ?? ""} de trabajo = ` +
+      `${consumo ?? "?"} L/${unidadMedida ?? ""}, contra un máximo de ${consumoMaximo ?? "?"}`
+    );
+  }
+  if (a.tipo === "varilla_exacta") {
+    const { varillasSeguidas, toleranciaLitros } = a.detalle as {
+      varillasSeguidas?: number;
+      toleranciaLitros?: number;
+    };
+    return (
+      `${varillasSeguidas ?? "?"} mediciones seguidas coincidieron con lo esperado dentro de ` +
+      `${toleranciaLitros ?? "?"} L. Una varilla medida casi nunca da exacto`
+    );
+  }
+  if (a.tipo === "varilla_sin_control") {
+    const { plazoDias, ultimaVarillaDeControl } = a.detalle as {
+      plazoDias?: number;
+      ultimaVarillaDeControl?: string | null;
+    };
+    return (
+      `${plazoDias ?? "?"} días midiendo solo personal de grifo. ` +
+      (ultimaVarillaDeControl
+        ? `Última medición independiente: ${new Date(ultimaVarillaDeControl).toLocaleDateString("es-PE")}`
+        : "Nunca midió alguien que no despacha")
     );
   }
   if (a.tipo === "despacho_retroactivo") {
@@ -1263,6 +1394,18 @@ export default function CombustiblePanel() {
   // Política de quién toma varilla (0085). Arranca en true porque es el
   // default del servidor: es lo que hace hoy la mayoría.
   const [grifieroVarilla, setGrifieroVarilla] = useState(true);
+  // 5ª auditoría (0088): validación de recepciones y varilla de control.
+  const [validarRecepciones, setValidarRecepciones] = useState(true);
+  const [horasParaValidar, setHorasParaValidar] = useState("48");
+  const [diasVarillaControl, setDiasVarillaControl] = useState("7");
+  // El motivo solo se pide cuando el cambio afloja algo; el backend lo dice
+  // con `requiere_motivo` y recién ahí aparece el campo.
+  const [motivoConfig, setMotivoConfig] = useState("");
+  // Sugerencia de los dos topes diarios desde el historial (respuesta de
+  // Kenif: "guiarnos por el historial para que nos recomiende"). Se muestra y
+  // rellena los campos, pero guardar lo sigue decidiendo una persona.
+  const [sugerenciaTopes, setSugerenciaTopes] = useState<string | null>(null);
+  const [pidiendoMotivoConfig, setPidiendoMotivoConfig] = useState(false);
   const [llenadosPorDia, setLlenadosPorDia] = useState("");
   const [topeSinCapacidad, setTopeSinCapacidad] = useState("");
   /** Hallazgos críticos SIN RESOLVER -- distinto de "sin leer": una alerta
@@ -1333,6 +1476,12 @@ export default function CombustiblePanel() {
   const [recepcionesTotal, setRecepcionesTotal] = useState(0);
   const [cargandoHistorialRecepciones, setCargandoHistorialRecepciones] = useState(false);
   const [recepcionAAnular, setRecepcionAAnular] = useState<RecepcionHistorial | null>(null);
+  // Validar una recepción contra la guía. El modal NO muestra la cantidad que
+  // cargó quien recibió: si la mostrara, validar sería apretar "sí" y el
+  // segundo testigo no existiría (5ª auditoría).
+  const [recepcionAValidar, setRecepcionAValidar] = useState<RecepcionHistorial | null>(null);
+  const [cantidadDeLaGuia, setCantidadDeLaGuia] = useState("");
+  const [validandoRecepcion, setValidandoRecepcion] = useState(false);
   const [motivoAnulacionRecepcion, setMotivoAnulacionRecepcion] = useState("");
   const [anulandoRecepcion, setAnulandoRecepcion] = useState(false);
 
@@ -1817,12 +1966,23 @@ export default function CombustiblePanel() {
         // puede ser la forma de saltearse esa decisión sin enterarse. No se
         // bloquea la importación -- se dice, y la etiqueta roja de la lista
         // hace el resto.
+        // Los códigos que ya existían NO se tocaron: la planilla da de alta,
+        // editar un tanque pasa por su ficha (que compara, pide motivo si el
+        // cambio afloja un control y avisa a los admins). Hay que decirlo,
+        // porque si no el cliente cree que su corrección se aplicó.
+        const omitidos: string[] = Array.isArray(body.omitidos) ? body.omitidos : [];
+        const avisoOmitidos =
+          omitidos.length > 0
+            ? ` ${omitidos.length} fila(s) se omitieron porque ese código ya existe ` +
+              `(${omitidos.slice(0, 5).join(", ")}${omitidos.length > 5 ? "…" : ""}): la planilla ` +
+              `solo da de alta; para cambiar un tanque que ya está, editá su ficha.`
+            : "";
         setMensajeExito(
-          body.sinVigilancia > 0
+          (body.sinVigilancia > 0
             ? `Se importaron ${importados} tanques. ${body.sinVigilancia} quedaron SIN VIGILANCIA ` +
-                `(la planilla no traía umbrales): el sistema no va a detectar faltantes en esos ` +
-                `tanques hasta que los configures. Aparecen marcados en rojo en la lista.`
-            : `Se importaron ${importados} tanques correctamente.`
+              `(la planilla no traía umbrales): el sistema no va a detectar faltantes en esos ` +
+              `tanques hasta que los configures. Aparecen marcados en rojo en la lista.`
+            : `Se importaron ${importados} tanques correctamente.`) + avisoOmitidos
         );
         await cargarTanques();
       } catch (err) {
@@ -2120,6 +2280,22 @@ export default function CombustiblePanel() {
             n_vale: Number(despachoForm.n_vale),
             cantidad: Number(despachoForm.cantidad),
             lectura_contometro: Number(despachoForm.lectura_contometro),
+            // El medidor del equipo también en el vale del tanque propio
+            // (migración 0088): sin él no se puede calcular el consumo, que
+            // es el único control del combustible que sale CON vale y no
+            // llega a la máquina.
+            lectura_horometro:
+              despachoForm.tipo_destino === "equipo" &&
+              equipoSeleccionado?.tipo_medidor === "horometro" &&
+              despachoForm.lectura_horometro !== ""
+                ? Number(despachoForm.lectura_horometro)
+                : undefined,
+            lectura_odometro:
+              despachoForm.tipo_destino === "equipo" &&
+              equipoSeleccionado?.tipo_medidor === "odometro" &&
+              despachoForm.lectura_odometro !== ""
+                ? Number(despachoForm.lectura_odometro)
+                : undefined,
             costo_unitario: Number(despachoForm.costo_unitario),
             observaciones: despachoForm.observaciones || undefined,
             despachado_en: despachadoEnIso,
@@ -2389,6 +2565,50 @@ export default function CombustiblePanel() {
   /** Hueco de talonario y vale anulado (migrations/0068) -- mismo criterio
    *  de "gerencia lo ve en el momento" que la campanita del Header, esta es
    *  la pantalla completa a la que esa campanita lleva. */
+  const pedirSugerenciaDeTopes = async () => {
+    setSugerenciaTopes("Calculando...");
+    try {
+      const res = await apiFetch("/api/erp/combustible/config/sugerencia-topes");
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body) {
+        setSugerenciaTopes("No se pudo calcular la sugerencia.");
+        return;
+      }
+      const partes: string[] = [];
+      if (body.topeSinCapacidad?.muestraSuficiente) {
+        partes.push(
+          `Tope diario: ${body.topeSinCapacidad.sugeridoL} L — lo define ` +
+            `${body.topeSinCapacidad.actorQueLoDefine}, que es quien más consume. Para los ` +
+            `demás destinos queda holgado.`
+        );
+        setTopeSinCapacidad(String(body.topeSinCapacidad.sugeridoL));
+      } else {
+        partes.push(
+          `Tope diario: todavía no hay ${body.minimoRequerido} días con movimiento en ningún ` +
+            `destino sin capacidad; cualquier número sería inventado.`
+        );
+      }
+      if (body.llenadosPorDia?.muestraSuficiente) {
+        partes.push(
+          `Llenados por día: ${body.llenadosPorDia.sugerido} (el máximo observado fue ` +
+            `${body.llenadosPorDia.maximoObservado} llenados en un día).`
+        );
+        setLlenadosPorDia(String(body.llenadosPorDia.sugerido));
+      } else {
+        partes.push(
+          "Llenados por día: hace falta cargar la capacidad de tanque de los equipos para poder sugerirlo."
+        );
+      }
+      partes.push(
+        `Calculado con los últimos ${body.diasHistorial} días. Si en ese período ya se estaba ` +
+          `sacando de más, el número lo incluye: revisá el día máximo antes de guardar.`
+      );
+      setSugerenciaTopes(partes.join(" "));
+    } catch {
+      setSugerenciaTopes("No se pudo calcular la sugerencia.");
+    }
+  };
+
   const abrirModalAlertas = async () => {
     setModalAlertasAbierto(true);
     setMensajeVentana(null);
@@ -2425,6 +2645,19 @@ export default function CombustiblePanel() {
       if (bodyConfig?.grifero_registra_varilla !== undefined) {
         setGrifieroVarilla(Boolean(bodyConfig.grifero_registra_varilla));
       }
+      if (bodyConfig?.recepcion_requiere_validacion !== undefined) {
+        setValidarRecepciones(Boolean(bodyConfig.recepcion_requiere_validacion));
+      }
+      if (bodyConfig?.horas_para_validar_recepcion !== undefined) {
+        setHorasParaValidar(String(bodyConfig.horas_para_validar_recepcion));
+      }
+      // null = la empresa decidió que no tiene a nadie más que el grifero
+      // para medir; se ve como campo vacío, no como "null".
+      setDiasVarillaControl(
+        bodyConfig?.dias_sin_varilla_de_control == null
+          ? ""
+          : String(bodyConfig.dias_sin_varilla_de_control)
+      );
       // null llega como "sin configurar" y tiene que verse como campo vacío,
       // no como "null" escrito adentro del input.
       setLlenadosPorDia(
@@ -2499,13 +2732,30 @@ export default function CombustiblePanel() {
           llenados_por_dia_max: llenados,
           tope_diario_sin_capacidad_l: topeSC,
           grifero_registra_varilla: grifieroVarilla,
+          recepcion_requiere_validacion: validarRecepciones,
+          horas_para_validar_recepcion: Number(horasParaValidar) || 48,
+          dias_sin_varilla_de_control: aNumeroOVacio(diasVarillaControl),
+          // Solo viaja si hay algo escrito: el backend lo exige únicamente
+          // cuando el cambio AFLOJA un control, y entonces responde 400
+          // pidiéndolo (ver más abajo).
+          ...(motivoConfig.trim() ? { motivo_ajuste: motivoConfig.trim() } : {}),
         }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        // El cambio afloja un control y hace falta decir por qué: se pide acá
+        // mismo y se reintenta, igual que en la ficha del tanque. No se
+        // guarda nada hasta que haya motivo.
+        if (body.requiere_motivo) {
+          setPidiendoMotivoConfig(true);
+          setMensajeVentana(body.error);
+          return;
+        }
         setMensajeVentana(body.error || "No se pudo guardar la configuración.");
         return;
       }
+      setPidiendoMotivoConfig(false);
+      setMotivoConfig("");
       setMensajeVentana(`Guardado: ventana ${horas} h, aviso sin medir a los ${dias} días`);
     } finally {
       setGuardandoVentana(false);
@@ -2667,6 +2917,41 @@ export default function CombustiblePanel() {
   const abrirModalHistorialRecepciones = async () => {
     setModalHistorialRecepcionesAbierto(true);
     await cargarHistorialRecepciones(recepcionesDesde, recepcionesHasta);
+  };
+
+  const handleValidarRecepcion = async () => {
+    if (validandoRecepcion || !recepcionAValidar || cantidadDeLaGuia.trim() === "") return;
+    setValidandoRecepcion(true);
+    try {
+      const res = await apiFetch(
+        `/api/erp/combustible/recepciones/${recepcionAValidar.id}/validar`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cantidad_documento: Number(cantidadDeLaGuia) }),
+        }
+      );
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(body.error || "No se pudo validar la recepción.");
+        return;
+      }
+      setRecepcionAValidar(null);
+      setCantidadDeLaGuia("");
+      // El resultado se dice acá y no solo en la campanita: quien valida tiene
+      // que enterarse EN EL MOMENTO de que los dos números no coinciden.
+      setMensajeExito(
+        body.discrepancia
+          ? `La guía dice ${body.discrepancia.cantidadDocumento} y se habían registrado ` +
+              `${body.discrepancia.cantidadRegistrada} ` +
+              `(${body.discrepancia.diferencia > 0 ? "+" : ""}${body.discrepancia.diferencia}). ` +
+              `Se abrió una alerta para revisarlo.`
+          : "Recepción validada: la guía coincide con lo registrado."
+      );
+      await cargarHistorialRecepciones(recepcionesDesde, recepcionesHasta);
+    } finally {
+      setValidandoRecepcion(false);
+    }
   };
 
   const handleAnularRecepcion = async () => {
@@ -4079,6 +4364,52 @@ export default function CombustiblePanel() {
                     El contómetro resetea a 0 en cada despacho: tiene que coincidir con la cantidad,
                     o el servidor lo rechaza.
                   </p>
+                  {/* El medidor del EQUIPO en el vale del tanque propio
+                      (0088). Antes solo existía en la compra externa, y por
+                      eso el canal principal de salida no tenía ningún control
+                      de consumo: el tanque cuadra aunque al volquete le
+                      carguen 380 de los 400 que dice el vale. */}
+                  {despachoForm.tipo_destino === "equipo" && equipoSeleccionado?.tipo_medidor && (
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="despacho-medidor-propio"
+                        className="text-xs font-bold text-slate-700 uppercase"
+                      >
+                        {equipoSeleccionado.tipo_medidor === "horometro"
+                          ? "Lectura del horómetro"
+                          : "Lectura del odómetro"}
+                      </label>
+                      <input
+                        id="despacho-medidor-propio"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        required
+                        className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                        value={
+                          equipoSeleccionado.tipo_medidor === "horometro"
+                            ? despachoForm.lectura_horometro
+                            : despachoForm.lectura_odometro
+                        }
+                        onChange={(e) =>
+                          setDespachoForm({
+                            ...despachoForm,
+                            ...(equipoSeleccionado.tipo_medidor === "horometro"
+                              ? { lectura_horometro: e.target.value }
+                              : { lectura_odometro: e.target.value }),
+                          })
+                        }
+                      />
+                      <p className="text-xs text-slate-600">
+                        Con este número el sistema calcula cuánto consume la unidad por{" "}
+                        {equipoSeleccionado.tipo_medidor === "horometro"
+                          ? "hora de motor"
+                          : "kilómetro"}
+                        . Es lo único que puede ver el combustible que sale con vale y no llega a la
+                        máquina.
+                      </p>
+                    </div>
+                  )}
                   <div className="space-y-1">
                     <label
                       htmlFor="despacho-tipo-destino"
@@ -5804,6 +6135,84 @@ export default function CombustiblePanel() {
               </span>
             </label>
 
+            {/* ── 5ª auditoría: los dos controles que faltaban ──────────── */}
+
+            <label className="flex items-center gap-2 ml-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={validarRecepciones}
+                onChange={(e) => {
+                  setValidarRecepciones(e.target.checked);
+                  setMensajeVentana(null);
+                }}
+              />
+              <span
+                className="text-xs font-bold text-slate-700 uppercase"
+                title="Administración escribe la cantidad que dice la guía, sin ver la que cargó quien recibió. Es lo único que detecta una entrega registrada por menos de lo que entró: la varilla cuadra igual."
+              >
+                Validar recepciones contra la guía
+              </span>
+            </label>
+
+            <label className="text-xs font-bold text-slate-700 uppercase" htmlFor="horas-validar">
+              Plazo para validar
+            </label>
+            <input
+              id="horas-validar"
+              type="number"
+              min={1}
+              className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
+              value={horasParaValidar}
+              onChange={(e) => {
+                setHorasParaValidar(e.target.value);
+                setMensajeVentana(null);
+              }}
+            />
+            <span className="text-sm text-slate-500">h</span>
+
+            <label
+              className="text-xs font-bold text-slate-700 uppercase"
+              htmlFor="dias-varilla-control"
+              title="Cada cuánto tiene que medir alguien que NO despacha. Cuando mide el mismo que despacha, la varilla puede repetir el número que el sistema espera y ningún umbral ve el faltante. Vacío = la empresa no tiene a nadie más."
+            >
+              Varilla de control cada
+            </label>
+            <input
+              id="dias-varilla-control"
+              type="number"
+              min={1}
+              placeholder="—"
+              className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
+              value={diasVarillaControl}
+              onChange={(e) => {
+                setDiasVarillaControl(e.target.value);
+                setMensajeVentana(null);
+              }}
+            />
+            <span className="text-sm text-slate-500">días</span>
+
+            {/* El motivo aparece solo cuando el backend dice que el cambio
+                afloja un control. Pedirlo siempre sería ruido; no pedirlo
+                nunca era el hueco: apagar un tope se guardaba sin explicar. */}
+            <button
+              type="button"
+              onClick={pedirSugerenciaDeTopes}
+              className="text-xs font-semibold text-slate-700 underline"
+              title="Calcula los dos topes con el historial de despachos del tenant"
+            >
+              Sugerir topes
+            </button>
+
+            {pidiendoMotivoConfig && (
+              <input
+                type="text"
+                placeholder="Motivo del cambio (obligatorio)"
+                className="w-72 border border-amber-400 rounded-lg p-2 outline-none focus:ring-2 focus:ring-amber-500"
+                value={motivoConfig}
+                onChange={(e) => setMotivoConfig(e.target.value)}
+              />
+            )}
+
             <button
               onClick={handleGuardarVentana}
               disabled={guardandoVentana}
@@ -5811,6 +6220,9 @@ export default function CombustiblePanel() {
             >
               {guardandoVentana ? "Guardando..." : "Guardar"}
             </button>
+            {sugerenciaTopes && (
+              <span className="basis-full text-xs text-slate-600">{sugerenciaTopes}</span>
+            )}
             {mensajeVentana && (
               <span
                 className={`text-xs font-semibold ${
@@ -6398,6 +6810,12 @@ export default function CombustiblePanel() {
                       >
                         Diferencia
                       </th>
+                      <th
+                        className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest"
+                        title="Administración escribe la cantidad que dice la guía, sin ver la registrada. Es el único control que ve una entrega registrada por menos de lo que entró."
+                      >
+                        Guía
+                      </th>
                       <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
                         Acciones
                       </th>
@@ -6490,9 +6908,38 @@ export default function CombustiblePanel() {
                                       {pct > 0 ? "+" : ""}
                                       {pct.toFixed(1)}%
                                     </span>
+                                    {Number(r.entregas_en_grupo) > 1 && (
+                                      <span
+                                        className="block text-[11px] font-normal text-slate-400"
+                                        title="Entre las mismas dos varillas entraron varias entregas: la diferencia es de todas juntas, no se le puede atribuir a una sola."
+                                      >
+                                        {r.entregas_en_grupo} entregas juntas
+                                      </span>
+                                    )}
                                   </span>
                                 );
                               })()
+                            )}
+                          </td>
+                          <td className="p-3 text-sm">
+                            {r.validada_en !== null ? (
+                              <span
+                                className="text-xs text-slate-600"
+                                title={`Validada por ${r.validada_por_nombre ?? "—"} el ${formatearFecha(r.validada_en)}`}
+                              >
+                                Guía: {Number(r.cantidad_documento).toLocaleString("es-PE")}
+                                {Number(r.cantidad_documento) !== Number(r.cantidad) && (
+                                  <span className="block text-[11px] font-bold text-red-600">
+                                    no coincide
+                                  </span>
+                                )}
+                              </span>
+                            ) : r.requiere_validacion && !anulada ? (
+                              <span className="text-xs font-semibold text-amber-600">
+                                Pendiente de validar
+                              </span>
+                            ) : (
+                              <span className="text-xs text-slate-300">—</span>
                             )}
                           </td>
                           <td className="p-3 text-sm text-right">
@@ -6508,15 +6955,29 @@ export default function CombustiblePanel() {
                                 {r.anulada_por_nombre ? ` por ${r.anulada_por_nombre}` : ""}
                               </span>
                             ) : (
-                              <button
-                                onClick={() => {
-                                  setRecepcionAAnular(r);
-                                  setMotivoAnulacionRecepcion("");
-                                }}
-                                className="text-xs text-red-500 hover:text-red-700 hover:underline"
-                              >
-                                Anular
-                              </button>
+                              <div className="flex gap-3 justify-end">
+                                {r.requiere_validacion && r.validada_en === null && (
+                                  <button
+                                    onClick={() => {
+                                      setRecepcionAValidar(r);
+                                      setCantidadDeLaGuia("");
+                                    }}
+                                    className="text-xs font-semibold text-emerald-600 hover:text-emerald-800 hover:underline"
+                                    title="Escribí la cantidad que dice la guía del proveedor"
+                                  >
+                                    Validar
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => {
+                                    setRecepcionAAnular(r);
+                                    setMotivoAnulacionRecepcion("");
+                                  }}
+                                  className="text-xs text-red-500 hover:text-red-700 hover:underline"
+                                >
+                                  Anular
+                                </button>
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -6532,6 +6993,72 @@ export default function CombustiblePanel() {
       {/* Modal: anular recepción -- motivo OBLIGATORIO, mismo criterio que
           lecturas y precios: es lo único que distingue un error de tipeo de
           alguien borrando un número que no le conviene. */}
+      {recepcionAValidar && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
+          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl">
+            <div className="p-6 border-b">
+              <h3 className="text-xl font-bold">Validar contra la guía</h3>
+              <p className="text-sm text-slate-600">
+                Escribí la cantidad que dice la guía o la factura del proveedor.{" "}
+                <strong>No mostramos a propósito</strong> la cantidad que se registró en cancha: si
+                la vieras, validar sería confirmar un número en vez de leer el documento.
+              </p>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="text-sm text-slate-600">
+                <p>
+                  <span className="text-slate-400">Tanque:</span> {recepcionAValidar.tanque_nombre}
+                </p>
+                <p>
+                  <span className="text-slate-400">Proveedor:</span>{" "}
+                  {recepcionAValidar.grifo_nombre}
+                </p>
+                <p>
+                  <span className="text-slate-400">Documento:</span>{" "}
+                  {recepcionAValidar.numero_documento ?? "sin documento"}
+                </p>
+                <p>
+                  <span className="text-slate-400">Recibida:</span>{" "}
+                  {formatearFecha(recepcionAValidar.recibido_en)}
+                </p>
+              </div>
+              <div>
+                <label
+                  htmlFor="cantidad-de-la-guia"
+                  className="block text-xs font-bold text-slate-700 uppercase tracking-widest mb-1"
+                >
+                  Cantidad según la guía
+                </label>
+                <input
+                  id="cantidad-de-la-guia"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={cantidadDeLaGuia}
+                  onChange={(e) => setCantidadDeLaGuia(e.target.value)}
+                  className="w-full p-3 border rounded-xl"
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div className="p-6 border-t flex justify-end gap-3">
+              <button
+                onClick={() => setRecepcionAValidar(null)}
+                className="px-4 py-2 rounded-xl border text-slate-600"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleValidarRecepcion}
+                disabled={validandoRecepcion || cantidadDeLaGuia.trim() === ""}
+                className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold disabled:opacity-50"
+              >
+                {validandoRecepcion ? "Validando..." : "Validar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {recepcionAAnular && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl">
