@@ -11,6 +11,7 @@ import {
   enfocarPaginaPrincipal,
 } from "../comunes/ventanasFlotantesEstado";
 import HistoricoCliente from "../HistoricoCliente";
+import UreaPanel from "../UreaPanel";
 
 interface Tanque {
   id: number;
@@ -1253,7 +1254,7 @@ export interface CombustiblePanelProps {
    *  "Histórico" ahí adentro cambia esta pestaña aunque el panel ya esté
    *  montado. undefined = comportamiento por defecto (Tanques), para los
    *  pocos lugares que todavía instancian el panel sin pasarlo. */
-  pestanaInicial?: "tanques" | "historico";
+  pestanaInicial?: "tanques" | "historico" | "urea";
 }
 
 export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelProps = {}) {
@@ -1376,7 +1377,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // ni botones acá adentro -- por eso el estado nace de `pestanaInicial` y
   // se resincroniza cuando cambia (el usuario puede clickear "Histórico" en
   // el sidebar con el panel ya montado).
-  const [pestanaCombustible, setPestanaCombustible] = useState<"tanques" | "historico">(
+  const [pestanaCombustible, setPestanaCombustible] = useState<"tanques" | "historico" | "urea">(
     pestanaInicial ?? "tanques"
   );
   useEffect(() => {
@@ -3128,6 +3129,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         )}
       </div>
       {pestanaCombustible === "historico" && <HistoricoCliente />}
+      {pestanaCombustible === "urea" && <UreaPanel />}
       {pestanaCombustible === "tanques" && errorImportacion && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-red-900 font-light flex-1">{errorImportacion}</p>
