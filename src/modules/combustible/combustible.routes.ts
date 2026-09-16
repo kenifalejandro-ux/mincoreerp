@@ -25,6 +25,8 @@ import {
   periodoHistorialCombustibleSchema,
   resolverAlertaCombustibleSchema,
   bajaTanqueCombustibleSchema,
+  crearConteoUreaSchema,
+  anularConteoUreaSchema,
 } from "../../server/schemas/combustible.schema";
 import { CombustibleController } from "./combustible.controller";
 // Se activa solo con importarse (setInterval + .unref()) -- mismo mecanismo
@@ -183,6 +185,32 @@ router.patch(
   requireRole("admin"),
   validate(anularRecepcionCombustibleSchema),
   asyncHandler(controller.anularRecepcion.bind(controller))
+);
+
+// Conteo físico de urea (migración 0092) -- segmentos literales, ANTES de
+// /:id, mismo motivo que el resto.
+//
+// Kenif confirmó (2026-09-16) que HOY es la MISMA persona la que recibe la
+// compra, la reparte a las unidades y cuenta lo que queda en almacén --
+// cero segregación de funciones. Por eso `admin` + `grifero` acá también
+// (mismo reparto que /recepciones): no hay a quién más dárselo todavía. El
+// costo de esto -- que el conteo se pueda "hacer cuadrar" -- es el límite
+// conocido del módulo ("si el admin es el dueño nadie lo vigila"); lo que
+// se puede hacer es que quede visible, no impedirlo. Pendiente: si esta
+// persona (¿logística?) recibe su propio acceso, revisar este reparto.
+router.get("/urea/estado", asyncHandler(controller.getEstadoUrea.bind(controller)));
+router.get("/urea/conteos", asyncHandler(controller.listarConteosUrea.bind(controller)));
+router.post(
+  "/urea/conteos",
+  requireRole("admin", "grifero"),
+  validate(crearConteoUreaSchema),
+  asyncHandler(controller.crearConteoUrea.bind(controller))
+);
+router.patch(
+  "/urea/conteos/:id/anular",
+  requireRole("admin"),
+  validate(anularConteoUreaSchema),
+  asyncHandler(controller.anularConteoUrea.bind(controller))
 );
 
 // Alertas (migrations/0068) -- segmentos literales, mismo motivo que

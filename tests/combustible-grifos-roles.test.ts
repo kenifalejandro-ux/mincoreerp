@@ -116,6 +116,7 @@ describe("combustible: roles del catálogo de grifos (migrations/0065)", () => {
       activo: true,
       abastece_ruta: true,
       abastece_tanque: false,
+      abastece_urea: false,
     });
     expect(editado.status).toBe(200);
     expect(editado.body.abastece_ruta).toBe(true);
@@ -199,6 +200,7 @@ describe("combustible: roles del catálogo de grifos (migrations/0065)", () => {
       activo: true,
       abastece_ruta: true,
       abastece_tanque: false,
+      abastece_urea: false,
     });
 
     const listado = await agente
@@ -253,6 +255,7 @@ describe("combustible: roles del catálogo de grifos (migrations/0065)", () => {
         activo: true,
         abastece_ruta: true,
         abastece_tanque: true,
+        abastece_urea: true,
       });
       expect(intento.status).toBe(404);
     } finally {

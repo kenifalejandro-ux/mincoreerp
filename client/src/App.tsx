@@ -102,7 +102,18 @@ function App() {
   // "modulo:subpestaña" del sidebar.
   const propsExtra =
     moduloIdActivo === "combustible"
-      ? { pestanaInicial: tabActiva === "combustible:historico" ? "historico" : "tanques" }
+      ? {
+          pestanaInicial:
+            tabActiva === "combustible:historico"
+              ? "historico"
+              : tabActiva === "combustible:urea"
+                ? "urea"
+                : tabActiva === "combustible:auditoria"
+                  ? "auditoria"
+                  : tabActiva === "combustible:bitacora"
+                    ? "bitacora"
+                    : "tanques",
+        }
       : {};
 
   // El registry tipa cada componente sin props (ComponentType<{}>) porque la

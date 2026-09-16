@@ -30,6 +30,12 @@ const camposCapacidadTanque = {
   // decidir dónde termina el nombre en cada carga.
   conductor_nombre: z.string().trim().min(1).max(150).optional(),
   conductor_dni: z.string().trim().min(6).max(15).optional(),
+  // Si esta unidad usa urea automotriz (migración 0092). Default TRUE: la
+  // mayoría de la flota (Euro V/SCR) sí consume -- el cliente confirmó que
+  // camionetas y maquinaria amarilla NO (respuesta 15). Marcarlo en false es
+  // lo que habilita el control `urea_equipo_no_habilitado`: un vale de urea
+  // a un equipo marcado así es sospechoso por definición.
+  usa_urea: z.boolean().optional(),
 };
 
 /** Espejo en Zod del CHECK `equipos_capacidad_tanque_check` de la migración

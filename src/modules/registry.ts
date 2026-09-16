@@ -142,6 +142,15 @@ export const MODULOS: ModuloDefinicion[] = [
           validada_por: "usuarios",
         },
       },
+      // Urea (migración 0092) -- el conteo físico, la contraparte de la
+      // varilla que combustible_lecturas es para el tanque. Va ANTES de
+      // combustible_alertas, que la referencia por FK (urea_conteo_id, el
+      // ancla de urea_descuadre_conteo) -- padres antes que hijos.
+      {
+        nombre: "combustible_conteos_urea",
+        pk: "serial",
+        fks: { usuario_id: "usuarios", anulada_por: "usuarios" },
+      },
       // Fase D (migrations/0068) -- el aviso vivo: hueco de talonario, vale
       // anulado, sobredespacho, despacho tardío. Va ANTES de
       // combustible_anomalias, que la referencia por FK.
@@ -157,12 +166,14 @@ export const MODULOS: ModuloDefinicion[] = [
         // Las anclas van TODAS: al clonar un backup a otro tenant los ids se
         // regeneran, y una FK que no esté acá se queda apuntando a la fila
         // del tenant de ORIGEN. Faltaban `combustible_id` y `recepcion_id`
-        // desde 0073 (lo encontró la 5ª auditoría); `lectura_id` es de 0086.
+        // desde 0073 (lo encontró la 5ª auditoría); `lectura_id` es de 0086;
+        // `urea_conteo_id` es de 0092.
         fks: {
           despacho_id: "combustible_despachos",
           combustible_id: "combustible",
           recepcion_id: "combustible_recepciones",
           lectura_id: "combustible_lecturas",
+          urea_conteo_id: "combustible_conteos_urea",
           resuelta_por: "usuarios",
         },
       },
@@ -180,6 +191,7 @@ export const MODULOS: ModuloDefinicion[] = [
           combustible_id: "combustible",
           recepcion_id: "combustible_recepciones",
           lectura_id: "combustible_lecturas",
+          urea_conteo_id: "combustible_conteos_urea",
           alerta_id: "combustible_alertas",
         },
       },
@@ -204,6 +216,7 @@ export const MODULOS: ModuloDefinicion[] = [
       // de este módulo, así que el wipe de un tenant (que NO borra la fila
       // del tenant) no las alcanzaría solo. Mismo orden padre→hijo que en
       // `tablas` -- RAICES_WIPE lo invierte para borrar hijos primero.
+      "combustible_conteos_urea",
       "combustible_alertas",
       "combustible_anomalias",
       "combustible_config",

@@ -52,7 +52,10 @@ import type {
   ConfigCombustibleInput,
   KardexCombustibleQuery,
   PeriodoHistorialCombustibleQuery,
+  CrearConteoUreaInput,
+  AnularConteoUreaInput,
 } from "../../server/schemas/combustible.schema";
+import { FACTOR_LITROS_UREA } from "../../server/schemas/combustible.schema";
 import { armarCsv } from "../../server/shared/utils/csv.util";
 import {
   armarXlsx,
@@ -2049,6 +2052,17 @@ export class CombustibleController {
     despachoId: number,
     data: CrearDespachoCombustibleInput
   ) {
+    // UREA: rama completamente separada -- ver procesarAlertasDespachoUrea().
+    // Los controles de abajo (sobredespacho, medidor inconsistente, consumo
+    // excedido) hablan de conceptos que la urea no tiene (tanque, capacidad
+    // en gal/L, horómetro como control PRINCIPAL) y mezclarlos acá sería
+    // repetir el mismo error que forzó a reescribir el CHECK de la migración
+    // 0092: dos formas de vale distintas no comparten una sola validación.
+    if (data.producto === "urea") {
+      await this.procesarAlertasDespachoUrea(tenantId, despachoId, data);
+      return;
+    }
+
     const serieTalonario = data.serie_talonario;
     const nVale = data.n_vale;
     try {
@@ -2066,6 +2080,7 @@ export class CombustibleController {
           const { llegoTarde } = await service.resolverAlertaHuecoSiExiste(
             client,
             tenantId,
+            "combustible",
             serieTalonario,
             nVale
           );
@@ -2073,6 +2088,7 @@ export class CombustibleController {
           const huecos = await service.detectarHuecosRevelados(
             client,
             tenantId,
+            "combustible",
             serieTalonario,
             despachoId,
             nVale
@@ -2085,6 +2101,7 @@ export class CombustibleController {
           const maxAnterior = await service.detectarValeFueraDeOrden(
             client,
             tenantId,
+            "combustible",
             serieTalonario,
             despachoId,
             nVale
@@ -2092,6 +2109,7 @@ export class CombustibleController {
           const huecoLoEsperaba = await service.existioHuecoPara(
             client,
             tenantId,
+            "combustible",
             serieTalonario,
             nVale
           );
@@ -2106,7 +2124,7 @@ export class CombustibleController {
                 tenantId,
                 data.equipo_id,
                 data.combustible_id ?? null,
-                data.cantidad
+                data.cantidad!
               )
             : null;
 
@@ -2145,9 +2163,10 @@ export class CombustibleController {
           const recargado = await service.evaluarValeRecargado(
             client,
             tenantId,
+            "combustible",
             serieTalonario,
             nVale,
-            data.cantidad
+            data.cantidad!
           );
 
           // Consumo por hora de motor / por km (0088). Es el único control que
@@ -2376,6 +2395,245 @@ export class CombustibleController {
       logger.warn(
         { err, tenantId, despachoId },
         "No se pudieron procesar las alertas del despacho creado"
+      );
+    }
+  }
+
+  /** El equivalente de procesarAlertasDespachoCreado() para UREA (migración
+   *  0092) -- mismo contrato "nunca lanza" (corre después de que la
+   *  transacción de crearDespacho ya confirmó). Reusa el motor de talonario
+   *  (hueco, fuera de orden, recargado) filtrado por producto='urea', y
+   *  suma los 3 controles propios: equipo no habilitado, ratio urea/diésel,
+   *  tope diario de urea. NO corre sobredespacho, medidor inconsistente ni
+   *  consumo excedido -- son conceptos de tanque/horómetro que la urea no
+   *  tiene (ver el comentario del branch en procesarAlertasDespachoCreado). */
+  private async procesarAlertasDespachoUrea(
+    tenantId: string,
+    despachoId: number,
+    data: CrearDespachoCombustibleInput
+  ) {
+    const serieTalonario = data.serie_talonario;
+    const nVale = data.n_vale;
+    const equipoId = data.equipo_id!; // el CHECK de 0092 lo garantiza para urea
+    try {
+      const { huecos, fueraDeOrden, recargado, noHabilitado, ratio, tope, admins } =
+        await withTenant(tenantId, async (client) => {
+          const { llegoTarde } = await service.resolverAlertaHuecoSiExiste(
+            client,
+            tenantId,
+            "urea",
+            serieTalonario,
+            nVale
+          );
+
+          const huecos = await service.detectarHuecosRevelados(
+            client,
+            tenantId,
+            "urea",
+            serieTalonario,
+            despachoId,
+            nVale
+          );
+
+          const maxAnterior = await service.detectarValeFueraDeOrden(
+            client,
+            tenantId,
+            "urea",
+            serieTalonario,
+            despachoId,
+            nVale
+          );
+          const huecoLoEsperaba = await service.existioHuecoPara(
+            client,
+            tenantId,
+            "urea",
+            serieTalonario,
+            nVale
+          );
+          const fueraDeOrden = maxAnterior !== null && !huecoLoEsperaba ? maxAnterior : null;
+
+          const recargado = await service.evaluarValeRecargado(
+            client,
+            tenantId,
+            "urea",
+            serieTalonario,
+            nVale,
+            data.cantidad_bultos! * FACTOR_LITROS_UREA[data.presentacion!]
+          );
+
+          const noHabilitado = await service.evaluarUreaEquipoNoHabilitado(
+            client,
+            tenantId,
+            equipoId
+          );
+
+          const despachadoEn = data.despachado_en ?? new Date().toISOString();
+          const ratio = await service.evaluarUreaRatioExcedido(
+            client,
+            tenantId,
+            equipoId,
+            despachadoEn
+          );
+
+          const tope = await service.evaluarTopeDiarioUrea(client, tenantId, {
+            despachoId,
+            equipoId,
+            despachadoEn,
+          });
+
+          const nuevas = [
+            ...huecos.map((n) => ({
+              tipo: "hueco_detectado" as const,
+              serieTalonario,
+              nVale: n,
+              despachoId,
+              producto: "urea" as const,
+              detalle: { revelado_por_vale: nVale } as Record<string, unknown>,
+            })),
+            ...(fueraDeOrden !== null
+              ? [
+                  {
+                    tipo: "vale_fuera_de_orden" as const,
+                    serieTalonario,
+                    nVale,
+                    despachoId,
+                    producto: "urea" as const,
+                    detalle: { maxAnteriorDeLaSerie: fueraDeOrden } as Record<string, unknown>,
+                  },
+                ]
+              : []),
+            ...(recargado
+              ? [
+                  {
+                    tipo: "vale_recargado" as const,
+                    serieTalonario,
+                    nVale,
+                    despachoId,
+                    producto: "urea" as const,
+                    detalle: { ...recargado } as Record<string, unknown>,
+                  },
+                ]
+              : []),
+            ...(noHabilitado
+              ? [
+                  {
+                    tipo: "urea_equipo_no_habilitado" as const,
+                    serieTalonario,
+                    nVale,
+                    despachoId,
+                    producto: "urea" as const,
+                    detalle: { ...noHabilitado } as Record<string, unknown>,
+                  },
+                ]
+              : []),
+            ...(ratio
+              ? [
+                  {
+                    tipo: "urea_ratio_excedido" as const,
+                    serieTalonario,
+                    nVale,
+                    despachoId,
+                    producto: "urea" as const,
+                    detalle: { ...ratio } as Record<string, unknown>,
+                  },
+                ]
+              : []),
+            ...(tope
+              ? [
+                  {
+                    tipo: "tope_diario_excedido" as const,
+                    serieTalonario,
+                    nVale,
+                    despachoId,
+                    producto: "urea" as const,
+                    detalle: { ...tope } as Record<string, unknown>,
+                  },
+                ]
+              : []),
+            ...(llegoTarde
+              ? [
+                  {
+                    tipo: "despacho_tardio" as const,
+                    serieTalonario,
+                    nVale,
+                    despachoId,
+                    producto: "urea" as const,
+                    detalle: {
+                      nota: "El vale llegó después de que el hueco se congelara como anomalía",
+                    } as Record<string, unknown>,
+                  },
+                ]
+              : []),
+          ];
+
+          if (nuevas.length === 0) {
+            return {
+              huecos,
+              fueraDeOrden,
+              recargado,
+              noHabilitado,
+              ratio,
+              tope,
+              admins: [] as { email: string; nombre: string }[],
+            };
+          }
+
+          await service.crearAlertas(client, tenantId, nuevas);
+          const admins = await service.findAdminsConCombustibleHabilitado(client, tenantId);
+          return { huecos, fueraDeOrden, recargado, noHabilitado, ratio, tope, admins };
+        });
+
+      if (huecos.length > 0) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "hueco_detectado",
+          producto: "urea",
+          serieTalonario,
+          valesFaltantes: huecos,
+        });
+      }
+      if (fueraDeOrden !== null) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "vale_fuera_de_orden",
+          producto: "urea",
+          serieTalonario,
+          nVale,
+        });
+      }
+      if (recargado) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "vale_recargado",
+          producto: "urea",
+          serieTalonario,
+          nVale,
+        });
+      }
+      if (noHabilitado) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "urea_equipo_no_habilitado",
+          serieTalonario,
+          nVale,
+        });
+      }
+      if (ratio) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "urea_ratio_excedido",
+          serieTalonario,
+          nVale,
+        });
+      }
+      if (tope) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "tope_diario_excedido",
+          producto: "urea",
+          serieTalonario,
+          nVale,
+        });
+      }
+      void admins; // el correo de urea queda para una entrega posterior -- ver PR
+    } catch (err) {
+      logger.warn(
+        { err, tenantId, despachoId },
+        "No se pudieron procesar las alertas del despacho de urea creado"
       );
     }
   }
@@ -2779,13 +3037,19 @@ export class CombustibleController {
       const origenRaw = req.query.origen;
       const origen =
         origenRaw === "tanque_propio" || origenRaw === "compra_externa" ? origenRaw : undefined;
+      // Migración 0092: sin filtro, la pestaña de urea (y la de combustible)
+      // verían los vales del otro producto mezclados en el mismo listado.
+      const producto =
+        req.query.producto === "urea" || req.query.producto === "combustible"
+          ? req.query.producto
+          : undefined;
       const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
 
       const filas = await withTenant(tenantId, (client) =>
         service.listarDespachos(
           client,
           tenantId,
-          { equipoId, serieTalonario, origen, desde, hasta },
+          { equipoId, serieTalonario, origen, producto, desde, hasta },
           paginacion
         )
       );
@@ -2869,9 +3133,12 @@ export class CombustibleController {
         res.status(400).json({ error: "El query param serie_talonario es obligatorio" });
         return;
       }
+      // Migración 0092: sin este filtro, un talonario de urea con el mismo
+      // NOMBRE que uno de combustible mezclaría sus huecos.
+      const producto = req.query.producto === "urea" ? "urea" : "combustible";
 
       const resultado = await withTenant(tenantId, (client) =>
-        service.detectarHuecos(client, tenantId, serieTalonario)
+        service.detectarHuecos(client, tenantId, serieTalonario, producto)
       );
       res.json(resultado);
     } catch {
@@ -2889,9 +3156,15 @@ export class CombustibleController {
       const tenantId = getTenantId(req);
       const paginacion = parsePaginacion(req.query);
       const soloNoLeidas = req.query.solo_no_leidas === "true";
+      // Filtro por producto (migración 0092): sin él, la pestaña de urea
+      // vería mezcladas sus propias alertas con las de diésel/gasolina/glp.
+      const producto =
+        req.query.producto === "urea" || req.query.producto === "combustible"
+          ? req.query.producto
+          : undefined;
 
       const filas = await withTenant(tenantId, (client) =>
-        service.listarAlertas(client, tenantId, { soloNoLeidas }, paginacion)
+        service.listarAlertas(client, tenantId, { soloNoLeidas, producto }, paginacion)
       );
       res.json(armarRespuestaPaginada(filas, paginacion));
     } catch {
@@ -3092,6 +3365,9 @@ export class CombustibleController {
             recepcionRequiereValidacion: nueva.recepcion_requiere_validacion,
             horasParaValidarRecepcion: nueva.horas_para_validar_recepcion,
             diasSinVarillaDeControl: nueva.dias_sin_varilla_de_control,
+            topeDiarioUreaL: nueva.tope_diario_urea_l,
+            ratioUreaDieselMaxPct: nueva.ratio_urea_diesel_max_pct,
+            diasSinConteoUrea: nueva.dias_sin_conteo_urea,
           },
           req.usuario!.id
         );
@@ -3913,12 +4189,18 @@ export class CombustibleController {
         recepcionId: fila!.id,
         combustibleId: data.combustible_id,
       });
-      await this.procesarAlertaRecepcionRetroactiva(
-        tenantId,
-        data.combustible_id,
-        Number(fila!.id),
-        new Date(fila!.recibido_en).toISOString()
-      );
+      // La recepción retroactiva (5ª auditoría) compara contra las lecturas
+      // de VARILLA de un tanque -- la urea no tiene tanque ni varilla, así
+      // que este control no le aplica (ver el conteo físico de urea, que es
+      // su propio equivalente, aparte).
+      if (data.producto !== "urea") {
+        await this.procesarAlertaRecepcionRetroactiva(
+          tenantId,
+          data.combustible_id!,
+          Number(fila!.id),
+          new Date(fila!.recibido_en).toISOString()
+        );
+      }
       res.status(201).json(fila);
     } catch (err) {
       if (
@@ -4166,10 +4448,19 @@ export class CombustibleController {
           ? Number(combustibleIdRaw)
           : undefined;
 
+      const producto =
+        req.query.producto === "urea" || req.query.producto === "combustible"
+          ? req.query.producto
+          : undefined;
       const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
 
       const filas = await withTenant(tenantId, (client) =>
-        service.listarRecepciones(client, tenantId, { combustibleId, desde, hasta }, paginacion)
+        service.listarRecepciones(
+          client,
+          tenantId,
+          { combustibleId, producto, desde, hasta },
+          paginacion
+        )
       );
       res.json(armarRespuestaPaginada(filas, paginacion));
     } catch {
@@ -4228,6 +4519,152 @@ export class CombustibleController {
       res.json({ recepcion: resultado.recepcion, tanque: resultado.tanque });
     } catch {
       res.status(500).json({ error: "Error al anular la recepción" });
+    }
+  }
+
+  // ── Conteo físico de urea (migración 0092) ────────────────────────────
+
+  /** POST /urea/conteos -- el reemplazo de la varilla para la urea. Cada
+   *  conteo dispara el chequeo de descuadre contra el stock teórico (ver
+   *  evaluarUreaDescuadreConteo), mismo patrón que registrarLectura con el
+   *  tanque de combustible. */
+  async crearConteoUrea(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const data = req.validatedBody as CrearConteoUreaInput;
+
+      const { fila, creado } = await withTenant(tenantId, (client) =>
+        service.crearConteoUrea(client, tenantId, req.usuario!.id, data)
+      );
+
+      if (!creado) {
+        res.status(200).json(fila ?? { error: "Este conteo ya se había registrado" });
+        return;
+      }
+
+      await registrarAuditoria({
+        accion: "combustible.urea_conteo_crear",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: { conteoId: fila!.id, cantidadLitros: fila!.cantidad_litros },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      await publicarEventoTenant(tenantId, "combustible.urea_conteo_creado", {
+        conteoId: fila!.id,
+      });
+
+      // Best-effort, mismo contrato "nunca lanza" que el resto del módulo:
+      // el conteo ya se guardó y se respondió, un fallo acá no lo revierte.
+      try {
+        const { descuadre, admins } = await withTenant(tenantId, async (client) => {
+          const descuadre = await service.evaluarUreaDescuadreConteo(
+            client,
+            tenantId,
+            Number(fila!.id),
+            Number(fila!.cantidad_litros),
+            new Date(fila!.contado_en).toISOString()
+          );
+          if (!descuadre) {
+            return { descuadre: null, admins: [] as { email: string; nombre: string }[] };
+          }
+          await service.crearAlertas(client, tenantId, [
+            {
+              tipo: "urea_descuadre_conteo",
+              producto: "urea",
+              ureaConteoId: Number(fila!.id),
+              detalle: { ...descuadre } as Record<string, unknown>,
+            },
+          ]);
+          return {
+            descuadre,
+            admins: await service.findAdminsConCombustibleHabilitado(client, tenantId),
+          };
+        });
+        if (descuadre) {
+          await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+            tipo: "urea_descuadre_conteo",
+          });
+          void admins; // el correo de esta alerta queda para una entrega posterior
+        }
+      } catch (err) {
+        logger.warn({ err, tenantId }, "No se pudo evaluar el descuadre del conteo de urea");
+      }
+
+      res.status(201).json(fila);
+    } catch {
+      res.status(500).json({ error: "Error al registrar el conteo de urea" });
+    }
+  }
+
+  async listarConteosUrea(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const paginacion = parsePaginacion(req.query);
+      const filas = await withTenant(tenantId, (client) =>
+        service.listarConteosUrea(client, tenantId, paginacion)
+      );
+      res.json(armarRespuestaPaginada(filas, paginacion));
+    } catch {
+      res.status(500).json({ error: "Error al listar los conteos de urea" });
+    }
+  }
+
+  /** PATCH /urea/conteos/:id/anular -- mismo mecanismo de siempre: 404 si
+   *  no existe, 409 si ya estaba anulado, motivo obligatorio. */
+  async anularConteoUrea(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const id = Number(req.params.id);
+      const { motivo } = req.validatedBody as AnularConteoUreaInput;
+
+      const resultado = await withTenant(tenantId, async (client) => {
+        const anulado = await service.anularConteoUrea(
+          client,
+          tenantId,
+          id,
+          req.usuario!.id,
+          motivo
+        );
+        if (anulado) return { estado: "anulada" as const, conteo: anulado };
+        const existente = await service.getConteoUreaPorId(client, tenantId, id);
+        return existente ? { estado: "ya_anulada" as const } : { estado: "inexistente" as const };
+      });
+
+      if (resultado.estado === "inexistente") {
+        res.status(404).json({ error: "Conteo no encontrado" });
+        return;
+      }
+      if (resultado.estado === "ya_anulada") {
+        res.status(409).json({ error: "Este conteo ya estaba anulado" });
+        return;
+      }
+
+      await registrarAuditoria({
+        accion: "combustible.urea_conteo_anular",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: { conteoId: id, motivo },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      await publicarEventoTenant(tenantId, "combustible.urea_conteo_anulado", { conteoId: id });
+      res.json(resultado.conteo);
+    } catch {
+      res.status(500).json({ error: "Error al anular el conteo de urea" });
+    }
+  }
+
+  /** GET /urea/estado -- hace cuánto que nadie cuenta la urea, para el
+   *  banner de la pestaña (mismo criterio que el tanque "operando ciego"
+   *  de combustible, migración 0082). */
+  async getEstadoUrea(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const sinConteo = await withTenant(tenantId, (client) =>
+        service.evaluarUreaSinConteo(client, tenantId)
+      );
+      res.json({ sinConteo: sinConteo ?? null });
+    } catch {
+      res.status(500).json({ error: "Error al obtener el estado del conteo de urea" });
     }
   }
 }
