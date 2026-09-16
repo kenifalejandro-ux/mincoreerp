@@ -1,4 +1,5 @@
-import { Receipt, ShieldCheck } from "lucide-react";
+import { ChevronDown, Receipt, ShieldCheck } from "lucide-react";
+import { useState } from "react";
 
 import { useAuth } from "../../context/AuthContext";
 import { MODULOS_CLIENTE } from "../../modules/registry";
@@ -13,8 +14,14 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
 
   const tabs = MODULOS_CLIENTE.filter((modulo) => usuario?.modulosPermitidos.includes(modulo.id));
 
+  // El submenú de Combustible se abre/cierra con la flechita, no con el
+  // click de navegar -- antes se abría solo porque isActive lo forzaba, y
+  // Kenif pidió separarlos: click en "Combustible" navega, click en la
+  // flecha despliega/pliega, cada uno su gesto.
+  const [combustibleDesplegado, setCombustibleDesplegado] = useState(false);
+
   return (
-    <aside className="w-64 bg-[#FFFFFF] border-r border-slate-200 min-h-[calc(100vh-66px)] flex flex-col shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
+    <aside className="w-64 sticky top-0 z-50 bg-[#0A1014]  border-l-3 border-[#DDF500] min-h-[calc(100vh-66px)] flex flex-col shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
       <div className="p-4 border-b border-slate-100">
         <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
           Módulos Operativos
@@ -23,24 +30,78 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
 
       <nav className="flex-1 py-4 flex flex-col gap-1">
         {tabs.map((tab) => {
-          const isActive = activeTab === tab.id;
+          // Combustible es, por ahora, el único módulo con submenú: adentro
+          // vive el Histórico que pidió el cliente (consumo, recepciones,
+          // compras externas, por conductor, por vehículo -- ver
+          // HistoricoCliente.tsx). activeTab codifica la sub-pestaña como
+          // "combustible:historico" -- CombustiblePanel la lee vía la prop
+          // pestanaInicial (ver App.tsx). isActive compara por prefijo para
+          // que el resaltado del ítem padre siga encendido con cualquiera
+          // de las dos sub-pestañas.
+          const esCombustible = tab.id === "combustible";
+          const isActive = esCombustible
+            ? activeTab === "combustible" || activeTab === "combustible:historico"
+            : activeTab === tab.id;
           return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`w-full text-left px-6 py-3.5 flex items-center gap-3 transition-all relative ${
-                isActive
-                  ? "bg-slate-50 text-[#0A1014] font-semibold"
-                  : "text-slate-500 hover:bg-slate-50 hover:text-[#0A1014] font-medium"
-              }`}
-            >
-              {isActive && <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-[#DDF500]" />}
+            <div key={tab.id}>
+              <button
+                onClick={() => setActiveTab(esCombustible ? "combustible" : tab.id)}
+                className={`w-full text-left px-6 py-3.5 flex  items-center gap-3 transition-all relative ${
+                  isActive
+                    ? "  bg-[#FFFFFF] font-semibold"
+                    : "text-slate-500  hover:bg-[#FFFFFF] hover:text-slate-800 font-medium"
+                }`}
+              >
+                {isActive && (
+                  <div className="absolute left-0 top-0 bottom-0 w-1.5 z-2 bg-[#DDF500]" />
+                )}
 
-              <span className={`${isActive ? "text-[#0A1014]" : "text-slate-400"}`}>
-                {tab.icono}
-              </span>
-              <span className="tracking-tight">{tab.label}</span>
-            </button>
+                <span className={`${isActive ? "text-[#0A1014]" : "text-slate-400"}`}>
+                  {tab.icono}
+                </span>
+                <span className="tracking-tight flex-1">{tab.label}</span>
+                {esCombustible && (
+                  <span
+                    role="button"
+                    aria-label={combustibleDesplegado ? "Cerrar submenú" : "Abrir submenú"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setCombustibleDesplegado((v) => !v);
+                    }}
+                    className={`p-1 rounded transition-transform ${combustibleDesplegado ? "rotate-180" : ""}`}
+                  >
+                    <ChevronDown
+                      size={16}
+                      className={isActive ? "text-[#0A1014]" : "text-slate-400"}
+                    />
+                  </span>
+                )}
+              </button>
+              {esCombustible && combustibleDesplegado && (
+                <div className="flex flex-col">
+                  <button
+                    onClick={() => setActiveTab("combustible")}
+                    className={`w-full text-left pl-14 pr-6 py-2.5 text-sm transition-all ${
+                      activeTab === "combustible"
+                        ? "  text-[#DDF500] font-semibold"
+                        : "text-slate-500  text:bg-[#FFFFFF] hover:text-[#DDF500] font-medium"
+                    }`}
+                  >
+                    Tanques
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("combustible:historico")}
+                    className={`w-full text-left pl-14 pr-6 py-2.5 text-sm transition-all ${
+                      activeTab === "combustible:historico"
+                        ? "  text-[#DDF500] font-semibold"
+                        : "text-slate-500  text:bg-[#FFFFFF] hover:text-[#DDF500] font-medium"
+                    }`}
+                  >
+                    Histórico
+                  </button>
+                </div>
+              )}
+            </div>
           );
         })}
 

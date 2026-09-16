@@ -2776,19 +2776,83 @@ export class CombustibleController {
           : undefined;
       const serieTalonario =
         typeof req.query.serie_talonario === "string" ? req.query.serie_talonario : undefined;
+      const origenRaw = req.query.origen;
+      const origen =
+        origenRaw === "tanque_propio" || origenRaw === "compra_externa" ? origenRaw : undefined;
       const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
 
       const filas = await withTenant(tenantId, (client) =>
         service.listarDespachos(
           client,
           tenantId,
-          { equipoId, serieTalonario, desde, hasta },
+          { equipoId, serieTalonario, origen, desde, hasta },
           paginacion
         )
       );
       res.json(armarRespuestaPaginada(filas, paginacion));
     } catch {
       res.status(500).json({ error: "Error al listar despachos" });
+    }
+  }
+
+  /** Días/semana/mes/año, o nada (todo el rango junto). Mismo criterio que
+   *  origen en listarDespachos: se valida a mano contra un allowlist fijo
+   *  en vez de con Zod, porque es un solo query param suelto que no
+   *  justifica un schema aparte -- y el repository lo vuelve a chequear
+   *  contra el mismo allowlist antes de tocar el SQL (ver TRUNC_SQL). */
+  private leerAgruparPor(req: Request): string | undefined {
+    const valor = req.query.agrupar_por;
+    return valor === "dia" || valor === "semana" || valor === "mes" || valor === "anio"
+      ? valor
+      : undefined;
+  }
+
+  /** GET /consumo-por-conductor -- Histórico -> Consumo por conductor, la
+   *  pestaña que mira el cliente. Sin paginar (ver el repository), por eso
+   *  no arma respuesta paginada como el resto de los listados. */
+  async getConsumoPorConductor(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
+      const agruparPor = this.leerAgruparPor(req);
+      const filas = await withTenant(tenantId, (client) =>
+        service.listarConsumoPorConductor(client, tenantId, { desde, hasta }, agruparPor)
+      );
+      res.json({ data: filas });
+    } catch {
+      res.status(500).json({ error: "Error al calcular el consumo por conductor" });
+    }
+  }
+
+  /** GET /consumo-por-vehiculo -- Histórico -> Consumo por vehículo/unidad. */
+  async getConsumoPorVehiculo(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
+      const agruparPor = this.leerAgruparPor(req);
+      const filas = await withTenant(tenantId, (client) =>
+        service.listarConsumoPorEquipo(client, tenantId, { desde, hasta }, agruparPor)
+      );
+      res.json({ data: filas });
+    } catch {
+      res.status(500).json({ error: "Error al calcular el consumo por vehículo" });
+    }
+  }
+
+  /** GET /consumo-por-grifo -- Histórico -> Ranking por grifo (interno y
+   *  cada externo). Sumar sus filas por tipo_grifo es la conciliación
+   *  interno-vs-externo que pidió Kenif, sin tener que sumarla a mano. */
+  async getConsumoPorGrifo(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
+      const agruparPor = this.leerAgruparPor(req);
+      const filas = await withTenant(tenantId, (client) =>
+        service.listarConsumoPorGrifo(client, tenantId, { desde, hasta }, agruparPor)
+      );
+      res.json({ data: filas });
+    } catch {
+      res.status(500).json({ error: "Error al calcular el consumo por grifo" });
     }
   }
 

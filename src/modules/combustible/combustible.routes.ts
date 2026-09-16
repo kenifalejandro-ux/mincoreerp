@@ -45,6 +45,27 @@ router.get(
   asyncHandler(controller.listarDespachos.bind(controller))
 );
 router.get("/despachos/huecos", asyncHandler(controller.getHuecosTalonario.bind(controller)));
+
+// Histórico del cliente (consumo por conductor / por vehículo) -- mismo
+// permiso que /despachos y /recepciones: sin requireRole, visible para
+// cualquier rol del tenant (incluido "lectura", el rol de solo consulta).
+// Segmentos literales, ANTES de /:id, mismo motivo que arriba.
+router.get(
+  "/consumo-por-conductor",
+  validateQuery(periodoHistorialCombustibleSchema),
+  asyncHandler(controller.getConsumoPorConductor.bind(controller))
+);
+router.get(
+  "/consumo-por-vehiculo",
+  validateQuery(periodoHistorialCombustibleSchema),
+  asyncHandler(controller.getConsumoPorVehiculo.bind(controller))
+);
+router.get(
+  "/consumo-por-grifo",
+  validateQuery(periodoHistorialCombustibleSchema),
+  asyncHandler(controller.getConsumoPorGrifo.bind(controller))
+);
+
 // Los cuatro roles pueden POSTear acá, pero NO lo mismo: este endpoint sirve
 // dos flujos distintos (el vale del tanque propio y la compra en grifo de
 // ruta) que se distinguen por el campo `origen` del body. requireRole decide
