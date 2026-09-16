@@ -21,11 +21,14 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "../../context/AuthContext";
 import {
+  actualizarUsuarioApi,
   cambiarEstadoUsuarioApi,
   crearUsuarioApi,
   generarClaveTemporal,
   listarUsuariosApi,
   resetearClaveApi,
+  type ModoAlta,
+  type ModoReseteo,
   type RolUsuario,
   type UsuarioDelTenant,
 } from "../../services/usuariosApi";
@@ -86,6 +89,7 @@ export default function UsuariosView() {
   const [modalAlta, setModalAlta] = useState(false);
   const [usuarioAResetear, setUsuarioAResetear] = useState<UsuarioDelTenant | null>(null);
   const [usuarioADarDeBaja, setUsuarioADarDeBaja] = useState<UsuarioDelTenant | null>(null);
+  const [usuarioAEditar, setUsuarioAEditar] = useState<UsuarioDelTenant | null>(null);
   const [enviando, setEnviando] = useState(false);
 
   // Lo único que se muestra una vez y no se puede recuperar.
@@ -95,6 +99,18 @@ export default function UsuariosView() {
     clave: string;
     esAlta: boolean;
   } | null>(null);
+  // El otro final posible del reseteo: la persona tiene cuenta y elige ella
+  // su clave, el admin no la ve (ver ModalResetearClave).
+  const [correoEnviadoA, setCorreoEnviadoA] = useState<UsuarioDelTenant | null>(null);
+  // Y el del alta con correo: no hay clave que dictar, se le mandó una
+  // invitación para que defina la suya.
+  const [invitacionEnviadaA, setInvitacionEnviadaA] = useState<{
+    nombre: string;
+    correo: string;
+  } | null>(null);
+  // Con la doble firma encendida no se aplicó nada: quedó una orden esperando
+  // a otro administrador (ver §11 del documento de arquitectura).
+  const [pendienteDeFirma, setPendienteDeFirma] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
     try {
@@ -122,6 +138,8 @@ export default function UsuariosView() {
     );
   });
 
+  const activos = usuarios.filter((u) => u.estado === "activo").length;
+
   if (cargando) return <div className="p-20 text-center text-slate-500">Cargando...</div>;
 
   return (
@@ -129,7 +147,10 @@ export default function UsuariosView() {
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-8">
         <div>
           <h1 className="text-3xl font-bold text-slate-800">Usuarios</h1>
-          <p className="text-slate-600">Quién puede entrar al sistema, y con qué permisos</p>
+          <p className="text-slate-600">
+            {usuarios.length} {usuarios.length === 1 ? "persona" : "personas"} en tu empresa
+            {activos !== usuarios.length && `, ${activos} ${activos === 1 ? "activa" : "activas"}`}
+          </p>
         </div>
         <button
           onClick={() => setModalAlta(true)}
@@ -166,7 +187,10 @@ export default function UsuariosView() {
                 entra con
               </th>
               <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-widest">
-                rol
+                celular
+              </th>
+              <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-widest">
+                tipo de usuario
               </th>
               <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-widest">
                 estado
@@ -193,22 +217,53 @@ export default function UsuariosView() {
                     </span>
                   )}
                 </td>
+                <td className="p-5 text-sm text-slate-600">
+                  {u.celular ? (
+                    <span className="font-mono">{u.celular}</span>
+                  ) : (
+                    <span className="text-slate-400">—</span>
+                  )}
+                </td>
                 <td className="p-5 text-sm font-medium text-slate-700">
                   {ROLES.find((r) => r.valor === u.rol)?.titulo ?? u.rol}
                 </td>
                 <td className="p-5 text-sm">
-                  <span className={`font-bold ${u.activo ? "text-emerald-700" : "text-slate-500"}`}>
-                    {u.activo ? "Activo" : "Dado de baja"}
-                  </span>
+                  <EstadoDelPerfil usuario={u} />
                 </td>
                 <td className="p-5 text-right whitespace-nowrap">
                   <button
                     onClick={() => setUsuarioAResetear(u)}
-                    disabled={!u.activo}
+                    disabled={u.estado === "inactivo"}
                     className="px-3 py-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Resetear clave
                   </button>
+                  <button
+                    onClick={() => setUsuarioAEditar(u)}
+                    className="ml-2 px-3 py-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-all"
+                  >
+                    Editar
+                  </button>
+                  {u.estado === "bloqueado" && (
+                    <button
+                      onClick={async () => {
+                        setEnviando(true);
+                        try {
+                          const r = await cambiarEstadoUsuarioApi(u.id, "activo");
+                          if (r.pendiente) setPendienteDeFirma(r.orden.correlativo);
+                          await cargar();
+                        } catch (err) {
+                          setError(err instanceof Error ? err.message : "No se pudo desbloquear.");
+                        } finally {
+                          setEnviando(false);
+                        }
+                      }}
+                      disabled={enviando}
+                      className="ml-2 px-3 py-1.5 text-xs font-bold text-amber-700 hover:bg-amber-50 rounded-lg transition-all disabled:opacity-40"
+                    >
+                      Desbloquear
+                    </button>
+                  )}
                   {u.activo ? (
                     <button
                       onClick={() => setUsuarioADarDeBaja(u)}
@@ -223,7 +278,8 @@ export default function UsuariosView() {
                       onClick={async () => {
                         setEnviando(true);
                         try {
-                          await cambiarEstadoUsuarioApi(u.id, true);
+                          const r = await cambiarEstadoUsuarioApi(u.id, "activo");
+                          if (r.pendiente) setPendienteDeFirma(r.orden.correlativo);
                           await cargar();
                         } catch (err) {
                           setError(err instanceof Error ? err.message : "No se pudo reactivar.");
@@ -256,7 +312,18 @@ export default function UsuariosView() {
           onCerrar={() => setModalAlta(false)}
           onCreado={async (datos) => {
             setModalAlta(false);
-            setClaveParaDictar({ ...datos, esAlta: true });
+            if (datos.modo === "pendiente-de-firma") {
+              setPendienteDeFirma(datos.correlativo ?? null);
+            } else if (datos.modo === "invitacion-enviada") {
+              setInvitacionEnviadaA({ nombre: datos.nombre, correo: datos.identificador });
+            } else {
+              setClaveParaDictar({
+                nombre: datos.nombre,
+                identificador: datos.identificador,
+                clave: datos.clave,
+                esAlta: true,
+              });
+            }
             await cargar();
           }}
         />
@@ -266,13 +333,19 @@ export default function UsuariosView() {
         <ModalResetearClave
           usuario={usuarioAResetear}
           onCerrar={() => setUsuarioAResetear(null)}
-          onListo={(clave) => {
-            setClaveParaDictar({
-              nombre: usuarioAResetear.nombre,
-              identificador: identificador(usuarioAResetear),
-              clave,
-              esAlta: false,
-            });
+          onListo={(resultado) => {
+            if (resultado.modo === "pendiente-de-firma") {
+              setPendienteDeFirma(resultado.correlativo ?? null);
+            } else if (resultado.modo === "correo-enviado") {
+              setCorreoEnviadoA(usuarioAResetear);
+            } else {
+              setClaveParaDictar({
+                nombre: usuarioAResetear.nombre,
+                identificador: identificador(usuarioAResetear),
+                clave: resultado.clave,
+                esAlta: false,
+              });
+            }
             setUsuarioAResetear(null);
           }}
         />
@@ -282,8 +355,9 @@ export default function UsuariosView() {
         <ModalDarDeBaja
           usuario={usuarioADarDeBaja}
           onCerrar={() => setUsuarioADarDeBaja(null)}
-          onListo={async () => {
+          onListo={async (correlativoPendiente) => {
             setUsuarioADarDeBaja(null);
+            if (correlativoPendiente) setPendienteDeFirma(correlativoPendiente);
             await cargar();
           }}
         />
@@ -292,7 +366,154 @@ export default function UsuariosView() {
       {claveParaDictar && (
         <ClaveParaDictar datos={claveParaDictar} onCerrar={() => setClaveParaDictar(null)} />
       )}
+
+      {correoEnviadoA && (
+        <CorreoEnviado usuario={correoEnviadoA} onCerrar={() => setCorreoEnviadoA(null)} />
+      )}
+
+      {usuarioAEditar && (
+        <ModalEditarUsuario
+          usuario={usuarioAEditar}
+          onCerrar={() => setUsuarioAEditar(null)}
+          onListo={async () => {
+            setUsuarioAEditar(null);
+            await cargar();
+          }}
+        />
+      )}
+
+      {pendienteDeFirma !== null && (
+        <Modal titulo="Queda pendiente de firma" onCerrar={() => setPendienteDeFirma(null)}>
+          <div className="p-6 space-y-4">
+            <p className="text-sm text-slate-700">
+              Tu empresa tiene la doble firma activada, así que esto todavía{" "}
+              <strong className="font-bold text-slate-900">no se aplicó</strong>. Quedó la orden{" "}
+              <strong className="font-mono font-bold text-slate-900">{pendienteDeFirma}</strong>{" "}
+              esperando que la firme otro administrador.
+            </p>
+            <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+              La vas a encontrar en Administración → Órdenes. Vence a las 72 horas sin firma.
+            </p>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setPendienteDeFirma(null)}
+                className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold rounded-xl"
+              >
+                Entendido
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {invitacionEnviadaA && (
+        <InvitacionEnviada
+          datos={invitacionEnviadaA}
+          onCerrar={() => setInvitacionEnviadaA(null)}
+        />
+      )}
     </div>
+  );
+}
+
+/** Los tres estados de 0090. El bloqueado se distingue del dado de baja a
+ *  propósito: uno es una decisión de un administrador y el otro es la clave
+ *  que se le trabó a alguien un lunes a la mañana. Mezclarlos deja al
+ *  administrador sin saber cuál de las dos cosas pasó. */
+function EstadoDelPerfil({ usuario }: { usuario: UsuarioDelTenant }) {
+  if (usuario.estado === "bloqueado") {
+    return (
+      <span className="inline-flex flex-col">
+        <span className="font-bold text-amber-700">Bloqueado</span>
+        <span className="text-[11px] text-slate-500">Erró la clave demasiadas veces</span>
+      </span>
+    );
+  }
+  if (usuario.estado === "inactivo") {
+    return <span className="font-bold text-slate-500">Dado de baja</span>;
+  }
+  return <span className="font-bold text-emerald-700">Activo</span>;
+}
+
+// ── Contacto ─────────────────────────────────────────────────────────────
+
+function ModalEditarUsuario({
+  usuario,
+  onCerrar,
+  onListo,
+}: {
+  usuario: UsuarioDelTenant;
+  onCerrar: () => void;
+  onListo: () => void | Promise<void>;
+}) {
+  const [nombre, setNombre] = useState(usuario.nombre);
+  const [celular, setCelular] = useState(usuario.celular ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState(false);
+
+  const enviar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (enviando) return;
+    setEnviando(true);
+    setError(null);
+    try {
+      await actualizarUsuarioApi(usuario.id, {
+        nombre: nombre.trim(),
+        celular: celular.trim() || null,
+      });
+      await onListo();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo guardar.");
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <Modal titulo={`Datos de ${usuario.nombre}`} onCerrar={onCerrar}>
+      <form onSubmit={enviar} className="p-6 space-y-4">
+        <Campo id="editar-nombre" etiqueta="Nombre y apellido">
+          <input
+            id="editar-nombre"
+            type="text"
+            required
+            maxLength={100}
+            className={ESTILO_INPUT}
+            value={nombre}
+            onChange={(e) => setNombre(e.target.value)}
+          />
+        </Campo>
+
+        <Campo
+          id="editar-celular"
+          etiqueta="Celular"
+          ayuda="Para ubicarlo cuando algo de su turno no cierra. Es de esta empresa: no se comparte con otras."
+        >
+          <input
+            id="editar-celular"
+            type="tel"
+            maxLength={30}
+            placeholder="Ej: 987 654 321"
+            className={ESTILO_INPUT}
+            value={celular}
+            onChange={(e) => setCelular(e.target.value)}
+          />
+        </Campo>
+
+        <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+          El correo no se edita: es con lo que esta persona entra a MinCore, acá y en cualquier otra
+          empresa donde trabaje.
+        </p>
+
+        {error && <p className="text-sm font-semibold text-red-700">{error}</p>}
+
+        <div className="flex justify-end gap-2 pt-2">
+          <BotonCancelar onClick={onCerrar} />
+          <BotonPrincipal enviando={enviando}>Guardar</BotonPrincipal>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -307,6 +528,8 @@ function ModalAlta({
     nombre: string;
     identificador: string;
     clave: string;
+    modo: ModoAlta | "pendiente-de-firma";
+    correlativo?: string;
   }) => void | Promise<void>;
 }) {
   // El DNI primero, y el correo abajo marcado como opcional: el caso masivo
@@ -321,6 +544,10 @@ function ModalAlta({
   const [error, setError] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
 
+  // Con correo, la clave la define la persona desde su invitación: no hay
+  // clave que mostrar ni dictar (ver §10 del documento de arquitectura).
+  const porInvitacion = email.trim().length > 0;
+
   const enviar = async (e: React.FormEvent) => {
     e.preventDefault();
     if (enviando) return;
@@ -331,17 +558,24 @@ function ModalAlta({
     setEnviando(true);
     setError(null);
     try {
-      await crearUsuarioApi({
+      // Con correo no se manda clave: la define la persona desde la
+      // invitación que le llega. Mandarla igual, "por las dudas", volvería a
+      // dejar al administrador sabiendo con qué clave firma su gente.
+      const creado = await crearUsuarioApi({
         nombre: nombre.trim(),
         dni: dni.trim() || undefined,
         email: email.trim() || undefined,
-        password: clave,
+        password: porInvitacion ? undefined : clave,
         rol,
       });
       await onCreado({
         nombre: nombre.trim(),
         identificador: email.trim() || dni.trim(),
         clave,
+        // Con la doble firma encendida todavía no existe nadie: la orden
+        // espera la firma de otro administrador.
+        modo: creado.pendiente ? "pendiente-de-firma" : creado.datos.modo,
+        correlativo: creado.pendiente ? creado.orden.correlativo : undefined,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo crear el usuario.");
@@ -418,30 +652,37 @@ function ModalAlta({
           />
         </fieldset>
 
-        <Campo
-          id="usuario-clave"
-          etiqueta="Clave temporal"
-          ayuda="Se la vas a dictar a la persona. El sistema la obliga a cambiarla apenas entre."
-        >
-          <div className="flex gap-2">
-            <input
-              id="usuario-clave"
-              type="text"
-              required
-              minLength={8}
-              className={`${ESTILO_INPUT} font-mono`}
-              value={clave}
-              onChange={(e) => setClave(e.target.value)}
-            />
-            <button
-              type="button"
-              onClick={() => setClave(generarClaveTemporal())}
-              className="px-3 py-2 text-xs font-bold text-slate-700 border border-slate-200 rounded-xl hover:bg-slate-50 whitespace-nowrap"
-            >
-              Otra
-            </button>
-          </div>
-        </Campo>
+        {porInvitacion ? (
+          <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+            No le pongas clave: le llega un correo para que elija la suya. Nadie de la empresa la ve
+            ni la puede elegir por ella — así su firma en un vale significa algo.
+          </p>
+        ) : (
+          <Campo
+            id="usuario-clave"
+            etiqueta="Clave temporal"
+            ayuda="Se la vas a dictar a la persona. El sistema la obliga a cambiarla apenas entre."
+          >
+            <div className="flex gap-2">
+              <input
+                id="usuario-clave"
+                type="text"
+                required
+                minLength={8}
+                className={`${ESTILO_INPUT} font-mono`}
+                value={clave}
+                onChange={(e) => setClave(e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => setClave(generarClaveTemporal())}
+                className="px-3 py-2 text-xs font-bold text-slate-700 border border-slate-200 rounded-xl hover:bg-slate-50 whitespace-nowrap"
+              >
+                Otra
+              </button>
+            </div>
+          </Campo>
+        )}
 
         {error && <p className="text-sm font-semibold text-red-700">{error}</p>}
 
@@ -463,11 +704,22 @@ function ModalResetearClave({
 }: {
   usuario: UsuarioDelTenant;
   onCerrar: () => void;
-  onListo: (clave: string) => void;
+  onListo: (resultado: {
+    modo: ModoReseteo | "pendiente-de-firma";
+    clave: string;
+    correlativo?: string;
+  }) => void;
 }) {
   const [clave, setClave] = useState(generarClaveTemporal);
   const [error, setError] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
+
+  // Quien tiene correo tiene CUENTA (migración 0087), y la clave de una
+  // cuenta no es de esta empresa: la misma le sirve en cualquier otra donde
+  // trabaje. Por eso acá el admin no elige ninguna clave -- se le manda un
+  // enlace a la persona y la elige ella. Con DNI no hay correo a donde
+  // mandar nada, así que sigue siendo una clave para dictar por teléfono.
+  const porCorreo = Boolean(usuario.email);
 
   const enviar = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -475,8 +727,14 @@ function ModalResetearClave({
     setEnviando(true);
     setError(null);
     try {
-      await resetearClaveApi(usuario.id, clave);
-      onListo(clave);
+      // La clave viaja siempre; el servidor la usa o la ignora, y lo que
+      // decide qué ve el admin es el `modo` que devuelve.
+      const resultado = await resetearClaveApi(usuario.id, clave);
+      onListo(
+        resultado.pendiente
+          ? { modo: "pendiente-de-firma", clave, correlativo: resultado.orden.correlativo }
+          : { modo: resultado.datos.modo, clave }
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo resetear la clave.");
     } finally {
@@ -485,44 +743,136 @@ function ModalResetearClave({
   };
 
   return (
-    <Modal titulo={`Resetear la clave de ${usuario.nombre}`} onCerrar={onCerrar}>
+    <Modal
+      titulo={
+        porCorreo ? `Resetear la clave de ${usuario.nombre}` : `Clave nueva para ${usuario.nombre}`
+      }
+      onCerrar={onCerrar}
+    >
       <form onSubmit={enviar} className="p-6 space-y-4">
-        <p className="text-sm text-slate-700">
-          Se le va a pedir que la cambie apenas entre, y{" "}
-          <strong className="font-bold text-slate-900">
-            se cierran todas las sesiones que tenga abiertas
-          </strong>{" "}
-          en cualquier dispositivo.
-        </p>
+        {porCorreo ? (
+          <>
+            <p className="text-sm text-slate-700">
+              Le llega un enlace a{" "}
+              <strong className="font-bold text-slate-900 break-all">{usuario.email}</strong> para
+              que elija una clave nueva, y{" "}
+              <strong className="font-bold text-slate-900">
+                se cierran todas las sesiones que tenga abiertas
+              </strong>{" "}
+              en cualquier dispositivo.
+            </p>
+            <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+              La clave la elige la persona, no vos: es de ella, no de la empresa. Así nadie acá
+              puede entrar firmando con su nombre.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-slate-700">
+              Se le va a pedir que la cambie apenas entre, y{" "}
+              <strong className="font-bold text-slate-900">
+                se cierran todas las sesiones que tenga abiertas
+              </strong>{" "}
+              en cualquier dispositivo.
+            </p>
 
-        <Campo id="reset-clave" etiqueta="Clave temporal">
-          <div className="flex gap-2">
-            <input
-              id="reset-clave"
-              type="text"
-              required
-              minLength={8}
-              className={`${ESTILO_INPUT} font-mono`}
-              value={clave}
-              onChange={(e) => setClave(e.target.value)}
-            />
-            <button
-              type="button"
-              onClick={() => setClave(generarClaveTemporal())}
-              className="px-3 py-2 text-xs font-bold text-slate-700 border border-slate-200 rounded-xl hover:bg-slate-50 whitespace-nowrap"
-            >
-              Otra
-            </button>
-          </div>
-        </Campo>
+            <Campo id="reset-clave" etiqueta="Clave temporal">
+              <div className="flex gap-2">
+                <input
+                  id="reset-clave"
+                  type="text"
+                  required
+                  minLength={8}
+                  className={`${ESTILO_INPUT} font-mono`}
+                  value={clave}
+                  onChange={(e) => setClave(e.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => setClave(generarClaveTemporal())}
+                  className="px-3 py-2 text-xs font-bold text-slate-700 border border-slate-200 rounded-xl hover:bg-slate-50 whitespace-nowrap"
+                >
+                  Otra
+                </button>
+              </div>
+            </Campo>
+          </>
+        )}
 
         {error && <p className="text-sm font-semibold text-red-700">{error}</p>}
 
         <div className="flex justify-end gap-2 pt-2">
           <BotonCancelar onClick={onCerrar} />
-          <BotonPrincipal enviando={enviando}>Resetear</BotonPrincipal>
+          <BotonPrincipal enviando={enviando}>
+            {porCorreo ? "Enviar el enlace" : "Resetear"}
+          </BotonPrincipal>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+// ── El aviso del alta con correo ─────────────────────────────────────────
+
+function InvitacionEnviada({
+  datos,
+  onCerrar,
+}: {
+  datos: { nombre: string; correo: string };
+  onCerrar: () => void;
+}) {
+  return (
+    <Modal titulo="Usuario creado" onCerrar={onCerrar}>
+      <div className="p-6 space-y-4">
+        <p className="text-sm text-slate-700">
+          <strong className="font-bold text-slate-900">{datos.nombre}</strong> ya figura en tu
+          empresa. Le llegó un correo a{" "}
+          <strong className="font-bold text-slate-900 break-all">{datos.correo}</strong> para que
+          defina su contraseña.
+        </p>
+        <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+          Hasta que lo haga no puede entrar. El enlace vence en 7 días; si se le pasa, entrá acá y
+          resetéale la clave para mandarle uno nuevo.
+        </p>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onCerrar}
+            className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold rounded-xl"
+          >
+            Entendido
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── El aviso cuando la clave la elige la persona ─────────────────────────
+
+function CorreoEnviado({ usuario, onCerrar }: { usuario: UsuarioDelTenant; onCerrar: () => void }) {
+  return (
+    <Modal titulo="Correo enviado" onCerrar={onCerrar}>
+      <div className="p-6 space-y-4">
+        <p className="text-sm text-slate-700">
+          <strong className="font-bold text-slate-900">{usuario.nombre}</strong> recibió un enlace
+          en <strong className="font-bold text-slate-900 break-all">{usuario.email}</strong> para
+          elegir su clave nueva. Sus sesiones abiertas ya se cerraron.
+        </p>
+        <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+          El enlace vence en una hora. Si no le llega, que mire el correo no deseado o pedí el
+          reseteo de nuevo.
+        </p>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onCerrar}
+            className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold rounded-xl"
+          >
+            Entendido
+          </button>
+        </div>
+      </div>
     </Modal>
   );
 }
@@ -536,7 +886,8 @@ function ModalDarDeBaja({
 }: {
   usuario: UsuarioDelTenant;
   onCerrar: () => void;
-  onListo: () => void | Promise<void>;
+  /** Recibe el correlativo si quedó pendiente de firma en vez de aplicarse. */
+  onListo: (correlativoPendiente?: string) => void | Promise<void>;
 }) {
   // El motivo es obligatorio del lado del servidor también: dejar a alguien
   // afuera del sistema es una acción correctiva, como anular un vale, y las
@@ -551,8 +902,8 @@ function ModalDarDeBaja({
     setEnviando(true);
     setError(null);
     try {
-      await cambiarEstadoUsuarioApi(usuario.id, false, motivo.trim());
-      await onListo();
+      const resultado = await cambiarEstadoUsuarioApi(usuario.id, "inactivo", motivo.trim());
+      await onListo(resultado.pendiente ? resultado.orden.correlativo : undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo dar de baja.");
     } finally {

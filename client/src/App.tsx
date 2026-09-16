@@ -11,19 +11,20 @@ import LoginPage from "./pages/LoginPage";
 // aparte, no vía MODULOS_CLIENTE.find().
 const FacturacionView = lazy(() => import("./components/facturacion/FacturacionView"));
 
-// Usuarios tampoco: la gente de la empresa no se contrata ni se factura, y un
-// tenant sin ningún módulo habilitado igual tiene que poder dar de alta a su
-// personal. Es la única pestaña que además depende del ROL -- el Sidebar no la
-// muestra si no sos admin, y el backend la rechaza igual (requireRole).
-const UsuariosView = lazy(() => import("./components/usuarios/UsuariosView"));
+// Administración tampoco: la gente de la empresa no se contrata ni se
+// factura, y un tenant sin ningún módulo habilitado igual tiene que poder dar
+// de alta a su personal. Es la única pestaña que además depende del ROL -- el
+// Sidebar no la muestra si no sos admin, y el backend la rechaza igual
+// (requireRole).
+const AdministracionView = lazy(() => import("./components/administracion/AdministracionView"));
 
 type UsuarioDeSesion = { rol: string; modulosPermitidos: string[] } | null;
 
 /** Si esta pestaña existe PARA ESTE usuario. Las dos que no son módulos van
- *  primero: Facturación la ve cualquiera, Usuarios solo el admin. */
+ *  primero: Facturación la ve cualquiera, Administración solo el admin. */
 function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
   if (tab === "facturacion") return true;
-  if (tab === "usuarios") return usuario?.rol === "admin";
+  if (tab === "administracion") return usuario?.rol === "admin";
   return (usuario?.modulosPermitidos ?? []).includes(tab);
 }
 
@@ -82,8 +83,8 @@ function App() {
   const ComponenteActivo =
     tabActiva === "facturacion"
       ? FacturacionView
-      : tabActiva === "usuarios"
-        ? UsuariosView
+      : tabActiva === "administracion"
+        ? AdministracionView
         : moduloActivo?.componente;
 
   return (

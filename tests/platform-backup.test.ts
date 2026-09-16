@@ -6,11 +6,13 @@
  * restaurarlo — sobre el mismo tenant (rollback / "punto de
  * restauración") y sobre un tenant vacío distinto (clonado).
  */
+import bcrypt from "bcrypt";
 import { describe, it, expect, afterAll } from "vitest";
 import request from "supertest";
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
 import { env } from "../src/server/config/env";
 import { pool, closeDatabase, withTenant } from "../src/server/config/database";
+import { leerBackup, guardarBackup } from "../src/server/services/platformBackupStorage";
 
 const BEARER = `Bearer ${env.platformAdminToken}`;
 const password = "ClaveDePrueba123";
@@ -598,5 +600,133 @@ describe("restaurarBackupService / POST /backups/:id/restaurar", () => {
     expect(auditoria.rows).toHaveLength(1);
     expect(auditoria.rows[0].resultado).toBe("success");
     expect(auditoria.rows[0].detalle.backupId).toBe(backup.body.backup.id);
+  });
+});
+
+// ── Cuentas (migración 0087) ─────────────────────────────────────────────
+//
+// Restaurar tiene que devolverle a la gente la posibilidad de ENTRAR, y desde
+// 0087 la clave de quien entra con correo no vive en el tenant: vive en su
+// cuenta, que es de la persona y puede estar compartida con otras empresas.
+// De ahí los tres casos de abajo.
+
+describe("restore y cuentas", () => {
+  /** Deja el objeto del backup como lo habría escrito el código anterior a
+   *  0087: sin la sección `cuentas`, sin `cuenta_id` en los perfiles, y con la
+   *  clave guardada en el propio perfil. Es la única forma de probar contra un
+   *  backup viejo de verdad -- los que produce el sistema hoy son versión 2. */
+  async function degradarAVersion1(backupId: string) {
+    const fila = (
+      await pool.query(`SELECT storage, storage_key FROM tenant_backups WHERE id = $1`, [backupId])
+    ).rows[0];
+    const ubicacion = { storage: fila.storage, key: fila.storage_key };
+    const contenido = JSON.parse(await leerBackup(ubicacion));
+
+    const clavePorCuenta = new Map<string, unknown>();
+    for (const cuenta of contenido.cuentas ?? []) {
+      clavePorCuenta.set(String(cuenta.id), cuenta.password_hash);
+    }
+    for (const perfil of contenido.tablas.usuarios ?? []) {
+      if (perfil.cuenta_id) perfil.password_hash = clavePorCuenta.get(String(perfil.cuenta_id));
+      delete perfil.cuenta_id;
+    }
+    delete contenido.cuentas;
+    contenido.version = 1;
+
+    await guardarBackup(fila.storage_key, JSON.stringify(contenido));
+  }
+
+  /** Borra la cuenta de una persona: el caso de restaurar en una base que
+   *  nunca la tuvo (otra instalación) o donde ya se había limpiado. */
+  async function borrarLaCuentaDe(tenantId: string, email: string) {
+    await withTenant(tenantId, (client) =>
+      client.query(`UPDATE usuarios SET cuenta_id = NULL WHERE tenant_id = $1`, [tenantId])
+    );
+    await pool.query(`DELETE FROM cuentas WHERE email = $1`, [email.toLowerCase()]);
+  }
+
+  const puedeEntrar = async (slug: string, email: string, clave: string) =>
+    (await request(app).post("/api/auth/login").send({ tenantSlug: slug, email, password: clave }))
+      .status;
+
+  it("recrea la cuenta borrada y la persona vuelve a poder entrar", async () => {
+    const { tenant, usuario } = await nuevoTenant();
+    const backup = await request(app)
+      .post(`/api/platform/tenants/${tenant.id}/backups`)
+      .set("Authorization", BEARER);
+    expect(backup.status).toBe(201);
+
+    await borrarLaCuentaDe(tenant.id, usuario.email);
+    expect(await puedeEntrar(tenant.slug, usuario.email, password)).toBe(401);
+
+    const restaurar = await request(app)
+      .post(`/api/platform/backups/${backup.body.backup.id}/restaurar`)
+      .set("Authorization", BEARER)
+      .send({ targetTenantId: tenant.id, confirmar: true });
+    expect(restaurar.status).toBe(200);
+
+    expect(await puedeEntrar(tenant.slug, usuario.email, password)).toBe(200);
+  });
+
+  it("NO le pisa la clave a una cuenta que ya existe", async () => {
+    // La persona cambió su clave después del backup. Restaurar este tenant no
+    // puede devolverle la vieja: con esa misma cuenta entra a otras empresas,
+    // que no tienen nada que ver con este restore.
+    const { tenant, usuario } = await nuevoTenant();
+    const backup = await request(app)
+      .post(`/api/platform/tenants/${tenant.id}/backups`)
+      .set("Authorization", BEARER);
+
+    const claveNueva = "ClaveCambiadaDespues1";
+    await pool.query(`UPDATE cuentas SET password_hash = $1 WHERE email = $2`, [
+      await bcrypt.hash(claveNueva, 12),
+      usuario.email.toLowerCase(),
+    ]);
+
+    const restaurar = await request(app)
+      .post(`/api/platform/backups/${backup.body.backup.id}/restaurar`)
+      .set("Authorization", BEARER)
+      .send({ targetTenantId: tenant.id, confirmar: true });
+    expect(restaurar.status).toBe(200);
+
+    expect(await puedeEntrar(tenant.slug, usuario.email, claveNueva)).toBe(200);
+    expect(await puedeEntrar(tenant.slug, usuario.email, password)).toBe(401);
+  });
+
+  it("un backup anterior a 0087 le arma la cuenta al perfil que no la tenía", async () => {
+    const { tenant, usuario } = await nuevoTenant();
+    const backup = await request(app)
+      .post(`/api/platform/tenants/${tenant.id}/backups`)
+      .set("Authorization", BEARER);
+
+    await degradarAVersion1(backup.body.backup.id);
+    await borrarLaCuentaDe(tenant.id, usuario.email);
+
+    const restaurar = await request(app)
+      .post(`/api/platform/backups/${backup.body.backup.id}/restaurar`)
+      .set("Authorization", BEARER)
+      .send({ targetTenantId: tenant.id, confirmar: true });
+    expect(restaurar.status).toBe(200);
+
+    // Lo que importa: puede entrar. Sin la conversión al restaurar, el perfil
+    // quedaría con su clave vieja y el login --que la busca en la cuenta-- no
+    // la encontraría nunca.
+    expect(await puedeEntrar(tenant.slug, usuario.email, password)).toBe(200);
+
+    const cuenta = (
+      await pool.query(`SELECT id, password_hash FROM cuentas WHERE email = $1`, [
+        usuario.email.toLowerCase(),
+      ])
+    ).rows[0];
+    expect(cuenta.password_hash).toBeTruthy();
+
+    const perfil = await withTenant(tenant.id, (client) =>
+      client.query(`SELECT cuenta_id, password_hash FROM usuarios WHERE tenant_id = $1`, [
+        tenant.id,
+      ])
+    );
+    expect(perfil.rows[0].cuenta_id).toBe(cuenta.id);
+    // La clave quedó en un solo lugar, no en dos.
+    expect(perfil.rows[0].password_hash).toBeNull();
   });
 });

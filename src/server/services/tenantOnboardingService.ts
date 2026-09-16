@@ -49,11 +49,11 @@ import {
 } from "./platform.service";
 import { obtenerPlanService } from "./platformPlanes.service";
 import type { OnboardTenantInput } from "../schemas/platform.schema";
-import type { UsuarioPayload } from "./auth.service";
+import type { UsuarioPublico } from "./auth.service";
 
 export interface TenantOnboardResultado {
   tenant: TenantCreado & { planCodigo: string | null };
-  usuario: Omit<UsuarioPayload, "tokenVersion">;
+  usuario: UsuarioPublico;
 }
 
 export async function onboardTenantService(

@@ -44,7 +44,13 @@ const ALLOWLIST_FUERA_DEL_BACKUP = new Set([
   "refresh_tokens",
   "reset_tokens",
   "usuario_modulos",
+  // `usuarios` y `ordenes_admin` NO son de ningún módulo, pero SÍ entran en
+  // el backup: están declaradas a mano en TABLAS_TENANT
+  // (platformBackup.service.ts), donde el orden importa -- usuarios primero,
+  // después las órdenes que la referencian, y recién ahí los módulos. Están
+  // en esta lista porque este test mira el registry de módulos, no ese array.
   "usuarios",
+  "ordenes_admin",
   // Buffers y bitácoras internas, no datos de negocio: se regeneran solos
   // o simplemente no tiene sentido restaurarlos.
   "eventos_tiempo_real",

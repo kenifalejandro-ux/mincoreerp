@@ -101,6 +101,51 @@ export async function withTenant<T>(
   }
 }
 
+/** El uuid nulo: no es el id de ninguna empresa. `withCuenta` lo usa para
+ *  dejar `app.tenant_id` en un valor que no matchea nada, en vez de no
+ *  setearlo -- la política `tenant_isolation` de `usuarios` (0010) llama a
+ *  `current_setting('app.tenant_id')` SIN missing_ok, así que sin valor la
+ *  consulta falla antes de que la otra política pueda decir que sí. */
+const TENANT_NINGUNO = "00000000-0000-0000-0000-000000000000";
+
+/** Lee los perfiles de UNA cuenta en todas sus empresas.
+ *
+ *  Hace falta en un solo lugar del sistema: al entrar, para saber a qué
+ *  empresas tiene acceso la persona (ver docs/architecture/
+ *  cuentas-perfiles-y-administracion.md §5). El resto del ERP sigue usando
+ *  `withTenant`, que no cambió.
+ *
+ *  Cómo no se rompe el aislamiento: la migración 0087 agrega a `usuarios` una
+ *  segunda política, SOLO de lectura, que deja ver las filas cuyo `cuenta_id`
+ *  coincida con `app.cuenta_id`. Acá se fija esa variable y se deja
+ *  `app.tenant_id` en un uuid que no existe. Resultado: se ven los perfiles de
+ *  esa persona y nada más, y cualquier escritura sigue limitada a la política
+ *  de empresa.
+ *
+ *  REGLA: `cuentaId` tiene que venir de una cuenta YA AUTENTICADA (clave
+ *  verificada, token de selección validado o SSO resuelto). Nunca de algo que
+ *  mandó el cliente sin verificar -- sería dejar que alguien liste los perfiles
+ *  de otra persona escribiendo su id. */
+export async function withCuenta<T>(
+  cuentaId: string,
+  fn: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [TENANT_NINGUNO]);
+    await client.query("SELECT set_config('app.cuenta_id', $1, true)", [cuentaId]);
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // ====================== FUNCIÓN PARA CERRAR ======================
 export async function closeDatabase(): Promise<void> {
   try {

@@ -48,6 +48,16 @@ type MetaTabla = TablaBackupMeta;
 // documentos) pueden ir en cualquier posición relativa.
 const TABLAS_TENANT: MetaTabla[] = [
   { nombre: "usuarios", pk: "uuid" },
+  // Las órdenes administrativas (0091) no son de ningún módulo: son el
+  // registro de POR QUÉ cada persona tiene el acceso que tiene, con sus dos
+  // firmas. Van después de `usuarios` porque apuntan a tres columnas suyas
+  // (sobre quién, quién la pidió, quién la firmó) y antes de los módulos, que
+  // no las referencian.
+  {
+    nombre: "ordenes_admin",
+    pk: "uuid",
+    fks: { usuario_id: "usuarios", solicitante_id: "usuarios", aprobador_id: "usuarios" },
+  },
   ...MODULOS.flatMap((m) => m.tablas),
 ];
 
@@ -56,15 +66,29 @@ const TABLAS_TENANT: MetaTabla[] = [
 // un orden válido de INSERT (padres antes que hijos) siempre da un orden
 // válido de DELETE (hijos antes que padres). usuarios se borra al final,
 // por la misma razón que se inserta primero.
-const RAICES_WIPE: string[] = [...MODULOS.flatMap((m) => m.raices)].reverse();
+const RAICES_WIPE: string[] = [
+  // Antes que nada: apunta a `usuarios`, que se borra al final de todo, y
+  // ningún módulo la referencia.
+  "ordenes_admin",
+  ...[...MODULOS.flatMap((m) => m.raices)].reverse(),
+];
 
 export interface ContenidoBackup {
-  version: 1;
+  /** 1 = antes de las cuentas (0087). 2 = incluye `cuentas`. Un backup
+   *  versión 1 se restaura igual: a sus perfiles con correo se les arma la
+   *  cuenta desde la clave que guardaban ellos mismos. */
+  version: 1 | 2;
   tenantId: string;
   tenantSlug: string;
   tenantNombre: string;
   creadoEn: string;
   tablas: Record<string, Record<string, unknown>[]>;
+  /** Las cuentas (0087) de los perfiles de este tenant. No son de ninguna
+   *  empresa --la misma persona puede trabajar en varias-- así que no entran
+   *  en `tablas`, que es todo "filas con tenant_id". Van igual porque sin
+   *  ellas un restore en otra base dejaría los perfiles apuntando a cuentas
+   *  que no existen. */
+  cuentas?: Record<string, unknown>[];
 }
 
 export interface TenantBackup {
@@ -135,13 +159,29 @@ export async function exportarTenantService(
       }
     );
 
+    // Las cuentas de los perfiles de este tenant. `usuarios` se lee bajo RLS
+    // (de ahí el withTenant de arriba); `cuentas` no tiene RLS.
+    const cuentas = await withTenant(tenantId, async (client) => {
+      const filas = await client.query(
+        `SELECT c.* FROM cuentas c
+          WHERE c.id IN (
+            SELECT u.cuenta_id FROM usuarios u
+             WHERE u.tenant_id = $1 AND u.cuenta_id IS NOT NULL
+          )
+          ORDER BY c.id`,
+        [tenantId]
+      );
+      return filas.rows;
+    });
+
     const backup: ContenidoBackup = {
-      version: 1,
+      version: 2,
       tenantId,
       tenantSlug: tenant.rows[0].slug,
       tenantNombre: tenant.rows[0].nombre,
       creadoEn: new Date().toISOString(),
       tablas,
+      cuentas,
     };
 
     const resumenTablas = Object.fromEntries(
@@ -240,6 +280,73 @@ export async function vaciarDatosDeTenant(client: PoolClient, tenantId: string):
   await client.query(`DELETE FROM usuarios WHERE tenant_id = $1`, [tenantId]);
 }
 
+/** La cuenta de un perfil que viene de un backup ANTERIOR a 0087.
+ *
+ *  Esos backups no tienen `cuentas` ni `usuarios.cuenta_id` --la columna no
+ *  existía-- pero sí traen la clave en el propio perfil. Sin esto, restaurar
+ *  uno dejaría a toda la gente de oficina de ese tenant sin poder entrar: el
+ *  login busca la clave en la cuenta, y el perfil no tendría ninguna. Es la
+ *  misma conversión que hizo la migración 0087, aplicada al restaurar.
+ *
+ *  Si esa persona ya tiene cuenta (trabaja en otra empresa), se usa la que ya
+ *  existe y su clave actual manda -- la del backup es más vieja. */
+async function cuentaParaPerfilSinCuenta(
+  client: PoolClient,
+  email: string,
+  passwordHash: unknown,
+  debeCambiarPassword: unknown
+): Promise<string | null> {
+  const creada = await client.query(
+    `INSERT INTO cuentas (email, password_hash, debe_cambiar_password)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (email) DO NOTHING
+     RETURNING id`,
+    [email.toLowerCase(), passwordHash ?? null, debeCambiarPassword ?? false]
+  );
+  if (creada.rows[0]) return creada.rows[0].id;
+
+  const existente = await client.query(`SELECT id FROM cuentas WHERE email = $1`, [
+    email.toLowerCase(),
+  ]);
+  return existente.rows[0]?.id ?? null;
+}
+
+/** Deja existir las cuentas del backup y devuelve el mapeo
+ *  id-en-el-backup → id-en-ESTA-base.
+ *
+ *  Una cuenta que ya existe **no se toca**: la misma persona puede trabajar en
+ *  otra empresa y haber cambiado su clave después del backup. Restaurar no
+ *  puede pisarle la clave con la que entra a las demás. Por eso el
+ *  `ON CONFLICT (email) DO NOTHING` y el SELECT posterior. */
+async function restaurarCuentas(
+  client: PoolClient,
+  cuentas: Record<string, unknown>[]
+): Promise<Map<string, string>> {
+  const mapeo = new Map<string, string>();
+
+  for (const cuenta of cuentas) {
+    const email = String(cuenta.email);
+    const creada = await client.query(
+      `INSERT INTO cuentas (email, password_hash, debe_cambiar_password, activo)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (email) DO NOTHING
+       RETURNING id`,
+      [
+        email,
+        cuenta.password_hash ?? null,
+        cuenta.debe_cambiar_password ?? false,
+        cuenta.activo ?? true,
+      ]
+    );
+    const id =
+      creada.rows[0]?.id ??
+      (await client.query(`SELECT id FROM cuentas WHERE email = $1`, [email])).rows[0]?.id;
+    if (id) mapeo.set(String(cuenta.id), id);
+  }
+
+  return mapeo;
+}
+
 /** `remapearIds` decide cómo se restauran los ids de cada fila:
  *
  *  - false (restaurar sobre el MISMO tenant que originó el backup): los
@@ -267,6 +374,11 @@ export async function restaurarTablas(
   const tablasRestauradas: Record<string, number> = {};
   const remapPorTabla: Record<string, Map<unknown, unknown>> = {};
 
+  // Los backups versión 1 (anteriores a 0087) no traen esta sección: sus
+  // perfiles tampoco traen cuenta_id, y se les arma la cuenta desde la clave
+  // que el propio perfil guardaba (ver cuentaParaPerfilSinCuenta).
+  const remapCuentas = backup.cuentas ? await restaurarCuentas(client, backup.cuentas) : null;
+
   for (const meta of TABLAS_TENANT) {
     const filas = backup.tablas[meta.nombre] ?? [];
 
@@ -288,6 +400,22 @@ export async function restaurarTablas(
 
     for (const filaOriginal of filas) {
       const fila: Record<string, unknown> = { ...filaOriginal, tenant_id: targetTenantId };
+
+      if (meta.nombre === "usuarios") {
+        if (fila.cuenta_id && remapCuentas) {
+          fila.cuenta_id = remapCuentas.get(String(fila.cuenta_id)) ?? null;
+        } else if (!fila.cuenta_id && fila.email) {
+          // Perfil de un backup anterior a 0087. Su clave pasa a la cuenta, y
+          // el perfil se queda sin clave propia, como todos los demás.
+          fila.cuenta_id = await cuentaParaPerfilSinCuenta(
+            client,
+            String(fila.email),
+            fila.password_hash,
+            fila.debe_cambiar_password
+          );
+          if (fila.cuenta_id) fila.password_hash = null;
+        }
+      }
       for (const columna of meta.columnasExcluidasAlRestaurar ?? []) {
         delete fila[columna];
       }

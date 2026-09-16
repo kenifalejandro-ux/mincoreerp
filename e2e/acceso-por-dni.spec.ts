@@ -32,7 +32,8 @@ test("el admin da de alta a alguien de cancha y esa persona entra con su DNI", a
 
   await loginPorUI(page, admin.email, admin.password);
 
-  await page.getByRole("button", { name: "Usuarios" }).click();
+  await page.getByRole("button", { name: "Administración" }).click();
+  // "Usuarios" es la primera pestaña de Administración y abre sola.
   await expect(page.getByRole("heading", { name: "Usuarios" })).toBeVisible();
 
   await page.getByRole("button", { name: "+ Nuevo usuario" }).click();
@@ -69,7 +70,7 @@ test("el admin da de alta a alguien de cancha y esa persona entra con su DNI", a
   // ── Limpieza: dejarlo inactivo para no consumir cupo ─────────────────
   await page.getByRole("button", { name: "No sos vos? Cerrar sesión" }).click();
   await loginPorUI(page, admin.email, admin.password);
-  await page.getByRole("button", { name: "Usuarios" }).click();
+  await page.getByRole("button", { name: "Administración" }).click();
   await page
     .getByRole("row", { name: new RegExp(dni) })
     .getByRole("button", { name: "Dar de baja" })
