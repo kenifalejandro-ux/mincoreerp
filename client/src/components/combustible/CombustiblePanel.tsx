@@ -10,6 +10,7 @@ import {
   buscarElementoEnPaneles,
   enfocarPaginaPrincipal,
 } from "../comunes/ventanasFlotantesEstado";
+import HistoricoCliente from "../HistoricoCliente";
 
 interface Tanque {
   id: number;
@@ -1245,7 +1246,17 @@ function formatearFecha(iso: string): string {
   });
 }
 
-export default function CombustiblePanel() {
+export interface CombustiblePanelProps {
+  /** Qué sub-pestaña mostrar -- la decide el submenú de Combustible en el
+   *  Sidebar (activeTab = "combustible" | "combustible:historico"), no un
+   *  estado local: así el link del sidebar es la fuente de verdad y clickear
+   *  "Histórico" ahí adentro cambia esta pestaña aunque el panel ya esté
+   *  montado. undefined = comportamiento por defecto (Tanques), para los
+   *  pocos lugares que todavía instancian el panel sin pasarlo. */
+  pestanaInicial?: "tanques" | "historico";
+}
+
+export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelProps = {}) {
   const [tanques, setTanques] = useState<Tanque[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -1359,6 +1370,19 @@ export default function CombustiblePanel() {
 
   // --- Historial de despachos (solo lectura, GET /despachos) ---
   const [modalHistorialDespachosAbierto, setModalHistorialDespachosAbierto] = useState(false);
+  // Sub-pestaña del módulo -- "Tanques" es la vista operativa de siempre,
+  // "Histórico" es la nueva para el cliente (desplegable con las 5 vistas,
+  // ver HistoricoCliente.tsx). Vive como submenú del Sidebar, no como tabs
+  // ni botones acá adentro -- por eso el estado nace de `pestanaInicial` y
+  // se resincroniza cuando cambia (el usuario puede clickear "Histórico" en
+  // el sidebar con el panel ya montado).
+  const [pestanaCombustible, setPestanaCombustible] = useState<"tanques" | "historico">(
+    pestanaInicial ?? "tanques"
+  );
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (pestanaInicial) setPestanaCombustible(pestanaInicial);
+  }, [pestanaInicial]);
   const [historialDespachos, setHistorialDespachos] = useState<DespachoHistorial[]>([]);
   const [despachosDesde, setDespachosDesde] = useState("");
   const [despachosHasta, setDespachosHasta] = useState("");
@@ -3020,88 +3044,91 @@ export default function CombustiblePanel() {
           <h1 className="text-3xl font-bold text-slate-800">Control de Combustible</h1>
           <p className="text-slate-500">Tanques y puntos de abastecimiento</p>
         </div>
-        <div className="flex items-center gap-3">
-          <label
-            className={`px-4 py-2.5 border rounded-xl flex items-center gap-2 transition-all ${
-              importando
-                ? "bg-emerald-100 text-emerald-400 border-emerald-200 cursor-wait"
-                : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 cursor-pointer"
-            }`}
-          >
-            <span>📊 {importando ? "Importando..." : "Importar Excel"}</span>
-            <input
-              type="file"
-              accept=".xlsx, .xls"
-              className="hidden"
-              disabled={importando}
-              onChange={handleExcelUpload}
-            />
-          </label>
-          <button
-            onClick={abrirModalHistorialDespachos}
-            className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
-          >
-            📋 Historial de despachos
-          </button>
-          <button
-            onClick={abrirModalHistorialRecepciones}
-            className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
-          >
-            🧾 Historial de recepciones
-          </button>
-          <button
-            onClick={abrirModalAlertas}
-            className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
-          >
-            🔔 Alertas
-          </button>
-          <button
-            onClick={abrirModalAuditoria}
-            className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
-            title="Estado de la vigilancia del período y quién controla a quién"
-          >
-            🔍 Auditoría
-          </button>
-          <button
-            onClick={abrirModalBitacora}
-            className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
-            title="Quién cambió qué en este módulo"
-          >
-            📓 Bitácora
-          </button>
-          <button
-            onClick={abrirModalGrifos}
-            className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
-          >
-            Grifos / Proveedores
-          </button>
-          <button
-            onClick={abrirModalPrecios}
-            className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
-          >
-            Precios
-          </button>
-          <button
-            onClick={abrirModalRecepcion}
-            className="px-6 py-2.5 bg-sky-600 hover:bg-sky-700 text-white font-medium rounded-xl transition-all"
-          >
-            🚚 Registrar recepción
-          </button>
-          <button
-            onClick={abrirModalDespacho}
-            className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl transition-all"
-          >
-            ⛽ Registrar despacho
-          </button>
-          <button
-            onClick={abrirModalNuevo}
-            className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
-          >
-            + Nuevo Tanque
-          </button>
-        </div>
+        {pestanaCombustible === "tanques" && (
+          <div className="flex items-center gap-3">
+            <label
+              className={`px-4 py-2.5 border rounded-xl flex items-center gap-2 transition-all ${
+                importando
+                  ? "bg-emerald-100 text-emerald-400 border-emerald-200 cursor-wait"
+                  : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 cursor-pointer"
+              }`}
+            >
+              <span>📊 {importando ? "Importando..." : "Importar Excel"}</span>
+              <input
+                type="file"
+                accept=".xlsx, .xls"
+                className="hidden"
+                disabled={importando}
+                onChange={handleExcelUpload}
+              />
+            </label>
+            <button
+              onClick={abrirModalHistorialDespachos}
+              className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
+            >
+              📋 Historial de despachos
+            </button>
+            <button
+              onClick={abrirModalHistorialRecepciones}
+              className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
+            >
+              🧾 Historial de recepciones
+            </button>
+            <button
+              onClick={abrirModalAlertas}
+              className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
+            >
+              🔔 Alertas
+            </button>
+            <button
+              onClick={abrirModalAuditoria}
+              className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
+              title="Estado de la vigilancia del período y quién controla a quién"
+            >
+              🔍 Auditoría
+            </button>
+            <button
+              onClick={abrirModalBitacora}
+              className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
+              title="Quién cambió qué en este módulo"
+            >
+              📓 Bitácora
+            </button>
+            <button
+              onClick={abrirModalGrifos}
+              className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
+            >
+              Grifos / Proveedores
+            </button>
+            <button
+              onClick={abrirModalPrecios}
+              className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
+            >
+              Precios
+            </button>
+            <button
+              onClick={abrirModalRecepcion}
+              className="px-6 py-2.5 bg-sky-600 hover:bg-sky-700 text-white font-medium rounded-xl transition-all"
+            >
+              🚚 Registrar recepción
+            </button>
+            <button
+              onClick={abrirModalDespacho}
+              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl transition-all"
+            >
+              ⛽ Registrar despacho
+            </button>
+            <button
+              onClick={abrirModalNuevo}
+              className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+            >
+              + Nuevo Tanque
+            </button>
+          </div>
+        )}
       </div>
-      {errorImportacion && (
+      {pestanaCombustible === "historico" && <HistoricoCliente />}
+      {pestanaCombustible === "tanques" && errorImportacion && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-red-900 font-light flex-1">{errorImportacion}</p>
           <button
@@ -3113,7 +3140,7 @@ export default function CombustiblePanel() {
           </button>
         </div>
       )}
-      {mensajeExito && (
+      {pestanaCombustible === "tanques" && mensajeExito && (
         <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-green-900 font-light flex-1">{mensajeExito}</p>
           <button
@@ -3126,190 +3153,191 @@ export default function CombustiblePanel() {
         </div>
       )}
       {/**AGREGAR MAS COLUMNAS  */}{" "}
-      {tanques.length === 0 ? (
-        <div className="bg-slate-50 border border-slate-200 border-dashed rounded-xl p-10 text-center text-slate-500">
-          No hay tanques registrados todavía.
-        </div>
-      ) : (
-        <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  Código
-                </th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  Nombre
-                </th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  Tipo
-                </th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  Punto
-                </th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  Humbral minimo
-                </th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  Nivel
-                </th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  Costo prom.
-                </th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  Estado
-                </th>
-                <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                  Acciones
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {tanques.map((t) => {
-                // Sin lecturas vigentes el nivel es desconocido: no se pinta
-                // ni de rojo ni de verde, porque las dos afirmarían algo que
-                // nadie midió.
-                const sinNivel = t.nivel_actual === null;
-                // Una sola fuente de verdad para el color: el umbral y el
-                // nivel tienen que pintarse SIEMPRE igual -- si viven
-                // separados, un cambio futuro en la regla los deja
-                // contradiciéndose en la misma fila.
-                const bajoUmbral = Number(t.nivel_actual) <= Number(t.nivel_minimo);
-                const colorNivel = sinNivel
-                  ? "text-slate-400"
-                  : bajoUmbral
-                    ? "text-red-500"
-                    : "text-emerald-600";
-                return (
-                  <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="p-4 font-mono text-sm text-slate-500">{t.codigo}</td>
-                    <td className="p-4 text-sm font-semibold text-slate-800">
-                      {t.tanque_nombre}
-                      {t.ubicacion && <p className="text-xs text-slate-400">{t.ubicacion}</p>}
-                    </td>
-                    <td className="p-4 text-sm text-slate-600">
-                      {ETIQUETA_TIPO_COMBUSTIBLE[t.tipo_combustible]}
-                    </td>
-                    <td className="p-4 text-sm text-slate-600">
-                      {ETIQUETA_TIPO_PUNTO[t.tipo_punto]}
-                    </td>
-                    <td className="p-4 text-sm">
-                      <span className={`font-medium ${colorNivel}`}>
-                        {Number(t.nivel_minimo).toLocaleString("es-PE")} {t.unidad}
-                      </span>
-                    </td>
-                    <td className="p-4 text-sm">
-                      {sinNivel ? (
-                        <>
-                          <span className="text-slate-400 italic">Sin lecturas</span>
-                          <p className="text-xs text-slate-400">
-                            Capacidad: {Number(t.capacidad_total).toLocaleString("es-PE")}{" "}
-                            {t.unidad}
-                          </p>
-                        </>
-                      ) : (
-                        <>
-                          <span className={`font-bold ${colorNivel}`}>
-                            {Number(t.nivel_actual).toLocaleString("es-PE")}
-                          </span>
-                          <span className="text-slate-400">
-                            {" "}
-                            / {Number(t.capacidad_total).toLocaleString("es-PE")} {t.unidad} (
-                            {t.porcentaje}%)
-                          </span>
-                          <p className="text-xs text-slate-400">
-                            Última lectura: {formatearFecha(t.fecha_actualizacion!)}
-                          </p>
-                        </>
-                      )}
-                    </td>
-                    {/* Fase C (0064) -- solo lectura: lo escribe el motor de
+      {pestanaCombustible === "tanques" &&
+        (tanques.length === 0 ? (
+          <div className="bg-slate-50 border border-slate-200 border-dashed rounded-xl p-10 text-center text-slate-500">
+            No hay tanques registrados todavía.
+          </div>
+        ) : (
+          <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead className="bg-slate-50">
+                <tr>
+                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                    Código
+                  </th>
+                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                    Nombre
+                  </th>
+                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                    Tipo
+                  </th>
+                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                    Punto
+                  </th>
+                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                    Humbral minimo
+                  </th>
+                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                    Nivel
+                  </th>
+                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                    Costo prom.
+                  </th>
+                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                    Estado
+                  </th>
+                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                    Acciones
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {tanques.map((t) => {
+                  // Sin lecturas vigentes el nivel es desconocido: no se pinta
+                  // ni de rojo ni de verde, porque las dos afirmarían algo que
+                  // nadie midió.
+                  const sinNivel = t.nivel_actual === null;
+                  // Una sola fuente de verdad para el color: el umbral y el
+                  // nivel tienen que pintarse SIEMPRE igual -- si viven
+                  // separados, un cambio futuro en la regla los deja
+                  // contradiciéndose en la misma fila.
+                  const bajoUmbral = Number(t.nivel_actual) <= Number(t.nivel_minimo);
+                  const colorNivel = sinNivel
+                    ? "text-slate-400"
+                    : bajoUmbral
+                      ? "text-red-500"
+                      : "text-emerald-600";
+                  return (
+                    <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="p-4 font-mono text-sm text-slate-500">{t.codigo}</td>
+                      <td className="p-4 text-sm font-semibold text-slate-800">
+                        {t.tanque_nombre}
+                        {t.ubicacion && <p className="text-xs text-slate-400">{t.ubicacion}</p>}
+                      </td>
+                      <td className="p-4 text-sm text-slate-600">
+                        {ETIQUETA_TIPO_COMBUSTIBLE[t.tipo_combustible]}
+                      </td>
+                      <td className="p-4 text-sm text-slate-600">
+                        {ETIQUETA_TIPO_PUNTO[t.tipo_punto]}
+                      </td>
+                      <td className="p-4 text-sm">
+                        <span className={`font-medium ${colorNivel}`}>
+                          {Number(t.nivel_minimo).toLocaleString("es-PE")} {t.unidad}
+                        </span>
+                      </td>
+                      <td className="p-4 text-sm">
+                        {sinNivel ? (
+                          <>
+                            <span className="text-slate-400 italic">Sin lecturas</span>
+                            <p className="text-xs text-slate-400">
+                              Capacidad: {Number(t.capacidad_total).toLocaleString("es-PE")}{" "}
+                              {t.unidad}
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <span className={`font-bold ${colorNivel}`}>
+                              {Number(t.nivel_actual).toLocaleString("es-PE")}
+                            </span>
+                            <span className="text-slate-400">
+                              {" "}
+                              / {Number(t.capacidad_total).toLocaleString("es-PE")} {t.unidad} (
+                              {t.porcentaje}%)
+                            </span>
+                            <p className="text-xs text-slate-400">
+                              Última lectura: {formatearFecha(t.fecha_actualizacion!)}
+                            </p>
+                          </>
+                        )}
+                      </td>
+                      {/* Fase C (0064) -- solo lectura: lo escribe el motor de
                         recepciones. 0 significa "todavía no se registró
                         ninguna compra", no "sale gratis": decirlo con
                         palabras evita que se lea como un precio real. */}
-                    <td className="p-4 text-sm">
-                      {Number(t.costo_promedio) === 0 ? (
-                        <span className="text-slate-400 italic text-xs">Sin recepciones</span>
-                      ) : (
-                        <span className="font-medium text-slate-700">
-                          {t.moneda} {Number(t.costo_promedio).toFixed(4)}
-                          <span className="text-slate-400 font-normal"> / {t.unidad}</span>
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-4 text-sm">
-                      <span
-                        className={`px-2 py-1 rounded-full text-xs font-medium ${
-                          t.activo
-                            ? "bg-emerald-50 text-emerald-700"
-                            : "bg-slate-100 text-slate-500"
-                        }`}
-                      >
-                        {t.activo ? "Activo" : "Desactivado"}
-                      </span>
-                      {(() => {
-                        const v = vigilanciaDe(t);
-                        if (v.nivel === "completa") return null;
-                        return (
-                          <span
-                            title={v.apagados.join("\n")}
-                            className={`mt-1 block w-fit px-2 py-1 rounded-full text-xs font-semibold cursor-help ${
-                              v.nivel === "sin"
-                                ? "bg-red-50 text-red-700 ring-1 ring-red-200"
-                                : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
-                            }`}
-                          >
-                            {v.nivel === "sin" ? "Sin vigilancia" : "Vigilancia parcial"}
+                      <td className="p-4 text-sm">
+                        {Number(t.costo_promedio) === 0 ? (
+                          <span className="text-slate-400 italic text-xs">Sin recepciones</span>
+                        ) : (
+                          <span className="font-medium text-slate-700">
+                            {t.moneda} {Number(t.costo_promedio).toFixed(4)}
+                            <span className="text-slate-400 font-normal"> / {t.unidad}</span>
                           </span>
-                        );
-                      })()}
-                    </td>
-                    <td className="p-4 text-right space-x-2">
-                      <button
-                        onClick={() => abrirModalHistorial(t)}
-                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                        title="Ver historial de lecturas"
-                      >
-                        📋
-                      </button>
-                      <button
-                        onClick={() => abrirModalLectura(t)}
-                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                        title="Registrar lectura"
-                      >
-                        ⛽
-                      </button>
-                      <button
-                        onClick={() => abrirModalKardex(t.id)}
-                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                        title="Kardex: movimiento del tanque con saldo corriente"
-                      >
-                        📒
-                      </button>
-                      <button
-                        onClick={() => abrirModalEditar(t)}
-                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                        title="Editar"
-                      >
-                        ✏️
-                      </button>
-                      {t.activo && (
-                        <button
-                          onClick={() => handleDesactivar(t)}
-                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                          title="Desactivar"
+                        )}
+                      </td>
+                      <td className="p-4 text-sm">
+                        <span
+                          className={`px-2 py-1 rounded-full text-xs font-medium ${
+                            t.activo
+                              ? "bg-emerald-50 text-emerald-700"
+                              : "bg-slate-100 text-slate-500"
+                          }`}
                         >
-                          🗑️
+                          {t.activo ? "Activo" : "Desactivado"}
+                        </span>
+                        {(() => {
+                          const v = vigilanciaDe(t);
+                          if (v.nivel === "completa") return null;
+                          return (
+                            <span
+                              title={v.apagados.join("\n")}
+                              className={`mt-1 block w-fit px-2 py-1 rounded-full text-xs font-semibold cursor-help ${
+                                v.nivel === "sin"
+                                  ? "bg-red-50 text-red-700 ring-1 ring-red-200"
+                                  : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
+                              }`}
+                            >
+                              {v.nivel === "sin" ? "Sin vigilancia" : "Vigilancia parcial"}
+                            </span>
+                          );
+                        })()}
+                      </td>
+                      <td className="p-4 text-right space-x-2">
+                        <button
+                          onClick={() => abrirModalHistorial(t)}
+                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                          title="Ver historial de lecturas"
+                        >
+                          📋
                         </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+                        <button
+                          onClick={() => abrirModalLectura(t)}
+                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                          title="Registrar lectura"
+                        >
+                          ⛽
+                        </button>
+                        <button
+                          onClick={() => abrirModalKardex(t.id)}
+                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                          title="Kardex: movimiento del tanque con saldo corriente"
+                        >
+                          📒
+                        </button>
+                        <button
+                          onClick={() => abrirModalEditar(t)}
+                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                          title="Editar"
+                        >
+                          ✏️
+                        </button>
+                        {t.activo && (
+                          <button
+                            onClick={() => handleDesactivar(t)}
+                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                            title="Desactivar"
+                          >
+                            🗑️
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ))}
       {/* Modal: alta / edición de tanque */}
       {modalTanqueAbierto && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">

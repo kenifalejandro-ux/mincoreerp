@@ -891,7 +891,7 @@ export class CombustibleRepository {
   async findDespachos(
     client: PoolClient,
     tenantId: string,
-    filtros: { equipoId?: number; serieTalonario?: string } & PeriodoHistorial,
+    filtros: { equipoId?: number; serieTalonario?: string; origen?: string } & PeriodoHistorial,
     { pageSize, offset }: Paginacion
   ) {
     const condiciones: string[] = ["tenant_id = $1"];
@@ -905,6 +905,10 @@ export class CombustibleRepository {
       valores.push(filtros.serieTalonario);
       condiciones.push(`serie_talonario = $${valores.length}`);
     }
+    if (filtros.origen !== undefined) {
+      valores.push(filtros.origen);
+      condiciones.push(`origen = $${valores.length}`);
+    }
     agregarPeriodo(condiciones, valores, "despachado_en", filtros);
 
     valores.push(pageSize, offset);
@@ -915,6 +919,170 @@ export class CombustibleRepository {
       WHERE ${condiciones.join(" AND ")}
       ORDER BY despachado_en DESC, id DESC
       LIMIT $${valores.length - 1} OFFSET $${valores.length}
+      `,
+      valores
+    );
+    return result.rows;
+  }
+
+  /** Con qué granularidad se agrupa un ranking del Histórico -- undefined
+   *  es "todo el período junto" (una fila por entidad), como era antes de
+   *  esto. El mapeo a la unidad real de `date_trunc` vive en un
+   *  allowlist fijo (TRUNC_SQL) precisamente para que este valor, que SÍ
+   *  llega del query string, jamás se concatene crudo en el SQL. */
+  private static readonly TRUNC_SQL: Record<string, string> = {
+    dia: "day",
+    semana: "week",
+    mes: "month",
+    anio: "year",
+  };
+
+  /** Consumo agregado por conductor, para la pestaña que el cliente mira
+   *  (no el kardex del auditor). Agrupa por el par (conductor_nombre,
+   *  conductor_dni) -- el DNI separa a dos conductores con el mismo nombre,
+   *  y el nombre solo cubre al caso real de que el DNI no se haya cargado.
+   *
+   *  Usa la COPIA que el vale guarda de 0083, no un JOIN al equipo: el
+   *  objetivo es "cuánto cargó Juan", y un JOIN devolvería el conductor DE
+   *  HOY para un vale de hace meses (ver la migración).
+   *
+   *  Sin paginar a propósito, igual que /despachos/huecos y los reportes de
+   *  gerencia: es un ranking chico (un conductor por fila -- o por
+   *  conductor y período, si se agrupa), no un listado que crezca sin
+   *  límite. Despachos sin conductor (a planta, por ejemplo) quedan
+   *  afuera: no hay a quién atribuírselos. */
+  async findConsumoPorConductor(
+    client: PoolClient,
+    tenantId: string,
+    periodo: PeriodoHistorial,
+    agruparPor?: string
+  ) {
+    const condiciones: string[] = [
+      "tenant_id = $1",
+      "anulada_en IS NULL",
+      "conductor_nombre IS NOT NULL",
+    ];
+    const valores: unknown[] = [tenantId];
+    agregarPeriodo(condiciones, valores, "despachado_en", periodo);
+
+    const trunc = agruparPor ? CombustibleRepository.TRUNC_SQL[agruparPor] : undefined;
+    const columnaPeriodo = trunc ? `date_trunc('${trunc}', despachado_en) AS periodo,` : "";
+    const groupByPeriodo = trunc ? ", periodo" : "";
+    const orderByPeriodo = trunc ? "periodo ASC, " : "";
+
+    const result = await client.query(
+      `
+      SELECT
+        ${columnaPeriodo}
+        conductor_nombre, conductor_dni,
+        COUNT(*) AS cantidad_vales,
+        SUM(cantidad) AS total_cantidad,
+        SUM(cantidad * costo_unitario) AS total_costo,
+        MIN(despachado_en) AS primer_despacho,
+        MAX(despachado_en) AS ultimo_despacho
+      FROM combustible_despachos
+      WHERE ${condiciones.join(" AND ")}
+      GROUP BY conductor_nombre, conductor_dni${groupByPeriodo}
+      ORDER BY ${orderByPeriodo}total_cantidad DESC
+      `,
+      valores
+    );
+    return result.rows;
+  }
+
+  /** Consumo agregado por vehículo/equipo -- el ranking que pidió el
+   *  cliente. JOIN a equipos por la placa y el tipo VIGENTES: acá sí
+   *  conviene el dato de hoy (a diferencia del conductor, la placa de un
+   *  equipo no rota entre vales). Un equipo dado de baja igual aparece si
+   *  tiene despachos en el período -- LEFT JOIN, no INNER. */
+  async findConsumoPorEquipo(
+    client: PoolClient,
+    tenantId: string,
+    periodo: PeriodoHistorial,
+    agruparPor?: string
+  ) {
+    const condiciones: string[] = [
+      "d.tenant_id = $1",
+      "d.anulada_en IS NULL",
+      "d.equipo_id IS NOT NULL",
+    ];
+    const valores: unknown[] = [tenantId];
+    agregarPeriodo(condiciones, valores, "d.despachado_en", periodo);
+
+    const trunc = agruparPor ? CombustibleRepository.TRUNC_SQL[agruparPor] : undefined;
+    const columnaPeriodo = trunc ? `date_trunc('${trunc}', d.despachado_en) AS periodo,` : "";
+    const groupByPeriodo = trunc ? ", periodo" : "";
+    const orderByPeriodo = trunc ? "periodo ASC, " : "";
+
+    const result = await client.query(
+      `
+      SELECT
+        ${columnaPeriodo}
+        d.equipo_id,
+        e.placa_codigo,
+        e.tipo AS equipo_tipo,
+        COUNT(*) AS cantidad_vales,
+        SUM(d.cantidad) AS total_cantidad,
+        SUM(d.cantidad * d.costo_unitario) AS total_costo,
+        MIN(d.despachado_en) AS primer_despacho,
+        MAX(d.despachado_en) AS ultimo_despacho
+      FROM combustible_despachos d
+      LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
+      WHERE ${condiciones.join(" AND ")}
+      GROUP BY d.equipo_id, e.placa_codigo, e.tipo${groupByPeriodo}
+      ORDER BY ${orderByPeriodo}total_cantidad DESC
+      `,
+      valores
+    );
+    return result.rows;
+  }
+
+  /** Consumo agregado por grifo -- la tercera pata del ranking, la que
+   *  contesta "¿de dónde sale el combustible?" y de paso arma la
+   *  conciliación interno vs externo que pidió Kenif: sumar las filas con
+   *  `tipo_grifo = 'interno'` da lo mismo que /despachos filtrado por
+   *  tanque_propio, y las de `'externo'` lo mismo que /despachos filtrado
+   *  por compra_externa -- ya viene sumado acá, sin tener que ir vale por
+   *  vale.
+   *
+   *  Un despacho de tanque propio NO tiene grifo_id (sale del tanque, no
+   *  de un proveedor externo) -- por eso el JOIN a combustible_grifos es
+   *  condicional al origen, y el "grifo" en ese caso es el TANQUE mismo
+   *  (para distinguir Santa Isabel de otro tanque, si el tenant tiene más
+   *  de uno). */
+  async findConsumoPorGrifo(
+    client: PoolClient,
+    tenantId: string,
+    periodo: PeriodoHistorial,
+    agruparPor?: string
+  ) {
+    const condiciones: string[] = ["d.tenant_id = $1", "d.anulada_en IS NULL"];
+    const valores: unknown[] = [tenantId];
+    agregarPeriodo(condiciones, valores, "d.despachado_en", periodo);
+
+    const trunc = agruparPor ? CombustibleRepository.TRUNC_SQL[agruparPor] : undefined;
+    const columnaPeriodo = trunc ? `date_trunc('${trunc}', d.despachado_en) AS periodo,` : "";
+    const groupByPeriodo = trunc ? ", periodo" : "";
+    const orderByPeriodo = trunc ? "periodo ASC, " : "";
+
+    const result = await client.query(
+      `
+      SELECT
+        ${columnaPeriodo}
+        d.origen,
+        CASE WHEN d.origen = 'tanque_propio' THEN 'interno' ELSE 'externo' END AS tipo_grifo,
+        COALESCE(t.tanque_nombre, g.nombre, 'Sin identificar') AS grifo_nombre,
+        COUNT(*) AS cantidad_vales,
+        SUM(d.cantidad) AS total_cantidad,
+        SUM(d.cantidad * d.costo_unitario) AS total_costo,
+        MIN(d.despachado_en) AS primer_despacho,
+        MAX(d.despachado_en) AS ultimo_despacho
+      FROM combustible_despachos d
+      LEFT JOIN combustible t ON t.id = d.combustible_id AND t.tenant_id = d.tenant_id
+      LEFT JOIN combustible_grifos g ON g.id = d.grifo_id AND g.tenant_id = d.tenant_id
+      WHERE ${condiciones.join(" AND ")}
+      GROUP BY d.origen, tipo_grifo, grifo_nombre${groupByPeriodo}
+      ORDER BY ${orderByPeriodo}total_cantidad DESC
       `,
       valores
     );

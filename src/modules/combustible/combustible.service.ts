@@ -713,10 +713,41 @@ export class CombustibleService {
   listarDespachos(
     client: PoolClient,
     tenantId: string,
-    filtros: { equipoId?: number; serieTalonario?: string } & PeriodoHistorial,
+    filtros: { equipoId?: number; serieTalonario?: string; origen?: string } & PeriodoHistorial,
     paginacion: Paginacion
   ) {
     return this.repository.findDespachos(client, tenantId, filtros, paginacion);
+  }
+
+  /** Las tres vistas de agregación de la pestaña del cliente (Histórico ->
+   *  Consumo por conductor / por vehículo / por grifo). Sin paginar, ver el
+   *  porqué en el repository. `agruparPor` es opcional (día/semana/mes/año)
+   *  -- sin él, una fila por entidad para todo el rango. */
+  listarConsumoPorConductor(
+    client: PoolClient,
+    tenantId: string,
+    periodo: PeriodoHistorial,
+    agruparPor?: string
+  ) {
+    return this.repository.findConsumoPorConductor(client, tenantId, periodo, agruparPor);
+  }
+
+  listarConsumoPorEquipo(
+    client: PoolClient,
+    tenantId: string,
+    periodo: PeriodoHistorial,
+    agruparPor?: string
+  ) {
+    return this.repository.findConsumoPorEquipo(client, tenantId, periodo, agruparPor);
+  }
+
+  listarConsumoPorGrifo(
+    client: PoolClient,
+    tenantId: string,
+    periodo: PeriodoHistorial,
+    agruparPor?: string
+  ) {
+    return this.repository.findConsumoPorGrifo(client, tenantId, periodo, agruparPor);
   }
 
   /** Devuelve null si el despacho no existe en este tenant o si ya estaba

@@ -1,5 +1,5 @@
 // client/src/App.tsx
-import { Suspense, lazy, useState } from "react";
+import { Suspense, lazy, useState, type ComponentType } from "react";
 
 import Layout from "./components/layout/Layout";
 import { useAuth } from "./context/AuthContext";
@@ -20,12 +20,21 @@ const AdministracionView = lazy(() => import("./components/administracion/Admini
 
 type UsuarioDeSesion = { rol: string; modulosPermitidos: string[] } | null;
 
+/** El id del MÓDULO detrás de un activeTab, sin la sub-pestaña. Solo
+ *  Combustible tiene submenú hoy ("combustible:historico" -- ver
+ *  Sidebar.tsx); el permiso y el componente a cargar dependen del módulo,
+ *  no de cuál de sus sub-pestañas esté abierta. */
+function moduloIdDe(tab: string): string {
+  return tab.split(":")[0];
+}
+
 /** Si esta pestaña existe PARA ESTE usuario. Las dos que no son módulos van
  *  primero: Facturación la ve cualquiera, Administración solo el admin. */
 function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
-  if (tab === "facturacion") return true;
-  if (tab === "administracion") return usuario?.rol === "admin";
-  return (usuario?.modulosPermitidos ?? []).includes(tab);
+  const moduloId = moduloIdDe(tab);
+  if (moduloId === "facturacion") return true;
+  if (moduloId === "administracion") return usuario?.rol === "admin";
+  return (usuario?.modulosPermitidos ?? []).includes(moduloId);
 }
 
 /** Con qué abre la app: el dashboard si lo tiene, y si no el primer módulo
@@ -79,18 +88,32 @@ function App() {
   // El componente de cada módulo viaja al navegador recién cuando se abre
   // (React.lazy, ver modules/registry.tsx) — agregar un módulo nuevo no
   // infla el chunk inicial de los que ya existen.
-  const moduloActivo = MODULOS_CLIENTE.find((m) => m.id === tabActiva);
+  const moduloIdActivo = moduloIdDe(tabActiva);
+  const moduloActivo = MODULOS_CLIENTE.find((m) => m.id === moduloIdActivo);
   const ComponenteActivo =
-    tabActiva === "facturacion"
+    moduloIdActivo === "facturacion"
       ? FacturacionView
-      : tabActiva === "administracion"
+      : moduloIdActivo === "administracion"
         ? AdministracionView
         : moduloActivo?.componente;
+  // Combustible es, por ahora, el único módulo con sub-pestaña (ver
+  // Sidebar.tsx) -- se la pasamos como prop en vez de que el panel la lea
+  // de activeTab directamente, para no acoplar ese componente al formato
+  // "modulo:subpestaña" del sidebar.
+  const propsExtra =
+    moduloIdActivo === "combustible"
+      ? { pestanaInicial: tabActiva === "combustible:historico" ? "historico" : "tanques" }
+      : {};
+
+  // El registry tipa cada componente sin props (ComponentType<{}>) porque la
+  // gran mayoría no las recibe -- Combustible es la única excepción, así que
+  // el cast queda acá, localizado, en vez de aflojar el tipo para todos.
+  const ComponenteConProps = ComponenteActivo as ComponentType<Record<string, unknown>> | undefined;
 
   return (
     <Layout activeTab={tabActiva} setActiveTab={setActiveTab}>
       <Suspense fallback={<div className="p-20 text-center text-slate-500">Cargando...</div>}>
-        {ComponenteActivo && <ComponenteActivo />}
+        {ComponenteConProps && <ComponenteConProps {...propsExtra} />}
       </Suspense>
     </Layout>
   );
