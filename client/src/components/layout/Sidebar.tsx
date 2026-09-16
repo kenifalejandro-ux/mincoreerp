@@ -33,18 +33,23 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
           // Combustible es, por ahora, el único módulo con submenú: adentro
           // viven el Histórico que pidió el cliente (consumo, recepciones,
           // compras externas, por conductor, por vehículo -- ver
-          // HistoricoCliente.tsx) y, desde la migración 0092, Urea
-          // (mismas tablas, pestaña propia -- decisión de Kenif
-          // 2026-09-10). activeTab codifica la sub-pestaña como
-          // "combustible:historico"/"combustible:urea" -- CombustiblePanel
-          // la lee vía la prop pestanaInicial (ver App.tsx). isActive
-          // compara por prefijo para que el resaltado del ítem padre siga
-          // encendido con cualquiera de las tres sub-pestañas.
+          // HistoricoCliente.tsx), Urea (migración 0092, mismas tablas,
+          // pestaña propia -- decisión de Kenif 2026-09-10), y Auditoría /
+          // Bitácora, que ANTES eran botones dentro de "Tanques" que abrían
+          // un panel flotante o un modal -- pasaron a sub-pestañas propias
+          // para que "Tanques" deje de cargar con acciones que no son de
+          // ABM (2026-09-16). activeTab codifica la sub-pestaña como
+          // "combustible:<nombre>" -- CombustiblePanel la lee vía la prop
+          // pestanaInicial (ver App.tsx). isActive compara por prefijo para
+          // que el resaltado del ítem padre siga encendido con cualquiera
+          // de las cinco sub-pestañas.
           const esCombustible = tab.id === "combustible";
           const isActive = esCombustible
             ? activeTab === "combustible" ||
               activeTab === "combustible:historico" ||
-              activeTab === "combustible:urea"
+              activeTab === "combustible:urea" ||
+              activeTab === "combustible:auditoria" ||
+              activeTab === "combustible:bitacora"
             : activeTab === tab.id;
           return (
             <div key={tab.id}>
@@ -112,6 +117,26 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
                     }`}
                   >
                     Urea
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("combustible:auditoria")}
+                    className={`w-full text-left pl-14 pr-6 py-2.5 text-sm transition-all ${
+                      activeTab === "combustible:auditoria"
+                        ? "  text-[#DDF500] font-semibold"
+                        : "text-slate-500  text:bg-[#FFFFFF] hover:text-[#DDF500] font-medium"
+                    }`}
+                  >
+                    Auditoría
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("combustible:bitacora")}
+                    className={`w-full text-left pl-14 pr-6 py-2.5 text-sm transition-all ${
+                      activeTab === "combustible:bitacora"
+                        ? "  text-[#DDF500] font-semibold"
+                        : "text-slate-500  text:bg-[#FFFFFF] hover:text-[#DDF500] font-medium"
+                    }`}
+                  >
+                    Bitácora
                   </button>
                 </div>
               )}

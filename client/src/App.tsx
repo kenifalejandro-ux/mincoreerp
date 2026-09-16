@@ -108,7 +108,11 @@ function App() {
               ? "historico"
               : tabActiva === "combustible:urea"
                 ? "urea"
-                : "tanques",
+                : tabActiva === "combustible:auditoria"
+                  ? "auditoria"
+                  : tabActiva === "combustible:bitacora"
+                    ? "bitacora"
+                    : "tanques",
         }
       : {};
 

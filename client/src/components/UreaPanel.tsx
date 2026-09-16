@@ -121,6 +121,34 @@ function formatearNumero(valor: string, decimales = 1): string {
     : valor;
 }
 
+/** Exporta la vista actual a CSV -- mismo mecanismo que HistoricoCliente.tsx
+ *  y CombustiblePanel.tsx, duplicado y no importado (no se comparte código
+ *  entre hermanos, ver el comentario de VentanaFlotante). NO hay
+ *  "Importar Excel" para urea, a diferencia de la carga masiva de tanques:
+ *  un vale/entrada/conteo necesita validación del servidor fila por fila
+ *  (talonario, factor de conversión, rol del grifo) que un bulk insert no
+ *  puede replicar sin reescribir esa lógica del lado del cliente -- mismo
+ *  motivo por el que combustible tampoco tiene "importar despachos". */
+function exportarCsvUrea(filas: Record<string, unknown>[], nombreArchivo: string) {
+  if (filas.length === 0) return;
+  const columnas = Object.keys(filas[0]);
+  const escapar = (v: unknown) => {
+    const s = v === null || v === undefined ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lineas = [
+    columnas.join(","),
+    ...filas.map((f) => columnas.map((c) => escapar(f[c])).join(",")),
+  ];
+  const blob = new Blob([lineas.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nombreArchivo;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function UreaPanel() {
   const [vista, setVista] = useState<Vista>("vales");
   const [cargando, setCargando] = useState(false);
@@ -262,6 +290,28 @@ export default function UreaPanel() {
               ))}
             </select>
           </label>
+          <button
+            type="button"
+            onClick={() =>
+              exportarCsvUrea(
+                (vista === "vales"
+                  ? vales
+                  : vista === "entradas"
+                    ? entradas
+                    : conteos) as unknown as Record<string, unknown>[],
+                `urea-${vista}-${new Date().toISOString().slice(0, 10)}.csv`
+              )
+            }
+            disabled={
+              (vista === "vales" && vales.length === 0) ||
+              (vista === "entradas" && entradas.length === 0) ||
+              (vista === "conteos" && conteos.length === 0)
+            }
+            className="ml-auto px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Exportar la vista actual a CSV"
+          >
+            ⬇️ Exportar
+          </button>
         </div>
 
         {error && <div className="p-4 text-sm text-red-600">{error}</div>}

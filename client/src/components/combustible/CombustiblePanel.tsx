@@ -1247,6 +1247,32 @@ function formatearFecha(iso: string): string {
   });
 }
 
+/** Exporta filas a CSV -- mismo mecanismo que HistoricoCliente.tsx, pero
+ *  duplicado acá y no importado: son dos archivos que no se importan entre
+ *  sí (ver el comentario de VentanaFlotante/ventanasFlotantesEstado sobre
+ *  imports padre/hermano), y una función de 15 líneas no amerita romper esa
+ *  regla para no repetirla. Un valor con coma, comilla o salto de línea se
+ *  escapa citándolo entero y duplicando las comillas internas (RFC 4180). */
+function exportarCsvCombustible(filas: Record<string, unknown>[], nombreArchivo: string) {
+  if (filas.length === 0) return;
+  const columnas = Object.keys(filas[0]);
+  const escapar = (v: unknown) => {
+    const s = v === null || v === undefined ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lineas = [
+    columnas.join(","),
+    ...filas.map((f) => columnas.map((c) => escapar(f[c])).join(",")),
+  ];
+  const blob = new Blob([lineas.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nombreArchivo;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export interface CombustiblePanelProps {
   /** Qué sub-pestaña mostrar -- la decide el submenú de Combustible en el
    *  Sidebar (activeTab = "combustible" | "combustible:historico"), no un
@@ -1254,7 +1280,7 @@ export interface CombustiblePanelProps {
    *  "Histórico" ahí adentro cambia esta pestaña aunque el panel ya esté
    *  montado. undefined = comportamiento por defecto (Tanques), para los
    *  pocos lugares que todavía instancian el panel sin pasarlo. */
-  pestanaInicial?: "tanques" | "historico" | "urea";
+  pestanaInicial?: "tanques" | "historico" | "urea" | "auditoria" | "bitacora";
 }
 
 export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelProps = {}) {
@@ -1377,9 +1403,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // ni botones acá adentro -- por eso el estado nace de `pestanaInicial` y
   // se resincroniza cuando cambia (el usuario puede clickear "Histórico" en
   // el sidebar con el panel ya montado).
-  const [pestanaCombustible, setPestanaCombustible] = useState<"tanques" | "historico" | "urea">(
-    pestanaInicial ?? "tanques"
-  );
+  const [pestanaCombustible, setPestanaCombustible] = useState<
+    "tanques" | "historico" | "urea" | "auditoria" | "bitacora"
+  >(pestanaInicial ?? "tanques");
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (pestanaInicial) setPestanaCombustible(pestanaInicial);
@@ -1445,7 +1471,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // Los dos reportes de auditoría comparten período y modal: se leen juntos
   // (uno dice qué control se aflojó, el otro quién controla a quién) y
   // separarlos en dos pantallas obligaría a elegir dos veces las fechas.
-  const [modalAuditoriaAbierto, setModalAuditoriaAbierto] = useState(false);
   const [cargandoAuditoria, setCargandoAuditoria] = useState(false);
   const [repControles, setRepControles] = useState<ReporteControles | null>(null);
   const [repSegregacion, setRepSegregacion] = useState<ReporteSegregacion | null>(null);
@@ -1462,7 +1487,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   );
   const [kardexHasta, setKardexHasta] = useState(() => new Date().toISOString().slice(0, 10));
 
-  const [modalBitacoraAbierto, setModalBitacoraAbierto] = useState(false);
   const [cargandoBitacora, setCargandoBitacora] = useState(false);
   const [bitacora, setBitacora] = useState<EventoBitacora[]>([]);
   /** Cómo se vigila el tanque que se está creando. Arranca en null y hay que
@@ -1685,7 +1709,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   };
 
   const abrirModalAuditoria = async () => {
-    setModalAuditoriaAbierto(true);
     setCargandoAuditoria(true);
     try {
       const desde = new Date(`${kardexDesde}T00:00:00`).toISOString();
@@ -1709,7 +1732,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   };
 
   const abrirModalBitacora = async () => {
-    setModalBitacoraAbierto(true);
     setCargandoBitacora(true);
     try {
       const res = await apiFetch("/api/erp/combustible/bitacora?pageSize=200");
@@ -1719,6 +1741,24 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       setCargandoBitacora(false);
     }
   };
+
+  // Auditoría y Bitácora eran botones dentro de "Tanques" que abrían un
+  // panel flotante o un modal -- pasaron a ser sub-pestañas propias (mismo
+  // criterio que Histórico/Urea), así que la carga arranca sola al entrar,
+  // no con un click aparte. Va DESPUÉS de las dos funciones de arriba
+  // (no antes): son `const` sin memoizar, y referenciarlas desde un efecto
+  // declarado más arriba en el archivo dispara
+  // react-hooks/immutability aunque en tiempo de ejecución sea seguro (el
+  // efecto corre después del render completo). Sin deps de las funciones a
+  // propósito -- dependen del rango de fechas del kardex, que el usuario
+  // puede seguir cambiando adentro de la pestaña con su propio botón "Ver
+  // período"; este efecto solo cubre la carga inicial al entrar.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (pestanaCombustible === "auditoria") abrirModalAuditoria();
+    if (pestanaCombustible === "bitacora") abrirModalBitacora();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pestanaCombustible]);
 
   const abrirModalNuevo = () => {
     setEditandoId(null);
@@ -3080,20 +3120,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
             >
               🔔 Alertas
-            </button>
-            <button
-              onClick={abrirModalAuditoria}
-              className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
-              title="Estado de la vigilancia del período y quién controla a quién"
-            >
-              🔍 Auditoría
-            </button>
-            <button
-              onClick={abrirModalBitacora}
-              className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
-              title="Quién cambió qué en este módulo"
-            >
-              📓 Bitácora
             </button>
             <button
               onClick={abrirModalGrifos}
@@ -5593,15 +5619,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           viernes, sacar el sábado, reponerlo el domingo), pero el registro no
           se puede reescribir. El segundo mide algo distinto y previo: si una
           sola persona hace y controla, ningún control interno alcanza. */}
-      {modalAuditoriaAbierto && (
-        <VentanaFlotante
-          id="combustible-auditoria"
-          titulo="Auditoría del período"
-          subtitulo="Qué controles estuvieron flojos mientras salía combustible, y quién revisa a quién."
-          onCerrar={() => setModalAuditoriaAbierto(false)}
-          anchoInicial={1040}
-          altoInicial={660}
-        >
+      {pestanaCombustible === "auditoria" && (
+        <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
+          <div className="px-6 pt-5">
+            <h2 className="text-xl font-bold text-slate-800">Auditoría del período</h2>
+            <p className="text-sm text-slate-500">
+              Qué controles estuvieron flojos mientras salía combustible, y quién revisa a quién.
+            </p>
+          </div>
           <div className="px-6 py-4 bg-slate-50 border-b flex flex-wrap items-end gap-3 shrink-0">
             <div>
               <label
@@ -5640,6 +5665,34 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             >
               {cargandoAuditoria ? "Armando..." : "Ver período"}
             </button>
+            <div className="ml-auto flex gap-2">
+              <button
+                type="button"
+                onClick={() =>
+                  exportarCsvCombustible(
+                    (repControles?.tanques ?? []) as unknown as Record<string, unknown>[],
+                    `auditoria-controles-${kardexDesde}-a-${kardexHasta}.csv`
+                  )
+                }
+                disabled={!repControles || repControles.tanques.length === 0}
+                className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                ⬇️ Exportar controles
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  exportarCsvCombustible(
+                    (repSegregacion?.personas ?? []) as unknown as Record<string, unknown>[],
+                    `auditoria-segregacion-${kardexDesde}-a-${kardexHasta}.csv`
+                  )
+                }
+                disabled={!repSegregacion || repSegregacion.personas.length === 0}
+                className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                ⬇️ Exportar segregación
+              </button>
+            </div>
           </div>
 
           <div className="flex-1 min-h-0 space-y-8 overflow-auto p-6">
@@ -5883,7 +5936,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               </>
             )}
           </div>
-        </VentanaFlotante>
+        </div>
       )}
       {/* Bitácora: quién cambió qué en el módulo.
 
@@ -5891,95 +5944,104 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           plataforma. Un control que únicamente revisa el proveedor no es un
           control de la empresa: gerencia tiene que poder responder "¿quién
           cambió esto?" sin pedirle nada a nadie. */}
-      {modalBitacoraAbierto && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white w-full max-w-4xl rounded-3xl shadow-2xl max-h-[90vh] flex flex-col">
-            <div className="p-6 border-b flex justify-between items-start shrink-0">
-              <div>
-                <h3 className="text-xl font-bold">Bitácora del módulo</h3>
-                <p className="text-sm text-slate-500">
-                  Quién cambió qué, y cuándo. Los cambios que reducen la vigilancia van marcados.
-                </p>
-              </div>
-              <button
-                onClick={() => setModalBitacoraAbierto(false)}
-                className="text-slate-400 hover:text-slate-600 text-2xl leading-none"
-                aria-label="Cerrar"
-              >
-                ×
-              </button>
+      {pestanaCombustible === "bitacora" && (
+        <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
+          <div className="p-6 border-b flex justify-between items-start shrink-0">
+            <div>
+              <h3 className="text-xl font-bold">Bitácora del módulo</h3>
+              <p className="text-sm text-slate-500">
+                Quién cambió qué, y cuándo. Los cambios que reducen la vigilancia van marcados.
+              </p>
             </div>
+            <button
+              type="button"
+              onClick={() =>
+                exportarCsvCombustible(
+                  bitacora.map((e) => ({
+                    cuando: new Date(e.creado_en).toLocaleString("es-PE"),
+                    quien: e.usuario,
+                    que_hizo: ETIQUETA_ACCION[e.accion] ?? e.accion,
+                    motivo: typeof e.detalle.motivo === "string" ? e.detalle.motivo : "",
+                  })),
+                  `bitacora-combustible-${new Date().toISOString().slice(0, 10)}.csv`
+                )
+              }
+              disabled={bitacora.length === 0}
+              className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              ⬇️ Exportar
+            </button>
+          </div>
 
-            <div className="overflow-auto p-6">
-              {cargandoBitacora ? (
-                <p className="text-slate-400 text-center py-8">Cargando...</p>
-              ) : bitacora.length === 0 ? (
-                <p className="text-slate-400 text-center py-8">Todavía no hay movimientos.</p>
-              ) : (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
-                      <th className="p-3">Cuándo</th>
-                      <th className="p-3">Quién</th>
-                      <th className="p-3">Qué hizo</th>
-                      <th className="p-3">Detalle</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {bitacora.map((e) => {
-                      const afloja = ACCIONES_QUE_AFLOJAN.has(e.accion);
-                      const cambios = (e.detalle.aflojados ?? []) as Array<{
-                        control: string;
-                        de: string;
-                        a: string;
-                      }>;
-                      return (
-                        <tr
-                          key={e.id}
+          <div className="overflow-auto p-6">
+            {cargandoBitacora ? (
+              <p className="text-slate-400 text-center py-8">Cargando...</p>
+            ) : bitacora.length === 0 ? (
+              <p className="text-slate-400 text-center py-8">Todavía no hay movimientos.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
+                    <th className="p-3">Cuándo</th>
+                    <th className="p-3">Quién</th>
+                    <th className="p-3">Qué hizo</th>
+                    <th className="p-3">Detalle</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bitacora.map((e) => {
+                    const afloja = ACCIONES_QUE_AFLOJAN.has(e.accion);
+                    const cambios = (e.detalle.aflojados ?? []) as Array<{
+                      control: string;
+                      de: string;
+                      a: string;
+                    }>;
+                    return (
+                      <tr
+                        key={e.id}
+                        className={
+                          afloja
+                            ? "align-top border-b border-slate-50 bg-red-50/60"
+                            : "align-top border-b border-slate-50"
+                        }
+                      >
+                        <td className="p-3 whitespace-nowrap text-slate-600">
+                          {new Date(e.creado_en).toLocaleString("es-PE")}
+                        </td>
+                        <td className="p-3 text-slate-800">{e.usuario}</td>
+                        <td
                           className={
-                            afloja
-                              ? "align-top border-b border-slate-50 bg-red-50/60"
-                              : "align-top border-b border-slate-50"
+                            afloja ? "p-3 font-semibold text-red-700" : "p-3 text-slate-800"
                           }
                         >
-                          <td className="p-3 whitespace-nowrap text-slate-600">
-                            {new Date(e.creado_en).toLocaleString("es-PE")}
-                          </td>
-                          <td className="p-3 text-slate-800">{e.usuario}</td>
-                          <td
-                            className={
-                              afloja ? "p-3 font-semibold text-red-700" : "p-3 text-slate-800"
-                            }
-                          >
-                            {ETIQUETA_ACCION[e.accion] ?? e.accion}
-                          </td>
-                          <td className="p-3 text-slate-600">
-                            {cambios.length > 0 ? (
-                              <>
-                                {cambios.map((c, i) => (
-                                  <span key={i} className="block">
-                                    {c.control}: {c.de} → <strong>{c.a}</strong>
-                                  </span>
-                                ))}
-                                {typeof e.detalle.motivo === "string" && (
-                                  <span className="block mt-1 italic">
-                                    Motivo: {e.detalle.motivo}
-                                  </span>
-                                )}
-                              </>
-                            ) : typeof e.detalle.codigo === "string" ? (
-                              <span>{e.detalle.codigo}</span>
-                            ) : (
-                              <span className="text-slate-300">—</span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
+                          {ETIQUETA_ACCION[e.accion] ?? e.accion}
+                        </td>
+                        <td className="p-3 text-slate-600">
+                          {cambios.length > 0 ? (
+                            <>
+                              {cambios.map((c, i) => (
+                                <span key={i} className="block">
+                                  {c.control}: {c.de} → <strong>{c.a}</strong>
+                                </span>
+                              ))}
+                              {typeof e.detalle.motivo === "string" && (
+                                <span className="block mt-1 italic">
+                                  Motivo: {e.detalle.motivo}
+                                </span>
+                              )}
+                            </>
+                          ) : typeof e.detalle.codigo === "string" ? (
+                            <span>{e.detalle.codigo}</span>
+                          ) : (
+                            <span className="text-slate-300">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       )}
