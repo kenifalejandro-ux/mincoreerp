@@ -420,4 +420,99 @@ describe("combustible: urea automotriz (migración 0092)", () => {
       expect(d.producto).toBe("urea");
     }
   });
+
+  // ── Bug encontrado 2026-09-17: los 3 rankings de Histórico sumaban
+  // litros de combustible y de urea juntos porque no filtraban por
+  // producto -- ver combustible.repository.ts findConsumoPor{Conductor,
+  // Equipo,Grifo}. ────────────────────────────────────────────────────────
+
+  it("consumo-por-conductor separa combustible de urea, no los suma", async () => {
+    const equipo = await agente.post("/api/erp/equipos").send({
+      placa_codigo: idUnico("MX"),
+      tipo: "VOLQUETE",
+      tipo_medidor: "odometro",
+      conductor_nombre: "Conductor Mixto",
+      conductor_dni: "99999999",
+    });
+    const equipoId = equipo.body.id;
+
+    const combustible = await agente.post("/api/erp/combustible/despachos").send({
+      origen: "compra_externa",
+      grifo_id: grifoRuta2,
+      tipo_combustible: "diesel_b5",
+      tipo_destino: "equipo",
+      equipo_id: equipoId,
+      serie_talonario: serieUnica(),
+      n_vale: 1,
+      cantidad: 40,
+      lectura_odometro: 1000,
+      horas_abastecidas: 2,
+      costo_unitario: 17,
+      despachado_en: new Date().toISOString(),
+    });
+    expect(combustible.status).toBe(201);
+
+    const urea = await agente
+      .post("/api/erp/combustible/despachos")
+      .send(payloadUrea({ equipo_id: equipoId, n_vale: 200 }));
+    expect(urea.status).toBe(201);
+
+    // Sin ?producto -- default 'combustible' (HistoricoCliente no lo manda,
+    // no puede empezar a ver litros de urea que antes no existían).
+    const soloCombustible = await agente.get("/api/erp/combustible/consumo-por-conductor");
+    const filaCombustible = soloCombustible.body.data.find(
+      (f: { conductor_dni: string }) => f.conductor_dni === "99999999"
+    );
+    expect(Number(filaCombustible.total_cantidad)).toBe(40); // NO 56 (40 + 16 de urea)
+
+    const soloUrea = await agente
+      .get("/api/erp/combustible/consumo-por-conductor")
+      .query({ producto: "urea" });
+    const filaUrea = soloUrea.body.data.find(
+      (f: { conductor_dni: string }) => f.conductor_dni === "99999999"
+    );
+    expect(Number(filaUrea.total_cantidad)).toBe(16);
+  });
+
+  it("consumo-por-vehiculo separa combustible de urea, no los suma", async () => {
+    const equipo = await agente
+      .post("/api/erp/equipos")
+      .send({ placa_codigo: idUnico("MX2"), tipo: "VOLQUETE", tipo_medidor: "horometro" });
+    const equipoId = equipo.body.id;
+
+    await agente.post("/api/erp/combustible/despachos").send({
+      origen: "compra_externa",
+      grifo_id: grifoRuta2,
+      tipo_combustible: "diesel_b5",
+      tipo_destino: "equipo",
+      equipo_id: equipoId,
+      serie_talonario: serieUnica(),
+      n_vale: 1,
+      cantidad: 50,
+      lectura_horometro: 100,
+      horas_abastecidas: 3,
+      costo_unitario: 17,
+      despachado_en: new Date().toISOString(),
+    });
+
+    await agente
+      .post("/api/erp/combustible/despachos")
+      .send(
+        payloadUrea({ equipo_id: equipoId, n_vale: 201, presentacion: "balde", cantidad_bultos: 2 })
+      );
+
+    const soloCombustible = await agente.get("/api/erp/combustible/consumo-por-vehiculo");
+    const filaCombustible = soloCombustible.body.data.find(
+      (f: { equipo_id: number }) => f.equipo_id === equipoId
+    );
+    expect(Number(filaCombustible.total_cantidad)).toBe(50);
+
+    const soloUrea = await agente
+      .get("/api/erp/combustible/consumo-por-vehiculo")
+      .query({ producto: "urea" });
+    const filaUrea = soloUrea.body.data.find(
+      (f: { equipo_id: number }) => f.equipo_id === equipoId
+    );
+    expect(Number(filaUrea.total_cantidad)).toBe(40); // 2 baldes x 20 L
+  });
 });

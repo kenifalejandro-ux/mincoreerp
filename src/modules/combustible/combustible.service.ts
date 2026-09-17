@@ -809,32 +809,43 @@ export class CombustibleService {
   /** Las tres vistas de agregación de la pestaña del cliente (Histórico ->
    *  Consumo por conductor / por vehículo / por grifo). Sin paginar, ver el
    *  porqué en el repository. `agruparPor` es opcional (día/semana/mes/año)
-   *  -- sin él, una fila por entidad para todo el rango. */
+   *  -- sin él, una fila por entidad para todo el rango.
+   *
+   *  `producto` es OBLIGATORIO (no opcional con default) a propósito: las
+   *  tres sumaban litros de combustible y de urea juntos porque nadie
+   *  filtraba por producto (bug encontrado 2026-09-17, después de que la
+   *  urea empezara a compartir `combustible_despachos`). Forzar el
+   *  parámetro en vez de dejarlo opcional es lo que evita que un llamador
+   *  nuevo se olvide de decidirlo -- el mismo error no puede repetirse en
+   *  silencio. */
   listarConsumoPorConductor(
     client: PoolClient,
     tenantId: string,
+    producto: string,
     periodo: PeriodoHistorial,
     agruparPor?: string
   ) {
-    return this.repository.findConsumoPorConductor(client, tenantId, periodo, agruparPor);
+    return this.repository.findConsumoPorConductor(client, tenantId, producto, periodo, agruparPor);
   }
 
   listarConsumoPorEquipo(
     client: PoolClient,
     tenantId: string,
+    producto: string,
     periodo: PeriodoHistorial,
     agruparPor?: string
   ) {
-    return this.repository.findConsumoPorEquipo(client, tenantId, periodo, agruparPor);
+    return this.repository.findConsumoPorEquipo(client, tenantId, producto, periodo, agruparPor);
   }
 
   listarConsumoPorGrifo(
     client: PoolClient,
     tenantId: string,
+    producto: string,
     periodo: PeriodoHistorial,
     agruparPor?: string
   ) {
-    return this.repository.findConsumoPorGrifo(client, tenantId, periodo, agruparPor);
+    return this.repository.findConsumoPorGrifo(client, tenantId, producto, periodo, agruparPor);
   }
 
   /** Devuelve null si el despacho no existe en este tenant o si ya estaba

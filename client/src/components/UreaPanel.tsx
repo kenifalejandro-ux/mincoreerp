@@ -33,13 +33,21 @@ const PRESENTACIONES = [
 ] as const;
 type Presentacion = (typeof PRESENTACIONES)[number]["valor"];
 
-type Vista = "vales" | "entradas" | "conteos";
+type Vista = "vales" | "entradas" | "conteos" | "por_conductor" | "por_vehiculo";
 
 const VISTAS: { valor: Vista; etiqueta: string }[] = [
   { valor: "vales", etiqueta: "Vales (salidas a unidades)" },
   { valor: "entradas", etiqueta: "Entradas (compras)" },
   { valor: "conteos", etiqueta: "Conteos físicos de almacén" },
+  { valor: "por_conductor", etiqueta: "Ranking de consumo por conductor" },
+  { valor: "por_vehiculo", etiqueta: "Ranking de consumo por vehículo" },
 ];
+
+/** Todas las vistas menos "Conteos" aceptan filtrar por fecha (los mismos
+ *  endpoints que ya usa Histórico de combustible, con ?producto=urea) --
+ *  sin fechas, cargan el período completo. "Conteos" queda afuera porque
+ *  `GET /urea/conteos` todavía no acepta un rango. */
+const VISTAS_SIN_PERIODO: ReadonlySet<Vista> = new Set(["conteos"]);
 
 interface Equipo {
   id: number;
@@ -91,6 +99,27 @@ interface ConteoFila {
   observaciones: string | null;
   anulada_en: string | null;
   motivo_anulacion: string | null;
+}
+
+interface ConductorFila {
+  conductor_nombre: string;
+  conductor_dni: string | null;
+  cantidad_vales: string;
+  total_cantidad: string;
+  total_costo: string;
+  primer_despacho: string;
+  ultimo_despacho: string;
+}
+
+interface VehiculoFila {
+  equipo_id: number;
+  placa_codigo: string | null;
+  equipo_tipo: string | null;
+  cantidad_vales: string;
+  total_cantidad: string;
+  total_costo: string;
+  primer_despacho: string;
+  ultimo_despacho: string;
 }
 
 interface EstadoUrea {
@@ -151,6 +180,8 @@ function exportarCsvUrea(filas: Record<string, unknown>[], nombreArchivo: string
 
 export default function UreaPanel() {
   const [vista, setVista] = useState<Vista>("vales");
+  const [desde, setDesde] = useState("");
+  const [hasta, setHasta] = useState("");
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -161,6 +192,8 @@ export default function UreaPanel() {
   const [vales, setVales] = useState<ValeFila[]>([]);
   const [entradas, setEntradas] = useState<EntradaFila[]>([]);
   const [conteos, setConteos] = useState<ConteoFila[]>([]);
+  const [porConductor, setPorConductor] = useState<ConductorFila[]>([]);
+  const [porVehiculo, setPorVehiculo] = useState<VehiculoFila[]>([]);
 
   const [modalVale, setModalVale] = useState(false);
   const [modalEntrada, setModalEntrada] = useState(false);
@@ -188,29 +221,57 @@ export default function UreaPanel() {
     setEstado(body ?? null);
   }, []);
 
-  const cargarVista = useCallback(async (v: Vista) => {
-    setCargando(true);
-    setError(null);
-    try {
-      if (v === "vales") {
-        const res = await apiFetch("/api/erp/combustible/despachos?producto=urea&pageSize=200");
-        const body = await res.json().catch(() => null);
-        setVales(Array.isArray(body?.data) ? body.data : []);
-      } else if (v === "entradas") {
-        const res = await apiFetch("/api/erp/combustible/recepciones?producto=urea&pageSize=200");
-        const body = await res.json().catch(() => null);
-        setEntradas(Array.isArray(body?.data) ? body.data : []);
-      } else {
-        const res = await apiFetch("/api/erp/combustible/urea/conteos?pageSize=200");
-        const body = await res.json().catch(() => null);
-        setConteos(Array.isArray(body?.data) ? body.data : []);
+  /** Arma el query string con el período, mismo criterio que
+   *  HistoricoCliente.tsx: sin fecha puesta, no manda el parámetro (el
+   *  backend interpreta "todo el rango"). */
+  const paramsDePeriodo = useCallback(
+    (extra: Record<string, string>) => {
+      const params = new URLSearchParams(extra);
+      if (desde) params.set("desde", new Date(`${desde}T00:00:00`).toISOString());
+      if (hasta) params.set("hasta", new Date(`${hasta}T23:59:59.999`).toISOString());
+      return params;
+    },
+    [desde, hasta]
+  );
+
+  const cargarVista = useCallback(
+    async (v: Vista) => {
+      setCargando(true);
+      setError(null);
+      try {
+        if (v === "vales") {
+          const q = paramsDePeriodo({ producto: "urea", pageSize: "200" });
+          const res = await apiFetch(`/api/erp/combustible/despachos?${q}`);
+          const body = await res.json().catch(() => null);
+          setVales(Array.isArray(body?.data) ? body.data : []);
+        } else if (v === "entradas") {
+          const q = paramsDePeriodo({ producto: "urea", pageSize: "200" });
+          const res = await apiFetch(`/api/erp/combustible/recepciones?${q}`);
+          const body = await res.json().catch(() => null);
+          setEntradas(Array.isArray(body?.data) ? body.data : []);
+        } else if (v === "por_conductor") {
+          const q = paramsDePeriodo({ producto: "urea" });
+          const res = await apiFetch(`/api/erp/combustible/consumo-por-conductor?${q}`);
+          const body = await res.json().catch(() => null);
+          setPorConductor(Array.isArray(body?.data) ? body.data : []);
+        } else if (v === "por_vehiculo") {
+          const q = paramsDePeriodo({ producto: "urea" });
+          const res = await apiFetch(`/api/erp/combustible/consumo-por-vehiculo?${q}`);
+          const body = await res.json().catch(() => null);
+          setPorVehiculo(Array.isArray(body?.data) ? body.data : []);
+        } else {
+          const res = await apiFetch("/api/erp/combustible/urea/conteos?pageSize=200");
+          const body = await res.json().catch(() => null);
+          setConteos(Array.isArray(body?.data) ? body.data : []);
+        }
+      } catch {
+        setError("No se pudo cargar la información.");
+      } finally {
+        setCargando(false);
       }
-    } catch {
-      setError("No se pudo cargar la información.");
-    } finally {
-      setCargando(false);
-    }
-  }, []);
+    },
+    [paramsDePeriodo]
+  );
 
   useEffect(() => {
     // Patrón estándar de carga al montar -- ver IpercView.tsx /
@@ -224,7 +285,11 @@ export default function UreaPanel() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     cargarVista(vista);
-  }, [vista, cargarVista]);
+    // Solo al cambiar de VISTA, no en cada tecla de las fechas -- esas se
+    // aplican con el botón "Consultar" (mismo criterio que
+    // HistoricoCliente.tsx).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vista]);
 
   const recargarTodo = useCallback(() => {
     cargarVista(vista);
@@ -290,6 +355,36 @@ export default function UreaPanel() {
               ))}
             </select>
           </label>
+          {!VISTAS_SIN_PERIODO.has(vista) && (
+            <>
+              <label className="flex flex-col text-sm">
+                <span className="text-gray-600">Desde</span>
+                <input
+                  type="date"
+                  value={desde}
+                  onChange={(e) => setDesde(e.target.value)}
+                  className="rounded border border-gray-300 px-2 py-1"
+                />
+              </label>
+              <label className="flex flex-col text-sm">
+                <span className="text-gray-600">Hasta</span>
+                <input
+                  type="date"
+                  value={hasta}
+                  onChange={(e) => setHasta(e.target.value)}
+                  className="rounded border border-gray-300 px-2 py-1"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => cargarVista(vista)}
+                disabled={cargando}
+                className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50"
+              >
+                {cargando ? "Cargando…" : "Consultar"}
+              </button>
+            </>
+          )}
           <button
             type="button"
             onClick={() =>
@@ -298,14 +393,20 @@ export default function UreaPanel() {
                   ? vales
                   : vista === "entradas"
                     ? entradas
-                    : conteos) as unknown as Record<string, unknown>[],
+                    : vista === "por_conductor"
+                      ? porConductor
+                      : vista === "por_vehiculo"
+                        ? porVehiculo
+                        : conteos) as unknown as Record<string, unknown>[],
                 `urea-${vista}-${new Date().toISOString().slice(0, 10)}.csv`
               )
             }
             disabled={
               (vista === "vales" && vales.length === 0) ||
               (vista === "entradas" && entradas.length === 0) ||
-              (vista === "conteos" && conteos.length === 0)
+              (vista === "conteos" && conteos.length === 0) ||
+              (vista === "por_conductor" && porConductor.length === 0) ||
+              (vista === "por_vehiculo" && porVehiculo.length === 0)
             }
             className="ml-auto px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
             title="Exportar la vista actual a CSV"
@@ -324,6 +425,8 @@ export default function UreaPanel() {
         {!cargando && vista === "conteos" && (
           <TablaConteos filas={conteos} onAnulado={recargarTodo} />
         )}
+        {!cargando && vista === "por_conductor" && <TablaPorConductor filas={porConductor} />}
+        {!cargando && vista === "por_vehiculo" && <TablaPorVehiculo filas={porVehiculo} />}
       </div>
 
       {modalVale && (
@@ -479,6 +582,89 @@ function TablaEntradas({ filas }: { filas: EntradaFila[] }) {
               <td className="px-4 py-2">
                 {f.tipo_documento ? `${f.tipo_documento} ${f.numero_documento ?? ""}` : "—"}
               </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** Los dos rankings -- mismo endpoint que Histórico de combustible
+ *  (GET /consumo-por-conductor, GET /consumo-por-vehiculo), filtrado con
+ *  ?producto=urea. Sin paginar, mismo criterio que el original: es un
+ *  ranking chico (un conductor/equipo por fila), no un listado que crezca
+ *  sin límite. */
+function TablaPorConductor({ filas }: { filas: ConductorFila[] }) {
+  if (filas.length === 0) {
+    return (
+      <div className="p-6 text-sm text-slate-500">
+        Sin vales de urea con conductor en el período elegido.
+      </div>
+    );
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full text-sm">
+        <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+          <tr>
+            <th className="text-left px-4 py-2">Conductor</th>
+            <th className="text-left px-4 py-2">DNI</th>
+            <th className="text-right px-4 py-2">Vales</th>
+            <th className="text-right px-4 py-2">Litros</th>
+            <th className="text-right px-4 py-2">Costo</th>
+            <th className="text-left px-4 py-2">Primer vale</th>
+            <th className="text-left px-4 py-2">Último vale</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {filas.map((f, i) => (
+            <tr key={i}>
+              <td className="px-4 py-2">{f.conductor_nombre}</td>
+              <td className="px-4 py-2">{f.conductor_dni ?? "—"}</td>
+              <td className="px-4 py-2 text-right">{formatearNumero(f.cantidad_vales, 0)}</td>
+              <td className="px-4 py-2 text-right">{formatearNumero(f.total_cantidad)} L</td>
+              <td className="px-4 py-2 text-right">S/ {formatearNumero(f.total_costo, 2)}</td>
+              <td className="px-4 py-2">{formatearFecha(f.primer_despacho)}</td>
+              <td className="px-4 py-2">{formatearFecha(f.ultimo_despacho)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function TablaPorVehiculo({ filas }: { filas: VehiculoFila[] }) {
+  if (filas.length === 0) {
+    return (
+      <div className="p-6 text-sm text-slate-500">Sin vales de urea en el período elegido.</div>
+    );
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full text-sm">
+        <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
+          <tr>
+            <th className="text-left px-4 py-2">Unidad</th>
+            <th className="text-left px-4 py-2">Tipo</th>
+            <th className="text-right px-4 py-2">Vales</th>
+            <th className="text-right px-4 py-2">Litros</th>
+            <th className="text-right px-4 py-2">Costo</th>
+            <th className="text-left px-4 py-2">Primer vale</th>
+            <th className="text-left px-4 py-2">Último vale</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {filas.map((f) => (
+            <tr key={f.equipo_id}>
+              <td className="px-4 py-2">{f.placa_codigo ?? "—"}</td>
+              <td className="px-4 py-2">{f.equipo_tipo ?? "—"}</td>
+              <td className="px-4 py-2 text-right">{formatearNumero(f.cantidad_vales, 0)}</td>
+              <td className="px-4 py-2 text-right">{formatearNumero(f.total_cantidad)} L</td>
+              <td className="px-4 py-2 text-right">S/ {formatearNumero(f.total_costo, 2)}</td>
+              <td className="px-4 py-2">{formatearFecha(f.primer_despacho)}</td>
+              <td className="px-4 py-2">{formatearFecha(f.ultimo_despacho)}</td>
             </tr>
           ))}
         </tbody>
