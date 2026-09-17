@@ -269,17 +269,44 @@ describe("protección del último super_admin activo (Redis-independiente)", () 
       rol: "super_admin",
     });
 
-    // Desactiva a todos los demás super_admin que hayan quedado de otros
-    // tests en esta misma corrida, para que este test sea determinista sin
-    // depender del orden en que corren los `it` de este archivo.
+    // Desactiva a todos los demás super_admin de PRUEBA que hayan quedado
+    // de otros tests en esta misma corrida, para que este test sea
+    // determinista sin depender del orden en que corren los `it` de este
+    // archivo. El filtro por dominio @platform-admin-test.local no es
+    // cosmético: sin él, esta query corriendo contra la base local (no una
+    // efímera de CI) desactivaba en silencio la cuenta real de Kenif
+    // (sigma@mincoreerp.com.pe) cada vez que alguien corría este archivo
+    // -- bug real, encontrado 2026-09-17 después de que el problema se
+    // repitiera varias veces sin explicación (ver
+    // incidente_desactivacion_sigma_sin_explicar en memoria).
     await pool.query(
-      `UPDATE platform_admins SET activo = false WHERE rol = 'super_admin' AND id != $1 AND activo = true`,
+      `UPDATE platform_admins SET activo = false
+       WHERE rol = 'super_admin' AND id != $1 AND activo = true
+         AND email LIKE '%@platform-admin-test.local'`,
       [admin.id]
     );
 
-    await expect(cambiarEstadoPlatformAdminService(admin.id, false)).rejects.toMatchObject({
-      statusCode: 400,
-    } satisfies Partial<AppError>);
+    // En CI (base efímera, sin admins reales) esto ya lo deja como el
+    // único super_admin activo -> el guard tiene que rechazar con 400. En
+    // local, con cuentas reales de plataforma que este test nunca toca
+    // (ver el filtro de arriba), puede seguir sin ser el último -> el
+    // guard no debería dispararse. Se verifica el conteo real en vez de
+    // asumir cuál de los dos casos aplica, para que el test sea correcto
+    // en los dos entornos.
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS total FROM platform_admins WHERE rol = 'super_admin' AND activo = true AND id != $1`,
+      [admin.id]
+    );
+    const esElUltimoSuperAdminActivo = rows[0].total === 0;
+
+    if (esElUltimoSuperAdminActivo) {
+      await expect(cambiarEstadoPlatformAdminService(admin.id, false)).rejects.toMatchObject({
+        statusCode: 400,
+      } satisfies Partial<AppError>);
+    } else {
+      const { admin: actualizado } = await cambiarEstadoPlatformAdminService(admin.id, false);
+      expect(actualizado.activo).toBe(false);
+    }
   });
 
   it("desactivar el último admin con rol 'admin' (no super_admin) no dispara el guard", async () => {
