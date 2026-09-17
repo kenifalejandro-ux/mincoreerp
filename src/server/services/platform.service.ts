@@ -628,6 +628,59 @@ export async function cambiarEstadoUsuarioService(
   return fila;
 }
 
+/** Borrado real, distinto de cambiarEstadoUsuarioService: solo tiene sentido
+ *  para perfiles sin historial (de prueba, cargados de más, etc.). Si el
+ *  usuario ya generó despachos, checklists, IPERC u órdenes, el DELETE
+ *  revienta contra esa foreign key (varias de esas tablas referencian
+ *  usuarios(id) SIN ON DELETE) y se lo devolvemos como un error entendible
+ *  en vez del 500 crudo de Postgres — la salida para ese caso sigue siendo
+ *  desactivar, nunca forzar el borrado. */
+export async function eliminarUsuarioService(
+  tenantId: string,
+  usuarioId: string,
+  motivo: string | undefined,
+  contexto: ContextoAuditoria
+): Promise<{ email: string | null; nombre: string }> {
+  const usuario = await withTenant(tenantId, async (client) => {
+    const anterior = await client.query(
+      `SELECT nombre, email FROM usuarios WHERE id = $1 AND tenant_id = $2`,
+      [usuarioId, tenantId]
+    );
+    if (anterior.rows.length === 0) {
+      throw new AppError(404, "Usuario no encontrado");
+    }
+
+    try {
+      await client.query(`DELETE FROM usuarios WHERE id = $1 AND tenant_id = $2`, [
+        usuarioId,
+        tenantId,
+      ]);
+    } catch (err) {
+      if (esViolacionForeignKey(err)) {
+        throw new AppError(
+          409,
+          "No se puede eliminar: el usuario tiene historial en el sistema (despachos, checklists, IPERC, órdenes, etc.). Desactivalo en su lugar."
+        );
+      }
+      throw err;
+    }
+
+    return anterior.rows[0] as { nombre: string; email: string | null };
+  });
+
+  await revocarSesionesService(usuarioId, tenantId);
+
+  await registrarAuditoria({
+    accion: "eliminar_usuario",
+    tenantId,
+    usuarioId,
+    detalle: { email: usuario.email, nombre: usuario.nombre, motivo: motivo ?? null },
+    contexto,
+  });
+
+  return usuario;
+}
+
 /** Los datos de contacto del perfil. El nombre y el celular son de la empresa:
  *  el correo NO se edita acá, porque es la identidad de la persona y cambiarlo
  *  sería moverla de cuenta (ver §4 del documento de arquitectura). */

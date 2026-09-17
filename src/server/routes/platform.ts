@@ -64,6 +64,7 @@ import {
   type ReemplazarAdminInput,
   type CambiarEstadoCuentaInput,
   cambiarEstadoUsuarioSchema,
+  eliminarUsuarioSchema,
   actualizarDominioSchema,
   platformSesionSchema,
   platformAdminLoginSchema,
@@ -106,6 +107,7 @@ import {
   listarUsuariosTenantService,
   crearUsuarioEnTenantService,
   cambiarEstadoUsuarioService,
+  eliminarUsuarioService,
   estadoDesdeActivo,
   reemplazarAdminService,
   cambiarEstadoCuentaService,
@@ -1843,6 +1845,35 @@ export function createPlatformRouter() {
           tenantId: req.params.tenantId,
           usuarioId: req.params.usuarioId,
           activo,
+        });
+        res.status(200).json({ ok: true, usuario });
+      } catch (err) {
+        next(err);
+      }
+    })
+  );
+
+  // Borrado real (distinto del PATCH de estado): solo pensado para perfiles
+  // sin historial de negocio — el servicio rechaza con 409 si hay una FK que
+  // lo bloquea (ver eliminarUsuarioService).
+  router.delete(
+    "/tenants/:tenantId/usuarios/:usuarioId",
+    validarConAuditoria(eliminarUsuarioSchema, "eliminar_usuario", (req) => ({
+      tenantId: req.params.tenantId,
+      usuarioId: req.params.usuarioId,
+    })),
+    asyncHandler(async (req, res, next) => {
+      try {
+        const { motivo } = req.validatedBody as { motivo?: string };
+        const usuario = await eliminarUsuarioService(
+          req.params.tenantId,
+          req.params.usuarioId,
+          motivo,
+          contextoDe(req)
+        );
+        await publicarEventoPlataforma("tenant.usuario_eliminado", {
+          tenantId: req.params.tenantId,
+          usuarioId: req.params.usuarioId,
         });
         res.status(200).json({ ok: true, usuario });
       } catch (err) {

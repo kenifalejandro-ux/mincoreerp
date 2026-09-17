@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import CambiarEstadoDialog from "./CambiarEstadoDialog";
+import EliminarUsuarioDialog from "./EliminarUsuarioDialog";
 import PasswordInput from "./PasswordInput";
 import PlanYCuotasTenant from "./PlanYCuotasTenant";
 import {
@@ -29,6 +30,7 @@ import {
   listarUsuariosTenantApi,
   crearUsuarioApi,
   cambiarEstadoUsuarioApi,
+  eliminarUsuarioApi,
   obtenerModulosUsuarioApi,
   actualizarModulosUsuarioApi,
   obtenerSsoTenantApi,
@@ -56,6 +58,7 @@ export default function TenantDetalleView({
   const [dialogTenantAbierto, setDialogTenantAbierto] = useState(false);
   const [usuarioParaCambiarEstado, setUsuarioParaCambiarEstado] =
     useState<UsuarioPlataforma | null>(null);
+  const [usuarioParaEliminar, setUsuarioParaEliminar] = useState<UsuarioPlataforma | null>(null);
 
   async function recargar() {
     try {
@@ -139,6 +142,20 @@ export default function TenantDetalleView({
         />
       )}
 
+      {usuarioParaEliminar && (
+        <EliminarUsuarioDialog
+          entidadNombre={
+            usuarioParaEliminar.email ?? usuarioParaEliminar.dni ?? usuarioParaEliminar.nombre
+          }
+          onConfirmar={async (motivo) => {
+            await eliminarUsuarioApi(tenant.id, usuarioParaEliminar.id, motivo);
+            setUsuarioParaEliminar(null);
+            recargar();
+          }}
+          onCancelar={() => setUsuarioParaEliminar(null)}
+        />
+      )}
+
       {error && (
         <p className="text-sm text-red-400 bg-red-950/40 border border-red-900 rounded-lg px-3 py-2 mb-4">
           {error}
@@ -216,6 +233,12 @@ export default function TenantDetalleView({
                   className={`text-xs font-medium ${u.activo ? "text-red-400 hover:text-red-300" : "text-emerald-400 hover:text-emerald-300"}`}
                 >
                   {u.activo ? "Desactivar" : "Activar"}
+                </button>
+                <button
+                  onClick={() => setUsuarioParaEliminar(u)}
+                  className="text-xs font-medium text-red-500 hover:text-red-400"
+                >
+                  Eliminar
                 </button>
               </div>
             </div>
