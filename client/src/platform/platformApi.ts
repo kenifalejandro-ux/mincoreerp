@@ -281,6 +281,18 @@ export async function cambiarEstadoUsuarioApi(
   await parseOrThrow(res);
 }
 
+export async function eliminarUsuarioApi(
+  tenantId: string,
+  usuarioId: string,
+  motivo?: string
+): Promise<void> {
+  const res = await platformFetch(
+    `/tenants/${tenantId}/usuarios/${usuarioId}`,
+    jsonInit("DELETE", { motivo })
+  );
+  await parseOrThrow(res);
+}
+
 export interface ModuloAsignado {
   modulo: string;
   asignado: boolean;

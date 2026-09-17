@@ -163,6 +163,14 @@ export type CambiarEstadoCuentaInput = z.infer<typeof cambiarEstadoCuentaSchema>
 
 export type CambiarEstadoUsuarioInput = z.infer<typeof cambiarEstadoUsuarioSchema>;
 
+/** Borrado real de un perfil (distinto de cambiarEstadoUsuarioSchema): el
+ *  motivo es opcional igual que al desactivar, queda en la auditoría. */
+export const eliminarUsuarioSchema = z.object({
+  motivo: z.string().trim().max(500).optional(),
+});
+
+export type EliminarUsuarioInput = z.infer<typeof eliminarUsuarioSchema>;
+
 // null = quitarle el dominio propio al tenant (vuelve a depender del
 // subdominio de la plataforma o del campo manual).
 export const actualizarDominioSchema = z.object({
