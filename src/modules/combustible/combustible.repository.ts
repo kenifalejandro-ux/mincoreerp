@@ -993,15 +993,17 @@ export class CombustibleRepository {
   async findConsumoPorConductor(
     client: PoolClient,
     tenantId: string,
+    producto: string,
     periodo: PeriodoHistorial,
     agruparPor?: string
   ) {
     const condiciones: string[] = [
       "tenant_id = $1",
+      "producto = $2",
       "anulada_en IS NULL",
       "conductor_nombre IS NOT NULL",
     ];
-    const valores: unknown[] = [tenantId];
+    const valores: unknown[] = [tenantId, producto];
     agregarPeriodo(condiciones, valores, "despachado_en", periodo);
 
     const trunc = agruparPor ? CombustibleRepository.TRUNC_SQL[agruparPor] : undefined;
@@ -1037,15 +1039,17 @@ export class CombustibleRepository {
   async findConsumoPorEquipo(
     client: PoolClient,
     tenantId: string,
+    producto: string,
     periodo: PeriodoHistorial,
     agruparPor?: string
   ) {
     const condiciones: string[] = [
       "d.tenant_id = $1",
+      "d.producto = $2",
       "d.anulada_en IS NULL",
       "d.equipo_id IS NOT NULL",
     ];
-    const valores: unknown[] = [tenantId];
+    const valores: unknown[] = [tenantId, producto];
     agregarPeriodo(condiciones, valores, "d.despachado_en", periodo);
 
     const trunc = agruparPor ? CombustibleRepository.TRUNC_SQL[agruparPor] : undefined;
@@ -1092,11 +1096,12 @@ export class CombustibleRepository {
   async findConsumoPorGrifo(
     client: PoolClient,
     tenantId: string,
+    producto: string,
     periodo: PeriodoHistorial,
     agruparPor?: string
   ) {
-    const condiciones: string[] = ["d.tenant_id = $1", "d.anulada_en IS NULL"];
-    const valores: unknown[] = [tenantId];
+    const condiciones: string[] = ["d.tenant_id = $1", "d.producto = $2", "d.anulada_en IS NULL"];
+    const valores: unknown[] = [tenantId, producto];
     agregarPeriodo(condiciones, valores, "d.despachado_en", periodo);
 
     const trunc = agruparPor ? CombustibleRepository.TRUNC_SQL[agruparPor] : undefined;

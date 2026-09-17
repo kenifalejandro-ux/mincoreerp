@@ -3071,6 +3071,16 @@ export class CombustibleController {
       : undefined;
   }
 
+  /** `?producto=` en los tres rankings de consumo -- bug encontrado
+   *  2026-09-17: sumaban litros de combustible y de urea juntos porque
+   *  nadie filtraba. Default 'combustible' porque es el comportamiento que
+   *  ya tenían estos tres endpoints antes de que la urea existiera --
+   *  HistoricoCliente.tsx (que no manda el parámetro) sigue viendo
+   *  exactamente lo mismo que veía. */
+  private leerProductoConsumo(req: Request): "combustible" | "urea" {
+    return req.query.producto === "urea" ? "urea" : "combustible";
+  }
+
   /** GET /consumo-por-conductor -- Histórico -> Consumo por conductor, la
    *  pestaña que mira el cliente. Sin paginar (ver el repository), por eso
    *  no arma respuesta paginada como el resto de los listados. */
@@ -3079,8 +3089,9 @@ export class CombustibleController {
       const tenantId = getTenantId(req);
       const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
       const agruparPor = this.leerAgruparPor(req);
+      const producto = this.leerProductoConsumo(req);
       const filas = await withTenant(tenantId, (client) =>
-        service.listarConsumoPorConductor(client, tenantId, { desde, hasta }, agruparPor)
+        service.listarConsumoPorConductor(client, tenantId, producto, { desde, hasta }, agruparPor)
       );
       res.json({ data: filas });
     } catch {
@@ -3094,8 +3105,9 @@ export class CombustibleController {
       const tenantId = getTenantId(req);
       const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
       const agruparPor = this.leerAgruparPor(req);
+      const producto = this.leerProductoConsumo(req);
       const filas = await withTenant(tenantId, (client) =>
-        service.listarConsumoPorEquipo(client, tenantId, { desde, hasta }, agruparPor)
+        service.listarConsumoPorEquipo(client, tenantId, producto, { desde, hasta }, agruparPor)
       );
       res.json({ data: filas });
     } catch {
@@ -3111,8 +3123,9 @@ export class CombustibleController {
       const tenantId = getTenantId(req);
       const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
       const agruparPor = this.leerAgruparPor(req);
+      const producto = this.leerProductoConsumo(req);
       const filas = await withTenant(tenantId, (client) =>
-        service.listarConsumoPorGrifo(client, tenantId, { desde, hasta }, agruparPor)
+        service.listarConsumoPorGrifo(client, tenantId, producto, { desde, hasta }, agruparPor)
       );
       res.json({ data: filas });
     } catch {
