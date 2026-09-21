@@ -15,12 +15,18 @@ import type {
   CrearPuntoPrecintoInput,
   CambiarPrecintoInput,
 } from "../../server/schemas/combustible.schema";
+import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import { FACTOR_LITROS_UREA } from "../../server/schemas/combustible.schema";
 import type { UsuarioPayload } from "../../server/services/auth.service";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { CombustibleRepository } from "./combustible.repository";
 import type { PeriodoHistorial } from "./combustible.repository";
 import { EquiposRepository } from "../equipos/equipos.repository";
+import {
+  listarMovimientosDeGrifo,
+  motivoFaltaGrifo,
+  moverDeGrifo,
+} from "../../server/services/sedes.service";
 
 /** Un tramo de la muestra de calibración, tal como lo devuelve el repositorio. */
 type IntervaloCalibracion = Awaited<
@@ -61,6 +67,10 @@ export class CombustibleService {
   }
 
   async create(client: PoolClient, tenantId: string, data: CrearTanqueCombustibleInput) {
+    // Con más de un grifo interno, el tanque tiene que decir en cuál está
+    // (0097). La base también lo rechaza, pero con un error de trigger.
+    const falta = await motivoFaltaGrifo(client, tenantId, data.grifo_interno_id, "tanque");
+    if (falta) throw new Error(falta);
     return this.repository.create(client, tenantId, data);
   }
 
@@ -443,7 +453,39 @@ export class CombustibleService {
   }
 
   async createBulk(client: PoolClient, tenantId: string, items: CrearTanqueCombustibleInput[]) {
+    // La misma regla que el alta de a uno, fila por fila, antes de insertar
+    // nada: una planilla a medias es peor que una rechazada entera.
+    const grifos = new Set(items.map((i) => i.grifo_interno_id));
+    for (const grifo of grifos) {
+      const falta = await motivoFaltaGrifo(client, tenantId, grifo, "tanque");
+      if (falta) {
+        const codigos = items.filter((i) => i.grifo_interno_id === grifo).map((i) => i.codigo);
+        throw new Error(`${falta} (filas: ${codigos.slice(0, 10).join(", ")})`);
+      }
+    }
     return this.repository.createBulk(client, tenantId, items);
+  }
+
+  /** Mover el tanque a otro grifo interno (0097). Null si el tanque no existe
+   *  en esta empresa. */
+  moverDeGrifo(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    id: number,
+    data: MoverDeGrifoInput
+  ) {
+    return moverDeGrifo(client, tenantId, {
+      tabla: "combustible",
+      id,
+      grifoDestinoId: data.grifo_interno_id,
+      motivo: data.motivo,
+      usuarioId,
+    });
+  }
+
+  listarMovimientosDeGrifo(client: PoolClient, tenantId: string, id: number) {
+    return listarMovimientosDeGrifo(client, tenantId, "combustible_id", id);
   }
 
   /** Devuelve null si la lectura no existe en este tenant o si ya estaba
@@ -4024,16 +4066,16 @@ export class CombustibleService {
   ) {
     const grifo = await this.repository.findGrifoPorId(client, tenantId, grifoId);
     if (!grifo) {
-      throw new Error(`grifo_id ${grifoId} no existe en este tenant`);
+      throw new Error(`el proveedor ${grifoId} no existe en este tenant`);
     }
     if (rol === "ruta" && !grifo.abastece_ruta) {
       throw new Error(
-        `el grifo "${grifo.nombre}" no está marcado como grifo de ruta -- marcalo en Grifos / Proveedores o elegí otro`
+        `el proveedor "${grifo.nombre}" no está marcado como proveedor de ruta -- marcalo en Proveedores o elegí otro`
       );
     }
     if (rol === "tanque" && !grifo.abastece_tanque) {
       throw new Error(
-        `el grifo "${grifo.nombre}" no está marcado como proveedor de tanque -- marcalo en Grifos / Proveedores o elegí otro`
+        `el proveedor "${grifo.nombre}" no está marcado como proveedor de tanque -- marcalo en Proveedores o elegí otro`
       );
     }
     // Tercer rol (migración 0092): el proveedor de urea, confirmado por el
@@ -4042,7 +4084,7 @@ export class CombustibleService {
     // porque también está en el mismo catálogo.
     if (rol === "urea" && !grifo.abastece_urea) {
       throw new Error(
-        `el grifo "${grifo.nombre}" no está marcado como proveedor de urea -- marcalo en Grifos / Proveedores o elegí otro`
+        `el proveedor "${grifo.nombre}" no está marcado como proveedor de urea -- marcalo en Proveedores o elegí otro`
       );
     }
   }

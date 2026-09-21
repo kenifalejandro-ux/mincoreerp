@@ -1,6 +1,6 @@
 # Sedes, grifos internos y surtidores
 
-Estado: **diseño aprobado en sus decisiones, sin código**. Las entregas están al final.
+Estado: **entrega 1 implementada** (migración 0097: sedes, grifos internos, movimientos y copia del grifo en cada hecho). Las entregas 2 a 4 siguen sin código; están al final.
 
 ## 1. Por qué
 
@@ -49,7 +49,7 @@ Convenciones del proyecto: `SERIAL`, `creado_en`, RLS con `FORCE` y la política
 
 - **`sedes`** (entrega 1): `id`, `tenant_id`, `nombre`, `activo`, `motivo_baja`, `creado_por`, `creado_en`. Es una entidad de la empresa y no de Combustible: los otros módulos podrán colgarse de ella más adelante sin rehacer nada. Esta entrega solo la conecta con Combustible.
 - **`grifos_internos`** (entrega 1): `id`, `tenant_id`, `sede_id`, `nombre`, `activo`, `motivo_baja`, `creado_por`, `creado_en`.
-- **`asignaciones_grifo`** (entrega 1): el historial de pertenencia de tanques, surtidores y equipos. Ver 7.2.
+- **`movimientos_grifo`** (entrega 1): cada vez que un tanque o un equipo cambió de grifo (en la entrega 2 se suma el surtidor). Ver 7.2.
 - **`surtidores`** (entrega 2): `id`, `tenant_id`, `grifo_interno_id`, `nombre`, `activo`, `usa_totalizador`, `totalizador_tolerancia`. **La casilla y la tolerancia pasan del tanque al surtidor**: un grifo puede tener un surtidor con totalizador y otro sin, y cada aparato tiene su propia resolución.
 - **`surtidor_tanques`** (entrega 2): `surtidor_id`, `combustible_id`. El servidor valida que el tanque y el surtidor sean del **mismo grifo**.
 - **`combustible_lectura_totalizadores`** (entrega 2): `lectura_id`, `surtidor_id`, `valor`. Reemplaza a `combustible_lecturas.totalizador_lectura` (migración 0096): la varilla de un tanque lee el totalizador de **cada** surtidor conectado a él.
@@ -58,7 +58,7 @@ Convenciones del proyecto: `SERIAL`, `creado_en`, RLS con `FORCE` y la política
 ### Columnas nuevas
 
 - `combustible.grifo_interno_id` (entrega 1): cada tanque pertenece a un grifo. NOT NULL después del backfill.
-- `equipos.grifo_interno_id` (entrega 1): cada equipo pertenece a un grifo. Nullable: una empresa sin el módulo Combustible no lo usa, y en la entrega 3 un equipo sin grifo solo lo ve quien tiene alcance "todo".
+- `equipos.grifo_interno_id` (entrega 1): cada equipo pertenece a un grifo. Nullable: un equipo dado de alta sin grifo en una empresa con varios (lo que el servicio impide, pero la base no) queda sin grifo, y en la entrega 3 solo lo ve quien tiene alcance "todo".
 - `combustible_despachos.surtidor_id` (entrega 2): obligatorio en los vales del tanque propio; nulo en las compras externas y en la urea. Un CHECK por forma, igual que el resto del vale.
 - `grifo_interno_id` **copiado en cada hecho** al registrarse (entrega 1): vales, varillas, recepciones, colocaciones de precinto, alertas y anomalías. La sección 7 dice de dónde sale en cada caso.
 - `combustible_despachos.equipo_grifo_interno_id` (entrega 1; la alerta que la usa es de la entrega 4): copia del grifo **del equipo** al momento del vale. Es la que dispara la alerta de equipo de otro grifo y la que ubica una compra externa.
@@ -137,21 +137,27 @@ Un vale cargado sin red que llega tarde copia el grifo **vigente a su fecha** (`
 
 Conviene llenar las copias con **triggers BEFORE INSERT**: cubren todos los caminos de inserción (la API, la cola offline, los scripts y los tests que insertan por SQL) sin tocar cada llamador. Si al diseñar la entrega 1 se elige hacerlo en el servicio, hay que justificar cómo quedan cubiertos los inserts directos.
 
-### 7.2 Historial de pertenencia
+### 7.2 Historial de movimientos
 
-Tabla append-only `asignaciones_grifo`: `tipo` (tanque, surtidor o equipo), `entidad_id`, `grifo_interno_id`, `desde`, `hasta`, `motivo`, `usuario_id`. La pertenencia vigente es la fila con `hasta` nulo, y un índice único parcial impide que haya dos.
+Tabla append-only `movimientos_grifo`: `combustible_id` o `equipo_id` (exactamente uno), `grifo_origen_id`, `grifo_destino_id`, `movido_en`, `motivo`, `usuario_id`. **Una fila solo por movimiento**, no por alta: el grifo actual está en la ficha (`grifo_interno_id`).
 
-La columna `grifo_interno_id` de la ficha sigue existiendo, para que las consultas no tengan que buscar en el historial. Para que las dos no se desalineen (la lección de 0059 con el nivel del tanque), **la base no deja cambiar esa columna sin dejar la fila de historial**: un trigger la escribe en la misma transacción, toma el motivo de una variable de sesión y rechaza el cambio si no viene. Así ni un script ni un UPDATE a mano pueden mover algo sin rastro. Al dar de alta un tanque o un equipo, otro trigger abre su primera fila (motivo "Alta").
+**El grifo de algo en un instante T** es el **origen** del primer movimiento posterior a T; si no hubo ninguno, el grifo actual. Lo calculan las funciones `grifo_de_tanque_en` y `grifo_de_equipo_en`, que usan los triggers de 7.1. No hace falta ninguna fila "desde siempre".
 
-La fila de la migración inicial arranca en `desde = '-infinity'`: así un hecho viejo que llega tarde también encuentra su grifo.
+**La base no deja cambiar el grifo sin dejar el movimiento**: un trigger lo escribe en la misma transacción, toma el motivo y el usuario de variables de sesión y rechaza el cambio si no viene el motivo. Así ni un script ni un UPDATE a mano pueden mover algo sin rastro.
+
+Por qué así y no con una fila por pertenencia (lo que decía la primera versión de este documento):
+
+- **Claves foráneas reales** (`combustible_id`, `equipo_id`) y no un `entidad_id` genérico: el clonado de backups remapea los ids columna por tabla, y uno genérico quedaría apuntando a la empresa de origen.
+- **Sin filas escritas al dar de alta:** una fila "Alta" puesta por trigger se duplicaría al restaurar un backup, que vuelve a insertar las filas del historial.
 
 ### 7.3 Reglas del movimiento
 
 - **Solo el administrador**, con **motivo obligatorio**, por un **endpoint dedicado** (el PUT del tanque y el del equipo no aceptan `grifo_interno_id`), y queda en la bitácora. La ficha del tanque y la del equipo muestran su historial de ubicación.
 - **No es retroactivo.** Un movimiento rige desde que se registra. Hacerlo retroactivo obligaría a reescribir las copias de los hechos, que es justo lo que este diseño prohíbe. Si se registra tarde, el motivo lo explica y los hechos intermedios quedan donde se registraron.
 - **Un surtidor y sus tanques siempre están en el mismo grifo.** Mover un tanque arrastra los surtidores que lo alimentan solo a él. Si un surtidor también alimenta a otro tanque que se queda, el movimiento se rechaza hasta desconectarlo. Nunca queda un surtidor en un grifo con su tanque en otro.
+- **La sede de un grifo no se cambia.** La sede de un hecho se deduce del grifo que copió, así que moverlo de sede reescribiría la sede de todo su pasado. Para reorganizar: grifo nuevo en la otra sede, y se mueven los tanques y equipos.
 - **No se bloquea por alertas abiertas.** Cada alerta ya guarda su grifo. Bloquear por alertas dejaría un tanque con "sin medir" o "nivel bajo" abierta sin poder moverse nunca.
-- **Una sede o un grifo no se dan de baja con cosas activas adentro.** Primero se mueven los tanques, surtidores y equipos. No hay huérfanos. La baja es lógica (`activo = false`), con motivo y en la bitácora; nunca se borra la fila.
+- **Una sede o un grifo no se dan de baja con cosas activas adentro.** Primero se mueven los tanques, surtidores y equipos. No hay huérfanos. La baja es lógica (`activo = false`), con motivo y en la bitácora; nunca se borra la fila. **Se reactivan** con motivo, para que una baja por error tenga vuelta; un grifo solo si su sede está activa.
 - **Lo que se calcula no se entera del movimiento.** El descuadre de tramo, ciclo y ventana es del tanque; la cadena del totalizador es del surtidor; el consumo es del equipo. Ninguno se corta ni se reinicia por un cambio de grifo.
 
 ### 7.4 Qué ve cada uno después de un movimiento
@@ -160,7 +166,9 @@ Cada hecho es de su grifo (7.1). El usuario del grifo viejo sigue viendo los val
 
 ### 7.5 Tanques y equipos nuevos
 
-Si la empresa tiene un solo grifo, el tanque o el equipo se asigna solo: un trigger BEFORE INSERT toma el único grifo activo. Con más de uno, el grifo es obligatorio al dar de alta un tanque (el trigger rechaza el alta sin grifo y el servicio lo traduce a 400) y un equipo de una empresa con Combustible. Una empresa sin el módulo Combustible no ve el campo. La carga masiva de tanques sigue la misma regla.
+Si la empresa tiene un solo grifo, el tanque o el equipo se asigna solo: un trigger BEFORE INSERT toma el único grifo activo. Si la empresa no tiene **ningún** grifo (un backup anterior a 0097 que se restaura, la prueba de backup), el mismo trigger crea el "Principal" en ese momento. Con más de uno, el grifo es obligatorio al dar de alta un tanque o un equipo: el servicio responde 400 y, de respaldo, el trigger rechaza el tanque.
+
+**El selector de grifo aparece cuando la empresa tiene más de un grifo activo**, y no según los módulos: el cliente conoce los módulos del usuario, no los de la empresa. Una empresa sin el módulo Combustible siempre tiene uno solo (el "Principal"), así que tampoco ve nada. La carga masiva de tanques sigue la misma regla, con una columna `grifo` que lleva el nombre del grifo.
 
 ## 8. Reportes y conciliación
 
@@ -175,13 +183,12 @@ Por cada empresa, en la **entrega 1**:
 
 1. Crear la sede "Principal" y el grifo "Principal".
 2. Asignar todos los tanques y **todos los equipos** a ese grifo (no en NULL: en la entrega 3 un equipo sin grifo desaparecería para los usuarios asignados).
-3. Abrir la primera fila de historial de cada tanque y equipo, con `desde = '-infinity'` y motivo "Migración inicial".
-4. Copiar el grifo "Principal" en todos los hechos existentes.
-5. Recién después, `combustible.grifo_interno_id` pasa a NOT NULL.
+3. Copiar el grifo "Principal" en todos los hechos existentes. No hay movimientos que registrar: nada se movió.
+4. Recién después, `combustible.grifo_interno_id` pasa a NOT NULL.
 
 El backfill recorre todas las empresas con RLS activo: usa el mecanismo de la migración 0057.
 
-**Las empresas creadas después de la migración** también necesitan su "Principal": se crea en el alta de empresa (`tenantOnboardingService.ts` y el alta desde plataforma). Sin eso, la primera empresa nueva no podría crear un tanque.
+**Las empresas creadas después de la migración** también necesitan su "Principal": se crea en `crearTenantConAdminService`, el único camino de alta (lo usan el onboarding, el panel de plataforma y los tests). Cualquier otro camino queda cubierto por el trigger de 7.5.
 
 En la **entrega 2**: crear un surtidor por tanque que hoy tenga `usa_totalizador`, con la tolerancia del tanque, conectarlo, y pasar a él los vales y las varillas ya cargados con totalizador.
 
@@ -191,7 +198,9 @@ Se hace en dos pasos (expandir y contraer, como en la migración de cuentas): pr
 
 ### Backup, restore y borrado de empresa
 
-`sedes`, `grifos_internos` y `asignaciones_grifo` son de la empresa, no de un módulo: van en `src/server/services/platformBackup.service.ts` junto a `usuarios` y `ordenes_admin`, **antes de todos los módulos** (Equipos es el primero y las referencia), y **al final del orden de borrado**. En `registry.ts` se declaran las claves foráneas nuevas de tanques, equipos y de cada copia en los hechos: sin eso, al clonar un backup los ids quedan apuntando a la empresa de origen, el mismo error que la 5ª auditoría encontró en las alertas.
+`sedes` y `grifos_internos` son de la empresa, no de un módulo: van en `src/server/services/platformBackup.service.ts` junto a `usuarios` y `ordenes_admin`, **antes de todos los módulos** (Equipos es el primero y las referencia), y **al final del orden de borrado**. `movimientos_grifo` va en la entrada de **Combustible** de `registry.ts`: referencia tanques y equipos, que se restauran antes.
+
+En `registry.ts` se declaran las claves foráneas nuevas de tanques, equipos y de cada copia en los hechos: sin eso, al clonar un backup los ids quedan apuntando a la empresa de origen, el mismo error que la 5ª auditoría encontró en las alertas. Un backup anterior a 0097 se restaura igual: el trigger de 7.5 crea el "Principal" y los de 7.1 calculan las copias.
 
 ## 10. Decisiones tomadas
 
@@ -208,15 +217,17 @@ Se hace en dos pasos (expandir y contraer, como en la migración de cuentas): pr
 | Nombre de los grifos externos | "Proveedores" en pantalla; la tabla no se renombra |
 | Reportes | Por conductor y por vehículo, de toda la empresa, con filtro por sede y grifo |
 | Pares del consumo | Toda la empresa; el filtro solo acota el listado |
-| Mover entre grifos | Cada hecho copia su grifo; historial append-only garantizado por la base; solo admin, con motivo, por endpoint dedicado, no retroactivo, sin bloquear por alertas |
+| Mover entre grifos | Cada hecho copia su grifo; historial de movimientos append-only garantizado por la base; solo admin, con motivo, por endpoint dedicado, no retroactivo, sin bloquear por alertas |
+| Sede de un grifo | No se cambia: se crea un grifo nuevo y se mueve lo que haga falta |
+| Selector de grifo | Aparece con más de un grifo activo, sin mirar módulos |
 | Integridad entre empresas | Claves foráneas compuestas `(tenant_id, id)` |
-| Bajas de sede y grifo | Lógicas, con motivo, rechazadas si quedan cosas activas adentro |
+| Bajas de sede y grifo | Lógicas, con motivo, rechazadas si quedan cosas activas adentro; se reactivan con motivo |
 
 ## 11. Entregas
 
 | # | Qué | Riesgo |
 |---|---|---|
-| 1 | Sedes y grifos internos: tablas, administración, tanques y equipos asignados, historial de pertenencia, copia del grifo en cada hecho, migración a "Principal", alta de empresas nuevas, backup, renombrar "Proveedores" | Alto: migra todas las empresas, agrega triggers y toca el backup |
+| 1 | **Hecha.** Sedes y grifos internos: tablas, administración, tanques y equipos asignados, historial de movimientos, copia del grifo en cada hecho, migración a "Principal", alta de empresas nuevas, backup, renombrar "Proveedores" | Alto: migra todas las empresas, agrega triggers y toca el backup |
 | 2 | Surtidores: entidad, vale por surtidor, totalizador por surtidor y en la varilla, migración de #180 y #183 | Alto: toca el cálculo |
 | 3 | Alcance por usuario aplicado en todo el módulo, con tests de ataque y eventos filtrados | **El más alto**: un hueco filtra datos de otra planta |
 | 4 | Unidades en los reportes, filtro por sede y grifo, "por grifo" desglosado, alerta de equipo de otro grifo | Bajo |

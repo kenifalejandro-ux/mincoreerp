@@ -25,6 +25,8 @@ import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./preci
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { ahoraParaInputLocal } from "../../utils/fechaLocal";
+import MoverDeGrifo from "../comunes/MoverDeGrifo";
+import { useSedes } from "../comunes/useSedes";
 import VentanaFlotante from "../comunes/VentanaFlotante";
 import {
   buscarElementoEnPaneles,
@@ -65,6 +67,9 @@ interface Tanque {
   totalizador_tolerancia: string;
   // Precintos numerados (0095): la varilla verifica el sello de cada punto.
   usa_precintos: boolean;
+  // El grifo interno donde está el tanque (0097). Se cambia con "Mover de
+  // grifo", nunca editando el tanque.
+  grifo_interno_id: number;
   // Desde cuántos % de diferencia entre lo facturado y lo medido se considera
   // sospechosa una recepción (migrations/0066). 0 = no alertar todavía.
   umbral_diferencia_pct: string | null;
@@ -1530,6 +1535,8 @@ async function mensajeDeErrorDelServidor(res: Response, filas: number): Promise<
 }
 
 const FORM_INICIAL = {
+  // Solo en el alta, y solo si la empresa tiene más de un grifo (0097).
+  grifo_interno_id: "",
   codigo: "",
   tanque_nombre: "",
   tipo_combustible: "diesel_b5" as Tanque["tipo_combustible"],
@@ -1620,6 +1627,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [modalTanqueAbierto, setModalTanqueAbierto] = useState(false);
   const [editandoId, setEditandoId] = useState<number | null>(null);
   const [formData, setFormData] = useState(FORM_INICIAL);
+  // Sedes y grifos internos (0097). Con uno solo, nada de esto se ve.
+  const grifosInternos = useSedes();
+  const [filtroGrifo, setFiltroGrifo] = useState("");
+  const [tanqueAMover, setTanqueAMover] = useState<Tanque | null>(null);
   // Bloquea el botón mientras el request está en vuelo Y corta un segundo
   // submit que haya entrado antes del re-render (mismo patrón que
   // handleRegistrarMovimiento en RepuestosTable.tsx) -- esto NO participa
@@ -2221,6 +2232,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       usa_totalizador: t.usa_totalizador,
       totalizador_tolerancia: t.totalizador_tolerancia,
       usa_precintos: t.usa_precintos,
+      // Solo para mostrarlo: el PUT no lo manda, se cambia con "Mover de grifo".
+      grifo_interno_id: String(t.grifo_interno_id ?? ""),
       umbral_diferencia_pct: t.umbral_diferencia_pct ?? "",
       umbral_descuadre_pct: t.umbral_descuadre_pct ?? "",
       umbral_descuadre_ciclo_pct: t.umbral_descuadre_ciclo_pct ?? "",
@@ -2281,6 +2294,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             usa_totalizador: formData.usa_totalizador,
             totalizador_tolerancia: Number(formData.totalizador_tolerancia),
             usa_precintos: formData.usa_precintos,
+            // Con un solo grifo lo asigna el servidor (0097).
+            grifo_interno_id:
+              grifosInternos.hayVarios && formData.grifo_interno_id !== ""
+                ? Number(formData.grifo_interno_id)
+                : undefined,
             umbral_diferencia_pct: aNumeroONull(formData.umbral_diferencia_pct),
             umbral_descuadre_pct: aNumeroONull(formData.umbral_descuadre_pct),
             umbral_descuadre_ciclo_pct: aNumeroONull(formData.umbral_descuadre_ciclo_pct),
@@ -2388,7 +2406,33 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         const wb = XLSX.read(bstr, { type: "binary" });
         const ws = wb.Sheets[wb.SheetNames[0]];
         if (!ws) throw new Error("El archivo no tiene ninguna hoja de cálculo.");
-        const data = XLSX.utils.sheet_to_json(ws);
+        const crudas = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws);
+
+        // Columna opcional "grifo" (0097): el NOMBRE del grifo interno, que se
+        // traduce a su id acá. Obligatoria solo si la empresa tiene más de
+        // uno (lo exige el servidor). Un nombre que no existe se avisa antes
+        // de mandar nada: una planilla a medias es peor que una rechazada.
+        const normalizar = (v: unknown) =>
+          String(v ?? "")
+            .trim()
+            .toLowerCase();
+        const noEncontrados = new Set<string>();
+        const data = crudas.map((fila) => {
+          const { grifo, ...resto } = fila;
+          if (grifo === undefined || String(grifo).trim() === "") return resto;
+          const g = grifosInternos.grifosActivos.find(
+            (x) =>
+              normalizar(x.nombre) === normalizar(grifo) ||
+              normalizar(x.etiqueta) === normalizar(grifo)
+          );
+          if (!g) noEncontrados.add(String(grifo));
+          return g ? { ...resto, grifo_interno_id: g.id } : resto;
+        });
+        if (noEncontrados.size > 0) {
+          throw new Error(
+            `No existe el grifo interno: ${[...noEncontrados].join(", ")}. Revisá la columna "grifo".`
+          );
+        }
 
         if (data.length === 0) throw new Error("La primera hoja está vacía.");
         if (data.length > MAX_FILAS_IMPORTACION) {
@@ -2857,7 +2901,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        alert(body.error || "No se pudo crear el grifo.");
+        alert(body.error || "No se pudo crear el proveedor.");
         return;
       }
       setNombreGrifoNuevo("");
@@ -2883,7 +2927,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       }),
     });
     if (!res.ok) {
-      alert("No se pudo actualizar el grifo.");
+      alert("No se pudo actualizar el proveedor.");
       return;
     }
     await cargarGrifos();
@@ -2907,7 +2951,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       }),
     });
     if (!res.ok) {
-      alert("No se pudo actualizar el grifo.");
+      alert("No se pudo actualizar el proveedor.");
       return;
     }
     await cargarGrifos();
@@ -3284,6 +3328,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   const tanqueRecepcion = tanques.find((t) => t.id === Number(recepcionForm.combustible_id));
   const tanqueDespacho = tanques.find((t) => t.id === Number(despachoForm.combustible_id));
+  // El filtro por grifo (0097): acota lo que se lista, no cambia ningún cálculo.
+  const tanquesVisibles =
+    grifosInternos.hayVarios && filtroGrifo !== ""
+      ? tanques.filter((t) => t.grifo_interno_id === Number(filtroGrifo))
+      : tanques;
   // La columna del totalizador solo aparece si el kardex trae alguno: un
   // tanque sin totalizador no tiene por qué ver una columna vacía.
   const kardexConTotalizador = kardex?.filas.some((f) => f.totalizador !== null) ?? false;
@@ -3543,7 +3592,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               <Bell className="w-4 h-4 shrink-0" /> Alertas
             </button>
             <button onClick={abrirModalGrifos} className={`${BTN_BASE} ${BTN_ESTILO.muted}`}>
-              <Wrench className="w-4 h-4 shrink-0" /> Grifos / Proveedores
+              <Wrench className="w-4 h-4 shrink-0" /> Proveedores
             </button>
             <button onClick={abrirModalPrecios} className={`${BTN_BASE} ${BTN_ESTILO.muted}`}>
               <Tag className="w-4 h-4 shrink-0" /> Precios
@@ -3594,8 +3643,28 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           </div>
         ) : (
           <>
+            {grifosInternos.hayVarios && (
+              <div className="mb-4 flex items-center gap-2">
+                <label htmlFor="filtro-grifo-tanques" className="text-xs font-bold uppercase">
+                  Grifo
+                </label>
+                <select
+                  id="filtro-grifo-tanques"
+                  className="border border-slate-200 rounded-lg p-2 text-sm bg-white"
+                  value={filtroGrifo}
+                  onChange={(e) => setFiltroGrifo(e.target.value)}
+                >
+                  <option value="">Todos</option>
+                  {grifosInternos.grifosActivos.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.etiqueta}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="grid grid-cols-1 xl:grid-cols-[minmax(320px,380px)_1fr] gap-6 items-start">
-              <TanqueVisual tanques={tanques.filter((t) => t.activo)} />
+              <TanqueVisual tanques={tanquesVisibles.filter((t) => t.activo)} />
               <div className="min-w-0">
                 <div
                   className="bg-[#192526] 
@@ -3610,6 +3679,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
                           Nombre
                         </th>
+                        {grifosInternos.hayVarios && (
+                          <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                            Grifo
+                          </th>
+                        )}
                         <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
                           Tipo
                         </th>
@@ -3634,7 +3708,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#2a2e37]/50">
-                      {tanques.map((t) => {
+                      {tanquesVisibles.map((t) => {
                         // Sin lecturas vigentes el nivel es desconocido: no se pinta
                         // ni de rojo ni de verde, porque las dos afirmarían algo que
                         // nadie midió.
@@ -3658,6 +3732,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                                 <p className="text-xs text-slate-400">{t.ubicacion}</p>
                               )}
                             </td>
+                            {grifosInternos.hayVarios && (
+                              <td className="p-4 text-sm text-slate-400">
+                                {grifosInternos.nombreDeGrifo(t.grifo_interno_id)}
+                              </td>
+                            )}
                             <td className="p-4 text-sm text-slate-600">
                               {ETIQUETA_TIPO_COMBUSTIBLE[t.tipo_combustible]}
                             </td>
@@ -3804,6 +3883,21 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             </div>
           </>
         ))}
+      {tanqueAMover && (
+        <MoverDeGrifo
+          que="tanque"
+          id={tanqueAMover.id}
+          nombre={`${tanqueAMover.codigo} — ${tanqueAMover.tanque_nombre}`}
+          grifoActualId={tanqueAMover.grifo_interno_id}
+          grifos={grifosInternos.grifosActivos}
+          onCerrar={() => setTanqueAMover(null)}
+          onMovido={() => {
+            setTanqueAMover(null);
+            grifosInternos.recargar();
+            void cargarTanques();
+          }}
+        />
+      )}
       {tanquePrecintos && (
         <VentanaPrecintos tanque={tanquePrecintos} onCerrar={() => setTanquePrecintos(null)} />
       )}
@@ -3965,12 +4059,63 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   id="tanque-ubicacion"
                   type="text"
                   maxLength={200}
-                  placeholder="Ej: Grifo Cantera"
+                  placeholder="Ej: al lado del taller"
                   className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
                   value={formData.ubicacion}
                   onChange={(e) => setFormData({ ...formData, ubicacion: e.target.value })}
                 />
               </div>
+
+              {/* Grifo interno (0097): solo si la empresa tiene más de uno. En
+                  el alta se elige; después se cambia con "Mover de grifo", que
+                  pide motivo y deja el historial. */}
+              {grifosInternos.hayVarios &&
+                (editandoId === null ? (
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="tanque-grifo-interno"
+                      className="text-xs font-bold text-slate-700 uppercase"
+                    >
+                      Grifo interno
+                    </label>
+                    <select
+                      id="tanque-grifo-interno"
+                      required
+                      className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                      value={formData.grifo_interno_id}
+                      onChange={(e) =>
+                        setFormData({ ...formData, grifo_interno_id: e.target.value })
+                      }
+                    >
+                      <option value="">Elegir grifo</option>
+                      {grifosInternos.grifosActivos.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.etiqueta}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-2 text-sm bg-slate-50 border border-slate-200 rounded-xl p-3">
+                    <span>
+                      <span className="text-xs font-bold text-slate-700 uppercase block">
+                        Grifo interno
+                      </span>
+                      {grifosInternos.nombreDeGrifo(
+                        tanques.find((t) => t.id === editandoId)?.grifo_interno_id
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setTanqueAMover(tanques.find((t) => t.id === editandoId) ?? null)
+                      }
+                      className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg hover:bg-white"
+                    >
+                      Mover de grifo
+                    </button>
+                  </div>
+                ))}
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1">
@@ -5111,7 +5256,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       htmlFor="despacho-grifo"
                       className="text-xs font-bold text-slate-700 uppercase"
                     >
-                      Grifo
+                      Proveedor
                     </label>
                     <select
                       id="despacho-grifo"
@@ -5123,7 +5268,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       }
                     >
                       <option value="" disabled>
-                        Elegir grifo
+                        Elegir proveedor
                       </option>
                       {/* Solo los de ruta (migrations/0065): un proveedor que
                           solo llena el tanque propio no es donde una unidad
@@ -5136,8 +5281,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     </select>
                     {grifosDeRuta.length === 0 && (
                       <p className="text-xs text-red-600">
-                        No hay grifos de ruta cargados -- agregalos desde "Grifos / Proveedores" en
-                        la barra superior, marcando "Abastece unidades en ruta".
+                        No hay proveedores de ruta cargados -- agregalos desde "Proveedores" en la
+                        barra superior, marcando "Abastece unidades en ruta".
                       </p>
                     )}
                   </div>
@@ -5440,7 +5585,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       Origen
                     </th>
                     <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                      Tanque / Grifo
+                      Tanque / Proveedor
                     </th>
                     <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
                       Unidad
@@ -5541,7 +5686,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b flex justify-between items-center">
               <div>
-                <h3 className="text-xl font-bold">Grifos / Proveedores</h3>
+                <h3 className="text-xl font-bold">Proveedores</h3>
                 <p className="text-sm text-slate-500">
                   Los que abastecen unidades en ruta y los que llenan los tanques propios
                 </p>
@@ -5558,7 +5703,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 htmlFor="grifo-nombre-nuevo"
                 className="text-xs font-bold text-slate-700 uppercase"
               >
-                Nuevo grifo o proveedor
+                Nuevo proveedor
               </label>
               <div className="flex gap-2">
                 <input
@@ -5609,7 +5754,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             <div className="p-6 space-y-2">
               {grifos.length === 0 ? (
                 <p className="text-sm text-slate-400 text-center">
-                  Todavía no hay grifos cargados.
+                  Todavía no hay proveedores cargados.
                 </p>
               ) : (
                 grifos.map((g) => (
@@ -5733,7 +5878,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     }
                   >
                     <option value="tanque">Precio de venta interna (tanque → flotas)</option>
-                    <option value="grifo">Precio de compra en grifo de ruta</option>
+                    <option value="grifo">Precio de compra a un proveedor de ruta</option>
                   </select>
                 </div>
               </div>
@@ -5776,7 +5921,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     htmlFor="precio-grifo"
                     className="text-xs font-bold text-slate-700 uppercase"
                   >
-                    Grifo
+                    Proveedor
                   </label>
                   <select
                     id="precio-grifo"
@@ -5786,7 +5931,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     onChange={(e) => setPrecioForm({ ...precioForm, grifo_id: e.target.value })}
                   >
                     <option value="" disabled>
-                      Elegir grifo
+                      Elegir proveedor
                     </option>
                     {grifos.map((g) => (
                       <option key={g.id} value={g.id}>
@@ -6593,7 +6738,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       Se marca lo que se aparta más de ±{repConsumo.criterio.tolerancia_pct}%. Hacen
                       falta {repConsumo.criterio.min_cargas} cargas con medidor en el período y{" "}
                       {repConsumo.criterio.min_pares} pares del mismo modelo para comparar. Los
-                      vales de grifo externo se toman en litros.
+                      vales de proveedores externos se toman en litros.
                     </p>
                   )}
 
@@ -7453,7 +7598,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     htmlFor="recepcion-grifo"
                     className="text-xs font-bold text-slate-700 uppercase"
                   >
-                    Proveedor / grifo *
+                    Proveedor *
                   </label>
                   <select
                     id="recepcion-grifo"
@@ -7486,7 +7631,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       }}
                       className="underline hover:text-slate-600"
                     >
-                      Grifos / Proveedores
+                      Proveedores
                     </button>
                     , marcando "Abastece el tanque (cisterna)".
                   </p>

@@ -25,13 +25,16 @@ export type EquipoPayload = {
   // NULL DEFAULT true en la base -- undefined acá se resuelve a true, igual
   // que el default de la columna.
   usa_urea?: boolean;
+  // 0097: solo en el alta. NULL = el único grifo de la empresa (lo asigna la
+  // base). El PUT no lo toca: mover de grifo tiene su propio camino.
+  grifo_interno_id?: number;
 };
 
 // Todas las columnas devueltas por el ABM -- centralizadas para que agregar
 // una no obligue a tocar cuatro queries y olvidarse de la quinta.
 const COLUMNAS_EQUIPO = `id, placa_codigo, tipo, marca, modelo, tipo_medidor,
   capacidad_tanque, capacidad_tanque_unidad, consumo_maximo_l,
-  conductor_nombre, conductor_dni, usa_urea, activo, creado_en`;
+  conductor_nombre, conductor_dni, usa_urea, activo, creado_en, grifo_interno_id`;
 
 export const EquiposRepository = {
   async findAll(client: PoolClient, tenantId: string, { pageSize, offset }: Paginacion) {
@@ -65,8 +68,8 @@ export const EquiposRepository = {
     const result = await client.query(
       `INSERT INTO equipos (tenant_id, placa_codigo, tipo, marca, modelo, tipo_medidor,
          capacidad_tanque, capacidad_tanque_unidad, conductor_nombre, conductor_dni,
-         consumo_maximo_l, usa_urea)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         consumo_maximo_l, usa_urea, grifo_interno_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING ${COLUMNAS_EQUIPO}`,
       [
         tenantId,
@@ -81,6 +84,7 @@ export const EquiposRepository = {
         data.conductor_dni ?? null,
         data.consumo_maximo_l ?? null,
         data.usa_urea ?? true,
+        data.grifo_interno_id ?? null,
       ]
     );
 

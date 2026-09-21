@@ -48,7 +48,7 @@ const VISTAS: { valor: Vista; etiqueta: string }[] = [
   { valor: "compras_externas", etiqueta: "Histórico de consumo (grifo externo)" },
   { valor: "por_conductor", etiqueta: "Ranking de consumo por conductor" },
   { valor: "por_vehiculo", etiqueta: "Ranking de consumo por vehículo" },
-  { valor: "por_grifo", etiqueta: "Ranking de consumo por grifo (interno y externos)" },
+  { valor: "por_grifo", etiqueta: "Ranking de consumo por origen (grifo interno y proveedores)" },
 ];
 
 /** Las tres vistas de arriba son rankings agregados -- las únicas donde
@@ -650,7 +650,7 @@ function TablaGrifo({
           <tr className="border-b text-left text-gray-600">
             {agrupacion && <th className="py-1 pr-2">Período</th>}
             <th className="py-1 pr-2">Tipo</th>
-            <th className="py-1 pr-2">Grifo</th>
+            <th className="py-1 pr-2">Origen</th>
             <th className="py-1 pr-2 text-right">Vales</th>
             <th className="py-1 pr-2 text-right">Total cantidad</th>
             <th className="py-1 pr-2 text-right">Total costo</th>
@@ -668,7 +668,9 @@ function TablaGrifo({
                   {f.periodo && formatearPeriodo(f.periodo, agrupacion)}
                 </td>
               )}
-              <td className="py-1 pr-2">{f.tipo_grifo === "interno" ? "Interno" : "Externo"}</td>
+              <td className="py-1 pr-2">
+                {f.tipo_grifo === "interno" ? "Grifo interno" : "Proveedor"}
+              </td>
               <td className="py-1 pr-2">{f.grifo_nombre}</td>
               <td className="py-1 pr-2 text-right">{f.cantidad_vales}</td>
               <td className="py-1 pr-2 text-right">{formatearNumero(f.total_cantidad)}</td>

@@ -100,7 +100,10 @@ export default defineConfig({
                 // Los puntos precintados de un tanque (0095): la varilla se
                 // toma en cancha sin señal y el formulario los necesita para
                 // saber qué sellos pedir.
-                /^\/api\/erp\/combustible\/\d+\/precintos$/.test(url.pathname)),
+                /^\/api\/erp\/combustible\/\d+\/precintos$/.test(url.pathname) ||
+                // Las sedes y grifos internos (0097): el alta de equipo, que
+                // funciona sin red, necesita la lista para su selector.
+                url.pathname === "/api/erp/sedes"),
             handler: "NetworkFirst",
             options: {
               cacheName: "erp-catalogos-v1",

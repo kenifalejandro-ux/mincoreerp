@@ -11,6 +11,7 @@ import erpRateLimiter from "../middleware/erpRateLimiter";
 import { tenantMetricsMiddleware } from "../shared/middlewares/tenantMetrics.middleware";
 import { createUsuariosTenantRouter } from "./usuariosTenant";
 import { createAdministracionRouter } from "./administracion";
+import { createSedesRouter } from "./sedes";
 // Se activa solo con importarse (setInterval + .unref()). Va acá y no en
 // las rutas de plataforma porque quien LLENA idempotency_keys son los
 // módulos de negocio que se montan abajo (migración 0044).
@@ -44,6 +45,10 @@ export function createApiRouter() {
   // y por el mismo motivo: administrar la propia gente no es un módulo que se
   // contrate.
   router.use("/administracion", createAdministracionRouter());
+
+  // Sedes y grifos internos (0097): de la empresa, no de un módulo. Solo la
+  // lectura va acá; crear, renombrar y dar de baja es de /administracion.
+  router.use("/sedes", createSedesRouter());
 
   // Cada módulo se monta bajo /<id> — agregar un módulo nuevo es agregarlo
   // al registry (ver docs/adr/0002-contrato-de-modulo.md), no tocar este

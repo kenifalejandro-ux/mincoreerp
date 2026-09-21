@@ -31,6 +31,7 @@ import {
   cambiarPrecintoSchema,
   bajaPuntoPrecintoSchema,
 } from "../../server/schemas/combustible.schema";
+import { moverDeGrifoSchema } from "../../server/schemas/sedes.schema";
 import { CombustibleController } from "./combustible.controller";
 // Se activa solo con importarse (setInterval + .unref()) -- mismo mecanismo
 // que events.ts con el worker de retención de eventos.
@@ -301,6 +302,18 @@ router.get("/:id", asyncHandler(controller.getById.bind(controller)));
 // Los puntos precintados del tanque con su número vigente. Cualquier rol: el
 // que toma la varilla necesita saber qué sellos mirar.
 router.get("/:id/precintos", asyncHandler(controller.listarPuntosPrecinto.bind(controller)));
+// Grifo interno del tanque (0097). Mover cambia quién lo ve (entrega 3): solo
+// admin, con motivo. Los errores de negocio salen como AppError del servicio.
+router.post(
+  "/:id/mover-grifo",
+  requireRole("admin"),
+  validate(moverDeGrifoSchema),
+  asyncHandler(controller.moverDeGrifo.bind(controller))
+);
+router.get(
+  "/:id/movimientos-grifo",
+  asyncHandler(controller.listarMovimientosDeGrifo.bind(controller))
+);
 router.get(
   "/:id/precintos/historial",
   requireRole("admin"),

@@ -8,6 +8,7 @@ import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
 import { registrarAuditoria } from "../../server/services/platformAudit.service";
 import { publicarEventoTenant } from "../../server/services/realtimeEvents.service";
 import type { CrearEquipoInput, ActualizarEquipoInput } from "../../server/schemas/equipos.schema";
+import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import { findAdminsConModulo } from "../../server/shared/utils/adminsDeModulo";
 import { enviarCorreoAlerta } from "../../server/shared/utils/alertaMailer";
 import { logger } from "../../server/config/logger";
@@ -124,9 +125,55 @@ export const EquiposController = {
       });
       await publicarEventoTenant(tenantId, "equipos.creado", { equipoId: nuevo!.id });
       res.status(201).json(nuevo);
-    } catch {
+    } catch (err) {
+      // Grifo interno (0097): falta con más de un grifo, no existe o está dado
+      // de baja. 400 y no 500: la cola offline descarta los 4xx y los reporta
+      // en vez de reintentarlos para siempre.
+      if (err instanceof Error && err.message.includes("grifo interno")) {
+        res.status(400).json({ message: err.message, error: err.message });
+        return;
+      }
       res.status(500).json({ message: "Error al crear equipo" });
     }
+  },
+
+  /** POST /:id/mover-grifo -- el único camino para cambiar el grifo interno
+   *  de un equipo (0097). Solo admin, con motivo. Vive en Equipos porque este
+   *  módulo es el dueño de la fila. */
+  async moverDeGrifo(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.id);
+    const data = req.validatedBody as MoverDeGrifoInput;
+    const movido = await withTenant(tenantId, (client) =>
+      EquiposService.moverDeGrifo(client, tenantId, req.usuario!.id, id, data)
+    );
+    if (!movido) {
+      res.status(404).json({ message: "Equipo no encontrado", error: "Equipo no encontrado" });
+      return;
+    }
+    await registrarAuditoria({
+      accion: "equipos.mover_grifo",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: {
+        equipoId: id,
+        grifoOrigenId: movido.grifoOrigenId,
+        grifoDestinoId: data.grifo_interno_id,
+        motivo: data.motivo,
+      },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "equipos.actualizado", { equipoId: id });
+    res.json({ ok: true });
+  },
+
+  /** GET /:id/movimientos-grifo -- el historial de ubicación del equipo. */
+  async listarMovimientosDeGrifo(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const filas = await withTenant(tenantId, (client) =>
+      EquiposService.listarMovimientosDeGrifo(client, tenantId, Number(req.params.id))
+    );
+    res.json(filas);
   },
 
   async update(req: Request, res: Response) {

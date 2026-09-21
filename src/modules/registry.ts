@@ -50,7 +50,9 @@ export const MODULOS: ModuloDefinicion[] = [
     icono: "🚜",
     version: "v1",
     router: equiposRoutes,
-    tablas: [{ nombre: "equipos", pk: "serial" }],
+    // El grifo interno del equipo (0097) vive en platformBackup.service.ts,
+    // que se restaura antes que cualquier módulo.
+    tablas: [{ nombre: "equipos", pk: "serial", fks: { grifo_interno_id: "grifos_internos" } }],
     raices: ["equipos"],
     cuota: { tabla: "equipos", porDefecto: 2_000 },
     // Solo crear el equipo califica para offline -- ver ADR-0002 §8. Dar de
@@ -77,6 +79,9 @@ export const MODULOS: ModuloDefinicion[] = [
         // un backup viejo fallaría con "column does not exist". Mismo
         // mecanismo que usa iperc para `nivel_riesgo`.
         columnasExcluidasAlRestaurar: ["nivel_actual", "fecha_actualizacion"],
+        // 0097: el grifo interno del tanque. Un backup anterior no la trae y
+        // el trigger de asignación por defecto la completa al restaurar.
+        fks: { grifo_interno_id: "grifos_internos" },
       },
       {
         nombre: "combustible_lecturas",
@@ -85,6 +90,7 @@ export const MODULOS: ModuloDefinicion[] = [
           combustible_id: "combustible",
           usuario_id: "usuarios",
           anulada_por: "usuarios",
+          grifo_interno_id: "grifos_internos",
         },
       },
       // Fase B, precios (migrations/0063) -- catálogo chico de grifos
@@ -110,6 +116,9 @@ export const MODULOS: ModuloDefinicion[] = [
           equipo_id: "equipos",
           grifo_id: "combustible_grifos",
           usuario_id: "usuarios",
+          // 0097: dónde ocurrió el vale y dónde estaba el equipo.
+          grifo_interno_id: "grifos_internos",
+          equipo_grifo_interno_id: "grifos_internos",
         },
       },
       // Precios (migrations/0063) -- historial apilado, nunca se pisa. Sin
@@ -140,6 +149,7 @@ export const MODULOS: ModuloDefinicion[] = [
           anulada_por: "usuarios",
           // Quién validó contra la guía (0088).
           validada_por: "usuarios",
+          grifo_interno_id: "grifos_internos",
         },
       },
       // Precintos numerados (migración 0095). Las tres cascadean desde su
@@ -159,6 +169,7 @@ export const MODULOS: ModuloDefinicion[] = [
           punto_id: "combustible_precinto_puntos",
           colocado_por: "usuarios",
           recepcion_id: "combustible_recepciones",
+          grifo_interno_id: "grifos_internos",
         },
       },
       {
@@ -167,6 +178,20 @@ export const MODULOS: ModuloDefinicion[] = [
         fks: {
           lectura_id: "combustible_lecturas",
           punto_id: "combustible_precinto_puntos",
+        },
+      },
+      // Movimientos de grifo (0097): referencian tanques Y equipos, así que
+      // van después de los dos (Equipos es un módulo anterior en este array).
+      // Cascadean desde el tanque y el equipo: no necesitan raíz propia.
+      {
+        nombre: "movimientos_grifo",
+        pk: "serial",
+        fks: {
+          combustible_id: "combustible",
+          equipo_id: "equipos",
+          grifo_origen_id: "grifos_internos",
+          grifo_destino_id: "grifos_internos",
+          usuario_id: "usuarios",
         },
       },
       // Urea (migración 0092) -- el conteo físico, la contraparte de la
@@ -202,6 +227,7 @@ export const MODULOS: ModuloDefinicion[] = [
           lectura_id: "combustible_lecturas",
           urea_conteo_id: "combustible_conteos_urea",
           resuelta_por: "usuarios",
+          grifo_interno_id: "grifos_internos",
         },
       },
       // Fase D (migrations/0072) -- el hallazgo congelado. Append-only.
@@ -220,6 +246,7 @@ export const MODULOS: ModuloDefinicion[] = [
           lectura_id: "combustible_lecturas",
           urea_conteo_id: "combustible_conteos_urea",
           alerta_id: "combustible_alertas",
+          grifo_interno_id: "grifos_internos",
         },
       },
       // Fase D (migrations/0071) -- la ventana de gracia por tenant.

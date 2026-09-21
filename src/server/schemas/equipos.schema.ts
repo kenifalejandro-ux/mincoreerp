@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { grifoNoEditable } from "./sedes.schema";
+
 // Qué instrumento mide este equipo en un despacho de combustible
 // compra_externa -- ver migrations/0062 y el punto 2 de
 // docs/architecture/control-de-combustible.md (hallazgo 9). Nullable: la
@@ -70,6 +72,9 @@ export const crearEquipoSchema = z
     modelo: z.string().trim().max(100).optional(),
     tipo_medidor: z.enum(TIPOS_MEDIDOR).optional(),
     ...camposCapacidadTanque,
+    // El grifo interno al que pertenece (0097). Opcional: con un solo grifo en
+    // la empresa lo asigna la base; con más de uno el servicio lo exige.
+    grifo_interno_id: z.number().int().positive().optional(),
   })
   .superRefine(validarCapacidadCompleta);
 
@@ -83,6 +88,8 @@ export const actualizarEquipoSchema = z
     modelo: z.string().trim().max(100).optional(),
     tipo_medidor: z.enum(TIPOS_MEDIDOR).optional(),
     ...camposCapacidadTanque,
+    // Cambiar de grifo tiene su propio endpoint, con motivo (0097).
+    grifo_interno_id: grifoNoEditable,
   })
   .superRefine(validarCapacidadCompleta);
 

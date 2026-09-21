@@ -168,7 +168,7 @@ describe("combustible: roles del catálogo de grifos (migrations/0065)", () => {
       .send(payloadDespachoExterno(soloTanque.body.id));
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toContain("no está marcado como grifo de ruta");
+    expect(res.body.error).toContain("no está marcado como proveedor de ruta");
   });
 
   it("un grifo con los dos roles sirve para recepción Y para despacho", async () => {

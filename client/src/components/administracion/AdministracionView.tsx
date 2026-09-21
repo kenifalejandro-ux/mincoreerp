@@ -7,6 +7,7 @@
 //   Configuración               las autonomías: módulos y nivel por persona
 //   Log de eventos              todo lo que se hizo, filtrable por fecha
 //   Órdenes                     las órdenes con correlativo y su doble firma
+//   Sedes y grifos              las plantas y sus grifos internos (0097)
 //
 // Solo lo ve un administrador. El sidebar no dibuja la entrada para nadie
 // más y el servidor rechaza igual cada ruta (requireRole("admin")): la
@@ -21,14 +22,16 @@ import UsuariosView from "../usuarios/UsuariosView";
 const ConfiguracionView = lazy(() => import("./ConfiguracionView"));
 const LogDeEventosView = lazy(() => import("./LogDeEventosView"));
 const OrdenesView = lazy(() => import("./OrdenesView"));
+const SedesYGrifosView = lazy(() => import("./SedesYGrifosView"));
 
-type Seccion = "usuarios" | "configuracion" | "eventos" | "ordenes";
+type Seccion = "usuarios" | "configuracion" | "eventos" | "ordenes" | "sedes";
 
 const SECCIONES: { id: Seccion; titulo: string }[] = [
   { id: "usuarios", titulo: "Usuarios" },
   { id: "configuracion", titulo: "Configuración" },
   { id: "eventos", titulo: "Log de eventos" },
   { id: "ordenes", titulo: "Órdenes" },
+  { id: "sedes", titulo: "Sedes y grifos" },
 ];
 
 export default function AdministracionView() {
@@ -71,6 +74,7 @@ export default function AdministracionView() {
         {seccion === "configuracion" && <ConfiguracionView />}
         {seccion === "eventos" && <LogDeEventosView />}
         {seccion === "ordenes" && <OrdenesView />}
+        {seccion === "sedes" && <SedesYGrifosView />}
       </Suspense>
     </div>
   );

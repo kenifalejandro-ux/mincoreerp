@@ -58,6 +58,16 @@ const TABLAS_TENANT: MetaTabla[] = [
     pk: "uuid",
     fks: { usuario_id: "usuarios", solicitante_id: "usuarios", aprobador_id: "usuarios" },
   },
+  // Sedes y grifos internos (0097) son de la EMPRESA, no de un módulo. Van
+  // antes de los módulos porque Equipos (el primero) y Combustible los
+  // referencian. `movimientos_grifo` NO va acá: referencia tanques y equipos,
+  // así que vive en la entrada de Combustible del registry.
+  { nombre: "sedes", pk: "serial", fks: { creado_por: "usuarios" } },
+  {
+    nombre: "grifos_internos",
+    pk: "serial",
+    fks: { sede_id: "sedes", creado_por: "usuarios" },
+  },
   ...MODULOS.flatMap((m) => m.tablas),
 ];
 
@@ -71,6 +81,10 @@ const RAICES_WIPE: string[] = [
   // ningún módulo la referencia.
   "ordenes_admin",
   ...[...MODULOS.flatMap((m) => m.raices)].reverse(),
+  // Después de los módulos: tanques, equipos y todos los hechos las
+  // referencian. `grifos_internos` antes que `sedes`, por la misma razón.
+  "grifos_internos",
+  "sedes",
 ];
 
 export interface ContenidoBackup {
