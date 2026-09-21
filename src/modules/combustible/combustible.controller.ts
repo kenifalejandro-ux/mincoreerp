@@ -31,6 +31,8 @@ import {
   enviarCorreoRecepcionDiscrepante,
   enviarCorreoRecepcionRetroactiva,
   enviarCorreoConsumoExcedido,
+  enviarCorreoPrecintoAlterado,
+  enviarCorreoPrecintoReemplazado,
 } from "./combustibleAlertas.mailer";
 import type {
   RegistrarLecturaCombustibleInput,
@@ -55,6 +57,9 @@ import type {
   PeriodoHistorialCombustibleQuery,
   CrearConteoUreaInput,
   AnularConteoUreaInput,
+  CrearPuntoPrecintoInput,
+  CambiarPrecintoInput,
+  BajaPuntoPrecintoInput,
 } from "../../server/schemas/combustible.schema";
 import { FACTOR_LITROS_UREA } from "../../server/schemas/combustible.schema";
 import { armarCsv } from "../../server/shared/utils/csv.util";
@@ -1882,6 +1887,7 @@ export class CombustibleController {
         // opcional en el body y puede venir sin definir).
         leidoEn: new Date(fila!.lectura.leido_en).toISOString(),
         rolQueMidio: req.usuario!.rol,
+        quienMidio: req.usuario!.nombre ?? req.usuario!.email ?? "Alguien",
       });
       res.status(201).json(fila);
     } catch (err) {
@@ -1894,7 +1900,11 @@ export class CombustibleController {
       if (
         err instanceof Error &&
         (err.message.includes("no existe en este tenant") ||
-          err.message.includes("supera la capacidad del tanque"))
+          err.message.includes("supera la capacidad del tanque") ||
+          // Precintos (0095): falta el número de un punto, o el punto no es
+          // de este tanque. Corregible con el tanque delante.
+          err.message.includes("usa precintos") ||
+          err.message.includes("no es de este tanque"))
       ) {
         res.status(400).json({ error: err.message });
         return;
@@ -2714,8 +2724,10 @@ export class CombustibleController {
       nivel: number;
       leidoEn: string;
       rolQueMidio: string;
+      quienMidio: string;
     }
   ) {
+    await this.procesarAlertaPrecintos(tenantId, l.combustibleId, l.lecturaId, l.quienMidio);
     await this.procesarAlertaNivelBajo(tenantId, l.combustibleId, l.nivel);
     await this.procesarAlertaDescuadre(tenantId, l.combustibleId, l.lecturaId, l.nivel, l.leidoEn);
     await this.procesarAlertaDescuadreCiclo(
@@ -2734,6 +2746,50 @@ export class CombustibleController {
     );
     await this.procesarAlertaDescuadreVentana(tenantId, l.combustibleId, l.lecturaId, l.leidoEn);
     await this.procesarControlesDeVarilla(tenantId, l.combustibleId, l.lecturaId, l.rolQueMidio);
+  }
+
+  /** Precinto que no coincide en la varilla (0095). Mismo contrato "nunca
+   *  lanza" que el resto: la lectura ya se guardó.
+   *
+   *  UNA alerta abierta por tanque, como el ciclo: mientras nadie registre el
+   *  cambio de precinto, cada varilla va a volver a ver el sello que no
+   *  coincide. Cinco varillas no son cinco robos -- es el mismo sello, y
+   *  cinco correos iguales son como muere un control. */
+  private async procesarAlertaPrecintos(
+    tenantId: string,
+    combustibleId: number,
+    lecturaId: number,
+    quienMidio: string
+  ) {
+    try {
+      const resultado = await withTenant(tenantId, async (client) => {
+        const fallidas = await service.findVerificacionesFallidas(client, tenantId, lecturaId);
+        if (fallidas.length === 0) return null;
+        const tanque = await service.getById(client, tenantId, combustibleId);
+        const detalle = {
+          tanque: tanque?.codigo ?? String(combustibleId),
+          quienMidio,
+          puntos: fallidas,
+        };
+        const { nueva } = await service.registrarAlertaDeEstadoAcumulado(client, tenantId, {
+          tipo: "precinto_alterado",
+          combustibleId,
+          lecturaId,
+          detalle,
+        });
+        if (!nueva) return null;
+        const admins = await service.findAdminsConCombustibleHabilitado(client, tenantId);
+        return { detalle, admins };
+      });
+      if (!resultado) return;
+      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+        tipo: "precinto_alterado",
+        combustibleId,
+      });
+      await enviarCorreoPrecintoAlterado(resultado.admins, resultado.detalle);
+    } catch (err) {
+      logger.warn({ err, tenantId, combustibleId }, "No se pudo procesar la alerta de precinto");
+    }
   }
 
   /** Los dos controles sobre QUIÉN y CÓMO se mide (5ª auditoría).
@@ -3562,7 +3618,13 @@ export class CombustibleController {
           // texto y el auditor no puede ordenar por fecha, que es lo primero
           // que hace.
           new Date(f.ocurrido_en).toLocaleString("es-PE", { timeZone: "America/Lima" }),
-          f.tipo === "recepcion" ? "Recepción" : f.tipo === "despacho" ? "Despacho" : "Varilla",
+          f.tipo === "recepcion"
+            ? "Recepción"
+            : f.tipo === "despacho"
+              ? "Despacho"
+              : f.tipo === "precinto"
+                ? "Precinto"
+                : "Varilla",
           f.documento,
           f.detalle,
           f.entrada || "",
@@ -3662,7 +3724,13 @@ export class CombustibleController {
 
       const filas: CeldaXlsx[][] = kardex.filas.map((f) => [
         fechaLima(f.ocurrido_en),
-        f.tipo === "recepcion" ? "Recepción" : f.tipo === "despacho" ? "Despacho" : "Varilla",
+        f.tipo === "recepcion"
+          ? "Recepción"
+          : f.tipo === "despacho"
+            ? "Despacho"
+            : f.tipo === "precinto"
+              ? "Precinto"
+              : "Varilla",
         f.documento,
         f.detalle,
         litros(f.entrada || null),
@@ -3959,6 +4027,7 @@ export class CombustibleController {
         vales_cargados: Number(f.vales_cargados),
         recepciones_cargadas: Number(f.recepciones_cargadas),
         lecturas_cargadas: Number(f.lecturas_cargadas),
+        precintos_colocados: Number(f.precintos_colocados),
         anulaciones: Number(f.anulaciones),
         anulaciones_propias: Number(f.anulaciones_propias),
         alertas_revisadas: Number(f.alertas_revisadas),
@@ -3999,6 +4068,208 @@ export class CombustibleController {
       });
     } catch {
       res.status(500).json({ error: "Error al armar el reporte de segregación" });
+    }
+  }
+
+  // ── Precintos numerados (migración 0095) ─────────────────────────────
+
+  /** GET /:id/precintos -- los puntos del tanque con su precinto vigente.
+   *  Cualquier rol: el que toma la varilla necesita saber qué puntos mirar. */
+  async listarPuntosPrecinto(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const puntos = await withTenant(tenantId, (client) =>
+        service.listarPuntosPrecinto(client, tenantId, Number(req.params.id))
+      );
+      res.json(puntos);
+    } catch {
+      res.status(500).json({ error: "Error al listar los precintos" });
+    }
+  }
+
+  /** GET /:id/precintos/historial -- cada colocación y cada varilla que no
+   *  coincidió. */
+  async historialPrecintos(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const filas = await withTenant(tenantId, (client) =>
+        service.historialPrecintos(client, tenantId, Number(req.params.id))
+      );
+      res.json(filas);
+    } catch {
+      res.status(500).json({ error: "Error al armar el historial de precintos" });
+    }
+  }
+
+  /** POST /:id/precintos/puntos -- alta de un punto con su primer precinto.
+   *  Es configuración: queda en la bitácora. */
+  async crearPuntoPrecinto(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const combustibleId = Number(req.params.id);
+      const data = req.validatedBody as CrearPuntoPrecintoInput;
+      const creado = await withTenant(tenantId, (client) =>
+        service.crearPuntoPrecinto(client, tenantId, req.usuario!.id, combustibleId, data)
+      );
+      if (!creado) {
+        res.status(404).json({ error: "Tanque no encontrado" });
+        return;
+      }
+      await registrarAuditoria({
+        accion: "combustible.precinto_punto_crear",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          combustibleId,
+          puntoId: creado.puntoId,
+          nombre: data.nombre,
+          seAbreEnRecepcion: data.se_abre_en_recepcion,
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", { combustibleId });
+      res.status(201).json({ id: creado.puntoId });
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("ya tiene un punto llamado")) {
+        res.status(409).json({ error: err.message });
+        return;
+      }
+      if (err instanceof Error && err.message.includes("ya se usó")) {
+        res.status(409).json({ error: err.message });
+        return;
+      }
+      res.status(500).json({ error: "Error al crear el punto de precinto" });
+    }
+  }
+
+  /** POST /precintos/puntos/:puntoId/cambios -- cambio de precinto FUERA de
+   *  una recepción. Se permite, pero siempre deja alerta y correo: es la
+   *  puerta que usaría el que roba. */
+  async cambiarPrecinto(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const puntoId = Number(req.params.puntoId);
+      const data = req.validatedBody as CambiarPrecintoInput;
+      const quien = req.usuario!.nombre ?? req.usuario!.email ?? "Alguien";
+
+      const resultado = await withTenant(tenantId, async (client) => {
+        const cambio = await service.cambiarPrecinto(
+          client,
+          tenantId,
+          req.usuario!.id,
+          puntoId,
+          data
+        );
+        if (!cambio) return null;
+        const detalle = {
+          tanque: cambio.tanque?.codigo ?? String(cambio.punto.combustible_id),
+          punto: cambio.punto.nombre,
+          numeroAnterior: cambio.numeroAnterior,
+          numeroNuevo: cambio.precinto.numero as string,
+          quien,
+          motivo: data.motivo,
+        };
+        await service.crearAlertas(client, tenantId, [
+          {
+            tipo: "precinto_reemplazado",
+            combustibleId: cambio.punto.combustible_id,
+            detalle: { ...detalle, puntoId, precintoId: Number(cambio.precinto.id) },
+          },
+        ]);
+        const admins = await service.findAdminsConCombustibleHabilitado(client, tenantId);
+        return { cambio, detalle, admins };
+      });
+      if (!resultado) {
+        res.status(404).json({ error: "Punto de precinto no encontrado" });
+        return;
+      }
+
+      await registrarAuditoria({
+        accion: "combustible.precinto_cambiar",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          combustibleId: resultado.cambio.punto.combustible_id,
+          puntoId,
+          numeroAnterior: resultado.cambio.numeroAnterior,
+          numeroNuevo: resultado.detalle.numeroNuevo,
+          motivo: data.motivo,
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+        tipo: "precinto_reemplazado",
+        combustibleId: resultado.cambio.punto.combustible_id,
+      });
+      try {
+        await enviarCorreoPrecintoReemplazado(resultado.admins, resultado.detalle);
+      } catch (err) {
+        logger.warn({ err, tenantId, puntoId }, "No se pudo avisar del cambio de precinto");
+      }
+      res.status(201).json(resultado.cambio.precinto);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("ya se usó")) {
+        res.status(409).json({ error: err.message });
+        return;
+      }
+      if (
+        err instanceof Error &&
+        (err.message.includes("está dado de baja") || err.message.includes("se colocó después"))
+      ) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      res.status(500).json({ error: "Error al cambiar el precinto" });
+    }
+  }
+
+  /** PATCH /precintos/puntos/:puntoId/baja -- dejar de vigilar un punto.
+   *  Cuenta como aflojar la vigilancia: misma acción de auditoría y mismo
+   *  correo que bajar un umbral. */
+  async bajaPuntoPrecinto(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const puntoId = Number(req.params.puntoId);
+      const { motivo } = req.validatedBody as BajaPuntoPrecintoInput;
+      const baja = await withTenant(tenantId, (client) =>
+        service.bajaPuntoPrecinto(client, tenantId, puntoId, motivo)
+      );
+      if (!baja) {
+        res.status(404).json({ error: "Punto no encontrado o ya dado de baja" });
+        return;
+      }
+      const aflojados = [
+        { control: `Precinto "${baja.nombre}"`, de: "verificado", a: "dado de baja" },
+      ];
+      await registrarAuditoria({
+        accion: "combustible.tanque_vigilancia_reducida",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: { combustibleId: baja.combustible_id, puntoId, aflojados, motivo },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      try {
+        const { admins, tanque } = await withTenant(tenantId, async (client) => ({
+          admins: await service.findAdminsConCombustibleHabilitado(client, tenantId),
+          tanque: await service.getById(client, tenantId, baja.combustible_id),
+        }));
+        await enviarCorreoVigilanciaReducida(admins, {
+          quien: req.usuario!.nombre ?? req.usuario!.email ?? "Un administrador",
+          objeto: tanque
+            ? `${tanque.codigo} — ${tanque.tanque_nombre}`
+            : `Tanque ${baja.combustible_id}`,
+          motivo,
+          cambios: aflojados,
+        });
+      } catch (err) {
+        logger.warn({ err, tenantId, puntoId }, "No se pudo avisar de la baja del precinto");
+      }
+      await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {
+        combustibleId: baja.combustible_id,
+      });
+      res.json({ message: "Punto dado de baja" });
+    } catch {
+      res.status(500).json({ error: "Error al dar de baja el punto" });
     }
   }
 
@@ -4308,12 +4579,24 @@ export class CombustibleController {
           err.message.includes("no tiene ninguna lectura vigente") ||
           err.message.includes("supera la capacidad del tanque") ||
           // Grifo del rol equivocado (migrations/0065).
-          err.message.includes("no está marcado como"))
+          err.message.includes("no está marcado como") ||
+          // Precintos de la recepción (0095).
+          err.message.includes("usa precintos") ||
+          err.message.includes("no es de este tanque") ||
+          err.message.includes("está dado de baja") ||
+          err.message.includes("vino dos veces") ||
+          err.message.includes("se colocó después"))
       ) {
         // Todos son datos que se contradicen a sí mismos o a la
         // configuración del tanque que el propio request referenció -- 400,
         // corregible en el momento (punto 5 del documento de diseño).
         res.status(400).json({ error: err.message });
+        return;
+      }
+      if (err instanceof Error && err.message.includes("ya se usó")) {
+        // 409, como el vale duplicado: no está mal formado, es un precinto
+        // que ya se colocó alguna vez.
+        res.status(409).json({ error: err.message });
         return;
       }
       res.status(500).json({ error: "Error al registrar la recepción" });

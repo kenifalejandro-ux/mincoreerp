@@ -142,6 +142,33 @@ export const MODULOS: ModuloDefinicion[] = [
           validada_por: "usuarios",
         },
       },
+      // Precintos numerados (migración 0095). Las tres cascadean desde su
+      // padre (el tanque, el punto o la lectura), así que no necesitan
+      // entrada en `raices`. Van DESPUÉS de combustible_recepciones y
+      // combustible_lecturas: los precintos referencian la recepción que los
+      // cambió y las verificaciones la varilla en que se vieron.
+      {
+        nombre: "combustible_precinto_puntos",
+        pk: "serial",
+        fks: { combustible_id: "combustible", creado_por: "usuarios" },
+      },
+      {
+        nombre: "combustible_precintos",
+        pk: "serial",
+        fks: {
+          punto_id: "combustible_precinto_puntos",
+          colocado_por: "usuarios",
+          recepcion_id: "combustible_recepciones",
+        },
+      },
+      {
+        nombre: "combustible_precinto_verificaciones",
+        pk: "serial",
+        fks: {
+          lectura_id: "combustible_lecturas",
+          punto_id: "combustible_precinto_puntos",
+        },
+      },
       // Urea (migración 0092) -- el conteo físico, la contraparte de la
       // varilla que combustible_lecturas es para el tanque. Va ANTES de
       // combustible_alertas, que la referencia por FK (urea_conteo_id, el

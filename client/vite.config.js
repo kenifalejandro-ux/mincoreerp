@@ -96,7 +96,11 @@ export default defineConfig({
                 // IPERC reutiliza este mismo caché: solo lectura del
                 // catálogo de líneas base aprobadas, no participa de la
                 // cola offline (esa es config de oficina, ver ADR-0002).
-                /^\/api\/erp\/iperc\/lineas-base(\/\d+)?$/.test(url.pathname)),
+                /^\/api\/erp\/iperc\/lineas-base(\/\d+)?$/.test(url.pathname) ||
+                // Los puntos precintados de un tanque (0095): la varilla se
+                // toma en cancha sin señal y el formulario los necesita para
+                // saber qué sellos pedir.
+                /^\/api\/erp\/combustible\/\d+\/precintos$/.test(url.pathname)),
             handler: "NetworkFirst",
             options: {
               cacheName: "erp-catalogos-v1",

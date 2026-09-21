@@ -12,6 +12,8 @@ import type {
   CrearGrifoCombustibleInput,
   ActualizarGrifoCombustibleInput,
   CrearConteoUreaInput,
+  CrearPuntoPrecintoInput,
+  CambiarPrecintoInput,
 } from "../../server/schemas/combustible.schema";
 import { FACTOR_LITROS_UREA } from "../../server/schemas/combustible.schema";
 import type { UsuarioPayload } from "../../server/services/auth.service";
@@ -201,6 +203,7 @@ export class CombustibleService {
       "umbral_descuadre_ventana_pct",
       "usa_totalizador",
       "totalizador_tolerancia",
+      "usa_precintos",
     ] as const;
 
     const cambios: { campo: string; de: string; a: string }[] = [];
@@ -210,7 +213,9 @@ export class CombustibleService {
       const nuevo = (ahora as unknown as Record<string, unknown>)[campo];
       // Opcionales en el PUT: omitirlos conserva el valor, no es un cambio.
       if (
-        (campo === "usa_totalizador" || campo === "totalizador_tolerancia") &&
+        (campo === "usa_totalizador" ||
+          campo === "totalizador_tolerancia" ||
+          campo === "usa_precintos") &&
         nuevo === undefined
       ) {
         continue;
@@ -273,6 +278,7 @@ export class CombustibleService {
       activo: boolean;
       tipo_combustible: string;
       usa_totalizador?: boolean;
+      usa_precintos?: boolean;
     },
     ahora: ActualizarTanqueCombustibleInput,
     /** Si el tanque ya tiene historial. Lo resuelve el controlador porque es
@@ -411,6 +417,16 @@ export class CombustibleService {
       });
     }
 
+    // Apagar los precintos (0095) deja de verificar el sello en cada varilla:
+    // la boca y el drenaje vuelven a poder abrirse sin que nadie se entere.
+    if (antes.usa_precintos && ahora.usa_precintos === false) {
+      cambios.push({
+        control: "Precintos verificados en cada varilla",
+        de: "exigidos",
+        a: "no exigidos",
+      });
+    }
+
     if (antes.requiere_documento && !ahora.requiere_documento) {
       cambios.push({
         control: "Exigir factura o guía en las recepciones",
@@ -474,13 +490,31 @@ export class CombustibleService {
       modulo: "combustible",
       clienteUuid: data.cliente_uuid,
       insertar: async () => {
+        const leidoEn = data.leido_en ?? new Date().toISOString();
+        // Antes del INSERT: un precinto que falta es un 400, y la varilla no
+        // tiene que quedar guardada a medias.
+        const verificaciones = await this.prepararVerificacionPrecintos(
+          client,
+          tenantId,
+          data.combustible_id,
+          leidoEn,
+          data.precintos
+        );
         const fila = await this.repository.registrarLectura(client, tenantId, {
           combustibleId: data.combustible_id,
           nivel: data.nivel,
-          leidoEn: data.leido_en ?? new Date().toISOString(),
+          leidoEn,
           usuarioId,
           metadata: data.metadata ?? {},
         });
+        if (verificaciones.length > 0) {
+          await this.repository.insertarVerificacionesPrecinto(
+            client,
+            tenantId,
+            Number(fila.lectura.id),
+            verificaciones
+          );
+        }
         return { id: Number(fila.lectura.id), fila };
       },
       recuperar: (filaId) => this.repository.findLecturaConTanque(client, tenantId, filaId),
@@ -2258,6 +2292,189 @@ export class CombustibleService {
     };
   }
 
+  // ── Precintos numerados (migración 0095) ─────────────────────────────
+
+  /** El mismo sello tipeado de dos formas tiene que dar el mismo número:
+   *  mayúsculas, sin espacios ni separadores, y sin ceros a la izquierda si
+   *  es solo número ("00-1234" y "1234" son el mismo precinto). Sin esto,
+   *  cada diferencia de tipeo sería una alerta de sello alterado. */
+  static normalizarNumeroPrecinto(crudo: string) {
+    const limpio = crudo.toUpperCase().replace(/[^0-9A-Z]/g, "");
+    if (/^[0-9]+$/.test(limpio)) return limpio.replace(/^0+(?=.)/, "");
+    return limpio;
+  }
+
+  /** Lo que la varilla vio contra lo que tendría que haber visto.
+   *
+   *  - Tanque sin precintos: no se verifica nada y lo que venga se ignora. Es
+   *    la varilla que se cargó offline cuando el control estaba prendido y
+   *    llega después de apagarlo: perderla por eso sería peor.
+   *  - Con precintos: cada punto que tenía un sello registrado AL MOMENTO DE
+   *    LA MEDICIÓN y sigue activo es obligatorio. Un punto que no es de este
+   *    tanque es un 400.
+   *
+   *  Lanza con mensajes que el controller traduce a 400. */
+  async prepararVerificacionPrecintos(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    leidoEn: string,
+    vistos: { punto_id: number; numero: string | null }[] | undefined
+  ) {
+    const tanque = await this.repository.findById(client, tenantId, combustibleId);
+    // Un tanque que no existe lo rechaza registrarLectura con su propio 400.
+    if (!tanque?.usa_precintos) return [];
+
+    const vigentes = await this.repository.findPrecintosVigentesEn(
+      client,
+      tenantId,
+      combustibleId,
+      leidoEn
+    );
+    const porPunto = new Map(vigentes.map((v) => [v.punto_id, v]));
+    const anotados = new Map((vistos ?? []).map((v) => [v.punto_id, v.numero]));
+
+    for (const puntoId of anotados.keys()) {
+      if (!porPunto.has(puntoId)) {
+        throw new Error(`el punto de precinto ${puntoId} no es de este tanque`);
+      }
+    }
+    const faltan = vigentes.filter(
+      (v) => v.activo && v.numero !== null && !anotados.has(v.punto_id)
+    );
+    if (faltan.length > 0) {
+      throw new Error(
+        `el tanque ${tanque.codigo} usa precintos: anotá el número que ves en ` +
+          faltan.map((f) => `"${f.nombre}"`).join(", ") +
+          ` (o marcá que no hay precinto)`
+      );
+    }
+
+    const filas: { puntoId: number; visto: string | null; esperado: string; coincide: boolean }[] =
+      [];
+    for (const [puntoId, crudo] of anotados) {
+      const esperado = porPunto.get(puntoId)!.numero;
+      // El punto todavía no tenía sello cuando se midió: no hay contra qué.
+      if (esperado === null) continue;
+      const visto = crudo === null ? null : CombustibleService.normalizarNumeroPrecinto(crudo);
+      filas.push({ puntoId, visto, esperado, coincide: visto === esperado });
+    }
+    return filas;
+  }
+
+  /** Los puntos que se abren al recibir exigen su precinto nuevo en la
+   *  misma recepción. Los demás puntos pueden venir (se abrió otro) pero no
+   *  son obligatorios. */
+  private async validarPrecintosDeRecepcion(
+    client: PoolClient,
+    tenantId: string,
+    data: CrearRecepcionCombustibleInput
+  ) {
+    const tanque = await this.repository.findById(client, tenantId, data.combustible_id!);
+    if (!tanque) return;
+    const enviados = data.precintos ?? [];
+    if (!tanque.usa_precintos) {
+      if (enviados.length > 0) {
+        throw new Error(
+          `el tanque ${tanque.codigo} no usa precintos -- activalos en el tanque o quitá los precintos`
+        );
+      }
+      return;
+    }
+    const puntos = await this.repository.listarPuntosPrecinto(
+      client,
+      tenantId,
+      data.combustible_id!
+    );
+    const ids = new Set(enviados.map((p) => p.punto_id));
+    if (ids.size !== enviados.length) {
+      throw new Error("el mismo punto de precinto vino dos veces");
+    }
+    for (const p of enviados) {
+      const punto = puntos.find((x: { id: number }) => x.id === p.punto_id);
+      if (!punto) throw new Error(`el punto de precinto ${p.punto_id} no es de este tanque`);
+      if (!punto.activo) throw new Error(`el punto "${punto.nombre}" está dado de baja`);
+    }
+    const faltan = puntos.filter(
+      (x: { activo: boolean; se_abre_en_recepcion: boolean; id: number }) =>
+        x.activo && x.se_abre_en_recepcion && !ids.has(x.id)
+    );
+    if (faltan.length > 0) {
+      throw new Error(
+        `el tanque ${tanque.codigo} usa precintos: anotá el precinto nuevo de ` +
+          faltan.map((f: { nombre: string }) => `"${f.nombre}"`).join(", ")
+      );
+    }
+  }
+
+  listarPuntosPrecinto(client: PoolClient, tenantId: string, combustibleId: number) {
+    return this.repository.listarPuntosPrecinto(client, tenantId, combustibleId);
+  }
+
+  historialPrecintos(client: PoolClient, tenantId: string, combustibleId: number) {
+    return this.repository.historialPrecintos(client, tenantId, combustibleId);
+  }
+
+  /** Alta de un punto con su primer precinto, en una sola transacción. */
+  async crearPuntoPrecinto(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    combustibleId: number,
+    data: CrearPuntoPrecintoInput
+  ) {
+    const tanque = await this.repository.findById(client, tenantId, combustibleId);
+    if (!tanque) return null;
+    const puntoId = await this.repository.crearPuntoPrecinto(client, tenantId, {
+      combustibleId,
+      nombre: data.nombre,
+      seAbreEnRecepcion: data.se_abre_en_recepcion,
+      usuarioId,
+    });
+    await this.repository.colocarPrecinto(client, tenantId, {
+      puntoId,
+      numero: CombustibleService.normalizarNumeroPrecinto(data.numero),
+      colocadoEn: new Date().toISOString(),
+      usuarioId,
+      motivo: "Instalación del punto",
+      recepcionId: null,
+    });
+    return { puntoId, tanque };
+  }
+
+  /** Cambio de precinto FUERA de una recepción. Devuelve null si el punto no
+   *  existe en este tenant; lanza si está dado de baja o si el número ya se
+   *  usó. */
+  async cambiarPrecinto(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    puntoId: number,
+    data: CambiarPrecintoInput
+  ) {
+    const punto = await this.repository.findPuntoPrecinto(client, tenantId, puntoId);
+    if (!punto) return null;
+    if (!punto.activo) throw new Error(`el punto "${punto.nombre}" está dado de baja`);
+    const tanque = await this.repository.findById(client, tenantId, punto.combustible_id);
+    const { precinto, numeroAnterior } = await this.repository.colocarPrecinto(client, tenantId, {
+      puntoId,
+      numero: CombustibleService.normalizarNumeroPrecinto(data.numero),
+      colocadoEn: data.colocado_en ?? new Date().toISOString(),
+      usuarioId,
+      motivo: data.motivo,
+      recepcionId: null,
+    });
+    return { punto, tanque, precinto, numeroAnterior };
+  }
+
+  bajaPuntoPrecinto(client: PoolClient, tenantId: string, puntoId: number, motivo: string) {
+    return this.repository.bajaPuntoPrecinto(client, tenantId, puntoId, motivo);
+  }
+
+  findVerificacionesFallidas(client: PoolClient, tenantId: string, lecturaId: number) {
+    return this.repository.findVerificacionesFallidas(client, tenantId, lecturaId);
+  }
+
   // ── Reporte de consumo por equipo ─────────────────────────────────────
   //
   // El que distingue "le roban" de "traga mucho". El máximo configurado del
@@ -3775,6 +3992,7 @@ export class CombustibleService {
           await this.validarRolGrifo(client, tenantId, data.grifo_id, "urea");
         } else {
           await this.validarDatosDeRecepcion(client, tenantId, data, recibidoEn);
+          await this.validarPrecintosDeRecepcion(client, tenantId, data);
         }
 
         // La política vigente HOY queda estampada en la fila (0088): si
@@ -3807,6 +4025,19 @@ export class CombustibleService {
         // no hay nada que recalcular acá.
         if (!esUrea) {
           await this.repository.recalcularCostoPromedio(client, tenantId, data.combustible_id!);
+          // Los sellos nuevos de los puntos que se abrieron para recibir
+          // (0095). Misma transacción: una recepción sin su cambio de
+          // precinto dejaría la próxima varilla alertando en falso.
+          for (const p of data.precintos ?? []) {
+            await this.repository.colocarPrecinto(client, tenantId, {
+              puntoId: p.punto_id,
+              numero: CombustibleService.normalizarNumeroPrecinto(p.numero),
+              colocadoEn: recibidoEn,
+              usuarioId,
+              motivo: `Recepción #${fila.id}`,
+              recepcionId: Number(fila.id),
+            });
+          }
         }
         return { id: Number(fila.id), fila };
       },

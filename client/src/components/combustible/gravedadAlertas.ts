@@ -61,6 +61,10 @@ const CRITICAS = new Set([
   // medidor que vuelve atrás son sospecha directa de robo o manipulación.
   "totalizador_salto",
   "totalizador_retroceso",
+  // 0095: un sello que no coincide es una apertura del tanque sin registrar;
+  // un cambio fuera de recepción es la puerta que usaría el que roba.
+  "precinto_alterado",
+  "precinto_reemplazado",
 ]);
 
 export function gravedadDe(tipo: string): GravedadAlerta {

@@ -95,6 +95,9 @@ export const TIPOS_ALERTA = [
   // ── Migración 0094: el totalizador acumulativo del surtidor.
   "totalizador_salto",
   "totalizador_retroceso",
+  // ── Migración 0095: precintos numerados del tanque.
+  "precinto_alterado",
+  "precinto_reemplazado",
 ] as const;
 
 export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];
@@ -172,7 +175,7 @@ const COLUMNAS_TANQUE = `
   c.tolerancia_capacidad_pct, c.requiere_documento, c.umbral_diferencia_pct,
   c.umbral_descuadre_pct, c.umbral_descuadre_ciclo_pct,
   c.umbral_descuadre_ventana_pct,
-  c.usa_totalizador, c.totalizador_tolerancia,
+  c.usa_totalizador, c.totalizador_tolerancia, c.usa_precintos,
   ultima.nivel AS nivel_actual,
   ultima.leido_en AS fecha_actualizacion,
   ROUND((ultima.nivel / c.capacidad_total) * 100, 2) AS porcentaje
@@ -322,9 +325,10 @@ export class CombustibleRepository {
         ubicacion, capacidad_total, nivel_minimo, moneda,
         tolerancia_capacidad_pct, requiere_documento, umbral_diferencia_pct,
         umbral_descuadre_pct, umbral_descuadre_ciclo_pct,
-        umbral_descuadre_ventana_pct, usa_totalizador, totalizador_tolerancia
+        umbral_descuadre_ventana_pct, usa_totalizador, totalizador_tolerancia,
+        usa_precintos
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
       RETURNING id
       `,
       [
@@ -346,6 +350,7 @@ export class CombustibleRepository {
         data.umbral_descuadre_ventana_pct,
         data.usa_totalizador,
         data.totalizador_tolerancia,
+        data.usa_precintos ?? false,
       ]
     );
 
@@ -409,8 +414,9 @@ export class CombustibleRepository {
         umbral_descuadre_ciclo_pct = $15,
         umbral_descuadre_ventana_pct = $16,
         usa_totalizador = COALESCE($17, usa_totalizador),
-        totalizador_tolerancia = COALESCE($18, totalizador_tolerancia)
-      WHERE id = $19 AND tenant_id = $20
+        totalizador_tolerancia = COALESCE($18, totalizador_tolerancia),
+        usa_precintos = COALESCE($19, usa_precintos)
+      WHERE id = $20 AND tenant_id = $21
       RETURNING id
       `,
       [
@@ -432,6 +438,7 @@ export class CombustibleRepository {
         data.umbral_descuadre_ventana_pct,
         data.usa_totalizador ?? null,
         data.totalizador_tolerancia ?? null,
+        data.usa_precintos ?? null,
         id,
         tenantId,
       ]
@@ -2819,6 +2826,23 @@ export class CombustibleRepository {
           FROM combustible_lecturas l
          WHERE l.tenant_id = $1 AND l.combustible_id = $2
            AND l.leido_en >= $3::timestamptz AND l.leido_en <= $4::timestamptz
+
+        UNION ALL
+
+        -- Cada precinto colocado (0095). No mueve el saldo ni se contrasta:
+        -- está en la línea de tiempo para que un descuadre se lea junto con
+        -- "ese día se abrió el drenaje".
+        SELECT p.colocado_en, 4, 'precinto',
+               p.id::text,
+               p.numero,
+               CONCAT(pp.nombre, ': ', p.motivo),
+               0::numeric, 0::numeric,
+               NULL::numeric,
+               p.colocado_por, NULL::timestamptz, NULL::text
+          FROM combustible_precintos p
+          JOIN combustible_precinto_puntos pp ON pp.id = p.punto_id AND pp.tenant_id = $1
+         WHERE p.tenant_id = $1 AND pp.combustible_id = $2
+           AND p.colocado_en >= $3::timestamptz AND p.colocado_en <= $4::timestamptz
       ),
       -- CONSUMO HISTÓRICO: todo despacho o recepción anterior a la primera
       -- varilla vigente del tanque (la de TODA su vida, no la del período).
@@ -2834,7 +2858,7 @@ export class CombustibleRepository {
       ),
       marcados AS (
         SELECT m.*,
-               COALESCE(m.tipo <> 'lectura'
+               COALESCE(m.tipo IN ('despacho', 'recepcion')
                         AND m.ocurrido_en < (SELECT p.en FROM primera p), false) AS historico
           FROM movimientos m
       )
@@ -2969,6 +2993,12 @@ export class CombustibleRepository {
           FROM combustible_lecturas l
          WHERE l.tenant_id = $1 AND l.leido_en BETWEEN $2::timestamptz AND $3::timestamptz
            AND l.origen <> 'inicial'
+        UNION ALL
+        -- Los precintos que cada uno COLOCÓ (0095): quien cambia el sello y
+        -- quien lo verifica en la varilla no deberían ser la misma persona.
+        SELECT p.colocado_por, 'precinto', 'carga', NULL::uuid
+          FROM combustible_precintos p
+         WHERE p.tenant_id = $1 AND p.colocado_en BETWEEN $2::timestamptz AND $3::timestamptz
 
         UNION ALL
 
@@ -2999,6 +3029,7 @@ export class CombustibleRepository {
              COUNT(*) FILTER (WHERE m.accion = 'carga' AND m.que = 'despacho') AS vales_cargados,
              COUNT(*) FILTER (WHERE m.accion = 'carga' AND m.que = 'recepcion') AS recepciones_cargadas,
              COUNT(*) FILTER (WHERE m.accion = 'carga' AND m.que = 'lectura') AS lecturas_cargadas,
+             COUNT(*) FILTER (WHERE m.accion = 'carga' AND m.que = 'precinto') AS precintos_colocados,
              COUNT(*) FILTER (WHERE m.accion = 'anulacion') AS anulaciones,
              COUNT(*) FILTER (WHERE m.accion = 'anulacion' AND m.autor_original = m.usuario)
                AS anulaciones_propias,
@@ -4396,6 +4427,232 @@ export class CombustibleRepository {
          FROM equipos
         WHERE tenant_id = $1 AND id = ANY($2::int[])`,
       [tenantId, ids]
+    );
+    return r.rows;
+  }
+
+  // ── Precintos numerados (migración 0095) ─────────────────────────────
+
+  /** Los puntos del tanque con su precinto VIGENTE hoy (la última
+   *  colocación). Incluye los dados de baja, marcados: la historia no se
+   *  esconde. */
+  async listarPuntosPrecinto(client: PoolClient, tenantId: string, combustibleId: number) {
+    const r = await client.query(
+      `SELECT pp.id, pp.combustible_id, pp.nombre, pp.se_abre_en_recepcion, pp.activo,
+              pp.motivo_baja, pp.creado_en,
+              v.numero AS numero_vigente, v.colocado_en, v.motivo AS motivo_vigente,
+              u.nombre AS colocado_por
+         FROM combustible_precinto_puntos pp
+         LEFT JOIN LATERAL (
+           SELECT p.numero, p.colocado_en, p.motivo, p.colocado_por
+             FROM combustible_precintos p
+            WHERE p.tenant_id = $1 AND p.punto_id = pp.id
+            ORDER BY p.colocado_en DESC, p.id DESC LIMIT 1
+         ) v ON true
+         LEFT JOIN usuarios u ON u.id = v.colocado_por AND u.tenant_id = $1
+        WHERE pp.tenant_id = $1 AND pp.combustible_id = $2
+        ORDER BY pp.activo DESC, pp.nombre`,
+      [tenantId, combustibleId]
+    );
+    return r.rows;
+  }
+
+  async findPuntoPrecinto(client: PoolClient, tenantId: string, puntoId: number) {
+    const r = await client.query<{
+      id: number;
+      combustible_id: number;
+      nombre: string;
+      se_abre_en_recepcion: boolean;
+      activo: boolean;
+    }>(
+      `SELECT id, combustible_id, nombre, se_abre_en_recepcion, activo
+         FROM combustible_precinto_puntos WHERE id = $1 AND tenant_id = $2`,
+      [puntoId, tenantId]
+    );
+    return r.rows[0] ?? null;
+  }
+
+  async crearPuntoPrecinto(
+    client: PoolClient,
+    tenantId: string,
+    data: { combustibleId: number; nombre: string; seAbreEnRecepcion: boolean; usuarioId: string }
+  ) {
+    try {
+      const r = await client.query<{ id: number }>(
+        `INSERT INTO combustible_precinto_puntos
+           (tenant_id, combustible_id, nombre, se_abre_en_recepcion, creado_por)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        [tenantId, data.combustibleId, data.nombre, data.seAbreEnRecepcion, data.usuarioId]
+      );
+      return r.rows[0].id;
+    } catch (err) {
+      if (esViolacionUnicidad(err)) {
+        throw new Error(`el tanque ya tiene un punto llamado "${data.nombre}"`, {
+          cause: err,
+        });
+      }
+      throw err;
+    }
+  }
+
+  async bajaPuntoPrecinto(client: PoolClient, tenantId: string, puntoId: number, motivo: string) {
+    const r = await client.query(
+      `UPDATE combustible_precinto_puntos SET activo = false, motivo_baja = $1
+        WHERE id = $2 AND tenant_id = $3 AND activo
+        RETURNING id, combustible_id, nombre`,
+      [motivo, puntoId, tenantId]
+    );
+    return r.rows[0] ?? null;
+  }
+
+  /** Coloca un precinto. Bloquea el punto para que dos cambios simultáneos
+   *  no queden en el orden equivocado, y rechaza uno fechado ANTES del último:
+   *  el vigente de cada instante sale del orden por fecha, y meter un cambio
+   *  atrás reescribiría qué se tendría que haber visto en varillas que ya se
+   *  verificaron. Lanza con un mensaje que el controller traduce a 400/409. */
+  async colocarPrecinto(
+    client: PoolClient,
+    tenantId: string,
+    data: {
+      puntoId: number;
+      numero: string;
+      colocadoEn: string;
+      usuarioId: string;
+      motivo: string;
+      recepcionId: number | null;
+    }
+  ) {
+    await client.query(
+      `SELECT id FROM combustible_precinto_puntos WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
+      [data.puntoId, tenantId]
+    );
+    const ultimo = await client.query<{ numero: string; colocado_en: Date }>(
+      `SELECT numero, colocado_en FROM combustible_precintos
+        WHERE tenant_id = $1 AND punto_id = $2
+        ORDER BY colocado_en DESC, id DESC LIMIT 1`,
+      [tenantId, data.puntoId]
+    );
+    const previo = ultimo.rows[0] ?? null;
+    if (previo && new Date(previo.colocado_en).getTime() > Date.parse(data.colocadoEn)) {
+      throw new Error(
+        `el precinto ${previo.numero} de este punto se colocó después de la fecha indicada`
+      );
+    }
+    try {
+      const r = await client.query(
+        `INSERT INTO combustible_precintos
+           (tenant_id, punto_id, numero, colocado_en, colocado_por, motivo, recepcion_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, punto_id, numero, colocado_en, motivo, recepcion_id`,
+        [
+          tenantId,
+          data.puntoId,
+          data.numero,
+          data.colocadoEn,
+          data.usuarioId,
+          data.motivo,
+          data.recepcionId,
+        ]
+      );
+      return { precinto: r.rows[0], numeroAnterior: previo?.numero ?? null };
+    } catch (err) {
+      if (esViolacionUnicidad(err)) {
+        throw new Error(`el precinto ${data.numero} ya se usó: cada número va una sola vez`, {
+          cause: err,
+        });
+      }
+      throw err;
+    }
+  }
+
+  /** Qué precinto había en cada punto del tanque EN UN INSTANTE: la última
+   *  colocación hasta ese momento. Es lo que una varilla offline tiene que
+   *  comparar -- no el de ahora. Un punto sin colocación hasta ese instante
+   *  (se creó después) viene con `numero` null y no se exige. */
+  async findPrecintosVigentesEn(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    instante: string
+  ) {
+    const r = await client.query<{
+      punto_id: number;
+      nombre: string;
+      activo: boolean;
+      numero: string | null;
+    }>(
+      `SELECT pp.id AS punto_id, pp.nombre, pp.activo, v.numero
+         FROM combustible_precinto_puntos pp
+         LEFT JOIN LATERAL (
+           SELECT p.numero FROM combustible_precintos p
+            WHERE p.tenant_id = $1 AND p.punto_id = pp.id AND p.colocado_en <= $3::timestamptz
+            ORDER BY p.colocado_en DESC, p.id DESC LIMIT 1
+         ) v ON true
+        WHERE pp.tenant_id = $1 AND pp.combustible_id = $2`,
+      [tenantId, combustibleId, instante]
+    );
+    return r.rows;
+  }
+
+  async insertarVerificacionesPrecinto(
+    client: PoolClient,
+    tenantId: string,
+    lecturaId: number,
+    filas: { puntoId: number; visto: string | null; esperado: string; coincide: boolean }[]
+  ) {
+    for (const f of filas) {
+      await client.query(
+        `INSERT INTO combustible_precinto_verificaciones
+           (tenant_id, lectura_id, punto_id, numero_visto, numero_esperado, coincide)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [tenantId, lecturaId, f.puntoId, f.visto, f.esperado, f.coincide]
+      );
+    }
+  }
+
+  /** Las verificaciones de una varilla que NO coincidieron, con el nombre del
+   *  punto: es lo que la alerta necesita contar. */
+  async findVerificacionesFallidas(client: PoolClient, tenantId: string, lecturaId: number) {
+    const r = await client.query<{
+      punto_id: number;
+      nombre: string;
+      numero_visto: string | null;
+      numero_esperado: string;
+    }>(
+      `SELECT v.punto_id, pp.nombre, v.numero_visto, v.numero_esperado
+         FROM combustible_precinto_verificaciones v
+         JOIN combustible_precinto_puntos pp ON pp.id = v.punto_id AND pp.tenant_id = $1
+        WHERE v.tenant_id = $1 AND v.lectura_id = $2 AND NOT v.coincide
+        ORDER BY pp.nombre`,
+      [tenantId, lecturaId]
+    );
+    return r.rows;
+  }
+
+  /** La historia de precintos del tanque: cada colocación y cada varilla que
+   *  no coincidió, de la más nueva a la más vieja. */
+  async historialPrecintos(client: PoolClient, tenantId: string, combustibleId: number) {
+    const r = await client.query(
+      `SELECT * FROM (
+         SELECT 'colocacion' AS tipo, p.colocado_en AS ocurrido_en, pp.nombre AS punto,
+                p.numero, NULL::varchar AS numero_esperado, p.motivo,
+                p.recepcion_id, u.nombre AS persona
+           FROM combustible_precintos p
+           JOIN combustible_precinto_puntos pp ON pp.id = p.punto_id AND pp.tenant_id = $1
+           LEFT JOIN usuarios u ON u.id = p.colocado_por AND u.tenant_id = $1
+          WHERE p.tenant_id = $1 AND pp.combustible_id = $2
+         UNION ALL
+         SELECT 'no_coincide', l.leido_en, pp.nombre, v.numero_visto, v.numero_esperado,
+                NULL, NULL, u.nombre
+           FROM combustible_precinto_verificaciones v
+           JOIN combustible_precinto_puntos pp ON pp.id = v.punto_id AND pp.tenant_id = $1
+           JOIN combustible_lecturas l ON l.id = v.lectura_id AND l.tenant_id = $1
+           LEFT JOIN usuarios u ON u.id = l.usuario_id AND u.tenant_id = $1
+          WHERE v.tenant_id = $1 AND pp.combustible_id = $2 AND NOT v.coincide
+       ) h
+       ORDER BY ocurrido_en DESC
+       LIMIT 300`,
+      [tenantId, combustibleId]
     );
     return r.rows;
   }
