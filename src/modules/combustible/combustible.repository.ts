@@ -92,6 +92,9 @@ export const TIPOS_ALERTA = [
   "urea_descuadre_conteo",
   // ── Migración 0093: consumo anterior a la primera varilla del tanque.
   "historial_sin_contrastar",
+  // ── Migración 0094: el totalizador acumulativo del surtidor.
+  "totalizador_salto",
+  "totalizador_retroceso",
 ] as const;
 
 export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];
@@ -169,6 +172,7 @@ const COLUMNAS_TANQUE = `
   c.tolerancia_capacidad_pct, c.requiere_documento, c.umbral_diferencia_pct,
   c.umbral_descuadre_pct, c.umbral_descuadre_ciclo_pct,
   c.umbral_descuadre_ventana_pct,
+  c.usa_totalizador, c.totalizador_tolerancia,
   ultima.nivel AS nivel_actual,
   ultima.leido_en AS fecha_actualizacion,
   ROUND((ultima.nivel / c.capacidad_total) * 100, 2) AS porcentaje
@@ -318,9 +322,9 @@ export class CombustibleRepository {
         ubicacion, capacidad_total, nivel_minimo, moneda,
         tolerancia_capacidad_pct, requiere_documento, umbral_diferencia_pct,
         umbral_descuadre_pct, umbral_descuadre_ciclo_pct,
-        umbral_descuadre_ventana_pct
+        umbral_descuadre_ventana_pct, usa_totalizador, totalizador_tolerancia
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
       RETURNING id
       `,
       [
@@ -340,6 +344,8 @@ export class CombustibleRepository {
         data.umbral_descuadre_pct,
         data.umbral_descuadre_ciclo_pct,
         data.umbral_descuadre_ventana_pct,
+        data.usa_totalizador,
+        data.totalizador_tolerancia,
       ]
     );
 
@@ -401,8 +407,10 @@ export class CombustibleRepository {
         umbral_diferencia_pct = $13,
         umbral_descuadre_pct = $14,
         umbral_descuadre_ciclo_pct = $15,
-        umbral_descuadre_ventana_pct = $16
-      WHERE id = $17 AND tenant_id = $18
+        umbral_descuadre_ventana_pct = $16,
+        usa_totalizador = COALESCE($17, usa_totalizador),
+        totalizador_tolerancia = COALESCE($18, totalizador_tolerancia)
+      WHERE id = $19 AND tenant_id = $20
       RETURNING id
       `,
       [
@@ -422,6 +430,8 @@ export class CombustibleRepository {
         data.umbral_descuadre_pct,
         data.umbral_descuadre_ciclo_pct,
         data.umbral_descuadre_ventana_pct,
+        data.usa_totalizador ?? null,
+        data.totalizador_tolerancia ?? null,
         id,
         tenantId,
       ]
@@ -764,7 +774,8 @@ export class CombustibleRepository {
   private static readonly COLUMNAS_DESPACHO = `
     id, tenant_id, producto, origen, combustible_id, grifo_id, tipo_combustible,
     tipo_destino, equipo_id, serie_talonario, n_vale, cantidad,
-    lectura_contometro, lectura_horometro, lectura_odometro, horas_abastecidas,
+    lectura_contometro, totalizador_lectura, lectura_horometro, lectura_odometro,
+    horas_abastecidas,
     presentacion, factor_litros, cantidad_bultos,
     costo_unitario, (cantidad * costo_unitario) AS costo_total, observaciones,
     usuario_id, despachado_en, creado_en,
@@ -798,6 +809,7 @@ export class CombustibleRepository {
       nVale: number;
       cantidad: number;
       lecturaContometro: number | null;
+      totalizadorLectura?: number | null;
       lecturaHorometro: number | null;
       lecturaOdometro: number | null;
       horasAbastecidas: number | null;
@@ -810,6 +822,15 @@ export class CombustibleRepository {
     }
   ) {
     try {
+      // El totalizador_actual del tanque es el MÁXIMO de sus vales vigentes.
+      // Se bloquea el tanque ANTES de insertar para que dos vales simultáneos
+      // no se pisen recalculando cada uno sin ver al otro.
+      if (data.totalizadorLectura != null && data.combustibleId != null) {
+        await client.query(
+          `SELECT id FROM combustible WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
+          [data.combustibleId, tenantId]
+        );
+      }
       const result = await client.query(
         `
         INSERT INTO combustible_despachos (
@@ -818,7 +839,7 @@ export class CombustibleRepository {
           lectura_contometro, lectura_horometro, lectura_odometro, horas_abastecidas,
           presentacion, factor_litros, cantidad_bultos,
           costo_unitario, observaciones, usuario_id, despachado_en,
-          conductor_nombre, conductor_dni
+          conductor_nombre, conductor_dni, totalizador_lectura
         )
         -- El conductor se COPIA del equipo en este mismo INSERT (0083). Nadie
         -- lo tipea, y no se resuelve después con un JOIN a propósito: los
@@ -827,7 +848,7 @@ export class CombustibleRepository {
         -- combustible salió, que es lo único que hace confiable el reporte de
         -- consumo por conductor. Vale también para urea -- mismo equipo_id.
         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
-               e.conductor_nombre, e.conductor_dni
+               e.conductor_nombre, e.conductor_dni, $23::numeric
           FROM (SELECT 1) dummy
           LEFT JOIN equipos e ON e.id = $8::int AND e.tenant_id = $1
         RETURNING ${CombustibleRepository.COLUMNAS_DESPACHO}
@@ -855,8 +876,12 @@ export class CombustibleRepository {
           data.observaciones,
           usuarioId,
           data.despachadoEn,
+          data.totalizadorLectura ?? null,
         ]
       );
+      if (data.totalizadorLectura != null && data.combustibleId != null) {
+        await this.recalcularTotalizadorActual(client, tenantId, data.combustibleId);
+      }
       return result.rows[0];
     } catch (err) {
       if (esViolacionUnicidad(err)) {
@@ -1162,7 +1187,77 @@ export class CombustibleRepository {
       `,
       [usuarioId, motivo, despachoId, tenantId]
     );
-    return result.rows[0] ?? null;
+    const anulado = result.rows[0] ?? null;
+    if (anulado?.totalizador_lectura != null && anulado.combustible_id != null) {
+      await client.query(`SELECT id FROM combustible WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [
+        anulado.combustible_id,
+        tenantId,
+      ]);
+      await this.recalcularTotalizadorActual(client, tenantId, anulado.combustible_id);
+    }
+    return anulado;
+  }
+
+  /** `combustible.totalizador_actual` = el MAYOR totalizador entre los vales
+   *  vigentes del tanque (0 si no hay ninguno). Se recalcula, no se acumula:
+   *  anular el último vale tiene que devolverlo al anterior. El llamador ya
+   *  bloqueó la fila del tanque. */
+  async recalcularTotalizadorActual(client: PoolClient, tenantId: string, combustibleId: number) {
+    await client.query(
+      `UPDATE combustible c
+          SET totalizador_actual = COALESCE((
+                SELECT MAX(d.totalizador_lectura) FROM combustible_despachos d
+                 WHERE d.tenant_id = $1 AND d.combustible_id = c.id
+                   AND d.anulada_en IS NULL AND d.totalizador_lectura IS NOT NULL
+              ), 0)
+        WHERE c.id = $2 AND c.tenant_id = $1`,
+      [tenantId, combustibleId]
+    );
+  }
+
+  /** Los vecinos de un vale por VALOR de totalizador, no por hora: un vale
+   *  offline que llega tarde se ubica donde le toca. Devuelve:
+   *  - `anterior`: el vale vigente con el mayor totalizador <= al de este;
+   *  - `retrocede`: algún vale vigente, anterior o igual en el tiempo, con un
+   *    totalizador MAYOR (el medidor "volvió atrás"). */
+  async findVecinosTotalizador(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    despachoId: number,
+    totalizador: number,
+    despachadoEn: string
+  ) {
+    const r = await client.query<{
+      anterior_id: string | null;
+      anterior_totalizador: string | null;
+      retroceso_id: string | null;
+      retroceso_totalizador: string | null;
+    }>(
+      `
+      SELECT
+        (SELECT d.id FROM combustible_despachos d
+          WHERE d.tenant_id = $1 AND d.combustible_id = $2 AND d.id <> $3
+            AND d.anulada_en IS NULL AND d.totalizador_lectura <= $4
+          ORDER BY d.totalizador_lectura DESC, d.despachado_en DESC LIMIT 1) AS anterior_id,
+        (SELECT d.totalizador_lectura FROM combustible_despachos d
+          WHERE d.tenant_id = $1 AND d.combustible_id = $2 AND d.id <> $3
+            AND d.anulada_en IS NULL AND d.totalizador_lectura <= $4
+          ORDER BY d.totalizador_lectura DESC, d.despachado_en DESC LIMIT 1) AS anterior_totalizador,
+        (SELECT d.id FROM combustible_despachos d
+          WHERE d.tenant_id = $1 AND d.combustible_id = $2 AND d.id <> $3
+            AND d.anulada_en IS NULL AND d.totalizador_lectura > $4
+            AND d.despachado_en <= $5::timestamptz
+          ORDER BY d.totalizador_lectura DESC LIMIT 1) AS retroceso_id,
+        (SELECT d.totalizador_lectura FROM combustible_despachos d
+          WHERE d.tenant_id = $1 AND d.combustible_id = $2 AND d.id <> $3
+            AND d.anulada_en IS NULL AND d.totalizador_lectura > $4
+            AND d.despachado_en <= $5::timestamptz
+          ORDER BY d.totalizador_lectura DESC LIMIT 1) AS retroceso_totalizador
+      `,
+      [tenantId, combustibleId, despachoId, totalizador, despachadoEn]
+    );
+    return r.rows[0];
   }
 
   /** Punto 1 reescrito: consulta bajo demanda, no persiste nada -- no hay

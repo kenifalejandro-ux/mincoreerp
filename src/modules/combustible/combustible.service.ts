@@ -199,6 +199,8 @@ export class CombustibleService {
       "umbral_descuadre_pct",
       "umbral_descuadre_ciclo_pct",
       "umbral_descuadre_ventana_pct",
+      "usa_totalizador",
+      "totalizador_tolerancia",
     ] as const;
 
     const cambios: { campo: string; de: string; a: string }[] = [];
@@ -206,6 +208,13 @@ export class CombustibleService {
     for (const campo of CAMPOS) {
       const viejo = (antes as Record<string, unknown>)[campo];
       const nuevo = (ahora as unknown as Record<string, unknown>)[campo];
+      // Opcionales en el PUT: omitirlos conserva el valor, no es un cambio.
+      if (
+        (campo === "usa_totalizador" || campo === "totalizador_tolerancia") &&
+        nuevo === undefined
+      ) {
+        continue;
+      }
 
       // NUMERIC vuelve de Postgres como string ("20000.00"), así que
       // comparar crudo marcaría como cambio lo que no cambió. Se comparan
@@ -263,6 +272,7 @@ export class CombustibleService {
       tolerancia_capacidad_pct: string;
       activo: boolean;
       tipo_combustible: string;
+      usa_totalizador?: boolean;
     },
     ahora: ActualizarTanqueCombustibleInput,
     /** Si el tanque ya tiene historial. Lo resuelve el controlador porque es
@@ -388,6 +398,16 @@ export class CombustibleService {
         control: "Tipo de combustible (el tanque ya tiene movimientos)",
         de: antes.tipo_combustible,
         a: ahora.tipo_combustible,
+      });
+    }
+
+    // Apagar el totalizador es apagar el segundo testigo independiente de la
+    // varilla: afloja la vigilancia como cualquier umbral.
+    if (antes.usa_totalizador && ahora.usa_totalizador === false) {
+      cambios.push({
+        control: "Totalizador del surtidor en cada vale",
+        de: "exigido",
+        a: "no exigido",
       });
     }
 
@@ -601,6 +621,7 @@ export class CombustibleService {
           nVale: data.n_vale,
           cantidad,
           lecturaContometro: data.lectura_contometro ?? null,
+          totalizadorLectura: data.totalizador_lectura ?? null,
           lecturaHorometro: data.lectura_horometro ?? null,
           lecturaOdometro: data.lectura_odometro ?? null,
           horasAbastecidas: data.horas_abastecidas ?? null,
@@ -761,6 +782,21 @@ export class CombustibleService {
       // lo saca de la alerta de "sin medir" -- y siguió sacándole 5.000 L sin
       // una queja. "Desactivado" tiene que significar algo.
       const tanque = await this.repository.findById(client, tenantId, data.combustible_id!);
+
+      // El totalizador acumulativo (0094). Si el tanque lo usa es OBLIGATORIO en
+      // el vale: dejarlo opcional sería dejar que el que quiere ocultar una
+      // salida simplemente no lo anote. Si el tanque no lo usa, mandarlo es un
+      // error de forma, no un dato a guardar a medias.
+      if (tanque?.usa_totalizador && data.totalizador_lectura === undefined) {
+        throw new Error(
+          `el tanque ${tanque.codigo} usa totalizador: anotá la lectura del totalizador del surtidor`
+        );
+      }
+      if (tanque && !tanque.usa_totalizador && data.totalizador_lectura !== undefined) {
+        throw new Error(
+          `el tanque ${tanque.codigo} no usa totalizador -- activalo en el tanque o quitá la lectura`
+        );
+      }
       if (tanque && !tanque.activo) {
         throw new Error(
           `el tanque ${tanque.codigo} está desactivado y no puede despachar -- reactivalo si sigue en uso`
@@ -1316,6 +1352,77 @@ export class CombustibleService {
       })
     );
     return { creadas: excedidas.length };
+  }
+
+  /** EL TOTALIZADOR CONTRA LOS VALES (0094). Se evalúa DESPUÉS de crear el vale
+   *  y no lo bloquea: puede ser un tipeo, pero también un medidor manipulado.
+   *
+   *  Por VALOR y no por hora: el vecino anterior es el vale con el mayor
+   *  totalizador que no lo supera, así que un vale offline que llega tarde se
+   *  ubica donde le toca. Lo único que se mira en el tiempo es el retroceso.
+   *
+   *  - retroceso: existe un vale ANTERIOR EN EL TIEMPO con un totalizador
+   *    MAYOR. Un contador acumulativo no vuelve atrás.
+   *  - salto: (totalizador − totalizador del vecino) − litros del vale. Positivo
+   *    = salió combustible por el surtidor SIN vale; negativo = el vale declara
+   *    más de lo que el surtidor entregó.
+   *
+   *  Límite conocido: si un vale intermedio llega DESPUÉS (offline), el salto
+   *  que se calculó antes ya quedó alertado y se cierra a mano con motivo. Es
+   *  el precio de no reescribir alertas ya emitidas.
+   *
+   *  Devuelve null si el tanque no usa totalizador, si el vale no lo trae o si
+   *  es el primero de la cadena. */
+  async evaluarTotalizador(
+    client: PoolClient,
+    tenantId: string,
+    data: {
+      despachoId: number;
+      combustibleId: number | null;
+      totalizador: number | null;
+      cantidad: number;
+      despachadoEn: string;
+    }
+  ) {
+    if (data.combustibleId === null || data.totalizador === null) return null;
+    const tanque = await this.repository.findById(client, tenantId, data.combustibleId);
+    if (!tanque?.usa_totalizador) return null;
+
+    const v = await this.repository.findVecinosTotalizador(
+      client,
+      tenantId,
+      data.combustibleId,
+      data.despachoId,
+      data.totalizador,
+      data.despachadoEn
+    );
+
+    if (v.retroceso_id !== null) {
+      return {
+        motivo: "retroceso" as const,
+        tanque: tanque.codigo,
+        unidad: tanque.unidad,
+        totalizador: data.totalizador,
+        totalizadorMayorPrevio: Number(v.retroceso_totalizador),
+      };
+    }
+    if (v.anterior_id === null) return null;
+
+    const avance = Number((data.totalizador - Number(v.anterior_totalizador)).toFixed(3));
+    const diferencia = Number((avance - data.cantidad).toFixed(3));
+    if (Math.abs(diferencia) <= Number(tanque.totalizador_tolerancia)) return null;
+
+    return {
+      motivo: "salto" as const,
+      tanque: tanque.codigo,
+      unidad: tanque.unidad,
+      totalizador: data.totalizador,
+      totalizadorAnterior: Number(v.anterior_totalizador),
+      avance,
+      declarado: data.cantidad,
+      diferencia,
+      sobra: diferencia > 0,
+    };
   }
 
   /** Medidor que no cierra con el anterior (punto 5 del documento). NO

@@ -57,6 +57,10 @@ const CRITICAS = new Set([
   "consumo_excedido",
   "varilla_exacta",
   "varilla_sin_control",
+  // 0094: el totalizador del surtidor. Combustible que sale sin vale o un
+  // medidor que vuelve atrás son sospecha directa de robo o manipulación.
+  "totalizador_salto",
+  "totalizador_retroceso",
 ]);
 
 export function gravedadDe(tipo: string): GravedadAlerta {

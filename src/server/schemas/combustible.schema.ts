@@ -54,6 +54,10 @@ export const crearTanqueCombustibleSchema = z.object({
    *  romper a un cliente viejo (la cola offline, un script) por un dato que
    *  solo sirve para el registro. */
   modo_vigilancia: z.enum(["recomendado", "personalizado", "sin_vigilar"]).optional(),
+  // Totalizador acumulativo del surtidor (0094). Nace APAGADO: falta confirmar
+  // con el cliente que sus surtidores lo tienen y que se anota en cada vale.
+  usa_totalizador: z.boolean().default(false),
+  totalizador_tolerancia: z.number().min(0).max(1000).default(1),
 });
 
 export type CrearTanqueCombustibleInput = z.infer<typeof crearTanqueCombustibleSchema>;
@@ -91,6 +95,11 @@ export const actualizarTanqueCombustibleSchema = z.object({
    *  APAGAR la detección de fraude -- quedaba en la auditoría igual que
    *  renombrar el tanque. */
   motivo_ajuste: z.string().trim().min(1).max(500).optional(),
+  // OPCIONALES a propósito, al revés que el resto de este schema: omitirlos
+  // conserva el valor actual. Un cliente viejo (la cola offline, un script) que
+  // no los conoce no puede apagar el control sin querer.
+  usa_totalizador: z.boolean().optional(),
+  totalizador_tolerancia: z.number().min(0).max(1000).optional(),
 });
 
 export type ActualizarTanqueCombustibleInput = z.infer<typeof actualizarTanqueCombustibleSchema>;
@@ -254,6 +263,11 @@ export const crearDespachoCombustibleSchema = z
     // Solo tanque_propio -- chequeo intra-vale del punto 5.
     lectura_contometro: z.number().nonnegative().optional(),
 
+    // Solo tanque_propio, y solo si el tanque usa totalizador (lo valida el
+    // servicio, que ve la fila del tanque): la lectura del contador
+    // ACUMULATIVO del surtidor después de despachar. Ver migración 0094.
+    totalizador_lectura: z.number().nonnegative().optional(),
+
     // Solo compra_externa -- exactamente uno de los dos, según
     // equipos.tipo_medidor (hallazgo 9). horas_abastecidas siempre junto.
     lectura_horometro: z.number().nonnegative().optional(),
@@ -349,6 +363,7 @@ export const crearDespachoCombustibleSchema = z
         ["combustible_id", data.combustible_id],
         ["cantidad", data.cantidad],
         ["lectura_contometro", data.lectura_contometro],
+        ["totalizador_lectura", data.totalizador_lectura],
         ["lectura_horometro", data.lectura_horometro],
         ["lectura_odometro", data.lectura_odometro],
         ["horas_abastecidas", data.horas_abastecidas],
@@ -503,6 +518,13 @@ export const crearDespachoCombustibleSchema = z
           code: z.ZodIssueCode.custom,
           path: ["lectura_contometro"],
           message: "lectura_contometro no aplica a 'compra_externa' (el grifo ajeno no la incluye)",
+        });
+      }
+      if (data.totalizador_lectura !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["totalizador_lectura"],
+          message: "totalizador_lectura no aplica a 'compra_externa' (no hay surtidor propio)",
         });
       }
       if (data.horas_abastecidas === undefined) {
