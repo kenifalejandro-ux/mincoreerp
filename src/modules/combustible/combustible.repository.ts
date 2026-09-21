@@ -608,7 +608,7 @@ export class CombustibleRepository {
     const result = await client.query(
       `
       SELECT l.id, l.combustible_id, l.nivel, l.leido_en, l.usuario_id, l.origen,
-             l.metadata, l.creado_en,
+             l.metadata, l.creado_en, l.totalizador_lectura,
              l.anulada_en, l.anulada_por, l.motivo_anulacion,
              anulador.nombre AS anulada_por_nombre,
              autor.nombre AS registrada_por_nombre,
@@ -661,7 +661,7 @@ export class CombustibleRepository {
       SET anulada_en = now(), anulada_por = $1, motivo_anulacion = $2
       WHERE id = $3 AND tenant_id = $4 AND anulada_en IS NULL
       RETURNING id, combustible_id, nivel, leido_en, usuario_id, origen, metadata,
-                creado_en, anulada_en, anulada_por, motivo_anulacion
+                creado_en, totalizador_lectura, anulada_en, anulada_por, motivo_anulacion
       `,
       [usuarioId, motivo, lecturaId, tenantId]
     );
@@ -669,6 +669,15 @@ export class CombustibleRepository {
     if (anulada.rows.length === 0) return null;
 
     const lectura = anulada.rows[0];
+    // Una varilla con totalizador es un punto de la cadena (0096): al anularla
+    // sale de ella, y el máximo vigente del tanque puede bajar.
+    if (lectura.totalizador_lectura != null) {
+      await client.query(`SELECT id FROM combustible WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [
+        lectura.combustible_id,
+        tenantId,
+      ]);
+      await this.recalcularTotalizadorActual(client, tenantId, lectura.combustible_id);
+    }
     const tanque = await this.findById(client, tenantId, lectura.combustible_id);
 
     return { lectura, tanque };
@@ -710,8 +719,18 @@ export class CombustibleRepository {
       leidoEn: string;
       usuarioId: string | null;
       metadata: Record<string, unknown>;
+      /** Solo si el tanque usa totalizador; el service ya decidió (0096). */
+      totalizadorLectura?: number | null;
     }
   ) {
+    // Se bloquea el tanque ANTES de insertar, igual que con el vale: el
+    // máximo vigente se recalcula y dos puntos simultáneos no pueden pisarse.
+    if (data.totalizadorLectura != null) {
+      await client.query(`SELECT id FROM combustible WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [
+        data.combustibleId,
+        tenantId,
+      ]);
+    }
     const tanqueExiste = await client.query<{ id: number; capacidad_total: string }>(
       `SELECT id, capacidad_total FROM combustible WHERE id = $1 AND tenant_id = $2`,
       [data.combustibleId, tenantId]
@@ -739,9 +758,10 @@ export class CombustibleRepository {
     const lectura = await client.query(
       `
       INSERT INTO combustible_lecturas
-        (tenant_id, combustible_id, nivel, leido_en, usuario_id, metadata)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING id, combustible_id, nivel, leido_en, usuario_id, origen, metadata, creado_en
+        (tenant_id, combustible_id, nivel, leido_en, usuario_id, metadata, totalizador_lectura)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id, combustible_id, nivel, leido_en, usuario_id, origen, metadata, creado_en,
+                totalizador_lectura
     `,
       [
         tenantId,
@@ -750,8 +770,12 @@ export class CombustibleRepository {
         data.leidoEn,
         data.usuarioId,
         JSON.stringify(data.metadata),
+        data.totalizadorLectura ?? null,
       ]
     );
+    if (data.totalizadorLectura != null) {
+      await this.recalcularTotalizadorActual(client, tenantId, data.combustibleId);
+    }
 
     const tanque = await this.findById(client, tenantId, data.combustibleId);
     return { lectura: lectura.rows[0], tanque };
@@ -761,7 +785,8 @@ export class CombustibleRepository {
    *  responde igual que la primera vez, sin volver a tocar `combustible`. */
   async findLecturaConTanque(client: PoolClient, tenantId: string, lecturaId: number) {
     const lectura = await client.query(
-      `SELECT id, combustible_id, nivel, leido_en, usuario_id, origen, metadata, creado_en
+      `SELECT id, combustible_id, nivel, leido_en, usuario_id, origen, metadata, creado_en,
+              totalizador_lectura
        FROM combustible_lecturas
        WHERE id = $1 AND tenant_id = $2`,
       [lecturaId, tenantId]
@@ -1205,35 +1230,43 @@ export class CombustibleRepository {
     return anulado;
   }
 
-  /** `combustible.totalizador_actual` = el MAYOR totalizador entre los vales
-   *  vigentes del tanque (0 si no hay ninguno). Se recalcula, no se acumula:
-   *  anular el último vale tiene que devolverlo al anterior. El llamador ya
-   *  bloqueó la fila del tanque. */
+  /** `combustible.totalizador_actual` = el MAYOR totalizador entre los puntos
+   *  vigentes del tanque -- vales y varillas (0096) -- o 0 si no hay ninguno.
+   *  Se recalcula, no se acumula: anular el último punto tiene que devolverlo
+   *  al anterior. El llamador ya bloqueó la fila del tanque. */
   async recalcularTotalizadorActual(client: PoolClient, tenantId: string, combustibleId: number) {
     await client.query(
       `UPDATE combustible c
           SET totalizador_actual = COALESCE((
-                SELECT MAX(d.totalizador_lectura) FROM combustible_despachos d
-                 WHERE d.tenant_id = $1 AND d.combustible_id = c.id
-                   AND d.anulada_en IS NULL AND d.totalizador_lectura IS NOT NULL
+                SELECT MAX(t) FROM (
+                  SELECT d.totalizador_lectura AS t FROM combustible_despachos d
+                   WHERE d.tenant_id = $1 AND d.combustible_id = c.id
+                     AND d.anulada_en IS NULL AND d.totalizador_lectura IS NOT NULL
+                  UNION ALL
+                  SELECT l.totalizador_lectura FROM combustible_lecturas l
+                   WHERE l.tenant_id = $1 AND l.combustible_id = c.id
+                     AND l.anulada_en IS NULL AND l.totalizador_lectura IS NOT NULL
+                ) puntos
               ), 0)
         WHERE c.id = $2 AND c.tenant_id = $1`,
       [tenantId, combustibleId]
     );
   }
 
-  /** Los vecinos de un vale por VALOR de totalizador, no por hora: un vale
-   *  offline que llega tarde se ubica donde le toca. Devuelve:
-   *  - `anterior`: el vale vigente con el mayor totalizador <= al de este;
-   *  - `retrocede`: algún vale vigente, anterior o igual en el tiempo, con un
+  /** Los vecinos de un punto de la cadena por VALOR de totalizador, no por
+   *  hora: un vale offline que llega tarde se ubica donde le toca. Los puntos
+   *  son los vales vigentes Y las varillas vigentes con totalizador (0096).
+   *  `excluir` es el propio punto, que ya está insertado. Devuelve:
+   *  - `anterior`: el punto vigente con el mayor totalizador <= al de este;
+   *  - `retrocede`: algún punto vigente, anterior o igual en el tiempo, con un
    *    totalizador MAYOR (el medidor "volvió atrás"). */
   async findVecinosTotalizador(
     client: PoolClient,
     tenantId: string,
     combustibleId: number,
-    despachoId: number,
+    excluir: { tipo: "despacho" | "lectura"; id: number },
     totalizador: number,
-    despachadoEn: string
+    instante: string
   ) {
     const r = await client.query<{
       anterior_id: string | null;
@@ -1242,27 +1275,34 @@ export class CombustibleRepository {
       retroceso_totalizador: string | null;
     }>(
       `
-      SELECT
-        (SELECT d.id FROM combustible_despachos d
-          WHERE d.tenant_id = $1 AND d.combustible_id = $2 AND d.id <> $3
-            AND d.anulada_en IS NULL AND d.totalizador_lectura <= $4
-          ORDER BY d.totalizador_lectura DESC, d.despachado_en DESC LIMIT 1) AS anterior_id,
-        (SELECT d.totalizador_lectura FROM combustible_despachos d
-          WHERE d.tenant_id = $1 AND d.combustible_id = $2 AND d.id <> $3
-            AND d.anulada_en IS NULL AND d.totalizador_lectura <= $4
-          ORDER BY d.totalizador_lectura DESC, d.despachado_en DESC LIMIT 1) AS anterior_totalizador,
-        (SELECT d.id FROM combustible_despachos d
-          WHERE d.tenant_id = $1 AND d.combustible_id = $2 AND d.id <> $3
-            AND d.anulada_en IS NULL AND d.totalizador_lectura > $4
-            AND d.despachado_en <= $5::timestamptz
-          ORDER BY d.totalizador_lectura DESC LIMIT 1) AS retroceso_id,
-        (SELECT d.totalizador_lectura FROM combustible_despachos d
-          WHERE d.tenant_id = $1 AND d.combustible_id = $2 AND d.id <> $3
-            AND d.anulada_en IS NULL AND d.totalizador_lectura > $4
-            AND d.despachado_en <= $5::timestamptz
-          ORDER BY d.totalizador_lectura DESC LIMIT 1) AS retroceso_totalizador
+      WITH puntos AS (
+        SELECT 'despacho' AS tipo, d.id, d.totalizador_lectura AS t, d.despachado_en AS en
+          FROM combustible_despachos d
+         WHERE d.tenant_id = $1 AND d.combustible_id = $2
+           AND d.anulada_en IS NULL AND d.totalizador_lectura IS NOT NULL
+        UNION ALL
+        SELECT 'lectura', l.id, l.totalizador_lectura, l.leido_en
+          FROM combustible_lecturas l
+         WHERE l.tenant_id = $1 AND l.combustible_id = $2
+           AND l.anulada_en IS NULL AND l.totalizador_lectura IS NOT NULL
+      ),
+      otros AS (
+        SELECT * FROM puntos WHERE NOT (tipo = $3 AND id = $4::bigint)
+      ),
+      anterior AS (
+        SELECT id, t FROM otros WHERE t <= $5::numeric ORDER BY t DESC, en DESC LIMIT 1
+      ),
+      retroceso AS (
+        SELECT id, t FROM otros
+         WHERE t > $5::numeric AND en <= $6::timestamptz
+         ORDER BY t DESC LIMIT 1
+      )
+      SELECT (SELECT id FROM anterior) AS anterior_id,
+             (SELECT t FROM anterior) AS anterior_totalizador,
+             (SELECT id FROM retroceso) AS retroceso_id,
+             (SELECT t FROM retroceso) AS retroceso_totalizador
       `,
-      [tenantId, combustibleId, despachoId, totalizador, despachadoEn]
+      [tenantId, combustibleId, excluir.tipo, excluir.id, totalizador, instante]
     );
     return r.rows[0];
   }
@@ -1874,10 +1914,16 @@ export class CombustibleRepository {
       umbral_descuadre_pct: string | null;
       despachos: string;
       recepciones: string;
+      // El totalizador de las DOS varillas del tramo (0096): con los dos se
+      // puede separar lo que salió por el surtidor de lo que no. NULL si el
+      // tanque no lo usa o si alguna de las dos no lo trae.
+      usa_totalizador: boolean;
+      totalizador_anterior: string | null;
+      totalizador_actual: string | null;
     }>(
       `
       WITH anterior AS (
-        SELECT l.id, l.nivel, l.leido_en
+        SELECT l.id, l.nivel, l.leido_en, l.totalizador_lectura
         FROM combustible_lecturas l
         WHERE l.tenant_id = $1 AND l.combustible_id = $2
           AND l.anulada_en IS NULL AND l.id <> $3
@@ -1889,6 +1935,10 @@ export class CombustibleRepository {
              a.nivel AS nivel_anterior,
              a.leido_en AS leido_en_anterior,
              c.tanque_nombre, c.unidad, c.capacidad_total, c.umbral_descuadre_pct,
+             c.usa_totalizador,
+             a.totalizador_lectura AS totalizador_anterior,
+             (SELECT l.totalizador_lectura FROM combustible_lecturas l
+               WHERE l.id = $3 AND l.tenant_id = $1) AS totalizador_actual,
              COALESCE((
                SELECT SUM(d.cantidad) FROM combustible_despachos d
                WHERE d.tenant_id = $1 AND d.combustible_id = $2
@@ -2764,6 +2814,7 @@ export class CombustibleRepository {
       anulada_en: Date | null;
       motivo_anulacion: string | null;
       historico: boolean;
+      totalizador: string | null;
     }>(
       `
       -- El punto de partida: la última varilla VIGENTE anterior al período.
@@ -2791,7 +2842,8 @@ export class CombustibleRepository {
                g.nombre AS detalle,
                r.cantidad AS entrada, 0::numeric AS salida,
                NULL::numeric AS nivel_medido,
-               r.usuario_id, r.anulada_en, r.motivo_anulacion
+               r.usuario_id, r.anulada_en, r.motivo_anulacion,
+               NULL::numeric AS totalizador
           FROM combustible_recepciones r
           LEFT JOIN combustible_grifos g
                  ON g.id = r.grifo_id AND g.tenant_id = $1
@@ -2806,7 +2858,8 @@ export class CombustibleRepository {
                COALESCE(e.placa_codigo, d.tipo_destino),
                0::numeric, d.cantidad,
                NULL::numeric,
-               d.usuario_id, d.anulada_en, d.motivo_anulacion
+               d.usuario_id, d.anulada_en, d.motivo_anulacion,
+               d.totalizador_lectura
           FROM combustible_despachos d
           LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1
          WHERE d.tenant_id = $1 AND d.combustible_id = $2
@@ -2822,7 +2875,8 @@ export class CombustibleRepository {
                l.origen,
                0::numeric, 0::numeric,
                l.nivel,
-               l.usuario_id, l.anulada_en, l.motivo_anulacion
+               l.usuario_id, l.anulada_en, l.motivo_anulacion,
+               l.totalizador_lectura
           FROM combustible_lecturas l
          WHERE l.tenant_id = $1 AND l.combustible_id = $2
            AND l.leido_en >= $3::timestamptz AND l.leido_en <= $4::timestamptz
@@ -2838,7 +2892,8 @@ export class CombustibleRepository {
                CONCAT(pp.nombre, ': ', p.motivo),
                0::numeric, 0::numeric,
                NULL::numeric,
-               p.colocado_por, NULL::timestamptz, NULL::text
+               p.colocado_por, NULL::timestamptz, NULL::text,
+               NULL::numeric
           FROM combustible_precintos p
           JOIN combustible_precinto_puntos pp ON pp.id = p.punto_id AND pp.tenant_id = $1
          WHERE p.tenant_id = $1 AND pp.combustible_id = $2
@@ -2872,7 +2927,7 @@ export class CombustibleRepository {
              ) OVER (ORDER BY m.ocurrido_en, m.orden_tipo, m.referencia_id
                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS saldo_teorico,
              u.nombre AS usuario,
-             m.anulada_en, m.motivo_anulacion, m.historico
+             m.anulada_en, m.motivo_anulacion, m.historico, m.totalizador
         FROM marcados m
         LEFT JOIN usuarios u ON u.id = m.usuario_id AND u.tenant_id = $1
        ORDER BY m.ocurrido_en, m.orden_tipo, m.referencia_id
