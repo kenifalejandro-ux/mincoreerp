@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { grifoNoEditable } from "./sedes.schema";
+
 // ── Tanques / puntos de abastecimiento (Fase A, ver
 // docs/architecture/control-de-combustible.md) ─────────────────────────────
 
@@ -61,6 +63,9 @@ export const crearTanqueCombustibleSchema = z.object({
   // Precintos numerados (0095). Apagado por el mismo motivo que el
   // totalizador: el cliente que no los usa no tiene que ver ni un campo.
   usa_precintos: z.boolean().default(false),
+  // El grifo interno donde está el tanque (0097). Opcional: con un solo grifo
+  // en la empresa lo asigna la base; con más de uno el servicio lo exige.
+  grifo_interno_id: z.number().int().positive().optional(),
 });
 
 export type CrearTanqueCombustibleInput = z.infer<typeof crearTanqueCombustibleSchema>;
@@ -104,6 +109,9 @@ export const actualizarTanqueCombustibleSchema = z.object({
   usa_totalizador: z.boolean().optional(),
   totalizador_tolerancia: z.number().min(0).max(1000).optional(),
   usa_precintos: z.boolean().optional(),
+  // Cambiar de grifo NO es editar el tanque: tiene su propio endpoint, con
+  // motivo y rastro (0097). Mandarlo acá es un error, no algo que se ignora.
+  grifo_interno_id: grifoNoEditable,
 });
 
 export type ActualizarTanqueCombustibleInput = z.infer<typeof actualizarTanqueCombustibleSchema>;

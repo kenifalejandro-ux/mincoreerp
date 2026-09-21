@@ -4,6 +4,12 @@ import type { PoolClient } from "pg";
 import type { Paginacion } from "../../server/shared/utils/pagination";
 import type { CrearEquipoInput } from "../../server/schemas/equipos.schema";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
+import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
+import {
+  listarMovimientosDeGrifo,
+  motivoFaltaGrifo,
+  moverDeGrifo,
+} from "../../server/services/sedes.service";
 import { EquiposRepository, type EquipoPayload } from "./equipos.repository";
 
 export const EquiposService = {
@@ -23,6 +29,11 @@ export const EquiposService = {
       modulo: "equipos",
       clienteUuid: data.cliente_uuid,
       insertar: async () => {
+        // Con más de un grifo interno, el equipo tiene que decir a cuál
+        // pertenece (0097). Acá adentro y no antes: el reintento de un envío
+        // que ya se había guardado no tiene que volver a validarse.
+        const falta = await motivoFaltaGrifo(client, tenantId, data.grifo_interno_id, "equipo");
+        if (falta) throw new Error(falta);
         const fila = await EquiposRepository.create(client, tenantId, data);
         return { id: fila.id as number, fila };
       },
@@ -43,5 +54,27 @@ export const EquiposService = {
 
   delete(client: PoolClient, tenantId: string, id: number) {
     return EquiposRepository.delete(client, tenantId, id);
+  },
+
+  /** Mover el equipo a otro grifo interno (0097). Null si no existe en esta
+   *  empresa. */
+  moverDeGrifo(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    id: number,
+    data: MoverDeGrifoInput
+  ) {
+    return moverDeGrifo(client, tenantId, {
+      tabla: "equipos",
+      id,
+      grifoDestinoId: data.grifo_interno_id,
+      motivo: data.motivo,
+      usuarioId,
+    });
+  },
+
+  listarMovimientosDeGrifo(client: PoolClient, tenantId: string, id: number) {
+    return listarMovimientosDeGrifo(client, tenantId, "equipo_id", id);
   },
 };

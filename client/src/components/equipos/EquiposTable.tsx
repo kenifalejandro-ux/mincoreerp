@@ -3,6 +3,8 @@ import { useState, useEffect, useCallback } from "react";
 
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
+import MoverDeGrifo from "../comunes/MoverDeGrifo";
+import { useSedes } from "../comunes/useSedes";
 
 interface Equipo {
   id: number;
@@ -28,6 +30,8 @@ interface Equipo {
   conductor_dni: string | null;
   activo: boolean;
   creado_en: string;
+  // El grifo interno al que pertenece (0097). Se cambia con "Mover de grifo".
+  grifo_interno_id: number | null;
 }
 
 const TIPOS_COMUNES = [
@@ -91,6 +95,13 @@ export default function EquiposTable() {
   // se aplica solo: la muestra puede incluir el robo que se quiere detectar.
   const [sugerenciaConsumo, setSugerenciaConsumo] = useState<string | null>(null);
 
+  // Sedes y grifos internos (0097): con uno solo, nada de esto se ve. El grifo
+  // del alta va APARTE del formulario: el PUT manda el formulario entero y el
+  // servidor rechaza un grifo ahí (cambiarlo es "Mover de grifo").
+  const grifosInternos = useSedes();
+  const [grifoAlta, setGrifoAlta] = useState("");
+  const [filtroGrifo, setFiltroGrifo] = useState("");
+  const [equipoAMover, setEquipoAMover] = useState<Equipo | null>(null);
   const [formData, setFormData] = useState({
     placa_codigo: "",
     tipo: TIPOS_COMUNES[0],
@@ -223,7 +234,15 @@ export default function EquiposTable() {
     };
     // cliente_uuid solo viaja al crear -- editar no pasa por
     // idempotentInsert() del lado del servidor.
-    const body = editingId ? datosFormulario : { ...datosFormulario, cliente_uuid: clienteUuid };
+    const body = editingId
+      ? datosFormulario
+      : {
+          ...datosFormulario,
+          cliente_uuid: clienteUuid,
+          // Con un solo grifo lo asigna el servidor (0097).
+          grifo_interno_id:
+            grifosInternos.hayVarios && grifoAlta !== "" ? Number(grifoAlta) : undefined,
+        };
     setEnviando(true);
     try {
       const res = await apiFetch(url, {
@@ -232,7 +251,8 @@ export default function EquiposTable() {
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        alert("Error: revisa los datos del equipo.");
+        const error = await res.json().catch(() => ({}));
+        alert(error.error || error.message || "Error: revisa los datos del equipo.");
         return;
       }
 
@@ -275,8 +295,12 @@ export default function EquiposTable() {
 
   const filteredEquipos = equipos.filter(
     (e) =>
-      e.placa_codigo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      e.tipo.toLowerCase().includes(searchTerm.toLowerCase())
+      (e.placa_codigo.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        e.tipo.toLowerCase().includes(searchTerm.toLowerCase())) &&
+      // El filtro por grifo (0097) solo existe con más de un grifo.
+      (!grifosInternos.hayVarios ||
+        filtroGrifo === "" ||
+        e.grifo_interno_id === Number(filtroGrifo))
   );
 
   if (loading) return <div className="p-20 text-center text-slate-500">Cargando...</div>;
@@ -303,6 +327,7 @@ export default function EquiposTable() {
               conductor_nombre: "",
               conductor_dni: "",
             });
+            setGrifoAlta("");
             // Se regenera en cada apertura: si no, el segundo equipo
             // legítimo que se registre reusaría la clave del primero y el
             // servidor devolvería aquel en silencio -- se perdería un
@@ -323,6 +348,26 @@ export default function EquiposTable() {
           className="w-full bg-white border border-slate-200 rounded-2xl px-5 py-4 outline-none focus:ring-2 focus:ring-slate-900 transition-all shadow-sm"
           onChange={(e) => setSearchTerm(e.target.value)}
         />
+        {grifosInternos.hayVarios && (
+          <div className="mt-3 flex items-center gap-2">
+            <label htmlFor="filtro-grifo-equipos" className="text-xs font-bold uppercase">
+              Grifo
+            </label>
+            <select
+              id="filtro-grifo-equipos"
+              className="border border-slate-200 rounded-lg p-2 text-sm bg-white"
+              value={filtroGrifo}
+              onChange={(e) => setFiltroGrifo(e.target.value)}
+            >
+              <option value="">Todos</option>
+              {grifosInternos.grifosActivos.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.etiqueta}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
@@ -344,6 +389,11 @@ export default function EquiposTable() {
               <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
                 medidor
               </th>
+              {grifosInternos.hayVarios && (
+                <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  grifo
+                </th>
+              )}
               <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
                 estado
               </th>
@@ -368,6 +418,11 @@ export default function EquiposTable() {
                       ? "Odómetro"
                       : "---"}
                 </td>
+                {grifosInternos.hayVarios && (
+                  <td className="p-5 text-sm text-slate-500">
+                    {grifosInternos.nombreDeGrifo(e.grifo_interno_id)}
+                  </td>
+                )}
                 <td className="p-5 text-sm">
                   <span className={`font-bold ${e.activo ? "text-emerald-600" : "text-slate-400"}`}>
                     {e.activo ? "Activo" : "Inactivo"}
@@ -668,6 +723,53 @@ export default function EquiposTable() {
                   />
                 </div>
               </div>
+              {/* Grifo interno (0097): solo con más de uno. En el alta se
+                  elige; después se cambia con "Mover de grifo", con motivo. */}
+              {grifosInternos.hayVarios &&
+                (editingId === null ? (
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="equipo-grifo-interno"
+                      className="text-xs font-bold text-slate-500 uppercase"
+                    >
+                      Grifo interno
+                    </label>
+                    <select
+                      id="equipo-grifo-interno"
+                      required
+                      className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                      value={grifoAlta}
+                      onChange={(e) => setGrifoAlta(e.target.value)}
+                    >
+                      <option value="">Elegir grifo</option>
+                      {grifosInternos.grifosActivos.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.etiqueta}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-2 text-sm bg-slate-50 border border-slate-200 rounded-xl p-3">
+                    <span>
+                      <span className="text-xs font-bold text-slate-500 uppercase block">
+                        Grifo interno
+                      </span>
+                      {grifosInternos.nombreDeGrifo(
+                        equipos.find((x) => x.id === editingId)?.grifo_interno_id
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEquipoAMover(equipos.find((x) => x.id === editingId) ?? null)
+                      }
+                      className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg hover:bg-white"
+                    >
+                      Mover de grifo
+                    </button>
+                  </div>
+                ))}
               <button
                 type="submit"
                 disabled={enviando}
@@ -678,6 +780,21 @@ export default function EquiposTable() {
             </form>
           </div>
         </div>
+      )}
+      {equipoAMover && (
+        <MoverDeGrifo
+          que="equipo"
+          id={equipoAMover.id}
+          nombre={equipoAMover.placa_codigo}
+          grifoActualId={equipoAMover.grifo_interno_id}
+          grifos={grifosInternos.grifosActivos}
+          onCerrar={() => setEquipoAMover(null)}
+          onMovido={() => {
+            setEquipoAMover(null);
+            grifosInternos.recargar();
+            void fetchEquipos(page);
+          }}
+        />
       )}
     </div>
   );

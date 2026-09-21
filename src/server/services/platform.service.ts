@@ -97,6 +97,18 @@ export async function crearTenantConAdminService(
     // después, según lo que ese cliente haya contratado.
     await habilitarTodosLosModulos(tenant.id, client);
 
+    // Toda empresa nace con su sede y su grifo interno "Principal" (0097). Con
+    // uno solo, nadie ve un selector: tanques y equipos van ahí sin preguntar.
+    // Si la empresa después abre otra planta, los crea desde Administración.
+    const sede = await client.query<{ id: number }>(
+      `INSERT INTO sedes (tenant_id, nombre) VALUES ($1, 'Principal') RETURNING id`,
+      [tenant.id]
+    );
+    await client.query(
+      `INSERT INTO grifos_internos (tenant_id, sede_id, nombre) VALUES ($1, $2, 'Principal')`,
+      [tenant.id, sede.rows[0].id]
+    );
+
     // Mismo client/transacción: si crear el admin falla, el tenant tampoco
     // queda creado — nunca un tenant huérfano sin nadie que pueda entrar.
     const usuario = await crearUsuarioService(

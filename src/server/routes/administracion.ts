@@ -11,7 +11,7 @@
  * Todo exige rol admin. Es el menú que decide quién entra al sistema y con
  * qué: ni `operador` ni `lectura` lo ven siquiera en el sidebar.
  */
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 
 import { validate } from "../middleware/validate";
@@ -31,6 +31,16 @@ import {
   solicitarOrdenService,
   type EstadoDeOrden,
 } from "../services/ordenesAdmin.service";
+import {
+  bajaGrifoService,
+  bajaSedeService,
+  crearGrifoService,
+  crearSedeService,
+  reactivarGrifoService,
+  reactivarSedeService,
+  renombrarGrifoService,
+  renombrarSedeService,
+} from "../services/sedes.service";
 
 /** Firmar sin decir por qué no es firmar: la orden queda con las dos razones,
  *  la de quien la pidió y la de quien la resolvió. Al aprobar es opcional
@@ -42,6 +52,17 @@ const aprobarSchema = z.object({
 
 const rechazarSchema = z.object({
   motivo: z.string().trim().min(1, "Decile por qué la rechazás").max(500),
+});
+
+// Sedes y grifos internos (0097). Mismo tope de nombre que la columna.
+const nombreSchema = z.object({ nombre: z.string().trim().min(1).max(80) });
+const grifoSchema = z.object({
+  sede_id: z.number().int().positive(),
+  nombre: z.string().trim().min(1).max(80),
+});
+// Dar de baja o reactivar sin decir por qué no deja rastro que sirva.
+const motivoSchema = z.object({
+  motivo: z.string().trim().min(1, "El motivo es obligatorio").max(500),
 });
 
 const dobleFirmaSchema = z.object({
@@ -129,6 +150,133 @@ export function createAdministracionRouter() {
   );
 
   // ── Doble firma ──────────────────────────────────────────────────────
+
+  // ── Sedes y grifos internos (0097) ─────────────────────────────────────
+  // La lectura es GET /api/erp/sedes (cualquier usuario). Acá, lo que cambia
+  // la estructura de la empresa. Nada se borra: baja lógica con motivo.
+  const actor = (req: Request) => ({ id: req.usuario!.id });
+
+  router.post(
+    "/sedes",
+    validate(nombreSchema),
+    asyncHandler(async (req, res) => {
+      const { nombre } = req.validatedBody as { nombre: string };
+      res
+        .status(201)
+        .json(
+          await crearSedeService(getTenantId(req), actor(req), nombre, contextoAuditoriaModulo(req))
+        );
+    })
+  );
+  router.put(
+    "/sedes/:id",
+    validate(nombreSchema),
+    asyncHandler(async (req, res) => {
+      const { nombre } = req.validatedBody as { nombre: string };
+      await renombrarSedeService(
+        getTenantId(req),
+        actor(req),
+        Number(req.params.id),
+        nombre,
+        contextoAuditoriaModulo(req)
+      );
+      res.json({ ok: true });
+    })
+  );
+  router.patch(
+    "/sedes/:id/baja",
+    validate(motivoSchema),
+    asyncHandler(async (req, res) => {
+      const { motivo } = req.validatedBody as { motivo: string };
+      await bajaSedeService(
+        getTenantId(req),
+        actor(req),
+        Number(req.params.id),
+        motivo,
+        contextoAuditoriaModulo(req)
+      );
+      res.json({ ok: true });
+    })
+  );
+  router.patch(
+    "/sedes/:id/reactivar",
+    validate(motivoSchema),
+    asyncHandler(async (req, res) => {
+      const { motivo } = req.validatedBody as { motivo: string };
+      await reactivarSedeService(
+        getTenantId(req),
+        actor(req),
+        Number(req.params.id),
+        motivo,
+        contextoAuditoriaModulo(req)
+      );
+      res.json({ ok: true });
+    })
+  );
+
+  router.post(
+    "/grifos",
+    validate(grifoSchema),
+    asyncHandler(async (req, res) => {
+      const { sede_id, nombre } = req.validatedBody as { sede_id: number; nombre: string };
+      res
+        .status(201)
+        .json(
+          await crearGrifoService(
+            getTenantId(req),
+            actor(req),
+            { sedeId: sede_id, nombre },
+            contextoAuditoriaModulo(req)
+          )
+        );
+    })
+  );
+  // Solo el nombre: la sede de un grifo no se cambia (ver migración 0097).
+  router.put(
+    "/grifos/:id",
+    validate(nombreSchema),
+    asyncHandler(async (req, res) => {
+      const { nombre } = req.validatedBody as { nombre: string };
+      await renombrarGrifoService(
+        getTenantId(req),
+        actor(req),
+        Number(req.params.id),
+        nombre,
+        contextoAuditoriaModulo(req)
+      );
+      res.json({ ok: true });
+    })
+  );
+  router.patch(
+    "/grifos/:id/baja",
+    validate(motivoSchema),
+    asyncHandler(async (req, res) => {
+      const { motivo } = req.validatedBody as { motivo: string };
+      await bajaGrifoService(
+        getTenantId(req),
+        actor(req),
+        Number(req.params.id),
+        motivo,
+        contextoAuditoriaModulo(req)
+      );
+      res.json({ ok: true });
+    })
+  );
+  router.patch(
+    "/grifos/:id/reactivar",
+    validate(motivoSchema),
+    asyncHandler(async (req, res) => {
+      const { motivo } = req.validatedBody as { motivo: string };
+      await reactivarGrifoService(
+        getTenantId(req),
+        actor(req),
+        Number(req.params.id),
+        motivo,
+        contextoAuditoriaModulo(req)
+      );
+      res.json({ ok: true });
+    })
+  );
 
   router.get(
     "/doble-firma",

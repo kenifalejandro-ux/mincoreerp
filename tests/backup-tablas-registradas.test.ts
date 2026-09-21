@@ -51,6 +51,10 @@ const ALLOWLIST_FUERA_DEL_BACKUP = new Set([
   // en esta lista porque este test mira el registry de módulos, no ese array.
   "usuarios",
   "ordenes_admin",
+  // Sedes y grifos internos (0097): de la empresa, no de un módulo, y en
+  // TABLAS_TENANT antes de los módulos que las referencian.
+  "sedes",
+  "grifos_internos",
   // Buffers y bitácoras internas, no datos de negocio: se regeneran solos
   // o simplemente no tiene sentido restaurarlos.
   "eventos_tiempo_real",

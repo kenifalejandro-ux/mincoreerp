@@ -61,6 +61,7 @@ import type {
   CambiarPrecintoInput,
   BajaPuntoPrecintoInput,
 } from "../../server/schemas/combustible.schema";
+import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import { FACTOR_LITROS_UREA } from "../../server/schemas/combustible.schema";
 import { armarCsv } from "../../server/shared/utils/csv.util";
 import {
@@ -1102,7 +1103,13 @@ export class CombustibleController {
       });
       res.status(201).json(nuevo);
     } catch (err) {
-      if (err instanceof Error && err.message.includes("supera la capacidad del tanque")) {
+      if (
+        err instanceof Error &&
+        (err.message.includes("supera la capacidad del tanque") ||
+          // Grifo interno (0097): falta con más de un grifo, no existe o está
+          // dado de baja. Lo dice el servicio o, de respaldo, el trigger.
+          err.message.includes("grifo interno"))
+      ) {
         res.status(400).json({ error: err.message });
         return;
       }
@@ -1362,7 +1369,10 @@ export class CombustibleController {
         data: creados,
       });
     } catch (err) {
-      if (err instanceof Error && err.message.includes("supera la capacidad")) {
+      if (
+        err instanceof Error &&
+        (err.message.includes("supera la capacidad") || err.message.includes("grifo interno"))
+      ) {
         res.status(400).json({ error: err.message });
         return;
       }
@@ -3300,7 +3310,7 @@ export class CombustibleController {
       );
       res.json({ data: filas });
     } catch {
-      res.status(500).json({ error: "Error al calcular el consumo por grifo" });
+      res.status(500).json({ error: "Error al calcular el consumo por origen" });
     }
   }
 
@@ -4134,6 +4144,48 @@ export class CombustibleController {
     }
   }
 
+  // ── Grifo interno del tanque (migración 0097) ────────────────────────
+
+  /** POST /:id/mover-grifo -- el único camino para cambiar el grifo de un
+   *  tanque. Solo admin, con motivo; la base escribe el movimiento y rechaza
+   *  el cambio sin motivo. Los hechos anteriores conservan el grifo donde
+   *  ocurrieron: mover no reescribe el pasado. */
+  async moverDeGrifo(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.id);
+    const data = req.validatedBody as MoverDeGrifoInput;
+    const movido = await withTenant(tenantId, (client) =>
+      service.moverDeGrifo(client, tenantId, req.usuario!.id, id, data)
+    );
+    if (!movido) {
+      res.status(404).json({ error: "Tanque no encontrado" });
+      return;
+    }
+    await registrarAuditoria({
+      accion: "combustible.tanque_mover_grifo",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: {
+        combustibleId: id,
+        grifoOrigenId: movido.grifoOrigenId,
+        grifoDestinoId: data.grifo_interno_id,
+        motivo: data.motivo,
+      },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", { combustibleId: id });
+    res.json({ ok: true });
+  }
+
+  /** GET /:id/movimientos-grifo -- el historial de ubicación del tanque. */
+  async listarMovimientosDeGrifo(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const filas = await withTenant(tenantId, (client) =>
+      service.listarMovimientosDeGrifo(client, tenantId, Number(req.params.id))
+    );
+    res.json(filas);
+  }
+
   // ── Precintos numerados (migración 0095) ─────────────────────────────
 
   /** GET /:id/precintos -- los puntos del tanque con su precinto vigente.
@@ -4380,7 +4432,7 @@ export class CombustibleController {
       const grifos = await withTenant(tenantId, (client) => service.listarGrifos(client, tenantId));
       res.json(grifos);
     } catch {
-      res.status(500).json({ error: "Error al listar grifos" });
+      res.status(500).json({ error: "Error al listar proveedores" });
     }
   }
 
@@ -4405,11 +4457,11 @@ export class CombustibleController {
       });
       res.status(201).json(grifo);
     } catch (err) {
-      if (err instanceof Error && err.message.includes("ya existe un grifo")) {
+      if (err instanceof Error && err.message.includes("ya existe un proveedor")) {
         res.status(409).json({ error: err.message });
         return;
       }
-      res.status(500).json({ error: "Error al crear el grifo" });
+      res.status(500).json({ error: "Error al crear el proveedor" });
     }
   }
 
@@ -4422,7 +4474,7 @@ export class CombustibleController {
         service.actualizarGrifo(client, tenantId, id, data)
       );
       if (!grifo) {
-        res.status(404).json({ error: "Grifo no encontrado" });
+        res.status(404).json({ error: "Proveedor no encontrado" });
         return;
       }
       await registrarAuditoria({
@@ -4438,11 +4490,11 @@ export class CombustibleController {
       });
       res.json(grifo);
     } catch (err) {
-      if (err instanceof Error && err.message.includes("ya existe un grifo")) {
+      if (err instanceof Error && err.message.includes("ya existe un proveedor")) {
         res.status(409).json({ error: err.message });
         return;
       }
-      res.status(500).json({ error: "Error al actualizar el grifo" });
+      res.status(500).json({ error: "Error al actualizar el proveedor" });
     }
   }
 
@@ -4483,7 +4535,7 @@ export class CombustibleController {
       if (
         err instanceof Error &&
         (err.message.includes("no existe en este tenant") ||
-          err.message.includes("ya existe un grifo"))
+          err.message.includes("ya existe un proveedor"))
       ) {
         res.status(400).json({ error: err.message });
         return;

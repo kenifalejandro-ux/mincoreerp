@@ -175,7 +175,7 @@ const COLUMNAS_TANQUE = `
   c.tolerancia_capacidad_pct, c.requiere_documento, c.umbral_diferencia_pct,
   c.umbral_descuadre_pct, c.umbral_descuadre_ciclo_pct,
   c.umbral_descuadre_ventana_pct,
-  c.usa_totalizador, c.totalizador_tolerancia, c.usa_precintos,
+  c.usa_totalizador, c.totalizador_tolerancia, c.usa_precintos, c.grifo_interno_id,
   ultima.nivel AS nivel_actual,
   ultima.leido_en AS fecha_actualizacion,
   ROUND((ultima.nivel / c.capacidad_total) * 100, 2) AS porcentaje
@@ -326,9 +326,9 @@ export class CombustibleRepository {
         tolerancia_capacidad_pct, requiere_documento, umbral_diferencia_pct,
         umbral_descuadre_pct, umbral_descuadre_ciclo_pct,
         umbral_descuadre_ventana_pct, usa_totalizador, totalizador_tolerancia,
-        usa_precintos
+        usa_precintos, grifo_interno_id
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
       RETURNING id
       `,
       [
@@ -351,6 +351,8 @@ export class CombustibleRepository {
         data.usa_totalizador,
         data.totalizador_tolerancia,
         data.usa_precintos ?? false,
+        // NULL = que lo asigne la base (el único grifo de la empresa, 0097).
+        data.grifo_interno_id ?? null,
       ]
     );
 
@@ -525,7 +527,7 @@ export class CombustibleRepository {
         }
       }
 
-      const COLUMNAS_POR_FILA = 15;
+      const COLUMNAS_POR_FILA = 16;
       const placeholders = filasUnicas
         .map((_, i) => {
           const base = i * COLUMNAS_POR_FILA;
@@ -558,6 +560,8 @@ export class CombustibleRepository {
         // vigilado creyendo el cliente que los había cargado.
         d.umbral_descuadre_ciclo_pct,
         d.umbral_descuadre_ventana_pct,
+        // 0097: NULL = el único grifo de la empresa, lo asigna la base.
+        d.grifo_interno_id ?? null,
       ]);
 
       const insertados = await client.query<{ id: number; codigo: string }>(
@@ -565,7 +569,8 @@ export class CombustibleRepository {
            tenant_id, codigo, tanque_nombre, tipo_combustible, unidad, tipo_punto,
            ubicacion, capacidad_total, nivel_minimo,
            tolerancia_capacidad_pct, requiere_documento, umbral_diferencia_pct,
-           umbral_descuadre_pct, umbral_descuadre_ciclo_pct, umbral_descuadre_ventana_pct
+           umbral_descuadre_pct, umbral_descuadre_ciclo_pct, umbral_descuadre_ventana_pct,
+           grifo_interno_id
          )
          VALUES ${placeholders}
          RETURNING id, codigo`,
@@ -936,7 +941,7 @@ export class CombustibleRepository {
           throw new Error(`equipo_id ${data.equipoId} no existe en este tenant`, { cause: err });
         }
         if (constraint.includes("grifo_id")) {
-          throw new Error(`grifo_id ${data.grifoId} no existe en este tenant`, { cause: err });
+          throw new Error(`el proveedor ${data.grifoId} no existe en este tenant`, { cause: err });
         }
       }
       throw err;
@@ -3450,7 +3455,7 @@ export class CombustibleRepository {
       return result.rows[0];
     } catch (err) {
       if (esViolacionUnicidad(err)) {
-        throw new Error(`ya existe un grifo llamado "${data.nombre}" en este tenant`, {
+        throw new Error(`ya existe un proveedor llamado "${data.nombre}" en este tenant`, {
           cause: err,
         });
       }
@@ -3489,7 +3494,7 @@ export class CombustibleRepository {
       return result.rows[0] ?? null;
     } catch (err) {
       if (esViolacionUnicidad(err)) {
-        throw new Error(`ya existe un grifo llamado "${data.nombre}" en este tenant`, {
+        throw new Error(`ya existe un proveedor llamado "${data.nombre}" en este tenant`, {
           cause: err,
         });
       }
@@ -3546,7 +3551,7 @@ export class CombustibleRepository {
           });
         }
         if (constraint.includes("grifo_id")) {
-          throw new Error(`grifo_id ${data.grifoId} no existe en este tenant`, { cause: err });
+          throw new Error(`el proveedor ${data.grifoId} no existe en este tenant`, { cause: err });
         }
       }
       throw err;
@@ -3861,7 +3866,7 @@ export class CombustibleRepository {
       if (esViolacionForeignKey(err)) {
         const constraint = (err as { constraint?: string }).constraint ?? "";
         if (constraint.includes("grifo_id")) {
-          throw new Error(`grifo_id ${data.grifoId} no existe en este tenant`, { cause: err });
+          throw new Error(`el proveedor ${data.grifoId} no existe en este tenant`, { cause: err });
         }
         if (constraint.includes("combustible_id")) {
           throw new Error(`combustible_id ${data.combustibleId} no existe en este tenant`, {
