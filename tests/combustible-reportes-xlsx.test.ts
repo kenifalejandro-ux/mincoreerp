@@ -173,10 +173,14 @@ describe("combustible: reportes en .xlsx", () => {
       // Evidencia: el vale anulado está en el detalle, marcado.
       expect(kardex).toContain("<v>900</v>");
       expect(kardex).toContain(">SÍ<");
-      // Pero los totales lo saltean: la fórmula filtra la columna L (Anulado).
+      // Pero los totales lo saltean: la fórmula filtra la columna L (Anulado / histórico).
       // Con SUM a secas este archivo decía 1.300 L de salidas y la pantalla 400.
-      expect(resumen).toMatch(/SUMIFS\(Kardex!F2:F\d+,Kardex!L2:L\d+,&quot;&lt;&gt;SÍ&quot;\)/);
-      expect(resumen).toMatch(/SUMIFS\(Kardex!E2:E\d+,Kardex!L2:L\d+,&quot;&lt;&gt;SÍ&quot;\)/);
+      expect(resumen).toMatch(
+        /SUMIFS\(Kardex!F2:F\d+,Kardex!L2:L\d+,&quot;&lt;&gt;SÍ&quot;,Kardex!L2:L\d+,&quot;&lt;&gt;HISTÓRICO&quot;\)/
+      );
+      expect(resumen).toMatch(
+        /SUMIFS\(Kardex!E2:E\d+,Kardex!L2:L\d+,&quot;&lt;&gt;SÍ&quot;,Kardex!L2:L\d+,&quot;&lt;&gt;HISTÓRICO&quot;\)/
+      );
       expect(resumen).not.toMatch(/<f>SUM\(Kardex!F/);
 
       // Y el número de la pantalla, contra el que esa fórmula tiene que dar.
