@@ -778,7 +778,7 @@ const BTN_BASE =
 const BTN_ESTILO = {
   outline: "border border-[#334155] text-[#e2e8f0] hover:bg-[#2a2e37] bg-transparent",
   lime: "bg-[#192526] text-slate-500 hover:bg-[#1e2128] border border-[#2a2e37]",
-  primary: "bg-[#a3e635] text-black hover:bg-[#BADC1e] border border-[#65a30d]",
+  primary: "bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d]",
   muted: "bg-[#192526] text-[#94a3b8] hover:bg-[#2a2e37] border border-[#2a2e37]",
   secundary: "bg-[#192526] text-white hover:bg-[#0D1719] border border-[#a3e635]",
 };

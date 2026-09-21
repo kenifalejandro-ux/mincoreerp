@@ -372,13 +372,13 @@ export default function HistoricoCliente() {
           type="button"
           onClick={handleVerPeriodo}
           disabled={cargando}
-          className="rounded bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          className="rounded bg-[#a3e635] px-3 py-1.5 text-sm font-medium text-black hover:bg-[#bef264] disabled:opacity-50"
         >
           {cargando ? "Cargando…" : "Consultar"}
         </button>
         <div className="ml-auto flex items-end gap-3">
           <label
-            className="px-4 py-2 border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-medium rounded-xl transition-all cursor-pointer text-sm flex items-center gap-2"
+            className="px-4 py-2  bg-[#192526]  text-slate-500 hover:bg-[#1e2128] border border-[#2a2e37] font-medium rounded-xl transition-all cursor-pointer text-sm flex items-center gap-2"
             title="Elegir el Excel con el histórico real del cliente (2025 a hoy)"
           >
             <span>📊 Importar Excel</span>
