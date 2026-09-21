@@ -1,0 +1,361 @@
+/* Tema oscuro del ERP (diseño Figma "industrial").
+
+   Los módulos están escritos con la paleta clara de Tailwind (bg-white,
+   text-slate-*, border-slate-*, fondos pastel). En vez de reescribir cada
+   clase, acá se redefinen esos colores para todo lo que cuelga de
+   body.tema-oscuro.
+
+   La clase la pone Layout al montarse y la saca al desmontarse -- va en
+   <body> y no en un contenedor porque VentanaFlotante se renderiza con
+   createPortal fuera del árbol del Layout. Login y panel de plataforma no
+   pasan por Layout, así que no se ven afectados.
+
+   Para tocar un color, cambiá SOLO este archivo.
+
+   REGLA PARA CÓDIGO NUEVO (modales, tablas): usá la paleta clara de siempre
+   (bg-white, text-slate-*, border-slate-*, bg-red-50...) y se ve bien sola.
+   Lo que NO se remapea, y deja barras/cajas blancas: colores en hex o
+   rgb() escritos a mano (bg-[#fff], style={{background:"#fff"}}) y variantes
+   arbitrarias con blanco ([&>th]:bg-white). Para eso, usá los hex del
+   tema: #192526 tarjeta, #142021 hondo, #2a2e37 borde. */
+
+html:has(body.tema-oscuro),
+body.tema-oscuro {
+  /* El fondo de <body> era el blanco por defecto: se asomaba debajo del
+     Layout porque header + main (100vh - 66px) suman un poco más que la
+     pantalla y el scroll de la página deja ver lo que hay atrás. */
+  background-color: #0d1719;
+}
+body.tema-oscuro {
+  color-scheme: dark;
+  color: #e2e8f0;
+}
+
+/* Todo lo de abajo va en la capa `utilities` y con especificidad 0 (:where):
+   así compite en igualdad con las clases de Tailwind y los `hover:` / `focus:`
+   de cada componente ganan sobre el color base. Si estas reglas quedaran
+   fuera de capa, le ganarían a TODOS los hover (pasó con el sidebar). */
+@layer utilities {
+/* Fondos */
+:where(body.tema-oscuro) .bg-white,
+:where(body.tema-oscuro) .hover\:bg-white:hover { background-color: #192526; }
+:where(body.tema-oscuro) .bg-slate-50,
+:where(body.tema-oscuro) .bg-gray-50 { background-color: #142021; }
+:where(body.tema-oscuro) .bg-slate-50\/50,
+:where(body.tema-oscuro) .bg-slate-50\/60 { background-color: rgba(255, 255, 255, 0.03); }
+:where(body.tema-oscuro) .bg-slate-100 { background-color: #203033; }
+:where(body.tema-oscuro) .bg-slate-200 { background-color: #2a2e37; }
+:where(body.tema-oscuro) .hover\:bg-slate-50:hover,
+:where(body.tema-oscuro) .hover\:bg-slate-50\/50:hover,
+:where(body.tema-oscuro) .hover\:bg-gray-50:hover { background-color: #203033; }
+:where(body.tema-oscuro) .hover\:bg-slate-100:hover,
+:where(body.tema-oscuro) .hover\:bg-slate-200:hover { background-color: #2a2e37; }
+
+/* Botón primario (antes slate-900 con texto blanco) -> lima del Figma */
+:where(body.tema-oscuro) .bg-slate-900 { background-color: #a3e635; color: #0f1115; }
+:where(body.tema-oscuro) .hover\:bg-slate-800:hover { background-color: #bef264; color: #0f1115; }
+:where(body.tema-oscuro) .border-slate-900 { border-color: #a3e635; }
+:where(body.tema-oscuro) .focus\:ring-slate-900:focus { --tw-ring-color: #a3e635; }
+:where(body.tema-oscuro) .focus\:border-slate-900:focus { border-color: #a3e635; }
+
+/* Textos */
+:where(body.tema-oscuro) .text-slate-900,
+:where(body.tema-oscuro) .text-slate-800,
+:where(body.tema-oscuro) .text-gray-900,
+:where(body.tema-oscuro) .text-gray-800 { color: #f1f5f9; }
+:where(body.tema-oscuro) .text-slate-700,
+:where(body.tema-oscuro) .text-gray-700 { color: #e2e8f0; }
+:where(body.tema-oscuro) .text-slate-600,
+:where(body.tema-oscuro) .text-gray-600 { color: #cbd5e1; }
+:where(body.tema-oscuro) .text-slate-500,
+:where(body.tema-oscuro) .text-gray-500 { color: #94a3b8; }
+:where(body.tema-oscuro) .text-slate-400,
+:where(body.tema-oscuro) .text-gray-400 { color: #64748b; }
+:where(body.tema-oscuro) .text-slate-300 { color: #475569; }
+:where(body.tema-oscuro) .hover\:text-slate-900:hover,
+:where(body.tema-oscuro) .hover\:text-slate-700:hover { color: #ffffff; }
+
+/* Bordes y divisores */
+:where(body.tema-oscuro) .border-slate-50,
+:where(body.tema-oscuro) .border-slate-100 { border-color: #23272f; }
+:where(body.tema-oscuro) .border-slate-200,
+:where(body.tema-oscuro) .border-gray-200 { border-color: #2a2e37; }
+:where(body.tema-oscuro) .border-slate-300,
+:where(body.tema-oscuro) .border-gray-300,
+:where(body.tema-oscuro) .border-zinc-400 { border-color: #334155; }
+:where(body.tema-oscuro) .divide-slate-100 > :not(:last-child),
+:where(body.tema-oscuro) .divide-slate-200 > :not(:last-child) { border-color: #2a2e37; }
+
+/* Formularios: los controles sin clase de fondo heredaban blanco */
+:where(body.tema-oscuro input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), body.tema-oscuro select, body.tema-oscuro textarea) {
+  color: #e2e8f0;
+  background-color: #0D1719;
+  border-color: #334155;
+}
+:where(body.tema-oscuro input::placeholder, body.tema-oscuro textarea::placeholder) { color: #64748b; }
+:where(body.tema-oscuro select option) { background-color: #192526; color: #e2e8f0; }
+
+/* Colores de estado: los pastel (bg-red-50, etc.) pasan a fondo translúcido
+   con borde y texto claros, para que las alertas se lean sin desentonar. */
+:where(body.tema-oscuro) .bg-red-50,
+:where(body.tema-oscuro) .bg-red-100 { background-color: rgba(239,68,68, 0.12); }
+:where(body.tema-oscuro) .hover\:bg-red-50:hover,
+:where(body.tema-oscuro) .hover\:bg-red-100:hover { background-color: rgba(239,68,68, 0.2); }
+:where(body.tema-oscuro) .border-red-200,
+:where(body.tema-oscuro) .border-red-300 { border-color: rgba(239,68,68, 0.35); }
+:where(body.tema-oscuro) .text-red-700,
+:where(body.tema-oscuro) .text-red-800,
+:where(body.tema-oscuro) .text-red-900 { color: #fca5a5; }
+:where(body.tema-oscuro) .text-red-600,
+:where(body.tema-oscuro) .text-red-500,
+:where(body.tema-oscuro) .text-red-400 { color: #f87171; }
+:where(body.tema-oscuro) .bg-amber-50,
+:where(body.tema-oscuro) .bg-amber-100 { background-color: rgba(245,158,11, 0.12); }
+:where(body.tema-oscuro) .hover\:bg-amber-50:hover,
+:where(body.tema-oscuro) .hover\:bg-amber-100:hover { background-color: rgba(245,158,11, 0.2); }
+:where(body.tema-oscuro) .border-amber-200,
+:where(body.tema-oscuro) .border-amber-300 { border-color: rgba(245,158,11, 0.35); }
+:where(body.tema-oscuro) .text-amber-700,
+:where(body.tema-oscuro) .text-amber-800,
+:where(body.tema-oscuro) .text-amber-900 { color: #fcd34d; }
+:where(body.tema-oscuro) .text-amber-600,
+:where(body.tema-oscuro) .text-amber-500,
+:where(body.tema-oscuro) .text-amber-400 { color: #fbbf24; }
+:where(body.tema-oscuro) .bg-emerald-50,
+:where(body.tema-oscuro) .bg-emerald-100 { background-color: rgba(16,185,129, 0.12); }
+:where(body.tema-oscuro) .hover\:bg-emerald-50:hover,
+:where(body.tema-oscuro) .hover\:bg-emerald-100:hover { background-color: rgba(16,185,129, 0.2); }
+:where(body.tema-oscuro) .border-emerald-200,
+:where(body.tema-oscuro) .border-emerald-300 { border-color: rgba(16,185,129, 0.35); }
+:where(body.tema-oscuro) .text-emerald-700,
+:where(body.tema-oscuro) .text-emerald-800,
+:where(body.tema-oscuro) .text-emerald-900 { color: #6ee7b7; }
+:where(body.tema-oscuro) .text-emerald-600,
+:where(body.tema-oscuro) .text-emerald-500,
+:where(body.tema-oscuro) .text-emerald-400 { color: #34d399; }
+:where(body.tema-oscuro) .bg-green-50,
+:where(body.tema-oscuro) .bg-green-100 { background-color: rgba(34,197,94, 0.12); }
+:where(body.tema-oscuro) .hover\:bg-green-50:hover,
+:where(body.tema-oscuro) .hover\:bg-green-100:hover { background-color: rgba(34,197,94, 0.2); }
+:where(body.tema-oscuro) .border-green-200,
+:where(body.tema-oscuro) .border-green-300 { border-color: rgba(34,197,94, 0.35); }
+:where(body.tema-oscuro) .text-green-700,
+:where(body.tema-oscuro) .text-green-800,
+:where(body.tema-oscuro) .text-green-900 { color: #86efac; }
+:where(body.tema-oscuro) .text-green-600,
+:where(body.tema-oscuro) .text-green-500,
+:where(body.tema-oscuro) .text-green-400 { color: #4ade80; }
+:where(body.tema-oscuro) .bg-blue-50,
+:where(body.tema-oscuro) .bg-blue-100 { background-color: rgba(59,130,246, 0.12); }
+:where(body.tema-oscuro) .hover\:bg-blue-50:hover,
+:where(body.tema-oscuro) .hover\:bg-blue-100:hover { background-color: rgba(59,130,246, 0.2); }
+:where(body.tema-oscuro) .border-blue-200,
+:where(body.tema-oscuro) .border-blue-300 { border-color: rgba(59,130,246, 0.35); }
+:where(body.tema-oscuro) .text-blue-700,
+:where(body.tema-oscuro) .text-blue-800,
+:where(body.tema-oscuro) .text-blue-900 { color: #93c5fd; }
+:where(body.tema-oscuro) .text-blue-600,
+:where(body.tema-oscuro) .text-blue-500,
+:where(body.tema-oscuro) .text-blue-400 { color: #60a5fa; }
+:where(body.tema-oscuro) .bg-sky-50,
+:where(body.tema-oscuro) .bg-sky-100 { background-color: rgba(14,165,233, 0.12); }
+:where(body.tema-oscuro) .hover\:bg-sky-50:hover,
+:where(body.tema-oscuro) .hover\:bg-sky-100:hover { background-color: rgba(14,165,233, 0.2); }
+:where(body.tema-oscuro) .border-sky-200,
+:where(body.tema-oscuro) .border-sky-300 { border-color: rgba(14,165,233, 0.35); }
+:where(body.tema-oscuro) .text-sky-700,
+:where(body.tema-oscuro) .text-sky-800,
+:where(body.tema-oscuro) .text-sky-900 { color: #7dd3fc; }
+:where(body.tema-oscuro) .text-sky-600,
+:where(body.tema-oscuro) .text-sky-500,
+:where(body.tema-oscuro) .text-sky-400 { color: #38bdf8; }
+
+  /* Más colores de estado (mismo criterio que arriba) */
+:where(body.tema-oscuro) .bg-rose-50,
+:where(body.tema-oscuro) .bg-rose-100 { background-color: rgba(244,63,94, 0.12); }
+:where(body.tema-oscuro) .hover\:bg-rose-50:hover,
+:where(body.tema-oscuro) .hover\:bg-rose-100:hover { background-color: rgba(244,63,94, 0.2); }
+:where(body.tema-oscuro) .border-rose-200,
+:where(body.tema-oscuro) .border-rose-300 { border-color: rgba(244,63,94, 0.35); }
+:where(body.tema-oscuro) .text-rose-700,
+:where(body.tema-oscuro) .text-rose-800,
+:where(body.tema-oscuro) .text-rose-900 { color: #fda4af; }
+:where(body.tema-oscuro) .text-rose-600,
+:where(body.tema-oscuro) .text-rose-500,
+:where(body.tema-oscuro) .text-rose-400 { color: #fb7185; }
+:where(body.tema-oscuro) .bg-violet-50,
+:where(body.tema-oscuro) .bg-violet-100 { background-color: rgba(139,92,246, 0.12); }
+:where(body.tema-oscuro) .hover\:bg-violet-50:hover,
+:where(body.tema-oscuro) .hover\:bg-violet-100:hover { background-color: rgba(139,92,246, 0.2); }
+:where(body.tema-oscuro) .border-violet-200,
+:where(body.tema-oscuro) .border-violet-300 { border-color: rgba(139,92,246, 0.35); }
+:where(body.tema-oscuro) .text-violet-700,
+:where(body.tema-oscuro) .text-violet-800,
+:where(body.tema-oscuro) .text-violet-900 { color: #c4b5fd; }
+:where(body.tema-oscuro) .text-violet-600,
+:where(body.tema-oscuro) .text-violet-500,
+:where(body.tema-oscuro) .text-violet-400 { color: #a78bfa; }
+:where(body.tema-oscuro) .bg-indigo-50,
+:where(body.tema-oscuro) .bg-indigo-100 { background-color: rgba(99,102,241, 0.12); }
+:where(body.tema-oscuro) .hover\:bg-indigo-50:hover,
+:where(body.tema-oscuro) .hover\:bg-indigo-100:hover { background-color: rgba(99,102,241, 0.2); }
+:where(body.tema-oscuro) .border-indigo-200,
+:where(body.tema-oscuro) .border-indigo-300 { border-color: rgba(99,102,241, 0.35); }
+:where(body.tema-oscuro) .text-indigo-700,
+:where(body.tema-oscuro) .text-indigo-800,
+:where(body.tema-oscuro) .text-indigo-900 { color: #a5b4fc; }
+:where(body.tema-oscuro) .text-indigo-600,
+:where(body.tema-oscuro) .text-indigo-500,
+:where(body.tema-oscuro) .text-indigo-400 { color: #818cf8; }
+:where(body.tema-oscuro) .bg-orange-50,
+:where(body.tema-oscuro) .bg-orange-100 { background-color: rgba(249,115,22, 0.12); }
+:where(body.tema-oscuro) .hover\:bg-orange-50:hover,
+:where(body.tema-oscuro) .hover\:bg-orange-100:hover { background-color: rgba(249,115,22, 0.2); }
+:where(body.tema-oscuro) .border-orange-200,
+:where(body.tema-oscuro) .border-orange-300 { border-color: rgba(249,115,22, 0.35); }
+:where(body.tema-oscuro) .text-orange-700,
+:where(body.tema-oscuro) .text-orange-800,
+:where(body.tema-oscuro) .text-orange-900 { color: #fdba74; }
+:where(body.tema-oscuro) .text-orange-600,
+:where(body.tema-oscuro) .text-orange-500,
+:where(body.tema-oscuro) .text-orange-400 { color: #fb923c; }
+:where(body.tema-oscuro) .bg-yellow-50,
+:where(body.tema-oscuro) .bg-yellow-100 { background-color: rgba(234,179,8, 0.12); }
+:where(body.tema-oscuro) .hover\:bg-yellow-50:hover,
+:where(body.tema-oscuro) .hover\:bg-yellow-100:hover { background-color: rgba(234,179,8, 0.2); }
+:where(body.tema-oscuro) .border-yellow-200,
+:where(body.tema-oscuro) .border-yellow-300 { border-color: rgba(234,179,8, 0.35); }
+:where(body.tema-oscuro) .text-yellow-700,
+:where(body.tema-oscuro) .text-yellow-800,
+:where(body.tema-oscuro) .text-yellow-900 { color: #fde047; }
+:where(body.tema-oscuro) .text-yellow-600,
+:where(body.tema-oscuro) .text-yellow-500,
+:where(body.tema-oscuro) .text-yellow-400 { color: #facc15; }
+:where(body.tema-oscuro) .bg-purple-50,
+:where(body.tema-oscuro) .bg-purple-100 { background-color: rgba(168,85,247, 0.12); }
+:where(body.tema-oscuro) .hover\:bg-purple-50:hover,
+:where(body.tema-oscuro) .hover\:bg-purple-100:hover { background-color: rgba(168,85,247, 0.2); }
+:where(body.tema-oscuro) .border-purple-200,
+:where(body.tema-oscuro) .border-purple-300 { border-color: rgba(168,85,247, 0.35); }
+:where(body.tema-oscuro) .text-purple-700,
+:where(body.tema-oscuro) .text-purple-800,
+:where(body.tema-oscuro) .text-purple-900 { color: #d8b4fe; }
+:where(body.tema-oscuro) .text-purple-600,
+:where(body.tema-oscuro) .text-purple-500,
+:where(body.tema-oscuro) .text-purple-400 { color: #c084fc; }
+:where(body.tema-oscuro) .bg-teal-50,
+:where(body.tema-oscuro) .bg-teal-100 { background-color: rgba(20,184,166, 0.12); }
+:where(body.tema-oscuro) .hover\:bg-teal-50:hover,
+:where(body.tema-oscuro) .hover\:bg-teal-100:hover { background-color: rgba(20,184,166, 0.2); }
+:where(body.tema-oscuro) .border-teal-200,
+:where(body.tema-oscuro) .border-teal-300 { border-color: rgba(20,184,166, 0.35); }
+:where(body.tema-oscuro) .text-teal-700,
+:where(body.tema-oscuro) .text-teal-800,
+:where(body.tema-oscuro) .text-teal-900 { color: #5eead4; }
+:where(body.tema-oscuro) .text-teal-600,
+:where(body.tema-oscuro) .text-teal-500,
+:where(body.tema-oscuro) .text-teal-400 { color: #2dd4bf; }
+:where(body.tema-oscuro) .bg-cyan-50,
+:where(body.tema-oscuro) .bg-cyan-100 { background-color: rgba(6,182,212, 0.12); }
+:where(body.tema-oscuro) .hover\:bg-cyan-50:hover,
+:where(body.tema-oscuro) .hover\:bg-cyan-100:hover { background-color: rgba(6,182,212, 0.2); }
+:where(body.tema-oscuro) .border-cyan-200,
+:where(body.tema-oscuro) .border-cyan-300 { border-color: rgba(6,182,212, 0.35); }
+:where(body.tema-oscuro) .text-cyan-700,
+:where(body.tema-oscuro) .text-cyan-800,
+:where(body.tema-oscuro) .text-cyan-900 { color: #67e8f9; }
+:where(body.tema-oscuro) .text-cyan-600,
+:where(body.tema-oscuro) .text-cyan-500,
+:where(body.tema-oscuro) .text-cyan-400 { color: #22d3ee; }
+:where(body.tema-oscuro) .bg-lime-50,
+:where(body.tema-oscuro) .bg-lime-100 { background-color: rgba(132,204,22, 0.12); }
+:where(body.tema-oscuro) .hover\:bg-lime-50:hover,
+:where(body.tema-oscuro) .hover\:bg-lime-100:hover { background-color: rgba(132,204,22, 0.2); }
+:where(body.tema-oscuro) .border-lime-200,
+:where(body.tema-oscuro) .border-lime-300 { border-color: rgba(132,204,22, 0.35); }
+:where(body.tema-oscuro) .text-lime-700,
+:where(body.tema-oscuro) .text-lime-800,
+:where(body.tema-oscuro) .text-lime-900 { color: #bef264; }
+:where(body.tema-oscuro) .text-lime-600,
+:where(body.tema-oscuro) .text-lime-500,
+:where(body.tema-oscuro) .text-lime-400 { color: #a3e635; }
+
+  :where(body.tema-oscuro) .bg-slate-100\/70 { background-color: #203033; }
+  :where(body.tema-oscuro) .bg-slate-300 { background-color: #334155; }
+  :where(body.tema-oscuro) .hover\:border-slate-300:hover { border-color: #475569; }
+
+  /* Variantes arbitrarias tipo [&>th]:bg-white (encabezados pegajosos de las
+     tablas): no las alcanzan las reglas de arriba y dejan barras blancas
+     tapando el contenido. Cubre los patrones habituales. */
+  :where(body.tema-oscuro) [class*=":bg-white"] > th,
+  :where(body.tema-oscuro) [class*=":bg-white"] > td,
+  :where(body.tema-oscuro) [class*=":bg-white"] > tr > th { background-color: #192526; }
+  :where(body.tema-oscuro) [class*=":bg-slate-50"] > th,
+  :where(body.tema-oscuro) [class*=":bg-slate-50"] > td { background-color: #142021; }
+
+  /* Tooltip de los gráficos (recharts pone el fondo blanco inline) */
+  :where(body.tema-oscuro) .recharts-default-tooltip {
+    background-color: #192526 !important;
+    border-color: #334155 !important;
+  }
+  :where(body.tema-oscuro) .recharts-tooltip-label,
+  :where(body.tema-oscuro) .recharts-tooltip-item { color: #e2e8f0 !important; }
+}
+
+/* Acento lima en algunos bordes (solo interactivos, no todos): al enfocar un
+   campo/filtro y al pasar el mouse por un botón con borde. */
+body.tema-oscuro input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):focus,
+body.tema-oscuro select:focus,
+body.tema-oscuro textarea:focus {
+  border-color: #a3e635;
+  outline: none;
+  box-shadow: 0 0 0 1px rgba(163, 230, 53, 0.35);
+}
+body.tema-oscuro button.border:not(.bg-slate-900):hover,
+body.tema-oscuro label.border:hover {
+  border-color: rgba(163, 230, 53, 0.6);
+}
+
+/* Los `border-b` / `border` sueltos (sin color) usan currentColor, que en el
+   tema oscuro es casi blanco: se ven como rayas blancas. Se les da el gris
+   de borde, salvo a los que ya traen un color propio. */
+body.tema-oscuro
+  :is(.border, .border-b, .border-t, .border-l, .border-r, .border-y, .border-x):not(
+    [class*="border-["],
+    [class*="border-white"],
+    [class*="border-black"],
+    [class*="border-slate"],
+    [class*="border-gray"],
+    [class*="border-zinc"],
+    [class*="border-red"],
+    [class*="border-amber"],
+    [class*="border-emerald"],
+    [class*="border-green"],
+    [class*="border-blue"],
+    [class*="border-sky"],
+    [class*="border-yellow"],
+    [class*="border-orange"],
+    [class*="border-transparent"],
+    [class*="[#"]
+  ) {
+  border-color: #2a2e37;
+}
+
+/* Barra de scroll "overlay": fina, invisible en reposo y lima solo mientras
+   se hace scroll. La clase `scrolling-activo` la pone y quita Layout (un
+   listener de scroll en captura, para que valga también en los modales y en
+   cualquier contenedor con scroll). */
+html:has(body.tema-oscuro),
+body.tema-oscuro,
+body.tema-oscuro * {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+/* Tenue al pasar el mouse por el contenedor, para poder ubicar y agarrar la barra. */
+body.tema-oscuro *:hover {
+  scrollbar-color: rgba(186, 220, 30, 0.35) transparent;
+}
+html:has(body.tema-oscuro).scrolling-activo,
+body.tema-oscuro .scrolling-activo {
+  scrollbar-color: #badc1e transparent;
+}

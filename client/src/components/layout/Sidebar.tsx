@@ -1,8 +1,28 @@
-import { ChevronDown, Receipt, ShieldCheck } from "lucide-react";
+import {
+  ChevronDown,
+  Droplets,
+  Fuel,
+  History,
+  Receipt,
+  ScrollText,
+  SearchCheck,
+  ShieldCheck,
+  type LucideIcon,
+} from "lucide-react";
 import { useState } from "react";
 
 import { useAuth } from "../../context/AuthContext";
 import { MODULOS_CLIENTE } from "../../modules/registry";
+
+// Submenú de Combustible. Los íconos son de trazo (lucide), los mismos que
+// usan las acciones de la tabla de tanques.
+const SUBMENU_COMBUSTIBLE: { tab: string; label: string; Icono: LucideIcon }[] = [
+  { tab: "combustible", label: "Tanques", Icono: Fuel },
+  { tab: "combustible:historico", label: "Histórico", Icono: History },
+  { tab: "combustible:urea", label: "Urea", Icono: Droplets },
+  { tab: "combustible:auditoria", label: "Auditoría", Icono: SearchCheck },
+  { tab: "combustible:bitacora", label: "Bitácora", Icono: ScrollText },
+];
 
 interface SidebarProps {
   activeTab: string;
@@ -21,7 +41,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
   const [combustibleDesplegado, setCombustibleDesplegado] = useState(false);
 
   return (
-    <aside className="w-64 sticky top-0 z-50 bg-[#0A1014]  border-l-3 border-[#DDF500] min-h-[calc(100vh-66px)] flex flex-col shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
+    <aside className="w-64 shrink-0 overflow-y-auto pb-6 bg-[#192526]  border-l border-[#BADC1E] flex flex-col shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
       <div className="p-4 border-b border-slate-100">
         <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
           Módulos Operativos
@@ -55,17 +75,19 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
             <div key={tab.id}>
               <button
                 onClick={() => setActiveTab(esCombustible ? "combustible" : tab.id)}
-                className={`w-full text-left px-6 py-3.5 flex  items-center gap-3 transition-all relative ${
+                className={`group w-full text-left px-6 py-3.5 flex  items-center gap-3 transition-all relative ${
                   isActive
-                    ? "  bg-[#FFFFFF] font-semibold"
-                    : "text-slate-500  hover:bg-[#FFFFFF] hover:text-slate-800 font-medium"
+                    ? "bg-[#BADC1E] text-[#0A1014] font-semibold"
+                    : "text-slate-500  hover:bg-[#BADC1E] font-medium"
                 }`}
               >
                 {isActive && (
-                  <div className="absolute left-0 top-0 bottom-0 w-1.5 z-2 bg-[#DDF500]" />
+                  <div className="absolute left-0 top-0 bottom-0 w-1.5 z-2 bg-[#BADC1E]" />
                 )}
 
-                <span className={`${isActive ? "text-[#0A1014]" : "text-slate-400"}`}>
+                <span
+                  className={`${isActive ? "text-[#0A1014]" : "text-slate-400 group-hover:text-[#0A1014]"}`}
+                >
                   {tab.icono}
                 </span>
                 <span className="tracking-tight flex-1">{tab.label}</span>
@@ -81,63 +103,58 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
                   >
                     <ChevronDown
                       size={16}
-                      className={isActive ? "text-[#0A1014]" : "text-slate-400"}
+                      className={
+                        isActive ? "text-[#0A1014]" : "text-slate-400 group-hover:text-[#0A1014]"
+                      }
                     />
                   </span>
                 )}
               </button>
-              {esCombustible && combustibleDesplegado && (
-                <div className="flex flex-col">
-                  <button
-                    onClick={() => setActiveTab("combustible")}
-                    className={`w-full text-left pl-14 pr-6 py-2.5 text-sm transition-all ${
-                      activeTab === "combustible"
-                        ? "  text-[#DDF500] font-semibold"
-                        : "text-slate-500  text:bg-[#FFFFFF] hover:text-[#DDF500] font-medium"
-                    }`}
-                  >
-                    Tanques
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("combustible:historico")}
-                    className={`w-full text-left pl-14 pr-6 py-2.5 text-sm transition-all ${
-                      activeTab === "combustible:historico"
-                        ? "  text-[#DDF500] font-semibold"
-                        : "text-slate-500  text:bg-[#FFFFFF] hover:text-[#DDF500] font-medium"
-                    }`}
-                  >
-                    Histórico
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("combustible:urea")}
-                    className={`w-full text-left pl-14 pr-6 py-2.5 text-sm transition-all ${
-                      activeTab === "combustible:urea"
-                        ? "  text-[#DDF500] font-semibold"
-                        : "text-slate-500  text:bg-[#FFFFFF] hover:text-[#DDF500] font-medium"
-                    }`}
-                  >
-                    Urea
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("combustible:auditoria")}
-                    className={`w-full text-left pl-14 pr-6 py-2.5 text-sm transition-all ${
-                      activeTab === "combustible:auditoria"
-                        ? "  text-[#DDF500] font-semibold"
-                        : "text-slate-500  text:bg-[#FFFFFF] hover:text-[#DDF500] font-medium"
-                    }`}
-                  >
-                    Auditoría
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("combustible:bitacora")}
-                    className={`w-full text-left pl-14 pr-6 py-2.5 text-sm transition-all ${
-                      activeTab === "combustible:bitacora"
-                        ? "  text-[#DDF500] font-semibold"
-                        : "text-slate-500  text:bg-[#FFFFFF] hover:text-[#DDF500] font-medium"
-                    }`}
-                  >
-                    Bitácora
-                  </button>
+              {esCombustible && (
+                /* Despliegue animado: la altura pasa de 0fr a 1fr (así no hace
+                   falta medir nada) y cada subitem entra con un pequeño
+                   desfase, deslizándose desde la izquierda. `invisible` con
+                   la misma transición saca los ítems ocultos del foco de
+                   teclado recién cuando terminó de cerrarse. */
+                <div
+                  aria-hidden={!combustibleDesplegado}
+                  className={`grid transition-[grid-template-rows,visibility] duration-300 ease-out motion-reduce:transition-none ${
+                    combustibleDesplegado ? "grid-rows-[1fr] visible" : "grid-rows-[0fr] invisible"
+                  }`}
+                >
+                  <div className="overflow-hidden">
+                    <div className="flex flex-col">
+                      {SUBMENU_COMBUSTIBLE.map(({ tab: destino, label, Icono }, i) => {
+                        const activo = activeTab === destino;
+                        return (
+                          <div
+                            key={destino}
+                            style={{
+                              transitionDelay: combustibleDesplegado ? `${80 + i * 50}ms` : "0ms",
+                            }}
+                            className={`transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none ${
+                              combustibleDesplegado
+                                ? "opacity-100 translate-x-0"
+                                : "opacity-0 -translate-x-3"
+                            }`}
+                          >
+                            <button
+                              onClick={() => setActiveTab(destino)}
+                              tabIndex={combustibleDesplegado ? 0 : -1}
+                              className={`group w-full text-left pl-12 pr-6 py-2.5 text-sm flex items-center gap-3 transition-all ${
+                                activo
+                                  ? "text-[#BADC1E] font-semibold"
+                                  : "text-slate-500 hover:text-[#BADC1E] font-medium"
+                              }`}
+                            >
+                              <Icono className="w-4 h-4 shrink-0" />
+                              {label}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
@@ -155,12 +172,12 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
             onClick={() => setActiveTab("administracion")}
             className={`w-full text-left px-6 py-3.5 flex items-center gap-3 transition-all relative ${
               activeTab === "administracion"
-                ? "bg-slate-50 text-[#0A1014] font-semibold"
-                : "text-slate-500 hover:bg-slate-50 hover:text-[#0A1014] font-medium"
+                ? "bg-[#BADC1E] text-[#0A1014] font-semibold"
+                : "text-slate-500 hover:bg-[#BADC1E] hover:text-[#0A1014] font-medium"
             }`}
           >
             {activeTab === "administracion" && (
-              <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-[#DDF500]" />
+              <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-[#BADC1E]" />
             )}
             <span
               className={`${activeTab === "administracion" ? "text-[#0A1014]" : "text-slate-400"}`}
@@ -175,12 +192,12 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
           onClick={() => setActiveTab("facturacion")}
           className={`w-full text-left px-6 py-3.5 flex items-center gap-3 transition-all relative ${
             activeTab === "facturacion"
-              ? "bg-slate-50 text-[#0A1014] font-semibold"
-              : "text-slate-500 hover:bg-slate-50 hover:text-[#0A1014] font-medium"
+              ? "bg-[#BADC1E] text-[#0A1014] font-semibold"
+              : "text-slate-500 hover:bg-[#BADC1E] hover:text-[#0A1014] font-medium"
           }`}
         >
           {activeTab === "facturacion" && (
-            <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-[#DDF500]" />
+            <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-[#BADC1E]" />
           )}
           <span className={`${activeTab === "facturacion" ? "text-[#0A1014]" : "text-slate-400"}`}>
             <Receipt size={20} strokeWidth={2} />

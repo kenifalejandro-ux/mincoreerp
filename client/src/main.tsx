@@ -19,6 +19,7 @@ import PlatformApp from "./platform/PlatformApp";
 // Importaciones globales (mantén solo las que realmente uses)
 import "./styles/globals.css"; // estilos globales
 import "./styles/index.css"; // si lo necesitas
+import "./styles/tema-oscuro.css"; // paleta oscura del ERP (ver el archivo)
 
 // Opcional: si vas a usar íconos (Lucide, Heroicons, etc.)
 // import './lib/icons';

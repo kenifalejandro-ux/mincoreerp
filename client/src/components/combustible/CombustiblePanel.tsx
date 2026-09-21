@@ -1,5 +1,22 @@
 /**client/src/components/combustible/CombustiblePanel */
 
+import {
+  BarChart2,
+  BookOpen,
+  Bell,
+  ClipboardCheck,
+  ClipboardList,
+  Eye,
+  FileText,
+  Fuel,
+  Pencil,
+  Plus,
+  Tag,
+  Trash2,
+  Truck,
+  Wrench,
+  X,
+} from "lucide-react";
 import { useState, useEffect, useCallback, useMemo } from "react";
 
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
@@ -755,6 +772,159 @@ function BarraDePeriodo({
   );
 }
 
+/** Botones de la cabecera del módulo (diseño Figma). */
+const BTN_BASE =
+  "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all active:scale-95";
+const BTN_ESTILO = {
+  outline: "border border-[#334155] text-[#e2e8f0] hover:bg-[#2a2e37] bg-transparent",
+  lime: "bg-[#192526] text-slate-500 hover:bg-[#1e2128] border border-[#2a2e37]",
+  primary: "bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d]",
+  muted: "bg-[#192526] text-[#94a3b8] hover:bg-[#2a2e37] border border-[#2a2e37]",
+  secundary: "bg-[#192526] text-white hover:bg-[#0D1719] border border-[#a3e635]",
+};
+
+{
+  /**curvatura del tanque */
+}
+// Curvatura de la parte de arriba del tanque. Cambiá SOLO estas dos (tienen que
+// ir escritas completas para que Tailwind las detecte): la de afuera es la
+// carcasa, marcas y vidrio; la de adentro recorta el líquido y va 4px más
+// chica porque el borde mide 4px. Si no van a la par, el líquido se sale.
+// Ejemplos: rounded-t-full (medio círculo), rounded-t-[80px], rounded-t-3xl (24px).
+const RADIO_EXT = "rounded-t-[60px] rounded-b-4xl";
+const RADIO_INT = "rounded-t-[60px] rounded-b-3xl";
+
+/** Panel "Nivel de tanque" (diseño Figma): un tanque grande con selector para
+ *  cambiar de tanque. Solo lectura: el nivel sale de la última lectura vigente.
+ *  Rojo = en o bajo el umbral mínimo del tanque (la misma regla que la tabla);
+ *  ámbar = bajo 40 %; sin lecturas no se pinta líquido, porque un tanque
+ *  "vacío" afirmaría algo que nadie midió. */
+function TanqueVisual({ tanques }: { tanques: Tanque[] }) {
+  const [elegidoId, setElegidoId] = useState<number | null>(null);
+  const t = tanques.find((x) => x.id === elegidoId) ?? tanques[0];
+  if (!t) return null;
+  const sinNivel = t.nivel_actual === null;
+  const capacidad = Number(t.capacidad_total);
+  const nivel = Number(t.nivel_actual);
+  const pct =
+    sinNivel || capacidad <= 0 ? 0 : Math.min(100, Math.max(0, (nivel / capacidad) * 100));
+  const minimo = Number(t.nivel_minimo);
+  const umbralPct =
+    capacidad > 0 && minimo > 0 ? Math.min(100, Math.max(0, (minimo / capacidad) * 100)) : null;
+  const bajoUmbral = !sinNivel && nivel <= Number(t.nivel_minimo);
+  // [base, claro (reflejo), oscuro (bordes), resplandor]
+  const [color, claro, oscuro, brillo] = bajoUmbral
+    ? ["#ef4444", "#fca5a5", "#7f1d1d", "rgba(239,68,68,0.4)"]
+    : pct < 40
+      ? ["#f59e0b", "#fde68a", "#78350f", "rgba(245,158,11,0.4)"]
+      : ["#a3e635", "#ecfccb", "#3f6212", "rgba(163,230,53,0.45)"];
+  return (
+    <div className="bg-[#192526] border border-[#2a2e37] rounded-lg p-6 flex flex-col items-center shadow-lg relative overflow-hidden">
+      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#2a2e37] to-transparent" />
+      <h2 className="text-sm font-bold uppercase tracking-widest text-[#94a3b8] mb-6 w-full text-center border-b border-[#2a2e37] pb-4">
+        Nivel de tanque
+      </h2>
+      {tanques.length > 1 ? (
+        <select
+          value={t.id}
+          onChange={(e) => setElegidoId(Number(e.target.value))}
+          className="mb-1 w-full bg-[#0D1719] border border-[#334155] rounded px-3 py-2 text-sm font-semibold text-white"
+        >
+          {tanques.map((x) => (
+            <option key={x.id} value={x.id}>
+              {x.tanque_nombre}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <p className="text-sm font-semibold text-white">{t.tanque_nombre}</p>
+      )}
+      {/**texto - nombre de tanque */}
+      <p className="text-[10px] font-mono text-[#64748b] mb-6">
+        {t.codigo} · {ETIQUETA_TIPO_COMBUSTIBLE[t.tipo_combustible]}
+      </p>
+      <div className="relative w-48 h-80 mb-6 flex justify-center">
+        {/* Capas de abajo hacia arriba: fondo -> líquido -> marcas -> vidrio.
+            El fondo va aparte y debajo: si fuera el mismo elemento que las
+            marcas (opaco y por encima), taparía el líquido. */}
+        <div
+          className={`absolute inset-0 ${RADIO_EXT} border-5 border-[#334155] bg-[#0f1115] shadow-[inset_0_0_20px_rgba(0,0,0,0.8)] z-0 pointer-events-none`}
+        />
+        {!sinNivel && (
+          <div className={`absolute inset-1 ${RADIO_INT} overflow-hidden z-10 pointer-events-none`}>
+            <div
+              className="absolute bottom-0 w-full transition-all duration-700 ease-out"
+              style={{ height: `${pct}%` }}
+            >
+              <div
+                className="w-full h-full relative overflow-hidden"
+                style={{
+                  background: `linear-gradient(90deg, ${oscuro} 0%, ${color} 28%, ${claro} 42%, ${color} 58%, ${oscuro} 100%)`,
+                  boxShadow: `0 -8px 30px ${brillo}`,
+                }}
+              >
+                {/* Superficie del líquido */}
+                <div className="absolute top-0 left-0 w-full h-2 bg-white/40" />
+                {/* Franja de reflejo vertical, como pintura metalizada */}
+                <div className="absolute top-0 bottom-0 left-[18%] w-[10%] bg-gradient-to-b from-white/50 via-white/15 to-white/0 blur-[2px]" />
+                <div className="absolute top-0 bottom-0 right-[16%] w-[4%] bg-white/15 blur-[2px]" />
+              </div>
+            </div>
+          </div>
+        )}
+        {/* Umbral mínimo: a esa altura del tanque salta la alerta de nivel bajo */}
+        {umbralPct !== null && (
+          <div className="absolute inset-1 z-[25] pointer-events-none">
+            <div
+              className="absolute left-0 w-full border-t-2 border-dashed border-[#f59e0b]"
+              style={{ bottom: `${umbralPct}%` }}
+            >
+              <span className="absolute right-2 -top-5 rounded bg-[#0f1115]/90 px-1.5 py-0.5 text-[10px] font-mono font-bold text-[#f59e0b]">
+                mín. {Number(t.nivel_minimo).toLocaleString("es-PE")}
+              </span>
+            </div>
+          </div>
+        )}
+        <div className={`absolute inset-0 ${RADIO_EXT} overflow-hidden z-20 pointer-events-none`}>
+          <div className="absolute left-0 top-0 h-full w-4 border-r border-[#334155]/50 flex flex-col justify-between py-8 opacity-70">
+            {[100, 80, 60, 40, 20, 0].map((m) => (
+              <div key={m} className="w-full border-b border-[#334155] relative">
+                <span className="absolute left-6 -top-2 text-[10px] font-mono text-[#94a3b8]">
+                  {m}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div
+          className={`absolute inset-0 ${RADIO_EXT} bg-gradient-to-r from-white/10 via-transparent to-black/40 z-30 pointer-events-none`}
+        />
+      </div>
+      <div className="bg-[#0D1719] border border-[#334155] rounded px-4 py-3 w-full text-center">
+        <div className="text-[10px] text-[#64748b] font-bold uppercase mb-1">Volumen actual</div>
+        {sinNivel ? (
+          <div className="text-sm italic text-[#94a3b8] py-2">Sin lecturas</div>
+        ) : (
+          <div className="font-mono text-3xl font-bold text-white tracking-tight flex items-baseline justify-center gap-1">
+            {nivel.toLocaleString("es-PE")}
+            <span className="text-sm text-[#94a3b8]">
+              / {capacidad.toLocaleString("es-PE")} {t.unidad}
+            </span>
+          </div>
+        )}
+        {!sinNivel && (
+          <div className="mt-2 flex items-baseline justify-center gap-1.5">
+            <span className="font-mono text-2xl font-bold" style={{ color }}>
+              {t.porcentaje}%
+            </span>
+            <span className="text-[10px] font-mono uppercase text-[#64748b]">de capacidad</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function vigilanciaDe(t: Tanque): {
   nivel: "sin" | "parcial" | "completa";
   apagados: string[];
@@ -1403,6 +1573,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // ni botones acá adentro -- por eso el estado nace de `pestanaInicial` y
   // se resincroniza cuando cambia (el usuario puede clickear "Histórico" en
   // el sidebar con el panel ya montado).
+  // Tanque abierto en la ventana "Ver tanque" (el ojo de la fila).
+  const [tanqueVerId, setTanqueVerId] = useState<number | null>(null);
   const [pestanaCombustible, setPestanaCombustible] = useState<
     "tanques" | "historico" | "urea" | "auditoria" | "bitacora"
   >(pestanaInicial ?? "tanques");
@@ -1489,6 +1661,40 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   const [cargandoBitacora, setCargandoBitacora] = useState(false);
   const [bitacora, setBitacora] = useState<EventoBitacora[]>([]);
+  // Filtros de la bitácora. Se aplican sobre lo ya cargado (los últimos 200
+  // eventos que devuelve el servidor), no piden nada nuevo.
+  const [bitDesde, setBitDesde] = useState("");
+  const [bitHasta, setBitHasta] = useState("");
+  const [bitQuien, setBitQuien] = useState("");
+  const [bitAccion, setBitAccion] = useState("");
+  // Arranca marcado: lo que reduce la vigilancia es lo primero que gerencia
+  // tiene que ver. Desmarcar o "Limpiar" muestra todo.
+  const [bitSoloAflojan, setBitSoloAflojan] = useState(true);
+  const bitUsuarios = useMemo(
+    () => Array.from(new Set(bitacora.map((e) => e.usuario))).sort(),
+    [bitacora]
+  );
+  const bitAcciones = useMemo(
+    () =>
+      Array.from(
+        new Set([...bitacora.map((e) => e.accion), "combustible.registrar_lectura"])
+      ).sort(),
+    [bitacora]
+  );
+  const bitacoraFiltrada = useMemo(() => {
+    const desde = bitDesde ? new Date(`${bitDesde}T00:00:00`).getTime() : null;
+    const hasta = bitHasta ? new Date(`${bitHasta}T23:59:59.999`).getTime() : null;
+    return bitacora.filter((e) => {
+      const t = new Date(e.creado_en).getTime();
+      if (desde !== null && t < desde) return false;
+      if (hasta !== null && t > hasta) return false;
+      if (bitQuien && e.usuario !== bitQuien) return false;
+      if (bitAccion && e.accion !== bitAccion) return false;
+      if (bitSoloAflojan && !ACCIONES_QUE_AFLOJAN.has(e.accion)) return false;
+      return true;
+    });
+  }, [bitacora, bitDesde, bitHasta, bitQuien, bitAccion, bitSoloAflojan]);
+  const bitHayFiltros = bitDesde || bitHasta || bitQuien || bitAccion || bitSoloAflojan;
   /** Cómo se vigila el tanque que se está creando. Arranca en null y hay que
    *  elegir: es la diferencia entre que el tanque quede ciego porque alguien
    *  lo decidió y que quede ciego porque nadie miró el formulario. */
@@ -3063,7 +3269,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {criticasAbiertas > 0 && (
         <button
           onClick={abrirModalAlertas}
-          className="w-full mb-6 flex items-center gap-3 rounded-xl border-2 border-red-300 bg-red-50 px-5 py-4 text-left hover:bg-red-100 transition-colors"
+          className="w-full mb-6 flex  items-center gap-3 rounded-xl border-2 border-red-300 bg-red-50 px-5 py-4 text-left hover:bg-red-100 transition-colors"
         >
           <span className="text-2xl leading-none">⚠️</span>
           <span className="flex-1">
@@ -3080,21 +3286,21 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           <span className="text-xs font-semibold text-red-800 underline">Revisar</span>
         </button>
       )}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-10">
+      <div className="flex flex-col  lg:flex-row lg:items-center lg:justify-between gap-6 mb-10">
         <div>
-          <h1 className="text-3xl font-bold text-slate-800">Control de Combustible</h1>
-          <p className="text-slate-500">Tanques y puntos de abastecimiento</p>
+          <h1 className="text-2xl font-extrabold text-white">Control de Combustible</h1>
+          <p className="text-sm text-[#94a3b8]">Tanques y puntos de abastecimiento</p>
         </div>
+
         {pestanaCombustible === "tanques" && (
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             <label
-              className={`px-4 py-2.5 border rounded-xl flex items-center gap-2 transition-all ${
-                importando
-                  ? "bg-emerald-100 text-emerald-400 border-emerald-200 cursor-wait"
-                  : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 cursor-pointer"
+              className={`${BTN_BASE} ${BTN_ESTILO.outline} ${
+                importando ? "opacity-50 cursor-wait" : "cursor-pointer"
               }`}
             >
-              <span>📊 {importando ? "Importando..." : "Importar Excel"}</span>
+              <BarChart2 className="w-4 h-4 shrink-0" />
+              <span>{importando ? "Importando..." : "Importar Excel"}</span>
               <input
                 type="file"
                 accept=".xlsx, .xls"
@@ -3105,51 +3311,33 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             </label>
             <button
               onClick={abrirModalHistorialDespachos}
-              className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
+              className={`${BTN_BASE} ${BTN_ESTILO.lime}`}
             >
-              📋 Historial de despachos
+              <FileText className="w-4 h-4 shrink-0" /> Historial de despachos
             </button>
             <button
               onClick={abrirModalHistorialRecepciones}
-              className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
+              className={`${BTN_BASE} ${BTN_ESTILO.lime}`}
             >
-              🧾 Historial de recepciones
+              <FileText className="w-4 h-4 shrink-0" /> Historial de recepciones
             </button>
-            <button
-              onClick={abrirModalAlertas}
-              className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
-            >
-              🔔 Alertas
+            <button onClick={abrirModalAlertas} className={`${BTN_BASE} ${BTN_ESTILO.lime}`}>
+              <Bell className="w-4 h-4 shrink-0" /> Alertas
             </button>
-            <button
-              onClick={abrirModalGrifos}
-              className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
-            >
-              Grifos / Proveedores
+            <button onClick={abrirModalGrifos} className={`${BTN_BASE} ${BTN_ESTILO.muted}`}>
+              <Wrench className="w-4 h-4 shrink-0" /> Grifos / Proveedores
             </button>
-            <button
-              onClick={abrirModalPrecios}
-              className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all"
-            >
-              Precios
+            <button onClick={abrirModalPrecios} className={`${BTN_BASE} ${BTN_ESTILO.muted}`}>
+              <Tag className="w-4 h-4 shrink-0" /> Precios
             </button>
-            <button
-              onClick={abrirModalRecepcion}
-              className="px-6 py-2.5 bg-sky-600 hover:bg-sky-700 text-white font-medium rounded-xl transition-all"
-            >
-              🚚 Registrar recepción
+            <button onClick={abrirModalRecepcion} className={`${BTN_BASE} ${BTN_ESTILO.secundary}`}>
+              <Truck className="w-4 h-4 shrink-0" /> Registrar recepción
             </button>
-            <button
-              onClick={abrirModalDespacho}
-              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-xl transition-all"
-            >
-              ⛽ Registrar despacho
+            <button onClick={abrirModalDespacho} className={`${BTN_BASE} ${BTN_ESTILO.secundary}`}>
+              <ClipboardCheck className="w-4 h-4 shrink-0" /> Registrar despacho
             </button>
-            <button
-              onClick={abrirModalNuevo}
-              className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
-            >
-              + Nuevo Tanque
+            <button onClick={abrirModalNuevo} className={`${BTN_BASE} ${BTN_ESTILO.primary}`}>
+              <Plus className="w-4 h-4 shrink-0" /> Nuevo Tanque
             </button>
           </div>
         )}
@@ -3183,192 +3371,238 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {/**AGREGAR MAS COLUMNAS  */}{" "}
       {pestanaCombustible === "tanques" &&
         (tanques.length === 0 ? (
-          <div className="bg-slate-50 border border-slate-200 border-dashed rounded-xl p-10 text-center text-slate-500">
+          <div className="bg-slate-50  border bg-[#BADC1E] border-dashed rounded-xl p-10 text-center text-slate-500">
             No hay tanques registrados todavía.
           </div>
         ) : (
-          <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    Código
-                  </th>
-                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    Nombre
-                  </th>
-                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    Tipo
-                  </th>
-                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    Punto
-                  </th>
-                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    Humbral minimo
-                  </th>
-                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    Nivel
-                  </th>
-                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    Costo prom.
-                  </th>
-                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    Estado
-                  </th>
-                  <th className="p-4 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                    Acciones
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {tanques.map((t) => {
-                  // Sin lecturas vigentes el nivel es desconocido: no se pinta
-                  // ni de rojo ni de verde, porque las dos afirmarían algo que
-                  // nadie midió.
-                  const sinNivel = t.nivel_actual === null;
-                  // Una sola fuente de verdad para el color: el umbral y el
-                  // nivel tienen que pintarse SIEMPRE igual -- si viven
-                  // separados, un cambio futuro en la regla los deja
-                  // contradiciéndose en la misma fila.
-                  const bajoUmbral = Number(t.nivel_actual) <= Number(t.nivel_minimo);
-                  const colorNivel = sinNivel
-                    ? "text-slate-400"
-                    : bajoUmbral
-                      ? "text-red-500"
-                      : "text-emerald-600";
-                  return (
-                    <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="p-4 font-mono text-sm text-slate-500">{t.codigo}</td>
-                      <td className="p-4 text-sm font-semibold text-slate-800">
-                        {t.tanque_nombre}
-                        {t.ubicacion && <p className="text-xs text-slate-400">{t.ubicacion}</p>}
-                      </td>
-                      <td className="p-4 text-sm text-slate-600">
-                        {ETIQUETA_TIPO_COMBUSTIBLE[t.tipo_combustible]}
-                      </td>
-                      <td className="p-4 text-sm text-slate-600">
-                        {ETIQUETA_TIPO_PUNTO[t.tipo_punto]}
-                      </td>
-                      <td className="p-4 text-sm">
-                        <span className={`font-medium ${colorNivel}`}>
-                          {Number(t.nivel_minimo).toLocaleString("es-PE")} {t.unidad}
-                        </span>
-                      </td>
-                      <td className="p-4 text-sm">
-                        {sinNivel ? (
-                          <>
-                            <span className="text-slate-400 italic">Sin lecturas</span>
-                            <p className="text-xs text-slate-400">
-                              Capacidad: {Number(t.capacidad_total).toLocaleString("es-PE")}{" "}
-                              {t.unidad}
-                            </p>
-                          </>
-                        ) : (
-                          <>
-                            <span className={`font-bold ${colorNivel}`}>
-                              {Number(t.nivel_actual).toLocaleString("es-PE")}
-                            </span>
-                            <span className="text-slate-400">
-                              {" "}
-                              / {Number(t.capacidad_total).toLocaleString("es-PE")} {t.unidad} (
-                              {t.porcentaje}%)
-                            </span>
-                            <p className="text-xs text-slate-400">
-                              Última lectura: {formatearFecha(t.fecha_actualizacion!)}
-                            </p>
-                          </>
-                        )}
-                      </td>
-                      {/* Fase C (0064) -- solo lectura: lo escribe el motor de
+          <>
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(320px,380px)_1fr] gap-6 items-start">
+              <TanqueVisual tanques={tanques.filter((t) => t.activo)} />
+              <div className="min-w-0">
+                <div
+                  className="bg-[#192526] 
+           border border-[#2a2e37] rounded-lg overflow-hidden shadow-sm overflow-x-auto"
+                >
+                  <table className="w-full text-left border-collapse">
+                    <thead className="bg-[#192526] border-b  border-b-[#2a2e37]">
+                      <tr>
+                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                          Código
+                        </th>
+                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                          Nombre
+                        </th>
+                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                          Tipo
+                        </th>
+                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                          Punto
+                        </th>
+                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                          Humbral minimo
+                        </th>
+                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                          Nivel
+                        </th>
+                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                          Costo prom.
+                        </th>
+                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                          Estado
+                        </th>
+                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest text-right">
+                          Acciones
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#2a2e37]/50">
+                      {tanques.map((t) => {
+                        // Sin lecturas vigentes el nivel es desconocido: no se pinta
+                        // ni de rojo ni de verde, porque las dos afirmarían algo que
+                        // nadie midió.
+                        const sinNivel = t.nivel_actual === null;
+                        // Una sola fuente de verdad para el color: el umbral y el
+                        // nivel tienen que pintarse SIEMPRE igual -- si viven
+                        // separados, un cambio futuro en la regla los deja
+                        // contradiciéndose en la misma fila.
+                        const bajoUmbral = Number(t.nivel_actual) <= Number(t.nivel_minimo);
+                        const colorNivel = sinNivel
+                          ? "text-slate-400"
+                          : bajoUmbral
+                            ? "text-red-500"
+                            : "text-[#a3e635]";
+                        return (
+                          <tr key={t.id} className=" transition-colors">
+                            <td className="p-4 font-mono text-sm text-[#94a3b8]">{t.codigo}</td>
+                            <td className="p-4 text-sm font-semibold text-white">
+                              {t.tanque_nombre}
+                              {t.ubicacion && (
+                                <p className="text-xs text-slate-400">{t.ubicacion}</p>
+                              )}
+                            </td>
+                            <td className="p-4 text-sm text-slate-600">
+                              {ETIQUETA_TIPO_COMBUSTIBLE[t.tipo_combustible]}
+                            </td>
+                            <td className="p-4 text-sm text-slate-600">
+                              {ETIQUETA_TIPO_PUNTO[t.tipo_punto]}
+                            </td>
+                            <td className="p-4 text-sm">
+                              <span className="font-mono font-semibold text-[#f59e0b]">
+                                {Number(t.nivel_minimo).toLocaleString("es-PE")} {t.unidad}
+                              </span>
+                            </td>
+                            <td className="p-4 text-sm">
+                              {sinNivel ? (
+                                <>
+                                  <span className="text-slate-400 italic">Sin lecturas</span>
+                                  <p className="text-xs text-slate-400">
+                                    Capacidad: {Number(t.capacidad_total).toLocaleString("es-PE")}{" "}
+                                    {t.unidad}
+                                  </p>
+                                </>
+                              ) : (
+                                <>
+                                  <span className={`font-mono font-bold ${colorNivel}`}>
+                                    {Number(t.nivel_actual).toLocaleString("es-PE")}
+                                  </span>
+                                  <span className="text-slate-400">
+                                    {" "}
+                                    / {Number(t.capacidad_total).toLocaleString("es-PE")} {t.unidad}{" "}
+                                    ({t.porcentaje}%)
+                                  </span>
+                                  <p className="text-xs text-slate-400">
+                                    Última lectura: {formatearFecha(t.fecha_actualizacion!)}
+                                  </p>
+                                </>
+                              )}
+                            </td>
+                            {/* Fase C (0064) -- solo lectura: lo escribe el motor de
                         recepciones. 0 significa "todavía no se registró
                         ninguna compra", no "sale gratis": decirlo con
                         palabras evita que se lea como un precio real. */}
-                      <td className="p-4 text-sm">
-                        {Number(t.costo_promedio) === 0 ? (
-                          <span className="text-slate-400 italic text-xs">Sin recepciones</span>
-                        ) : (
-                          <span className="font-medium text-slate-700">
-                            {t.moneda} {Number(t.costo_promedio).toFixed(4)}
-                            <span className="text-slate-400 font-normal"> / {t.unidad}</span>
-                          </span>
-                        )}
-                      </td>
-                      <td className="p-4 text-sm">
-                        <span
-                          className={`px-2 py-1 rounded-full text-xs font-medium ${
-                            t.activo
-                              ? "bg-emerald-50 text-emerald-700"
-                              : "bg-slate-100 text-slate-500"
-                          }`}
-                        >
-                          {t.activo ? "Activo" : "Desactivado"}
-                        </span>
-                        {(() => {
-                          const v = vigilanciaDe(t);
-                          if (v.nivel === "completa") return null;
-                          return (
-                            <span
-                              title={v.apagados.join("\n")}
-                              className={`mt-1 block w-fit px-2 py-1 rounded-full text-xs font-semibold cursor-help ${
-                                v.nivel === "sin"
-                                  ? "bg-red-50 text-red-700 ring-1 ring-red-200"
-                                  : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
-                              }`}
-                            >
-                              {v.nivel === "sin" ? "Sin vigilancia" : "Vigilancia parcial"}
-                            </span>
-                          );
-                        })()}
-                      </td>
-                      <td className="p-4 text-right space-x-2">
-                        <button
-                          onClick={() => abrirModalHistorial(t)}
-                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                          title="Ver historial de lecturas"
-                        >
-                          📋
-                        </button>
-                        <button
-                          onClick={() => abrirModalLectura(t)}
-                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                          title="Registrar lectura"
-                        >
-                          ⛽
-                        </button>
-                        <button
-                          onClick={() => abrirModalKardex(t.id)}
-                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                          title="Kardex: movimiento del tanque con saldo corriente"
-                        >
-                          📒
-                        </button>
-                        <button
-                          onClick={() => abrirModalEditar(t)}
-                          className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                          title="Editar"
-                        >
-                          ✏️
-                        </button>
-                        {t.activo && (
-                          <button
-                            onClick={() => handleDesactivar(t)}
-                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                            title="Desactivar"
-                          >
-                            🗑️
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                            <td className="p-4 text-sm">
+                              {Number(t.costo_promedio) === 0 ? (
+                                <span className="inline-block rounded-full border border-[#334155] bg-[#0D1719] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#94a3b8]">
+                                  Sin recepciones
+                                </span>
+                              ) : (
+                                <span className="font-mono font-medium text-[#cbd5e1]">
+                                  {t.moneda} {Number(t.costo_promedio).toFixed(4)}
+                                  <span className="text-slate-400 font-normal"> / {t.unidad}</span>
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-4 text-sm">
+                              <span
+                                className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                  t.activo
+                                    ? "bg-[#a3e635]/15 text-[#a3e635] border border-[#a3e635]/30 font-bold"
+                                    : "bg-slate-100 text-slate-500"
+                                }`}
+                              >
+                                {t.activo ? "Activo" : "Desactivado"}
+                              </span>
+                              {(() => {
+                                const v = vigilanciaDe(t);
+                                if (v.nivel === "completa") return null;
+                                return (
+                                  <span
+                                    title={v.apagados.join("\n")}
+                                    className={`mt-1 block w-fit px-2 py-1 rounded-full text-xs font-semibold cursor-help ${
+                                      v.nivel === "sin"
+                                        ? "bg-red-50 text-red-700 ring-1 ring-red-200"
+                                        : "bg-amber-50 text-amber-700 ring-1 ring-amber-200"
+                                    }`}
+                                  >
+                                    {v.nivel === "sin" ? "Sin vigilancia" : "Vigilancia parcial"}
+                                  </span>
+                                );
+                              })()}
+                            </td>
+                            <td className="p-4">
+                              <div className="flex flex-nowrap items-center justify-end gap-1 min-w-max">
+                                <button
+                                  onClick={() => setTanqueVerId(t.id)}
+                                  className="p-1.5 rounded text-[#94a3b8] hover:text-white transition-colors"
+                                  title="Ver tanque"
+                                >
+                                  <Eye className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => abrirModalHistorial(t)}
+                                  className="p-1.5 rounded text-[#94a3b8] hover:text-white transition-colors"
+                                  title="Ver historial de lecturas"
+                                >
+                                  <ClipboardList className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => abrirModalLectura(t)}
+                                  className="p-1.5 rounded text-[#f59e0b] hover:text-amber-300 transition-colors"
+                                  title="Registrar lectura"
+                                >
+                                  <Fuel className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => abrirModalKardex(t.id)}
+                                  className="p-1.5 rounded text-[#94a3b8] hover:text-white transition-colors"
+                                  title="Kardex: movimiento del tanque con saldo corriente"
+                                >
+                                  <BookOpen className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => abrirModalEditar(t)}
+                                  className="p-1.5 rounded text-[#94a3b8] hover:text-white transition-colors"
+                                  title="Editar"
+                                >
+                                  <Pencil className="w-4 h-4" />
+                                </button>
+                                {t.activo && (
+                                  <button
+                                    onClick={() => handleDesactivar(t)}
+                                    className="p-1.5 rounded text-[#ef4444]/60 hover:text-[#ef4444] transition-colors"
+                                    title="Desactivar"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </>
         ))}
+      {/* Tanque en vivo (diseño Figma): se abre con el ojo de la fila */}
+      {tanqueVerId !== null &&
+        (() => {
+          const tv = tanques.find((x) => x.id === tanqueVerId);
+          if (!tv) return null;
+          return (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 overflow-y-auto"
+              onClick={() => setTanqueVerId(null)}
+            >
+              <div className="relative w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+                <button
+                  onClick={() => setTanqueVerId(null)}
+                  className="absolute top-3 right-3 z-10 text-[#64748b] hover:text-white"
+                  aria-label="Cerrar"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+                <TanqueVisual tanques={[tv]} />
+              </div>
+            </div>
+          );
+        })()}
       {/* Modal: alta / edición de tanque */}
       {modalTanqueAbierto && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b flex justify-between items-center">
               <h3 className="text-xl font-bold">{editandoId ? "Editar Tanque" : "Nuevo Tanque"}</h3>
@@ -4124,7 +4358,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {/* Modal: anular lectura (motivo obligatorio) -- se monta por encima
           del historial, que queda abierto detrás. */}
       {lecturaAAnular && tanqueHistorial && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
+        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl">
             <div className="p-6 border-b flex justify-between items-center">
               <h3 className="text-xl font-bold">Anular lectura</h3>
@@ -4183,7 +4417,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       )}
       {/* Modal: registrar lectura - ícono de tanque*/}
       {tanqueLectura && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl">
             <div className="p-6 border-b flex justify-between items-center">
               <h3 className="text-xl font-bold">Lectura — {tanqueLectura.tanque_nombre}</h3>
@@ -4281,7 +4515,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       )}
       {/* Modal: registrar despacho (Fase B) */}
       {modalDespachoAbierto && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b flex justify-between items-center">
               <h3 className="text-xl font-bold">Registrar despacho</h3>
@@ -4954,7 +5188,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       )}
       {/* Modal: Grifos externos (migrations/0063) */}
       {modalGrifosAbierto && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b flex justify-between items-center">
               <div>
@@ -5080,7 +5314,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       )}
       {/* Modal: Precios de combustible (migrations/0063) */}
       {modalPreciosAbierto && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b flex justify-between items-center">
               <h3 className="text-xl font-bold">Precio de combustible</h3>
@@ -5319,7 +5553,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {/* Modal: anular precio (motivo obligatorio) -- se monta por encima
           del historial, que queda abierto detrás. */}
       {precioAAnular && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
+        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
           <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl">
             <div className="p-6 border-b flex justify-between items-center">
               <h3 className="text-xl font-bold">Anular precio</h3>
@@ -5502,7 +5736,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     viaja con ella. El fondo opaco es lo que hace que las
                     filas pasen por detrás en vez de encimarse. */}
                 <thead>
-                  <tr className="text-left text-xs font-bold text-slate-700 uppercase [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-white [&>th]:shadow-[inset_0_-1px_0_#e2e8f0]">
+                  <tr className="text-left text-xs font-bold text-slate-700 uppercase [&>th]:sticky [&>th]:top-0 [&>th]:z-10 [&>th]:bg-[#192526] [&>th]:shadow-[inset_0_-1px_0_#2a2e37]">
                     <th className="p-2">Fecha</th>
                     <th className="p-2">Movimiento</th>
                     <th className="p-2">Documento</th>
@@ -5957,7 +6191,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               type="button"
               onClick={() =>
                 exportarCsvCombustible(
-                  bitacora.map((e) => ({
+                  bitacoraFiltrada.map((e) => ({
                     cuando: new Date(e.creado_en).toLocaleString("es-PE"),
                     quien: e.usuario,
                     que_hizo: ETIQUETA_ACCION[e.accion] ?? e.accion,
@@ -5966,11 +6200,88 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   `bitacora-combustible-${new Date().toISOString().slice(0, 10)}.csv`
                 )
               }
-              disabled={bitacora.length === 0}
+              disabled={bitacoraFiltrada.length === 0}
               className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
             >
               ⬇️ Exportar
             </button>
+          </div>
+
+          <div className="px-6 py-4 border-b flex flex-wrap items-end gap-3">
+            <label className="text-xs font-bold text-slate-500 uppercase">
+              Desde
+              <input
+                type="date"
+                value={bitDesde}
+                onChange={(e) => setBitDesde(e.target.value)}
+                className="mt-1 block border border-slate-200 rounded-lg px-3 py-2 text-sm font-normal normal-case"
+              />
+            </label>
+            <label className="text-xs font-bold text-slate-500 uppercase">
+              Hasta
+              <input
+                type="date"
+                value={bitHasta}
+                onChange={(e) => setBitHasta(e.target.value)}
+                className="mt-1 block border border-slate-200 rounded-lg px-3 py-2 text-sm font-normal normal-case"
+              />
+            </label>
+            <label className="text-xs font-bold text-slate-500 uppercase">
+              Quién
+              <select
+                value={bitQuien}
+                onChange={(e) => setBitQuien(e.target.value)}
+                className="mt-1 block border border-slate-200 rounded-lg px-3 py-2 text-sm font-normal normal-case"
+              >
+                <option value="">Todos</option>
+                {bitUsuarios.map((u) => (
+                  <option key={u} value={u}>
+                    {u}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="text-xs font-bold text-slate-500 uppercase">
+              Qué hizo
+              <select
+                value={bitAccion}
+                onChange={(e) => setBitAccion(e.target.value)}
+                className="mt-1 block border border-slate-200 rounded-lg px-3 py-2 text-sm font-normal normal-case"
+              >
+                <option value="">Todo</option>
+                {bitAcciones.map((a) => (
+                  <option key={a} value={a}>
+                    {ETIQUETA_ACCION[a] ?? a}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-center gap-2 text-sm text-slate-600 pb-2">
+              <input
+                type="checkbox"
+                checked={bitSoloAflojan}
+                onChange={(e) => setBitSoloAflojan(e.target.checked)}
+              />
+              Solo los que reducen la vigilancia
+            </label>
+            {bitHayFiltros && (
+              <button
+                type="button"
+                onClick={() => {
+                  setBitDesde("");
+                  setBitHasta("");
+                  setBitQuien("");
+                  setBitAccion("");
+                  setBitSoloAflojan(false);
+                }}
+                className="px-3 py-2 border border-slate-200 text-slate-600 rounded-lg text-sm hover:bg-slate-50"
+              >
+                Limpiar
+              </button>
+            )}
+            <span className="ml-auto pb-2 text-xs text-slate-400">
+              {bitacoraFiltrada.length} de {bitacora.length}
+            </span>
           </div>
 
           <div className="overflow-auto p-6">
@@ -5978,6 +6289,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               <p className="text-slate-400 text-center py-8">Cargando...</p>
             ) : bitacora.length === 0 ? (
               <p className="text-slate-400 text-center py-8">Todavía no hay movimientos.</p>
+            ) : bitacoraFiltrada.length === 0 ? (
+              <p className="text-slate-400 text-center py-8">
+                Ningún movimiento coincide con los filtros.
+              </p>
             ) : (
               <table className="w-full text-sm">
                 <thead>
@@ -5989,7 +6304,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   </tr>
                 </thead>
                 <tbody>
-                  {bitacora.map((e) => {
+                  {bitacoraFiltrada.map((e) => {
                     const afloja = ACCIONES_QUE_AFLOJAN.has(e.accion);
                     const cambios = (e.detalle.aflojados ?? []) as Array<{
                       control: string;
@@ -6504,7 +6819,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           es obligatorio: es lo único que distingue "se mojó con diésel" de
           "estoy borrando un vale que no me conviene". */}
       {despachoAAnular && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
+        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl">
             <div className="p-6 border-b">
               <h3 className="text-xl font-bold">Anular vale</h3>
@@ -6562,7 +6877,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       )}
       {/* Modal: registrar recepción (Fase C, migrations/0064) */}
       {modalRecepcionAbierto && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b flex justify-between items-center">
               <div>
@@ -6828,7 +7143,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       )}
       {/* Modal: historial de recepciones (con anulación) */}
       {modalHistorialRecepcionesAbierto && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl max-h-[85vh] flex flex-col">
             <div className="p-6 border-b flex justify-between items-center shrink-0">
               <div>
@@ -7086,7 +7401,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           lecturas y precios: es lo único que distingue un error de tipeo de
           alguien borrando un número que no le conviene. */}
       {recepcionAValidar && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
+        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl">
             <div className="p-6 border-b">
               <h3 className="text-xl font-bold">Validar contra la guía</h3>
@@ -7151,8 +7466,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           </div>
         </div>
       )}
+      {/**Modal: recepción anular */}
       {recepcionAAnular && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
+        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl">
             <div className="p-6 border-b">
               <h3 className="text-xl font-bold">Anular recepción</h3>
