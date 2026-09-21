@@ -25,6 +25,28 @@ type IntervaloCalibracion = Awaited<
   ReturnType<CombustibleRepository["findMuestraDescuadresParaCalibracion"]>
 >[number];
 
+/** Resumen del consumo anterior a la primera varilla, o null si no hay. */
+function resumirHistorico(
+  filas: {
+    historico: boolean;
+    anulada: boolean;
+    entrada: number;
+    salida: number;
+    ocurrido_en: Date;
+  }[]
+) {
+  const h = filas.filter((f) => f.historico && !f.anulada);
+  if (h.length === 0) return null;
+  const fechas = h.map((f) => new Date(f.ocurrido_en).getTime());
+  return {
+    movimientos: h.length,
+    litros_salida: Number(h.reduce((a, f) => a + f.salida, 0).toFixed(2)),
+    litros_entrada: Number(h.reduce((a, f) => a + f.entrada, 0).toFixed(2)),
+    desde: new Date(Math.min(...fechas)).toISOString(),
+    hasta: new Date(Math.max(...fechas)).toISOString(),
+  };
+}
+
 export class CombustibleService {
   private repository = new CombustibleRepository();
 
@@ -1899,6 +1921,36 @@ export class CombustibleService {
     return { creadas };
   }
 
+  /** Avisa, UNA vez por tanque, que hay consumo anterior a su primera varilla
+   *  (0093). El kardex ya lo muestra como "consumo histórico" sin mover el
+   *  saldo; esto es para que nadie lo lea como auditado. */
+  async evaluarHistorialSinContrastar(client: PoolClient, tenantId: string) {
+    const tanques = await this.repository.findTanquesConHistorialPrevio(client, tenantId);
+    if (tanques.length === 0) return { alertas: [] };
+
+    await this.repository.crearAlertas(
+      client,
+      tenantId,
+      tanques.map((t) => ({
+        tipo: "historial_sin_contrastar" as const,
+        combustibleId: t.id,
+        detalle: {
+          tanqueNombre: t.tanque_nombre,
+          codigo: t.codigo,
+          unidad: t.unidad,
+          vales: Number(t.vales),
+          litrosDespachados: Number(t.litros_despachados),
+          recepciones: Number(t.recepciones),
+          litrosRecibidos: Number(t.litros_recibidos),
+          desde: new Date(t.desde).toISOString(),
+          hasta: new Date(t.hasta).toISOString(),
+          primeraVarilla: new Date(t.primera_varilla).toISOString(),
+        },
+      }))
+    );
+    return { alertas: tanques };
+  }
+
   async evaluarTanquesSinMedir(client: PoolClient, tenantId: string) {
     const dias = await this.repository.getDiasSinMedir(client, tenantId);
     const tanques = await this.repository.findTanquesSinMedir(client, tenantId, dias);
@@ -2722,7 +2774,8 @@ export class CombustibleService {
         nivel_medido: nivelMedido,
         // Un movimiento anulado no mueve el saldo, así que mostrar la columna
         // sería sugerir que sí participó de la cuenta.
-        saldo_teorico: anulada ? null : saldoTeorico,
+        saldo_teorico: anulada || f.historico ? null : saldoTeorico,
+        historico: f.historico,
         dif_tramo: difTramo,
         dif_acumulada: difAcumulada,
         usuario: f.usuario ?? "Sistema",
@@ -2742,15 +2795,23 @@ export class CombustibleService {
       periodo: { desde, hasta },
       // El saldo con el que arranca la cuenta. Sale del SQL: es el saldo
       // teórico de la primera fila menos lo que esa fila movió.
-      saldo_inicial:
-        filas.length > 0 && filas[0].saldo_teorico !== null
-          ? Number((filas[0].saldo_teorico - filas[0].entrada + filas[0].salida).toFixed(2))
-          : null,
+      // La primera fila que SÍ movió el saldo: las anuladas y el histórico
+      // no tienen saldo teórico y no sirven de punto de partida.
+      saldo_inicial: (() => {
+        const f = filas.find((x) => x.saldo_teorico !== null);
+        return f ? Number((f.saldo_teorico! - f.entrada + f.salida).toFixed(2)) : null;
+      })(),
       filas,
       // El cierre del período, que es lo que un auditor copia al informe.
       resumen: {
-        entradas: Number(filas.reduce((a, f) => a + (f.anulada ? 0 : f.entrada), 0).toFixed(2)),
-        salidas: Number(filas.reduce((a, f) => a + (f.anulada ? 0 : f.salida), 0).toFixed(2)),
+        entradas: Number(
+          filas.reduce((a, f) => a + (f.anulada || f.historico ? 0 : f.entrada), 0).toFixed(2)
+        ),
+        salidas: Number(
+          filas.reduce((a, f) => a + (f.anulada || f.historico ? 0 : f.salida), 0).toFixed(2)
+        ),
+        // Lo previo a la primera varilla: se ve, pero no entra a la cuenta.
+        historico: resumirHistorico(filas),
         mediciones: filas.filter((f) => f.tipo === "lectura" && !f.anulada).length,
         anulados: filas.filter((f) => f.anulada).length,
         // La última diferencia acumulada del período: el número que hay que

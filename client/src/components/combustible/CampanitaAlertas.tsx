@@ -35,6 +35,7 @@ const ETIQUETA_TIPO: Record<string, string> = {
   consumo_excedido: "Consumo por encima del máximo",
   varilla_sin_control: "Solo mide quien despacha",
   varilla_exacta: "Varillas que cuadran al litro",
+  historial_sin_contrastar: "Consumo previo a la primera varilla",
   tanque_sin_vigilancia: "Tanque despachando sin vigilancia",
 };
 

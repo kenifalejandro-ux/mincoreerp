@@ -191,6 +191,17 @@ async function conciliarTenant(
       dias: 0,
     }
   );
+  // Consumo anterior a la primera varilla (0093). Informativo: sin correo,
+  // solo la campanita -- es un aviso de "esto no está contrastado", no un robo.
+  const historial = await paso(
+    "historial_sin_contrastar",
+    () => service.evaluarHistorialSinContrastar(client, tenantId),
+    {
+      alertas: [] as Awaited<
+        ReturnType<CombustibleService["evaluarHistorialSinContrastar"]>
+      >["alertas"],
+    }
+  );
   const vigilanciaExtra = await paso(
     "controles_de_la_quinta_auditoria",
     () => service.evaluarControlesPeriodicos(client, tenantId),
@@ -218,7 +229,7 @@ async function conciliarTenant(
     capturarError(e.error, { worker: "combustibleConciliacion", tenantId, alertaId: e.alertaId });
   }
 
-  return { ...congelado, sinMedir, sinVigilancia, vigilanciaExtra };
+  return { ...congelado, sinMedir, sinVigilancia, vigilanciaExtra, historial };
 }
 
 /** Los avisos salen FUERA de la transacción: mandarlos adentro la dejaría
@@ -230,6 +241,11 @@ async function avisarResultado(tenantId: string, r: ResultadoTenant): Promise<vo
   }
   if (r.sinMedir.alertas.length > 0) {
     await avisarSinMedir(tenantId, r.sinMedir.alertas, r.sinMedir.dias);
+  }
+  if (r.historial.alertas.length > 0) {
+    await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+      tipo: "historial_sin_contrastar",
+    }).catch((err) => logger.warn({ err, tenantId }, "No se pudo publicar el evento"));
   }
   if (r.vigilanciaExtra.creadas.length > 0) {
     await avisarControlesPeriodicos(tenantId, r.vigilanciaExtra.creadas);
