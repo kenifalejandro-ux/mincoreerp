@@ -4305,6 +4305,10 @@ export class CombustibleRepository {
          FROM combustible_despachos d
          LEFT JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = $1
         WHERE d.tenant_id = $1 AND d.equipo_id = $2 AND d.anulada_en IS NULL
+          -- La urea (0092) también es un vale a un equipo, pero no se quema en
+          -- el motor: sumarla inflaba el consumo y disparaba consumo_excedido
+          -- en falso.
+          AND d.producto = 'combustible'
           AND d.despachado_en > $3`,
       [tenantId, equipoId, desde]
     );
@@ -4328,6 +4332,72 @@ export class CombustibleRepository {
       tipoMedidor: f.tipo_medidor,
       placa: f.placa_codigo,
     };
+  }
+
+  /** Los vales de COMBUSTIBLE a equipos, en litros, del más viejo al más
+   *  nuevo. Todos, con o sin medidor: los que no traen medidor igual se
+   *  quemaron en el motor y tienen que contar en el numerador del consumo.
+   *  Sin urea (no se quema) y sin anulados.
+   *
+   *  `equipoId` null = toda la flota (el reporte); con id, un solo equipo (la
+   *  sugerencia). `desde` null = sin límite hacia atrás; `limite` corta por
+   *  el lado VIEJO, así que lo que se pierde es la historia más antigua.
+   *
+   *  compra_externa no tiene tanque y por lo tanto no tiene unidad: se toma
+   *  como litros, igual que en findAcumuladoDiario. */
+  async findValesParaConsumo(
+    client: PoolClient,
+    tenantId: string,
+    filtro: { equipoId: number | null; desde: string | null; hasta: string; limite: number }
+  ) {
+    const r = await client.query<{
+      id: string;
+      equipo_id: number;
+      litros: string;
+      lectura_horometro: string | null;
+      lectura_odometro: string | null;
+      despachado_en: Date;
+    }>(
+      `SELECT * FROM (
+         SELECT d.id, d.equipo_id,
+                d.cantidad * CASE WHEN c.unidad = 'gal' THEN 3.785411784 ELSE 1 END AS litros,
+                d.lectura_horometro, d.lectura_odometro, d.despachado_en
+           FROM combustible_despachos d
+           LEFT JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = $1
+          WHERE d.tenant_id = $1 AND d.anulada_en IS NULL
+            AND d.producto = 'combustible' AND d.equipo_id IS NOT NULL
+            AND ($2::int IS NULL OR d.equipo_id = $2)
+            AND ($3::timestamptz IS NULL OR d.despachado_en >= $3)
+            AND d.despachado_en <= $4
+          ORDER BY d.despachado_en DESC, d.id DESC
+          LIMIT $5
+       ) ultimos
+       ORDER BY despachado_en ASC, id ASC`,
+      [tenantId, filtro.equipoId, filtro.desde, filtro.hasta, filtro.limite]
+    );
+    return r.rows;
+  }
+
+  /** Los datos del equipo que el reporte de consumo necesita para agrupar
+   *  pares (tipo/marca/modelo) y elegir el medidor. */
+  async findEquiposParaConsumo(client: PoolClient, tenantId: string, ids: number[]) {
+    if (ids.length === 0) return [];
+    const r = await client.query<{
+      id: number;
+      placa_codigo: string;
+      tipo: string | null;
+      marca: string | null;
+      modelo: string | null;
+      tipo_medidor: string | null;
+      consumo_maximo_l: string | null;
+      activo: boolean;
+    }>(
+      `SELECT id, placa_codigo, tipo, marca, modelo, tipo_medidor, consumo_maximo_l, activo
+         FROM equipos
+        WHERE tenant_id = $1 AND id = ANY($2::int[])`,
+      [tenantId, ids]
+    );
+    return r.rows;
   }
 
   // ── 5ª auditoría: recepciones validadas contra la guía (0088) ────────

@@ -4002,6 +4002,26 @@ export class CombustibleController {
     }
   }
 
+  /** GET /reportes/consumo-equipos?desde=&hasta= -- CONSUMO POR EQUIPO.
+   *
+   *  El control del robo que sale CON vale (se declaran 400 L y se cargan
+   *  380): ni la varilla ni el totalizador lo ven, porque del tanque salieron
+   *  400 de verdad. Lo único que lo delata es el trabajo que ese combustible
+   *  tendría que haber hecho. Compara cada equipo contra sus pares y contra
+   *  su propio pasado; el detalle está en service.reporteConsumoEquipos. */
+  async getReporteConsumoEquipos(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const { desde, hasta } = req.validatedQuery as KardexCombustibleQuery;
+      const reporte = await withTenant(tenantId, (client) =>
+        service.reporteConsumoEquipos(client, tenantId, desde, hasta)
+      );
+      res.json(reporte);
+    } catch {
+      res.status(500).json({ error: "Error al armar el reporte de consumo" });
+    }
+  }
+
   /** GET /anomalias -- los hallazgos ya congelados. Solo lectura: la tabla
    *  es append-only a propósito (ver migrations/0072), no hay endpoint para
    *  editarlas ni borrarlas. */
