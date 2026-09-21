@@ -14,8 +14,8 @@ export default function Header({ onIrACombustible }: HeaderProps) {
     usuario?.rol === "admin" && (usuario?.modulosPermitidos.includes("combustible") ?? false);
 
   return (
-    <header className="sticky top-0 z-50 bg-[#0A1014] border-b-2 border-[#DDF500]">
-      <div className="max-w-7xl mx-auto px-6 lg:px-8 py-3">
+    <header className="sticky top-0 z-50 bg-[#0D1719] border-b border-[#DDF500]">
+      <div className="w-full px-6 py-3">
         <div className="flex items-center justify-between gap-6">
           {/* Logo y Brand */}
           <div className="flex items-center gap-4">
@@ -27,9 +27,7 @@ export default function Header({ onIrACombustible }: HeaderProps) {
             />
 
             <div className="flex flex-col">
-              <h1 className="text-lg font-semibold text-white tracking-wide uppercase">
-                Mincore ERP
-              </h1>
+              <h1 className="text-lg font-semibold text-white tracking-wide ">Mincore ERP</h1>
               <span className="text-[10px] font-medium text-slate-400 tracking-widest uppercase">
                 Sistema de Gestión
               </span>
