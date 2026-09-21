@@ -314,6 +314,8 @@ interface FilaKardex {
   usuario: string;
   anulada: boolean;
   motivo_anulacion: string | null;
+  // Anterior a la primera varilla: se ve, pero no mueve el saldo.
+  historico: boolean;
 }
 
 interface Kardex {
@@ -327,6 +329,7 @@ interface Kardex {
     mediciones: number;
     anulados: number;
     descuadre_final: number | null;
+    historico: { movimientos: number } | null;
   };
 }
 
@@ -443,7 +446,8 @@ interface AlertaCombustible {
     | "recepcion_retroactiva"
     | "consumo_excedido"
     | "varilla_sin_control"
-    | "varilla_exacta";
+    | "varilla_exacta"
+    | "historial_sin_contrastar";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -965,6 +969,7 @@ const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   consumo_excedido: "Consumo por encima del máximo",
   varilla_sin_control: "Solo mide quien despacha",
   varilla_exacta: "Varillas que cuadran al litro",
+  historial_sin_contrastar: "Consumo previo a la primera varilla",
 };
 
 /** El `detalle` es JSONB libre y cada tipo de alerta guarda cosas
@@ -1083,6 +1088,21 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     return (
       `${varillasSeguidas ?? "?"} mediciones seguidas coincidieron con lo esperado dentro de ` +
       `${toleranciaLitros ?? "?"} L. Una varilla medida casi nunca da exacto`
+    );
+  }
+  if (a.tipo === "historial_sin_contrastar") {
+    const d = a.detalle as {
+      vales?: number;
+      litrosDespachados?: number;
+      recepciones?: number;
+      desde?: string;
+      hasta?: string;
+    };
+    const fecha = (iso?: string) => (iso ? new Date(iso).toLocaleDateString("es-PE") : "?");
+    return (
+      `${d.vales ?? 0} vales (${d.litrosDespachados ?? 0} L) y ${d.recepciones ?? 0} recepciones ` +
+      `del ${fecha(d.desde)} al ${fecha(d.hasta)}, anteriores a la primera medición: ` +
+      `ninguna varilla los contrasta`
     );
   }
   if (a.tipo === "varilla_sin_control") {
@@ -5792,6 +5812,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         </td>
                         <td className="p-2">
                           {etiqueta}
+                          {f.historico && !f.anulada && (
+                            <span className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-500">
+                              consumo histórico
+                            </span>
+                          )}
                           {f.detalle && (
                             <span className="text-slate-400 text-xs"> · {f.detalle}</span>
                           )}
@@ -5837,6 +5862,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               </table>
             )}
 
+            {kardex && kardex.resumen.historico && (
+              <p className="text-xs text-slate-600 mt-4">
+                Los movimientos marcados como consumo histórico son anteriores a la primera medición
+                del tanque: se muestran, pero ninguna varilla los contrasta y no mueven el saldo.
+              </p>
+            )}
             {kardex && kardex.resumen.anulados > 0 && (
               <p className="text-xs text-slate-600 mt-4">
                 Las filas tachadas están anuladas: se muestran porque son evidencia, pero no suman

@@ -90,6 +90,8 @@ export const TIPOS_ALERTA = [
   "urea_equipo_no_habilitado",
   "urea_ratio_excedido",
   "urea_descuadre_conteo",
+  // ── Migración 0093: consumo anterior a la primera varilla del tanque.
+  "historial_sin_contrastar",
 ] as const;
 
 export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];
@@ -1968,6 +1970,67 @@ export class CombustibleRepository {
     return result.rows;
   }
 
+  /** Tanques con despachos o recepciones fechados ANTES de su primera varilla
+   *  vigente (0093): consumo que ninguna medición puede contrastar. Una sola
+   *  alerta por tanque en toda su vida -- se excluye al que ya tuvo una, abierta
+   *  o cerrada, porque el historial no "se arregla" y re-alertar cada hora
+   *  después de que alguien la cerró con motivo sería ruido. */
+  async findTanquesConHistorialPrevio(client: PoolClient, tenantId: string) {
+    const result = await client.query<{
+      id: number;
+      tanque_nombre: string;
+      codigo: string;
+      unidad: string;
+      primera_varilla: Date;
+      vales: string;
+      litros_despachados: string;
+      recepciones: string;
+      litros_recibidos: string;
+      desde: Date;
+      hasta: Date;
+    }>(
+      `
+      SELECT c.id, c.tanque_nombre, c.codigo, c.unidad,
+             p.en AS primera_varilla,
+             h.vales::text, h.litros_despachados::text,
+             h.recepciones::text, h.litros_recibidos::text,
+             h.desde, h.hasta
+        FROM combustible c
+        JOIN LATERAL (
+          SELECT MIN(l.leido_en) AS en FROM combustible_lecturas l
+           WHERE l.tenant_id = $1 AND l.combustible_id = c.id AND l.anulada_en IS NULL
+        ) p ON p.en IS NOT NULL
+        JOIN LATERAL (
+          SELECT COUNT(*) FILTER (WHERE m.tipo = 'despacho') AS vales,
+                 COALESCE(SUM(m.cantidad) FILTER (WHERE m.tipo = 'despacho'), 0) AS litros_despachados,
+                 COUNT(*) FILTER (WHERE m.tipo = 'recepcion') AS recepciones,
+                 COALESCE(SUM(m.cantidad) FILTER (WHERE m.tipo = 'recepcion'), 0) AS litros_recibidos,
+                 MIN(m.en) AS desde, MAX(m.en) AS hasta
+            FROM (
+              SELECT 'despacho' AS tipo, d.cantidad, d.despachado_en AS en
+                FROM combustible_despachos d
+               WHERE d.tenant_id = $1 AND d.combustible_id = c.id
+                 AND d.anulada_en IS NULL AND d.despachado_en < p.en
+              UNION ALL
+              SELECT 'recepcion', r.cantidad, r.recibido_en
+                FROM combustible_recepciones r
+               WHERE r.tenant_id = $1 AND r.combustible_id = c.id
+                 AND r.anulada_en IS NULL AND r.recibido_en < p.en
+            ) m
+        ) h ON h.vales + h.recepciones > 0
+       WHERE c.tenant_id = $1 AND c.activo = true
+         AND NOT EXISTS (
+           SELECT 1 FROM combustible_alertas a
+            WHERE a.tenant_id = $1 AND a.combustible_id = c.id
+              AND a.tipo = 'historial_sin_contrastar'
+         )
+       ORDER BY c.id
+      `,
+      [tenantId]
+    );
+    return result.rows;
+  }
+
   /** Cuántos días puede un tanque despachar sin umbrales antes de que el
    *  sistema empiece a insistir (0082). */
   async getDiasSinVigilancia(client: PoolClient, tenantId: string): Promise<number> {
@@ -2598,6 +2661,7 @@ export class CombustibleRepository {
       usuario: string | null;
       anulada_en: Date | null;
       motivo_anulacion: string | null;
+      historico: boolean;
     }>(
       `
       -- El punto de partida: la última varilla VIGENTE anterior al período.
@@ -2660,18 +2724,37 @@ export class CombustibleRepository {
           FROM combustible_lecturas l
          WHERE l.tenant_id = $1 AND l.combustible_id = $2
            AND l.leido_en >= $3::timestamptz AND l.leido_en <= $4::timestamptz
+      ),
+      -- CONSUMO HISTÓRICO: todo despacho o recepción anterior a la primera
+      -- varilla vigente del tanque (la de TODA su vida, no la del período).
+      -- Nada lo puede contrastar --la medición es posterior-- y si moviera
+      -- el saldo, la primera varilla mostraría un "sobrante" igual a todo
+      -- el consumo previo. Se muestra, pero suma 0, como los anulados.
+      -- Igual instante que la varilla NO es histórico: en el orden del
+      -- kardex el movimiento va antes que la lectura y ella lo ve.
+      primera AS (
+        SELECT MIN(l.leido_en) AS en
+          FROM combustible_lecturas l
+         WHERE l.tenant_id = $1 AND l.combustible_id = $2 AND l.anulada_en IS NULL
+      ),
+      marcados AS (
+        SELECT m.*,
+               COALESCE(m.tipo <> 'lectura'
+                        AND m.ocurrido_en < (SELECT p.en FROM primera p), false) AS historico
+          FROM movimientos m
       )
       SELECT m.ocurrido_en, m.tipo, m.referencia_id, m.documento, m.detalle,
              m.entrada, m.salida, m.nivel_medido,
-             -- El saldo corriente. Los anulados aportan 0 (el CASE), así que
-             -- aparecen en la lista sin ensuciar la cuenta.
+             -- El saldo corriente. Los anulados y el histórico aportan 0 (el
+             -- CASE), así que aparecen en la lista sin ensuciar la cuenta.
              (SELECT a.nivel FROM ancla a) + SUM(
-               CASE WHEN m.anulada_en IS NULL THEN m.entrada - m.salida ELSE 0 END
+               CASE WHEN m.anulada_en IS NULL AND NOT m.historico
+                    THEN m.entrada - m.salida ELSE 0 END
              ) OVER (ORDER BY m.ocurrido_en, m.orden_tipo, m.referencia_id
                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS saldo_teorico,
              u.nombre AS usuario,
-             m.anulada_en, m.motivo_anulacion
-        FROM movimientos m
+             m.anulada_en, m.motivo_anulacion, m.historico
+        FROM marcados m
         LEFT JOIN usuarios u ON u.id = m.usuario_id AND u.tenant_id = $1
        ORDER BY m.ocurrido_en, m.orden_tipo, m.referencia_id
       `,

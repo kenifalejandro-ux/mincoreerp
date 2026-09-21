@@ -3497,7 +3497,7 @@ export class CombustibleController {
           `Dif. tramo (${u})`,
           `Dif. acumulada (${u})`,
           "Quién",
-          "Anulado",
+          "Anulado / histórico",
           "Motivo de anulación",
         ],
         kardex.filas.map((f) => [
@@ -3515,7 +3515,7 @@ export class CombustibleController {
           f.dif_tramo,
           f.dif_acumulada,
           f.usuario,
-          f.anulada ? "SÍ" : "",
+          f.anulada ? "SÍ" : f.historico ? "HISTÓRICO" : "",
           f.motivo_anulacion,
         ])
       );
@@ -3593,7 +3593,7 @@ export class CombustibleController {
         `Dif. tramo (${u})`,
         `Dif. acumulada (${u})`,
         "Quién",
-        "Anulado",
+        "Anulado / histórico",
         "Motivo de anulación",
       ].map((t) => ({ valor: t, negrita: true }));
 
@@ -3615,7 +3615,7 @@ export class CombustibleController {
         litros(f.dif_tramo),
         litros(f.dif_acumulada),
         f.usuario,
-        f.anulada ? "SÍ" : null,
+        f.anulada ? "SÍ" : f.historico ? "HISTÓRICO" : null,
         f.motivo_anulacion,
       ]);
 
@@ -3640,6 +3640,8 @@ export class CombustibleController {
         [`Capacidad (${u})`, { valor: kardex.tanque.capacidad_total, formato: "entero" }],
         [],
         [{ valor: "TOTALES DEL PERÍODO", negrita: true }],
+        // Las filas HISTÓRICAS (anteriores a la primera varilla) también se
+        // saltean: se ven, pero no mueven el saldo -- ver `armarKardex`.
         // Las filas anuladas se SALTEAN (columna L = "SÍ"), igual que en
         // `armarKardex`. Siguen en la hoja de detalle porque son evidencia,
         // pero un vale anulado no sacó combustible: sumarlo daba otro total
@@ -3648,11 +3650,17 @@ export class CombustibleController {
         // diferencia era exactamente el vale de 900 L anulado.
         [
           `Entradas (${u})`,
-          { formula: `SUMIFS(${rango("E")},${rango("L")},"<>SÍ")`, formato: "decimal" },
+          {
+            formula: `SUMIFS(${rango("E")},${rango("L")},"<>SÍ",${rango("L")},"<>HISTÓRICO")`,
+            formato: "decimal",
+          },
         ],
         [
           `Salidas (${u})`,
-          { formula: `SUMIFS(${rango("F")},${rango("L")},"<>SÍ")`, formato: "decimal" },
+          {
+            formula: `SUMIFS(${rango("F")},${rango("L")},"<>SÍ",${rango("L")},"<>HISTÓRICO")`,
+            formato: "decimal",
+          },
         ],
         [
           "Mediciones (varillas)",
