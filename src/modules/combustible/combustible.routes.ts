@@ -304,6 +304,15 @@ router.get(
   asyncHandler(controller.getReporteControles.bind(controller))
 );
 
+// Consumo por equipo contra sus pares y contra su propio pasado: el único
+// control que ve el robo que sale CON vale.
+router.get(
+  "/reportes/consumo-equipos",
+  requireRole("admin"),
+  validateQuery(kardexCombustibleSchema),
+  asyncHandler(controller.getReporteConsumoEquipos.bind(controller))
+);
+
 // Kardex del tanque: las tres historias (despachos, recepciones, lecturas)
 // en UNA línea de tiempo con saldo corriente. Solo admin -- es visibilidad
 // de gerencia y la herramienta del auditor, no trabajo de cancha.

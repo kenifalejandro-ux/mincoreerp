@@ -303,6 +303,55 @@ interface ReporteSegregacion {
   };
 }
 
+interface TramoConsumo {
+  consumo: number;
+  litros: number;
+  recorrido: number;
+  cargas: number;
+}
+
+type DiagnosticoConsumo =
+  "subio_y_alto" | "subio" | "alto" | "bajo" | "sin_referencia" | "normal" | "sin_datos";
+
+interface FilaConsumoEquipo {
+  equipo_id: number;
+  placa_codigo: string;
+  tipo: string | null;
+  marca: string | null;
+  modelo: string | null;
+  unidad_medida: "h" | "km";
+  litros_cargados: number;
+  consumo_maximo_l: number | null;
+  periodo: TramoConsumo | null;
+  pasado: TramoConsumo | null;
+  pares: { cantidad: number; mediana: number } | null;
+  vs_pares_pct: number | null;
+  vs_pasado_pct: number | null;
+  supera_maximo: boolean | null;
+  diagnostico: DiagnosticoConsumo;
+  lectura: string;
+}
+
+interface ReporteConsumoEquipos {
+  criterio: { tolerancia_pct: number; min_cargas: number; dias_pasado: number; min_pares: number };
+  equipos: FilaConsumoEquipo[];
+  resumen: Partial<Record<DiagnosticoConsumo, number>>;
+}
+
+/** Color por urgencia: lo que CAMBIÓ es rojo porque se está pagando hoy. */
+const ESTILO_DIAGNOSTICO_CONSUMO: Record<DiagnosticoConsumo, { etiqueta: string; clase: string }> =
+  {
+    subio_y_alto: { etiqueta: "Subió y alto", clase: "bg-red-100 text-red-700" },
+    subio: { etiqueta: "Subió", clase: "bg-red-100 text-red-700" },
+    alto: { etiqueta: "Alto vs pares", clase: "bg-amber-100 text-amber-700" },
+    bajo: { etiqueta: "Bajo: ¿medidor?", clase: "bg-sky-100 text-sky-700" },
+    sin_referencia: { etiqueta: "Sin referencia", clase: "bg-slate-100 text-slate-500" },
+    normal: { etiqueta: "Normal", clase: "bg-emerald-100 text-emerald-700" },
+    sin_datos: { etiqueta: "Sin datos", clase: "bg-slate-100 text-slate-400" },
+  };
+
+const pctConSigno = (v: number | null) => (v === null ? "—" : `${v > 0 ? "+" : ""}${v}%`);
+
 interface FilaKardex {
   ocurrido_en: string;
   tipo: "recepcion" | "despacho" | "lectura";
@@ -1695,6 +1744,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [cargandoAuditoria, setCargandoAuditoria] = useState(false);
   const [repControles, setRepControles] = useState<ReporteControles | null>(null);
   const [repSegregacion, setRepSegregacion] = useState<ReporteSegregacion | null>(null);
+  const [repConsumo, setRepConsumo] = useState<ReporteConsumoEquipos | null>(null);
 
   const [modalKardexAbierto, setModalKardexAbierto] = useState(false);
   const [cargandoKardex, setCargandoKardex] = useState(false);
@@ -1969,12 +2019,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       const desde = new Date(`${kardexDesde}T00:00:00`).toISOString();
       const hasta = new Date(`${kardexHasta}T23:59:59`).toISOString();
       const q = `desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`;
-      const [rc, rs] = await Promise.all([
+      const [rc, rs, rq] = await Promise.all([
         apiFetch(`/api/erp/combustible/reportes/controles?${q}`),
         apiFetch(`/api/erp/combustible/reportes/segregacion?${q}`),
+        apiFetch(`/api/erp/combustible/reportes/consumo-equipos?${q}`),
       ]);
       setRepControles(rc.ok ? await rc.json() : null);
       setRepSegregacion(rs.ok ? await rs.json() : null);
+      setRepConsumo(rq.ok ? await rq.json() : null);
     } finally {
       setCargandoAuditoria(false);
     }
@@ -6061,6 +6113,36 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               >
                 ⬇️ Exportar segregación
               </button>
+              <button
+                type="button"
+                onClick={() =>
+                  exportarCsvCombustible(
+                    (repConsumo?.equipos ?? []).map((e) => ({
+                      equipo: e.placa_codigo,
+                      tipo: e.tipo,
+                      marca: e.marca,
+                      modelo: e.modelo,
+                      unidad: `L/${e.unidad_medida}`,
+                      litros_cargados: e.litros_cargados,
+                      consumo_periodo: e.periodo?.consumo ?? null,
+                      cargas_periodo: e.periodo?.cargas ?? null,
+                      consumo_pares: e.pares?.mediana ?? null,
+                      pares: e.pares?.cantidad ?? null,
+                      vs_pares_pct: e.vs_pares_pct,
+                      consumo_pasado: e.pasado?.consumo ?? null,
+                      vs_pasado_pct: e.vs_pasado_pct,
+                      consumo_maximo: e.consumo_maximo_l,
+                      diagnostico: ESTILO_DIAGNOSTICO_CONSUMO[e.diagnostico].etiqueta,
+                      lectura: e.lectura,
+                    })),
+                    `auditoria-consumo-equipos-${kardexDesde}-a-${kardexHasta}.csv`
+                  )
+                }
+                disabled={!repConsumo || repConsumo.equipos.length === 0}
+                className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                ⬇️ Exportar consumo
+              </button>
             </div>
           </div>
 
@@ -6300,6 +6382,125 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         ))}
                       </tbody>
                     </table>
+                  )}
+                </section>
+
+                {/* ── 3. Consumo por equipo ── */}
+                <section>
+                  <h4 className="text-sm font-bold text-slate-700 uppercase tracking-wide mb-1">
+                    Consumo por equipo
+                  </h4>
+                  <p className="text-xs text-slate-500 mb-3">
+                    El único control que ve el robo que sale <strong>con</strong> vale: se declaran
+                    400 L y el equipo recibe 380. El tanque cuadra; lo que no cuadra es el trabajo.
+                    Cada equipo se compara contra <strong>sus pares</strong> (mismo tipo, marca y
+                    modelo, en este período) y contra <strong>su pasado</strong> (el año anterior).
+                    Si subió contra su pasado, algo cambió: robo nuevo o falla mecánica. Si siempre
+                    fue alto contra sus pares, traga o le roban desde el inicio.
+                  </p>
+                  {repConsumo && (
+                    <p className="text-[11px] text-slate-400 mb-3">
+                      Se marca lo que se aparta más de ±{repConsumo.criterio.tolerancia_pct}%. Hacen
+                      falta {repConsumo.criterio.min_cargas} cargas con medidor en el período y{" "}
+                      {repConsumo.criterio.min_pares} pares del mismo modelo para comparar. Los
+                      vales de grifo externo se toman en litros.
+                    </p>
+                  )}
+
+                  {!repConsumo || repConsumo.equipos.length === 0 ? (
+                    <p className="text-sm text-slate-400">
+                      Ningún equipo cargó combustible en este período.
+                    </p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm border-collapse">
+                        <thead>
+                          <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
+                            <th className="p-2">Equipo</th>
+                            <th className="p-2 text-right">Consumo</th>
+                            <th className="p-2 text-right" title="Mediana de sus pares">
+                              Pares
+                            </th>
+                            <th className="p-2 text-right">vs pares</th>
+                            <th className="p-2 text-right" title="El año anterior al período">
+                              Su pasado
+                            </th>
+                            <th className="p-2 text-right">vs pasado</th>
+                            <th className="p-2">Lectura</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {repConsumo.equipos.map((e) => {
+                            const u = `L/${e.unidad_medida}`;
+                            const estilo = ESTILO_DIAGNOSTICO_CONSUMO[e.diagnostico];
+                            return (
+                              <tr key={e.equipo_id} className="border-b align-top">
+                                <td className="p-2">
+                                  <div className="font-medium">{e.placa_codigo}</div>
+                                  <div className="text-[11px] text-slate-400">
+                                    {[e.tipo, e.marca, e.modelo].filter(Boolean).join(" · ")}
+                                  </div>
+                                </td>
+                                <td className="p-2 text-right whitespace-nowrap">
+                                  {e.periodo ? (
+                                    <>
+                                      <span
+                                        className={e.supera_maximo ? "font-bold text-red-600" : ""}
+                                        title={
+                                          e.consumo_maximo_l !== null
+                                            ? `Máximo configurado: ${e.consumo_maximo_l} ${u}`
+                                            : "Sin máximo configurado"
+                                        }
+                                      >
+                                        {e.periodo.consumo} {u}
+                                      </span>
+                                      <div className="text-[11px] text-slate-400">
+                                        {e.periodo.cargas} cargas
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <span className="text-slate-300">—</span>
+                                  )}
+                                </td>
+                                <td className="p-2 text-right whitespace-nowrap">
+                                  {e.pares ? (
+                                    <>
+                                      {e.pares.mediana} {u}
+                                      <div className="text-[11px] text-slate-400">
+                                        {e.pares.cantidad} equipos
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <span className="text-slate-300">—</span>
+                                  )}
+                                </td>
+                                <td className="p-2 text-right font-bold">
+                                  {pctConSigno(e.vs_pares_pct)}
+                                </td>
+                                <td className="p-2 text-right whitespace-nowrap">
+                                  {e.pasado ? (
+                                    `${e.pasado.consumo} ${u}`
+                                  ) : (
+                                    <span className="text-slate-300">—</span>
+                                  )}
+                                </td>
+                                <td className="p-2 text-right font-bold">
+                                  {pctConSigno(e.vs_pasado_pct)}
+                                </td>
+                                <td className="p-2">
+                                  <span
+                                    className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${estilo.clase}`}
+                                  >
+                                    {estilo.etiqueta}
+                                  </span>
+                                  <div className="text-xs text-slate-500 mt-1">{e.lectura}</div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </section>
               </>

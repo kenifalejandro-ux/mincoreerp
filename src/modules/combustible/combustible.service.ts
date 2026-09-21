@@ -2184,10 +2184,21 @@ export class CombustibleService {
     if (!equipo) return null;
     const esHorometro = equipo.tipoMedidor !== "odometro";
 
-    // Todas las cargas con medidor del equipo, de la más vieja a la más nueva.
-    const vales = (
-      await this.repository.findValesConMedidor(client, tenantId, equipoId, -1, 500)
-    ).reverse();
+    // Todas las cargas de combustible del equipo, CON y SIN medidor, de la
+    // más vieja a la más nueva. Antes solo entraban las que traían medidor y
+    // el punto usaba los litros de ese único vale: una carga sin horómetro en
+    // el medio se perdía y el consumo salía más bajo que el real -- una
+    // sugerencia floja justo en el equipo que peor anota.
+    const vales = await this.repository.findValesParaConsumo(client, tenantId, {
+      equipoId,
+      desde: null,
+      hasta: new Date().toISOString(),
+      limite: 2000,
+    });
+    const medidorDe = (v: (typeof vales)[number]) => {
+      const crudo = esHorometro ? v.lectura_horometro : v.lectura_odometro;
+      return crudo === null ? null : Number(crudo);
+    };
 
     const puntos: {
       desdeEn: string;
@@ -2196,24 +2207,30 @@ export class CombustibleService {
       recorrido: number;
       consumo: number;
     }[] = [];
-    for (let i = 1; i < vales.length; i++) {
-      const anterior = vales[i - 1];
-      const actual = vales[i];
-      const mAnterior = Number(
-        esHorometro ? anterior.lectura_horometro : anterior.lectura_odometro
-      );
-      const mActual = Number(esHorometro ? actual.lectura_horometro : actual.lectura_odometro);
-      if (!Number.isFinite(mAnterior) || !Number.isFinite(mActual)) continue;
-      const recorrido = mActual - mAnterior;
-      if (!(recorrido > 0)) continue;
-      const litros = Number(actual.cantidad) * (actual.unidad === "gal" ? 3.785411784 : 1);
+    let base = vales.findIndex((v) => medidorDe(v) !== null);
+    for (let k = base + 1; base >= 0 && k < vales.length; k++) {
+      const mActual = medidorDe(vales[k]);
+      if (mActual === null) continue;
+      const recorrido = mActual - medidorDe(vales[base])!;
+      // Misma lectura: dos cargas en la misma hora de motor. Se acumulan en
+      // el tramo siguiente en vez de perderse.
+      if (recorrido === 0) continue;
+      // El medidor retrocedió (cambio de tablero, tipeo): esa base no sirve.
+      // Lo reporta medidor_inconsistente, acá solo se arranca de nuevo.
+      if (recorrido < 0) {
+        base = k;
+        continue;
+      }
+      let litros = 0;
+      for (let t = base + 1; t <= k; t++) litros += Number(vales[t].litros);
       puntos.push({
-        desdeEn: new Date(anterior.despachado_en).toISOString(),
-        hastaEn: new Date(actual.despachado_en).toISOString(),
+        desdeEn: new Date(vales[base].despachado_en).toISOString(),
+        hastaEn: new Date(vales[k].despachado_en).toISOString(),
         litros: Number(litros.toFixed(2)),
         recorrido: Number(recorrido.toFixed(2)),
         consumo: Number((litros / recorrido).toFixed(3)),
       });
+      base = k;
     }
 
     const consumos = puntos.map((p) => p.consumo);
@@ -2238,6 +2255,309 @@ export class CombustibleService {
       promedio: Number(promedio.toFixed(2)),
       desviacion: Number(desviacion.toFixed(2)),
       muestra: puntos,
+    };
+  }
+
+  // ── Reporte de consumo por equipo ─────────────────────────────────────
+  //
+  // El que distingue "le roban" de "traga mucho". El máximo configurado del
+  // equipo (consumo_excedido) solo compara al equipo contra SU propia
+  // historia, y eso tiene un punto ciego: si le roban desde el primer día, el
+  // robo ya está adentro de su "normal" y nunca se ve. Por eso dos preguntas
+  // separadas, y de la combinación sale la lectura:
+  //   - contra sus PARES (mismo tipo, marca y modelo, en el mismo período, o
+  //     sea con el mismo clima y el mismo frente de trabajo);
+  //   - contra SU PASADO (el año anterior al período).
+
+  /** Cuánto se aparta, para arriba o para abajo, antes de marcarlo. Fijo a
+   *  propósito: el reporte muestra los porcentajes, y el que decide es una
+   *  persona que mira la tabla, no el número. */
+  static readonly TOLERANCIA_CONSUMO_PCT = 15;
+  /** Cargas mínimas en un tramo para dar un consumo. El tramo telescopa (el
+   *  llenado parcial de una punta se compensa en la siguiente), así que el
+   *  error no crece con las cargas, pero con una o dos el tramo es tan corto
+   *  que el llenado parcial de las puntas lo domina. */
+  static readonly MIN_CARGAS_TRAMO_CONSUMO = 3;
+  /** Cuánta historia hacia atrás cuenta como "su pasado". */
+  static readonly DIAS_PASADO_CONSUMO = 365;
+  /** Con menos pares que esto, la "mediana" sería la de un solo equipo. */
+  static readonly MIN_PARES_CONSUMO = 2;
+
+  /** Consumo de un tramo: litros cargados / (medidor final − medidor base).
+   *
+   *  La base es la última carga con medidor ANTES del tramo (si se permite) y
+   *  el final es la última carga con medidor DENTRO. Los litros son TODAS las
+   *  cargas después de la base hasta el final inclusive, tengan medidor o no:
+   *  el combustible de la carga base se quemó antes del tramo, y el de cada
+   *  carga posterior, durante.
+   *
+   *  `vales` tiene que venir ordenado del más viejo al más nuevo. */
+  static consumoDelTramo(
+    vales: {
+      litros: string | number;
+      lectura_horometro: string | null;
+      lectura_odometro: string | null;
+      despachado_en: Date;
+    }[],
+    medidor: "horometro" | "odometro",
+    desdeMs: number,
+    hastaMs: number,
+    baseAnterior: boolean
+  ):
+    | { ok: true; consumo: number; litros: number; recorrido: number; cargas: number }
+    | { ok: false; motivo: "pocas_cargas" | "medidor_retrocede" } {
+    const m = (i: number) => {
+      const crudo =
+        medidor === "horometro" ? vales[i].lectura_horometro : vales[i].lectura_odometro;
+      return crudo === null ? null : Number(crudo);
+    };
+    const t = (i: number) => new Date(vales[i].despachado_en).getTime();
+
+    let base = -1;
+    let fin = -1;
+    let primeraDentro = -1;
+    for (let i = 0; i < vales.length; i++) {
+      if (m(i) === null) continue;
+      const ti = t(i);
+      if (ti < desdeMs) {
+        if (baseAnterior) base = i;
+      } else if (ti <= hastaMs) {
+        if (primeraDentro < 0) primeraDentro = i;
+        fin = i;
+      }
+    }
+    if (base < 0) base = primeraDentro;
+    if (base < 0 || fin <= base) return { ok: false, motivo: "pocas_cargas" };
+
+    // Un medidor que retrocede adentro del tramo (tablero cambiado, tipeo)
+    // hace que la resta final no signifique nada. No se adivina: se avisa.
+    let previo = m(base)!;
+    for (let i = base + 1; i <= fin; i++) {
+      const mi = m(i);
+      if (mi === null) continue;
+      if (mi < previo) return { ok: false, motivo: "medidor_retrocede" };
+      previo = mi;
+    }
+
+    const recorrido = m(fin)! - m(base)!;
+    const cargas = fin - base;
+    if (!(recorrido > 0) || cargas < CombustibleService.MIN_CARGAS_TRAMO_CONSUMO) {
+      return { ok: false, motivo: "pocas_cargas" };
+    }
+    let litros = 0;
+    for (let i = base + 1; i <= fin; i++) litros += Number(vales[i].litros);
+    return {
+      ok: true,
+      consumo: Number((litros / recorrido).toFixed(3)),
+      litros: Number(litros.toFixed(2)),
+      recorrido: Number(recorrido.toFixed(2)),
+      cargas,
+    };
+  }
+
+  /** La lectura de la combinación. Orden = urgencia: lo que CAMBIÓ va
+   *  primero, porque es un robo nuevo o una falla que se está pagando hoy;
+   *  lo que siempre fue alto ya se viene pagando y admite una semana más. */
+  static diagnosticarConsumo(
+    vsPares: "alto" | "normal" | "bajo" | null,
+    vsPasado: "subio" | "estable" | "bajo" | null
+  ) {
+    if (vsPasado === "subio" && vsPares === "alto") {
+      return {
+        diagnostico: "subio_y_alto" as const,
+        lectura:
+          "Consume más que antes y más que sus pares: robo nuevo o falla mecánica. Revisar ya.",
+      };
+    }
+    if (vsPasado === "subio") {
+      return {
+        diagnostico: "subio" as const,
+        lectura:
+          "Subió contra su propio pasado: robo nuevo o falla mecánica (inyectores, filtros). Revisar ya.",
+      };
+    }
+    if (vsPares === "alto") {
+      return {
+        diagnostico: "alto" as const,
+        lectura:
+          "Consume más que sus pares desde siempre: traga por cómo trabaja o por su estado, o le roban desde el inicio.",
+      };
+    }
+    if (vsPares === "bajo" || vsPasado === "bajo") {
+      return {
+        diagnostico: "bajo" as const,
+        lectura:
+          "Consume menos de lo esperable: revisar que el horómetro u odómetro no esté adelantado. Inflar el medidor esconde un robo.",
+      };
+    }
+    if (vsPares === null && vsPasado === null) {
+      return {
+        diagnostico: "sin_referencia" as const,
+        lectura:
+          "Sin pares del mismo modelo ni historia previa: todavía no hay con qué compararlo.",
+      };
+    }
+    return { diagnostico: "normal" as const, lectura: "Dentro de lo esperable." };
+  }
+
+  async reporteConsumoEquipos(client: PoolClient, tenantId: string, desde: string, hasta: string) {
+    const desdeMs = Date.parse(desde);
+    const hastaMs = Date.parse(hasta);
+    const pasadoDesdeMs = desdeMs - CombustibleService.DIAS_PASADO_CONSUMO * 24 * 3600 * 1000;
+    const tol = CombustibleService.TOLERANCIA_CONSUMO_PCT;
+
+    const vales = await this.repository.findValesParaConsumo(client, tenantId, {
+      equipoId: null,
+      desde: new Date(pasadoDesdeMs).toISOString(),
+      hasta,
+      limite: 200_000,
+    });
+    const porEquipo = new Map<number, typeof vales>();
+    for (const v of vales) {
+      const lista = porEquipo.get(v.equipo_id) ?? [];
+      lista.push(v);
+      porEquipo.set(v.equipo_id, lista);
+    }
+    // Solo los equipos que cargaron en el período: el que estuvo parado no
+    // tiene nada que explicar.
+    const idsConCargas = [...porEquipo.entries()]
+      .filter(([, lista]) =>
+        lista.some((v) => {
+          const tv = new Date(v.despachado_en).getTime();
+          return tv >= desdeMs && tv <= hastaMs;
+        })
+      )
+      .map(([id]) => id);
+    const equipos = await this.repository.findEquiposParaConsumo(client, tenantId, idsConCargas);
+
+    const norm = (x: string | null) => (x ?? "").trim().toLowerCase();
+    const filas = equipos.map((e) => {
+      const lista = porEquipo.get(e.id) ?? [];
+      // El medidor del equipo; si no está configurado, el que traen sus vales.
+      const medidor: "horometro" | "odometro" =
+        e.tipo_medidor === "odometro" ||
+        (e.tipo_medidor === null &&
+          !lista.some((v) => v.lectura_horometro !== null) &&
+          lista.some((v) => v.lectura_odometro !== null))
+          ? "odometro"
+          : "horometro";
+      const periodo = CombustibleService.consumoDelTramo(lista, medidor, desdeMs, hastaMs, true);
+      const pasado = CombustibleService.consumoDelTramo(
+        lista,
+        medidor,
+        pasadoDesdeMs,
+        desdeMs - 1,
+        false
+      );
+      const litrosPeriodo = lista
+        .filter((v) => {
+          const tv = new Date(v.despachado_en).getTime();
+          return tv >= desdeMs && tv <= hastaMs;
+        })
+        .reduce((a, v) => a + Number(v.litros), 0);
+      return {
+        equipo_id: e.id,
+        placa_codigo: e.placa_codigo,
+        tipo: e.tipo,
+        marca: e.marca,
+        modelo: e.modelo,
+        activo: e.activo,
+        medidor,
+        unidad_medida: medidor === "horometro" ? "h" : "km",
+        // Clave de pares: sin marca Y modelo no hay con quién compararlo --
+        // "todos los volquetes" mezcla motores que no tienen nada que ver.
+        clavePares:
+          norm(e.marca) && norm(e.modelo)
+            ? [medidor, norm(e.tipo), norm(e.marca), norm(e.modelo)].join("|")
+            : null,
+        litros_cargados: Number(litrosPeriodo.toFixed(2)),
+        consumo_maximo_l: e.consumo_maximo_l === null ? null : Number(e.consumo_maximo_l),
+        periodo: periodo.ok ? periodo : null,
+        sin_datos_motivo: periodo.ok ? null : periodo.motivo,
+        pasado: pasado.ok ? pasado : null,
+      };
+    });
+
+    const pct = (a: number, b: number) => Number((((a - b) / b) * 100).toFixed(1));
+    const resultado = filas.map((f) => {
+      let pares: { cantidad: number; mediana: number } | null = null;
+      if (f.periodo && f.clavePares) {
+        const otros = filas
+          .filter((o) => o.equipo_id !== f.equipo_id && o.clavePares === f.clavePares && o.periodo)
+          .map((o) => o.periodo!.consumo)
+          .sort((a, b) => a - b);
+        // Mediana y no promedio: si uno de los pares es justo el que traga
+        // (o al que le roban), el promedio lo arrastra y esconde al resto.
+        if (otros.length >= CombustibleService.MIN_PARES_CONSUMO) {
+          const medio = Math.floor(otros.length / 2);
+          const mediana =
+            otros.length % 2 === 0 ? (otros[medio - 1] + otros[medio]) / 2 : otros[medio];
+          pares = { cantidad: otros.length, mediana: Number(mediana.toFixed(3)) };
+        }
+      }
+      const vsParesPct = f.periodo && pares ? pct(f.periodo.consumo, pares.mediana) : null;
+      const vsPasadoPct = f.periodo && f.pasado ? pct(f.periodo.consumo, f.pasado.consumo) : null;
+      const clasif = <A extends string, B extends string>(v: number | null, alto: A, bajo: B) =>
+        v === null ? null : v > tol ? alto : v < -tol ? bajo : null;
+      const vsPares =
+        vsParesPct === null
+          ? null
+          : (clasif(vsParesPct, "alto" as const, "bajo" as const) ?? "normal");
+      const vsPasado =
+        vsPasadoPct === null
+          ? null
+          : (clasif(vsPasadoPct, "subio" as const, "bajo" as const) ?? "estable");
+      const { diagnostico, lectura } = f.periodo
+        ? CombustibleService.diagnosticarConsumo(vsPares, vsPasado)
+        : {
+            diagnostico: "sin_datos" as const,
+            lectura:
+              f.sin_datos_motivo === "medidor_retrocede"
+                ? "El medidor retrocede dentro del período: no se puede calcular. Revisar las alertas de medidor."
+                : `Menos de ${CombustibleService.MIN_CARGAS_TRAMO_CONSUMO} cargas con medidor en el período: no alcanza para medir el consumo.`,
+          };
+      const { clavePares: _clave, sin_datos_motivo: _motivo, ...resto } = f;
+      return {
+        ...resto,
+        pares,
+        vs_pares_pct: vsParesPct,
+        vs_pasado_pct: vsPasadoPct,
+        supera_maximo:
+          f.periodo && f.consumo_maximo_l !== null ? f.periodo.consumo > f.consumo_maximo_l : null,
+        diagnostico,
+        lectura,
+      };
+    });
+
+    const URGENCIA = [
+      "subio_y_alto",
+      "subio",
+      "alto",
+      "bajo",
+      "sin_referencia",
+      "normal",
+      "sin_datos",
+    ];
+    resultado.sort(
+      (a, b) =>
+        URGENCIA.indexOf(a.diagnostico) - URGENCIA.indexOf(b.diagnostico) ||
+        Math.abs(b.vs_pasado_pct ?? b.vs_pares_pct ?? 0) -
+          Math.abs(a.vs_pasado_pct ?? a.vs_pares_pct ?? 0)
+    );
+
+    const resumen: Record<string, number> = {};
+    for (const r of resultado) resumen[r.diagnostico] = (resumen[r.diagnostico] ?? 0) + 1;
+
+    return {
+      periodo: { desde, hasta },
+      criterio: {
+        tolerancia_pct: tol,
+        min_cargas: CombustibleService.MIN_CARGAS_TRAMO_CONSUMO,
+        dias_pasado: CombustibleService.DIAS_PASADO_CONSUMO,
+        min_pares: CombustibleService.MIN_PARES_CONSUMO,
+      },
+      equipos: resultado,
+      resumen,
     };
   }
 
