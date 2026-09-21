@@ -27,6 +27,9 @@ import {
   bajaTanqueCombustibleSchema,
   crearConteoUreaSchema,
   anularConteoUreaSchema,
+  crearPuntoPrecintoSchema,
+  cambiarPrecintoSchema,
+  bajaPuntoPrecintoSchema,
 } from "../../server/schemas/combustible.schema";
 import { CombustibleController } from "./combustible.controller";
 // Se activa solo con importarse (setInterval + .unref()) -- mismo mecanismo
@@ -101,6 +104,23 @@ router.patch(
   requireRole("admin", "operador"),
   validate(anularDespachoCombustibleSchema),
   asyncHandler(controller.anularDespacho.bind(controller))
+);
+
+// Precintos numerados (migración 0095) -- segmentos literales, ANTES de /:id.
+// Cambiar un sello abre el tanque: admin u operador, nunca el grifero, que es
+// justamente el que tiene el tanque a mano. Dar de baja un punto es aflojar
+// la vigilancia: solo admin.
+router.post(
+  "/precintos/puntos/:puntoId/cambios",
+  requireRole("admin", "operador"),
+  validate(cambiarPrecintoSchema),
+  asyncHandler(controller.cambiarPrecinto.bind(controller))
+);
+router.patch(
+  "/precintos/puntos/:puntoId/baja",
+  requireRole("admin"),
+  validate(bajaPuntoPrecintoSchema),
+  asyncHandler(controller.bajaPuntoPrecinto.bind(controller))
 );
 
 // Grifos externos y precios (migrations/0063) -- segmentos literales,
@@ -278,6 +298,20 @@ router.get(
 );
 
 router.get("/:id", asyncHandler(controller.getById.bind(controller)));
+// Los puntos precintados del tanque con su número vigente. Cualquier rol: el
+// que toma la varilla necesita saber qué sellos mirar.
+router.get("/:id/precintos", asyncHandler(controller.listarPuntosPrecinto.bind(controller)));
+router.get(
+  "/:id/precintos/historial",
+  requireRole("admin"),
+  asyncHandler(controller.historialPrecintos.bind(controller))
+);
+router.post(
+  "/:id/precintos/puntos",
+  requireRole("admin"),
+  validate(crearPuntoPrecintoSchema),
+  asyncHandler(controller.crearPuntoPrecinto.bind(controller))
+);
 router.get(
   "/:id/lecturas",
   validateQuery(periodoHistorialCombustibleSchema),

@@ -159,6 +159,61 @@ export async function enviarCorreoTotalizador(
   });
 }
 
+/** En la varilla, el precinto de algún punto no es el registrado, o no
+ *  estaba (0095). La lectura se guardó igual: el nivel medido sigue siendo
+ *  un dato real, y justamente ahora es cuando más importa tenerlo. */
+export async function enviarCorreoPrecintoAlterado(
+  destinatarios: Destinatario[],
+  params: {
+    tanque: string;
+    quienMidio: string;
+    puntos: { nombre: string; numero_visto: string | null; numero_esperado: string }[];
+  }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: precinto alterado en el tanque ${params.tanque}`,
+    titulo: `Precinto que no coincide en ${params.tanque}`,
+    lineas: [
+      ...params.puntos.map((p) =>
+        p.numero_visto === null
+          ? `${p.nombre}: NO HAY PRECINTO. El registrado era el ${p.numero_esperado}.`
+          : `${p.nombre}: se vio el ${p.numero_visto}, el registrado es el ${p.numero_esperado}.`
+      ),
+      `Lo anotó ${params.quienMidio} al tomar la varilla. Alguien abrió el tanque sin ` +
+        "registrar el cambio de precinto. Revisar el nivel de esa varilla contra el teórico " +
+        "y quién tuvo acceso al tanque.",
+    ],
+  });
+}
+
+/** Se cambió un precinto FUERA de una recepción (0095). Se permite (un sello
+ *  se rompe), pero es la puerta que usaría el que roba: corta, saca, pone
+ *  uno nuevo y escribe un motivo. Por eso avisa siempre. */
+export async function enviarCorreoPrecintoReemplazado(
+  destinatarios: Destinatario[],
+  params: {
+    tanque: string;
+    punto: string;
+    numeroAnterior: string | null;
+    numeroNuevo: string;
+    quien: string;
+    motivo: string;
+  }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: se cambió un precinto del tanque ${params.tanque}`,
+    titulo: `Cambio de precinto fuera de una recepción en ${params.tanque}`,
+    lineas: [
+      `${params.punto}: ${params.numeroAnterior ?? "sin precinto"} → ${params.numeroNuevo}.`,
+      `Lo registró ${params.quien}. Motivo: "${params.motivo}".`,
+      "Cambiar un precinto abre el tanque. Confirmar el motivo con alguien que no sea quien " +
+        "lo cambió, y mirar la próxima varilla.",
+    ],
+  });
+}
+
 /** El tanque cruzó su nivel mínimo. A diferencia del resto, esta alerta NO
  *  es anti-fraude sino operativa: avisa antes de quedarse sin combustible
  *  en cancha. Por eso tampoco se congela como anomalía. */

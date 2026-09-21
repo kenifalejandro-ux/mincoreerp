@@ -58,6 +58,9 @@ export const crearTanqueCombustibleSchema = z.object({
   // con el cliente que sus surtidores lo tienen y que se anota en cada vale.
   usa_totalizador: z.boolean().default(false),
   totalizador_tolerancia: z.number().min(0).max(1000).default(1),
+  // Precintos numerados (0095). Apagado por el mismo motivo que el
+  // totalizador: el cliente que no los usa no tiene que ver ni un campo.
+  usa_precintos: z.boolean().default(false),
 });
 
 export type CrearTanqueCombustibleInput = z.infer<typeof crearTanqueCombustibleSchema>;
@@ -100,6 +103,7 @@ export const actualizarTanqueCombustibleSchema = z.object({
   // no los conoce no puede apagar el control sin querer.
   usa_totalizador: z.boolean().optional(),
   totalizador_tolerancia: z.number().min(0).max(1000).optional(),
+  usa_precintos: z.boolean().optional(),
 });
 
 export type ActualizarTanqueCombustibleInput = z.infer<typeof actualizarTanqueCombustibleSchema>;
@@ -156,6 +160,19 @@ export const registrarLecturaCombustibleSchema = z.object({
     })
     .optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
+  // Lo que se VE en cada punto precintado al tomar la varilla (0095). Solo
+  // si el tanque usa precintos; cuáles puntos son obligatorios lo decide el
+  // servicio, que ve los puntos del tanque. `numero: null` = "no hay
+  // precinto": el sello no está, que es un hallazgo y no un dato que falta.
+  precintos: z
+    .array(
+      z.object({
+        punto_id: z.number().int().positive(),
+        numero: z.string().trim().min(1).max(40).nullable(),
+      })
+    )
+    .max(20)
+    .optional(),
 });
 
 export type RegistrarLecturaCombustibleInput = z.infer<typeof registrarLecturaCombustibleSchema>;
@@ -866,6 +883,19 @@ export const crearRecepcionCombustibleSchema = z
         message: "La fecha de la recepción no puede ser futura",
       })
       .optional(),
+
+    // El precinto NUEVO de cada punto que se abrió para recibir (0095). Los
+    // puntos marcados "se abre en recepción" lo exigen; lo valida el
+    // servicio, que ve los puntos del tanque.
+    precintos: z
+      .array(
+        z.object({
+          punto_id: z.number().int().positive(),
+          numero: z.string().trim().min(1).max(40),
+        })
+      )
+      .max(20)
+      .optional(),
   })
   .superRefine((data, ctx) => {
     // Espejo del CHECK combustible_recepciones_documento_check (0064): un
@@ -995,3 +1025,41 @@ export const anularConteoUreaSchema = z.object({
 });
 
 export type AnularConteoUreaInput = z.infer<typeof anularConteoUreaSchema>;
+
+// ── Precintos numerados (migrations/0095) ─────────────────────────────────
+
+/** Alta de un punto precintado: nace CON su primer precinto. Un punto sin
+ *  precinto registrado no se puede verificar, así que no tiene sentido
+ *  crearlo vacío. */
+export const crearPuntoPrecintoSchema = z.object({
+  nombre: z.string().trim().min(1).max(60),
+  se_abre_en_recepcion: z.boolean().default(false),
+  numero: z.string().trim().min(1).max(40),
+});
+
+export type CrearPuntoPrecintoInput = z.infer<typeof crearPuntoPrecintoSchema>;
+
+/** Cambio de precinto FUERA de una recepción: mantenimiento, sello roto,
+ *  corrección de un número mal tipeado. Motivo obligatorio: es la puerta que
+ *  usaría el que roba, y lo único que la distingue es la explicación. */
+export const cambiarPrecintoSchema = z.object({
+  numero: z.string().trim().min(1).max(40),
+  motivo: z.string().trim().min(1, "El motivo del cambio es obligatorio").max(500),
+  colocado_en: z
+    .string()
+    .datetime()
+    .refine((v) => new Date(v).getTime() <= Date.now() + 60 * 60 * 1000, {
+      message: "La fecha del cambio no puede ser futura",
+    })
+    .optional(),
+});
+
+export type CambiarPrecintoInput = z.infer<typeof cambiarPrecintoSchema>;
+
+/** Dejar de vigilar un punto. No se borra: queda con su historia y el
+ *  motivo, y cuenta como aflojar la vigilancia. */
+export const bajaPuntoPrecintoSchema = z.object({
+  motivo: z.string().trim().min(1, "El motivo de la baja es obligatorio").max(500),
+});
+
+export type BajaPuntoPrecintoInput = z.infer<typeof bajaPuntoPrecintoSchema>;

@@ -38,6 +38,8 @@ const ETIQUETA_TIPO: Record<string, string> = {
   historial_sin_contrastar: "Consumo previo a la primera varilla",
   totalizador_salto: "Totalizador no cierra con el vale",
   totalizador_retroceso: "Totalizador retrocedió",
+  precinto_alterado: "Precinto que no coincide",
+  precinto_reemplazado: "Precinto cambiado fuera de una recepción",
   tanque_sin_vigilancia: "Tanque despachando sin vigilancia",
 };
 

@@ -9,6 +9,7 @@ import {
   Eye,
   FileText,
   Fuel,
+  Lock,
   Pencil,
   Plus,
   Tag,
@@ -19,6 +20,8 @@ import {
 } from "lucide-react";
 import { useState, useEffect, useCallback, useMemo } from "react";
 
+import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from "./Precintos";
+import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { ahoraParaInputLocal } from "../../utils/fechaLocal";
@@ -60,6 +63,8 @@ interface Tanque {
   // el cliente que sus surtidores lo tienen y que el grifero lo anota.
   usa_totalizador: boolean;
   totalizador_tolerancia: string;
+  // Precintos numerados (0095): la varilla verifica el sello de cada punto.
+  usa_precintos: boolean;
   // Desde cuántos % de diferencia entre lo facturado y lo medido se considera
   // sospechosa una recepción (migrations/0066). 0 = no alertar todavía.
   umbral_diferencia_pct: string | null;
@@ -287,6 +292,7 @@ interface FilaSegregacion {
   vales_cargados: number;
   recepciones_cargadas: number;
   lecturas_cargadas: number;
+  precintos_colocados: number;
   anulaciones: number;
   anulaciones_propias: number;
   alertas_revisadas: number;
@@ -354,7 +360,7 @@ const pctConSigno = (v: number | null) => (v === null ? "—" : `${v > 0 ? "+" :
 
 interface FilaKardex {
   ocurrido_en: string;
-  tipo: "recepcion" | "despacho" | "lectura";
+  tipo: "recepcion" | "despacho" | "lectura" | "precinto";
   referencia_id: string;
   documento: string | null;
   detalle: string | null;
@@ -502,7 +508,9 @@ interface AlertaCombustible {
     | "varilla_exacta"
     | "historial_sin_contrastar"
     | "totalizador_salto"
-    | "totalizador_retroceso";
+    | "totalizador_retroceso"
+    | "precinto_alterado"
+    | "precinto_reemplazado";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -544,6 +552,8 @@ const TIPOS_CRITICOS = new Set([
   "varilla_sin_control",
   "totalizador_salto",
   "totalizador_retroceso",
+  "precinto_alterado",
+  "precinto_reemplazado",
 ]);
 const esCritica = (tipo: string) => TIPOS_CRITICOS.has(tipo);
 
@@ -1029,6 +1039,8 @@ const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   historial_sin_contrastar: "Consumo previo a la primera varilla",
   totalizador_salto: "Totalizador no cierra con el vale",
   totalizador_retroceso: "Totalizador retrocedió",
+  precinto_alterado: "Precinto que no coincide",
+  precinto_reemplazado: "Precinto cambiado fuera de una recepción",
 };
 
 /** El `detalle` es JSONB libre y cada tipo de alerta guarda cosas
@@ -1164,6 +1176,28 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     return d.sobra
       ? `El surtidor avanzó ${d.avance ?? "?"} ${d.unidad ?? ""} y el vale dice ${d.declarado ?? "?"}: salieron ${d.diferencia ?? "?"} sin vale`
       : `El surtidor avanzó ${d.avance ?? "?"} ${d.unidad ?? ""} y el vale dice ${d.declarado ?? "?"}: el vale declara de más`;
+  }
+  if (a.tipo === "precinto_alterado") {
+    const d = a.detalle as {
+      puntos?: { nombre: string; numero_visto: string | null; numero_esperado: string }[];
+    };
+    return (d.puntos ?? [])
+      .map((p) =>
+        p.numero_visto === null
+          ? `${p.nombre}: no había precinto (registrado ${p.numero_esperado})`
+          : `${p.nombre}: se vio el ${p.numero_visto}, registrado ${p.numero_esperado}`
+      )
+      .join(" · ");
+  }
+  if (a.tipo === "precinto_reemplazado") {
+    const d = a.detalle as {
+      punto?: string;
+      numeroAnterior?: string | null;
+      numeroNuevo?: string;
+      quien?: string;
+      motivo?: string;
+    };
+    return `${d.punto ?? "?"}: ${d.numeroAnterior ?? "sin precinto"} → ${d.numeroNuevo ?? "?"}, por ${d.quien ?? "?"} ("${d.motivo ?? ""}")`;
   }
   if (a.tipo === "historial_sin_contrastar") {
     const d = a.detalle as {
@@ -1487,6 +1521,7 @@ const FORM_INICIAL = {
   requiere_documento: true,
   usa_totalizador: false,
   totalizador_tolerancia: "1",
+  usa_precintos: false,
   // Vacíos, no "0": desde la migración 0075 el 0 significa "estricto,
   // alertar por cualquier diferencia" y el vacío es "sin configurar".
   // Precargar un 0 le pondría a todo tanque nuevo la vigilancia más
@@ -1745,6 +1780,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [repControles, setRepControles] = useState<ReporteControles | null>(null);
   const [repSegregacion, setRepSegregacion] = useState<ReporteSegregacion | null>(null);
   const [repConsumo, setRepConsumo] = useState<ReporteConsumoEquipos | null>(null);
+  // Precintos (0095): la ventana de gestión y lo anotado en varilla/recepción.
+  const [tanquePrecintos, setTanquePrecintos] = useState<Tanque | null>(null);
+  const [precintosVistos, setPrecintosVistos] = useState<Record<number, PrecintoVisto>>({});
+  const [precintosRecepcion, setPrecintosRecepcion] = useState<Record<number, string>>({});
 
   const [modalKardexAbierto, setModalKardexAbierto] = useState(false);
   const [cargandoKardex, setCargandoKardex] = useState(false);
@@ -2153,6 +2192,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       requiere_documento: t.requiere_documento,
       usa_totalizador: t.usa_totalizador,
       totalizador_tolerancia: t.totalizador_tolerancia,
+      usa_precintos: t.usa_precintos,
       umbral_diferencia_pct: t.umbral_diferencia_pct ?? "",
       umbral_descuadre_pct: t.umbral_descuadre_pct ?? "",
       umbral_descuadre_ciclo_pct: t.umbral_descuadre_ciclo_pct ?? "",
@@ -2191,6 +2231,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             requiere_documento: formData.requiere_documento,
             usa_totalizador: formData.usa_totalizador,
             totalizador_tolerancia: Number(formData.totalizador_tolerancia),
+            usa_precintos: formData.usa_precintos,
             umbral_diferencia_pct: aNumeroONull(formData.umbral_diferencia_pct),
             umbral_descuadre_pct: aNumeroONull(formData.umbral_descuadre_pct),
             umbral_descuadre_ciclo_pct: aNumeroONull(formData.umbral_descuadre_ciclo_pct),
@@ -2211,6 +2252,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             requiere_documento: formData.requiere_documento,
             usa_totalizador: formData.usa_totalizador,
             totalizador_tolerancia: Number(formData.totalizador_tolerancia),
+            usa_precintos: formData.usa_precintos,
             umbral_diferencia_pct: aNumeroONull(formData.umbral_diferencia_pct),
             umbral_descuadre_pct: aNumeroONull(formData.umbral_descuadre_pct),
             umbral_descuadre_ciclo_pct: aNumeroONull(formData.umbral_descuadre_ciclo_pct),
@@ -2464,6 +2506,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   const abrirModalLectura = (t: Tanque) => {
     setTanqueLectura(t);
+    setPrecintosVistos({});
     setNivel("");
     setLeidoEn(ahoraParaInputLocal());
     setHoraEditadaAMano(false);
@@ -2515,6 +2558,16 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           combustible_id: tanqueLectura.id,
           nivel: Number(nivel),
           leido_en: horaEditadaAMano ? new Date(leidoEn).toISOString() : new Date().toISOString(),
+          // Lo que se VIO en cada sello (0095). Solo si el tanque usa precintos.
+          precintos: tanqueLectura.usa_precintos
+            ? puntosAVerificar(precintosLectura.puntos).map((p) => {
+                const v = precintosVistos[p.id];
+                return {
+                  punto_id: p.id,
+                  numero: v?.sinPrecinto ? null : (v?.numero ?? "").trim(),
+                };
+              })
+            : undefined,
         }),
       });
 
@@ -3188,6 +3241,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   const abrirModalRecepcion = () => {
     setRecepcionForm(RECEPCION_FORM_INICIAL);
+    setPrecintosRecepcion({});
     setRecibidoEn(ahoraParaInputLocal());
     setHoraRecepcionEditadaAMano(false);
     setMensajeExito(null);
@@ -3197,6 +3251,16 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   const tanqueRecepcion = tanques.find((t) => t.id === Number(recepcionForm.combustible_id));
   const tanqueDespacho = tanques.find((t) => t.id === Number(despachoForm.combustible_id));
+
+  // Los puntos precintados de los dos formularios que los piden (0095).
+  const precintosLectura = usePuntosPrecinto(
+    tanqueLectura?.id ?? null,
+    Boolean(tanqueLectura?.usa_precintos)
+  );
+  const precintosDeRecepcion = usePuntosPrecinto(
+    tanqueRecepcion?.id ?? null,
+    Boolean(tanqueRecepcion?.usa_precintos) && modalRecepcionAbierto
+  );
 
   const costoTotalRecepcion =
     recepcionForm.cantidad !== "" && recepcionForm.costo_unitario !== ""
@@ -3253,6 +3317,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           tipo_documento: conDocumento ? recepcionForm.tipo_documento : undefined,
           numero_documento: conDocumento ? recepcionForm.numero_documento.trim() : undefined,
           recibido_en: recibidoEnIso,
+          // El sello nuevo de cada punto que se abrió para recibir (0095).
+          precintos: tanqueRecepcion?.usa_precintos
+            ? Object.entries(precintosRecepcion)
+                .filter(([, numero]) => numero.trim() !== "")
+                .map(([puntoId, numero]) => ({ punto_id: Number(puntoId), numero: numero.trim() }))
+            : undefined,
         }),
       });
 
@@ -3654,6 +3724,15 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                                 >
                                   <Fuel className="w-4 h-4" />
                                 </button>
+                                {t.usa_precintos && (
+                                  <button
+                                    onClick={() => setTanquePrecintos(t)}
+                                    className="p-1.5 rounded text-[#94a3b8] hover:text-white transition-colors"
+                                    title="Precintos del tanque"
+                                  >
+                                    <Lock className="w-4 h-4" />
+                                  </button>
+                                )}
                                 <button
                                   onClick={() => abrirModalKardex(t.id)}
                                   className="p-1.5 rounded text-[#94a3b8] hover:text-white transition-colors"
@@ -3689,6 +3768,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             </div>
           </>
         ))}
+      {tanquePrecintos && (
+        <VentanaPrecintos tanque={tanquePrecintos} onCerrar={() => setTanquePrecintos(null)} />
+      )}
       {/* Tanque en vivo (diseño Figma): se abre con el ojo de la fila */}
       {tanqueVerId !== null &&
         (() => {
@@ -4337,6 +4419,22 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     />
                   </div>
                 )}
+                <label className="flex items-start gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={formData.usa_precintos}
+                    onChange={(e) => setFormData({ ...formData, usa_precintos: e.target.checked })}
+                  />
+                  <span>
+                    Verificar los precintos en cada varilla
+                    <span className="block text-xs text-slate-600">
+                      Sellos numerados en la boca, el drenaje y demás aberturas. Quien mide anota el
+                      número que ve; si no es el registrado, alguien abrió el tanque. Los puntos se
+                      cargan desde el candado de la fila del tanque.
+                    </span>
+                  </span>
+                </label>
               </div>
 
               {editandoId !== null && (
@@ -4653,6 +4751,16 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   }}
                 />
               </div>
+              {tanqueLectura.usa_precintos && (
+                <CamposPrecintoVarilla
+                  puntos={precintosLectura.puntos}
+                  error={precintosLectura.error}
+                  valores={precintosVistos}
+                  onCambiar={(puntoId, v) =>
+                    setPrecintosVistos((prev) => ({ ...prev, [puntoId]: v }))
+                  }
+                />
+              )}
               <button
                 type="submit"
                 disabled={enviandoLectura}
@@ -5951,7 +6059,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         ? "Recepción"
                         : f.tipo === "despacho"
                           ? "Despacho"
-                          : "Varilla";
+                          : f.tipo === "precinto"
+                            ? "Precinto"
+                            : "Varilla";
                     return (
                       <tr
                         key={`${f.tipo}-${f.referencia_id}`}
@@ -6339,6 +6449,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           <th className="p-2 text-right">Vales</th>
                           <th className="p-2 text-right">Recepciones</th>
                           <th className="p-2 text-right">Varillas</th>
+                          <th className="p-2 text-right" title="Precintos que colocó">
+                            Precintos
+                          </th>
                           <th className="p-2 text-right">Anulaciones</th>
                           <th
                             className="p-2 text-right"
@@ -6362,6 +6475,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                             <td className="p-2 text-right">{p.vales_cargados}</td>
                             <td className="p-2 text-right">{p.recepciones_cargadas}</td>
                             <td className="p-2 text-right">{p.lecturas_cargadas}</td>
+                            <td className="p-2 text-right">{p.precintos_colocados}</td>
                             <td className="p-2 text-right">{p.anulaciones}</td>
                             <td
                               className={`p-2 text-right font-bold ${
@@ -7442,6 +7556,17 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   />
                 </div>
               </div>
+
+              {tanqueRecepcion?.usa_precintos && (
+                <CamposPrecintoRecepcion
+                  puntos={precintosDeRecepcion.puntos}
+                  error={precintosDeRecepcion.error}
+                  valores={precintosRecepcion}
+                  onCambiar={(puntoId, numero) =>
+                    setPrecintosRecepcion((prev) => ({ ...prev, [puntoId]: numero }))
+                  }
+                />
+              )}
 
               <div className="space-y-1">
                 <label
