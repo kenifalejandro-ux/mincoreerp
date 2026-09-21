@@ -491,6 +491,12 @@ export class CombustibleService {
       clienteUuid: data.cliente_uuid,
       insertar: async () => {
         const leidoEn = data.leido_en ?? new Date().toISOString();
+        const totalizadorLectura = await this.resolverTotalizadorDeLectura(
+          client,
+          tenantId,
+          data.combustible_id,
+          data.totalizador_lectura
+        );
         // Antes del INSERT: un precinto que falta es un 400, y la varilla no
         // tiene que quedar guardada a medias.
         const verificaciones = await this.prepararVerificacionPrecintos(
@@ -506,6 +512,7 @@ export class CombustibleService {
           leidoEn,
           usuarioId,
           metadata: data.metadata ?? {},
+          totalizadorLectura,
         });
         if (verificaciones.length > 0) {
           await this.repository.insertarVerificacionesPrecinto(
@@ -519,6 +526,34 @@ export class CombustibleService {
       },
       recuperar: (filaId) => this.repository.findLecturaConTanque(client, tenantId, filaId),
     });
+  }
+
+  /** El totalizador que se guarda con la varilla (0096).
+   *
+   *  - Tanque que lo usa: OBLIGATORIO. Dejarlo opcional sería dejar que quien
+   *    mide simplemente no lo anote, y el hueco de "después del último vale"
+   *    seguiría abierto.
+   *  - Tanque que no lo usa: se IGNORA en vez de rechazar. Es la varilla que se
+   *    cargó sin red cuando el control estaba prendido y llega después de
+   *    apagarlo -- perderla sería peor que descartar un dato (mismo criterio
+   *    que los precintos). El vale, en cambio, lo rechaza: ahí no hay cola
+   *    offline con el control prendido que justifique la excepción.
+   *
+   *  Un tanque que no existe lo rechaza registrarLectura con su propio 400. */
+  private async resolverTotalizadorDeLectura(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    totalizador: number | undefined
+  ): Promise<number | null> {
+    const tanque = await this.repository.findById(client, tenantId, combustibleId);
+    if (!tanque?.usa_totalizador) return null;
+    if (totalizador === undefined) {
+      throw new Error(
+        `el tanque ${tanque.codigo} usa totalizador: anotá la lectura del totalizador del surtidor al medir`
+      );
+    }
+    return totalizador;
   }
 
   // ── Despachos (Fase B) ───────────────────────────────────────────────
@@ -1419,6 +1454,58 @@ export class CombustibleService {
     }
   ) {
     if (data.combustibleId === null || data.totalizador === null) return null;
+    return this.evaluarCadenaTotalizador(client, tenantId, {
+      combustibleId: data.combustibleId,
+      excluir: { tipo: "despacho", id: data.despachoId },
+      totalizador: data.totalizador,
+      litros: data.cantidad,
+      instante: data.despachadoEn,
+    });
+  }
+
+  /** LA VARILLA EN LA CADENA (0096). Mismo cálculo que un vale, con 0 litros:
+   *  el punto anterior más cercano por valor y lo que el totalizador avanzó
+   *  desde ahí es, entero, combustible que salió por la manguera SIN vale.
+   *
+   *  Es lo que cierra el hueco de "después del último vale": sin la varilla,
+   *  eso solo se veía cuando llegaba el vale siguiente. Y es una segunda
+   *  lectura independiente: la hace quien mide, no quien despacha.
+   *
+   *  Devuelve null si el tanque no usa totalizador, si la varilla no lo trae
+   *  (se ignoró, o es la `inicial` del alta) o si es el primer punto de la
+   *  cadena. */
+  async evaluarTotalizadorLectura(
+    client: PoolClient,
+    tenantId: string,
+    data: {
+      lecturaId: number;
+      combustibleId: number;
+      totalizador: number | null;
+      leidoEn: string;
+    }
+  ) {
+    if (data.totalizador === null) return null;
+    const r = await this.evaluarCadenaTotalizador(client, tenantId, {
+      combustibleId: data.combustibleId,
+      excluir: { tipo: "lectura", id: data.lecturaId },
+      totalizador: data.totalizador,
+      litros: 0,
+      instante: data.leidoEn,
+    });
+    return r ? { ...r, ancla: "varilla" as const, lecturaId: data.lecturaId } : null;
+  }
+
+  private async evaluarCadenaTotalizador(
+    client: PoolClient,
+    tenantId: string,
+    data: {
+      combustibleId: number;
+      excluir: { tipo: "despacho" | "lectura"; id: number };
+      totalizador: number;
+      litros: number;
+      instante: string;
+    }
+  ) {
     const tanque = await this.repository.findById(client, tenantId, data.combustibleId);
     if (!tanque?.usa_totalizador) return null;
 
@@ -1426,9 +1513,9 @@ export class CombustibleService {
       client,
       tenantId,
       data.combustibleId,
-      data.despachoId,
+      data.excluir,
       data.totalizador,
-      data.despachadoEn
+      data.instante
     );
 
     if (v.retroceso_id !== null) {
@@ -1443,7 +1530,7 @@ export class CombustibleService {
     if (v.anterior_id === null) return null;
 
     const avance = Number((data.totalizador - Number(v.anterior_totalizador)).toFixed(3));
-    const diferencia = Number((avance - data.cantidad).toFixed(3));
+    const diferencia = Number((avance - data.litros).toFixed(3));
     if (Math.abs(diferencia) <= Number(tanque.totalizador_tolerancia)) return null;
 
     return {
@@ -1453,7 +1540,7 @@ export class CombustibleService {
       totalizador: data.totalizador,
       totalizadorAnterior: Number(v.anterior_totalizador),
       avance,
-      declarado: data.cantidad,
+      declarado: data.litros,
       diferencia,
       sobra: diferencia > 0,
     };
@@ -1680,6 +1767,59 @@ export class CombustibleService {
       toleradoLitros,
       lecturaAnteriorId: Number(datos.lectura_anterior_id),
       lecturaId,
+      // De dónde salió la diferencia, si las dos varillas traen totalizador.
+      ...CombustibleService.desglosarDescuadre(datos, {
+        nivelAnterior,
+        nivelMedido: nivel,
+        despachos,
+        recepciones,
+      }),
+    };
+  }
+
+  /** DE DÓNDE SALIÓ LA DIFERENCIA (0096). Con el totalizador de las dos
+   *  varillas del tramo, el faltante se separa en dos causas que se leen
+   *  distinto:
+   *
+   *      faltante = salió del tanque − lo que declaran los vales
+   *               = (avance − vales)        <- por la manguera, SIN vale
+   *               + (salió del tanque − avance)   <- por FUERA del surtidor
+   *
+   *  - `mangueraSinVale`: el avance del totalizador es exacto (±2 L) y los
+   *    vales también, así que esta parte es firme: combustible que pasó por
+   *    el surtidor sin vale.
+   *  - `fueraDelSurtidor`: lo que bajó el tanque y no pasó por el surtidor
+   *    (balde por la boca, drenaje). Es la resta de dos medidas y arrastra el
+   *    error de la varilla (±150 L): no baja el piso de robo invisible, pero
+   *    dice dónde mirar.
+   *
+   *  Positivo = falta en las dos. Devuelve {} si no se puede: tanque sin
+   *  totalizador, alguna de las dos varillas sin él, o un totalizador que
+   *  retrocede (eso ya es su propia alerta y no hay avance que dividir). */
+  static desglosarDescuadre(
+    datos: {
+      usa_totalizador: boolean;
+      totalizador_anterior: string | null;
+      totalizador_actual: string | null;
+    },
+    tramo: { nivelAnterior: number; nivelMedido: number; despachos: number; recepciones: number }
+  ) {
+    if (
+      !datos.usa_totalizador ||
+      datos.totalizador_anterior === null ||
+      datos.totalizador_actual === null
+    ) {
+      return {};
+    }
+    const avance = Number(datos.totalizador_actual) - Number(datos.totalizador_anterior);
+    if (avance < 0) return {};
+    const salioDelTanque = tramo.nivelAnterior + tramo.recepciones - tramo.nivelMedido;
+    return {
+      desglose: {
+        avanceTotalizador: Number(avance.toFixed(3)),
+        mangueraSinVale: Number((avance - tramo.despachos).toFixed(3)),
+        fueraDelSurtidor: Number((salioDelTanque - avance).toFixed(3)),
+      },
     };
   }
 
@@ -3425,6 +3565,9 @@ export class CombustibleService {
         usuario: f.usuario ?? "Sistema",
         anulada: anulada,
         motivo_anulacion: f.motivo_anulacion,
+        // El contador acumulativo del surtidor en ese vale o varilla (0094,
+        // 0096). null si el punto no lo lleva.
+        totalizador: f.totalizador === null ? null : Number(f.totalizador),
       };
     });
 

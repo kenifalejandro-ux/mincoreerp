@@ -1888,6 +1888,10 @@ export class CombustibleController {
         leidoEn: new Date(fila!.lectura.leido_en).toISOString(),
         rolQueMidio: req.usuario!.rol,
         quienMidio: req.usuario!.nombre ?? req.usuario!.email ?? "Alguien",
+        totalizador:
+          fila!.lectura.totalizador_lectura == null
+            ? null
+            : Number(fila!.lectura.totalizador_lectura),
       });
       res.status(201).json(fila);
     } catch (err) {
@@ -1904,6 +1908,8 @@ export class CombustibleController {
           // Precintos (0095): falta el número de un punto, o el punto no es
           // de este tanque. Corregible con el tanque delante.
           err.message.includes("usa precintos") ||
+          // Totalizador (0096): falta la lectura del surtidor.
+          err.message.includes("usa totalizador") ||
           err.message.includes("no es de este tanque"))
       ) {
         res.status(400).json({ error: err.message });
@@ -1983,7 +1989,11 @@ export class CombustibleController {
           // Grifo del rol equivocado (migrations/0065).
           err.message.includes("no está marcado como") ||
           // Salto de numeración imposible de tipeo (5ª auditoría).
-          err.message.includes("salta"))
+          err.message.includes("salta") ||
+          // Totalizador (0094): faltaba en un tanque que lo usa, o vino en uno
+          // que no. Sin esto era un 500, y la cola offline reintenta los 5xx
+          // para siempre.
+          err.message.includes("usa totalizador"))
       ) {
         // Todos estos son datos que se contradicen a sí mismos o a una
         // fila que el propio request referenció mal -- 400, corregible ahí
@@ -2725,9 +2735,12 @@ export class CombustibleController {
       leidoEn: string;
       rolQueMidio: string;
       quienMidio: string;
+      /** Lo que quedó guardado (0096): null si el tanque no lo usa. */
+      totalizador: number | null;
     }
   ) {
     await this.procesarAlertaPrecintos(tenantId, l.combustibleId, l.lecturaId, l.quienMidio);
+    await this.procesarAlertaTotalizadorLectura(tenantId, l);
     await this.procesarAlertaNivelBajo(tenantId, l.combustibleId, l.nivel);
     await this.procesarAlertaDescuadre(tenantId, l.combustibleId, l.lecturaId, l.nivel, l.leidoEn);
     await this.procesarAlertaDescuadreCiclo(
@@ -2746,6 +2759,51 @@ export class CombustibleController {
     );
     await this.procesarAlertaDescuadreVentana(tenantId, l.combustibleId, l.lecturaId, l.leidoEn);
     await this.procesarControlesDeVarilla(tenantId, l.combustibleId, l.lecturaId, l.rolQueMidio);
+  }
+
+  /** El totalizador de la varilla contra el punto anterior de la cadena
+   *  (0096). Mismo contrato "nunca lanza": la lectura ya se guardó.
+   *
+   *  Sin deduplicar a propósito, a diferencia del precinto: el siguiente
+   *  punto de la cadena ya parte de ESTA varilla, así que un mismo faltante no
+   *  se repite en la varilla de mañana. Es un hallazgo (se congela como
+   *  anomalía si nadie lo explica), igual que el del vale. */
+  private async procesarAlertaTotalizadorLectura(
+    tenantId: string,
+    l: { combustibleId: number; lecturaId: number; leidoEn: string; totalizador: number | null }
+  ) {
+    try {
+      const resultado = await withTenant(tenantId, async (client) => {
+        const t = await service.evaluarTotalizadorLectura(client, tenantId, {
+          lecturaId: l.lecturaId,
+          combustibleId: l.combustibleId,
+          totalizador: l.totalizador,
+          leidoEn: l.leidoEn,
+        });
+        if (!t) return null;
+        await service.crearAlertas(client, tenantId, [
+          {
+            tipo: t.motivo === "retroceso" ? "totalizador_retroceso" : "totalizador_salto",
+            combustibleId: l.combustibleId,
+            lecturaId: l.lecturaId,
+            detalle: { ...t } as Record<string, unknown>,
+          },
+        ]);
+        const admins = await service.findAdminsConCombustibleHabilitado(client, tenantId);
+        return { t, admins };
+      });
+      if (!resultado) return;
+      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+        tipo: resultado.t.motivo === "retroceso" ? "totalizador_retroceso" : "totalizador_salto",
+        combustibleId: l.combustibleId,
+      });
+      await enviarCorreoTotalizador(resultado.admins, resultado.t);
+    } catch (err) {
+      logger.warn(
+        { err, tenantId, combustibleId: l.combustibleId },
+        "No se pudo procesar la alerta del totalizador de la varilla"
+      );
+    }
   }
 
   /** Precinto que no coincide en la varilla (0095). Mismo contrato "nunca
@@ -3612,6 +3670,7 @@ export class CombustibleController {
           "Quién",
           "Anulado / histórico",
           "Motivo de anulación",
+          `Totalizador (${u})`,
         ],
         kardex.filas.map((f) => [
           // Fecha local y no ISO: con el ISO, Excel trata la columna como
@@ -3636,6 +3695,7 @@ export class CombustibleController {
           f.usuario,
           f.anulada ? "SÍ" : f.historico ? "HISTÓRICO" : "",
           f.motivo_anulacion,
+          f.totalizador,
         ])
       );
 
@@ -3714,6 +3774,8 @@ export class CombustibleController {
         "Quién",
         "Anulado / histórico",
         "Motivo de anulación",
+        // Al FINAL a propósito: las fórmulas del resumen apuntan a E, F, H y L.
+        `Totalizador (${u})`,
       ].map((t) => ({ valor: t, negrita: true }));
 
       // Litros con 2 decimales: sin formato, una planilla muestra los números
@@ -3742,6 +3804,7 @@ export class CombustibleController {
         f.usuario,
         f.anulada ? "SÍ" : f.historico ? "HISTÓRICO" : null,
         f.motivo_anulacion,
+        f.totalizador === null ? null : { valor: f.totalizador, formato: "decimal" },
       ]);
 
       // Los totales del resumen van como FÓRMULA sobre la hoja de detalle, no

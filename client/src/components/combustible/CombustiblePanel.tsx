@@ -145,6 +145,9 @@ interface Lectura {
   // NULL, ver 0045) o si la lectura la generó el sistema (`origen` =
   // 'inicial' al crear el tanque, o 'backfill' de una migración vieja).
   registrada_por_nombre: string | null;
+  // El contador acumulativo del surtidor al medir (0096). null si el tanque
+  // no lo usaba.
+  totalizador_lectura: string | null;
 }
 
 /** Fase B (migrations/0062) -- solo los campos que el formulario de
@@ -375,6 +378,8 @@ interface FilaKardex {
   motivo_anulacion: string | null;
   // Anterior a la primera varilla: se ve, pero no mueve el saldo.
   historico: boolean;
+  // El contador acumulativo del surtidor en ese vale o varilla (0094, 0096).
+  totalizador: number | null;
 }
 
 interface Kardex {
@@ -1162,8 +1167,12 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     );
   }
   if (a.tipo === "totalizador_retroceso") {
-    const d = a.detalle as { totalizador?: number; totalizadorMayorPrevio?: number };
-    return `Marcó ${d.totalizador ?? "?"}, menos que los ${d.totalizadorMayorPrevio ?? "?"} de un vale anterior`;
+    const d = a.detalle as {
+      totalizador?: number;
+      totalizadorMayorPrevio?: number;
+      ancla?: string;
+    };
+    return `Marcó ${d.totalizador ?? "?"}${d.ancla === "varilla" ? " al medir" : ""}, menos que los ${d.totalizadorMayorPrevio ?? "?"} de un ${d.ancla === "varilla" ? "punto" : "vale"} anterior`;
   }
   if (a.tipo === "totalizador_salto") {
     const d = a.detalle as {
@@ -1172,7 +1181,13 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
       diferencia?: number;
       sobra?: boolean;
       unidad?: string;
+      ancla?: string;
     };
+    // De la varilla: no hay vale ni litros propios, todo el avance es
+    // combustible que salió por el surtidor sin vale.
+    if (d.ancla === "varilla") {
+      return `Al medir, el totalizador avanzó ${d.avance ?? "?"} ${d.unidad ?? ""} desde el punto anterior y ningún vale lo explica: salieron ${d.diferencia ?? "?"} sin vale`;
+    }
     return d.sobra
       ? `El surtidor avanzó ${d.avance ?? "?"} ${d.unidad ?? ""} y el vale dice ${d.declarado ?? "?"}: salieron ${d.diferencia ?? "?"} sin vale`
       : `El surtidor avanzó ${d.avance ?? "?"} ${d.unidad ?? ""} y el vale dice ${d.declarado ?? "?"}: el vale declara de más`;
@@ -1292,14 +1307,21 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     );
   }
   if (a.tipo === "descuadre_inventario") {
-    const { descuadreLitros, esperado, nivelMedido, sentido, unidad, umbralPct } = a.detalle as {
-      descuadreLitros?: number;
-      esperado?: number;
-      nivelMedido?: number;
-      sentido?: string;
-      unidad?: string;
-      umbralPct?: number;
-    };
+    const { descuadreLitros, esperado, nivelMedido, sentido, unidad, umbralPct, desglose } =
+      a.detalle as {
+        descuadreLitros?: number;
+        esperado?: number;
+        nivelMedido?: number;
+        sentido?: string;
+        unidad?: string;
+        umbralPct?: number;
+        // Solo si las dos varillas del tramo traen totalizador (0096).
+        desglose?: {
+          avanceTotalizador: number;
+          mangueraSinVale: number;
+          fueraDelSurtidor: number;
+        };
+      };
     if (descuadreLitros === undefined) return "—";
     // El valor absoluto va con la palabra ("faltan"/"sobran") en vez del
     // signo: un "-500" pide que el lector traduzca, y esta columna se lee de
@@ -1307,10 +1329,14 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     const magnitud = Math.abs(descuadreLitros).toLocaleString("es-PE", {
       maximumFractionDigits: 2,
     });
-    return (
+    const base =
       `${sentido === "falta" ? "Faltan" : "Sobran"} ${magnitud} ${unidad ?? ""}: ` +
-      `esperado ${esperado ?? "?"}, medido ${nivelMedido ?? "?"} (umbral ${umbralPct ?? "?"}%)`
-    );
+      `esperado ${esperado ?? "?"}, medido ${nivelMedido ?? "?"} (umbral ${umbralPct ?? "?"}%)`;
+    // De dónde salió: la parte de la manguera es firme (±2), la de fuera del
+    // surtidor arrastra el error de la varilla. Positivo = falta.
+    return desglose
+      ? `${base}. Por la manguera sin vale: ${desglose.mangueraSinVale}; fuera del surtidor: ${desglose.fueraDelSurtidor}`
+      : base;
   }
   if (a.tipo === "diferencia_recepcion") {
     const { diferenciaLitros, diferenciaPct, umbralPct, unidad } = a.detalle as {
@@ -1641,6 +1667,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // --- Registrar lectura (offline-capaz, como antes) ---
   const [tanqueLectura, setTanqueLectura] = useState<Tanque | null>(null);
   const [nivel, setNivel] = useState("");
+  // El totalizador del surtidor leído al medir (0096).
+  const [totalizadorVarilla, setTotalizadorVarilla] = useState("");
   const [leidoEn, setLeidoEn] = useState(ahoraParaInputLocal());
   // Si el operario NO tocó la hora, la lectura es "ahora" y hay que
   // mandarla con precisión de segundos. El input datetime-local recorta a
@@ -2508,6 +2536,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     setTanqueLectura(t);
     setPrecintosVistos({});
     setNivel("");
+    setTotalizadorVarilla("");
     setLeidoEn(ahoraParaInputLocal());
     setHoraEditadaAMano(false);
     // Limpia el aviso de la operación anterior: si no, quien abre el modal
@@ -2558,6 +2587,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           combustible_id: tanqueLectura.id,
           nivel: Number(nivel),
           leido_en: horaEditadaAMano ? new Date(leidoEn).toISOString() : new Date().toISOString(),
+          totalizador_lectura:
+            tanqueLectura.usa_totalizador && totalizadorVarilla !== ""
+              ? Number(totalizadorVarilla)
+              : undefined,
           // Lo que se VIO en cada sello (0095). Solo si el tanque usa precintos.
           precintos: tanqueLectura.usa_precintos
             ? puntosAVerificar(precintosLectura.puntos).map((p) => {
@@ -3251,6 +3284,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   const tanqueRecepcion = tanques.find((t) => t.id === Number(recepcionForm.combustible_id));
   const tanqueDespacho = tanques.find((t) => t.id === Number(despachoForm.combustible_id));
+  // La columna del totalizador solo aparece si el kardex trae alguno: un
+  // tanque sin totalizador no tiene por qué ver una columna vacía.
+  const kardexConTotalizador = kardex?.filas.some((f) => f.totalizador !== null) ?? false;
 
   // Los puntos precintados de los dos formularios que los piden (0095).
   const precintosLectura = usePuntosPrecinto(
@@ -4544,6 +4580,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                               ? `Registró: ${l.registrada_por_nombre}`
                               : "Registró: —"}
                           </p>
+                          {l.totalizador_lectura !== null && (
+                            <p className="text-xs text-slate-500 mt-0.5">
+                              Totalizador: {Number(l.totalizador_lectura).toLocaleString("es-PE")}
+                            </p>
+                          )}
                           {anulada && (
                             <p className="text-xs text-amber-700 mt-0.5">
                               Anulada: {l.motivo_anulacion}
@@ -4732,6 +4773,30 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   onChange={(e) => setNivel(e.target.value)}
                 />
               </div>
+              {tanqueLectura.usa_totalizador && (
+                <div className="space-y-1">
+                  <label
+                    htmlFor="combustible-totalizador"
+                    className="text-xs font-bold text-slate-700 uppercase"
+                  >
+                    Totalizador del surtidor
+                  </label>
+                  <input
+                    id="combustible-totalizador"
+                    type="number"
+                    min={0}
+                    step="0.001"
+                    required
+                    className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                    value={totalizadorVarilla}
+                    onChange={(e) => setTotalizadorVarilla(e.target.value)}
+                  />
+                  <p className="text-xs text-slate-400">
+                    El contador acumulativo, tal como está ahora. Léelo tú: no lo copies del último
+                    vale.
+                  </p>
+                </div>
+              )}
               <div className="space-y-1">
                 <label
                   htmlFor="combustible-leido-en"
@@ -6028,6 +6093,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     <th className="p-2 text-right">Salida</th>
                     <th className="p-2 text-right">Saldo teórico</th>
                     <th className="p-2 text-right">Medido</th>
+                    {kardexConTotalizador && (
+                      <th
+                        className="p-2 text-right"
+                        title="El contador acumulativo del surtidor en ese vale o varilla"
+                      >
+                        Totalizador
+                      </th>
+                    )}
                     <th
                       className="p-2 text-right"
                       title="Contra la varilla anterior: ubica CUÁNDO pasó"
@@ -6050,7 +6123,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         Saldo al inicio del período (última varilla anterior)
                       </td>
                       <td className="p-2 text-right font-bold">{kardex.saldo_inicial}</td>
-                      <td className="p-2" colSpan={4}></td>
+                      <td className="p-2" colSpan={kardexConTotalizador ? 5 : 4}></td>
                     </tr>
                   )}
                   {kardex.filas.map((f) => {
@@ -6104,6 +6177,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         </td>
                         <td className="p-2 text-right font-semibold">{f.saldo_teorico ?? "—"}</td>
                         <td className="p-2 text-right font-semibold">{f.nivel_medido ?? ""}</td>
+                        {kardexConTotalizador && (
+                          <td className="p-2 text-right">{f.totalizador ?? ""}</td>
+                        )}
                         <td className="p-2 text-right">
                           {f.dif_tramo === null ? "" : f.dif_tramo}
                         </td>

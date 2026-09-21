@@ -114,14 +114,19 @@ export async function enviarCorreoAlertaMedidor(
   });
 }
 
-/** El totalizador acumulativo del surtidor no cierra con los vales (0094).
- *  El vale NO se bloqueó: puede ser un tipeo, pero también combustible que
- *  salió sin vale o un medidor manipulado -- por eso lo mira una persona. */
+/** El totalizador acumulativo del surtidor no cierra (0094, 0096). El vale o
+ *  la varilla NO se bloquearon: puede ser un tipeo, pero también combustible
+ *  que salió sin vale o un medidor manipulado -- por eso lo mira una persona.
+ *
+ *  Sin `serieTalonario`/`nVale` y con `ancla: "varilla"` el punto que no
+ *  cierra es una varilla: no tiene vale ni litros propios, así que todo el
+ *  avance del totalizador es combustible sin vale. */
 export async function enviarCorreoTotalizador(
   destinatarios: Destinatario[],
   params: {
-    serieTalonario: string;
-    nVale: number;
+    serieTalonario?: string;
+    nVale?: number;
+    ancla?: "varilla";
     motivo: "retroceso" | "salto";
     tanque: string;
     unidad: string;
@@ -134,27 +139,42 @@ export async function enviarCorreoTotalizador(
     sobra?: boolean;
   }
 ) {
-  const vale = String(params.nVale).padStart(5, "0");
+  const deVarilla = params.ancla === "varilla";
+  const vale = String(params.nVale ?? 0).padStart(5, "0");
+  const cual = deVarilla ? "la varilla" : "un vale anterior";
   const explicacion =
     params.motivo === "retroceso"
       ? `El totalizador del tanque ${params.tanque} marcó ${params.totalizador}, MENOS que los ` +
-        `${params.totalizadorMayorPrevio} de un vale anterior. Un contador acumulativo no vuelve atrás.`
-      : params.sobra
-        ? `Desde el vale anterior el totalizador avanzó ${params.avance} ${params.unidad}, pero este ` +
-          `vale declara ${params.declarado}: sobran ${params.diferencia} ${params.unidad} que ` +
-          `salieron por el surtidor SIN vale.`
-        : `Desde el vale anterior el totalizador avanzó ${params.avance} ${params.unidad}, pero este ` +
-          `vale declara ${params.declarado}: el vale dice ${Math.abs(params.diferencia ?? 0)} ` +
-          `${params.unidad} más de lo que el surtidor entregó.`;
+        `${params.totalizadorMayorPrevio} de ${deVarilla ? "un punto anterior" : cual}. ` +
+        `Un contador acumulativo no vuelve atrás.`
+      : deVarilla
+        ? `Desde el punto anterior el totalizador avanzó ${params.avance} ${params.unidad} y ` +
+          `ningún vale lo explica: salieron ${params.diferencia} ${params.unidad} por el ` +
+          `surtidor SIN vale.`
+        : params.sobra
+          ? `Desde el vale anterior el totalizador avanzó ${params.avance} ${params.unidad}, pero este ` +
+            `vale declara ${params.declarado}: sobran ${params.diferencia} ${params.unidad} que ` +
+            `salieron por el surtidor SIN vale.`
+          : `Desde el vale anterior el totalizador avanzó ${params.avance} ${params.unidad}, pero este ` +
+            `vale declara ${params.declarado}: el vale dice ${Math.abs(params.diferencia ?? 0)} ` +
+            `${params.unidad} más de lo que el surtidor entregó.`;
 
   await enviarCorreoAlerta({
     destinatarios,
-    asunto: `Combustible: totalizador no cierra en vale ${params.serieTalonario}-${vale}`,
-    titulo: `Totalizador del surtidor inconsistente en la serie ${params.serieTalonario}`,
+    asunto: deVarilla
+      ? `Combustible: totalizador no cierra al medir el tanque ${params.tanque}`
+      : `Combustible: totalizador no cierra en vale ${params.serieTalonario}-${vale}`,
+    titulo: deVarilla
+      ? `Totalizador del surtidor inconsistente en la varilla de ${params.tanque}`
+      : `Totalizador del surtidor inconsistente en la serie ${params.serieTalonario}`,
     lineas: [
-      `Vale ${vale}. ${explicacion}`,
-      "El vale se registró igual (no se bloquea el abastecimiento). Puede ser un error de " +
-        "tipeo, combustible sacado sin vale o un medidor manipulado -- revisar en el ERP.",
+      deVarilla ? explicacion : `Vale ${vale}. ${explicacion}`,
+      deVarilla
+        ? "La varilla se registró igual. Puede ser un error de tipeo, combustible sacado por " +
+          "la manguera después del último vale, o un totalizador anotado de menos en los " +
+          "vales anteriores -- revisar en el ERP."
+        : "El vale se registró igual (no se bloquea el abastecimiento). Puede ser un error de " +
+          "tipeo, combustible sacado sin vale o un medidor manipulado -- revisar en el ERP.",
     ],
   });
 }
@@ -254,11 +274,18 @@ export async function enviarCorreoAlertaDescuadre(
     descuadreLitros: number;
     sentido: "falta" | "sobra";
     umbralPct: number;
+    /** Solo si las dos varillas del tramo traen totalizador (0096). */
+    desglose?: {
+      avanceTotalizador: number;
+      mangueraSinVale: number;
+      fueraDelSurtidor: number;
+    };
   }
 ) {
   const u = params.unidad;
   const faltante = params.sentido === "falta";
   const magnitud = Math.abs(params.descuadreLitros);
+  const d = params.desglose;
 
   await enviarCorreoAlerta({
     destinatarios,
@@ -276,6 +303,15 @@ export async function enviarCorreoAlertaDescuadre(
         : `Sobran ${magnitud} ${u}: los vales declaran más salida de la que realmente ` +
           `hubo. Puede ser un error de tipeo en un vale, o combustible cargado en el ` +
           `papel a una unidad que nunca lo recibió.`,
+      ...(d
+        ? [
+            `De dónde sale (el totalizador avanzó ${d.avanceTotalizador} ${u} entre las dos ` +
+              `varillas): ${d.mangueraSinVale} ${u} pasaron por el surtidor SIN vale ` +
+              `(dato firme, ±2 ${u}) y ${d.fueraDelSurtidor} ${u} salieron del tanque sin ` +
+              `pasar por el surtidor (balde, drenaje; tiene el error de la varilla). ` +
+              `Positivo = falta.`,
+          ]
+        : []),
       `El umbral configurado para este tanque es ${params.umbralPct}% de su capacidad.`,
     ],
   });

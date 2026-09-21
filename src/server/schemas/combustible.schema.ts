@@ -160,6 +160,9 @@ export const registrarLecturaCombustibleSchema = z.object({
     })
     .optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
+  // El contador ACUMULATIVO del surtidor leído al medir (0096). Lo exige el
+  // servicio si el tanque usa totalizador -- Zod no ve la fila del tanque.
+  totalizador_lectura: z.number().nonnegative().optional(),
   // Lo que se VE en cada punto precintado al tomar la varilla (0095). Solo
   // si el tanque usa precintos; cuáles puntos son obligatorios lo decide el
   // servicio, que ve los puntos del tanque. `numero: null` = "no hay
