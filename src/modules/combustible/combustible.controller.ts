@@ -16,6 +16,7 @@ import {
   enviarCorreoAlertaAnulacion,
   enviarCorreoAlertaSobredespacho,
   enviarCorreoAlertaMedidor,
+  enviarCorreoTotalizador,
   enviarCorreoAlertaNivelBajo,
   enviarCorreoAlertaDescuadre,
   enviarCorreoAlertaDescuadreCiclo,
@@ -2066,244 +2067,291 @@ export class CombustibleController {
     const serieTalonario = data.serie_talonario;
     const nVale = data.n_vale;
     try {
-      const { huecos, exceso, medidor, fueraDeOrden, tope, retro, recargado, consumo, admins } =
-        await withTenant(tenantId, async (client) => {
-          // El vale que acaba de llegar puede estar llenando un hueco ya
-          // alertado (offline que sincronizó) -- esto corre siempre, sin
-          // condicionar, y no hace nada si no había ninguna alerta abierta.
-          //
-          // Si el hueco YA se había congelado como anomalía, no lo resuelve
-          // (la anomalía es inmutable): devuelve `llegoTarde` y se registra
-          // el despacho_tardio del punto 4 -- que alguien se acuerde de un
-          // vale dos días después es una señal, no algo a corregir en
-          // silencio.
-          const { llegoTarde } = await service.resolverAlertaHuecoSiExiste(
-            client,
-            tenantId,
-            "combustible",
-            serieTalonario,
-            nVale
-          );
+      const {
+        huecos,
+        exceso,
+        medidor,
+        fueraDeOrden,
+        tope,
+        retro,
+        recargado,
+        consumo,
+        totalizador,
+        admins,
+      } = await withTenant(tenantId, async (client) => {
+        // El vale que acaba de llegar puede estar llenando un hueco ya
+        // alertado (offline que sincronizó) -- esto corre siempre, sin
+        // condicionar, y no hace nada si no había ninguna alerta abierta.
+        //
+        // Si el hueco YA se había congelado como anomalía, no lo resuelve
+        // (la anomalía es inmutable): devuelve `llegoTarde` y se registra
+        // el despacho_tardio del punto 4 -- que alguien se acuerde de un
+        // vale dos días después es una señal, no algo a corregir en
+        // silencio.
+        const { llegoTarde } = await service.resolverAlertaHuecoSiExiste(
+          client,
+          tenantId,
+          "combustible",
+          serieTalonario,
+          nVale
+        );
 
-          const huecos = await service.detectarHuecosRevelados(
-            client,
-            tenantId,
-            "combustible",
-            serieTalonario,
-            despachoId,
-            nVale
-          );
+        const huecos = await service.detectarHuecosRevelados(
+          client,
+          tenantId,
+          "combustible",
+          serieTalonario,
+          despachoId,
+          nVale
+        );
 
-          // Vale cargado POR DEBAJO del máximo de su serie (0077). Si venía a
-          // llenar un hueco alertado, `llegoTarde`/el UPDATE de arriba ya lo
-          // explicaron y no hay nada que reportar: lo sospechoso es el vale
-          // desordenado que NADIE estaba esperando.
-          const maxAnterior = await service.detectarValeFueraDeOrden(
-            client,
-            tenantId,
-            "combustible",
-            serieTalonario,
-            despachoId,
-            nVale
-          );
-          const huecoLoEsperaba = await service.existioHuecoPara(
-            client,
-            tenantId,
-            "combustible",
-            serieTalonario,
-            nVale
-          );
-          const fueraDeOrden = maxAnterior !== null && !huecoLoEsperaba ? maxAnterior : null;
+        // Vale cargado POR DEBAJO del máximo de su serie (0077). Si venía a
+        // llenar un hueco alertado, `llegoTarde`/el UPDATE de arriba ya lo
+        // explicaron y no hay nada que reportar: lo sospechoso es el vale
+        // desordenado que NADIE estaba esperando.
+        const maxAnterior = await service.detectarValeFueraDeOrden(
+          client,
+          tenantId,
+          "combustible",
+          serieTalonario,
+          despachoId,
+          nVale
+        );
+        const huecoLoEsperaba = await service.existioHuecoPara(
+          client,
+          tenantId,
+          "combustible",
+          serieTalonario,
+          nVale
+        );
+        const fueraDeOrden = maxAnterior !== null && !huecoLoEsperaba ? maxAnterior : null;
 
-          // Sobredespacho (0069/0070): solo aplica si el vale fue a un equipo.
-          // Devuelve null en el caso normal -- sin capacidad configurada, sin
-          // unidad conocida, o sin exceso (ver evaluarSobredespacho).
-          const exceso = data.equipo_id
-            ? await service.evaluarSobredespacho(
-                client,
-                tenantId,
-                data.equipo_id,
-                data.combustible_id ?? null,
-                data.cantidad!
-              )
-            : null;
+        // Sobredespacho (0069/0070): solo aplica si el vale fue a un equipo.
+        // Devuelve null en el caso normal -- sin capacidad configurada, sin
+        // unidad conocida, o sin exceso (ver evaluarSobredespacho).
+        const exceso = data.equipo_id
+          ? await service.evaluarSobredespacho(
+              client,
+              tenantId,
+              data.equipo_id,
+              data.combustible_id ?? null,
+              data.cantidad!
+            )
+          : null;
 
-          // Medidor que no cierra con el anterior (punto 5 del documento,
-          // migración 0073). Igual que el sobredespacho: no bloquea el vale,
-          // solo lo marca. Se evalúa contra el ÚLTIMO despacho vigente de ese
-          // equipo, así que el primero de cada equipo nunca alerta.
-          const medidor = data.equipo_id
-            ? await service.evaluarMedidorInconsistente(client, tenantId, data.equipo_id, {
-                lecturaHorometro: data.lectura_horometro ?? null,
-                lecturaOdometro: data.lectura_odometro ?? null,
-                despachadoEn: data.despachado_en ?? new Date().toISOString(),
-                despachoId,
-              })
-            : null;
-
-          // Tope diario por actor (0079): lo que le faltaba al sobredespacho,
-          // que mira UN vale. Acá el problema es la SUMA de 24 h, así que
-          // aplica también a los destinos sin equipo -- planta y reserva no
-          // tenían ningún techo hasta ahora.
-          // El vale fechado muy atrás (0081): la cola offline produce horas,
-          // no semanas. Un vale con tres semanas de atraso no es
-          // sincronización, es alguien eligiendo una fecha -- el red team lo
-          // usó para sacar un despacho del reporte de controles.
-          const retro = await service.evaluarDespachoRetroactivo(
-            client,
-            tenantId,
-            data.combustible_id ?? null,
-            despachoId,
-            data.despachado_en ?? new Date().toISOString()
-          );
-
-          // El número de vale que vuelve con OTRA cantidad (0081). Reutilizar
-          // el número es la corrección de un tipeo funcionando; que la
-          // cantidad cambie es lo que hay que mirar.
-          const recargado = await service.evaluarValeRecargado(
-            client,
-            tenantId,
-            "combustible",
-            serieTalonario,
-            nVale,
-            data.cantidad!
-          );
-
-          // Consumo por hora de motor / por km (0088). Es el único control que
-          // ve el combustible que sale CON vale y no llega a la máquina.
-          const consumo = data.equipo_id
-            ? await service.evaluarConsumoExcedido(client, tenantId, data.equipo_id, {
-                despachoId,
-                lecturaHorometro: data.lectura_horometro ?? null,
-                lecturaOdometro: data.lectura_odometro ?? null,
-              })
-            : null;
-
-          const tope = await service.evaluarTopeDiario(client, tenantId, {
-            despachoId,
-            equipoId: data.equipo_id ?? null,
-            tipoDestino: data.tipo_destino,
-            despachadoEn: data.despachado_en ?? new Date().toISOString(),
-          });
-
-          const nuevas = [
-            ...(consumo
-              ? [
-                  {
-                    tipo: "consumo_excedido" as const,
-                    serieTalonario,
-                    nVale,
-                    despachoId,
-                    detalle: { ...consumo, equipoId: data.equipo_id } as Record<string, unknown>,
-                  },
-                ]
-              : []),
-            ...huecos.map((n) => ({
-              tipo: "hueco_detectado" as const,
-              serieTalonario,
-              nVale: n,
+        // Medidor que no cierra con el anterior (punto 5 del documento,
+        // migración 0073). Igual que el sobredespacho: no bloquea el vale,
+        // solo lo marca. Se evalúa contra el ÚLTIMO despacho vigente de ese
+        // equipo, así que el primero de cada equipo nunca alerta.
+        const medidor = data.equipo_id
+          ? await service.evaluarMedidorInconsistente(client, tenantId, data.equipo_id, {
+              lecturaHorometro: data.lectura_horometro ?? null,
+              lecturaOdometro: data.lectura_odometro ?? null,
+              despachadoEn: data.despachado_en ?? new Date().toISOString(),
               despachoId,
-              detalle: { revelado_por_vale: nVale } as Record<string, unknown>,
-            })),
-            ...(exceso
-              ? [
-                  {
-                    tipo: "sobredespacho" as const,
-                    serieTalonario,
-                    nVale,
-                    despachoId,
-                    detalle: { ...exceso, equipoId: data.equipo_id } as Record<string, unknown>,
-                  },
-                ]
-              : []),
-            ...(tope
-              ? [
-                  {
-                    tipo: "tope_diario_excedido" as const,
-                    serieTalonario,
-                    nVale,
-                    despachoId,
-                    detalle: { ...tope } as Record<string, unknown>,
-                  },
-                ]
-              : []),
-            ...(retro
-              ? [
-                  {
-                    tipo: "despacho_retroactivo" as const,
-                    serieTalonario,
-                    nVale,
-                    despachoId,
-                    detalle: { ...retro } as Record<string, unknown>,
-                  },
-                ]
-              : []),
-            ...(recargado
-              ? [
-                  {
-                    tipo: "vale_recargado" as const,
-                    serieTalonario,
-                    nVale,
-                    despachoId,
-                    detalle: { ...recargado } as Record<string, unknown>,
-                  },
-                ]
-              : []),
-            ...(fueraDeOrden !== null
-              ? [
-                  {
-                    tipo: "vale_fuera_de_orden" as const,
-                    serieTalonario,
-                    nVale,
-                    despachoId,
-                    detalle: { maxAnteriorDeLaSerie: fueraDeOrden } as Record<string, unknown>,
-                  },
-                ]
-              : []),
-            ...(medidor
-              ? [
-                  {
-                    tipo: "medidor_inconsistente" as const,
-                    serieTalonario,
-                    nVale,
-                    despachoId,
-                    detalle: { ...medidor, equipoId: data.equipo_id } as Record<string, unknown>,
-                  },
-                ]
-              : []),
-            ...(llegoTarde
-              ? [
-                  {
-                    tipo: "despacho_tardio" as const,
-                    serieTalonario,
-                    nVale,
-                    despachoId,
-                    detalle: {
-                      nota: "El vale llegó después de que el hueco se congelara como anomalía",
-                    } as Record<string, unknown>,
-                  },
-                ]
-              : []),
-          ];
+            })
+          : null;
 
-          if (nuevas.length === 0) {
-            return {
-              huecos,
-              exceso,
-              medidor,
-              fueraDeOrden,
-              tope,
-              retro,
-              recargado,
-              consumo,
-              admins: [] as { email: string; nombre: string }[],
-            };
-          }
+        // Tope diario por actor (0079): lo que le faltaba al sobredespacho,
+        // que mira UN vale. Acá el problema es la SUMA de 24 h, así que
+        // aplica también a los destinos sin equipo -- planta y reserva no
+        // tenían ningún techo hasta ahora.
+        // El vale fechado muy atrás (0081): la cola offline produce horas,
+        // no semanas. Un vale con tres semanas de atraso no es
+        // sincronización, es alguien eligiendo una fecha -- el red team lo
+        // usó para sacar un despacho del reporte de controles.
+        const retro = await service.evaluarDespachoRetroactivo(
+          client,
+          tenantId,
+          data.combustible_id ?? null,
+          despachoId,
+          data.despachado_en ?? new Date().toISOString()
+        );
 
-          await service.crearAlertas(client, tenantId, nuevas);
-          const admins = await service.findAdminsConCombustibleHabilitado(client, tenantId);
-          return { huecos, exceso, medidor, fueraDeOrden, tope, retro, recargado, consumo, admins };
+        // El número de vale que vuelve con OTRA cantidad (0081). Reutilizar
+        // el número es la corrección de un tipeo funcionando; que la
+        // cantidad cambie es lo que hay que mirar.
+        const recargado = await service.evaluarValeRecargado(
+          client,
+          tenantId,
+          "combustible",
+          serieTalonario,
+          nVale,
+          data.cantidad!
+        );
+
+        // Consumo por hora de motor / por km (0088). Es el único control que
+        // ve el combustible que sale CON vale y no llega a la máquina.
+        const consumo = data.equipo_id
+          ? await service.evaluarConsumoExcedido(client, tenantId, data.equipo_id, {
+              despachoId,
+              lecturaHorometro: data.lectura_horometro ?? null,
+              lecturaOdometro: data.lectura_odometro ?? null,
+            })
+          : null;
+
+        // Totalizador acumulativo contra los litros del vale (0094). null si el
+        // tanque no lo usa o si es el primer vale de la cadena.
+        const totalizador = await service.evaluarTotalizador(client, tenantId, {
+          despachoId,
+          combustibleId: data.combustible_id ?? null,
+          totalizador: data.totalizador_lectura ?? null,
+          cantidad: data.cantidad!,
+          despachadoEn: data.despachado_en ?? new Date().toISOString(),
         });
+
+        const tope = await service.evaluarTopeDiario(client, tenantId, {
+          despachoId,
+          equipoId: data.equipo_id ?? null,
+          tipoDestino: data.tipo_destino,
+          despachadoEn: data.despachado_en ?? new Date().toISOString(),
+        });
+
+        const nuevas = [
+          ...(consumo
+            ? [
+                {
+                  tipo: "consumo_excedido" as const,
+                  serieTalonario,
+                  nVale,
+                  despachoId,
+                  detalle: { ...consumo, equipoId: data.equipo_id } as Record<string, unknown>,
+                },
+              ]
+            : []),
+          ...huecos.map((n) => ({
+            tipo: "hueco_detectado" as const,
+            serieTalonario,
+            nVale: n,
+            despachoId,
+            detalle: { revelado_por_vale: nVale } as Record<string, unknown>,
+          })),
+          ...(exceso
+            ? [
+                {
+                  tipo: "sobredespacho" as const,
+                  serieTalonario,
+                  nVale,
+                  despachoId,
+                  detalle: { ...exceso, equipoId: data.equipo_id } as Record<string, unknown>,
+                },
+              ]
+            : []),
+          ...(tope
+            ? [
+                {
+                  tipo: "tope_diario_excedido" as const,
+                  serieTalonario,
+                  nVale,
+                  despachoId,
+                  detalle: { ...tope } as Record<string, unknown>,
+                },
+              ]
+            : []),
+          ...(retro
+            ? [
+                {
+                  tipo: "despacho_retroactivo" as const,
+                  serieTalonario,
+                  nVale,
+                  despachoId,
+                  detalle: { ...retro } as Record<string, unknown>,
+                },
+              ]
+            : []),
+          ...(recargado
+            ? [
+                {
+                  tipo: "vale_recargado" as const,
+                  serieTalonario,
+                  nVale,
+                  despachoId,
+                  detalle: { ...recargado } as Record<string, unknown>,
+                },
+              ]
+            : []),
+          ...(fueraDeOrden !== null
+            ? [
+                {
+                  tipo: "vale_fuera_de_orden" as const,
+                  serieTalonario,
+                  nVale,
+                  despachoId,
+                  detalle: { maxAnteriorDeLaSerie: fueraDeOrden } as Record<string, unknown>,
+                },
+              ]
+            : []),
+          ...(medidor
+            ? [
+                {
+                  tipo: "medidor_inconsistente" as const,
+                  serieTalonario,
+                  nVale,
+                  despachoId,
+                  detalle: { ...medidor, equipoId: data.equipo_id } as Record<string, unknown>,
+                },
+              ]
+            : []),
+          ...(totalizador
+            ? [
+                {
+                  tipo:
+                    totalizador.motivo === "retroceso"
+                      ? ("totalizador_retroceso" as const)
+                      : ("totalizador_salto" as const),
+                  serieTalonario,
+                  nVale,
+                  despachoId,
+                  combustibleId: data.combustible_id ?? null,
+                  detalle: { ...totalizador } as Record<string, unknown>,
+                },
+              ]
+            : []),
+          ...(llegoTarde
+            ? [
+                {
+                  tipo: "despacho_tardio" as const,
+                  serieTalonario,
+                  nVale,
+                  despachoId,
+                  detalle: {
+                    nota: "El vale llegó después de que el hueco se congelara como anomalía",
+                  } as Record<string, unknown>,
+                },
+              ]
+            : []),
+        ];
+
+        if (nuevas.length === 0) {
+          return {
+            huecos,
+            exceso,
+            medidor,
+            fueraDeOrden,
+            tope,
+            retro,
+            recargado,
+            consumo,
+            totalizador,
+            admins: [] as { email: string; nombre: string }[],
+          };
+        }
+
+        await service.crearAlertas(client, tenantId, nuevas);
+        const admins = await service.findAdminsConCombustibleHabilitado(client, tenantId);
+        return {
+          huecos,
+          exceso,
+          medidor,
+          fueraDeOrden,
+          tope,
+          retro,
+          recargado,
+          consumo,
+          totalizador,
+          admins,
+        };
+      });
 
       if (huecos.length > 0) {
         await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
@@ -2381,6 +2429,15 @@ export class CombustibleController {
           nVale,
         });
         await enviarCorreoConsumoExcedido(admins, { ...consumo, serieTalonario, nVale });
+      }
+
+      if (totalizador) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: totalizador.motivo === "retroceso" ? "totalizador_retroceso" : "totalizador_salto",
+          serieTalonario,
+          nVale,
+        });
+        await enviarCorreoTotalizador(admins, { serieTalonario, nVale, ...totalizador });
       }
 
       if (medidor) {

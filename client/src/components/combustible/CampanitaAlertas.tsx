@@ -36,6 +36,8 @@ const ETIQUETA_TIPO: Record<string, string> = {
   varilla_sin_control: "Solo mide quien despacha",
   varilla_exacta: "Varillas que cuadran al litro",
   historial_sin_contrastar: "Consumo previo a la primera varilla",
+  totalizador_salto: "Totalizador no cierra con el vale",
+  totalizador_retroceso: "Totalizador retrocedió",
   tanque_sin_vigilancia: "Tanque despachando sin vigilancia",
 };
 

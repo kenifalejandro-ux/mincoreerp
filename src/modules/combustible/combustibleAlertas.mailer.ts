@@ -114,6 +114,51 @@ export async function enviarCorreoAlertaMedidor(
   });
 }
 
+/** El totalizador acumulativo del surtidor no cierra con los vales (0094).
+ *  El vale NO se bloqueó: puede ser un tipeo, pero también combustible que
+ *  salió sin vale o un medidor manipulado -- por eso lo mira una persona. */
+export async function enviarCorreoTotalizador(
+  destinatarios: Destinatario[],
+  params: {
+    serieTalonario: string;
+    nVale: number;
+    motivo: "retroceso" | "salto";
+    tanque: string;
+    unidad: string;
+    totalizador: number;
+    totalizadorMayorPrevio?: number;
+    totalizadorAnterior?: number;
+    avance?: number;
+    declarado?: number;
+    diferencia?: number;
+    sobra?: boolean;
+  }
+) {
+  const vale = String(params.nVale).padStart(5, "0");
+  const explicacion =
+    params.motivo === "retroceso"
+      ? `El totalizador del tanque ${params.tanque} marcó ${params.totalizador}, MENOS que los ` +
+        `${params.totalizadorMayorPrevio} de un vale anterior. Un contador acumulativo no vuelve atrás.`
+      : params.sobra
+        ? `Desde el vale anterior el totalizador avanzó ${params.avance} ${params.unidad}, pero este ` +
+          `vale declara ${params.declarado}: sobran ${params.diferencia} ${params.unidad} que ` +
+          `salieron por el surtidor SIN vale.`
+        : `Desde el vale anterior el totalizador avanzó ${params.avance} ${params.unidad}, pero este ` +
+          `vale declara ${params.declarado}: el vale dice ${Math.abs(params.diferencia ?? 0)} ` +
+          `${params.unidad} más de lo que el surtidor entregó.`;
+
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: totalizador no cierra en vale ${params.serieTalonario}-${vale}`,
+    titulo: `Totalizador del surtidor inconsistente en la serie ${params.serieTalonario}`,
+    lineas: [
+      `Vale ${vale}. ${explicacion}`,
+      "El vale se registró igual (no se bloquea el abastecimiento). Puede ser un error de " +
+        "tipeo, combustible sacado sin vale o un medidor manipulado -- revisar en el ERP.",
+    ],
+  });
+}
+
 /** El tanque cruzó su nivel mínimo. A diferencia del resto, esta alerta NO
  *  es anti-fraude sino operativa: avisa antes de quedarse sin combustible
  *  en cancha. Por eso tampoco se congela como anomalía. */

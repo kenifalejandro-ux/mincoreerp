@@ -56,6 +56,10 @@ interface Tanque {
   // si este tanque exige factura/guía. Los dos se editan en el ABM.
   tolerancia_capacidad_pct: string;
   requiere_documento: boolean;
+  // Totalizador acumulativo del surtidor (0094). Apagado hasta confirmar con
+  // el cliente que sus surtidores lo tienen y que el grifero lo anota.
+  usa_totalizador: boolean;
+  totalizador_tolerancia: string;
   // Desde cuántos % de diferencia entre lo facturado y lo medido se considera
   // sospechosa una recepción (migrations/0066). 0 = no alertar todavía.
   umbral_diferencia_pct: string | null;
@@ -447,7 +451,9 @@ interface AlertaCombustible {
     | "consumo_excedido"
     | "varilla_sin_control"
     | "varilla_exacta"
-    | "historial_sin_contrastar";
+    | "historial_sin_contrastar"
+    | "totalizador_salto"
+    | "totalizador_retroceso";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -487,6 +493,8 @@ const TIPOS_CRITICOS = new Set([
   "consumo_excedido",
   "varilla_exacta",
   "varilla_sin_control",
+  "totalizador_salto",
+  "totalizador_retroceso",
 ]);
 const esCritica = (tipo: string) => TIPOS_CRITICOS.has(tipo);
 
@@ -970,6 +978,8 @@ const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   varilla_sin_control: "Solo mide quien despacha",
   varilla_exacta: "Varillas que cuadran al litro",
   historial_sin_contrastar: "Consumo previo a la primera varilla",
+  totalizador_salto: "Totalizador no cierra con el vale",
+  totalizador_retroceso: "Totalizador retrocedió",
 };
 
 /** El `detalle` es JSONB libre y cada tipo de alerta guarda cosas
@@ -1089,6 +1099,22 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
       `${varillasSeguidas ?? "?"} mediciones seguidas coincidieron con lo esperado dentro de ` +
       `${toleranciaLitros ?? "?"} L. Una varilla medida casi nunca da exacto`
     );
+  }
+  if (a.tipo === "totalizador_retroceso") {
+    const d = a.detalle as { totalizador?: number; totalizadorMayorPrevio?: number };
+    return `Marcó ${d.totalizador ?? "?"}, menos que los ${d.totalizadorMayorPrevio ?? "?"} de un vale anterior`;
+  }
+  if (a.tipo === "totalizador_salto") {
+    const d = a.detalle as {
+      avance?: number;
+      declarado?: number;
+      diferencia?: number;
+      sobra?: boolean;
+      unidad?: string;
+    };
+    return d.sobra
+      ? `El surtidor avanzó ${d.avance ?? "?"} ${d.unidad ?? ""} y el vale dice ${d.declarado ?? "?"}: salieron ${d.diferencia ?? "?"} sin vale`
+      : `El surtidor avanzó ${d.avance ?? "?"} ${d.unidad ?? ""} y el vale dice ${d.declarado ?? "?"}: el vale declara de más`;
   }
   if (a.tipo === "historial_sin_contrastar") {
     const d = a.detalle as {
@@ -1259,6 +1285,7 @@ const DESPACHO_FORM_INICIAL = {
   n_vale: "",
   cantidad: "",
   lectura_contometro: "",
+  totalizador_lectura: "",
   lectura_horometro: "",
   lectura_odometro: "",
   horas_abastecidas: "",
@@ -1409,6 +1436,8 @@ const FORM_INICIAL = {
   // migración: sin margen de tolerancia y con documento exigido.
   tolerancia_capacidad_pct: "0",
   requiere_documento: true,
+  usa_totalizador: false,
+  totalizador_tolerancia: "1",
   // Vacíos, no "0": desde la migración 0075 el 0 significa "estricto,
   // alertar por cualquier diferencia" y el vacío es "sin configurar".
   // Precargar un 0 le pondría a todo tanque nuevo la vigilancia más
@@ -2070,6 +2099,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       activo: t.activo,
       tolerancia_capacidad_pct: t.tolerancia_capacidad_pct,
       requiere_documento: t.requiere_documento,
+      usa_totalizador: t.usa_totalizador,
+      totalizador_tolerancia: t.totalizador_tolerancia,
       umbral_diferencia_pct: t.umbral_diferencia_pct ?? "",
       umbral_descuadre_pct: t.umbral_descuadre_pct ?? "",
       umbral_descuadre_ciclo_pct: t.umbral_descuadre_ciclo_pct ?? "",
@@ -2106,6 +2137,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             activo: formData.activo,
             tolerancia_capacidad_pct: Number(formData.tolerancia_capacidad_pct),
             requiere_documento: formData.requiere_documento,
+            usa_totalizador: formData.usa_totalizador,
+            totalizador_tolerancia: Number(formData.totalizador_tolerancia),
             umbral_diferencia_pct: aNumeroONull(formData.umbral_diferencia_pct),
             umbral_descuadre_pct: aNumeroONull(formData.umbral_descuadre_pct),
             umbral_descuadre_ciclo_pct: aNumeroONull(formData.umbral_descuadre_ciclo_pct),
@@ -2124,6 +2157,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             moneda: formData.moneda,
             tolerancia_capacidad_pct: Number(formData.tolerancia_capacidad_pct),
             requiere_documento: formData.requiere_documento,
+            usa_totalizador: formData.usa_totalizador,
+            totalizador_tolerancia: Number(formData.totalizador_tolerancia),
             umbral_diferencia_pct: aNumeroONull(formData.umbral_diferencia_pct),
             umbral_descuadre_pct: aNumeroONull(formData.umbral_descuadre_pct),
             umbral_descuadre_ciclo_pct: aNumeroONull(formData.umbral_descuadre_ciclo_pct),
@@ -2571,6 +2606,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             n_vale: Number(despachoForm.n_vale),
             cantidad: Number(despachoForm.cantidad),
             lectura_contometro: Number(despachoForm.lectura_contometro),
+            totalizador_lectura:
+              tanqueDespacho?.usa_totalizador && despachoForm.totalizador_lectura !== ""
+                ? Number(despachoForm.totalizador_lectura)
+                : undefined,
             // El medidor del equipo también en el vale del tanque propio
             // (migración 0088): sin él no se puede calcular el consumo, que
             // es el único control del combustible que sale CON vale y no
@@ -3105,6 +3144,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   };
 
   const tanqueRecepcion = tanques.find((t) => t.id === Number(recepcionForm.combustible_id));
+  const tanqueDespacho = tanques.find((t) => t.id === Number(despachoForm.combustible_id));
 
   const costoTotalRecepcion =
     recepcionForm.cantidad !== "" && recepcionForm.costo_unitario !== ""
@@ -4206,6 +4246,45 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     </span>
                   </span>
                 </label>
+                <label className="flex items-start gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={formData.usa_totalizador}
+                    onChange={(e) =>
+                      setFormData({ ...formData, usa_totalizador: e.target.checked })
+                    }
+                  />
+                  <span>
+                    Anotar el totalizador del surtidor en cada vale
+                    <span className="block text-xs text-slate-600">
+                      Es el contador acumulativo que no se resetea. Sirve para detectar combustible
+                      que sale sin vale. Activalo solo si el surtidor lo tiene y el grifero lo
+                      anota.
+                    </span>
+                  </span>
+                </label>
+                {formData.usa_totalizador && (
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="tanque-totalizador-tolerancia"
+                      className="text-xs font-bold text-slate-700 uppercase"
+                    >
+                      Diferencia tolerada (en la unidad del tanque)
+                    </label>
+                    <input
+                      id="tanque-totalizador-tolerancia"
+                      type="number"
+                      min={0}
+                      step="0.001"
+                      className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                      value={formData.totalizador_tolerancia}
+                      onChange={(e) =>
+                        setFormData({ ...formData, totalizador_tolerancia: e.target.value })
+                      }
+                    />
+                  </div>
+                )}
               </div>
 
               {editandoId !== null && (
@@ -4674,6 +4753,31 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     El contómetro resetea a 0 en cada despacho: tiene que coincidir con la cantidad,
                     o el servidor lo rechaza.
                   </p>
+                  {tanqueDespacho?.usa_totalizador && (
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="despacho-totalizador"
+                        className="text-xs font-bold text-slate-700 uppercase"
+                      >
+                        Totalizador del surtidor
+                      </label>
+                      <input
+                        id="despacho-totalizador"
+                        type="number"
+                        min={0}
+                        step="0.001"
+                        required
+                        className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                        value={despachoForm.totalizador_lectura}
+                        onChange={(e) =>
+                          setDespachoForm({ ...despachoForm, totalizador_lectura: e.target.value })
+                        }
+                      />
+                      <p className="text-xs text-slate-400">
+                        El contador acumulativo, leído después de despachar. No se resetea.
+                      </p>
+                    </div>
+                  )}
                   {/* El medidor del EQUIPO en el vale del tanque propio
                       (0088). Antes solo existía en la compra externa, y por
                       eso el canal principal de salida no tenía ningún control
