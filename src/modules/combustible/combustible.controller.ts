@@ -58,6 +58,10 @@ import type {
   CrearConteoUreaInput,
   AnularConteoUreaInput,
   CrearPuntoPrecintoInput,
+  CrearSurtidorInput,
+  ActualizarSurtidorInput,
+  ConectarSurtidorInput,
+  MotivoSurtidorInput,
   CambiarPrecintoInput,
   BajaPuntoPrecintoInput,
 } from "../../server/schemas/combustible.schema";
@@ -73,6 +77,7 @@ import {
 } from "../../server/shared/utils/xlsx.util";
 import { sanearNombreArchivo } from "../../server/services/documentStorage";
 import { CombustibleService } from "./combustible.service";
+import * as surtidores from "./surtidores.service";
 
 const service = new CombustibleService();
 
@@ -1898,10 +1903,6 @@ export class CombustibleController {
         leidoEn: new Date(fila!.lectura.leido_en).toISOString(),
         rolQueMidio: req.usuario!.rol,
         quienMidio: req.usuario!.nombre ?? req.usuario!.email ?? "Alguien",
-        totalizador:
-          fila!.lectura.totalizador_lectura == null
-            ? null
-            : Number(fila!.lectura.totalizador_lectura),
       });
       res.status(201).json(fila);
     } catch (err) {
@@ -1918,8 +1919,10 @@ export class CombustibleController {
           // Precintos (0095): falta el número de un punto, o el punto no es
           // de este tanque. Corregible con el tanque delante.
           err.message.includes("usa precintos") ||
-          // Totalizador (0096): falta la lectura del surtidor.
+          // Totalizador (0096): falta la lectura del surtidor, o el surtidor
+          // indicado no alimenta a este tanque (0098).
           err.message.includes("usa totalizador") ||
+          err.message.includes("no alimenta a este tanque") ||
           err.message.includes("no es de este tanque"))
       ) {
         res.status(400).json({ error: err.message });
@@ -2003,7 +2006,12 @@ export class CombustibleController {
           // Totalizador (0094): faltaba en un tanque que lo usa, o vino en uno
           // que no. Sin esto era un 500, y la cola offline reintenta los 5xx
           // para siempre.
-          err.message.includes("usa totalizador"))
+          err.message.includes("usa totalizador") ||
+          // Surtidor (0098): el indicado no alimentaba al tanque, el tanque
+          // tiene varios y no se dijo cuál, o no tenía ninguno conectado.
+          err.message.includes("el surtidor indicado") ||
+          err.message.includes("más de un surtidor") ||
+          err.message.includes("ningún surtidor conectado"))
       ) {
         // Todos estos son datos que se contradicen a sí mismos o a una
         // fila que el propio request referenció mal -- 400, corregible ahí
@@ -2745,8 +2753,6 @@ export class CombustibleController {
       leidoEn: string;
       rolQueMidio: string;
       quienMidio: string;
-      /** Lo que quedó guardado (0096): null si el tanque no lo usa. */
-      totalizador: number | null;
     }
   ) {
     await this.procesarAlertaPrecintos(tenantId, l.combustibleId, l.lecturaId, l.quienMidio);
@@ -2780,34 +2786,42 @@ export class CombustibleController {
    *  anomalía si nadie lo explica), igual que el del vale. */
   private async procesarAlertaTotalizadorLectura(
     tenantId: string,
-    l: { combustibleId: number; lecturaId: number; leidoEn: string; totalizador: number | null }
+    l: { combustibleId: number; lecturaId: number; leidoEn: string }
   ) {
     try {
+      // Una alerta por cada surtidor que no cierra (0098): son contadores
+      // distintos y cada uno se explica por separado.
       const resultado = await withTenant(tenantId, async (client) => {
-        const t = await service.evaluarTotalizadorLectura(client, tenantId, {
+        const hallazgos = await service.evaluarTotalizadoresDeLectura(client, tenantId, {
           lecturaId: l.lecturaId,
           combustibleId: l.combustibleId,
-          totalizador: l.totalizador,
           leidoEn: l.leidoEn,
         });
-        if (!t) return null;
-        await service.crearAlertas(client, tenantId, [
-          {
-            tipo: t.motivo === "retroceso" ? "totalizador_retroceso" : "totalizador_salto",
+        if (hallazgos.length === 0) return null;
+        await service.crearAlertas(
+          client,
+          tenantId,
+          hallazgos.map((t) => ({
+            tipo:
+              t.motivo === "retroceso"
+                ? ("totalizador_retroceso" as const)
+                : ("totalizador_salto" as const),
             combustibleId: l.combustibleId,
             lecturaId: l.lecturaId,
             detalle: { ...t } as Record<string, unknown>,
-          },
-        ]);
+          }))
+        );
         const admins = await service.findAdminsConCombustibleHabilitado(client, tenantId);
-        return { t, admins };
+        return { hallazgos, admins };
       });
       if (!resultado) return;
-      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
-        tipo: resultado.t.motivo === "retroceso" ? "totalizador_retroceso" : "totalizador_salto",
-        combustibleId: l.combustibleId,
-      });
-      await enviarCorreoTotalizador(resultado.admins, resultado.t);
+      for (const t of resultado.hallazgos) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: t.motivo === "retroceso" ? "totalizador_retroceso" : "totalizador_salto",
+          combustibleId: l.combustibleId,
+        });
+        await enviarCorreoTotalizador(resultado.admins, t);
+      }
     } catch (err) {
       logger.warn(
         { err, tenantId, combustibleId: l.combustibleId },
@@ -4142,6 +4156,241 @@ export class CombustibleController {
     } catch {
       res.status(500).json({ error: "Error al armar el reporte de segregación" });
     }
+  }
+
+  // ── Surtidores (migración 0098) ──────────────────────────────────────
+  //
+  // Los errores de negocio salen como AppError desde surtidores.service y
+  // los traduce el middleware (asyncHandler): 400, 404 o 409.
+
+  /** Apagar el totalizador de un surtidor, o dar de baja uno que lo usaba,
+   *  afloja la vigilancia: misma acción de bitácora y mismo correo que bajar
+   *  un umbral del tanque. */
+  private async avisarSurtidorAflojado(
+    req: Request,
+    tenantId: string,
+    datos: {
+      surtidorId: number;
+      nombre: string;
+      control: string;
+      de: string;
+      a: string;
+      motivo: string;
+    }
+  ) {
+    const aflojados = [{ control: datos.control, de: datos.de, a: datos.a }];
+    await registrarAuditoria({
+      accion: "combustible.tanque_vigilancia_reducida",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { surtidorId: datos.surtidorId, aflojados, motivo: datos.motivo },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    try {
+      const admins = await withTenant(tenantId, (client) =>
+        service.findAdminsConCombustibleHabilitado(client, tenantId)
+      );
+      await enviarCorreoVigilanciaReducida(admins, {
+        quien: req.usuario!.nombre ?? req.usuario!.email ?? "Un administrador",
+        objeto: `el surtidor ${datos.nombre}`,
+        motivo: datos.motivo,
+        cambios: aflojados,
+      });
+    } catch (err) {
+      logger.warn(
+        { err, tenantId, surtidorId: datos.surtidorId },
+        "No se pudo avisar del aflojamiento"
+      );
+    }
+  }
+
+  /** GET /surtidores -- cualquier rol: el vale y la varilla los necesitan. */
+  async listarSurtidores(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    res.json(await withTenant(tenantId, (client) => surtidores.listarSurtidores(client, tenantId)));
+  }
+
+  async crearSurtidor(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const data = req.validatedBody as CrearSurtidorInput;
+    const creado = await withTenant(tenantId, (client) =>
+      surtidores.crearSurtidor(client, tenantId, req.usuario!.id, data)
+    );
+    await registrarAuditoria({
+      accion: "combustible.surtidor_crear",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { surtidorId: creado.id, ...data },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
+    res.status(201).json(creado);
+  }
+
+  async actualizarSurtidor(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.surtidorId);
+    const data = req.validatedBody as ActualizarSurtidorInput;
+    const antes = await withTenant(tenantId, async (client) => {
+      const previo = await service.getSurtidor(client, tenantId, id);
+      if (!previo) return null;
+      const apaga = previo.usa_totalizador && data.usa_totalizador === false;
+      if (apaga && !data.motivo) {
+        // 400 y no un guardado silencioso: apagar un control anti-fraude pide
+        // decir por qué, igual que en el tanque.
+        return { previo, error: "Apagar el totalizador de un surtidor pide un motivo" };
+      }
+      await surtidores.actualizarSurtidor(client, tenantId, id, data);
+      return { previo, error: null };
+    });
+    if (!antes) {
+      res.status(404).json({ error: "Surtidor no encontrado" });
+      return;
+    }
+    if (antes.error) {
+      res.status(400).json({ error: antes.error });
+      return;
+    }
+    const apago = antes.previo.usa_totalizador && data.usa_totalizador === false;
+    if (apago) {
+      await this.avisarSurtidorAflojado(req, tenantId, {
+        surtidorId: id,
+        nombre: antes.previo.nombre,
+        control: "Totalizador del surtidor en cada vale y varilla",
+        de: "exigido",
+        a: "no exigido",
+        motivo: data.motivo!,
+      });
+    } else {
+      await registrarAuditoria({
+        accion: "combustible.surtidor_actualizar",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: { surtidorId: id, cambios: data },
+        contexto: contextoAuditoriaModulo(req),
+      });
+    }
+    await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
+    res.json({ ok: true });
+  }
+
+  async conectarSurtidor(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.surtidorId);
+    const data = req.validatedBody as ConectarSurtidorInput;
+    const conexion = await withTenant(tenantId, (client) =>
+      surtidores.conectarTanque(
+        client,
+        tenantId,
+        req.usuario!.id,
+        id,
+        data.combustible_id,
+        data.motivo
+      )
+    );
+    if (!conexion) {
+      res.status(404).json({ error: "Surtidor no encontrado" });
+      return;
+    }
+    await registrarAuditoria({
+      accion: "combustible.surtidor_conectar",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { surtidorId: id, combustibleId: data.combustible_id, motivo: data.motivo },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {
+      combustibleId: data.combustible_id,
+    });
+    res.status(201).json(conexion);
+  }
+
+  async desconectarSurtidor(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.surtidorId);
+    const conexionId = Number(req.params.conexionId);
+    const { motivo } = req.validatedBody as MotivoSurtidorInput;
+    const hecho = await withTenant(tenantId, (client) =>
+      surtidores.desconectarTanque(client, tenantId, req.usuario!.id, id, conexionId, motivo)
+    );
+    if (!hecho) {
+      res.status(404).json({ error: "Conexión no encontrada o ya desconectada" });
+      return;
+    }
+    await registrarAuditoria({
+      accion: "combustible.surtidor_desconectar",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { surtidorId: id, combustibleId: hecho.combustible_id, motivo },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {
+      combustibleId: hecho.combustible_id,
+    });
+    res.json({ ok: true });
+  }
+
+  async bajaSurtidor(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.surtidorId);
+    const { motivo } = req.validatedBody as MotivoSurtidorInput;
+    const baja = await withTenant(tenantId, (client) =>
+      surtidores.bajaSurtidor(client, tenantId, req.usuario!.id, id, motivo)
+    );
+    if (!baja) {
+      res.status(404).json({ error: "Surtidor no encontrado o ya dado de baja" });
+      return;
+    }
+    if (baja.usa_totalizador) {
+      await this.avisarSurtidorAflojado(req, tenantId, {
+        surtidorId: id,
+        nombre: baja.nombre,
+        control: `Surtidor "${baja.nombre}" con totalizador`,
+        de: "activo",
+        a: "dado de baja",
+        motivo,
+      });
+    } else {
+      await registrarAuditoria({
+        accion: "combustible.surtidor_baja",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: { surtidorId: id, motivo },
+        contexto: contextoAuditoriaModulo(req),
+      });
+    }
+    await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
+    res.json({ ok: true });
+  }
+
+  async reactivarSurtidor(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.surtidorId);
+    const { motivo } = req.validatedBody as MotivoSurtidorInput;
+    const ok = await withTenant(tenantId, (client) =>
+      surtidores.reactivarSurtidor(client, tenantId, id)
+    );
+    if (!ok) {
+      res.status(404).json({ error: "Surtidor no encontrado o ya activo" });
+      return;
+    }
+    await registrarAuditoria({
+      accion: "combustible.surtidor_reactivar",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { surtidorId: id, motivo },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
+    res.json({ ok: true });
+  }
+
+  async historialConexionesSurtidor(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.surtidorId);
+    res.json(
+      await withTenant(tenantId, (client) => surtidores.historialConexiones(client, tenantId, id))
+    );
   }
 
   // ── Grifo interno del tanque (migración 0097) ────────────────────────

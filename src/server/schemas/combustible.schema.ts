@@ -171,6 +171,18 @@ export const registrarLecturaCombustibleSchema = z.object({
   // El contador ACUMULATIVO del surtidor leído al medir (0096). Lo exige el
   // servicio si el tanque usa totalizador -- Zod no ve la fila del tanque.
   totalizador_lectura: z.number().nonnegative().optional(),
+  // Lo que se leyó en CADA surtidor del tanque (0098). Lo exige el servicio
+  // para los que tienen la casilla. `totalizador_lectura` sigue valiendo con un
+  // solo surtidor: es lo que manda la app vieja del caché del celular.
+  totalizadores: z
+    .array(
+      z.object({
+        surtidor_id: z.number().int().positive(),
+        valor: z.number().nonnegative(),
+      })
+    )
+    .max(20)
+    .optional(),
   // Lo que se VE en cada punto precintado al tomar la varilla (0095). Solo
   // si el tanque usa precintos; cuáles puntos son obligatorios lo decide el
   // servicio, que ve los puntos del tanque. `numero: null` = "no hay
@@ -296,6 +308,10 @@ export const crearDespachoCombustibleSchema = z
     // ACUMULATIVO del surtidor después de despachar. Ver migración 0094.
     totalizador_lectura: z.number().nonnegative().optional(),
 
+    // Solo tanque_propio (0098): de qué surtidor salió. Opcional: con un solo
+    // surtidor en el tanque lo asigna la base.
+    surtidor_id: z.number().int().positive().optional(),
+
     // Solo compra_externa -- exactamente uno de los dos, según
     // equipos.tipo_medidor (hallazgo 9). horas_abastecidas siempre junto.
     lectura_horometro: z.number().nonnegative().optional(),
@@ -392,6 +408,7 @@ export const crearDespachoCombustibleSchema = z
         ["cantidad", data.cantidad],
         ["lectura_contometro", data.lectura_contometro],
         ["totalizador_lectura", data.totalizador_lectura],
+        ["surtidor_id", data.surtidor_id],
         ["lectura_horometro", data.lectura_horometro],
         ["lectura_odometro", data.lectura_odometro],
         ["horas_abastecidas", data.horas_abastecidas],
@@ -553,6 +570,13 @@ export const crearDespachoCombustibleSchema = z
           code: z.ZodIssueCode.custom,
           path: ["totalizador_lectura"],
           message: "totalizador_lectura no aplica a 'compra_externa' (no hay surtidor propio)",
+        });
+      }
+      if (data.surtidor_id !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["surtidor_id"],
+          message: "surtidor_id no aplica a 'compra_externa' (no hay surtidor propio)",
         });
       }
       if (data.horas_abastecidas === undefined) {
@@ -1074,3 +1098,40 @@ export const bajaPuntoPrecintoSchema = z.object({
 });
 
 export type BajaPuntoPrecintoInput = z.infer<typeof bajaPuntoPrecintoSchema>;
+
+// ── Surtidores (migración 0098) ───────────────────────────────────────────
+
+export const crearSurtidorSchema = z.object({
+  grifo_interno_id: z.number().int().positive(),
+  nombre: z.string().trim().min(1).max(80),
+  usa_totalizador: z.boolean().default(false),
+  totalizador_tolerancia: z.number().min(0).max(1000).default(1),
+});
+
+export type CrearSurtidorInput = z.infer<typeof crearSurtidorSchema>;
+
+/** Todo opcional: omitir un campo lo conserva. `motivo` es obligatorio
+ *  cuando el cambio apaga el totalizador (lo decide el controller, que sabe
+ *  cómo estaba). */
+export const actualizarSurtidorSchema = z.object({
+  nombre: z.string().trim().min(1).max(80).optional(),
+  usa_totalizador: z.boolean().optional(),
+  totalizador_tolerancia: z.number().min(0).max(1000).optional(),
+  motivo: z.string().trim().min(1).max(500).optional(),
+});
+
+export type ActualizarSurtidorInput = z.infer<typeof actualizarSurtidorSchema>;
+
+export const conectarSurtidorSchema = z.object({
+  combustible_id: z.number().int().positive(),
+  motivo: z.string().trim().min(1, "El motivo es obligatorio").max(500),
+});
+
+export type ConectarSurtidorInput = z.infer<typeof conectarSurtidorSchema>;
+
+/** Desconectar, dar de baja o reactivar: sin decir por qué no deja rastro. */
+export const motivoSurtidorSchema = z.object({
+  motivo: z.string().trim().min(1, "El motivo es obligatorio").max(500),
+});
+
+export type MotivoSurtidorInput = z.infer<typeof motivoSurtidorSchema>;

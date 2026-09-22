@@ -170,12 +170,23 @@ export interface AlertaNueva {
 // mostrar un 0 que nadie midió.
 const COLUMNAS_TANQUE = `
   c.id, c.codigo, c.tanque_nombre, c.tipo_combustible, c.unidad, c.tipo_punto,
-  c.ubicacion, c.capacidad_total, c.nivel_minimo, c.totalizador_actual,
+  c.ubicacion, c.capacidad_total, c.nivel_minimo,
   c.costo_promedio, c.moneda, c.activo,
   c.tolerancia_capacidad_pct, c.requiere_documento, c.umbral_diferencia_pct,
   c.umbral_descuadre_pct, c.umbral_descuadre_ciclo_pct,
   c.umbral_descuadre_ventana_pct,
-  c.usa_totalizador, c.totalizador_tolerancia, c.usa_precintos, c.grifo_interno_id,
+  c.usa_precintos, c.grifo_interno_id,
+  -- Los surtidores que alimentan al tanque hoy (0098). La configuración del
+  -- totalizador es del SURTIDOR; estas tres columnas se siguen devolviendo con
+  -- los valores de su surtidor cuando tiene UNO solo (el caso simple, donde la
+  -- casilla sigue en el formulario del tanque), y en NULL si tiene varios.
+  sv.surtidores,
+  CASE WHEN jsonb_array_length(sv.surtidores) = 1
+       THEN (sv.surtidores->0->>'usa_totalizador')::boolean END AS usa_totalizador,
+  CASE WHEN jsonb_array_length(sv.surtidores) = 1
+       THEN (sv.surtidores->0->>'totalizador_tolerancia')::numeric END AS totalizador_tolerancia,
+  CASE WHEN jsonb_array_length(sv.surtidores) = 1
+       THEN (sv.surtidores->0->>'totalizador_actual')::numeric END AS totalizador_actual,
   ultima.nivel AS nivel_actual,
   ultima.leido_en AS fecha_actualizacion,
   ROUND((ultima.nivel / c.capacidad_total) * 100, 2) AS porcentaje
@@ -197,6 +208,25 @@ const JOIN_ULTIMA_LECTURA = `
     ORDER BY l.leido_en DESC, l.id DESC
     LIMIT 1
   ) ultima ON true
+  LEFT JOIN LATERAL (
+    SELECT COALESCE(jsonb_agg(jsonb_build_object(
+             'id', s.id,
+             'nombre', s.nombre,
+             'activo', s.activo,
+             'usa_totalizador', s.usa_totalizador,
+             'totalizador_tolerancia', s.totalizador_tolerancia,
+             'totalizador_actual', s.totalizador_actual,
+             -- Alimenta también a otro tanque: el vale tiene que decir de cuál
+             -- salió, y el desglose del descuadre no se puede calcular.
+             'compartido', EXISTS (
+               SELECT 1 FROM surtidor_tanques otro
+                WHERE otro.surtidor_id = s.id AND otro.desconectado_en IS NULL
+                  AND otro.combustible_id <> c.id)
+           ) ORDER BY lower(s.nombre)), '[]'::jsonb) AS surtidores
+      FROM surtidor_tanques st
+      JOIN surtidores s ON s.id = st.surtidor_id AND s.tenant_id = c.tenant_id
+     WHERE st.combustible_id = c.id AND st.desconectado_en IS NULL
+  ) sv ON true
 `;
 
 /** LA cuenta de la diferencia de recepción, compartida por el listado, la
@@ -362,6 +392,10 @@ export class CombustibleRepository {
        VALUES ($1, $2, $3, NOW(), 'inicial')`,
       [tenantId, id, data.nivel_actual]
     );
+    // Todo tanque nace con su surtidor (0098), con la casilla y la tolerancia
+    // del formulario. Acá y no en un trigger de alta: restaurar un backup
+    // volvería a crearlo encima del que trae el backup.
+    await this.crearSurtidorDelTanque(client, id);
 
     // Se relee en vez de usar RETURNING: el nivel sale de un LATERAL JOIN
     // contra las lecturas, que RETURNING no puede hacer.
@@ -447,6 +481,22 @@ export class CombustibleRepository {
     );
 
     if (result.rows.length === 0) return null;
+    // La casilla del totalizador es del SURTIDOR (0098). En el caso simple --un
+    // solo surtidor-- sigue en el formulario del tanque y se guarda en él. Con
+    // varios, se configura en cada surtidor y lo que venga acá no aplica.
+    if (data.usa_totalizador !== undefined || data.totalizador_tolerancia !== undefined) {
+      await client.query(
+        `UPDATE surtidores s
+            SET usa_totalizador = COALESCE($1, s.usa_totalizador),
+                totalizador_tolerancia = COALESCE($2, s.totalizador_tolerancia)
+          WHERE s.tenant_id = $3
+            AND s.id = (SELECT st.surtidor_id FROM surtidor_tanques st
+                         WHERE st.combustible_id = $4 AND st.desconectado_en IS NULL)
+            AND (SELECT count(*) FROM surtidor_tanques st
+                  WHERE st.combustible_id = $4 AND st.desconectado_en IS NULL) = 1`,
+        [data.usa_totalizador ?? null, data.totalizador_tolerancia ?? null, tenantId, id]
+      );
+    }
     return this.findById(client, tenantId, id);
   }
 
@@ -587,6 +637,8 @@ export class CombustibleRepository {
       }
 
       for (const fila of insertados.rows) {
+        // Mismo surtidor que el alta de a uno (0098).
+        await this.crearSurtidorDelTanque(client, fila.id);
         creados.push(await this.findById(client, tenantId, fila.id));
       }
     }
@@ -613,7 +665,13 @@ export class CombustibleRepository {
     const result = await client.query(
       `
       SELECT l.id, l.combustible_id, l.nivel, l.leido_en, l.usuario_id, l.origen,
-             l.metadata, l.creado_en, l.totalizador_lectura,
+             l.metadata, l.creado_en,
+             -- Lo que leyó en cada surtidor (0098), y el valor suelto cuando
+             -- leyó uno solo: el campo que usaban la pantalla y los tests de
+             -- 0096, que sigue teniendo sentido en el caso simple.
+             tv.totalizadores,
+             CASE WHEN jsonb_array_length(tv.totalizadores) = 1
+                  THEN (tv.totalizadores->0->>'valor')::numeric END AS totalizador_lectura,
              l.anulada_en, l.anulada_por, l.motivo_anulacion,
              anulador.nombre AS anulada_por_nombre,
              autor.nombre AS registrada_por_nombre,
@@ -629,6 +687,14 @@ export class CombustibleRepository {
       -- módulo anti-fuga, "¿quién anotó esta lectura rara?" es justamente
       -- la pregunta que hay que poder responder.
       LEFT JOIN usuarios autor ON autor.id = l.usuario_id
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(jsonb_agg(jsonb_build_object(
+                 'surtidor_id', lt.surtidor_id, 'surtidor', s.nombre, 'valor', lt.valor
+               ) ORDER BY lower(s.nombre)), '[]'::jsonb) AS totalizadores
+          FROM combustible_lectura_totalizadores lt
+          JOIN surtidores s ON s.id = lt.surtidor_id AND s.tenant_id = lt.tenant_id
+         WHERE lt.lectura_id = l.id AND lt.tenant_id = l.tenant_id
+      ) tv ON true
       WHERE ${condiciones.join(" AND ")}
       ORDER BY l.leido_en DESC
       LIMIT $${valores.length - 1} OFFSET $${valores.length}
@@ -674,14 +740,17 @@ export class CombustibleRepository {
     if (anulada.rows.length === 0) return null;
 
     const lectura = anulada.rows[0];
-    // Una varilla con totalizador es un punto de la cadena (0096): al anularla
-    // sale de ella, y el máximo vigente del tanque puede bajar.
-    if (lectura.totalizador_lectura != null) {
-      await client.query(`SELECT id FROM combustible WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [
-        lectura.combustible_id,
-        tenantId,
-      ]);
-      await this.recalcularTotalizadorActual(client, tenantId, lectura.combustible_id);
+    // Una varilla con totalizador es un punto de la cadena de CADA surtidor
+    // que leyó (0096, 0098): al anularla sale de todas, y el máximo vigente de
+    // cada uno puede bajar.
+    const leidos = await client.query<{ surtidor_id: number }>(
+      `SELECT surtidor_id FROM combustible_lectura_totalizadores
+        WHERE lectura_id = $1 AND tenant_id = $2 ORDER BY surtidor_id`,
+      [lecturaId, tenantId]
+    );
+    for (const { surtidor_id } of leidos.rows) {
+      await this.bloquearSurtidor(client, tenantId, surtidor_id);
+      await this.recalcularTotalizadorActual(client, tenantId, surtidor_id);
     }
     const tanque = await this.findById(client, tenantId, lectura.combustible_id);
 
@@ -724,18 +793,8 @@ export class CombustibleRepository {
       leidoEn: string;
       usuarioId: string | null;
       metadata: Record<string, unknown>;
-      /** Solo si el tanque usa totalizador; el service ya decidió (0096). */
-      totalizadorLectura?: number | null;
     }
   ) {
-    // Se bloquea el tanque ANTES de insertar, igual que con el vale: el
-    // máximo vigente se recalcula y dos puntos simultáneos no pueden pisarse.
-    if (data.totalizadorLectura != null) {
-      await client.query(`SELECT id FROM combustible WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [
-        data.combustibleId,
-        tenantId,
-      ]);
-    }
     const tanqueExiste = await client.query<{ id: number; capacidad_total: string }>(
       `SELECT id, capacidad_total FROM combustible WHERE id = $1 AND tenant_id = $2`,
       [data.combustibleId, tenantId]
@@ -763,8 +822,8 @@ export class CombustibleRepository {
     const lectura = await client.query(
       `
       INSERT INTO combustible_lecturas
-        (tenant_id, combustible_id, nivel, leido_en, usuario_id, metadata, totalizador_lectura)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+        (tenant_id, combustible_id, nivel, leido_en, usuario_id, metadata)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING id, combustible_id, nivel, leido_en, usuario_id, origen, metadata, creado_en,
                 totalizador_lectura
     `,
@@ -775,12 +834,8 @@ export class CombustibleRepository {
         data.leidoEn,
         data.usuarioId,
         JSON.stringify(data.metadata),
-        data.totalizadorLectura ?? null,
       ]
     );
-    if (data.totalizadorLectura != null) {
-      await this.recalcularTotalizadorActual(client, tenantId, data.combustibleId);
-    }
 
     const tanque = await this.findById(client, tenantId, data.combustibleId);
     return { lectura: lectura.rows[0], tanque };
@@ -790,10 +845,13 @@ export class CombustibleRepository {
    *  responde igual que la primera vez, sin volver a tocar `combustible`. */
   async findLecturaConTanque(client: PoolClient, tenantId: string, lecturaId: number) {
     const lectura = await client.query(
-      `SELECT id, combustible_id, nivel, leido_en, usuario_id, origen, metadata, creado_en,
-              totalizador_lectura
-       FROM combustible_lecturas
-       WHERE id = $1 AND tenant_id = $2`,
+      `SELECT l.id, l.combustible_id, l.nivel, l.leido_en, l.usuario_id, l.origen, l.metadata,
+              l.creado_en,
+              (SELECT CASE WHEN count(*) = 1 THEN max(lt.valor) END
+                 FROM combustible_lectura_totalizadores lt WHERE lt.lectura_id = l.id)
+                AS totalizador_lectura
+       FROM combustible_lecturas l
+       WHERE l.id = $1 AND l.tenant_id = $2`,
       [lecturaId, tenantId]
     );
     if (lectura.rows.length === 0) return null;
@@ -811,7 +869,7 @@ export class CombustibleRepository {
   private static readonly COLUMNAS_DESPACHO = `
     id, tenant_id, producto, origen, combustible_id, grifo_id, tipo_combustible,
     tipo_destino, equipo_id, serie_talonario, n_vale, cantidad,
-    lectura_contometro, totalizador_lectura, lectura_horometro, lectura_odometro,
+    lectura_contometro, totalizador_lectura, surtidor_id, lectura_horometro, lectura_odometro,
     horas_abastecidas,
     presentacion, factor_litros, cantidad_bultos,
     costo_unitario, (cantidad * costo_unitario) AS costo_total, observaciones,
@@ -847,6 +905,9 @@ export class CombustibleRepository {
       cantidad: number;
       lecturaContometro: number | null;
       totalizadorLectura?: number | null;
+      /** 0098: de qué surtidor salió. NULL = el único del tanque (la base lo
+       *  asigna, y rechaza si hay más de uno). */
+      surtidorId?: number | null;
       lecturaHorometro: number | null;
       lecturaOdometro: number | null;
       horasAbastecidas: number | null;
@@ -859,14 +920,11 @@ export class CombustibleRepository {
     }
   ) {
     try {
-      // El totalizador_actual del tanque es el MÁXIMO de sus vales vigentes.
-      // Se bloquea el tanque ANTES de insertar para que dos vales simultáneos
-      // no se pisen recalculando cada uno sin ver al otro.
-      if (data.totalizadorLectura != null && data.combustibleId != null) {
-        await client.query(
-          `SELECT id FROM combustible WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
-          [data.combustibleId, tenantId]
-        );
+      // El totalizador_actual del SURTIDOR es el máximo de sus puntos
+      // vigentes. Se bloquea el surtidor ANTES de insertar para que dos vales
+      // simultáneos no se pisen recalculando cada uno sin ver al otro.
+      if (data.totalizadorLectura != null && data.surtidorId != null) {
+        await this.bloquearSurtidor(client, tenantId, data.surtidorId);
       }
       const result = await client.query(
         `
@@ -876,7 +934,7 @@ export class CombustibleRepository {
           lectura_contometro, lectura_horometro, lectura_odometro, horas_abastecidas,
           presentacion, factor_litros, cantidad_bultos,
           costo_unitario, observaciones, usuario_id, despachado_en,
-          conductor_nombre, conductor_dni, totalizador_lectura
+          conductor_nombre, conductor_dni, totalizador_lectura, surtidor_id
         )
         -- El conductor se COPIA del equipo en este mismo INSERT (0083). Nadie
         -- lo tipea, y no se resuelve después con un JOIN a propósito: los
@@ -885,7 +943,7 @@ export class CombustibleRepository {
         -- combustible salió, que es lo único que hace confiable el reporte de
         -- consumo por conductor. Vale también para urea -- mismo equipo_id.
         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
-               e.conductor_nombre, e.conductor_dni, $23::numeric
+               e.conductor_nombre, e.conductor_dni, $23::numeric, $24::int
           FROM (SELECT 1) dummy
           LEFT JOIN equipos e ON e.id = $8::int AND e.tenant_id = $1
         RETURNING ${CombustibleRepository.COLUMNAS_DESPACHO}
@@ -914,12 +972,14 @@ export class CombustibleRepository {
           usuarioId,
           data.despachadoEn,
           data.totalizadorLectura ?? null,
+          data.surtidorId ?? null,
         ]
       );
-      if (data.totalizadorLectura != null && data.combustibleId != null) {
-        await this.recalcularTotalizadorActual(client, tenantId, data.combustibleId);
+      const fila = result.rows[0];
+      if (data.totalizadorLectura != null && fila.surtidor_id != null) {
+        await this.recalcularTotalizadorActual(client, tenantId, Number(fila.surtidor_id));
       }
-      return result.rows[0];
+      return fila;
     } catch (err) {
       if (esViolacionUnicidad(err)) {
         throw new Error(
@@ -1225,37 +1285,149 @@ export class CombustibleRepository {
       [usuarioId, motivo, despachoId, tenantId]
     );
     const anulado = result.rows[0] ?? null;
-    if (anulado?.totalizador_lectura != null && anulado.combustible_id != null) {
-      await client.query(`SELECT id FROM combustible WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [
-        anulado.combustible_id,
-        tenantId,
-      ]);
-      await this.recalcularTotalizadorActual(client, tenantId, anulado.combustible_id);
+    if (anulado?.totalizador_lectura != null && anulado.surtidor_id != null) {
+      await this.bloquearSurtidor(client, tenantId, Number(anulado.surtidor_id));
+      await this.recalcularTotalizadorActual(client, tenantId, Number(anulado.surtidor_id));
     }
     return anulado;
   }
 
-  /** `combustible.totalizador_actual` = el MAYOR totalizador entre los puntos
-   *  vigentes del tanque -- vales y varillas (0096) -- o 0 si no hay ninguno.
-   *  Se recalcula, no se acumula: anular el último punto tiene que devolverlo
-   *  al anterior. El llamador ya bloqueó la fila del tanque. */
-  async recalcularTotalizadorActual(client: PoolClient, tenantId: string, combustibleId: number) {
+  /** Serializa los cambios de la cadena de un surtidor: dos vales o varillas
+   *  simultáneos no pueden recalcular el máximo sin verse. */
+  async bloquearSurtidor(client: PoolClient, tenantId: string, surtidorId: number) {
+    await client.query(`SELECT id FROM surtidores WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [
+      surtidorId,
+      tenantId,
+    ]);
+  }
+
+  /** `surtidores.totalizador_actual` = el MAYOR totalizador entre los puntos
+   *  vigentes del surtidor -- sus vales y lo que leyeron de él las varillas
+   *  (0098) -- o 0 si no hay ninguno. Se recalcula, no se acumula: anular el
+   *  último punto tiene que devolverlo al anterior. El llamador ya bloqueó la
+   *  fila del surtidor. */
+  async recalcularTotalizadorActual(client: PoolClient, tenantId: string, surtidorId: number) {
     await client.query(
-      `UPDATE combustible c
+      `UPDATE surtidores s
           SET totalizador_actual = COALESCE((
                 SELECT MAX(t) FROM (
                   SELECT d.totalizador_lectura AS t FROM combustible_despachos d
-                   WHERE d.tenant_id = $1 AND d.combustible_id = c.id
+                   WHERE d.tenant_id = $1 AND d.surtidor_id = s.id
                      AND d.anulada_en IS NULL AND d.totalizador_lectura IS NOT NULL
                   UNION ALL
-                  SELECT l.totalizador_lectura FROM combustible_lecturas l
-                   WHERE l.tenant_id = $1 AND l.combustible_id = c.id
-                     AND l.anulada_en IS NULL AND l.totalizador_lectura IS NOT NULL
+                  SELECT lt.valor FROM combustible_lectura_totalizadores lt
+                    JOIN combustible_lecturas l ON l.id = lt.lectura_id AND l.tenant_id = $1
+                   WHERE lt.tenant_id = $1 AND lt.surtidor_id = s.id AND l.anulada_en IS NULL
                 ) puntos
               ), 0)
-        WHERE c.id = $2 AND c.tenant_id = $1`,
-      [tenantId, combustibleId]
+        WHERE s.id = $2 AND s.tenant_id = $1`,
+      [tenantId, surtidorId]
     );
+  }
+
+  /** Lo que la varilla leyó en cada surtidor (0098). Bloquea cada surtidor y
+   *  recalcula su máximo: la varilla es un punto de su cadena. */
+  async insertarTotalizadoresDeLectura(
+    client: PoolClient,
+    tenantId: string,
+    lecturaId: number,
+    filas: { surtidorId: number; valor: number }[]
+  ) {
+    for (const f of [...filas].sort((a, b) => a.surtidorId - b.surtidorId)) {
+      await this.bloquearSurtidor(client, tenantId, f.surtidorId);
+      await client.query(
+        `INSERT INTO combustible_lectura_totalizadores (tenant_id, lectura_id, surtidor_id, valor)
+         VALUES ($1, $2, $3, $4)`,
+        [tenantId, lecturaId, f.surtidorId, f.valor]
+      );
+      await this.recalcularTotalizadorActual(client, tenantId, f.surtidorId);
+    }
+  }
+
+  /** Lo que leyó una varilla, surtidor por surtidor. */
+  async findTotalizadoresDeLectura(client: PoolClient, tenantId: string, lecturaId: number) {
+    const r = await client.query<{ surtidor_id: number; valor: string }>(
+      `SELECT surtidor_id, valor FROM combustible_lectura_totalizadores
+        WHERE lectura_id = $1 AND tenant_id = $2 ORDER BY surtidor_id`,
+      [lecturaId, tenantId]
+    );
+    return r.rows.map((f) => ({ surtidorId: f.surtidor_id, valor: Number(f.valor) }));
+  }
+
+  /** Los surtidores que alimentaban un tanque EN UN INSTANTE (la conexión
+   *  tiene historia, 0098), con su configuración y si eran compartidos. Es lo
+   *  que decide qué exige un vale o una varilla cargados sin red que llegan
+   *  tarde. `alguna_vez` dice si el tanque tuvo alguna conexión en su vida:
+   *  sin ninguna, la base le crea su surtidor al primer vale. */
+  async findSurtidoresDelTanqueEn(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    instante: string
+  ) {
+    const r = await client.query<{
+      id: number;
+      nombre: string;
+      activo: boolean;
+      usa_totalizador: boolean;
+      totalizador_tolerancia: string;
+      compartido: boolean;
+    }>(
+      `SELECT s.id, s.nombre, s.activo, s.usa_totalizador, s.totalizador_tolerancia,
+              EXISTS (
+                SELECT 1 FROM surtidor_tanques otro
+                 WHERE otro.surtidor_id = s.id AND otro.combustible_id <> $2
+                   AND otro.conectado_en <= $3::timestamptz
+                   AND (otro.desconectado_en IS NULL OR otro.desconectado_en > $3::timestamptz)
+              ) AS compartido
+         FROM surtidores s
+        WHERE s.tenant_id = $1
+          AND s.id IN (SELECT surtidores_del_tanque_en($2, $3::timestamptz))
+        ORDER BY lower(s.nombre)`,
+      [tenantId, combustibleId, instante]
+    );
+    const alguna = await client.query<{ hay: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM surtidor_tanques WHERE combustible_id = $1 AND tenant_id = $2)
+         AS hay`,
+      [combustibleId, tenantId]
+    );
+    return { surtidores: r.rows, algunaVez: alguna.rows[0].hay };
+  }
+
+  /** Un tanque que nunca tuvo surtidor (insertado por SQL, backup viejo):
+   *  la casilla que va a heredar el surtidor que le crea la base. */
+  async usaTotalizadorSinSurtidor(client: PoolClient, tenantId: string, combustibleId: number) {
+    const r = await client.query<{ usa_totalizador: boolean }>(
+      `SELECT usa_totalizador FROM combustible WHERE id = $1 AND tenant_id = $2`,
+      [combustibleId, tenantId]
+    );
+    return r.rows[0]?.usa_totalizador ?? false;
+  }
+
+  async findSurtidorPorId(client: PoolClient, tenantId: string, surtidorId: number) {
+    const r = await client.query<{
+      id: number;
+      nombre: string;
+      activo: boolean;
+      usa_totalizador: boolean;
+      totalizador_tolerancia: string;
+      grifo_interno_id: number;
+    }>(
+      `SELECT id, nombre, activo, usa_totalizador, totalizador_tolerancia, grifo_interno_id
+         FROM surtidores WHERE id = $1 AND tenant_id = $2`,
+      [surtidorId, tenantId]
+    );
+    return r.rows[0] ?? null;
+  }
+
+  /** El surtidor que la base le creó (o le va a crear) a un tanque. Lo usa el
+   *  alta de tanque: el surtidor se crea explícito, no por trigger de alta,
+   *  porque restaurar un backup lo duplicaría. */
+  async crearSurtidorDelTanque(client: PoolClient, combustibleId: number) {
+    const r = await client.query<{ id: number }>(`SELECT crear_surtidor_del_tanque($1) AS id`, [
+      combustibleId,
+    ]);
+    return r.rows[0].id;
   }
 
   /** Los vecinos de un punto de la cadena por VALOR de totalizador, no por
@@ -1268,7 +1440,7 @@ export class CombustibleRepository {
   async findVecinosTotalizador(
     client: PoolClient,
     tenantId: string,
-    combustibleId: number,
+    surtidorId: number,
     excluir: { tipo: "despacho" | "lectura"; id: number },
     totalizador: number,
     instante: string
@@ -1280,16 +1452,18 @@ export class CombustibleRepository {
       retroceso_totalizador: string | null;
     }>(
       `
+      -- La cadena es del SURTIDOR (0098): dos surtidores del mismo tanque
+      -- tienen contadores distintos y no se comparan entre sí.
       WITH puntos AS (
         SELECT 'despacho' AS tipo, d.id, d.totalizador_lectura AS t, d.despachado_en AS en
           FROM combustible_despachos d
-         WHERE d.tenant_id = $1 AND d.combustible_id = $2
+         WHERE d.tenant_id = $1 AND d.surtidor_id = $2
            AND d.anulada_en IS NULL AND d.totalizador_lectura IS NOT NULL
         UNION ALL
-        SELECT 'lectura', l.id, l.totalizador_lectura, l.leido_en
-          FROM combustible_lecturas l
-         WHERE l.tenant_id = $1 AND l.combustible_id = $2
-           AND l.anulada_en IS NULL AND l.totalizador_lectura IS NOT NULL
+        SELECT 'lectura', l.id, lt.valor, l.leido_en
+          FROM combustible_lectura_totalizadores lt
+          JOIN combustible_lecturas l ON l.id = lt.lectura_id AND l.tenant_id = $1
+         WHERE lt.tenant_id = $1 AND lt.surtidor_id = $2 AND l.anulada_en IS NULL
       ),
       otros AS (
         SELECT * FROM puntos WHERE NOT (tipo = $3 AND id = $4::bigint)
@@ -1307,7 +1481,7 @@ export class CombustibleRepository {
              (SELECT id FROM retroceso) AS retroceso_id,
              (SELECT t FROM retroceso) AS retroceso_totalizador
       `,
-      [tenantId, combustibleId, excluir.tipo, excluir.id, totalizador, instante]
+      [tenantId, surtidorId, excluir.tipo, excluir.id, totalizador, instante]
     );
     return r.rows[0];
   }
@@ -1919,16 +2093,10 @@ export class CombustibleRepository {
       umbral_descuadre_pct: string | null;
       despachos: string;
       recepciones: string;
-      // El totalizador de las DOS varillas del tramo (0096): con los dos se
-      // puede separar lo que salió por el surtidor de lo que no. NULL si el
-      // tanque no lo usa o si alguna de las dos no lo trae.
-      usa_totalizador: boolean;
-      totalizador_anterior: string | null;
-      totalizador_actual: string | null;
     }>(
       `
       WITH anterior AS (
-        SELECT l.id, l.nivel, l.leido_en, l.totalizador_lectura
+        SELECT l.id, l.nivel, l.leido_en
         FROM combustible_lecturas l
         WHERE l.tenant_id = $1 AND l.combustible_id = $2
           AND l.anulada_en IS NULL AND l.id <> $3
@@ -1940,10 +2108,6 @@ export class CombustibleRepository {
              a.nivel AS nivel_anterior,
              a.leido_en AS leido_en_anterior,
              c.tanque_nombre, c.unidad, c.capacidad_total, c.umbral_descuadre_pct,
-             c.usa_totalizador,
-             a.totalizador_lectura AS totalizador_anterior,
-             (SELECT l.totalizador_lectura FROM combustible_lecturas l
-               WHERE l.id = $3 AND l.tenant_id = $1) AS totalizador_actual,
              COALESCE((
                SELECT SUM(d.cantidad) FROM combustible_despachos d
                WHERE d.tenant_id = $1 AND d.combustible_id = $2
@@ -2820,6 +2984,7 @@ export class CombustibleRepository {
       motivo_anulacion: string | null;
       historico: boolean;
       totalizador: string | null;
+      totalizador_texto: string | null;
     }>(
       `
       -- El punto de partida: la última varilla VIGENTE anterior al período.
@@ -2848,7 +3013,7 @@ export class CombustibleRepository {
                r.cantidad AS entrada, 0::numeric AS salida,
                NULL::numeric AS nivel_medido,
                r.usuario_id, r.anulada_en, r.motivo_anulacion,
-               NULL::numeric AS totalizador
+               NULL::numeric AS totalizador, NULL::text AS totalizador_texto
           FROM combustible_recepciones r
           LEFT JOIN combustible_grifos g
                  ON g.id = r.grifo_id AND g.tenant_id = $1
@@ -2864,7 +3029,7 @@ export class CombustibleRepository {
                0::numeric, d.cantidad,
                NULL::numeric,
                d.usuario_id, d.anulada_en, d.motivo_anulacion,
-               d.totalizador_lectura
+               d.totalizador_lectura, NULL::text
           FROM combustible_despachos d
           LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1
          WHERE d.tenant_id = $1 AND d.combustible_id = $2
@@ -2881,7 +3046,15 @@ export class CombustibleRepository {
                0::numeric, 0::numeric,
                l.nivel,
                l.usuario_id, l.anulada_en, l.motivo_anulacion,
-               l.totalizador_lectura
+               -- Un surtidor: el número. Varios (0098): "S1: 100 · S2: 200".
+               (SELECT CASE WHEN count(*) = 1 THEN max(lt.valor) END
+                  FROM combustible_lectura_totalizadores lt WHERE lt.lectura_id = l.id),
+               (SELECT CASE WHEN count(*) > 1
+                            THEN string_agg(s.nombre || ': ' || lt.valor::text, ' · '
+                                            ORDER BY lower(s.nombre)) END
+                  FROM combustible_lectura_totalizadores lt
+                  JOIN surtidores s ON s.id = lt.surtidor_id
+                 WHERE lt.lectura_id = l.id)
           FROM combustible_lecturas l
          WHERE l.tenant_id = $1 AND l.combustible_id = $2
            AND l.leido_en >= $3::timestamptz AND l.leido_en <= $4::timestamptz
@@ -2898,7 +3071,7 @@ export class CombustibleRepository {
                0::numeric, 0::numeric,
                NULL::numeric,
                p.colocado_por, NULL::timestamptz, NULL::text,
-               NULL::numeric
+               NULL::numeric, NULL::text
           FROM combustible_precintos p
           JOIN combustible_precinto_puntos pp ON pp.id = p.punto_id AND pp.tenant_id = $1
          WHERE p.tenant_id = $1 AND pp.combustible_id = $2
@@ -2932,7 +3105,7 @@ export class CombustibleRepository {
              ) OVER (ORDER BY m.ocurrido_en, m.orden_tipo, m.referencia_id
                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS saldo_teorico,
              u.nombre AS usuario,
-             m.anulada_en, m.motivo_anulacion, m.historico, m.totalizador
+             m.anulada_en, m.motivo_anulacion, m.historico, m.totalizador, m.totalizador_texto
         FROM marcados m
         LEFT JOIN usuarios u ON u.id = m.usuario_id AND u.tenant_id = $1
        ORDER BY m.ocurrido_en, m.orden_tipo, m.referencia_id

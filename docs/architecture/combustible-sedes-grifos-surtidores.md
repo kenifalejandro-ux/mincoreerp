@@ -1,6 +1,6 @@
 # Sedes, grifos internos y surtidores
 
-Estado: **entrega 1 implementada** (migración 0097: sedes, grifos internos, movimientos y copia del grifo en cada hecho). Las entregas 2 a 4 siguen sin código; están al final.
+Estado: **entregas 1 y 2 implementadas** (migración 0097: sedes, grifos internos, movimientos y copia del grifo en cada hecho; migración 0098: surtidores). Las entregas 3 y 4 siguen sin código; están al final.
 
 ## 1. Por qué
 
@@ -51,7 +51,7 @@ Convenciones del proyecto: `SERIAL`, `creado_en`, RLS con `FORCE` y la política
 - **`grifos_internos`** (entrega 1): `id`, `tenant_id`, `sede_id`, `nombre`, `activo`, `motivo_baja`, `creado_por`, `creado_en`.
 - **`movimientos_grifo`** (entrega 1): cada vez que un tanque o un equipo cambió de grifo (en la entrega 2 se suma el surtidor). Ver 7.2.
 - **`surtidores`** (entrega 2): `id`, `tenant_id`, `grifo_interno_id`, `nombre`, `activo`, `usa_totalizador`, `totalizador_tolerancia`. **La casilla y la tolerancia pasan del tanque al surtidor**: un grifo puede tener un surtidor con totalizador y otro sin, y cada aparato tiene su propia resolución.
-- **`surtidor_tanques`** (entrega 2): `surtidor_id`, `combustible_id`. El servidor valida que el tanque y el surtidor sean del **mismo grifo**.
+- **`surtidor_tanques`** (entrega 2): `surtidor_id`, `combustible_id`, `conectado_en`, `desconectado_en`, motivos y usuarios. **La conexión tiene historia**: un vale cargado sin red que llega tarde se valida contra la conexión de SU fecha. La base valida que el tanque y el surtidor sean del **mismo grifo**. La conexión inicial de cada tanque es "desde siempre" (`1900-01-01`, y no `-infinity`: node-pg la vuelve una fecha inválida y el backup la guarda como null).
 - **`combustible_lectura_totalizadores`** (entrega 2): `lectura_id`, `surtidor_id`, `valor`. Reemplaza a `combustible_lecturas.totalizador_lectura` (migración 0096): la varilla de un tanque lee el totalizador de **cada** surtidor conectado a él.
 - **`usuario_accesos_combustible`** (entrega 3): `usuario_id` más exactamente uno de `sede_id`, `grifo_interno_id`, `surtidor_id` (ver sección 5).
 
@@ -74,6 +74,10 @@ El vale guarda el surtidor **y** el tanque. Con un solo tanque por surtidor, el 
 
 ## 4. El totalizador por surtidor
 
+**Todo tanque tiene su surtidor.** La migración le crea uno a cada tanque ("Surtidor TQ-01") con la casilla, la tolerancia y el totalizador que tenía, y el alta de tanque (una o masiva) crea el suyo. No lo crea un trigger de alta, porque restaurar un backup lo duplicaría: si un tanque nunca tuvo surtidor (insertado por SQL, backup anterior a 0098), la base se lo crea al primer vale.
+
+**El caso simple no cambia:** con un solo surtidor, la casilla del totalizador sigue en el formulario del tanque y se guarda en su surtidor; el vale no pregunta de qué surtidor salió. Con varios, el totalizador se configura en cada surtidor (Combustible → **Surtidores**) y el vale elige el surtidor.
+
 La cadena de comparación de #180 y #183 (por valor, con las varillas como puntos de 0 litros) **se arma por surtidor** y no por tanque. Lo que cambia:
 
 - Cada vale y cada varilla aportan un punto **a la cadena del surtidor** que leyeron.
@@ -81,6 +85,8 @@ La cadena de comparación de #180 y #183 (por valor, con las varillas como punto
 - Un surtidor sin totalizador (`usa_totalizador = false`) no participa y no se pide.
 - **El desglose del descuadre** ("por la manguera sin vale" y "fuera del surtidor") se calcula por tanque **solo si todos los surtidores del tanque tienen totalizador y ninguno está compartido con otro tanque**. Con un surtidor compartido el avance no se puede repartir entre los tanques, y el desglose se omite. La alerta de combustible sin vale sigue funcionando: se compara contra todos los vales de ese surtidor.
 - La tolerancia es del surtidor.
+- Apagar el totalizador de un surtidor, o dar de baja uno que lo usaba, es **aflojar la vigilancia**: pide motivo, queda en la bitácora y avisa por correo.
+- **Expandir y contraer:** `combustible.usa_totalizador`, `totalizador_tolerancia` y `totalizador_actual`, y `combustible_lecturas.totalizador_lectura`, siguen en la base pero el código ya no los lee. Se borran en una migración posterior al despliegue de 0098. Mientras tanto, lo que el código viejo escriba en `totalizador_lectura` se copia a la tabla nueva. Durante la ventana del despliegue, el código viejo no ve las varillas en la cadena del totalizador; solo importa en tanques con la casilla prendida.
 
 ## 5. Quién ve qué
 
@@ -213,7 +219,9 @@ En `registry.ts` se declaran las claves foráneas nuevas de tanques, equipos y d
 | Compras externas | Se ven por el grifo del equipo, y quien las registró las ve siempre |
 | Equipos | Pertenecen a un grifo |
 | Sede | Entidad de la empresa, no de Combustible |
-| Totalizador | Por surtidor |
+| Totalizador | Por surtidor; en el caso simple, la casilla sigue en el formulario del tanque |
+| Surtidores | Todo tanque tiene el suyo; se administran en Combustible → Surtidores; la conexión tiene historia |
+| Tipo de tanque `surtidor` | Se muestra como "Surtidor portátil", para no confundirlo con la entidad |
 | Nombre de los grifos externos | "Proveedores" en pantalla; la tabla no se renombra |
 | Reportes | Por conductor y por vehículo, de toda la empresa, con filtro por sede y grifo |
 | Pares del consumo | Toda la empresa; el filtro solo acota el listado |
@@ -228,7 +236,7 @@ En `registry.ts` se declaran las claves foráneas nuevas de tanques, equipos y d
 | # | Qué | Riesgo |
 |---|---|---|
 | 1 | **Hecha.** Sedes y grifos internos: tablas, administración, tanques y equipos asignados, historial de movimientos, copia del grifo en cada hecho, migración a "Principal", alta de empresas nuevas, backup, renombrar "Proveedores" | Alto: migra todas las empresas, agrega triggers y toca el backup |
-| 2 | Surtidores: entidad, vale por surtidor, totalizador por surtidor y en la varilla, migración de #180 y #183 | Alto: toca el cálculo |
+| 2 | **Hecha.** Surtidores: entidad, conexión con historia, vale por surtidor, totalizador por surtidor y en la varilla, migración de #180 y #183. Pendiente: la migración que borra las columnas viejas, después del despliegue | Alto: toca el cálculo |
 | 3 | Alcance por usuario aplicado en todo el módulo, con tests de ataque y eventos filtrados | **El más alto**: un hueco filtra datos de otra planta |
 | 4 | Unidades en los reportes, filtro por sede y grifo, "por grifo" desglosado, alerta de equipo de otro grifo | Bajo |
 

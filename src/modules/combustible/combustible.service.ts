@@ -533,11 +533,12 @@ export class CombustibleService {
       clienteUuid: data.cliente_uuid,
       insertar: async () => {
         const leidoEn = data.leido_en ?? new Date().toISOString();
-        const totalizadorLectura = await this.resolverTotalizadorDeLectura(
+        const totalizadores = await this.resolverTotalizadoresDeLectura(
           client,
           tenantId,
           data.combustible_id,
-          data.totalizador_lectura
+          leidoEn,
+          data
         );
         // Antes del INSERT: un precinto que falta es un 400, y la varilla no
         // tiene que quedar guardada a medias.
@@ -554,8 +555,15 @@ export class CombustibleService {
           leidoEn,
           usuarioId,
           metadata: data.metadata ?? {},
-          totalizadorLectura,
         });
+        if (totalizadores.length > 0) {
+          await this.repository.insertarTotalizadoresDeLectura(
+            client,
+            tenantId,
+            Number(fila.lectura.id),
+            totalizadores
+          );
+        }
         if (verificaciones.length > 0) {
           await this.repository.insertarVerificacionesPrecinto(
             client,
@@ -570,32 +578,130 @@ export class CombustibleService {
     });
   }
 
-  /** El totalizador que se guarda con la varilla (0096).
+  /** Lo que la varilla leyó en cada surtidor del tanque (0096, 0098).
    *
-   *  - Tanque que lo usa: OBLIGATORIO. Dejarlo opcional sería dejar que quien
-   *    mide simplemente no lo anote, y el hueco de "después del último vale"
-   *    seguiría abierto.
-   *  - Tanque que no lo usa: se IGNORA en vez de rechazar. Es la varilla que se
-   *    cargó sin red cuando el control estaba prendido y llega después de
-   *    apagarlo -- perderla sería peor que descartar un dato (mismo criterio
-   *    que los precintos). El vale, en cambio, lo rechaza: ahí no hay cola
-   *    offline con el control prendido que justifique la excepción.
+   *  - Cada surtidor que alimentaba al tanque AL MOMENTO DE MEDIR, activo y con
+   *    la casilla del totalizador, es OBLIGATORIO. Dejarlo opcional sería
+   *    dejar que quien mide no lo anote, y el hueco de "después del último
+   *    vale" seguiría abierto.
+   *  - Sin ninguno así, lo que venga se IGNORA en vez de rechazar: es la
+   *    varilla que se cargó sin red cuando el control estaba prendido y llega
+   *    después de apagarlo (mismo criterio que los precintos).
+   *  - `totalizador_lectura` (el campo de 0096) sigue valiendo cuando hay UN
+   *    solo surtidor con totalizador: es lo que manda la app vieja que quedó
+   *    en el caché del celular. Con varios no se puede saber de cuál es.
    *
    *  Un tanque que no existe lo rechaza registrarLectura con su propio 400. */
-  private async resolverTotalizadorDeLectura(
+  private async resolverTotalizadoresDeLectura(
     client: PoolClient,
     tenantId: string,
     combustibleId: number,
-    totalizador: number | undefined
-  ): Promise<number | null> {
+    leidoEn: string,
+    data: Pick<RegistrarLecturaCombustibleInput, "totalizadores" | "totalizador_lectura">
+  ): Promise<{ surtidorId: number; valor: number }[]> {
     const tanque = await this.repository.findById(client, tenantId, combustibleId);
-    if (!tanque?.usa_totalizador) return null;
-    if (totalizador === undefined) {
+    if (!tanque) return [];
+    const { surtidores } = await this.repository.findSurtidoresDelTanqueEn(
+      client,
+      tenantId,
+      combustibleId,
+      leidoEn
+    );
+    const conTotalizador = surtidores.filter((s) => s.activo && s.usa_totalizador);
+    if (conTotalizador.length === 0) return [];
+
+    let dados = data.totalizadores;
+    if (dados === undefined && data.totalizador_lectura !== undefined) {
+      if (conTotalizador.length !== 1) {
+        throw new Error(
+          `el tanque ${tanque.codigo} usa totalizador en ${conTotalizador.length} surtidores: ` +
+            `anotá la lectura de cada uno`
+        );
+      }
+      dados = [{ surtidor_id: conTotalizador[0].id, valor: data.totalizador_lectura }];
+    }
+    const porSurtidor = new Map((dados ?? []).map((d) => [d.surtidor_id, d.valor]));
+    for (const id of porSurtidor.keys()) {
+      if (!surtidores.some((s) => s.id === id)) {
+        throw new Error(`el surtidor ${id} no alimenta a este tanque`);
+      }
+    }
+    const faltan = conTotalizador.filter((s) => !porSurtidor.has(s.id));
+    if (faltan.length > 0) {
       throw new Error(
-        `el tanque ${tanque.codigo} usa totalizador: anotá la lectura del totalizador del surtidor al medir`
+        `el tanque ${tanque.codigo} usa totalizador: anotá la lectura del totalizador de ` +
+          faltan.map((s) => `"${s.nombre}"`).join(", ") +
+          ` al medir`
       );
     }
-    return totalizador;
+    return conTotalizador.map((s) => ({ surtidorId: s.id, valor: porSurtidor.get(s.id)! }));
+  }
+
+  /** De qué surtidor sale un vale de tanque propio (0098), y si tiene que
+   *  traer el totalizador.
+   *
+   *  - Con `surtidor_id`: tiene que haber alimentado al tanque EN LA FECHA DEL
+   *    VALE (la conexión tiene historia: un vale sin red que llega tarde se
+   *    valida contra la de su día).
+   *  - Sin él: el único surtidor del tanque a esa fecha. Con más de uno, el
+   *    vale tiene que decir de cuál salió.
+   *  - Un tanque que NUNCA tuvo surtidor (insertado por SQL, backup viejo): la
+   *    base le crea el suyo al insertar el vale, con la casilla del tanque.
+   *
+   *  El totalizador es OBLIGATORIO si ese surtidor lo usa (dejarlo opcional
+   *  sería dejar que el que oculta una salida no lo anote) y un error de forma
+   *  si no lo usa. Devuelve el id, o null si lo va a crear la base. */
+  private async resolverSurtidorDelVale(
+    client: PoolClient,
+    tenantId: string,
+    data: CrearDespachoCombustibleInput,
+    despachadoEn: string
+  ): Promise<number | null> {
+    if (data.producto !== "combustible" || data.origen !== "tanque_propio") return null;
+    const tanque = await this.repository.findById(client, tenantId, data.combustible_id!);
+    if (!tanque) return null;
+    const { surtidores, algunaVez } = await this.repository.findSurtidoresDelTanqueEn(
+      client,
+      tenantId,
+      data.combustible_id!,
+      despachadoEn
+    );
+
+    let surtidor: { id: number; nombre: string; usa_totalizador: boolean } | null;
+    if (data.surtidor_id !== undefined) {
+      surtidor = surtidores.find((x) => x.id === data.surtidor_id) ?? null;
+      if (!surtidor) {
+        throw new Error(
+          `el surtidor indicado no alimentaba al tanque ${tanque.codigo} en la fecha del vale`
+        );
+      }
+    } else if (surtidores.length === 1) {
+      surtidor = surtidores[0];
+    } else if (surtidores.length === 0 && !algunaVez) {
+      surtidor = null;
+    } else if (surtidores.length === 0) {
+      throw new Error(
+        `el tanque ${tanque.codigo} no tenía ningún surtidor conectado en la fecha del vale`
+      );
+    } else {
+      throw new Error(`el tanque ${tanque.codigo} tiene más de un surtidor: indicá de cuál salió`);
+    }
+
+    const usa = surtidor
+      ? surtidor.usa_totalizador
+      : await this.repository.usaTotalizadorSinSurtidor(client, tenantId, data.combustible_id!);
+    const nombre = surtidor?.nombre ?? `Surtidor ${tanque.codigo}`;
+    if (usa && data.totalizador_lectura === undefined) {
+      throw new Error(
+        `el tanque ${tanque.codigo} usa totalizador: anotá la lectura del totalizador de "${nombre}"`
+      );
+    }
+    if (!usa && data.totalizador_lectura !== undefined) {
+      throw new Error(
+        `el tanque ${tanque.codigo} no usa totalizador en "${nombre}" -- activalo en el surtidor o quitá la lectura`
+      );
+    }
+    return surtidor?.id ?? null;
   }
 
   // ── Despachos (Fase B) ───────────────────────────────────────────────
@@ -720,6 +826,8 @@ export class CombustibleService {
               )
             : data.costo_unitario!;
 
+        const surtidorId = await this.resolverSurtidorDelVale(client, tenantId, data, despachadoEn);
+
         const fila = await this.repository.crearDespacho(client, tenantId, usuarioId, {
           producto: data.producto,
           origen: data.origen,
@@ -733,6 +841,7 @@ export class CombustibleService {
           cantidad,
           lecturaContometro: data.lectura_contometro ?? null,
           totalizadorLectura: data.totalizador_lectura ?? null,
+          surtidorId,
           lecturaHorometro: data.lectura_horometro ?? null,
           lecturaOdometro: data.lectura_odometro ?? null,
           horasAbastecidas: data.horas_abastecidas ?? null,
@@ -894,20 +1003,8 @@ export class CombustibleService {
       // una queja. "Desactivado" tiene que significar algo.
       const tanque = await this.repository.findById(client, tenantId, data.combustible_id!);
 
-      // El totalizador acumulativo (0094). Si el tanque lo usa es OBLIGATORIO en
-      // el vale: dejarlo opcional sería dejar que el que quiere ocultar una
-      // salida simplemente no lo anote. Si el tanque no lo usa, mandarlo es un
-      // error de forma, no un dato a guardar a medias.
-      if (tanque?.usa_totalizador && data.totalizador_lectura === undefined) {
-        throw new Error(
-          `el tanque ${tanque.codigo} usa totalizador: anotá la lectura del totalizador del surtidor`
-        );
-      }
-      if (tanque && !tanque.usa_totalizador && data.totalizador_lectura !== undefined) {
-        throw new Error(
-          `el tanque ${tanque.codigo} no usa totalizador -- activalo en el tanque o quitá la lectura`
-        );
-      }
+      // El totalizador (0094) ahora es del SURTIDOR (0098): lo valida
+      // resolverSurtidorDelVale, que sabe de qué surtidor salió el vale.
       if (tanque && !tanque.activo) {
         throw new Error(
           `el tanque ${tanque.codigo} está desactivado y no puede despachar -- reactivalo si sigue en uso`
@@ -1496,8 +1593,12 @@ export class CombustibleService {
     }
   ) {
     if (data.combustibleId === null || data.totalizador === null) return null;
+    // El surtidor lo pudo haber asignado la base (el único del tanque).
+    const despacho = await this.repository.findDespachoPorId(client, tenantId, data.despachoId);
+    if (!despacho?.surtidor_id) return null;
     return this.evaluarCadenaTotalizador(client, tenantId, {
       combustibleId: data.combustibleId,
+      surtidorId: Number(despacho.surtidor_id),
       excluir: { tipo: "despacho", id: data.despachoId },
       totalizador: data.totalizador,
       litros: data.cantidad,
@@ -1505,36 +1606,37 @@ export class CombustibleService {
     });
   }
 
-  /** LA VARILLA EN LA CADENA (0096). Mismo cálculo que un vale, con 0 litros:
-   *  el punto anterior más cercano por valor y lo que el totalizador avanzó
-   *  desde ahí es, entero, combustible que salió por la manguera SIN vale.
+  /** LA VARILLA EN LA CADENA (0096), una vez por cada surtidor que leyó
+   *  (0098). Mismo cálculo que un vale, con 0 litros: el punto anterior más
+   *  cercano por valor en la cadena de ESE surtidor, y lo que avanzó desde ahí
+   *  es, entero, combustible que salió por él SIN vale.
    *
-   *  Es lo que cierra el hueco de "después del último vale": sin la varilla,
-   *  eso solo se veía cuando llegaba el vale siguiente. Y es una segunda
-   *  lectura independiente: la hace quien mide, no quien despacha.
-   *
-   *  Devuelve null si el tanque no usa totalizador, si la varilla no lo trae
-   *  (se ignoró, o es la `inicial` del alta) o si es el primer punto de la
-   *  cadena. */
-  async evaluarTotalizadorLectura(
+   *  Cierra el hueco de "después del último vale" y es una segunda lectura
+   *  independiente: la hace quien mide, no quien despacha. Devuelve una
+   *  alerta por surtidor que no cierra (puede ser ninguna). */
+  async evaluarTotalizadoresDeLectura(
     client: PoolClient,
     tenantId: string,
-    data: {
-      lecturaId: number;
-      combustibleId: number;
-      totalizador: number | null;
-      leidoEn: string;
-    }
+    data: { lecturaId: number; combustibleId: number; leidoEn: string }
   ) {
-    if (data.totalizador === null) return null;
-    const r = await this.evaluarCadenaTotalizador(client, tenantId, {
-      combustibleId: data.combustibleId,
-      excluir: { tipo: "lectura", id: data.lecturaId },
-      totalizador: data.totalizador,
-      litros: 0,
-      instante: data.leidoEn,
-    });
-    return r ? { ...r, ancla: "varilla" as const, lecturaId: data.lecturaId } : null;
+    const leidos = await this.repository.findTotalizadoresDeLectura(
+      client,
+      tenantId,
+      data.lecturaId
+    );
+    const hallazgos = [];
+    for (const l of leidos) {
+      const r = await this.evaluarCadenaTotalizador(client, tenantId, {
+        combustibleId: data.combustibleId,
+        surtidorId: l.surtidorId,
+        excluir: { tipo: "lectura", id: data.lecturaId },
+        totalizador: l.valor,
+        litros: 0,
+        instante: data.leidoEn,
+      });
+      if (r) hallazgos.push({ ...r, ancla: "varilla" as const, lecturaId: data.lecturaId });
+    }
+    return hallazgos;
   }
 
   private async evaluarCadenaTotalizador(
@@ -1542,30 +1644,39 @@ export class CombustibleService {
     tenantId: string,
     data: {
       combustibleId: number;
+      surtidorId: number;
       excluir: { tipo: "despacho" | "lectura"; id: number };
       totalizador: number;
       litros: number;
       instante: string;
     }
   ) {
+    const surtidor = await this.repository.findSurtidorPorId(client, tenantId, data.surtidorId);
+    if (!surtidor?.usa_totalizador) return null;
     const tanque = await this.repository.findById(client, tenantId, data.combustibleId);
-    if (!tanque?.usa_totalizador) return null;
+    if (!tanque) return null;
 
     const v = await this.repository.findVecinosTotalizador(
       client,
       tenantId,
-      data.combustibleId,
+      data.surtidorId,
       data.excluir,
       data.totalizador,
       data.instante
     );
+    // Lo que el correo y la pantalla necesitan para decir DE QUÉ surtidor es.
+    const base = {
+      tanque: tanque.codigo,
+      unidad: tanque.unidad,
+      surtidor: surtidor.nombre,
+      surtidorId: surtidor.id,
+      totalizador: data.totalizador,
+    };
 
     if (v.retroceso_id !== null) {
       return {
         motivo: "retroceso" as const,
-        tanque: tanque.codigo,
-        unidad: tanque.unidad,
-        totalizador: data.totalizador,
+        ...base,
         totalizadorMayorPrevio: Number(v.retroceso_totalizador),
       };
     }
@@ -1573,13 +1684,11 @@ export class CombustibleService {
 
     const avance = Number((data.totalizador - Number(v.anterior_totalizador)).toFixed(3));
     const diferencia = Number((avance - data.litros).toFixed(3));
-    if (Math.abs(diferencia) <= Number(tanque.totalizador_tolerancia)) return null;
+    if (Math.abs(diferencia) <= Number(surtidor.totalizador_tolerancia)) return null;
 
     return {
       motivo: "salto" as const,
-      tanque: tanque.codigo,
-      unidad: tanque.unidad,
-      totalizador: data.totalizador,
+      ...base,
       totalizadorAnterior: Number(v.anterior_totalizador),
       avance,
       declarado: data.litros,
@@ -1809,52 +1918,97 @@ export class CombustibleService {
       toleradoLitros,
       lecturaAnteriorId: Number(datos.lectura_anterior_id),
       lecturaId,
-      // De dónde salió la diferencia, si las dos varillas traen totalizador.
-      ...CombustibleService.desglosarDescuadre(datos, {
+      // De dónde salió la diferencia, si las dos varillas leyeron el
+      // totalizador de todos los surtidores del tanque.
+      ...(await this.desglosarDescuadre(client, tenantId, {
+        combustibleId,
+        lecturaAnteriorId: Number(datos.lectura_anterior_id),
+        leidoEnAnterior: new Date(datos.leido_en_anterior).toISOString(),
+        lecturaId,
+        leidoEn,
         nivelAnterior,
         nivelMedido: nivel,
         despachos,
         recepciones,
-      }),
+      })),
     };
   }
 
-  /** DE DÓNDE SALIÓ LA DIFERENCIA (0096). Con el totalizador de las dos
-   *  varillas del tramo, el faltante se separa en dos causas que se leen
-   *  distinto:
+  /** DE DÓNDE SALIÓ LA DIFERENCIA (0096, por surtidor desde 0098). Con el
+   *  totalizador de las dos varillas del tramo, el faltante se separa en dos
+   *  causas que se leen distinto:
    *
    *      faltante = salió del tanque − lo que declaran los vales
    *               = (avance − vales)        <- por la manguera, SIN vale
    *               + (salió del tanque − avance)   <- por FUERA del surtidor
    *
-   *  - `mangueraSinVale`: el avance del totalizador es exacto (±2 L) y los
-   *    vales también, así que esta parte es firme: combustible que pasó por
-   *    el surtidor sin vale.
-   *  - `fueraDelSurtidor`: lo que bajó el tanque y no pasó por el surtidor
-   *    (balde por la boca, drenaje). Es la resta de dos medidas y arrastra el
-   *    error de la varilla (±150 L): no baja el piso de robo invisible, pero
-   *    dice dónde mirar.
+   *  - `mangueraSinVale`: el avance es exacto (±2 L) y los vales también, así
+   *    que esta parte es firme.
+   *  - `fueraDelSurtidor`: la resta de dos medidas, con el error de la varilla
+   *    (±150 L). No baja el piso de robo invisible; dice dónde mirar.
    *
-   *  Positivo = falta en las dos. Devuelve {} si no se puede: tanque sin
-   *  totalizador, alguna de las dos varillas sin él, o un totalizador que
-   *  retrocede (eso ya es su propia alerta y no hay avance que dividir). */
-  static desglosarDescuadre(
-    datos: {
-      usa_totalizador: boolean;
-      totalizador_anterior: string | null;
-      totalizador_actual: string | null;
-    },
-    tramo: { nivelAnterior: number; nivelMedido: number; despachos: number; recepciones: number }
+   *  El avance es la SUMA de los surtidores del tanque, y solo se calcula en
+   *  el caso limpio: los mismos surtidores conectados en las dos varillas,
+   *  todos con totalizador, ninguno compartido con otro tanque (su avance no
+   *  se podría repartir) y los dos valores de cada uno. Si no, devuelve {}. */
+  private async desglosarDescuadre(
+    client: PoolClient,
+    tenantId: string,
+    tramo: {
+      combustibleId: number;
+      lecturaAnteriorId: number;
+      leidoEnAnterior: string;
+      lecturaId: number;
+      leidoEn: string;
+      nivelAnterior: number;
+      nivelMedido: number;
+      despachos: number;
+      recepciones: number;
+    }
   ) {
+    const antes = await this.repository.findSurtidoresDelTanqueEn(
+      client,
+      tenantId,
+      tramo.combustibleId,
+      tramo.leidoEnAnterior
+    );
+    const ahora = await this.repository.findSurtidoresDelTanqueEn(
+      client,
+      tenantId,
+      tramo.combustibleId,
+      tramo.leidoEn
+    );
+    const ids = (l: { id: number }[]) =>
+      l
+        .map((x) => x.id)
+        .sort((a, b) => a - b)
+        .join(",");
+    const limpio = (l: { usa_totalizador: boolean; compartido: boolean }[]) =>
+      l.length > 0 && l.every((x) => x.usa_totalizador && !x.compartido);
     if (
-      !datos.usa_totalizador ||
-      datos.totalizador_anterior === null ||
-      datos.totalizador_actual === null
+      ids(antes.surtidores) !== ids(ahora.surtidores) ||
+      !limpio(antes.surtidores) ||
+      !limpio(ahora.surtidores)
     ) {
       return {};
     }
-    const avance = Number(datos.totalizador_actual) - Number(datos.totalizador_anterior);
-    if (avance < 0) return {};
+    const valoresAntes = new Map(
+      (
+        await this.repository.findTotalizadoresDeLectura(client, tenantId, tramo.lecturaAnteriorId)
+      ).map((x) => [x.surtidorId, x.valor])
+    );
+    const valoresAhora = new Map(
+      (await this.repository.findTotalizadoresDeLectura(client, tenantId, tramo.lecturaId)).map(
+        (x) => [x.surtidorId, x.valor]
+      )
+    );
+    let avance = 0;
+    for (const s of ahora.surtidores) {
+      const a = valoresAntes.get(s.id);
+      const b = valoresAhora.get(s.id);
+      if (a === undefined || b === undefined || b < a) return {};
+      avance += b - a;
+    }
     const salioDelTanque = tramo.nivelAnterior + tramo.recepciones - tramo.nivelMedido;
     return {
       desglose: {
@@ -2587,6 +2741,10 @@ export class CombustibleService {
           faltan.map((f: { nombre: string }) => `"${f.nombre}"`).join(", ")
       );
     }
+  }
+
+  getSurtidor(client: PoolClient, tenantId: string, surtidorId: number) {
+    return this.repository.findSurtidorPorId(client, tenantId, surtidorId);
   }
 
   listarPuntosPrecinto(client: PoolClient, tenantId: string, combustibleId: number) {
@@ -3610,6 +3768,8 @@ export class CombustibleService {
         // El contador acumulativo del surtidor en ese vale o varilla (0094,
         // 0096). null si el punto no lo lleva.
         totalizador: f.totalizador === null ? null : Number(f.totalizador),
+        // Una varilla que leyó varios surtidores (0098): "S1: 100 · S2: 200".
+        totalizador_texto: f.totalizador_texto,
       };
     });
 
