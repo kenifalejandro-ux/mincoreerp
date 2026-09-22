@@ -86,7 +86,7 @@ La cadena de comparación de #180 y #183 (por valor, con las varillas como punto
 - **El desglose del descuadre** ("por la manguera sin vale" y "fuera del surtidor") se calcula por tanque **solo si todos los surtidores del tanque tienen totalizador y ninguno está compartido con otro tanque**. Con un surtidor compartido el avance no se puede repartir entre los tanques, y el desglose se omite. La alerta de combustible sin vale sigue funcionando: se compara contra todos los vales de ese surtidor.
 - La tolerancia es del surtidor.
 - Apagar el totalizador de un surtidor, o dar de baja uno que lo usaba, es **aflojar la vigilancia**: pide motivo, queda en la bitácora y avisa por correo.
-- **Expandir y contraer:** `combustible.usa_totalizador`, `totalizador_tolerancia` y `totalizador_actual`, y `combustible_lecturas.totalizador_lectura`, siguen en la base pero el código ya no los lee. Se borran en una migración posterior al despliegue de 0098. Mientras tanto, lo que el código viejo escriba en `totalizador_lectura` se copia a la tabla nueva. Durante la ventana del despliegue, el código viejo no ve las varillas en la cadena del totalizador; solo importa en tanques con la casilla prendida.
+- **Expandir y contraer:** `combustible.usa_totalizador`, `totalizador_tolerancia` y `totalizador_actual`, y `combustible_lecturas.totalizador_lectura`, se borraron en la migración 0099. Producción nunca corrió con el código anterior, así que no hubo ventana de despliegue que cuidar. Un backup anterior a 0098 se restaura igual: `registry.ts` declara esas columnas como excluidas al restaurar, y el surtidor que la base le crea a esos tanques nace sin la casilla del totalizador.
 
 ## 5. Quién ve qué
 
@@ -236,7 +236,7 @@ En `registry.ts` se declaran las claves foráneas nuevas de tanques, equipos y d
 | # | Qué | Riesgo |
 |---|---|---|
 | 1 | **Hecha.** Sedes y grifos internos: tablas, administración, tanques y equipos asignados, historial de movimientos, copia del grifo en cada hecho, migración a "Principal", alta de empresas nuevas, backup, renombrar "Proveedores" | Alto: migra todas las empresas, agrega triggers y toca el backup |
-| 2 | **Hecha.** Surtidores: entidad, conexión con historia, vale por surtidor, totalizador por surtidor y en la varilla, migración de #180 y #183. Pendiente: la migración que borra las columnas viejas, después del despliegue | Alto: toca el cálculo |
+| 2 | **Hecha.** Surtidores: entidad, conexión con historia, vale por surtidor, totalizador por surtidor y en la varilla, migración de #180 y #183 (0098), y el borrado de las columnas viejas (0099) | Alto: toca el cálculo |
 | 3 | Alcance por usuario aplicado en todo el módulo, con tests de ataque y eventos filtrados | **El más alto**: un hueco filtra datos de otra planta |
 | 4 | Unidades en los reportes, filtro por sede y grifo, "por grifo" desglosado, alerta de equipo de otro grifo | Bajo |
 

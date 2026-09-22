@@ -355,10 +355,9 @@ export class CombustibleRepository {
         ubicacion, capacidad_total, nivel_minimo, moneda,
         tolerancia_capacidad_pct, requiere_documento, umbral_diferencia_pct,
         umbral_descuadre_pct, umbral_descuadre_ciclo_pct,
-        umbral_descuadre_ventana_pct, usa_totalizador, totalizador_tolerancia,
-        usa_precintos, grifo_interno_id
+        umbral_descuadre_ventana_pct, usa_precintos, grifo_interno_id
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
       RETURNING id
       `,
       [
@@ -378,8 +377,6 @@ export class CombustibleRepository {
         data.umbral_descuadre_pct,
         data.umbral_descuadre_ciclo_pct,
         data.umbral_descuadre_ventana_pct,
-        data.usa_totalizador,
-        data.totalizador_tolerancia,
         data.usa_precintos ?? false,
         // NULL = que lo asigne la base (el único grifo de la empresa, 0097).
         data.grifo_interno_id ?? null,
@@ -395,14 +392,19 @@ export class CombustibleRepository {
     // Todo tanque nace con su surtidor (0098), con la casilla y la tolerancia
     // del formulario. Acá y no en un trigger de alta: restaurar un backup
     // volvería a crearlo encima del que trae el backup.
-    await this.crearSurtidorDelTanque(client, id);
+    await this.crearSurtidorDelTanque(
+      client,
+      id,
+      data.usa_totalizador,
+      data.totalizador_tolerancia
+    );
 
     // Se relee en vez de usar RETURNING: el nivel sale de un LATERAL JOIN
     // contra las lecturas, que RETURNING no puede hacer.
     return this.findById(client, tenantId, id);
   }
 
-  /** Reemplaza la fila entera salvo `nivel_actual`/`totalizador_actual`/
+  /** Reemplaza la fila entera salvo `nivel_actual` (que es de las lecturas)/
    *  `costo_promedio` -- mismo motivo que en create(): esos tres tienen su
    *  propio camino de escritura, este endpoint no es ese camino. */
   async update(
@@ -449,10 +451,8 @@ export class CombustibleRepository {
         umbral_descuadre_pct = $14,
         umbral_descuadre_ciclo_pct = $15,
         umbral_descuadre_ventana_pct = $16,
-        usa_totalizador = COALESCE($17, usa_totalizador),
-        totalizador_tolerancia = COALESCE($18, totalizador_tolerancia),
-        usa_precintos = COALESCE($19, usa_precintos)
-      WHERE id = $20 AND tenant_id = $21
+        usa_precintos = COALESCE($17, usa_precintos)
+      WHERE id = $18 AND tenant_id = $19
       RETURNING id
       `,
       [
@@ -472,8 +472,6 @@ export class CombustibleRepository {
         data.umbral_descuadre_pct,
         data.umbral_descuadre_ciclo_pct,
         data.umbral_descuadre_ventana_pct,
-        data.usa_totalizador ?? null,
-        data.totalizador_tolerancia ?? null,
         data.usa_precintos ?? null,
         id,
         tenantId,
@@ -638,7 +636,13 @@ export class CombustibleRepository {
 
       for (const fila of insertados.rows) {
         // Mismo surtidor que el alta de a uno (0098).
-        await this.crearSurtidorDelTanque(client, fila.id);
+        const datos = porCodigo.get(fila.codigo);
+        await this.crearSurtidorDelTanque(
+          client,
+          fila.id,
+          datos?.usa_totalizador,
+          datos?.totalizador_tolerancia
+        );
         creados.push(await this.findById(client, tenantId, fila.id));
       }
     }
@@ -732,7 +736,7 @@ export class CombustibleRepository {
       SET anulada_en = now(), anulada_por = $1, motivo_anulacion = $2
       WHERE id = $3 AND tenant_id = $4 AND anulada_en IS NULL
       RETURNING id, combustible_id, nivel, leido_en, usuario_id, origen, metadata,
-                creado_en, totalizador_lectura, anulada_en, anulada_por, motivo_anulacion
+                creado_en, anulada_en, anulada_por, motivo_anulacion
       `,
       [usuarioId, motivo, lecturaId, tenantId]
     );
@@ -825,7 +829,9 @@ export class CombustibleRepository {
         (tenant_id, combustible_id, nivel, leido_en, usuario_id, metadata)
       VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING id, combustible_id, nivel, leido_en, usuario_id, origen, metadata, creado_en,
-                totalizador_lectura
+                -- Lo leído en cada surtidor se inserta después (0098); el
+                -- servicio relee la varilla para devolverlo.
+                NULL::numeric AS totalizador_lectura
     `,
       [
         tenantId,
@@ -1394,16 +1400,6 @@ export class CombustibleRepository {
     return { surtidores: r.rows, algunaVez: alguna.rows[0].hay };
   }
 
-  /** Un tanque que nunca tuvo surtidor (insertado por SQL, backup viejo):
-   *  la casilla que va a heredar el surtidor que le crea la base. */
-  async usaTotalizadorSinSurtidor(client: PoolClient, tenantId: string, combustibleId: number) {
-    const r = await client.query<{ usa_totalizador: boolean }>(
-      `SELECT usa_totalizador FROM combustible WHERE id = $1 AND tenant_id = $2`,
-      [combustibleId, tenantId]
-    );
-    return r.rows[0]?.usa_totalizador ?? false;
-  }
-
   async findSurtidorPorId(client: PoolClient, tenantId: string, surtidorId: number) {
     const r = await client.query<{
       id: number;
@@ -1423,10 +1419,16 @@ export class CombustibleRepository {
   /** El surtidor que la base le creó (o le va a crear) a un tanque. Lo usa el
    *  alta de tanque: el surtidor se crea explícito, no por trigger de alta,
    *  porque restaurar un backup lo duplicaría. */
-  async crearSurtidorDelTanque(client: PoolClient, combustibleId: number) {
-    const r = await client.query<{ id: number }>(`SELECT crear_surtidor_del_tanque($1) AS id`, [
-      combustibleId,
-    ]);
+  async crearSurtidorDelTanque(
+    client: PoolClient,
+    combustibleId: number,
+    usaTotalizador = false,
+    tolerancia = 1
+  ) {
+    const r = await client.query<{ id: number }>(
+      `SELECT crear_surtidor_del_tanque($1, $2, $3) AS id`,
+      [combustibleId, usaTotalizador, tolerancia]
+    );
     return r.rows[0].id;
   }
 
