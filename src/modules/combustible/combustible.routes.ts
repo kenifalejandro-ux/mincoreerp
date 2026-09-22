@@ -36,6 +36,7 @@ import {
   motivoSurtidorSchema,
 } from "../../server/schemas/combustible.schema";
 import { moverDeGrifoSchema } from "../../server/schemas/sedes.schema";
+import { cargarAlcance, GUARDIAS, requiereTanqueCompleto } from "./alcance";
 import { CombustibleController } from "./combustible.controller";
 // Se activa solo con importarse (setInterval + .unref()) -- mismo mecanismo
 // que events.ts con el worker de retención de eventos.
@@ -43,6 +44,11 @@ import "../../server/services/combustibleConciliacion.worker";
 
 const router = Router();
 const controller = new CombustibleController();
+
+// El alcance del usuario (0100), una vez por pedido y antes de cualquier
+// ruta: todo lo que sigue lo lee de req.alcanceCombustible.
+router.use(cargarAlcance);
+for (const [param, guardia] of Object.entries(GUARDIAS)) router.param(param, guardia);
 
 router.get("/", asyncHandler(controller.getAll.bind(controller)));
 
@@ -350,7 +356,11 @@ router.get(
 router.get("/:id", asyncHandler(controller.getById.bind(controller)));
 // Los puntos precintados del tanque con su número vigente. Cualquier rol: el
 // que toma la varilla necesita saber qué sellos mirar.
-router.get("/:id/precintos", asyncHandler(controller.listarPuntosPrecinto.bind(controller)));
+router.get(
+  "/:id/precintos",
+  requiereTanqueCompleto,
+  asyncHandler(controller.listarPuntosPrecinto.bind(controller))
+);
 // Grifo interno del tanque (0097). Mover cambia quién lo ve (entrega 3): solo
 // admin, con motivo. Los errores de negocio salen como AppError del servicio.
 router.post(
@@ -376,6 +386,8 @@ router.post(
 );
 router.get(
   "/:id/lecturas",
+  // El historial de varillas es del grifo entero (0100).
+  requiereTanqueCompleto,
   validateQuery(periodoHistorialCombustibleSchema),
   asyncHandler(controller.getLecturas.bind(controller))
 );

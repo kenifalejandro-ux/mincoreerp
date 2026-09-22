@@ -18,6 +18,10 @@ export interface OpcionesStreamSSE {
   canal: string;
   reponer: (desdeId: number) => Promise<EventoTiempoReal[]>;
   suscribir: (canal: string, onMensaje: (mensajeCrudo: string) => void) => Promise<() => void>;
+  /** Ajusta cada evento antes de mandarlo a ESTA conexión (el alcance de
+   *  Combustible, 0100, vacía el contenido para quien ve solo algunas
+   *  plantas). Sin él, el evento sale tal cual. */
+  adaptar?: (evento: EventoTiempoReal) => EventoTiempoReal;
 }
 
 function parsearUltimoEventId(req: Request): number | undefined {
@@ -57,7 +61,7 @@ export async function manejarConexionSSE(
   if (desdeId !== undefined) {
     try {
       const pendientes = await opciones.reponer(desdeId);
-      pendientes.forEach((evento) => enviarEventoSSE(res, evento));
+      pendientes.forEach((evento) => enviarEventoSSE(res, opciones.adaptar?.(evento) ?? evento));
     } catch (err) {
       // No cortar la conexión por esto -- el cliente sigue recibiendo lo
       // que llegue en vivo de acá en más, aunque se haya perdido el tramo
@@ -68,7 +72,8 @@ export async function manejarConexionSSE(
 
   const desuscribir = await opciones.suscribir(opciones.canal, (mensajeCrudo) => {
     try {
-      enviarEventoSSE(res, JSON.parse(mensajeCrudo) as EventoTiempoReal);
+      const evento = JSON.parse(mensajeCrudo) as EventoTiempoReal;
+      enviarEventoSSE(res, opciones.adaptar?.(evento) ?? evento);
     } catch (err) {
       logger.warn(
         { err, canal: opciones.canal },

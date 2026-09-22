@@ -108,6 +108,19 @@ export const MODULOS: ModuloDefinicion[] = [
           desconectado_por: "usuarios",
         },
       },
+      // Alcance por usuario (0100): después de sedes, grifos (se restauran con
+      // usuarios, antes de los módulos) y surtidores. Cascadea desde el
+      // usuario y desde lo asignado: no necesita raíz propia.
+      {
+        nombre: "usuario_accesos_combustible",
+        pk: "serial",
+        fks: {
+          usuario_id: "usuarios",
+          sede_id: "sedes",
+          grifo_interno_id: "grifos_internos",
+          surtidor_id: "surtidores",
+        },
+      },
       {
         nombre: "combustible_lecturas",
         pk: "serial",

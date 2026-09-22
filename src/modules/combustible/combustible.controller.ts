@@ -78,6 +78,7 @@ import {
 import { sanearNombreArchivo } from "../../server/services/documentStorage";
 import { CombustibleService } from "./combustible.service";
 import * as surtidores from "./surtidores.service";
+import { alcanceDe, ambitoDe, grifosDelFiltro } from "./alcance";
 
 const service = new CombustibleService();
 
@@ -1011,7 +1012,9 @@ export class CombustibleController {
   async getAll(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
-      const data = await withTenant(tenantId, (client) => service.getAll(client, tenantId));
+      const data = await withTenant(tenantId, (client) =>
+        service.getAll(client, tenantId, alcanceDe(req))
+      );
       res.json(data);
     } catch {
       res.status(500).json({ error: "Error al obtener combustible" });
@@ -1869,7 +1872,7 @@ export class CombustibleController {
       }
 
       const { fila, creado } = await withTenant(tenantId, (client) =>
-        service.registrarLectura(client, tenantId, req.usuario!.id, data)
+        service.registrarLectura(client, tenantId, req.usuario!.id, data, alcanceDe(req))
       );
 
       // Reintento de un envío que ya se había guardado (la respuesta
@@ -1956,7 +1959,7 @@ export class CombustibleController {
       }
 
       const { fila, creado } = await withTenant(tenantId, (client) =>
-        service.crearDespacho(client, tenantId, req.usuario!.id, data)
+        service.crearDespacho(client, tenantId, req.usuario!.id, data, alcanceDe(req))
       );
 
       // Reintento de un envío que ya se había guardado -- mismo criterio
@@ -2245,7 +2248,23 @@ export class CombustibleController {
           despachadoEn: data.despachado_en ?? new Date().toISOString(),
         });
 
+        // El equipo es de otro grifo (0100). Solo alerta, sin correo: los
+        // equipos se prestan entre plantas.
+        const deOtroGrifo = await service.detectarEquipoDeOtroGrifo(client, tenantId, despachoId);
+
         const nuevas = [
+          ...(deOtroGrifo
+            ? [
+                {
+                  tipo: "equipo_de_otro_grifo" as const,
+                  serieTalonario,
+                  nVale,
+                  despachoId,
+                  combustibleId: data.combustible_id ?? null,
+                  detalle: { ...deOtroGrifo } as Record<string, unknown>,
+                },
+              ]
+            : []),
           ...(consumo
             ? [
                 {
@@ -3245,7 +3264,8 @@ export class CombustibleController {
           client,
           tenantId,
           { equipoId, serieTalonario, origen, producto, desde, hasta },
-          paginacion
+          paginacion,
+          ambitoDe(req)
         )
       );
       res.json(armarRespuestaPaginada(filas, paginacion));
@@ -3259,6 +3279,18 @@ export class CombustibleController {
    *  en vez de con Zod, porque es un solo query param suelto que no
    *  justifica un schema aparte -- y el repository lo vuelve a chequear
    *  contra el mismo allowlist antes de tocar el SQL (ver TRUNC_SQL). */
+  /** `?sede_id=` o `?grifo_interno_id=` en los reportes de consumo (entrega
+   *  4): acota por la copia del grifo de cada vale. El grifo gana si vienen
+   *  los dos. Un número inválido se ignora, como agrupar_por. */
+  private leerFiltroSede(req: Request): { sede_id?: number; grifo_interno_id?: number } {
+    const entero = (v: unknown) =>
+      typeof v === "string" && /^[1-9][0-9]*$/.test(v) ? Number(v) : undefined;
+    return {
+      sede_id: entero(req.query.sede_id),
+      grifo_interno_id: entero(req.query.grifo_interno_id),
+    };
+  }
+
   private leerAgruparPor(req: Request): string | undefined {
     const valor = req.query.agrupar_por;
     return valor === "dia" || valor === "semana" || valor === "mes" || valor === "anio"
@@ -3285,8 +3317,15 @@ export class CombustibleController {
       const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
       const agruparPor = this.leerAgruparPor(req);
       const producto = this.leerProductoConsumo(req);
-      const filas = await withTenant(tenantId, (client) =>
-        service.listarConsumoPorConductor(client, tenantId, producto, { desde, hasta }, agruparPor)
+      const filas = await withTenant(tenantId, async (client) =>
+        service.listarConsumoPorConductor(
+          client,
+          tenantId,
+          producto,
+          { desde, hasta },
+          agruparPor,
+          ambitoDe(req, await grifosDelFiltro(client, tenantId, this.leerFiltroSede(req)))
+        )
       );
       res.json({ data: filas });
     } catch {
@@ -3301,8 +3340,15 @@ export class CombustibleController {
       const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
       const agruparPor = this.leerAgruparPor(req);
       const producto = this.leerProductoConsumo(req);
-      const filas = await withTenant(tenantId, (client) =>
-        service.listarConsumoPorEquipo(client, tenantId, producto, { desde, hasta }, agruparPor)
+      const filas = await withTenant(tenantId, async (client) =>
+        service.listarConsumoPorEquipo(
+          client,
+          tenantId,
+          producto,
+          { desde, hasta },
+          agruparPor,
+          ambitoDe(req, await grifosDelFiltro(client, tenantId, this.leerFiltroSede(req)))
+        )
       );
       res.json({ data: filas });
     } catch {
@@ -3319,8 +3365,15 @@ export class CombustibleController {
       const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
       const agruparPor = this.leerAgruparPor(req);
       const producto = this.leerProductoConsumo(req);
-      const filas = await withTenant(tenantId, (client) =>
-        service.listarConsumoPorGrifo(client, tenantId, producto, { desde, hasta }, agruparPor)
+      const filas = await withTenant(tenantId, async (client) =>
+        service.listarConsumoPorGrifo(
+          client,
+          tenantId,
+          producto,
+          { desde, hasta },
+          agruparPor,
+          ambitoDe(req, await grifosDelFiltro(client, tenantId, this.leerFiltroSede(req)))
+        )
       );
       res.json({ data: filas });
     } catch {
@@ -4207,7 +4260,11 @@ export class CombustibleController {
   /** GET /surtidores -- cualquier rol: el vale y la varilla los necesitan. */
   async listarSurtidores(req: Request, res: Response) {
     const tenantId = getTenantId(req);
-    res.json(await withTenant(tenantId, (client) => surtidores.listarSurtidores(client, tenantId)));
+    res.json(
+      await withTenant(tenantId, (client) =>
+        surtidores.listarSurtidores(client, tenantId, alcanceDe(req))
+      )
+    );
   }
 
   async crearSurtidor(req: Request, res: Response) {
@@ -4895,7 +4952,7 @@ export class CombustibleController {
       const tenantId = getTenantId(req);
       const data = req.validatedBody as CrearRecepcionCombustibleInput;
       const { fila, creado } = await withTenant(tenantId, (client) =>
-        service.crearRecepcion(client, tenantId, req.usuario!.id, data)
+        service.crearRecepcion(client, tenantId, req.usuario!.id, data, alcanceDe(req))
       );
 
       // Reintento de un envío ya guardado (doble clic sobre el mismo
@@ -5204,7 +5261,8 @@ export class CombustibleController {
           client,
           tenantId,
           { combustibleId, producto, desde, hasta },
-          paginacion
+          paginacion,
+          alcanceDe(req)
         )
       );
       res.json(armarRespuestaPaginada(filas, paginacion));

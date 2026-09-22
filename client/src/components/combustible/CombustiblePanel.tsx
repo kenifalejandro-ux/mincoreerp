@@ -541,7 +541,8 @@ interface AlertaCombustible {
     | "totalizador_salto"
     | "totalizador_retroceso"
     | "precinto_alterado"
-    | "precinto_reemplazado";
+    | "precinto_reemplazado"
+    | "equipo_de_otro_grifo";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -1072,6 +1073,7 @@ const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   totalizador_retroceso: "Totalizador retrocedió",
   precinto_alterado: "Precinto que no coincide",
   precinto_reemplazado: "Precinto cambiado fuera de una recepción",
+  equipo_de_otro_grifo: "Equipo cargado en otro grifo",
 };
 
 /** El `detalle` es JSONB libre y cada tipo de alerta guarda cosas
@@ -1111,6 +1113,12 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
       `Despachó ${cantidad} ${unidadDespacho ?? ""} a un tanque de ` +
       `${capacidad} ${unidadCapacidad ?? ""} (+${excesoPct ?? "?"}%)`
     );
+  }
+  if (a.tipo === "equipo_de_otro_grifo") {
+    const { equipo, grifoDelVale, grifoDelEquipo } = a.detalle as Record<string, string>;
+    // No es un error en sí (un equipo de paso carga donde está), pero el
+    // consumo del equipo queda repartido entre dos grifos.
+    return `${equipo ?? "El equipo"} es de ${grifoDelEquipo ?? "?"} y cargó en ${grifoDelVale ?? "?"}`;
   }
   if (a.tipo === "tanque_sin_vigilancia") {
     const { litrosEnLaVentana, valesEnLaVentana, unidad, plazoDias } = a.detalle as {

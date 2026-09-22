@@ -44,6 +44,8 @@ import {
 } from "./platform.service";
 import { resetearClaveUsuarioService } from "./auth.service";
 import {
+  alcanceAmplia,
+  alcanceRecorta,
   guardarPermisosUsuarioService,
   listarPermisosUsuarioService,
   type CambioDePermisos,
@@ -215,7 +217,21 @@ async function firmasRequeridas(
       return 1;
     case "cambiar_permisos": {
       const antes = await listarPermisosUsuarioService(tenantId, solicitud.usuarioId!);
-      return permisosRecortan(antes, solicitud.payload as unknown as CambioDePermisos) ? 1 : 2;
+      const pedido = solicitud.payload as unknown as CambioDePermisos;
+      // Ampliar el alcance de Combustible (0100) pide dos firmas aunque el
+      // mismo cambio recorte otra cosa.
+      if (alcanceAmplia(antes.alcanceCombustible, pedido.alcanceCombustible)) return 2;
+      // Achicar SOLO el alcance es un recorte: una firma. Mezclado con cambios
+      // de rol o de módulos, manda la regla de siempre.
+      const soloAlcance = !pedido.rol && pedido.modulos.length === 0;
+      if (
+        soloAlcance &&
+        pedido.alcanceCombustible &&
+        alcanceRecorta(antes.alcanceCombustible, pedido.alcanceCombustible)
+      ) {
+        return 1;
+      }
+      return permisosRecortan(antes, pedido) ? 1 : 2;
     }
     case "cambiar_doble_firma":
       // Encenderla, una firma (endurecer). Apagarla, dos.

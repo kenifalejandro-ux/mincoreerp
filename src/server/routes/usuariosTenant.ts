@@ -108,6 +108,15 @@ const guardarPermisosSchema = z.object({
       })
     )
     .max(50),
+  // Alcance en Combustible (0100). Ausente = no se toca.
+  alcanceCombustible: z
+    .object({
+      todo: z.boolean(),
+      sedes: z.array(z.number().int().positive()).max(200),
+      grifos: z.array(z.number().int().positive()).max(200),
+      surtidores: z.array(z.number().int().positive()).max(500),
+    })
+    .optional(),
   motivo: z.string().trim().max(500).optional(),
 });
 
@@ -293,6 +302,12 @@ export function createUsuariosTenantRouter() {
       const cambio = req.validatedBody as {
         rol?: "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta";
         modulos: { modulo: string; asignado: boolean; nivel: "operar" | "consultas" }[];
+        alcanceCombustible?: {
+          todo: boolean;
+          sedes: number[];
+          grifos: number[];
+          surtidores: number[];
+        };
         motivo?: string;
       };
 
@@ -302,7 +317,11 @@ export function createUsuariosTenantRouter() {
         {
           tipo: "cambiar_permisos",
           usuarioId: req.params.id,
-          payload: { rol: cambio.rol, modulos: cambio.modulos },
+          payload: {
+            rol: cambio.rol,
+            modulos: cambio.modulos,
+            ...(cambio.alcanceCombustible ? { alcanceCombustible: cambio.alcanceCombustible } : {}),
+          },
           motivo: cambio.motivo ?? "Cambio de permisos",
         },
         (resultado) => ({ estado: 200, cuerpo: resultado })
