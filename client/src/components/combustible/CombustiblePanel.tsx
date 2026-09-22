@@ -1604,17 +1604,23 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
       : base;
   }
   if (a.tipo === "diferencia_recepcion") {
-    const { diferenciaLitros, diferenciaPct, umbralPct, unidad } = a.detalle as {
+    const { diferenciaLitros, diferenciaPct, umbralPct, toleradoLitros, unidad } = a.detalle as {
       diferenciaLitros?: number;
       diferenciaPct?: number;
       umbralPct?: number;
+      // La tolerancia ya calculada (0101): piso + % de lo entregado. Las
+      // alertas anteriores a esa migración no la traen, y por eso el texto
+      // cae al porcentaje -- el histórico tiene que seguir leyéndose.
+      toleradoLitros?: number;
       unidad?: string;
     };
     if (diferenciaLitros === undefined) return "—";
     const signo = diferenciaLitros > 0 ? "+" : "";
     return (
       `Facturado vs. medido: ${signo}${diferenciaLitros} ${unidad ?? ""} ` +
-      `(${signo}${diferenciaPct ?? "?"}%, umbral ${umbralPct ?? "?"}%)`
+      (toleradoLitros !== undefined
+        ? `(tolerancia ${toleradoLitros} ${unidad ?? ""})`
+        : `(${signo}${diferenciaPct ?? "?"}%, umbral ${umbralPct ?? "?"}%)`)
     );
   }
   if (a.tipo === "nivel_bajo") {

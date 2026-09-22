@@ -828,11 +828,18 @@ export class CombustibleController {
           // configurado -- y "nadie lo vigilaba" es justo lo que hay que
           // poder responder después.
           modoVigilancia: data.modo_vigilancia ?? null,
+          // El piso va junto a su porcentaje (0101): la tolerancia real es
+          // la suma de los dos, y auditar solo el porcentaje dejaría medio
+          // registro de con qué quedó configurado el tanque.
           umbrales: {
             descuadre: data.umbral_descuadre_pct,
+            descuadrePiso: data.umbral_descuadre_piso,
             ciclo: data.umbral_descuadre_ciclo_pct,
+            cicloPiso: data.umbral_descuadre_ciclo_piso,
             diferencia: data.umbral_diferencia_pct,
+            diferenciaPiso: data.umbral_diferencia_piso,
             ventana: data.umbral_descuadre_ventana_pct,
+            ventanaPiso: data.umbral_descuadre_ventana_piso,
           },
         },
         contexto: contextoAuditoriaModulo(req),

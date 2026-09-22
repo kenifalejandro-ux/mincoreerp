@@ -132,9 +132,12 @@ export class CombustibleService {
    *  pero:
    *
    *  1. La capacidad no se convierte: el 20.000 que significaba litros pasa a
-   *     significar GALONES, o sea 75.708 L. Y como los cuatro umbrales son
-   *     porcentaje de la capacidad, TODAS las bandas se multiplican por
-   *     3,785 de golpe. Un umbral del 1% pasa de tolerar 200 L a tolerar 757.
+   *     significar GALONES, o sea 75.708 L. Y el piso de cada umbral (0101)
+   *     se guarda en la unidad del tanque, así que un piso de 400 pasa a
+   *     significar 400 GALONES (1.514 L) sin que nadie haya tocado el
+   *     número. Antes de 0101 el efecto era el mismo por otro camino: los
+   *     cuatro umbrales eran porcentaje de la capacidad, y esa capacidad
+   *     reinterpretada multiplicaba todas las bandas por 3,785 de golpe.
    *  2. Todo el historial se reinterpreta. Los despachos guardados en litros
    *     se leen como galones al convertir (ver findAcumuladoDiario), así que
    *     el techo diario también se ensancha ×3,785.
@@ -4438,23 +4441,10 @@ export class CombustibleService {
     };
   }
 
-  /** Un punto por tramo, medido contra la capacidad del tanque. Lo comparten
-   *  el umbral por tramo y el de la ventana.
-   *
-   *  ⚠ DESALINEADO CON LA ALERTA DESDE 0101, Y HAY QUE ARREGLARLO ANTES DE
-   *  CUALQUIER DEPLOY. La alerta ya no compara contra la capacidad: la
-   *  tolerancia es `piso + % de lo movido`. Esta muestra sigue expresando
-   *  cada tramo como porcentaje de la capacidad, así que el número que
-   *  sugiere NO significa lo mismo que el campo donde se aplicaría --
-   *  apretar "Usar este valor" cargaría un porcentaje de capacidad en un
-   *  campo que se multiplica por el movimiento, y la tolerancia saltaría
-   *  sola.
-   *
-   *  Es la entrega 2 de este cambio: la muestra tiene que estimar DOS
-   *  números (el corte en el eje = piso, la pendiente = %) en vez de uno.
-   *  Mientras tanto el asistente queda sirviendo un número que no se puede
-   *  aplicar, que es feo pero visible; lo peligroso sería que pareciera
-   *  correcto. */
+  /** Un punto por tramo: el descuadre y cuánto pasó por los medidores en ese
+   *  período (0101). Lo comparten el ajuste del balance y el de la ventana --
+   *  ver `calibrarPar`, que es quien realmente estima el piso y el
+   *  porcentaje a partir de estos puntos. */
   private static puntosDeTramo(intervalos: IntervaloCalibracion[]) {
     return CombustibleService.tramosMedidos(intervalos).map((i) => ({
       descuadre: Number(i.descuadre.toFixed(2)),
