@@ -219,7 +219,11 @@ describe("menú Administración", () => {
   });
 
   it("filtra por fecha y por acción", async () => {
-    const hoy = new Date().toISOString().slice(0, 10);
+    // El "hasta"/"desde" se interpreta como fecha en la sesión de Postgres,
+    // que corre en America/Lima -- NO en UTC. Entre las 19:00 y la medianoche
+    // en Lima, toISOString() ya da el día siguiente (UTC va 5h adelante), y
+    // "hoy" en UTC buscaba eventos desde mañana a medianoche en Lima: vacío.
+    const hoy = new Date().toLocaleDateString("en-CA", { timeZone: "America/Lima" });
 
     const porAccion = await admin.get("/api/erp/administracion/eventos?accion=crear_usuario");
     expect(
