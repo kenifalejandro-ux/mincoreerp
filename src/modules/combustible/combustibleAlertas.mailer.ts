@@ -277,6 +277,10 @@ export async function enviarCorreoAlertaDescuadre(
     descuadreLitros: number;
     sentido: "falta" | "sobra";
     umbralPct: number;
+    /** Piso fijo + % de lo movido = la tolerancia del tramo (0101). */
+    piso: number;
+    movimiento: number;
+    toleradoLitros: number;
     /** Solo si las dos varillas del tramo traen totalizador (0096). */
     desglose?: {
       avanceTotalizador: number;
@@ -315,7 +319,13 @@ export async function enviarCorreoAlertaDescuadre(
               `Positivo = falta.`,
           ]
         : []),
-      `El umbral configurado para este tanque es ${params.umbralPct}% de su capacidad.`,
+      // La cuenta entera, no solo el resultado: quien lee el correo tiene
+      // que poder ver POR QUÉ esta diferencia pasó el filtro y no las de
+      // otros días. El piso es el error propio de la varilla; el porcentaje,
+      // el de los medidores por donde pasó el combustible del período.
+      `Tolerancia de este tanque: ${params.toleradoLitros} ${u} ` +
+        `(piso de ${params.piso} ${u} por el error de la varilla, más ` +
+        `${params.umbralPct}% de los ${params.movimiento} ${u} que se movieron).`,
     ],
   });
 }
@@ -341,6 +351,9 @@ export async function enviarCorreoAlertaDescuadreCiclo(
     descuadreLitros: number;
     sentido: "falta" | "sobra";
     umbralPct: number;
+    piso: number;
+    movimiento: number;
+    toleradoLitros: number;
   }
 ) {
   const u = params.unidad;
@@ -366,7 +379,13 @@ export async function enviarCorreoAlertaDescuadreCiclo(
           `se ve sumando el período completo.`
         : `Sobran ${magnitud} ${u} en todo el ciclo: los vales del período declaran más ` +
           `salida de la que realmente hubo.`,
-      `Umbral del ciclo para este tanque: ${params.umbralPct}% de su capacidad.`,
+      // El piso es el MISMO que el del tramo (la misma varilla, las mismas
+      // dos lecturas); lo que crece es la parte proporcional, porque el
+      // ciclo acumula más movimiento. Decirlo así evita la pregunta obvia
+      // de por qué un control tolera más que el otro.
+      `Tolerancia del ciclo: ${params.toleradoLitros} ${u} (piso de ${params.piso} ${u} ` +
+        `por el error de la varilla, más ${params.umbralPct}% de los ` +
+        `${params.movimiento} ${u} movidos en el ciclo).`,
     ],
   });
 }
@@ -523,6 +542,8 @@ export async function enviarCorreoAlertaDescuadreVentana(
     sentido: "falta" | "sobra";
     promedioPorTramo: number;
     umbralPct: number;
+    piso: number;
+    movimiento: number;
     toleradoLitros: number;
   }
 ) {
@@ -536,7 +557,13 @@ export async function enviarCorreoAlertaDescuadreVentana(
     lineas: [
       `Son ${params.tramos} mediciones, un promedio de ` +
         `${Math.abs(params.promedioPorTramo)} ${params.unidad} por medición.`,
-      `El umbral es ${params.umbralPct}% de la capacidad (${params.toleradoLitros} ${params.unidad}).`,
+      // Un solo piso para toda la ventana, no uno por medición: el error de
+      // la varilla se cancela entre tramos consecutivos. Lo dice la línea de
+      // abajo con otras palabras, y acá se ve en el número.
+      `Tolerancia de la ventana: ${params.toleradoLitros} ${params.unidad} ` +
+        `(piso de ${params.piso} ${params.unidad} por el error de la varilla, más ` +
+        `${params.umbralPct}% de los ${params.movimiento} ${params.unidad} movidos en ` +
+        `los ${params.diasVentana} días).`,
       "Ninguna medición suelta llamaba la atención -- por eso no hubo alertas antes. " +
         "Lo que se ve acá es la suma, y a diferencia del acumulado del ciclo, esta " +
         "cuenta NO se reinicia cuando llega una recepción.",

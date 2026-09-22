@@ -71,9 +71,16 @@ describe("combustible: el reporte de controles mide el faltante, no solo lo decl
       nivel_minimo: 1000,
       tolerancia_capacidad_pct: 0,
       modo_vigilancia: "personalizado",
-      umbral_descuadre_pct: 2,
-      umbral_descuadre_ciclo_pct: 3,
-      umbral_descuadre_ventana_pct: 4,
+      // La vigilancia recomendada, traducida al modelo de 0101: los 2/3/4 %
+      // de la capacidad de antes son bandas fijas de 400/600/800 L, así que
+      // van como piso puro. El de diferencia conserva su porcentaje porque
+      // su base nunca fue la capacidad (se mide contra lo entregado).
+      umbral_descuadre_pct: 0,
+      umbral_descuadre_piso: 400,
+      umbral_descuadre_ciclo_pct: 0,
+      umbral_descuadre_ciclo_piso: 600,
+      umbral_descuadre_ventana_pct: 0,
+      umbral_descuadre_ventana_piso: 800,
       umbral_diferencia_pct: 2,
     });
     expect(r.status).toBe(201);
@@ -101,9 +108,16 @@ describe("combustible: el reporte de controles mide el faltante, no solo lo decl
       tolerancia_capacidad_pct: Number(f.tolerancia_capacidad_pct),
       requiere_documento: f.requiere_documento,
       umbral_diferencia_pct: num(f.umbral_diferencia_pct),
-      umbral_descuadre_pct: 60,
-      umbral_descuadre_ciclo_pct: 60,
-      umbral_descuadre_ventana_pct: 60,
+      // Aflojar hasta que no alerte nada: el 60 % de la capacidad de antes
+      // son 12.000 L de banda, que acá se piden como piso. El punto del test
+      // es que el REPORTE mida el faltante aunque ninguna alerta salte, así
+      // que la banda tiene que quedar igual de absurda que antes.
+      umbral_descuadre_pct: 0,
+      umbral_descuadre_piso: 12000,
+      umbral_descuadre_ciclo_pct: 0,
+      umbral_descuadre_ciclo_piso: 12000,
+      umbral_descuadre_ventana_pct: 0,
+      umbral_descuadre_ventana_piso: 12000,
       motivo_ajuste: "recalibración",
     });
   };

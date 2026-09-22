@@ -213,6 +213,10 @@ export class CombustibleService {
       "umbral_descuadre_pct",
       "umbral_descuadre_ciclo_pct",
       "umbral_descuadre_ventana_pct",
+      "umbral_diferencia_piso",
+      "umbral_descuadre_piso",
+      "umbral_descuadre_ciclo_piso",
+      "umbral_descuadre_ventana_piso",
       "usa_totalizador",
       "totalizador_tolerancia",
       "usa_precintos",
@@ -259,6 +263,60 @@ export class CombustibleService {
     return cambios;
   }
 
+  /** Los cuatro pares (pct, piso) del tanque, en un solo lugar (0101).
+   *
+   *  Está acá y no repetido en cada consumidor porque cada vez que uno de
+   *  estos pares se escribe a mano en otro archivo aparece la posibilidad de
+   *  que se desincronicen -- y desincronizados no son un bug visible, son un
+   *  control apagado en silencio. */
+  static readonly PARES_UMBRAL = [
+    ["umbral_diferencia_pct", "umbral_diferencia_piso"],
+    ["umbral_descuadre_pct", "umbral_descuadre_piso"],
+    ["umbral_descuadre_ciclo_pct", "umbral_descuadre_ciclo_piso"],
+    ["umbral_descuadre_ventana_pct", "umbral_descuadre_ventana_piso"],
+  ] as const;
+
+  /** Deja el par (pct, piso) de cada umbral en un estado que el CHECK
+   *  `combustible_umbral_par_atomico_check` (0101) acepte, y que además
+   *  signifique lo que el que mandó el PUT quiso decir.
+   *
+   *  Tres reglas, y las tres tienen una razón:
+   *
+   *  1. **`pct` NULL apaga el umbral entero**, así que el piso también va a
+   *     NULL. Un piso colgando de un umbral apagado sería un número que no
+   *     hace nada esperando a que alguien lo encienda sin darse cuenta.
+   *  2. **Piso omitido (`undefined`) conserva el que había.** Es la razón de
+   *     que el campo sea opcional en el PUT: un llamador viejo --la cola
+   *     offline, un script, el formulario hasta que se actualice-- manda los
+   *     cuatro porcentajes y ningún piso, y no puede por eso bajarle el piso
+   *     a 0 al tanque y llenar al tenant de falsos positivos.
+   *  3. **Piso en `null` con el umbral encendido significa 0**, o sea "sin
+   *     piso, solo la parte proporcional". Es una postura legítima y es el
+   *     lado ESTRICTO (tolera menos), así que se acepta sin motivo.
+   *
+   *  `antes` viene de la base, donde NUMERIC llega como string. Se pasa solo
+   *  en el PUT: en el alta no hay valor anterior que conservar. */
+  static normalizarUmbrales<T extends object>(data: T, antes?: Record<string, unknown>): T {
+    const campos = data as unknown as Record<string, number | null | undefined>;
+    for (const [campoPct, campoPiso] of CombustibleService.PARES_UMBRAL) {
+      const pct = campos[campoPct] ?? null;
+      if (pct === null) {
+        campos[campoPiso] = null;
+        continue;
+      }
+      const mandado = campos[campoPiso];
+      const anterior = antes?.[campoPiso];
+      const efectivo =
+        mandado !== undefined
+          ? mandado
+          : anterior === null || anterior === undefined
+            ? null
+            : Number(anterior);
+      campos[campoPiso] = efectivo ?? 0;
+    }
+    return data;
+  }
+
   /** Compara la vigilancia ANTES y DESPUÉS de un PUT de tanque y devuelve
    *  qué controles se aflojan, con el valor viejo y el nuevo.
    *
@@ -283,6 +341,10 @@ export class CombustibleService {
       umbral_descuadre_pct: string | null;
       umbral_descuadre_ciclo_pct: string | null;
       umbral_descuadre_ventana_pct: string | null;
+      umbral_diferencia_piso: string | null;
+      umbral_descuadre_piso: string | null;
+      umbral_descuadre_ciclo_piso: string | null;
+      umbral_descuadre_ventana_piso: string | null;
       requiere_documento: boolean;
       capacidad_total: string;
       nivel_minimo: string;
@@ -351,17 +413,71 @@ export class CombustibleService {
       }
     }
 
-    // SUBIR LA CAPACIDAD AFLOJA, aunque el porcentaje no se toque.
+    // SUBIR EL PISO AFLOJA, igual que subir el porcentaje (0101). Es la mitad
+    // de la tolerancia --y después de la migración, en la práctica es TODA la
+    // tolerancia, porque los porcentajes quedaron en 0-- así que sin esto se
+    // podía multiplicar la banda de un tanque sin que la auditoría lo
+    // distinguiera de renombrarlo, que es exactamente el hueco que
+    // `evaluarAflojamiento` vino a cerrar en su momento.
     //
-    // Los tres umbrales se miden como % de la capacidad, así que pasar un
-    // tanque de 20.000 a 200.000 L convierte una banda de 200 L en una de
-    // 2.000 sin que ningún umbral haya cambiado de número. Es la forma más
-    // discreta de apagar la vigilancia que tiene este modelo, y no la cubría
-    // nada: en la auditoría se veía como una corrección de ficha.
+    // Omitir el piso en el PUT no es un cambio: conserva el valor (ver
+    // `normalizarUmbrales`). Por eso se compara contra `undefined` antes que
+    // nada -- si no, un llamador viejo que no manda el campo parecería estar
+    // bajándolo a cero.
+    const pisos = [
+      ["umbral_diferencia_piso", "Piso del umbral de diferencia", antes.umbral_diferencia_piso],
+      ["umbral_descuadre_piso", "Piso del umbral de descuadre", antes.umbral_descuadre_piso],
+      [
+        "umbral_descuadre_ciclo_piso",
+        "Piso del umbral del ciclo",
+        antes.umbral_descuadre_ciclo_piso,
+      ],
+      [
+        "umbral_descuadre_ventana_piso",
+        "Piso del umbral de la ventana",
+        antes.umbral_descuadre_ventana_piso,
+      ],
+    ] as const;
+
+    for (const [campo, etiqueta, viejoRaw] of pisos) {
+      const nuevo = (ahora as unknown as Record<string, number | null | undefined>)[campo];
+      if (nuevo === undefined) continue;
+      const viejo = viejoRaw === null ? null : Number(viejoRaw);
+      if (viejo === nuevo) continue;
+
+      // Apagar el umbral entero (piso a null) ya lo reporta el bloque de
+      // porcentajes de arriba: el par es atómico, así que el pct viaja en
+      // null en el mismo PUT. Duplicarlo acá diría dos veces lo mismo.
+      if (nuevo === null) continue;
+      if (viejo !== null && nuevo > viejo) {
+        cambios.push({
+          control: etiqueta,
+          de: `${viejo}`,
+          a: `${nuevo}`,
+        });
+      }
+    }
+
+    // SUBIR LA CAPACIDAD SIGUE AFLOJANDO, pero ya no por donde antes.
+    //
+    // Hasta 0101 los tres umbrales se medían como % de la capacidad, así que
+    // pasar un tanque de 20.000 a 200.000 L convertía una banda de 200 L en
+    // una de 2.000 sin tocar ningún umbral: era la forma más discreta de
+    // apagar la vigilancia que tenía el modelo. Con piso + % sobre lo
+    // MOVIDO, la capacidad ya no entra en esa cuenta y ese vector se cerró
+    // solo.
+    //
+    // La regla se queda igual porque sigue aflojando por otros dos lados, y
+    // borrarla dejaría los dos sin cubrir:
+    //   · el techo para aceptar una recepción es `capacidad × (1 +
+    //     tolerancia_capacidad_pct/100)` -- más capacidad, entrega más
+    //     grande aceptada sin chistar (`validarFormaRecepcion`);
+    //   · una recepción abre ciclo nuevo solo si supera el 1 % de la
+    //     capacidad (`findSaldoCiclo`), umbral que también se corre.
     const capacidadAntes = Number(antes.capacidad_total);
     if (ahora.capacidad_total > capacidadAntes) {
       cambios.push({
-        control: "Capacidad del tanque (ensancha todos los umbrales)",
+        control: "Capacidad del tanque (acepta recepciones más grandes)",
         de: `${capacidadAntes}`,
         a: `${ahora.capacidad_total}`,
       });
@@ -1617,6 +1733,17 @@ export class CombustibleService {
             recepcionesDelGrupo: r.recepciones_del_grupo.map(Number),
             diferenciaPct: Number(((litros / cantidad) * 100).toFixed(2)),
             umbralPct: Number(r.umbral_diferencia_pct),
+            // El piso de este umbral es el error de las dos varillas que
+            // encierran la descarga; el porcentaje, el del medidor del
+            // camión (0101). Su base NO cambió con esa migración: siempre se
+            // midió contra lo entregado, no contra la capacidad.
+            piso: Number(r.umbral_diferencia_piso),
+            toleradoLitros: Number(
+              (
+                Number(r.umbral_diferencia_piso) +
+                (cantidad * Number(r.umbral_diferencia_pct)) / 100
+              ).toFixed(2)
+            ),
             unidad: r.unidad,
             tanqueNombre: r.tanque_nombre,
           },
@@ -1922,14 +2049,26 @@ export class CombustibleService {
    *  filas -- todos los movimientos del intervalo -- así que se marca, no se
    *  rechaza. Misma regla que el sobredespacho (ver 0070).
    *
-   *  **El umbral se mide contra la capacidad del tanque**, no contra lo que
-   *  se movió. La fuente de ruido dominante es la varilla, y su error escala
-   *  con el tamaño del tanque, no con cuánto entró o salió ese día. Además
-   *  nunca divide por cero, cosa que sí pasaría con un intervalo sin
-   *  movimientos. El costo conocido de esa elección: un descuadre chico en
-   *  términos del tanque pero grande respecto de lo que se movió (50 L
-   *  perdidos de 100 L despachados en un tanque de 20.000) pasa por debajo.
-   *  Se revisa cuando haya datos reales con qué calibrar. */
+   *  **La tolerancia es PISO + PORCENTAJE DE LO MOVIDO** (migración 0101):
+   *
+   *      tolerado = piso + (pct / 100) × (despachos + recepciones)
+   *
+   *  Hasta 0101 era `capacidad × pct`, o sea un número fijo para todos los
+   *  tramos del tanque. Estaba mal por la física: el ruido tiene dos fuentes
+   *  que escalan distinto. La varilla se equivoca lo mismo en un tramo sin
+   *  movimiento que en uno de 3.000 L --es el instrumento, no el caudal-- y
+   *  los medidores se equivocan en proporción a lo que pasa por ellos. Con
+   *  un solo número, el tramo tranquilo terminaba pagando el ruido del tramo
+   *  movido: en un tanque de 2.000 gal al 2 %, un domingo sin despachos
+   *  toleraba 40 gal cuando su ruido real era del orden de 5.
+   *
+   *  El movimiento SUMA despachos y recepciones en vez de restarlos: el
+   *  descuadre se calcula con signo porque el combustible entra y sale, pero
+   *  el ERROR de medición no se compensa entre una recepción y un despacho.
+   *  Cada medición aporta su propia incertidumbre.
+   *
+   *  Un tramo sin movimiento tolera exactamente el piso, que es justo el
+   *  error de las dos varillas y ni un litro más. */
   async evaluarDescuadre(
     client: PoolClient,
     tenantId: string,
@@ -1954,15 +2093,19 @@ export class CombustibleService {
     // estricto de todos.
     if (datos.umbral_descuadre_pct === null) return null;
     const umbralPct = Number(datos.umbral_descuadre_pct);
+    // El par es atómico (CHECK de 0101): si el pct no es NULL, el piso
+    // tampoco. El `?? 0` es defensa contra una fila escrita antes de esa
+    // migración por un camino que no pasó por acá, no un default operativo.
+    const piso = Number(datos.umbral_descuadre_piso ?? 0);
 
     const nivelAnterior = Number(datos.nivel_anterior);
     const despachos = Number(datos.despachos);
     const recepciones = Number(datos.recepciones);
-    const capacidad = Number(datos.capacidad_total);
 
     const esperado = nivelAnterior + recepciones - despachos;
     const descuadre = nivel - esperado;
-    const toleradoLitros = (capacidad * umbralPct) / 100;
+    const movimiento = despachos + recepciones;
+    const toleradoLitros = piso + (movimiento * umbralPct) / 100;
 
     if (Math.abs(descuadre) <= toleradoLitros) return null;
 
@@ -1978,7 +2121,13 @@ export class CombustibleService {
       // Lo que el correo y la pantalla necesitan para explicarse sin
       // recalcular nada del lado del que lee.
       sentido: descuadre < 0 ? ("falta" as const) : ("sobra" as const),
+      // `umbralPct` y `toleradoLitros` conservan el nombre que ya tenían: las
+      // alertas viejas guardaron esas dos claves en su `detalle` y la
+      // pantalla las sigue leyendo. `piso` y `movimiento` son las dos que
+      // faltaban para que la cuenta se pueda reconstruir sin ir a la base.
       umbralPct,
+      piso,
+      movimiento,
       toleradoLitros,
       lecturaAnteriorId: Number(datos.lectura_anterior_id),
       lecturaId,
@@ -2156,14 +2305,19 @@ export class CombustibleService {
     if (datos.umbral_descuadre_ciclo_pct === null) return null;
 
     const umbralPct = Number(datos.umbral_descuadre_ciclo_pct);
+    const piso = Number(datos.umbral_descuadre_ciclo_piso ?? 0);
     const nivelInicio = Number(datos.nivel_inicio);
     const despachos = Number(datos.despachos);
     const recepciones = Number(datos.recepciones);
-    const capacidad = Number(datos.capacidad_total);
 
     const esperado = nivelInicio + recepciones - despachos;
     const descuadre = nivel - esperado;
-    const toleradoLitros = (capacidad * umbralPct) / 100;
+    // El MISMO piso que el tramo (es la misma varilla, y son las mismas dos
+    // lecturas: la del arranque del ciclo y la de ahora), sobre un
+    // movimiento más grande. Ahí está toda la diferencia entre los dos
+    // controles -- ya no son dos números inventados por separado.
+    const movimiento = despachos + recepciones;
+    const toleradoLitros = piso + (movimiento * umbralPct) / 100;
 
     if (Math.abs(descuadre) <= toleradoLitros) return null;
 
@@ -2179,6 +2333,8 @@ export class CombustibleService {
       descuadreLitros: descuadre,
       sentido: descuadre < 0 ? ("falta" as const) : ("sobra" as const),
       umbralPct,
+      piso,
+      movimiento,
       toleradoLitros,
       lecturaId,
     };
@@ -2218,9 +2374,20 @@ export class CombustibleService {
     if (tramos < 2) return null;
 
     const umbralPct = Number(datos.umbral_descuadre_ventana_pct);
-    const capacidad = Number(datos.capacidad_total);
+    const piso = Number(datos.umbral_descuadre_ventana_piso ?? 0);
     const descuadre = Number(datos.descuadre_total);
-    const toleradoLitros = (capacidad * umbralPct) / 100;
+    // Un solo piso para toda la ventana, no uno por tramo: los tramos
+    // telescopan (el nivel final de uno es el inicial del siguiente) y el
+    // error de cada varilla entra +e y −e, así que la suma arrastra el error
+    // de DOS lecturas, igual que un tramo suelto. Es el mismo argumento por
+    // el que `calibrarConSigno` no multiplica por √n.
+    //
+    // Lo que sí crece es el movimiento acumulado, y con él la parte
+    // proporcional. Esa es la razón por la que el porcentaje tiene que
+    // quedarse chico: en una ventana de mucho despacho, es lo único que
+    // separa el ruido de medidor del robo sostenido.
+    const movimiento = Number(datos.movimiento_total);
+    const toleradoLitros = piso + (movimiento * umbralPct) / 100;
 
     if (Math.abs(descuadre) <= toleradoLitros) return null;
 
@@ -2233,6 +2400,8 @@ export class CombustibleService {
       descuadreLitros: Number(descuadre.toFixed(2)),
       sentido: descuadre < 0 ? ("falta" as const) : ("sobra" as const),
       umbralPct,
+      piso,
+      movimiento: Number(movimiento.toFixed(2)),
       toleradoLitros: Number(toleradoLitros.toFixed(2)),
       // El promedio por tramo es el número que hace entendible el hallazgo:
       // "se fueron 1.500 L" asusta, "50 L por medición durante un mes"
@@ -4152,8 +4321,23 @@ export class CombustibleService {
     };
   }
 
-  /** Un punto por tramo, medido contra la capacidad del tanque (la base que usa
-   *  la alerta en vivo). Lo comparten el umbral por tramo y el de la ventana. */
+  /** Un punto por tramo, medido contra la capacidad del tanque. Lo comparten
+   *  el umbral por tramo y el de la ventana.
+   *
+   *  ⚠ DESALINEADO CON LA ALERTA DESDE 0101, Y HAY QUE ARREGLARLO ANTES DE
+   *  CUALQUIER DEPLOY. La alerta ya no compara contra la capacidad: la
+   *  tolerancia es `piso + % de lo movido`. Esta muestra sigue expresando
+   *  cada tramo como porcentaje de la capacidad, así que el número que
+   *  sugiere NO significa lo mismo que el campo donde se aplicaría --
+   *  apretar "Usar este valor" cargaría un porcentaje de capacidad en un
+   *  campo que se multiplica por el movimiento, y la tolerancia saltaría
+   *  sola.
+   *
+   *  Es la entrega 2 de este cambio: la muestra tiene que estimar DOS
+   *  números (el corte en el eje = piso, la pendiente = %) en vez de uno.
+   *  Mientras tanto el asistente queda sirviendo un número que no se puede
+   *  aplicar, que es feo pero visible; lo peligroso sería que pareciera
+   *  correcto. */
   private static puntosDeTramo(intervalos: IntervaloCalibracion[]) {
     return intervalos
       .filter((i) => i.capacidad > 0)

@@ -1040,7 +1040,12 @@ export class CombustibleController {
   async create(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
-      const data = req.validatedBody as CrearTanqueCombustibleInput;
+      // El par (pct, piso) de cada umbral queda coherente ANTES de tocar la
+      // base: el CHECK de 0101 rechaza el estado mitad configurado, y acá el
+      // alta no tiene valores previos que conservar (a diferencia del PUT).
+      const data = CombustibleService.normalizarUmbrales(
+        req.validatedBody as CrearTanqueCombustibleInput
+      );
       const nuevo = await withTenant(tenantId, (client) => service.create(client, tenantId, data));
       await registrarAuditoria({
         accion: "combustible.tanque_crear",
@@ -1138,6 +1143,14 @@ export class CombustibleController {
       if (!antes) {
         return res.status(404).json({ error: "No encontrado" });
       }
+
+      // Con el tanque de antes a la vista se resuelven los pisos omitidos
+      // (omitir = conservar, ver `normalizarUmbrales`). Va ANTES de
+      // `evaluarAflojamiento` y de `diffFicha` a propósito: los dos tienen
+      // que ver los valores EFECTIVOS, no los que viajaron en el body. Si no,
+      // un piso conservado se leería como un cambio, y uno completado por
+      // defecto se escaparía del control de aflojamiento.
+      CombustibleService.normalizarUmbrales(data, antes as unknown as Record<string, unknown>);
 
       // El tipo de combustible solo escala si el tanque YA tiene historial
       // (en uno recién creado, cambiarlo es terminar de darlo de alta).
@@ -1301,7 +1314,14 @@ export class CombustibleController {
   async bulk(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
-      const rows = req.validatedBody as CargaMasivaTanquesCombustibleInput;
+      // Fila por fila, igual que el alta de a uno (0101). La carga masiva es
+      // la puerta de atrás del alta y ya perdió umbrales una vez (hallazgo B
+      // de la 5ª auditoría): una planilla trae los porcentajes y ningún
+      // piso, y sin esto el INSERT chocaría contra el CHECK del par atómico
+      // y se caería la importación entera con un 500.
+      const rows = (req.validatedBody as CargaMasivaTanquesCombustibleInput).map((fila) =>
+        CombustibleService.normalizarUmbrales(fila)
+      );
       const { creados, omitidos } = await withTenant(tenantId, (client) =>
         service.createBulk(client, tenantId, rows)
       );

@@ -93,6 +93,13 @@ interface Tanque {
   umbral_descuadre_pct: string | null;
   umbral_descuadre_ciclo_pct: string | null;
   umbral_descuadre_ventana_pct: string | null;
+  // El piso fijo de cada umbral, en la unidad del tanque (0101). La
+  // tolerancia real de un control es `piso + pct/100 x lo movido`: el piso
+  // cubre el error de la varilla y el porcentaje el de los medidores.
+  umbral_diferencia_piso: string | null;
+  umbral_descuadre_piso: string | null;
+  umbral_descuadre_ciclo_piso: string | null;
+  umbral_descuadre_ventana_piso: string | null;
 }
 
 /** Una fila del historial de recepciones (GET /recepciones, Fase C). A
@@ -133,6 +140,9 @@ interface RecepcionHistorial {
   umbral_descuadre_pct: string;
   umbral_descuadre_ciclo_pct: string;
   umbral_descuadre_ventana_pct: string;
+  // El piso del umbral de diferencia (0101): la fila lo necesita para
+  // pintar en rojo con la misma cuenta que usa la alerta.
+  umbral_diferencia_piso: string | null;
 }
 
 const ETIQUETA_TIPO_DOCUMENTO: Record<"factura" | "guia_remision", string> = {
@@ -1344,21 +1354,33 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     );
   }
   if (a.tipo === "descuadre_inventario") {
-    const { descuadreLitros, esperado, nivelMedido, sentido, unidad, umbralPct, desglose } =
-      a.detalle as {
-        descuadreLitros?: number;
-        esperado?: number;
-        nivelMedido?: number;
-        sentido?: string;
-        unidad?: string;
-        umbralPct?: number;
-        // Solo si las dos varillas del tramo traen totalizador (0096).
-        desglose?: {
-          avanceTotalizador: number;
-          mangueraSinVale: number;
-          fueraDelSurtidor: number;
-        };
+    const {
+      descuadreLitros,
+      esperado,
+      nivelMedido,
+      sentido,
+      unidad,
+      umbralPct,
+      toleradoLitros,
+      desglose,
+    } = a.detalle as {
+      descuadreLitros?: number;
+      esperado?: number;
+      nivelMedido?: number;
+      sentido?: string;
+      unidad?: string;
+      umbralPct?: number;
+      // La tolerancia ya calculada (0101). Las alertas anteriores a esa
+      // migración no la traen, y por eso el texto cae al porcentaje: el
+      // histórico tiene que seguir leyéndose.
+      toleradoLitros?: number;
+      // Solo si las dos varillas del tramo traen totalizador (0096).
+      desglose?: {
+        avanceTotalizador: number;
+        mangueraSinVale: number;
+        fueraDelSurtidor: number;
       };
+    };
     if (descuadreLitros === undefined) return "—";
     // El valor absoluto va con la palabra ("faltan"/"sobran") en vez del
     // signo: un "-500" pide que el lector traduzca, y esta columna se lee de
@@ -1368,7 +1390,13 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     });
     const base =
       `${sentido === "falta" ? "Faltan" : "Sobran"} ${magnitud} ${unidad ?? ""}: ` +
-      `esperado ${esperado ?? "?"}, medido ${nivelMedido ?? "?"} (umbral ${umbralPct ?? "?"}%)`;
+      `esperado ${esperado ?? "?"}, medido ${nivelMedido ?? "?"} ` +
+      // En litros, que es la unidad en la que la persona piensa. El
+      // porcentaje suelto obligaba a multiplicarlo por la capacidad de
+      // memoria, y desde 0101 ya ni siquiera se mide contra la capacidad.
+      (toleradoLitros !== undefined
+        ? `(tolerancia ${toleradoLitros} ${unidad ?? ""})`
+        : `(umbral ${umbralPct ?? "?"}%)`);
     // De dónde salió: la parte de la manguera es firme (±2), la de fuera del
     // surtidor arrastra el error de la varilla. Positivo = falta.
     return desglose
@@ -8107,11 +8135,16 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                                 // 0 sí pinta, porque ahora significa
                                 // "cualquier diferencia cuenta" -- de ahí que
                                 // se pregunte por null y no por `> 0`.
-                                const umbral =
+                                // La tolerancia es piso + % de lo entregado
+                                // (0101), la misma cuenta que hace la alerta.
+                                // Comparar solo contra el porcentaje pintaría
+                                // de rojo entregas que el sistema no alertó.
+                                const tolerado =
                                   r.umbral_diferencia_pct === null
                                     ? null
-                                    : Number(r.umbral_diferencia_pct);
-                                const excede = umbral !== null && Math.abs(pct) > umbral;
+                                    : Number(r.umbral_diferencia_piso ?? 0) +
+                                      (Number(r.cantidad) * Number(r.umbral_diferencia_pct)) / 100;
+                                const excede = tolerado !== null && Math.abs(litros) > tolerado;
                                 return (
                                   <span
                                     className={

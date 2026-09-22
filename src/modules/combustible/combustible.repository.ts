@@ -191,6 +191,11 @@ const COLUMNAS_TANQUE = `
   c.tolerancia_capacidad_pct, c.requiere_documento, c.umbral_diferencia_pct,
   c.umbral_descuadre_pct, c.umbral_descuadre_ciclo_pct,
   c.umbral_descuadre_ventana_pct,
+  -- El piso fijo de cada umbral, en la unidad del tanque (0101). Va SIEMPRE
+  -- junto a su porcentaje: la tolerancia es la suma de los dos y mostrar uno
+  -- solo es mostrar media cuenta.
+  c.umbral_diferencia_piso, c.umbral_descuadre_piso,
+  c.umbral_descuadre_ciclo_piso, c.umbral_descuadre_ventana_piso,
   c.usa_precintos, c.grifo_interno_id,
   -- Los surtidores que alimentan al tanque hoy (0098). La configuración del
   -- totalizador es del SURTIDOR; estas tres columnas se siguen devolviendo con
@@ -373,9 +378,12 @@ export class CombustibleRepository {
         ubicacion, capacidad_total, nivel_minimo, moneda,
         tolerancia_capacidad_pct, requiere_documento, umbral_diferencia_pct,
         umbral_descuadre_pct, umbral_descuadre_ciclo_pct,
-        umbral_descuadre_ventana_pct, usa_precintos, grifo_interno_id
+        umbral_descuadre_ventana_pct,
+        umbral_diferencia_piso, umbral_descuadre_piso,
+        umbral_descuadre_ciclo_piso, umbral_descuadre_ventana_piso,
+        usa_precintos, grifo_interno_id
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
       RETURNING id
       `,
       [
@@ -395,6 +403,13 @@ export class CombustibleRepository {
         data.umbral_descuadre_pct,
         data.umbral_descuadre_ciclo_pct,
         data.umbral_descuadre_ventana_pct,
+        // El par (pct, piso) es atómico y lo normaliza el service antes de
+        // llegar acá: si el umbral está configurado, su piso es un número
+        // (0 = sin piso); si no, los dos son NULL. El CHECK de 0101 lo exige.
+        data.umbral_diferencia_piso,
+        data.umbral_descuadre_piso,
+        data.umbral_descuadre_ciclo_piso,
+        data.umbral_descuadre_ventana_piso,
         data.usa_precintos ?? false,
         // NULL = que lo asigne la base (el único grifo de la empresa, 0097).
         data.grifo_interno_id ?? null,
@@ -469,8 +484,12 @@ export class CombustibleRepository {
         umbral_descuadre_pct = $14,
         umbral_descuadre_ciclo_pct = $15,
         umbral_descuadre_ventana_pct = $16,
-        usa_precintos = COALESCE($17, usa_precintos)
-      WHERE id = $18 AND tenant_id = $19
+        umbral_diferencia_piso = $17,
+        umbral_descuadre_piso = $18,
+        umbral_descuadre_ciclo_piso = $19,
+        umbral_descuadre_ventana_piso = $20,
+        usa_precintos = COALESCE($21, usa_precintos)
+      WHERE id = $22 AND tenant_id = $23
       RETURNING id
       `,
       [
@@ -490,6 +509,13 @@ export class CombustibleRepository {
         data.umbral_descuadre_pct,
         data.umbral_descuadre_ciclo_pct,
         data.umbral_descuadre_ventana_pct,
+        // Ya normalizados contra los valores actuales por el service: en el
+        // PUT el piso es OPCIONAL (omitirlo conserva el que había), al revés
+        // que los porcentajes. Ver `normalizarUmbrales`.
+        data.umbral_diferencia_piso,
+        data.umbral_descuadre_piso,
+        data.umbral_descuadre_ciclo_piso,
+        data.umbral_descuadre_ventana_piso,
         data.usa_precintos ?? null,
         id,
         tenantId,
@@ -593,7 +619,7 @@ export class CombustibleRepository {
         }
       }
 
-      const COLUMNAS_POR_FILA = 16;
+      const COLUMNAS_POR_FILA = 20;
       const placeholders = filasUnicas
         .map((_, i) => {
           const base = i * COLUMNAS_POR_FILA;
@@ -626,6 +652,14 @@ export class CombustibleRepository {
         // vigilado creyendo el cliente que los había cargado.
         d.umbral_descuadre_ciclo_pct,
         d.umbral_descuadre_ventana_pct,
+        // Los cuatro pisos (0101). El controlador ya normalizó el par de
+        // cada fila, así que acá llegan coherentes con su porcentaje -- una
+        // planilla que trae umbrales y ningún piso entra con piso 0 (sin
+        // piso), no con el CHECK del par atómico en la cara.
+        d.umbral_diferencia_piso,
+        d.umbral_descuadre_piso,
+        d.umbral_descuadre_ciclo_piso,
+        d.umbral_descuadre_ventana_piso,
         // 0097: NULL = el único grifo de la empresa, lo asigna la base.
         d.grifo_interno_id ?? null,
       ]);
@@ -636,6 +670,8 @@ export class CombustibleRepository {
            ubicacion, capacidad_total, nivel_minimo,
            tolerancia_capacidad_pct, requiere_documento, umbral_diferencia_pct,
            umbral_descuadre_pct, umbral_descuadre_ciclo_pct, umbral_descuadre_ventana_pct,
+           umbral_diferencia_piso, umbral_descuadre_piso,
+           umbral_descuadre_ciclo_piso, umbral_descuadre_ventana_piso,
            grifo_interno_id
          )
          VALUES ${placeholders}
@@ -2003,6 +2039,7 @@ export class CombustibleRepository {
       unidad: string;
       diferencia_litros: string;
       umbral_diferencia_pct: string;
+      umbral_diferencia_piso: string;
       tanque_nombre: string;
       entregas_en_grupo: string;
       cantidad_del_grupo: string;
@@ -2010,7 +2047,7 @@ export class CombustibleRepository {
     }>(
       `
       SELECT r.id, r.combustible_id, r.cantidad, c.unidad, c.tanque_nombre,
-             c.umbral_diferencia_pct, dif.diferencia_litros,
+             c.umbral_diferencia_pct, c.umbral_diferencia_piso, dif.diferencia_litros,
              dif.entregas_en_grupo, dif.cantidad_del_grupo, dif.recepciones_del_grupo
       FROM combustible_recepciones r
       JOIN combustible c ON c.id = r.combustible_id
@@ -2021,8 +2058,16 @@ export class CombustibleRepository {
         AND dif.diferencia_litros IS NOT NULL
         -- UNA alerta por grupo, anclada a su última entrega.
         AND dif.ultima_del_grupo = r.id
-        AND abs(dif.diferencia_litros / NULLIF(dif.cantidad_del_grupo, 0)) * 100
-            > c.umbral_diferencia_pct
+        -- PISO + PORCENTAJE (0101). Antes era un cociente contra el umbral;
+        -- ahora se compara la diferencia en litros contra la tolerancia, que
+        -- es el piso (error de las dos varillas que encierran la descarga)
+        -- más el porcentaje de lo entregado (error del medidor del camión).
+        -- Sin el NULLIF de antes: no hay división, así que una cantidad en 0
+        -- ya no puede dividir por cero -- simplemente no aporta tolerancia
+        -- proporcional, que es lo correcto.
+        AND abs(dif.diferencia_litros)
+            > c.umbral_diferencia_piso
+              + (c.umbral_diferencia_pct / 100) * COALESCE(dif.cantidad_del_grupo, 0)
         AND NOT EXISTS (
           SELECT 1 FROM combustible_alertas a
           WHERE a.tenant_id = $1 AND a.tipo = 'diferencia_recepcion'
@@ -2129,8 +2174,11 @@ export class CombustibleRepository {
       unidad: string;
       capacidad_total: string;
       // NULL = sin configurar (migración 0075), distinto de "0" que es
-      // tolerancia cero.
+      // tolerancia cero. Desde 0101 el par (pct, piso) viaja junto: el pct se
+      // aplica sobre lo MOVIDO (despachos + recepciones, las dos columnas de
+      // abajo) y el piso es el error fijo de la varilla.
       umbral_descuadre_pct: string | null;
+      umbral_descuadre_piso: string | null;
       despachos: string;
       recepciones: string;
     }>(
@@ -2147,7 +2195,8 @@ export class CombustibleRepository {
       SELECT a.id AS lectura_anterior_id,
              a.nivel AS nivel_anterior,
              a.leido_en AS leido_en_anterior,
-             c.tanque_nombre, c.unidad, c.capacidad_total, c.umbral_descuadre_pct,
+             c.tanque_nombre, c.unidad, c.capacidad_total,
+             c.umbral_descuadre_pct, c.umbral_descuadre_piso,
              COALESCE((
                SELECT SUM(d.cantidad) FROM combustible_despachos d
                WHERE d.tenant_id = $1 AND d.combustible_id = $2
@@ -2199,6 +2248,7 @@ export class CombustibleRepository {
       unidad: string;
       capacidad_total: string;
       umbral_descuadre_ciclo_pct: string | null;
+      umbral_descuadre_ciclo_piso: string | null;
       despachos: string;
       recepciones: string;
     }>(
@@ -2236,7 +2286,7 @@ export class CombustibleRepository {
       SELECT i.leido_en AS inicio_en,
              i.nivel AS nivel_inicio,
              c.tanque_nombre, c.unidad, c.capacidad_total,
-             c.umbral_descuadre_ciclo_pct,
+             c.umbral_descuadre_ciclo_pct, c.umbral_descuadre_ciclo_piso,
              COALESCE((
                SELECT SUM(d.cantidad) FROM combustible_despachos d
                WHERE d.tenant_id = $1 AND d.combustible_id = $2
@@ -3222,9 +3272,11 @@ export class CombustibleRepository {
   async findEstadoVigilancia(client: PoolClient, tenantId: string) {
     const r = await client.query(
       `
-      SELECT id, codigo, tanque_nombre, activo,
+      SELECT id, codigo, tanque_nombre, activo, unidad,
              umbral_descuadre_pct, umbral_descuadre_ciclo_pct,
-             umbral_descuadre_ventana_pct, umbral_diferencia_pct
+             umbral_descuadre_ventana_pct, umbral_diferencia_pct,
+             umbral_descuadre_piso, umbral_descuadre_ciclo_piso,
+             umbral_descuadre_ventana_piso, umbral_diferencia_piso
         FROM combustible
        WHERE tenant_id = $1
        ORDER BY activo DESC, codigo
@@ -4158,7 +4210,7 @@ export class CombustibleRepository {
              r.creado_en, r.anulada_en, r.anulada_por, r.motivo_anulacion,
              r.requiere_validacion, r.cantidad_documento, r.validada_en, r.validada_por,
              c.tanque_nombre, g.nombre AS grifo_nombre,
-             c.umbral_diferencia_pct,
+             c.umbral_diferencia_pct, c.umbral_diferencia_piso,
              autor.nombre AS registrada_por_nombre,
              anulador.nombre AS anulada_por_nombre,
              -- Cuánto se midió de menos (o de más) respecto de lo facturado.
@@ -4371,12 +4423,15 @@ export class CombustibleRepository {
   ) {
     const result = await client.query<{
       descuadre_total: string;
+      /** Lo que pasó por los medidores en la ventana: la base del % (0101). */
+      movimiento_total: string;
       tramos: string;
       desde_en: Date | null;
       tanque_nombre: string;
       unidad: string;
       capacidad_total: string;
       umbral_descuadre_ventana_pct: string | null;
+      umbral_descuadre_ventana_piso: string | null;
     }>(
       `
       WITH lecturas AS (
@@ -4395,6 +4450,11 @@ export class CombustibleRepository {
         SELECT
           (le.nivel - (le.nivel_anterior + COALESCE(rec.total, 0) - COALESCE(des.total, 0)))
             AS descuadre,
+          -- Lo que pasó por los medidores en el tramo (0101). Suma, no resta:
+          -- el descuadre se calcula con signo porque entra y sale, pero el
+          -- ERROR de medición no se compensa entre una recepción y un
+          -- despacho -- cada medición aporta su propia incertidumbre.
+          (COALESCE(rec.total, 0) + COALESCE(des.total, 0)) AS movimiento,
           le.leido_en_anterior
         FROM lecturas le
         LEFT JOIN LATERAL (
@@ -4413,14 +4473,16 @@ export class CombustibleRepository {
           AND le.leido_en > $3::timestamptz - make_interval(days => $4)
       )
       SELECT COALESCE(SUM(t.descuadre), 0) AS descuadre_total,
+             COALESCE(SUM(t.movimiento), 0) AS movimiento_total,
              COUNT(t.descuadre) AS tramos,
              MIN(t.leido_en_anterior) AS desde_en,
              c.tanque_nombre, c.unidad, c.capacidad_total,
-             c.umbral_descuadre_ventana_pct
+             c.umbral_descuadre_ventana_pct, c.umbral_descuadre_ventana_piso
       FROM combustible c
       LEFT JOIN tramos t ON true
       WHERE c.id = $2 AND c.tenant_id = $1
-      GROUP BY c.tanque_nombre, c.unidad, c.capacidad_total, c.umbral_descuadre_ventana_pct
+      GROUP BY c.tanque_nombre, c.unidad, c.capacidad_total,
+               c.umbral_descuadre_ventana_pct, c.umbral_descuadre_ventana_piso
       `,
       [tenantId, combustibleId, hasta, dias]
     );

@@ -60,7 +60,17 @@ describe("combustible: descuadre de inventario (migración 0074)", () => {
 
   /** Tanque de 20.000 L con nivel inicial 20.000. Con umbral 1%, la banda
    *  tolerada es de 200 L -- los tests de abajo se mueven a propósito por
-   *  encima y por debajo de ese número. */
+   *  encima y por debajo de ese número.
+   *
+   *  Desde 0101 la tolerancia es `piso + % de lo movido`, así que el
+   *  parámetro se sigue expresando como el porcentaje de capacidad DE ANTES
+   *  y se traduce acá a su piso equivalente -- la misma cuenta que hace la
+   *  migración sobre los tanques que ya existían. De esa forma estos tests
+   *  siguen fijando exactamente las mismas bandas que fijaban, y que sigan
+   *  pasando es la prueba de que el cambio de modelo no movió ninguna.
+   *
+   *  La parte proporcional (el % sobre lo movido) se prueba aparte, en
+   *  tests/combustible-umbral-piso.test.ts. */
   async function crearTanque(umbralDescuadrePct: number | null, nivelInicial = 20000) {
     const res = await agente.post("/api/erp/combustible").send({
       codigo: idUnico("TQ"),
@@ -70,7 +80,9 @@ describe("combustible: descuadre de inventario (migración 0074)", () => {
       tipo_punto: "fijo",
       capacidad_total: 20000,
       nivel_actual: nivelInicial,
-      umbral_descuadre_pct: umbralDescuadrePct,
+      umbral_descuadre_pct: umbralDescuadrePct === null ? null : 0,
+      umbral_descuadre_piso:
+        umbralDescuadrePct === null ? null : (20000 * umbralDescuadrePct) / 100,
     });
     expect(res.status).toBe(201);
     return res.body.id as number;
