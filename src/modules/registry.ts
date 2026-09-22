@@ -78,7 +78,15 @@ export const MODULOS: ModuloDefinicion[] = [
         // INSERT con las claves que vengan en el JSON -- sin esto, restaurar
         // un backup viejo fallaría con "column does not exist". Mismo
         // mecanismo que usa iperc para `nivel_riesgo`.
-        columnasExcluidasAlRestaurar: ["nivel_actual", "fecha_actualizacion"],
+        // 0099: el totalizador pasó al surtidor (0098). Un backup anterior las
+        // trae y restaurarlas fallaría con "column does not exist".
+        columnasExcluidasAlRestaurar: [
+          "nivel_actual",
+          "fecha_actualizacion",
+          "usa_totalizador",
+          "totalizador_tolerancia",
+          "totalizador_actual",
+        ],
         // 0097: el grifo interno del tanque. Un backup anterior no la trae y
         // el trigger de asignación por defecto la completa al restaurar.
         fks: { grifo_interno_id: "grifos_internos" },
@@ -103,6 +111,9 @@ export const MODULOS: ModuloDefinicion[] = [
       {
         nombre: "combustible_lecturas",
         pk: "serial",
+        // 0099: lo que la varilla leyó ahora está en
+        // combustible_lectura_totalizadores (0098).
+        columnasExcluidasAlRestaurar: ["totalizador_lectura"],
         fks: {
           combustible_id: "combustible",
           usuario_id: "usuarios",

@@ -556,6 +556,7 @@ export class CombustibleService {
           usuarioId,
           metadata: data.metadata ?? {},
         });
+        let respuesta = fila;
         if (totalizadores.length > 0) {
           await this.repository.insertarTotalizadoresDeLectura(
             client,
@@ -563,6 +564,14 @@ export class CombustibleService {
             Number(fila.lectura.id),
             totalizadores
           );
+          // Se relee para que la respuesta traiga lo leído (el
+          // `totalizador_lectura` que usan la pantalla y los tests de 0096).
+          respuesta =
+            (await this.repository.findLecturaConTanque(
+              client,
+              tenantId,
+              Number(fila.lectura.id)
+            )) ?? fila;
         }
         if (verificaciones.length > 0) {
           await this.repository.insertarVerificacionesPrecinto(
@@ -572,7 +581,7 @@ export class CombustibleService {
             verificaciones
           );
         }
-        return { id: Number(fila.lectura.id), fila };
+        return { id: Number(fila.lectura.id), fila: respuesta };
       },
       recuperar: (filaId) => this.repository.findLecturaConTanque(client, tenantId, filaId),
     });
@@ -687,9 +696,9 @@ export class CombustibleService {
       throw new Error(`el tanque ${tanque.codigo} tiene más de un surtidor: indicá de cuál salió`);
     }
 
-    const usa = surtidor
-      ? surtidor.usa_totalizador
-      : await this.repository.usaTotalizadorSinSurtidor(client, tenantId, data.combustible_id!);
+    // Sin surtidor (el tanque nunca tuvo uno), la base le crea uno sin la
+    // casilla del totalizador.
+    const usa = surtidor ? surtidor.usa_totalizador : false;
     const nombre = surtidor?.nombre ?? `Surtidor ${tanque.codigo}`;
     if (usa && data.totalizador_lectura === undefined) {
       throw new Error(

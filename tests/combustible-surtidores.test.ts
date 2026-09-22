@@ -13,7 +13,8 @@ import request from "supertest";
 
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
 import { env } from "../src/server/config/env";
-import { closeDatabase, withTenant } from "../src/server/config/database";
+import { closeDatabase, pool, withTenant } from "../src/server/config/database";
+import { guardarBackup, leerBackup } from "../src/server/services/platformBackupStorage";
 
 const BEARER = `Bearer ${env.platformAdminToken}`;
 const password = "ClaveDePrueba123";
@@ -434,5 +435,43 @@ describe("backup", () => {
     expect(Number(r.rows[0].valor)).toBe(4321);
     expect(r.rows[0].surtidor_tenant).toBe(destino.tenantId);
     expect(r.rows[0].conexiones).toBe(1);
+  });
+
+  it("un backup con las columnas viejas del totalizador (antes de 0099) se restaura igual", async () => {
+    const origen = await empresa();
+    const t = await tanque(origen.admin);
+    await origen.admin
+      .post("/api/erp/combustible/lecturas")
+      .send({ combustible_id: t.id, nivel: 9000 });
+    const backup = await request(app)
+      .post(`/api/platform/tenants/${origen.tenantId}/backups`)
+      .set("Authorization", BEARER);
+
+    // Volverlo a como lo escribía el código anterior: con las columnas del
+    // totalizador en el tanque y en la varilla, que 0099 borró.
+    const fila = (
+      await pool.query(`SELECT storage, storage_key FROM tenant_backups WHERE id = $1`, [
+        backup.body.backup.id,
+      ])
+    ).rows[0];
+    const contenido = JSON.parse(
+      await leerBackup({ storage: fila.storage, key: fila.storage_key })
+    );
+    for (const f of contenido.tablas.combustible) {
+      Object.assign(f, {
+        usa_totalizador: true,
+        totalizador_tolerancia: 2,
+        totalizador_actual: 99,
+      });
+    }
+    for (const f of contenido.tablas.combustible_lecturas) f.totalizador_lectura = 1234;
+    await guardarBackup(fila.storage_key, JSON.stringify(contenido));
+
+    const destino = await empresa();
+    const r = await request(app)
+      .post(`/api/platform/backups/${backup.body.backup.id}/restaurar`)
+      .set("Authorization", BEARER)
+      .send({ targetTenantId: destino.tenantId, confirmar: true });
+    expect(r.status).toBe(200);
   });
 });
