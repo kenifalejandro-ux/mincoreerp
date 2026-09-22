@@ -137,10 +137,20 @@ export async function moverDeGrifo(
 
   await client.query(`SELECT set_config('app.motivo_movimiento_grifo', $1, true)`, [datos.motivo]);
   await client.query(`SELECT set_config('app.usuario_id', $1, true)`, [datos.usuarioId]);
-  await client.query(
-    `UPDATE ${datos.tabla} SET grifo_interno_id = $1 WHERE id = $2 AND tenant_id = $3`,
-    [datos.grifoDestinoId, datos.id, tenantId]
-  );
+  try {
+    await client.query(
+      `UPDATE ${datos.tabla} SET grifo_interno_id = $1 WHERE id = $2 AND tenant_id = $3`,
+      [datos.grifoDestinoId, datos.id, tenantId]
+    );
+  } catch (err) {
+    // Lo rechazó un trigger (0098): el tanque tiene un surtidor que también
+    // alimenta a otro tanque que se queda. Es un dato que hay que corregir
+    // antes, no una falla.
+    if ((err as { code?: string }).code === "23514" && err instanceof Error) {
+      throw new AppError(400, err.message);
+    }
+    throw err;
+  }
   return { grifoOrigenId: origen };
 }
 

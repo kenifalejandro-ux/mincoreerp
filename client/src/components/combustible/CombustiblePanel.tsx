@@ -22,6 +22,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 
 import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from "./Precintos";
 import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
+import VentanaSurtidores from "./Surtidores";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { ahoraParaInputLocal } from "../../utils/fechaLocal";
@@ -34,6 +35,17 @@ import {
 } from "../comunes/ventanasFlotantesEstado";
 import HistoricoCliente from "../HistoricoCliente";
 import UreaPanel from "../UreaPanel";
+
+interface SurtidorDelTanque {
+  id: number;
+  nombre: string;
+  activo: boolean;
+  usa_totalizador: boolean;
+  totalizador_tolerancia: string;
+  totalizador_actual: string;
+  // Alimenta también a otro tanque.
+  compartido: boolean;
+}
 
 interface Tanque {
   id: number;
@@ -63,8 +75,13 @@ interface Tanque {
   requiere_documento: boolean;
   // Totalizador acumulativo del surtidor (0094). Apagado hasta confirmar con
   // el cliente que sus surtidores lo tienen y que el grifero lo anota.
-  usa_totalizador: boolean;
-  totalizador_tolerancia: string;
+  // El totalizador es del SURTIDOR (0098). Estos dos traen los valores de su
+  // surtidor cuando el tanque tiene UNO solo (el caso simple), y null si tiene
+  // varios: ahí se configura en la ventana de surtidores.
+  usa_totalizador: boolean | null;
+  totalizador_tolerancia: string | null;
+  // Los surtidores que alimentan al tanque hoy (0098).
+  surtidores: SurtidorDelTanque[];
   // Precintos numerados (0095): la varilla verifica el sello de cada punto.
   usa_precintos: boolean;
   // El grifo interno donde está el tanque (0097). Se cambia con "Mover de
@@ -153,6 +170,8 @@ interface Lectura {
   // El contador acumulativo del surtidor al medir (0096). null si el tanque
   // no lo usaba.
   totalizador_lectura: string | null;
+  // Lo que leyó en cada surtidor (0098).
+  totalizadores?: { surtidor_id: number; surtidor: string; valor: string }[];
 }
 
 /** Fase B (migrations/0062) -- solo los campos que el formulario de
@@ -385,6 +404,8 @@ interface FilaKardex {
   historico: boolean;
   // El contador acumulativo del surtidor en ese vale o varilla (0094, 0096).
   totalizador: number | null;
+  // Una varilla que leyó varios surtidores (0098): "S1: 100 · S2: 200".
+  totalizador_texto: string | null;
 }
 
 interface Kardex {
@@ -1176,8 +1197,9 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
       totalizador?: number;
       totalizadorMayorPrevio?: number;
       ancla?: string;
+      surtidor?: string;
     };
-    return `Marcó ${d.totalizador ?? "?"}${d.ancla === "varilla" ? " al medir" : ""}, menos que los ${d.totalizadorMayorPrevio ?? "?"} de un ${d.ancla === "varilla" ? "punto" : "vale"} anterior`;
+    return `${d.surtidor ? `${d.surtidor}: m` : "M"}arcó ${d.totalizador ?? "?"}${d.ancla === "varilla" ? " al medir" : ""}, menos que los ${d.totalizadorMayorPrevio ?? "?"} de un ${d.ancla === "varilla" ? "punto" : "vale"} anterior`;
   }
   if (a.tipo === "totalizador_salto") {
     const d = a.detalle as {
@@ -1187,15 +1209,17 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
       sobra?: boolean;
       unidad?: string;
       ancla?: string;
+      surtidor?: string;
     };
+    const quien = d.surtidor ? `${d.surtidor}: ` : "";
     // De la varilla: no hay vale ni litros propios, todo el avance es
     // combustible que salió por el surtidor sin vale.
     if (d.ancla === "varilla") {
-      return `Al medir, el totalizador avanzó ${d.avance ?? "?"} ${d.unidad ?? ""} desde el punto anterior y ningún vale lo explica: salieron ${d.diferencia ?? "?"} sin vale`;
+      return `${quien}al medir, el totalizador avanzó ${d.avance ?? "?"} ${d.unidad ?? ""} desde el punto anterior y ningún vale lo explica: salieron ${d.diferencia ?? "?"} sin vale`;
     }
     return d.sobra
-      ? `El surtidor avanzó ${d.avance ?? "?"} ${d.unidad ?? ""} y el vale dice ${d.declarado ?? "?"}: salieron ${d.diferencia ?? "?"} sin vale`
-      : `El surtidor avanzó ${d.avance ?? "?"} ${d.unidad ?? ""} y el vale dice ${d.declarado ?? "?"}: el vale declara de más`;
+      ? `${quien}el surtidor avanzó ${d.avance ?? "?"} ${d.unidad ?? ""} y el vale dice ${d.declarado ?? "?"}: salieron ${d.diferencia ?? "?"} sin vale`
+      : `${quien}el surtidor avanzó ${d.avance ?? "?"} ${d.unidad ?? ""} y el vale dice ${d.declarado ?? "?"}: el vale declara de más`;
   }
   if (a.tipo === "precinto_alterado") {
     const d = a.detalle as {
@@ -1391,6 +1415,8 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
 const DESPACHO_FORM_INICIAL = {
   origen: "tanque_propio" as OrigenDespacho,
   combustible_id: "",
+  // De qué surtidor salió (0098): solo si el tanque tiene más de uno.
+  surtidor_id: "",
   grifo_id: "",
   tipo_combustible: "diesel_b5" as Tanque["tipo_combustible"],
   tipo_destino: "equipo" as TipoDestinoDespacho,
@@ -1413,10 +1439,16 @@ const ETIQUETA_TIPO_COMBUSTIBLE: Record<Tanque["tipo_combustible"], string> = {
   glp: "GLP",
 };
 
+/** Los surtidores del tanque cuyo totalizador la varilla tiene que leer. */
+const surtidoresConTotalizador = (t: Tanque) =>
+  (t.surtidores ?? []).filter((s) => s.activo && s.usa_totalizador);
+
 const ETIQUETA_TIPO_PUNTO: Record<Tanque["tipo_punto"], string> = {
   fijo: "Tanque fijo",
   cisterna: "Cisterna",
-  surtidor: "Surtidor",
+  // Un tanque que ES un surtidor (portátil). No confundir con los surtidores
+  // del grifo (0098), que son el aparato por el que sale el combustible.
+  surtidor: "Surtidor portátil",
 };
 
 /** Cuánto tiene que moverse una lectura respecto de la anterior para
@@ -1631,6 +1663,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const grifosInternos = useSedes();
   const [filtroGrifo, setFiltroGrifo] = useState("");
   const [tanqueAMover, setTanqueAMover] = useState<Tanque | null>(null);
+  // Surtidores (0098): la ventana de gestión.
+  const [ventanaSurtidores, setVentanaSurtidores] = useState(false);
   // Bloquea el botón mientras el request está en vuelo Y corta un segundo
   // submit que haya entrado antes del re-render (mismo patrón que
   // handleRegistrarMovimiento en RepuestosTable.tsx) -- esto NO participa
@@ -1679,7 +1713,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [tanqueLectura, setTanqueLectura] = useState<Tanque | null>(null);
   const [nivel, setNivel] = useState("");
   // El totalizador del surtidor leído al medir (0096).
-  const [totalizadorVarilla, setTotalizadorVarilla] = useState("");
+  // Lo leído en cada surtidor del tanque (0098), por id de surtidor.
+  const [totalizadoresVarilla, setTotalizadoresVarilla] = useState<Record<number, string>>({});
   const [leidoEn, setLeidoEn] = useState(ahoraParaInputLocal());
   // Si el operario NO tocó la hora, la lectura es "ahora" y hay que
   // mandarla con precisión de segundos. El input datetime-local recorta a
@@ -2229,8 +2264,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       activo: t.activo,
       tolerancia_capacidad_pct: t.tolerancia_capacidad_pct,
       requiere_documento: t.requiere_documento,
-      usa_totalizador: t.usa_totalizador,
-      totalizador_tolerancia: t.totalizador_tolerancia,
+      usa_totalizador: t.usa_totalizador ?? false,
+      totalizador_tolerancia: t.totalizador_tolerancia ?? "1",
       usa_precintos: t.usa_precintos,
       // Solo para mostrarlo: el PUT no lo manda, se cambia con "Mover de grifo".
       grifo_interno_id: String(t.grifo_interno_id ?? ""),
@@ -2270,8 +2305,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             activo: formData.activo,
             tolerancia_capacidad_pct: Number(formData.tolerancia_capacidad_pct),
             requiere_documento: formData.requiere_documento,
-            usa_totalizador: formData.usa_totalizador,
-            totalizador_tolerancia: Number(formData.totalizador_tolerancia),
+            // Con varios surtidores el totalizador se configura en cada uno
+            // (0098): no se manda desde acá.
+            ...(totalizadorEnElTanque
+              ? {
+                  usa_totalizador: formData.usa_totalizador,
+                  totalizador_tolerancia: Number(formData.totalizador_tolerancia),
+                }
+              : {}),
             usa_precintos: formData.usa_precintos,
             umbral_diferencia_pct: aNumeroONull(formData.umbral_diferencia_pct),
             umbral_descuadre_pct: aNumeroONull(formData.umbral_descuadre_pct),
@@ -2580,7 +2621,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     setTanqueLectura(t);
     setPrecintosVistos({});
     setNivel("");
-    setTotalizadorVarilla("");
+    setTotalizadoresVarilla({});
     setLeidoEn(ahoraParaInputLocal());
     setHoraEditadaAMano(false);
     // Limpia el aviso de la operación anterior: si no, quien abre el modal
@@ -2631,9 +2672,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           combustible_id: tanqueLectura.id,
           nivel: Number(nivel),
           leido_en: horaEditadaAMano ? new Date(leidoEn).toISOString() : new Date().toISOString(),
-          totalizador_lectura:
-            tanqueLectura.usa_totalizador && totalizadorVarilla !== ""
-              ? Number(totalizadorVarilla)
+          // Un valor por cada surtidor con totalizador (0098).
+          totalizadores:
+            surtidoresConTotalizador(tanqueLectura).length > 0
+              ? surtidoresConTotalizador(tanqueLectura).map((s) => ({
+                  surtidor_id: s.id,
+                  valor: Number(totalizadoresVarilla[s.id] ?? ""),
+                }))
               : undefined,
           // Lo que se VIO en cada sello (0095). Solo si el tanque usa precintos.
           precintos: tanqueLectura.usa_precintos
@@ -2788,8 +2833,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             n_vale: Number(despachoForm.n_vale),
             cantidad: Number(despachoForm.cantidad),
             lectura_contometro: Number(despachoForm.lectura_contometro),
+            surtidor_id:
+              surtidoresDelVale.length > 1 && despachoForm.surtidor_id !== ""
+                ? Number(despachoForm.surtidor_id)
+                : undefined,
             totalizador_lectura:
-              tanqueDespacho?.usa_totalizador && despachoForm.totalizador_lectura !== ""
+              surtidorDelVale?.usa_totalizador && despachoForm.totalizador_lectura !== ""
                 ? Number(despachoForm.totalizador_lectura)
                 : undefined,
             // El medidor del equipo también en el vale del tanque propio
@@ -3328,6 +3377,17 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   const tanqueRecepcion = tanques.find((t) => t.id === Number(recepcionForm.combustible_id));
   const tanqueDespacho = tanques.find((t) => t.id === Number(despachoForm.combustible_id));
+  // Surtidores (0098). El vale elige surtidor solo si el tanque tiene más de
+  // uno; con uno, lo asigna el servidor.
+  const surtidoresDelVale = (tanqueDespacho?.surtidores ?? []).filter((x) => x.activo);
+  const surtidorDelVale =
+    surtidoresDelVale.length === 1
+      ? surtidoresDelVale[0]
+      : surtidoresDelVale.find((x) => x.id === Number(despachoForm.surtidor_id));
+  // La casilla del totalizador sigue en el formulario del tanque solo en el
+  // caso simple (un surtidor, o un tanque nuevo, que nace con uno).
+  const totalizadorEnElTanque =
+    editandoId === null || (tanques.find((t) => t.id === editandoId)?.surtidores.length ?? 0) <= 1;
   // El filtro por grifo (0097): acota lo que se lista, no cambia ningún cálculo.
   const tanquesVisibles =
     grifosInternos.hayVarios && filtroGrifo !== ""
@@ -3335,7 +3395,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       : tanques;
   // La columna del totalizador solo aparece si el kardex trae alguno: un
   // tanque sin totalizador no tiene por qué ver una columna vacía.
-  const kardexConTotalizador = kardex?.filas.some((f) => f.totalizador !== null) ?? false;
+  const kardexConTotalizador =
+    kardex?.filas.some((f) => f.totalizador !== null || f.totalizador_texto !== null) ?? false;
 
   // Los puntos precintados de los dos formularios que los piden (0095).
   const precintosLectura = usePuntosPrecinto(
@@ -3593,6 +3654,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             </button>
             <button onClick={abrirModalGrifos} className={`${BTN_BASE} ${BTN_ESTILO.muted}`}>
               <Wrench className="w-4 h-4 shrink-0" /> Proveedores
+            </button>
+            <button
+              onClick={() => setVentanaSurtidores(true)}
+              className={`${BTN_BASE} ${BTN_ESTILO.muted}`}
+            >
+              <Fuel className="w-4 h-4 shrink-0" /> Surtidores
             </button>
             <button onClick={abrirModalPrecios} className={`${BTN_BASE} ${BTN_ESTILO.muted}`}>
               <Tag className="w-4 h-4 shrink-0" /> Precios
@@ -3883,6 +3950,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             </div>
           </>
         ))}
+      {ventanaSurtidores && (
+        <VentanaSurtidores
+          tanques={tanques}
+          onCerrar={() => setVentanaSurtidores(false)}
+          onCambio={() => void cargarTanques()}
+        />
+      )}
       {tanqueAMover && (
         <MoverDeGrifo
           que="tanque"
@@ -4561,25 +4635,33 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     </span>
                   </span>
                 </label>
-                <label className="flex items-start gap-2 text-sm text-slate-600">
-                  <input
-                    type="checkbox"
-                    className="mt-1"
-                    checked={formData.usa_totalizador}
-                    onChange={(e) =>
-                      setFormData({ ...formData, usa_totalizador: e.target.checked })
-                    }
-                  />
-                  <span>
-                    Anotar el totalizador del surtidor en cada vale
-                    <span className="block text-xs text-slate-600">
-                      Es el contador acumulativo que no se resetea. Sirve para detectar combustible
-                      que sale sin vale. Activalo solo si el surtidor lo tiene y el grifero lo
-                      anota.
+                {!totalizadorEnElTanque && (
+                  <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl p-3">
+                    Este tanque tiene varios surtidores: el totalizador se configura en cada uno,
+                    desde <strong>Surtidores</strong>.
+                  </p>
+                )}
+                {totalizadorEnElTanque && (
+                  <label className="flex items-start gap-2 text-sm text-slate-600">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={formData.usa_totalizador}
+                      onChange={(e) =>
+                        setFormData({ ...formData, usa_totalizador: e.target.checked })
+                      }
+                    />
+                    <span>
+                      Anotar el totalizador del surtidor en cada vale
+                      <span className="block text-xs text-slate-600">
+                        Es el contador acumulativo que no se resetea. Sirve para detectar
+                        combustible que sale sin vale. Activalo solo si el surtidor lo tiene y el
+                        grifero lo anota.
+                      </span>
                     </span>
-                  </span>
-                </label>
-                {formData.usa_totalizador && (
+                  </label>
+                )}
+                {totalizadorEnElTanque && formData.usa_totalizador && (
                   <div className="space-y-1">
                     <label
                       htmlFor="tanque-totalizador-tolerancia"
@@ -4725,11 +4807,18 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                               ? `Registró: ${l.registrada_por_nombre}`
                               : "Registró: —"}
                           </p>
-                          {l.totalizador_lectura !== null && (
-                            <p className="text-xs text-slate-500 mt-0.5">
-                              Totalizador: {Number(l.totalizador_lectura).toLocaleString("es-PE")}
-                            </p>
-                          )}
+                          {(l.totalizadores ?? []).length > 1
+                            ? l.totalizadores!.map((t) => (
+                                <p key={t.surtidor_id} className="text-xs text-slate-500 mt-0.5">
+                                  {t.surtidor}: {Number(t.valor).toLocaleString("es-PE")}
+                                </p>
+                              ))
+                            : l.totalizador_lectura !== null && (
+                                <p className="text-xs text-slate-500 mt-0.5">
+                                  Totalizador:{" "}
+                                  {Number(l.totalizador_lectura).toLocaleString("es-PE")}
+                                </p>
+                              )}
                           {anulada && (
                             <p className="text-xs text-amber-700 mt-0.5">
                               Anulada: {l.motivo_anulacion}
@@ -4918,30 +5007,34 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   onChange={(e) => setNivel(e.target.value)}
                 />
               </div>
-              {tanqueLectura.usa_totalizador && (
-                <div className="space-y-1">
+              {surtidoresConTotalizador(tanqueLectura).map((sur, _i, lista) => (
+                <div key={sur.id} className="space-y-1">
                   <label
-                    htmlFor="combustible-totalizador"
+                    htmlFor={`combustible-totalizador-${sur.id}`}
                     className="text-xs font-bold text-slate-700 uppercase"
                   >
-                    Totalizador del surtidor
+                    {lista.length > 1 ? `Totalizador — ${sur.nombre}` : "Totalizador del surtidor"}
                   </label>
                   <input
-                    id="combustible-totalizador"
+                    id={`combustible-totalizador-${sur.id}`}
                     type="number"
                     min={0}
                     step="0.001"
                     required
                     className="w-full border border-slate-200 rounded-xl p-3 outline-none"
-                    value={totalizadorVarilla}
-                    onChange={(e) => setTotalizadorVarilla(e.target.value)}
+                    value={totalizadoresVarilla[sur.id] ?? ""}
+                    onChange={(e) =>
+                      setTotalizadoresVarilla((prev) => ({ ...prev, [sur.id]: e.target.value }))
+                    }
                   />
-                  <p className="text-xs text-slate-400">
-                    El contador acumulativo, tal como está ahora. Léelo tú: no lo copies del último
-                    vale.
-                  </p>
+                  {_i === lista.length - 1 && (
+                    <p className="text-xs text-slate-400">
+                      El contador acumulativo, tal como está ahora. Léelo tú: no lo copies del
+                      último vale.
+                    </p>
+                  )}
                 </div>
-              )}
+              ))}
               <div className="space-y-1">
                 <label
                   htmlFor="combustible-leido-en"
@@ -5062,7 +5155,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
                       value={despachoForm.combustible_id}
                       onChange={(e) =>
-                        setDespachoForm({ ...despachoForm, combustible_id: e.target.value })
+                        // El surtidor elegido era del tanque anterior (0098).
+                        setDespachoForm({
+                          ...despachoForm,
+                          combustible_id: e.target.value,
+                          surtidor_id: "",
+                        })
                       }
                     >
                       <option value="" disabled>
@@ -5123,7 +5221,33 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     El contómetro resetea a 0 en cada despacho: tiene que coincidir con la cantidad,
                     o el servidor lo rechaza.
                   </p>
-                  {tanqueDespacho?.usa_totalizador && (
+                  {surtidoresDelVale.length > 1 && (
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="despacho-surtidor"
+                        className="text-xs font-bold text-slate-700 uppercase"
+                      >
+                        Surtidor
+                      </label>
+                      <select
+                        id="despacho-surtidor"
+                        required
+                        className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                        value={despachoForm.surtidor_id}
+                        onChange={(e) =>
+                          setDespachoForm({ ...despachoForm, surtidor_id: e.target.value })
+                        }
+                      >
+                        <option value="">Elegir surtidor</option>
+                        {surtidoresDelVale.map((sur) => (
+                          <option key={sur.id} value={sur.id}>
+                            {sur.nombre}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                  {surtidorDelVale?.usa_totalizador && (
                     <div className="space-y-1">
                       <label
                         htmlFor="despacho-totalizador"
@@ -6323,7 +6447,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         <td className="p-2 text-right font-semibold">{f.saldo_teorico ?? "—"}</td>
                         <td className="p-2 text-right font-semibold">{f.nivel_medido ?? ""}</td>
                         {kardexConTotalizador && (
-                          <td className="p-2 text-right">{f.totalizador ?? ""}</td>
+                          <td className="p-2 text-right">
+                            {f.totalizador ?? f.totalizador_texto ?? ""}
+                          </td>
                         )}
                         <td className="p-2 text-right">
                           {f.dif_tramo === null ? "" : f.dif_tramo}

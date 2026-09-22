@@ -129,6 +129,8 @@ export async function enviarCorreoTotalizador(
     ancla?: "varilla";
     motivo: "retroceso" | "salto";
     tanque: string;
+    /** 0098: el totalizador es del surtidor, y un tanque puede tener varios. */
+    surtidor?: string;
     unidad: string;
     totalizador: number;
     totalizadorMayorPrevio?: number;
@@ -168,6 +170,7 @@ export async function enviarCorreoTotalizador(
       ? `Totalizador del surtidor inconsistente en la varilla de ${params.tanque}`
       : `Totalizador del surtidor inconsistente en la serie ${params.serieTalonario}`,
     lineas: [
+      ...(params.surtidor ? [`Surtidor: ${params.surtidor}.`] : []),
       deVarilla ? explicacion : `Vale ${vale}. ${explicacion}`,
       deVarilla
         ? "La varilla se registró igual. Puede ser un error de tipeo, combustible sacado por " +

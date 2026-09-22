@@ -30,6 +30,10 @@ import {
   crearPuntoPrecintoSchema,
   cambiarPrecintoSchema,
   bajaPuntoPrecintoSchema,
+  crearSurtidorSchema,
+  actualizarSurtidorSchema,
+  conectarSurtidorSchema,
+  motivoSurtidorSchema,
 } from "../../server/schemas/combustible.schema";
 import { moverDeGrifoSchema } from "../../server/schemas/sedes.schema";
 import { CombustibleController } from "./combustible.controller";
@@ -105,6 +109,51 @@ router.patch(
   requireRole("admin", "operador"),
   validate(anularDespachoCombustibleSchema),
   asyncHandler(controller.anularDespacho.bind(controller))
+);
+
+// Surtidores (migración 0098) -- segmentos literales, ANTES de /:id. La lista
+// la lee cualquier rol (el vale y la varilla la necesitan); lo que cambia la
+// estructura del grifo es del admin, y todo pide motivo.
+router.get("/surtidores", asyncHandler(controller.listarSurtidores.bind(controller)));
+router.post(
+  "/surtidores",
+  requireRole("admin"),
+  validate(crearSurtidorSchema),
+  asyncHandler(controller.crearSurtidor.bind(controller))
+);
+router.put(
+  "/surtidores/:surtidorId",
+  requireRole("admin"),
+  validate(actualizarSurtidorSchema),
+  asyncHandler(controller.actualizarSurtidor.bind(controller))
+);
+router.post(
+  "/surtidores/:surtidorId/conexiones",
+  requireRole("admin"),
+  validate(conectarSurtidorSchema),
+  asyncHandler(controller.conectarSurtidor.bind(controller))
+);
+router.get(
+  "/surtidores/:surtidorId/conexiones",
+  asyncHandler(controller.historialConexionesSurtidor.bind(controller))
+);
+router.patch(
+  "/surtidores/:surtidorId/conexiones/:conexionId/desconectar",
+  requireRole("admin"),
+  validate(motivoSurtidorSchema),
+  asyncHandler(controller.desconectarSurtidor.bind(controller))
+);
+router.patch(
+  "/surtidores/:surtidorId/baja",
+  requireRole("admin"),
+  validate(motivoSurtidorSchema),
+  asyncHandler(controller.bajaSurtidor.bind(controller))
+);
+router.patch(
+  "/surtidores/:surtidorId/reactivar",
+  requireRole("admin"),
+  validate(motivoSurtidorSchema),
+  asyncHandler(controller.reactivarSurtidor.bind(controller))
 );
 
 // Precintos numerados (migración 0095) -- segmentos literales, ANTES de /:id.

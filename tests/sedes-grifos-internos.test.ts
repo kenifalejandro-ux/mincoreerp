@@ -527,10 +527,15 @@ describe("backup", () => {
     delete contenido.tablas.sedes;
     delete contenido.tablas.grifos_internos;
     delete contenido.tablas.movimientos_grifo;
+    // Tampoco existían los surtidores (0098), que cuelgan de los grifos.
+    delete contenido.tablas.surtidores;
+    delete contenido.tablas.surtidor_tanques;
+    delete contenido.tablas.combustible_lectura_totalizadores;
     for (const filas of Object.values(contenido.tablas) as Record<string, unknown>[][]) {
       for (const f of filas) {
         delete f.grifo_interno_id;
         delete f.equipo_grifo_interno_id;
+        delete f.surtidor_id;
       }
     }
     await guardarBackup(fila.storage_key, JSON.stringify(contenido));

@@ -83,6 +83,23 @@ export const MODULOS: ModuloDefinicion[] = [
         // el trigger de asignación por defecto la completa al restaurar.
         fks: { grifo_interno_id: "grifos_internos" },
       },
+      // Surtidores (0098): después del tanque y antes de los vales y las
+      // varillas, que los referencian. La conexión cascadea desde los dos.
+      {
+        nombre: "surtidores",
+        pk: "serial",
+        fks: { grifo_interno_id: "grifos_internos", creado_por: "usuarios" },
+      },
+      {
+        nombre: "surtidor_tanques",
+        pk: "serial",
+        fks: {
+          surtidor_id: "surtidores",
+          combustible_id: "combustible",
+          conectado_por: "usuarios",
+          desconectado_por: "usuarios",
+        },
+      },
       {
         nombre: "combustible_lecturas",
         pk: "serial",
@@ -92,6 +109,12 @@ export const MODULOS: ModuloDefinicion[] = [
           anulada_por: "usuarios",
           grifo_interno_id: "grifos_internos",
         },
+      },
+      // Lo que la varilla leyó en cada surtidor (0098).
+      {
+        nombre: "combustible_lectura_totalizadores",
+        pk: "serial",
+        fks: { lectura_id: "combustible_lecturas", surtidor_id: "surtidores" },
       },
       // Fase B, precios (migrations/0063) -- catálogo chico de grifos
       // externos (PRIMAX, VELASQUEZ...). Va ANTES de combustible_despachos
@@ -119,6 +142,7 @@ export const MODULOS: ModuloDefinicion[] = [
           // 0097: dónde ocurrió el vale y dónde estaba el equipo.
           grifo_interno_id: "grifos_internos",
           equipo_grifo_interno_id: "grifos_internos",
+          surtidor_id: "surtidores",
         },
       },
       // Precios (migrations/0063) -- historial apilado, nunca se pisa. Sin
@@ -189,6 +213,7 @@ export const MODULOS: ModuloDefinicion[] = [
         fks: {
           combustible_id: "combustible",
           equipo_id: "equipos",
+          surtidor_id: "surtidores",
           grifo_origen_id: "grifos_internos",
           grifo_destino_id: "grifos_internos",
           usuario_id: "usuarios",
@@ -262,6 +287,9 @@ export const MODULOS: ModuloDefinicion[] = [
     // sí lo necesitan (ver el comentario de sus entradas en `tablas`).
     raices: [
       "combustible",
+      // 0098: los vales lo referencian sin ON DELETE, así que se borra después
+      // de ellos (este orden se invierte al vaciar).
+      "surtidores",
       "combustible_grifos",
       "combustible_despachos",
       "combustible_precios",
