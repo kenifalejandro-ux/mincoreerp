@@ -22,6 +22,8 @@ import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { CombustibleRepository } from "./combustible.repository";
 import type { PeriodoHistorial } from "./combustible.repository";
 import { EquiposRepository } from "../equipos/equipos.repository";
+import { tanqueEnAlcance, valeEnAlcance } from "./alcance";
+import type { AlcanceCombustible, AmbitoVales } from "./alcance";
 import {
   listarMovimientosDeGrifo,
   motivoFaltaGrifo,
@@ -58,8 +60,8 @@ function resumirHistorico(
 export class CombustibleService {
   private repository = new CombustibleRepository();
 
-  async getAll(client: PoolClient, tenantId: string) {
-    return this.repository.findAll(client, tenantId);
+  async getAll(client: PoolClient, tenantId: string, alcance?: AlcanceCombustible) {
+    return this.repository.findAll(client, tenantId, alcance);
   }
 
   async getById(client: PoolClient, tenantId: string, id: number) {
@@ -524,7 +526,8 @@ export class CombustibleService {
     client: PoolClient,
     tenantId: string,
     usuarioId: string,
-    data: RegistrarLecturaCombustibleInput
+    data: RegistrarLecturaCombustibleInput,
+    alcance?: AlcanceCombustible
   ) {
     return idempotentInsert({
       client,
@@ -532,6 +535,14 @@ export class CombustibleService {
       modulo: "combustible",
       clienteUuid: data.cliente_uuid,
       insertar: async () => {
+        // La varilla es del grifo entero (0100). Fuera del alcance, igual que
+        // un tanque que no existe.
+        if (
+          alcance &&
+          !(await tanqueEnAlcance(client, tenantId, alcance, data.combustible_id, "completo"))
+        ) {
+          throw new Error(`combustible_id ${data.combustible_id} no existe en este tenant`);
+        }
         const leidoEn = data.leido_en ?? new Date().toISOString();
         const totalizadores = await this.resolverTotalizadoresDeLectura(
           client,
@@ -755,7 +766,8 @@ export class CombustibleService {
     client: PoolClient,
     tenantId: string,
     usuarioId: string,
-    data: CrearDespachoCombustibleInput
+    data: CrearDespachoCombustibleInput,
+    alcance?: AlcanceCombustible
   ) {
     return idempotentInsert({
       client,
@@ -763,6 +775,24 @@ export class CombustibleService {
       modulo: "combustible",
       clienteUuid: data.cliente_uuid,
       insertar: async () => {
+        // El alcance (0100) ANTES que cualquier otra validación: los mensajes
+        // de las siguientes nombran el tanque, y un tanque fuera del alcance
+        // tiene que comportarse igual que uno que no existe.
+        if (alcance && !alcance.todo && data.origen === "tanque_propio" && data.combustible_id) {
+          let surtidor = data.surtidor_id ?? null;
+          if (surtidor === null) {
+            const { surtidores } = await this.repository.findSurtidoresDelTanqueEn(
+              client,
+              tenantId,
+              data.combustible_id,
+              data.despachado_en ?? new Date().toISOString()
+            );
+            if (surtidores.length === 1) surtidor = surtidores[0].id;
+          }
+          if (!(await valeEnAlcance(client, tenantId, alcance, data.combustible_id, surtidor))) {
+            throw new Error(`combustible_id ${data.combustible_id} no existe en este tenant`);
+          }
+        }
         // El duplicado le gana a cualquier otro 400 -- ver el comentario de
         // CombustibleRepository.existeVale. El constraint único de 0062
         // sigue siendo la red de seguridad real contra una carrera entre
@@ -1076,9 +1106,10 @@ export class CombustibleService {
       origen?: string;
       producto?: string;
     } & PeriodoHistorial,
-    paginacion: Paginacion
+    paginacion: Paginacion,
+    ambito?: AmbitoVales
   ) {
-    return this.repository.findDespachos(client, tenantId, filtros, paginacion);
+    return this.repository.findDespachos(client, tenantId, filtros, paginacion, ambito);
   }
 
   /** Las tres vistas de agregación de la pestaña del cliente (Histórico ->
@@ -1098,9 +1129,17 @@ export class CombustibleService {
     tenantId: string,
     producto: string,
     periodo: PeriodoHistorial,
-    agruparPor?: string
+    agruparPor?: string,
+    ambito?: AmbitoVales
   ) {
-    return this.repository.findConsumoPorConductor(client, tenantId, producto, periodo, agruparPor);
+    return this.repository.findConsumoPorConductor(
+      client,
+      tenantId,
+      producto,
+      periodo,
+      agruparPor,
+      ambito
+    );
   }
 
   listarConsumoPorEquipo(
@@ -1108,9 +1147,17 @@ export class CombustibleService {
     tenantId: string,
     producto: string,
     periodo: PeriodoHistorial,
-    agruparPor?: string
+    agruparPor?: string,
+    ambito?: AmbitoVales
   ) {
-    return this.repository.findConsumoPorEquipo(client, tenantId, producto, periodo, agruparPor);
+    return this.repository.findConsumoPorEquipo(
+      client,
+      tenantId,
+      producto,
+      periodo,
+      agruparPor,
+      ambito
+    );
   }
 
   listarConsumoPorGrifo(
@@ -1118,9 +1165,17 @@ export class CombustibleService {
     tenantId: string,
     producto: string,
     periodo: PeriodoHistorial,
-    agruparPor?: string
+    agruparPor?: string,
+    ambito?: AmbitoVales
   ) {
-    return this.repository.findConsumoPorGrifo(client, tenantId, producto, periodo, agruparPor);
+    return this.repository.findConsumoPorGrifo(
+      client,
+      tenantId,
+      producto,
+      periodo,
+      agruparPor,
+      ambito
+    );
   }
 
   /** Devuelve null si el despacho no existe en este tenant o si ya estaba
@@ -2752,6 +2807,30 @@ export class CombustibleService {
     }
   }
 
+  /** Un vale de tanque propio cuyo grifo no es el del equipo (0100). Se lee
+   *  de las dos copias que la base puso en el vale (0097), así que un vale
+   *  cargado sin red que llega tarde usa los grifos de SU fecha. */
+  async detectarEquipoDeOtroGrifo(client: PoolClient, tenantId: string, despachoId: number) {
+    const r = await client.query<{
+      grifo_vale: string;
+      grifo_equipo: string;
+      equipo: string;
+    }>(
+      `SELECT gv.nombre AS grifo_vale, ge.nombre AS grifo_equipo, e.placa_codigo AS equipo
+         FROM combustible_despachos d
+         JOIN grifos_internos gv ON gv.id = d.grifo_interno_id AND gv.tenant_id = d.tenant_id
+         JOIN grifos_internos ge ON ge.id = d.equipo_grifo_interno_id AND ge.tenant_id = d.tenant_id
+         JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
+        WHERE d.id = $1 AND d.tenant_id = $2 AND d.origen = 'tanque_propio'
+          AND d.grifo_interno_id <> d.equipo_grifo_interno_id`,
+      [despachoId, tenantId]
+    );
+    const f = r.rows[0];
+    return f
+      ? { equipo: f.equipo, grifoDelVale: f.grifo_vale, grifoDelEquipo: f.grifo_equipo }
+      : null;
+  }
+
   getSurtidor(client: PoolClient, tenantId: string, surtidorId: number) {
     return this.repository.findSurtidorPorId(client, tenantId, surtidorId);
   }
@@ -4327,7 +4406,8 @@ export class CombustibleService {
     client: PoolClient,
     tenantId: string,
     usuarioId: string,
-    data: CrearRecepcionCombustibleInput
+    data: CrearRecepcionCombustibleInput,
+    alcance?: AlcanceCombustible
   ) {
     return idempotentInsert({
       client,
@@ -4337,6 +4417,15 @@ export class CombustibleService {
       insertar: async () => {
         const recibidoEn = data.recibido_en ?? new Date().toISOString();
         const esUrea = data.producto === "urea";
+        // La recepción es del grifo entero (0100); la de urea, de la empresa.
+        if (
+          !esUrea &&
+          alcance &&
+          data.combustible_id &&
+          !(await tanqueEnAlcance(client, tenantId, alcance, data.combustible_id, "completo"))
+        ) {
+          throw new Error(`combustible_id ${data.combustible_id} no existe en este tenant`);
+        }
 
         if (esUrea) {
           // El grifo tiene que estar marcado como proveedor de UREA (0092) --
@@ -4478,9 +4567,10 @@ export class CombustibleService {
     client: PoolClient,
     tenantId: string,
     filtros: { combustibleId?: number; producto?: string } & PeriodoHistorial,
-    paginacion: Paginacion
+    paginacion: Paginacion,
+    alcance?: AlcanceCombustible
   ) {
-    return this.repository.findRecepciones(client, tenantId, filtros, paginacion);
+    return this.repository.findRecepciones(client, tenantId, filtros, paginacion, alcance);
   }
 
   getRecepcionPorId(client: PoolClient, tenantId: string, id: number) {

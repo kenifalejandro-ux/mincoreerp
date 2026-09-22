@@ -8,6 +8,13 @@ import type {
 } from "../../server/schemas/combustible.schema";
 import type { Paginacion } from "../../server/shared/utils/pagination";
 import { esViolacionUnicidad, esViolacionForeignKey } from "../../server/shared/utils/pgError";
+import {
+  agregarAmbitoVales,
+  filtroHechoDeGrifo,
+  filtroTanqueVisible,
+  type AlcanceCombustible,
+  type AmbitoVales,
+} from "./alcance";
 
 /** El período con el que se acota un historial. Las dos puntas son
  *  opcionales y se pueden usar sueltas: "de marzo en adelante" y "hasta
@@ -98,6 +105,8 @@ export const TIPOS_ALERTA = [
   // ── Migración 0095: precintos numerados del tanque.
   "precinto_alterado",
   "precinto_reemplazado",
+  // ── Migración 0100: vale de tanque propio a un equipo de otro grifo.
+  "equipo_de_otro_grifo",
 ] as const;
 
 export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];
@@ -168,6 +177,13 @@ export interface AlertaNueva {
 // NULL cuando el tanque no tiene ninguna lectura vigente (todas anuladas):
 // ahí el nivel es genuinamente desconocido, y decirlo es más honesto que
 // mostrar un 0 que nadie midió.
+/** Los litros de un listado de vales, convertidos por la unidad de SU tanque
+ *  (entrega 4): sumar galones y litros crudos da un número sin sentido. Una
+ *  compra externa no tiene tanque ni unidad: se toma como litros, igual que
+ *  findAcumuladoDiario. `t` es el alias del tanque en la consulta. */
+const sumaLitros = (t: string) =>
+  `SUM(d.cantidad * CASE WHEN ${t}.unidad = 'gal' THEN 3.785411784 ELSE 1 END)`;
+
 const COLUMNAS_TANQUE = `
   c.id, c.codigo, c.tanque_nombre, c.tipo_combustible, c.unidad, c.tipo_punto,
   c.ubicacion, c.capacidad_total, c.nivel_minimo,
@@ -307,11 +323,13 @@ const LATERAL_DIFERENCIA_RECEPCION = `
 `;
 
 export class CombustibleRepository {
-  async findAll(client: PoolClient, tenantId: string) {
+  async findAll(client: PoolClient, tenantId: string, alcance?: AlcanceCombustible) {
+    // Solo los tanques que el usuario ve (0100): su grifo o un surtidor suyo.
+    const f = alcance ? filtroTanqueVisible(alcance, "c", 2) : { sql: "TRUE", valores: [] };
     const result = await client.query(
       `SELECT ${COLUMNAS_TANQUE} FROM combustible c ${JOIN_ULTIMA_LECTURA}
-       WHERE c.tenant_id = $1 ORDER BY c.id ASC`,
-      [tenantId]
+       WHERE c.tenant_id = $1 AND ${f.sql} ORDER BY c.id ASC`,
+      [tenantId, ...f.valores]
     );
 
     return result.rows;
@@ -1057,7 +1075,8 @@ export class CombustibleRepository {
       origen?: string;
       producto?: string;
     } & PeriodoHistorial,
-    { pageSize, offset }: Paginacion
+    { pageSize, offset }: Paginacion,
+    ambito?: AmbitoVales
   ) {
     const condiciones: string[] = ["tenant_id = $1"];
     const valores: unknown[] = [tenantId];
@@ -1079,6 +1098,7 @@ export class CombustibleRepository {
       condiciones.push(`producto = $${valores.length}`);
     }
     agregarPeriodo(condiciones, valores, "despachado_en", filtros);
+    agregarAmbitoVales(condiciones, valores, "combustible_despachos", ambito);
 
     valores.push(pageSize, offset);
     const result = await client.query(
@@ -1125,19 +1145,21 @@ export class CombustibleRepository {
     tenantId: string,
     producto: string,
     periodo: PeriodoHistorial,
-    agruparPor?: string
+    agruparPor?: string,
+    ambito?: AmbitoVales
   ) {
     const condiciones: string[] = [
-      "tenant_id = $1",
-      "producto = $2",
-      "anulada_en IS NULL",
-      "conductor_nombre IS NOT NULL",
+      "d.tenant_id = $1",
+      "d.producto = $2",
+      "d.anulada_en IS NULL",
+      "d.conductor_nombre IS NOT NULL",
     ];
     const valores: unknown[] = [tenantId, producto];
-    agregarPeriodo(condiciones, valores, "despachado_en", periodo);
+    agregarPeriodo(condiciones, valores, "d.despachado_en", periodo);
+    agregarAmbitoVales(condiciones, valores, "d", ambito);
 
     const trunc = agruparPor ? CombustibleRepository.TRUNC_SQL[agruparPor] : undefined;
-    const columnaPeriodo = trunc ? `date_trunc('${trunc}', despachado_en) AS periodo,` : "";
+    const columnaPeriodo = trunc ? `date_trunc('${trunc}', d.despachado_en) AS periodo,` : "";
     const groupByPeriodo = trunc ? ", periodo" : "";
     const orderByPeriodo = trunc ? "periodo ASC, " : "";
 
@@ -1145,15 +1167,18 @@ export class CombustibleRepository {
       `
       SELECT
         ${columnaPeriodo}
-        conductor_nombre, conductor_dni,
+        d.conductor_nombre, d.conductor_dni,
         COUNT(*) AS cantidad_vales,
-        SUM(cantidad) AS total_cantidad,
-        SUM(cantidad * costo_unitario) AS total_costo,
-        MIN(despachado_en) AS primer_despacho,
-        MAX(despachado_en) AS ultimo_despacho
-      FROM combustible_despachos
+        SUM(d.cantidad) AS total_cantidad,
+        ${sumaLitros("c")} AS total_litros,
+        ${sumaLitros("c")} / 3.785411784 AS total_galones,
+        SUM(d.cantidad * d.costo_unitario) AS total_costo,
+        MIN(d.despachado_en) AS primer_despacho,
+        MAX(d.despachado_en) AS ultimo_despacho
+      FROM combustible_despachos d
+      LEFT JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = d.tenant_id
       WHERE ${condiciones.join(" AND ")}
-      GROUP BY conductor_nombre, conductor_dni${groupByPeriodo}
+      GROUP BY d.conductor_nombre, d.conductor_dni${groupByPeriodo}
       ORDER BY ${orderByPeriodo}total_cantidad DESC
       `,
       valores
@@ -1171,7 +1196,8 @@ export class CombustibleRepository {
     tenantId: string,
     producto: string,
     periodo: PeriodoHistorial,
-    agruparPor?: string
+    agruparPor?: string,
+    ambito?: AmbitoVales
   ) {
     const condiciones: string[] = [
       "d.tenant_id = $1",
@@ -1181,6 +1207,7 @@ export class CombustibleRepository {
     ];
     const valores: unknown[] = [tenantId, producto];
     agregarPeriodo(condiciones, valores, "d.despachado_en", periodo);
+    agregarAmbitoVales(condiciones, valores, "d", ambito);
 
     const trunc = agruparPor ? CombustibleRepository.TRUNC_SQL[agruparPor] : undefined;
     const columnaPeriodo = trunc ? `date_trunc('${trunc}', d.despachado_en) AS periodo,` : "";
@@ -1196,11 +1223,14 @@ export class CombustibleRepository {
         e.tipo AS equipo_tipo,
         COUNT(*) AS cantidad_vales,
         SUM(d.cantidad) AS total_cantidad,
+        ${sumaLitros("c")} AS total_litros,
+        ${sumaLitros("c")} / 3.785411784 AS total_galones,
         SUM(d.cantidad * d.costo_unitario) AS total_costo,
         MIN(d.despachado_en) AS primer_despacho,
         MAX(d.despachado_en) AS ultimo_despacho
       FROM combustible_despachos d
       LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
+      LEFT JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = d.tenant_id
       WHERE ${condiciones.join(" AND ")}
       GROUP BY d.equipo_id, e.placa_codigo, e.tipo${groupByPeriodo}
       ORDER BY ${orderByPeriodo}total_cantidad DESC
@@ -1228,11 +1258,13 @@ export class CombustibleRepository {
     tenantId: string,
     producto: string,
     periodo: PeriodoHistorial,
-    agruparPor?: string
+    agruparPor?: string,
+    ambito?: AmbitoVales
   ) {
     const condiciones: string[] = ["d.tenant_id = $1", "d.producto = $2", "d.anulada_en IS NULL"];
     const valores: unknown[] = [tenantId, producto];
     agregarPeriodo(condiciones, valores, "d.despachado_en", periodo);
+    agregarAmbitoVales(condiciones, valores, "d", ambito);
 
     const trunc = agruparPor ? CombustibleRepository.TRUNC_SQL[agruparPor] : undefined;
     const columnaPeriodo = trunc ? `date_trunc('${trunc}', d.despachado_en) AS periodo,` : "";
@@ -1246,16 +1278,22 @@ export class CombustibleRepository {
         d.origen,
         CASE WHEN d.origen = 'tanque_propio' THEN 'interno' ELSE 'externo' END AS tipo_grifo,
         COALESCE(t.tanque_nombre, g.nombre, 'Sin identificar') AS grifo_nombre,
+        -- El grifo interno del vale (0097), para desglosar lo interno por
+        -- planta. NULL en las compras externas.
+        CASE WHEN d.origen = 'tanque_propio' THEN gi.nombre END AS grifo_interno,
         COUNT(*) AS cantidad_vales,
         SUM(d.cantidad) AS total_cantidad,
+        ${sumaLitros("t")} AS total_litros,
+        ${sumaLitros("t")} / 3.785411784 AS total_galones,
         SUM(d.cantidad * d.costo_unitario) AS total_costo,
         MIN(d.despachado_en) AS primer_despacho,
         MAX(d.despachado_en) AS ultimo_despacho
       FROM combustible_despachos d
       LEFT JOIN combustible t ON t.id = d.combustible_id AND t.tenant_id = d.tenant_id
       LEFT JOIN combustible_grifos g ON g.id = d.grifo_id AND g.tenant_id = d.tenant_id
+      LEFT JOIN grifos_internos gi ON gi.id = d.grifo_interno_id AND gi.tenant_id = d.tenant_id
       WHERE ${condiciones.join(" AND ")}
-      GROUP BY d.origen, tipo_grifo, grifo_nombre${groupByPeriodo}
+      GROUP BY d.origen, tipo_grifo, grifo_nombre, grifo_interno${groupByPeriodo}
       ORDER BY ${orderByPeriodo}total_cantidad DESC
       `,
       valores
@@ -4088,7 +4126,8 @@ export class CombustibleRepository {
     client: PoolClient,
     tenantId: string,
     filtros: { combustibleId?: number; producto?: string } & PeriodoHistorial,
-    { pageSize, offset }: Paginacion
+    { pageSize, offset }: Paginacion,
+    alcance?: AlcanceCombustible
   ) {
     const condiciones: string[] = ["r.tenant_id = $1"];
     const valores: unknown[] = [tenantId];
@@ -4102,6 +4141,12 @@ export class CombustibleRepository {
       condiciones.push(`r.producto = $${valores.length}`);
     }
     agregarPeriodo(condiciones, valores, "r.recibido_en", filtros);
+    // La recepción es del grifo entero (0100); la de urea, de la empresa.
+    if (alcance && !alcance.todo) {
+      const f = filtroHechoDeGrifo(alcance, "r", valores.length + 1);
+      valores.push(...f.valores);
+      condiciones.push(`(r.producto = 'urea' OR ${f.sql})`);
+    }
 
     valores.push(pageSize, offset);
     const result = await client.query(

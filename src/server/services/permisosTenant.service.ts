@@ -46,6 +46,72 @@ export interface PermisosDeUsuario {
   rol: UsuarioPayload["rol"];
   /** Solo los módulos que la EMPRESA tiene; un admin no puede dar más que eso. */
   modulos: PermisoDeModulo[];
+  /** Qué sedes, grifos y surtidores ve en Combustible (0100). */
+  alcanceCombustible: AlcanceDeCombustible;
+}
+
+/** `todo` = todas las sedes (el valor de todos hasta la migración 0100). */
+export interface AlcanceDeCombustible {
+  todo: boolean;
+  sedes: number[];
+  grifos: number[];
+  surtidores: number[];
+}
+
+async function leerAlcance(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string
+): Promise<AlcanceDeCombustible> {
+  const perfil = await client.query<{ alcance_combustible: string }>(
+    `SELECT alcance_combustible FROM usuarios WHERE id = $1 AND tenant_id = $2`,
+    [usuarioId, tenantId]
+  );
+  const accesos = await client.query<{
+    sede_id: number | null;
+    grifo_interno_id: number | null;
+    surtidor_id: number | null;
+  }>(
+    `SELECT sede_id, grifo_interno_id, surtidor_id FROM usuario_accesos_combustible
+      WHERE usuario_id = $1 AND tenant_id = $2`,
+    [usuarioId, tenantId]
+  );
+  const de = (k: "sede_id" | "grifo_interno_id" | "surtidor_id") =>
+    accesos.rows
+      .map((f) => f[k])
+      .filter((v): v is number => v !== null)
+      .sort((a, b) => a - b);
+  return {
+    todo: perfil.rows[0]?.alcance_combustible !== "asignado",
+    sedes: de("sede_id"),
+    grifos: de("grifo_interno_id"),
+    surtidores: de("surtidor_id"),
+  };
+}
+
+/** ¿El alcance nuevo deja ver algo que el anterior no? Eso pide dos firmas,
+ *  aunque el mismo cambio recorte otra cosa. */
+export function alcanceAmplia(antes: AlcanceDeCombustible, despues?: AlcanceDeCombustible) {
+  if (!despues || antes.todo) return false;
+  if (despues.todo) return true;
+  const nuevo = (a: number[], b: number[]) => b.some((x) => !a.includes(x));
+  return (
+    nuevo(antes.sedes, despues.sedes) ||
+    nuevo(antes.grifos, despues.grifos) ||
+    nuevo(antes.surtidores, despues.surtidores)
+  );
+}
+
+/** ¿Deja de ver algo que veía? */
+export function alcanceRecorta(antes: AlcanceDeCombustible, despues: AlcanceDeCombustible) {
+  if (antes.todo) return !despues.todo;
+  if (despues.todo) return false;
+  const falta = (a: number[], b: number[]) => a.some((x) => !b.includes(x));
+  return (
+    falta(antes.sedes, despues.sedes) ||
+    falta(antes.grifos, despues.grifos) ||
+    falta(antes.surtidores, despues.surtidores)
+  );
 }
 
 /** Los módulos que la empresa tiene hoy, en el orden del registry.
@@ -92,6 +158,7 @@ export async function listarPermisosUsuarioService(
       usuarioId: perfil.id,
       nombre: perfil.nombre,
       rol: perfil.rol,
+      alcanceCombustible: await leerAlcance(client, tenantId, usuarioId),
       modulos: disponibles.map((modulo) => ({
         modulo,
         asignado: porModulo.has(modulo),
@@ -104,6 +171,8 @@ export async function listarPermisosUsuarioService(
 export interface CambioDePermisos {
   rol?: UsuarioPayload["rol"];
   modulos: { modulo: string; asignado: boolean; nivel: NivelModulo }[];
+  /** Ausente = no se toca. */
+  alcanceCombustible?: AlcanceDeCombustible;
 }
 
 export interface ResultadoPermisos {
@@ -120,6 +189,7 @@ export interface ResultadoPermisos {
  *  operador a grifero también (el rol recorta módulos, ver MODULOS_POR_ROL). */
 function calcularRecorte(antes: PermisosDeUsuario, despues: PermisosDeUsuario): boolean {
   if (antes.rol !== despues.rol && despues.rol !== "admin") return true;
+  if (alcanceRecorta(antes.alcanceCombustible, despues.alcanceCombustible)) return true;
 
   const nivelAntes = new Map(antes.modulos.map((m) => [m.modulo, m]));
   return despues.modulos.some((ahora) => {
@@ -158,6 +228,10 @@ export async function guardarPermisosUsuarioService(
       ]);
     }
 
+    if (cambio.alcanceCombustible) {
+      await guardarAlcance(client, tenantId, usuarioId, cambio.alcanceCombustible);
+    }
+
     for (const pedido of cambio.modulos) {
       // Un módulo que la empresa no tiene se ignora en silencio: no es un
       // error del administrador, es un request que no puede valer.
@@ -185,4 +259,57 @@ export async function guardarPermisosUsuarioService(
   if (recorta) await revocarSesionesService(usuarioId, tenantId);
 
   return { antes, despues, recorta };
+}
+
+/** Reemplaza el alcance entero. Cada id tiene que ser de ESTA empresa: la
+ *  clave compuesta también lo impediría, pero con un 500. */
+async function guardarAlcance(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  alcance: AlcanceDeCombustible
+) {
+  const unicos = (ids: number[]) => [...new Set(ids)];
+  const sedes = unicos(alcance.sedes);
+  const grifos = unicos(alcance.grifos);
+  const surtidores = unicos(alcance.surtidores);
+  const existen = async (tabla: string, ids: number[]) =>
+    ids.length === 0 ||
+    Number(
+      (
+        await client.query(
+          `SELECT count(*) AS n FROM ${tabla} WHERE tenant_id = $1 AND id = ANY($2::int[])`,
+          [tenantId, ids]
+        )
+      ).rows[0].n
+    ) === ids.length;
+  if (
+    !(await existen("sedes", sedes)) ||
+    !(await existen("grifos_internos", grifos)) ||
+    !(await existen("surtidores", surtidores))
+  ) {
+    throw new AppError(400, "Alguna sede, grifo o surtidor del alcance no existe");
+  }
+
+  await client.query(
+    `UPDATE usuarios SET alcance_combustible = $1 WHERE id = $2 AND tenant_id = $3`,
+    [alcance.todo ? "todo" : "asignado", usuarioId, tenantId]
+  );
+  await client.query(
+    `DELETE FROM usuario_accesos_combustible WHERE usuario_id = $1 AND tenant_id = $2`,
+    [usuarioId, tenantId]
+  );
+  if (alcance.todo) return;
+  const filas: ["sede_id" | "grifo_interno_id" | "surtidor_id", number][] = [
+    ...sedes.map((id) => ["sede_id", id] as ["sede_id", number]),
+    ...grifos.map((id) => ["grifo_interno_id", id] as ["grifo_interno_id", number]),
+    ...surtidores.map((id) => ["surtidor_id", id] as ["surtidor_id", number]),
+  ];
+  for (const [columna, id] of filas) {
+    await client.query(
+      `INSERT INTO usuario_accesos_combustible (tenant_id, usuario_id, ${columna})
+       VALUES ($1, $2, $3)`,
+      [tenantId, usuarioId, id]
+    );
+  }
 }

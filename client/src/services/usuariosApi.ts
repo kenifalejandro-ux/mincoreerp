@@ -196,6 +196,17 @@ export interface PermisosDeUsuario {
   rol: RolUsuario;
   /** Solo los módulos que la empresa tiene contratados. */
   modulos: PermisoDeModulo[];
+  alcanceCombustible: AlcanceDeCombustible;
+}
+
+/** Qué sedes, grifos y surtidores ve en Combustible (migración 0100).
+ *  `todo` = toda la empresa; si no, solo lo marcado. Una sede incluye sus
+ *  grifos, también los que se agreguen después. */
+export interface AlcanceDeCombustible {
+  todo: boolean;
+  sedes: number[];
+  grifos: number[];
+  surtidores: number[];
 }
 
 export async function permisosDeUsuarioApi(usuarioId: string): Promise<PermisosDeUsuario> {
@@ -204,7 +215,12 @@ export async function permisosDeUsuarioApi(usuarioId: string): Promise<PermisosD
 
 export async function guardarPermisosApi(
   usuarioId: string,
-  cambio: { rol?: RolUsuario; modulos: PermisoDeModulo[]; motivo?: string }
+  cambio: {
+    rol?: RolUsuario;
+    modulos: PermisoDeModulo[];
+    alcanceCombustible?: AlcanceDeCombustible;
+    motivo?: string;
+  }
 ): Promise<ResultadoDeAccion<{ recorta: boolean }>> {
   return interpretar<{ recorta: boolean }>(
     await leerRespuesta(

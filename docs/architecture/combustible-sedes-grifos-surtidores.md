@@ -62,7 +62,7 @@ Convenciones del proyecto: `SERIAL`, `creado_en`, RLS con `FORCE` y la política
 - `combustible_despachos.surtidor_id` (entrega 2): obligatorio en los vales del tanque propio; nulo en las compras externas y en la urea. Un CHECK por forma, igual que el resto del vale.
 - `grifo_interno_id` **copiado en cada hecho** al registrarse (entrega 1): vales, varillas, recepciones, colocaciones de precinto, alertas y anomalías. La sección 7 dice de dónde sale en cada caso.
 - `combustible_despachos.equipo_grifo_interno_id` (entrega 1; la alerta que la usa es de la entrega 4): copia del grifo **del equipo** al momento del vale. Es la que dispara la alerta de equipo de otro grifo y la que ubica una compra externa.
-- `usuario_modulos.alcance` (entrega 3, junto con su lógica): `todo` (por defecto) o `asignado`.
+- `usuarios.alcance_combustible` (entrega 3, migración 0100): `todo` (por defecto) o `asignado`. Va en el perfil y no en `usuario_modulos`: esa fila se borra al quitarle el módulo, y al devolvérselo el alcance renacería en `todo` sin que nadie lo decida.
 
 ### Integridad entre empresas
 
@@ -107,8 +107,11 @@ El **administrador** de la empresa ve todo siempre, sin importar el alcance.
 - **Regla general:** cada hecho es visible para quien tiene **el grifo donde ocurrió** (su copia, sección 7), no el grifo actual del tanque o del equipo.
 - **Vales:** carga y ve los de los surtidores que tiene.
 - **Varilla y recepción:** exigen alcance sobre **el grifo entero**. La varilla lee el totalizador de todos los surtidores del tanque, y la recepción abre puntos del tanque.
-- **Alertas:** ve las de sus tanques y sus surtidores. Una alerta que cruza dos grifos (ver más abajo) se ve si tiene alguno de los dos.
-- **Compras externas:** se ven por el **grifo que tenía el equipo al cargar** (su copia). Quien registró una compra externa siempre la ve. La alerta de consumo excedido de un equipo la ve quien tiene el grifo del equipo.
+- **Solo un surtidor:** ve el tanque que ese surtidor alimenta, porque lo necesita para cargar el vale, pero no mide, no recibe y no ve las varillas ni los precintos. El tanque tiene dos niveles de acceso: *visible* (el grifo, o un surtidor suyo) y *completo* (el grifo).
+- **Alertas, bitácora y reportes de auditoría:** hoy son solo del administrador, que ve todo, así que no hay nada que filtrar. Si algún día los ve otro rol, se filtran por la copia del grifo como el resto.
+- **Compras externas:** se ven por el **grifo que tenía el equipo al cargar** (su copia). Quien registró una compra externa siempre la ve.
+- **Sin filtrar a propósito:** los huecos de talonario (un hueco en otro grifo es un vale que falta, y esconderlo ayuda a quien lo robó), la urea, los proveedores, los precios y el módulo Equipos.
+- **Fuera de alcance por id:** pedir un tanque, vale, varilla, recepción, punto de precinto o surtidor de otro grifo responde 404, lo mismo que si no existiera. Cargar un vale o una varilla contra un tanque ajeno responde el mismo 400 que un id inexistente.
 - **Urea:** el inventario es **por empresa** y el alcance por grifo no lo filtra. Lo ve quien tiene el módulo y un rol que opera urea, como hoy.
 
 ### Un vale a un equipo de otro grifo
@@ -117,11 +120,12 @@ El **administrador** de la empresa ve todo siempre, sin importar el alcance.
 
 ## 6. Cómo se aplica
 
-- **En un solo punto del servidor.** El alcance del usuario se resuelve una vez por pedido y se pasa a las consultas como una condición sobre el `grifo_interno_id` **copiado en cada hecho**. Que sea siempre la misma columna es lo que permite aplicarla en un solo lugar. No se repite endpoint por endpoint.
-- **Cubre:** tanques, vales, varillas, recepciones, precintos, alertas, kardex, todos los reportes y sus exportaciones, la sugerencia de umbrales, y los **eventos en tiempo real**. Los eventos llevan el grifo y el canal filtra por usuario.
+- **En un solo punto del servidor** (`src/modules/combustible/alcance.ts`). El alcance se resuelve una vez por pedido, no va en el token, así que un cambio rige desde el pedido siguiente. Los endpoints por id pasan por un guardia de `router.param` por cada parámetro (`id`, `despachoId`, `lecturaId`, `recepcionId`, `puntoId`, `surtidorId`), y los listados agregan la condición sobre el `grifo_interno_id` **copiado en cada hecho**. Un endpoint nuevo con uno de esos parámetros queda cubierto solo.
+- **Cubre:** tanques, vales, varillas, recepciones, precintos, kardex y movimientos del tanque, surtidores, los tres rankings de consumo, y los **eventos en tiempo real**. A un usuario asignado los eventos de Combustible le llegan **sin contenido**: el cliente los usa solo como aviso para volver a pedir, y lo que pide ya viene filtrado. Así no hace falta que cada evento lleve su grifo.
 - **Se prueba atacando la API**, con el método de las auditorías anteriores: para cada endpoint, un usuario asignado a otro grifo intenta leer y escribir, y el gemelo de control con el grifo correcto pasa.
-- **Caché offline.** La lista de puntos de precinto queda en el caché del navegador hasta 30 días. Un cambio de alcance a mitad de sesión no debe dejar ver datos viejos: al cambiar el alcance de un usuario se invalida la sesión de caché en su próximo ingreso.
-- **RLS.** El aislamiento entre empresas sigue siendo RLS. El alcance por grifo se aplica en la aplicación. Una política adicional en la base con una variable de sesión sería una defensa extra, pero cuesta mucho en cada tabla; se evalúa al llegar a la entrega 3, con los tests de ataque ya escritos.
+- **Recortar el alcance cierra las sesiones** de esa persona (como recortar módulos), y con eso también el canal de eventos abierto con el alcance viejo.
+- **Caché offline.** La lista de puntos de precinto queda en el caché del navegador hasta 30 días, con red primero. Con señal, el servidor ya responde 404 para lo que salió del alcance; sin señal, el caché puede mostrar lo que esa persona **ya vio** antes del recorte, y no puede cargar nada con eso. Se acepta: borrar el caché en cada ingreso le quitaría al grifero los catálogos que usa sin red.
+- **RLS.** El aislamiento entre empresas sigue siendo RLS. El alcance por grifo se aplica en la aplicación. Una política adicional con variable de sesión quedó descartada en la entrega 3: el guardia único y los tests de ataque (`tests/combustible-alcance.test.ts`, con gemelo de control en cada caso) cubren lo mismo sin tocar cada tabla.
 
 ## 7. Mover tanques, surtidores y equipos entre grifos
 
@@ -181,7 +185,8 @@ Si la empresa tiene un solo grifo, el tanque o el equipo se asigna solo: un trig
 - **Los reportes que importan son el consumo por conductor y por vehículo.** Ya existen (Histórico → Consumo por conductor, por vehículo y por grifo). Se miran para **toda la empresa** por defecto, con filtro por **sede** y por **grifo** para las conciliaciones. El filtro usa la copia del hecho (7.1), así que un equipo que se movió en el período aporta a cada grifo lo que cargó en él.
 - **El reporte "por grifo" existente** separa hoy interno de externo, y lo interno es un solo bloque. Pasa a desglosar por **grifo interno** y por **proveedor**, y sigue sirviendo para conciliar interno contra externo.
 - **Los pares del consumo por equipo** (el reporte que compara contra pares y contra su pasado) comparan en **toda la empresa**: el mismo modelo consume parecido en cualquier planta, y achicar la muestra a un grifo la deja sin pares. El filtro por sede o grifo acota qué equipos se **listan**, no contra quiénes se comparan.
-- **Antes de la entrega 4 hay que arreglar las unidades.** Los reportes por conductor y por vehículo suman la cantidad **tal como está**, sin convertir galones a litros. Con una sola sede no se nota; con varias es fácil que un tanque esté en galones y otro en litros, y el total mezclaría las dos.
+- **Unidades (arreglado en la entrega 4).** Los tres rankings devuelven `total_litros` y `total_galones`, convirtiendo cada vale según la unidad de su tanque; una compra externa se toma en litros. `total_cantidad` queda para la urea, que no tiene tanque.
+- **El filtro** se pasa como `sede_id` o `grifo_interno_id` y se combina con el alcance: nunca amplía lo que la persona ve.
 
 ## 9. Migración de lo existente
 
@@ -198,7 +203,7 @@ El backfill recorre todas las empresas con RLS activo: usa el mecanismo de la mi
 
 En la **entrega 2**: crear un surtidor por tanque que hoy tenga `usa_totalizador`, con la tolerancia del tanque, conectarlo, y pasar a él los vales y las varillas ya cargados con totalizador.
 
-En la **entrega 3**: `usuario_modulos.alcance` nace con `todo` para todos los usuarios.
+En la **entrega 3** (0100): `usuarios.alcance_combustible` nace con `todo` para todos los usuarios.
 
 Se hace en dos pasos (expandir y contraer, como en la migración de cuentas): primero se agregan las estructuras y se llenan; recién después, cuando el código nuevo ya se despliega, se retiran las columnas del tanque (`usa_totalizador`, `totalizador_tolerancia`) y de la varilla (`totalizador_lectura`).
 
@@ -230,6 +235,8 @@ En `registry.ts` se declaran las claves foráneas nuevas de tanques, equipos y d
 | Selector de grifo | Aparece con más de un grifo activo, sin mirar módulos |
 | Integridad entre empresas | Claves foráneas compuestas `(tenant_id, id)` |
 | Bajas de sede y grifo | Lógicas, con motivo, rechazadas si quedan cosas activas adentro; se reactivan con motivo |
+| Cambiar el alcance | Va en la orden de cambio de permisos: ampliar pide doble firma, recortar una sola y cierra sesiones |
+| Pantalla del alcance | Administración → Configuración; aparece con más de un grifo o de un surtidor, y nunca para un administrador |
 
 ## 11. Entregas
 
@@ -237,8 +244,8 @@ En `registry.ts` se declaran las claves foráneas nuevas de tanques, equipos y d
 |---|---|---|
 | 1 | **Hecha.** Sedes y grifos internos: tablas, administración, tanques y equipos asignados, historial de movimientos, copia del grifo en cada hecho, migración a "Principal", alta de empresas nuevas, backup, renombrar "Proveedores" | Alto: migra todas las empresas, agrega triggers y toca el backup |
 | 2 | **Hecha.** Surtidores: entidad, conexión con historia, vale por surtidor, totalizador por surtidor y en la varilla, migración de #180 y #183 (0098), y el borrado de las columnas viejas (0099) | Alto: toca el cálculo |
-| 3 | Alcance por usuario aplicado en todo el módulo, con tests de ataque y eventos filtrados | **El más alto**: un hueco filtra datos de otra planta |
-| 4 | Unidades en los reportes, filtro por sede y grifo, "por grifo" desglosado, alerta de equipo de otro grifo | Bajo |
+| 3 | **Hecha.** Alcance por usuario (0100) aplicado en todo el módulo, con tests de ataque y eventos filtrados | **El más alto**: un hueco filtra datos de otra planta |
+| 4 | **Hecha.** Unidades en los reportes, filtro por sede y grifo, "por grifo" desglosado, alerta de equipo de otro grifo | Bajo |
 
 Las cuatro con Opus y esfuerzo alto. Cada entrega pide su diseño detallado en texto antes de tocar código.
 

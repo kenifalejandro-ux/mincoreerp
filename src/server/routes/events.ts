@@ -12,6 +12,8 @@ import erpRateLimiter from "../middleware/erpRateLimiter";
 import { asyncHandler } from "../shared/utils/asyncHandler";
 import { getTenantId } from "../shared/utils/request";
 import { manejarConexionSSE } from "../shared/utils/sse";
+import { withTenant } from "../config/database";
+import { resolverAlcance, vaciarEventoDeCombustible } from "../../modules/combustible/alcance";
 import {
   canalDeTenant,
   reponerEventosTenant,
@@ -29,10 +31,18 @@ eventosRouter.get(
   "/stream",
   asyncHandler(async (req, res) => {
     const tenantId = getTenantId(req);
+    // Quien ve solo algunas plantas (alcance de Combustible, 0100) recibe el
+    // aviso de que algo cambió, SIN el contenido: el cliente solo lo usa para
+    // recargar, y lo que recarga ya viene filtrado. Se resuelve al conectar;
+    // un cambio de alcance rige desde la próxima conexión.
+    const alcance = await withTenant(tenantId, (client) =>
+      resolverAlcance(client, tenantId, req.usuario!)
+    );
     await manejarConexionSSE(req, res, {
       canal: canalDeTenant(tenantId),
       reponer: (desdeId) => reponerEventosTenant(tenantId, desdeId),
       suscribir: suscribirCanal,
+      adaptar: alcance.todo ? undefined : vaciarEventoDeCombustible,
     });
   })
 );

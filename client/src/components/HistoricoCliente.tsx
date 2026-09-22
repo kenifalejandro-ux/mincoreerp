@@ -37,6 +37,7 @@
 
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 
+import { useSedes } from "./comunes/useSedes";
 import { apiFetch } from "../services/apiClient";
 
 type Vista =
@@ -104,6 +105,10 @@ interface ConductorFila {
   conductor_dni: string | null;
   cantidad_vales: string;
   total_cantidad: string;
+  /** Pasado a litros según la unidad de cada tanque (0100): sumar
+   *  `total_cantidad` mezcla galones con litros si hay tanques de las dos. */
+  total_litros: string;
+  total_galones: string;
   total_costo: string;
   primer_despacho: string;
   ultimo_despacho: string;
@@ -116,6 +121,10 @@ interface VehiculoFila {
   equipo_tipo: string | null;
   cantidad_vales: string;
   total_cantidad: string;
+  /** Pasado a litros según la unidad de cada tanque (0100): sumar
+   *  `total_cantidad` mezcla galones con litros si hay tanques de las dos. */
+  total_litros: string;
+  total_galones: string;
   total_costo: string;
   primer_despacho: string;
   ultimo_despacho: string;
@@ -125,8 +134,14 @@ interface GrifoFila {
   periodo?: string;
   tipo_grifo: "interno" | "externo";
   grifo_nombre: string;
+  /** El grifo interno del tanque; null en compras a proveedor. */
+  grifo_interno: string | null;
   cantidad_vales: string;
   total_cantidad: string;
+  /** Pasado a litros según la unidad de cada tanque (0100): sumar
+   *  `total_cantidad` mezcla galones con litros si hay tanques de las dos. */
+  total_litros: string;
+  total_galones: string;
   total_costo: string;
   primer_despacho: string;
   ultimo_despacho: string;
@@ -201,6 +216,10 @@ export default function HistoricoCliente() {
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
   const [agrupacion, setAgrupacion] = useState<Agrupacion>("");
+  // "" = toda la empresa; "s:<id>" una sede; "g:<id>" un grifo. Solo para
+  // los rankings, y solo se ofrece con más de un grifo (regla de useSedes).
+  const [filtroSede, setFiltroSede] = useState("");
+  const { sedes, hayVarios } = useSedes();
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -211,57 +230,62 @@ export default function HistoricoCliente() {
   const [porVehiculo, setPorVehiculo] = useState<VehiculoFila[]>([]);
   const [porGrifo, setPorGrifo] = useState<GrifoFila[]>([]);
 
-  const cargar = useCallback(async (v: Vista, d: string, h: string, agr: Agrupacion) => {
-    setCargando(true);
-    setError(null);
-    try {
-      const conAgrupacion = agr ? { agrupar_por: agr } : undefined;
-      let url = "";
-      switch (v) {
-        case "despachos":
-          url = `/api/erp/combustible/despachos?${paramsDePeriodo(d, h, { origen: "tanque_propio" })}`;
-          break;
-        case "compras_externas":
-          url = `/api/erp/combustible/despachos?${paramsDePeriodo(d, h, { origen: "compra_externa" })}`;
-          break;
-        case "recepciones":
-          url = `/api/erp/combustible/recepciones?${paramsDePeriodo(d, h)}`;
-          break;
-        case "por_conductor":
-          url = `/api/erp/combustible/consumo-por-conductor?${paramsDePeriodo(d, h, conAgrupacion)}`;
-          break;
-        case "por_vehiculo":
-          url = `/api/erp/combustible/consumo-por-vehiculo?${paramsDePeriodo(d, h, conAgrupacion)}`;
-          break;
-        case "por_grifo":
-          url = `/api/erp/combustible/consumo-por-grifo?${paramsDePeriodo(d, h, conAgrupacion)}`;
-          break;
+  const cargar = useCallback(
+    async (v: Vista, d: string, h: string, agr: Agrupacion, sede: string) => {
+      setCargando(true);
+      setError(null);
+      try {
+        const conAgrupacion: Record<string, string> = agr ? { agrupar_por: agr } : {};
+        if (sede)
+          conAgrupacion[sede.startsWith("s:") ? "sede_id" : "grifo_interno_id"] = sede.slice(2);
+        let url = "";
+        switch (v) {
+          case "despachos":
+            url = `/api/erp/combustible/despachos?${paramsDePeriodo(d, h, { origen: "tanque_propio" })}`;
+            break;
+          case "compras_externas":
+            url = `/api/erp/combustible/despachos?${paramsDePeriodo(d, h, { origen: "compra_externa" })}`;
+            break;
+          case "recepciones":
+            url = `/api/erp/combustible/recepciones?${paramsDePeriodo(d, h)}`;
+            break;
+          case "por_conductor":
+            url = `/api/erp/combustible/consumo-por-conductor?${paramsDePeriodo(d, h, conAgrupacion)}`;
+            break;
+          case "por_vehiculo":
+            url = `/api/erp/combustible/consumo-por-vehiculo?${paramsDePeriodo(d, h, conAgrupacion)}`;
+            break;
+          case "por_grifo":
+            url = `/api/erp/combustible/consumo-por-grifo?${paramsDePeriodo(d, h, conAgrupacion)}`;
+            break;
+        }
+        const res = await apiFetch(url);
+        const body = await res.json().catch(() => null);
+        if (!res.ok) {
+          setError(mensajeDeFallo(res.status));
+          return;
+        }
+        const filas = Array.isArray(body?.data) ? body.data : [];
+        if (v === "despachos") setDespachosInternos(filas);
+        else if (v === "compras_externas") setComprasExternas(filas);
+        else if (v === "recepciones") setRecepciones(filas);
+        else if (v === "por_conductor") setPorConductor(filas);
+        else if (v === "por_vehiculo") setPorVehiculo(filas);
+        else if (v === "por_grifo") setPorGrifo(filas);
+      } finally {
+        setCargando(false);
       }
-      const res = await apiFetch(url);
-      const body = await res.json().catch(() => null);
-      if (!res.ok) {
-        setError(mensajeDeFallo(res.status));
-        return;
-      }
-      const filas = Array.isArray(body?.data) ? body.data : [];
-      if (v === "despachos") setDespachosInternos(filas);
-      else if (v === "compras_externas") setComprasExternas(filas);
-      else if (v === "recepciones") setRecepciones(filas);
-      else if (v === "por_conductor") setPorConductor(filas);
-      else if (v === "por_vehiculo") setPorVehiculo(filas);
-      else if (v === "por_grifo") setPorGrifo(filas);
-    } finally {
-      setCargando(false);
-    }
-  }, []);
+    },
+    []
+  );
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    cargar(vista, desde, hasta, agrupacion);
+    cargar(vista, desde, hasta, agrupacion, filtroSede);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vista]);
 
-  const handleVerPeriodo = () => cargar(vista, desde, hasta, agrupacion);
+  const handleVerPeriodo = () => cargar(vista, desde, hasta, agrupacion, filtroSede);
 
   /** Cuál array mostrar en pantalla ahora -- un solo lugar para no repetir
    *  el switch (vista) en el export y en el render. */
@@ -296,14 +320,14 @@ export default function HistoricoCliente() {
     const esRanking =
       vista === "por_conductor" || vista === "por_vehiculo" || vista === "por_grifo";
     const filas = filasDeLaVista();
-    const campoCantidad = esRanking ? "total_cantidad" : "cantidad";
+    const campoCantidad = esRanking ? "total_litros" : "cantidad";
     const campoCosto = esRanking ? "total_costo" : "costo_total";
     const totalCantidad = filas.reduce((acc, f) => acc + Number(f[campoCantidad] ?? 0), 0);
     const totalCosto = filas.reduce((acc, f) => acc + Number(f[campoCosto] ?? 0), 0);
     const totalVales = esRanking
       ? filas.reduce((acc, f) => acc + Number(f.cantidad_vales ?? 0), 0)
       : filas.length;
-    return { totalVales, totalCantidad, totalCosto };
+    return { totalVales, totalCantidad, totalCosto, esRanking };
   };
 
   // La importación todavía no tiene lógica -- ver Fase 1 del histórico
@@ -368,6 +392,32 @@ export default function HistoricoCliente() {
             </select>
           </label>
         )}
+        {VISTAS_CON_PERIODO.has(vista) && hayVarios && (
+          <label className="flex flex-col text-sm">
+            <span className="text-gray-600">Sede / grifo</span>
+            <select
+              value={filtroSede}
+              onChange={(e) => setFiltroSede(e.target.value)}
+              className="rounded border border-gray-300 px-2 py-1"
+            >
+              <option value="">Toda la empresa</option>
+              {sedes
+                .filter((sede) => sede.activo)
+                .map((sede) => [
+                  <option key={`s${sede.id}`} value={`s:${sede.id}`}>
+                    {sede.nombre} (toda la sede)
+                  </option>,
+                  ...sede.grifos
+                    .filter((g) => g.activo)
+                    .map((g) => (
+                      <option key={`g${g.id}`} value={`g:${g.id}`}>
+                        {sede.nombre} · {g.nombre}
+                      </option>
+                    )),
+                ])}
+            </select>
+          </label>
+        )}
         <button
           type="button"
           onClick={handleVerPeriodo}
@@ -418,7 +468,7 @@ export default function HistoricoCliente() {
           </div>
           <div>
             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-              Cantidad total
+              {totalesDeLaVista().esRanking ? "Litros" : "Cantidad total"}
             </p>
             <p className="text-xl font-bold text-slate-800">
               {totalesDeLaVista().totalCantidad.toLocaleString("es-PE", {
@@ -552,7 +602,8 @@ function TablaConductor({
           <th className="py-1 pr-2">Conductor</th>
           <th className="py-1 pr-2">DNI</th>
           <th className="py-1 pr-2 text-right">Vales</th>
-          <th className="py-1 pr-2 text-right">Total cantidad</th>
+          <th className="py-1 pr-2 text-right">Litros</th>
+          <th className="py-1 pr-2 text-right">Galones</th>
           <th className="py-1 pr-2 text-right">Total costo</th>
           <th className="py-1 pr-2">Último despacho</th>
         </tr>
@@ -569,7 +620,8 @@ function TablaConductor({
             <td className="py-1 pr-2">{c.conductor_nombre}</td>
             <td className="py-1 pr-2">{c.conductor_dni ?? "—"}</td>
             <td className="py-1 pr-2 text-right">{c.cantidad_vales}</td>
-            <td className="py-1 pr-2 text-right">{formatearNumero(c.total_cantidad)}</td>
+            <td className="py-1 pr-2 text-right">{formatearNumero(c.total_litros)}</td>
+            <td className="py-1 pr-2 text-right">{formatearNumero(c.total_galones)}</td>
             <td className="py-1 pr-2 text-right">{formatearNumero(c.total_costo)}</td>
             <td className="py-1 pr-2">{formatearFecha(c.ultimo_despacho)}</td>
           </tr>
@@ -598,7 +650,8 @@ function TablaVehiculo({
           <th className="py-1 pr-2">Placa</th>
           <th className="py-1 pr-2">Tipo</th>
           <th className="py-1 pr-2 text-right">Vales</th>
-          <th className="py-1 pr-2 text-right">Total cantidad</th>
+          <th className="py-1 pr-2 text-right">Litros</th>
+          <th className="py-1 pr-2 text-right">Galones</th>
           <th className="py-1 pr-2 text-right">Total costo</th>
           <th className="py-1 pr-2">Último despacho</th>
         </tr>
@@ -613,7 +666,8 @@ function TablaVehiculo({
             <td className="py-1 pr-2">{v.placa_codigo ?? `Equipo #${v.equipo_id}`}</td>
             <td className="py-1 pr-2">{v.equipo_tipo ?? "—"}</td>
             <td className="py-1 pr-2 text-right">{v.cantidad_vales}</td>
-            <td className="py-1 pr-2 text-right">{formatearNumero(v.total_cantidad)}</td>
+            <td className="py-1 pr-2 text-right">{formatearNumero(v.total_litros)}</td>
+            <td className="py-1 pr-2 text-right">{formatearNumero(v.total_galones)}</td>
             <td className="py-1 pr-2 text-right">{formatearNumero(v.total_costo)}</td>
             <td className="py-1 pr-2">{formatearFecha(v.ultimo_despacho)}</td>
           </tr>
@@ -633,26 +687,30 @@ function TablaGrifo({
   agrupacion: Agrupacion;
 }) {
   if (filas.length === 0) return <EstadoVacio cargando={cargando} />;
+  // Con un solo grifo la columna repetiría "Principal" en cada fila.
+  const conGrifo = new Set(filas.map((f) => f.grifo_interno).filter(Boolean)).size > 1;
   const totalInterno = filas
     .filter((f) => f.tipo_grifo === "interno")
-    .reduce((acc, f) => acc + Number(f.total_cantidad), 0);
+    .reduce((acc, f) => acc + Number(f.total_litros), 0);
   const totalExterno = filas
     .filter((f) => f.tipo_grifo === "externo")
-    .reduce((acc, f) => acc + Number(f.total_cantidad), 0);
+    .reduce((acc, f) => acc + Number(f.total_litros), 0);
   return (
     <div>
       <p className="mb-3 text-sm text-gray-700">
-        Interno: <span className="font-semibold">{totalInterno.toLocaleString("es-PE")}</span> ·
-        Externo: <span className="font-semibold">{totalExterno.toLocaleString("es-PE")}</span>
+        Interno: <span className="font-semibold">{totalInterno.toLocaleString("es-PE")} L</span> ·
+        Externo: <span className="font-semibold">{totalExterno.toLocaleString("es-PE")} L</span>
       </p>
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b text-left text-gray-600">
             {agrupacion && <th className="py-1 pr-2">Período</th>}
             <th className="py-1 pr-2">Tipo</th>
+            {conGrifo && <th className="py-1 pr-2">Grifo</th>}
             <th className="py-1 pr-2">Origen</th>
             <th className="py-1 pr-2 text-right">Vales</th>
-            <th className="py-1 pr-2 text-right">Total cantidad</th>
+            <th className="py-1 pr-2 text-right">Litros</th>
+            <th className="py-1 pr-2 text-right">Galones</th>
             <th className="py-1 pr-2 text-right">Total costo</th>
             <th className="py-1 pr-2">Último despacho</th>
           </tr>
@@ -671,9 +729,11 @@ function TablaGrifo({
               <td className="py-1 pr-2">
                 {f.tipo_grifo === "interno" ? "Grifo interno" : "Proveedor"}
               </td>
+              {conGrifo && <td className="py-1 pr-2">{f.grifo_interno ?? "—"}</td>}
               <td className="py-1 pr-2">{f.grifo_nombre}</td>
               <td className="py-1 pr-2 text-right">{f.cantidad_vales}</td>
-              <td className="py-1 pr-2 text-right">{formatearNumero(f.total_cantidad)}</td>
+              <td className="py-1 pr-2 text-right">{formatearNumero(f.total_litros)}</td>
+              <td className="py-1 pr-2 text-right">{formatearNumero(f.total_galones)}</td>
               <td className="py-1 pr-2 text-right">{formatearNumero(f.total_costo)}</td>
               <td className="py-1 pr-2">{formatearFecha(f.ultimo_despacho)}</td>
             </tr>

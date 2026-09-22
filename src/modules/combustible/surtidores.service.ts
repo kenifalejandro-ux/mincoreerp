@@ -19,6 +19,7 @@ import type { PoolClient } from "pg";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { esViolacionUnicidad } from "../../server/shared/utils/pgError";
 import { motivoGrifoNoAsignable } from "../../server/services/sedes.service";
+import { ALCANCE_TODO, type AlcanceCombustible } from "./alcance";
 
 /** Un error de un trigger de la base (check_violation) es un dato que se
  *  contradice, no una falla: 400 con el mensaje del trigger. */
@@ -28,7 +29,18 @@ function traducirErrorDeBase(err: unknown): never {
   throw err;
 }
 
-export async function listarSurtidores(client: PoolClient, tenantId: string) {
+export async function listarSurtidores(
+  client: PoolClient,
+  tenantId: string,
+  alcance: AlcanceCombustible = ALCANCE_TODO
+) {
+  // Solo los surtidores del alcance (0100): de sus grifos o asignados sueltos.
+  const f = alcance.todo
+    ? { sql: "TRUE", valores: [] as unknown[] }
+    : {
+        sql: "(s.grifo_interno_id = ANY($2::int[]) OR s.id = ANY($3::int[]))",
+        valores: [alcance.grifos, alcance.surtidores],
+      };
   const r = await client.query(
     `SELECT s.id, s.grifo_interno_id, s.nombre, s.activo, s.motivo_baja,
             s.usa_totalizador, s.totalizador_tolerancia, s.totalizador_actual,
@@ -45,9 +57,9 @@ export async function listarSurtidores(client: PoolClient, tenantId: string) {
                WHERE st.surtidor_id = s.id AND st.desconectado_en IS NULL
             ), '[]'::jsonb) AS tanques
        FROM surtidores s
-      WHERE s.tenant_id = $1
+      WHERE s.tenant_id = $1 AND ${f.sql}
       ORDER BY s.activo DESC, lower(s.nombre)`,
-    [tenantId]
+    [tenantId, ...f.valores]
   );
   return r.rows;
 }

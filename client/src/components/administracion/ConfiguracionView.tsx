@@ -10,9 +10,11 @@
 // a sí mismo.
 import { useCallback, useEffect, useState } from "react";
 
+import AlcanceCombustible from "./AlcanceCombustible";
 import { MODULOS_CLIENTE } from "../../modules/registry";
 import {
   guardarPermisosApi,
+  type AlcanceDeCombustible,
   listarUsuariosApi,
   permisosDeUsuarioApi,
   type NivelModulo,
@@ -40,6 +42,8 @@ export default function ConfiguracionView() {
   const [usuarios, setUsuarios] = useState<UsuarioDelTenant[]>([]);
   const [elegido, setElegido] = useState<string | null>(null);
   const [modulos, setModulos] = useState<PermisoDeModulo[]>([]);
+  const [alcance, setAlcance] = useState<AlcanceDeCombustible | null>(null);
+  const [esAdmin, setEsAdmin] = useState(false);
   const [motivo, setMotivo] = useState("");
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
@@ -61,9 +65,12 @@ export default function ConfiguracionView() {
     try {
       const permisos = await permisosDeUsuarioApi(usuarioId);
       setModulos(permisos.modulos);
+      setAlcance(permisos.alcanceCombustible);
+      setEsAdmin(permisos.rol === "admin");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudieron cargar los permisos.");
       setModulos([]);
+      setAlcance(null);
     }
   }, []);
 
@@ -89,6 +96,7 @@ export default function ConfiguracionView() {
     try {
       const resultado = await guardarPermisosApi(elegido, {
         modulos,
+        alcanceCombustible: alcance ?? undefined,
         motivo: motivo.trim() || undefined,
       });
 
@@ -124,8 +132,8 @@ export default function ConfiguracionView() {
       <div className="mb-6">
         <h2 className="text-xl font-bold text-slate-800">Configuración</h2>
         <p className="text-slate-600 text-sm">
-          Qué módulos ve cada persona y con qué nivel. Solo aparecen los módulos que tu empresa
-          tiene contratados.
+          Qué módulos ve cada persona, con qué nivel y, en Combustible, qué sedes y grifos. Solo
+          aparecen los módulos que tu empresa tiene contratados.
         </p>
       </div>
 
@@ -208,6 +216,14 @@ export default function ConfiguracionView() {
                   ))}
                 </ul>
               )}
+
+              {/* Un admin ve toda la empresa siempre: recortarle el alcance no
+                  tendría efecto, así que ni se le ofrece. */}
+              {alcance &&
+                !esAdmin &&
+                modulos.some((m) => m.modulo === "combustible" && m.asignado) && (
+                  <AlcanceCombustible valor={alcance} onChange={setAlcance} />
+                )}
 
               <div>
                 <label
