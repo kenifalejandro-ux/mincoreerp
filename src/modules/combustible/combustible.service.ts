@@ -31,6 +31,12 @@ import {
 } from "../../server/services/sedes.service";
 
 /** Un tramo de la muestra de calibración, tal como lo devuelve el repositorio. */
+/** Lo mínimo que el ajuste de calibración necesita de cada medición: la
+ *  diferencia CON SIGNO y cuánto combustible pasó por los medidores en ese
+ *  período. Todo lo demás que viaja en la muestra es para que la persona
+ *  pueda mirar de dónde sale cada fila. */
+type PuntoAjuste = { descuadre: number; movimiento: number };
+
 type IntervaloCalibracion = Awaited<
   ReturnType<CombustibleRepository["findMuestraDescuadresParaCalibracion"]>
 >[number];
@@ -4097,6 +4103,11 @@ export class CombustibleService {
       cantidad: m.cantidad,
       diferenciaLitros: m.diferencia_litros,
       diferenciaPct: (m.diferencia_litros / m.cantidad) * 100,
+      // El par (descuadre, movimiento) que consume el ajuste. Acá el
+      // "movimiento" es lo entregado: es el volumen que pasó por el medidor
+      // del camión, que es el instrumento cuyo error cubre el porcentaje.
+      descuadre: m.diferencia_litros,
+      movimiento: m.cantidad,
       // Los pasos de la cuenta, para la exportación. La pantalla no los usa.
       recibidoEn: m.recibido_en,
       documento: m.documento,
@@ -4105,10 +4116,8 @@ export class CombustibleService {
       salidas: m.salidas,
     }));
 
-    return CombustibleService.calibrar(
-      puntos.map((p) => p.diferenciaPct),
-      puntos
-    );
+    const capacidad = muestra[0]?.capacidad ?? 0;
+    return CombustibleService.calibrarPar(puntos, capacidad);
   }
 
   /** El estadístico compartido por los TRES umbrales. Estaba embebido en la
@@ -4132,7 +4141,16 @@ export class CombustibleService {
    *  el número aparezca antes, que es exactamente lo que este módulo no
    *  hace. Mientras tanto queda el valor provisional del alta, que protege. */
   static readonly MINIMO_MUESTRA = 10;
-  static readonly PISO_PCT = 1;
+  /** El piso sugerido nunca baja de este % de la capacidad. No es un número
+   *  de política sino física conocida: el combustible se dilata con la
+   *  temperatura (del orden de 0,08 % por grado en el diésel), y eso mueve
+   *  la varilla en proporción a lo que hay ALMACENADO -- o sea con la
+   *  capacidad, no con lo que se movió. Por debajo de este piso, el umbral
+   *  estaría alertando por la temperatura del día.
+   *
+   *  Es el mismo 1 % que el estimador viejo aplicaba como "piso de 1 %",
+   *  ahora con su razón escrita y expresado en litros. */
+  static readonly PISO_MINIMO_PCT_CAPACIDAD = 1;
 
   /** Con menos filas que el mínimo no se calcula ningún número. */
   static muestraInsuficiente<T>(tamanio: number, muestra: T[]) {
@@ -4211,88 +4229,172 @@ export class CombustibleService {
     };
   }
 
-  private static calibrar<T>(valoresPct: number[], muestra: T[]) {
-    if (valoresPct.length < CombustibleService.MINIMO_MUESTRA) {
-      return CombustibleService.muestraInsuficiente(valoresPct.length, muestra);
-    }
+  /** EL ESTIMADOR DE LOS DOS NÚMEROS (0101).
+   *
+   *  Ajusta por mínimos cuadrados la recta
+   *
+   *      |descuadre| ≈ corte + pendiente × movimiento
+   *
+   *  y la lee como lo que físicamente es: el CORTE es el error que no
+   *  depende del movimiento (la varilla, siempre dos lecturas) y la
+   *  PENDIENTE es el error que sí depende (los medidores, proporcional al
+   *  volumen que pasó por ellos).
+   *
+   *  Por qué hacía falta cambiarlo: el estimador viejo calculaba UN número
+   *  (promedio de |x| + 2 desvíos) sobre el descuadre expresado como
+   *  porcentaje de la capacidad. Con una sola cifra para dos fuentes de
+   *  ruido que escalan distinto, el número sale de un promedio entre cosas
+   *  que no son comparables -- y la muestra del tanque tiene, mezclados,
+   *  tramos de un domingo sin despachos y tramos de un día pico.
+   *
+   *  El margen (2 desviaciones de los RESIDUOS, no de los valores) va
+   *  entero al piso y no repartido: con muestras de 10 a 30 puntos no
+   *  alcanza para estimar además cómo crece la dispersión con el
+   *  movimiento, y cargarlo al término fijo es la opción conservadora para
+   *  los tramos chicos, que son los que el modelo viejo desprotegía.
+   *
+   *  DEGENERA EN EL ESTIMADOR VIEJO cuando no se puede estimar la
+   *  pendiente: ahí la pendiente es 0, el corte es el promedio y la
+   *  desviación de los residuos es la desviación de siempre, o sea
+   *  `promedio + 2 desvíos` en litros. No se perdió nada por el camino. */
+  private static ajusteLineal(puntos: PuntoAjuste[], conSigno: boolean) {
+    const y = puntos.map((p) => (conSigno ? p.descuadre : Math.abs(p.descuadre)));
+    const x = puntos.map((p) => p.movimiento);
+    const n = y.length;
+    const prom = (v: number[]) => v.reduce((a, b) => a + b, 0) / v.length;
+    const mx = prom(x);
+    const my = prom(y);
+    const sxx = x.reduce((acc, v) => acc + (v - mx) ** 2, 0);
+    const sxy = x.reduce((acc, v, i) => acc + (v - mx) * (y[i] - my), 0);
 
-    const formula = (valores: number[]) => {
-      const abs = valores.map((v) => Math.abs(v));
-      const promedio = abs.reduce((a, b) => a + b, 0) / abs.length;
-      const varianza = abs.reduce((acc, v) => acc + (v - promedio) ** 2, 0) / (abs.length - 1);
-      const desviacion = Math.sqrt(varianza);
+    // ¿ALCANZA LA MUESTRA PARA SEPARAR LOS DOS TÉRMINOS?
+    //
+    // Hace falta que los tramos sean de tamaños DISTINTOS. Si todos mueven
+    // más o menos lo mismo, cualquier recta que pase por la nube explica los
+    // datos igual de bien: el ajuste puede poner el ruido en el término fijo
+    // o en el proporcional, y elegiría uno al azar. En ese caso se elige el
+    // FIJO a propósito -- es el que no crece, y equivocarse hacia el fijo
+    // deja el control más estricto cuando el tanque empiece a mover más.
+    //
+    // El corte en 15 % de dispersión relativa es un criterio, no una ley.
+    // Lo que importa es que exista y que la pantalla lo pueda decir, en vez
+    // de servir una pendiente inventada con cara de medición.
+    const desvX = Math.sqrt(sxx / Math.max(1, n - 1));
+    const hayDispersion = mx > 0 && sxx > 0 && desvX / mx >= 0.15;
+
+    let pendiente = hayDispersion ? sxy / sxx : 0;
+    // Una pendiente negativa diría que cuanto más se mueve el tanque, MENOS
+    // se equivoca el medidor. No hay física que lo sostenga: es ruido de la
+    // muestra. Se trata como "no hay parte proporcional".
+    if (!(pendiente > 0)) pendiente = 0;
+
+    const corte = my - pendiente * mx;
+    const residuos = y.map((v, i) => v - (corte + pendiente * x[i]));
+    // Grados de libertad: n − 2 cuando se estimaron dos parámetros, n − 1
+    // cuando la pendiente quedó en 0 y esto es el estimador de siempre.
+    const gl = Math.max(1, n - (pendiente > 0 ? 2 : 1));
+    const desviacion = Math.sqrt(residuos.reduce((a, r) => a + r * r, 0) / gl);
+
+    return { corte, pendiente, residuos, desviacion, hayDispersion };
+  }
+
+  /** El par (piso, %) del BALANCE del tanque: lo usan el umbral por tramo y
+   *  el del ciclo, que miran las mismas dos varillas y los mismos medidores
+   *  -- lo único que los distingue es cuánto movimiento suma cada uno.
+   *
+   *  Devolver un solo par para los dos es el punto: hasta 0101 eran dos
+   *  números calibrados por separado (y antes de eso, dos números
+   *  inventados) que nada obligaba a ser coherentes entre sí. */
+  private static calibrarPar<T extends PuntoAjuste>(
+    puntos: T[],
+    capacidad: number,
+    opciones: { conSigno?: boolean; pctFijo?: number } = {}
+  ) {
+    if (puntos.length < CombustibleService.MINIMO_MUESTRA) {
+      return CombustibleService.muestraInsuficiente(puntos.length, puntos);
+    }
+    const conSigno = opciones.conSigno ?? false;
+
+    const formula = (ps: T[]) => {
+      const fit = CombustibleService.ajusteLineal(ps, conSigno);
+      // El piso NUNCA baja de la dilatación térmica: el combustible cambia
+      // de volumen con la temperatura del día, y eso escala con lo que hay
+      // ALMACENADO (o sea con la capacidad), no con lo que se movió. Es el
+      // mismo piso de 1 % que traía el estimador viejo, ahora con su razón
+      // explícita y expresado en litros.
+      const pisoMinimo = (capacidad * CombustibleService.PISO_MINIMO_PCT_CAPACIDAD) / 100;
+      // Con signo (la ventana) el nivel de la recta NO entra: solo la
+      // dispersión alrededor de ella. Es la misma decisión que ya tomaba
+      // `calibrarConSigno` y la razón de ser de ese control -- un faltante
+      // sostenido corre la recta entera hacia abajo sin ensanchar la nube,
+      // así que tolerar el nivel sería tolerar exactamente el robo que la
+      // ventana existe para encontrar.
+      const piso = conSigno
+        ? Math.max(pisoMinimo, 2 * fit.desviacion)
+        : Math.max(pisoMinimo, Math.max(0, fit.corte) + 2 * fit.desviacion);
       return {
-        promedio,
-        desviacion,
-        sugerido: Math.min(100, Math.max(CombustibleService.PISO_PCT, promedio + 2 * desviacion)),
+        piso,
+        // La ventana no estima su propio porcentaje: usa el del balance.
+        // El error del medidor es una propiedad del medidor, no de la
+        // ventana desde la que se lo mire -- y estimarlo con los valores
+        // CON SIGNO sería justamente absorber en la pendiente un robo
+        // proporcional al despacho.
+        pct: opciones.pctFijo ?? fit.pendiente * 100,
+        hayDispersion: fit.hayDispersion,
+        residuos: fit.residuos,
       };
     };
-    const { promedio, desviacion, sugerido } = formula(valoresPct);
+
+    const base = formula(puntos);
+    const redondear = (v: { piso: number; pct: number }) => ({
+      piso: Number(v.piso.toFixed(2)),
+      pct: Number(v.pct.toFixed(2)),
+    });
+
+    // Los atípicos se buscan en los RESIDUOS, no en el descuadre crudo: un
+    // faltante grande en un tramo que movió mucho puede ser normal, y uno
+    // chico en un tramo quieto puede no serlo. Lo que delata a una medición
+    // es cuánto se aparta de lo que el resto del tanque hace, no su tamaño.
+    const { indices } = CombustibleService.detectarAtipicos(base.residuos);
+    const limpios = puntos.filter((_, i) => !indices.includes(i));
+    const atipicos =
+      indices.length === 0
+        ? null
+        : {
+            cantidad: indices.length,
+            descuadres: indices.map((i) => Number(puntos[i].descuadre.toFixed(2))),
+            mediciones: indices.map((i) => puntos[i]),
+            sinEllos:
+              limpios.length >= CombustibleService.MINIMO_MUESTRA
+                ? redondear(formula(limpios))
+                : null,
+          };
 
     return {
       muestraSuficiente: true as const,
-      tamanioMuestra: valoresPct.length,
+      tamanioMuestra: puntos.length,
       minimoRequerido: CombustibleService.MINIMO_MUESTRA,
-      sugerido: Number(sugerido.toFixed(1)),
-      promedio: Number(promedio.toFixed(2)),
-      desviacion: Number(desviacion.toFixed(2)),
-      ...CombustibleService.conAtipicos(valoresPct, muestra, (v) => formula(v).sugerido),
-      muestra,
+      ...redondear(base),
+      /** false = todos los tramos mueven parecido y no se pudo separar el
+       *  término proporcional del fijo. La pantalla tiene que decirlo: la
+       *  sugerencia sigue sirviendo, pero es un piso solo. */
+      movimientoConDispersion: base.hayDispersion,
+      /** El movimiento típico y qué tolerancia da el par ahí. Es la forma de
+       *  leer la sugerencia sin hacer la cuenta a mano: "en un tramo normal
+       *  de este tanque, esto tolera X litros". */
+      movimientoTipico: Number(
+        CombustibleService.mediana(puntos.map((p) => p.movimiento)).toFixed(2)
+      ),
+      atipicos,
+      muestra: puntos,
     };
   }
 
-  /** El estadístico de la VENTANA: 2 desviaciones de la diferencia CON SIGNO,
-   *  sin sumar el promedio y sin multiplicar por la cantidad de tramos.
-   *
-   *  Por qué no se multiplica por √n aunque la ventana sume decenas de tramos:
-   *  los tramos no son independientes. Cada uno arranca en la varilla donde
-   *  terminó el anterior, así que el error de una varilla entra dos veces con
-   *  signo contrario (+e en el tramo que termina en ella, −e en el que arranca)
-   *  y se cancela. La suma de la ventana telescopa a
-   *  `medido_final − medido_inicial − recepciones + despachos`: arrastra el error
-   *  de DOS varillas, igual que un tramo solo. Con √n la sugerencia salía varias
-   *  veces más grande que el ruido real, y un umbral así deja pasar el robo de a
-   *  poco que este control existe para agarrar.
-   *
-   *  Por qué la desviación respecto del promedio CON SIGNO, y no de |x| como los
-   *  otros tres: un robo sistemático (siempre falta lo mismo) corre el promedio
-   *  pero no agranda la desviación, así que no infla la sugerencia. Con |x| el
-   *  robo pasaría por ruido y la fórmula propondría tolerarlo.
-   *
-   *  Lo que NO modela: el error del contómetro o del vale, que no telescopa y sí
-   *  crece con los despachos de la ventana. Sumarlo bien pide la tolerancia real
-   *  del medidor, que es un dato del cliente y no un número para inventar. Hasta
-   *  entonces lo cubre el piso de 1 %. */
-  private static calibrarConSigno<T>(valoresPct: number[], muestra: T[]) {
-    const n = valoresPct.length;
-    if (n < CombustibleService.MINIMO_MUESTRA) {
-      return CombustibleService.muestraInsuficiente(n, muestra);
-    }
-
-    const formula = (valores: number[]) => {
-      const prom = valores.reduce((a, b) => a + b, 0) / valores.length;
-      const varianza = valores.reduce((acc, v) => acc + (v - prom) ** 2, 0) / (valores.length - 1);
-      const desv = Math.sqrt(varianza);
-      return {
-        promedio: prom,
-        desviacion: desv,
-        sugerido: Math.min(100, Math.max(CombustibleService.PISO_PCT, 2 * desv)),
-      };
-    };
-    const { promedio, desviacion, sugerido } = formula(valoresPct);
-
-    return {
-      muestraSuficiente: true as const,
-      tamanioMuestra: n,
-      minimoRequerido: CombustibleService.MINIMO_MUESTRA,
-      sugerido: Number(sugerido.toFixed(1)),
-      // Con signo: la tendencia por tramo. No entra en la sugerencia, pero lejos
-      // de 0 dice que algo falta (o sobra) siempre para el mismo lado.
-      promedio: Number(promedio.toFixed(2)),
-      desviacion: Number(desviacion.toFixed(2)),
-      ...CombustibleService.conAtipicos(valoresPct, muestra, (v) => formula(v).sugerido),
-      muestra,
-    };
+  private static mediana(xs: number[]) {
+    if (xs.length === 0) return 0;
+    const o = [...xs].sort((a, b) => a - b);
+    const m = Math.floor(o.length / 2);
+    return o.length % 2 ? o[m] : (o[m - 1] + o[m]) / 2;
   }
 
   /** Las cuatro sugerencias del tanque, en secuencia sobre el mismo cliente: pg
@@ -4311,13 +4413,28 @@ export class CombustibleService {
     );
     const diasVentana = await this.repository.getDiasVentanaDescuadre(client, tenantId);
 
+    const puntos = CombustibleService.puntosDeTramo(intervalos);
+    const capacidad = intervalos.find((i) => i.capacidad > 0)?.capacidad ?? 0;
+
+    // UN solo par para el tramo y el ciclo: son la misma varilla y los
+    // mismos medidores, y lo único que los separa es cuánto movimiento
+    // acumula cada ventana. Esa es la coherencia que el modelo viejo no
+    // podía dar, con tres números calibrados por separado.
+    const balance = CombustibleService.calibrarPar(puntos, capacidad);
+    const pctDelBalance = "pct" in balance ? balance.pct : 0;
+
     return {
       diferencia,
-      descuadre: CombustibleService.calibrarDescuadre(intervalos),
-      ciclo: CombustibleService.calibrarCiclo(intervalos),
-      // Los días no entran en la cuenta (ver calibrarConSigno): viajan para que
-      // la exportación diga sobre cuántos días suma la alerta.
-      ventana: { ...CombustibleService.calibrarVentana(intervalos), diasVentana },
+      balance,
+      // La ventana comparte el porcentaje (mismo medidor) y calcula su
+      // propio piso con los valores CON SIGNO: ver `calibrarPar`.
+      ventana: {
+        ...CombustibleService.calibrarPar(puntos, capacidad, {
+          conSigno: true,
+          pctFijo: pctDelBalance,
+        }),
+        diasVentana,
+      },
     };
   }
 
@@ -4339,102 +4456,63 @@ export class CombustibleService {
    *  aplicar, que es feo pero visible; lo peligroso sería que pareciera
    *  correcto. */
   private static puntosDeTramo(intervalos: IntervaloCalibracion[]) {
-    return intervalos
-      .filter((i) => i.capacidad > 0)
-      .map((i) => ({
-        descuadreLitros: Number(i.descuadre.toFixed(2)),
-        descuadrePct: (i.descuadre / i.capacidad) * 100,
-        leidoEn: i.leido_en,
-        // Los pasos de la cuenta, para la exportación: con esto cada fila del
-        // archivo muestra de dónde sale su descuadre, no solo el resultado.
-        leidoEnAnterior: i.leido_en_anterior,
-        nivelAnterior: i.nivel_anterior,
-        despachos: i.despachos,
-        recepciones: i.recepciones,
-        nivelMedido: i.nivel,
-        origen: i.origen,
-      }));
+    return CombustibleService.tramosMedidos(intervalos).map((i) => ({
+      descuadre: Number(i.descuadre.toFixed(2)),
+      // El movimiento: lo que pasó por los medidores en el tramo. Suma, no
+      // resta -- el error de medir una recepción no se compensa con el de
+      // medir un despacho.
+      movimiento: Number((i.despachos + i.recepciones).toFixed(2)),
+      descuadreLitros: Number(i.descuadre.toFixed(2)),
+      leidoEn: i.leido_en,
+      // Los pasos de la cuenta, para la exportación: con esto cada fila del
+      // archivo muestra de dónde sale su descuadre, no solo el resultado.
+      leidoEnAnterior: i.leido_en_anterior,
+      nivelAnterior: i.nivel_anterior,
+      despachos: i.despachos,
+      recepciones: i.recepciones,
+      nivelMedido: i.nivel,
+      origen: i.origen,
+    }));
   }
 
-  /** Umbral de descuadre POR TRAMO: un punto por cada intervalo entre dos
-   *  lecturas consecutivas (ver `evaluarDescuadre`). */
-  private static calibrarDescuadre(intervalos: IntervaloCalibracion[]) {
-    const puntos = CombustibleService.puntosDeTramo(intervalos);
-    return CombustibleService.calibrar(
-      puntos.map((p) => p.descuadrePct),
-      puntos
-    );
-  }
-
-  /** Umbral acumulado de la VENTANA: los mismos tramos que el de descuadre,
-   *  con otro estadístico (ver `calibrarConSigno`). */
-  private static calibrarVentana(intervalos: IntervaloCalibracion[]) {
-    const puntos = CombustibleService.puntosDeTramo(intervalos);
-    return CombustibleService.calibrarConSigno(
-      puntos.map((p) => p.descuadrePct),
-      puntos
-    );
-  }
-
-  /** Umbral de descuadre del CICLO. La muestra es un punto por ciclo cerrado
-   *  (de una recepción a la siguiente), no por lectura.
+  /** LOS TRAMOS QUE SON UNA MEDICIÓN DE VERDAD.
    *
-   *  No hace falta volver a la base: el descuadre acumulado de un ciclo es la
-   *  SUMA de los descuadres de sus intervalos -- telescopan, porque el nivel
-   *  final de un intervalo es el inicial del siguiente. Un intervalo que
-   *  contiene una recepción es el que abre el ciclo nuevo.
+   *  Saca de la muestra los tramos que tocan la lectura `inicial` del alta
+   *  cuando esa lectura NO es el arranque legítimo de la historia. Esa
+   *  lectura no es una varilla: es el número que alguien escribió en el
+   *  formulario al registrar el tanque, con la fecha del día del alta.
    *
-   *  El ciclo en curso NO entra en la muestra: todavía puede moverse, y un
-   *  ciclo a medias mediría menos acumulación de la que va a terminar
-   *  teniendo, tirando la sugerencia para abajo. */
-  private static calibrarCiclo(intervalos: IntervaloCalibracion[]) {
-    type Ciclo = {
-      descuadreLitros: number;
-      capacidad: number;
-      intervalos: number;
-      desde: Date;
-      hasta: Date;
-    };
-    const ciclos: Ciclo[] = [];
-    let actual: Ciclo | null = null;
-
-    for (const i of intervalos) {
-      // Solo una carga de verdad abre un ciclo (ver findSaldoCiclo): una
-      // recepción de 1 L no cierra un período de consumo.
-      if (i.recepcionesAncla > 0) {
-        // Entró combustible: cierra el ciclo anterior y arranca uno nuevo.
-        if (actual) ciclos.push(actual);
-        actual = {
-          descuadreLitros: 0,
-          capacidad: i.capacidad,
-          intervalos: 0,
-          desde: i.leido_en,
-          hasta: i.leido_en,
-        };
-        continue;
-      }
-      if (!actual) continue; // Todavía no hubo ninguna recepción: sin ciclo que medir.
-      actual.descuadreLitros += i.descuadre;
-      actual.intervalos += 1;
-      actual.hasta = i.leido_en;
-    }
-    // `actual` queda afuera a propósito: es el ciclo en curso.
-
-    const puntos = ciclos
-      .filter((c) => c.capacidad > 0 && c.intervalos > 0)
-      .map((c) => ({
-        descuadreLitros: Number(c.descuadreLitros.toFixed(2)),
-        descuadrePct: (c.descuadreLitros / c.capacidad) * 100,
-        intervalos: c.intervalos,
-        // Para que la exportación diga QUÉ ciclo es cada fila.
-        desde: c.desde,
-        hasta: c.hasta,
-      }));
-
-    return CombustibleService.calibrar(
-      puntos.map((p) => p.descuadrePct),
-      puntos
-    );
+   *  Por qué importa tanto, y es un bug abierto desde el 2026-09-11: cuando
+   *  el historial se carga DESPUÉS y fechado hacia atrás, esa lectura queda
+   *  al final de la línea de tiempo con el nivel del PRINCIPIO, y el tramo
+   *  contra la última varilla real da un salto de la nada. En el tenant de
+   *  pruebas esa sola fila aportaba el 82 % de la varianza y llevaba la
+   *  sugerencia de 1,8 % a 14,5 % -- una sugerencia que, aceptada, toleraba
+   *  justo el robo que había que encontrar.
+   *
+   *  Dos casos, y el segundo es el que se pensó de más:
+   *
+   *  1. El tramo TERMINA en una `inicial`. Siempre es artefacto: el final de
+   *     un tramo nunca es la lectura más vieja del tanque (esa no tiene
+   *     anterior contra la cual formar tramo), así que una `inicial` ahí
+   *     está necesariamente fuera de lugar.
+   *  2. El tramo ARRANCA en una `inicial`. Acá hay que distinguir: si es la
+   *     lectura más vieja del tanque, es el comienzo legítimo de la historia
+   *     y el tramo sirve. Si no lo es --una `inicial` que quedó en el MEDIO
+   *     porque se cargó historial para los dos lados-- ensucia también el
+   *     tramo que arranca en ella.
+   *
+   *  `findUltimoMovimiento` ya ignoraba la `inicial` desde #157; la muestra
+   *  de calibración era el último lugar donde seguía entrando. */
+  private static tramosMedidos(intervalos: IntervaloCalibracion[]) {
+    return intervalos.filter((i) => {
+      if (i.capacidad <= 0) return false;
+      if (i.origen === "inicial") return false;
+      // `orden` es el lugar de la lectura FINAL, así que la inicial del
+      // tramo está en `orden - 1`: legítima solo si es la número 1.
+      if (i.origenAnterior === "inicial" && i.orden - 1 > 1) return false;
+      return true;
+    });
   }
 
   // ── Grifos externos (migrations/0063) ───────────────────────────────

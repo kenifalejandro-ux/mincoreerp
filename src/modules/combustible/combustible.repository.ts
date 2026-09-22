@@ -4265,6 +4265,10 @@ export class CombustibleRepository {
       nivel_antes: number;
       nivel_despues: number;
       salidas: number;
+      /** La capacidad del tanque: el piso sugerido no puede quedar por
+       *  debajo de la dilatación térmica, que escala con el volumen
+       *  almacenado (ver PISO_MINIMO_PCT_CAPACIDAD). */
+      capacidad: number;
     }>
   > {
     // Los pasos de la cuenta (nivel antes, nivel después, salidas del medio)
@@ -4279,12 +4283,14 @@ export class CombustibleRepository {
       nivel_antes: string;
       nivel_despues: string;
       salidas: string;
+      capacidad_total: string;
     }>(
       `
       SELECT r.cantidad, dif.diferencia_litros, r.recibido_en,
              NULLIF(CONCAT_WS(' ', r.tipo_documento, r.numero_documento), '') AS documento,
-             dif.nivel_antes, dif.nivel_despues, dif.salidas
+             dif.nivel_antes, dif.nivel_despues, dif.salidas, c.capacidad_total
       FROM combustible_recepciones r
+      JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
       ${LATERAL_DIFERENCIA_RECEPCION}
       WHERE r.tenant_id = $1 AND r.combustible_id = $2 AND r.anulada_en IS NULL
         AND dif.diferencia_litros IS NOT NULL
@@ -4303,6 +4309,7 @@ export class CombustibleRepository {
       nivel_antes: Number(f.nivel_antes),
       nivel_despues: Number(f.nivel_despues),
       salidas: Number(f.salidas),
+      capacidad: Number(f.capacidad_total),
     }));
   }
 
@@ -4505,6 +4512,10 @@ export class CombustibleRepository {
       nivel: number;
       despachos: number;
       origen: string;
+      /** El origen de la lectura donde arranca el tramo. */
+      origenAnterior: string | null;
+      /** Lugar de la lectura FINAL en la línea de tiempo (1 = la más vieja). */
+      orden: number;
     }>
   > {
     // Además del descuadre, los pasos que lo producen (nivel anterior,
@@ -4523,12 +4534,21 @@ export class CombustibleRepository {
       nivel: string;
       despachos: string;
       origen: string;
+      origen_anterior: string | null;
+      orden: string;
     }>(
       `
       WITH lecturas AS (
         SELECT l.nivel, l.leido_en, l.origen,
                LAG(l.nivel) OVER (ORDER BY l.leido_en, l.id) AS nivel_anterior,
-               LAG(l.leido_en) OVER (ORDER BY l.leido_en, l.id) AS leido_en_anterior
+               LAG(l.leido_en) OVER (ORDER BY l.leido_en, l.id) AS leido_en_anterior,
+               -- El origen de la lectura donde ARRANCA el tramo y su lugar en
+               -- la línea de tiempo. Los dos hacen falta para descartar los
+               -- tramos que tocan la lectura "inicial" del alta sin descartar
+               -- la que legítimamente abre la historia -- ver tramosMedidos
+               -- en el service.
+               LAG(l.origen) OVER (ORDER BY l.leido_en, l.id) AS origen_anterior,
+               ROW_NUMBER() OVER (ORDER BY l.leido_en, l.id) AS orden
         FROM combustible_lecturas l
         WHERE l.tenant_id = $1 AND l.combustible_id = $2 AND l.anulada_en IS NULL
       )
@@ -4546,7 +4566,9 @@ export class CombustibleRepository {
         le.nivel_anterior,
         le.nivel,
         COALESCE(des.total, 0) AS despachos,
-        le.origen
+        le.origen,
+        le.origen_anterior,
+        le.orden
       FROM lecturas le
       JOIN combustible c ON c.id = $2 AND c.tenant_id = $1
       LEFT JOIN LATERAL (
@@ -4578,6 +4600,8 @@ export class CombustibleRepository {
       nivel: Number(f.nivel),
       despachos: Number(f.despachos),
       origen: f.origen,
+      origenAnterior: f.origen_anterior,
+      orden: Number(f.orden),
     }));
   }
 
