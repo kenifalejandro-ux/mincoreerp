@@ -60,9 +60,20 @@ const requestLogger = pinoHttp({
 //   uno cree que tiene monitoreo cuando no lo tiene. El host sale del DSN
 //   (VITE_SENTRY_DSN); si alguna vez se cambia de proyecto u organización
 //   en Sentry, hay que actualizarlo acá también.
+// - google.com/recaptcha y gstatic.com/recaptcha en scriptSrc/frameSrc: el
+//   script de reCAPTCHA v3 (client/src/services/recaptcha.ts) y el iframe
+//   invisible que arma para el desafío. Sin esto el navegador bloquea la
+//   carga del script y el login nunca genera el token -- el servidor
+//   responde 400 "Token de reCAPTCHA faltante" sin que se vea nada raro en
+//   Network más que un script bloqueado.
 const cspDirectives = {
   defaultSrc: ["'self'"],
-  scriptSrc: ["'self'", "https://accounts.google.com"],
+  scriptSrc: [
+    "'self'",
+    "https://accounts.google.com",
+    "https://www.google.com/recaptcha/",
+    "https://www.gstatic.com/recaptcha/",
+  ],
   styleSrc: [
     "'self'",
     "'unsafe-inline'",
@@ -72,7 +83,7 @@ const cspDirectives = {
   fontSrc: ["'self'", "https://fonts.gstatic.com"],
   imgSrc: ["'self'", "data:"],
   connectSrc: ["'self'", "https://o4511866017480704.ingest.us.sentry.io"],
-  frameSrc: ["https://accounts.google.com"],
+  frameSrc: ["https://accounts.google.com", "https://www.google.com/recaptcha/"],
 };
 
 const helmetMiddleware = helmet({
