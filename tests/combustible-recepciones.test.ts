@@ -316,6 +316,143 @@ describe("combustible: recepciones y costo ponderado (Fase C)", () => {
     expect(fuera.body.error).toContain("tolerancia");
   });
 
+  // ── Excedente de recepción, modo flexible (migración 0102) ─────────────
+
+  it("modo 'flexible' responde 409 con el detalle en vez de rechazar, y no guarda nada", async () => {
+    const tanqueId = await crearTanque({
+      capacidad_total: 1000,
+      nivel_actual: 800,
+      modo_excedente_recepcion: "flexible",
+    });
+
+    // 800 + 300 = 1.100 > 1.000: mismo caso que el rechazo duro de arriba,
+    // pero acá el tanque puede decidir.
+    const res = await agente
+      .post("/api/erp/combustible/recepciones")
+      .send(payloadRecepcion(tanqueId, { cantidad: 300 }));
+
+    expect(res.status).toBe(409);
+    expect(res.body.requiereDecision).toBe(true);
+    expect(res.body.detalle).toMatchObject({
+      capacidad: 1000,
+      nivelMedido: 800,
+      cantidadRecepcion: 300,
+      totalTrasRecepcion: 1100,
+      techo: 1000,
+      excedenteLitros: 100,
+    });
+
+    // No quedó nada guardado: la recepción es reversible mientras no se
+    // decida.
+    const listado = await agente
+      .get("/api/erp/combustible/recepciones")
+      .query({ combustible_id: tanqueId });
+    expect(listado.body.data.length).toBe(0);
+  });
+
+  it("reenviar con decision_excedente='aceptar' guarda la recepción y genera la alerta + el correo", async () => {
+    const tanqueId = await crearTanque({
+      capacidad_total: 1000,
+      nivel_actual: 800,
+      modo_excedente_recepcion: "flexible",
+    });
+    const payload = payloadRecepcion(tanqueId, { cantidad: 300 });
+
+    const rechazo = await agente.post("/api/erp/combustible/recepciones").send(payload);
+    expect(rechazo.status).toBe(409);
+
+    const aceptado = await agente
+      .post("/api/erp/combustible/recepciones")
+      .send({ ...payload, decision_excedente: "aceptar" });
+    expect(aceptado.status).toBe(201);
+    expect(Number(aceptado.body.cantidad)).toBe(300);
+
+    const alertas = await agente.get("/api/erp/combustible/alertas").query({ pageSize: 100 });
+    const alerta = alertas.body.data.find(
+      (a: { tipo: string; recepcion_id: number }) =>
+        a.tipo === "sobrestock_recepcion" && a.recepcion_id === aceptado.body.id
+    );
+    expect(alerta).toBeDefined();
+    expect(alerta.detalle.excedenteLitros).toBe(100);
+  });
+
+  it("un excedente que supera limite_excedente_pct se rechaza igual, aunque el tanque sea flexible", async () => {
+    // Tope adicional: 5% de 1.000 = 50. Un excedente de 100 lo supera.
+    const tanqueId = await crearTanque({
+      capacidad_total: 1000,
+      nivel_actual: 800,
+      modo_excedente_recepcion: "flexible",
+      limite_excedente_pct: 5,
+    });
+
+    const res = await agente
+      .post("/api/erp/combustible/recepciones")
+      .send(payloadRecepcion(tanqueId, { cantidad: 300 }));
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("supera la capacidad del tanque");
+    expect(res.body.requiereDecision).toBeUndefined();
+  });
+
+  it("un excedente dentro de limite_excedente_pct sí admite decisión", async () => {
+    // Tope adicional: 20% de 1.000 = 200. Un excedente de 100 entra.
+    const tanqueId = await crearTanque({
+      capacidad_total: 1000,
+      nivel_actual: 800,
+      modo_excedente_recepcion: "flexible",
+      limite_excedente_pct: 20,
+    });
+
+    const res = await agente
+      .post("/api/erp/combustible/recepciones")
+      .send(payloadRecepcion(tanqueId, { cantidad: 300 }));
+
+    expect(res.status).toBe(409);
+    expect(res.body.requiereDecision).toBe(true);
+  });
+
+  it("POST /recepciones/resolver-excedente con 'rechazar' no guarda nada y queda auditado", async () => {
+    const tanqueId = await crearTanque({
+      capacidad_total: 1000,
+      nivel_actual: 800,
+      modo_excedente_recepcion: "flexible",
+    });
+
+    const res = await agente.post("/api/erp/combustible/recepciones/resolver-excedente").send({
+      combustible_id: tanqueId,
+      cantidad: 300,
+      decision: "rechazar",
+      motivo: "Se devuelve al proveedor, error de pedido",
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+
+    const listado = await agente
+      .get("/api/erp/combustible/recepciones")
+      .query({ combustible_id: tanqueId });
+    expect(listado.body.data.length).toBe(0);
+  });
+
+  it("POST /recepciones/resolver-excedente con 'contactar_admin' tampoco guarda nada", async () => {
+    const tanqueId = await crearTanque({
+      capacidad_total: 1000,
+      nivel_actual: 800,
+      modo_excedente_recepcion: "flexible",
+    });
+
+    const res = await agente.post("/api/erp/combustible/recepciones/resolver-excedente").send({
+      combustible_id: tanqueId,
+      cantidad: 300,
+      decision: "contactar_admin",
+    });
+    expect(res.status).toBe(200);
+
+    const listado = await agente
+      .get("/api/erp/combustible/recepciones")
+      .query({ combustible_id: tanqueId });
+    expect(listado.body.data.length).toBe(0);
+  });
+
   // ── Documento configurable ────────────────────────────────────────────
 
   it("con requiere_documento=true (default) la factura/guía es obligatoria", async () => {

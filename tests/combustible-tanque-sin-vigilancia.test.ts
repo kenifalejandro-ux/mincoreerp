@@ -210,6 +210,8 @@ describe("combustible: el tanque que OPERA ciego (migración 0082)", () => {
       capacidad_total: Number(f.capacidad_total),
       nivel_minimo: Number(f.nivel_minimo),
       tolerancia_capacidad_pct: Number(f.tolerancia_capacidad_pct),
+      modo_excedente_recepcion: f.modo_excedente_recepcion,
+      limite_excedente_pct: f.limite_excedente_pct === null ? null : Number(f.limite_excedente_pct),
       requiere_documento: f.requiere_documento,
       umbral_diferencia_pct: null,
       umbral_descuadre_pct: 2,

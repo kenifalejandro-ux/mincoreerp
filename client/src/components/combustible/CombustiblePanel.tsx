@@ -72,6 +72,12 @@ interface Tanque {
   // Margen sobre capacidad_total (en %) antes de bloquear una recepción, y
   // si este tanque exige factura/guía. Los dos se editan en el ABM.
   tolerancia_capacidad_pct: string;
+  // Qué hacer cuando una recepción supera capacidad + tolerancia (0102).
+  // 'estricto' rechaza siempre (comportamiento de siempre). 'flexible' deja
+  // decidir (aceptar/rechazar/contactar admin), salvo que el excedente
+  // supere limite_excedente_pct.
+  modo_excedente_recepcion: "estricto" | "flexible";
+  limite_excedente_pct: string | null;
   requiere_documento: boolean;
   // Totalizador acumulativo del surtidor (0094). Apagado hasta confirmar con
   // el cliente que sus surtidores lo tienen y que el grifero lo anota.
@@ -575,7 +581,8 @@ interface AlertaCombustible {
     | "totalizador_retroceso"
     | "precinto_alterado"
     | "precinto_reemplazado"
-    | "equipo_de_otro_grifo";
+    | "equipo_de_otro_grifo"
+    | "sobrestock_recepcion";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -1312,6 +1319,7 @@ const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   precinto_alterado: "Precinto que no coincide",
   precinto_reemplazado: "Precinto cambiado fuera de una recepción",
   equipo_de_otro_grifo: "Equipo cargado en otro grifo",
+  sobrestock_recepcion: "Sobrestock de recepción aceptado",
 };
 
 /** El `detalle` es JSONB libre y cada tipo de alerta guarda cosas
@@ -1395,6 +1403,19 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     return (
       `Se registraron ${cantidadRegistrada ?? "?"} ${unidad ?? ""} y la guía dice ` +
       `${cantidadDocumento ?? "?"} (${(diferencia ?? 0) > 0 ? "+" : ""}${diferencia ?? "?"})`
+    );
+  }
+  if (a.tipo === "sobrestock_recepcion") {
+    const { cantidadRecepcion, totalTrasRecepcion, excedenteLitros, unidad } = a.detalle as {
+      cantidadRecepcion?: number;
+      totalTrasRecepcion?: number;
+      excedenteLitros?: number;
+      unidad?: string;
+    };
+    return (
+      `Se aceptó una recepción de ${cantidadRecepcion ?? "?"} ${unidad ?? ""} que dejó el ` +
+      `tanque en ${totalTrasRecepcion ?? "?"} ${unidad ?? ""} -- ${excedenteLitros ?? "?"} ` +
+      `${unidad ?? ""} por encima de su capacidad`
     );
   }
   if (a.tipo === "recepcion_sin_validar") {
@@ -1868,6 +1889,8 @@ const FORM_INICIAL = {
   // Fase C (0064). Los defaults reproducen el comportamiento anterior a esa
   // migración: sin margen de tolerancia y con documento exigido.
   tolerancia_capacidad_pct: "0",
+  modo_excedente_recepcion: "estricto" as Tanque["modo_excedente_recepcion"],
+  limite_excedente_pct: "",
   requiere_documento: true,
   usa_totalizador: false,
   totalizador_tolerancia: "1",
@@ -2554,6 +2577,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       moneda: t.moneda,
       activo: t.activo,
       tolerancia_capacidad_pct: t.tolerancia_capacidad_pct,
+      modo_excedente_recepcion: t.modo_excedente_recepcion,
+      limite_excedente_pct: t.limite_excedente_pct ?? "",
       requiere_documento: t.requiere_documento,
       usa_totalizador: t.usa_totalizador ?? false,
       totalizador_tolerancia: t.totalizador_tolerancia ?? "1",
@@ -2599,6 +2624,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             moneda: formData.moneda,
             activo: formData.activo,
             tolerancia_capacidad_pct: Number(formData.tolerancia_capacidad_pct),
+            modo_excedente_recepcion: formData.modo_excedente_recepcion,
+            limite_excedente_pct: aNumeroONull(formData.limite_excedente_pct),
             requiere_documento: formData.requiere_documento,
             // Con varios surtidores el totalizador se configura en cada uno
             // (0098): no se manda desde acá.
@@ -2634,6 +2661,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             nivel_minimo: Number(formData.nivel_minimo),
             moneda: formData.moneda,
             tolerancia_capacidad_pct: Number(formData.tolerancia_capacidad_pct),
+            modo_excedente_recepcion: formData.modo_excedente_recepcion,
+            limite_excedente_pct: aNumeroONull(formData.limite_excedente_pct),
             requiere_documento: formData.requiere_documento,
             usa_totalizador: formData.usa_totalizador,
             totalizador_tolerancia: Number(formData.totalizador_tolerancia),
@@ -4703,6 +4732,58 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     <p className="text-xs text-slate-600">
                       Margen sobre la capacidad antes de rechazar una recepción. 0 = estricto.
                     </p>
+                  </div>
+                  <div className="space-y-1 col-span-2">
+                    <label className="flex items-start gap-2 text-sm text-slate-700">
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={formData.modo_excedente_recepcion === "flexible"}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            modo_excedente_recepcion: e.target.checked ? "flexible" : "estricto",
+                          })
+                        }
+                      />
+                      <span>
+                        Cuando una recepción excede la capacidad, dejar decidir en vez de rechazar
+                        automáticamente
+                      </span>
+                    </label>
+                    <p className="text-xs text-slate-600">
+                      Sin marcar (default): una recepción que supera la capacidad se rechaza siempre
+                      -- se devuelve al proveedor. Marcado: se pregunta qué hacer (aceptar el
+                      sobrestock, rechazar, o pedirle a un admin que lo resuelva) porque el
+                      combustible ya se descargó.
+                    </p>
+                    {formData.modo_excedente_recepcion === "flexible" && (
+                      <div className="pt-1">
+                        <label
+                          htmlFor="tanque-limite-excedente"
+                          className="text-xs font-bold text-slate-700 uppercase"
+                        >
+                          Tope adicional del excedente (%)
+                        </label>
+                        <input
+                          id="tanque-limite-excedente"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          placeholder="Sin tope"
+                          className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                          value={formData.limite_excedente_pct}
+                          onChange={(e) =>
+                            setFormData({ ...formData, limite_excedente_pct: e.target.value })
+                          }
+                        />
+                        <p className="text-xs text-slate-600">
+                          Un excedente que supere este % de la capacidad se rechaza igual, aunque
+                          esté marcada la casilla de arriba -- es el "hasta acá lo asumimos
+                          nosotros". Vacío = sin tope, cualquier excedente admite decidir.
+                        </p>
+                      </div>
+                    )}
                   </div>
                   {/* Los tres umbrales solo se muestran en "Personalizado"
                       (o al editar, donde ya hay una decisión tomada). En

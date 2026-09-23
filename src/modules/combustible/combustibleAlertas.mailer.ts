@@ -852,3 +852,57 @@ export async function enviarCorreoVarillaSinControl(
     ],
   });
 }
+
+/** Se aceptó una recepción a sabiendas de que supera capacidad + tolerancia
+ *  (migración 0102, tanque en modo flexible). La recepción YA quedó guardada
+ *  completa -- esto avisa que el tanque tiene más combustible del que su
+ *  ficha dice que le entra. */
+export async function enviarCorreoSobrestockRecepcion(
+  destinatarios: Destinatario[],
+  params: {
+    tanqueNombre: string;
+    unidad: string;
+    capacidad: number;
+    nivelMedido: number;
+    cantidadRecepcion: number;
+    totalTrasRecepcion: number;
+    excedenteLitros: number;
+  }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: sobrestock aceptado en ${params.tanqueNombre}`,
+    titulo: `${params.tanqueNombre} quedó con ${params.excedenteLitros} ${params.unidad} de más`,
+    lineas: [
+      `Se aceptó una recepción de ${params.cantidadRecepcion} ${params.unidad} sobre un nivel de ` +
+        `${params.nivelMedido} ${params.unidad}, que deja el tanque en ${params.totalTrasRecepcion} ` +
+        `${params.unidad} -- ${params.excedenteLitros} ${params.unidad} por encima de su capacidad ` +
+        `(${params.capacidad} ${params.unidad}).`,
+      "Se decidió a propósito en vez de rechazar la recepción: el combustible ya se había descargado. " +
+        "Revisar qué hacer con el excedente (venta, transferencia a otro tanque, ajuste con el " +
+        "proveedor de la próxima compra).",
+    ],
+  });
+}
+
+/** Un excedente de recepción que NO se aceptó ni se rechazó todavía --
+ *  alguien pidió que un admin lo resuelva a mano (migración 0102). No hay
+ *  recepción guardada: el combustible está fuera del sistema hasta que se
+ *  decida dónde va. */
+export async function enviarCorreoExcedenteRecepcionPendiente(
+  destinatarios: Destinatario[],
+  params: { tanqueNombre: string; unidad: string; cantidadRecepcion: number; motivo: string | null }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: excedente sin resolver en ${params.tanqueNombre}`,
+    titulo: `Recepción de ${params.cantidadRecepcion} ${params.unidad} no cabe en ${params.tanqueNombre}`,
+    lineas: [
+      `Una recepción de ${params.cantidadRecepcion} ${params.unidad} para ${params.tanqueNombre} ` +
+        "supera su capacidad y quedó pendiente de resolver -- no se guardó en el sistema.",
+      params.motivo ? `Motivo que dejó quien la recibió: ${params.motivo}` : "",
+      "Hay que decidir qué hacer con el combustible (dividir entre tanques, devolver al proveedor) " +
+        "y cargarlo a mano cuando esté resuelto.",
+    ].filter(Boolean),
+  });
+}
