@@ -129,6 +129,11 @@ interface RecepcionHistorial {
   // > 1 = la diferencia es de varias entregas entre las mismas dos varillas.
   // No se le puede atribuir a una sola, pero ya no se pierde (5ª auditoría).
   entregas_en_grupo: string | null;
+  // Lo entregado por TODO el grupo, no solo esta fila (0101). Es la base
+  // real del % de tolerancia cuando entregas_en_grupo > 1 -- usar `cantidad`
+  // ahí calcula contra una sola entrega y pinta "excede" recepciones que el
+  // sistema no alertó.
+  cantidad_del_grupo: string | null;
   nivel_antes: string | null;
   nivel_despues: string | null;
   // Validación contra la guía (migración 0088).
@@ -874,10 +879,22 @@ function CampoUmbral({
   onDescargarDetalle?: () => void;
   descargandoDetalle?: boolean;
 }) {
-  const vacio = piso.trim() === "" && pct.trim() === "";
   const numero = (v: string) => (v.trim() === "" ? null : Number(v));
   const p = numero(piso);
   const q = numero(pct);
+  // El % es el interruptor maestro (normalizarUmbrales, combustible.service.ts):
+  // dejarlo vacío apaga el PAR ENTERO al guardar, sin importar qué haya en el
+  // piso -- el piso NO se conserva en ese caso, se pisa a null igual. Antes
+  // acá se preguntaba por los dos campos vacíos ("piso vacío Y pct vacío"), y
+  // eso mentía: con piso=200 y pct vacío mostraba "tolera 200 L fijos" y al
+  // guardar quedaba en null/null, apagando el tanque sin que la pantalla lo
+  // hubiera avisado.
+  const vacio = pct.trim() === "";
+  // El caso que hay que señalar aparte: alguien dejó un piso tipeado
+  // pensando en "solo piso, sin proporcional" -- ese piso se va a perder
+  // porque el % vacío apaga los dos. Para "solo piso" el % correcto es 0,
+  // no vacío.
+  const pisoQueSePierde = vacio && piso.trim() !== "";
 
   return (
     <div className="space-y-1 col-span-2 border-t border-slate-100 pt-3">
@@ -919,6 +936,17 @@ function CampoUmbral({
           <>
             <strong>Vacío = no alertar todavía</strong>, conviene dejarlo así hasta juntar historial
             propio del tanque.
+            {pisoQueSePierde && (
+              <>
+                {" "}
+                <strong className="text-amber-700">
+                  El piso ({piso} {unidad}) NO se va a guardar
+                </strong>{" "}
+                mientras este campo esté vacío: al guardar, los dos quedan sin configurar. Si querés
+                solo el piso sin parte proporcional, poné <strong>0</strong> acá en vez de dejarlo
+                vacío.
+              </>
+            )}
           </>
         ) : (
           <>
@@ -1496,21 +1524,32 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     return `Cargado ${diasDeAtraso ?? "?"} días después de su fecha (se toleran ${diasTolerados ?? "?"})`;
   }
   if (a.tipo === "descuadre_ventana") {
-    const { descuadreLitros, sentido, unidad, diasVentana, tramos, promedioPorTramo } =
-      a.detalle as {
-        descuadreLitros?: number;
-        sentido?: string;
-        unidad?: string;
-        diasVentana?: number;
-        tramos?: number;
-        promedioPorTramo?: number;
-      };
+    const {
+      descuadreLitros,
+      sentido,
+      unidad,
+      diasVentana,
+      tramos,
+      promedioPorTramo,
+      toleradoLitros,
+    } = a.detalle as {
+      descuadreLitros?: number;
+      sentido?: string;
+      unidad?: string;
+      diasVentana?: number;
+      tramos?: number;
+      promedioPorTramo?: number;
+      // La tolerancia ya calculada (0101). Las alertas de antes de esa
+      // migración no la traen -- el histórico tiene que seguir leyéndose.
+      toleradoLitros?: number;
+    };
     // El promedio por tramo es lo que explica por qué NINGÚN control anterior
     // dijo nada: medición por medición el número era normal.
     return (
       `${sentido === "sobra" ? "Sobran" : "Faltan"} ${Math.abs(descuadreLitros ?? 0)} ` +
       `${unidad ?? ""} en ${diasVentana ?? "?"} días (${tramos ?? "?"} mediciones, ` +
-      `~${Math.abs(promedioPorTramo ?? 0)} ${unidad ?? ""} por medición)`
+      `~${Math.abs(promedioPorTramo ?? 0)} ${unidad ?? ""} por medición)` +
+      (toleradoLitros !== undefined ? ` -- tolerancia ${toleradoLitros} ${unidad ?? ""}` : "")
     );
   }
   if (a.tipo === "tope_diario_excedido") {
@@ -1537,11 +1576,14 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
       : `${diasSinMedir} días sin varilla (plazo: ${plazoDias ?? "?"} días)`;
   }
   if (a.tipo === "descuadre_ciclo") {
-    const { descuadreLitros, sentido, unidad, cicloDesde } = a.detalle as {
+    const { descuadreLitros, sentido, unidad, cicloDesde, toleradoLitros } = a.detalle as {
       descuadreLitros?: number;
       sentido?: string;
       unidad?: string;
       cicloDesde?: string;
+      // La tolerancia ya calculada (0101). Las alertas de antes de esa
+      // migración no la traen -- el histórico tiene que seguir leyéndose.
+      toleradoLitros?: number;
     };
     if (descuadreLitros === undefined) return "—";
     const magnitud = Math.abs(descuadreLitros).toLocaleString("es-PE", {
@@ -1550,7 +1592,8 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     const desde = cicloDesde ? new Date(cicloDesde).toLocaleDateString("es-PE") : "?";
     return (
       `${sentido === "falta" ? "Faltan" : "Sobran"} ${magnitud} ${unidad ?? ""} ` +
-      `acumulados desde la carga del ${desde}`
+      `acumulados desde la carga del ${desde}` +
+      (toleradoLitros !== undefined ? ` -- tolerancia ${toleradoLitros} ${unidad ?? ""}` : "")
     );
   }
   if (a.tipo === "descuadre_inventario") {
@@ -1905,6 +1948,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [modalTanqueAbierto, setModalTanqueAbierto] = useState(false);
   const [editandoId, setEditandoId] = useState<number | null>(null);
   const [formData, setFormData] = useState(FORM_INICIAL);
+  /** Los cuatro `<CampoUmbral>` del formulario (diferencia, descuadre, ciclo,
+   *  ventana) comparten esta misma forma de actualizar su par (piso, pct):
+   *  solo cambia el prefijo del campo. Una fábrica en vez de 4 closures
+   *  casi idénticas -- cada una reescribía a mano el mismo
+   *  `setFormData((f) => ({ ...f, [campo]: valor }))` con su propio prefijo
+   *  pegado adentro del template string. */
+  const onCambioUmbral = (prefijo: string) => (campo: "piso" | "pct", valor: string) =>
+    setFormData((f) => ({ ...f, [`${prefijo}_${campo}`]: valor }));
   // Sedes y grifos internos (0097). Con uno solo, nada de esto se ve.
   const grifosInternos = useSedes();
   const [filtroGrifo, setFiltroGrifo] = useState("");
@@ -4667,9 +4718,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         unidad={formData.unidad}
                         piso={formData.umbral_diferencia_piso}
                         pct={formData.umbral_diferencia_pct}
-                        onCambio={(campo, valor) =>
-                          setFormData((f) => ({ ...f, [`umbral_diferencia_${campo}`]: valor }))
-                        }
+                        onCambio={onCambioUmbral("umbral_diferencia")}
                         ayuda={
                           <>
                             Cuánto puede diferir lo facturado de lo que realmente subió la varilla,
@@ -4692,9 +4741,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         unidad={formData.unidad}
                         piso={formData.umbral_descuadre_piso}
                         pct={formData.umbral_descuadre_pct}
-                        onCambio={(campo, valor) =>
-                          setFormData((f) => ({ ...f, [`umbral_descuadre_${campo}`]: valor }))
-                        }
+                        onCambio={onCambioUmbral("umbral_descuadre")}
                         ayuda={
                           <>
                             Cuánto puede diferir el nivel medido de lo que los vales y recepciones
@@ -4717,12 +4764,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         unidad={formData.unidad}
                         piso={formData.umbral_descuadre_ciclo_piso}
                         pct={formData.umbral_descuadre_ciclo_pct}
-                        onCambio={(campo, valor) =>
-                          setFormData((f) => ({
-                            ...f,
-                            [`umbral_descuadre_ciclo_${campo}`]: valor,
-                          }))
-                        }
+                        onCambio={onCambioUmbral("umbral_descuadre_ciclo")}
                         ayuda={
                           <>
                             Lo mismo que el anterior, pero sumando <strong>todo el ciclo</strong>{" "}
@@ -4747,12 +4789,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         unidad={formData.unidad}
                         piso={formData.umbral_descuadre_ventana_piso}
                         pct={formData.umbral_descuadre_ventana_pct}
-                        onCambio={(campo, valor) =>
-                          setFormData((f) => ({
-                            ...f,
-                            [`umbral_descuadre_ventana_${campo}`]: valor,
-                          }))
-                        }
+                        onCambio={onCambioUmbral("umbral_descuadre_ventana")}
                         ayuda={
                           <>
                             El único acumulado que <strong>no se reinicia con una recepción</strong>
@@ -8257,11 +8294,22 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                                 // (0101), la misma cuenta que hace la alerta.
                                 // Comparar solo contra el porcentaje pintaría
                                 // de rojo entregas que el sistema no alertó.
+                                //
+                                // La base del % es lo entregado por TODO el
+                                // GRUPO cuando hay varias recepciones entre
+                                // las mismas dos varillas -- `r.cantidad` es
+                                // solo esta fila. Usar la de esta fila sola
+                                // pintaba "excede" recepciones que la alerta
+                                // real (que sí suma el grupo) no consideraba
+                                // sospechosas.
+                                const cantidadParaLaCuenta = r.cantidad_del_grupo ?? r.cantidad;
                                 const tolerado =
                                   r.umbral_diferencia_pct === null
                                     ? null
                                     : Number(r.umbral_diferencia_piso ?? 0) +
-                                      (Number(r.cantidad) * Number(r.umbral_diferencia_pct)) / 100;
+                                      (Number(cantidadParaLaCuenta) *
+                                        Number(r.umbral_diferencia_pct)) /
+                                        100;
                                 const excede = tolerado !== null && Math.abs(litros) > tolerado;
                                 return (
                                   <span

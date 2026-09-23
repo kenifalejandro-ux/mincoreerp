@@ -4222,6 +4222,13 @@ export class CombustibleRepository {
              -- > 1 = la diferencia es de varias entregas juntas (ver
              -- LATERAL_DIFERENCIA_RECEPCION): la UI lo tiene que decir.
              dif.entregas_en_grupo,
+             -- La cantidad del GRUPO, no de esta fila sola (0101). La
+             -- tolerancia de este umbral se mide contra lo entregado, y con
+             -- varias recepciones agrupadas eso es la suma de todas, igual
+             -- que hace findRecepcionesConDiferenciaExcedida. Sin esto la
+             -- UI no tenía cómo reproducir la misma cuenta que la alerta, y
+             -- pintaba "excede" recepciones que el sistema no había alertado.
+             dif.cantidad_del_grupo,
              validador.nombre AS validada_por_nombre,
              COUNT(*) OVER() AS total_count
       FROM combustible_recepciones r

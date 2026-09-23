@@ -205,7 +205,13 @@ export class CombustibleService {
   ): { campo: string; de: string; a: string }[] {
     // `nivel_actual` no está: no se edita por acá (va por /lecturas).
     // `motivo_ajuste` tampoco: es el motivo del cambio, no un dato del tanque.
-    const CAMPOS = [
+    // Los 8 campos de umbral vienen de PARES_UMBRAL (más abajo en este mismo
+    // archivo) y no listados a mano: es la fuente única para no repetir los
+    // mismos 8 nombres en varios lugares, que es justo lo que su propio
+    // comentario advierte que se desincroniza. Mismo orden que antes (los
+    // cuatro pct, después los cuatro piso) para no mover nada en el diff que
+    // ve el auditor.
+    const CAMPOS: string[] = [
       "codigo",
       "tanque_nombre",
       "tipo_combustible",
@@ -218,18 +224,12 @@ export class CombustibleService {
       "activo",
       "tolerancia_capacidad_pct",
       "requiere_documento",
-      "umbral_diferencia_pct",
-      "umbral_descuadre_pct",
-      "umbral_descuadre_ciclo_pct",
-      "umbral_descuadre_ventana_pct",
-      "umbral_diferencia_piso",
-      "umbral_descuadre_piso",
-      "umbral_descuadre_ciclo_piso",
-      "umbral_descuadre_ventana_piso",
+      ...CombustibleService.PARES_UMBRAL.map(([pct]) => pct),
+      ...CombustibleService.PARES_UMBRAL.map(([, piso]) => piso),
       "usa_totalizador",
       "totalizador_tolerancia",
       "usa_precintos",
-    ] as const;
+    ];
 
     const cambios: { campo: string; de: string; a: string }[] = [];
 
@@ -272,17 +272,41 @@ export class CombustibleService {
     return cambios;
   }
 
-  /** Los cuatro pares (pct, piso) del tanque, en un solo lugar (0101).
+  /** Los cuatro pares (pct, piso) del tanque, en un solo lugar (0101), con
+   *  las dos etiquetas legibles de cada uno.
    *
    *  Está acá y no repetido en cada consumidor porque cada vez que uno de
    *  estos pares se escribe a mano en otro archivo aparece la posibilidad de
    *  que se desincronicen -- y desincronizados no son un bug visible, son un
-   *  control apagado en silencio. */
+   *  control apagado en silencio. `diffFicha` y `evaluarAflojamiento` (más
+   *  abajo) derivan sus listas de acá en vez de retipear los 8 nombres:
+   *  antes de esto tres listas del archivo los repetían a mano, exactamente
+   *  el patrón que este comentario advertía. */
   static readonly PARES_UMBRAL = [
-    ["umbral_diferencia_pct", "umbral_diferencia_piso"],
-    ["umbral_descuadre_pct", "umbral_descuadre_piso"],
-    ["umbral_descuadre_ciclo_pct", "umbral_descuadre_ciclo_piso"],
-    ["umbral_descuadre_ventana_pct", "umbral_descuadre_ventana_piso"],
+    [
+      "umbral_diferencia_pct",
+      "umbral_diferencia_piso",
+      "Umbral de diferencia",
+      "Piso del umbral de diferencia",
+    ],
+    [
+      "umbral_descuadre_pct",
+      "umbral_descuadre_piso",
+      "Umbral de descuadre",
+      "Piso del umbral de descuadre",
+    ],
+    [
+      "umbral_descuadre_ciclo_pct",
+      "umbral_descuadre_ciclo_piso",
+      "Umbral acumulado del ciclo",
+      "Piso del umbral del ciclo",
+    ],
+    [
+      "umbral_descuadre_ventana_pct",
+      "umbral_descuadre_ventana_piso",
+      "Umbral acumulado de la ventana",
+      "Piso del umbral de la ventana",
+    ],
   ] as const;
 
   /** Deja el par (pct, piso) de cada umbral en un estado que el CHECK
@@ -371,98 +395,64 @@ export class CombustibleService {
     tieneMovimientos = false
   ) {
     const cambios: { control: string; de: string; a: string }[] = [];
+    const antesGenerico = antes as unknown as Record<string, string | null>;
+    const ahoraGenerico = ahora as unknown as Record<string, number | null | undefined>;
 
-    const umbrales = [
-      [
-        "umbral_diferencia_pct",
-        "Umbral de diferencia",
-        antes.umbral_diferencia_pct,
-        ahora.umbral_diferencia_pct,
-      ],
-      [
-        "umbral_descuadre_pct",
-        "Umbral de descuadre",
-        antes.umbral_descuadre_pct,
-        ahora.umbral_descuadre_pct,
-      ],
-      [
-        "umbral_descuadre_ciclo_pct",
-        "Umbral acumulado del ciclo",
-        antes.umbral_descuadre_ciclo_pct,
-        ahora.umbral_descuadre_ciclo_pct,
-      ],
-      [
-        "umbral_descuadre_ventana_pct",
-        "Umbral acumulado de la ventana",
-        antes.umbral_descuadre_ventana_pct,
-        ahora.umbral_descuadre_ventana_pct,
-      ],
-    ] as const;
-
-    for (const [control, etiqueta, viejoRaw, nuevo] of umbrales) {
-      const viejo = viejoRaw === null ? null : Number(viejoRaw);
-      if (viejo === nuevo) continue;
-
-      const afloja =
-        // Apagarlo del todo: el estado más débil que existe.
-        nuevo === null
-          ? viejo !== null
-          : // Encenderlo (null -> número) siempre endurece, nunca afloja.
-            viejo !== null && nuevo > viejo;
-
-      if (afloja) {
-        cambios.push({
-          control,
-          de: viejo === null ? "sin configurar" : `${viejo}%`,
-          a: nuevo === null ? "sin configurar (no alerta)" : `${nuevo}%`,
-        });
-        // La etiqueta legible viaja aparte para el mensaje de error, que lo
-        // lee una persona parada frente al formulario.
-        cambios[cambios.length - 1].control = etiqueta;
+    // UN loop sobre PARES_UMBRAL para los 8 campos, en vez de dos listas
+    // separadas (`umbrales` y `pisos`) que retipeaban los mismos 4 controles
+    // cada una. Antes de este cambio, agregar un quinto par de umbral exigía
+    // acordarse de tocar PARES_UMBRAL, esta lista Y esa otra lista, a mano,
+    // sin que el compilador atara ninguna -- exactamente el "control que se
+    // desincroniza en silencio" que el comentario de PARES_UMBRAL advierte.
+    for (const [
+      campoPct,
+      campoPiso,
+      etiquetaPct,
+      etiquetaPiso,
+    ] of CombustibleService.PARES_UMBRAL) {
+      // El porcentaje: apagarlo del todo es el estado más débil que existe;
+      // encenderlo (null -> número) siempre endurece, nunca afloja.
+      const viejoPctRaw = antesGenerico[campoPct];
+      const viejoPct = viejoPctRaw === null ? null : Number(viejoPctRaw);
+      const nuevoPct = ahoraGenerico[campoPct] ?? null;
+      if (viejoPct !== nuevoPct) {
+        const aflojaPct =
+          nuevoPct === null ? viejoPct !== null : viejoPct !== null && nuevoPct > viejoPct;
+        if (aflojaPct) {
+          cambios.push({
+            control: etiquetaPct,
+            de: viejoPct === null ? "sin configurar" : `${viejoPct}%`,
+            a: nuevoPct === null ? "sin configurar (no alerta)" : `${nuevoPct}%`,
+          });
+        }
       }
-    }
 
-    // SUBIR EL PISO AFLOJA, igual que subir el porcentaje (0101). Es la mitad
-    // de la tolerancia --y después de la migración, en la práctica es TODA la
-    // tolerancia, porque los porcentajes quedaron en 0-- así que sin esto se
-    // podía multiplicar la banda de un tanque sin que la auditoría lo
-    // distinguiera de renombrarlo, que es exactamente el hueco que
-    // `evaluarAflojamiento` vino a cerrar en su momento.
-    //
-    // Omitir el piso en el PUT no es un cambio: conserva el valor (ver
-    // `normalizarUmbrales`). Por eso se compara contra `undefined` antes que
-    // nada -- si no, un llamador viejo que no manda el campo parecería estar
-    // bajándolo a cero.
-    const pisos = [
-      ["umbral_diferencia_piso", "Piso del umbral de diferencia", antes.umbral_diferencia_piso],
-      ["umbral_descuadre_piso", "Piso del umbral de descuadre", antes.umbral_descuadre_piso],
-      [
-        "umbral_descuadre_ciclo_piso",
-        "Piso del umbral del ciclo",
-        antes.umbral_descuadre_ciclo_piso,
-      ],
-      [
-        "umbral_descuadre_ventana_piso",
-        "Piso del umbral de la ventana",
-        antes.umbral_descuadre_ventana_piso,
-      ],
-    ] as const;
-
-    for (const [campo, etiqueta, viejoRaw] of pisos) {
-      const nuevo = (ahora as unknown as Record<string, number | null | undefined>)[campo];
-      if (nuevo === undefined) continue;
-      const viejo = viejoRaw === null ? null : Number(viejoRaw);
-      if (viejo === nuevo) continue;
+      // SUBIR EL PISO AFLOJA, igual que subir el porcentaje (0101). Es la
+      // mitad de la tolerancia --y después de la migración, en la práctica
+      // es TODA la tolerancia, porque los porcentajes quedaron en 0-- así
+      // que sin esto se podía multiplicar la banda de un tanque sin que la
+      // auditoría lo distinguiera de renombrarlo, que es exactamente el
+      // hueco que `evaluarAflojamiento` vino a cerrar en su momento.
+      //
+      // Omitir el piso en el PUT no es un cambio: conserva el valor (ver
+      // `normalizarUmbrales`). Por eso se compara contra `undefined` antes
+      // que nada -- si no, un llamador viejo que no manda el campo parecería
+      // estar bajándolo a cero.
+      const nuevoPiso = ahoraGenerico[campoPiso];
+      if (nuevoPiso === undefined) continue;
+      const viejoPisoRaw = antesGenerico[campoPiso];
+      const viejoPiso = viejoPisoRaw === null ? null : Number(viejoPisoRaw);
+      if (viejoPiso === nuevoPiso) continue;
 
       // Apagar el umbral entero (piso a null) ya lo reporta el bloque de
       // porcentajes de arriba: el par es atómico, así que el pct viaja en
       // null en el mismo PUT. Duplicarlo acá diría dos veces lo mismo.
-      if (nuevo === null) continue;
-      if (viejo !== null && nuevo > viejo) {
+      if (nuevoPiso === null) continue;
+      if (viejoPiso !== null && nuevoPiso > viejoPiso) {
         cambios.push({
-          control: etiqueta,
-          de: `${viejo}`,
-          a: `${nuevo}`,
+          control: etiquetaPiso,
+          de: `${viejoPiso}`,
+          a: `${nuevoPiso}`,
         });
       }
     }
@@ -4203,33 +4193,6 @@ export class CombustibleService {
       .map((v, i) => (Math.abs(v - med) > corte ? i : -1))
       .filter((i) => i >= 0);
     return { indices, corte };
-  }
-
-  /** Vuelve a calcular la sugerencia SIN los valores atípicos, y devuelve las
-   *  dos cifras. La pantalla muestra las dos y deja elegir: quien decide tiene
-   *  que ver que hay mediciones fuera de escala ANTES de aceptar un número que
-   *  esas mediciones inflaron. */
-  private static conAtipicos<T>(
-    valoresPct: number[],
-    muestra: T[],
-    calcular: (v: number[]) => number
-  ) {
-    const { indices } = CombustibleService.detectarAtipicos(valoresPct);
-    if (indices.length === 0) return { atipicos: null };
-    const limpios = valoresPct.filter((_, i) => !indices.includes(i));
-    return {
-      atipicos: {
-        cantidad: indices.length,
-        // En porcentaje, que es la unidad de la sugerencia.
-        valoresPct: indices.map((i) => Number(valoresPct[i].toFixed(2))),
-        // Las filas completas, para poder mirarlas sin abrir la planilla.
-        mediciones: indices.map((i) => muestra[i]),
-        sugeridoSinEllos:
-          limpios.length >= CombustibleService.MINIMO_MUESTRA
-            ? Number(calcular(limpios).toFixed(1))
-            : null,
-      },
-    };
   }
 
   /** EL ESTIMADOR DE LOS DOS NÚMEROS (0101).

@@ -123,6 +123,16 @@ ALTER TABLE combustible
 -- toleraba. ROUND a 2 decimales porque la columna es NUMERIC(12,2); el desvío
 -- máximo contra la cuenta vieja es de medio centilitro, muy por debajo de
 -- cualquier varilla.
+--
+-- Las siete columnas (los 4 pisos y los 3 porcentajes que se pisan a 0) van
+-- en UNA sola sentencia, y es seguro: todas las cláusulas `USING` de un mismo
+-- `ALTER TABLE` se evalúan contra la fila COMO ERA ANTES de la sentencia --
+-- igual que un `UPDATE a = b, b = a` intercambia dos columnas en vez de
+-- pisar una con la otra. Verificado en vivo antes de escribir esto (una
+-- prueba de intercambio de dos columnas en una tabla temporal, y la misma
+-- estructura de esta migración con una fila real). El piso del descuadre lee
+-- `umbral_descuadre_pct` con su valor de ANTES aunque esa misma sentencia lo
+-- vaya a pisar a 0 más abajo.
 ALTER TABLE combustible
   ALTER COLUMN umbral_descuadre_piso TYPE NUMERIC(12,2)
     USING CASE
@@ -142,14 +152,10 @@ ALTER TABLE combustible
   -- El de diferencia conserva su porcentaje (su base no cambia) y estrena
   -- piso en 0: hoy no tiene ninguno, y 0 es exactamente "sin piso".
   ALTER COLUMN umbral_diferencia_piso TYPE NUMERIC(12,2)
-    USING CASE WHEN umbral_diferencia_pct IS NULL THEN NULL ELSE 0 END;
-
--- Los tres porcentajes de descuadre quedan en 0 = sin parte proporcional.
--- Se hace en un ALTER aparte del de arriba a propósito: si fueran el mismo,
--- el USING del piso leería el pct YA pisado a 0 y el piso saldría 0 para
--- todos, apagando la vigilancia de todos los tanques en silencio. Es el error
--- más caro que podía tener esta migración.
-ALTER TABLE combustible
+    USING CASE WHEN umbral_diferencia_pct IS NULL THEN NULL ELSE 0 END,
+  -- Los tres porcentajes de descuadre quedan en 0 = sin parte proporcional,
+  -- en la MISMA sentencia que calculó sus pisos arriba (ver el porqué al
+  -- principio de este bloque).
   ALTER COLUMN umbral_descuadre_pct TYPE NUMERIC(5,2)
     USING CASE WHEN umbral_descuadre_pct IS NULL THEN NULL ELSE 0 END,
   ALTER COLUMN umbral_descuadre_ciclo_pct TYPE NUMERIC(5,2)
