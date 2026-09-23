@@ -46,6 +46,22 @@ export const crearTanqueCombustibleSchema = z.object({
   // El acumulado de la ventana deslizante (0080): el único que no se
   // reinicia con una recepción, y por eso el que atrapa el robo de a poco.
   umbral_descuadre_ventana_pct: z.number().min(0).max(100).nullable().default(null),
+  /** EL PISO FIJO DE CADA UMBRAL (migración 0101), en la unidad del tanque.
+   *
+   *  La tolerancia de un control es `piso + pct/100 × lo movido`. El piso
+   *  cubre el error de la varilla --que no depende del movimiento ni del
+   *  tamaño del tanque-- y el porcentaje cubre el de los medidores, que sí
+   *  crece con el volumen que pasa por ellos.
+   *
+   *  El par es ATÓMICO y lo normaliza el service (`normalizarUmbrales`): o
+   *  los dos son NULL (sin configurar, no alerta) o los dos son números.
+   *  Mandar el pct sin el piso deja el piso en 0 = sin piso, que es el lado
+   *  estricto. Sin `.max()`: un piso se mide en litros o galones, no tiene
+   *  techo natural más allá del CHECK de no-negativo. */
+  umbral_diferencia_piso: z.number().min(0).nullable().default(null),
+  umbral_descuadre_piso: z.number().min(0).nullable().default(null),
+  umbral_descuadre_ciclo_piso: z.number().min(0).nullable().default(null),
+  umbral_descuadre_ventana_piso: z.number().min(0).nullable().default(null),
   /** Qué eligió la persona en el alta: "recomendado" | "personalizado" |
    *  "sin_vigilar". NO se guarda en la tabla -- los umbrales ya dicen cómo
    *  quedó configurado el tanque. Existe para la AUDITORÍA: distingue "eligió
@@ -94,6 +110,17 @@ export const actualizarTanqueCombustibleSchema = z.object({
   umbral_descuadre_pct: z.number().min(0).max(100).nullable(),
   umbral_descuadre_ciclo_pct: z.number().min(0).max(100).nullable(),
   umbral_descuadre_ventana_pct: z.number().min(0).max(100).nullable(),
+  /** Los cuatro pisos (0101) van OPCIONALES, al revés que los porcentajes de
+   *  acá arriba: omitirlos CONSERVA el valor actual. Mismo criterio que
+   *  `usa_totalizador` y por el mismo motivo -- un cliente viejo que no
+   *  conoce el campo (la cola offline, un script, el formulario hasta que se
+   *  actualice) no puede bajar un piso a 0 sin querer y llenar de falsos
+   *  positivos al tenant. Mandar `null` explícito SÍ apaga el umbral entero,
+   *  y eso pide motivo como cualquier aflojamiento. */
+  umbral_diferencia_piso: z.number().min(0).nullable().optional(),
+  umbral_descuadre_piso: z.number().min(0).nullable().optional(),
+  umbral_descuadre_ciclo_piso: z.number().min(0).nullable().optional(),
+  umbral_descuadre_ventana_piso: z.number().min(0).nullable().optional(),
   /** Obligatorio SOLO si el cambio AFLOJA una vigilancia (subir un umbral,
    *  apagarlo poniéndolo en null, o dejar de exigir documento). No se puede
    *  validar acá porque depende de los valores actuales del tanque, que Zod

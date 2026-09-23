@@ -150,6 +150,30 @@ describe("combustible: los tres sueltos de la 3ª auditoría", () => {
     expect(log.rows[0].detalle.modoVigilancia).toBe("sin_vigilar");
     expect(log.rows[0].detalle.umbrales.descuadre).toBeNull();
     expect(log.rows[0].detalle.umbrales.ventana).toBeNull();
+    // El piso también queda auditado (0101): sin él el registro dice media
+    // cuenta, y "nadie lo vigilaba" es justo lo que hay que poder responder.
+    expect(log.rows[0].detalle.umbrales.descuadrePiso).toBeNull();
+    expect(log.rows[0].detalle.umbrales.ventanaPiso).toBeNull();
+  });
+
+  it("un tanque configurado audita el par completo, no solo el porcentaje", async () => {
+    const r = await tanque({
+      modo_vigilancia: "personalizado",
+      umbral_descuadre_pct: 0.5,
+      umbral_descuadre_piso: 150,
+      umbral_descuadre_ciclo_pct: 0.5,
+      umbral_descuadre_ciclo_piso: 150,
+      umbral_descuadre_ventana_pct: 0.5,
+      umbral_descuadre_ventana_piso: 150,
+      umbral_diferencia_pct: 1,
+      umbral_diferencia_piso: 50,
+    });
+    expect(r.status).toBe(201);
+
+    const log = await ultima("combustible.tanque_crear");
+    expect(log.rows[0].detalle.umbrales.descuadre).toBe(0.5);
+    expect(log.rows[0].detalle.umbrales.descuadrePiso).toBe(150);
+    expect(log.rows[0].detalle.umbrales.diferenciaPiso).toBe(50);
   });
 
   // ── 3. Segregación: quién cierra la alerta ────────────────────────────

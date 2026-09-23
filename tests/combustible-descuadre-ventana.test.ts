@@ -66,9 +66,17 @@ describe("combustible: descuadre acumulado en ventana deslizante (migración 008
       nivel_actual: 10000,
       nivel_minimo: 2000,
       modo_vigilancia: "personalizado",
-      umbral_descuadre_pct: 1,
-      umbral_descuadre_ciclo_pct: 1,
-      umbral_descuadre_ventana_pct: ventanaPct,
+      // Desde 0101 la tolerancia es `piso + % de lo movido`. Estos tests
+      // fijan bandas FIJAS (1% de 20.000 = 200 L), así que se expresan como
+      // piso puro y porcentaje 0 -- la misma traducción que hizo la
+      // migración sobre los tanques existentes. Que sigan pasando tal cual
+      // es la prueba de que las bandas no se movieron.
+      umbral_descuadre_pct: 0,
+      umbral_descuadre_piso: 200,
+      umbral_descuadre_ciclo_pct: 0,
+      umbral_descuadre_ciclo_piso: 200,
+      umbral_descuadre_ventana_pct: ventanaPct === null ? null : 0,
+      umbral_descuadre_ventana_piso: ventanaPct === null ? null : (20000 * ventanaPct) / 100,
     });
     expect(r.status).toBe(201);
     return r.body.id as number;
@@ -240,6 +248,9 @@ describe("combustible: descuadre acumulado en ventana deslizante (migración 008
   it("el umbral se guarda y vuelve en la ficha del tanque", async () => {
     const tq = await tanque(2.5);
     const res = await ag.get(`/api/erp/combustible/${tq}`);
-    expect(Number(res.body.umbral_descuadre_ventana_pct)).toBe(2.5);
+    // El par (pct, piso) viaja completo: la ficha tiene que poder mostrar la
+    // tolerancia entera, y con un solo término mostraría media cuenta.
+    expect(Number(res.body.umbral_descuadre_ventana_pct)).toBe(0);
+    expect(Number(res.body.umbral_descuadre_ventana_piso)).toBe(500);
   });
 });
