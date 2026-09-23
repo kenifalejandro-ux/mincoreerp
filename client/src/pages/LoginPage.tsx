@@ -12,6 +12,7 @@ import {
   ssoIniciarUrl,
   type EmpresaDeLaCuenta,
 } from "../services/authApi";
+import { obtenerTokenRecaptcha } from "../services/recaptcha";
 
 declare global {
   interface Window {
@@ -165,7 +166,13 @@ export default function LoginPage() {
     try {
       // El DNI necesita empresa; el correo la resuelve solo (ver arriba).
       const esDni = !email.includes("@");
-      const resultado = await loginApi(esDni ? slugDeLaEmpresa : slugDeLaUrl, email, password);
+      const recaptchaToken = await obtenerTokenRecaptcha("submit");
+      const resultado = await loginApi(
+        esDni ? slugDeLaEmpresa : slugDeLaUrl,
+        email,
+        password,
+        recaptchaToken
+      );
       if (resultado.tipo === "elegir-empresa") {
         setEleccion(resultado);
         // La clave ya cumplió: el token de 2 minutos la reemplaza en el
