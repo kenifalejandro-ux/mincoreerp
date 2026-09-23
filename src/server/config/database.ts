@@ -4,8 +4,11 @@ import { Pool, type PoolClient } from "pg";
 import { env } from "./env";
 import { logger } from "./logger";
 
-// Sin TLS en localhost (no aporta nada); certificado validado en cualquier
-// host remoto — Railway y cualquier otro proveedor SaaS entregan un cert válido.
+// Sin TLS en localhost (no aporta nada). En host remoto sí se cifra, pero
+// SIN validar la cadena: el Postgres interno de Railway (*.railway.internal)
+// entrega un certificado autofirmado, y la conexión ya viaja por la red
+// privada de Railway (cifrada a nivel de infraestructura) — no es un host
+// público que necesite verificación de CA.
 const hostRemoto =
   Boolean(process.env.DATABASE_URL) || !["localhost", "127.0.0.1", "::1"].includes(env.dbHost);
 
@@ -13,7 +16,7 @@ const hostRemoto =
 const poolConfig = process.env.DATABASE_URL
   ? {
       connectionString: process.env.DATABASE_URL,
-      ssl: hostRemoto ? { rejectUnauthorized: true } : false,
+      ssl: hostRemoto ? { rejectUnauthorized: false } : false,
     }
   : {
       host: env.dbHost,
@@ -21,7 +24,7 @@ const poolConfig = process.env.DATABASE_URL
       password: env.dbPass,
       database: env.dbName,
       port: env.dbPort,
-      ssl: env.isProduction && hostRemoto ? { rejectUnauthorized: true } : false,
+      ssl: env.isProduction && hostRemoto ? { rejectUnauthorized: false } : false,
     };
 
 export const pool = new Pool({
