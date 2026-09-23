@@ -27,7 +27,7 @@
     "dev": "concurrently \"tsx watch server.ts\" \"npm run dev --prefix client\"",
     "build": "npm run build --prefix client",
     "test:e2e": "playwright test",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "engines": {
     "node": ">=20"
