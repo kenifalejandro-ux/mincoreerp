@@ -76,10 +76,26 @@ export async function listarBitacoraTenantService(
     condiciones.push(sql.replace("$N", `$${valores.length}`));
   };
 
-  if (filtro.desde) agregar("a.creado_en >= $N", filtro.desde);
+  // "2026-09-15" tiene que interpretarse como medianoche en Lima, sin
+  // importar el TimeZone de la SESIÓN de Postgres -- `$N::date` a secas se
+  // castea con ese TimeZone, y ahí está el bug real que encontró CI: en
+  // local, Postgres arranca en America/Lima porque así está instalado, pero
+  // el postgres:16 de CI (y casi seguro el de producción) arranca en UTC.
+  // Entre las 19:00 y la medianoche en Lima, UTC ya rodó al día siguiente, y
+  // "hoy" (Lima) quedaba buscando eventos desde mañana a medianoche UTC:
+  // vacío, para cualquier empresa que consultara el log en esa ventana.
+  // `(fecha)::timestamp AT TIME ZONE 'America/Lima'` fija la zona en la
+  // CONSULTA en vez de heredarla de la sesión, así que da el mismo resultado
+  // sin importar en qué TimeZone esté conectado el pool.
+  if (filtro.desde)
+    agregar("a.creado_en >= ($N::date)::timestamp AT TIME ZONE 'America/Lima'", filtro.desde);
   // El "hasta" se recibe como fecha (2026-09-15) y se interpreta hasta el
   // final de ese día: quien filtra "del 1 al 15" espera que el 15 entre.
-  if (filtro.hasta) agregar("a.creado_en < ($N::date + interval '1 day')", filtro.hasta);
+  if (filtro.hasta)
+    agregar(
+      "a.creado_en < ($N::date + interval '1 day')::timestamp AT TIME ZONE 'America/Lima'",
+      filtro.hasta
+    );
   if (filtro.accion) agregar("a.accion = $N", filtro.accion);
   if (filtro.usuarioId) agregar("a.usuario_id = $N", filtro.usuarioId);
   if (filtro.antesDe) agregar("a.id < $N", filtro.antesDe);

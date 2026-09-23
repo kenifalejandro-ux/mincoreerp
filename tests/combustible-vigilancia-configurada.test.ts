@@ -132,12 +132,19 @@ describe("combustible: la vigilancia del tanque es una decisión, no un descuido
     expect(detalle.modoVigilancia).toBe("sin_vigilar");
     // El umbral de la ventana deslizante (0080) entró tarde a este detalle:
     // el alta lo guardaba sin él, así que un tanque que nacía ciego de ESE
-    // control se veía igual que uno configurado.
+    // control se veía igual que uno configurado. El piso de cada umbral
+    // (0101) entró por el mismo motivo: sin él el registro dice media
+    // cuenta, y con el par en NULL/NULL no cambia nada de lo que ya se
+    // comprobaba acá.
     expect(detalle.umbrales).toEqual({
       descuadre: null,
+      descuadrePiso: null,
       ciclo: null,
+      cicloPiso: null,
       diferencia: null,
+      diferenciaPiso: null,
       ventana: null,
+      ventanaPiso: null,
     });
   });
 
@@ -146,7 +153,9 @@ describe("combustible: la vigilancia del tanque es una decisión, no un descuido
       payload({
         modo_vigilancia: "recomendado",
         umbral_descuadre_pct: 2,
+        umbral_descuadre_piso: 400,
         umbral_descuadre_ciclo_pct: 3,
+        umbral_descuadre_ciclo_piso: 600,
         umbral_diferencia_pct: 2,
       })
     );
@@ -154,6 +163,10 @@ describe("combustible: la vigilancia del tanque es una decisión, no un descuido
     const log = await auditoriaDe("combustible.tanque_crear");
     expect(log.rows[0].detalle.modoVigilancia).toBe("recomendado");
     expect(log.rows[0].detalle.umbrales.ciclo).toBe(3);
+    // El piso también queda con el número que la persona aplicó, no solo el
+    // porcentaje: los dos son la tolerancia, mostrar uno solo sería mostrar
+    // media cuenta.
+    expect(log.rows[0].detalle.umbrales.cicloPiso).toBe(600);
   });
 
   it("la API sigue aceptando un alta SIN modo_vigilancia", async () => {

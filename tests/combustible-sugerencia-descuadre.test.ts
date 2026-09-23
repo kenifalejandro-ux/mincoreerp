@@ -115,16 +115,17 @@ describe("combustible: calibración de los umbrales de descuadre", () => {
     await leer(tq, 9800, t(1, 10));
 
     const s = await sugerencias(tq);
-    expect(s.descuadre.muestraSuficiente).toBe(false);
+    expect(s.balance.muestraSuficiente).toBe(false);
     // Un intervalo se forma entre DOS lecturas, así que tres lecturas dan
     // dos intervalos (la `inicial` del alta se anuló en el setup).
-    expect(s.descuadre.tamanioMuestra).toBe(2);
-    expect(s.descuadre.sugerido).toBeUndefined();
+    expect(s.balance.tamanioMuestra).toBe(2);
+    expect(s.balance.piso).toBeUndefined();
+    expect(s.balance.pct).toBeUndefined();
   });
 
-  it("un tanque que cierra clavado cae al piso de 1%, no a 0", async () => {
-    // Sin piso, un tanque con historial perfecto quedaría con umbral 0 y
-    // alertaría por la dilatación térmica del día siguiente.
+  it("un tanque que cierra clavado cae al piso por dilatación, no a 0", async () => {
+    // Sin piso mínimo, un tanque con historial perfecto quedaría con
+    // tolerancia 0 y alertaría por la dilatación térmica del día siguiente.
     const tq = await crearTanque();
     let nivel = 10000;
     for (let i = 0; i < 11; i++) {
@@ -134,15 +135,17 @@ describe("combustible: calibración de los umbrales de descuadre", () => {
     }
 
     const s = await sugerencias(tq);
-    expect(s.descuadre.muestraSuficiente).toBe(true);
-    expect(s.descuadre.promedio).toBe(0);
-    expect(s.descuadre.sugerido).toBe(1);
+    expect(s.balance.muestraSuficiente).toBe(true);
+    // 1 % de la capacidad (10.000), en litros. Antes esto se expresaba como
+    // "sugerido: 1 %" y había que multiplicarlo a mano.
+    expect(s.balance.piso).toBe(100);
+    expect(s.balance.pct).toBe(0);
   });
 
-  it("con ruido real, sugiere por encima del ruido observado", async () => {
-    // Cada intervalo pierde 50 L extra sobre un tanque de 10.000 = 0,5%.
-    // Muestra constante: promedio 0,5 y desvío 0, así que el sugerido cae al
-    // piso de 1% -- que igual queda POR ENCIMA del ruido, que es el punto.
+  it("con ruido real, el piso queda por encima del ruido observado", async () => {
+    // Cada intervalo pierde 50 L extra. Todos los tramos mueven lo mismo
+    // (100 L de vale), así que la pendiente no es estimable y el ruido va
+    // entero al piso -- que es lo correcto: es la opción que no crece.
     const tq = await crearTanque();
     let nivel = 10000;
     for (let i = 0; i < 11; i++) {
@@ -152,12 +155,42 @@ describe("combustible: calibración de los umbrales de descuadre", () => {
     }
 
     const s = await sugerencias(tq);
-    expect(s.descuadre.muestraSuficiente).toBe(true);
-    expect(s.descuadre.promedio).toBeCloseTo(0.5, 1);
-    expect(s.descuadre.sugerido).toBeGreaterThanOrEqual(0.5);
+    expect(s.balance.muestraSuficiente).toBe(true);
+    expect(s.balance.movimientoConDispersion).toBe(false);
+    expect(s.balance.pct).toBe(0);
+    expect(s.balance.piso).toBeGreaterThanOrEqual(50);
   });
 
-  it("devuelve la muestra fila por fila, nunca solo el número", async () => {
+  it("con tramos de tamaños distintos SÍ separa el piso del porcentaje", async () => {
+    // El caso que el modelo viejo no podía representar. Se fabrica un tanque
+    // cuyo error es 20 L fijos más el 2 % de lo despachado, y se comprueba
+    // que el ajuste recupera los dos números por separado en vez de
+    // promediarlos en uno solo.
+    const tq = await crearTanque();
+    // Tramos de tamaños muy distintos, todos dentro de la capacidad (10.000).
+    const despachos = [50, 100, 150, 200, 300, 400, 500, 600, 700, 800, 900];
+    let nivel = 9900;
+    expect((await leer(tq, nivel, t(5, 0))).status).toBe(201);
+    for (const [i, cantidad] of despachos.entries()) {
+      expect((await despachar(tq, cantidad, t(5, i + 1))).status).toBe(201);
+      nivel -= cantidad + (20 + cantidad * 0.02);
+      expect((await leer(tq, nivel, t(5, i + 1))).status).toBe(201);
+    }
+
+    const s = await sugerencias(tq);
+    expect(s.balance.muestraSuficiente).toBe(true);
+    expect(s.balance.movimientoConDispersion).toBe(true);
+    // La pendiente real: 2 % de lo movido.
+    expect(s.balance.pct).toBeCloseTo(2, 1);
+    // El piso queda en el mínimo por dilatación (1 % de 10.000 = 100), que
+    // está por encima de los 20 L fijos reales. También es correcto: por
+    // debajo de la dilatación el umbral alertaría por el clima.
+    expect(s.balance.piso).toBe(100);
+    // Y la traducción que hace legible el par: qué tolera en un tramo típico.
+    expect(s.balance.movimientoTipico).toBe(400);
+  });
+
+  it("devuelve la muestra fila por fila, nunca solo los números", async () => {
     // El módulo no aplica sugerencias solo: la muestra puede estar
     // contaminada con robos reales y eso lo tiene que ver un humano.
     const tq = await crearTanque();
@@ -168,104 +201,26 @@ describe("combustible: calibración de los umbrales de descuadre", () => {
     }
 
     const s = await sugerencias(tq);
-    expect(s.descuadre.muestra).toHaveLength(s.descuadre.tamanioMuestra);
-    expect(s.descuadre.muestra[0]).toHaveProperty("descuadreLitros");
-    expect(s.descuadre.muestra[0]).toHaveProperty("descuadrePct");
+    expect(s.balance.muestra).toHaveLength(s.balance.tamanioMuestra);
+    expect(s.balance.muestra[0]).toHaveProperty("descuadreLitros");
+    // La columna nueva: sin el movimiento de cada fila no se puede
+    // reconstruir la recta ni entender por qué una fila tolera más que otra.
+    expect(s.balance.muestra[0]).toHaveProperty("movimiento");
   });
 
-  // ── Umbral del ciclo ──────────────────────────────────────────────────
+  // ── El ciclo comparte el par con el tramo ─────────────────────────────
 
-  it("sin recepciones no hay ciclos que medir", async () => {
-    // Un ciclo va de una carga a la siguiente. Sin ninguna carga registrada,
-    // el tanque no tiene ciclos cerrados por más lecturas que tenga.
+  it("el ciclo NO tiene su propia calibración: usa el par del balance", async () => {
+    // Decisión de 0101, y es el punto del cambio de modelo. El tramo y el
+    // ciclo miran las mismas dos varillas y los mismos medidores: el error
+    // fijo y el proporcional son los mismos, y lo único que los distingue es
+    // cuánto movimiento suma cada uno, que ya está en la fórmula de la
+    // alerta. Calibrarlos por separado era pedir dos números que nada
+    // obligaba a ser coherentes entre sí.
     const tq = await crearTanque();
-    let nivel = 10000;
-    for (let i = 0; i < 11; i++) {
-      nivel -= 100;
-      await leer(tq, nivel, t(5, 8 + i));
-    }
-
     const s = await sugerencias(tq);
-    expect(s.ciclo.muestraSuficiente).toBe(false);
-    expect(s.ciclo.tamanioMuestra).toBe(0);
-  });
-
-  it("el ciclo EN CURSO no entra en la muestra", async () => {
-    // Todavía puede moverse: contarlo mediría menos acumulación de la que va
-    // a terminar teniendo y tiraría la sugerencia para abajo.
-    const tq = await crearTanque();
-    const grifo = await agente
-      .post("/api/erp/combustible/grifos")
-      .send({ nombre: idUnico("G"), abastece_tanque: true });
-
-    await leer(tq, 5000, t(6, 8));
-    await agente.post("/api/erp/combustible/recepciones").send({
-      combustible_id: tq,
-      grifo_id: grifo.body.id,
-      cantidad: 1000,
-      costo_unitario: 16,
-      tipo_documento: "factura",
-      numero_documento: idUnico("F"),
-      recibido_en: t(6, 9),
-    });
-    await leer(tq, 6000, t(6, 10));
-    await leer(tq, 5900, t(6, 11));
-
-    const s = await sugerencias(tq);
-    // Hay UN ciclo, y está abierto: no se cerró porque no llegó otra carga.
-    expect(s.ciclo.tamanioMuestra).toBe(0);
-  });
-
-  it("un ciclo cierra con la carga siguiente, y el descuadre acumula sus intervalos", async () => {
-    // Diez ciclos para que la muestra alcance y el endpoint devuelva las
-    // filas: es la única forma de verificar la aritmética del acumulado, que
-    // es lo que este test existe para fijar.
-    //
-    // Cada ciclo tiene DOS intervalos y pierde 50 L en cada uno, así que el
-    // acumulado del ciclo tiene que dar −100 (telescopan). Si el código
-    // midiera solo el último intervalo daría −50, y el test lo agarra.
-    const tq = await crearTanque();
-    const grifo = await agente
-      .post("/api/erp/combustible/grifos")
-      .send({ nombre: idUnico("G"), abastece_tanque: true });
-
-    const recepcion = (dia: number, hora: number) =>
-      agente.post("/api/erp/combustible/recepciones").send({
-        combustible_id: tq,
-        grifo_id: grifo.body.id,
-        cantidad: 1000,
-        costo_unitario: 16,
-        tipo_documento: "factura",
-        numero_documento: idUnico("F"),
-        recibido_en: t(dia, hora),
-      });
-
-    // El tanque tiene que despachar lo que recibe: sin eso el nivel sube 900
-    // L netos por ciclo y a la quinta carga la recepción se rechaza por
-    // capacidad (el tope son 10.000 con tolerancia 0).
-    let nivel = 5000;
-    await leer(tq, nivel, t(7, 6));
-    for (let c = 0; c < 11; c++) {
-      const dia = 7 + c;
-      await recepcion(dia, 7);
-      nivel += 1000;
-      await leer(tq, nivel, t(dia, 8)); // abre el ciclo (y cierra el anterior)
-
-      await despachar(tq, 1000, t(dia, 9));
-      nivel -= 1000 + 50;
-      await leer(tq, nivel, t(dia, 9)); // el vale explica 1000; faltan 50
-      nivel -= 50;
-      await leer(tq, nivel, t(dia, 10)); // faltan otros 50, sin vale
-    }
-
-    const s = await sugerencias(tq);
-    // Once cargas: diez ciclos cerrados y el último todavía abierto.
-    expect(s.ciclo.tamanioMuestra).toBe(10);
-    expect(s.ciclo.muestraSuficiente).toBe(true);
-    expect(s.ciclo.muestra[0].descuadreLitros).toBeCloseTo(-100, 0);
-    // 100 L sobre un tanque de 10.000 = 1%.
-    expect(s.ciclo.muestra[0].descuadrePct).toBeCloseTo(-1, 1);
-    expect(s.ciclo.muestra[0].intervalos).toBe(2);
+    expect(s.ciclo).toBeUndefined();
+    expect(s).toHaveProperty("balance");
   });
 
   // ── Umbral de la ventana ──────────────────────────────────────────────
@@ -292,27 +247,26 @@ describe("combustible: calibración de los umbrales de descuadre", () => {
 
     const s = await sugerencias(tq);
     expect(s.ventana.muestraSuficiente).toBe(false);
-    // Mismos tramos que el umbral de descuadre: el mínimo se cuenta igual.
-    expect(s.ventana.tamanioMuestra).toBe(s.descuadre.tamanioMuestra);
-    expect(s.ventana.sugerido).toBeUndefined();
+    // Mismos tramos que el balance: el mínimo se cuenta igual.
+    expect(s.ventana.tamanioMuestra).toBe(s.balance.tamanioMuestra);
+    expect(s.ventana.piso).toBeUndefined();
   });
 
   it("el error de la varilla NO se multiplica por la cantidad de tramos", async () => {
-    // Una varilla que marca 100 L de más y de menos, alternando: +1 %, −1 %.
-    // Promedio con signo 1/11 = 0,09 %; desviación √(10,909/10) = 1,044 %.
-    // Sugerencia = 2 × 1,044 = 2,1 %.
+    // Una varilla que marca 100 L de más y de menos, alternando. Sin
+    // movimiento en ningún tramo, la pendiente no se estima y el piso es
+    // 2 × la desviación de los valores con signo: 2 × 104,4 = 208,8 L.
     //
     // Si el código multiplicara por √n (el error de diseño que se descartó),
-    // con 11 tramos daría 2 × 1,044 × √11 = 6,9 %: un umbral que deja pasar
-    // el robo de a poco que la ventana existe para agarrar.
+    // con 11 tramos daría 692 L: un umbral que deja pasar el robo de a poco
+    // que la ventana existe para agarrar.
     const tq = await tanqueConTramos(alternando(100, -100), 21);
 
     const s = await sugerencias(tq);
     expect(s.ventana.muestraSuficiente).toBe(true);
     expect(s.ventana.tamanioMuestra).toBe(11);
-    expect(s.ventana.promedio).toBeCloseTo(0.09, 2);
-    expect(s.ventana.desviacion).toBeCloseTo(1.04, 2);
-    expect(s.ventana.sugerido).toBe(2.1);
+    expect(s.ventana.piso).toBeCloseTo(208.8, 0);
+    expect(s.ventana.piso).toBeLessThan(300);
   });
 
   it("un robo constante corre el promedio pero NO sube la sugerencia", async () => {
@@ -324,29 +278,49 @@ describe("combustible: calibración de los umbrales de descuadre", () => {
     const limpio = await sugerencias(await tanqueConTramos(alternando(100, -100), 22));
     const robado = await sugerencias(await tanqueConTramos(alternando(50, -150), 23));
 
-    expect(robado.ventana.promedio).toBeCloseTo(limpio.ventana.promedio - 0.5, 2);
-    expect(robado.ventana.desviacion).toBe(limpio.ventana.desviacion);
-    expect(robado.ventana.sugerido).toBe(limpio.ventana.sugerido);
-    // El umbral por tramo, en cambio, promedia |x|: ese sí se infla con el robo.
-    expect(robado.descuadre.sugerido).toBeGreaterThan(limpio.descuadre.sugerido);
+    // El piso de la ventana sale de la dispersión alrededor de la recta, y
+    // correr todos los valores lo mismo no agranda la dispersión.
+    expect(robado.ventana.piso).toBe(limpio.ventana.piso);
+    // El del balance, en cambio, sale de |x|: ese sí se infla con el robo, y
+    // es la razón por la que la ventana necesita su propia cuenta.
+    expect(robado.balance.piso).toBeGreaterThan(limpio.balance.piso);
   });
 
-  it("sin ruido ni robo cae al piso de 1 %, igual que los otros umbrales", async () => {
+  it("sin ruido ni robo cae al piso por dilatación, igual que el balance", async () => {
     const tq = await tanqueConTramos(Array(11).fill(0), 24);
 
     const s = await sugerencias(tq);
-    expect(s.ventana.desviacion).toBe(0);
-    expect(s.ventana.sugerido).toBe(1);
+    // 1 % de la capacidad del tanque de estos tests.
+    expect(s.ventana.piso).toBe(s.balance.piso);
+    expect(s.ventana.pct).toBe(0);
+  });
+
+  it("la ventana usa el MISMO porcentaje que el balance", async () => {
+    // El error del medidor es una propiedad del medidor, no de la ventana
+    // desde la que se lo mire. Y estimarlo con los valores con signo sería
+    // absorber en la pendiente un robo proporcional al despacho.
+    const tq = await crearTanque();
+    const despachos = [50, 100, 150, 200, 300, 400, 500, 600, 700, 800, 900];
+    let nivel = 9900;
+    expect((await leer(tq, nivel, t(6, 0))).status).toBe(201);
+    for (const [i, cantidad] of despachos.entries()) {
+      expect((await despachar(tq, cantidad, t(6, i + 1))).status).toBe(201);
+      nivel -= cantidad + cantidad * 0.02;
+      expect((await leer(tq, nivel, t(6, i + 1))).status).toBe(201);
+    }
+
+    const s = await sugerencias(tq);
+    expect(s.balance.pct).toBeGreaterThan(0);
+    expect(s.ventana.pct).toBe(s.balance.pct);
   });
 
   // ── Las cuatro vienen juntas ──────────────────────────────────────────
 
-  it("un solo request devuelve las cuatro sugerencias", async () => {
+  it("un solo request devuelve los tres pares", async () => {
     const tq = await crearTanque();
     const s = await sugerencias(tq);
     expect(s).toHaveProperty("diferencia");
-    expect(s).toHaveProperty("descuadre");
-    expect(s).toHaveProperty("ciclo");
+    expect(s).toHaveProperty("balance");
     expect(s).toHaveProperty("ventana");
   });
 });

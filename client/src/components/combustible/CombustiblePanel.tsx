@@ -93,6 +93,13 @@ interface Tanque {
   umbral_descuadre_pct: string | null;
   umbral_descuadre_ciclo_pct: string | null;
   umbral_descuadre_ventana_pct: string | null;
+  // El piso fijo de cada umbral, en la unidad del tanque (0101). La
+  // tolerancia real de un control es `piso + pct/100 x lo movido`: el piso
+  // cubre el error de la varilla y el porcentaje el de los medidores.
+  umbral_diferencia_piso: string | null;
+  umbral_descuadre_piso: string | null;
+  umbral_descuadre_ciclo_piso: string | null;
+  umbral_descuadre_ventana_piso: string | null;
 }
 
 /** Una fila del historial de recepciones (GET /recepciones, Fase C). A
@@ -122,6 +129,11 @@ interface RecepcionHistorial {
   // > 1 = la diferencia es de varias entregas entre las mismas dos varillas.
   // No se le puede atribuir a una sola, pero ya no se pierde (5ª auditoría).
   entregas_en_grupo: string | null;
+  // Lo entregado por TODO el grupo, no solo esta fila (0101). Es la base
+  // real del % de tolerancia cuando entregas_en_grupo > 1 -- usar `cantidad`
+  // ahí calcula contra una sola entrega y pinta "excede" recepciones que el
+  // sistema no alertó.
+  cantidad_del_grupo: string | null;
   nivel_antes: string | null;
   nivel_despues: string | null;
   // Validación contra la guía (migración 0088).
@@ -133,6 +145,9 @@ interface RecepcionHistorial {
   umbral_descuadre_pct: string;
   umbral_descuadre_ciclo_pct: string;
   umbral_descuadre_ventana_pct: string;
+  // El piso del umbral de diferencia (0101): la fila lo necesita para
+  // pintar en rojo con la misma cuenta que usa la alerta.
+  umbral_diferencia_piso: string | null;
 }
 
 const ETIQUETA_TIPO_DOCUMENTO: Record<"factura" | "guia_remision", string> = {
@@ -263,18 +278,32 @@ interface SugerenciaUmbral {
   muestraSuficiente: boolean;
   tamanioMuestra: number;
   minimoRequerido: number;
-  sugerido?: number;
-  promedio?: number;
-  desviacion?: number;
-  muestra?: Array<{ cantidad: number; diferenciaLitros: number; diferenciaPct: number }>;
+  /** El PAR que propone el asistente desde 0101: el error fijo de la varilla
+   *  (en la unidad del tanque) y el de los medidores (proporcional a lo que
+   *  se movió). Los dos juntos o ninguno -- aplicar uno solo cambiaría la
+   *  tolerancia sin que nadie lo haya decidido. */
+  piso?: number;
+  pct?: number;
+  /** false = todos los períodos de la muestra mueven parecido, así que no se
+   *  pudo separar el término proporcional del fijo y el porcentaje quedó en
+   *  0. La pantalla lo dice: la sugerencia sirve igual, pero es un piso solo. */
+  movimientoConDispersion?: boolean;
+  /** Lo que mueve un período típico, y la tolerancia que el par daría ahí.
+   *  Es la forma de juzgar la sugerencia sin hacer la cuenta a mano. */
+  movimientoTipico?: number;
+  muestra?: Array<{ cantidad?: number; diferenciaLitros?: number; movimiento?: number }>;
   /** Mediciones muy fuera de escala respecto del resto (5ª auditoría). La
    *  muestra con la que se calibra puede contener el robo que se quiere
    *  detectar: unas pocas mediciones sucias disparan el desvío y la
-   *  sugerencia termina proponiendo tolerar justo eso. null = no hay. */
+   *  sugerencia termina proponiendo tolerar justo eso. null = no hay.
+   *
+   *  Desde 0101 se buscan en los RESIDUOS del ajuste, no en la diferencia
+   *  cruda: lo que delata a una medición no es su tamaño sino cuánto se
+   *  aparta de lo que el resto del tanque hace. */
   atipicos?: {
     cantidad: number;
-    valoresPct: number[];
-    sugeridoSinEllos: number | null;
+    descuadres: number[];
+    sinEllos: { piso: number; pct: number } | null;
   } | null;
 }
 
@@ -479,10 +508,14 @@ const ACCIONES_QUE_AFLOJAN = new Set([
  *  sobre lo mismo. */
 interface SugerenciasUmbral {
   diferencia: SugerenciaUmbral;
-  descuadre: SugerenciaUmbral;
-  ciclo: SugerenciaUmbral;
-  /** Opcional: llegó después que las otras tres. Un backend sin ella (durante
-   *  un deploy) solo apaga esta sugerencia, no las cuatro. */
+  /** UN solo par para el tramo y para el ciclo (0101): son la misma varilla
+   *  y los mismos medidores, y lo único que los distingue es cuánto
+   *  movimiento suma cada control. Antes eran dos calibraciones separadas
+   *  que nada obligaba a ser coherentes entre sí. */
+  balance: SugerenciaUmbral;
+  /** Comparte el porcentaje con el balance y calcula su propio piso con los
+   *  valores CON SIGNO. Opcional: un backend viejo (durante un deploy) solo
+   *  apaga esta sugerencia, no las otras. */
   ventana?: SugerenciaUmbral;
 }
 
@@ -601,21 +634,46 @@ const esCritica = (tipo: string) => TIPOS_CRITICOS.has(tipo);
  *  NULL = sin configurar (migración 0075). El 0 SÍ vigila -- es tolerancia
  *  cero -- así que preguntar por `!x` estaría mal: un tanque estrictísimo
  *  aparecería como desprotegido. */
-/** Punto de partida RAZONADO, no medido: la varilla de un tanque de 20.000 L
- *  tiene un error honesto del orden de 100-200 L. Ese error NO se acumula a lo
- *  largo del ciclo ni de la ventana -- se cancela entre tramos seguidos, ver
- *  `calibrarConSigno` en el servicio --, pero el del contómetro de cada
- *  despacho sí, y ciclo y ventana suman más despachos que un tramo. De ahí la
- *  escalera 2 / 3 / 4, con escalones chicos.
+/** El punto de partida del alta, en el modelo de 0101 (piso + % de lo movido).
  *
- *  Se presentan como provisionales en la UI a propósito. Un número inventado
- *  que se muestra como definitivo es peor que ninguno: nadie lo vuelve a
- *  mirar. El asistente de calibración los reemplaza cuando hay historial. */
-const VIGILANCIA_RECOMENDADA = {
-  umbral_descuadre_pct: "2",
-  umbral_descuadre_ciclo_pct: "3",
-  umbral_descuadre_ventana_pct: "4",
-  umbral_diferencia_pct: "2",
+ *  Sigue siendo RAZONADO, no medido, y se presenta como provisional a
+ *  propósito: un número inventado que se muestra como definitivo es peor que
+ *  ninguno, porque nadie lo vuelve a mirar. El asistente de calibración lo
+ *  reemplaza por el del tanque real en cuanto haya diez mediciones.
+ *
+ *  De dónde salen los dos números:
+ *
+ *  · El PISO va como 1 % de la capacidad, calculado al vuelo con lo que la
+ *    persona escribió arriba en el formulario. No es un porcentaje
+ *    disfrazado: es la dilatación térmica, que sí escala con lo que hay
+ *    almacenado (del orden de 0,08 % por grado en el diésel, así que un
+ *    salto de 12 grados en el día ya mueve esa cifra). Es el mismo piso
+ *    mínimo que usa el asistente.
+ *
+ *  · El PORCENTAJE va en 0,5 % para los tres controles del balance, que es
+ *    el orden del error de un medidor de caudal en buen estado. Y va IGUAL
+ *    en los tres a propósito: es el mismo medidor mirado desde tres
+ *    ventanas, y lo que hace que el ciclo tolere más que el tramo no es un
+ *    número más alto sino que suma más movimiento. Ahí murió la escalera
+ *    2/3/4, que eran tres números inventados sin relación entre sí.
+ *
+ *  · El de la factura del proveedor va en 1 %: ese medidor es el del camión,
+ *    no está bajo control de la mina y nadie lo calibra por acá. */
+const PCT_RECOMENDADO_BALANCE = "0.5";
+const PCT_RECOMENDADO_FACTURA = "1";
+const vigilanciaRecomendada = (capacidad: string) => {
+  const cap = Number(capacidad);
+  const piso = Number.isFinite(cap) && cap > 0 ? String(Number((cap / 100).toFixed(2))) : "";
+  return {
+    umbral_descuadre_pct: PCT_RECOMENDADO_BALANCE,
+    umbral_descuadre_ciclo_pct: PCT_RECOMENDADO_BALANCE,
+    umbral_descuadre_ventana_pct: PCT_RECOMENDADO_BALANCE,
+    umbral_diferencia_pct: PCT_RECOMENDADO_FACTURA,
+    umbral_descuadre_piso: piso,
+    umbral_descuadre_ciclo_piso: piso,
+    umbral_descuadre_ventana_piso: piso,
+    umbral_diferencia_piso: piso,
+  };
 };
 
 const CONTROLES_VIGILANCIA = [
@@ -638,30 +696,36 @@ const CONTROLES_VIGILANCIA = [
   },
 ] as const;
 
-/** Sugerencia compacta debajo de un campo de umbral. La versión rica -- con
- *  la muestra fila por fila -- se quedó solo en el umbral de diferencia, que
- *  es el que más se discute con el proveedor. Para los otros dos alcanza con
- *  el número y de cuántas mediciones sale: lo que importa es que el valor
- *  provisional del alta se pueda reemplazar por uno medido.
+/** LA SUGERENCIA DEL ASISTENTE, debajo de su par de campos.
  *
- *  Nunca aplica sola: el botón lo aprieta una persona. Mismo criterio que la
- *  sugerencia de diferencia y que sugerirRateLimitTenant() en plataforma. */
+ *  Desde 0101 propone DOS números y los aplica juntos: el piso (el error de
+ *  la varilla, que no depende del movimiento) y el porcentaje (el de los
+ *  medidores, que sí). Aplicar uno solo dejaría la tolerancia a medio camino
+ *  entre dos modelos, que es peor que no aplicar nada.
+ *
+ *  Lo primero que se lee no es la estadística sino la traducción: cuántos
+ *  litros tolera esto en un período normal de ESTE tanque. Es el número con
+ *  el que una persona puede decir "eso es demasiado" sin saber qué es una
+ *  desviación -- la lección de que la etiqueta vieja ("promedio 1.93% ±
+ *  6.27%") costara media hora de preguntas y terminara en "si no lo voy a
+ *  usar, ¿para qué lo pones?".
+ *
+ *  Nunca aplica sola: el botón lo aprieta una persona. Mismo criterio que
+ *  sugerirRateLimitTenant() en plataforma. */
 function SugerenciaCompacta({
   sugerencia,
   cargando,
+  unidad,
   onUsar,
   onDescargarDetalle,
   descargandoDetalle,
-  soloDesviacion = false,
 }: {
   sugerencia: SugerenciaUmbral | undefined;
   cargando: boolean;
-  onUsar: (valor: number) => void;
-  /** La ventana calibra con 2 desviaciones de la diferencia CON SIGNO, sin
-   *  sumar el promedio: mostrar "promedio ± desviación" haría pensar que la
-   *  cuenta es la misma que la de los otros umbrales. Si se cambia este texto,
-   *  cambiarlo también en la hoja "Ventana" del .xlsx, que lo reconstruye. */
-  soloDesviacion?: boolean;
+  /** La del tanque: el piso se expresa en litros o galones, no en porcentaje. */
+  unidad: string;
+  /** Aplica el PAR completo. Los dos juntos, siempre. */
+  onUsar: (piso: number, pct: number) => void;
   /** Baja el .xlsx con la muestra fila por fila y los números como fórmulas.
    *  Opcional para no obligar a pasarlo en un tanque que se está creando. */
   onDescargarDetalle?: () => void;
@@ -700,48 +764,222 @@ function SugerenciaCompacta({
   }
 
   const atipicos = sugerencia.atipicos;
+  const piso = sugerencia.piso ?? 0;
+  const pct = sugerencia.pct ?? 0;
+  const mov = sugerencia.movimientoTipico ?? 0;
+  const enLitros = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
+  /** El par traducido a la única unidad que se puede juzgar de un vistazo. */
+  const tolerancia = (p: number, pc: number) => enLitros(p + (pc / 100) * mov);
 
   return (
     <div className="text-xs text-slate-600 space-y-1">
       <p>
-        Sugerencia: <strong>{sugerencia.sugerido}%</strong> ({sugerencia.tamanioMuestra} mediciones,
-        {soloDesviacion
-          ? ` desviación ${sugerencia.desviacion}%`
-          : ` promedio ${sugerencia.promedio}% ± ${sugerencia.desviacion}%`}
-        ){" "}
+        Sugerencia:{" "}
+        <strong>
+          piso {enLitros(piso)} {unidad}
+          {pct > 0 ? ` + ${pct}% de lo que se mueva` : ""}
+        </strong>{" "}
         <button
           type="button"
-          onClick={() => onUsar(sugerencia.sugerido ?? 0)}
+          onClick={() => onUsar(piso, pct)}
           className="text-slate-700 underline hover:text-slate-900"
         >
-          Usar este valor
+          Usar
         </button>
         {enlaceDetalle}
       </p>
+      <p>
+        En un período normal de este tanque ({enLitros(mov)} {unidad} de movimiento) esto deja pasar{" "}
+        <strong>
+          {tolerancia(piso, pct)} {unidad}
+        </strong>
+        . Sale de {sugerencia.tamanioMuestra} mediciones.
+      </p>
+      {/* Cuando todos los períodos mueven parecido no se puede saber qué parte
+          del error es fija y qué parte crece con el movimiento. Decirlo es
+          mejor que servir una pendiente que es ruido con cara de medición. */}
+      {sugerencia.movimientoConDispersion === false && (
+        <p>
+          Todos los períodos medidos mueven cantidades parecidas, así que todavía no se puede
+          separar el error de la varilla del de los medidores: la sugerencia va entera al piso, que
+          es la parte que no crece. Se corrige sola cuando el tanque tenga períodos de tamaños
+          distintos.
+        </p>
+      )}
       {/* El aviso que faltaba: el número de arriba puede estar inflado por unas
           pocas mediciones fuera de escala -- y si esas mediciones son el robo,
           aceptar la sugerencia es tolerarlo de acá en adelante. */}
       {atipicos && (
         <p className="text-amber-700">
           ⚠ {atipicos.cantidad} {atipicos.cantidad === 1 ? "medición está" : "mediciones están"} muy
-          fuera de escala ({atipicos.valoresPct.map((v) => `${v}%`).join(", ")}) y{" "}
+          lejos de lo que hace el resto del tanque (
+          {atipicos.descuadres.map((v) => `${enLitros(v)} ${unidad}`).join(", ")}) y{" "}
           {atipicos.cantidad === 1 ? "es la que infla" : "son las que inflan"} el número. Miralas
-          antes de aceptarlo: si ahí hubo un faltante real, este umbral lo va a tolerar.
-          {atipicos.sugeridoSinEllos !== null && (
+          antes de aceptarlo: si ahí hubo un faltante real, esta tolerancia lo va a tapar.
+          {atipicos.sinEllos !== null && (
             <>
               {" "}
-              Sin {atipicos.cantidad === 1 ? "esa medición" : "esas mediciones"} la sugerencia sería{" "}
-              <strong>{atipicos.sugeridoSinEllos}%</strong>{" "}
+              Sin {atipicos.cantidad === 1 ? "esa medición" : "esas mediciones"} sería{" "}
+              <strong>
+                piso {enLitros(atipicos.sinEllos.piso)} {unidad}
+                {atipicos.sinEllos.pct > 0 ? ` + ${atipicos.sinEllos.pct}%` : ""}
+              </strong>{" "}
+              ({tolerancia(atipicos.sinEllos.piso, atipicos.sinEllos.pct)} {unidad} en un período
+              normal){" "}
               <button
                 type="button"
-                onClick={() => onUsar(atipicos.sugeridoSinEllos ?? 0)}
+                onClick={() => onUsar(atipicos.sinEllos!.piso, atipicos.sinEllos!.pct)}
                 className="text-slate-700 underline hover:text-slate-900"
               >
-                Usar {atipicos.sugeridoSinEllos}%
+                Usar este
               </button>
             </>
           )}
         </p>
+      )}
+    </div>
+  );
+}
+
+/** UN UMBRAL, QUE SON DOS CAMPOS (0101): el piso en la unidad del tanque y
+ *  el porcentaje sobre lo que se movió.
+ *
+ *  Van juntos en la pantalla porque van juntos en la cuenta: la tolerancia es
+ *  la suma de los dos, y dos campos separados a diez líneas de distancia
+ *  invitan a tocar uno solo. Debajo, la línea que traduce el par a litros en
+ *  un período típico -- que es lo único que una persona puede juzgar sin
+ *  saber qué es una desviación estándar. */
+function CampoUmbral({
+  id,
+  titulo,
+  base,
+  unidad,
+  piso,
+  pct,
+  onCambio,
+  ayuda,
+  sugerencia,
+  cargandoSugerencia,
+  mostrarSugerencia,
+  onDescargarDetalle,
+  descargandoDetalle,
+}: {
+  id: string;
+  titulo: string;
+  /** Sobre qué se aplica el porcentaje, en palabras. Cambia por control. */
+  base: string;
+  unidad: string;
+  piso: string;
+  pct: string;
+  onCambio: (campo: "piso" | "pct", valor: string) => void;
+  ayuda: React.ReactNode;
+  sugerencia: SugerenciaUmbral | undefined;
+  cargandoSugerencia: boolean;
+  mostrarSugerencia: boolean;
+  onDescargarDetalle?: () => void;
+  descargandoDetalle?: boolean;
+}) {
+  const numero = (v: string) => (v.trim() === "" ? null : Number(v));
+  const p = numero(piso);
+  const q = numero(pct);
+  // El % es el interruptor maestro (normalizarUmbrales, combustible.service.ts):
+  // dejarlo vacío apaga el PAR ENTERO al guardar, sin importar qué haya en el
+  // piso -- el piso NO se conserva en ese caso, se pisa a null igual. Antes
+  // acá se preguntaba por los dos campos vacíos ("piso vacío Y pct vacío"), y
+  // eso mentía: con piso=200 y pct vacío mostraba "tolera 200 L fijos" y al
+  // guardar quedaba en null/null, apagando el tanque sin que la pantalla lo
+  // hubiera avisado.
+  const vacio = pct.trim() === "";
+  // El caso que hay que señalar aparte: alguien dejó un piso tipeado
+  // pensando en "solo piso, sin proporcional" -- ese piso se va a perder
+  // porque el % vacío apaga los dos. Para "solo piso" el % correcto es 0,
+  // no vacío.
+  const pisoQueSePierde = vacio && piso.trim() !== "";
+
+  return (
+    <div className="space-y-1 col-span-2 border-t border-slate-100 pt-3">
+      <p className="text-xs font-bold text-slate-700 uppercase">{titulo}</p>
+      <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-1">
+          <label htmlFor={`tanque-umbral-${id}-piso`} className="text-xs text-slate-600">
+            Piso fijo ({unidad})
+          </label>
+          <input
+            id={`tanque-umbral-${id}-piso`}
+            type="number"
+            min={0}
+            step="0.01"
+            className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+            value={piso}
+            onChange={(e) => onCambio("piso", e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <label htmlFor={`tanque-umbral-${id}-pct`} className="text-xs text-slate-600">
+            + % de {base}
+          </label>
+          <input
+            id={`tanque-umbral-${id}-pct`}
+            type="number"
+            min={0}
+            max={100}
+            step="0.01"
+            className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+            value={pct}
+            onChange={(e) => onCambio("pct", e.target.value)}
+          />
+        </div>
+      </div>
+      <p className="text-xs text-slate-600">{ayuda}</p>
+      <p className="text-xs text-slate-600">
+        {vacio ? (
+          <>
+            <strong>Vacío = no alertar todavía</strong>, conviene dejarlo así hasta juntar historial
+            propio del tanque.
+            {pisoQueSePierde && (
+              <>
+                {" "}
+                <strong className="text-amber-700">
+                  El piso ({piso} {unidad}) NO se va a guardar
+                </strong>{" "}
+                mientras este campo esté vacío: al guardar, los dos quedan sin configurar. Si querés
+                solo el piso sin parte proporcional, poné <strong>0</strong> acá en vez de dejarlo
+                vacío.
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            Hoy tolera <strong>{p ?? 0}</strong> {unidad}
+            {(q ?? 0) > 0 ? (
+              <>
+                {" "}
+                más el <strong>{q}%</strong> de {base}
+              </>
+            ) : (
+              " fijos, sin parte proporcional"
+            )}
+            .
+            {(p ?? 0) === 0 && (q ?? 0) === 0
+              ? " Es tolerancia cero: alerta por cualquier diferencia."
+              : ""}
+          </>
+        )}
+      </p>
+      {mostrarSugerencia && (
+        <SugerenciaCompacta
+          sugerencia={sugerencia}
+          cargando={cargandoSugerencia}
+          unidad={unidad}
+          onUsar={(pisoSugerido, pctSugerido) => {
+            // Los DOS, siempre: aplicar uno solo dejaría la tolerancia a
+            // medio camino entre la medición vieja y la nueva.
+            onCambio("piso", String(pisoSugerido));
+            onCambio("pct", String(pctSugerido));
+          }}
+          onDescargarDetalle={onDescargarDetalle}
+          descargandoDetalle={descargandoDetalle}
+        />
       )}
     </div>
   );
@@ -1286,21 +1524,32 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     return `Cargado ${diasDeAtraso ?? "?"} días después de su fecha (se toleran ${diasTolerados ?? "?"})`;
   }
   if (a.tipo === "descuadre_ventana") {
-    const { descuadreLitros, sentido, unidad, diasVentana, tramos, promedioPorTramo } =
-      a.detalle as {
-        descuadreLitros?: number;
-        sentido?: string;
-        unidad?: string;
-        diasVentana?: number;
-        tramos?: number;
-        promedioPorTramo?: number;
-      };
+    const {
+      descuadreLitros,
+      sentido,
+      unidad,
+      diasVentana,
+      tramos,
+      promedioPorTramo,
+      toleradoLitros,
+    } = a.detalle as {
+      descuadreLitros?: number;
+      sentido?: string;
+      unidad?: string;
+      diasVentana?: number;
+      tramos?: number;
+      promedioPorTramo?: number;
+      // La tolerancia ya calculada (0101). Las alertas de antes de esa
+      // migración no la traen -- el histórico tiene que seguir leyéndose.
+      toleradoLitros?: number;
+    };
     // El promedio por tramo es lo que explica por qué NINGÚN control anterior
     // dijo nada: medición por medición el número era normal.
     return (
       `${sentido === "sobra" ? "Sobran" : "Faltan"} ${Math.abs(descuadreLitros ?? 0)} ` +
       `${unidad ?? ""} en ${diasVentana ?? "?"} días (${tramos ?? "?"} mediciones, ` +
-      `~${Math.abs(promedioPorTramo ?? 0)} ${unidad ?? ""} por medición)`
+      `~${Math.abs(promedioPorTramo ?? 0)} ${unidad ?? ""} por medición)` +
+      (toleradoLitros !== undefined ? ` -- tolerancia ${toleradoLitros} ${unidad ?? ""}` : "")
     );
   }
   if (a.tipo === "tope_diario_excedido") {
@@ -1327,11 +1576,14 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
       : `${diasSinMedir} días sin varilla (plazo: ${plazoDias ?? "?"} días)`;
   }
   if (a.tipo === "descuadre_ciclo") {
-    const { descuadreLitros, sentido, unidad, cicloDesde } = a.detalle as {
+    const { descuadreLitros, sentido, unidad, cicloDesde, toleradoLitros } = a.detalle as {
       descuadreLitros?: number;
       sentido?: string;
       unidad?: string;
       cicloDesde?: string;
+      // La tolerancia ya calculada (0101). Las alertas de antes de esa
+      // migración no la traen -- el histórico tiene que seguir leyéndose.
+      toleradoLitros?: number;
     };
     if (descuadreLitros === undefined) return "—";
     const magnitud = Math.abs(descuadreLitros).toLocaleString("es-PE", {
@@ -1340,25 +1592,38 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     const desde = cicloDesde ? new Date(cicloDesde).toLocaleDateString("es-PE") : "?";
     return (
       `${sentido === "falta" ? "Faltan" : "Sobran"} ${magnitud} ${unidad ?? ""} ` +
-      `acumulados desde la carga del ${desde}`
+      `acumulados desde la carga del ${desde}` +
+      (toleradoLitros !== undefined ? ` -- tolerancia ${toleradoLitros} ${unidad ?? ""}` : "")
     );
   }
   if (a.tipo === "descuadre_inventario") {
-    const { descuadreLitros, esperado, nivelMedido, sentido, unidad, umbralPct, desglose } =
-      a.detalle as {
-        descuadreLitros?: number;
-        esperado?: number;
-        nivelMedido?: number;
-        sentido?: string;
-        unidad?: string;
-        umbralPct?: number;
-        // Solo si las dos varillas del tramo traen totalizador (0096).
-        desglose?: {
-          avanceTotalizador: number;
-          mangueraSinVale: number;
-          fueraDelSurtidor: number;
-        };
+    const {
+      descuadreLitros,
+      esperado,
+      nivelMedido,
+      sentido,
+      unidad,
+      umbralPct,
+      toleradoLitros,
+      desglose,
+    } = a.detalle as {
+      descuadreLitros?: number;
+      esperado?: number;
+      nivelMedido?: number;
+      sentido?: string;
+      unidad?: string;
+      umbralPct?: number;
+      // La tolerancia ya calculada (0101). Las alertas anteriores a esa
+      // migración no la traen, y por eso el texto cae al porcentaje: el
+      // histórico tiene que seguir leyéndose.
+      toleradoLitros?: number;
+      // Solo si las dos varillas del tramo traen totalizador (0096).
+      desglose?: {
+        avanceTotalizador: number;
+        mangueraSinVale: number;
+        fueraDelSurtidor: number;
       };
+    };
     if (descuadreLitros === undefined) return "—";
     // El valor absoluto va con la palabra ("faltan"/"sobran") en vez del
     // signo: un "-500" pide que el lector traduzca, y esta columna se lee de
@@ -1368,7 +1633,13 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     });
     const base =
       `${sentido === "falta" ? "Faltan" : "Sobran"} ${magnitud} ${unidad ?? ""}: ` +
-      `esperado ${esperado ?? "?"}, medido ${nivelMedido ?? "?"} (umbral ${umbralPct ?? "?"}%)`;
+      `esperado ${esperado ?? "?"}, medido ${nivelMedido ?? "?"} ` +
+      // En litros, que es la unidad en la que la persona piensa. El
+      // porcentaje suelto obligaba a multiplicarlo por la capacidad de
+      // memoria, y desde 0101 ya ni siquiera se mide contra la capacidad.
+      (toleradoLitros !== undefined
+        ? `(tolerancia ${toleradoLitros} ${unidad ?? ""})`
+        : `(umbral ${umbralPct ?? "?"}%)`);
     // De dónde salió: la parte de la manguera es firme (±2), la de fuera del
     // surtidor arrastra el error de la varilla. Positivo = falta.
     return desglose
@@ -1376,17 +1647,23 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
       : base;
   }
   if (a.tipo === "diferencia_recepcion") {
-    const { diferenciaLitros, diferenciaPct, umbralPct, unidad } = a.detalle as {
+    const { diferenciaLitros, diferenciaPct, umbralPct, toleradoLitros, unidad } = a.detalle as {
       diferenciaLitros?: number;
       diferenciaPct?: number;
       umbralPct?: number;
+      // La tolerancia ya calculada (0101): piso + % de lo entregado. Las
+      // alertas anteriores a esa migración no la traen, y por eso el texto
+      // cae al porcentaje -- el histórico tiene que seguir leyéndose.
+      toleradoLitros?: number;
       unidad?: string;
     };
     if (diferenciaLitros === undefined) return "—";
     const signo = diferenciaLitros > 0 ? "+" : "";
     return (
       `Facturado vs. medido: ${signo}${diferenciaLitros} ${unidad ?? ""} ` +
-      `(${signo}${diferenciaPct ?? "?"}%, umbral ${umbralPct ?? "?"}%)`
+      (toleradoLitros !== undefined
+        ? `(tolerancia ${toleradoLitros} ${unidad ?? ""})`
+        : `(${signo}${diferenciaPct ?? "?"}%, umbral ${umbralPct ?? "?"}%)`)
     );
   }
   if (a.tipo === "nivel_bajo") {
@@ -1603,6 +1880,10 @@ const FORM_INICIAL = {
   umbral_descuadre_pct: "",
   umbral_descuadre_ciclo_pct: "",
   umbral_descuadre_ventana_pct: "",
+  umbral_diferencia_piso: "",
+  umbral_descuadre_piso: "",
+  umbral_descuadre_ciclo_piso: "",
+  umbral_descuadre_ventana_piso: "",
 };
 
 /** Campo vacío -> null (sin configurar). Cualquier número, incluido el 0,
@@ -1667,6 +1948,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [modalTanqueAbierto, setModalTanqueAbierto] = useState(false);
   const [editandoId, setEditandoId] = useState<number | null>(null);
   const [formData, setFormData] = useState(FORM_INICIAL);
+  /** Los cuatro `<CampoUmbral>` del formulario (diferencia, descuadre, ciclo,
+   *  ventana) comparten esta misma forma de actualizar su par (piso, pct):
+   *  solo cambia el prefijo del campo. Una fábrica en vez de 4 closures
+   *  casi idénticas -- cada una reescribía a mano el mismo
+   *  `setFormData((f) => ({ ...f, [campo]: valor }))` con su propio prefijo
+   *  pegado adentro del template string. */
+  const onCambioUmbral = (prefijo: string) => (campo: "piso" | "pct", valor: string) =>
+    setFormData((f) => ({ ...f, [`${prefijo}_${campo}`]: valor }));
   // Sedes y grifos internos (0097). Con uno solo, nada de esto se ve.
   const grifosInternos = useSedes();
   const [filtroGrifo, setFiltroGrifo] = useState("");
@@ -1685,7 +1974,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // editar uno existente.
   const [sugerenciasUmbral, setSugerenciasUmbral] = useState<SugerenciasUmbral | null>(null);
   const [cargandoSugerenciaUmbral, setCargandoSugerenciaUmbral] = useState(false);
-  const [mostrarMuestraUmbral, setMostrarMuestraUmbral] = useState(false);
 
   // --- Importación masiva ---
   const [importando, setImportando] = useState(false);
@@ -2194,7 +2482,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     setModoVigilancia(null);
     // Un tanque nuevo no tiene historial -- nada que sugerir todavía.
     setSugerenciasUmbral(null);
-    setMostrarMuestraUmbral(false);
     setModalTanqueAbierto(true);
   };
 
@@ -2230,10 +2517,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       const esSugerencia = (v: unknown) =>
         typeof v === "object" && v !== null && "muestraSuficiente" in v;
       const formaEsperada =
-        body !== null &&
-        esSugerencia(body.diferencia) &&
-        esSugerencia(body.descuadre) &&
-        esSugerencia(body.ciclo);
+        body !== null && esSugerencia(body.diferencia) && esSugerencia(body.balance);
 
       setSugerenciasUmbral(
         formaEsperada
@@ -2252,7 +2536,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     setModoVigilancia("personalizado");
     setEditandoId(t.id);
     setSugerenciasUmbral(null);
-    setMostrarMuestraUmbral(false);
     cargarSugerenciaUmbral(t.id);
     setFormData({
       codigo: t.codigo,
@@ -2281,6 +2564,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       umbral_descuadre_pct: t.umbral_descuadre_pct ?? "",
       umbral_descuadre_ciclo_pct: t.umbral_descuadre_ciclo_pct ?? "",
       umbral_descuadre_ventana_pct: t.umbral_descuadre_ventana_pct ?? "",
+      umbral_diferencia_piso: t.umbral_diferencia_piso ?? "",
+      umbral_descuadre_piso: t.umbral_descuadre_piso ?? "",
+      umbral_descuadre_ciclo_piso: t.umbral_descuadre_ciclo_piso ?? "",
+      umbral_descuadre_ventana_piso: t.umbral_descuadre_ventana_piso ?? "",
     });
     setModalTanqueAbierto(true);
   };
@@ -2326,6 +2613,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             umbral_descuadre_pct: aNumeroONull(formData.umbral_descuadre_pct),
             umbral_descuadre_ciclo_pct: aNumeroONull(formData.umbral_descuadre_ciclo_pct),
             umbral_descuadre_ventana_pct: aNumeroONull(formData.umbral_descuadre_ventana_pct),
+            // El piso viaja SIEMPRE junto a su porcentaje: el servidor los
+            // normaliza como par (uno NULL obliga al otro), y mandar solo la
+            // mitad dejaría el otro campo conservando un valor que la
+            // persona no vio en pantalla.
+            umbral_diferencia_piso: aNumeroONull(formData.umbral_diferencia_piso),
+            umbral_descuadre_piso: aNumeroONull(formData.umbral_descuadre_piso),
+            umbral_descuadre_ciclo_piso: aNumeroONull(formData.umbral_descuadre_ciclo_piso),
+            umbral_descuadre_ventana_piso: aNumeroONull(formData.umbral_descuadre_ventana_piso),
           }
         : {
             codigo: formData.codigo,
@@ -2352,6 +2647,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             umbral_descuadre_pct: aNumeroONull(formData.umbral_descuadre_pct),
             umbral_descuadre_ciclo_pct: aNumeroONull(formData.umbral_descuadre_ciclo_pct),
             umbral_descuadre_ventana_pct: aNumeroONull(formData.umbral_descuadre_ventana_pct),
+            // El piso viaja SIEMPRE junto a su porcentaje: el servidor los
+            // normaliza como par (uno NULL obliga al otro), y mandar solo la
+            // mitad dejaría el otro campo conservando un valor que la
+            // persona no vio en pantalla.
+            umbral_diferencia_piso: aNumeroONull(formData.umbral_diferencia_piso),
+            umbral_descuadre_piso: aNumeroONull(formData.umbral_descuadre_piso),
+            umbral_descuadre_ciclo_piso: aNumeroONull(formData.umbral_descuadre_ciclo_piso),
+            umbral_descuadre_ventana_piso: aNumeroONull(formData.umbral_descuadre_ventana_piso),
             // Viaja para la auditoría del alta: distingue "eligió no vigilar"
             // de "configuró umbrales que dan lo mismo".
             modo_vigilancia: modoVigilancia,
@@ -4276,7 +4579,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     {
                       valor: "recomendado" as const,
                       titulo: "Recomendado",
-                      detalle: `Alerta desde ${VIGILANCIA_RECOMENDADA.umbral_descuadre_pct}% de faltante entre varillas, ${VIGILANCIA_RECOMENDADA.umbral_descuadre_ciclo_pct}% acumulado en el ciclo, ${VIGILANCIA_RECOMENDADA.umbral_descuadre_ventana_pct}% acumulado en la ventana del mes y ${VIGILANCIA_RECOMENDADA.umbral_diferencia_pct}% contra la factura del proveedor. Valores provisionales: se afinan con el historial del tanque.`,
+                      detalle:
+                        `Tolera un piso fijo del 1% de la capacidad` +
+                        `${formData.capacidad_total ? ` (${vigilanciaRecomendada(formData.capacidad_total).umbral_descuadre_piso} ${formData.unidad})` : ""}` +
+                        `, que es el error de la varilla y la dilatación por temperatura, más ${PCT_RECOMENDADO_BALANCE}% de lo que se mueva en cada período ` +
+                        `(${PCT_RECOMENDADO_FACTURA}% contra la factura del proveedor, que es otro medidor). ` +
+                        `Valores provisionales: se afinan con el historial del tanque.`,
                     },
                     {
                       valor: "personalizado" as const,
@@ -4306,7 +4614,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         onChange={() => {
                           setModoVigilancia(opcion.valor);
                           if (opcion.valor === "recomendado") {
-                            setFormData((f) => ({ ...f, ...VIGILANCIA_RECOMENDADA }));
+                            // El piso depende de la capacidad que la persona
+                            // acaba de escribir, así que se calcula acá y no
+                            // en una constante.
+                            setFormData((f) => ({
+                              ...f,
+                              ...vigilanciaRecomendada(f.capacidad_total),
+                            }));
                           } else if (opcion.valor === "sin_vigilar") {
                             setFormData((f) => ({
                               ...f,
@@ -4314,6 +4628,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                               umbral_descuadre_ciclo_pct: "",
                               umbral_descuadre_ventana_pct: "",
                               umbral_diferencia_pct: "",
+                              umbral_descuadre_piso: "",
+                              umbral_descuadre_ciclo_piso: "",
+                              umbral_descuadre_ventana_piso: "",
+                              umbral_diferencia_piso: "",
                             }));
                           }
                         }}
@@ -4393,237 +4711,102 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       tocarlos sin haber cambiado la elección de arriba. */}
                   {(editandoId !== null || modoVigilancia === "personalizado") && (
                     <>
-                      <div className="space-y-1 col-span-2">
-                        <label
-                          htmlFor="tanque-umbral-diferencia"
-                          className="text-xs font-bold text-slate-700 uppercase"
-                        >
-                          Umbral de diferencia (%)
-                        </label>
-                        <input
-                          id="tanque-umbral-diferencia"
-                          type="number"
-                          min={0}
-                          max={100}
-                          step="0.01"
-                          className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
-                          value={formData.umbral_diferencia_pct}
-                          onChange={(e) =>
-                            setFormData({ ...formData, umbral_diferencia_pct: e.target.value })
-                          }
-                        />
-                        <p className="text-xs text-slate-600">
-                          Desde cuánta diferencia entre lo facturado y lo medido con varilla se
-                          marca una recepción como sospechosa.{" "}
-                          <strong>Vacío = no alertar todavía</strong>, conviene dejarlo así hasta
-                          juntar historial propio del tanque.{" "}
-                          <strong>0 = alertar por cualquier diferencia</strong>.
-                        </p>
-
-                        {/* Fase D, entrega 3: el asistente nunca guarda solo --
-                        sugiere y muestra la muestra completa, el admin
-                        decide. Solo aplica editando un tanque existente. */}
-                        {editandoId !== null && (
-                          <div className="mt-2 border border-slate-200 rounded-xl p-3 bg-slate-50/60 text-sm">
-                            {cargandoSugerenciaUmbral ? (
-                              <p className="text-slate-400">Calculando sugerencia...</p>
-                            ) : !sugerenciasUmbral ? null : !sugerenciasUmbral.diferencia
-                                .muestraSuficiente ? (
-                              <p className="text-slate-500">
-                                Todavía no hay muestra suficiente para sugerir un umbral (
-                                {sugerenciasUmbral.diferencia.tamanioMuestra}/
-                                {sugerenciasUmbral.diferencia.minimoRequerido} recepciones con
-                                lectura antes y después).
-                              </p>
-                            ) : (
-                              <div className="space-y-2">
-                                <div className="flex items-center justify-between gap-2">
-                                  <p className="text-slate-700">
-                                    Sugerencia:{" "}
-                                    <strong>{sugerenciasUmbral.diferencia.sugerido}%</strong> (
-                                    {sugerenciasUmbral.diferencia.tamanioMuestra} recepciones,
-                                    promedio {sugerenciasUmbral.diferencia.promedio}% ±{" "}
-                                    {sugerenciasUmbral.diferencia.desviacion}%)
-                                  </p>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setFormData({
-                                        ...formData,
-                                        umbral_diferencia_pct: String(
-                                          sugerenciasUmbral.diferencia.sugerido
-                                        ),
-                                      })
-                                    }
-                                    className="shrink-0 px-3 py-1.5 bg-slate-900 text-white text-xs font-medium rounded-lg hover:bg-slate-800"
-                                  >
-                                    Usar este valor
-                                  </button>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => setMostrarMuestraUmbral((v) => !v)}
-                                  className="text-xs text-slate-500 hover:text-slate-900 hover:underline"
-                                >
-                                  {mostrarMuestraUmbral ? "Ocultar" : "Ver"} la muestra antes de
-                                  aceptarlo
-                                </button>
-                                {mostrarMuestraUmbral && (
-                                  <ul className="text-xs text-slate-500 max-h-32 overflow-y-auto divide-y divide-slate-100">
-                                    {sugerenciasUmbral.diferencia.muestra?.map((m, i) => (
-                                      <li key={i} className="py-1 flex justify-between gap-2">
-                                        <span>{m.cantidad.toLocaleString("es-PE")} recibido</span>
-                                        <span
-                                          className={
-                                            Math.abs(m.diferenciaPct) >
-                                            (sugerenciasUmbral.diferencia.sugerido ?? 0)
-                                              ? "text-red-500 font-medium"
-                                              : ""
-                                          }
-                                        >
-                                          {m.diferenciaLitros > 0 ? "+" : ""}
-                                          {m.diferenciaLitros.toLocaleString("es-PE", {
-                                            maximumFractionDigits: 1,
-                                          })}{" "}
-                                          ({m.diferenciaPct > 0 ? "+" : ""}
-                                          {m.diferenciaPct.toFixed(1)}%)
-                                        </span>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      <div className="space-y-1 col-span-2">
-                        <label
-                          htmlFor="tanque-umbral-descuadre"
-                          className="text-xs font-bold text-slate-700 uppercase"
-                        >
-                          Umbral de descuadre (%)
-                        </label>
-                        <input
-                          id="tanque-umbral-descuadre"
-                          type="number"
-                          min={0}
-                          max={100}
-                          step="0.01"
-                          className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
-                          value={formData.umbral_descuadre_pct}
-                          onChange={(e) =>
-                            setFormData({ ...formData, umbral_descuadre_pct: e.target.value })
-                          }
-                        />
-                        <p className="text-xs text-slate-600">
-                          Cuánto puede diferir el nivel medido de lo que los vales y recepciones
-                          explican, antes de alertar. Se mide sobre la capacidad del tanque: 1% de
-                          20,000 L son 200 L. <strong>Vacío = no alertar todavía</strong>, hasta
-                          saber cuánto ruido produce la varilla de este tanque.{" "}
-                          <strong>0 = alertar por cualquier faltante o sobrante</strong>.
-                        </p>
-                        {editandoId !== null && (
-                          <SugerenciaCompacta
-                            sugerencia={sugerenciasUmbral?.descuadre}
-                            cargando={cargandoSugerenciaUmbral}
-                            onUsar={(v) =>
-                              setFormData((f) => ({ ...f, umbral_descuadre_pct: String(v) }))
-                            }
-                            onDescargarDetalle={descargarDetalleCalibracion}
-                            descargandoDetalle={descargandoCalibracion}
-                          />
-                        )}
-                      </div>
-                      <div className="space-y-1 col-span-2">
-                        <label
-                          htmlFor="tanque-umbral-ciclo"
-                          className="text-xs font-bold text-slate-700 uppercase"
-                        >
-                          Umbral acumulado del ciclo (%)
-                        </label>
-                        <input
-                          id="tanque-umbral-ciclo"
-                          type="number"
-                          min={0}
-                          max={100}
-                          step="0.01"
-                          className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
-                          value={formData.umbral_descuadre_ciclo_pct}
-                          onChange={(e) =>
-                            setFormData({ ...formData, umbral_descuadre_ciclo_pct: e.target.value })
-                          }
-                        />
-                        <p className="text-xs text-slate-600">
-                          Igual que el anterior, pero sumando <strong>todo el ciclo</strong> desde
-                          que el tanque se cargó, no solo entre dos varillas. Atrapa el faltante
-                          repartido en porciones chicas, que medición por medición parece normal. No
-                          hace falta ponerlo mucho más alto que el de arriba: el error de la varilla{" "}
-                          <strong>no se acumula</strong>, porque lo que marca de más en una medición
-                          se descuenta en la siguiente. Lo que sí se va sumando es el error del
-                          contómetro en cada despacho.
-                        </p>
-                        {editandoId !== null && (
-                          <SugerenciaCompacta
-                            sugerencia={sugerenciasUmbral?.ciclo}
-                            cargando={cargandoSugerenciaUmbral}
-                            onUsar={(v) =>
-                              setFormData((f) => ({ ...f, umbral_descuadre_ciclo_pct: String(v) }))
-                            }
-                            onDescargarDetalle={descargarDetalleCalibracion}
-                            descargandoDetalle={descargandoCalibracion}
-                          />
-                        )}
-                      </div>
-                      <div className="space-y-1 col-span-2">
-                        <label
-                          htmlFor="tanque-umbral-ventana"
-                          className="text-xs font-bold text-slate-700 uppercase"
-                        >
-                          Umbral acumulado de la ventana (%)
-                        </label>
-                        <input
-                          id="tanque-umbral-ventana"
-                          type="number"
-                          min={0}
-                          max={100}
-                          step="0.01"
-                          className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
-                          value={formData.umbral_descuadre_ventana_pct}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              umbral_descuadre_ventana_pct: e.target.value,
-                            })
-                          }
-                        />
-                        <p className="text-xs text-slate-600">
-                          El único acumulado que <strong>no se reinicia con una recepción</strong>.
-                          El del ciclo vuelve a cero cada vez que llega el camión, y ahí se esconde
-                          el robo de a poco: 50 L por día no alertan nunca si el tanque se carga
-                          seguido. Este suma los últimos 30 días de corrido (se configura en
-                          Alertas). Igual que en el del ciclo, el error de la varilla se descuenta
-                          solo y no crece con los días. Lo que sí crece es el error del contómetro
-                          en cada despacho: puede ir parecido al del ciclo, o un poco más alto si el
-                          tanque despacha mucho. Con historial suficiente, la sugerencia de abajo te
-                          da el número.
-                        </p>
-                        {editandoId !== null && (
-                          <SugerenciaCompacta
-                            sugerencia={sugerenciasUmbral?.ventana}
-                            cargando={cargandoSugerenciaUmbral}
-                            onUsar={(v) =>
-                              setFormData((f) => ({
-                                ...f,
-                                umbral_descuadre_ventana_pct: String(v),
-                              }))
-                            }
-                            onDescargarDetalle={descargarDetalleCalibracion}
-                            descargandoDetalle={descargandoCalibracion}
-                            soloDesviacion
-                          />
-                        )}
-                      </div>
+                      <CampoUmbral
+                        id="diferencia"
+                        titulo="Diferencia con la factura del proveedor"
+                        base="lo que entregó el camión"
+                        unidad={formData.unidad}
+                        piso={formData.umbral_diferencia_piso}
+                        pct={formData.umbral_diferencia_pct}
+                        onCambio={onCambioUmbral("umbral_diferencia")}
+                        ayuda={
+                          <>
+                            Cuánto puede diferir lo facturado de lo que realmente subió la varilla,
+                            antes de marcar la recepción como sospechosa. El <strong>piso</strong>{" "}
+                            cubre el error de las dos varillas que encierran la descarga; el{" "}
+                            <strong>porcentaje</strong>, el del medidor del camión, que crece con lo
+                            entregado.
+                          </>
+                        }
+                        sugerencia={sugerenciasUmbral?.diferencia}
+                        cargandoSugerencia={cargandoSugerenciaUmbral}
+                        mostrarSugerencia={editandoId !== null}
+                        onDescargarDetalle={descargarDetalleCalibracion}
+                        descargandoDetalle={descargandoCalibracion}
+                      />
+                      <CampoUmbral
+                        id="descuadre"
+                        titulo="Descuadre entre dos varillas"
+                        base="lo que se movió en el tramo"
+                        unidad={formData.unidad}
+                        piso={formData.umbral_descuadre_piso}
+                        pct={formData.umbral_descuadre_pct}
+                        onCambio={onCambioUmbral("umbral_descuadre")}
+                        ayuda={
+                          <>
+                            Cuánto puede diferir el nivel medido de lo que los vales y recepciones
+                            explican. El <strong>piso</strong> es el error de la varilla: es el
+                            mismo en un tramo sin despachos que en uno de 3.000, porque es del
+                            instrumento y no del caudal. El <strong>porcentaje</strong> se aplica
+                            sobre lo que pasó por los medidores en ese tramo.
+                          </>
+                        }
+                        sugerencia={sugerenciasUmbral?.balance}
+                        cargandoSugerencia={cargandoSugerenciaUmbral}
+                        mostrarSugerencia={editandoId !== null}
+                        onDescargarDetalle={descargarDetalleCalibracion}
+                        descargandoDetalle={descargandoCalibracion}
+                      />
+                      <CampoUmbral
+                        id="ciclo"
+                        titulo="Acumulado del ciclo"
+                        base="lo que se movió desde la última carga"
+                        unidad={formData.unidad}
+                        piso={formData.umbral_descuadre_ciclo_piso}
+                        pct={formData.umbral_descuadre_ciclo_pct}
+                        onCambio={onCambioUmbral("umbral_descuadre_ciclo")}
+                        ayuda={
+                          <>
+                            Lo mismo que el anterior, pero sumando <strong>todo el ciclo</strong>{" "}
+                            desde que el tanque se cargó. Atrapa el faltante repartido en porciones
+                            chicas, que medición por medición parece normal.{" "}
+                            <strong>El piso es el mismo que el de arriba</strong>: son las mismas
+                            dos varillas. Lo que cambia es que el porcentaje se aplica sobre mucho
+                            más movimiento, y por eso el ciclo tolera más en litros sin que haya que
+                            inventarle un número aparte.
+                          </>
+                        }
+                        sugerencia={sugerenciasUmbral?.balance}
+                        cargandoSugerencia={cargandoSugerenciaUmbral}
+                        mostrarSugerencia={editandoId !== null}
+                        onDescargarDetalle={descargarDetalleCalibracion}
+                        descargandoDetalle={descargandoCalibracion}
+                      />
+                      <CampoUmbral
+                        id="ventana"
+                        titulo="Acumulado de la ventana"
+                        base="lo que se movió en la ventana"
+                        unidad={formData.unidad}
+                        piso={formData.umbral_descuadre_ventana_piso}
+                        pct={formData.umbral_descuadre_ventana_pct}
+                        onCambio={onCambioUmbral("umbral_descuadre_ventana")}
+                        ayuda={
+                          <>
+                            El único acumulado que <strong>no se reinicia con una recepción</strong>
+                            . El del ciclo vuelve a cero cada vez que llega el camión, y ahí se
+                            esconde el robo de a poco: 50 L por día no alertan nunca si el tanque se
+                            carga seguido. Este suma los últimos 30 días de corrido (se configura en
+                            Alertas). El piso sigue siendo el de dos varillas: el error de cada
+                            medición se cancela con el de la siguiente, así que no crece con los
+                            días.
+                          </>
+                        }
+                        sugerencia={sugerenciasUmbral?.ventana}
+                        cargandoSugerencia={cargandoSugerenciaUmbral}
+                        mostrarSugerencia={editandoId !== null}
+                        onDescargarDetalle={descargarDetalleCalibracion}
+                        descargandoDetalle={descargandoCalibracion}
+                      />
                     </>
                   )}
                 </div>
@@ -8107,11 +8290,27 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                                 // 0 sí pinta, porque ahora significa
                                 // "cualquier diferencia cuenta" -- de ahí que
                                 // se pregunte por null y no por `> 0`.
-                                const umbral =
+                                // La tolerancia es piso + % de lo entregado
+                                // (0101), la misma cuenta que hace la alerta.
+                                // Comparar solo contra el porcentaje pintaría
+                                // de rojo entregas que el sistema no alertó.
+                                //
+                                // La base del % es lo entregado por TODO el
+                                // GRUPO cuando hay varias recepciones entre
+                                // las mismas dos varillas -- `r.cantidad` es
+                                // solo esta fila. Usar la de esta fila sola
+                                // pintaba "excede" recepciones que la alerta
+                                // real (que sí suma el grupo) no consideraba
+                                // sospechosas.
+                                const cantidadParaLaCuenta = r.cantidad_del_grupo ?? r.cantidad;
+                                const tolerado =
                                   r.umbral_diferencia_pct === null
                                     ? null
-                                    : Number(r.umbral_diferencia_pct);
-                                const excede = umbral !== null && Math.abs(pct) > umbral;
+                                    : Number(r.umbral_diferencia_piso ?? 0) +
+                                      (Number(cantidadParaLaCuenta) *
+                                        Number(r.umbral_diferencia_pct)) /
+                                        100;
+                                const excede = tolerado !== null && Math.abs(litros) > tolerado;
                                 return (
                                   <span
                                     className={

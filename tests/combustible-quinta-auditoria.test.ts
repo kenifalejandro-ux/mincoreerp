@@ -620,13 +620,18 @@ describe("combustible: los diez huecos de la 5ª auditoría", () => {
 
     const sug = await admin.get(`/api/erp/combustible/${tq.id}/sugerencia-umbral`);
     expect(sug.status).toBe(200);
-    const descuadre = sug.body.descuadre;
-    expect(descuadre.muestraSuficiente).toBe(true);
-    expect(descuadre.atipicos).not.toBeNull();
-    expect(descuadre.atipicos.cantidad).toBeGreaterThanOrEqual(2);
-    // Y el número limpio es bastante más chico que el contaminado: si no, el
+    const balance = sug.body.balance;
+    expect(balance.muestraSuficiente).toBe(true);
+    expect(balance.atipicos).not.toBeNull();
+    expect(balance.atipicos.cantidad).toBeGreaterThanOrEqual(2);
+    // Y el par limpio es bastante más chico que el contaminado: si no, el
     // aviso no serviría para decidir nada.
-    expect(descuadre.atipicos.sugeridoSinEllos).toBeLessThan(descuadre.sugerido);
+    //
+    // Desde 0101 los atípicos se buscan en los RESIDUOS y no en el descuadre
+    // crudo: lo que delata a una medición no es su tamaño sino cuánto se
+    // aparta de lo que el resto del tanque hace. Una diferencia grande en un
+    // tramo que movió mucho puede ser perfectamente normal.
+    expect(balance.atipicos.sinEllos.piso).toBeLessThan(balance.piso);
   });
 
   it("los topes diarios se sugieren desde el historial, sin aplicarse solos", async () => {

@@ -234,24 +234,49 @@ describe("combustible: reportes en .xlsx", () => {
   describe("detalle de calibración", () => {
     const url = (tq: number) => `/api/erp/combustible/${tq}/sugerencia-umbral/xlsx`;
 
-    it("trae una hoja por umbral, en el orden del formulario, y la explicación en palabras", async () => {
+    it("trae una hoja por par de números, en el orden del formulario", async () => {
       const tq = await tanque();
 
       const res = await bajar(url(tq));
       expect(res.status).toBe(200);
       expect(res.headers["content-disposition"]).toContain(".xlsx");
-      // Mismo orden que los campos de la ficha del tanque: quien baja el
-      // archivo desde un campo encuentra su hoja en el lugar que espera.
+      // Ya no hay hoja de ciclo: desde 0101 el tramo y el ciclo comparten un
+      // solo par (misma varilla, mismos medidores), y lo único que los
+      // distingue es cuánto movimiento suma cada uno.
       expect(nombresDeHojas(res.body)).toEqual([
         "Diferencia en recepción",
-        "Descuadre por tramo",
-        "Ciclo",
+        "Balance del tanque",
         "Ventana",
         "Cómo leerlo",
       ]);
     });
 
-    it("la hoja de la ventana hace la cuenta CON SIGNO, sin valor absoluto ni √n", async () => {
+    it("ajusta la recta contra el movimiento, no contra la capacidad", async () => {
+      const tq = await tanque(10000);
+      await despachar(tq, 500, hace(10));
+      await leer(tq, 9200, hace(9));
+
+      const libro = (await bajar(url(tq))).body;
+      const hoja = hojaPorNombre(libro, "Balance del tanque");
+      const notas = Object.values(notasPorNombre(libro, "Balance del tanque")).join("\n");
+
+      // Los dos números del ajuste, como fórmulas de planilla: si el archivo
+      // no los calculara, no podría explicar la pantalla.
+      expect(hoja).toContain("<f>IF($B$");
+      expect(hoja).toContain("SLOPE(");
+      expect(hoja).toContain("SUMSQ(");
+      // El corte se calcula a mano (promedio − pendiente × promedio) y no con
+      // INTERCEPT: tiene que usar la pendiente YA recortada a 0, no la cruda.
+      expect(hoja).toContain("AVERAGE(");
+      // La columna de movimiento y la del residuo, que son las nuevas.
+      expect(hoja).toContain("Movimiento (");
+      expect(hoja).toContain("Residuo (");
+      // El porqué, en palabras.
+      expect(notas).toContain("no depende de cuánto se movió");
+      expect(notas).toContain("crece con el volumen que pasa por ellos");
+    });
+
+    it("la hoja de la ventana va CON SIGNO y no suma el nivel de la recta", async () => {
       const tq = await tanque(10000, "recomendado");
       await despachar(tq, 500, hace(10));
       await leer(tq, 9200, hace(9));
@@ -260,27 +285,19 @@ describe("combustible: reportes en .xlsx", () => {
       const hoja = hojaPorNombre(libro, "Ventana");
       const notas = Object.values(notasPorNombre(libro, "Ventana")).join("\n");
 
-      // Los mismos tramos que la hoja de descuadre, desarmados igual.
+      // Los mismos tramos que la hoja de balance, desarmados igual.
       expect(hoja).toMatch(/<f>D\d+-E\d+\+F\d+<\/f>/);
       expect(hoja).toMatch(/<f>H\d+-G\d+<\/f>/);
-      // Con signo: ni la columna ni la fórmula del valor absoluto.
-      expect(hoja).not.toContain("Valor absoluto");
-      expect(hoja).not.toContain("ABS(");
-      // Cuadrados contra el promedio CON SIGNO, que es el de la columna I.
-      expect(hoja).toMatch(/<f>\(I\d+-\$B\$\d+\)\^2<\/f>/);
-      expect(hoja).toContain("<f>AVERAGE(I");
-      // Sugerencia = 2 desviaciones, sin sumar el promedio ni multiplicar por
-      // la cantidad de tramos.
-      expect(hoja).toMatch(/<f>IF\(\$B\$\d+&gt;1,2\*\$B\$\d+,&quot;&quot;\)<\/f>/);
-      // No compara tramos sueltos contra el umbral: la alerta mira la suma.
-      expect(hoja).not.toContain("¿Alerta con el umbral de hoy?");
-      expect(hoja).toContain("COMPARACIÓN: EL UMBRAL DE HOY CONTRA LA SUGERENCIA");
-      // La etiqueta de la pantalla, con "desviación" en vez de "promedio ±".
-      expect(hoja).toContain(" mediciones, desviación ");
+      // Con signo: la columna de la cuenta NO pasa por el valor absoluto.
+      expect(hoja).toContain("Valor para la cuenta (con signo)");
+      // El piso es 2 desviaciones SIN el corte, al revés que en el balance.
+      expect(hoja).toMatch(/MAX\(\$B\$\d+,2\*\$B\$\d+\)/);
+      expect(hoja).not.toMatch(/MAX\(0,\$B\$\d+\)\+2\*/);
       expect(hoja).toContain("los últimos 30 días");
-      // El porqué, en palabras: el error de cada varilla se cancela.
-      expect(notas).toContain("se cancela con el tramo siguiente");
-      expect(notas).toContain("un robo sistemático subiría el umbral");
+      // El porqué, en palabras: el error de cada varilla se cancela, y el
+      // nivel de la recta no entra porque ahí vive el robo sostenido.
+      expect(notas).toContain("un robo se acumula siempre para el mismo lado");
+      expect(notas).toContain("tolerar justo el robo");
     });
 
     it("desarma CADA tramo en su cuenta, con fórmulas", async () => {
@@ -294,10 +311,10 @@ describe("combustible: reportes en .xlsx", () => {
       await leer(tq, 8200, hace(9)); // teórico 8.500, medido 8.200: faltan 300
 
       const sugerencia = await ag.get(`/api/erp/combustible/${tq}/sugerencia-umbral`);
-      const n = sugerencia.body.descuadre.tamanioMuestra as number;
+      const n = sugerencia.body.balance.tamanioMuestra as number;
       expect(n).toBeGreaterThan(0);
 
-      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Descuadre por tramo");
+      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Balance del tanque");
 
       // Una fila por tramo: el número de la primera columna llega hasta n.
       expect(hoja).toContain(`<v>${n}</v>`);
@@ -308,23 +325,35 @@ describe("combustible: reportes en .xlsx", () => {
       // diferencia = medido − teórico. Nada pegado.
       expect(hoja).toMatch(/<f>D\d+-E\d+\+F\d+<\/f>/);
       expect(hoja).toMatch(/<f>H\d+-G\d+<\/f>/);
-      // Los números de la etiqueta, como fórmulas.
+      // Los pasos del ajuste, como fórmulas.
       expect(hoja).toContain("<f>AVERAGE(");
       expect(hoja).toContain("SQRT(");
       expect(hoja).toContain("MEDIAN(");
-      // El mismo recorte que hace el sistema: piso de 1 %, tope de 100 %.
-      expect(hoja).toContain("MAX(1,MIN(100,");
+      // El piso mínimo por dilatación: 1 % de la capacidad.
+      expect(hoja).toContain("<f>$B$5*1/100</f>");
     });
 
-    it("marca la lectura inicial del alta, que no es una medición de cancha", async () => {
-      // El alta del tanque crea una lectura `inicial` con la fecha de hoy. Con
-      // varillas anteriores cargadas, el tramo contra ella es basura: en el
-      // tenant redteam aportaba el 82 % de la varianza.
+    it("deja afuera el tramo que toca la lectura inicial del alta", async () => {
+      // El alta crea una lectura `inicial` con la fecha de hoy. Con varillas
+      // anteriores cargadas, el tramo contra ella es basura: en el tenant
+      // redteam aportaba el 82 % de la varianza y llevaba la sugerencia de
+      // 1,8 % a 14,5 %. Desde 0101 ni siquiera entra en la muestra.
       const tq = await tanque(10000);
       await leer(tq, 9000, hace(9));
 
-      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Descuadre por tramo");
-      expect(hoja).toContain("Lectura inicial del alta del tanque");
+      const res = await ag.get(`/api/erp/combustible/${tq}/sugerencia-umbral`);
+      // Hay TRES lecturas: la de hace 50 días que arma el helper, la de hace
+      // 9, y la `inicial` que el alta fecha HOY. Eso da dos tramos posibles,
+      // pero el segundo (hace 9 -> inicial) termina en la lectura del alta y
+      // queda afuera. Antes de 0101 ese tramo entraba y podía dominar toda
+      // la estadística: es un salto de 9.000 L contra un nivel que nadie
+      // midió en cancha.
+      expect(res.body.balance.tamanioMuestra).toBe(1);
+
+      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Balance del tanque");
+      // Una sola fila de datos en la tabla: la #1, sin #2.
+      expect(hoja).toContain("<v>1</v>");
+      expect(hoja).not.toContain("<v>2</v>");
     });
 
     it("explica cada columna y cada resultado en palabras", async () => {
@@ -333,9 +362,9 @@ describe("combustible: reportes en .xlsx", () => {
       await leer(tq, 9200, hace(9));
 
       const libro = (await bajar(url(tq))).body;
-      const hoja = hojaPorNombre(libro, "Descuadre por tramo");
-      const notas = Object.values(notasPorNombre(libro, "Descuadre por tramo")).join("\n");
-      expect(hoja).toContain("LECTURA RÁPIDA");
+      const hoja = hojaPorNombre(libro, "Balance del tanque");
+      const notas = Object.values(notasPorNombre(libro, "Balance del tanque")).join("\n");
+      expect(hoja).toContain("¿HAY FILAS QUE NO REPRESENTAN AL TANQUE?");
       // Las explicaciones van en NOTAS de celda, no escritas al lado de los
       // números: ni la columna "QUÉ SIGNIFICA" ni el bloque de leyenda.
       expect(hoja).not.toContain("QUÉ SIGNIFICA");
@@ -344,10 +373,7 @@ describe("combustible: reportes en .xlsx", () => {
       expect(notas).toContain("Lo que DEBERÍA haber");
     });
 
-    it("las tres hojas explican sus resultados, no solo la de tramo", async () => {
-      // Las tres salen de la misma función, pero el bloque de resultados solo
-      // se arma con al menos una fila: hacen falta recepciones para que el
-      // ciclo y la diferencia tengan algo que mostrar.
+    it("las tres hojas explican sus resultados, no solo la del balance", async () => {
       const tq = await tanque(10000);
       const grifo = await ag
         .post("/api/erp/combustible/grifos")
@@ -367,108 +393,79 @@ describe("combustible: reportes en .xlsx", () => {
       await leer(tq, 14000, hace(19));
       await despachar(tq, 500, hace(18));
       await leer(tq, 13400, hace(17));
-      // La segunda recepción cierra el primer ciclo.
       expect((await recibir(2000, hace(15))).status).toBe(201);
       await leer(tq, 15400, hace(14));
 
       const libro = (await bajar(url(tq))).body;
-      for (const nombre of ["Descuadre por tramo", "Ciclo", "Diferencia en recepción"]) {
+      for (const nombre of ["Balance del tanque", "Ventana", "Diferencia en recepción"]) {
         const notas = Object.values(notasPorNombre(libro, nombre)).join("\n");
         expect(hojaPorNombre(libro, nombre), nombre).not.toContain("QUÉ SIGNIFICA");
-        expect(notas, nombre).toContain("Cuánto suele variar el desajuste");
-        expect(notas, nombre).toContain("Lo normal del tanque más un margen");
-        // La de recepción ya calcula en %: no tiene paso de litros a porcentaje.
-        if (nombre !== "Diferencia en recepción") {
-          expect(notas, nombre).toContain("pasada a porcentaje del tanque");
-        }
-        expect(notas, nombre).toContain("Con piso de 1 %");
-      }
-
-      // Cada hoja reconstruye la etiqueta de SU campo, que no es la misma: el
-      // de diferencia tiene su propio recuadro con otro texto. Con una sola
-      // fórmula para las tres, el archivo decía otra cosa que la pantalla.
-      expect(hojaPorNombre(libro, "Diferencia en recepción")).toContain(
-        "Todavía no hay muestra suficiente para sugerir un umbral ("
-      );
-      expect(hojaPorNombre(libro, "Diferencia en recepción")).toContain(
-        " recepciones con lectura antes y después)."
-      );
-      expect(hojaPorNombre(libro, "Diferencia en recepción")).toContain(" recepciones, promedio ");
-      for (const nombre of ["Descuadre por tramo", "Ciclo", "Ventana"]) {
-        expect(hojaPorNombre(libro, nombre), nombre).toContain(
-          "). Hasta entonces, el valor de arriba es provisional."
-        );
+        // Los dos resultados y el piso mínimo, explicados en las tres.
+        expect(notas, nombre).toContain("Cuánto se aparta una fila típica de la recta");
+        expect(notas, nombre).toContain("alertando por el clima");
+        expect(notas, nombre).toContain("Hace falta que las filas sean de tamaños distintos");
       }
     });
 
-    it("pone el umbral de hoy también en litros", async () => {
+    it("pone el par configurado hoy, los dos números", async () => {
       const tq = await tanque(10000, "recomendado");
       await leer(tq, 9900, hace(9));
 
-      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Descuadre por tramo");
-      // Umbral % (B6) × capacidad (B5) / 100. Con 2 % y 20.000 L son 400 L.
-      expect(hoja).toContain("<f>B6*B5/100</f>");
+      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Balance del tanque");
+      // La cabecera lleva el piso Y el porcentaje: la tolerancia es la suma
+      // de los dos, y mostrar uno solo sería mostrar media cuenta.
+      expect(hoja).toContain("Piso configurado hoy (");
+      expect(hoja).toContain("Porcentaje configurado hoy (%)");
     });
 
-    it("compara el umbral de hoy contra la sugerencia, en filas concretas", async () => {
+    it("compara lo de hoy contra la sugerencia, en filas concretas", async () => {
       const tq = await tanque(10000, "recomendado");
       await despachar(tq, 500, hace(10));
       await leer(tq, 9200, hace(9));
 
-      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Descuadre por tramo");
-      expect(hoja).toContain("COMPARACIÓN: EL UMBRAL DE HOY CONTRA LA SUGERENCIA");
+      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Balance del tanque");
+      expect(hoja).toContain("COMPARACIÓN: LO DE HOY CONTRA LA SUGERENCIA");
       expect(hoja).toContain("Filas que DEJARÍAN de alertar si se acepta la sugerencia");
-      // Cuenta filas contra una celda: COUNTIF(rango,">"&$B$n).
-      expect(hoja).toMatch(/COUNTIF\([A-Z]+\d+:[A-Z]+\d+,&quot;&gt;&quot;&amp;\$B\$\d+\)/);
-      // Con menos filas que el mínimo, la comparación queda vacía: no hay
+      // Cada fila se compara contra SU tolerancia, no contra un número fijo:
+      // piso + porcentaje × el movimiento de esa fila.
+      expect(hoja).toMatch(/ABS\([A-Z]+\d+\)&gt;\$B\$\d+\+\$B\$\d+\/100\*[A-Z]+\d+/);
+      // Con menos filas que el mínimo, la columna queda vacía: no hay
       // sugerencia que aceptar y mostrar un número inventado confunde.
       expect(hoja).toMatch(/IF\(\$B\$\d+&lt;\$B\$\d+,&quot;&quot;,/);
     });
 
-    it("sin umbral configurado no inventa la comparación", async () => {
+    it("sin nada configurado no inventa la comparación", async () => {
       const tq = await tanque(10000, "sin_vigilar");
       await leer(tq, 9900, hace(9));
 
-      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Descuadre por tramo");
+      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Balance del tanque");
       expect(hoja).toContain("sin configurar");
-      expect(hoja).toContain("sin umbral");
-      expect(hoja).not.toContain("COMPARACIÓN: EL UMBRAL DE HOY");
+      expect(hoja).not.toContain("COMPARACIÓN: LO DE HOY");
     });
 
-    it("empareja la etiqueta de la pantalla con los números del archivo", async () => {
-      // La pantalla dice "promedio 1.93% ± 6.27%" y la hoja trabaja en litros:
-      // sin este bloque no hay forma de encontrar el 6.27 en el archivo.
+    it("traduce el par a litros en un período típico", async () => {
+      // El número que hace juzgable la sugerencia: "en un tramo normal de
+      // este tanque, esto deja pasar X litros". Sin él hay que multiplicar a
+      // mano el porcentaje por el movimiento para saber qué se está aceptando.
       const tq = await tanque(10000);
       await despachar(tq, 500, hace(10));
       await leer(tq, 9200, hace(9));
 
       const libro = (await bajar(url(tq))).body;
-      const hoja = hojaPorNombre(libro, "Descuadre por tramo");
-      expect(hoja).toContain("CÓMO LO MUESTRA LA PANTALLA");
-      expect(hoja).toContain("Desviación en % de la capacidad");
-      // La aclaración del ± vive en la nota del rótulo, no al lado del número.
-      expect(Object.values(notasPorNombre(libro, "Descuadre por tramo")).join("\n")).toContain(
-        "el ± NO significa"
-      );
-      // La etiqueta reconstruida con fórmula, con el mismo formato que la pantalla.
-      expect(hoja).toContain("mediciones, promedio ");
+      const hoja = hojaPorNombre(libro, "Balance del tanque");
+      const notas = Object.values(notasPorNombre(libro, "Balance del tanque")).join("\n");
+      expect(hoja).toContain("Tolerancia en un período típico (");
+      expect(notas).toContain("deja pasar X litros");
     });
 
     it("muestra los litros con 2 decimales y los conteos enteros", async () => {
       const tq = await tanque(10000);
       await leer(tq, 9900, hace(9));
 
-      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Descuadre por tramo");
+      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Balance del tanque");
       // Estilos del generador: 2/3 = decimal (normal/negrita), 4/5 = entero.
       expect(hoja).toMatch(/ s="2"/);
       expect(hoja).toMatch(/ s="4"/);
-    });
-
-    it("en la hoja de recepciones el umbral en litros no aplica", async () => {
-      const tq = await tanque(10000, "recomendado");
-
-      const hoja = hojaPorNombre((await bajar(url(tq))).body, "Diferencia en recepción");
-      expect(hoja).toContain("no aplica");
     });
 
     it("se puede bajar aunque la muestra no alcance para sugerir", async () => {
@@ -477,30 +474,27 @@ describe("combustible: reportes en .xlsx", () => {
       await leer(tq, 9500, hace(9));
 
       const sugerencia = await ag.get(`/api/erp/combustible/${tq}/sugerencia-umbral`);
-      expect(sugerencia.body.descuadre.muestraSuficiente).toBe(false);
+      expect(sugerencia.body.balance.muestraSuficiente).toBe(false);
 
       const res = await bajar(url(tq));
       expect(res.status).toBe(200);
-      const hoja = hojaPorNombre(res.body, "Descuadre por tramo");
-      // Las pocas mediciones que hay, más la aclaración de que no alcanzan.
+      const hoja = hojaPorNombre(res.body, "Balance del tanque");
+      // Las pocas mediciones que hay, más el bloque de resultados.
       expect(hoja).toContain("RESULTADOS");
-      expect(hoja).toContain("faltan mediciones");
       // El rótulo del conteo dice QUÉ se cuenta: en esta hoja, tramos.
       expect(hoja).toContain("Mínimo de tramos para que el sistema sugiera");
-      expect(hoja).toContain("No -- faltan tramos");
     });
 
-    it("no ofrece la muestra en la pantalla cuando no alcanza, pero sí la manda", async () => {
-      // La muestra viaja en la respuesta aunque no alcance -- es lo que usa la
-      // exportación -- pero la pantalla sigue sin recibir ningún número.
+    it("no ofrece números en la pantalla cuando no alcanza, pero sí manda la muestra", async () => {
       const tq = await tanque(10000);
       await despachar(tq, 500, hace(10));
       await leer(tq, 9500, hace(9));
 
       const res = await ag.get(`/api/erp/combustible/${tq}/sugerencia-umbral`);
-      expect(res.body.descuadre.muestraSuficiente).toBe(false);
-      expect(res.body.descuadre.sugerido).toBeUndefined();
-      expect(Array.isArray(res.body.descuadre.muestra)).toBe(true);
+      expect(res.body.balance.muestraSuficiente).toBe(false);
+      expect(res.body.balance.piso).toBeUndefined();
+      expect(res.body.balance.pct).toBeUndefined();
+      expect(Array.isArray(res.body.balance.muestra)).toBe(true);
     });
 
     it("una hoja sin mediciones lo dice, en vez de romper las fórmulas", async () => {

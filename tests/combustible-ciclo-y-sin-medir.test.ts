@@ -49,6 +49,13 @@ describe("combustible: saldo del ciclo y tanque sin medir (migración 0076)", ()
     await closeDatabase();
   });
 
+  /** El porcentaje de capacidad de antes de 0101, traducido al par
+   *  (pct, piso) que significa exactamente lo mismo en un tanque de 20.000. */
+  const aPiso = (campo: string, pct: number | null) => ({
+    [`${campo}_pct`]: pct === null ? null : 0,
+    [`${campo}_piso`]: pct === null ? null : (20000 * pct) / 100,
+  });
+
   /** Tanque de 20.000 L. Tramo 1% (banda 200 L) y ciclo 2% (banda 400 L):
    *  la combinación que hace visible el robo fraccionado sin que cada
    *  medición individual haga ruido. */
@@ -61,8 +68,12 @@ describe("combustible: saldo del ciclo y tanque sin medir (migración 0076)", ()
       tipo_punto: "fijo",
       capacidad_total: 20000,
       nivel_actual: 20000,
-      umbral_descuadre_pct: opts.tramo === undefined ? 1 : opts.tramo,
-      umbral_descuadre_ciclo_pct: opts.ciclo === undefined ? 2 : opts.ciclo,
+      // Desde 0101 la banda es `piso + % de lo movido`. Acá las bandas son
+      // fijas, así que van como piso puro con porcentaje 0 -- la misma
+      // traducción que aplicó la migración a los tanques que ya existían
+      // (1% de 20.000 = 200 L, 2% = 400 L).
+      ...aPiso("umbral_descuadre", opts.tramo === undefined ? 1 : opts.tramo),
+      ...aPiso("umbral_descuadre_ciclo", opts.ciclo === undefined ? 2 : opts.ciclo),
     });
     expect(res.status).toBe(201);
     return res.body.id as number;

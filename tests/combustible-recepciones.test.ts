@@ -582,6 +582,12 @@ describe("combustible: recepciones y costo ponderado (Fase C)", () => {
     for (const fila of listado.body.data) {
       expect(Number(fila.diferencia_litros)).toBe(-100);
       expect(Number(fila.entregas_en_grupo)).toBe(2);
+      // 0101, hallazgo de la revisión adversaria: el listado tiene que traer
+      // la cantidad del GRUPO (1200), no solo la de esta fila (500 o 700).
+      // Sin esto el frontend no puede reconstruir la misma tolerancia
+      // (piso + % de lo entregado) que usa la alerta real, y pinta "excede"
+      // recepciones que el sistema nunca consideró sospechosas.
+      expect(Number(fila.cantidad_del_grupo)).toBe(1200);
     }
   });
 

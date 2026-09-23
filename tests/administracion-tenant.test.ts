@@ -240,6 +240,51 @@ describe("menú Administración", () => {
     expect(deAntes.body.eventos).toHaveLength(0);
   });
 
+  // Encontrado en CI (2026-09-22), NO en local: local corre con Postgres
+  // configurado en America/Lima a nivel de sistema, así que el bug nunca se
+  // veía acá. `postgres:16` (la imagen de CI, y casi seguro la de producción)
+  // arranca en UTC, y entre las 19:00 y la medianoche en Lima UTC ya rodó al
+  // día siguiente: "hoy" (Lima) le pedía a la sesión un `::date` que ESA
+  // sesión interpretaba como UTC, y el evento de "ahora" quedaba excluido.
+  // El test de arriba nunca lo iba a agarrar porque corre con el TimeZone
+  // que YA tiene la máquina de quien lo ejecuta -- este fuerza la sesión a
+  // UTC a propósito, para que la regresión no dependa de en qué reloj corra
+  // quien lo lee.
+  it("el filtro de fecha da lo mismo aunque la SESIÓN de Postgres esté en UTC", async () => {
+    const { pool } = await import("../src/server/config/database");
+    const client = await pool.connect();
+    try {
+      await client.query("SET TIME ZONE 'UTC'");
+
+      // Un instante que HOY, en Lima, es hoy -- pero para una sesión en UTC
+      // puede ya ser "mañana" (la ventana nocturna que rompía el filtro).
+      const ahora = new Date();
+      const hoyLima = ahora.toLocaleDateString("en-CA", { timeZone: "America/Lima" });
+
+      await client.query(
+        `INSERT INTO platform_audit_log (accion, tenant_id, resultado, actor_type, actor_label, creado_en)
+         VALUES ('sonda_timezone_test', $1, 'success', 'system', 'sonda', $2)`,
+        [empresa.tenant.id, ahora.toISOString()]
+      );
+
+      const res = await client.query(
+        `SELECT 1 FROM platform_audit_log
+          WHERE tenant_id = $1 AND accion = 'sonda_timezone_test'
+            AND creado_en >= ($2::date)::timestamp AT TIME ZONE 'America/Lima'
+            AND creado_en < ($2::date + interval '1 day')::timestamp AT TIME ZONE 'America/Lima'`,
+        [empresa.tenant.id, hoyLima]
+      );
+      // Bajo la sesión UTC forzada de este test, la versión rota (sin el
+      // `AT TIME ZONE 'America/Lima'` explícito) da 0 filas en la ventana
+      // nocturna. Con el fix, siempre 1 -- sin importar la hora del día en
+      // que corra CI.
+      expect(res.rows).toHaveLength(1);
+    } finally {
+      await client.query("RESET TIME ZONE");
+      client.release();
+    }
+  });
+
   it("no muestra ni un evento de otra empresa", async () => {
     const otra = await crearTenantDePrueba(PASSWORD);
     try {
