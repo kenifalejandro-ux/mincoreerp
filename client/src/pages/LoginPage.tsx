@@ -507,6 +507,31 @@ export default function LoginPage() {
             )}
           </form>
         )}
+
+        {/* El badge de reCAPTCHA está oculto por CSS (ver globals.css) --
+            Google exige este aviso en su lugar, o viola sus Términos de
+            Servicio de reCAPTCHA. */}
+        <p className="mt-4 text-center text-[11px] leading-snug text-slate-500">
+          Este sitio está protegido por reCAPTCHA y aplican la{" "}
+          <a
+            href="https://policies.google.com/privacy"
+            target="_blank"
+            rel="noreferrer"
+            className="underline hover:text-slate-300"
+          >
+            Política de Privacidad
+          </a>{" "}
+          y los{" "}
+          <a
+            href="https://policies.google.com/terms"
+            target="_blank"
+            rel="noreferrer"
+            className="underline hover:text-slate-300"
+          >
+            Términos de Servicio
+          </a>{" "}
+          de Google.
+        </p>
       </div>
     </div>
   );

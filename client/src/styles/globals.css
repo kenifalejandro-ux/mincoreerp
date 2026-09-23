@@ -11,6 +11,14 @@ body {
   overflow-x: clip;
 }
 
+/* Google exige mostrar el badge de reCAPTCHA (ver recaptcha.ts) O, si se
+   oculta, un aviso de texto equivalente -- ver ese aviso en LoginPage.tsx,
+   junto al botón de "Ingresar". Sin el aviso, ocultar el badge viola los
+   Términos de Servicio de reCAPTCHA. */
+.grecaptcha-badge {
+  visibility: hidden;
+}
+
 /*animación scroll indicator*/
 @keyframes scrollWheel {
   0% {
