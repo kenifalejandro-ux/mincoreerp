@@ -41,7 +41,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
   const [combustibleDesplegado, setCombustibleDesplegado] = useState(false);
 
   return (
-    <aside className="w-64 shrink-0 overflow-y-auto pb-6 bg-[#192526]  border-l border-[#BADC1E] flex flex-col shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
+    <aside className="w-64 shrink-0 overflow-y-auto pb-6 bg-[#192526]  border-l-3 border-[#BADC1E] flex flex-col shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
       <div className="p-4 border-b border-slate-100">
         <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
           Módulos Operativos
@@ -77,7 +77,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
                 onClick={() => setActiveTab(esCombustible ? "combustible" : tab.id)}
                 className={`group w-full text-left px-6 py-3.5 flex  items-center gap-3 transition-all relative ${
                   isActive
-                    ? "bg-[#BADC1E] text-[#0A1014] font-semibold"
+                    ? "bg-[#BADC1E] text-[#0A1014] hover:bg-[#BADC1E] font-semibold"
                     : "text-slate-500  hover:bg-[#BADC1E] font-medium"
                 }`}
               >
