@@ -86,12 +86,17 @@ function conEmpresa(tenantSlug: string | null, resto: Record<string, unknown>) {
 export async function loginApi(
   tenantSlug: string | null,
   identificador: string,
-  password: string
+  password: string,
+  recaptchaToken?: string | null
 ): Promise<ResultadoLogin> {
   const res = await apiFetch("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: conEmpresa(tenantSlug, { identificador, password }),
+    body: conEmpresa(tenantSlug, {
+      identificador,
+      password,
+      ...(recaptchaToken ? { recaptcha_token: recaptchaToken } : {}),
+    }),
   });
   return interpretarLogin(await parseOrThrow(res));
 }
