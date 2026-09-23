@@ -73,6 +73,9 @@ describe("combustible: endurecimiento de auditoría y cierre (migración 0077)",
       moneda: tanque.moneda,
       activo: tanque.activo,
       tolerancia_capacidad_pct: Number(tanque.tolerancia_capacidad_pct),
+      modo_excedente_recepcion: tanque.modo_excedente_recepcion,
+      limite_excedente_pct:
+        tanque.limite_excedente_pct === null ? null : Number(tanque.limite_excedente_pct),
       requiere_documento: tanque.requiere_documento,
       umbral_diferencia_pct:
         tanque.umbral_diferencia_pct === null ? null : Number(tanque.umbral_diferencia_pct),

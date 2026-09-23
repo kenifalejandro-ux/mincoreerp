@@ -106,6 +106,8 @@ describe("combustible: el reporte de controles mide el faltante, no solo lo decl
       capacidad_total: Number(f.capacidad_total),
       nivel_minimo: Number(f.nivel_minimo),
       tolerancia_capacidad_pct: Number(f.tolerancia_capacidad_pct),
+      modo_excedente_recepcion: f.modo_excedente_recepcion,
+      limite_excedente_pct: num(f.limite_excedente_pct),
       requiere_documento: f.requiere_documento,
       umbral_diferencia_pct: num(f.umbral_diferencia_pct),
       // Aflojar hasta que no alerte nada: el 60 % de la capacidad de antes

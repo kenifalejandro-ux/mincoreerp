@@ -245,6 +245,9 @@ describe("con más de un grifo, el grifo es obligatorio", () => {
       moneda: ficha.moneda,
       activo: true,
       tolerancia_capacidad_pct: Number(ficha.tolerancia_capacidad_pct),
+      modo_excedente_recepcion: ficha.modo_excedente_recepcion,
+      limite_excedente_pct:
+        ficha.limite_excedente_pct === null ? null : Number(ficha.limite_excedente_pct),
       requiere_documento: false,
       umbral_diferencia_pct: null,
       umbral_descuadre_pct: null,

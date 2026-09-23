@@ -42,6 +42,7 @@ const ETIQUETA_TIPO: Record<string, string> = {
   precinto_reemplazado: "Precinto cambiado fuera de una recepción",
   tanque_sin_vigilancia: "Tanque despachando sin vigilancia",
   equipo_de_otro_grifo: "Equipo cargado en otro grifo",
+  sobrestock_recepcion: "Sobrestock de recepción aceptado",
 };
 
 /** No toda alerta es sobre un vale (migración 0073): las de nivel bajo van

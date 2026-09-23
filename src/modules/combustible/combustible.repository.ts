@@ -107,6 +107,9 @@ export const TIPOS_ALERTA = [
   "precinto_reemplazado",
   // ── Migración 0100: vale de tanque propio a un equipo de otro grifo.
   "equipo_de_otro_grifo",
+  // ── Migración 0102: se aceptó un sobrestock de recepción a sabiendas
+  // (modo flexible de `modo_excedente_recepcion`).
+  "sobrestock_recepcion",
 ] as const;
 
 export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];
@@ -189,6 +192,7 @@ const COLUMNAS_TANQUE = `
   c.ubicacion, c.capacidad_total, c.nivel_minimo,
   c.costo_promedio, c.moneda, c.activo,
   c.tolerancia_capacidad_pct, c.requiere_documento, c.umbral_diferencia_pct,
+  c.modo_excedente_recepcion, c.limite_excedente_pct,
   c.umbral_descuadre_pct, c.umbral_descuadre_ciclo_pct,
   c.umbral_descuadre_ventana_pct,
   -- El piso fijo de cada umbral, en la unidad del tanque (0101). Va SIEMPRE
@@ -381,9 +385,10 @@ export class CombustibleRepository {
         umbral_descuadre_ventana_pct,
         umbral_diferencia_piso, umbral_descuadre_piso,
         umbral_descuadre_ciclo_piso, umbral_descuadre_ventana_piso,
-        usa_precintos, grifo_interno_id
+        usa_precintos, grifo_interno_id,
+        modo_excedente_recepcion, limite_excedente_pct
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
       RETURNING id
       `,
       [
@@ -413,6 +418,8 @@ export class CombustibleRepository {
         data.usa_precintos ?? false,
         // NULL = que lo asigne la base (el único grifo de la empresa, 0097).
         data.grifo_interno_id ?? null,
+        data.modo_excedente_recepcion,
+        data.limite_excedente_pct ?? null,
       ]
     );
 
@@ -488,8 +495,10 @@ export class CombustibleRepository {
         umbral_descuadre_piso = $18,
         umbral_descuadre_ciclo_piso = $19,
         umbral_descuadre_ventana_piso = $20,
-        usa_precintos = COALESCE($21, usa_precintos)
-      WHERE id = $22 AND tenant_id = $23
+        usa_precintos = COALESCE($21, usa_precintos),
+        modo_excedente_recepcion = $22,
+        limite_excedente_pct = $23
+      WHERE id = $24 AND tenant_id = $25
       RETURNING id
       `,
       [
@@ -517,6 +526,8 @@ export class CombustibleRepository {
         data.umbral_descuadre_ciclo_piso,
         data.umbral_descuadre_ventana_piso,
         data.usa_precintos ?? null,
+        data.modo_excedente_recepcion,
+        data.limite_excedente_pct ?? null,
         id,
         tenantId,
       ]
@@ -3935,11 +3946,16 @@ export class CombustibleRepository {
   async findTanqueParaRecepcion(client: PoolClient, tenantId: string, combustibleId: number) {
     const result = await client.query<{
       id: number;
+      tanque_nombre: string;
+      unidad: string;
       capacidad_total: string;
       tolerancia_capacidad_pct: string;
       requiere_documento: boolean;
+      modo_excedente_recepcion: "estricto" | "flexible";
+      limite_excedente_pct: string | null;
     }>(
-      `SELECT id, capacidad_total, tolerancia_capacidad_pct, requiere_documento
+      `SELECT id, tanque_nombre, unidad, capacidad_total, tolerancia_capacidad_pct,
+              requiere_documento, modo_excedente_recepcion, limite_excedente_pct
        FROM combustible WHERE id = $1 AND tenant_id = $2`,
       [combustibleId, tenantId]
     );

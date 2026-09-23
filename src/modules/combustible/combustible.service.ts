@@ -14,6 +14,7 @@ import type {
   CrearConteoUreaInput,
   CrearPuntoPrecintoInput,
   CambiarPrecintoInput,
+  ResolverExcedenteRecepcionInput,
 } from "../../server/schemas/combustible.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import { FACTOR_LITROS_UREA } from "../../server/schemas/combustible.schema";
@@ -29,6 +30,35 @@ import {
   motivoFaltaGrifo,
   moverDeGrifo,
 } from "../../server/services/sedes.service";
+
+/** Lo que la pantalla necesita para mostrar (o registrar) la decisión sobre
+ *  un excedente de recepción, sin volver a calcular nada (migración 0102). */
+export interface ExcedenteRecepcionDetalle {
+  tanqueNombre: string;
+  unidad: string;
+  capacidad: number;
+  toleranciaCapacidadPct: number;
+  nivelMedido: number;
+  cantidadRecepcion: number;
+  totalTrasRecepcion: number;
+  techo: number;
+  excedenteLitros: number;
+}
+
+/** Una recepción que supera capacidad + tolerancia en un tanque con
+ *  `modo_excedente_recepcion = 'flexible'` y dentro de `limite_excedente_pct`.
+ *  No es un dato mal formado -- el combustible ya entró -- así que el
+ *  controller la traduce a 409, no a 400: el cliente tiene que DECIDIR, no
+ *  corregir. */
+export class RecepcionExcedeCapacidadError extends Error {
+  constructor(
+    message: string,
+    public readonly detalle: ExcedenteRecepcionDetalle
+  ) {
+    super(message);
+    this.name = "RecepcionExcedeCapacidadError";
+  }
+}
 
 /** Un tramo de la muestra de calibración, tal como lo devuelve el repositorio. */
 /** Lo mínimo que el ajuste de calibración necesita de cada medición: la
@@ -4617,14 +4647,20 @@ export class CombustibleService {
    *  clic (ver el comentario de `cliente_uuid` en el schema): sin esto, dos
    *  envíos del mismo formulario cargarían la compra dos veces y el
    *  promedio ponderado la contaría dos veces. */
-  crearRecepcion(
+  async crearRecepcion(
     client: PoolClient,
     tenantId: string,
     usuarioId: string,
     data: CrearRecepcionCombustibleInput,
     alcance?: AlcanceCombustible
   ) {
-    return idempotentInsert({
+    // Capturada por el closure de `insertar` de más abajo. Vive FUERA de
+    // idempotentInsert porque su tipo genérico solo transporta la fila de
+    // negocio (T); esto es una segunda salida que no tiene que sobrevivir
+    // un reintento (si ya se creó, la alerta también, no hay que repetirla).
+    let excedenteAceptado: ExcedenteRecepcionDetalle | null = null;
+
+    const resultado = await idempotentInsert({
       client,
       tenantId,
       modulo: "combustible",
@@ -4649,7 +4685,12 @@ export class CombustibleService {
           // columna es del tanque de combustible, la urea no tiene uno).
           await this.validarRolGrifo(client, tenantId, data.grifo_id, "urea");
         } else {
-          await this.validarDatosDeRecepcion(client, tenantId, data, recibidoEn);
+          excedenteAceptado = await this.validarDatosDeRecepcion(
+            client,
+            tenantId,
+            data,
+            recibidoEn
+          );
           await this.validarPrecintosDeRecepcion(client, tenantId, data);
         }
 
@@ -4701,6 +4742,7 @@ export class CombustibleService {
       },
       recuperar: (filaId) => this.repository.findRecepcionPorId(client, tenantId, filaId),
     });
+    return { ...resultado, excedenteAceptado };
   }
 
   /** Las tres reglas que dependen de otra fila, así que Zod (que solo ve el
@@ -4721,7 +4763,7 @@ export class CombustibleService {
     tenantId: string,
     data: CrearRecepcionCombustibleInput,
     recibidoEn: string
-  ) {
+  ): Promise<ExcedenteRecepcionDetalle | null> {
     const tanque = await this.repository.findTanqueParaRecepcion(
       client,
       tenantId,
@@ -4766,16 +4808,56 @@ export class CombustibleService {
     const techo = capacidad * (1 + toleranciaPct / 100);
     const totalTrasRecepcion = nivelMedido + data.cantidad!;
 
-    if (totalTrasRecepcion > techo) {
-      // El mensaje incluye los tres números porque el operario tiene que
-      // poder ver de un vistazo cuál está mal: puede ser la cantidad
-      // tipeada, o una lectura vieja que ya no refleja lo que hay.
-      const detalleTolerancia =
-        toleranciaPct > 0 ? ` + ${toleranciaPct}% de tolerancia (${techo.toFixed(2)})` : "";
-      throw new Error(
-        `la recepción de ${data.cantidad} sobre un nivel medido de ${nivelMedido} supera la capacidad del tanque (${capacidad}${detalleTolerancia})`
-      );
+    if (totalTrasRecepcion <= techo) return null;
+
+    const detalleTolerancia =
+      toleranciaPct > 0 ? ` + ${toleranciaPct}% de tolerancia (${techo.toFixed(2)})` : "";
+    const excedenteLitros = Number((totalTrasRecepcion - techo).toFixed(2));
+
+    // Modo 'flexible' (0102): el combustible YA entró -- el error casi
+    // siempre es de cálculo de quien pidió la compra, no del proveedor que
+    // cumplió la entrega. `limite_excedente_pct` es el "hasta acá lo
+    // asumimos nosotros": un excedente que lo supera se rechaza IGUAL que en
+    // modo estricto, aunque el tanque esté marcado como flexible.
+    if (tanque.modo_excedente_recepcion === "flexible") {
+      const limitePct =
+        tanque.limite_excedente_pct === null ? null : Number(tanque.limite_excedente_pct);
+      const limiteLitros = limitePct === null ? null : capacidad * (limitePct / 100);
+      const dentroDelLimite = limiteLitros === null || excedenteLitros <= limiteLitros;
+
+      if (dentroDelLimite) {
+        const detalle = {
+          tanqueNombre: tanque.tanque_nombre,
+          unidad: tanque.unidad,
+          capacidad,
+          toleranciaCapacidadPct: toleranciaPct,
+          nivelMedido,
+          cantidadRecepcion: data.cantidad!,
+          totalTrasRecepcion,
+          techo,
+          excedenteLitros,
+        };
+
+        // Ya decidió: reenvió el mismo payload con "aceptar" -- guardar y
+        // dejar que el controller genere la alerta + el correo.
+        if (data.decision_excedente === "aceptar") return detalle;
+
+        // Primera vez que se ve este excedente: 409, no guarda nada, el
+        // cliente decide (ver resolverExcedenteRecepcionSchema para las
+        // otras dos opciones).
+        throw new RecepcionExcedeCapacidadError(
+          `la recepción de ${data.cantidad} sobre un nivel medido de ${nivelMedido} supera la capacidad del tanque (${capacidad}${detalleTolerancia}) -- requiere decisión`,
+          detalle
+        );
+      }
     }
+
+    // El mensaje incluye los tres números porque el operario tiene que
+    // poder ver de un vistazo cuál está mal: puede ser la cantidad
+    // tipeada, o una lectura vieja que ya no refleja lo que hay.
+    throw new Error(
+      `la recepción de ${data.cantidad} sobre un nivel medido de ${nivelMedido} supera la capacidad del tanque (${capacidad}${detalleTolerancia})`
+    );
   }
 
   listarRecepciones(

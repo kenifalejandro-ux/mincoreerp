@@ -33,6 +33,8 @@ import {
   enviarCorreoConsumoExcedido,
   enviarCorreoPrecintoAlterado,
   enviarCorreoPrecintoReemplazado,
+  enviarCorreoSobrestockRecepcion,
+  enviarCorreoExcedenteRecepcionPendiente,
 } from "./combustibleAlertas.mailer";
 import type {
   RegistrarLecturaCombustibleInput,
@@ -64,6 +66,7 @@ import type {
   MotivoSurtidorInput,
   CambiarPrecintoInput,
   BajaPuntoPrecintoInput,
+  ResolverExcedenteRecepcionInput,
 } from "../../server/schemas/combustible.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import { FACTOR_LITROS_UREA } from "../../server/schemas/combustible.schema";
@@ -76,7 +79,11 @@ import {
   type HojaXlsx,
 } from "../../server/shared/utils/xlsx.util";
 import { sanearNombreArchivo } from "../../server/services/documentStorage";
-import { CombustibleService } from "./combustible.service";
+import {
+  CombustibleService,
+  RecepcionExcedeCapacidadError,
+  type ExcedenteRecepcionDetalle,
+} from "./combustible.service";
 import * as surtidores from "./surtidores.service";
 import { alcanceDe, ambitoDe, grifosDelFiltro } from "./alcance";
 
@@ -4705,7 +4712,7 @@ export class CombustibleController {
     try {
       const tenantId = getTenantId(req);
       const data = req.validatedBody as CrearRecepcionCombustibleInput;
-      const { fila, creado } = await withTenant(tenantId, (client) =>
+      const { fila, creado, excedenteAceptado } = await withTenant(tenantId, (client) =>
         service.crearRecepcion(client, tenantId, req.usuario!.id, data, alcanceDe(req))
       );
 
@@ -4745,8 +4752,26 @@ export class CombustibleController {
           new Date(fila!.recibido_en).toISOString()
         );
       }
+      // Se aceptó un sobrestock a sabiendas (0102, modo flexible): la
+      // recepción YA se guardó completa, esto solo avisa. Mismo contrato
+      // "nunca lanza" que el resto de los procesar*.
+      if (excedenteAceptado) {
+        await this.procesarAlertaSobrestockRecepcion(
+          tenantId,
+          data.combustible_id!,
+          Number(fila!.id),
+          excedenteAceptado
+        );
+      }
       res.status(201).json(fila);
     } catch (err) {
+      // 409, no 400: el combustible YA entró y hay un tanque en modo
+      // 'flexible' -- no es un dato mal formado, es una decisión pendiente
+      // (0102). El `detalle` es lo que la pantalla necesita para el modal.
+      if (err instanceof RecepcionExcedeCapacidadError) {
+        res.status(409).json({ error: err.message, requiereDecision: true, detalle: err.detalle });
+        return;
+      }
       if (
         err instanceof Error &&
         (err.message.includes("no existe en este tenant") ||
@@ -4775,6 +4800,89 @@ export class CombustibleController {
         return;
       }
       res.status(500).json({ error: "Error al registrar la recepción" });
+    }
+  }
+
+  /** Mismo contrato best-effort que el resto de los procesar*: la recepción
+   *  ya se guardó con el sobrestock adentro, esto solo avisa (0102). */
+  private async procesarAlertaSobrestockRecepcion(
+    tenantId: string,
+    combustibleId: number,
+    recepcionId: number,
+    detalle: ExcedenteRecepcionDetalle
+  ) {
+    try {
+      const admins = await withTenant(tenantId, async (client) => {
+        await service.crearAlertas(client, tenantId, [
+          {
+            tipo: "sobrestock_recepcion",
+            recepcionId,
+            combustibleId,
+            detalle: { ...detalle, decision: "aceptado" },
+          },
+        ]);
+        return service.findAdminsConCombustibleHabilitado(client, tenantId);
+      });
+      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+        tipo: "sobrestock_recepcion",
+        recepcionId,
+      });
+      await enviarCorreoSobrestockRecepcion(admins, detalle);
+    } catch (err) {
+      logger.warn({ err, tenantId, combustibleId }, "No se pudo procesar la alerta de sobrestock");
+    }
+  }
+
+  /** POST /recepciones/resolver-excedente -- las otras dos decisiones frente
+   *  al 409 de crearRecepcion (0102). Ninguna guarda una recepción: "rechazar"
+   *  es la constancia de que se optó por devolver al proveedor, y
+   *  "contactar_admin" avisa por correo para que alguien lo resuelva a mano
+   *  (por ejemplo, dividiendo la entrega entre dos tanques). */
+  async resolverExcedenteRecepcion(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const data = req.validatedBody as ResolverExcedenteRecepcionInput;
+
+      const tanque = await withTenant(tenantId, (client) =>
+        service.getById(client, tenantId, data.combustible_id)
+      );
+      if (!tanque) {
+        res
+          .status(400)
+          .json({ error: `combustible_id ${data.combustible_id} no existe en este tenant` });
+        return;
+      }
+
+      await registrarAuditoria({
+        accion:
+          data.decision === "rechazar"
+            ? "combustible.recepcion_excedente_rechazado"
+            : "combustible.recepcion_excedente_contactar_admin",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          combustibleId: data.combustible_id,
+          cantidad: data.cantidad,
+          motivo: data.motivo ?? null,
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+
+      if (data.decision === "contactar_admin") {
+        const admins = await withTenant(tenantId, (client) =>
+          service.findAdminsConCombustibleHabilitado(client, tenantId)
+        );
+        await enviarCorreoExcedenteRecepcionPendiente(admins, {
+          tanqueNombre: tanque.tanque_nombre,
+          unidad: tanque.unidad,
+          cantidadRecepcion: data.cantidad,
+          motivo: data.motivo ?? null,
+        });
+      }
+
+      res.json({ ok: true });
+    } catch {
+      res.status(500).json({ error: "Error al registrar la decisión sobre el excedente" });
     }
   }
 

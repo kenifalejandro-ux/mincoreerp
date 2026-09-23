@@ -76,6 +76,8 @@ function payloadTanque(overrides: Partial<Record<string, unknown>> = {}) {
     // Fase C (migrations/0064) -- mismo caso que moneda/activo: el POST los
     // completa por default, el PUT los exige.
     tolerancia_capacidad_pct: 0,
+    modo_excedente_recepcion: "estricto",
+    limite_excedente_pct: null,
     requiere_documento: true,
     umbral_diferencia_pct: null,
     umbral_descuadre_pct: null,
@@ -358,6 +360,8 @@ describe("combustible: ABM de tanques (Fase A)", () => {
       moneda: "PEN",
       activo: true,
       tolerancia_capacidad_pct: 0,
+      modo_excedente_recepcion: "estricto",
+      limite_excedente_pct: null,
       requiere_documento: true,
       umbral_diferencia_pct: null,
       umbral_descuadre_pct: null,
@@ -385,6 +389,8 @@ describe("combustible: ABM de tanques (Fase A)", () => {
       moneda: "USD",
       activo: true,
       tolerancia_capacidad_pct: 0,
+      modo_excedente_recepcion: "estricto",
+      limite_excedente_pct: null,
       requiere_documento: true,
       umbral_diferencia_pct: null,
       umbral_descuadre_pct: null,
@@ -505,9 +511,18 @@ describe("combustible: ABM de tanques (Fase A)", () => {
   });
 
   it("bulk rechaza más filas que el máximo permitido", async () => {
-    const filas = Array.from({ length: MAX_FILAS_CARGA_MASIVA_TANQUES + 1 }, (_, i) =>
-      payloadTanque({ codigo: `MAX-${i}` })
-    );
+    // Fila mínima (solo lo que el schema exige sin default) a propósito: lo
+    // que este test verifica es el .max() del ARRAY, no el contenido de cada
+    // fila -- payloadTanque() completa, ×5.001, se acerca al límite de body
+    // de /bulk y el 413 del body-parser taparía el 400 que se quiere probar.
+    const filas = Array.from({ length: MAX_FILAS_CARGA_MASIVA_TANQUES + 1 }, (_, i) => ({
+      codigo: `MAX-${i}`,
+      tanque_nombre: "T",
+      tipo_combustible: "diesel_b5",
+      unidad: "gal",
+      tipo_punto: "fijo",
+      capacidad_total: 1000,
+    }));
     const res = await agent.post("/api/erp/combustible/bulk").send(filas);
     expect(res.status).toBe(400);
   });

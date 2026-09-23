@@ -71,6 +71,8 @@ describe("combustible: bitácora del tenant y aviso de aflojamiento", () => {
       moneda: t.moneda,
       activo: t.activo,
       tolerancia_capacidad_pct: Number(t.tolerancia_capacidad_pct),
+      modo_excedente_recepcion: t.modo_excedente_recepcion,
+      limite_excedente_pct: t.limite_excedente_pct === null ? null : Number(t.limite_excedente_pct),
       requiere_documento: t.requiere_documento,
       umbral_diferencia_pct:
         t.umbral_diferencia_pct === null ? null : Number(t.umbral_diferencia_pct),
