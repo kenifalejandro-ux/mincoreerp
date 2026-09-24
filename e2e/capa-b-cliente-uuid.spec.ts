@@ -154,7 +154,7 @@ test("el cliente_uuid está atado al formulario abierto, no al clic", async ({ p
   await expect(registrar).toBeHidden();
 
   uuidsEnviados.length = 0;
-  await page.getByRole("button", { name: "+ Nuevo Checklist" }).click();
+  await page.getByRole("button", { name: "Nuevo Checklist" }).click();
   // `reabriendo` no es un detalle: al cerrar, el <select> conserva su valor
   // y volver a elegir lo mismo no dispara onChange -- ver la fixture.
   await elegirEquipoYPlantilla(page, marca, { reabriendo: true });
