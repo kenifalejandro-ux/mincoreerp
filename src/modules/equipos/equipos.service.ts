@@ -2,7 +2,10 @@
 
 import type { PoolClient } from "pg";
 import type { Paginacion } from "../../server/shared/utils/pagination";
-import type { CrearEquipoInput } from "../../server/schemas/equipos.schema";
+import type {
+  CargaMasivaEquiposInput,
+  CrearEquipoInput,
+} from "../../server/schemas/equipos.schema";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import {
@@ -15,6 +18,10 @@ import { EquiposRepository, type EquipoPayload } from "./equipos.repository";
 export const EquiposService = {
   getAll(client: PoolClient, tenantId: string, paginacion: Paginacion) {
     return EquiposRepository.findAll(client, tenantId, paginacion);
+  },
+
+  getAllParaExportar(client: PoolClient, tenantId: string) {
+    return EquiposRepository.findAllParaExportar(client, tenantId);
   },
 
   /** Devuelve `creado: false` cuando el equipo ya se había creado con este
@@ -54,6 +61,14 @@ export const EquiposService = {
 
   delete(client: PoolClient, tenantId: string, id: number) {
     return EquiposRepository.delete(client, tenantId, id);
+  },
+
+  createBulk(client: PoolClient, tenantId: string, rows: CargaMasivaEquiposInput) {
+    return EquiposRepository.createBulk(client, tenantId, rows);
+  },
+
+  deleteMany(client: PoolClient, tenantId: string, ids: number[]) {
+    return EquiposRepository.deleteMany(client, tenantId, ids);
   },
 
   /** Mover el equipo a otro grifo interno (0097). Null si no existe en esta

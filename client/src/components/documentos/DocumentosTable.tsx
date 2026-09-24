@@ -579,10 +579,8 @@ export default function DocumentosTable() {
           </button>
 
           <label
-            className={`flex items-center gap-2 px-6 py-2.5 text-white text-sm font-medium rounded-lg ${
-              importando
-                ? "bg-blue-400 cursor-wait"
-                : "bg-blue-600 hover:bg-blue-700 cursor-pointer"
+            className={`flex items-center gap-2 px-6 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50  text-sm font-medium rounded-lg ${
+              importando ? " cursor-wait" : " cursor-pointer"
             }`}
           >
             <FileSpreadsheet className="w-4 h-4 shrink-0" />

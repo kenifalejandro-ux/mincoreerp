@@ -10,6 +10,10 @@ export type EquipoPayload = {
   tipo: string;
   marca?: string;
   modelo?: string;
+  // Código interno de la empresa (columna CODIGO de la planilla de flota,
+  // ej. "CU-14") -- distinto de la placa. Migración 0103. Opcional: no toda
+  // la flota lo trae.
+  codigo_interno?: string;
   // Qué instrumento mide este equipo en compra_externa (Fase B de
   // combustible) -- ver migrations/0062. undefined/null = no configurado.
   tipo_medidor?: string;
@@ -32,7 +36,7 @@ export type EquipoPayload = {
 
 // Todas las columnas devueltas por el ABM -- centralizadas para que agregar
 // una no obligue a tocar cuatro queries y olvidarse de la quinta.
-const COLUMNAS_EQUIPO = `id, placa_codigo, tipo, marca, modelo, tipo_medidor,
+const COLUMNAS_EQUIPO = `id, placa_codigo, codigo_interno, tipo, marca, modelo, tipo_medidor,
   capacidad_tanque, capacidad_tanque_unidad, consumo_maximo_l,
   conductor_nombre, conductor_dni, usa_urea, activo, creado_en, grifo_interno_id`;
 
@@ -53,6 +57,17 @@ export const EquiposRepository = {
     return result.rows;
   },
 
+  /** Toda la flota, sin paginar -- para el export a Excel. La lista visible
+   *  en pantalla pagina de a 50 porque el operario la recorre a ojo; el
+   *  archivo lo abre en una planilla, así que tiene que traer todo de una. */
+  async findAllParaExportar(client: PoolClient, tenantId: string) {
+    const result = await client.query(
+      `SELECT ${COLUMNAS_EQUIPO} FROM equipos WHERE tenant_id = $1 ORDER BY tipo, placa_codigo`,
+      [tenantId]
+    );
+    return result.rows;
+  },
+
   async findById(client: PoolClient, tenantId: string, id: number) {
     const result = await client.query(
       `SELECT ${COLUMNAS_EQUIPO}
@@ -66,14 +81,15 @@ export const EquiposRepository = {
     const { placa_codigo, tipo, marca, modelo, tipo_medidor } = data;
 
     const result = await client.query(
-      `INSERT INTO equipos (tenant_id, placa_codigo, tipo, marca, modelo, tipo_medidor,
-         capacidad_tanque, capacidad_tanque_unidad, conductor_nombre, conductor_dni,
-         consumo_maximo_l, usa_urea, grifo_interno_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      `INSERT INTO equipos (tenant_id, placa_codigo, codigo_interno, tipo, marca, modelo,
+         tipo_medidor, capacidad_tanque, capacidad_tanque_unidad, conductor_nombre,
+         conductor_dni, consumo_maximo_l, usa_urea, grifo_interno_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
        RETURNING ${COLUMNAS_EQUIPO}`,
       [
         tenantId,
         placa_codigo,
+        data.codigo_interno ?? null,
         tipo,
         marca ?? null,
         modelo ?? null,
@@ -97,20 +113,22 @@ export const EquiposRepository = {
     const result = await client.query(
       `UPDATE equipos SET
         placa_codigo = $1,
-        tipo = $2,
-        marca = $3,
-        modelo = $4,
-        tipo_medidor = $5,
-        capacidad_tanque = $6,
-        capacidad_tanque_unidad = $7,
-        conductor_nombre = $8,
-        conductor_dni = $9,
-        consumo_maximo_l = $10,
-        usa_urea = $11
-      WHERE id = $12 AND tenant_id = $13
+        codigo_interno = $2,
+        tipo = $3,
+        marca = $4,
+        modelo = $5,
+        tipo_medidor = $6,
+        capacidad_tanque = $7,
+        capacidad_tanque_unidad = $8,
+        conductor_nombre = $9,
+        conductor_dni = $10,
+        consumo_maximo_l = $11,
+        usa_urea = $12
+      WHERE id = $13 AND tenant_id = $14
       RETURNING ${COLUMNAS_EQUIPO}`,
       [
         placa_codigo,
+        data.codigo_interno ?? null,
         tipo,
         marca ?? null,
         modelo ?? null,
@@ -160,5 +178,76 @@ export const EquiposRepository = {
       tenantId,
     ]);
     return (result.rowCount ?? 0) > 0;
+  },
+
+  /** Importación masiva (planilla de flota). Solo toca placa/código
+   *  interno/tipo/marca/modelo -- un ON CONFLICT que reimporta NO puede
+   *  pisar capacidad de tanque, medidor, conductor ni grifo: esos los carga
+   *  la operación a mano y una planilla de inventario no los trae. Mismo
+   *  patrón que repuestos.repository.ts#createBulk (upsert por lotes,
+   *  dedupe dentro del lote para no chocar contra sí mismo en el mismo
+   *  INSERT). */
+  async createBulk(
+    client: PoolClient,
+    tenantId: string,
+    items: {
+      placa_codigo: string;
+      tipo: string;
+      marca?: string;
+      modelo?: string;
+      codigo_interno?: string;
+    }[]
+  ) {
+    const TAMANO_LOTE = 1000;
+    const resultados: unknown[] = [];
+
+    for (let inicio = 0; inicio < items.length; inicio += TAMANO_LOTE) {
+      const lote = items.slice(inicio, inicio + TAMANO_LOTE);
+
+      const porPlaca = new Map<string, (typeof lote)[number]>();
+      for (const fila of lote) porPlaca.set(fila.placa_codigo, fila);
+      const filasUnicas = [...porPlaca.values()];
+
+      const placeholders = filasUnicas
+        .map(
+          (_, i) =>
+            `($${i * 6 + 1}, $${i * 6 + 2}, $${i * 6 + 3}, $${i * 6 + 4}, $${i * 6 + 5}, $${i * 6 + 6})`
+        )
+        .join(", ");
+
+      const valores = filasUnicas.flatMap((d) => [
+        tenantId,
+        d.placa_codigo,
+        d.codigo_interno ?? null,
+        d.tipo,
+        d.marca ?? null,
+        d.modelo ?? null,
+      ]);
+
+      const result = await client.query(
+        `INSERT INTO equipos (tenant_id, placa_codigo, codigo_interno, tipo, marca, modelo)
+         VALUES ${placeholders}
+         ON CONFLICT (tenant_id, placa_codigo) DO UPDATE SET
+           codigo_interno = EXCLUDED.codigo_interno,
+           tipo = EXCLUDED.tipo,
+           marca = EXCLUDED.marca,
+           modelo = EXCLUDED.modelo
+         RETURNING ${COLUMNAS_EQUIPO}`,
+        valores
+      );
+      resultados.push(...result.rows);
+    }
+
+    return resultados;
+  },
+
+  /** Eliminación masiva: mismo camino de RLS que delete() (tenant_id en el
+   *  WHERE), pero en UNA sola vuelta a la base en vez de N deletes. */
+  async deleteMany(client: PoolClient, tenantId: string, ids: number[]) {
+    const result = await client.query(
+      `DELETE FROM equipos WHERE tenant_id = $1 AND id = ANY($2::int[]) RETURNING id`,
+      [tenantId, ids]
+    );
+    return result.rows.map((r: { id: number }) => r.id);
   },
 };
