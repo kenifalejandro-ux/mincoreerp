@@ -109,7 +109,9 @@ export default function LogDeEventosView() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-xl font-bold text-slate-800">Log de eventos</h2>
+        <h2 className="text-base sm:text-lg font-bold text-slate-800 tracking-tight">
+          Log de eventos
+        </h2>
         <p className="text-slate-600 text-sm">
           Todo lo que se hizo en el sistema, quién lo hizo y cuándo.
         </p>
@@ -184,22 +186,22 @@ export default function LogDeEventosView() {
       )}
 
       <div className="bg-white border border-slate-200 rounded-3xl overflow-x-auto shadow-sm">
-        <table className="w-full text-left border-collapse">
+        <table className="w-full min-w-max text-left border-collapse">
           <thead className="bg-slate-50">
             <tr>
-              <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-widest">
+              <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
                 cuándo
               </th>
-              <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-widest">
+              <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
                 quién
               </th>
-              <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-widest">
+              <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
                 qué hizo
               </th>
-              <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-widest">
+              <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
                 sobre quién
               </th>
-              <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">
+              <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest text-right">
                 detalle
               </th>
             </tr>
@@ -207,10 +209,10 @@ export default function LogDeEventosView() {
           <tbody className="divide-y divide-slate-100">
             {eventos.map((evento) => (
               <tr key={evento.id} className="hover:bg-slate-50/50 align-top">
-                <td className="p-4 text-sm text-slate-600 whitespace-nowrap">
+                <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-600 whitespace-nowrap">
                   {fechaLegible(evento.creadoEn)}
                 </td>
-                <td className="p-4 text-sm text-slate-800">
+                <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-800">
                   {evento.actor}
                   {evento.actorTipo === "platform_admin" && (
                     <span className="ml-2 px-2 py-0.5 rounded-full bg-slate-100 text-[11px] font-bold text-slate-600 uppercase">
@@ -218,7 +220,7 @@ export default function LogDeEventosView() {
                     </span>
                   )}
                 </td>
-                <td className="p-4 text-sm">
+                <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
                   <span className="font-semibold text-slate-800">
                     {enCastellano(evento.accion)}
                   </span>
@@ -231,8 +233,10 @@ export default function LogDeEventosView() {
                     </span>
                   )}
                 </td>
-                <td className="p-4 text-sm text-slate-600">{evento.usuarioNombre ?? "—"}</td>
-                <td className="p-4 text-right">
+                <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-600">
+                  {evento.usuarioNombre ?? "—"}
+                </td>
+                <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right">
                   {evento.detalle && (
                     <button
                       type="button"

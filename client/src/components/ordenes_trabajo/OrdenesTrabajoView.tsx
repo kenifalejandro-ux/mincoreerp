@@ -1,4 +1,5 @@
 // client/src/components/ordenes_trabajo/OrdenesTrabajoView.tsx
+import { ChevronLeft, ChevronRight, Trash2, X } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
@@ -293,11 +294,15 @@ export default function OrdenesTrabajoView() {
   if (loading) return <div className="p-20 text-center text-slate-500">Cargando...</div>;
 
   return (
-    <div className="p-4 lg:p-8 animate-in fade-in duration-500">
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-10">
+    <div className="p-2 sm:p-4 lg:p-8 animate-in fade-in duration-500">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-10">
         <div>
-          <h1 className="text-3xl font-bold text-slate-800">Órdenes de Trabajo</h1>
-          <p className="text-slate-500">Mantenimiento correctivo y preventivo de equipos</p>
+          <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-slate-800 tracking-tight">
+            Órdenes de Trabajo
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-500">
+            Mantenimiento correctivo y preventivo de equipos
+          </p>
         </div>
         <button
           onClick={abrirModal}
@@ -314,7 +319,7 @@ export default function OrdenesTrabajoView() {
           </label>
           <select
             id="ot-filtro-estado"
-            className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+            className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
             value={filtroEstado}
             onChange={(e) => {
               setPage(1);
@@ -335,7 +340,7 @@ export default function OrdenesTrabajoView() {
           </label>
           <select
             id="ot-filtro-equipo"
-            className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+            className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
             value={filtroEquipo}
             onChange={(e) => {
               setPage(1);
@@ -359,7 +364,7 @@ export default function OrdenesTrabajoView() {
           </label>
           <select
             id="ot-filtro-asignado"
-            className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+            className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
             value={filtroAsignado}
             onChange={(e) => {
               setPage(1);
@@ -377,117 +382,126 @@ export default function OrdenesTrabajoView() {
       </div>
 
       <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
-        <table className="w-full text-left border-collapse">
-          <thead className="bg-slate-50">
-            <tr>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                equipo
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                título
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                tipo
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                prioridad
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                estado
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                asignado a
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                acciones
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {ordenes.map((ot) => (
-              <tr key={ot.id} className="hover:bg-slate-50/50 transition-colors">
-                <td className="p-5 font-mono text-sm font-semibold text-slate-800">
-                  {ot.placa_codigo}
-                </td>
-                <td className="p-5 text-sm text-slate-600">{ot.titulo}</td>
-                <td className="p-5 text-sm text-slate-500 capitalize">{ot.tipo}</td>
-                <td className="p-5 text-sm text-slate-500 capitalize">{ot.prioridad}</td>
-                <td className="p-5 text-sm">
-                  <span
-                    className={`px-2.5 py-1 rounded-full text-xs font-bold ${ESTADO_COLOR[ot.estado]}`}
-                  >
-                    {ESTADO_LABEL[ot.estado]}
-                  </span>
-                </td>
-                <td className="p-5 text-sm">
-                  <select
-                    aria-label={`Reasignar orden de trabajo #${ot.id}`}
-                    className="border border-slate-200 rounded-lg p-2 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-                    value={ot.asignado_a ?? ""}
-                    onChange={(e) => handleReasignar(ot, e.target.value)}
-                  >
-                    <option value="">Sin asignar</option>
-                    {usuariosAsignables.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className="p-5 text-right space-x-2 whitespace-nowrap">
-                  {ot.estado === "abierta" && (
-                    <>
-                      <button
-                        onClick={() => handleCambiarEstado(ot.id, "en_progreso")}
-                        className="px-3 py-1.5 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                      >
-                        Iniciar
-                      </button>
-                      <button
-                        onClick={() => handleCambiarEstado(ot.id, "cancelada")}
-                        className="px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                      >
-                        Cancelar
-                      </button>
-                    </>
-                  )}
-                  {ot.estado === "en_progreso" && (
-                    <>
-                      <button
-                        onClick={() => handleCambiarEstado(ot.id, "completada")}
-                        className="px-3 py-1.5 text-xs font-bold text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
-                      >
-                        Completar
-                      </button>
-                      <button
-                        onClick={() => handleCambiarEstado(ot.id, "cancelada")}
-                        className="px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                      >
-                        Cancelar
-                      </button>
-                    </>
-                  )}
-                  <button
-                    onClick={() => handleEliminar(ot.id)}
-                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                    title="Eliminar"
-                  >
-                    🗑️
-                  </button>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-max text-left border-collapse">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  equipo
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  título
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  tipo
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  prioridad
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  estado
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  asignado a
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                  acciones
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {ordenes.map((ot) => (
+                <tr key={ot.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm font-semibold text-slate-800">
+                    {ot.placa_codigo}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-600">
+                    {ot.titulo}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500 capitalize">
+                    {ot.tipo}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500 capitalize">
+                    {ot.prioridad}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-xs font-bold ${ESTADO_COLOR[ot.estado]}`}
+                    >
+                      {ESTADO_LABEL[ot.estado]}
+                    </span>
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
+                    <select
+                      aria-label={`Reasignar orden de trabajo #${ot.id}`}
+                      className="border border-slate-200 rounded-lg p-2 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                      value={ot.asignado_a ?? ""}
+                      onChange={(e) => handleReasignar(ot, e.target.value)}
+                    >
+                      <option value="">Sin asignar</option>
+                      {usuariosAsignables.map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.nombre}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-2 whitespace-nowrap">
+                    {ot.estado === "abierta" && (
+                      <>
+                        <button
+                          onClick={() => handleCambiarEstado(ot.id, "en_progreso")}
+                          className="px-3 py-1.5 text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                        >
+                          Iniciar
+                        </button>
+                        <button
+                          onClick={() => handleCambiarEstado(ot.id, "cancelada")}
+                          className="px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                        >
+                          Cancelar
+                        </button>
+                      </>
+                    )}
+                    {ot.estado === "en_progreso" && (
+                      <>
+                        <button
+                          onClick={() => handleCambiarEstado(ot.id, "completada")}
+                          className="px-3 py-1.5 text-xs font-bold text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+                        >
+                          Completar
+                        </button>
+                        <button
+                          onClick={() => handleCambiarEstado(ot.id, "cancelada")}
+                          className="px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                        >
+                          Cancelar
+                        </button>
+                      </>
+                    )}
+                    <button
+                      onClick={() => handleEliminar(ot.id)}
+                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                      title="Eliminar"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="flex items-center justify-between mt-4 px-1">
         <button
           onClick={() => setPage((p) => Math.max(1, p - 1))}
           disabled={page <= 1}
-          className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+          className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
         >
-          ← Anterior
+          <ChevronLeft className="w-4 h-4" />
+          Anterior
         </button>
         <span className="text-sm text-slate-400">
           Página {page} de {totalPages}
@@ -495,9 +509,10 @@ export default function OrdenesTrabajoView() {
         <button
           onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
           disabled={page >= totalPages}
-          className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+          className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
         >
-          Siguiente →
+          Siguiente
+          <ChevronRight className="w-4 h-4" />
         </button>
       </div>
 
@@ -508,9 +523,10 @@ export default function OrdenesTrabajoView() {
               <h3 className="text-xl font-bold">Nueva Orden de Trabajo</h3>
               <button
                 onClick={() => setModalAbierto(false)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                aria-label="Cerrar"
+                className="text-slate-400 hover:text-slate-900"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleCrear} className="p-6 space-y-4">
@@ -521,7 +537,7 @@ export default function OrdenesTrabajoView() {
                 <select
                   id="ot-equipo"
                   required
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                   value={formData.equipo_id}
                   onChange={(e) => setFormData({ ...formData, equipo_id: e.target.value })}
                 >
@@ -545,7 +561,7 @@ export default function OrdenesTrabajoView() {
                   type="text"
                   placeholder="Ej: Cambio de aceite"
                   required
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={formData.titulo}
                   onChange={(e) => setFormData({ ...formData, titulo: e.target.value })}
                 />
@@ -561,20 +577,20 @@ export default function OrdenesTrabajoView() {
                 <textarea
                   id="ot-descripcion"
                   rows={3}
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={formData.descripcion}
                   onChange={(e) => setFormData({ ...formData, descripcion: e.target.value })}
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label htmlFor="ot-tipo" className="text-xs font-bold text-slate-500 uppercase">
                     Tipo
                   </label>
                   <select
                     id="ot-tipo"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                     value={formData.tipo}
                     onChange={(e) =>
                       setFormData({
@@ -596,7 +612,7 @@ export default function OrdenesTrabajoView() {
                   </label>
                   <select
                     id="ot-prioridad"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                     value={formData.prioridad}
                     onChange={(e) =>
                       setFormData({
@@ -619,7 +635,7 @@ export default function OrdenesTrabajoView() {
                 </label>
                 <select
                   id="ot-iperc"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                   value={formData.iperc_id}
                   onChange={(e) => setFormData({ ...formData, iperc_id: e.target.value })}
                 >
@@ -638,7 +654,7 @@ export default function OrdenesTrabajoView() {
                 </label>
                 <select
                   id="ot-asignado"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                   value={formData.asignado_a}
                   onChange={(e) => setFormData({ ...formData, asignado_a: e.target.value })}
                 >
@@ -661,7 +677,7 @@ export default function OrdenesTrabajoView() {
                 <input
                   id="ot-fecha-programada"
                   type="date"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={formData.fecha_programada}
                   onChange={(e) => setFormData({ ...formData, fecha_programada: e.target.value })}
                 />

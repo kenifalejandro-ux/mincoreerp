@@ -77,12 +77,12 @@ export default function PlatformApp() {
 
   return (
     <div className="min-h-screen bg-slate-950">
-      <header className="border-b border-slate-800 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-6">
+      <header className="border-b border-slate-800 px-4 sm:px-6 py-3 sm:py-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           <span className="text-slate-100 font-light text-sm tracking-tight">
             MinCore ERP · Plataforma
           </span>
-          <nav className="flex items-center gap-4">
+          <nav className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <button
               onClick={() => {
                 setSeccion("tenants");
@@ -138,7 +138,7 @@ export default function PlatformApp() {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-6 py-8">
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
         {seccion === "tenants" &&
           (tenantSeleccionado ? (
             <TenantDetalleView

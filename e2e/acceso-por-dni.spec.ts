@@ -36,7 +36,7 @@ test("el admin da de alta a alguien de cancha y esa persona entra con su DNI", a
   // "Usuarios" es la primera pestaña de Administración y abre sola.
   await expect(page.getByRole("heading", { name: "Usuarios" })).toBeVisible();
 
-  await page.getByRole("button", { name: "+ Nuevo usuario" }).click();
+  await page.getByRole("button", { name: "Nuevo usuario" }).click();
   await page.getByLabel("Nombre y apellido").fill(nombre);
   await page.getByLabel("DNI").fill(dni);
 

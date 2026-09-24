@@ -16,6 +16,7 @@
 // falta traer algo de más arriba, hay que meterlo por props o duplicarlo,
 // como se hizo en components/combustible/gravedadAlertas.ts.
 
+import { ExternalLink, Minimize2, X } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { PointerEvent as PointerEventReact, ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -64,6 +65,27 @@ const PASO_CASCADA = 30;
 function medidaDelStyle(valor: string, siNoSePuede: number): number {
   const numero = parseFloat(valor);
   return Number.isFinite(numero) ? numero : siNoSePuede;
+}
+
+/** Por debajo de este ancho no hay lugar para una ventana que se arrastra:
+ *  el panel ocupa la pantalla entera, debajo del header. */
+const CONSULTA_ANGOSTA = "(max-width: 767px)";
+
+function suscribirseAlAncho(avisar: () => void): () => void {
+  const consulta = window.matchMedia(CONSULTA_ANGOSTA);
+  consulta.addEventListener("change", avisar);
+  return () => consulta.removeEventListener("change", avisar);
+}
+
+function pantallaAngosta(): boolean {
+  return window.matchMedia(CONSULTA_ANGOSTA).matches;
+}
+
+/** El header es sticky y z-50, más alto que cualquier panel (ver Z_TECHO):
+ *  en pantalla completa el panel arranca donde termina el header, o su
+ *  barra con la X queda tapada. */
+function bordeInferiorDelHeader(): number {
+  return document.querySelector("header")?.getBoundingClientRect().bottom ?? 0;
 }
 
 function limitar(valor: number, minimo: number, maximo: number): number {
@@ -216,20 +238,27 @@ export default function VentanaFlotante({
   const [host, setHost] = useState<HTMLElement | null>(null);
   const [avisoDesprender, setAvisoDesprender] = useState<string | null>(null);
 
-  const [geometria, setGeometria] = useState<GeometriaPanel>(() => {
+  // La geometría que el usuario ELIGIÓ (o la inicial), separada de la que
+  // se muestra. La mostrada se recorta para entrar en la pantalla actual;
+  // si el recorte pisara a la elegida, achicar el navegador (o probar en
+  // modo celular) dejaba el panel chico para siempre al volver a agrandar.
+  const [elegida, setElegida] = useState<GeometriaPanel>(() => {
     const guardada = leerGeometria(id);
-    if (guardada) return acomodarAPantalla(guardada);
+    if (guardada) return guardada;
     // Sin nada guardado, cascada: cada panel nuevo baja y corre un poco
     // respecto de los que ya están abiertos, para que el de abajo no quede
     // escondido justo detrás del de arriba.
     const paso = reservarSlotCascada(id) * PASO_CASCADA;
-    return acomodarAPantalla({
-      x: X_INICIAL + paso,
-      y: Y_INICIAL + paso,
-      ancho: anchoInicial,
-      alto: altoInicial,
-    });
+    return { x: X_INICIAL + paso, y: Y_INICIAL + paso, ancho: anchoInicial, alto: altoInicial };
   });
+
+  // Solo fuerza un re-render al cambiar el tamaño de la ventana: la
+  // geometría mostrada se recalcula leyendo window.innerWidth/Height.
+  const [, setTamanoPantalla] = useState(0);
+  const geometria = acomodarAPantalla(elegida);
+
+  const angosta = useSyncExternalStore(suscribirseAlAncho, pantallaAngosta, () => false);
+  const [topAngosta, setTopAngosta] = useState(bordeInferiorDelHeader);
 
   const zIndex = useSyncExternalStore(
     suscribirseAlFoco,
@@ -245,7 +274,10 @@ export default function VentanaFlotante({
   // Al achicar la ventana del navegador, un panel puede quedar fuera de la
   // pantalla. Se lo trae de vuelta en lugar de darlo por perdido.
   useEffect(() => {
-    const alRedimensionar = () => setGeometria((actual) => acomodarAPantalla(actual));
+    const alRedimensionar = () => {
+      setTamanoPantalla((n) => n + 1);
+      setTopAngosta(bordeInferiorDelHeader());
+    };
     window.addEventListener("resize", alRedimensionar);
     return () => window.removeEventListener("resize", alRedimensionar);
   }, []);
@@ -282,7 +314,7 @@ export default function VentanaFlotante({
   }, [id]);
 
   const fijarGeometria = (nueva: GeometriaPanel) => {
-    setGeometria(nueva);
+    setElegida(nueva);
     guardarGeometria(id, nueva);
   };
 
@@ -320,7 +352,7 @@ export default function VentanaFlotante({
 
   const iniciarArrastre = (evento: PointerEventReact<HTMLDivElement>) => {
     // Desprendida, la que manda es la ventana del sistema operativo.
-    if (host) return;
+    if (host || angosta) return;
     // Un clic en "Desprender" o en la X no es el comienzo de un arrastre.
     if ((evento.target as HTMLElement).closest("button")) return;
 
@@ -416,8 +448,8 @@ export default function VentanaFlotante({
   const barra = (
     <div
       onPointerDown={iniciarArrastre}
-      className={`flex shrink-0 items-start justify-between gap-3 border-b bg-slate-50 px-5 py-3 ${
-        host ? "" : "cursor-move select-none"
+      className={`flex shrink-0 items-start justify-between gap-3 border-b bg-slate-50 px-4 py-3 sm:px-5 ${
+        host || angosta ? "" : "cursor-move select-none"
       }`}
     >
       <div className="min-w-0">
@@ -435,19 +467,19 @@ export default function VentanaFlotante({
       <div className="flex shrink-0 items-center gap-1">
         <button
           onClick={host ? volverALaPagina : desprender}
-          className="rounded-lg px-2 py-1 text-lg leading-none text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-900"
+          className="hidden md:inline-flex rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-900"
           title={host ? "Traer el panel de vuelta a la página" : "Desprender a otra ventana"}
           aria-label={host ? "Traer el panel de vuelta a la página" : "Desprender a otra ventana"}
         >
-          {host ? "⊞" : "⧉"}
+          {host ? <Minimize2 className="w-4 h-4" /> : <ExternalLink className="w-4 h-4" />}
         </button>
         <button
           onClick={onCerrar}
-          className="rounded-lg px-2 py-1 text-2xl leading-none text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-900"
+          className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-900"
           title="Cerrar"
           aria-label="Cerrar"
         >
-          ×
+          <X className="w-5 h-5" />
         </button>
       </div>
     </div>
@@ -469,14 +501,20 @@ export default function VentanaFlotante({
       // Cualquier clic dentro lo trae al frente. En `capture` para que
       // llegue igual si un hijo corta la propagación.
       onPointerDownCapture={() => traerAlFrente(id)}
-      style={{
-        left: geometria.x,
-        top: geometria.y,
-        width: geometria.ancho,
-        height: geometria.alto,
-        zIndex,
-      }}
-      className="fixed flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+      style={
+        angosta
+          ? { left: 0, right: 0, bottom: 0, top: topAngosta, zIndex }
+          : {
+              left: geometria.x,
+              top: geometria.y,
+              width: geometria.ancho,
+              height: geometria.alto,
+              zIndex,
+            }
+      }
+      className={`fixed flex flex-col overflow-hidden bg-white shadow-2xl ${
+        angosta ? "" : "rounded-2xl border border-slate-200"
+      }`}
       role="dialog"
       aria-label={titulo}
     >
@@ -487,15 +525,17 @@ export default function VentanaFlotante({
           redondeadas, recorta justo la punta -- que es adonde apunta el
           usuario. Los píxeles de más van hacia adentro, donde no hay
           recorte, y ahí es donde queda el área agarrable de verdad. */}
-      <div
-        onPointerDown={iniciarRedimension}
-        className="absolute bottom-0 right-0 h-5 w-5 cursor-nwse-resize text-slate-300"
-        aria-hidden="true"
-      >
-        <svg viewBox="0 0 20 20" className="h-5 w-5 fill-current">
-          <path d="M20 20h-9l9-9z" />
-        </svg>
-      </div>
+      {!angosta && (
+        <div
+          onPointerDown={iniciarRedimension}
+          className="absolute bottom-0 right-0 h-5 w-5 cursor-nwse-resize text-slate-300"
+          aria-hidden="true"
+        >
+          <svg viewBox="0 0 20 20" className="h-5 w-5 fill-current">
+            <path d="M20 20h-9l9-9z" />
+          </svg>
+        </div>
+      )}
     </div>
   );
 }

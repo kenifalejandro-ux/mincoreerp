@@ -1,5 +1,6 @@
 /**client/src/documentos/Documentostable.tsx */
 
+import { ChevronLeft, ChevronRight, FileSpreadsheet, Plus, X } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 
 import { apiFetch } from "../../services/apiClient";
@@ -554,17 +555,16 @@ export default function DocumentosTable() {
   return (
     <div className="animate-in fade-in duration-700 slide-in-from-bottom-4">
       {/* Header */}
-      <div className="flex flex-col lg:flex-row lg:items-center gap-6 mb-12">
+      <div className="flex flex-col lg:flex-row lg:items-center gap-4 lg:gap-6 mb-6 lg:mb-12">
         {/* IZQUIERDA */}
         <div className="space-y-1">
-          <h1 className="text-3xl lg:text-4xl font-light text-slate-800 tracking-tight">
+          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-light text-slate-800 tracking-tight">
             Documentación Legal
           </h1>
         </div>
 
         {/* DERECHA (BOTONES) */}
         <div className="flex items-center gap-3 ml-auto">
-          {/* ➕ BOTÓN NUEVO */}
           <button
             onClick={() => {
               setForm({});
@@ -572,19 +572,20 @@ export default function DocumentosTable() {
               setClienteUuid(crypto.randomUUID());
               setOpenModal(true);
             }}
-            className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg transition-colors duration-200"
+            className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg transition-colors duration-200"
           >
+            <Plus className="w-4 h-4 shrink-0" />
             Nuevo Documento
           </button>
 
-          {/* 📦 EXCEL */}
           <label
-            className={`px-6 py-2.5 text-white text-sm font-medium rounded-lg ${
+            className={`flex items-center gap-2 px-6 py-2.5 text-white text-sm font-medium rounded-lg ${
               importando
                 ? "bg-blue-400 cursor-wait"
                 : "bg-blue-600 hover:bg-blue-700 cursor-pointer"
             }`}
           >
+            <FileSpreadsheet className="w-4 h-4 shrink-0" />
             {importando ? "Importando..." : "Excel"}
             <input
               type="file"
@@ -607,8 +608,8 @@ export default function DocumentosTable() {
 
       {/* MODAL ERP (NUEVO / EDITAR) */}
       {openModal && (
-        <div className="fixed inset-0 bg-zinc-800/50 flex items-center justify-center">
-          <div className="bg-white w-[520px] h-[320px] p-6 rounded-xl space-y-3">
+        <div className="fixed inset-0 z-50 p-4 bg-zinc-800/50 flex items-center justify-center">
+          <div className="bg-white w-full max-w-[520px] min-h-[320px] p-4 sm:p-6 rounded-xl space-y-3">
             <h2 className="text-lg font-semibold">
               {editId ? "Editar Documento" : "Nuevo Documento"}
             </h2>
@@ -690,8 +691,8 @@ export default function DocumentosTable() {
 
       {/* MODAL ARCHIVO ADJUNTO (versiones) */}
       {docArchivoId !== null && (
-        <div className="fixed inset-0 bg-zinc-800/50 flex items-center justify-center">
-          <div className="bg-white w-[520px] max-h-[80vh] p-6 rounded-xl space-y-4 flex flex-col">
+        <div className="fixed inset-0 z-50 p-4 bg-zinc-800/50 flex items-center justify-center">
+          <div className="bg-white w-full max-w-[520px] max-h-[80vh] p-4 sm:p-6 rounded-xl space-y-4 flex flex-col">
             <h2 className="text-lg font-semibold">Archivo del documento</h2>
 
             <label className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg cursor-pointer text-center w-fit">
@@ -758,11 +759,11 @@ export default function DocumentosTable() {
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-red-900 font-light flex-1">{errorImportacion}</p>
           <button
-            className="text-red-400 hover:text-red-600 text-sm shrink-0"
+            className="text-red-400 hover:text-red-600 shrink-0"
             onClick={() => setErrorImportacion(null)}
             aria-label="Cerrar aviso de error"
           >
-            ✕
+            <X className="w-4 h-4" />
           </button>
         </div>
       )}
@@ -770,11 +771,11 @@ export default function DocumentosTable() {
         <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-green-900 font-light flex-1">{resultadoImportacion}</p>
           <button
-            className="text-green-500 hover:text-green-700 text-sm shrink-0"
+            className="text-green-500 hover:text-green-700 shrink-0"
             onClick={() => setResultadoImportacion(null)}
             aria-label="Cerrar aviso de importación"
           >
-            ✕
+            <X className="w-4 h-4" />
           </button>
         </div>
       )}
@@ -795,7 +796,7 @@ export default function DocumentosTable() {
       {/* TABLE */}
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left">
+          <table className="w-full min-w-max text-left">
             <thead>
               <tr className="border-b border-slate-200">
                 <th className="px-6 py-4 text-xs font-medium text-slate-400 uppercase tracking-wide">
@@ -911,9 +912,10 @@ export default function DocumentosTable() {
         <button
           onClick={() => setPage((p) => Math.max(1, p - 1))}
           disabled={page <= 1}
-          className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+          className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
         >
-          ← Anterior
+          <ChevronLeft className="w-4 h-4" />
+          Anterior
         </button>
         <span className="text-sm text-slate-400">
           Página {page} de {totalPages}
@@ -921,9 +923,10 @@ export default function DocumentosTable() {
         <button
           onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
           disabled={page >= totalPages}
-          className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+          className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
         >
-          Siguiente →
+          Siguiente
+          <ChevronRight className="w-4 h-4" />
         </button>
       </div>
     </div>

@@ -38,10 +38,12 @@ export default function AdministracionView() {
   const [seccion, setSeccion] = useState<Seccion>("usuarios");
 
   return (
-    <div className="p-4 lg:p-8 animate-in fade-in duration-500">
+    <div className="p-2 sm:p-4 lg:p-8 animate-in fade-in duration-500">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-slate-800">Administración</h1>
-        <p className="text-slate-600">
+        <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-slate-800 tracking-tight">
+          Administración
+        </h1>
+        <p className="text-xs sm:text-sm text-slate-600">
           Quién entra a tu empresa, qué puede hacer, y qué se hizo en el sistema
         </p>
       </div>
@@ -52,7 +54,7 @@ export default function AdministracionView() {
             key={s.id}
             type="button"
             onClick={() => setSeccion(s.id)}
-            className={`px-5 py-3 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+            className={`px-3 sm:px-5 py-2.5 sm:py-3 text-xs sm:text-sm font-semibold border-b-2 -mb-px transition-colors ${
               seccion === s.id
                 ? "border-[#DDF500] text-slate-900"
                 : "border-transparent text-slate-500 hover:text-slate-800"
@@ -64,13 +66,7 @@ export default function AdministracionView() {
       </div>
 
       <Suspense fallback={<div className="p-20 text-center text-slate-500">Cargando...</div>}>
-        {/* Usuarios trae su propio encabezado y padding: se renderiza entero,
-            sin el margen exterior de esta pantalla. */}
-        {seccion === "usuarios" && (
-          <div className="-m-4 lg:-m-8 -mt-2 lg:-mt-2">
-            <UsuariosView />
-          </div>
-        )}
+        {seccion === "usuarios" && <UsuariosView />}
         {seccion === "configuracion" && <ConfiguracionView />}
         {seccion === "eventos" && <LogDeEventosView />}
         {seccion === "ordenes" && <OrdenesView />}

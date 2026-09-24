@@ -90,16 +90,19 @@ export default function SelectorEmpresa() {
         aria-haspopup="listbox"
         aria-expanded={abierto}
         className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-slate-700 text-slate-200 hover:border-[#DDF500] hover:text-white transition-colors max-w-[220px]"
+        title={actual?.nombre ?? "Empresa"}
       >
         <Building2 size={16} className="text-[#DDF500] shrink-0" />
-        <span className="text-sm font-medium truncate">{actual?.nombre ?? "Empresa"}</span>
+        <span className="hidden md:inline text-sm font-medium truncate">
+          {actual?.nombre ?? "Empresa"}
+        </span>
         <ChevronDown size={14} className="shrink-0 text-slate-400" />
       </button>
 
       {abierto && (
         <div
           role="listbox"
-          className="absolute right-0 mt-2 w-72 bg-[#0A1014] border border-slate-700 rounded-lg shadow-2xl overflow-hidden z-50"
+          className="fixed inset-x-2 top-16 sm:absolute sm:inset-x-auto sm:top-auto sm:right-0 mt-2 sm:w-72 bg-[#0A1014] border border-slate-700 rounded-lg shadow-2xl overflow-hidden z-50"
         >
           <p className="px-4 py-2 text-[10px] uppercase tracking-widest text-slate-500 border-b border-slate-800">
             Tus empresas

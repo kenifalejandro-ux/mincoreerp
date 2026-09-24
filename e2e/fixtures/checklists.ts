@@ -60,7 +60,7 @@ export async function sembrarEquipoYPlantilla(page: Page, marca: string): Promis
  *  sub-pestaña dentro de la vista; la del sidebar viene antes en el DOM. */
 export async function abrirModalNuevoChecklist(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Checklists" }).first().click();
-  await page.getByRole("button", { name: "+ Nuevo Checklist" }).click();
+  await page.getByRole("button", { name: "Nuevo Checklist" }).click();
 }
 
 /** Elige equipo y plantilla, y espera a que los ítems estén en pantalla —
@@ -94,9 +94,9 @@ export function botonRegistrar(page: Page): Locator {
   return page.getByRole("button", { name: /Registrar Checklist|Registrando/ });
 }
 
-/** El botón × que cierra el modal. */
+/** El botón que cierra el modal (ícono, sin texto -- ver su aria-label). */
 export function botonCerrarModal(page: Page): Locator {
-  return page.getByRole("button", { name: "×" });
+  return page.getByRole("button", { name: "Cerrar" });
 }
 
 /** Los checklists ya guardados en el servidor para ese equipo. Es la

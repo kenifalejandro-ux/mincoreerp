@@ -15,6 +15,17 @@
 // El componente se carga con React.lazy (code-splitting): el chunk de un
 // módulo solo viaja al navegador si ese usuario realmente lo tiene
 // habilitado y lo abre — ver App.tsx (<Suspense>).
+import {
+  ClipboardCheck,
+  FileText,
+  Fuel,
+  Hammer,
+  LayoutDashboard,
+  ShieldAlert,
+  Tractor,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react";
 import { lazy, type LazyExoticComponent, type ComponentType } from "react";
 
 // Qué escrituras de cada módulo participan de la cola offline se declara en
@@ -25,7 +36,10 @@ import { lazy, type LazyExoticComponent, type ComponentType } from "react";
 export interface ModuloCliente {
   id: string;
   label: string;
-  icono: string;
+  // De trazo (lucide), no emoji: coherente con el resto de la app y con
+  // Administración/Facturación, que ya vivían hardcodeadas en Sidebar.tsx
+  // con íconos de este mismo tipo.
+  icono: LucideIcon;
   componente: LazyExoticComponent<ComponentType>;
 }
 
@@ -33,49 +47,49 @@ export const MODULOS_CLIENTE: ModuloCliente[] = [
   {
     id: "dashboard",
     label: "Dashboard",
-    icono: "📊",
+    icono: LayoutDashboard,
     componente: lazy(() => import("../components/dashboard/Dashboard")),
   },
   {
     id: "repuestos",
     label: "Repuestos",
-    icono: "🔧",
+    icono: Wrench,
     componente: lazy(() => import("../components/repuestos/RepuestosTable")),
   },
   {
     id: "combustible",
     label: "Combustible",
-    icono: "⛽",
+    icono: Fuel,
     componente: lazy(() => import("../components/combustible/CombustiblePanel")),
   },
   {
     id: "documentos",
     label: "Documentos",
-    icono: "📄",
+    icono: FileText,
     componente: lazy(() => import("../components/documentos/DocumentosTable")),
   },
   {
     id: "equipos",
     label: "Equipos",
-    icono: "🚜",
+    icono: Tractor,
     componente: lazy(() => import("../components/equipos/EquiposTable")),
   },
   {
     id: "checklists",
     label: "Checklists",
-    icono: "✅",
+    icono: ClipboardCheck,
     componente: lazy(() => import("../components/checklists/ChecklistsView")),
   },
   {
     id: "iperc",
     label: "IPERC",
-    icono: "⚠️",
+    icono: ShieldAlert,
     componente: lazy(() => import("../components/iperc/IpercView")),
   },
   {
     id: "ordenes_trabajo",
     label: "Órdenes de Trabajo",
-    icono: "🛠️",
+    icono: Hammer,
     componente: lazy(() => import("../components/ordenes_trabajo/OrdenesTrabajoView")),
   },
 ];

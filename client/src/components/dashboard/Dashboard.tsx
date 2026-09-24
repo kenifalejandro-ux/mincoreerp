@@ -112,13 +112,15 @@ export default function Dashboard() {
   return (
     <div className="animate-in fade-in duration-700 slide-in-from-bottom-4">
       {/* Header Section */}
-      <div className="mb-12">
+      <div className="mb-6 lg:mb-12">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
           <div className="space-y-1">
-            <h1 className="text-3xl lg:text-4xl font-light text-slate-800 tracking-tight">
+            <h1 className="text-xl sm:text-2xl lg:text-3xl font-light text-slate-800 tracking-tight">
               Vista General
             </h1>
-            <p className="text-slate-500 text-sm font-light">Indicadores clave del sistema</p>
+            <p className="text-xs sm:text-sm text-slate-500 font-light">
+              Indicadores clave del sistema
+            </p>
           </div>
           <div className="flex items-center gap-2 text-sm text-slate-400">
             <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full"></div>
@@ -131,8 +133,192 @@ export default function Dashboard() {
       </div>
 
       {/* KPI Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
-        ... tus tarjetas KPI ...
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+        {/* --------------------------------REPUESTOS OPERATIVOS --------------------------------*/}
+        {/* Total Inventario Card */}
+        <div className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-sm transition-all duration-300">
+          <div className="flex items-start justify-between mb-8">
+            <div className="space-y-0.5">
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                Inventario
+              </p>
+              <p className="text-3xl font-light text-slate-900 tracking-tight">
+                <CountUp end={kpis?.total_repuestos || 0} />
+              </p>
+            </div>
+            <div className="w-8 h-8 bg-indigo-50 rounded-lg flex items-center justify-center">
+              <div className="w-3 h-3 bg-indigo-500 rounded-sm"></div>
+            </div>
+          </div>
+          <p className="text-xs text-slate-400 font-light">Total de SKUs activos</p>
+        </div>
+
+        {/* Stock Crítico Card */}
+        <div
+          className={`border rounded-xl p-6 hover:shadow-sm transition-all duration-300 ${
+            kpis && kpis.stock_bajo > 0
+              ? "bg-amber-50 border-amber-200"
+              : "bg-white border-slate-200"
+          }`}
+        >
+          <div className="flex items-start justify-between mb-8">
+            <div className="space-y-0.5">
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                Stock Crítico
+              </p>
+              <p
+                className={`text-3xl font-light tracking-tight ${
+                  kpis && kpis.stock_bajo > 0 ? "text-amber-900" : "text-slate-900"
+                }`}
+              >
+                <CountUp end={kpis?.stock_bajo || 0} />
+              </p>
+            </div>
+            <div
+              className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                kpis && kpis.stock_bajo > 0 ? "bg-amber-100" : "bg-emerald-50"
+              }`}
+            >
+              <div
+                className={`w-3 h-3 rounded-sm ${
+                  kpis && kpis.stock_bajo > 0 ? "bg-amber-500" : "bg-emerald-500"
+                }`}
+              ></div>
+            </div>
+          </div>
+          <p className="text-xs text-slate-400 font-light">
+            {kpis && kpis.stock_bajo > 0 ? "Requieren reabastecimiento" : "Nivel óptimo"}
+          </p>
+        </div>
+
+        {/* Valor Inventario Card */}
+        <div className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-sm transition-all duration-300">
+          <div className="flex items-start justify-between mb-8">
+            <div className="space-y-0.5">
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                Valor Total
+              </p>
+              <p className="text-3xl font-light text-slate-900 tracking-tight">
+                <CountUp end={kpis?.valor_inventario || 0} prefix="S/ " decimals={0} />
+              </p>
+            </div>
+            <div className="w-8 h-8 bg-emerald-50 rounded-lg flex items-center justify-center">
+              <div className="w-3 h-3 bg-emerald-500 rounded-sm"></div>
+            </div>
+          </div>
+          <p className="text-xs text-slate-400 font-light">Patrimonio en inventario</p>
+        </div>
+        {/* --------------------------------REPUESTOS ESTRÁTEGICOS --------------------------------*/}
+
+        {/* KPI — % Inventario en Riesgo */}
+        <div
+          className={`border rounded-xl p-6 transition-all duration-300 ${
+            (kpis?.porcentaje_riesgo || 0) > 20
+              ? "bg-red-50 border-red-200"
+              : "bg-white border-slate-200"
+          }`}
+        >
+          <div className="flex items-start justify-between mb-8">
+            <div>
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                Inventario en Riesgo
+              </p>
+              <p
+                className={`text-3xl font-light tracking-tight ${
+                  (kpis?.porcentaje_riesgo || 0) > 20 ? "text-red-700" : "text-slate-900"
+                }`}
+              >
+                <CountUp end={kpis?.porcentaje_riesgo || 0} />%
+              </p>
+            </div>
+            <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center">
+              <div className="w-3 h-3 bg-red-500 rounded-sm"></div>
+            </div>
+          </div>
+          <p className="text-xs text-slate-400 font-light">Salud general del inventario</p>
+        </div>
+
+        {/* KPI — Sobre Stock */}
+        <div className="bg-white border border-slate-200 rounded-xl p-6 transition-all duration-300">
+          <div className="flex items-start justify-between mb-8">
+            <div>
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                Sobre Stock
+              </p>
+              <p className="text-3xl font-light text-slate-900 tracking-tight">
+                <CountUp end={kpis?.sobre_stock || 0} />
+              </p>
+            </div>
+            <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
+              <div className="w-3 h-3 bg-blue-500 rounded-sm"></div>
+            </div>
+          </div>
+          <p className="text-xs text-slate-400 font-light">Productos con exceso de inventario</p>
+        </div>
+
+        {/* KPI — Valor en Riesgo */}
+        <div
+          className={`border rounded-xl p-6 transition-all duration-300 ${
+            (kpis?.valor_stock_bajo || 0) > 0
+              ? "bg-rose-50 border-rose-200"
+              : "bg-white border-slate-200"
+          }`}
+        >
+          <div className="flex items-start justify-between mb-8">
+            <div>
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                Valor en Riesgo
+              </p>
+              <p
+                className={`text-3xl font-light tracking-tight ${
+                  (kpis?.valor_stock_bajo || 0) > 0 ? "text-rose-700" : "text-slate-900"
+                }`}
+              >
+                <CountUp end={kpis?.valor_stock_bajo || 0} prefix="S/ " decimals={0} />
+              </p>
+            </div>
+            <div className="w-8 h-8 bg-rose-100 rounded-lg flex items-center justify-center">
+              <div className="w-3 h-3 bg-rose-500 rounded-sm"></div>
+            </div>
+          </div>
+          <p className="text-xs text-slate-400 font-light">Capital comprometido en stock crítico</p>
+        </div>
+
+        {/* Combustible Card */}
+        <div className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-sm transition-all duration-300">
+          <div className="flex items-start justify-between mb-8">
+            <div className="space-y-0.5">
+              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                Combustible
+              </p>
+              <p className="text-3xl font-light text-slate-900 tracking-tight">
+                <CountUp end={kpis?.combustible_porcentaje || 0} />%
+              </p>
+            </div>
+            <div
+              className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                Number(kpis?.combustible_porcentaje) < 30 ? "bg-red-50" : "bg-blue-50"
+              }`}
+            >
+              <div
+                className={`w-3 h-3 rounded-sm ${
+                  Number(kpis?.combustible_porcentaje) < 30 ? "bg-red-500" : "bg-blue-500"
+                }`}
+              ></div>
+            </div>
+          </div>
+          <div className="space-y-2">
+            <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden">
+              <div
+                className={`h-full transition-all duration-1000 ease-out ${
+                  Number(kpis?.combustible_porcentaje) < 30 ? "bg-red-500" : "bg-blue-500"
+                }`}
+                style={{ width: `${barWidth}%` }}
+              ></div>
+            </div>
+            <p className="text-xs text-slate-400 font-light">Nivel del tanque principal</p>
+          </div>
+        </div>
       </div>
 
       {/* Charts Section */}
@@ -144,188 +330,6 @@ export default function Dashboard() {
           <StockMinimoChart data={charts.stock_vs_minimo} />
         </div>
       )}
-      {/* --------------------------------REPUESTOS OPERATIVOS --------------------------------*/}
-      {/* Total Inventario Card */}
-      <div className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-sm transition-all duration-300">
-        <div className="flex items-start justify-between mb-8">
-          <div className="space-y-0.5">
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">Inventario</p>
-            <p className="text-3xl font-light text-slate-900 tracking-tight">
-              <CountUp end={kpis?.total_repuestos || 0} />
-            </p>
-          </div>
-          <div className="w-8 h-8 bg-indigo-50 rounded-lg flex items-center justify-center">
-            <div className="w-3 h-3 bg-indigo-500 rounded-sm"></div>
-          </div>
-        </div>
-        <p className="text-xs text-slate-400 font-light">Total de SKUs activos</p>
-      </div>
-
-      {/* Stock Crítico Card */}
-      <div
-        className={`border rounded-xl p-6 hover:shadow-sm transition-all duration-300 ${
-          kpis && kpis.stock_bajo > 0 ? "bg-amber-50 border-amber-200" : "bg-white border-slate-200"
-        }`}
-      >
-        <div className="flex items-start justify-between mb-8">
-          <div className="space-y-0.5">
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              Stock Crítico
-            </p>
-            <p
-              className={`text-3xl font-light tracking-tight ${
-                kpis && kpis.stock_bajo > 0 ? "text-amber-900" : "text-slate-900"
-              }`}
-            >
-              <CountUp end={kpis?.stock_bajo || 0} />
-            </p>
-          </div>
-          <div
-            className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-              kpis && kpis.stock_bajo > 0 ? "bg-amber-100" : "bg-emerald-50"
-            }`}
-          >
-            <div
-              className={`w-3 h-3 rounded-sm ${
-                kpis && kpis.stock_bajo > 0 ? "bg-amber-500" : "bg-emerald-500"
-              }`}
-            ></div>
-          </div>
-        </div>
-        <p className="text-xs text-slate-400 font-light">
-          {kpis && kpis.stock_bajo > 0 ? "Requieren reabastecimiento" : "Nivel óptimo"}
-        </p>
-      </div>
-
-      {/* Valor Inventario Card */}
-      <div className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-sm transition-all duration-300">
-        <div className="flex items-start justify-between mb-8">
-          <div className="space-y-0.5">
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              Valor Total
-            </p>
-            <p className="text-3xl font-light text-slate-900 tracking-tight">
-              <CountUp end={kpis?.valor_inventario || 0} prefix="S/ " decimals={0} />
-            </p>
-          </div>
-          <div className="w-8 h-8 bg-emerald-50 rounded-lg flex items-center justify-center">
-            <div className="w-3 h-3 bg-emerald-500 rounded-sm"></div>
-          </div>
-        </div>
-        <p className="text-xs text-slate-400 font-light">Patrimonio en inventario</p>
-      </div>
-      {/* --------------------------------REPUESTOS ESTRÁTEGICOS --------------------------------*/}
-
-      {/* KPI — % Inventario en Riesgo */}
-
-      <div
-        className={`border rounded-xl p-6 transition-all duration-300 ${
-          (kpis?.porcentaje_riesgo || 0) > 20
-            ? "bg-red-50 border-red-200"
-            : "bg-white border-slate-200"
-        }`}
-      >
-        <div className="flex items-start justify-between mb-8">
-          <div>
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              Inventario en Riesgo
-            </p>
-            <p
-              className={`text-3xl font-light tracking-tight ${
-                (kpis?.porcentaje_riesgo || 0) > 20 ? "text-red-700" : "text-slate-900"
-              }`}
-            >
-              <CountUp end={kpis?.porcentaje_riesgo || 0} />%
-            </p>
-          </div>
-          <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center">
-            <div className="w-3 h-3 bg-red-500 rounded-sm"></div>
-          </div>
-        </div>
-        <p className="text-xs text-slate-400 font-light">Salud general del inventario</p>
-      </div>
-
-      {/* KPI — Sobre Stock */}
-      <div className="bg-white border border-slate-200 rounded-xl p-6 transition-all duration-300">
-        <div className="flex items-start justify-between mb-8">
-          <div>
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              Sobre Stock
-            </p>
-            <p className="text-3xl font-light text-slate-900 tracking-tight">
-              <CountUp end={kpis?.sobre_stock || 0} />
-            </p>
-          </div>
-          <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
-            <div className="w-3 h-3 bg-blue-500 rounded-sm"></div>
-          </div>
-        </div>
-        <p className="text-xs text-slate-400 font-light">Productos con exceso de inventario</p>
-      </div>
-
-      {/* KPI — Valor en Riesgo */}
-      <div
-        className={`border rounded-xl p-6 transition-all duration-300 ${
-          (kpis?.valor_stock_bajo || 0) > 0
-            ? "bg-rose-50 border-rose-200"
-            : "bg-white border-slate-200"
-        }`}
-      >
-        <div className="flex items-start justify-between mb-8">
-          <div>
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              Valor en Riesgo
-            </p>
-            <p
-              className={`text-3xl font-light tracking-tight ${
-                (kpis?.valor_stock_bajo || 0) > 0 ? "text-rose-700" : "text-slate-900"
-              }`}
-            >
-              <CountUp end={kpis?.valor_stock_bajo || 0} prefix="S/ " decimals={0} />
-            </p>
-          </div>
-          <div className="w-8 h-8 bg-rose-100 rounded-lg flex items-center justify-center">
-            <div className="w-3 h-3 bg-rose-500 rounded-sm"></div>
-          </div>
-        </div>
-        <p className="text-xs text-slate-400 font-light">Capital comprometido en stock crítico</p>
-      </div>
-
-      {/* Combustible Card */}
-      <div className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-sm transition-all duration-300">
-        <div className="flex items-start justify-between mb-8">
-          <div className="space-y-0.5">
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              Combustible
-            </p>
-            <p className="text-3xl font-light text-slate-900 tracking-tight">
-              <CountUp end={kpis?.combustible_porcentaje || 0} />%
-            </p>
-          </div>
-          <div
-            className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-              Number(kpis?.combustible_porcentaje) < 30 ? "bg-red-50" : "bg-blue-50"
-            }`}
-          >
-            <div
-              className={`w-3 h-3 rounded-sm ${
-                Number(kpis?.combustible_porcentaje) < 30 ? "bg-red-500" : "bg-blue-500"
-              }`}
-            ></div>
-          </div>
-        </div>
-        <div className="space-y-2">
-          <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden">
-            <div
-              className={`h-full transition-all duration-1000 ease-out ${
-                Number(kpis?.combustible_porcentaje) < 30 ? "bg-red-500" : "bg-blue-500"
-              }`}
-              style={{ width: `${barWidth}%` }}
-            ></div>
-          </div>
-          <p className="text-xs text-slate-400 font-light">Nivel del tanque principal</p>
-        </div>
-      </div>
 
       {/* Documentos Section */}
       <div className="bg-white border border-slate-200 rounded-xl p-6">

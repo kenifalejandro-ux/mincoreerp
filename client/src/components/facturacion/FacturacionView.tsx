@@ -46,7 +46,7 @@ export default function FacturacionView() {
   }, []);
 
   return (
-    <div className="p-8 max-w-4xl mx-auto">
+    <div className="p-2 sm:p-4 lg:p-8 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold text-gray-900 mb-6">Facturación</h1>
 
       <div className="flex gap-2 mb-6 border-b">
@@ -86,39 +86,41 @@ export default function FacturacionView() {
           ) : comprobantes.length === 0 ? (
             <div className="p-6 text-gray-500">Todavía no tenés comprobantes de pago.</div>
           ) : (
-            <table className="w-full text-left">
-              <thead className="bg-gray-50 text-sm text-gray-500">
-                <tr>
-                  <th className="px-4 py-3">Fecha</th>
-                  <th className="px-4 py-3">Concepto</th>
-                  <th className="px-4 py-3">Monto</th>
-                  <th className="px-4 py-3">Número</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {comprobantes.map((c) => (
-                  <tr key={c.id}>
-                    <td className="px-4 py-3">
-                      {new Date(c.creadoEn).toLocaleDateString("es-PE")}
-                    </td>
-                    <td className="px-4 py-3">{c.concepto}</td>
-                    <td className="px-4 py-3">
-                      {c.monto} {c.moneda}
-                    </td>
-                    <td className="px-4 py-3 text-gray-500">{c.numero ?? "—"}</td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => descargarComprobante(c.id)}
-                        className="text-blue-600 hover:text-blue-800 font-medium"
-                      >
-                        Descargar
-                      </button>
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-max text-left">
+                <thead className="bg-gray-50 text-sm text-gray-500">
+                  <tr>
+                    <th className="px-4 py-3">Fecha</th>
+                    <th className="px-4 py-3">Concepto</th>
+                    <th className="px-4 py-3">Monto</th>
+                    <th className="px-4 py-3">Número</th>
+                    <th className="px-4 py-3" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y">
+                  {comprobantes.map((c) => (
+                    <tr key={c.id}>
+                      <td className="px-4 py-3">
+                        {new Date(c.creadoEn).toLocaleDateString("es-PE")}
+                      </td>
+                      <td className="px-4 py-3">{c.concepto}</td>
+                      <td className="px-4 py-3">
+                        {c.monto} {c.moneda}
+                      </td>
+                      <td className="px-4 py-3 text-gray-500">{c.numero ?? "—"}</td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => descargarComprobante(c.id)}
+                          className="text-blue-600 hover:text-blue-800 font-medium"
+                        >
+                          Descargar
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}

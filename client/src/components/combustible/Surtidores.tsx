@@ -399,7 +399,7 @@ export default function VentanaSurtidores({
                 <select
                   id="surtidor-nuevo-grifo"
                   required
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white"
                   value={nuevo.grifo}
                   onChange={(e) => setNuevo({ ...nuevo, grifo: e.target.value })}
                 >
@@ -420,7 +420,7 @@ export default function VentanaSurtidores({
                 id="surtidor-nuevo-nombre"
                 required
                 maxLength={80}
-                className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                 placeholder="Ej.: Surtidor 2 (manguera larga)"
                 value={nuevo.nombre}
                 onChange={(e) => setNuevo({ ...nuevo, nombre: e.target.value })}
@@ -445,7 +445,7 @@ export default function VentanaSurtidores({
                 type="number"
                 min={0}
                 step="0.001"
-                className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                 value={nuevo.tolerancia}
                 onChange={(e) => setNuevo({ ...nuevo, tolerancia: e.target.value })}
               />

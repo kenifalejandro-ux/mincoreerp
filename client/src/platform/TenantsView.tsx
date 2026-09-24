@@ -65,45 +65,49 @@ export default function TenantsView({
         <p className="text-sm text-slate-400">Cargando...</p>
       ) : (
         <div className="border border-slate-800 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-slate-900 text-slate-400 text-left">
-                <th className="px-4 py-3 font-light">Nombre</th>
-                <th className="px-4 py-3 font-light">Slug</th>
-                <th className="px-4 py-3 font-light">Dominio propio</th>
-                <th className="px-4 py-3 font-light">Estado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tenants.map((t) => (
-                <tr
-                  key={t.id}
-                  onClick={() => onSeleccionar(t)}
-                  className="border-t border-slate-800 text-slate-200 hover:bg-slate-900 cursor-pointer transition-colors"
-                >
-                  <td className="px-4 py-3">{t.nombre}</td>
-                  <td className="px-4 py-3 text-slate-400">{t.slug}</td>
-                  <td className="px-4 py-3 text-slate-400">{t.dominioPersonalizado || "—"}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-xs ${
-                        t.activo ? "bg-emerald-950 text-emerald-400" : "bg-slate-800 text-slate-400"
-                      }`}
-                    >
-                      {t.activo ? "Activo" : "Desactivado"}
-                    </span>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-max text-sm">
+              <thead>
+                <tr className="bg-slate-900 text-slate-400 text-left">
+                  <th className="px-4 py-3 font-light">Nombre</th>
+                  <th className="px-4 py-3 font-light">Slug</th>
+                  <th className="px-4 py-3 font-light">Dominio propio</th>
+                  <th className="px-4 py-3 font-light">Estado</th>
                 </tr>
-              ))}
-              {tenants.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
-                    No hay tenants todavía.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {tenants.map((t) => (
+                  <tr
+                    key={t.id}
+                    onClick={() => onSeleccionar(t)}
+                    className="border-t border-slate-800 text-slate-200 hover:bg-slate-900 cursor-pointer transition-colors"
+                  >
+                    <td className="px-4 py-3">{t.nombre}</td>
+                    <td className="px-4 py-3 text-slate-400">{t.slug}</td>
+                    <td className="px-4 py-3 text-slate-400">{t.dominioPersonalizado || "—"}</td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-xs ${
+                          t.activo
+                            ? "bg-emerald-950 text-emerald-400"
+                            : "bg-slate-800 text-slate-400"
+                        }`}
+                      >
+                        {t.activo ? "Activo" : "Desactivado"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {tenants.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-6 text-center text-slate-500">
+                      No hay tenants todavía.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

@@ -1,0 +1,37 @@
+/* Reglas de adaptación a pantalla que valen para TODO el ERP.
+
+   Van en la capa `utilities` y con :where (especificidad 0), igual que
+   tema-oscuro.css: son un piso, y cualquier clase de Tailwind que ponga un
+   componente (max-h-[90vh], overflow-hidden...) les gana. */
+
+@layer utilities {
+  /* Modales: todos son un fondo `fixed inset-0` con la tarjeta como hijo
+     directo. La tarjeta nunca puede ser más alta ni más ancha que la
+     pantalla; si el contenido no entra, scrollea adentro. Sin esto, en un
+     celular el botón "Guardar" de un formulario largo quedaba fuera de
+     alcance. dvh y no vh: en el celular vh ignora la barra del navegador. */
+  :where(.fixed.inset-0) > :where(div, form) {
+    max-width: 100%;
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
+  }
+
+  /* Tablas dentro de un contenedor con scroll horizontal: el encabezado no
+     se parte, así cada columna tiene al menos el ancho de su título. En una
+     pantalla angosta la tabla se desliza de costado en vez de aplastar las
+     columnas hasta dejar una palabra por renglón. */
+  :where(.overflow-x-auto, .overflow-auto) > :where(table) :where(th) {
+    white-space: nowrap;
+  }
+}
+
+/* iOS hace zoom al enfocar un campo con letra menor a 16px, y no lo
+   deshace al salir: el grifero queda con la pantalla ampliada a mitad del
+   formulario. Fuera de :where a propósito, para ganarle a text-sm/text-xs. */
+@media (max-width: 639px) {
+  body.tema-oscuro input:not([type="checkbox"]):not([type="radio"]),
+  body.tema-oscuro select,
+  body.tema-oscuro textarea {
+    font-size: 16px;
+  }
+}

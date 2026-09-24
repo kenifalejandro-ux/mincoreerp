@@ -17,6 +17,7 @@
 // contraseñas del personal en texto plano, que es exactamente lo que un ERP
 // con trazabilidad de vales no puede permitirse: si el admin sabe la clave con
 // la que el grifero firma, la firma del grifero deja de significar algo.
+import { Plus, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "../../context/AuthContext";
@@ -143,20 +144,23 @@ export default function UsuariosView() {
   if (cargando) return <div className="p-20 text-center text-slate-500">Cargando...</div>;
 
   return (
-    <div className="p-4 lg:p-8 animate-in fade-in duration-500">
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-8">
+    <div className="animate-in fade-in duration-500">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-8">
         <div>
-          <h1 className="text-3xl font-bold text-slate-800">Usuarios</h1>
-          <p className="text-slate-600">
+          <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-slate-800 tracking-tight">
+            Usuarios
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-600">
             {usuarios.length} {usuarios.length === 1 ? "persona" : "personas"} en tu empresa
             {activos !== usuarios.length && `, ${activos} ${activos === 1 ? "activa" : "activas"}`}
           </p>
         </div>
         <button
           onClick={() => setModalAlta(true)}
-          className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+          className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
         >
-          + Nuevo usuario
+          <Plus className="w-4 h-4 shrink-0" />
+          Nuevo usuario
         </button>
       </div>
 
@@ -170,32 +174,32 @@ export default function UsuariosView() {
         <input
           type="text"
           placeholder="Buscar por nombre, correo o DNI..."
-          className="w-full bg-white border border-slate-200 rounded-2xl px-5 py-4 outline-none focus:ring-2 focus:ring-slate-900 transition-all shadow-sm"
+          className="w-full bg-white border border-slate-200 rounded-2xl px-4 sm:px-5 py-3 sm:py-4 text-sm outline-none focus:ring-2 focus:ring-slate-900 transition-all shadow-sm"
           value={busqueda}
           onChange={(e) => setBusqueda(e.target.value)}
         />
       </div>
 
       <div className="bg-white border border-slate-200 rounded-3xl overflow-x-auto shadow-sm">
-        <table className="w-full text-left border-collapse">
+        <table className="w-full min-w-max text-left border-collapse">
           <thead className="bg-slate-50">
             <tr>
-              <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-widest">
+              <th className="px-4 sm:px-5 py-2.5 sm:py-3.5 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
                 nombre
               </th>
-              <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-widest">
+              <th className="px-4 sm:px-5 py-2.5 sm:py-3.5 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
                 entra con
               </th>
-              <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-widest">
+              <th className="px-4 sm:px-5 py-2.5 sm:py-3.5 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
                 celular
               </th>
-              <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-widest">
+              <th className="px-4 sm:px-5 py-2.5 sm:py-3.5 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
                 tipo de usuario
               </th>
-              <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-widest">
+              <th className="px-4 sm:px-5 py-2.5 sm:py-3.5 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest">
                 estado
               </th>
-              <th className="p-5 text-xs font-bold text-slate-500 uppercase tracking-widest text-right">
+              <th className="px-4 sm:px-5 py-2.5 sm:py-3.5 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-widest text-right">
                 acciones
               </th>
             </tr>
@@ -203,34 +207,34 @@ export default function UsuariosView() {
           <tbody className="divide-y divide-slate-100">
             {filtrados.map((u) => (
               <tr key={u.id} className="hover:bg-slate-50/50 transition-colors">
-                <td className="p-5 text-sm font-semibold text-slate-800">
+                <td className="px-4 sm:px-5 py-2.5 sm:py-3.5 text-xs sm:text-sm font-semibold text-slate-800">
                   {u.nombre}
                   {u.id === yo?.id && (
                     <span className="ml-2 text-xs font-bold text-slate-500">(vos)</span>
                   )}
                 </td>
-                <td className="p-5 text-sm">
-                  <span className="font-mono text-slate-700">{identificador(u)}</span>
+                <td className="px-4 sm:px-5 py-2.5 sm:py-3.5 text-xs sm:text-sm">
+                  <span className="font-mono text-slate-700 break-all">{identificador(u)}</span>
                   {!u.email && u.dni && (
                     <span className="ml-2 px-2 py-0.5 rounded-full bg-slate-100 text-[11px] font-bold text-slate-600 uppercase">
                       DNI
                     </span>
                   )}
                 </td>
-                <td className="p-5 text-sm text-slate-600">
+                <td className="px-4 sm:px-5 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-600">
                   {u.celular ? (
                     <span className="font-mono">{u.celular}</span>
                   ) : (
                     <span className="text-slate-400">—</span>
                   )}
                 </td>
-                <td className="p-5 text-sm font-medium text-slate-700">
+                <td className="px-4 sm:px-5 py-2.5 sm:py-3.5 text-xs sm:text-sm font-medium text-slate-700">
                   {ROLES.find((r) => r.valor === u.rol)?.titulo ?? u.rol}
                 </td>
-                <td className="p-5 text-sm">
+                <td className="px-4 sm:px-5 py-2.5 sm:py-3.5 text-xs sm:text-sm">
                   <EstadoDelPerfil usuario={u} />
                 </td>
-                <td className="p-5 text-right whitespace-nowrap">
+                <td className="px-4 sm:px-5 py-2.5 sm:py-3.5 text-right whitespace-nowrap">
                   <button
                     onClick={() => setUsuarioAResetear(u)}
                     disabled={u.estado === "inactivo"}
@@ -1020,7 +1024,7 @@ function ClaveParaDictar({
 // ── Piezas compartidas ───────────────────────────────────────────────────
 
 const ESTILO_INPUT =
-  "w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900";
+  "w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900";
 
 function Modal({
   titulo,
@@ -1039,9 +1043,9 @@ function Modal({
           <button
             onClick={onCerrar}
             aria-label="Cerrar"
-            className="text-slate-400 hover:text-slate-900 text-2xl leading-none"
+            className="text-slate-400 hover:text-slate-900"
           >
-            ×
+            <X className="w-5 h-5" />
           </button>
         </div>
         {children}

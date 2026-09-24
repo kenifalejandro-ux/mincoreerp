@@ -22,6 +22,7 @@
 // mismo criterio que HistoricoCliente: este componente no debe depender de
 // las ~7000 líneas de al lado.
 
+import { ClipboardList, Download, Droplets, PackagePlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { apiFetch } from "../services/apiClient";
@@ -319,23 +320,26 @@ export default function UreaPanel() {
         <button
           type="button"
           onClick={() => setModalVale(true)}
-          className="px-4 py-2 bg-[#0A1014] text-white font-semibold rounded-xl hover:opacity-90 transition-all text-sm"
+          className="flex items-center gap-2 px-4 py-2 bg-[#0A1014] text-white font-semibold rounded-xl hover:opacity-90 transition-all text-sm"
         >
-          🧴 Registrar vale
+          <Droplets className="w-4 h-4 shrink-0" />
+          Registrar vale
         </button>
         <button
           type="button"
           onClick={() => setModalEntrada(true)}
-          className="px-4 py-2 border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm"
+          className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm"
         >
-          📦 Registrar entrada
+          <PackagePlus className="w-4 h-4 shrink-0" />
+          Registrar entrada
         </button>
         <button
           type="button"
           onClick={() => setModalConteo(true)}
-          className="px-4 py-2 border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm"
+          className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm"
         >
-          🧮 Registrar conteo físico
+          <ClipboardList className="w-4 h-4 shrink-0" />
+          Registrar conteo físico
         </button>
       </div>
 
@@ -346,7 +350,7 @@ export default function UreaPanel() {
             <select
               value={vista}
               onChange={(e) => setVista(e.target.value as Vista)}
-              className="rounded border border-gray-300 px-2 py-1"
+              className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
             >
               {VISTAS.map((v) => (
                 <option key={v.valor} value={v.valor}>
@@ -363,7 +367,7 @@ export default function UreaPanel() {
                   type="date"
                   value={desde}
                   onChange={(e) => setDesde(e.target.value)}
-                  className="rounded border border-gray-300 px-2 py-1"
+                  className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
                 />
               </label>
               <label className="flex flex-col text-sm">
@@ -372,7 +376,7 @@ export default function UreaPanel() {
                   type="date"
                   value={hasta}
                   onChange={(e) => setHasta(e.target.value)}
-                  className="rounded border border-gray-300 px-2 py-1"
+                  className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
                 />
               </label>
               <button
@@ -408,10 +412,11 @@ export default function UreaPanel() {
               (vista === "por_conductor" && porConductor.length === 0) ||
               (vista === "por_vehiculo" && porVehiculo.length === 0)
             }
-            className="ml-auto px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            className="ml-auto flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
             title="Exportar la vista actual a CSV"
           >
-            ⬇️ Exportar
+            <Download className="w-4 h-4 shrink-0" />
+            Exportar
           </button>
         </div>
 
@@ -873,7 +878,7 @@ function ModalVale({
       <div className="p-6 flex flex-col gap-4">
         <h3 className="text-lg font-bold text-slate-800">Registrar vale de urea</h3>
         {error && <div className="text-sm text-red-600 bg-red-50 rounded p-2">{error}</div>}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="flex flex-col text-sm gap-1">
             <span className="text-gray-600">Serie del talonario</span>
             <input
@@ -929,7 +934,7 @@ function ModalVale({
             ))}
           </select>
         </label>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="flex flex-col text-sm gap-1">
             <span className="text-gray-600">Presentación</span>
             <select
@@ -1066,7 +1071,7 @@ function ModalEntrada({
             ))}
           </select>
         </label>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="flex flex-col text-sm gap-1">
             <span className="text-gray-600">Presentación</span>
             <select
@@ -1105,7 +1110,7 @@ function ModalEntrada({
             className="rounded border border-gray-300 px-3 py-2"
           />
         </label>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="flex flex-col text-sm gap-1">
             <span className="text-gray-600">Documento</span>
             <select
@@ -1210,7 +1215,7 @@ function ModalConteo({ onCerrar, onCreado }: { onCerrar: () => void; onCreado: (
           quedar una alerta para revisar.
         </p>
         {error && <div className="text-sm text-red-600 bg-red-50 rounded p-2">{error}</div>}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="flex flex-col text-sm gap-1">
             <span className="text-gray-600">Presentación contada</span>
             <select

@@ -4,6 +4,7 @@
 // historial de ubicación. Sirve para los dos porque la regla es la misma:
 // solo admin (lo decide el servidor), con motivo obligatorio, y lo que ya
 // pasó queda en el grifo donde pasó.
+import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { OpcionDeGrifo } from "./useSedes";
@@ -80,10 +81,10 @@ export default function MoverDeGrifo({
           <button
             type="button"
             onClick={onCerrar}
-            className="text-slate-400 hover:text-slate-900 text-2xl"
+            className="text-slate-400 hover:text-slate-900"
             aria-label="Cerrar"
           >
-            ×
+            <X className="w-5 h-5" />
           </button>
         </div>
 
@@ -99,7 +100,7 @@ export default function MoverDeGrifo({
             <select
               id="mover-grifo-destino"
               required
-              className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white"
+              className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white"
               value={destino}
               onChange={(e) => setDestino(e.target.value)}
             >
@@ -119,7 +120,7 @@ export default function MoverDeGrifo({
               id="mover-grifo-motivo"
               required
               maxLength={500}
-              className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+              className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
               placeholder="Ej.: la cisterna se llevó a la planta norte"
               value={motivo}
               onChange={(e) => setMotivo(e.target.value)}

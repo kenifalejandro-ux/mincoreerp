@@ -1,5 +1,15 @@
 /**client/src/components/repuestos/repuestostable.tsx */
 
+import {
+  ArrowLeftRight,
+  ChevronLeft,
+  ChevronRight,
+  FileSpreadsheet,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
@@ -370,12 +380,14 @@ export default function RepuestosTable() {
   if (loading) return <div className="p-20 text-center text-slate-500">Cargando...</div>;
 
   return (
-    <div className="p-4 lg:p-8 animate-in fade-in duration-500">
+    <div className="p-2 sm:p-4 lg:p-8 animate-in fade-in duration-500">
       {/* CABECERA: Título y Botones de acción */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-10">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-10">
         <div>
-          <h1 className="text-3xl font-bold text-slate-800">Inventario de Repuestos</h1>
-          <p className="text-slate-500">Control de existencias y carga masiva</p>
+          <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-slate-800 tracking-tight">
+            Inventario de Repuestos
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-500">Control de existencias y carga masiva</p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -386,7 +398,8 @@ export default function RepuestosTable() {
                 : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 cursor-pointer"
             }`}
           >
-            <span>📊 {importando ? "Importando..." : "Importar Excel"}</span>
+            <FileSpreadsheet className="w-4 h-4 shrink-0" />
+            <span>{importando ? "Importando..." : "Importar Excel"}</span>
             <input
               type="file"
               accept=".xlsx, .xls"
@@ -397,9 +410,10 @@ export default function RepuestosTable() {
           </label>
           <button
             onClick={() => setIsModalOpen(true)}
-            className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+            className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
           >
-            + Nuevo Repuesto
+            <Plus className="w-4 h-4 shrink-0" />
+            Nuevo Repuesto
           </button>
         </div>
       </div>
@@ -409,11 +423,11 @@ export default function RepuestosTable() {
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-red-900 font-light flex-1">{errorImportacion}</p>
           <button
-            className="text-red-400 hover:text-red-600 text-sm shrink-0"
+            className="text-red-400 hover:text-red-600 shrink-0"
             onClick={() => setErrorImportacion(null)}
             aria-label="Cerrar aviso de error"
           >
-            ✕
+            <X className="w-4 h-4" />
           </button>
         </div>
       )}
@@ -421,11 +435,11 @@ export default function RepuestosTable() {
         <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-green-900 font-light flex-1">{resultadoImportacion}</p>
           <button
-            className="text-green-500 hover:text-green-700 text-sm shrink-0"
+            className="text-green-500 hover:text-green-700 shrink-0"
             onClick={() => setResultadoImportacion(null)}
             aria-label="Cerrar aviso de importación"
           >
-            ✕
+            <X className="w-4 h-4" />
           </button>
         </div>
       )}
@@ -435,104 +449,122 @@ export default function RepuestosTable() {
         <input
           type="text"
           placeholder="Buscar repuesto por nombre o código..."
-          className="w-full bg-white border border-slate-200 rounded-2xl px-5 py-4 outline-none focus:ring-2 focus:ring-slate-900 transition-all shadow-sm"
+          className="w-full bg-white border border-slate-200 rounded-2xl px-4 sm:px-5 py-3 sm:py-4 text-sm outline-none focus:ring-2 focus:ring-slate-900 transition-all shadow-sm"
           onChange={(e) => setSearchTerm(e.target.value)}
         />
       </div>
 
       {/* TABLA DE DATOS */}
       <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
-        <table className="w-full text-left border-collapse">
-          <thead className="bg-slate-50">
-            <tr>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">id</th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                codigo
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                nombre
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                categoria
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                stock
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                stock_minimo
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                stock_maximo
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                precio
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                fecha-creación
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                editar-eliminar
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {filteredRepuestos.map((r) => (
-              <tr key={r.id} className="hover:bg-slate-50/50 transition-colors">
-                <td className="p-5 text-sm text-slate-400">#{r.id}</td>
-                <td className="p-5 font-mono text-sm text-slate-500">{r.codigo}</td>
-                <td className="p-5 text-sm font-semibold text-slate-800">{r.nombre}</td>
-                <td className="p-5 text-sm text-slate-600">{r.categoria}</td>
-                <td className="p-5 text-sm">
-                  <span
-                    className={`font-bold ${
-                      Number(r.stock) <= Number(r.stock_minimo)
-                        ? "text-red-500" // Alerta: Stock bajo
-                        : Number(r.stock) >= Number(r.stock_maximo)
-                          ? "text-orange-500" // Alerta: Sobre-stock
-                          : "text-emerald-600" // Todo bien
-                    }`}
-                  >
-                    {r.stock}
-                  </span>
-                </td>
-                <td className="p-5 text-sm text-slate-400 font-medium">{r.stock_minimo}</td>
-                <td className="p-5 text-sm text-slate-400 font-medium">{r.stock_maximo}</td>
-
-                <td className="p-5 text-sm font-medium text-slate-900">
-                  S/ {Number(r.precio).toFixed(2)}
-                </td>
-
-                {/* FECHA DE CREACIÓN (Mapeada desde el backend) */}
-                <td className="p-5 text-sm text-slate-500 text-right">{r.fecha || "---"}</td>
-
-                {/* ACCIONES (MOVIMIENTO - EDITAR - ELIMINAR) */}
-                <td className="p-5 text-right space-x-2">
-                  <button
-                    onClick={() => abrirModalMovimiento(r)}
-                    className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
-                    title="Registrar movimiento de stock"
-                  >
-                    📦
-                  </button>
-                  <button
-                    onClick={() => openEditModal(r)}
-                    className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                    title="Editar"
-                  >
-                    ✏️
-                  </button>
-                  <button
-                    onClick={() => handleDelete(r.id)}
-                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                    title="Eliminar"
-                  >
-                    🗑️
-                  </button>
-                </td>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-max text-left border-collapse">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  id
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  codigo
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  nombre
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  categoria
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  stock
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  stock_minimo
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  stock_maximo
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  precio
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                  fecha-creación
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                  editar-eliminar
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredRepuestos.map((r) => (
+                <tr key={r.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-400">
+                    #{r.id}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm text-slate-500">
+                    {r.codigo}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-semibold text-slate-800">
+                    {r.nombre}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-600">
+                    {r.categoria}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
+                    <span
+                      className={`font-bold ${
+                        Number(r.stock) <= Number(r.stock_minimo)
+                          ? "text-red-500" // Alerta: Stock bajo
+                          : Number(r.stock) >= Number(r.stock_maximo)
+                            ? "text-orange-500" // Alerta: Sobre-stock
+                            : "text-emerald-600" // Todo bien
+                      }`}
+                    >
+                      {r.stock}
+                    </span>
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-400 font-medium">
+                    {r.stock_minimo}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-400 font-medium">
+                    {r.stock_maximo}
+                  </td>
+
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-medium text-slate-900">
+                    S/ {Number(r.precio).toFixed(2)}
+                  </td>
+
+                  {/* FECHA DE CREACIÓN (Mapeada desde el backend) */}
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500 text-right">
+                    {r.fecha || "---"}
+                  </td>
+
+                  {/* ACCIONES (MOVIMIENTO - EDITAR - ELIMINAR) */}
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-2">
+                    <button
+                      onClick={() => abrirModalMovimiento(r)}
+                      className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+                      title="Registrar movimiento de stock"
+                    >
+                      <ArrowLeftRight className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => openEditModal(r)}
+                      className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                      title="Editar"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(r.id)}
+                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                      title="Eliminar"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* PAGINACIÓN */}
@@ -540,9 +572,10 @@ export default function RepuestosTable() {
         <button
           onClick={() => setPage((p) => Math.max(1, p - 1))}
           disabled={page <= 1}
-          className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+          className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
         >
-          ← Anterior
+          <ChevronLeft className="w-4 h-4" />
+          Anterior
         </button>
         <span className="text-sm text-slate-400">
           Página {page} de {totalPages}
@@ -550,9 +583,10 @@ export default function RepuestosTable() {
         <button
           onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
           disabled={page >= totalPages}
-          className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+          className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
         >
-          Siguiente →
+          Siguiente
+          <ChevronRight className="w-4 h-4" />
         </button>
       </div>
 
@@ -564,9 +598,10 @@ export default function RepuestosTable() {
               <h3 className="text-xl font-bold">Nuevo Repuesto</h3>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                aria-label="Cerrar"
+                className="text-slate-400 hover:text-slate-900"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
 
@@ -586,7 +621,7 @@ export default function RepuestosTable() {
                   type="text"
                   placeholder="Ej: FIL-001"
                   required
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={formData.codigo}
                   onChange={(e) => setFormData({ ...formData, codigo: e.target.value })}
                 />
@@ -605,7 +640,7 @@ export default function RepuestosTable() {
                   type="text"
                   placeholder="Nombre completo"
                   required
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={formData.nombre}
                   onChange={(e) => setFormData({ ...formData, nombre: e.target.value })}
                 />
@@ -621,7 +656,7 @@ export default function RepuestosTable() {
                 </label>
                 <select
                   id="repuesto-categoria"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                   value={formData.categoria}
                   onChange={(e) => setFormData({ ...formData, categoria: e.target.value })}
                 >
@@ -635,7 +670,7 @@ export default function RepuestosTable() {
               </div>
 
               {/* Fila 4: Stocks (Dos columnas) */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="repuesto-stock-actual"
@@ -646,12 +681,12 @@ export default function RepuestosTable() {
                   <input
                     id="repuesto-stock-actual"
                     type="number"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={formData.stock}
                     onChange={(e) => setFormData({ ...formData, stock: Number(e.target.value) })}
                   />
                 </div>
-                <div className="space-y-1 grid grid-cols-2 gap-2">
+                <div className="space-y-1 grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div className="space-y-1">
                     <label
                       htmlFor="repuesto-stock-minimo"
@@ -662,7 +697,7 @@ export default function RepuestosTable() {
                     <input
                       id="repuesto-stock-minimo"
                       type="number"
-                      className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                       value={formData.stock_minimo}
                       onChange={(e) =>
                         setFormData({ ...formData, stock_minimo: Number(e.target.value) })
@@ -679,7 +714,7 @@ export default function RepuestosTable() {
                     <input
                       id="repuesto-stock-maximo"
                       type="number"
-                      className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                       value={formData.stock_maximo}
                       onChange={(e) =>
                         setFormData({ ...formData, stock_maximo: Number(e.target.value) })
@@ -701,7 +736,7 @@ export default function RepuestosTable() {
                   id="repuesto-precio"
                   type="number"
                   step="0.01"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={formData.precio}
                   onChange={(e) => setFormData({ ...formData, precio: Number(e.target.value) })}
                 />
@@ -726,9 +761,10 @@ export default function RepuestosTable() {
               <h3 className="text-xl font-bold">Movimiento — {movimientoRepuesto.codigo}</h3>
               <button
                 onClick={cerrarModalMovimiento}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                aria-label="Cerrar"
+                className="text-slate-400 hover:text-slate-900"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
 
@@ -746,7 +782,7 @@ export default function RepuestosTable() {
                 </label>
                 <select
                   id="movimiento-tipo"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                   value={movTipo}
                   onChange={(e) => setMovTipo(e.target.value as "entrada" | "salida")}
                 >
@@ -768,7 +804,7 @@ export default function RepuestosTable() {
                   min={1}
                   step="1"
                   required
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={movCantidad}
                   onChange={(e) => setMovCantidad(e.target.value)}
                 />
@@ -797,7 +833,7 @@ export default function RepuestosTable() {
                   id="movimiento-motivo"
                   type="text"
                   placeholder="Ej: usado en mantenimiento del equipo EQ-01"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={movMotivo}
                   onChange={(e) => setMovMotivo(e.target.value)}
                 />
@@ -812,7 +848,7 @@ export default function RepuestosTable() {
                 </label>
                 <select
                   id="movimiento-orden-trabajo"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                   value={movOrdenTrabajoId}
                   onChange={(e) => setMovOrdenTrabajoId(e.target.value)}
                 >
@@ -836,7 +872,7 @@ export default function RepuestosTable() {
                   id="movimiento-registrado-en"
                   type="datetime-local"
                   required
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={movRegistradoEn}
                   onChange={(e) => setMovRegistradoEn(e.target.value)}
                 />
