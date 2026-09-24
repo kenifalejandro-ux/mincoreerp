@@ -7,11 +7,17 @@ import { parsePaginacion, armarRespuestaPaginada } from "../../server/shared/uti
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
 import { registrarAuditoria } from "../../server/services/platformAudit.service";
 import { publicarEventoTenant } from "../../server/services/realtimeEvents.service";
-import type { CrearEquipoInput, ActualizarEquipoInput } from "../../server/schemas/equipos.schema";
+import type {
+  CrearEquipoInput,
+  ActualizarEquipoInput,
+  CargaMasivaEquiposInput,
+  EliminarMasivoEquiposInput,
+} from "../../server/schemas/equipos.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import { findAdminsConModulo } from "../../server/shared/utils/adminsDeModulo";
 import { enviarCorreoAlerta } from "../../server/shared/utils/alertaMailer";
 import { logger } from "../../server/config/logger";
+import { armarXlsx, CONTENT_TYPE_XLSX } from "../../server/shared/utils/xlsx.util";
 import { EquiposService } from "./equipos.service";
 
 /** ¿Este PUT le AMPLÍA el techo diario de combustible al equipo?
@@ -317,6 +323,105 @@ export const EquiposController = {
       res.json({ message: "Eliminado" });
     } catch {
       res.status(500).json({ message: "Error al eliminar equipo" });
+    }
+  },
+
+  /** POST /bulk -- importar la planilla de flota (placa/tipo/marca/modelo).
+   *  Upsert por placa: reimportar la misma planilla corrige datos, no
+   *  duplica. Auditoría con el CONTEO, no fila por fila -- mismo criterio
+   *  que repuestos.controller.ts#bulk. */
+  async bulk(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const rows = req.validatedBody as CargaMasivaEquiposInput;
+      const result = await withTenant(tenantId, (client) =>
+        EquiposService.createBulk(client, tenantId, rows)
+      );
+      await registrarAuditoria({
+        accion: "equipos.carga_masiva",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: { cantidad: result.length },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      await publicarEventoTenant(tenantId, "equipos.carga_masiva", { cantidad: result.length });
+      res.status(201).json({ insertados: result.length, data: result });
+    } catch {
+      res.status(500).json({ message: "Error en importación masiva" });
+    }
+  },
+
+  /** DELETE /bulk -- borrar varios de una, para el "seleccionar todo" de la
+   *  tabla. Mismo requireRole("admin") que el delete de a uno: no se
+   *  relaja el permiso solo porque son varios a la vez. */
+  async deleteMany(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const { ids } = req.validatedBody as EliminarMasivoEquiposInput;
+      const eliminados = await withTenant(tenantId, (client) =>
+        EquiposService.deleteMany(client, tenantId, ids)
+      );
+      await registrarAuditoria({
+        accion: "equipos.eliminar_masivo",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: { cantidad: eliminados.length, equipoIds: eliminados },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      await publicarEventoTenant(tenantId, "equipos.eliminado_masivo", {
+        cantidad: eliminados.length,
+      });
+      res.json({ eliminados: eliminados.length });
+    } catch {
+      res.status(500).json({ message: "Error al eliminar equipos" });
+    }
+  },
+
+  /** GET /export/xlsx -- toda la flota del tenant, en el mismo orden de
+   *  columnas que se ve en pantalla. */
+  async exportXlsx(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const filas = await withTenant(tenantId, (client) =>
+        EquiposService.getAllParaExportar(client, tenantId)
+      );
+
+      const libro = armarXlsx([
+        {
+          nombre: "Equipos",
+          anchos: [16, 14, 22, 18, 22, 14, 12],
+          filas: [
+            [
+              { valor: "Placa", negrita: true },
+              { valor: "Código", negrita: true },
+              { valor: "Tipo", negrita: true },
+              { valor: "Marca", negrita: true },
+              { valor: "Modelo", negrita: true },
+              { valor: "Medidor", negrita: true },
+              { valor: "Estado", negrita: true },
+            ],
+            ...filas.map((e) => [
+              e.placa_codigo,
+              e.codigo_interno ?? "",
+              e.tipo,
+              e.marca ?? "",
+              e.modelo ?? "",
+              e.tipo_medidor === "horometro"
+                ? "Horómetro"
+                : e.tipo_medidor === "odometro"
+                  ? "Odómetro"
+                  : "",
+              e.activo ? "Activo" : "Inactivo",
+            ]),
+          ],
+        },
+      ]);
+
+      res.setHeader("Content-Type", CONTENT_TYPE_XLSX);
+      res.setHeader("Content-Disposition", `attachment; filename="equipos.xlsx"`);
+      res.send(libro);
+    } catch {
+      res.status(500).json({ message: "Error al exportar equipos" });
     }
   },
 };

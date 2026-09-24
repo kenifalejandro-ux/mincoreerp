@@ -67,6 +67,9 @@ export const crearEquipoSchema = z
     // duplica (ver idempotentInsert.ts).
     cliente_uuid: z.string().uuid().optional(),
     placa_codigo: z.string().trim().min(1, "Placa/código requerido").max(50),
+    // Código interno de la empresa (ej. "CU-14"), distinto de la placa --
+    // migración 0103. Opcional: no toda la flota lo trae.
+    codigo_interno: z.string().trim().max(50).optional(),
     tipo: z.string().trim().min(1, "Tipo requerido").max(100),
     marca: z.string().trim().max(100).optional(),
     modelo: z.string().trim().max(100).optional(),
@@ -83,6 +86,7 @@ export type CrearEquipoInput = z.infer<typeof crearEquipoSchema>;
 export const actualizarEquipoSchema = z
   .object({
     placa_codigo: z.string().trim().min(1, "Placa/código requerido").max(50),
+    codigo_interno: z.string().trim().max(50).optional(),
     tipo: z.string().trim().min(1, "Tipo requerido").max(100),
     marca: z.string().trim().max(100).optional(),
     modelo: z.string().trim().max(100).optional(),
@@ -94,3 +98,49 @@ export const actualizarEquipoSchema = z
   .superRefine(validarCapacidadCompleta);
 
 export type ActualizarEquipoInput = z.infer<typeof actualizarEquipoSchema>;
+
+// ── Carga masiva (importar Excel) ───────────────────────────────────────
+//
+// Solo los cuatro campos que trae la planilla del cliente (placa, tipo,
+// marca, modelo): el resto (capacidad de tanque, medidor, conductor, grifo)
+// es configuración operativa que no vive en un inventario de flota y se
+// carga a mano, equipo por equipo, igual que hoy. Mismo criterio que
+// repuestos.schema.ts: no se reusa crearEquipoSchema completo porque acá NO
+// hace falta ni tiene sentido pedir cliente_uuid ni grifo_interno_id.
+export const filaCargaMasivaEquipoSchema = z.object({
+  placa_codigo: z.string().trim().min(1, "Placa/código requerido").max(50),
+  codigo_interno: z.string().trim().max(50).optional(),
+  tipo: z.string().trim().min(1, "Tipo requerido").max(100),
+  marca: z.string().trim().max(100).optional(),
+  modelo: z.string().trim().max(100).optional(),
+});
+
+/** Mismo tope y mismo motivo que MAX_FILAS_CARGA_MASIVA en
+ *  repuestos.schema.ts: acota el trabajo que un solo request le impone a la
+ *  base compartida por todos los tenants. */
+export const MAX_FILAS_CARGA_MASIVA_EQUIPOS = 5000;
+
+export const cargaMasivaEquiposSchema = z
+  .array(filaCargaMasivaEquipoSchema)
+  .min(1, "La importación no puede estar vacía")
+  .max(
+    MAX_FILAS_CARGA_MASIVA_EQUIPOS,
+    `No se pueden importar más de ${MAX_FILAS_CARGA_MASIVA_EQUIPOS} filas de una vez`
+  );
+
+export type CargaMasivaEquiposInput = z.infer<typeof cargaMasivaEquiposSchema>;
+
+// ── Eliminación masiva (checkbox "seleccionar todo") ────────────────────
+export const MAX_IDS_ELIMINACION_MASIVA = 500;
+
+export const eliminarMasivoEquiposSchema = z.object({
+  ids: z
+    .array(z.number().int().positive())
+    .min(1, "Elegí al menos un equipo")
+    .max(
+      MAX_IDS_ELIMINACION_MASIVA,
+      `No se pueden eliminar más de ${MAX_IDS_ELIMINACION_MASIVA} equipos de una vez`
+    ),
+});
+
+export type EliminarMasivoEquiposInput = z.infer<typeof eliminarMasivoEquiposSchema>;

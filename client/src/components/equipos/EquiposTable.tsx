@@ -1,15 +1,26 @@
 // client/src/components/equipos/EquiposTable.tsx
-import { ChevronLeft, ChevronRight, Pencil, Plus, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
+import type { WorkBook } from "xlsx";
 
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
+import {
+  BannerImportacion,
+  BotonImportarExcel,
+  ModalVistaPreviaImportacion,
+  type ColumnaVistaPreviaExcel,
+} from "../comunes/ImportarExcel";
 import MoverDeGrifo from "../comunes/MoverDeGrifo";
+import { useImportacionExcel, type UtilidadesXlsx } from "../comunes/useImportacionExcel";
 import { useSedes } from "../comunes/useSedes";
 
 interface Equipo {
   id: number;
   placa_codigo: string;
+  // Código interno de la empresa (ej. "CU-14"), distinto de la placa --
+  // columna CODIGO de la planilla de flota real (migración 0103).
+  codigo_interno: string | null;
   tipo: string;
   marca: string | null;
   modelo: string | null;
@@ -73,6 +84,90 @@ const ETIQUETA_TIPO_MEDIDOR: Record<"" | "horometro" | "odometro", string> = {
   odometro: "Odómetro (kilometraje)",
 };
 
+/** Espejo de MAX_FILAS_CARGA_MASIVA_EQUIPOS en server/schemas/equipos.schema.ts.
+ *  Duplicarlo permite avisar ANTES de mandar miles de filas al servidor
+ *  para que las rechace; el servidor sigue siendo el que decide. */
+const MAX_FILAS_IMPORTACION = 5000;
+
+type FilaPlanillaEquipo = {
+  placa_codigo: string;
+  tipo: string;
+  marca?: string;
+  modelo?: string;
+  codigo_interno?: string;
+};
+
+/** Encabezados que puede traer la columna de TIPO/PLACA/CODIGO/MARCA/MODELO
+ *  en la planilla real de flota (ver DATOS DE FLOTA_SANTA ISABEL.xlsx): busca
+ *  por coincidencia parcial porque el cliente no siempre escribe el
+ *  encabezado igual ("PLACA " con espacio, "TIPO DE UNIDAD" en vez de
+ *  "TIPO"). */
+function indiceDeColumna(encabezados: unknown[], candidatos: string[]): number {
+  return encabezados.findIndex((c) => {
+    const texto = String(c ?? "")
+      .trim()
+      .toUpperCase();
+    return candidatos.some((cand) => texto.includes(cand));
+  });
+}
+
+/** Convierte la hoja cruda (array de arrays) en filas de equipo.
+ *
+ *  La planilla real trae el TIPO en celdas COMBINADAS: SheetJS solo pone el
+ *  valor en la primera fila de cada grupo y deja las demás vacías -- hay que
+ *  "rellenar hacia abajo" a mano, si no cada equipo del grupo queda sin
+ *  tipo. También hay filas de título ("REGISTRO DE FLOTA...") y una fila de
+ *  encabezado en el medio del archivo: se busca la fila que tiene "PLACA"
+ *  y se arranca a leer desde la siguiente. */
+function parsearPlanillaEquipos(libro: WorkBook, utils: UtilidadesXlsx): FilaPlanillaEquipo[] {
+  const ws = libro.Sheets[libro.SheetNames[0]];
+  if (!ws) throw new Error("El archivo no tiene ninguna hoja de cálculo.");
+  // header: 1 (array de arrays), no el modo objeto por nombre de columna:
+  // es lo que permite rellenar el TIPO hacia abajo antes de saber qué fila
+  // es cada equipo.
+  const filasCrudas: unknown[][] = utils.sheet_to_json(ws, { header: 1 });
+  const indiceEncabezado = filasCrudas.findIndex((fila) =>
+    fila.some((c) =>
+      String(c ?? "")
+        .toUpperCase()
+        .includes("PLACA")
+    )
+  );
+  if (indiceEncabezado === -1) {
+    throw new Error(
+      'No se encontró una columna "Placa" en la planilla. Revisá que tenga los encabezados TIPO/PLACA/MARCA/MODELO.'
+    );
+  }
+  const encabezados = filasCrudas[indiceEncabezado];
+  const colTipo = indiceDeColumna(encabezados, ["TIPO"]);
+  const colPlaca = indiceDeColumna(encabezados, ["PLACA"]);
+  const colMarca = indiceDeColumna(encabezados, ["MARCA"]);
+  const colModelo = indiceDeColumna(encabezados, ["MODELO"]);
+  const colCodigo = indiceDeColumna(encabezados, ["CODIGO", "CÓDIGO"]);
+  if (colPlaca === -1) {
+    throw new Error('No se encontró la columna "Placa" en la planilla.');
+  }
+
+  const filas: FilaPlanillaEquipo[] = [];
+  let ultimoTipo = "";
+  for (const fila of filasCrudas.slice(indiceEncabezado + 1)) {
+    const tipoCelda = colTipo === -1 ? "" : String(fila[colTipo] ?? "").trim();
+    if (tipoCelda !== "") ultimoTipo = tipoCelda;
+    const placa = String(fila[colPlaca] ?? "").trim();
+    if (placa === "") continue; // fila vacía o de separador de grupo
+
+    filas.push({
+      placa_codigo: placa,
+      tipo: ultimoTipo || "Otro",
+      marca: colMarca === -1 ? undefined : String(fila[colMarca] ?? "").trim() || undefined,
+      modelo: colModelo === -1 ? undefined : String(fila[colModelo] ?? "").trim() || undefined,
+      codigo_interno:
+        colCodigo === -1 ? undefined : String(fila[colCodigo] ?? "").trim() || undefined,
+    });
+  }
+  return filas;
+}
+
 export default function EquiposTable() {
   const [equipos, setEquipos] = useState<Equipo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -82,6 +177,14 @@ export default function EquiposTable() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [enviando, setEnviando] = useState(false);
+
+  // 📦 EXPORTAR (Excel) -- IMPORTAR vive en `importacion` más abajo, con el
+  // hook compartido de los tres módulos que tienen esta pantalla.
+  const [exportando, setExportando] = useState(false);
+
+  // ☑️ SELECCIÓN MÚLTIPLE + ELIMINACIÓN MASIVA
+  const [seleccionados, setSeleccionados] = useState<Set<number>>(new Set());
+  const [eliminandoMasivo, setEliminandoMasivo] = useState(false);
 
   // El cliente_uuid se fija al ABRIR el modal para CREAR (no al apretar el
   // botón): un doble tap en la tablet antes del re-render mandaría DOS
@@ -105,6 +208,7 @@ export default function EquiposTable() {
   const [equipoAMover, setEquipoAMover] = useState<Equipo | null>(null);
   const [formData, setFormData] = useState({
     placa_codigo: "",
+    codigo_interno: "",
     tipo: TIPOS_COMUNES[0],
     marca: "",
     modelo: "",
@@ -134,6 +238,10 @@ export default function EquiposTable() {
     // -> fetch -> setLoading(false)), usado en toda la app.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchEquipos(page);
+    // La selección es por id de fila -- cambiar de página muestra otras
+    // filas, así que arrastrar la selección de la página anterior sería
+    // borrar equipos que el usuario ya no ve en pantalla.
+    setSeleccionados(new Set());
   }, [page, fetchEquipos]);
 
   // Cuando la cola offline termina de drenar, los equipos que se dieron de
@@ -180,6 +288,7 @@ export default function EquiposTable() {
     setSugerenciaConsumo(null);
     setFormData({
       placa_codigo: e.placa_codigo,
+      codigo_interno: e.codigo_interno ?? "",
       tipo: e.tipo,
       marca: e.marca ?? "",
       modelo: e.modelo ?? "",
@@ -198,12 +307,135 @@ export default function EquiposTable() {
     try {
       const res = await apiFetch(`/api/erp/equipos/${id}`, { method: "DELETE" });
       if (res.ok) {
+        setSeleccionados((prev) => {
+          const copia = new Set(prev);
+          copia.delete(id);
+          return copia;
+        });
         fetchEquipos(page);
       } else {
         alert("Error: el servidor no permitió eliminar el equipo.");
       }
     } catch {
       alert("Error de conexión con el backend.");
+    }
+  };
+
+  // Filtro de búsqueda -- se define acá (y no más abajo, junto al JSX) porque
+  // "seleccionar todo" necesita saber qué filas están visibles ANTES del
+  // return. Búsqueda solo en la página actual (50 filas), como el resto del
+  // listado paginado en servidor.
+  const filteredEquipos = equipos.filter(
+    (e) =>
+      (e.placa_codigo.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (e.codigo_interno ?? "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        e.tipo.toLowerCase().includes(searchTerm.toLowerCase())) &&
+      // El filtro por grifo (0097) solo existe con más de un grifo.
+      (!grifosInternos.hayVarios ||
+        filtroGrifo === "" ||
+        e.grifo_interno_id === Number(filtroGrifo))
+  );
+
+  // ☑️ Selección múltiple: por fila, y "seleccionar todo" cubre solo la
+  // página visible (la tabla pagina de a 50, como el resto del listado).
+  const toggleSeleccion = (id: number) => {
+    setSeleccionados((prev) => {
+      const copia = new Set(prev);
+      if (copia.has(id)) copia.delete(id);
+      else copia.add(id);
+      return copia;
+    });
+  };
+
+  const todosSeleccionadosEnPagina =
+    filteredEquipos.length > 0 && filteredEquipos.every((e) => seleccionados.has(e.id));
+
+  const toggleSeleccionarTodo = () => {
+    setSeleccionados((prev) => {
+      const idsPagina = filteredEquipos.map((e) => e.id);
+      const todosMarcados = idsPagina.length > 0 && idsPagina.every((id) => prev.has(id));
+      const copia = new Set(prev);
+      if (todosMarcados) {
+        idsPagina.forEach((id) => copia.delete(id));
+      } else {
+        idsPagina.forEach((id) => copia.add(id));
+      }
+      return copia;
+    });
+  };
+
+  const handleEliminarSeleccionados = async () => {
+    const ids = [...seleccionados];
+    if (ids.length === 0) return;
+    if (
+      !window.confirm(
+        `¿Eliminar ${ids.length} equipo${ids.length === 1 ? "" : "s"} seleccionado${ids.length === 1 ? "" : "s"}? Esta acción no se puede deshacer.`
+      )
+    )
+      return;
+    setEliminandoMasivo(true);
+    try {
+      const res = await apiFetch("/api/erp/equipos/bulk", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        alert(error.message || "No se pudieron eliminar los equipos seleccionados.");
+        return;
+      }
+      setSeleccionados(new Set());
+      fetchEquipos(page);
+    } catch {
+      alert("Error de conexión con el backend.");
+    } finally {
+      setEliminandoMasivo(false);
+    }
+  };
+
+  // 📥 Importar planilla de flota (.xlsx) -- hook compartido con Repuestos y
+  // Combustible: se lee y se parsea acá, pero el POST /bulk solo se manda si
+  // el usuario confirma la vista previa (ModalVistaPreviaImportacion, más
+  // abajo en el JSX).
+  const importacion = useImportacionExcel<FilaPlanillaEquipo>({
+    endpoint: "/api/erp/equipos/bulk",
+    parsear: parsearPlanillaEquipos,
+    maxFilas: MAX_FILAS_IMPORTACION,
+    etiquetaEntidad: "equipos",
+    onImportado: () => {
+      void fetchEquipos(page);
+    },
+  });
+
+  const columnasVistaPreviaEquipos: ColumnaVistaPreviaExcel<FilaPlanillaEquipo>[] = [
+    { encabezado: "Placa", render: (f) => f.placa_codigo },
+    { encabezado: "Código", render: (f) => f.codigo_interno || "---" },
+    { encabezado: "Tipo", render: (f) => f.tipo },
+    { encabezado: "Marca", render: (f) => f.marca || "---" },
+    { encabezado: "Modelo", render: (f) => f.modelo || "---" },
+  ];
+
+  // 📤 Exportar la flota entera (no solo la página visible) a Excel.
+  const handleExportExcel = async () => {
+    setExportando(true);
+    try {
+      const res = await apiFetch("/api/erp/equipos/export/xlsx");
+      if (!res.ok) {
+        alert("No se pudo generar el archivo de exportación.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "equipos.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Error de conexión con el backend.");
+    } finally {
+      setExportando(false);
     }
   };
 
@@ -232,6 +464,7 @@ export default function EquiposTable() {
       // string vacío fallaría el min(1).
       conductor_nombre: formData.conductor_nombre.trim() || undefined,
       conductor_dni: formData.conductor_dni.trim() || undefined,
+      codigo_interno: formData.codigo_interno.trim() || undefined,
     };
     // cliente_uuid solo viaja al crear -- editar no pasa por
     // idempotentInsert() del lado del servidor.
@@ -261,6 +494,7 @@ export default function EquiposTable() {
       setEditingId(null);
       setFormData({
         placa_codigo: "",
+        codigo_interno: "",
         tipo: TIPOS_COMUNES[0],
         marca: "",
         modelo: "",
@@ -294,16 +528,6 @@ export default function EquiposTable() {
     }
   };
 
-  const filteredEquipos = equipos.filter(
-    (e) =>
-      (e.placa_codigo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        e.tipo.toLowerCase().includes(searchTerm.toLowerCase())) &&
-      // El filtro por grifo (0097) solo existe con más de un grifo.
-      (!grifosInternos.hayVarios ||
-        filtroGrifo === "" ||
-        e.grifo_interno_id === Number(filtroGrifo))
-  );
-
   if (loading) return <div className="p-20 text-center text-slate-500">Cargando...</div>;
 
   return (
@@ -315,40 +539,55 @@ export default function EquiposTable() {
           </h1>
           <p className="text-xs sm:text-sm text-slate-500">Vehículos y maquinaria de la flota</p>
         </div>
-        <button
-          onClick={() => {
-            setEditingId(null);
-            setFormData({
-              placa_codigo: "",
-              tipo: TIPOS_COMUNES[0],
-              marca: "",
-              modelo: "",
-              tipo_medidor: "",
-              capacidad_tanque: "",
-              capacidad_tanque_unidad: "L",
-              consumo_maximo_l: "",
-              conductor_nombre: "",
-              conductor_dni: "",
-            });
-            setGrifoAlta("");
-            // Se regenera en cada apertura: si no, el segundo equipo
-            // legítimo que se registre reusaría la clave del primero y el
-            // servidor devolvería aquel en silencio -- se perdería un
-            // registro, que es peor que el duplicado que esto evita.
-            setClienteUuid(crypto.randomUUID());
-            setIsModalOpen(true);
-          }}
-          className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
-        >
-          <Plus className="w-4 h-4 shrink-0" />
-          Nuevo Equipo
-        </button>
+        <div className="flex  flex-wrap items-center gap-3">
+          <BotonImportarExcel cargando={importacion.cargando} onFile={importacion.handleFile} />
+          <button
+            type="button"
+            onClick={handleExportExcel}
+            disabled={exportando}
+            className="px-4 py-2.5 border rounded-xl flex items-center gap-2 transition-all bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-wait"
+          >
+            <Download className="w-4 h-4 shrink-0" />
+            <span>{exportando ? "Exportando..." : "Exportar Excel"}</span>
+          </button>
+          <button
+            onClick={() => {
+              setEditingId(null);
+              setFormData({
+                placa_codigo: "",
+                codigo_interno: "",
+                tipo: TIPOS_COMUNES[0],
+                marca: "",
+                modelo: "",
+                tipo_medidor: "",
+                capacidad_tanque: "",
+                capacidad_tanque_unidad: "L",
+                consumo_maximo_l: "",
+                conductor_nombre: "",
+                conductor_dni: "",
+              });
+              setGrifoAlta("");
+              // Se regenera en cada apertura: si no, el segundo equipo
+              // legítimo que se registre reusaría la clave del primero y el
+              // servidor devolvería aquel en silencio -- se perdería un
+              // registro, que es peor que el duplicado que esto evita.
+              setClienteUuid(crypto.randomUUID());
+              setIsModalOpen(true);
+            }}
+            className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+          >
+            <Plus className="w-4 h-4 shrink-0" />
+            Nuevo Equipo
+          </button>
+        </div>
       </div>
+
+      <BannerImportacion error={importacion.error} resultado={importacion.resultado} />
 
       <div className="mb-8">
         <input
           type="text"
-          placeholder="Buscar por placa/código o tipo..."
+          placeholder="Buscar por placa, código o tipo..."
           className="w-full bg-white border border-slate-200 rounded-2xl px-4 sm:px-5 py-3 sm:py-4 text-sm outline-none focus:ring-2 focus:ring-slate-900 transition-all shadow-sm"
           onChange={(e) => setSearchTerm(e.target.value)}
         />
@@ -374,13 +613,52 @@ export default function EquiposTable() {
         )}
       </div>
 
+      {seleccionados.size > 0 && (
+        <div className="mb-4 flex items-center justify-between gap-3 bg-slate-900 text-white rounded-xl px-4 py-3 text-sm">
+          <span>
+            {seleccionados.size} equipo{seleccionados.size === 1 ? "" : "s"} seleccionado
+            {seleccionados.size === 1 ? "" : "s"}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSeleccionados(new Set())}
+              className="px-3 py-1.5 text-xs rounded-lg border border-white/30 hover:bg-white/10"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={handleEliminarSeleccionados}
+              disabled={eliminandoMasivo}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              {eliminandoMasivo ? "Eliminando..." : "Eliminar seleccionados"}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full min-w-max text-left border-collapse">
             <thead className="bg-slate-50">
               <tr>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3">
+                  <input
+                    type="checkbox"
+                    aria-label="Seleccionar todos los equipos de esta página"
+                    checked={todosSeleccionadosEnPagina}
+                    onChange={toggleSeleccionarTodo}
+                    className="w-4 h-4 rounded border-slate-300"
+                  />
+                </th>
                 <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  placa/código
+                  placa
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  código
                 </th>
                 <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
                   tipo
@@ -410,8 +688,20 @@ export default function EquiposTable() {
             <tbody className="divide-y divide-slate-100">
               {filteredEquipos.map((e) => (
                 <tr key={e.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5">
+                    <input
+                      type="checkbox"
+                      aria-label={`Seleccionar ${e.placa_codigo}`}
+                      checked={seleccionados.has(e.id)}
+                      onChange={() => toggleSeleccion(e.id)}
+                      className="w-4 h-4 rounded border-slate-300"
+                    />
+                  </td>
                   <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm font-semibold text-slate-800">
                     {e.placa_codigo}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm text-slate-500">
+                    {e.codigo_interno || "---"}
                   </td>
                   <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-600">
                     {e.tipo}
@@ -505,7 +795,7 @@ export default function EquiposTable() {
                   htmlFor="equipo-placa-codigo"
                   className="text-xs font-bold text-slate-500 uppercase"
                 >
-                  Placa / Código
+                  Placa
                 </label>
                 <input
                   id="equipo-placa-codigo"
@@ -515,6 +805,22 @@ export default function EquiposTable() {
                   className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={formData.placa_codigo}
                   onChange={(e) => setFormData({ ...formData, placa_codigo: e.target.value })}
+                />
+              </div>
+              <div className="space-y-1">
+                <label
+                  htmlFor="equipo-codigo-interno"
+                  className="text-xs font-bold text-slate-500 uppercase"
+                >
+                  Código interno
+                </label>
+                <input
+                  id="equipo-codigo-interno"
+                  type="text"
+                  placeholder="Ej: CU-14 (opcional)"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                  value={formData.codigo_interno}
+                  onChange={(e) => setFormData({ ...formData, codigo_interno: e.target.value })}
                 />
               </div>
               <div className="space-y-1">
@@ -811,6 +1117,16 @@ export default function EquiposTable() {
             grifosInternos.recargar();
             void fetchEquipos(page);
           }}
+        />
+      )}
+      {importacion.filasPendientes && (
+        <ModalVistaPreviaImportacion
+          filas={importacion.filasPendientes}
+          columnas={columnasVistaPreviaEquipos}
+          etiquetaEntidad="equipos"
+          confirmando={importacion.importando}
+          onConfirmar={importacion.confirmar}
+          onCancelar={importacion.cancelar}
         />
       )}
     </div>

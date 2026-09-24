@@ -1,20 +1,19 @@
 /**client/src/components/repuestos/repuestostable.tsx */
 
-import {
-  ArrowLeftRight,
-  ChevronLeft,
-  ChevronRight,
-  FileSpreadsheet,
-  Pencil,
-  Plus,
-  Trash2,
-  X,
-} from "lucide-react";
+import { ArrowLeftRight, ChevronLeft, ChevronRight, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
+import type { WorkBook } from "xlsx";
 
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { ahoraParaInputLocal } from "../../utils/fechaLocal";
+import {
+  BannerImportacion,
+  BotonImportarExcel,
+  ModalVistaPreviaImportacion,
+  type ColumnaVistaPreviaExcel,
+} from "../comunes/ImportarExcel";
+import { useImportacionExcel, type UtilidadesXlsx } from "../comunes/useImportacionExcel";
 
 // 1. ESTRUCTURA DE DATOS: Define qué campos tiene un repuesto
 interface Repuesto {
@@ -40,34 +39,27 @@ interface OrdenTrabajoResumen {
  *  comodidad, no seguridad). */
 const MAX_FILAS_IMPORTACION = 5000;
 
-/** Traduce la respuesta de error a algo accionable -- mismo criterio que
- *  DocumentosTable.tsx. El 413 es el caso que más confundía: no lo genera
- *  nuestro código sino Express, así que no trae JSON y sin este mensaje el
- *  usuario ve un error vacío. */
-async function mensajeDeErrorDelServidor(res: Response, filas: number): Promise<string> {
-  if (res.status === 413) {
-    return `El archivo es demasiado grande para enviarlo de una vez (${filas} filas). Dividilo en varios archivos.`;
-  }
-  if (res.status === 403) {
-    const body = await res.json().catch(() => null);
-    if (body?.error === "cuota_excedida") {
-      return `Se alcanzó el límite de repuestos del plan (${body.uso} de ${body.limite}). Importar ${filas} más lo superaría.`;
-    }
-    return "No tenés permiso para importar repuestos.";
-  }
-  if (res.status === 400) {
-    const body = await res.json().catch(() => null);
-    const primero = body?.errors?.[0];
-    if (primero) {
-      // El campo viene como "3.codigo" (índice del array). Se traduce a
-      // número de fila de la planilla, +2 por el encabezado.
-      const indice = Number(String(primero.field).split(".")[0]);
-      const ubicacion = Number.isInteger(indice) ? `Fila ${indice + 2}: ` : "";
-      return `${ubicacion}${primero.message}`;
-    }
-    return "El archivo tiene filas con datos inválidos.";
-  }
-  return "El servidor rechazó la importación. Intentalo de nuevo.";
+/** La planilla de repuestos trae los encabezados con el MISMO nombre que
+ *  el campo del schema (codigo, nombre, categoria, stock, ...) -- a
+ *  diferencia de Equipos, acá alcanza con sheet_to_json en modo objeto, sin
+ *  rellenar nada a mano. */
+type FilaImportacionRepuesto = {
+  codigo?: string;
+  nombre?: string;
+  categoria?: string;
+  stock?: number;
+  stock_minimo?: number;
+  stock_maximo?: number;
+  precio?: number;
+};
+
+function parsearPlanillaRepuestos(
+  libro: WorkBook,
+  utils: UtilidadesXlsx
+): FilaImportacionRepuesto[] {
+  const ws = libro.Sheets[libro.SheetNames[0]];
+  if (!ws) throw new Error("El archivo no tiene ninguna hoja de cálculo.");
+  return utils.sheet_to_json<FilaImportacionRepuesto>(ws);
 }
 
 export default function RepuestosTable() {
@@ -79,11 +71,6 @@ export default function RepuestosTable() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-
-  // 📦 IMPORTACIÓN MASIVA
-  const [importando, setImportando] = useState(false);
-  const [errorImportacion, setErrorImportacion] = useState<string | null>(null);
-  const [resultadoImportacion, setResultadoImportacion] = useState<string | null>(null);
 
   //  Crea la función para abrir el modo edición:
   const openEditModal = (r: Repuesto) => {
@@ -272,66 +259,26 @@ export default function RepuestosTable() {
     }
   };
 
-  // 4. CARGA MASIVA EXCEL: Procesa archivos .xlsx
-  // xlsx se carga on-demand (import dinámico) para que su chunk no viaje
-  // en el bundle inicial: solo hace falta cuando se usa esta importación.
-  const handleExcelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    // Sin esto, elegir el MISMO archivo dos veces seguidas no dispara
-    // onChange (el value no cambió) -- justo lo que querría hacer alguien
-    // que corrigió su planilla y la vuelve a subir con el mismo nombre.
-    e.target.value = "";
-    if (!file) return;
+  // 4. CARGA MASIVA EXCEL: hook compartido (con Equipos y Combustible) --
+  // lee y parsea el archivo, pero el POST /bulk solo se manda si el usuario
+  // confirma la vista previa (ModalVistaPreviaImportacion, en el JSX).
+  const importacion = useImportacionExcel<FilaImportacionRepuesto>({
+    endpoint: "/api/erp/repuestos/bulk",
+    parsear: parsearPlanillaRepuestos,
+    maxFilas: MAX_FILAS_IMPORTACION,
+    etiquetaEntidad: "repuestos",
+    onImportado: () => {
+      void fetchRepuestos();
+    },
+  });
 
-    setErrorImportacion(null);
-    setResultadoImportacion(null);
-    setImportando(true);
-
-    const reader = new FileReader();
-    reader.onerror = () => {
-      setImportando(false);
-      setErrorImportacion("No se pudo leer el archivo.");
-    };
-    reader.onload = async (evt) => {
-      try {
-        const bstr = evt.target?.result;
-        const XLSX = await import("xlsx");
-        const wb = XLSX.read(bstr, { type: "binary" });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        if (!ws) throw new Error("El archivo no tiene ninguna hoja de cálculo.");
-        const data = XLSX.utils.sheet_to_json(ws);
-
-        if (data.length === 0) throw new Error("La primera hoja está vacía.");
-        if (data.length > MAX_FILAS_IMPORTACION) {
-          throw new Error(
-            `El archivo tiene ${data.length} filas y el máximo es ${MAX_FILAS_IMPORTACION}. Dividilo en varios archivos.`
-          );
-        }
-
-        const res = await apiFetch("/api/erp/repuestos/bulk", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        });
-
-        if (!res.ok) {
-          setErrorImportacion(await mensajeDeErrorDelServidor(res, data.length));
-          return;
-        }
-
-        const body = await res.json().catch(() => ({}));
-        setResultadoImportacion(
-          `Se importaron ${body.insertados ?? data.length} repuestos correctamente.`
-        );
-        fetchRepuestos();
-      } catch (err) {
-        setErrorImportacion(err instanceof Error ? err.message : "Error al procesar el archivo.");
-      } finally {
-        setImportando(false);
-      }
-    };
-    reader.readAsBinaryString(file);
-  };
+  const columnasVistaPreviaRepuestos: ColumnaVistaPreviaExcel<FilaImportacionRepuesto>[] = [
+    { encabezado: "Código", render: (f) => f.codigo ?? "---" },
+    { encabezado: "Nombre", render: (f) => f.nombre ?? "---" },
+    { encabezado: "Categoría", render: (f) => f.categoria ?? "General" },
+    { encabezado: "Stock", render: (f) => f.stock ?? 0 },
+    { encabezado: "Precio", render: (f) => (f.precio != null ? `S/ ${f.precio}` : "S/ 0") },
+  ];
 
   // 5. REGISTRO MANUAL: Envía el formulario a la base de datos
   const handleManualSubmit = async (e: React.FormEvent) => {
@@ -391,23 +338,7 @@ export default function RepuestosTable() {
         </div>
 
         <div className="flex items-center gap-3">
-          <label
-            className={`px-4 py-2.5 border rounded-xl flex items-center gap-2 transition-all ${
-              importando
-                ? "bg-emerald-100 text-emerald-400 border-emerald-200 cursor-wait"
-                : "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 cursor-pointer"
-            }`}
-          >
-            <FileSpreadsheet className="w-4 h-4 shrink-0" />
-            <span>{importando ? "Importando..." : "Importar Excel"}</span>
-            <input
-              type="file"
-              accept=".xlsx, .xls"
-              className="hidden"
-              disabled={importando}
-              onChange={handleExcelUpload}
-            />
-          </label>
+          <BotonImportarExcel cargando={importacion.cargando} onFile={importacion.handleFile} />
           <button
             onClick={() => setIsModalOpen(true)}
             className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
@@ -418,31 +349,7 @@ export default function RepuestosTable() {
         </div>
       </div>
 
-      {/* RESULTADO DE LA IMPORTACIÓN */}
-      {errorImportacion && (
-        <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
-          <p className="text-sm text-red-900 font-light flex-1">{errorImportacion}</p>
-          <button
-            className="text-red-400 hover:text-red-600 shrink-0"
-            onClick={() => setErrorImportacion(null)}
-            aria-label="Cerrar aviso de error"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-      {resultadoImportacion && (
-        <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
-          <p className="text-sm text-green-900 font-light flex-1">{resultadoImportacion}</p>
-          <button
-            className="text-green-500 hover:text-green-700 shrink-0"
-            onClick={() => setResultadoImportacion(null)}
-            aria-label="Cerrar aviso de importación"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
+      <BannerImportacion error={importacion.error} resultado={importacion.resultado} />
 
       {/* BARRA DE BÚSQUEDA */}
       <div className="mb-8">
@@ -888,6 +795,17 @@ export default function RepuestosTable() {
             </form>
           </div>
         </div>
+      )}
+
+      {importacion.filasPendientes && (
+        <ModalVistaPreviaImportacion
+          filas={importacion.filasPendientes}
+          columnas={columnasVistaPreviaRepuestos}
+          etiquetaEntidad="repuestos"
+          confirmando={importacion.importando}
+          onConfirmar={importacion.confirmar}
+          onCancelar={importacion.cancelar}
+        />
       )}
     </div>
   );

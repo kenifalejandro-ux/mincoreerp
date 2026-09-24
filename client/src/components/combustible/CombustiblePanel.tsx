@@ -28,7 +28,12 @@ import VentanaSurtidores from "./Surtidores";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { ahoraParaInputLocal } from "../../utils/fechaLocal";
+import {
+  ModalVistaPreviaImportacion,
+  type ColumnaVistaPreviaExcel,
+} from "../comunes/ImportarExcel";
 import MoverDeGrifo from "../comunes/MoverDeGrifo";
+import { useImportacionExcel } from "../comunes/useImportacionExcel";
 import { useSedes } from "../comunes/useSedes";
 import VentanaFlotante from "../comunes/VentanaFlotante";
 import {
@@ -1835,44 +1840,10 @@ function motivoParaConfirmarLectura(
 }
 
 /** Espejo de MAX_FILAS_CARGA_MASIVA_TANQUES en
- *  server/schemas/combustible.schema.ts -- mismo motivo que
- *  MAX_FILAS_IMPORTACION en RepuestosTable.tsx: avisa antes de mandar
- *  miles de filas al servidor para que las rechace. */
+ *  server/schemas/combustible.schema.ts -- mismo motivo que en el hook
+ *  compartido: avisa antes de mandar miles de filas al servidor para que
+ *  las rechace. */
 const MAX_FILAS_IMPORTACION = 5000;
-
-/** Traduce la respuesta de error a algo accionable -- mismo criterio que
- *  RepuestosTable.tsx/DocumentosTable.tsx. */
-async function mensajeDeErrorDelServidor(res: Response, filas: number): Promise<string> {
-  if (res.status === 413) {
-    return `El archivo es demasiado grande para enviarlo de una vez (${filas} filas). Dividilo en varios archivos.`;
-  }
-  if (res.status === 403) {
-    const body = await res.json().catch(() => null);
-    if (body?.error === "cuota_excedida") {
-      return `Se alcanzó el límite de tanques del plan (${body.uso} de ${body.limite}). Importar ${filas} más lo superaría.`;
-    }
-    return "No tenés permiso para importar tanques.";
-  }
-  if (res.status === 400) {
-    const body = await res.json().catch(() => null);
-    const primero = body?.errors?.[0];
-    if (primero) {
-      // `field` viaja como "0.tanque_nombre" (índice de fila + columna, ver
-      // validate.ts: issue.path.join(".")) -- hay que quedarse también con
-      // la columna, no solo el índice: si no, el aviso dice "Fila 2:
-      // Required" sin decir QUÉ campo falta.
-      const partes = String(primero.field).split(".");
-      const indice = Number(partes[0]);
-      const campo = partes.slice(1).join(".");
-      const ubicacion = Number.isInteger(indice)
-        ? `Fila ${indice + 2}${campo ? ` (columna "${campo}")` : ""}: `
-        : "";
-      return `${ubicacion}${primero.message}`;
-    }
-    return "El archivo tiene filas con datos inválidos.";
-  }
-  return "El servidor rechazó la importación. Intentalo de nuevo.";
-}
 
 const FORM_INICIAL = {
   // Solo en el alta, y solo si la empresa tiene más de un grifo (0097).
@@ -2000,9 +1971,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [sugerenciasUmbral, setSugerenciasUmbral] = useState<SugerenciasUmbral | null>(null);
   const [cargandoSugerenciaUmbral, setCargandoSugerenciaUmbral] = useState(false);
 
-  // --- Importación masiva ---
-  const [importando, setImportando] = useState(false);
-  const [errorImportacion, setErrorImportacion] = useState<string | null>(null);
+  // --- Importación masiva (el hook trae su propio cargando/error/resultado;
+  // ver `importacion` más abajo, después de que están definidos
+  // grifosInternos y cargarTanques). ---
+  //
   // Un solo banner verde para TODA la pantalla (importación y lectura), no
   // uno por flujo: si no, dos avisos de éxito podrían apilarse y compiten
   // por la atención en vez de sumarla.
@@ -2762,112 +2734,84 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     await cargarTanques();
   };
 
-  // --- Importación masiva -- xlsx se carga on-demand (import dinámico)
-  // para que su chunk no viaje en el bundle inicial, mismo patrón que
-  // RepuestosTable.tsx. ---
-  const handleExcelUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    // Sin esto, elegir el MISMO archivo dos veces seguidas no dispara
-    // onChange -- justo lo que querría hacer alguien que corrigió su
-    // planilla y la vuelve a subir con el mismo nombre.
-    e.target.value = "";
-    if (!file) return;
+  // --- Importación masiva -- hook compartido con Repuestos y Equipos (ver
+  // client/src/components/comunes/useImportacionExcel.ts). Lo específico de
+  // Combustible vive acá: resolver la columna "grifo" (nombre → id) al
+  // parsear, y el mensaje de éxito con los avisos de sinVigilancia/omitidos.
+  const importacion = useImportacionExcel<Record<string, unknown>>({
+    endpoint: "/api/erp/combustible/bulk",
+    maxFilas: MAX_FILAS_IMPORTACION,
+    etiquetaEntidad: "tanques",
+    parsear: (libro, utils) => {
+      const ws = libro.Sheets[libro.SheetNames[0]];
+      if (!ws) throw new Error("El archivo no tiene ninguna hoja de cálculo.");
+      const crudas = utils.sheet_to_json<Record<string, unknown>>(ws);
 
-    setErrorImportacion(null);
-    setMensajeExito(null);
-    setImportando(true);
-
-    const reader = new FileReader();
-    reader.onerror = () => {
-      setImportando(false);
-      setErrorImportacion("No se pudo leer el archivo.");
-    };
-    reader.onload = async (evt) => {
-      try {
-        const bstr = evt.target?.result;
-        const XLSX = await import("xlsx");
-        const wb = XLSX.read(bstr, { type: "binary" });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        if (!ws) throw new Error("El archivo no tiene ninguna hoja de cálculo.");
-        const crudas = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws);
-
-        // Columna opcional "grifo" (0097): el NOMBRE del grifo interno, que se
-        // traduce a su id acá. Obligatoria solo si la empresa tiene más de
-        // uno (lo exige el servidor). Un nombre que no existe se avisa antes
-        // de mandar nada: una planilla a medias es peor que una rechazada.
-        const normalizar = (v: unknown) =>
-          String(v ?? "")
-            .trim()
-            .toLowerCase();
-        const noEncontrados = new Set<string>();
-        const data = crudas.map((fila) => {
-          const { grifo, ...resto } = fila;
-          if (grifo === undefined || String(grifo).trim() === "") return resto;
-          const g = grifosInternos.grifosActivos.find(
-            (x) =>
-              normalizar(x.nombre) === normalizar(grifo) ||
-              normalizar(x.etiqueta) === normalizar(grifo)
-          );
-          if (!g) noEncontrados.add(String(grifo));
-          return g ? { ...resto, grifo_interno_id: g.id } : resto;
-        });
-        if (noEncontrados.size > 0) {
-          throw new Error(
-            `No existe el grifo interno: ${[...noEncontrados].join(", ")}. Revisá la columna "grifo".`
-          );
-        }
-
-        if (data.length === 0) throw new Error("La primera hoja está vacía.");
-        if (data.length > MAX_FILAS_IMPORTACION) {
-          throw new Error(
-            `El archivo tiene ${data.length} filas y el máximo es ${MAX_FILAS_IMPORTACION}. Dividilo en varios archivos.`
-          );
-        }
-
-        const res = await apiFetch("/api/erp/combustible/bulk", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(data),
-        });
-
-        if (!res.ok) {
-          setErrorImportacion(await mensajeDeErrorDelServidor(res, data.length));
-          return;
-        }
-
-        const body = await res.json().catch(() => ({}));
-        const importados = body.insertados ?? data.length;
-        // El alta obliga a elegir cómo se vigila el tanque; la planilla no
-        // puede ser la forma de saltearse esa decisión sin enterarse. No se
-        // bloquea la importación -- se dice, y la etiqueta roja de la lista
-        // hace el resto.
-        // Los códigos que ya existían NO se tocaron: la planilla da de alta,
-        // editar un tanque pasa por su ficha (que compara, pide motivo si el
-        // cambio afloja un control y avisa a los admins). Hay que decirlo,
-        // porque si no el cliente cree que su corrección se aplicó.
-        const omitidos: string[] = Array.isArray(body.omitidos) ? body.omitidos : [];
-        const avisoOmitidos =
-          omitidos.length > 0
-            ? ` ${omitidos.length} fila(s) se omitieron porque ese código ya existe ` +
-              `(${omitidos.slice(0, 5).join(", ")}${omitidos.length > 5 ? "…" : ""}): la planilla ` +
-              `solo da de alta; para cambiar un tanque que ya está, editá su ficha.`
-            : "";
-        setMensajeExito(
-          (body.sinVigilancia > 0
-            ? `Se importaron ${importados} tanques. ${body.sinVigilancia} quedaron SIN VIGILANCIA ` +
-              `(la planilla no traía umbrales): el sistema no va a detectar faltantes en esos ` +
-              `tanques hasta que los configures. Aparecen marcados en rojo en la lista.`
-            : `Se importaron ${importados} tanques correctamente.`) + avisoOmitidos
+      // Columna opcional "grifo" (0097): el NOMBRE del grifo interno, que se
+      // traduce a su id acá. Obligatoria solo si la empresa tiene más de
+      // uno (lo exige el servidor). Un nombre que no existe se avisa antes
+      // de mandar nada: una planilla a medias es peor que una rechazada.
+      const normalizar = (v: unknown) =>
+        String(v ?? "")
+          .trim()
+          .toLowerCase();
+      const noEncontrados = new Set<string>();
+      const data = crudas.map((fila) => {
+        const { grifo, ...resto } = fila;
+        if (grifo === undefined || String(grifo).trim() === "") return resto;
+        const g = grifosInternos.grifosActivos.find(
+          (x) =>
+            normalizar(x.nombre) === normalizar(grifo) ||
+            normalizar(x.etiqueta) === normalizar(grifo)
         );
-        await cargarTanques();
-      } catch (err) {
-        setErrorImportacion(err instanceof Error ? err.message : "Error al procesar el archivo.");
-      } finally {
-        setImportando(false);
+        if (!g) noEncontrados.add(String(grifo));
+        return g ? { ...resto, grifo_interno_id: g.id } : resto;
+      });
+      if (noEncontrados.size > 0) {
+        throw new Error(
+          `No existe el grifo interno: ${[...noEncontrados].join(", ")}. Revisá la columna "grifo".`
+        );
       }
-    };
-    reader.readAsBinaryString(file);
-  };
+      return data;
+    },
+    onImportado: (body, cantidadEnviada) => {
+      const importados = Number(body.insertados ?? cantidadEnviada);
+      // El alta obliga a elegir cómo se vigila el tanque; la planilla no
+      // puede ser la forma de saltearse esa decisión sin enterarse. No se
+      // bloquea la importación -- se dice, y la etiqueta roja de la lista
+      // hace el resto.
+      // Los códigos que ya existían NO se tocaron: la planilla da de alta,
+      // editar un tanque pasa por su ficha (que compara, pide motivo si el
+      // cambio afloja un control y avisa a los admins). Hay que decirlo,
+      // porque si no el cliente cree que su corrección se aplicó.
+      const omitidos: string[] = Array.isArray(body.omitidos) ? (body.omitidos as string[]) : [];
+      const avisoOmitidos =
+        omitidos.length > 0
+          ? ` ${omitidos.length} fila(s) se omitieron porque ese código ya existe ` +
+            `(${omitidos.slice(0, 5).join(", ")}${omitidos.length > 5 ? "…" : ""}): la planilla ` +
+            `solo da de alta; para cambiar un tanque que ya está, editá su ficha.`
+          : "";
+      const sinVigilancia = Number(body.sinVigilancia ?? 0);
+      const mensaje =
+        (sinVigilancia > 0
+          ? `Se importaron ${importados} tanques. ${sinVigilancia} quedaron SIN VIGILANCIA ` +
+            `(la planilla no traía umbrales): el sistema no va a detectar faltantes en esos ` +
+            `tanques hasta que los configures. Aparecen marcados en rojo en la lista.`
+          : `Se importaron ${importados} tanques correctamente.`) + avisoOmitidos;
+      // Un solo banner verde para toda la pantalla (ver el comentario en
+      // mensajeExito): se enruta ahí en vez de leer importacion.resultado.
+      setMensajeExito(mensaje);
+      void cargarTanques();
+      return mensaje;
+    },
+  });
+
+  const columnasVistaPreviaTanques: ColumnaVistaPreviaExcel<Record<string, unknown>>[] = [
+    { encabezado: "Código", render: (f) => String(f.codigo ?? "---") },
+    { encabezado: "Nombre", render: (f) => String(f.tanque_nombre ?? "---") },
+    { encabezado: "Combustible", render: (f) => String(f.tipo_combustible ?? "---") },
+    { encabezado: "Capacidad", render: (f) => String(f.capacidad_total ?? "---") },
+  ];
 
   // --- Historial de lecturas ---
 
@@ -3968,17 +3912,17 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           <div className="flex flex-wrap items-center gap-2 lg:justify-end">
             <label
               className={`${BTN_BASE} ${BTN_ESTILO.outline} ${
-                importando ? "opacity-50 cursor-wait" : "cursor-pointer"
+                importacion.cargando ? "opacity-50 cursor-wait" : "cursor-pointer"
               }`}
             >
               <FileSpreadsheet className="w-4 h-4 shrink-0" />
-              <span>{importando ? "Importando..." : "Importar Excel"}</span>
+              <span>{importacion.cargando ? "Leyendo..." : "Importar Excel"}</span>
               <input
                 type="file"
                 accept=".xlsx, .xls"
                 className="hidden"
-                disabled={importando}
-                onChange={handleExcelUpload}
+                disabled={importacion.cargando}
+                onChange={importacion.handleFile}
               />
             </label>
             <button
@@ -4022,12 +3966,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       </div>
       {pestanaCombustible === "historico" && <HistoricoCliente />}
       {pestanaCombustible === "urea" && <UreaPanel />}
-      {pestanaCombustible === "tanques" && errorImportacion && (
+      {pestanaCombustible === "tanques" && importacion.error && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
-          <p className="text-sm text-red-900 font-light flex-1">{errorImportacion}</p>
+          <p className="text-sm text-red-900 font-light flex-1">{importacion.error}</p>
           <button
             className="text-red-400 hover:text-red-600 shrink-0"
-            onClick={() => setErrorImportacion(null)}
+            onClick={importacion.limpiarMensajes}
             aria-label="Cerrar aviso de error"
           >
             <X className="w-4 h-4" />
@@ -8650,6 +8594,16 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             </div>
           </div>
         </div>
+      )}
+      {importacion.filasPendientes && (
+        <ModalVistaPreviaImportacion
+          filas={importacion.filasPendientes}
+          columnas={columnasVistaPreviaTanques}
+          etiquetaEntidad="tanques"
+          confirmando={importacion.importando}
+          onConfirmar={importacion.confirmar}
+          onCancelar={importacion.cancelar}
+        />
       )}
     </div>
   );
