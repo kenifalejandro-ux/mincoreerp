@@ -1,4 +1,5 @@
 // client/src/components/equipos/EquiposTable.tsx
+import { ChevronLeft, ChevronRight, Pencil, Plus, Trash2, X } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
@@ -306,11 +307,13 @@ export default function EquiposTable() {
   if (loading) return <div className="p-20 text-center text-slate-500">Cargando...</div>;
 
   return (
-    <div className="p-4 lg:p-8f animate-in fade-in duration-500">
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-10">
+    <div className="p-2 sm:p-4 lg:p-8 animate-in fade-in duration-500">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-10">
         <div>
-          <h1 className="text-3xl font-bold text-slate-800">Equipos</h1>
-          <p className="text-slate-500">Vehículos y maquinaria de la flota</p>
+          <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-slate-800 tracking-tight">
+            Equipos
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-500">Vehículos y maquinaria de la flota</p>
         </div>
         <button
           onClick={() => {
@@ -335,9 +338,10 @@ export default function EquiposTable() {
             setClienteUuid(crypto.randomUUID());
             setIsModalOpen(true);
           }}
-          className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+          className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
         >
-          + Nuevo Equipo
+          <Plus className="w-4 h-4 shrink-0" />
+          Nuevo Equipo
         </button>
       </div>
 
@@ -345,7 +349,7 @@ export default function EquiposTable() {
         <input
           type="text"
           placeholder="Buscar por placa/código o tipo..."
-          className="w-full bg-white border border-slate-200 rounded-2xl px-5 py-4 outline-none focus:ring-2 focus:ring-slate-900 transition-all shadow-sm"
+          className="w-full bg-white border border-slate-200 rounded-2xl px-4 sm:px-5 py-3 sm:py-4 text-sm outline-none focus:ring-2 focus:ring-slate-900 transition-all shadow-sm"
           onChange={(e) => setSearchTerm(e.target.value)}
         />
         {grifosInternos.hayVarios && (
@@ -371,92 +375,103 @@ export default function EquiposTable() {
       </div>
 
       <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
-        <table className="w-full text-left border-collapse">
-          <thead className="bg-slate-50">
-            <tr>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                placa/código
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                tipo
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                marca
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                modelo
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                medidor
-              </th>
-              {grifosInternos.hayVarios && (
-                <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  grifo
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-max text-left border-collapse">
+            <thead className="bg-slate-50">
+              <tr>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  placa/código
                 </th>
-              )}
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                estado
-              </th>
-              <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                editar-eliminar
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {filteredEquipos.map((e) => (
-              <tr key={e.id} className="hover:bg-slate-50/50 transition-colors">
-                <td className="p-5 font-mono text-sm font-semibold text-slate-800">
-                  {e.placa_codigo}
-                </td>
-                <td className="p-5 text-sm text-slate-600">{e.tipo}</td>
-                <td className="p-5 text-sm text-slate-500">{e.marca || "---"}</td>
-                <td className="p-5 text-sm text-slate-500">{e.modelo || "---"}</td>
-                <td className="p-5 text-sm text-slate-500">
-                  {e.tipo_medidor === "horometro"
-                    ? "Horómetro"
-                    : e.tipo_medidor === "odometro"
-                      ? "Odómetro"
-                      : "---"}
-                </td>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  tipo
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  marca
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  modelo
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  medidor
+                </th>
                 {grifosInternos.hayVarios && (
-                  <td className="p-5 text-sm text-slate-500">
-                    {grifosInternos.nombreDeGrifo(e.grifo_interno_id)}
-                  </td>
+                  <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                    grifo
+                  </th>
                 )}
-                <td className="p-5 text-sm">
-                  <span className={`font-bold ${e.activo ? "text-emerald-600" : "text-slate-400"}`}>
-                    {e.activo ? "Activo" : "Inactivo"}
-                  </span>
-                </td>
-                <td className="p-5 text-right space-x-2">
-                  <button
-                    onClick={() => openEditModal(e)}
-                    className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                    title="Editar"
-                  >
-                    ✏️
-                  </button>
-                  <button
-                    onClick={() => handleDelete(e.id)}
-                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                    title="Eliminar"
-                  >
-                    🗑️
-                  </button>
-                </td>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  estado
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                  editar-eliminar
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredEquipos.map((e) => (
+                <tr key={e.id} className="hover:bg-slate-50/50 transition-colors">
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm font-semibold text-slate-800">
+                    {e.placa_codigo}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-600">
+                    {e.tipo}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500">
+                    {e.marca || "---"}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500">
+                    {e.modelo || "---"}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500">
+                    {e.tipo_medidor === "horometro"
+                      ? "Horómetro"
+                      : e.tipo_medidor === "odometro"
+                        ? "Odómetro"
+                        : "---"}
+                  </td>
+                  {grifosInternos.hayVarios && (
+                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500">
+                      {grifosInternos.nombreDeGrifo(e.grifo_interno_id)}
+                    </td>
+                  )}
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
+                    <span
+                      className={`font-bold ${e.activo ? "text-emerald-600" : "text-slate-400"}`}
+                    >
+                      {e.activo ? "Activo" : "Inactivo"}
+                    </span>
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-2">
+                    <button
+                      onClick={() => openEditModal(e)}
+                      className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                      title="Editar"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(e.id)}
+                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                      title="Eliminar"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="flex items-center justify-between mt-4 px-1">
         <button
           onClick={() => setPage((p) => Math.max(1, p - 1))}
           disabled={page <= 1}
-          className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+          className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
         >
-          ← Anterior
+          <ChevronLeft className="w-4 h-4" />
+          Anterior
         </button>
         <span className="text-sm text-slate-400">
           Página {page} de {totalPages}
@@ -464,22 +479,24 @@ export default function EquiposTable() {
         <button
           onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
           disabled={page >= totalPages}
-          className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+          className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
         >
-          Siguiente →
+          Siguiente
+          <ChevronRight className="w-4 h-4" />
         </button>
       </div>
 
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white overflow-x-auto  h-full w-full max-w-lg  shadow-2xl animate-in zoom-in duration-200 ">
+          <div className="bg-white overflow-x-auto h-full w-full max-w-lg shadow-2xl animate-in zoom-in duration-200">
             <div className="p-6 border-b flex justify-between items-center">
               <h3 className="text-xl font-bold">{editingId ? "Editar Equipo" : "Nuevo Equipo"}</h3>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                aria-label="Cerrar"
+                className="text-slate-400 hover:text-slate-900"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
@@ -495,7 +512,7 @@ export default function EquiposTable() {
                   type="text"
                   placeholder="Ej: V-014"
                   required
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={formData.placa_codigo}
                   onChange={(e) => setFormData({ ...formData, placa_codigo: e.target.value })}
                 />
@@ -506,7 +523,7 @@ export default function EquiposTable() {
                 </label>
                 <select
                   id="equipo-tipo"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                   value={formData.tipo}
                   onChange={(e) => {
                     const tipo = e.target.value;
@@ -551,13 +568,13 @@ export default function EquiposTable() {
                     min={0}
                     step="0.01"
                     placeholder="Dejar vacío si no se conoce"
-                    className="flex-1 border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="flex-1 border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={formData.capacidad_tanque}
                     onChange={(e) => setFormData({ ...formData, capacidad_tanque: e.target.value })}
                   />
                   <select
                     aria-label="Unidad de la capacidad de tanque"
-                    className="border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    className="border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                     value={formData.capacidad_tanque_unidad}
                     onChange={(e) =>
                       setFormData({
@@ -591,7 +608,7 @@ export default function EquiposTable() {
                     min={0}
                     step="0.01"
                     placeholder="Dejar vacío si todavía no se sabe"
-                    className="flex-1 border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="flex-1 border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={formData.consumo_maximo_l}
                     onChange={(e) => setFormData({ ...formData, consumo_maximo_l: e.target.value })}
                   />
@@ -629,7 +646,7 @@ export default function EquiposTable() {
                 </label>
                 <select
                   id="equipo-tipo-medidor"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                   value={formData.tipo_medidor}
                   onChange={(e) =>
                     setFormData({
@@ -652,7 +669,7 @@ export default function EquiposTable() {
               {/* El conductor asignado (0083). Se copia al vale en el momento
                   del despacho, así el consumo por conductor no se reescribe
                   cuando la unidad cambia de chofer. */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="equipo-conductor"
@@ -664,7 +681,7 @@ export default function EquiposTable() {
                     id="equipo-conductor"
                     type="text"
                     placeholder="Nombre y apellidos"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={formData.conductor_nombre}
                     onChange={(e) => setFormData({ ...formData, conductor_nombre: e.target.value })}
                   />
@@ -680,7 +697,7 @@ export default function EquiposTable() {
                     id="equipo-dni"
                     type="text"
                     placeholder="Ej: 12345678"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={formData.conductor_dni}
                     onChange={(e) => setFormData({ ...formData, conductor_dni: e.target.value })}
                   />
@@ -691,7 +708,7 @@ export default function EquiposTable() {
                 conductor sigue siendo correcto aunque después cambie de chofer.
               </p>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="equipo-marca"
@@ -702,7 +719,7 @@ export default function EquiposTable() {
                   <input
                     id="equipo-marca"
                     type="text"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={formData.marca}
                     onChange={(e) => setFormData({ ...formData, marca: e.target.value })}
                   />
@@ -717,7 +734,7 @@ export default function EquiposTable() {
                   <input
                     id="equipo-modelo"
                     type="text"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={formData.modelo}
                     onChange={(e) => setFormData({ ...formData, modelo: e.target.value })}
                   />
@@ -737,7 +754,7 @@ export default function EquiposTable() {
                     <select
                       id="equipo-grifo-interno"
                       required
-                      className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                       value={grifoAlta}
                       onChange={(e) => setGrifoAlta(e.target.value)}
                     >

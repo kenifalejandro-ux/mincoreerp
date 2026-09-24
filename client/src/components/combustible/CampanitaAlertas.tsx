@@ -123,7 +123,7 @@ export default function CampanitaAlertas({ activo, onIrACombustible }: Campanita
       {abierta && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setAbierta(false)} />
-          <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden">
+          <div className="fixed inset-x-2 top-16 sm:absolute sm:inset-x-auto sm:top-auto sm:right-0 mt-2 sm:w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden">
             <div className="p-3 border-b border-slate-100 flex items-center justify-between">
               <span className="text-sm font-bold text-slate-800">Alertas de combustible</span>
               {noLeidas > 0 && (

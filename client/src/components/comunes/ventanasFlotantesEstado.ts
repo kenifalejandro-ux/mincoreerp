@@ -30,7 +30,9 @@ export const Z_BASE = 30;
  *  por debajo de 50 aunque alguien abra cincuenta. */
 const Z_TECHO = 49;
 
-const PREFIJO_ALMACEN = "mincore.panelFlotante.";
+// v2: antes del modo pantalla-completa en celular, probar en un ancho
+// angosto podía dejar grabado un panel achicado a ANCHO_MIN.
+const PREFIJO_ALMACEN = "mincore.panelFlotante.v2.";
 
 // --- Orden de foco -------------------------------------------------------
 //

@@ -148,69 +148,71 @@ export default function PlanYCuotasTenant({
         </p>
       )}
 
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-left text-xs text-slate-400 uppercase tracking-wide">
-            <th className="pb-2 font-medium">Recurso</th>
-            <th className="pb-2 font-medium">Uso</th>
-            <th className="pb-2 font-medium">Límite</th>
-            <th className="pb-2 font-medium">Origen</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-800">
-          {cuotas.map((c) => (
-            <tr key={c.recurso} className={c.excedido ? "text-red-300" : "text-slate-200"}>
-              <td className="py-2">{c.recurso}</td>
-              <td className="py-2 tabular-nums">
-                {formatearValor(c.uso, c.unidad)}
-                {c.porcentaje !== null && (
-                  <span
-                    className={`ml-2 text-xs ${c.porcentaje >= 80 ? "text-amber-400" : "text-slate-500"}`}
-                  >
-                    {c.porcentaje}%
-                  </span>
-                )}
-              </td>
-              <td className="py-2 tabular-nums">
-                {editando === c.recurso ? (
-                  <input
-                    autoFocus
-                    defaultValue={c.limite === null ? "ilimitado" : String(c.limite)}
-                    placeholder='número, "ilimitado", o vacío'
-                    className="w-40 bg-[#1D2124] border border-slate-600 rounded px-2 py-1 text-sm"
-                    onBlur={(e) => guardarOverride(c.recurso, e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                      if (e.key === "Escape") setEditando(null);
-                    }}
-                  />
-                ) : (
-                  <button
-                    className="hover:underline decoration-dotted"
-                    title="Fijar una excepción para este tenant. Vaciar el campo devuelve el control al plan."
-                    onClick={() => setEditando(c.recurso)}
-                  >
-                    {c.limite === null ? "ilimitado" : formatearValor(c.limite, c.unidad)}
-                  </button>
-                )}
-              </td>
-              <td className="py-2">
-                <span
-                  className={`text-xs px-2 py-0.5 rounded ${
-                    c.origen === "override"
-                      ? "bg-blue-950 text-blue-300"
-                      : c.origen === "plan"
-                        ? "bg-slate-800 text-slate-300"
-                        : "bg-transparent text-slate-500"
-                  }`}
-                >
-                  {ETIQUETA_ORIGEN[c.origen]}
-                </span>
-              </td>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-max text-sm">
+          <thead>
+            <tr className="text-left text-xs text-slate-400 uppercase tracking-wide">
+              <th className="pb-2 font-medium">Recurso</th>
+              <th className="pb-2 font-medium">Uso</th>
+              <th className="pb-2 font-medium">Límite</th>
+              <th className="pb-2 font-medium">Origen</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-slate-800">
+            {cuotas.map((c) => (
+              <tr key={c.recurso} className={c.excedido ? "text-red-300" : "text-slate-200"}>
+                <td className="py-2">{c.recurso}</td>
+                <td className="py-2 tabular-nums">
+                  {formatearValor(c.uso, c.unidad)}
+                  {c.porcentaje !== null && (
+                    <span
+                      className={`ml-2 text-xs ${c.porcentaje >= 80 ? "text-amber-400" : "text-slate-500"}`}
+                    >
+                      {c.porcentaje}%
+                    </span>
+                  )}
+                </td>
+                <td className="py-2 tabular-nums">
+                  {editando === c.recurso ? (
+                    <input
+                      autoFocus
+                      defaultValue={c.limite === null ? "ilimitado" : String(c.limite)}
+                      placeholder='número, "ilimitado", o vacío'
+                      className="w-40 bg-[#1D2124] border border-slate-600 rounded px-2 py-1 text-sm"
+                      onBlur={(e) => guardarOverride(c.recurso, e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                        if (e.key === "Escape") setEditando(null);
+                      }}
+                    />
+                  ) : (
+                    <button
+                      className="hover:underline decoration-dotted"
+                      title="Fijar una excepción para este tenant. Vaciar el campo devuelve el control al plan."
+                      onClick={() => setEditando(c.recurso)}
+                    >
+                      {c.limite === null ? "ilimitado" : formatearValor(c.limite, c.unidad)}
+                    </button>
+                  )}
+                </td>
+                <td className="py-2">
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded ${
+                      c.origen === "override"
+                        ? "bg-blue-950 text-blue-300"
+                        : c.origen === "plan"
+                          ? "bg-slate-800 text-slate-300"
+                          : "bg-transparent text-slate-500"
+                    }`}
+                  >
+                    {ETIQUETA_ORIGEN[c.origen]}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
       <p className="text-xs text-slate-500">
         Las cuotas solo bloquean la creación de registros nuevos: nunca borran ni ocultan datos ya

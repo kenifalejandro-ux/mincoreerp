@@ -86,7 +86,7 @@ function TablaAlertas({
         </p>
       ) : (
         <div className="border border-slate-800 rounded-xl overflow-hidden overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-max text-sm">
             <thead>
               <tr className="bg-slate-900 text-slate-400 text-left">
                 <th className="px-4 py-3 font-light">Tenant</th>

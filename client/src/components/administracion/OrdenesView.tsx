@@ -160,7 +160,7 @@ export default function OrdenesView() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-xl font-bold text-slate-800">Órdenes</h2>
+        <h2 className="text-base sm:text-lg font-bold text-slate-800 tracking-tight">Órdenes</h2>
         <p className="text-slate-600 text-sm">
           Cada alta, baja, desbloqueo o cambio de permisos deja una orden con número. Una orden
           aplicada es el respaldo de por qué alguien tiene el acceso que tiene.

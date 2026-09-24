@@ -8,7 +8,7 @@
 // devuelve esa lista y además ignora cualquier otro que llegue en el request.
 // Un administrador reparte lo que su empresa ya tiene; no se habilita módulos
 // a sí mismo.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import AlcanceCombustible from "./AlcanceCombustible";
 import { MODULOS_CLIENTE } from "../../modules/registry";
@@ -49,6 +49,7 @@ export default function ConfiguracionView() {
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
+  const detalleRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     listarUsuariosApi()
@@ -62,6 +63,15 @@ export default function ConfiguracionView() {
     setError(null);
     setAviso(null);
     setMotivo("");
+    // En mobile/tablet la lista y el detalle quedan uno debajo del otro
+    // (grid-cols-1): sin esto, elegir a alguien deja el detalle fuera de
+    // pantalla y parece que no pasó nada. En desktop (lg+, dos columnas
+    // lado a lado) no hace falta.
+    if (window.innerWidth < 1024) {
+      requestAnimationFrame(() => {
+        detalleRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
     try {
       const permisos = await permisosDeUsuarioApi(usuarioId);
       setModulos(permisos.modulos);
@@ -130,7 +140,9 @@ export default function ConfiguracionView() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-xl font-bold text-slate-800">Configuración</h2>
+        <h2 className="text-base sm:text-lg font-bold text-slate-800 tracking-tight">
+          Configuración
+        </h2>
         <p className="text-slate-600 text-sm">
           Qué módulos ve cada persona, con qué nivel y, en Combustible, qué sedes y grifos. Solo
           aparecen los módulos que tu empresa tiene contratados.
@@ -166,7 +178,7 @@ export default function ConfiguracionView() {
           </ul>
         </div>
 
-        <div className="lg:col-span-2">
+        <div ref={detalleRef} className="lg:col-span-2 scroll-mt-4">
           {!persona ? (
             <div className="bg-white border border-slate-200 rounded-3xl p-10 text-center text-slate-500 shadow-sm">
               Elegí a alguien de la lista para ver y cambiar sus módulos.
@@ -237,7 +249,7 @@ export default function ConfiguracionView() {
                   type="text"
                   maxLength={500}
                   placeholder="Ej: pasa a almacén, ya no carga vales"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={motivo}
                   onChange={(e) => setMotivo(e.target.value)}
                 />

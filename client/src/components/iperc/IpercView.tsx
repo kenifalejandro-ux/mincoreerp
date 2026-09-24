@@ -1,4 +1,5 @@
 // client/src/components/iperc/IpercView.tsx
+import { Check, ChevronLeft, ChevronRight, Plus, Trash2, X } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
@@ -83,7 +84,7 @@ function ItemsEditor({
       <span className="text-xs font-bold text-slate-500 uppercase">Ítems de riesgo</span>
       {items.map((item, i) => (
         <div key={i} className="bg-slate-50 rounded-xl p-4 space-y-2">
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <input
               placeholder="Etapa/actividad"
               required
@@ -108,7 +109,7 @@ function ItemsEditor({
             value={item.riesgo}
             onChange={(e) => actualizarItem(items, setItems, i, "riesgo", e.target.value)}
           />
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <label className="text-xs text-slate-500 flex items-center gap-2">
               Probabilidad (1-4)
               <select
@@ -405,11 +406,13 @@ export default function IpercView() {
   if (loading) return <div className="p-20 text-center text-slate-500">Cargando...</div>;
 
   return (
-    <div className="p-4 lg:p-8 animate-in fade-in duration-500">
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-8">
+    <div className="p-2 sm:p-4 lg:p-8 animate-in fade-in duration-500">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-8">
         <div>
-          <h1 className="text-3xl font-bold text-slate-800">IPERC</h1>
-          <p className="text-slate-500">
+          <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-slate-800 tracking-tight">
+            IPERC
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-500">
             Identificación de peligros, evaluación de riesgos y controles
           </p>
         </div>
@@ -434,93 +437,106 @@ export default function IpercView() {
           <div className="flex justify-end mb-6">
             <button
               onClick={abrirModalIperc}
-              className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+              className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
             >
-              + Nuevo IPERC
+              <Plus className="w-4 h-4 shrink-0" />
+              Nuevo IPERC
             </button>
           </div>
           <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
-            <table className="w-full text-left border-collapse">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    tipo
-                  </th>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    área/frente
-                  </th>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    equipo
-                  </th>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    realizado por
-                  </th>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    estado
-                  </th>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                    acciones
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {ipercs.map((i) => (
-                  <tr key={i.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="p-5 text-sm capitalize text-slate-600">{i.tipo}</td>
-                    <td className="p-5 text-sm text-slate-800">{i.area_frente}</td>
-                    <td className="p-5 font-mono text-sm text-slate-500">
-                      {i.placa_codigo || "---"}
-                    </td>
-                    <td className="p-5 text-sm text-slate-500">{i.usuario_nombre}</td>
-                    <td className="p-5 text-sm">
-                      <EstadoBadge estado={i.estado} />
-                    </td>
-                    <td className="p-5 text-right space-x-1">
-                      {i.estado === "borrador" && (
-                        <>
-                          <button
-                            onClick={() => handleCambiarEstadoIperc(i.id, "aprobado")}
-                            className="px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50 rounded-lg"
-                            title="Aprobar"
-                          >
-                            ✔ Aprobar
-                          </button>
-                          <button
-                            onClick={() => handleCambiarEstadoIperc(i.id, "rechazado")}
-                            className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded-lg"
-                            title="Rechazar"
-                          >
-                            ✕ Rechazar
-                          </button>
-                        </>
-                      )}
-                      <button
-                        onClick={() => handleEliminarIperc(i.id)}
-                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                        title="Eliminar"
-                      >
-                        🗑️
-                      </button>
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-max text-left border-collapse">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      tipo
+                    </th>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      área/frente
+                    </th>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      equipo
+                    </th>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      realizado por
+                    </th>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      estado
+                    </th>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                      acciones
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {ipercs.map((i) => (
+                    <tr key={i.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm capitalize text-slate-600">
+                        {i.tipo}
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-800">
+                        {i.area_frente}
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm text-slate-500">
+                        {i.placa_codigo || "---"}
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500">
+                        {i.usuario_nombre}
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
+                        <EstadoBadge estado={i.estado} />
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-1">
+                        {i.estado === "borrador" && (
+                          <>
+                            <button
+                              onClick={() => handleCambiarEstadoIperc(i.id, "aprobado")}
+                              className="flex items-center gap-1 px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50 rounded-lg"
+                              title="Aprobar"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              Aprobar
+                            </button>
+                            <button
+                              onClick={() => handleCambiarEstadoIperc(i.id, "rechazado")}
+                              className="flex items-center gap-1 px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded-lg"
+                              title="Rechazar"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              Rechazar
+                            </button>
+                          </>
+                        )}
+                        <button
+                          onClick={() => handleEliminarIperc(i.id)}
+                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                          title="Eliminar"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
           <div className="flex justify-between items-center mt-4">
             <button
               onClick={handleAnteriorIpercs}
               disabled={historialCursorIpercs.length === 0}
-              className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+              className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
             >
-              ← Anterior
+              <ChevronLeft className="w-4 h-4" />
+              Anterior
             </button>
             <button
               onClick={handleSiguienteIpercs}
               disabled={!hayMasIpercs}
-              className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+              className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
             >
-              Siguiente →
+              Siguiente
+              <ChevronRight className="w-4 h-4" />
             </button>
           </div>
         </>
@@ -537,62 +553,70 @@ export default function IpercView() {
             </button>
           </div>
           <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
-            <table className="w-full text-left border-collapse">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    proceso/actividad
-                  </th>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    área/frente
-                  </th>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    estado
-                  </th>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                    acciones
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {lineasBase.map((lb) => (
-                  <tr key={lb.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="p-5 text-sm font-semibold text-slate-800">
-                      {lb.proceso_actividad}
-                    </td>
-                    <td className="p-5 text-sm text-slate-500">{lb.area_frente || "---"}</td>
-                    <td className="p-5 text-sm">
-                      <EstadoBadge estado={lb.estado} />
-                    </td>
-                    <td className="p-5 text-right space-x-1">
-                      {lb.estado === "borrador" && (
-                        <>
-                          <button
-                            onClick={() => handleCambiarEstadoLineaBase(lb.id, "aprobado")}
-                            className="px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50 rounded-lg"
-                          >
-                            ✔ Aprobar
-                          </button>
-                          <button
-                            onClick={() => handleCambiarEstadoLineaBase(lb.id, "rechazado")}
-                            className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded-lg"
-                          >
-                            ✕ Rechazar
-                          </button>
-                        </>
-                      )}
-                      <button
-                        onClick={() => handleEliminarLineaBase(lb.id)}
-                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                        title="Eliminar"
-                      >
-                        🗑️
-                      </button>
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-max text-left border-collapse">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      proceso/actividad
+                    </th>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      área/frente
+                    </th>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      estado
+                    </th>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                      acciones
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {lineasBase.map((lb) => (
+                    <tr key={lb.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-semibold text-slate-800">
+                        {lb.proceso_actividad}
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500">
+                        {lb.area_frente || "---"}
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
+                        <EstadoBadge estado={lb.estado} />
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-1">
+                        {lb.estado === "borrador" && (
+                          <>
+                            <button
+                              onClick={() => handleCambiarEstadoLineaBase(lb.id, "aprobado")}
+                              className="flex items-center gap-1 px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50 rounded-lg"
+                              title="Aprobar"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              Aprobar
+                            </button>
+                            <button
+                              onClick={() => handleCambiarEstadoLineaBase(lb.id, "rechazado")}
+                              className="flex items-center gap-1 px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded-lg"
+                              title="Rechazar"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                              Rechazar
+                            </button>
+                          </>
+                        )}
+                        <button
+                          onClick={() => handleEliminarLineaBase(lb.id)}
+                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                          title="Eliminar"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}
@@ -605,13 +629,14 @@ export default function IpercView() {
               <h3 className="text-xl font-bold">Nuevo IPERC</h3>
               <button
                 onClick={() => setModalIpercAbierto(false)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                aria-label="Cerrar"
+                className="text-slate-400 hover:text-slate-900"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleCrearIperc} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="iperc-tipo"
@@ -621,7 +646,7 @@ export default function IpercView() {
                   </label>
                   <select
                     id="iperc-tipo"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white"
                     value={formIperc.tipo}
                     onChange={(e) =>
                       setFormIperc({
@@ -643,7 +668,7 @@ export default function IpercView() {
                   </label>
                   <select
                     id="iperc-equipo"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white"
                     value={formIperc.equipo_id}
                     onChange={(e) => setFormIperc({ ...formIperc, equipo_id: e.target.value })}
                   >
@@ -667,7 +692,7 @@ export default function IpercView() {
                   id="iperc-area-frente"
                   type="text"
                   required
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                   value={formIperc.area_frente}
                   onChange={(e) => setFormIperc({ ...formIperc, area_frente: e.target.value })}
                 />
@@ -679,7 +704,7 @@ export default function IpercView() {
                 <input
                   id="iperc-turno"
                   type="text"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                   value={formIperc.turno}
                   onChange={(e) => setFormIperc({ ...formIperc, turno: e.target.value })}
                 />
@@ -696,7 +721,7 @@ export default function IpercView() {
                     id="iperc-tarea-especifica"
                     type="text"
                     required
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                     value={formIperc.tarea_especifica}
                     onChange={(e) =>
                       setFormIperc({ ...formIperc, tarea_especifica: e.target.value })
@@ -727,9 +752,10 @@ export default function IpercView() {
               <h3 className="text-xl font-bold">Nueva Línea Base</h3>
               <button
                 onClick={() => setModalLineaBaseAbierto(false)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                aria-label="Cerrar"
+                className="text-slate-400 hover:text-slate-900"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleCrearLineaBase} className="p-6 space-y-4">
@@ -744,7 +770,7 @@ export default function IpercView() {
                   id="lineabase-proceso-actividad"
                   type="text"
                   required
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                   value={formLineaBase.proceso_actividad}
                   onChange={(e) =>
                     setFormLineaBase({ ...formLineaBase, proceso_actividad: e.target.value })
@@ -761,7 +787,7 @@ export default function IpercView() {
                 <input
                   id="lineabase-area-frente"
                   type="text"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                   value={formLineaBase.area_frente}
                   onChange={(e) =>
                     setFormLineaBase({ ...formLineaBase, area_frente: e.target.value })

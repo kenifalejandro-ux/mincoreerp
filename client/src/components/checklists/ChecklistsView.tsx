@@ -1,4 +1,5 @@
 // client/src/components/checklists/ChecklistsView.tsx
+import { ChevronLeft, ChevronRight, Plus, Trash2, X } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
@@ -306,11 +307,13 @@ export default function ChecklistsView() {
   if (loading) return <div className="p-20 text-center text-slate-500">Cargando...</div>;
 
   return (
-    <div className="p-4 lg:p-8 animate-in fade-in duration-500">
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6 mb-8">
+    <div className="p-2 sm:p-4 lg:p-8 animate-in fade-in duration-500">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-8">
         <div>
-          <h1 className="text-3xl font-bold text-slate-800">Checklists de pre-uso</h1>
-          <p className="text-slate-500">Plantillas e inspecciones de equipos</p>
+          <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-slate-800 tracking-tight">
+            Checklists de pre-uso
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-500">Plantillas e inspecciones de equipos</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -339,79 +342,90 @@ export default function ChecklistsView() {
                 }
                 abrirModalChecklist();
               }}
-              className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+              className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
             >
-              + Nuevo Checklist
+              <Plus className="w-4 h-4 shrink-0" />
+              Nuevo Checklist
             </button>
           </div>
           <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
-            <table className="w-full text-left border-collapse">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    equipo
-                  </th>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    fecha
-                  </th>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    turno
-                  </th>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    realizado por
-                  </th>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    resultado
-                  </th>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                    eliminar
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {checklists.map((c) => (
-                  <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="p-5 font-mono text-sm font-semibold text-slate-800">
-                      {c.placa_codigo}
-                    </td>
-                    <td className="p-5 text-sm text-slate-600">{c.fecha}</td>
-                    <td className="p-5 text-sm text-slate-500">{c.turno || "---"}</td>
-                    <td className="p-5 text-sm text-slate-500">{c.usuario_nombre}</td>
-                    <td className="p-5 text-sm">
-                      <span
-                        className={`font-bold ${c.resultado === "bien" ? "text-emerald-600" : "text-red-500"}`}
-                      >
-                        {c.resultado === "bien" ? "Bien" : "Observado"}
-                      </span>
-                    </td>
-                    <td className="p-5 text-right">
-                      <button
-                        onClick={() => handleEliminarChecklist(c.id)}
-                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                        title="Eliminar"
-                      >
-                        🗑️
-                      </button>
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-max text-left border-collapse">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      equipo
+                    </th>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      fecha
+                    </th>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      turno
+                    </th>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      realizado por
+                    </th>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      resultado
+                    </th>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                      eliminar
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {checklists.map((c) => (
+                    <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm font-semibold text-slate-800">
+                        {c.placa_codigo}
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-600">
+                        {c.fecha}
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500">
+                        {c.turno || "---"}
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500">
+                        {c.usuario_nombre}
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
+                        <span
+                          className={`font-bold ${c.resultado === "bien" ? "text-emerald-600" : "text-red-500"}`}
+                        >
+                          {c.resultado === "bien" ? "Bien" : "Observado"}
+                        </span>
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right">
+                        <button
+                          onClick={() => handleEliminarChecklist(c.id)}
+                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                          title="Eliminar"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
           <div className="flex justify-between items-center mt-4">
             <button
               onClick={handleAnteriorChecklists}
               disabled={historialCursorChecklists.length === 0}
-              className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+              className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
             >
-              ← Anterior
+              <ChevronLeft className="w-4 h-4" />
+              Anterior
             </button>
             <button
               onClick={handleSiguienteChecklists}
               disabled={!hayMasChecklists}
-              className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+              className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
             >
-              Siguiente →
+              Siguiente
+              <ChevronRight className="w-4 h-4" />
             </button>
           </div>
         </>
@@ -428,38 +442,44 @@ export default function ChecklistsView() {
             </button>
           </div>
           <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
-            <table className="w-full text-left border-collapse">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    nombre
-                  </th>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    tipo de equipo
-                  </th>
-                  <th className="p-5 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                    eliminar
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {plantillas.map((p) => (
-                  <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="p-5 text-sm font-semibold text-slate-800">{p.nombre}</td>
-                    <td className="p-5 text-sm text-slate-500">{p.tipo_equipo || "Uso general"}</td>
-                    <td className="p-5 text-right">
-                      <button
-                        onClick={() => handleEliminarPlantilla(p.id)}
-                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                        title="Eliminar"
-                      >
-                        🗑️
-                      </button>
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-max text-left border-collapse">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      nombre
+                    </th>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      tipo de equipo
+                    </th>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                      eliminar
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {plantillas.map((p) => (
+                    <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-semibold text-slate-800">
+                        {p.nombre}
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500">
+                        {p.tipo_equipo || "Uso general"}
+                      </td>
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right">
+                        <button
+                          onClick={() => handleEliminarPlantilla(p.id)}
+                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                          title="Eliminar"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}
@@ -472,9 +492,10 @@ export default function ChecklistsView() {
               <h3 className="text-xl font-bold">Nueva Plantilla</h3>
               <button
                 onClick={() => setModalPlantillaAbierto(false)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                className="text-slate-400 hover:text-slate-900"
+                aria-label="Cerrar"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleCrearPlantilla} className="p-6 space-y-4">
@@ -489,7 +510,7 @@ export default function ChecklistsView() {
                   id="plantilla-nombre"
                   type="text"
                   required
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={formPlantilla.nombre}
                   onChange={(e) => setFormPlantilla({ ...formPlantilla, nombre: e.target.value })}
                 />
@@ -505,7 +526,7 @@ export default function ChecklistsView() {
                   id="plantilla-tipo-equipo"
                   type="text"
                   placeholder="Ej: Camioneta"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={formPlantilla.tipo_equipo}
                   onChange={(e) =>
                     setFormPlantilla({ ...formPlantilla, tipo_equipo: e.target.value })
@@ -520,7 +541,7 @@ export default function ChecklistsView() {
                       type="text"
                       required
                       placeholder={`Ítem ${i + 1}`}
-                      className="flex-1 border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                      className="flex-1 border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                       value={valor}
                       onChange={(e) => {
                         const items = [...formPlantilla.items];
@@ -538,8 +559,9 @@ export default function ChecklistsView() {
                           })
                         }
                         className="px-3 text-slate-400 hover:text-red-600"
+                        aria-label="Quitar ítem"
                       >
-                        ✕
+                        <X className="w-4 h-4" />
                       </button>
                     )}
                   </div>
@@ -577,13 +599,14 @@ export default function ChecklistsView() {
                   setModalChecklistAbierto(false);
                   setPlantillaSeleccionada(null);
                 }}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                className="text-slate-400 hover:text-slate-900"
+                aria-label="Cerrar"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleCrearChecklist} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   {/* htmlFor + id, no un <label> suelto al lado: sin la
                       asociación explícita un lector de pantalla anuncia el
@@ -597,7 +620,7 @@ export default function ChecklistsView() {
                   <select
                     id="checklist-equipo"
                     required
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                     value={formChecklist.equipo_id}
                     onChange={(e) =>
                       setFormChecklist({ ...formChecklist, equipo_id: e.target.value })
@@ -621,7 +644,7 @@ export default function ChecklistsView() {
                   <select
                     id="checklist-plantilla"
                     required
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                     value={formChecklist.plantilla_id}
                     onChange={(e) => handleSeleccionarPlantilla(e.target.value)}
                   >
@@ -644,7 +667,7 @@ export default function ChecklistsView() {
                 <input
                   id="checklist-turno"
                   type="text"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={formChecklist.turno}
                   onChange={(e) => setFormChecklist({ ...formChecklist, turno: e.target.value })}
                 />
@@ -690,7 +713,7 @@ export default function ChecklistsView() {
                 </label>
                 <textarea
                   id="checklist-observaciones"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={formChecklist.observaciones_generales}
                   onChange={(e) =>
                     setFormChecklist({ ...formChecklist, observaciones_generales: e.target.value })

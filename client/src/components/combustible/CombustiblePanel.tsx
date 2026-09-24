@@ -1,12 +1,13 @@
 /**client/src/components/combustible/CombustiblePanel */
 
 import {
-  BarChart2,
   BookOpen,
   Bell,
   ClipboardCheck,
   ClipboardList,
+  Download,
   Eye,
+  FileSpreadsheet,
   FileText,
   Fuel,
   Lock,
@@ -14,6 +15,7 @@ import {
   Plus,
   Tag,
   Trash2,
+  TriangleAlert,
   Truck,
   Wrench,
   X,
@@ -904,9 +906,9 @@ function CampoUmbral({
   const pisoQueSePierde = vacio && piso.trim() !== "";
 
   return (
-    <div className="space-y-1 col-span-2 border-t border-slate-100 pt-3">
+    <div className="space-y-1 sm:col-span-2 border-t border-slate-100 pt-3">
       <p className="text-xs font-bold text-slate-700 uppercase">{titulo}</p>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div className="space-y-1">
           <label htmlFor={`tanque-umbral-${id}-piso`} className="text-xs text-slate-600">
             Piso fijo ({unidad})
@@ -916,7 +918,7 @@ function CampoUmbral({
             type="number"
             min={0}
             step="0.01"
-            className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+            className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
             value={piso}
             onChange={(e) => onCambio("piso", e.target.value)}
           />
@@ -931,7 +933,7 @@ function CampoUmbral({
             min={0}
             max={100}
             step="0.01"
-            className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+            className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
             value={pct}
             onChange={(e) => onCambio("pct", e.target.value)}
           />
@@ -1064,7 +1066,7 @@ function BarraDePeriodo({
           // rango al revés. El backend igual lo rechaza, pero es mejor que
           // no se pueda armar el error que explicarlo después.
           max={hasta || undefined}
-          className="border border-slate-200 rounded-lg p-2"
+          className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs sm:text-sm"
           value={desde}
           onChange={(e) => onCambiarDesde(e.target.value)}
         />
@@ -1080,7 +1082,7 @@ function BarraDePeriodo({
           id={`${idBase}-hasta`}
           type="date"
           min={desde || undefined}
-          className="border border-slate-200 rounded-lg p-2"
+          className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs sm:text-sm"
           value={hasta}
           onChange={(e) => onCambiarHasta(e.target.value)}
         />
@@ -1253,16 +1255,16 @@ function TanqueVisual({ tanques }: { tanques: Tanque[] }) {
         {sinNivel ? (
           <div className="text-sm italic text-[#94a3b8] py-2">Sin lecturas</div>
         ) : (
-          <div className="font-mono text-3xl font-bold text-white tracking-tight flex items-baseline justify-center gap-1">
+          <div className="font-mono text-xl sm:text-2xl lg:text-3xl font-bold text-white tracking-tight flex items-baseline justify-center gap-1">
             {nivel.toLocaleString("es-PE")}
-            <span className="text-sm text-[#94a3b8]">
+            <span className="text-xs sm:text-sm text-[#94a3b8]">
               / {capacidad.toLocaleString("es-PE")} {t.unidad}
             </span>
           </div>
         )}
         {!sinNivel && (
           <div className="mt-2 flex items-baseline justify-center gap-1.5">
-            <span className="font-mono text-2xl font-bold" style={{ color }}>
+            <span className="font-mono text-lg sm:text-xl lg:text-2xl font-bold" style={{ color }}>
               {t.porcentaje}%
             </span>
             <span className="text-[10px] font-mono uppercase text-[#64748b]">de capacidad</span>
@@ -3925,7 +3927,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   }
 
   return (
-    <div className="p-4 lg:p-8 animate-in fade-in duration-500">
+    <div className="p-2 sm:p-4 lg:p-8 animate-in fade-in duration-500">
       {/* Franja de hallazgos SIN RESOLVER. No se puede cerrar y no se va
           sola: desaparece cuando alguien resuelve las alertas, que es la
           única forma de que el problema deje de existir.
@@ -3937,9 +3939,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {criticasAbiertas > 0 && (
         <button
           onClick={abrirModalAlertas}
-          className="w-full mb-6 flex  items-center gap-3 rounded-xl border-2 border-red-300 bg-red-50 px-5 py-4 text-left hover:bg-red-100 transition-colors"
+          className="w-full mb-6 flex items-center gap-3 rounded-xl border-2 border-red-300 bg-red-50 px-5 py-4 text-left hover:bg-red-100 transition-colors"
         >
-          <span className="text-2xl leading-none">⚠️</span>
+          <TriangleAlert className="w-6 h-6 shrink-0 text-red-600" />
           <span className="flex-1">
             <span className="block text-sm font-bold text-red-800">
               {criticasAbiertas === 1
@@ -3954,20 +3956,22 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           <span className="text-xs font-semibold text-red-800 underline">Revisar</span>
         </button>
       )}
-      <div className="flex flex-col  lg:flex-row lg:items-center lg:justify-between gap-6 mb-10">
-        <div>
-          <h1 className="text-2xl font-extrabold text-white">Control de Combustible</h1>
-          <p className="text-sm text-[#94a3b8]">Tanques y puntos de abastecimiento</p>
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-10">
+        <div className="shrink-0">
+          <h1 className="text-lg sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight">
+            Control de Combustible
+          </h1>
+          <p className="text-xs sm:text-sm text-[#94a3b8]">Tanques y puntos de abastecimiento</p>
         </div>
 
         {pestanaCombustible === "tanques" && (
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
             <label
               className={`${BTN_BASE} ${BTN_ESTILO.outline} ${
                 importando ? "opacity-50 cursor-wait" : "cursor-pointer"
               }`}
             >
-              <BarChart2 className="w-4 h-4 shrink-0" />
+              <FileSpreadsheet className="w-4 h-4 shrink-0" />
               <span>{importando ? "Importando..." : "Importar Excel"}</span>
               <input
                 type="file"
@@ -4022,11 +4026,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-red-900 font-light flex-1">{errorImportacion}</p>
           <button
-            className="text-red-400 hover:text-red-600 text-sm shrink-0"
+            className="text-red-400 hover:text-red-600 shrink-0"
             onClick={() => setErrorImportacion(null)}
             aria-label="Cerrar aviso de error"
           >
-            ✕
+            <X className="w-4 h-4" />
           </button>
         </div>
       )}
@@ -4034,18 +4038,18 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-green-900 font-light flex-1">{mensajeExito}</p>
           <button
-            className="text-green-500 hover:text-green-700 text-sm shrink-0"
+            className="text-green-500 hover:text-green-700 shrink-0"
             onClick={() => setMensajeExito(null)}
             aria-label="Cerrar aviso de importación"
           >
-            ✕
+            <X className="w-4 h-4" />
           </button>
         </div>
       )}
       {/**AGREGAR MAS COLUMNAS  */}{" "}
       {pestanaCombustible === "tanques" &&
         (tanques.length === 0 ? (
-          <div className="bg-slate-50  border bg-[#BADC1E] border-dashed rounded-xl p-10 text-center text-slate-500">
+          <div className="bg-slate-50 border border-dashed rounded-xl p-10 text-center text-slate-500">
             No hay tanques registrados todavía.
           </div>
         ) : (
@@ -4077,39 +4081,39 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   className="bg-[#192526] 
            border border-[#2a2e37] rounded-lg overflow-hidden shadow-sm overflow-x-auto"
                 >
-                  <table className="w-full text-left border-collapse">
-                    <thead className="bg-[#192526] border-b  border-b-[#2a2e37]">
+                  <table className="w-full min-w-max text-left border-collapse">
+                    <thead className="bg-[#192526] border-b border-b-[#2a2e37]">
                       <tr>
-                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                        <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#64748b] uppercase tracking-widest">
                           Código
                         </th>
-                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                        <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#64748b] uppercase tracking-widest">
                           Nombre
                         </th>
                         {grifosInternos.hayVarios && (
-                          <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                          <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#64748b] uppercase tracking-widest">
                             Grifo
                           </th>
                         )}
-                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                        <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#64748b] uppercase tracking-widest">
                           Tipo
                         </th>
-                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                        <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#64748b] uppercase tracking-widest">
                           Punto
                         </th>
-                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                        <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#64748b] uppercase tracking-widest">
                           Humbral minimo
                         </th>
-                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                        <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#64748b] uppercase tracking-widest">
                           Nivel
                         </th>
-                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                        <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#64748b] uppercase tracking-widest">
                           Costo prom.
                         </th>
-                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest">
+                        <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#64748b] uppercase tracking-widest">
                           Estado
                         </th>
-                        <th className="p-4 text-xs font-bold text-[#64748b] uppercase tracking-widest text-right">
+                        <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#64748b] uppercase tracking-widest text-right">
                           Acciones
                         </th>
                       </tr>
@@ -4132,30 +4136,32 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                             : "text-[#a3e635]";
                         return (
                           <tr key={t.id} className=" transition-colors">
-                            <td className="p-4 font-mono text-sm text-[#94a3b8]">{t.codigo}</td>
-                            <td className="p-4 text-sm font-semibold text-white">
+                            <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm text-[#94a3b8]">
+                              {t.codigo}
+                            </td>
+                            <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-semibold text-white">
                               {t.tanque_nombre}
                               {t.ubicacion && (
                                 <p className="text-xs text-slate-400">{t.ubicacion}</p>
                               )}
                             </td>
                             {grifosInternos.hayVarios && (
-                              <td className="p-4 text-sm text-slate-400">
+                              <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-400">
                                 {grifosInternos.nombreDeGrifo(t.grifo_interno_id)}
                               </td>
                             )}
-                            <td className="p-4 text-sm text-slate-600">
+                            <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-600">
                               {ETIQUETA_TIPO_COMBUSTIBLE[t.tipo_combustible]}
                             </td>
-                            <td className="p-4 text-sm text-slate-600">
+                            <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-600">
                               {ETIQUETA_TIPO_PUNTO[t.tipo_punto]}
                             </td>
-                            <td className="p-4 text-sm">
+                            <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
                               <span className="font-mono font-semibold text-[#f59e0b]">
                                 {Number(t.nivel_minimo).toLocaleString("es-PE")} {t.unidad}
                               </span>
                             </td>
-                            <td className="p-4 text-sm">
+                            <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
                               {sinNivel ? (
                                 <>
                                   <span className="text-slate-400 italic">Sin lecturas</span>
@@ -4184,7 +4190,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         recepciones. 0 significa "todavía no se registró
                         ninguna compra", no "sale gratis": decirlo con
                         palabras evita que se lea como un precio real. */}
-                            <td className="p-4 text-sm">
+                            <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
                               {Number(t.costo_promedio) === 0 ? (
                                 <span className="inline-block rounded-full border border-[#334155] bg-[#0D1719] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#94a3b8]">
                                   Sin recepciones
@@ -4196,7 +4202,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                                 </span>
                               )}
                             </td>
-                            <td className="p-4 text-sm">
+                            <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
                               <span
                                 className={`px-2 py-1 rounded-full text-xs font-medium ${
                                   t.activo
@@ -4346,13 +4352,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               <h3 className="text-xl font-bold">{editandoId ? "Editar Tanque" : "Nuevo Tanque"}</h3>
               <button
                 onClick={() => setModalTanqueAbierto(false)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                aria-label="Cerrar"
+                className="text-slate-400 hover:text-slate-900"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleGuardarTanque} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="tanque-codigo"
@@ -4366,7 +4373,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     placeholder="Ej: TQ-01"
                     required
                     maxLength={50}
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={formData.codigo}
                     onChange={(e) => setFormData({ ...formData, codigo: e.target.value })}
                   />
@@ -4383,14 +4390,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     type="text"
                     required
                     maxLength={100}
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={formData.tanque_nombre}
                     onChange={(e) => setFormData({ ...formData, tanque_nombre: e.target.value })}
                   />
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="tanque-tipo-combustible"
@@ -4400,7 +4407,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   </label>
                   <select
                     id="tanque-tipo-combustible"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                     value={formData.tipo_combustible}
                     onChange={(e) =>
                       setFormData({
@@ -4425,7 +4432,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   </label>
                   <select
                     id="tanque-unidad"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                     value={formData.unidad}
                     onChange={(e) =>
                       setFormData({ ...formData, unidad: e.target.value as Tanque["unidad"] })
@@ -4444,7 +4451,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   </label>
                   <select
                     id="tanque-tipo-punto"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                     value={formData.tipo_punto}
                     onChange={(e) =>
                       setFormData({
@@ -4474,7 +4481,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   type="text"
                   maxLength={200}
                   placeholder="Ej: al lado del taller"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={formData.ubicacion}
                   onChange={(e) => setFormData({ ...formData, ubicacion: e.target.value })}
                 />
@@ -4495,7 +4502,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     <select
                       id="tanque-grifo-interno"
                       required
-                      className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                       value={formData.grifo_interno_id}
                       onChange={(e) =>
                         setFormData({ ...formData, grifo_interno_id: e.target.value })
@@ -4531,7 +4538,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   </div>
                 ))}
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="tanque-capacidad"
@@ -4545,7 +4552,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     min={0.01}
                     step="0.01"
                     required
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={formData.capacidad_total}
                     onChange={(e) => setFormData({ ...formData, capacidad_total: e.target.value })}
                   />
@@ -4562,7 +4569,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     type="number"
                     min={0}
                     step="0.01"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={formData.nivel_minimo}
                     onChange={(e) => setFormData({ ...formData, nivel_minimo: e.target.value })}
                   />
@@ -4585,7 +4592,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     type="number"
                     min={0}
                     step="0.01"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={formData.nivel_actual}
                     onChange={(e) => setFormData({ ...formData, nivel_actual: e.target.value })}
                   />
@@ -4688,7 +4695,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 <p className="text-xs font-bold text-slate-400 uppercase">
                   Recepciones de combustible
                 </p>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label
                       htmlFor="tanque-moneda"
@@ -4702,7 +4709,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         el costo promedio existe de verdad, se muestra. */}
                     <select
                       id="tanque-moneda"
-                      className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                       value={formData.moneda}
                       onChange={(e) => setFormData({ ...formData, moneda: e.target.value })}
                     >
@@ -4723,7 +4730,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       min={0}
                       max={100}
                       step="0.01"
-                      className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                       value={formData.tolerancia_capacidad_pct}
                       onChange={(e) =>
                         setFormData({ ...formData, tolerancia_capacidad_pct: e.target.value })
@@ -4733,7 +4740,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       Margen sobre la capacidad antes de rechazar una recepción. 0 = estricto.
                     </p>
                   </div>
-                  <div className="space-y-1 col-span-2">
+                  <div className="space-y-1 sm:col-span-2">
                     <label className="flex items-start gap-2 text-sm text-slate-700">
                       <input
                         type="checkbox"
@@ -4771,7 +4778,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           min={0}
                           step="0.01"
                           placeholder="Sin tope"
-                          className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                          className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                           value={formData.limite_excedente_pct}
                           onChange={(e) =>
                             setFormData({ ...formData, limite_excedente_pct: e.target.value })
@@ -4946,7 +4953,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       type="number"
                       min={0}
                       step="0.001"
-                      className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                       value={formData.totalizador_tolerancia}
                       onChange={(e) =>
                         setFormData({ ...formData, totalizador_tolerancia: e.target.value })
@@ -5040,113 +5047,115 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 Este tanque todavía no tiene lecturas registradas.
               </p>
             ) : (
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                      Fecha de la lectura
-                    </th>
-                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                      Nivel
-                    </th>
-                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                      Variación
-                    </th>
-                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                      Acciones
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {lecturas.map((l) => {
-                    const anulada = l.anulada_en !== null;
-                    const variacion = variacionPorLectura.get(l.id) ?? null;
-                    return (
-                      <tr key={l.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="p-3 text-sm text-slate-600">
-                          <span className={anulada ? "line-through text-slate-400" : ""}>
-                            {formatearFecha(l.leido_en)}
-                          </span>
-                          {l.origen !== "manual" && (
-                            <span className="ml-2 text-xs text-slate-400">({l.origen})</span>
-                          )}
-                          {/* Quién tomó la medición. Va SIEMPRE visible,
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-max text-left border-collapse">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                        Fecha de la lectura
+                      </th>
+                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                        Nivel
+                      </th>
+                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                        Variación
+                      </th>
+                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                        Acciones
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {lecturas.map((l) => {
+                      const anulada = l.anulada_en !== null;
+                      const variacion = variacionPorLectura.get(l.id) ?? null;
+                      return (
+                        <tr key={l.id} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="p-3 text-sm text-slate-600">
+                            <span className={anulada ? "line-through text-slate-400" : ""}>
+                              {formatearFecha(l.leido_en)}
+                            </span>
+                            {l.origen !== "manual" && (
+                              <span className="ml-2 text-xs text-slate-400">({l.origen})</span>
+                            )}
+                            {/* Quién tomó la medición. Va SIEMPRE visible,
                                 incluso en las anuladas: si una lectura
                                 resultó estar mal, quién la cargó es parte
                                 de lo que hay que poder ver. */}
-                          <p className="text-xs text-slate-500 mt-0.5">
-                            {l.registrada_por_nombre
-                              ? `Registró: ${l.registrada_por_nombre}`
-                              : "Registró: —"}
-                          </p>
-                          {(l.totalizadores ?? []).length > 1
-                            ? l.totalizadores!.map((t) => (
-                                <p key={t.surtidor_id} className="text-xs text-slate-500 mt-0.5">
-                                  {t.surtidor}: {Number(t.valor).toLocaleString("es-PE")}
-                                </p>
-                              ))
-                            : l.totalizador_lectura !== null && (
-                                <p className="text-xs text-slate-500 mt-0.5">
-                                  Totalizador:{" "}
-                                  {Number(l.totalizador_lectura).toLocaleString("es-PE")}
-                                </p>
-                              )}
-                          {anulada && (
-                            <p className="text-xs text-amber-700 mt-0.5">
-                              Anulada: {l.motivo_anulacion}
-                              {l.anulada_por_nombre && ` — ${l.anulada_por_nombre}`}
+                            <p className="text-xs text-slate-500 mt-0.5">
+                              {l.registrada_por_nombre
+                                ? `Registró: ${l.registrada_por_nombre}`
+                                : "Registró: —"}
                             </p>
-                          )}
-                        </td>
-                        <td
-                          className={`p-3 text-sm font-semibold text-right ${
-                            anulada ? "line-through text-slate-400" : "text-slate-800"
-                          }`}
-                        >
-                          {Number(l.nivel).toLocaleString("es-PE")} {tanqueHistorial.unidad}
-                        </td>
-                        <td className="p-3 text-sm text-right">
-                          {variacion === null ? (
-                            <span className="text-slate-300">—</span>
-                          ) : (
-                            <span
-                              className={
-                                variacion < 0
-                                  ? "text-red-500 font-medium"
-                                  : variacion > 0
-                                    ? "text-emerald-600 font-medium"
-                                    : "text-slate-400"
-                              }
-                            >
-                              {variacion > 0 ? "+" : ""}
-                              {variacion.toLocaleString("es-PE")} {tanqueHistorial.unidad}
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-3 text-sm text-right">
-                          {!anulada && (
-                            <button
-                              onClick={() => {
-                                // El modal que pide el motivo se abre en la
-                                // página, no acá adentro: si este panel está
-                                // desprendido, hay que ir a buscar la
-                                // ventana principal o parece no pasar nada.
-                                enfocarPaginaPrincipal();
-                                setLecturaAAnular(l);
-                                setMotivoAnulacion("");
-                              }}
-                              className="px-2 py-1 text-xs text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition-all"
-                              title="Anular esta lectura"
-                            >
-                              Anular
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                            {(l.totalizadores ?? []).length > 1
+                              ? l.totalizadores!.map((t) => (
+                                  <p key={t.surtidor_id} className="text-xs text-slate-500 mt-0.5">
+                                    {t.surtidor}: {Number(t.valor).toLocaleString("es-PE")}
+                                  </p>
+                                ))
+                              : l.totalizador_lectura !== null && (
+                                  <p className="text-xs text-slate-500 mt-0.5">
+                                    Totalizador:{" "}
+                                    {Number(l.totalizador_lectura).toLocaleString("es-PE")}
+                                  </p>
+                                )}
+                            {anulada && (
+                              <p className="text-xs text-amber-700 mt-0.5">
+                                Anulada: {l.motivo_anulacion}
+                                {l.anulada_por_nombre && ` — ${l.anulada_por_nombre}`}
+                              </p>
+                            )}
+                          </td>
+                          <td
+                            className={`p-3 text-sm font-semibold text-right ${
+                              anulada ? "line-through text-slate-400" : "text-slate-800"
+                            }`}
+                          >
+                            {Number(l.nivel).toLocaleString("es-PE")} {tanqueHistorial.unidad}
+                          </td>
+                          <td className="p-3 text-sm text-right">
+                            {variacion === null ? (
+                              <span className="text-slate-300">—</span>
+                            ) : (
+                              <span
+                                className={
+                                  variacion < 0
+                                    ? "text-red-500 font-medium"
+                                    : variacion > 0
+                                      ? "text-emerald-600 font-medium"
+                                      : "text-slate-400"
+                                }
+                              >
+                                {variacion > 0 ? "+" : ""}
+                                {variacion.toLocaleString("es-PE")} {tanqueHistorial.unidad}
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3 text-sm text-right">
+                            {!anulada && (
+                              <button
+                                onClick={() => {
+                                  // El modal que pide el motivo se abre en la
+                                  // página, no acá adentro: si este panel está
+                                  // desprendido, hay que ir a buscar la
+                                  // ventana principal o parece no pasar nada.
+                                  enfocarPaginaPrincipal();
+                                  setLecturaAAnular(l);
+                                  setMotivoAnulacion("");
+                                }}
+                                className="px-2 py-1 text-xs text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition-all"
+                                title="Anular esta lectura"
+                              >
+                                Anular
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </VentanaFlotante>
@@ -5160,9 +5169,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               <h3 className="text-xl font-bold">Anular lectura</h3>
               <button
                 onClick={() => setLecturaAAnular(null)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                aria-label="Cerrar"
+                className="text-slate-400 hover:text-slate-900"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleAnularLectura} className="p-6 space-y-4">
@@ -5194,7 +5204,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   rows={3}
                   maxLength={500}
                   placeholder="Ej: error de tipeo, se registró 500 en vez de 19.000"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={motivoAnulacion}
                   onChange={(e) => setMotivoAnulacion(e.target.value)}
                 />
@@ -5219,9 +5229,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               <h3 className="text-xl font-bold">Lectura — {tanqueLectura.tanque_nombre}</h3>
               <button
                 onClick={() => setTanqueLectura(null)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                aria-label="Cerrar"
+                className="text-slate-400 hover:text-slate-900"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
 
@@ -5274,7 +5285,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   min={0}
                   step="0.01"
                   required
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                   value={nivel}
                   onChange={(e) => setNivel(e.target.value)}
                 />
@@ -5293,7 +5304,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     min={0}
                     step="0.001"
                     required
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                     value={totalizadoresVarilla[sur.id] ?? ""}
                     onChange={(e) =>
                       setTotalizadoresVarilla((prev) => ({ ...prev, [sur.id]: e.target.value }))
@@ -5318,7 +5329,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   id="combustible-leido-en"
                   type="datetime-local"
                   required
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                   value={leidoEn}
                   onChange={(e) => {
                     setLeidoEn(e.target.value);
@@ -5355,14 +5366,15 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               <h3 className="text-xl font-bold">Registrar despacho</h3>
               <button
                 onClick={() => setModalDespachoAbierto(false)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                aria-label="Cerrar"
+                className="text-slate-400 hover:text-slate-900"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleRegistrarDespacho} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="despacho-origen"
@@ -5372,7 +5384,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   </label>
                   <select
                     id="despacho-origen"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                     value={despachoForm.origen}
                     onChange={(e) =>
                       setDespachoForm({
@@ -5394,7 +5406,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   </label>
                   <select
                     id="despacho-tipo-combustible"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                     value={despachoForm.tipo_combustible}
                     onChange={(e) =>
                       setDespachoForm({
@@ -5424,7 +5436,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     <select
                       id="despacho-tanque"
                       required
-                      className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                       value={despachoForm.combustible_id}
                       onChange={(e) =>
                         // El surtidor elegido era del tanque anterior (0098).
@@ -5447,7 +5459,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         ))}
                     </select>
                   </div>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <label
                         htmlFor="despacho-cantidad"
@@ -5461,7 +5473,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         min={0}
                         step="0.01"
                         required
-                        className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                         value={despachoForm.cantidad}
                         onChange={(e) =>
                           setDespachoForm({ ...despachoForm, cantidad: e.target.value })
@@ -5481,7 +5493,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         min={0}
                         step="0.01"
                         required
-                        className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                         value={despachoForm.lectura_contometro}
                         onChange={(e) =>
                           setDespachoForm({ ...despachoForm, lectura_contometro: e.target.value })
@@ -5504,7 +5516,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       <select
                         id="despacho-surtidor"
                         required
-                        className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                         value={despachoForm.surtidor_id}
                         onChange={(e) =>
                           setDespachoForm({ ...despachoForm, surtidor_id: e.target.value })
@@ -5533,7 +5545,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         min={0}
                         step="0.001"
                         required
-                        className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                         value={despachoForm.totalizador_lectura}
                         onChange={(e) =>
                           setDespachoForm({ ...despachoForm, totalizador_lectura: e.target.value })
@@ -5565,7 +5577,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         min={0}
                         step="0.01"
                         required
-                        className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                         value={
                           equipoSeleccionado.tipo_medidor === "horometro"
                             ? despachoForm.lectura_horometro
@@ -5599,7 +5611,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     </label>
                     <select
                       id="despacho-tipo-destino"
-                      className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                       value={despachoForm.tipo_destino}
                       onChange={(e) =>
                         setDespachoForm({
@@ -5627,7 +5639,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       <select
                         id="despacho-equipo"
                         required
-                        className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                         value={despachoForm.equipo_id}
                         onChange={(e) =>
                           setDespachoForm({ ...despachoForm, equipo_id: e.target.value })
@@ -5657,7 +5669,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     <select
                       id="despacho-grifo"
                       required
-                      className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                       value={despachoForm.grifo_id}
                       onChange={(e) =>
                         setDespachoForm({ ...despachoForm, grifo_id: e.target.value })
@@ -5692,7 +5704,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     <select
                       id="despacho-equipo-externo"
                       required
-                      className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                       value={despachoForm.equipo_id}
                       onChange={(e) =>
                         setDespachoForm({ ...despachoForm, equipo_id: e.target.value })
@@ -5714,7 +5726,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       Configuralo en Equipos antes de continuar.
                     </p>
                   )}
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <label
                         htmlFor="despacho-cantidad-externa"
@@ -5728,7 +5740,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         min={0}
                         step="0.01"
                         required
-                        className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                         value={despachoForm.cantidad}
                         onChange={(e) =>
                           setDespachoForm({ ...despachoForm, cantidad: e.target.value })
@@ -5749,7 +5761,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           min={0}
                           step="0.01"
                           required
-                          className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                          className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                           value={despachoForm.lectura_odometro}
                           onChange={(e) =>
                             setDespachoForm({ ...despachoForm, lectura_odometro: e.target.value })
@@ -5771,7 +5783,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           step="0.01"
                           required
                           disabled={!equipoSeleccionado?.tipo_medidor}
-                          className="w-full border border-slate-200 rounded-xl p-3 outline-none disabled:bg-slate-50"
+                          className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none disabled:bg-slate-50"
                           value={despachoForm.lectura_horometro}
                           onChange={(e) =>
                             setDespachoForm({ ...despachoForm, lectura_horometro: e.target.value })
@@ -5793,7 +5805,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       min={0}
                       step="0.01"
                       required
-                      className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                       value={despachoForm.horas_abastecidas}
                       onChange={(e) =>
                         setDespachoForm({ ...despachoForm, horas_abastecidas: e.target.value })
@@ -5803,7 +5815,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 </>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="despacho-costo-unitario"
@@ -5817,7 +5829,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     min={0}
                     step="0.0001"
                     required
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                     value={despachoForm.costo_unitario}
                     onChange={(e) => {
                       setCostoEditadoAMano(true);
@@ -5853,7 +5865,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   id="despacho-observaciones"
                   rows={2}
                   maxLength={500}
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                   value={despachoForm.observaciones}
                   onChange={(e) =>
                     setDespachoForm({ ...despachoForm, observaciones: e.target.value })
@@ -5861,7 +5873,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="despacho-serie"
@@ -5874,7 +5886,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     type="text"
                     required
                     maxLength={20}
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                     value={despachoForm.serie_talonario}
                     onChange={(e) =>
                       setDespachoForm({ ...despachoForm, serie_talonario: e.target.value })
@@ -5893,7 +5905,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     type="number"
                     min={1}
                     required
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                     value={despachoForm.n_vale}
                     onChange={(e) => setDespachoForm({ ...despachoForm, n_vale: e.target.value })}
                   />
@@ -5911,7 +5923,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   id="despacho-fecha"
                   type="datetime-local"
                   required
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                   value={despachadoEn}
                   onChange={(e) => {
                     setDespachadoEn(e.target.value);
@@ -5968,7 +5980,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 Todavía no hay despachos registrados.
               </p>
             ) : (
-              <table className="w-full text-left border-collapse">
+              <table className="w-full min-w-max text-left border-collapse">
                 <thead className="bg-slate-50">
                   <tr>
                     <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
@@ -6089,9 +6101,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               </div>
               <button
                 onClick={() => setModalGrifosAbierto(false)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                aria-label="Cerrar"
+                className="text-slate-400 hover:text-slate-900"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleCrearGrifo} className="p-6 space-y-3 border-b">
@@ -6107,7 +6120,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   type="text"
                   placeholder="Ej. PRIMAX Bambamarca"
                   maxLength={150}
-                  className="flex-1 border border-slate-200 rounded-xl p-3 outline-none"
+                  className="flex-1 border border-slate-200 rounded-xl p-3 text-sm outline-none"
                   value={nombreGrifoNuevo}
                   onChange={(e) => setNombreGrifoNuevo(e.target.value)}
                 />
@@ -6210,13 +6223,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               <h3 className="text-xl font-bold">Precio de combustible</h3>
               <button
                 onClick={() => setModalPreciosAbierto(false)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                aria-label="Cerrar"
+                className="text-slate-400 hover:text-slate-900"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
             <form onSubmit={handleCrearPrecio} className="p-6 space-y-4 border-b">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="precio-tipo-combustible"
@@ -6226,7 +6240,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   </label>
                   <select
                     id="precio-tipo-combustible"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                     value={precioForm.tipo_combustible}
                     onChange={(e) =>
                       setPrecioForm({
@@ -6245,7 +6259,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 {/* col-span-2: la etiqueta larga ("Precio de venta interna
                     (tanque → flotas)") se corta a la mitad de la flecha en
                     media columna, y truncada dice otra cosa. */}
-                <div className="space-y-1 col-span-2">
+                <div className="space-y-1 sm:col-span-2">
                   <label
                     htmlFor="precio-aplica-a"
                     className="text-xs font-bold text-slate-700 uppercase"
@@ -6262,7 +6276,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       recepciones (Fase C), no se carga acá. */}
                   <select
                     id="precio-aplica-a"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                     value={precioForm.aplicaA}
                     onChange={(e) =>
                       setPrecioForm({
@@ -6295,7 +6309,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   <select
                     id="precio-tanque"
                     required
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                     value={precioForm.combustible_id}
                     onChange={(e) =>
                       setPrecioForm({ ...precioForm, combustible_id: e.target.value })
@@ -6322,7 +6336,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   <select
                     id="precio-grifo"
                     required
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                     value={precioForm.grifo_id}
                     onChange={(e) => setPrecioForm({ ...precioForm, grifo_id: e.target.value })}
                   >
@@ -6338,7 +6352,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="precio-valor"
@@ -6352,7 +6366,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     min={0}
                     step="0.0001"
                     required
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                     value={precioForm.precio_unitario}
                     onChange={(e) =>
                       setPrecioForm({ ...precioForm, precio_unitario: e.target.value })
@@ -6370,7 +6384,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     id="precio-vigente-desde"
                     type="datetime-local"
                     required
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                     value={vigenteDesde}
                     onChange={(e) => setVigenteDesde(e.target.value)}
                   />
@@ -6449,9 +6463,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               <h3 className="text-xl font-bold">Anular precio</h3>
               <button
                 onClick={() => setPrecioAAnular(null)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                aria-label="Cerrar"
+                className="text-slate-400 hover:text-slate-900"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
             <div className="p-6 space-y-4">
@@ -6478,7 +6493,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   rows={3}
                   maxLength={500}
                   placeholder="Ej: se tipeó 999 en vez de 17.9"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={motivoAnulacionPrecio}
                   onChange={(e) => setMotivoAnulacionPrecio(e.target.value)}
                 />
@@ -6524,7 +6539,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               <input
                 id="kardex-desde"
                 type="date"
-                className="border border-slate-200 rounded-lg p-2"
+                className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs sm:text-sm"
                 value={kardexDesde}
                 onChange={(e) => setKardexDesde(e.target.value)}
               />
@@ -6539,7 +6554,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               <input
                 id="kardex-hasta"
                 type="date"
-                className="border border-slate-200 rounded-lg p-2"
+                className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs sm:text-sm"
                 value={kardexHasta}
                 onChange={(e) => setKardexHasta(e.target.value)}
               />
@@ -6554,10 +6569,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             <button
               onClick={() => descargarKardex("xlsx")}
               disabled={descargandoKardex || !kardex || kardex.filas.length === 0}
-              className="px-4 py-2 border border-slate-300 text-slate-700 text-sm font-medium rounded-lg hover:bg-white disabled:opacity-40"
+              className="flex items-center gap-2 px-4 py-2 border border-slate-300 text-slate-700 text-sm font-medium rounded-lg hover:bg-white disabled:opacity-40"
               title="Planilla con dos hojas: el detalle y un resumen con totales que se recalculan"
             >
-              {descargandoKardex ? "Exportando..." : "⬇ Excel (.xlsx)"}
+              <Download className="w-4 h-4 shrink-0" />
+              {descargandoKardex ? "Exportando..." : "Excel (.xlsx)"}
             </button>
             <button
               onClick={() => descargarKardex("csv")}
@@ -6612,7 +6628,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             ) : !kardex || kardex.filas.length === 0 ? (
               <p className="text-slate-400 text-center py-8">Sin movimientos en este período.</p>
             ) : (
-              <table className="w-full text-sm border-collapse">
+              <table className="w-full min-w-max text-sm border-collapse">
                 {/* El encabezado queda fijo al scrollear: el kardex se lee
                     comparando "saldo teórico" contra "medido" columna por
                     columna, y a la fila treinta ya nadie se acuerda de cuál
@@ -6772,7 +6788,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {pestanaCombustible === "auditoria" && (
         <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
           <div className="px-6 pt-5">
-            <h2 className="text-xl font-bold text-slate-800">Auditoría del período</h2>
+            <h2 className="text-base sm:text-lg font-bold text-slate-800 tracking-tight">
+              Auditoría del período
+            </h2>
             <p className="text-sm text-slate-500">
               Qué controles estuvieron flojos mientras salía combustible, y quién revisa a quién.
             </p>
@@ -6788,7 +6806,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               <input
                 id="aud-desde"
                 type="date"
-                className="border border-slate-200 rounded-lg p-2"
+                className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs sm:text-sm"
                 value={kardexDesde}
                 onChange={(e) => setKardexDesde(e.target.value)}
               />
@@ -6803,7 +6821,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               <input
                 id="aud-hasta"
                 type="date"
-                className="border border-slate-200 rounded-lg p-2"
+                className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs sm:text-sm"
                 value={kardexHasta}
                 onChange={(e) => setKardexHasta(e.target.value)}
               />
@@ -6825,9 +6843,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   )
                 }
                 disabled={!repControles || repControles.tanques.length === 0}
-                className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                ⬇️ Exportar controles
+                <Download className="w-4 h-4 shrink-0" />
+                Exportar controles
               </button>
               <button
                 type="button"
@@ -6838,9 +6857,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   )
                 }
                 disabled={!repSegregacion || repSegregacion.personas.length === 0}
-                className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                ⬇️ Exportar segregación
+                <Download className="w-4 h-4 shrink-0" />
+                Exportar segregación
               </button>
               <button
                 type="button"
@@ -6868,9 +6888,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   )
                 }
                 disabled={!repConsumo || repConsumo.equipos.length === 0}
-                className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                ⬇️ Exportar consumo
+                <Download className="w-4 h-4 shrink-0" />
+                Exportar consumo
               </button>
             </div>
           </div>
@@ -6930,79 +6951,81 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       Nadie redujo ningún control en este período.
                     </p>
                   ) : (
-                    <table className="w-full text-sm border-collapse">
-                      <thead>
-                        <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
-                          <th className="p-2">Cuándo</th>
-                          <th className="p-2">Quién</th>
-                          <th className="p-2">Qué se aflojó</th>
-                          <th className="p-2">Motivo</th>
-                          <th className="p-2 text-right">Declarado</th>
-                          <th
-                            className="p-2 text-right"
-                            title="Lo que dice la varilla, calculado sin mirar el umbral. Es lo que el aflojamiento habilita: sacar sin emitir vale."
-                          >
-                            Faltante medido
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {repControles.eventos.map((e, i) => (
-                          <tr key={`${e.cuando}-${i}`} className="border-b">
-                            <td className="p-2 whitespace-nowrap">
-                              {new Date(e.cuando).toLocaleString("es-PE", {
-                                day: "2-digit",
-                                month: "2-digit",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </td>
-                            <td className="p-2">{e.quien}</td>
-                            <td className="p-2">
-                              {e.aflojados.map((a, j) => (
-                                <span key={j} className="block text-xs">
-                                  <strong>{a.control}</strong>: {a.de} → {a.a}
-                                </span>
-                              ))}
-                            </td>
-                            <td className="p-2 text-xs text-slate-500">{e.motivo ?? "—"}</td>
-                            <td
-                              className={`p-2 text-right font-bold ${
-                                e.despachado_despues_l > 0 ? "text-red-600" : "text-slate-400"
-                              }`}
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-max text-sm border-collapse">
+                        <thead>
+                          <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
+                            <th className="p-2">Cuándo</th>
+                            <th className="p-2">Quién</th>
+                            <th className="p-2">Qué se aflojó</th>
+                            <th className="p-2">Motivo</th>
+                            <th className="p-2 text-right">Declarado</th>
+                            <th
+                              className="p-2 text-right"
+                              title="Lo que dice la varilla, calculado sin mirar el umbral. Es lo que el aflojamiento habilita: sacar sin emitir vale."
                             >
-                              {e.despachado_despues_l > 0 ? `${e.despachado_despues_l} L` : "—"}
-                              {e.vales_despues > 0 && (
-                                <span className="block text-[11px] font-normal text-slate-500">
-                                  {e.vales_despues} vale(s)
-                                </span>
-                              )}
-                            </td>
-                            {/* La columna que importa. Un aflojamiento sirve
+                              Faltante medido
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {repControles.eventos.map((e, i) => (
+                            <tr key={`${e.cuando}-${i}`} className="border-b">
+                              <td className="p-2 whitespace-nowrap">
+                                {new Date(e.cuando).toLocaleString("es-PE", {
+                                  day: "2-digit",
+                                  month: "2-digit",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </td>
+                              <td className="p-2">{e.quien}</td>
+                              <td className="p-2">
+                                {e.aflojados.map((a, j) => (
+                                  <span key={j} className="block text-xs">
+                                    <strong>{a.control}</strong>: {a.de} → {a.a}
+                                  </span>
+                                ))}
+                              </td>
+                              <td className="p-2 text-xs text-slate-500">{e.motivo ?? "—"}</td>
+                              <td
+                                className={`p-2 text-right font-bold ${
+                                  e.despachado_despues_l > 0 ? "text-red-600" : "text-slate-400"
+                                }`}
+                              >
+                                {e.despachado_despues_l > 0 ? `${e.despachado_despues_l} L` : "—"}
+                                {e.vales_despues > 0 && (
+                                  <span className="block text-[11px] font-normal text-slate-500">
+                                    {e.vales_despues} vale(s)
+                                  </span>
+                                )}
+                              </td>
+                              {/* La columna que importa. Un aflojamiento sirve
                                   para sacar SIN vale, así que "declarado"
                                   puede ser cero mientras el tanque se vacía. */}
-                            <td
-                              className={`p-2 text-right font-bold ${
-                                e.descuadre_medido_l === null
-                                  ? "text-slate-400"
-                                  : e.descuadre_medido_l < 0
-                                    ? "text-red-600"
-                                    : e.descuadre_medido_l > 0
-                                      ? "text-amber-600"
-                                      : "text-emerald-600"
-                              }`}
-                            >
-                              {e.descuadre_medido_l === null
-                                ? "sin medir"
-                                : `${e.descuadre_medido_l} L`}
-                              <span className="block text-[11px] font-normal text-slate-500">
-                                {e.mediciones_despues} varilla(s)
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                              <td
+                                className={`p-2 text-right font-bold ${
+                                  e.descuadre_medido_l === null
+                                    ? "text-slate-400"
+                                    : e.descuadre_medido_l < 0
+                                      ? "text-red-600"
+                                      : e.descuadre_medido_l > 0
+                                        ? "text-amber-600"
+                                        : "text-emerald-600"
+                                }`}
+                              >
+                                {e.descuadre_medido_l === null
+                                  ? "sin medir"
+                                  : `${e.descuadre_medido_l} L`}
+                                <span className="block text-[11px] font-normal text-slate-500">
+                                  {e.mediciones_despues} varilla(s)
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
 
                   {/* La FOTO de hoy: un control apagado ANTES del período no
@@ -7061,60 +7084,62 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   {!repSegregacion || repSegregacion.personas.length === 0 ? (
                     <p className="text-sm text-slate-400">Sin movimientos en este período.</p>
                   ) : (
-                    <table className="w-full text-sm border-collapse">
-                      <thead>
-                        <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
-                          <th className="p-2">Persona</th>
-                          <th className="p-2 text-right">Vales</th>
-                          <th className="p-2 text-right">Recepciones</th>
-                          <th className="p-2 text-right">Varillas</th>
-                          <th className="p-2 text-right" title="Precintos que colocó">
-                            Precintos
-                          </th>
-                          <th className="p-2 text-right">Anulaciones</th>
-                          <th
-                            className="p-2 text-right"
-                            title="Anuló algo que había cargado él mismo"
-                          >
-                            …propias
-                          </th>
-                          <th className="p-2 text-right">Alertas cerradas</th>
-                          <th
-                            className="p-2 text-right"
-                            title="Cerró una alerta que generó su propio movimiento"
-                          >
-                            …propias
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {repSegregacion.personas.map((p) => (
-                          <tr key={p.usuario_id} className="border-b">
-                            <td className="p-2 font-medium">{p.persona}</td>
-                            <td className="p-2 text-right">{p.vales_cargados}</td>
-                            <td className="p-2 text-right">{p.recepciones_cargadas}</td>
-                            <td className="p-2 text-right">{p.lecturas_cargadas}</td>
-                            <td className="p-2 text-right">{p.precintos_colocados}</td>
-                            <td className="p-2 text-right">{p.anulaciones}</td>
-                            <td
-                              className={`p-2 text-right font-bold ${
-                                p.anulaciones_propias > 0 ? "text-amber-600" : "text-slate-300"
-                              }`}
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-max text-sm border-collapse">
+                        <thead>
+                          <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
+                            <th className="p-2">Persona</th>
+                            <th className="p-2 text-right">Vales</th>
+                            <th className="p-2 text-right">Recepciones</th>
+                            <th className="p-2 text-right">Varillas</th>
+                            <th className="p-2 text-right" title="Precintos que colocó">
+                              Precintos
+                            </th>
+                            <th className="p-2 text-right">Anulaciones</th>
+                            <th
+                              className="p-2 text-right"
+                              title="Anuló algo que había cargado él mismo"
                             >
-                              {p.anulaciones_propias}
-                            </td>
-                            <td className="p-2 text-right">{p.alertas_revisadas}</td>
-                            <td
-                              className={`p-2 text-right font-bold ${
-                                p.autorevisiones > 0 ? "text-red-600" : "text-slate-300"
-                              }`}
+                              …propias
+                            </th>
+                            <th className="p-2 text-right">Alertas cerradas</th>
+                            <th
+                              className="p-2 text-right"
+                              title="Cerró una alerta que generó su propio movimiento"
                             >
-                              {p.autorevisiones}
-                            </td>
+                              …propias
+                            </th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {repSegregacion.personas.map((p) => (
+                            <tr key={p.usuario_id} className="border-b">
+                              <td className="p-2 font-medium">{p.persona}</td>
+                              <td className="p-2 text-right">{p.vales_cargados}</td>
+                              <td className="p-2 text-right">{p.recepciones_cargadas}</td>
+                              <td className="p-2 text-right">{p.lecturas_cargadas}</td>
+                              <td className="p-2 text-right">{p.precintos_colocados}</td>
+                              <td className="p-2 text-right">{p.anulaciones}</td>
+                              <td
+                                className={`p-2 text-right font-bold ${
+                                  p.anulaciones_propias > 0 ? "text-amber-600" : "text-slate-300"
+                                }`}
+                              >
+                                {p.anulaciones_propias}
+                              </td>
+                              <td className="p-2 text-right">{p.alertas_revisadas}</td>
+                              <td
+                                className={`p-2 text-right font-bold ${
+                                  p.autorevisiones > 0 ? "text-red-600" : "text-slate-300"
+                                }`}
+                              >
+                                {p.autorevisiones}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )}
                 </section>
 
@@ -7146,7 +7171,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     </p>
                   ) : (
                     <div className="overflow-x-auto">
-                      <table className="w-full text-sm border-collapse">
+                      <table className="w-full min-w-max text-sm border-collapse">
                         <thead>
                           <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
                             <th className="p-2">Equipo</th>
@@ -7270,9 +7295,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 )
               }
               disabled={bitacoraFiltrada.length === 0}
-              className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
             >
-              ⬇️ Exportar
+              <Download className="w-4 h-4 shrink-0" />
+              Exportar
             </button>
           </div>
 
@@ -7353,7 +7379,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             </span>
           </div>
 
-          <div className="overflow-auto p-6">
+          <div className="overflow-x-auto p-6">
             {cargandoBitacora ? (
               <p className="text-slate-400 text-center py-8">Cargando...</p>
             ) : bitacora.length === 0 ? (
@@ -7363,12 +7389,16 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 Ningún movimiento coincide con los filtros.
               </p>
             ) : (
-              <table className="w-full text-sm">
+              // min-w: sin esto, en mobile la tabla se angosta hasta el ancho
+              // de la pantalla y cada celda -- sobre todo "Detalle", que trae
+              // frases largas -- termina partida en una palabra por línea.
+              // Mejor que scrollee de costado a que se vea así de apretada.
+              <table className="w-full min-w-[720px] text-sm">
                 <thead>
                   <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
-                    <th className="p-3">Cuándo</th>
-                    <th className="p-3">Quién</th>
-                    <th className="p-3">Qué hizo</th>
+                    <th className="p-3 whitespace-nowrap">Cuándo</th>
+                    <th className="p-3 whitespace-nowrap">Quién</th>
+                    <th className="p-3 whitespace-nowrap">Qué hizo</th>
                     <th className="p-3">Detalle</th>
                   </tr>
                 </thead>
@@ -7381,14 +7411,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       a: string;
                     }>;
                     return (
-                      <tr
-                        key={e.id}
-                        className={
-                          afloja
-                            ? "align-top border-b border-slate-50 bg-red-50/60"
-                            : "align-top border-b border-slate-50"
-                        }
-                      >
+                      <tr key={e.id} className="align-top border-b border-slate-50">
                         <td className="p-3 whitespace-nowrap text-slate-600">
                           {new Date(e.creado_en).toLocaleString("es-PE")}
                         </td>
@@ -7683,7 +7706,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               <input
                 type="text"
                 placeholder="Motivo del cambio (obligatorio)"
-                className="w-72 border border-amber-400 rounded-lg p-2 outline-none focus:ring-2 focus:ring-amber-500"
+                className="w-full sm:w-72 border border-amber-400 rounded-lg p-2 outline-none focus:ring-2 focus:ring-amber-500"
                 value={motivoConfig}
                 onChange={(e) => setMotivoConfig(e.target.value)}
               />
@@ -7758,48 +7781,50 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   Pasaron su ventana de gracia sin explicación. No se pueden editar ni borrar: son
                   evidencia.
                 </p>
-                <table className="w-full text-left border-collapse">
-                  <thead className="bg-red-50">
-                    <tr>
-                      <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
-                        Tipo
-                      </th>
-                      <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
-                        Vale
-                      </th>
-                      <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
-                        Detectada
-                      </th>
-                      <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
-                        Congelada
-                      </th>
-                      <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest text-right">
-                        Sin explicar
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-red-100">
-                    {anomalias.map((a) => (
-                      <tr key={a.id} className="align-top">
-                        <td className="p-3 text-sm text-slate-800">
-                          {ETIQUETA_TIPO_ALERTA[a.tipo]}
-                        </td>
-                        <td className="p-3 text-sm text-slate-800 font-mono">
-                          {referenciaAlerta(a)}
-                        </td>
-                        <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
-                          {new Date(a.detectada_en).toLocaleString("es-PE")}
-                        </td>
-                        <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
-                          {new Date(a.congelada_en).toLocaleString("es-PE")}
-                        </td>
-                        <td className="p-3 text-sm text-right text-red-600 font-semibold whitespace-nowrap">
-                          {a.ventana_horas} h
-                        </td>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-max text-left border-collapse">
+                    <thead className="bg-red-50">
+                      <tr>
+                        <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
+                          Tipo
+                        </th>
+                        <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
+                          Vale
+                        </th>
+                        <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
+                          Detectada
+                        </th>
+                        <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
+                          Congelada
+                        </th>
+                        <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest text-right">
+                          Sin explicar
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-red-100">
+                      {anomalias.map((a) => (
+                        <tr key={a.id} className="align-top">
+                          <td className="p-3 text-sm text-slate-800">
+                            {ETIQUETA_TIPO_ALERTA[a.tipo]}
+                          </td>
+                          <td className="p-3 text-sm text-slate-800 font-mono">
+                            {referenciaAlerta(a)}
+                          </td>
+                          <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
+                            {new Date(a.detectada_en).toLocaleString("es-PE")}
+                          </td>
+                          <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
+                            {new Date(a.congelada_en).toLocaleString("es-PE")}
+                          </td>
+                          <td className="p-3 text-sm text-right text-red-600 font-semibold whitespace-nowrap">
+                            {a.ventana_horas} h
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -7814,72 +7839,76 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             ) : alertasCombustible.length === 0 ? (
               <p className="text-center text-slate-500 py-8">No hay alertas registradas.</p>
             ) : (
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                      Tipo
-                    </th>
-                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                      Vale
-                    </th>
-                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                      Detalle
-                    </th>
-                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                      Detectada
-                    </th>
-                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                      Estado
-                    </th>
-                    <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                      Acciones
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {alertasCombustible.map((a) => (
-                    <tr
-                      key={a.id}
-                      id={`alerta-${a.id}`}
-                      className={
-                        a.id === alertaResaltadaId
-                          ? "align-top bg-amber-50 ring-2 ring-inset ring-amber-400 transition-colors"
-                          : "align-top hover:bg-slate-50/50 transition-colors"
-                      }
-                    >
-                      <td className="p-3 text-sm text-slate-800">{ETIQUETA_TIPO_ALERTA[a.tipo]}</td>
-                      <td className="p-3 text-sm text-slate-800 font-mono">
-                        {referenciaAlerta(a)}
-                      </td>
-                      <td className="p-3 text-sm text-slate-600">{describirDetalleAlerta(a)}</td>
-                      <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
-                        {new Date(a.creado_en).toLocaleString("es-PE")}
-                      </td>
-                      <td className="p-3 text-sm">
-                        {a.resuelta_en ? (
-                          <span className="text-emerald-600 font-medium">
-                            {a.resuelta_por ? "Revisada" : "Resuelta sola"}
-                          </span>
-                        ) : (
-                          <span className="text-amber-600 font-medium">Pendiente</span>
-                        )}
-                      </td>
-                      <td className="p-3 text-sm text-right whitespace-nowrap">
-                        {a.tipo !== "hueco_detectado" && !a.resuelta_en && (
-                          <button
-                            onClick={() => handleResolverAlerta(a.id)}
-                            disabled={resolviendoAlertaId === a.id}
-                            className="text-xs text-slate-500 hover:text-slate-900 hover:underline disabled:opacity-50"
-                          >
-                            {resolviendoAlertaId === a.id ? "Marcando..." : "Marcar revisado"}
-                          </button>
-                        )}
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-max text-left border-collapse">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                        Tipo
+                      </th>
+                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                        Vale
+                      </th>
+                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                        Detalle
+                      </th>
+                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                        Detectada
+                      </th>
+                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                        Estado
+                      </th>
+                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
+                        Acciones
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {alertasCombustible.map((a) => (
+                      <tr
+                        key={a.id}
+                        id={`alerta-${a.id}`}
+                        className={
+                          a.id === alertaResaltadaId
+                            ? "align-top bg-amber-50 ring-2 ring-inset ring-amber-400 transition-colors"
+                            : "align-top hover:bg-slate-50/50 transition-colors"
+                        }
+                      >
+                        <td className="p-3 text-sm text-slate-800">
+                          {ETIQUETA_TIPO_ALERTA[a.tipo]}
+                        </td>
+                        <td className="p-3 text-sm text-slate-800 font-mono">
+                          {referenciaAlerta(a)}
+                        </td>
+                        <td className="p-3 text-sm text-slate-600">{describirDetalleAlerta(a)}</td>
+                        <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
+                          {new Date(a.creado_en).toLocaleString("es-PE")}
+                        </td>
+                        <td className="p-3 text-sm">
+                          {a.resuelta_en ? (
+                            <span className="text-emerald-600 font-medium">
+                              {a.resuelta_por ? "Revisada" : "Resuelta sola"}
+                            </span>
+                          ) : (
+                            <span className="text-amber-600 font-medium">Pendiente</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-sm text-right whitespace-nowrap">
+                          {a.tipo !== "hueco_detectado" && !a.resuelta_en && (
+                            <button
+                              onClick={() => handleResolverAlerta(a.id)}
+                              disabled={resolviendoAlertaId === a.id}
+                              className="text-xs text-slate-500 hover:text-slate-900 hover:underline disabled:opacity-50"
+                            >
+                              {resolviendoAlertaId === a.id ? "Marcando..." : "Marcar revisado"}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </VentanaFlotante>
@@ -7919,7 +7948,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   id="motivo-anulacion-despacho"
                   rows={3}
                   maxLength={500}
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   placeholder="Ej: se mojó con diésel, colilla guardada en el block"
                   value={motivoAnulacionDespacho}
                   onChange={(e) => setMotivoAnulacionDespacho(e.target.value)}
@@ -7957,14 +7986,15 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               </div>
               <button
                 onClick={() => setModalRecepcionAbierto(false)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                aria-label="Cerrar"
+                className="text-slate-400 hover:text-slate-900"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleRegistrarRecepcion} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="recepcion-tanque"
@@ -7975,7 +8005,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   <select
                     id="recepcion-tanque"
                     required
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={recepcionForm.combustible_id}
                     onChange={(e) =>
                       setRecepcionForm({ ...recepcionForm, combustible_id: e.target.value })
@@ -8001,7 +8031,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   <select
                     id="recepcion-grifo"
                     required
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={recepcionForm.grifo_id}
                     onChange={(e) =>
                       setRecepcionForm({ ...recepcionForm, grifo_id: e.target.value })
@@ -8036,7 +8066,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="recepcion-cantidad"
@@ -8050,7 +8080,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     required
                     min={0}
                     step="0.01"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={recepcionForm.cantidad}
                     onChange={(e) =>
                       setRecepcionForm({ ...recepcionForm, cantidad: e.target.value })
@@ -8070,7 +8100,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     required
                     min={0}
                     step="0.0001"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={recepcionForm.costo_unitario}
                     onChange={(e) =>
                       setRecepcionForm({ ...recepcionForm, costo_unitario: e.target.value })
@@ -8127,7 +8157,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="recepcion-tipo-doc"
@@ -8137,7 +8167,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   </label>
                   <select
                     id="recepcion-tipo-doc"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={recepcionForm.tipo_documento}
                     onChange={(e) =>
                       setRecepcionForm({
@@ -8167,7 +8197,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     required={tanqueRecepcion?.requiere_documento !== false}
                     maxLength={100}
                     placeholder="F001-00012345"
-                    className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={recepcionForm.numero_documento}
                     onChange={(e) =>
                       setRecepcionForm({ ...recepcionForm, numero_documento: e.target.value })
@@ -8197,7 +8227,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 <input
                   id="recepcion-fecha"
                   type="datetime-local"
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={recibidoEn}
                   onChange={(e) => {
                     setRecibidoEn(e.target.value);
@@ -8234,9 +8264,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               </div>
               <button
                 onClick={() => setModalHistorialRecepcionesAbierto(false)}
-                className="text-slate-400 hover:text-slate-900 text-2xl"
+                aria-label="Cerrar"
+                className="text-slate-400 hover:text-slate-900"
               >
-                ×
+                <X className="w-5 h-5" />
               </button>
             </div>
 
@@ -8267,7 +8298,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   Todavía no hay recepciones registradas.
                 </p>
               ) : (
-                <table className="w-full text-left border-collapse">
+                <table className="w-full min-w-max text-left border-collapse">
                   <thead className="bg-slate-50">
                     <tr>
                       <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
@@ -8595,7 +8626,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   id="motivo-anulacion-recepcion"
                   rows={3}
                   maxLength={500}
-                  className="w-full border border-slate-200 rounded-xl p-3 outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   placeholder="Ej: se cargó la factura de otra cisterna"
                   value={motivoAnulacionRecepcion}
                   onChange={(e) => setMotivoAnulacionRecepcion(e.target.value)}

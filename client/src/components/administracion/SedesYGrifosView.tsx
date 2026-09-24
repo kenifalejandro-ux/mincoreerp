@@ -139,51 +139,55 @@ export default function SedesYGrifosView() {
             </div>
           </div>
 
-          <table className="w-full text-sm border-collapse">
-            <thead>
-              <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
-                <th className="p-2">Grifo interno</th>
-                <th className="p-2 text-right">Tanques activos</th>
-                <th className="p-2 text-right">Equipos activos</th>
-                <th className="p-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {sede.grifos.map((g) => (
-                <tr key={g.id} className={`border-b ${g.activo ? "" : "text-slate-400"}`}>
-                  <td className="p-2">
-                    <div className="font-medium">{g.nombre}</div>
-                    {!g.activo && <div className="text-[11px]">Dado de baja: {g.motivo_baja}</div>}
-                  </td>
-                  <td className="p-2 text-right">{g.tanques_activos}</td>
-                  <td className="p-2 text-right">{g.equipos_activos}</td>
-                  <td className="p-2 text-right whitespace-nowrap space-x-2">
-                    <button
-                      type="button"
-                      className={boton}
-                      disabled={trabajando}
-                      onClick={() => renombrar("grifo", g.id, g.nombre)}
-                    >
-                      Renombrar
-                    </button>
-                    <button
-                      type="button"
-                      className={boton}
-                      disabled={trabajando}
-                      title={
-                        g.activo && (g.tanques_activos > 0 || g.equipos_activos > 0)
-                          ? "Primero mueve sus tanques y equipos a otro grifo"
-                          : undefined
-                      }
-                      onClick={() => cambiarEstado("grifo", g.id, g.activo, g.nombre)}
-                    >
-                      {g.activo ? "Dar de baja" : "Reactivar"}
-                    </button>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-max text-sm border-collapse">
+              <thead>
+                <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
+                  <th className="p-2">Grifo interno</th>
+                  <th className="p-2 text-right">Tanques activos</th>
+                  <th className="p-2 text-right">Equipos activos</th>
+                  <th className="p-2" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sede.grifos.map((g) => (
+                  <tr key={g.id} className={`border-b ${g.activo ? "" : "text-slate-400"}`}>
+                    <td className="p-2">
+                      <div className="font-medium">{g.nombre}</div>
+                      {!g.activo && (
+                        <div className="text-[11px]">Dado de baja: {g.motivo_baja}</div>
+                      )}
+                    </td>
+                    <td className="p-2 text-right">{g.tanques_activos}</td>
+                    <td className="p-2 text-right">{g.equipos_activos}</td>
+                    <td className="p-2 text-right whitespace-nowrap space-x-2">
+                      <button
+                        type="button"
+                        className={boton}
+                        disabled={trabajando}
+                        onClick={() => renombrar("grifo", g.id, g.nombre)}
+                      >
+                        Renombrar
+                      </button>
+                      <button
+                        type="button"
+                        className={boton}
+                        disabled={trabajando}
+                        title={
+                          g.activo && (g.tanques_activos > 0 || g.equipos_activos > 0)
+                            ? "Primero mueve sus tanques y equipos a otro grifo"
+                            : undefined
+                        }
+                        onClick={() => cambiarEstado("grifo", g.id, g.activo, g.nombre)}
+                      >
+                        {g.activo ? "Dar de baja" : "Reactivar"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           {sede.activo && (
             <form onSubmit={(e) => crearGrifo(e, sede)} className="flex flex-wrap gap-2 mt-3">

@@ -35,6 +35,7 @@
 // vista). El consumo TOTAL de un vehículo/conductor sí suma las dos cosas
 // -- ahí el origen del combustible no importa, importa cuánto gastó.
 
+import { Download, FileSpreadsheet } from "lucide-react";
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 
 import { useSedes } from "./comunes/useSedes";
@@ -349,7 +350,7 @@ export default function HistoricoCliente() {
           <select
             value={vista}
             onChange={(e) => setVista(e.target.value as Vista)}
-            className="rounded border border-gray-300 px-2 py-1"
+            className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
           >
             {VISTAS.map((v) => (
               <option key={v.valor} value={v.valor}>
@@ -364,7 +365,7 @@ export default function HistoricoCliente() {
             type="date"
             value={desde}
             onChange={(e) => setDesde(e.target.value)}
-            className="rounded border border-gray-300 px-2 py-1"
+            className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
           />
         </label>
         <label className="flex flex-col text-sm">
@@ -373,7 +374,7 @@ export default function HistoricoCliente() {
             type="date"
             value={hasta}
             onChange={(e) => setHasta(e.target.value)}
-            className="rounded border border-gray-300 px-2 py-1"
+            className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
           />
         </label>
         {VISTAS_CON_PERIODO.has(vista) && (
@@ -382,7 +383,7 @@ export default function HistoricoCliente() {
             <select
               value={agrupacion}
               onChange={(e) => setAgrupacion(e.target.value as Agrupacion)}
-              className="rounded border border-gray-300 px-2 py-1"
+              className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
             >
               {OPCIONES_AGRUPACION.map((o) => (
                 <option key={o.valor} value={o.valor}>
@@ -398,7 +399,7 @@ export default function HistoricoCliente() {
             <select
               value={filtroSede}
               onChange={(e) => setFiltroSede(e.target.value)}
-              className="rounded border border-gray-300 px-2 py-1"
+              className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
             >
               <option value="">Toda la empresa</option>
               {sedes
@@ -431,7 +432,8 @@ export default function HistoricoCliente() {
             className="px-4 py-2  bg-[#192526]  text-slate-500 hover:bg-[#1e2128] border border-[#2a2e37] font-medium rounded-xl transition-all cursor-pointer text-sm flex items-center gap-2"
             title="Elegir el Excel con el histórico real del cliente (2025 a hoy)"
           >
-            <span>📊 Importar Excel</span>
+            <FileSpreadsheet className="w-4 h-4 shrink-0" />
+            <span>Importar Excel</span>
             <input
               type="file"
               accept=".xlsx,.xls"
@@ -443,10 +445,11 @@ export default function HistoricoCliente() {
             type="button"
             onClick={handleExportar}
             disabled={filasDeLaVista().length === 0}
-            className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
             title="Exportar la vista actual a CSV"
           >
-            ⬇️ Exportar
+            <Download className="w-4 h-4 shrink-0" />
+            Exportar
           </button>
         </div>
       </div>
@@ -459,7 +462,7 @@ export default function HistoricoCliente() {
       )}
 
       {!cargando && filasDeLaVista().length > 0 && (
-        <div className="mx-4 mt-4 grid grid-cols-3 gap-3 rounded-xl bg-slate-50 border border-slate-200 p-4">
+        <div className="mx-4 mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-xl bg-slate-50 border border-slate-200 p-4">
           <div>
             <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Vales</p>
             <p className="text-xl font-bold text-slate-800">
@@ -523,64 +526,74 @@ function EstadoVacio({ cargando }: { cargando: boolean }) {
 function TablaDespachos({ filas, cargando }: { filas: DespachoFila[]; cargando: boolean }) {
   if (filas.length === 0) return <EstadoVacio cargando={cargando} />;
   return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="border-b text-left text-gray-600">
-          <th className="py-1 pr-2">Fecha</th>
-          <th className="py-1 pr-2">Vale</th>
-          <th className="py-1 pr-2">Conductor</th>
-          <th className="py-1 pr-2 text-right">Cantidad</th>
-          <th className="py-1 pr-2 text-right">Costo total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {filas.map((d) => (
-          <tr key={d.id} className={`border-b ${d.anulada_en ? "text-gray-400 line-through" : ""}`}>
-            <td className="py-1 pr-2">{formatearFecha(d.despachado_en)}</td>
-            <td className="py-1 pr-2">
-              {d.serie_talonario && d.n_vale ? `${d.serie_talonario}-${d.n_vale}` : "—"}
-            </td>
-            <td className="py-1 pr-2">{d.conductor_nombre ?? "—"}</td>
-            <td className="py-1 pr-2 text-right">{formatearNumero(d.cantidad)}</td>
-            <td className="py-1 pr-2 text-right">{formatearNumero(d.costo_total)}</td>
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-max text-sm">
+        <thead>
+          <tr className="border-b text-left text-gray-600">
+            <th className="py-1 pr-2">Fecha</th>
+            <th className="py-1 pr-2">Vale</th>
+            <th className="py-1 pr-2">Conductor</th>
+            <th className="py-1 pr-2 text-right">Cantidad</th>
+            <th className="py-1 pr-2 text-right">Costo total</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {filas.map((d) => (
+            <tr
+              key={d.id}
+              className={`border-b ${d.anulada_en ? "text-gray-400 line-through" : ""}`}
+            >
+              <td className="py-1 pr-2">{formatearFecha(d.despachado_en)}</td>
+              <td className="py-1 pr-2">
+                {d.serie_talonario && d.n_vale ? `${d.serie_talonario}-${d.n_vale}` : "—"}
+              </td>
+              <td className="py-1 pr-2">{d.conductor_nombre ?? "—"}</td>
+              <td className="py-1 pr-2 text-right">{formatearNumero(d.cantidad)}</td>
+              <td className="py-1 pr-2 text-right">{formatearNumero(d.costo_total)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
 function TablaRecepciones({ filas, cargando }: { filas: RecepcionFila[]; cargando: boolean }) {
   if (filas.length === 0) return <EstadoVacio cargando={cargando} />;
   return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="border-b text-left text-gray-600">
-          <th className="py-1 pr-2">Fecha</th>
-          <th className="py-1 pr-2">Tanque</th>
-          <th className="py-1 pr-2">Proveedor</th>
-          <th className="py-1 pr-2">Documento</th>
-          <th className="py-1 pr-2 text-right">Cantidad</th>
-          <th className="py-1 pr-2 text-right">Costo total</th>
-        </tr>
-      </thead>
-      <tbody>
-        {filas.map((r) => (
-          <tr key={r.id} className={`border-b ${r.anulada_en ? "text-gray-400 line-through" : ""}`}>
-            <td className="py-1 pr-2">{formatearFecha(r.recibido_en)}</td>
-            <td className="py-1 pr-2">{r.tanque_nombre}</td>
-            <td className="py-1 pr-2">{r.grifo_nombre}</td>
-            <td className="py-1 pr-2">
-              {r.numero_documento
-                ? `${r.tipo_documento === "factura" ? "Factura" : "Guía"} ${r.numero_documento}`
-                : "—"}
-            </td>
-            <td className="py-1 pr-2 text-right">{formatearNumero(r.cantidad)}</td>
-            <td className="py-1 pr-2 text-right">{formatearNumero(r.costo_total)}</td>
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-max text-sm">
+        <thead>
+          <tr className="border-b text-left text-gray-600">
+            <th className="py-1 pr-2">Fecha</th>
+            <th className="py-1 pr-2">Tanque</th>
+            <th className="py-1 pr-2">Proveedor</th>
+            <th className="py-1 pr-2">Documento</th>
+            <th className="py-1 pr-2 text-right">Cantidad</th>
+            <th className="py-1 pr-2 text-right">Costo total</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {filas.map((r) => (
+            <tr
+              key={r.id}
+              className={`border-b ${r.anulada_en ? "text-gray-400 line-through" : ""}`}
+            >
+              <td className="py-1 pr-2">{formatearFecha(r.recibido_en)}</td>
+              <td className="py-1 pr-2">{r.tanque_nombre}</td>
+              <td className="py-1 pr-2">{r.grifo_nombre}</td>
+              <td className="py-1 pr-2">
+                {r.numero_documento
+                  ? `${r.tipo_documento === "factura" ? "Factura" : "Guía"} ${r.numero_documento}`
+                  : "—"}
+              </td>
+              <td className="py-1 pr-2 text-right">{formatearNumero(r.cantidad)}</td>
+              <td className="py-1 pr-2 text-right">{formatearNumero(r.costo_total)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -595,39 +608,43 @@ function TablaConductor({
 }) {
   if (filas.length === 0) return <EstadoVacio cargando={cargando} />;
   return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="border-b text-left text-gray-600">
-          {agrupacion && <th className="py-1 pr-2">Período</th>}
-          <th className="py-1 pr-2">Conductor</th>
-          <th className="py-1 pr-2">DNI</th>
-          <th className="py-1 pr-2 text-right">Vales</th>
-          <th className="py-1 pr-2 text-right">Litros</th>
-          <th className="py-1 pr-2 text-right">Galones</th>
-          <th className="py-1 pr-2 text-right">Total costo</th>
-          <th className="py-1 pr-2">Último despacho</th>
-        </tr>
-      </thead>
-      <tbody>
-        {filas.map((c, i) => (
-          <tr
-            key={`${c.periodo ?? ""}-${c.conductor_nombre}-${c.conductor_dni ?? ""}-${i}`}
-            className="border-b"
-          >
-            {agrupacion && (
-              <td className="py-1 pr-2">{c.periodo && formatearPeriodo(c.periodo, agrupacion)}</td>
-            )}
-            <td className="py-1 pr-2">{c.conductor_nombre}</td>
-            <td className="py-1 pr-2">{c.conductor_dni ?? "—"}</td>
-            <td className="py-1 pr-2 text-right">{c.cantidad_vales}</td>
-            <td className="py-1 pr-2 text-right">{formatearNumero(c.total_litros)}</td>
-            <td className="py-1 pr-2 text-right">{formatearNumero(c.total_galones)}</td>
-            <td className="py-1 pr-2 text-right">{formatearNumero(c.total_costo)}</td>
-            <td className="py-1 pr-2">{formatearFecha(c.ultimo_despacho)}</td>
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-max text-sm">
+        <thead>
+          <tr className="border-b text-left text-gray-600">
+            {agrupacion && <th className="py-1 pr-2">Período</th>}
+            <th className="py-1 pr-2">Conductor</th>
+            <th className="py-1 pr-2">DNI</th>
+            <th className="py-1 pr-2 text-right">Vales</th>
+            <th className="py-1 pr-2 text-right">Litros</th>
+            <th className="py-1 pr-2 text-right">Galones</th>
+            <th className="py-1 pr-2 text-right">Total costo</th>
+            <th className="py-1 pr-2">Último despacho</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {filas.map((c, i) => (
+            <tr
+              key={`${c.periodo ?? ""}-${c.conductor_nombre}-${c.conductor_dni ?? ""}-${i}`}
+              className="border-b"
+            >
+              {agrupacion && (
+                <td className="py-1 pr-2">
+                  {c.periodo && formatearPeriodo(c.periodo, agrupacion)}
+                </td>
+              )}
+              <td className="py-1 pr-2">{c.conductor_nombre}</td>
+              <td className="py-1 pr-2">{c.conductor_dni ?? "—"}</td>
+              <td className="py-1 pr-2 text-right">{c.cantidad_vales}</td>
+              <td className="py-1 pr-2 text-right">{formatearNumero(c.total_litros)}</td>
+              <td className="py-1 pr-2 text-right">{formatearNumero(c.total_galones)}</td>
+              <td className="py-1 pr-2 text-right">{formatearNumero(c.total_costo)}</td>
+              <td className="py-1 pr-2">{formatearFecha(c.ultimo_despacho)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -642,38 +659,42 @@ function TablaVehiculo({
 }) {
   if (filas.length === 0) return <EstadoVacio cargando={cargando} />;
   return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="border-b text-left text-gray-600">
-          <th className="py-1 pr-2">#</th>
-          {agrupacion && <th className="py-1 pr-2">Período</th>}
-          <th className="py-1 pr-2">Placa</th>
-          <th className="py-1 pr-2">Tipo</th>
-          <th className="py-1 pr-2 text-right">Vales</th>
-          <th className="py-1 pr-2 text-right">Litros</th>
-          <th className="py-1 pr-2 text-right">Galones</th>
-          <th className="py-1 pr-2 text-right">Total costo</th>
-          <th className="py-1 pr-2">Último despacho</th>
-        </tr>
-      </thead>
-      <tbody>
-        {filas.map((v, i) => (
-          <tr key={`${v.periodo ?? ""}-${v.equipo_id}-${i}`} className="border-b">
-            <td className="py-1 pr-2">{i + 1}</td>
-            {agrupacion && (
-              <td className="py-1 pr-2">{v.periodo && formatearPeriodo(v.periodo, agrupacion)}</td>
-            )}
-            <td className="py-1 pr-2">{v.placa_codigo ?? `Equipo #${v.equipo_id}`}</td>
-            <td className="py-1 pr-2">{v.equipo_tipo ?? "—"}</td>
-            <td className="py-1 pr-2 text-right">{v.cantidad_vales}</td>
-            <td className="py-1 pr-2 text-right">{formatearNumero(v.total_litros)}</td>
-            <td className="py-1 pr-2 text-right">{formatearNumero(v.total_galones)}</td>
-            <td className="py-1 pr-2 text-right">{formatearNumero(v.total_costo)}</td>
-            <td className="py-1 pr-2">{formatearFecha(v.ultimo_despacho)}</td>
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-max text-sm">
+        <thead>
+          <tr className="border-b text-left text-gray-600">
+            <th className="py-1 pr-2">#</th>
+            {agrupacion && <th className="py-1 pr-2">Período</th>}
+            <th className="py-1 pr-2">Placa</th>
+            <th className="py-1 pr-2">Tipo</th>
+            <th className="py-1 pr-2 text-right">Vales</th>
+            <th className="py-1 pr-2 text-right">Litros</th>
+            <th className="py-1 pr-2 text-right">Galones</th>
+            <th className="py-1 pr-2 text-right">Total costo</th>
+            <th className="py-1 pr-2">Último despacho</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {filas.map((v, i) => (
+            <tr key={`${v.periodo ?? ""}-${v.equipo_id}-${i}`} className="border-b">
+              <td className="py-1 pr-2">{i + 1}</td>
+              {agrupacion && (
+                <td className="py-1 pr-2">
+                  {v.periodo && formatearPeriodo(v.periodo, agrupacion)}
+                </td>
+              )}
+              <td className="py-1 pr-2">{v.placa_codigo ?? `Equipo #${v.equipo_id}`}</td>
+              <td className="py-1 pr-2">{v.equipo_tipo ?? "—"}</td>
+              <td className="py-1 pr-2 text-right">{v.cantidad_vales}</td>
+              <td className="py-1 pr-2 text-right">{formatearNumero(v.total_litros)}</td>
+              <td className="py-1 pr-2 text-right">{formatearNumero(v.total_galones)}</td>
+              <td className="py-1 pr-2 text-right">{formatearNumero(v.total_costo)}</td>
+              <td className="py-1 pr-2">{formatearFecha(v.ultimo_despacho)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -701,45 +722,47 @@ function TablaGrifo({
         Interno: <span className="font-semibold">{totalInterno.toLocaleString("es-PE")} L</span> ·
         Externo: <span className="font-semibold">{totalExterno.toLocaleString("es-PE")} L</span>
       </p>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b text-left text-gray-600">
-            {agrupacion && <th className="py-1 pr-2">Período</th>}
-            <th className="py-1 pr-2">Tipo</th>
-            {conGrifo && <th className="py-1 pr-2">Grifo</th>}
-            <th className="py-1 pr-2">Origen</th>
-            <th className="py-1 pr-2 text-right">Vales</th>
-            <th className="py-1 pr-2 text-right">Litros</th>
-            <th className="py-1 pr-2 text-right">Galones</th>
-            <th className="py-1 pr-2 text-right">Total costo</th>
-            <th className="py-1 pr-2">Último despacho</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filas.map((f, i) => (
-            <tr
-              key={`${f.periodo ?? ""}-${f.tipo_grifo}-${f.grifo_nombre}-${i}`}
-              className="border-b"
-            >
-              {agrupacion && (
-                <td className="py-1 pr-2">
-                  {f.periodo && formatearPeriodo(f.periodo, agrupacion)}
-                </td>
-              )}
-              <td className="py-1 pr-2">
-                {f.tipo_grifo === "interno" ? "Grifo interno" : "Proveedor"}
-              </td>
-              {conGrifo && <td className="py-1 pr-2">{f.grifo_interno ?? "—"}</td>}
-              <td className="py-1 pr-2">{f.grifo_nombre}</td>
-              <td className="py-1 pr-2 text-right">{f.cantidad_vales}</td>
-              <td className="py-1 pr-2 text-right">{formatearNumero(f.total_litros)}</td>
-              <td className="py-1 pr-2 text-right">{formatearNumero(f.total_galones)}</td>
-              <td className="py-1 pr-2 text-right">{formatearNumero(f.total_costo)}</td>
-              <td className="py-1 pr-2">{formatearFecha(f.ultimo_despacho)}</td>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-max text-sm">
+          <thead>
+            <tr className="border-b text-left text-gray-600">
+              {agrupacion && <th className="py-1 pr-2">Período</th>}
+              <th className="py-1 pr-2">Tipo</th>
+              {conGrifo && <th className="py-1 pr-2">Grifo</th>}
+              <th className="py-1 pr-2">Origen</th>
+              <th className="py-1 pr-2 text-right">Vales</th>
+              <th className="py-1 pr-2 text-right">Litros</th>
+              <th className="py-1 pr-2 text-right">Galones</th>
+              <th className="py-1 pr-2 text-right">Total costo</th>
+              <th className="py-1 pr-2">Último despacho</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {filas.map((f, i) => (
+              <tr
+                key={`${f.periodo ?? ""}-${f.tipo_grifo}-${f.grifo_nombre}-${i}`}
+                className="border-b"
+              >
+                {agrupacion && (
+                  <td className="py-1 pr-2">
+                    {f.periodo && formatearPeriodo(f.periodo, agrupacion)}
+                  </td>
+                )}
+                <td className="py-1 pr-2">
+                  {f.tipo_grifo === "interno" ? "Grifo interno" : "Proveedor"}
+                </td>
+                {conGrifo && <td className="py-1 pr-2">{f.grifo_interno ?? "—"}</td>}
+                <td className="py-1 pr-2">{f.grifo_nombre}</td>
+                <td className="py-1 pr-2 text-right">{f.cantidad_vales}</td>
+                <td className="py-1 pr-2 text-right">{formatearNumero(f.total_litros)}</td>
+                <td className="py-1 pr-2 text-right">{formatearNumero(f.total_galones)}</td>
+                <td className="py-1 pr-2 text-right">{formatearNumero(f.total_costo)}</td>
+                <td className="py-1 pr-2">{formatearFecha(f.ultimo_despacho)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

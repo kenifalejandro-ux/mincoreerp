@@ -1,5 +1,6 @@
 import {
   ChevronDown,
+  ChevronsLeft,
   Droplets,
   Fuel,
   History,
@@ -27,9 +28,11 @@ const SUBMENU_COMBUSTIBLE: { tab: string; label: string; Icono: LucideIcon }[] =
 interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: any) => void;
+  abierto: boolean;
+  onToggle: () => void;
 }
 
-export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
+export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: SidebarProps) {
   const { usuario } = useAuth();
 
   const tabs = MODULOS_CLIENTE.filter((modulo) => usuario?.modulosPermitidos.includes(modulo.id));
@@ -41,11 +44,25 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
   const [combustibleDesplegado, setCombustibleDesplegado] = useState(false);
 
   return (
-    <aside className="w-64 shrink-0 overflow-y-auto pb-6 bg-[#192526]  border-l-3 border-[#BADC1E] flex flex-col shadow-[4px_0_24px_rgba(0,0,0,0.02)]">
-      <div className="p-4 border-b border-slate-100">
-        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+    <aside
+      className={`absolute inset-y-0 left-0 z-40 w-64 max-w-[85vw] shrink-0 overflow-y-auto pb-6 bg-[#192526] border-l-3 border-[#BADC1E] flex flex-col shadow-[4px_0_24px_rgba(0,0,0,0.02)] transition-transform duration-300 ease-out lg:static lg:transition-[width] ${
+        abierto
+          ? "translate-x-0 lg:w-64"
+          : "-translate-x-full lg:translate-x-0 lg:w-0 lg:overflow-hidden lg:border-l-0"
+      }`}
+    >
+      <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-2">
+        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap">
           Módulos Operativos
         </span>
+        <button
+          onClick={onToggle}
+          aria-label="Ocultar menú"
+          title="Ocultar menú"
+          className="p-1 rounded text-slate-400 hover:text-[#BADC1E] hover:bg-white/5 transition-colors shrink-0"
+        >
+          <ChevronsLeft size={18} />
+        </button>
       </div>
 
       <nav className="flex-1 py-4 flex flex-col gap-1">
@@ -75,7 +92,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
             <div key={tab.id}>
               <button
                 onClick={() => setActiveTab(esCombustible ? "combustible" : tab.id)}
-                className={`group w-full text-left px-6 py-3.5 flex  items-center gap-3 transition-all relative ${
+                className={`group w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all relative ${
                   isActive
                     ? "bg-[#BADC1E] text-[#0A1014] hover:bg-[#BADC1E] font-semibold"
                     : "text-slate-500  hover:bg-[#BADC1E] font-medium"
@@ -85,11 +102,11 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
                   <div className="absolute left-0 top-0 bottom-0 w-1.5 z-2 bg-[#BADC1E]" />
                 )}
 
-                <span
-                  className={`${isActive ? "text-[#0A1014]" : "text-slate-400 group-hover:text-[#0A1014]"}`}
-                >
-                  {tab.icono}
-                </span>
+                <tab.icono
+                  size={18}
+                  strokeWidth={2}
+                  className={`shrink-0 ${isActive ? "text-[#0A1014]" : "text-slate-400 group-hover:text-[#0A1014]"}`}
+                />
                 <span className="tracking-tight flex-1">{tab.label}</span>
                 {esCombustible && (
                   <span
@@ -170,7 +187,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
         {usuario?.rol === "admin" && (
           <button
             onClick={() => setActiveTab("administracion")}
-            className={`w-full text-left px-6 py-3.5 flex items-center gap-3 transition-all relative ${
+            className={`w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all relative ${
               activeTab === "administracion"
                 ? "bg-[#BADC1E] text-[#0A1014] font-semibold"
                 : "text-slate-500 hover:bg-[#BADC1E] hover:text-[#0A1014] font-medium"
@@ -190,7 +207,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
 
         <button
           onClick={() => setActiveTab("facturacion")}
-          className={`w-full text-left px-6 py-3.5 flex items-center gap-3 transition-all relative ${
+          className={`w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all relative ${
             activeTab === "facturacion"
               ? "bg-[#BADC1E] text-[#0A1014] font-semibold"
               : "text-slate-500 hover:bg-[#BADC1E] hover:text-[#0A1014] font-medium"

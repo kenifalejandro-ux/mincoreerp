@@ -74,7 +74,7 @@ export function CamposPrecintoVarilla({
               type="text"
               required={!v.sinPrecinto}
               disabled={v.sinPrecinto}
-              className="w-full border border-slate-200 rounded-xl p-3 outline-none disabled:bg-slate-100"
+              className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none disabled:bg-slate-100"
               placeholder="Número impreso en el sello"
               value={v.numero}
               onChange={(e) => onCambiar(p.id, { ...v, numero: e.target.value })}
@@ -126,7 +126,7 @@ export function CamposPrecintoRecepcion({
             id={`precinto-nuevo-${p.id}`}
             type="text"
             required
-            className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+            className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
             placeholder="Número del sello que se coloca"
             value={valores[p.id] ?? ""}
             onChange={(e) => onCambiar(p.id, e.target.value)}
@@ -267,59 +267,61 @@ export function VentanaPrecintos({
           {!puntos || puntos.length === 0 ? (
             <p className="text-sm text-slate-400">Este tanque todavía no tiene puntos.</p>
           ) : (
-            <table className="w-full text-sm border-collapse">
-              <thead>
-                <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
-                  <th className="p-2">Punto</th>
-                  <th className="p-2">Precinto vigente</th>
-                  <th className="p-2">Desde</th>
-                  <th className="p-2" />
-                </tr>
-              </thead>
-              <tbody>
-                {puntos.map((p) => (
-                  <tr key={p.id} className={`border-b ${p.activo ? "" : "text-slate-400"}`}>
-                    <td className="p-2">
-                      <div className="font-medium">{p.nombre}</div>
-                      <div className="text-[11px] text-slate-400">
-                        {!p.activo
-                          ? `Dado de baja: ${p.motivo_baja ?? ""}`
-                          : p.se_abre_en_recepcion
-                            ? "Se abre al recibir"
-                            : "No se abre al recibir"}
-                      </div>
-                    </td>
-                    <td className="p-2 font-mono">{p.numero_vigente ?? "—"}</td>
-                    <td className="p-2">
-                      <div>{fecha(p.colocado_en)}</div>
-                      <div className="text-[11px] text-slate-400">
-                        {p.colocado_por ?? ""} {p.motivo_vigente ? `· ${p.motivo_vigente}` : ""}
-                      </div>
-                    </td>
-                    <td className="p-2 text-right whitespace-nowrap">
-                      {p.activo && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => setCambio({ puntoId: p.id, numero: "", motivo: "" })}
-                            className="px-2 py-1 text-xs border border-slate-200 rounded-lg hover:bg-slate-50"
-                          >
-                            Cambiar
-                          </button>{" "}
-                          <button
-                            type="button"
-                            onClick={() => darDeBaja(p)}
-                            className="px-2 py-1 text-xs text-red-600 border border-red-200 rounded-lg hover:bg-red-50"
-                          >
-                            Dar de baja
-                          </button>
-                        </>
-                      )}
-                    </td>
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-max text-sm border-collapse">
+                <thead>
+                  <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
+                    <th className="p-2">Punto</th>
+                    <th className="p-2">Precinto vigente</th>
+                    <th className="p-2">Desde</th>
+                    <th className="p-2" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {puntos.map((p) => (
+                    <tr key={p.id} className={`border-b ${p.activo ? "" : "text-slate-400"}`}>
+                      <td className="p-2">
+                        <div className="font-medium">{p.nombre}</div>
+                        <div className="text-[11px] text-slate-400">
+                          {!p.activo
+                            ? `Dado de baja: ${p.motivo_baja ?? ""}`
+                            : p.se_abre_en_recepcion
+                              ? "Se abre al recibir"
+                              : "No se abre al recibir"}
+                        </div>
+                      </td>
+                      <td className="p-2 font-mono">{p.numero_vigente ?? "—"}</td>
+                      <td className="p-2">
+                        <div>{fecha(p.colocado_en)}</div>
+                        <div className="text-[11px] text-slate-400">
+                          {p.colocado_por ?? ""} {p.motivo_vigente ? `· ${p.motivo_vigente}` : ""}
+                        </div>
+                      </td>
+                      <td className="p-2 text-right whitespace-nowrap">
+                        {p.activo && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setCambio({ puntoId: p.id, numero: "", motivo: "" })}
+                              className="px-2 py-1 text-xs border border-slate-200 rounded-lg hover:bg-slate-50"
+                            >
+                              Cambiar
+                            </button>{" "}
+                            <button
+                              type="button"
+                              onClick={() => darDeBaja(p)}
+                              className="px-2 py-1 text-xs text-red-600 border border-red-200 rounded-lg hover:bg-red-50"
+                            >
+                              Dar de baja
+                            </button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </section>
 
@@ -339,7 +341,7 @@ export function VentanaPrecintos({
             <input
               id="precinto-cambio-numero"
               required
-              className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white"
+              className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white"
               value={cambio.numero}
               onChange={(e) => setCambio({ ...cambio, numero: e.target.value })}
             />
@@ -349,7 +351,7 @@ export function VentanaPrecintos({
             <input
               id="precinto-cambio-motivo"
               required
-              className="w-full border border-slate-200 rounded-xl p-3 outline-none bg-white"
+              className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white"
               placeholder="Ej.: se cortó para cambiar el filtro"
               value={cambio.motivo}
               onChange={(e) => setCambio({ ...cambio, motivo: e.target.value })}
@@ -386,7 +388,7 @@ export function VentanaPrecintos({
                 id="precinto-punto-nombre"
                 required
                 maxLength={60}
-                className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                 placeholder="Boca de llenado, drenaje..."
                 value={nuevo.nombre}
                 onChange={(e) => setNuevo({ ...nuevo, nombre: e.target.value })}
@@ -400,7 +402,7 @@ export function VentanaPrecintos({
                 id="precinto-punto-numero"
                 required
                 maxLength={40}
-                className="w-full border border-slate-200 rounded-xl p-3 outline-none"
+                className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                 value={nuevo.numero}
                 onChange={(e) => setNuevo({ ...nuevo, numero: e.target.value })}
               />
@@ -437,35 +439,37 @@ export function VentanaPrecintos({
             {historial.length === 0 ? (
               <p className="text-sm text-slate-400">Sin movimientos.</p>
             ) : (
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
-                    <th className="p-2">Cuándo</th>
-                    <th className="p-2">Punto</th>
-                    <th className="p-2">Qué pasó</th>
-                    <th className="p-2">Quién</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {historial.map((h, i) => (
-                    <tr
-                      key={`${h.tipo}-${h.ocurrido_en}-${i}`}
-                      className={`border-b ${h.tipo === "no_coincide" ? "text-red-700" : ""}`}
-                    >
-                      <td className="p-2 whitespace-nowrap">{fecha(h.ocurrido_en)}</td>
-                      <td className="p-2">{h.punto}</td>
-                      <td className="p-2">
-                        {h.tipo === "colocacion"
-                          ? `Se colocó el ${h.numero} · ${h.motivo ?? ""}`
-                          : h.numero === null
-                            ? `Varilla: no había precinto (registrado ${h.numero_esperado})`
-                            : `Varilla: se vio el ${h.numero}, registrado ${h.numero_esperado}`}
-                      </td>
-                      <td className="p-2">{h.persona ?? "—"}</td>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-max text-sm border-collapse">
+                  <thead>
+                    <tr className="text-left text-xs font-bold text-slate-700 uppercase border-b">
+                      <th className="p-2">Cuándo</th>
+                      <th className="p-2">Punto</th>
+                      <th className="p-2">Qué pasó</th>
+                      <th className="p-2">Quién</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {historial.map((h, i) => (
+                      <tr
+                        key={`${h.tipo}-${h.ocurrido_en}-${i}`}
+                        className={`border-b ${h.tipo === "no_coincide" ? "text-red-700" : ""}`}
+                      >
+                        <td className="p-2 whitespace-nowrap">{fecha(h.ocurrido_en)}</td>
+                        <td className="p-2">{h.punto}</td>
+                        <td className="p-2">
+                          {h.tipo === "colocacion"
+                            ? `Se colocó el ${h.numero} · ${h.motivo ?? ""}`
+                            : h.numero === null
+                              ? `Varilla: no había precinto (registrado ${h.numero_esperado})`
+                              : `Varilla: se vio el ${h.numero}, registrado ${h.numero_esperado}`}
+                        </td>
+                        <td className="p-2">{h.persona ?? "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </section>
         )}
