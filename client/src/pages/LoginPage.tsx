@@ -291,8 +291,14 @@ export default function LoginPage() {
   }, [googleClientId, login]);
 
   return (
-    <div className="min-h-screen bg-[#DDF500] flex items-center justify-center px-4">
-      <div className="w-full max-w-sm">
+    <div
+      className="relative isolate min-h-screen flex items-center justify-center px-4 bg-[#DDF500]
+             before:content-[''] before:absolute before:inset-0 
+             before:bg-[url('/portada-login/womenofficer8.jpg')] 
+             before:bg-cover before:bg-center before:bg-no-repeat 
+             before:opacity-100 before:z-2"
+    >
+      <div className="relative z-10 w-full max-w-sm">
         <div className="flex flex-col items-center gap-3 mb-8">
           {/**logo-mincore */}
           <img
@@ -300,14 +306,13 @@ export default function LoginPage() {
             alt="MinCore"
             className="w-14 h-14 rounded-xl"
           />
-
-          <h1 className="text-xl font-light text-slate-900 tracking-tight">MinCore ERP</h1>
+          <h1 className="text-xl  font-light text-slate-900 tracking-tight">Mincore ERP</h1>
         </div>
 
         {modo === "olvide" ? (
           <form
             onSubmit={handleOlvide}
-            className="bg-[#1D2124] border border-slate-200 rounded-xl p-6 space-y-4 shadow-sm"
+            className="bg-[#FFFFFF] border  border-slate-200 rounded-xl p-6 space-y-4 shadow-sm"
           >
             <div>
               <label
@@ -418,7 +423,7 @@ export default function LoginPage() {
         ) : (
           <form
             onSubmit={handleSubmit}
-            className="bg-[#1D2124] border border-slate-200 rounded-xl p-6 space-y-4 shadow-sm"
+            className="bg-[#1D2124]/80  rounded-xl p-6 space-y-4 shadow-sm"
           >
             {/* Correo O DNI en el mismo campo (migración 0084): el grifero y
                 los conductores de ruta no tienen correo corporativo. `type`
