@@ -296,7 +296,7 @@ export default function LoginPage() {
              before:content-[''] before:absolute before:inset-0 
              before:bg-[url('/portada-login/womenofficer8.jpg')] 
              before:bg-cover before:bg-center before:bg-no-repeat 
-             before:opacity-100 before:z-2"
+             before:opacity-50 before:z-2"
     >
       <div className="relative z-10 w-full max-w-sm">
         <div className="flex flex-col items-center gap-3 mb-8">
