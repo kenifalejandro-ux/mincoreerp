@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import CambiarEstadoDialog from "./CambiarEstadoDialog";
+import CambiarPerfilDialog from "./CambiarPerfilDialog";
 import EliminarUsuarioDialog from "./EliminarUsuarioDialog";
 import PasswordInput from "./PasswordInput";
 import PlanYCuotasTenant from "./PlanYCuotasTenant";
@@ -11,6 +12,7 @@ import {
   type ModuloEstado,
   type EstadoModulo,
   type UsuarioPlataforma,
+  type RolUsuarioTenant,
   type DominioTenant as DominioTenantData,
   type SaludTenant as SaludTenantData,
   type TenantBackup,
@@ -30,6 +32,7 @@ import {
   listarUsuariosTenantApi,
   crearUsuarioApi,
   cambiarEstadoUsuarioApi,
+  cambiarPerfilUsuarioApi,
   eliminarUsuarioApi,
   obtenerModulosUsuarioApi,
   actualizarModulosUsuarioApi,
@@ -57,6 +60,8 @@ export default function TenantDetalleView({
   const [usuarioExpandido, setUsuarioExpandido] = useState<string | null>(null);
   const [dialogTenantAbierto, setDialogTenantAbierto] = useState(false);
   const [usuarioParaCambiarEstado, setUsuarioParaCambiarEstado] =
+    useState<UsuarioPlataforma | null>(null);
+  const [usuarioParaCambiarPerfil, setUsuarioParaCambiarPerfil] =
     useState<UsuarioPlataforma | null>(null);
   const [usuarioParaEliminar, setUsuarioParaEliminar] = useState<UsuarioPlataforma | null>(null);
 
@@ -142,6 +147,18 @@ export default function TenantDetalleView({
         />
       )}
 
+      {usuarioParaCambiarPerfil && (
+        <CambiarPerfilDialog
+          usuario={usuarioParaCambiarPerfil}
+          onConfirmar={async (rol, motivo) => {
+            await cambiarPerfilUsuarioApi(tenant.id, usuarioParaCambiarPerfil.id, rol, motivo);
+            setUsuarioParaCambiarPerfil(null);
+            await recargar();
+          }}
+          onCancelar={() => setUsuarioParaCambiarPerfil(null)}
+        />
+      )}
+
       {usuarioParaEliminar && (
         <EliminarUsuarioDialog
           entidadNombre={
@@ -214,7 +231,7 @@ export default function TenantDetalleView({
                   {u.email ?? u.dni ?? "sin identificador"} · {u.rol}
                 </p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center justify-end gap-3">
                 <span
                   className={`px-2 py-0.5 rounded-full text-xs ${
                     u.activo ? "bg-emerald-950 text-emerald-400" : "bg-slate-800 text-slate-400"
@@ -222,6 +239,12 @@ export default function TenantDetalleView({
                 >
                   {u.activo ? "Activo" : "Desactivado"}
                 </span>
+                <button
+                  onClick={() => setUsuarioParaCambiarPerfil(u)}
+                  className="text-xs text-slate-400 hover:text-slate-100 underline underline-offset-2"
+                >
+                  Cambiar perfil
+                </button>
                 <button
                   onClick={() => setUsuarioExpandido((v) => (v === u.id ? null : u.id))}
                   className="text-xs text-slate-400 hover:text-slate-100 underline underline-offset-2"
