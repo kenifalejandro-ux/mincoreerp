@@ -3202,6 +3202,9 @@ export class CombustibleController {
       const tenantId = getTenantId(req);
       const { ids } = req.validatedBody as MarcarAlertasLeidasCombustibleInput;
       await withTenant(tenantId, (client) => service.marcarAlertasLeidas(client, tenantId, ids));
+      await publicarEventoTenant(tenantId, "combustible.alertas_actualizadas", {
+        ids: ids ?? null,
+      });
       res.status(204).send();
     } catch {
       res.status(500).json({ error: "Error al marcar alertas como leídas" });
@@ -3253,6 +3256,11 @@ export class CombustibleController {
           autorevision: resuelta.autorevision,
         },
         contexto: contextoAuditoriaModulo(req),
+      });
+
+      await publicarEventoTenant(tenantId, "combustible.alerta_resuelta", {
+        alertaId,
+        tipo: resuelta.tipo,
       });
 
       res.json(resuelta);

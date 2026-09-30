@@ -519,7 +519,37 @@ describe("combustible: recepciones y costo ponderado (Fase C)", () => {
     expect(tanqueMalo.body.error).toContain("no existe en este tenant");
   });
 
-  it("rechaza la recepción si el tanque no tiene lectura vigente a esa fecha", async () => {
+  it("acepta una recepción cuando el saldo teórico ya quedó descontado por despachos sin nueva varilla", async () => {
+    const tanqueId = await crearTanque({ capacidad_total: 1000, nivel_actual: 1000 });
+    const equipo = await agente
+      .post("/api/erp/equipos")
+      .send({ placa_codigo: idUnico("EQ"), tipo: "VOLQUETE" });
+
+    const despacho = await agente.post("/api/erp/combustible/despachos").send({
+      origen: "tanque_propio",
+      combustible_id: tanqueId,
+      tipo_combustible: "diesel_b5",
+      tipo_destino: "equipo",
+      equipo_id: equipo.body.id,
+      serie_talonario: `S${Math.floor(Math.random() * 1e8).toString(36)}`,
+      n_vale: 1,
+      cantidad: 300,
+      lectura_contometro: 300,
+      costo_unitario: 16,
+    });
+    expect(despacho.status).toBe(201);
+
+    const res = await agente
+      .post("/api/erp/combustible/recepciones")
+      .send(payloadRecepcion(tanqueId, { cantidad: 200 }));
+
+    expect(res.status).toBe(201);
+    const estado = await agente.get(`/api/erp/combustible/${tanqueId}`);
+    expect(Number(estado.body.nivel_actual)).toBe(1000);
+    expect(Number(estado.body.nivel_teorico)).toBe(900);
+  });
+
+  it("rechaza la recepción si el tanque no tiene lectura vigente a esa fecha y tampoco un saldo teórico válido", async () => {
     const tanqueId = await crearTanque({ nivel_actual: 500 });
 
     // Fecha anterior al alta del tanque: la lectura `inicial` es posterior,

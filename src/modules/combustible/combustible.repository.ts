@@ -214,7 +214,9 @@ const COLUMNAS_TANQUE = `
        THEN (sv.surtidores->0->>'totalizador_actual')::numeric END AS totalizador_actual,
   ultima.nivel AS nivel_actual,
   ultima.leido_en AS fecha_actualizacion,
-  ROUND((ultima.nivel / c.capacidad_total) * 100, 2) AS porcentaje
+  ROUND((ultima.nivel / c.capacidad_total) * 100, 2) AS porcentaje,
+  teorico.nivel_teorico,
+  ROUND((teorico.nivel_teorico / c.capacidad_total) * 100, 2) AS porcentaje_teorico
 `;
 
 // LEFT JOIN LATERAL y no un subquery por columna: así la última lectura se
@@ -252,6 +254,41 @@ const JOIN_ULTIMA_LECTURA = `
       JOIN surtidores s ON s.id = st.surtidor_id AND s.tenant_id = c.tenant_id
      WHERE st.combustible_id = c.id AND st.desconectado_en IS NULL
   ) sv ON true
+`;
+
+const JOIN_NIVEL_TEORICO = `
+  LEFT JOIN LATERAL (
+    WITH ultima AS (
+      SELECT l.nivel, l.leido_en
+        FROM combustible_lecturas l
+       WHERE l.tenant_id = c.tenant_id AND l.combustible_id = c.id
+         AND l.anulada_en IS NULL AND l.leido_en <= CURRENT_TIMESTAMP
+       ORDER BY l.leido_en DESC, l.id DESC
+       LIMIT 1
+    ), movimientos AS (
+      SELECT
+        COALESCE((SELECT SUM(r.cantidad)
+                    FROM combustible_recepciones r
+                   WHERE r.tenant_id = c.tenant_id AND r.combustible_id = c.id
+                     AND r.anulada_en IS NULL
+                     AND r.recibido_en > COALESCE((SELECT leido_en FROM ultima), '-infinity'::timestamptz)
+                     AND r.recibido_en <= CURRENT_TIMESTAMP), 0) AS entradas,
+        COALESCE((SELECT SUM(d.cantidad)
+                    FROM combustible_despachos d
+                   WHERE d.tenant_id = c.tenant_id AND d.combustible_id = c.id
+                     AND d.anulada_en IS NULL
+                     AND d.despachado_en > COALESCE((SELECT leido_en FROM ultima), '-infinity'::timestamptz)
+                     AND d.despachado_en <= CURRENT_TIMESTAMP), 0) AS salidas
+    )
+    SELECT CASE
+      WHEN (SELECT nivel FROM ultima) IS NOT NULL THEN
+        (SELECT nivel FROM ultima) + movimientos.entradas - movimientos.salidas
+      WHEN movimientos.entradas <> 0 OR movimientos.salidas <> 0 THEN
+        movimientos.entradas - movimientos.salidas
+      ELSE NULL
+    END AS nivel_teorico
+    FROM movimientos
+  ) teorico ON true
 `;
 
 /** LA cuenta de la diferencia de recepción, compartida por el listado, la
@@ -336,7 +373,7 @@ export class CombustibleRepository {
     // Solo los tanques que el usuario ve (0100): su grifo o un surtidor suyo.
     const f = alcance ? filtroTanqueVisible(alcance, "c", 2) : { sql: "TRUE", valores: [] };
     const result = await client.query(
-      `SELECT ${COLUMNAS_TANQUE} FROM combustible c ${JOIN_ULTIMA_LECTURA}
+      `SELECT ${COLUMNAS_TANQUE} FROM combustible c ${JOIN_ULTIMA_LECTURA} ${JOIN_NIVEL_TEORICO}
        WHERE c.tenant_id = $1 AND ${f.sql} ORDER BY c.id ASC`,
       [tenantId, ...f.valores]
     );
@@ -346,7 +383,7 @@ export class CombustibleRepository {
 
   async findById(client: PoolClient, tenantId: string, id: number) {
     const result = await client.query(
-      `SELECT ${COLUMNAS_TANQUE} FROM combustible c ${JOIN_ULTIMA_LECTURA}
+      `SELECT ${COLUMNAS_TANQUE} FROM combustible c ${JOIN_ULTIMA_LECTURA} ${JOIN_NIVEL_TEORICO}
        WHERE c.id = $1 AND c.tenant_id = $2`,
       [id, tenantId]
     );
@@ -3960,6 +3997,64 @@ export class CombustibleRepository {
       [combustibleId, tenantId]
     );
     return result.rows[0] ?? null;
+  }
+
+  /** El saldo teórico del tanque a una fecha: la última lectura vigente
+   *  anterior, más las recepciones menos los despachos ocurridos desde esa
+   *  lectura. Si no hay ninguna lectura ni movimiento previo, devuelve null:
+   *  no es un 0 real, es un dato aún desconocido.
+   *
+   *  Esto permite que una recepción no se bloquee por una varilla vieja y
+   *  desactualizada, mientras mantiene la regla principal: sin una base de
+   *  verdad ni historial, el sistema no inventa stock. */
+  async findNivelTeoricoVigenteA(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    fecha: string
+  ): Promise<number | null> {
+    const result = await client.query<{ nivel_teorico: string | null }>(
+      `
+      WITH ultima AS (
+        SELECT l.nivel, l.leido_en
+        FROM combustible_lecturas l
+        WHERE l.combustible_id = $1 AND l.tenant_id = $2
+          AND l.anulada_en IS NULL AND l.leido_en <= $3
+        ORDER BY l.leido_en DESC, l.id DESC
+        LIMIT 1
+      ),
+      totales AS (
+        SELECT
+          COALESCE((
+            SELECT SUM(r.cantidad)
+            FROM combustible_recepciones r
+            WHERE r.tenant_id = $2 AND r.combustible_id = $1
+              AND r.anulada_en IS NULL
+              AND r.recibido_en > COALESCE((SELECT leido_en FROM ultima), '0001-01-01'::timestamptz)
+              AND r.recibido_en <= $3
+          ), 0) AS entradas,
+          COALESCE((
+            SELECT SUM(d.cantidad)
+            FROM combustible_despachos d
+            WHERE d.tenant_id = $2 AND d.combustible_id = $1
+              AND d.anulada_en IS NULL
+              AND d.despachado_en > COALESCE((SELECT leido_en FROM ultima), '0001-01-01'::timestamptz)
+              AND d.despachado_en <= $3
+          ), 0) AS salidas
+      )
+      SELECT CASE
+        WHEN (SELECT nivel FROM ultima) IS NOT NULL THEN
+          (SELECT nivel FROM ultima) + (SELECT entradas FROM totales) - (SELECT salidas FROM totales)
+        WHEN (SELECT entradas FROM totales) <> 0 OR (SELECT salidas FROM totales) <> 0 THEN
+          (SELECT entradas FROM totales) - (SELECT salidas FROM totales)
+        ELSE NULL
+      END AS nivel_teorico
+      `,
+      [combustibleId, tenantId, fecha]
+    );
+
+    const valor = result.rows[0]?.nivel_teorico;
+    return valor === null || valor === undefined ? null : Number(valor);
   }
 
   /** El nivel medido del tanque A UNA FECHA: la última lectura vigente
