@@ -83,6 +83,15 @@ export function useAlertasCombustibleStream(activo: boolean) {
     es.addEventListener("combustible.alerta_creada", () => {
       cargar();
     });
+    es.addEventListener("combustible.alerta_resuelta", () => {
+      cargar();
+    });
+    es.addEventListener("combustible.alertas_actualizadas", () => {
+      cargar();
+    });
+
+    const alActualizarLocal = () => cargar();
+    window.addEventListener("combustible:actualizado", alActualizarLocal);
 
     // ── Por qué el stream no alcanza ────────────────────────────────────
     //
@@ -112,6 +121,7 @@ export function useAlertasCombustibleStream(activo: boolean) {
     return () => {
       es.close();
       eventSourceRef.current = null;
+      window.removeEventListener("combustible:actualizado", alActualizarLocal);
       document.removeEventListener("visibilitychange", alVolver);
       window.removeEventListener("focus", alVolver);
       clearInterval(repaso);

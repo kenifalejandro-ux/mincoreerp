@@ -39,6 +39,7 @@ export interface ExcedenteRecepcionDetalle {
   capacidad: number;
   toleranciaCapacidadPct: number;
   nivelMedido: number;
+  nivelTeorico: number;
   cantidadRecepcion: number;
   totalTrasRecepcion: number;
   techo: number;
@@ -4785,28 +4786,26 @@ export class CombustibleService {
       );
     }
 
-    // Sin nivel medido no se puede ni validar la capacidad ni ponderar el
-    // costo. Devolver 0 sería mentir: la migración 0059 estableció que un
-    // tanque sin lectura vigente tiene nivel DESCONOCIDO, no cero -- y
-    // valorizar sobre un cero inventado deja el inventario mal costeado sin
-    // que nadie se entere. Pedir la lectura primero es 30 segundos de
-    // trabajo y es coherente con todo el módulo: la varilla manda.
-    const nivelMedido = await this.repository.findNivelVigenteA(
+    // El nivel que vale para la capacidad no tiene que ser necesariamente la
+    // última varilla: el saldo teórico ya cuenta los despachos y recepciones
+    // desde esa medición. Eso evita bloquear una compra por una varilla que
+    // quedó vieja, sin convertir la estimación en una medición física.
+    const nivelTeorico = await this.repository.findNivelTeoricoVigenteA(
       client,
       tenantId,
       data.combustible_id!,
       recibidoEn
     );
-    if (nivelMedido === null) {
+    if (nivelTeorico === null) {
       throw new Error(
-        "el tanque no tiene ninguna lectura vigente anterior a la fecha de la recepción -- registrá primero la lectura de varilla"
+        "el tanque no tiene ninguna lectura vigente anterior a la fecha de la recepción ni un saldo teórico válido -- registrá primero la lectura de varilla"
       );
     }
 
     const capacidad = Number(tanque.capacidad_total);
     const toleranciaPct = Number(tanque.tolerancia_capacidad_pct);
     const techo = capacidad * (1 + toleranciaPct / 100);
-    const totalTrasRecepcion = nivelMedido + data.cantidad!;
+    const totalTrasRecepcion = nivelTeorico + data.cantidad!;
 
     if (totalTrasRecepcion <= techo) return null;
 
@@ -4831,7 +4830,8 @@ export class CombustibleService {
           unidad: tanque.unidad,
           capacidad,
           toleranciaCapacidadPct: toleranciaPct,
-          nivelMedido,
+          nivelMedido: nivelTeorico,
+          nivelTeorico,
           cantidadRecepcion: data.cantidad!,
           totalTrasRecepcion,
           techo,
@@ -4846,7 +4846,7 @@ export class CombustibleService {
         // cliente decide (ver resolverExcedenteRecepcionSchema para las
         // otras dos opciones).
         throw new RecepcionExcedeCapacidadError(
-          `la recepción de ${data.cantidad} sobre un nivel medido de ${nivelMedido} supera la capacidad del tanque (${capacidad}${detalleTolerancia}) -- requiere decisión`,
+          `la recepción de ${data.cantidad} sobre un saldo teórico de ${nivelTeorico} supera la capacidad del tanque (${capacidad}${detalleTolerancia}) -- requiere decisión`,
           detalle
         );
       }
@@ -4856,7 +4856,7 @@ export class CombustibleService {
     // poder ver de un vistazo cuál está mal: puede ser la cantidad
     // tipeada, o una lectura vieja que ya no refleja lo que hay.
     throw new Error(
-      `la recepción de ${data.cantidad} sobre un nivel medido de ${nivelMedido} supera la capacidad del tanque (${capacidad}${detalleTolerancia})`
+      `la recepción de ${data.cantidad} sobre un saldo teórico de ${nivelTeorico} supera la capacidad del tanque (${capacidad}${detalleTolerancia})`
     );
   }
 

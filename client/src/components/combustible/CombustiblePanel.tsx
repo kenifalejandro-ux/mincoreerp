@@ -67,10 +67,12 @@ interface Tanque {
   // el nivel es DESCONOCIDO, no cero. Desde la migración 0059 estos tres
   // campos no son columnas, se derivan de la última lectura vigente.
   nivel_actual: string | null;
+  nivel_teorico: string | null;
   nivel_minimo: string;
   moneda: string;
   activo: boolean;
   porcentaje: string | null;
+  porcentaje_teorico: string | null;
   fecha_actualizacion: string | null;
   // Fase C (migrations/0064). Lo calcula el motor de recepciones -- acá es
   // SOLO LECTURA: no hay campo de formulario que lo escriba. 0 significa
@@ -1150,17 +1152,16 @@ const RADIO_EXT = "rounded-t-[60px] rounded-b-4xl";
 const RADIO_INT = "rounded-t-[60px] rounded-b-3xl";
 
 /** Panel "Nivel de tanque" (diseño Figma): un tanque grande con selector para
- *  cambiar de tanque. Solo lectura: el nivel sale de la última lectura vigente.
+ *  cambiar de tanque. Muestra el saldo teórico y conserva la fecha de la última varilla.
  *  Rojo = en o bajo el umbral mínimo del tanque (la misma regla que la tabla);
- *  ámbar = bajo 40 %; sin lecturas no se pinta líquido, porque un tanque
- *  "vacío" afirmaría algo que nadie midió. */
+ *  ámbar = bajo 40 %; sin base para calcular saldo no se pinta líquido. */
 function TanqueVisual({ tanques }: { tanques: Tanque[] }) {
   const [elegidoId, setElegidoId] = useState<number | null>(null);
   const t = tanques.find((x) => x.id === elegidoId) ?? tanques[0];
   if (!t) return null;
-  const sinNivel = t.nivel_actual === null;
+  const sinNivel = t.nivel_teorico === null;
   const capacidad = Number(t.capacidad_total);
-  const nivel = Number(t.nivel_actual);
+  const nivel = Number(t.nivel_teorico);
   const pct =
     sinNivel || capacidad <= 0 ? 0 : Math.min(100, Math.max(0, (nivel / capacidad) * 100));
   const minimo = Number(t.nivel_minimo);
@@ -1256,9 +1257,9 @@ function TanqueVisual({ tanques }: { tanques: Tanque[] }) {
         />
       </div>
       <div className="bg-[#0D1719] border border-[#334155] rounded px-4 py-3 w-full text-center">
-        <div className="text-[10px] text-[#64748b] font-bold uppercase mb-1">Volumen actual</div>
+        <div className="text-[10px] text-[#64748b] font-bold uppercase mb-1">Saldo estimado</div>
         {sinNivel ? (
-          <div className="text-sm italic text-[#94a3b8] py-2">Sin lecturas</div>
+          <div className="text-sm italic text-[#94a3b8] py-2">Saldo desconocido</div>
         ) : (
           <div className="font-mono text-xl sm:text-2xl lg:text-3xl font-bold text-white tracking-tight flex items-baseline justify-center gap-1">
             {nivel.toLocaleString("es-PE")}
@@ -1270,11 +1271,16 @@ function TanqueVisual({ tanques }: { tanques: Tanque[] }) {
         {!sinNivel && (
           <div className="mt-2 flex items-baseline justify-center gap-1.5">
             <span className="font-mono text-lg sm:text-xl lg:text-2xl font-bold" style={{ color }}>
-              {t.porcentaje}%
+              {pct.toFixed(2)}%
             </span>
             <span className="text-[10px] font-mono uppercase text-[#64748b]">de capacidad</span>
           </div>
         )}
+        <div className="mt-2 text-[10px] text-[#64748b]">
+          {t.fecha_actualizacion
+            ? `Última varilla: ${formatearFecha(t.fecha_actualizacion)}`
+            : "Sin varilla registrada"}
+        </div>
       </div>
     </div>
   );
@@ -2347,29 +2353,109 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   // --- Alta / edición ---
 
-  const cargarKardex = async (tanqueId: number) => {
-    setCargandoKardex(true);
-    setErrorKardex(null);
-    try {
-      // El input date da solo el día; el backend pide un instante con zona.
-      // `hasta` se estira al final del día para que un movimiento de las
-      // 17:00 del último día no quede afuera del informe.
-      const desde = new Date(`${kardexDesde}T00:00:00`).toISOString();
-      const hasta = new Date(`${kardexHasta}T23:59:59`).toISOString();
-      const res = await apiFetch(
-        `/api/erp/combustible/${tanqueId}/kardex?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`
-      );
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setErrorKardex(body.errors?.[0]?.message || body.error || "No se pudo armar el kardex.");
-        setKardex(null);
-        return;
+  const cargarKardex = useCallback(
+    async (tanqueId: number) => {
+      setCargandoKardex(true);
+      setErrorKardex(null);
+      try {
+        // El input date da solo el día; el backend pide un instante con zona.
+        // `hasta` se estira al final del día para que un movimiento de las
+        // 17:00 del último día no quede afuera del informe.
+        const desde = new Date(`${kardexDesde}T00:00:00`).toISOString();
+        const hasta = new Date(`${kardexHasta}T23:59:59`).toISOString();
+        const res = await apiFetch(
+          `/api/erp/combustible/${tanqueId}/kardex?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`
+        );
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          setErrorKardex(body.errors?.[0]?.message || body.error || "No se pudo armar el kardex.");
+          setKardex(null);
+          return;
+        }
+        setKardex(await res.json());
+      } finally {
+        setCargandoKardex(false);
       }
-      setKardex(await res.json());
-    } finally {
-      setCargandoKardex(false);
+    },
+    [kardexDesde, kardexHasta]
+  );
+
+  const recargarAlertasModal = useCallback(async () => {
+    if (!modalAlertasAbierto) return;
+    try {
+      const res = await apiFetch("/api/erp/combustible/alertas?pageSize=100");
+      if (!res.ok) return;
+      const body = await res.json();
+      setAlertasCombustible(Array.isArray(body?.data) ? body.data : []);
+    } catch {
+      // Se conserva la última lista visible si falla el refresco.
     }
+  }, [modalAlertasAbierto]);
+
+  const actualizarVistasCombustible = async () => {
+    window.dispatchEvent(new Event("combustible:actualizado"));
+    const tareas: Promise<void>[] = [
+      cargarTanques(),
+      cargarCriticasAbiertas(),
+      recargarAlertasModal(),
+    ];
+    if (modalKardexAbierto && kardexTanqueId !== null) {
+      tareas.push(cargarKardex(kardexTanqueId));
+    }
+    await Promise.allSettled(tareas);
   };
+
+  useEffect(() => {
+    const es = new EventSource("/api/eventos/stream", { withCredentials: true });
+    let temporizador: number | undefined;
+    const refrescar = () => {
+      if (temporizador !== undefined) window.clearTimeout(temporizador);
+      temporizador = window.setTimeout(() => {
+        void Promise.allSettled([
+          cargarTanques(),
+          cargarCriticasAbiertas(),
+          recargarAlertasModal(),
+          ...(modalKardexAbierto && kardexTanqueId !== null ? [cargarKardex(kardexTanqueId)] : []),
+        ]);
+      }, 100);
+    };
+    const tipos = [
+      "combustible.tanque_creado",
+      "combustible.tanque_actualizado",
+      "combustible.tanque_eliminado",
+      "combustible.tanques_carga_masiva",
+      "combustible.lectura_registrada",
+      "combustible.lectura_anulada",
+      "combustible.despacho_creado",
+      "combustible.despacho_anulado",
+      "combustible.recepcion_creada",
+      "combustible.recepcion_anulada",
+      "combustible.alerta_creada",
+      "combustible.alerta_resuelta",
+      "combustible.alertas_actualizadas",
+    ];
+    tipos.forEach((tipo) => es.addEventListener(tipo, refrescar));
+
+    const alVolver = () => {
+      if (document.visibilityState === "visible") refrescar();
+    };
+    document.addEventListener("visibilitychange", alVolver);
+    window.addEventListener("focus", alVolver);
+
+    return () => {
+      es.close();
+      if (temporizador !== undefined) window.clearTimeout(temporizador);
+      document.removeEventListener("visibilitychange", alVolver);
+      window.removeEventListener("focus", alVolver);
+    };
+  }, [
+    cargarTanques,
+    cargarCriticasAbiertas,
+    recargarAlertasModal,
+    cargarKardex,
+    modalKardexAbierto,
+    kardexTanqueId,
+  ]);
 
   /** Descarga el kardex del período que está en pantalla.
    *
@@ -2895,7 +2981,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       // la tabla de tanques -- anular puede hacer retroceder el nivel, así
       // que la fila de afuera queda desactualizada si no se refresca.
       await cargarLecturas(tanqueHistorial.id, lecturasDesde, lecturasHasta);
-      await cargarTanques();
+      await actualizarVistasCombustible();
     } finally {
       setAnulando(false);
     }
@@ -3018,7 +3104,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           : `Lectura registrada: ${nombreDelTanque} quedó en ` +
               `${nivelNuevo.toLocaleString("es-PE")} ${unidadDelTanque}.`
       );
-      await cargarTanques();
+      await actualizarVistasCombustible();
     } finally {
       setEnviandoLectura(false);
     }
@@ -3200,6 +3286,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       setMensajeExito(
         `Despacho registrado: vale ${despachoForm.n_vale} de la serie ${despachoForm.serie_talonario}.`
       );
+      await actualizarVistasCombustible();
     } finally {
       setEnviandoDespacho(false);
     }
@@ -3404,6 +3491,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       setDespachoAAnular(null);
       setMotivoAnulacionDespacho("");
       await cargarHistorialDespachos(despachosDesde, despachosHasta);
+      await actualizarVistasCombustible();
     } finally {
       setAnulandoDespacho(false);
     }
@@ -3644,6 +3732,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       // La franja de arriba tiene que bajar el conteo en el momento: si
       // sigue mostrando el número viejo, el usuario cree que no se guardó.
       await cargarCriticasAbiertas();
+      window.dispatchEvent(new Event("combustible:actualizado"));
     } finally {
       setResolviendoAlertaId(null);
     }
@@ -3767,7 +3856,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       setModalRecepcionAbierto(false);
       // Recargar: el costo promedio del tanque acaba de cambiar y se muestra
       // en la tabla.
-      await cargarTanques();
+      await actualizarVistasCombustible();
       setMensajeExito(
         `Recepción registrada: ${Number(recepcionForm.cantidad).toLocaleString("es-PE")} ` +
           `${tanqueRecepcion?.unidad ?? ""} en ${tanqueRecepcion?.tanque_nombre ?? "el tanque"}. ` +
@@ -3834,6 +3923,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           : "Recepción validada: la guía coincide con lo registrado."
       );
       await cargarHistorialRecepciones(recepcionesDesde, recepcionesHasta);
+      window.dispatchEvent(new Event("combustible:actualizado"));
     } finally {
       setValidandoRecepcion(false);
     }
@@ -3859,7 +3949,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       // recargar las dos cosas.
       await Promise.all([
         cargarHistorialRecepciones(recepcionesDesde, recepcionesHasta),
-        cargarTanques(),
+        actualizarVistasCombustible(),
       ]);
     } finally {
       setAnulandoRecepcion(false);
