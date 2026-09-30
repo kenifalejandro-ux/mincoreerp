@@ -17,7 +17,7 @@
 // contraseñas del personal en texto plano, que es exactamente lo que un ERP
 // con trazabilidad de vales no puede permitirse: si el admin sabe la clave con
 // la que el grifero firma, la firma del grifero deja de significar algo.
-import { Plus, X } from "lucide-react";
+import { Plus, UserRoundCog, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "../../context/AuthContext";
@@ -26,7 +26,9 @@ import {
   cambiarEstadoUsuarioApi,
   crearUsuarioApi,
   generarClaveTemporal,
+  guardarPermisosApi,
   listarUsuariosApi,
+  permisosDeUsuarioApi,
   resetearClaveApi,
   type ModoAlta,
   type ModoReseteo,
@@ -89,6 +91,7 @@ export default function UsuariosView() {
 
   const [modalAlta, setModalAlta] = useState(false);
   const [usuarioAResetear, setUsuarioAResetear] = useState<UsuarioDelTenant | null>(null);
+  const [usuarioACambiarPerfil, setUsuarioACambiarPerfil] = useState<UsuarioDelTenant | null>(null);
   const [usuarioADarDeBaja, setUsuarioADarDeBaja] = useState<UsuarioDelTenant | null>(null);
   const [usuarioAEditar, setUsuarioAEditar] = useState<UsuarioDelTenant | null>(null);
   const [enviando, setEnviando] = useState(false);
@@ -236,6 +239,19 @@ export default function UsuariosView() {
                 </td>
                 <td className="px-4 sm:px-5 py-2.5 sm:py-3.5 text-right whitespace-nowrap">
                   <button
+                    onClick={() => setUsuarioACambiarPerfil(u)}
+                    disabled={u.id === yo?.id}
+                    title={
+                      u.id === yo?.id
+                        ? "Pedile a otro administrador que cambie tu perfil"
+                        : "Cambiar perfil"
+                    }
+                    className="px-3 py-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <UserRoundCog className="mr-1 inline h-4 w-4 align-[-3px]" />
+                    Cambiar perfil
+                  </button>
+                  <button
                     onClick={() => setUsuarioAResetear(u)}
                     disabled={u.estado === "inactivo"}
                     className="px-3 py-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed"
@@ -361,6 +377,18 @@ export default function UsuariosView() {
           onCerrar={() => setUsuarioADarDeBaja(null)}
           onListo={async (correlativoPendiente) => {
             setUsuarioADarDeBaja(null);
+            if (correlativoPendiente) setPendienteDeFirma(correlativoPendiente);
+            await cargar();
+          }}
+        />
+      )}
+
+      {usuarioACambiarPerfil && (
+        <ModalCambiarPerfil
+          usuario={usuarioACambiarPerfil}
+          onCerrar={() => setUsuarioACambiarPerfil(null)}
+          onListo={async (correlativoPendiente) => {
+            setUsuarioACambiarPerfil(null);
             if (correlativoPendiente) setPendienteDeFirma(correlativoPendiente);
             await cargar();
           }}
@@ -515,6 +543,92 @@ function ModalEditarUsuario({
         <div className="flex justify-end gap-2 pt-2">
           <BotonCancelar onClick={onCerrar} />
           <BotonPrincipal enviando={enviando}>Guardar</BotonPrincipal>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ModalCambiarPerfil({
+  usuario,
+  onCerrar,
+  onListo,
+}: {
+  usuario: UsuarioDelTenant;
+  onCerrar: () => void;
+  onListo: (correlativoPendiente?: string) => void | Promise<void>;
+}) {
+  const [rol, setRol] = useState<RolUsuario>(usuario.rol as RolUsuario);
+  const [motivo, setMotivo] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const perfil = ROLES.find((opcion) => opcion.valor === rol);
+
+  const enviar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (enviando || rol === usuario.rol) return;
+    setEnviando(true);
+    setError(null);
+    try {
+      const permisos = await permisosDeUsuarioApi(usuario.id);
+      const resultado = await guardarPermisosApi(usuario.id, {
+        rol,
+        modulos: permisos.modulos,
+        alcanceCombustible: permisos.alcanceCombustible,
+        motivo: motivo.trim() || `Cambio de perfil a ${perfil?.titulo ?? rol}`,
+      });
+      await onListo(resultado.pendiente ? resultado.orden.correlativo : undefined);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo cambiar el perfil.");
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <Modal titulo={`Cambiar perfil de ${usuario.nombre}`} onCerrar={onCerrar}>
+      <form onSubmit={enviar} className="p-6 space-y-4">
+        <Campo id="cambiar-perfil" etiqueta="Perfil">
+          <select
+            id="cambiar-perfil"
+            className={ESTILO_INPUT}
+            value={rol}
+            onChange={(e) => setRol(e.target.value as RolUsuario)}
+          >
+            {ROLES.map((opcion) => (
+              <option key={opcion.valor} value={opcion.valor}>
+                {opcion.titulo}
+              </option>
+            ))}
+          </select>
+        </Campo>
+
+        {perfil && <p className="text-sm text-slate-600">{perfil.detalle}</p>}
+        <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+          Las asignaciones de módulos y el alcance de Combustible se conservan. Al reducir permisos,
+          se cerrarán las sesiones activas; al ampliarlos, el usuario los recibirá al renovar su
+          sesión.
+        </p>
+
+        <Campo id="cambiar-perfil-motivo" etiqueta="Motivo (opcional)">
+          <input
+            id="cambiar-perfil-motivo"
+            type="text"
+            maxLength={500}
+            placeholder="Ej: pasa a conducir en ruta"
+            className={ESTILO_INPUT}
+            value={motivo}
+            onChange={(e) => setMotivo(e.target.value)}
+          />
+        </Campo>
+
+        {error && <p className="text-sm font-semibold text-red-700">{error}</p>}
+
+        <div className="flex justify-end gap-2 pt-2">
+          <BotonCancelar onClick={onCerrar} />
+          <BotonPrincipal enviando={enviando} deshabilitado={rol === usuario.rol}>
+            {enviando ? "Guardando..." : "Guardar perfil"}
+          </BotonPrincipal>
         </div>
       </form>
     </Modal>
@@ -1134,16 +1248,18 @@ function BotonCancelar({ onClick }: { onClick: () => void }) {
 function BotonPrincipal({
   enviando,
   peligro,
+  deshabilitado = false,
   children,
 }: {
   enviando: boolean;
   peligro?: boolean;
+  deshabilitado?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <button
       type="submit"
-      disabled={enviando}
+      disabled={enviando || deshabilitado}
       className={`px-6 py-2.5 text-white text-sm font-bold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
         peligro ? "bg-red-700 hover:bg-red-800" : "bg-slate-900 hover:bg-slate-800"
       }`}

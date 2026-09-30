@@ -254,6 +254,8 @@ export interface UsuarioPlataforma {
   activo: boolean;
 }
 
+export type RolUsuarioTenant = "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta";
+
 export async function listarUsuariosTenantApi(tenantId: string): Promise<UsuarioPlataforma[]> {
   const res = await platformFetch(`/tenants/${tenantId}/usuarios`);
   const data = await parseOrThrow(res);
@@ -279,6 +281,21 @@ export async function cambiarEstadoUsuarioApi(
     jsonInit("PATCH", { activo, motivo })
   );
   await parseOrThrow(res);
+}
+
+export async function cambiarPerfilUsuarioApi(
+  tenantId: string,
+  usuarioId: string,
+  rol: RolUsuarioTenant,
+  motivo: string,
+  numeroCarta?: string
+): Promise<UsuarioPlataforma> {
+  const res = await platformFetch(
+    `/tenants/${tenantId}/usuarios/${usuarioId}/rol`,
+    jsonInit("PATCH", { rol, motivo, ...(numeroCarta ? { numeroCarta } : {}) })
+  );
+  const data = await parseOrThrow(res);
+  return data.usuario;
 }
 
 export async function eliminarUsuarioApi(
