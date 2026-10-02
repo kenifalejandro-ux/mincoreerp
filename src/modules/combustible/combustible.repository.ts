@@ -110,6 +110,8 @@ export const TIPOS_ALERTA = [
   // ── Migración 0102: se aceptó un sobrestock de recepción a sabiendas
   // (modo flexible de `modo_excedente_recepcion`).
   "sobrestock_recepcion",
+  // ── Migración 0106: un grifero anuló una lectura de varilla.
+  "lectura_anulada",
 ] as const;
 
 export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];
