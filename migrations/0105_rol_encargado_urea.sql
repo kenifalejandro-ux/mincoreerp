@@ -1,0 +1,1 @@
+ALTER TYPE rol_usuario ADD VALUE IF NOT EXISTS 'encargado_urea';
