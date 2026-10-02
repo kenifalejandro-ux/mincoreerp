@@ -19,6 +19,7 @@ import {
   permisosDeUsuarioApi,
   type NivelModulo,
   type PermisoDeModulo,
+  type PermisoDePestana,
   type UsuarioDelTenant,
 } from "../../services/usuariosApi";
 
@@ -38,11 +39,120 @@ function nivelElegido(permiso: PermisoDeModulo): "sin-acceso" | NivelModulo {
   return permiso.asignado ? permiso.nivel : "sin-acceso";
 }
 
+function ArbolPermisosCombustible({
+  items,
+  onChange,
+  disabled = false,
+}: {
+  items: PermisoDePestana[];
+  onChange: (modulo: string, pestana: string, permitido: boolean) => void;
+  disabled?: boolean;
+}) {
+  const submenus = items.filter((item) => item.nivel === "submenu");
+
+  // Un hijo NO se deshabilita porque su submenú esté apagado: marcarlo lo
+  // prende (ver cambiarPestana). Si no, el admin no podría darle una sola
+  // vista del Histórico a un perfil de cancha, que es justo el caso que la
+  // matriz deja a su criterio.
+  const fila = (item: PermisoDePestana, indent = "pl-8") => (
+    <li
+      key={`${item.modulo}:${item.pestana}`}
+      className={`flex items-center justify-between gap-4 py-2 ${indent}`}
+    >
+      <span className="text-sm text-slate-700">
+        {item.nombre}
+        {item.permitido === item.predeterminado && (
+          <span className="ml-2 text-xs text-slate-400">Predeterminado</span>
+        )}
+      </span>
+      <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-600">
+        <input
+          type="checkbox"
+          checked={item.permitido}
+          disabled={disabled}
+          onChange={(event) => onChange(item.modulo, item.pestana, event.target.checked)}
+          className="h-4 w-4 accent-lime-500"
+        />
+        Visible
+      </label>
+    </li>
+  );
+
+  return (
+    <div className="mt-2 border-t border-slate-200 px-3">
+      <p className="py-2 text-[11px] font-bold uppercase text-slate-400">Submenús de Combustible</p>
+      <div className="divide-y divide-slate-100">
+        {submenus.map((submenu) => {
+          const children = items.filter((item) => item.padre === submenu.pestana);
+          const tabs = children.filter((item) => item.nivel === "pestana");
+          const actions = children.filter((item) => item.nivel === "accion");
+
+          return (
+            <details
+              key={submenu.pestana}
+              className="group py-2"
+              open={submenu.pestana === "tanques"}
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-4 py-1">
+                <span className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                  <span className="text-slate-400 transition-transform group-open:rotate-90">
+                    ›
+                  </span>
+                  {submenu.nombre}
+                  {submenu.permitido === submenu.predeterminado && (
+                    <span className="text-xs font-normal text-slate-400">
+                      Predeterminado del perfil
+                    </span>
+                  )}
+                </span>
+                <label
+                  className="inline-flex items-center gap-2 text-xs font-medium text-slate-600"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    checked={submenu.permitido}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      onChange(submenu.modulo, submenu.pestana, event.target.checked)
+                    }
+                    className="h-4 w-4 accent-lime-500"
+                  />
+                  Visible
+                </label>
+              </summary>
+              <ul className="mt-2">
+                {tabs.length > 0 && (
+                  <>
+                    <li className="pl-8 pt-2 text-[11px] font-bold uppercase text-slate-400">
+                      Pestañas
+                    </li>
+                    {tabs.map((item) => fila(item))}
+                  </>
+                )}
+                {actions.length > 0 && (
+                  <>
+                    <li className="pl-8 pt-3 text-[11px] font-bold uppercase text-slate-400">
+                      Panel del tanque · Acciones
+                    </li>
+                    {actions.map((item) => fila(item))}
+                  </>
+                )}
+              </ul>
+            </details>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function ConfiguracionView() {
   const [usuarios, setUsuarios] = useState<UsuarioDelTenant[]>([]);
   const [elegido, setElegido] = useState<string | null>(null);
   const [modulos, setModulos] = useState<PermisoDeModulo[]>([]);
   const [alcance, setAlcance] = useState<AlcanceDeCombustible | null>(null);
+  const [pestanas, setPestanas] = useState<PermisoDePestana[]>([]);
   const [esAdmin, setEsAdmin] = useState(false);
   const [motivo, setMotivo] = useState("");
   const [cargando, setCargando] = useState(true);
@@ -76,11 +186,13 @@ export default function ConfiguracionView() {
       const permisos = await permisosDeUsuarioApi(usuarioId);
       setModulos(permisos.modulos);
       setAlcance(permisos.alcanceCombustible);
+      setPestanas(permisos.pestanas ?? []);
       setEsAdmin(permisos.rol === "admin");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudieron cargar los permisos.");
       setModulos([]);
       setAlcance(null);
+      setPestanas([]);
     }
   }, []);
 
@@ -98,6 +210,29 @@ export default function ConfiguracionView() {
     );
   };
 
+  const cambiarPestana = (modulo: string, pestana: string, permitido: boolean) => {
+    setPestanas((anteriores) => {
+      // Apagar un submenú apaga lo que tiene adentro: dejar un hijo prendido
+      // bajo un padre apagado sería una casilla marcada que no se cumple.
+      const padreDe = anteriores.find(
+        (item) => item.modulo === modulo && item.pestana === pestana
+      )?.padre;
+      return anteriores.map((item) => {
+        if (item.modulo === modulo && item.pestana === pestana) return { ...item, permitido };
+        if (!permitido && item.modulo === modulo && item.padre === pestana) {
+          return { ...item, permitido: false };
+        }
+        // Y prender un hijo prende su submenú: es lo que hace falta para
+        // darle a un perfil de cancha UNA vista del Histórico sin abrirle el
+        // resto (filas 24-29 de la matriz). El backend hace lo mismo.
+        if (permitido && padreDe && item.modulo === modulo && item.pestana === padreDe) {
+          return { ...item, permitido: true };
+        }
+        return item;
+      });
+    });
+  };
+
   const guardar = async () => {
     if (!elegido || guardando) return;
     setGuardando(true);
@@ -106,6 +241,11 @@ export default function ConfiguracionView() {
     try {
       const resultado = await guardarPermisosApi(elegido, {
         modulos,
+        pestanas: pestanas.map(({ modulo, pestana, permitido }) => ({
+          modulo,
+          pestana,
+          permitido,
+        })),
         alcanceCombustible: alcance ?? undefined,
         motivo: motivo.trim() || undefined,
       });
@@ -136,6 +276,8 @@ export default function ConfiguracionView() {
   if (cargando) return <div className="p-20 text-center text-slate-500">Cargando...</div>;
 
   const persona = usuarios.find((u) => u.id === elegido);
+  const pestañasCombustible = pestanas.filter((item) => item.modulo === "combustible");
+  const pestañasFacturacion = pestanas.filter((item) => item.modulo === "facturacion");
 
   return (
     <div>
@@ -144,8 +286,8 @@ export default function ConfiguracionView() {
           Configuración
         </h2>
         <p className="text-slate-600 text-sm">
-          Qué módulos ve cada persona, con qué nivel y, en Combustible, qué sedes y grifos. Solo
-          aparecen los módulos que tu empresa tiene contratados.
+          Qué módulos y pestañas ve cada persona, con qué nivel y, en Combustible, qué sedes y
+          grifos. Solo aparecen los módulos que tu empresa tiene contratados.
         </p>
       </div>
 
@@ -157,7 +299,7 @@ export default function ConfiguracionView() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
-          <p className="px-5 py-3 text-xs font-bold text-slate-500 uppercase tracking-widest bg-slate-50 border-b border-slate-100">
+          <p className="sticky top-0 z-10 px-5 py-3 text-xs font-bold text-slate-500 uppercase tracking-widest bg-slate-50 border-b border-slate-100">
             Elegí a quién
           </p>
           <ul className="divide-y divide-slate-100 max-h-[28rem] overflow-y-auto">
@@ -196,36 +338,82 @@ export default function ConfiguracionView() {
                 </p>
               ) : (
                 <ul className="space-y-3">
-                  {modulos.map((permiso) => (
-                    <li
-                      key={permiso.modulo}
-                      className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border border-slate-200 rounded-2xl px-4 py-3"
-                    >
-                      <span className="text-sm font-semibold text-slate-800">
-                        {nombreDeModulo(permiso.modulo)}
-                      </span>
-                      <div className="flex gap-1">
-                        {NIVELES.map((nivel) => {
-                          const activo = nivelElegido(permiso) === nivel.valor;
-                          return (
-                            <button
-                              key={nivel.valor}
-                              type="button"
-                              title={nivel.detalle}
-                              onClick={() => cambiarNivel(permiso.modulo, nivel.valor)}
-                              className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${
-                                activo
-                                  ? "bg-slate-900 text-white border-slate-900"
-                                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
-                              }`}
-                            >
-                              {nivel.titulo}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </li>
-                  ))}
+                  {modulos.map((permiso) =>
+                    permiso.modulo === "combustible" ? (
+                      <li
+                        key={permiso.modulo}
+                        className="border border-slate-200 rounded-2xl overflow-hidden"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-start gap-3 bg-slate-50 px-4 py-3">
+                          <details className="group flex-1" open={false}>
+                            <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-slate-800">
+                              <span className="text-slate-400 transition-transform group-open:rotate-90">
+                                ›
+                              </span>
+                              Menú: {nombreDeModulo(permiso.modulo)}
+                              <span className="text-xs font-normal text-slate-400">
+                                Desplegar submenús
+                              </span>
+                            </summary>
+                            <ArbolPermisosCombustible
+                              items={pestañasCombustible}
+                              onChange={cambiarPestana}
+                              disabled={!permiso.asignado || esAdmin}
+                            />
+                          </details>
+                          <div className="flex gap-1 sm:shrink-0">
+                            {NIVELES.map((nivel) => {
+                              const activo = nivelElegido(permiso) === nivel.valor;
+                              return (
+                                <button
+                                  key={nivel.valor}
+                                  type="button"
+                                  title={nivel.detalle}
+                                  onClick={() => cambiarNivel(permiso.modulo, nivel.valor)}
+                                  className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${
+                                    activo
+                                      ? "bg-slate-900 text-white border-slate-900"
+                                      : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                                  }`}
+                                >
+                                  {nivel.titulo}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </li>
+                    ) : (
+                      <li
+                        key={permiso.modulo}
+                        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border border-slate-200 rounded-2xl px-4 py-3"
+                      >
+                        <span className="text-sm font-semibold text-slate-800">
+                          {nombreDeModulo(permiso.modulo)}
+                        </span>
+                        <div className="flex gap-1">
+                          {NIVELES.map((nivel) => {
+                            const activo = nivelElegido(permiso) === nivel.valor;
+                            return (
+                              <button
+                                key={nivel.valor}
+                                type="button"
+                                title={nivel.detalle}
+                                onClick={() => cambiarNivel(permiso.modulo, nivel.valor)}
+                                className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all ${
+                                  activo
+                                    ? "bg-slate-900 text-white border-slate-900"
+                                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                                }`}
+                              >
+                                {nivel.titulo}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </li>
+                    )
+                  )}
                 </ul>
               )}
 
@@ -236,6 +424,33 @@ export default function ConfiguracionView() {
                 modulos.some((m) => m.modulo === "combustible" && m.asignado) && (
                   <AlcanceCombustible valor={alcance} onChange={setAlcance} />
                 )}
+
+              {pestañasFacturacion.map((item) => (
+                <section
+                  key={`${item.modulo}:${item.pestana}`}
+                  className="border-t border-slate-200 pt-5 flex items-center justify-between gap-4"
+                >
+                  <div>
+                    <h4 className="text-sm font-bold text-slate-800">Facturación</h4>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Solo Admin por defecto. Habilitar aquí concede acceso al comprobante de
+                      facturación del tenant.
+                    </p>
+                  </div>
+                  <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={item.permitido}
+                      disabled={esAdmin}
+                      onChange={(event) =>
+                        cambiarPestana(item.modulo, item.pestana, event.target.checked)
+                      }
+                      className="h-4 w-4 accent-lime-500"
+                    />
+                    Visible
+                  </label>
+                </section>
+              ))}
 
               <div>
                 <label

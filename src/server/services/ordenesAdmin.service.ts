@@ -183,18 +183,32 @@ async function administradoresActivos(client: PoolClient, tenantId: string): Pro
 /** ¿Este cambio de permisos le SACA algo a la persona? Lo mismo que decide en
  *  permisosTenant.service si se le cierran las sesiones. */
 function permisosRecortan(
-  antes: { rol: string; modulos: { modulo: string; asignado: boolean; nivel: string }[] },
+  antes: {
+    rol: string;
+    modulos: { modulo: string; asignado: boolean; nivel: string }[];
+    pestanas?: { modulo: string; pestana: string; permitido: boolean }[];
+  },
   pedido: CambioDePermisos
 ): boolean {
   if (pedido.rol && pedido.rol !== antes.rol && pedido.rol !== "admin") return true;
 
   const previo = new Map(antes.modulos.map((m) => [m.modulo, m]));
-  return pedido.modulos.some((ahora) => {
-    const era = previo.get(ahora.modulo);
-    if (!era?.asignado) return false;
-    if (!ahora.asignado) return true;
-    return era.nivel === "operar" && ahora.nivel === "consultas";
-  });
+  if (
+    pedido.modulos.some((ahora) => {
+      const era = previo.get(ahora.modulo);
+      if (!era?.asignado) return false;
+      if (!ahora.asignado) return true;
+      return era.nivel === "operar" && ahora.nivel === "consultas";
+    })
+  )
+    return true;
+
+  const pestanasAntes = new Map(
+    (antes.pestanas ?? []).map((p) => [`${p.modulo}:${p.pestana}`, p.permitido])
+  );
+  return (pedido.pestanas ?? []).some(
+    (p) => pestanasAntes.get(`${p.modulo}:${p.pestana}`) === true && !p.permitido
+  );
 }
 
 /** Las reglas de la tabla del encabezado. */

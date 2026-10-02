@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
+import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 
 interface Iperc {
   id: number;
@@ -173,6 +174,7 @@ function ItemsEditor({
 }
 
 export default function IpercView() {
+  const puedeEscribir = usePuedeEscribir("iperc");
   const [subTab, setSubTab] = useState<"iperc" | "lineasBase">("iperc");
   const [ipercs, setIpercs] = useState<Iperc[]>([]);
   const [lineasBase, setLineasBase] = useState<LineaBase[]>([]);
@@ -435,13 +437,15 @@ export default function IpercView() {
       {subTab === "iperc" && (
         <>
           <div className="flex justify-end mb-6">
-            <button
-              onClick={abrirModalIperc}
-              className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
-            >
-              <Plus className="w-4 h-4 shrink-0" />
-              Nuevo IPERC
-            </button>
+            {puedeEscribir && (
+              <button
+                onClick={abrirModalIperc}
+                className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+              >
+                <Plus className="w-4 h-4 shrink-0" />
+                Nuevo IPERC
+              </button>
+            )}
           </div>
           <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
             <div className="overflow-x-auto">
@@ -487,6 +491,7 @@ export default function IpercView() {
                         <EstadoBadge estado={i.estado} />
                       </td>
                       <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-1">
+                        puedeEscribir &&{" "}
                         {i.estado === "borrador" && (
                           <>
                             <button
@@ -507,13 +512,15 @@ export default function IpercView() {
                             </button>
                           </>
                         )}
-                        <button
-                          onClick={() => handleEliminarIperc(i.id)}
-                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                          title="Eliminar"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {puedeEscribir && (
+                          <button
+                            onClick={() => handleEliminarIperc(i.id)}
+                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                            title="Eliminar"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -545,12 +552,14 @@ export default function IpercView() {
       {subTab === "lineasBase" && (
         <>
           <div className="flex justify-end mb-6">
-            <button
-              onClick={() => setModalLineaBaseAbierto(true)}
-              className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
-            >
-              + Nueva Línea Base
-            </button>
+            {puedeEscribir && (
+              <button
+                onClick={() => setModalLineaBaseAbierto(true)}
+                className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+              >
+                + Nueva Línea Base
+              </button>
+            )}
           </div>
           <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
             <div className="overflow-x-auto">
@@ -584,6 +593,7 @@ export default function IpercView() {
                         <EstadoBadge estado={lb.estado} />
                       </td>
                       <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-1">
+                        puedeEscribir &&{" "}
                         {lb.estado === "borrador" && (
                           <>
                             <button
@@ -604,13 +614,15 @@ export default function IpercView() {
                             </button>
                           </>
                         )}
-                        <button
-                          onClick={() => handleEliminarLineaBase(lb.id)}
-                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                          title="Eliminar"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {puedeEscribir && (
+                          <button
+                            onClick={() => handleEliminarLineaBase(lb.id)}
+                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                            title="Eliminar"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}

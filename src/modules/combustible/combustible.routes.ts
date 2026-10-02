@@ -1,8 +1,10 @@
 /**src/modules/combutible/combustible.routes.ts */
 
-import { Router } from "express";
+import { Router, type Request, type Response, type NextFunction } from "express";
 import { validate, validateQuery } from "../../server/middleware/validate";
 import { requireRole } from "../../server/shared/middlewares/roles.middleware";
+import { requirePestana } from "../../server/shared/middlewares/pestana.middleware";
+import { pestanaPermitida } from "../../server/services/permisosPestanas.service";
 import { asyncHandler } from "../../server/shared/utils/asyncHandler";
 import {
   registrarLecturaCombustibleSchema,
@@ -39,46 +41,120 @@ import {
 import { moverDeGrifoSchema } from "../../server/schemas/sedes.schema";
 import { cargarAlcance, GUARDIAS, requiereTanqueCompleto } from "./alcance";
 import { CombustibleController } from "./combustible.controller";
+import { EquiposController } from "../equipos/equipos.controller";
 // Se activa solo con importarse (setInterval + .unref()) -- mismo mecanismo
 // que events.ts con el worker de retención de eventos.
 import "../../server/services/combustibleConciliacion.worker";
 
 const router = Router();
 const controller = new CombustibleController();
+const requireHistorialOProducto =
+  (pestanaBase: string, pestanaUrea = "urea:vista") =>
+  (req: Request, res: Response, next: NextFunction) =>
+    requirePestana("combustible", req.query.producto === "urea" ? pestanaUrea : pestanaBase)(
+      req,
+      res,
+      next
+    );
+
+/** El listado de despachos sirve a TRES lugares distintos con permisos
+ *  distintos: el botón "Historial de despacho" del panel de Tanques, la
+ *  vista "Histórico de despachos (tanque propio)" y la vista "Histórico de
+ *  consumo (grifo externo)". Lo que decide cuál permiso pedir es el filtro
+ *  `origen` que el propio endpoint aplica después, así que un conductor con
+ *  solo la vista de grifo externo habilitada no puede pedir los vales del
+ *  tanque propio cambiando la URL: el permiso va atado al filtro real. */
+const requireHistorialDeDespachos = (req: Request, res: Response, next: NextFunction) => {
+  if (req.query.producto === "urea") {
+    return requirePestana("combustible", "urea:vista")(req, res, next);
+  }
+  const porOrigen =
+    req.query.origen === "tanque_propio"
+      ? "historico:despachos"
+      : req.query.origen === "compra_externa"
+        ? "historico:compras_externas"
+        : null;
+  // Sin filtro de origen el listado trae de los dos tipos: solo lo ve
+  // quien tiene el historial completo del panel de Tanques.
+  if (!porOrigen)
+    return requirePestana("combustible", "tanques:historial_despacho")(req, res, next);
+  return requirePestanaAlguna(porOrigen, "tanques:historial_despacho")(req, res, next);
+};
+
+/** Deja pasar si el usuario tiene CUALQUIERA de las pestañas. Sirve donde un
+ *  mismo dato se alcanza desde dos lugares con permisos distintos. */
+const requirePestanaAlguna =
+  (...pestanas: string[]) =>
+  (req: Request, res: Response, next: NextFunction) => {
+    const usuario = req.usuario;
+    if (!usuario) return res.status(401).json({ ok: false, message: "No autenticado" });
+    if (pestanas.some((pestana) => pestanaPermitida(usuario, "combustible", pestana))) {
+      return next();
+    }
+    return res.status(403).json({ ok: false, message: "Pestaña no disponible para este perfil" });
+  };
+const requirePestanaSegunProducto =
+  (pestanaBase: string, pestanaUrea: string) => (req: Request, res: Response, next: NextFunction) =>
+    requirePestana("combustible", req.body?.producto === "urea" ? pestanaUrea : pestanaBase)(
+      req,
+      res,
+      next
+    );
 
 // El alcance del usuario (0100), una vez por pedido y antes de cualquier
 // ruta: todo lo que sigue lo lee de req.alcanceCombustible.
 router.use(cargarAlcance);
 for (const [param, guardia] of Object.entries(GUARDIAS)) router.param(param, guardia);
 
-router.get("/", asyncHandler(controller.getAll.bind(controller)));
+router.get(
+  "/",
+  requirePestana("combustible", "tanques"),
+  requireRole("admin", "operador", "lectura", "grifero"),
+  asyncHandler(controller.getAll.bind(controller))
+);
+
+// El formulario de despacho necesita elegir una unidad, pero el personal de
+// cancha no debe recibir acceso al módulo Equipos completo. Esta consulta
+// acotada queda dentro de Combustible y solo expone el listado paginado.
+router.get(
+  "/equipos-destino",
+  requireRole("admin", "operador", "grifero", "conductor_ruta", "encargado_urea"),
+  asyncHandler(EquiposController.getAll)
+);
 
 // Despachos (Fase B) -- segmentos literales, van ANTES de /:id: si /:id
 // los capturara primero, "despachos" quedaría interpretado como un id
-// (mismo motivo que /lecturas más abajo).
 router.get(
   "/despachos",
+  requireHistorialDeDespachos,
   validateQuery(periodoHistorialCombustibleSchema),
   asyncHandler(controller.listarDespachos.bind(controller))
 );
-router.get("/despachos/huecos", asyncHandler(controller.getHuecosTalonario.bind(controller)));
+router.get(
+  "/despachos/huecos",
+  requirePestana("combustible", "tanques:historial_despacho"),
+  asyncHandler(controller.getHuecosTalonario.bind(controller))
+);
 
-// Histórico del cliente (consumo por conductor / por vehículo) -- mismo
-// permiso que /despachos y /recepciones: sin requireRole, visible para
-// cualquier rol del tenant (incluido "lectura", el rol de solo consulta).
-// Segmentos literales, ANTES de /:id, mismo motivo que arriba.
+// Histórico del cliente: cada vista del selector tiene su propio permiso
+// (filas 24-29 de la matriz robusta), para que el admin pueda darle a un
+// perfil de cancha una sola consulta sin abrirle el resto. Segmentos
+// literales, ANTES de /:id, mismo motivo que arriba.
 router.get(
   "/consumo-por-conductor",
+  requirePestana("combustible", "historico:por_conductor"),
   validateQuery(periodoHistorialCombustibleSchema),
   asyncHandler(controller.getConsumoPorConductor.bind(controller))
 );
 router.get(
   "/consumo-por-vehiculo",
+  requirePestana("combustible", "historico:por_vehiculo"),
   validateQuery(periodoHistorialCombustibleSchema),
   asyncHandler(controller.getConsumoPorVehiculo.bind(controller))
 );
 router.get(
   "/consumo-por-grifo",
+  requirePestana("combustible", "historico:por_grifo"),
   validateQuery(periodoHistorialCombustibleSchema),
   asyncHandler(controller.getConsumoPorGrifo.bind(controller))
 );
@@ -92,7 +168,8 @@ router.get(
 // validarOrigenPermitidoParaRol() en combustible.service.ts.
 router.post(
   "/despachos",
-  requireRole("admin", "operador", "grifero", "conductor_ruta"),
+  requirePestanaSegunProducto("tanques:registrar_despacho", "urea:registrar_vale"),
+  requireRole("admin", "operador", "grifero", "conductor_ruta", "encargado_urea"),
   validate(crearDespachoCombustibleSchema),
   asyncHandler(controller.crearDespacho.bind(controller))
 );
@@ -121,44 +198,55 @@ router.patch(
 // Surtidores (migración 0098) -- segmentos literales, ANTES de /:id. La lista
 // la lee cualquier rol (el vale y la varilla la necesitan); lo que cambia la
 // estructura del grifo es del admin, y todo pide motivo.
-router.get("/surtidores", asyncHandler(controller.listarSurtidores.bind(controller)));
+router.get(
+  "/surtidores",
+  requirePestana("combustible", "tanques:surtidores"),
+  asyncHandler(controller.listarSurtidores.bind(controller))
+);
 router.post(
   "/surtidores",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:surtidores"),
+  requireRole("admin", "operador"),
   validate(crearSurtidorSchema),
   asyncHandler(controller.crearSurtidor.bind(controller))
 );
 router.put(
   "/surtidores/:surtidorId",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:surtidores"),
+  requireRole("admin", "operador"),
   validate(actualizarSurtidorSchema),
   asyncHandler(controller.actualizarSurtidor.bind(controller))
 );
 router.post(
   "/surtidores/:surtidorId/conexiones",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:surtidores"),
+  requireRole("admin", "operador"),
   validate(conectarSurtidorSchema),
   asyncHandler(controller.conectarSurtidor.bind(controller))
 );
 router.get(
   "/surtidores/:surtidorId/conexiones",
+  requirePestana("combustible", "tanques:surtidores"),
   asyncHandler(controller.historialConexionesSurtidor.bind(controller))
 );
 router.patch(
   "/surtidores/:surtidorId/conexiones/:conexionId/desconectar",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:surtidores"),
+  requireRole("admin", "operador"),
   validate(motivoSurtidorSchema),
   asyncHandler(controller.desconectarSurtidor.bind(controller))
 );
 router.patch(
   "/surtidores/:surtidorId/baja",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:surtidores"),
+  requireRole("admin", "operador"),
   validate(motivoSurtidorSchema),
   asyncHandler(controller.bajaSurtidor.bind(controller))
 );
 router.patch(
   "/surtidores/:surtidorId/reactivar",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:surtidores"),
+  requireRole("admin", "operador"),
   validate(motivoSurtidorSchema),
   asyncHandler(controller.reactivarSurtidor.bind(controller))
 );
@@ -182,33 +270,49 @@ router.patch(
 
 // Grifos externos y precios (migrations/0063) -- segmentos literales,
 // mismo motivo que /despachos: tienen que ir ANTES de /:id.
-router.get("/grifos", asyncHandler(controller.listarGrifos.bind(controller)));
+router.get(
+  "/grifos",
+  requirePestana("combustible", "tanques:proveedores"),
+  asyncHandler(controller.listarGrifos.bind(controller))
+);
 router.post(
   "/grifos",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:proveedores"),
+  requireRole("admin", "operador"),
   validate(crearGrifoCombustibleSchema),
   asyncHandler(controller.crearGrifo.bind(controller))
 );
 router.put(
   "/grifos/:id",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:proveedores"),
+  requireRole("admin", "operador"),
   validate(actualizarGrifoCombustibleSchema),
   asyncHandler(controller.actualizarGrifo.bind(controller))
 );
 
 // GET /precios/vigente ANTES de GET /precios y de GET /:id -- Express
 // matchea por orden de registro, no por especificidad.
-router.get("/precios/vigente", asyncHandler(controller.getPrecioVigente.bind(controller)));
-router.get("/precios", asyncHandler(controller.listarPrecios.bind(controller)));
+router.get(
+  "/precios/vigente",
+  requirePestana("combustible", "tanques:precios"),
+  asyncHandler(controller.getPrecioVigente.bind(controller))
+);
+router.get(
+  "/precios",
+  requirePestana("combustible", "tanques:precios"),
+  asyncHandler(controller.listarPrecios.bind(controller))
+);
 router.post(
   "/precios",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:precios"),
+  requireRole("admin", "operador"),
   validate(crearPrecioCombustibleSchema),
   asyncHandler(controller.crearPrecio.bind(controller))
 );
 router.patch(
   "/precios/:precioId/anular",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:precios"),
+  requireRole("admin", "operador"),
   validate(anularPrecioCombustibleSchema),
   asyncHandler(controller.anularPrecio.bind(controller))
 );
@@ -234,12 +338,14 @@ router.patch(
 // verdad), si no la próxima varilla mostraría un excedente inexistente.
 router.get(
   "/recepciones",
+  requireHistorialOProducto("historico:recepciones"),
   validateQuery(periodoHistorialCombustibleSchema),
   asyncHandler(controller.listarRecepciones.bind(controller))
 );
 router.post(
   "/recepciones",
-  requireRole("admin", "grifero"),
+  requirePestanaSegunProducto("tanques:registrar_recepcion", "urea:registrar_entrada"),
+  requireRole("admin", "operador", "grifero", "encargado_urea"),
   validate(crearRecepcionCombustibleSchema),
   asyncHandler(controller.crearRecepcion.bind(controller))
 );
@@ -249,7 +355,8 @@ router.post(
 // reparto de roles que /recepciones: quien puede recibir, puede decidir.
 router.post(
   "/recepciones/resolver-excedente",
-  requireRole("admin", "grifero"),
+  requirePestanaSegunProducto("tanques:registrar_recepcion", "urea:registrar_entrada"),
+  requireRole("admin", "operador", "grifero"),
   validate(resolverExcedenteRecepcionSchema),
   asyncHandler(controller.resolverExcedenteRecepcion.bind(controller))
 );
@@ -262,6 +369,7 @@ router.post(
 // diferencia no disparaba una sola alerta.
 router.patch(
   "/recepciones/:recepcionId/validar",
+  requirePestana("combustible", "tanques:gestion_recepciones"),
   requireRole("admin"),
   validate(validarRecepcionCombustibleSchema),
   asyncHandler(controller.validarRecepcion.bind(controller))
@@ -269,7 +377,8 @@ router.patch(
 
 router.patch(
   "/recepciones/:recepcionId/anular",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:gestion_recepciones"),
+  requireRole("admin", "operador"),
   validate(anularRecepcionCombustibleSchema),
   asyncHandler(controller.anularRecepcion.bind(controller))
 );
@@ -285,17 +394,27 @@ router.patch(
 // conocido del módulo ("si el admin es el dueño nadie lo vigila"); lo que
 // se puede hacer es que quede visible, no impedirlo. Pendiente: si esta
 // persona (¿logística?) recibe su propio acceso, revisar este reparto.
-router.get("/urea/estado", asyncHandler(controller.getEstadoUrea.bind(controller)));
-router.get("/urea/conteos", asyncHandler(controller.listarConteosUrea.bind(controller)));
+router.get(
+  "/urea/estado",
+  requirePestana("combustible", "urea:vista"),
+  asyncHandler(controller.getEstadoUrea.bind(controller))
+);
+router.get(
+  "/urea/conteos",
+  requirePestana("combustible", "urea:vista"),
+  asyncHandler(controller.listarConteosUrea.bind(controller))
+);
 router.post(
   "/urea/conteos",
-  requireRole("admin", "grifero"),
+  requirePestana("combustible", "urea:registrar_conteo_fisico"),
+  requireRole("admin", "operador", "grifero", "encargado_urea"),
   validate(crearConteoUreaSchema),
   asyncHandler(controller.crearConteoUrea.bind(controller))
 );
 router.patch(
   "/urea/conteos/:id/anular",
-  requireRole("admin"),
+  requirePestana("combustible", "urea:registrar_conteo_fisico"),
+  requireRole("admin", "operador"),
   validate(anularConteoUreaSchema),
   asyncHandler(controller.anularConteoUrea.bind(controller))
 );
@@ -307,18 +426,21 @@ router.patch(
 // anulado), el operador no la necesita para hacer su trabajo de cancha.
 router.get(
   "/alertas",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:alertas"),
+  requireRole("admin", "operador"),
   asyncHandler(controller.listarAlertas.bind(controller))
 );
 router.patch(
   "/alertas/leidas",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:alertas"),
+  requireRole("admin", "operador"),
   validate(marcarAlertasLeidasCombustibleSchema),
   asyncHandler(controller.marcarAlertasLeidas.bind(controller))
 );
 router.patch(
   "/alertas/:alertaId/resolver",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:alertas"),
+  requireRole("admin", "operador"),
   validate(resolverAlertaCombustibleSchema),
   asyncHandler(controller.resolverAlertaManual.bind(controller))
 );
@@ -330,13 +452,20 @@ router.patch(
 // /:id. Solo admin: es visibilidad de gerencia, igual que las alertas.
 router.get(
   "/bitacora",
-  requireRole("admin"),
+  requirePestana("combustible", "bitacora"),
+  requireRole("admin", "operador"),
   asyncHandler(controller.listarBitacora.bind(controller))
 );
 
-router.get("/config", requireRole("admin"), asyncHandler(controller.getConfig.bind(controller)));
+router.get(
+  "/config",
+  requirePestana("combustible", "tanques"),
+  requireRole("admin"),
+  asyncHandler(controller.getConfig.bind(controller))
+);
 router.put(
   "/config",
+  requirePestana("combustible", "tanques"),
   requireRole("admin"),
   validate(configCombustibleSchema),
   asyncHandler(controller.guardarConfig.bind(controller))
@@ -346,12 +475,14 @@ router.put(
 // ANTES de /:id.
 router.get(
   "/config/sugerencia-topes",
+  requirePestana("combustible", "tanques:alertas"),
   requireRole("admin"),
   asyncHandler(controller.getSugerenciaTopes.bind(controller))
 );
 router.get(
   "/anomalias",
-  requireRole("admin"),
+  requirePestana("combustible", "auditoria"),
+  requireRole("admin", "operador"),
   asyncHandler(controller.listarAnomalias.bind(controller))
 );
 
@@ -360,15 +491,21 @@ router.get(
 // admin: es configuración, igual que el asistente de umbrales del tanque.
 router.get(
   "/equipos/:equipoId/sugerencia-consumo",
+  requirePestana("combustible", "auditoria"),
   requireRole("admin"),
   asyncHandler(controller.getSugerenciaConsumo.bind(controller))
 );
 
-router.get("/:id", asyncHandler(controller.getById.bind(controller)));
+router.get(
+  "/:id",
+  requirePestana("combustible", "tanques:acciones:ver_tanque"),
+  asyncHandler(controller.getById.bind(controller))
+);
 // Los puntos precintados del tanque con su número vigente. Cualquier rol: el
 // que toma la varilla necesita saber qué sellos mirar.
 router.get(
   "/:id/precintos",
+  requirePestana("combustible", "tanques:acciones:ver_tanque"),
   requiereTanqueCompleto,
   asyncHandler(controller.listarPuntosPrecinto.bind(controller))
 );
@@ -397,6 +534,7 @@ router.post(
 );
 router.get(
   "/:id/lecturas",
+  requirePestana("combustible", "tanques:acciones:historial_varilla"),
   // El historial de varillas es del grifo entero (0100).
   requiereTanqueCompleto,
   validateQuery(periodoHistorialCombustibleSchema),
@@ -437,7 +575,8 @@ router.get(
 // de gerencia y la herramienta del auditor, no trabajo de cancha.
 router.get(
   "/:id/kardex",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:acciones:kardex"),
+  requireRole("admin", "operador"),
   validateQuery(kardexCombustibleSchema),
   asyncHandler(controller.getKardex.bind(controller))
 );
@@ -446,7 +585,8 @@ router.get(
 // para que el navegador reciba un archivo y no un JSON con otro header.
 router.get(
   "/:id/kardex/csv",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:acciones:kardex"),
+  requireRole("admin", "operador"),
   validateQuery(kardexCombustibleSchema),
   asyncHandler(controller.getKardexCsv.bind(controller))
 );
@@ -455,7 +595,8 @@ router.get(
 // fórmulas. Convive con el CSV, no lo reemplaza.
 router.get(
   "/:id/kardex/xlsx",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:acciones:kardex"),
+  requireRole("admin", "operador"),
   validateQuery(kardexCombustibleSchema),
   asyncHandler(controller.getKardexXlsx.bind(controller))
 );
@@ -481,7 +622,8 @@ router.get(
 // criterio que las plantillas de Checklists, no las OT/movimientos).
 router.post(
   "/",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:nuevo_tanque"),
+  requireRole("admin", "operador"),
   validate(crearTanqueCombustibleSchema),
   asyncHandler(controller.create.bind(controller))
 );
@@ -489,7 +631,8 @@ router.post(
 // ✏️ actualizar tanque
 router.put(
   "/:id",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:acciones:editar"),
+  requireRole("admin", "operador"),
   validate(actualizarTanqueCombustibleSchema),
   asyncHandler(controller.update.bind(controller))
 );
@@ -497,7 +640,8 @@ router.put(
 // 🗑 soft-delete -- ver CombustibleController.delete
 router.delete(
   "/:id",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:acciones:eliminar"),
+  requireRole("admin", "operador"),
   validate(bajaTanqueCombustibleSchema),
   asyncHandler(controller.delete.bind(controller))
 );
@@ -506,7 +650,8 @@ router.delete(
 // app.ts de forma genérica para cualquier ruta que termine en /bulk.
 router.post(
   "/bulk",
-  requireRole("admin"),
+  requirePestana("combustible", "tanques:importar_excel"),
+  requireRole("admin", "operador"),
   validate(cargaMasivaTanquesCombustibleSchema),
   asyncHandler(controller.bulk.bind(controller))
 );
@@ -522,20 +667,26 @@ router.post(
 // solo puede permitirse una empresa con gente de sobra.
 router.post(
   "/lecturas",
+  requirePestana("combustible", "tanques:acciones:registrar_lectura_varilla"),
   requireRole("admin", "operador", "grifero"),
   validate(registrarLecturaCombustibleSchema),
   asyncHandler(controller.registrarLectura.bind(controller))
 );
 
-// 🚫 anular una lectura mal cargada -- admin y operador, los mismos que
-// pueden registrarla: quien se equivoca al tipear tiene que poder
-// corregirlo en el momento, sin depender de nadie más (ver el punto 3 de
-// docs/architecture/control-de-combustible.md). El `grifero` queda afuera por
-// el mismo motivo que en el vale: una varilla que se puede anular es una
-// varilla que se puede hacer coincidir con lo que uno ya declaró.
+// 🚫 anular una lectura mal cargada -- quien se equivoca al tipear tiene que
+// poder corregirlo en el momento, sin depender de nadie más (ver el punto 3
+// de docs/architecture/control-de-combustible.md).
+//
+// El `grifero` entra desde la matriz robusta de perfiles (fila 21: "puede
+// anular el mal tipeo pero justificando, deja alerta"). El riesgo es real y
+// conocido --una varilla que se puede anular es una varilla que se puede
+// hacer coincidir con lo que uno ya declaró-- y lo que lo hace tolerable es
+// que no queda en silencio: cada anulación suya levanta una alerta
+// `lectura_anulada` con el motivo (ver anularLectura en el controller).
 router.patch(
   "/lecturas/:lecturaId/anular",
-  requireRole("admin", "operador"),
+  requirePestana("combustible", "tanques:acciones:anular_lectura_varilla"),
+  requireRole("admin", "operador", "grifero"),
   validate(anularLecturaCombustibleSchema),
   asyncHandler(controller.anularLectura.bind(controller))
 );

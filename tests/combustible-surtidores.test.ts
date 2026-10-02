@@ -388,7 +388,8 @@ describe("aflojar y permisos", () => {
       .query({ accion: "combustible.tanque_vigilancia_reducida" });
     expect(JSON.stringify(eventos.body)).toContain("El contador se rompió");
 
-    // Solo el admin toca surtidores.
+    // Matriz robusta de perfiles (profile_user.xlsx, confirmado por Kenif
+    // 2026-10-01): Surtidores es Visible para Operador, no exclusivo de admin.
     const operador = request.agent(app);
     const dni = String(87100000 + Math.floor(Math.random() * 800000));
     await admin.post("/api/erp/usuarios").send({ nombre: "Op", dni, password, rol: "operador" });
@@ -399,7 +400,7 @@ describe("aflojar y permisos", () => {
           .post("/api/erp/combustible/surtidores")
           .send({ grifo_interno_id: grifo, nombre: "X" })
       ).status
-    ).toBe(403);
+    ).toBe(201);
   });
 });
 

@@ -39,6 +39,7 @@ import { Download, FileSpreadsheet } from "lucide-react";
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 
 import { useSedes } from "./comunes/useSedes";
+import { useAuth } from "../context/AuthContext";
 import { apiFetch } from "../services/apiClient";
 
 type Vista =
@@ -52,6 +53,22 @@ const VISTAS: { valor: Vista; etiqueta: string }[] = [
   { valor: "por_vehiculo", etiqueta: "Ranking de consumo por vehículo" },
   { valor: "por_grifo", etiqueta: "Ranking de consumo por origen (grifo interno y proveedores)" },
 ];
+
+/** El espejo en el front del default del backend (`defaultsDeRol` en
+ *  permisosPestanas.service.ts): Admin, Operador y Lectura ven las seis
+ *  vistas; los perfiles de cancha ninguna, salvo que el admin del tenant les
+ *  habilite alguna. El backend exige el mismo permiso ruta por ruta, así que
+ *  esto solo evita ofrecer una opción que iba a dar 403. */
+function puedeVerVista(
+  usuario: { rol: string; permisosPestanas?: Record<string, boolean> } | null | undefined,
+  vista: Vista
+): boolean {
+  if (!usuario) return false;
+  if (usuario.rol === "admin") return true;
+  const override = usuario.permisosPestanas?.[`combustible:historico:${vista}`];
+  if (override !== undefined) return override;
+  return usuario.rol === "operador" || usuario.rol === "lectura";
+}
 
 /** Las tres vistas de arriba son rankings agregados -- las únicas donde
  *  agrupar por período (día/semana/mes/año) tiene sentido. Las otras tres
@@ -213,7 +230,12 @@ function exportarCsv(filas: Record<string, unknown>[], nombreArchivo: string) {
 }
 
 export default function HistoricoCliente() {
-  const [vista, setVista] = useState<Vista>("despachos");
+  const { usuario } = useAuth();
+  // Cada vista tiene su permiso (filas 24-29 de la matriz robusta): el admin
+  // del tenant puede darle a un perfil de cancha una sola consulta sin
+  // abrirle el resto, así que el selector muestra lo que esa persona tiene.
+  const vistasVisibles = VISTAS.filter(({ valor }) => puedeVerVista(usuario, valor));
+  const [vista, setVista] = useState<Vista>(vistasVisibles[0]?.valor ?? "despachos");
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
   const [agrupacion, setAgrupacion] = useState<Agrupacion>("");
@@ -352,7 +374,7 @@ export default function HistoricoCliente() {
             onChange={(e) => setVista(e.target.value as Vista)}
             className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
           >
-            {VISTAS.map((v) => (
+            {vistasVisibles.map((v) => (
               <option key={v.valor} value={v.valor}>
                 {v.etiqueta}
               </option>

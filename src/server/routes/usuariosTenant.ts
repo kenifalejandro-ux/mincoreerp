@@ -52,6 +52,7 @@ import {
   type CrearUsuarioEnTenantInput,
 } from "../schemas/platform.schema";
 import { listarPermisosUsuarioService } from "../services/permisosTenant.service";
+import { PESTANAS_CONFIGURABLES } from "../services/permisosPestanas.service";
 import {
   solicitarOrdenService,
   verificarNoDejaSinFirmantes,
@@ -98,7 +99,9 @@ const actualizarUsuarioSchema = z
  *  de los permisos por diferencias -- dos administradores editando a la vez y
  *  un módulo que queda asignado porque nadie mandó su baja. */
 const guardarPermisosSchema = z.object({
-  rol: z.enum(["admin", "operador", "lectura", "grifero", "conductor_ruta"]).optional(),
+  rol: z
+    .enum(["admin", "operador", "lectura", "grifero", "conductor_ruta", "encargado_urea"])
+    .optional(),
   modulos: z
     .array(
       z.object({
@@ -116,6 +119,16 @@ const guardarPermisosSchema = z.object({
       grifos: z.array(z.number().int().positive()).max(200),
       surtidores: z.array(z.number().int().positive()).max(500),
     })
+    .optional(),
+  pestanas: z
+    .array(
+      z.object({
+        modulo: z.enum(["combustible", "facturacion"]),
+        pestana: z.string().trim().min(1).max(100),
+        permitido: z.boolean(),
+      })
+    )
+    .max(50)
     .optional(),
   motivo: z.string().trim().max(500).optional(),
 });
@@ -300,7 +313,7 @@ export function createUsuariosTenantRouter() {
     validate(guardarPermisosSchema),
     asyncHandler(async (req, res) => {
       const cambio = req.validatedBody as {
-        rol?: "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta";
+        rol?: "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta" | "encargado_urea";
         modulos: { modulo: string; asignado: boolean; nivel: "operar" | "consultas" }[];
         alcanceCombustible?: {
           todo: boolean;
@@ -308,6 +321,7 @@ export function createUsuariosTenantRouter() {
           grifos: number[];
           surtidores: number[];
         };
+        pestanas?: { modulo: string; pestana: string; permitido: boolean }[];
         motivo?: string;
       };
 
@@ -321,6 +335,7 @@ export function createUsuariosTenantRouter() {
             rol: cambio.rol,
             modulos: cambio.modulos,
             ...(cambio.alcanceCombustible ? { alcanceCombustible: cambio.alcanceCombustible } : {}),
+            ...(cambio.pestanas ? { pestanas: cambio.pestanas } : {}),
           },
           motivo: cambio.motivo ?? "Cambio de permisos",
         },

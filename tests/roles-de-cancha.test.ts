@@ -29,6 +29,8 @@ describe("combustible: roles de cancha (migración 0085)", () => {
   const admin = request.agent(app);
   const grifero = request.agent(app);
   const conductor = request.agent(app);
+  const encargadoUrea = request.agent(app);
+  const operador = request.agent(app);
   let seq = 0;
   const dniUnico = () => String(82000000 + seq++);
 
@@ -79,6 +81,8 @@ describe("combustible: roles de cancha (migración 0085)", () => {
 
     await altaYLogin(grifero, "grifero");
     await altaYLogin(conductor, "conductor_ruta");
+    await altaYLogin(encargadoUrea, "encargado_urea");
+    await altaYLogin(operador, "operador");
   });
 
   afterAll(async () => {
@@ -142,6 +146,63 @@ describe("combustible: roles de cancha (migración 0085)", () => {
       recibido_en: new Date().toISOString(),
     });
     expect(res.status).toBe(201);
+  });
+
+  // Matriz robusta de perfiles (profile_user.xlsx, confirmado por Kenif
+  // 2026-10-01): Operador parte con acceso amplio -- ve y opera casi todo
+  // en Combustible y en el resto de módulos del ERP; cada tenant recorta
+  // desde Administración → Configuración según sus propias políticas. Lo
+  // que sigue siendo admin-only son las cosas sin fila en esa matriz
+  // (configuración del tanque, reportes de segregación/controles que
+  // auditan al propio operador, validar recepción) y Facturación.
+  it("el operador en Combustible tiene acceso amplio por defecto (matriz robusta)", async () => {
+    expect((await operador.post("/api/erp/combustible/lecturas").send(varilla(9200))).status).toBe(
+      201
+    );
+    expect(
+      (await operador.post("/api/erp/combustible/despachos").send(valeDelTanque())).status
+    ).toBe(201);
+    expect(
+      (
+        await operador.post("/api/erp/combustible/recepciones").send({
+          combustible_id: tanqueId,
+          grifo_id: grifoId,
+          cantidad: 100,
+          costo_unitario: 16,
+          recibido_en: new Date().toISOString(),
+        })
+      ).status
+    ).toBe(201);
+    expect((await operador.get("/api/erp/combustible/config")).status).toBe(403);
+    const desde = new Date(Date.now() - 3600_000).toISOString();
+    const hasta = new Date().toISOString();
+    expect(
+      (await operador.get(`/api/erp/combustible/${tanqueId}/kardex?desde=${desde}&hasta=${hasta}`))
+        .status
+    ).toBe(200);
+    expect((await operador.get("/api/facturacion/comprobantes")).status).toBe(403);
+    expect(
+      (
+        await operador.post("/api/erp/combustible").send({
+          codigo: idUnico("TQ"),
+          tanque_nombre: idUnico("Tanque operador"),
+          tipo_combustible: "diesel_b5",
+          unidad: "gal",
+          tipo_punto: "fijo",
+          capacidad_total: 1000,
+          nivel_actual: 0,
+        })
+      ).status
+    ).toBe(201);
+    expect(
+      (
+        await operador.post("/api/erp/equipos").send({
+          placa_codigo: idUnico("VQ"),
+          tipo: "Volquete",
+          tipo_medidor: "horometro",
+        })
+      ).status
+    ).toBe(201);
   });
 
   // ── El cruce que requireRole no puede frenar ─────────────────────────
@@ -241,6 +302,41 @@ describe("combustible: roles de cancha (migración 0085)", () => {
     expect((await conductor.get("/api/erp/iperc")).status).toBe(403);
   });
 
+  it("el conductor solo consulta unidades para despachar, no tanques ni el módulo Equipos", async () => {
+    expect((await conductor.get("/api/erp/combustible")).status).toBe(403);
+    expect((await conductor.get("/api/erp/equipos?pageSize=200")).status).toBe(403);
+
+    const unidades = await conductor
+      .get("/api/erp/combustible/equipos-destino")
+      .query({ pageSize: 200 });
+    expect(unidades.status).toBe(200);
+    expect(unidades.body.data.some((equipo: { id: number }) => equipo.id === equipoId)).toBe(true);
+  });
+
+  it("Grifero y Conductor no acceden por API a pestañas ocultas por defecto", async () => {
+    for (const agente of [grifero, conductor]) {
+      expect((await agente.get("/api/erp/combustible/consumo-por-conductor")).status).toBe(403);
+      expect((await agente.get("/api/erp/combustible/urea/estado")).status).toBe(403);
+    }
+    expect((await conductor.get(`/api/erp/combustible/${tanqueId}/lecturas`)).status).toBe(403);
+  });
+
+  it("Encargado de Urea solo ve Urea y no opera combustible ni módulos generales", async () => {
+    const yo = await encargadoUrea.get("/api/auth/me");
+    expect(yo.body.usuario.modulosPermitidos).toEqual(["combustible"]);
+    expect((await encargadoUrea.get("/api/erp/combustible")).status).toBe(403);
+    expect((await encargadoUrea.get("/api/erp/combustible/urea/estado")).status).toBe(200);
+    expect((await encargadoUrea.get("/api/erp/equipos")).status).toBe(403);
+    expect(
+      (await encargadoUrea.get("/api/erp/combustible/equipos-destino?pageSize=200")).status
+    ).toBe(200);
+
+    const intentoCombustible = await encargadoUrea
+      .post("/api/erp/combustible/despachos")
+      .send(compraEnRuta({ producto: "combustible" }));
+    expect(intentoCombustible.status).toBe(403);
+  });
+
   // ── La varilla, que es configurable ──────────────────────────────────
 
   async function ponerVarillaDelGrifero(puede: boolean) {
@@ -304,15 +400,36 @@ describe("combustible: roles de cancha (migración 0085)", () => {
 
   // ── El grifero tampoco anula varillas ────────────────────────────────
 
-  it("el grifero NO anula una varilla", async () => {
-    // Una varilla que se puede anular es una varilla que se puede hacer
-    // coincidir con lo que uno ya declaró.
+  // Matriz robusta de perfiles (profile_user.xlsx, fila 21, confirmado por
+  // Kenif 2026-10-01): "puede anular el mal tipeo pero justificando, deja
+  // alerta". El riesgo sigue siendo el de siempre --una varilla que se puede
+  // anular es una varilla que se puede hacer coincidir con lo que uno ya
+  // declaró-- y lo que lo hace tolerable es que no pasa en silencio.
+  it("el grifero anula su varilla mal tipeada, pero deja alerta con el motivo", async () => {
     const propia = await grifero.post("/api/erp/combustible/lecturas").send(varilla(8800));
     expect(propia.status).toBe(201);
 
     const res = await grifero
       .patch(`/api/erp/combustible/lecturas/${propia.body.lectura.id}/anular`)
       .send({ motivo: "Leí mal la regla" });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
+
+    const alertas = await admin.get("/api/erp/combustible/alertas?pageSize=200");
+    expect(alertas.status).toBe(200);
+    const dejada = (alertas.body.data as { tipo: string; detalle: { motivo?: string } }[]).find(
+      (a) => a.tipo === "lectura_anulada"
+    );
+    expect(dejada?.detalle.motivo).toBe("Leí mal la regla");
+  });
+
+  // El motivo no es opcional: sin él la anulación no se puede auditar.
+  it("el grifero no puede anular sin justificar", async () => {
+    const propia = await grifero.post("/api/erp/combustible/lecturas").send(varilla(8700));
+    expect(propia.status).toBe(201);
+
+    const res = await grifero
+      .patch(`/api/erp/combustible/lecturas/${propia.body.lectura.id}/anular`)
+      .send({});
+    expect(res.status).toBe(400);
   });
 });

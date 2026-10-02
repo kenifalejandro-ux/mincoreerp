@@ -28,6 +28,11 @@ const PERFILES: { rol: RolUsuarioTenant; nombre: string; detalle: string }[] = [
     nombre: "Conductor de ruta",
     detalle: "Registra compras de combustible realizadas en grifos externos.",
   },
+  {
+    rol: "encargado_urea",
+    nombre: "Encargado de Urea",
+    detalle: "Acceso acotado a la pestaña Urea.",
+  },
 ];
 
 export default function CambiarPerfilDialog({

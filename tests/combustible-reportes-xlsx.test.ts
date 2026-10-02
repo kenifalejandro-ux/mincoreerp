@@ -221,11 +221,13 @@ describe("combustible: reportes en .xlsx", () => {
       expect((await ag.get(`/api/erp/combustible/${tq}/kardex/xlsx`)).status).toBe(400);
     });
 
-    it("un operador no puede llevárselo", async () => {
+    // Matriz robusta de perfiles (profile_user.xlsx, confirmado por Kenif
+    // 2026-10-01): Kardex es Visible para Operador, no exclusivo de admin.
+    it("el operador sí puede llevárselo (matriz robusta de perfiles)", async () => {
       const tq = await tanque();
       const agOp = await operador();
       const res = await agOp.get(`/api/erp/combustible/${tq}/kardex/xlsx`).query(periodo());
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(200);
     });
   });
 

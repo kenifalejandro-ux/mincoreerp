@@ -22,9 +22,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect, useCallback, useMemo } from "react";
 
-import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from "./Precintos";
-import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
-import VentanaSurtidores from "./Surtidores";
+import { useAuth } from "../../context/AuthContext";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { ahoraParaInputLocal } from "../../utils/fechaLocal";
@@ -42,6 +40,10 @@ import {
 } from "../comunes/ventanasFlotantesEstado";
 import HistoricoCliente from "../HistoricoCliente";
 import UreaPanel from "../UreaPanel";
+
+import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from "./Precintos";
+import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
+import VentanaSurtidores from "./Surtidores";
 
 interface SurtidorDelTanque {
   id: number;
@@ -1943,6 +1945,49 @@ export interface CombustiblePanelProps {
 }
 
 export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelProps = {}) {
+  const { usuario } = useAuth();
+  const esAdmin = usuario?.rol === "admin";
+  const esGrifero = usuario?.rol === "grifero";
+  const esConductor = usuario?.rol === "conductor_ruta";
+  // El espejo en el front de `defaultsDeRol` (permisosPestanas.service.ts),
+  // traducido de la matriz robusta de perfiles (profile_user.xlsx). El
+  // backend exige lo mismo ruta por ruta: esto solo evita dibujar un botón
+  // que iba a dar 403.
+  const esLectura = usuario?.rol === "lectura";
+  const permiteTanque = (id: string) => {
+    const override = usuario?.permisosPestanas?.[`combustible:tanques:${id}`];
+    if (override !== undefined) return override;
+    if (esAdmin) return true;
+    if (esGrifero) return id === "registrar_recepcion" || id === "registrar_despacho";
+    if (esConductor) return id === "registrar_despacho";
+    if (usuario?.rol === "encargado_urea") return false;
+    // Lectura: solo lo informativo. Ni "Registrar X", ni Alertas/Proveedores/
+    // Surtidores/Precios/Nuevo tanque.
+    if (esLectura) return id === "importar_excel" || id === "historial_despacho";
+    return true;
+  };
+  const permiteAccionTanque = (id: string) => {
+    const override = usuario?.permisosPestanas?.[`combustible:tanques:acciones:${id}`];
+    if (override !== undefined) return override;
+    if (esAdmin) return true;
+    // El grifero anula su propia varilla mal tipeada (fila 21 de la matriz):
+    // el backend se lo permite y deja una alerta con el motivo.
+    if (esGrifero) {
+      return (
+        id === "registrar_lectura_varilla" ||
+        id === "anular_lectura_varilla" ||
+        id === "historial_varilla" ||
+        id === "ver_tanque"
+      );
+    }
+    if (esConductor || usuario?.rol === "encargado_urea") return false;
+    // Lectura ve el panel pero no sus acciones de escritura -- el Excel las
+    // marca "No visible / acción bloqueada", no "Solo consulta".
+    if (usuario?.rol === "lectura") {
+      return id === "kardex" || id === "historial_varilla" || id === "ver_tanque";
+    }
+    return true;
+  };
   const [tanques, setTanques] = useState<Tanque[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -2252,17 +2297,21 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [anulandoRecepcion, setAnulandoRecepcion] = useState(false);
 
   const cargarTanques = useCallback(async () => {
+    if (esConductor) {
+      setTanques([]);
+      return;
+    }
     const res = await apiFetch("/api/erp/combustible");
     const data = await res.json();
     setTanques(Array.isArray(data) ? data : []);
-  }, []);
+  }, [esConductor]);
 
   // pageSize=200 (el máximo, ver pagination.ts) alcanza para el <select> de
   // este formulario -- un buscador de equipos aparte es más de lo que Fase
   // B necesita ("solo lo indispensable para que el grifero pueda cargar
   // vales").
   const cargarEquipos = useCallback(async () => {
-    const res = await apiFetch("/api/erp/equipos?pageSize=200");
+    const res = await apiFetch("/api/erp/combustible/equipos-destino?pageSize=200");
     const body = await res.json().catch(() => null);
     setEquipos(Array.isArray(body?.data) ? body.data : []);
   }, []);
@@ -3113,7 +3162,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // --- Registrar despacho (Fase B) ---
 
   const abrirModalDespacho = () => {
-    setDespachoForm(DESPACHO_FORM_INICIAL);
+    setDespachoForm({
+      ...DESPACHO_FORM_INICIAL,
+      origen: esConductor ? "compra_externa" : DESPACHO_FORM_INICIAL.origen,
+    });
     setDespachadoEn(ahoraParaInputLocal());
     setHoraDespachoEditadaAMano(false);
     setCostoEditadoAMano(false);
@@ -3993,70 +4045,105 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-10">
         <div className="shrink-0">
           <h1 className="text-lg sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight">
-            Control de Combustible
+            {esConductor ? "Registrar despacho" : "Control de Combustible"}
           </h1>
-          <p className="text-xs sm:text-sm text-[#94a3b8]">Tanques y puntos de abastecimiento</p>
+          <p className="text-xs sm:text-sm text-[#94a3b8]">
+            {esConductor
+              ? "Despacho de combustible de origen externo"
+              : "Tanques y puntos de abastecimiento"}
+          </p>
         </div>
 
         {pestanaCombustible === "tanques" && (
           <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-            <label
-              className={`${BTN_BASE} ${BTN_ESTILO.outline} ${
-                importacion.cargando ? "opacity-50 cursor-wait" : "cursor-pointer"
-              }`}
-            >
-              <FileSpreadsheet className="w-4 h-4 shrink-0" />
-              <span>{importacion.cargando ? "Leyendo..." : "Importar Excel"}</span>
-              <input
-                type="file"
-                accept=".xlsx, .xls"
-                className="hidden"
-                disabled={importacion.cargando}
-                onChange={importacion.handleFile}
-              />
-            </label>
-            <button
-              onClick={abrirModalHistorialDespachos}
-              className={`${BTN_BASE} ${BTN_ESTILO.lime}`}
-            >
-              <FileText className="w-4 h-4 shrink-0" /> Historial de despachos
-            </button>
-            <button
-              onClick={abrirModalHistorialRecepciones}
-              className={`${BTN_BASE} ${BTN_ESTILO.lime}`}
-            >
-              <FileText className="w-4 h-4 shrink-0" /> Historial de recepciones
-            </button>
-            <button onClick={abrirModalAlertas} className={`${BTN_BASE} ${BTN_ESTILO.lime}`}>
-              <Bell className="w-4 h-4 shrink-0" /> Alertas
-            </button>
-            <button onClick={abrirModalGrifos} className={`${BTN_BASE} ${BTN_ESTILO.muted}`}>
-              <Wrench className="w-4 h-4 shrink-0" /> Proveedores
-            </button>
-            <button
-              onClick={() => setVentanaSurtidores(true)}
-              className={`${BTN_BASE} ${BTN_ESTILO.muted}`}
-            >
-              <Fuel className="w-4 h-4 shrink-0" /> Surtidores
-            </button>
-            <button onClick={abrirModalPrecios} className={`${BTN_BASE} ${BTN_ESTILO.muted}`}>
-              <Tag className="w-4 h-4 shrink-0" /> Precios
-            </button>
-            <button onClick={abrirModalRecepcion} className={`${BTN_BASE} ${BTN_ESTILO.secundary}`}>
-              <Truck className="w-4 h-4 shrink-0" /> Registrar recepción
-            </button>
-            <button onClick={abrirModalDespacho} className={`${BTN_BASE} ${BTN_ESTILO.secundary}`}>
-              <ClipboardCheck className="w-4 h-4 shrink-0" /> Registrar despacho
-            </button>
-            <button onClick={abrirModalNuevo} className={`${BTN_BASE} ${BTN_ESTILO.primary}`}>
-              <Plus className="w-4 h-4 shrink-0" /> Nuevo Tanque
-            </button>
+            {permiteTanque("importar_excel") && (
+              <label
+                className={`${BTN_BASE} ${BTN_ESTILO.outline} ${
+                  importacion.cargando ? "opacity-50 cursor-wait" : "cursor-pointer"
+                }`}
+              >
+                <FileSpreadsheet className="w-4 h-4 shrink-0" />
+                <span>{importacion.cargando ? "Leyendo..." : "Importar Excel"}</span>
+                <input
+                  type="file"
+                  accept=".xlsx, .xls"
+                  className="hidden"
+                  disabled={importacion.cargando}
+                  onChange={importacion.handleFile}
+                />
+              </label>
+            )}
+            {permiteTanque("historial_despacho") && (
+              <button
+                onClick={abrirModalHistorialDespachos}
+                className={`${BTN_BASE} ${BTN_ESTILO.lime}`}
+              >
+                <FileText className="w-4 h-4 shrink-0" /> Historial de despachos
+              </button>
+            )}
+            {/* La CONSULTA del historial de recepciones se mudó al submenú
+                Histórico. Este botón queda porque adentro viven además
+                "Validar" (el control cruzado contra la guía: el grifero
+                registra, el admin valida) y "Anular", que no existen en
+                ningún otro lado -- por eso ahora se llama por lo que hace. */}
+            {permiteTanque("gestion_recepciones") && (
+              <button
+                onClick={abrirModalHistorialRecepciones}
+                className={`${BTN_BASE} ${BTN_ESTILO.lime}`}
+              >
+                <FileText className="w-4 h-4 shrink-0" /> Validar recepciones
+              </button>
+            )}
+            {permiteTanque("alertas") && (
+              <button onClick={abrirModalAlertas} className={`${BTN_BASE} ${BTN_ESTILO.lime}`}>
+                <Bell className="w-4 h-4 shrink-0" /> Alertas
+              </button>
+            )}
+            {permiteTanque("proveedores") && (
+              <button onClick={abrirModalGrifos} className={`${BTN_BASE} ${BTN_ESTILO.muted}`}>
+                <Wrench className="w-4 h-4 shrink-0" /> Proveedores
+              </button>
+            )}
+            {permiteTanque("surtidores") && (
+              <button
+                onClick={() => setVentanaSurtidores(true)}
+                className={`${BTN_BASE} ${BTN_ESTILO.muted}`}
+              >
+                <Fuel className="w-4 h-4 shrink-0" /> Surtidores
+              </button>
+            )}
+            {permiteTanque("precios") && (
+              <button onClick={abrirModalPrecios} className={`${BTN_BASE} ${BTN_ESTILO.muted}`}>
+                <Tag className="w-4 h-4 shrink-0" /> Precios
+              </button>
+            )}
+            {permiteTanque("registrar_recepcion") && (
+              <button
+                onClick={abrirModalRecepcion}
+                className={`${BTN_BASE} ${BTN_ESTILO.secundary}`}
+              >
+                <Truck className="w-4 h-4 shrink-0" /> Registrar recepción
+              </button>
+            )}
+            {permiteTanque("registrar_despacho") && (
+              <button
+                onClick={abrirModalDespacho}
+                className={`${BTN_BASE} ${BTN_ESTILO.secundary}`}
+              >
+                <ClipboardCheck className="w-4 h-4 shrink-0" /> Registrar despacho
+              </button>
+            )}
+            {permiteTanque("nuevo_tanque") && (
+              <button onClick={abrirModalNuevo} className={`${BTN_BASE} ${BTN_ESTILO.primary}`}>
+                <Plus className="w-4 h-4 shrink-0" /> Nuevo Tanque
+              </button>
+            )}
           </div>
         )}
       </div>
       {pestanaCombustible === "historico" && <HistoricoCliente />}
       {pestanaCombustible === "urea" && <UreaPanel />}
-      {pestanaCombustible === "tanques" && importacion.error && (
+      {!esConductor && pestanaCombustible === "tanques" && importacion.error && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-red-900 font-light flex-1">{importacion.error}</p>
           <button
@@ -4068,7 +4155,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           </button>
         </div>
       )}
-      {pestanaCombustible === "tanques" && mensajeExito && (
+      {!esConductor && pestanaCombustible === "tanques" && mensajeExito && (
         <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-green-900 font-light flex-1">{mensajeExito}</p>
           <button
@@ -4081,7 +4168,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         </div>
       )}
       {/**AGREGAR MAS COLUMNAS  */}{" "}
-      {pestanaCombustible === "tanques" &&
+      {!esConductor &&
+        pestanaCombustible === "tanques" &&
         (tanques.length === 0 ? (
           <div className="bg-slate-50 border border-dashed rounded-xl p-10 text-center text-slate-500">
             No hay tanques registrados todavía.
@@ -4265,51 +4353,62 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                             </td>
                             <td className="p-4">
                               <div className="flex flex-nowrap items-center justify-end gap-1 min-w-max">
-                                <button
-                                  onClick={() => setTanqueVerId(t.id)}
-                                  className="p-1.5 rounded text-[#94a3b8] hover:text-white transition-colors"
-                                  title="Ver tanque"
-                                >
-                                  <Eye className="w-4 h-4" />
-                                </button>
-                                <button
-                                  onClick={() => abrirModalHistorial(t)}
-                                  className="p-1.5 rounded text-[#94a3b8] hover:text-white transition-colors"
-                                  title="Ver historial de lecturas"
-                                >
-                                  <ClipboardList className="w-4 h-4" />
-                                </button>
-                                <button
-                                  onClick={() => abrirModalLectura(t)}
-                                  className="p-1.5 rounded text-[#f59e0b] hover:text-amber-300 transition-colors"
-                                  title="Registrar lectura"
-                                >
-                                  <Fuel className="w-4 h-4" />
-                                </button>
-                                {t.usa_precintos && (
+                                {permiteAccionTanque("ver_tanque") && (
                                   <button
-                                    onClick={() => setTanquePrecintos(t)}
+                                    onClick={() => setTanqueVerId(t.id)}
                                     className="p-1.5 rounded text-[#94a3b8] hover:text-white transition-colors"
-                                    title="Precintos del tanque"
+                                    title="Ver tanque"
                                   >
-                                    <Lock className="w-4 h-4" />
+                                    <Eye className="w-4 h-4" />
                                   </button>
                                 )}
-                                <button
-                                  onClick={() => abrirModalKardex(t.id)}
-                                  className="p-1.5 rounded text-[#94a3b8] hover:text-white transition-colors"
-                                  title="Kardex: movimiento del tanque con saldo corriente"
-                                >
-                                  <BookOpen className="w-4 h-4" />
-                                </button>
-                                <button
-                                  onClick={() => abrirModalEditar(t)}
-                                  className="p-1.5 rounded text-[#94a3b8] hover:text-white transition-colors"
-                                  title="Editar"
-                                >
-                                  <Pencil className="w-4 h-4" />
-                                </button>
-                                {t.activo && (
+                                {permiteAccionTanque("historial_varilla") && (
+                                  <button
+                                    onClick={() => abrirModalHistorial(t)}
+                                    className="p-1.5 rounded text-[#94a3b8] hover:text-white transition-colors"
+                                    title="Ver historial de lecturas"
+                                  >
+                                    <ClipboardList className="w-4 h-4" />
+                                  </button>
+                                )}
+                                {permiteAccionTanque("registrar_lectura_varilla") && (
+                                  <button
+                                    onClick={() => abrirModalLectura(t)}
+                                    className="p-1.5 rounded text-[#f59e0b] hover:text-amber-300 transition-colors"
+                                    title="Registrar lectura"
+                                  >
+                                    <Fuel className="w-4 h-4" />
+                                  </button>
+                                )}
+                                {t.usa_precintos &&
+                                  permiteAccionTanque("registrar_lectura_varilla") && (
+                                    <button
+                                      onClick={() => setTanquePrecintos(t)}
+                                      className="p-1.5 rounded text-[#94a3b8] hover:text-white transition-colors"
+                                      title="Precintos del tanque"
+                                    >
+                                      <Lock className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                {permiteAccionTanque("kardex") && (
+                                  <button
+                                    onClick={() => abrirModalKardex(t.id)}
+                                    className="p-1.5 rounded text-[#94a3b8] hover:text-white transition-colors"
+                                    title="Kardex: movimiento del tanque con saldo corriente"
+                                  >
+                                    <BookOpen className="w-4 h-4" />
+                                  </button>
+                                )}
+                                {permiteAccionTanque("editar") && (
+                                  <button
+                                    onClick={() => abrirModalEditar(t)}
+                                    className="p-1.5 rounded text-[#94a3b8] hover:text-white transition-colors"
+                                    title="Editar"
+                                  >
+                                    <Pencil className="w-4 h-4" />
+                                  </button>
+                                )}
+                                {permiteAccionTanque("eliminar") && t.activo && (
                                   <button
                                     onClick={() => handleDesactivar(t)}
                                     className="p-1.5 rounded text-[#ef4444]/60 hover:text-[#ef4444] transition-colors"
@@ -5166,7 +5265,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                             )}
                           </td>
                           <td className="p-3 text-sm text-right">
-                            {!anulada && (
+                            {permiteAccionTanque("anular_lectura_varilla") && !anulada && (
                               <button
                                 onClick={() => {
                                   // El modal que pide el motivo se abre en la
@@ -5416,20 +5515,26 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   >
                     Origen
                   </label>
-                  <select
-                    id="despacho-origen"
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-                    value={despachoForm.origen}
-                    onChange={(e) =>
-                      setDespachoForm({
-                        ...DESPACHO_FORM_INICIAL,
-                        origen: e.target.value as OrigenDespacho,
-                      })
-                    }
-                  >
-                    <option value="tanque_propio">Tanque propio</option>
-                    <option value="compra_externa">Compra externa (ruta)</option>
-                  </select>
+                  {esConductor ? (
+                    <div className="w-full border border-slate-200 rounded-xl p-3 text-sm bg-slate-50 text-slate-700">
+                      Compra externa (ruta)
+                    </div>
+                  ) : (
+                    <select
+                      id="despacho-origen"
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                      value={despachoForm.origen}
+                      onChange={(e) =>
+                        setDespachoForm({
+                          ...DESPACHO_FORM_INICIAL,
+                          origen: e.target.value as OrigenDespacho,
+                        })
+                      }
+                    >
+                      <option value="tanque_propio">Tanque propio</option>
+                      <option value="compra_externa">Compra externa (ruta)</option>
+                    </select>
+                  )}
                 </div>
                 <div className="space-y-1">
                   <label

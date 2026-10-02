@@ -55,6 +55,7 @@ import {
   onboardTenantSchema,
   cambiarEstadoTenantSchema,
   actualizarModulosSchema,
+  actualizarPestanasUsuarioSchema,
   actualizarModulosTenantSchema,
   actualizarModuloGlobalSchema,
   MODULOS_ERP,
@@ -115,7 +116,12 @@ import {
   actualizarModulosUsuarioService,
   type ConfiguracionModulo,
 } from "../services/platform.service";
+import {
+  actualizarPermisosPestanasTenantService,
+  listarPermisosPestanasService,
+} from "../services/permisosPestanas.service";
 import { onboardTenantService } from "../services/tenantOnboardingService";
+import { revocarSesionesService } from "../services/auth.service";
 import {
   asignarDominioTenantService,
   verificarDominioService,
@@ -1915,6 +1921,50 @@ export function createPlatformRouter() {
           modulos,
         });
         res.status(200).json({ ok: true, modulos: resultado });
+      } catch (err) {
+        next(err);
+      }
+    })
+  );
+
+  router.get(
+    "/tenants/:tenantId/usuarios/:usuarioId/pestanas",
+    asyncHandler(async (req, res, next) => {
+      try {
+        const pestanas = await listarPermisosPestanasService(
+          req.params.tenantId,
+          req.params.usuarioId
+        );
+        res.status(200).json({ ok: true, pestanas });
+      } catch (err) {
+        next(err);
+      }
+    })
+  );
+
+  router.put(
+    "/tenants/:tenantId/usuarios/:usuarioId/pestanas",
+    validate(actualizarPestanasUsuarioSchema),
+    asyncHandler(async (req, res, next) => {
+      try {
+        const { pestanas } = req.validatedBody as {
+          pestanas: { modulo: string; pestana: string; permitido: boolean }[];
+        };
+        const resultado = await actualizarPermisosPestanasTenantService(
+          req.params.tenantId,
+          req.params.usuarioId,
+          pestanas
+        );
+        if (resultado.recorta)
+          await revocarSesionesService(req.params.usuarioId, req.params.tenantId);
+        await publicarEventoPlataforma("tenant.usuario_pestanas_actualizadas", {
+          tenantId: req.params.tenantId,
+          usuarioId: req.params.usuarioId,
+          pestanas,
+        });
+        res
+          .status(200)
+          .json({ ok: true, pestanas: resultado.pestanas, recorta: resultado.recorta });
       } catch (err) {
         next(err);
       }

@@ -7,6 +7,7 @@
  */
 import { Router } from "express";
 import { authMiddleware } from "../shared/middlewares/auth.middleware";
+import { requirePestana } from "../shared/middlewares/pestana.middleware";
 import { tenantMiddleware } from "../shared/middlewares/tenant.middleware";
 import erpRateLimiter from "../middleware/erpRateLimiter";
 import { asyncHandler } from "../shared/utils/asyncHandler";
@@ -22,7 +23,12 @@ export const facturacionRouter = Router();
 // CodeQL marcó estas rutas como "Missing rate limiting" al no tenerlo
 // (leen la base tras autenticar, mismo perfil de riesgo que cualquier
 // ruta de negocio).
-facturacionRouter.use(authMiddleware, tenantMiddleware, erpRateLimiter);
+facturacionRouter.use(
+  authMiddleware,
+  tenantMiddleware,
+  erpRateLimiter,
+  requirePestana("facturacion", "principal")
+);
 
 facturacionRouter.get(
   "/comprobantes",

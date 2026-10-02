@@ -254,7 +254,8 @@ export interface UsuarioPlataforma {
   activo: boolean;
 }
 
-export type RolUsuarioTenant = "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta";
+export type RolUsuarioTenant =
+  "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta" | "encargado_urea";
 
 export async function listarUsuariosTenantApi(tenantId: string): Promise<UsuarioPlataforma[]> {
   const res = await platformFetch(`/tenants/${tenantId}/usuarios`);
@@ -335,6 +336,38 @@ export async function actualizarModulosUsuarioApi(
   );
   const data = await parseOrThrow(res);
   return data.modulos;
+}
+
+export interface PermisoPestanaUsuario {
+  modulo: string;
+  pestana: string;
+  nombre: string;
+  permitido: boolean;
+  predeterminado: boolean;
+  nivel: "submenu" | "pestana" | "accion";
+  padre: string | null;
+}
+
+export async function obtenerPestanasUsuarioApi(
+  tenantId: string,
+  usuarioId: string
+): Promise<PermisoPestanaUsuario[]> {
+  const res = await platformFetch(`/tenants/${tenantId}/usuarios/${usuarioId}/pestanas`);
+  const data = await parseOrThrow(res);
+  return data.pestanas;
+}
+
+export async function actualizarPestanasUsuarioApi(
+  tenantId: string,
+  usuarioId: string,
+  pestanas: { modulo: string; pestana: string; permitido: boolean }[]
+): Promise<PermisoPestanaUsuario[]> {
+  const res = await platformFetch(
+    `/tenants/${tenantId}/usuarios/${usuarioId}/pestanas`,
+    jsonInit("PUT", { pestanas })
+  );
+  const data = await parseOrThrow(res);
+  return data.pestanas;
 }
 
 export interface EntradaAuditoria {

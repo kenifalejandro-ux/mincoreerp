@@ -121,6 +121,18 @@ export const MODULOS: ModuloDefinicion[] = [
           surtidor_id: "surtidores",
         },
       },
+      // Permisos de navegación por pestaña (0104): guarda overrides tanto de
+      // Combustible como de Facturación (columna `modulo`) -- Facturación no
+      // tiene módulo propio en el registry (es infraestructura de cuenta,
+      // ver facturacion.ts), así que la tabla cascadea acá, junto a su
+      // hermana usuario_accesos_combustible.
+      {
+        nombre: "usuario_permisos_pestana",
+        pk: "serial",
+        fks: {
+          usuario_id: "usuarios",
+        },
+      },
       {
         nombre: "combustible_lecturas",
         pk: "serial",

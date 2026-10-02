@@ -18,7 +18,11 @@ const FacturacionView = lazy(() => import("./components/facturacion/FacturacionV
 // (requireRole).
 const AdministracionView = lazy(() => import("./components/administracion/AdministracionView"));
 
-type UsuarioDeSesion = { rol: string; modulosPermitidos: string[] } | null;
+type UsuarioDeSesion = {
+  rol: string;
+  modulosPermitidos: string[];
+  permisosPestanas?: Record<string, boolean>;
+} | null;
 
 /** El id del MÓDULO detrás de un activeTab, sin la sub-pestaña. Solo
  *  Combustible tiene submenú hoy ("combustible:historico" -- ver
@@ -32,14 +36,43 @@ function moduloIdDe(tab: string): string {
  *  primero: Facturación la ve cualquiera, Administración solo el admin. */
 function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
   const moduloId = moduloIdDe(tab);
-  if (moduloId === "facturacion") return true;
+  if (moduloId === "facturacion") {
+    if (usuario?.rol === "admin") return true;
+    const override = usuario?.permisosPestanas?.["facturacion:principal"];
+    if (override !== undefined) return override;
+    // Exclusiva de Admin por defecto (confirmado por Kenif, 2026-10-01); el
+    // admin del tenant puede habilitarla por usuario desde Configuración.
+    return false;
+  }
   if (moduloId === "administracion") return usuario?.rol === "admin";
+  if (moduloId === "combustible") {
+    const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
+    const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
+    if (override !== undefined) return override;
+    // Operador y Lectura parten con acceso amplio a Combustible (matriz
+    // robusta de perfiles): sin override, caen al fallback de abajo (ve
+    // cualquier sub-pestaña mientras tenga el módulo asignado).
+    if (usuario?.rol === "grifero") return tab === "combustible";
+    if (usuario?.rol === "conductor_ruta") return tab === "combustible";
+    if (usuario?.rol === "encargado_urea") return tab === "combustible:urea";
+  }
   return (usuario?.modulosPermitidos ?? []).includes(moduloId);
 }
 
 /** Con qué abre la app: el dashboard si lo tiene, y si no el primer módulo
  *  que sí, en el orden del menú. */
 function primeraPestania(usuario: UsuarioDeSesion): string {
+  const override = (pestana: string) => usuario?.permisosPestanas?.[`combustible:${pestana}`];
+  if (usuario?.rol === "conductor_ruta" && override("tanques") !== false) return "combustible";
+  if (usuario?.rol === "encargado_urea" && override("urea") !== false) return "combustible:urea";
+  if (usuario?.rol === "grifero" && override("tanques") !== false) return "combustible";
+  if (
+    usuario?.rol === "operador" &&
+    override("tanques") !== false &&
+    (usuario.modulosPermitidos ?? []).includes("combustible")
+  ) {
+    return "combustible";
+  }
   const permitidos = usuario?.modulosPermitidos ?? [];
   if (permitidos.includes("dashboard")) return "dashboard";
   return MODULOS_CLIENTE.find((m) => permitidos.includes(m.id))?.id ?? "dashboard";

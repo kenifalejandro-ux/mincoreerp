@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
+import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 
 interface Plantilla {
   id: number;
@@ -37,6 +38,7 @@ interface Equipo {
 type ItemEstado = "bien" | "malo" | "na";
 
 export default function ChecklistsView() {
+  const puedeEscribir = usePuedeEscribir("checklists");
   const [subTab, setSubTab] = useState<"checklists" | "plantillas">("checklists");
 
   const [checklists, setChecklists] = useState<Checklist[]>([]);
@@ -334,19 +336,21 @@ export default function ChecklistsView() {
       {subTab === "checklists" && (
         <>
           <div className="flex justify-end mb-6">
-            <button
-              onClick={() => {
-                if (plantillas.length === 0) {
-                  alert("Primero crea una plantilla.");
-                  return;
-                }
-                abrirModalChecklist();
-              }}
-              className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
-            >
-              <Plus className="w-4 h-4 shrink-0" />
-              Nuevo Checklist
-            </button>
+            {puedeEscribir && (
+              <button
+                onClick={() => {
+                  if (plantillas.length === 0) {
+                    alert("Primero crea una plantilla.");
+                    return;
+                  }
+                  abrirModalChecklist();
+                }}
+                className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+              >
+                <Plus className="w-4 h-4 shrink-0" />
+                Nuevo Checklist
+              </button>
+            )}
           </div>
           <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
             <div className="overflow-x-auto">
@@ -396,13 +400,15 @@ export default function ChecklistsView() {
                         </span>
                       </td>
                       <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right">
-                        <button
-                          onClick={() => handleEliminarChecklist(c.id)}
-                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                          title="Eliminar"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {puedeEscribir && (
+                          <button
+                            onClick={() => handleEliminarChecklist(c.id)}
+                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                            title="Eliminar"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -434,12 +440,14 @@ export default function ChecklistsView() {
       {subTab === "plantillas" && (
         <>
           <div className="flex justify-end mb-6">
-            <button
-              onClick={() => setModalPlantillaAbierto(true)}
-              className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
-            >
-              + Nueva Plantilla
-            </button>
+            {puedeEscribir && (
+              <button
+                onClick={() => setModalPlantillaAbierto(true)}
+                className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+              >
+                + Nueva Plantilla
+              </button>
+            )}
           </div>
           <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
             <div className="overflow-x-auto">
@@ -467,13 +475,15 @@ export default function ChecklistsView() {
                         {p.tipo_equipo || "Uso general"}
                       </td>
                       <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right">
-                        <button
-                          onClick={() => handleEliminarPlantilla(p.id)}
-                          className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                          title="Eliminar"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        {puedeEscribir && (
+                          <button
+                            onClick={() => handleEliminarPlantilla(p.id)}
+                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                            title="Eliminar"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   ))}

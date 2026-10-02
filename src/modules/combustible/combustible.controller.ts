@@ -1552,6 +1552,12 @@ export class CombustibleController {
       const lecturaId = Number(req.params.lecturaId);
       const { motivo } = req.validatedBody as AnularLecturaCombustibleInput;
 
+      // Un perfil de cancha puede anular su propia varilla mal tipeada
+      // (matriz robusta, fila 21), pero no en silencio: queda la alerta para
+      // que alguien de oficina la mire. Admin y operador no la levantan --
+      // ellos SON quienes revisan.
+      const dejaAlerta = req.usuario!.rol === "grifero";
+
       const resultado = await withTenant(tenantId, async (client) => {
         const anulada = await service.anularLectura(
           client,
@@ -1560,7 +1566,19 @@ export class CombustibleController {
           req.usuario!.id,
           motivo
         );
-        if (anulada) return { estado: "anulada" as const, ...anulada };
+        if (anulada) {
+          if (dejaAlerta) {
+            await service.crearAlertas(client, tenantId, [
+              {
+                tipo: "lectura_anulada",
+                combustibleId: anulada.lectura.combustible_id,
+                lecturaId,
+                detalle: { motivo, anuladaPor: req.usuario!.nombre },
+              },
+            ]);
+          }
+          return { estado: "anulada" as const, ...anulada };
+        }
 
         // El UPDATE no afectó nada: o la lectura no existe en este tenant,
         // o ya estaba anulada. Hay que distinguirlo para no responder 404
@@ -1707,6 +1725,13 @@ export class CombustibleController {
     try {
       const tenantId = getTenantId(req);
       const data = req.validatedBody as CrearDespachoCombustibleInput;
+
+      if (req.usuario!.rol === "encargado_urea" && data.producto !== "urea") {
+        res
+          .status(403)
+          .json({ error: "El Encargado de Urea solo puede registrar despachos de Urea" });
+        return;
+      }
 
       // Los roles de cancha (0085) comparten este endpoint con los de
       // oficina, pero cada uno tiene UN solo origen permitido -- y eso
@@ -4720,6 +4745,12 @@ export class CombustibleController {
     try {
       const tenantId = getTenantId(req);
       const data = req.validatedBody as CrearRecepcionCombustibleInput;
+      if (req.usuario!.rol === "encargado_urea" && data.producto !== "urea") {
+        res
+          .status(403)
+          .json({ error: "El Encargado de Urea solo puede registrar entradas de Urea" });
+        return;
+      }
       const { fila, creado, excedenteAceptado } = await withTenant(tenantId, (client) =>
         service.crearRecepcion(client, tenantId, req.usuario!.id, data, alcanceDe(req))
       );

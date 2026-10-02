@@ -74,6 +74,12 @@ const ROLES: { valor: RolUsuario; titulo: string; detalle: string; cancha?: bool
     detalle: "Solo Combustible: cargas en grifos externos. Nada del tanque de la empresa.",
     cancha: true,
   },
+  {
+    valor: "encargado_urea",
+    titulo: "Encargado de Urea",
+    detalle: "Acceso a Urea y sus acciones habilitadas; no ve los demás módulos de operación.",
+    cancha: true,
+  },
 ];
 
 /** Lo que la persona escribe en el login. Nunca los dos a la vez: el que
@@ -605,9 +611,10 @@ function ModalCambiarPerfil({
 
         {perfil && <p className="text-sm text-slate-600">{perfil.detalle}</p>}
         <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
-          Las asignaciones de módulos y el alcance de Combustible se conservan. Al reducir permisos,
-          se cerrarán las sesiones activas; al ampliarlos, el usuario los recibirá al renovar su
-          sesión.
+          Al cambiar el perfil, los módulos y las pestañas vuelven a lo predeterminado del perfil
+          nuevo: se pierde lo que se le haya personalizado a mano. El alcance de Combustible (sedes
+          y grifos) se conserva. Al reducir permisos se cierran las sesiones activas; al ampliarlos,
+          el usuario los recibe al renovar su sesión.
         </p>
 
         <Campo id="cambiar-perfil-motivo" etiqueta="Motivo (opcional)">

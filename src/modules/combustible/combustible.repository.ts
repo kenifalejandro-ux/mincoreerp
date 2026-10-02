@@ -110,7 +110,8 @@ export const TIPOS_ALERTA = [
   // ── Migración 0102: se aceptó un sobrestock de recepción a sabiendas
   // (modo flexible de `modo_excedente_recepcion`).
   "sobrestock_recepcion",
-  // ── Migración 0106: un grifero anuló una lectura de varilla.
+  // ── Migración 0106: un perfil de cancha anuló su propia varilla. Puede
+  // hacerlo (matriz robusta, fila 21) pero no en silencio.
   "lectura_anulada",
 ] as const;
 
