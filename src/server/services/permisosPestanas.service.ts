@@ -336,7 +336,11 @@ export async function guardarPermisosPestanas(
     [tenantId, usuarioId]
   );
   for (const permiso of permisos) {
-    const predeterminado = pestanaPermitida({ rol }, permiso.modulo, permiso.pestana);
+    const predeterminado = pestanaPermitida(
+      { rol, permisosPestanas: {} },
+      permiso.modulo,
+      permiso.pestana
+    );
     if (permiso.permitido === predeterminado) continue;
     await client.query(
       `INSERT INTO usuario_permisos_pestana (tenant_id, usuario_id, modulo, pestana, permitido)

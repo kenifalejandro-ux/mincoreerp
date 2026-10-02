@@ -6,7 +6,13 @@ export function requirePestana(modulo: string, pestana: string) {
   return (req: Request, res: Response, next: NextFunction) => {
     const usuario = req.usuario;
     if (!usuario) return res.status(401).json({ ok: false, message: "No autenticado" });
-    if (!pestanaPermitida(usuario, modulo, pestana)) {
+    if (
+      !pestanaPermitida(
+        { rol: usuario.rol, permisosPestanas: usuario.permisosPestanas },
+        modulo,
+        pestana
+      )
+    ) {
       return res.status(403).json({ ok: false, message: "Pestaña no disponible para este perfil" });
     }
     next();
