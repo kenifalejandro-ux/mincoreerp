@@ -68,6 +68,13 @@ const TABLAS_TENANT: MetaTabla[] = [
     pk: "serial",
     fks: { sede_id: "sedes", creado_por: "usuarios" },
   },
+  // Permisos de pestaña por usuario (migración 0104): sobrescribe los
+  // predeterminados del rol. Va después de usuarios porque lo referencia.
+  {
+    nombre: "usuario_permisos_pestana",
+    pk: "uuid",
+    fks: { usuario_id: "usuarios" },
+  },
   ...MODULOS.flatMap((m) => m.tablas),
 ];
 
