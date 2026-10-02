@@ -10,8 +10,10 @@ export interface UsuarioPayload {
    *  Al menos uno de los dos siempre está. */
   email: string | null;
   dni?: string | null;
-  rol: "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta";
+  rol: "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta" | "encargado_urea";
   modulosPermitidos: string[];
+  modulosConsulta?: string[];
+  permisosPestanas?: Record<string, boolean>;
   debeCambiarPassword: boolean;
 }
 

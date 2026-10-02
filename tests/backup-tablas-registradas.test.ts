@@ -44,6 +44,10 @@ const ALLOWLIST_FUERA_DEL_BACKUP = new Set([
   "refresh_tokens",
   "reset_tokens",
   "usuario_modulos",
+  // Permisos de pestaña por usuario (0104): configuración de acceso,
+  // se restaura con TABLAS_TENANT pero se declara acá porque no es de
+  // un módulo de negocio sino de usuarios.
+  "usuario_permisos_pestana",
   // `usuarios` y `ordenes_admin` NO son de ningún módulo, pero SÍ entran en
   // el backup: están declaradas a mano en TABLAS_TENANT
   // (platformBackup.service.ts), donde el orden importa -- usuarios primero,

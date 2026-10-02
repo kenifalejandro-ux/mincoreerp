@@ -56,7 +56,7 @@ export interface UsuarioPayload {
    *  `conductor_ruta` (migración 0085) NO están en esa escalera -- son
    *  recortes laterales, en direcciones distintas entre sí. Por eso
    *  requireRole recibe una LISTA de roles y no un nivel mínimo. */
-  rol: "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta";
+  rol: "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta" | "encargado_urea";
   /** Intersección de tenant_modulos (habilitados para la empresa) y
    *  usuario_modulos (asignados a este usuario) al momento del login/
    *  refresh — ver obtenerModulosPermitidos(). Igual que `rol`, un cambio
@@ -69,6 +69,9 @@ export interface UsuarioPayload {
    *  migración, y ausente significa "puede operar en todos" -- que es lo que
    *  valía hasta entonces. */
   modulosConsulta?: string[];
+  /** Permisos de pestaña por usuario (migración 0104): sobreescribe los
+   *  predeterminados del rol. Clave es `modulo:pestana`. */
+  permisosPestanas?: Record<string, boolean>;
   /** Comparado contra usuarios.token_version en cada request (ver
    *  authMiddleware): incrementar esa columna revoca todos los JWT emitidos
    *  antes del incremento, sin depender de que Redis esté disponible. */
