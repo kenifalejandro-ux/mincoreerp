@@ -146,8 +146,11 @@ describe("alertas por correo: el destinatario es una marca, no un rol", () => {
   });
 
   it("marcar un módulo que no envía correos se ignora", async () => {
+    // El GET se resuelve ANTES del .send(): anidar un request del mismo agent
+    // adentro de otro lo rompe con ECONNREFUSED (ver a4be70f y cd4d9f8).
+    const actuales = await permisos(jefeId);
     const res = await admin.put(`/api/erp/usuarios/${jefeId}/permisos`).send({
-      modulos: (await permisos(jefeId)).modulos.map((m) => ({
+      modulos: actuales.modulos.map((m) => ({
         modulo: m.modulo,
         asignado: m.asignado,
         nivel: m.nivel,
