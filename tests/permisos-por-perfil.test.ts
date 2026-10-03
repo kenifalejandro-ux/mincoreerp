@@ -28,6 +28,12 @@ const PASSWORD = "ClaveDePrueba123";
 describe("permisos por perfil (autonomías)", () => {
   let empresa: Awaited<ReturnType<typeof crearTenantDePrueba>>;
   let admin: ReturnType<typeof request.agent>;
+  /** Agent reusado para las llamadas vía plataforma (Bearer, sin sesión):
+   *  `request(app)` suelto levanta y cierra un server efímero en CADA
+   *  llamada -- con las ~90 de "las 30 transiciones" eso agota puertos/
+   *  file descriptors bajo los límites de un runner de CI y tira
+   *  ECONNREFUSED (no pasa en local, con más recursos disponibles). */
+  let plataforma: ReturnType<typeof request.agent>;
   /** Una persona de oficina a la que se le mueven los permisos. */
   let operadorId: string;
   const emailOperador = () => `operador-${empresa.tenant.slug}@test.local`;
@@ -70,6 +76,7 @@ describe("permisos por perfil (autonomías)", () => {
   beforeAll(async () => {
     empresa = await crearTenantDePrueba(PASSWORD);
     admin = await sesionDe(empresa.usuario.email, PASSWORD);
+    plataforma = request.agent(app);
 
     const alta = await admin.post("/api/erp/usuarios").send({
       nombre: "Operador de prueba",
@@ -471,7 +478,7 @@ describe("permisos por perfil (autonomías)", () => {
       expect(nivelDe(await permisosDe(usuarioId), "equipos")).toBe("sin-acceso");
 
       const cambiarA = async (rol: string) => {
-        const res = await request(app)
+        const res = await plataforma
           .patch(`/api/platform/tenants/${empresa.tenant.id}/usuarios/${usuarioId}/rol`)
           .set("Authorization", `Bearer ${env.platformAdminToken}`)
           .send({ rol, motivo: "Prueba de perfiles" });
@@ -531,7 +538,7 @@ describe("permisos por perfil (autonomías)", () => {
       };
 
       const porPlataforma = (usuarioId: string) => async (rol: string) => {
-        const res = await request(app)
+        const res = await plataforma
           .patch(`/api/platform/tenants/${empresa.tenant.id}/usuarios/${usuarioId}/rol`)
           .set("Authorization", `Bearer ${env.platformAdminToken}`)
           .send({ rol, motivo: "Prueba de perfiles" });
