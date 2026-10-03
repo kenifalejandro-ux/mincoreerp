@@ -28,11 +28,6 @@ const PASSWORD = "ClaveDePrueba123";
 describe("permisos por perfil (autonomías)", () => {
   let empresa: Awaited<ReturnType<typeof crearTenantDePrueba>>;
   let admin: ReturnType<typeof request.agent>;
-  /** Agent reusado para las llamadas vía plataforma (Bearer, sin sesión):
-   *  `request(app)` suelto levanta y cierra un server efímero en CADA
-   *  llamada -- con las ~90 de "las 30 transiciones" eso agota puertos/
-   *  file descriptors bajo los límites de un runner de CI y tira
-   *  ECONNREFUSED (no pasa en local, con más recursos disponibles). */
   let plataforma: ReturnType<typeof request.agent>;
   /** Una persona de oficina a la que se le mueven los permisos. */
   let operadorId: string;
@@ -398,6 +393,10 @@ describe("permisos por perfil (autonomías)", () => {
   // el punto de partida que le ahorra la configuración inicial a la empresa,
   // no el límite -- el admin del tenant lo cambia después.
   describe("predeterminados del perfil", () => {
+    // Nunca `admin.put(...).send({ x: await permisosDe(...) })`: supertest
+    // levanta el server efímero al construir el PUT, el GET anidado del mismo
+    // agent se mete en el medio y en CI el PUT sale contra un server ya
+    // cerrado (ECONNREFUSED). Leer primero, armar el request después.
     const permisosDe = async (usuarioId: string) =>
       (await permisos(usuarioId)) as Awaited<ReturnType<typeof permisos>> & {
         pestanas: { modulo: string; pestana: string; permitido: boolean }[];
@@ -453,9 +452,10 @@ describe("permisos por perfil (autonomías)", () => {
       const usuarioId = await alta("lectura", "Cambia de perfil");
       expect(nivelDe(await permisosDe(usuarioId), "equipos")).toBe("consultas");
 
+      const { modulos } = await permisosDe(usuarioId);
       const cambio = await admin.put(`/api/erp/usuarios/${usuarioId}/permisos`).send({
         rol: "encargado_urea",
-        modulos: (await permisosDe(usuarioId)).modulos,
+        modulos,
         motivo: "Pasa a manejar urea",
       });
       expect(cambio.status).toBe(200);
@@ -546,9 +546,10 @@ describe("permisos por perfil (autonomías)", () => {
       };
 
       const porTenant = (usuarioId: string) => async (rol: string) => {
+        const { modulos } = await permisosDe(usuarioId);
         const res = await admin.put(`/api/erp/usuarios/${usuarioId}/permisos`).send({
           rol,
-          modulos: (await permisosDe(usuarioId)).modulos,
+          modulos,
           motivo: "Prueba de perfiles",
         });
         expect(res.status).toBe(200);
@@ -616,9 +617,10 @@ describe("permisos por perfil (autonomías)", () => {
       ).toBe(false);
 
       // ...y al cambiarle el perfil, ese recorte se va con el perfil viejo.
+      const { modulos } = await permisosDe(usuarioId);
       const cambio = await admin.put(`/api/erp/usuarios/${usuarioId}/permisos`).send({
         rol: "admin",
-        modulos: (await permisosDe(usuarioId)).modulos,
+        modulos,
         motivo: "Pasa a administrar",
       });
       expect(cambio.status).toBe(200);
