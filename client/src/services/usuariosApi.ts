@@ -199,6 +199,19 @@ export interface PermisosDeUsuario {
   modulos: PermisoDeModulo[];
   alcanceCombustible: AlcanceDeCombustible;
   pestanas: PermisoDePestana[];
+  /** De qué módulos recibe los correos de alerta (migración 0107). */
+  alertasCorreo: AlertaDeModulo[];
+  /** De la EMPRESA: módulos habilitados a los que no les quedó ningún
+   *  destinatario de alertas. */
+  modulosSinDestinatarios: string[];
+}
+
+/** Recibir los avisos de un módulo es independiente del rol y del nivel: un
+ *  jefe de planta en "Consultas" puede recibirlos (mirar no es operar) y un
+ *  administrador puede no recibirlos. */
+export interface AlertaDeModulo {
+  modulo: string;
+  recibeAlertas: boolean;
 }
 
 export interface PermisoDePestana {
@@ -232,6 +245,7 @@ export async function guardarPermisosApi(
     modulos: PermisoDeModulo[];
     alcanceCombustible?: AlcanceDeCombustible;
     pestanas?: { modulo: string; pestana: string; permitido: boolean }[];
+    alertasCorreo?: AlertaDeModulo[];
     motivo?: string;
   }
 ): Promise<ResultadoDeAccion<{ recorta: boolean }>> {

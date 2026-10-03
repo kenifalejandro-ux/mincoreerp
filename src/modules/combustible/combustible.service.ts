@@ -1447,8 +1447,8 @@ export class CombustibleService {
     return fila ? { ...fila, autorevision } : null;
   }
 
-  findAdminsConCombustibleHabilitado(client: PoolClient, tenantId: string) {
-    return this.repository.findAdminsConCombustibleHabilitado(client, tenantId);
+  findDestinatariosAlertasCombustible(client: PoolClient, tenantId: string) {
+    return this.repository.findDestinatariosAlertasCombustible(client, tenantId);
   }
 
   // ── Conciliación (migraciones 0071/0072) ──────────────────────────────

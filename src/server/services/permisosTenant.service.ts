@@ -29,6 +29,10 @@ import type { PoolClient } from "pg";
 import { withTenant } from "../config/database";
 import { MODULOS_ERP } from "../schemas/platform.schema";
 import { AppError } from "../shared/middlewares/error.middleware";
+import {
+  MODULOS_CON_ALERTAS_POR_CORREO,
+  modulosSinDestinatarios,
+} from "../shared/utils/destinatariosAlertas";
 import { revocarSesionesService, type UsuarioPayload } from "./auth.service";
 import {
   guardarPermisosPestanas,
@@ -56,6 +60,19 @@ export interface PermisosDeUsuario {
   /** Qué sedes, grifos y surtidores ve en Combustible (0100). */
   alcanceCombustible: AlcanceDeCombustible;
   pestanas: Awaited<ReturnType<typeof listarPermisosPestanasService>>;
+  /** De qué módulos recibe los correos de alerta (0107). Una entrada por
+   *  módulo disponible, como `modulos`. */
+  alertasCorreo: AlertaDeModulo[];
+  /** De la EMPRESA, no de esta persona: los módulos habilitados a los que no
+   *  les quedó ningún destinatario. Viaja en este payload porque es el que la
+   *  pantalla de Configuración ya pide, y el aviso tiene que aparecer justo
+   *  donde el admin acaba de dejar a un módulo sin nadie mirándolo. */
+  modulosSinDestinatarios: string[];
+}
+
+export interface AlertaDeModulo {
+  modulo: string;
+  recibeAlertas: boolean;
 }
 
 /** `todo` = todas las sedes (el valor de todos hasta la migración 0100). */
@@ -148,6 +165,12 @@ export async function reiniciarModulosDePerfil(
   disponibles: Iterable<string>
 ): Promise<void> {
   await client.query(`DELETE FROM usuario_permisos_pestana WHERE usuario_id = $1`, [usuarioId]);
+  // Las alertas por correo (0107) también se rehacen: el perfil nuevo arranca
+  // sin ninguna, igual que arranca sin overrides de pestañas. No se re-siembra
+  // por rol a propósito -- "admin recibe todo" es exactamente el default
+  // implícito que 0107 vino a sacar. Que un módulo quede sin destinatario se
+  // ve en pantalla.
+  await client.query(`DELETE FROM usuario_alertas_correo WHERE usuario_id = $1`, [usuarioId]);
   await client.query(`DELETE FROM usuario_modulos WHERE usuario_id = $1`, [usuarioId]);
   for (const modulo of disponibles) {
     const base = moduloPorDefectoDeRol(rolNuevo, modulo);
@@ -184,6 +207,15 @@ export async function listarPermisosUsuarioService(
       asignados.rows.map((f) => [f.modulo as string, f.nivel as NivelModulo])
     );
 
+    const alertas = await client.query<{ modulo: string; recibe_alertas: boolean }>(
+      `SELECT modulo, recibe_alertas FROM usuario_alertas_correo
+        WHERE usuario_id = $1 AND tenant_id = $2`,
+      [usuarioId, tenantId]
+    );
+    const alertaPorModulo = new Map(
+      alertas.rows.map((f) => [f.modulo, f.recibe_alertas as boolean])
+    );
+
     return {
       usuarioId: perfil.id,
       nombre: perfil.nombre,
@@ -195,6 +227,15 @@ export async function listarPermisosUsuarioService(
         asignado: porModulo.has(modulo),
         nivel: porModulo.get(modulo) ?? "operar",
       })),
+      // Sin fila = no recibe. Ver el encabezado de la migración 0107. Solo los
+      // módulos que de verdad envían correos: ver MODULOS_CON_ALERTAS_POR_CORREO.
+      alertasCorreo: disponibles
+        .filter((modulo) => MODULOS_CON_ALERTAS_POR_CORREO.includes(modulo))
+        .map((modulo) => ({
+          modulo,
+          recibeAlertas: alertaPorModulo.get(modulo) ?? false,
+        })),
+      modulosSinDestinatarios: await modulosSinDestinatarios(client, tenantId),
     };
   });
 }
@@ -205,6 +246,8 @@ export interface CambioDePermisos {
   /** Ausente = no se toca. */
   alcanceCombustible?: AlcanceDeCombustible;
   pestanas?: PermisoPestana[];
+  /** Ausente = no se toca (0107). */
+  alertasCorreo?: AlertaDeModulo[];
 }
 
 export interface ResultadoPermisos {
@@ -218,7 +261,11 @@ export interface ResultadoPermisos {
 /** ¿El cambio le quita algo? Un módulo que ya no tiene, o que pasa de operar
  *  a consultas. El cambio de tipo de usuario cuenta como recorte salvo que
  *  suba a administrador: bajar de admin a operador quita permisos, y de
- *  operador a grifero también (el rol recorta módulos, ver MODULOS_POR_ROL). */
+ *  operador a grifero también (el rol recorta módulos, ver MODULOS_POR_ROL).
+ *
+ *  Las alertas por correo (0107) NO cuentan: destildar una casilla no le quita
+ *  a nadie acceso a nada, y echar a alguien de sus sesiones abiertas por dejar
+ *  de mandarle correos sería un castigo sin motivo. */
 function calcularRecorte(antes: PermisosDeUsuario, despues: PermisosDeUsuario): boolean {
   if (antes.rol !== despues.rol && despues.rol !== "admin") return true;
   if (alcanceRecorta(antes.alcanceCombustible, despues.alcanceCombustible)) return true;
@@ -312,6 +359,11 @@ export async function guardarPermisosUsuarioService(
         ]);
       }
     }
+
+    // Después del reparto de módulos, no antes: quitarle un módulo le quita
+    // también sus alertas, y para saber qué módulos le quedaron hay que leer
+    // el estado final.
+    await guardarAlertasCorreo(client, tenantId, usuarioId, cambio.alertasCorreo);
   });
 
   const despues = await listarPermisosUsuarioService(tenantId, usuarioId);
@@ -320,6 +372,55 @@ export async function guardarPermisosUsuarioService(
   if (recorta) await revocarSesionesService(usuarioId, tenantId);
 
   return { antes, despues, recorta };
+}
+
+/** Quién recibe los correos de alerta de cada módulo (0107).
+ *
+ *  La limpieza corre SIEMPRE, incluso cuando el request no trae
+ *  `alertasCorreo`: si el mismo guardado le quitó un módulo, su marca de
+ *  alertas se va con él en la misma transacción. Sin eso quedaría una fila
+ *  huérfana que vuelve a la vida -- y vuelve a mandar correos -- el día que
+ *  alguien le reasigne el módulo, que es la clase de reaparición silenciosa
+ *  que la migración 0100 ya evitó con el alcance.
+ *
+ *  `pedidos` es el estado completo, no un parche, por lo mismo que `modulos`:
+ *  dos administradores editando a la vez no pueden dejar una marca puesta
+ *  porque nadie mandó su baja. */
+async function guardarAlertasCorreo(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  pedidos: AlertaDeModulo[] | undefined
+) {
+  await client.query(
+    `DELETE FROM usuario_alertas_correo
+      WHERE usuario_id = $1 AND tenant_id = $2
+        AND modulo NOT IN (SELECT modulo FROM usuario_modulos WHERE usuario_id = $1)`,
+    [usuarioId, tenantId]
+  );
+  if (!pedidos) return;
+
+  // Solo módulos que la persona TIENE: marcar alertas de algo que no ve sería
+  // enterarse por correo de un módulo al que no se puede entrar.
+  const asignados = await client.query<{ modulo: string }>(
+    `SELECT modulo FROM usuario_modulos WHERE usuario_id = $1`,
+    [usuarioId]
+  );
+  const tiene = new Set(asignados.rows.map((f) => f.modulo));
+
+  for (const pedido of pedidos) {
+    if (!tiene.has(pedido.modulo)) continue;
+    // Un módulo que no envía correos no tiene nada que suscribir: se ignora
+    // en silencio, igual que uno que la empresa no contrató.
+    if (!MODULOS_CON_ALERTAS_POR_CORREO.includes(pedido.modulo)) continue;
+    await client.query(
+      `INSERT INTO usuario_alertas_correo (tenant_id, usuario_id, modulo, recibe_alertas)
+       VALUES ($1, $2, $3::modulo_erp, $4)
+       ON CONFLICT (usuario_id, modulo)
+         DO UPDATE SET recibe_alertas = EXCLUDED.recibe_alertas, actualizado_en = now()`,
+      [tenantId, usuarioId, pedido.modulo, pedido.recibeAlertas]
+    );
+  }
 }
 
 /** Reemplaza el alcance entero. Cada id tiene que ser de ESTA empresa: la
