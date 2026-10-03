@@ -40,7 +40,10 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { pool, closeDatabase } from "../src/server/config/database";
-import { onboardTenantService } from "../src/server/services/tenantOnboardingService";
+import {
+  apagarCambioObligatorioDelAdmin,
+  onboardTenantService,
+} from "../src/server/services/tenantOnboardingService";
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const clientDir = path.join(raiz, "client");
@@ -98,22 +101,32 @@ async function sembrarTenantsSiFaltan(): Promise<void> {
   for (const tenant of TENANTS) {
     // `tenants` no tiene RLS (ver ALLOWLIST_SIN_RLS en rls-coverage.test.ts),
     // así que pool.query directo es correcto acá.
-    const existe = await pool.query(`SELECT 1 FROM tenants WHERE slug = $1`, [tenant.tenantSlug]);
-    if ((existe.rowCount ?? 0) > 0) {
+    const existe = await pool.query<{ id: string }>(`SELECT id FROM tenants WHERE slug = $1`, [
+      tenant.tenantSlug,
+    ]);
+    let tenantId = existe.rows[0]?.id;
+
+    if (tenantId) {
       console.log(`✓ tenant "${tenant.tenantSlug}" ya existe, se reusa`);
-      continue;
+    } else {
+      console.log(`→ sembrando tenant "${tenant.tenantSlug}"...`);
+      const creado = await onboardTenantService(
+        { ...tenant },
+        {
+          ip: "127.0.0.1",
+          actorType: "system",
+          actorLabel: "cli:e2e:local",
+        }
+      );
+      tenantId = creado.tenant.id;
+      console.log(`✓ tenant "${tenant.tenantSlug}" creado`);
     }
 
-    console.log(`→ sembrando tenant "${tenant.tenantSlug}"...`);
-    await onboardTenantService(
-      { ...tenant },
-      {
-        ip: "127.0.0.1",
-        actorType: "system",
-        actorLabel: "cli:e2e:local",
-      }
-    );
-    console.log(`✓ tenant "${tenant.tenantSlug}" creado`);
+    // También para un tenant que ya existía: uno sembrado antes de que
+    // existiera esta línea queda para siempre en la pantalla de "Poné tu
+    // propia contraseña", y todo spec falla en el login. Es lo mismo que hace
+    // ci.yml con --sinCambioObligatorio.
+    await apagarCambioObligatorioDelAdmin(tenantId, tenant.adminEmail);
   }
 }
 

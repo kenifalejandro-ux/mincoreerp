@@ -23,8 +23,11 @@
  * CI para los e2e de Playwright, que esperan llegar al dashboard directo
  * después del login).
  */
-import { closeDatabase, pool, withTenant } from "../src/server/config/database";
-import { onboardTenantService } from "../src/server/services/tenantOnboardingService";
+import { closeDatabase } from "../src/server/config/database";
+import {
+  apagarCambioObligatorioDelAdmin,
+  onboardTenantService,
+} from "../src/server/services/tenantOnboardingService";
 import type { OnboardTenantInput } from "../src/server/schemas/platform.schema";
 
 const args = new Map(
@@ -72,22 +75,7 @@ async function main() {
   });
 
   if (args.has("sinCambioObligatorio")) {
-    // Las DOS filas. Desde la migración 0087 la sesión de quien entra con
-    // correo lee esta bandera de su CUENTA, no de su perfil: apagarla solo en
-    // `usuarios` deja al admin sembrado en la pantalla de "Poné tu propia
-    // contraseña", que es exactamente lo que este flag existe para evitar.
-    // El perfil se apaga igual, por si alguna vez se siembra alguien sin
-    // correo (personal de cancha por DNI), que no tiene cuenta.
-    await withTenant(resultado.tenant.id, (client) =>
-      client.query(`UPDATE usuarios SET debe_cambiar_password = false WHERE id = $1`, [
-        resultado.usuario.id,
-      ])
-    );
-    await pool.query(
-      `UPDATE cuentas SET debe_cambiar_password = false, actualizado_en = now()
-        WHERE email = $1`,
-      [input.adminEmail.trim().toLowerCase()]
-    );
+    await apagarCambioObligatorioDelAdmin(resultado.tenant.id, input.adminEmail);
   }
 
   console.log("Tenant aprovisionado correctamente:");

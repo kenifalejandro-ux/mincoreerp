@@ -41,6 +41,7 @@
  *     Sembrar datos de ejemplo acá sería inventar un requisito que ningún
  *     módulo pide.
  */
+import { pool, withTenant } from "../config/database";
 import { AppError } from "../shared/middlewares/error.middleware";
 import {
   crearTenantConAdminService,
@@ -82,4 +83,38 @@ export async function onboardTenantService(
   );
 
   return { tenant: { ...tenant, planCodigo }, usuario };
+}
+
+/** Deja al admin de un tenant entrar directo, sin la pantalla de "Poné tu
+ *  propia contraseña". Solo para cuentas descartables que nunca van a cambiarla
+ *  (el tenant de prueba de los e2e); un onboarding real NO debe llamarla.
+ *
+ *  Apaga las DOS filas. Desde la migración 0087 la sesión de quien entra con
+ *  correo lee esta bandera de su CUENTA, no de su perfil: apagarla solo en
+ *  `usuarios` lo deja igual en el cambio obligatorio. El perfil se apaga
+ *  también, por si algún día se siembra a alguien sin correo (DNI), que no
+ *  tiene cuenta.
+ *
+ *  Vive acá y no en el CLI porque la usan DOS caminos de siembra --
+ *  scripts/onboardTenant.ts (CI) y scripts/e2eLocal.ts (la máquina de
+ *  desarrollo) --, y cuando la lógica vivía solo en el CLI el segundo quedó sin
+ *  ella y `npm run e2e:local` fallaba en el login con cualquier spec.
+ *  Idempotente: sirve también para un tenant ya sembrado. */
+export async function apagarCambioObligatorioDelAdmin(
+  tenantId: string,
+  adminEmail: string
+): Promise<void> {
+  const email = adminEmail.trim().toLowerCase();
+  await withTenant(tenantId, (client) =>
+    client.query(
+      `UPDATE usuarios SET debe_cambiar_password = false
+        WHERE tenant_id = $1 AND lower(email) = $2`,
+      [tenantId, email]
+    )
+  );
+  await pool.query(
+    `UPDATE cuentas SET debe_cambiar_password = false, actualizado_en = now()
+      WHERE email = $1`,
+    [email]
+  );
 }
