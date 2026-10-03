@@ -14,7 +14,7 @@ import type {
   EliminarMasivoEquiposInput,
 } from "../../server/schemas/equipos.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
-import { findAdminsConModulo } from "../../server/shared/utils/adminsDeModulo";
+import { findDestinatariosAlertas } from "../../server/shared/utils/destinatariosAlertas";
 import { enviarCorreoAlerta } from "../../server/shared/utils/alertaMailer";
 import { logger } from "../../server/config/logger";
 import { armarXlsx, CONTENT_TYPE_XLSX } from "../../server/shared/utils/xlsx.util";
@@ -243,7 +243,7 @@ export const EquiposController = {
       if (consumoAflojado) {
         try {
           const admins = await withTenant(tenantId, (client) =>
-            findAdminsConModulo(client, tenantId, "combustible")
+            findDestinatariosAlertas(client, tenantId, "combustible")
           );
           await enviarCorreoAlerta({
             destinatarios: admins,
@@ -268,11 +268,11 @@ export const EquiposController = {
 
       if (ampliacion) {
         // Nunca bloquea: el cambio ya está guardado y auditado. Y se avisa a
-        // los admins de COMBUSTIBLE, no a los de equipos: el control que se
-        // acaba de ensanchar es de ellos.
+        // los destinatarios de COMBUSTIBLE, no a los de equipos: el control
+        // que se acaba de ensanchar es de ellos.
         try {
           const admins = await withTenant(tenantId, (client) =>
-            findAdminsConModulo(client, tenantId, "combustible")
+            findDestinatariosAlertas(client, tenantId, "combustible")
           );
           await enviarCorreoAlerta({
             destinatarios: admins,

@@ -263,7 +263,7 @@ async function avisarControlesPeriodicos(
 ): Promise<void> {
   try {
     const admins = await withTenant(tenantId, (client) =>
-      service.findAdminsConCombustibleHabilitado(client, tenantId)
+      service.findDestinatariosAlertasCombustible(client, tenantId)
     );
     for (const alerta of creadas) {
       const d = alerta.detalle;
@@ -303,7 +303,7 @@ async function avisarSinVigilancia(
 ): Promise<void> {
   try {
     const admins = await withTenant(tenantId, (client) =>
-      service.findAdminsConCombustibleHabilitado(client, tenantId)
+      service.findDestinatariosAlertasCombustible(client, tenantId)
     );
     for (const t of tanques) {
       await enviarCorreoSinVigilancia(admins, {
@@ -342,7 +342,7 @@ async function avisarSinMedir(
 ): Promise<void> {
   try {
     const admins = await withTenant(tenantId, (client) =>
-      service.findAdminsConCombustibleHabilitado(client, tenantId)
+      service.findDestinatariosAlertasCombustible(client, tenantId)
     );
     for (const tanque of tanques) {
       await enviarCorreoAlertaSinMedir(admins, {

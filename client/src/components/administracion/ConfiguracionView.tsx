@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import AlcanceCombustible from "./AlcanceCombustible";
 import { MODULOS_CLIENTE } from "../../modules/registry";
 import {
+  type AlertaDeModulo,
   guardarPermisosApi,
   type AlcanceDeCombustible,
   listarUsuariosApi,
@@ -153,6 +154,8 @@ export default function ConfiguracionView() {
   const [modulos, setModulos] = useState<PermisoDeModulo[]>([]);
   const [alcance, setAlcance] = useState<AlcanceDeCombustible | null>(null);
   const [pestanas, setPestanas] = useState<PermisoDePestana[]>([]);
+  const [alertas, setAlertas] = useState<AlertaDeModulo[]>([]);
+  const [sinDestinatarios, setSinDestinatarios] = useState<string[]>([]);
   const [esAdmin, setEsAdmin] = useState(false);
   const [motivo, setMotivo] = useState("");
   const [cargando, setCargando] = useState(true);
@@ -187,14 +190,26 @@ export default function ConfiguracionView() {
       setModulos(permisos.modulos);
       setAlcance(permisos.alcanceCombustible);
       setPestanas(permisos.pestanas ?? []);
+      setAlertas(permisos.alertasCorreo ?? []);
+      setSinDestinatarios(permisos.modulosSinDestinatarios ?? []);
       setEsAdmin(permisos.rol === "admin");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudieron cargar los permisos.");
       setModulos([]);
       setAlcance(null);
       setPestanas([]);
+      setAlertas([]);
+      setSinDestinatarios([]);
     }
   }, []);
+
+  const cambiarAlerta = (modulo: string, recibeAlertas: boolean) => {
+    setAlertas((previas) =>
+      previas.some((a) => a.modulo === modulo)
+        ? previas.map((a) => (a.modulo === modulo ? { ...a, recibeAlertas } : a))
+        : [...previas, { modulo, recibeAlertas }]
+    );
+  };
 
   const cambiarNivel = (modulo: string, valor: "sin-acceso" | NivelModulo) => {
     setModulos((previos) =>
@@ -247,6 +262,7 @@ export default function ConfiguracionView() {
           permitido,
         })),
         alcanceCombustible: alcance ?? undefined,
+        alertasCorreo: alertas,
         motivo: motivo.trim() || undefined,
       });
 
@@ -266,6 +282,13 @@ export default function ConfiguracionView() {
           ? "Guardado. Se le cerraron las sesiones abiertas: cuando vuelva a entrar, entra con estos permisos."
           : "Guardado. Lo nuevo le aparece la próxima vez que la app renueve su sesión."
       );
+
+      // Quién quedó sin destinatarios depende de TODA la empresa, no de esta
+      // pantalla: se vuelve a leer del servidor en vez de recalcularlo acá,
+      // que es lo único que no puede quedar desactualizado.
+      const frescos = await permisosDeUsuarioApi(elegido);
+      setAlertas(frescos.alertasCorreo ?? []);
+      setSinDestinatarios(frescos.modulosSinDestinatarios ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo guardar.");
     } finally {
@@ -278,6 +301,11 @@ export default function ConfiguracionView() {
   const persona = usuarios.find((u) => u.id === elegido);
   const pestañasCombustible = pestanas.filter((item) => item.modulo === "combustible");
   const pestañasFacturacion = pestanas.filter((item) => item.modulo === "facturacion");
+  // El servidor manda solo los módulos que envían correos; acá se quedan los
+  // que esta persona tiene asignados (marcar alertas de algo que no ve no existe).
+  const alertasVisibles = alertas.filter((alerta) =>
+    modulos.some((permiso) => permiso.modulo === alerta.modulo && permiso.asignado)
+  );
 
   return (
     <div>
@@ -424,6 +452,60 @@ export default function ConfiguracionView() {
                 modulos.some((m) => m.modulo === "combustible" && m.asignado) && (
                   <AlcanceCombustible valor={alcance} onChange={setAlcance} />
                 )}
+
+              {/* ── Alertas por correo (migración 0107) ──────────────────
+                  Antes esto no se configuraba: lo recibían todos los
+                  administradores con el módulo, por ser administradores. */}
+              {alertasVisibles.length > 0 && (
+                <section className="border-t border-slate-200 pt-5">
+                  <h4 className="text-sm font-bold text-slate-800">Alertas por correo</h4>
+                  <p className="mt-1 text-xs text-slate-500">
+                    De qué módulos le llegan los avisos por correo. No depende del nivel: alguien en
+                    “Consultas” puede recibirlos —mirar no es operar— y un administrador puede no
+                    recibirlos.
+                  </p>
+
+                  {!persona.email ? (
+                    <p className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
+                      Entra con DNI y no tiene correo registrado, así que no puede recibir avisos.
+                      Para que reciba alguno, primero hay que darle un correo.
+                    </p>
+                  ) : (
+                    <ul className="mt-3 divide-y divide-slate-100">
+                      {alertasVisibles.map((alerta) => (
+                        <li
+                          key={alerta.modulo}
+                          className="flex items-center justify-between gap-4 py-2"
+                        >
+                          <span className="text-sm text-slate-700">
+                            {nombreDeModulo(alerta.modulo)}
+                          </span>
+                          <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-600">
+                            <input
+                              type="checkbox"
+                              checked={alerta.recibeAlertas}
+                              onChange={(event) =>
+                                cambiarAlerta(alerta.modulo, event.target.checked)
+                              }
+                              className="h-4 w-4 accent-lime-500"
+                            />
+                            Recibe alertas
+                          </label>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {/* De la empresa entera, no de esta persona: se lee del
+                      servidor al abrir y después de guardar. */}
+                  {sinDestinatarios.length > 0 && (
+                    <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">
+                      Nadie recibe las alertas de {sinDestinatarios.map(nombreDeModulo).join(", ")}.
+                      Si algo se descuadra, no se va a enterar nadie por correo.
+                    </p>
+                  )}
+                </section>
+              )}
 
               {pestañasFacturacion.map((item) => (
                 <section

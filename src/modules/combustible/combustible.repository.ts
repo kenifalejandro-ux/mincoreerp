@@ -1,7 +1,7 @@
 /**src/modules/combutible/combustible.repository.ts */
 
 import type { PoolClient } from "pg";
-import { findAdminsConModulo } from "../../server/shared/utils/adminsDeModulo";
+import { findDestinatariosAlertas } from "../../server/shared/utils/destinatariosAlertas";
 import type {
   CrearTanqueCombustibleInput,
   ActualizarTanqueCombustibleInput,
@@ -3711,15 +3711,13 @@ export class CombustibleRepository {
     return result.rows[0] ?? null;
   }
 
-  /** Destinatarios de correo/campanita: "gerencia" es el rol admin, sin
-   *  concepto propio en el modelo de datos -- y solo los que además tienen
-   *  el módulo combustible habilitado, mismo criterio que
-   *  obtenerModulosPermitidos() en auth.service.ts pero a la inversa (de
-   *  módulo a lista de usuarios, no de usuario a lista de módulos). */
-  /** Delega en el helper compartido: la consulta no tenía nada de
-   *  combustible salvo el nombre del módulo escrito a mano. */
-  async findAdminsConCombustibleHabilitado(client: PoolClient, tenantId: string) {
-    return findAdminsConModulo(client, tenantId, "combustible");
+  /** Destinatarios de correo/campanita. Desde la migración 0107 ya no es un
+   *  rol: es la marca explícita de cada persona (`usuario_alertas_correo`),
+   *  así que un jefe de planta que no administra nada puede recibirlas y un
+   *  admin puede no recibirlas. Delega en el helper compartido, que no tiene
+   *  nada de combustible salvo el nombre del módulo. */
+  async findDestinatariosAlertasCombustible(client: PoolClient, tenantId: string) {
+    return findDestinatariosAlertas(client, tenantId, "combustible");
   }
 
   // ── Grifos externos (migrations/0063) ────────────────────────────────

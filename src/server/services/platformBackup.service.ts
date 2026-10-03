@@ -75,6 +75,15 @@ const TABLAS_TENANT: MetaTabla[] = [
     pk: "uuid",
     fks: { usuario_id: "usuarios" },
   },
+  // Quién recibe los correos de alerta de cada módulo (migración 0107). Va
+  // en el backup: sin esto, un restore deja a la empresa con sus módulos
+  // intactos y a NADIE recibiendo las alertas -- en silencio, que es la peor
+  // forma de perder un control.
+  {
+    nombre: "usuario_alertas_correo",
+    pk: "serial",
+    fks: { usuario_id: "usuarios" },
+  },
   ...MODULOS.flatMap((m) => m.tablas),
 ];
 

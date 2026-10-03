@@ -49,6 +49,7 @@ import {
 } from "../services/platform.service";
 import {
   crearUsuarioEnTenantSchema,
+  MODULOS_ERP,
   type CrearUsuarioEnTenantInput,
 } from "../schemas/platform.schema";
 import { listarPermisosUsuarioService } from "../services/permisosTenant.service";
@@ -126,6 +127,16 @@ const guardarPermisosSchema = z.object({
         modulo: z.enum(["combustible", "facturacion"]),
         pestana: z.string().trim().min(1).max(100),
         permitido: z.boolean(),
+      })
+    )
+    .max(50)
+    .optional(),
+  // De qué módulos recibe los correos de alerta (0107). Ausente = no se toca.
+  alertasCorreo: z
+    .array(
+      z.object({
+        modulo: z.enum(MODULOS_ERP),
+        recibeAlertas: z.boolean(),
       })
     )
     .max(50)
@@ -322,6 +333,7 @@ export function createUsuariosTenantRouter() {
           surtidores: number[];
         };
         pestanas?: { modulo: string; pestana: string; permitido: boolean }[];
+        alertasCorreo?: { modulo: string; recibeAlertas: boolean }[];
         motivo?: string;
       };
 
@@ -336,6 +348,7 @@ export function createUsuariosTenantRouter() {
             modulos: cambio.modulos,
             ...(cambio.alcanceCombustible ? { alcanceCombustible: cambio.alcanceCombustible } : {}),
             ...(cambio.pestanas ? { pestanas: cambio.pestanas } : {}),
+            ...(cambio.alertasCorreo ? { alertasCorreo: cambio.alertasCorreo } : {}),
           },
           motivo: cambio.motivo ?? "Cambio de permisos",
         },
