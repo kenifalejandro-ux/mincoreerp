@@ -238,6 +238,9 @@ interface Grifo {
   // servidor -- ver validarRolGrifo en combustible.service.ts.
   abastece_ruta: boolean;
   abastece_tanque: boolean;
+  // El PUT exige los tres roles (la fila completa), aunque esta pantalla
+  // solo edite dos: se reenvía tal cual para no pisarlo.
+  abastece_urea: boolean;
 }
 
 /** Historial de precios (migrations/0063) -- se apila, nunca se pisa. Un
@@ -3349,6 +3352,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const abrirModalGrifos = () => {
     setNombreGrifoNuevo("");
     setRolesGrifoNuevo({ abastece_ruta: true, abastece_tanque: true });
+    setBorradorRolesGrifo({});
     setModalGrifosAbierto(true);
     cargarGrifos();
   };
@@ -3398,6 +3402,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         activo: !grifo.activo,
         abastece_ruta: grifo.abastece_ruta,
         abastece_tanque: grifo.abastece_tanque,
+        abastece_urea: grifo.abastece_urea,
       }),
     });
     if (!res.ok) {
@@ -3407,28 +3412,69 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     await cargarGrifos();
   };
 
-  /** Cambia UN rol dejando el otro y `activo` como estaban -- mismo motivo que
-   *  arriba: el PUT manda la fila completa. */
-  const handleCambiarRolGrifo = async (
-    grifo: Grifo,
-    rol: "abastece_ruta" | "abastece_tanque",
-    valor: boolean
-  ) => {
-    const res = await apiFetch(`/api/erp/combustible/grifos/${grifo.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        nombre: grifo.nombre,
-        activo: grifo.activo,
-        abastece_ruta: rol === "abastece_ruta" ? valor : grifo.abastece_ruta,
-        abastece_tanque: rol === "abastece_tanque" ? valor : grifo.abastece_tanque,
-      }),
-    });
-    if (!res.ok) {
-      alert("No se pudo actualizar el proveedor.");
+  /** Roles editados en la lista pero todavía sin guardar, por id de proveedor.
+   *  Las casillas solo tocan este borrador; el PUT sale con "Guardar". */
+  const [borradorRolesGrifo, setBorradorRolesGrifo] = useState<
+    Record<number, { abastece_ruta: boolean; abastece_tanque: boolean }>
+  >({});
+
+  /** Proveedores con casillas distintas a las guardadas. */
+  const grifosConCambios = grifos.filter((g) => {
+    const b = borradorRolesGrifo[g.id];
+    return (
+      b !== undefined &&
+      (b.abastece_ruta !== g.abastece_ruta || b.abastece_tanque !== g.abastece_tanque)
+    );
+  });
+
+  const [guardandoRolesGrifo, setGuardandoRolesGrifo] = useState(false);
+
+  /** Guarda todos los cambios pendientes de una vez. Un PUT por proveedor (la
+   *  fila completa); el que falla conserva su borrador y se nombra. */
+  const handleGuardarRolesGrifos = async () => {
+    const sinRol = grifosConCambios.find(
+      (g) => !borradorRolesGrifo[g.id].abastece_ruta && !borradorRolesGrifo[g.id].abastece_tanque
+    );
+    if (sinRol) {
+      alert(`"${sinRol.nombre}": marcá al menos un rol (en ruta, tanque, o los dos).`);
       return;
     }
+    setGuardandoRolesGrifo(true);
+    const fallidos: string[] = [];
+    const restante = { ...borradorRolesGrifo };
+    for (const g of grifosConCambios) {
+      const b = borradorRolesGrifo[g.id];
+      const res = await apiFetch(`/api/erp/combustible/grifos/${g.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nombre: g.nombre,
+          activo: g.activo,
+          abastece_ruta: b.abastece_ruta,
+          abastece_tanque: b.abastece_tanque,
+          abastece_urea: g.abastece_urea,
+        }),
+      });
+      if (res.ok) delete restante[g.id];
+      else fallidos.push(g.nombre);
+    }
+    setBorradorRolesGrifo(restante);
+    setGuardandoRolesGrifo(false);
     await cargarGrifos();
+    if (fallidos.length > 0) {
+      alert(`No se pudo actualizar: ${fallidos.join(", ")}. Los demás sí se guardaron.`);
+    }
+  };
+
+  const cerrarModalGrifos = () => {
+    if (
+      grifosConCambios.length > 0 &&
+      !window.confirm("Tenés cambios sin guardar en Proveedores. ¿Cerrar y descartarlos?")
+    ) {
+      return;
+    }
+    setBorradorRolesGrifo({});
+    setModalGrifosAbierto(false);
   };
 
   // --- Precios de combustible (migrations/0063) ---
@@ -6239,7 +6285,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 </p>
               </div>
               <button
-                onClick={() => setModalGrifosAbierto(false)}
+                onClick={cerrarModalGrifos}
                 aria-label="Cerrar"
                 className="text-slate-400 hover:text-slate-900"
               >
@@ -6322,35 +6368,72 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         {g.activo ? "Activo" : "Desactivado"}
                       </button>
                     </div>
-                    {/* Editar los roles de una ficha existente, sin pantalla
-                        aparte: el catálogo es chico y cambiar un rol es un
-                        clic, igual que activar/desactivar. */}
-                    <div className="flex flex-wrap gap-4">
-                      <label className="flex items-center gap-1.5 text-xs text-slate-500">
-                        <input
-                          type="checkbox"
-                          checked={g.abastece_ruta}
-                          onChange={(e) =>
-                            handleCambiarRolGrifo(g, "abastece_ruta", e.target.checked)
-                          }
-                        />
-                        En ruta
-                      </label>
-                      <label className="flex items-center gap-1.5 text-xs text-slate-500">
-                        <input
-                          type="checkbox"
-                          checked={g.abastece_tanque}
-                          onChange={(e) =>
-                            handleCambiarRolGrifo(g, "abastece_tanque", e.target.checked)
-                          }
-                        />
-                        Tanque (cisterna)
-                      </label>
-                    </div>
+                    {/* Las casillas editan un borrador; el cambio se guarda
+                        recién con el botón del pie (antes se guardaba al marcar). */}
+                    {(() => {
+                      const b = borradorRolesGrifo[g.id] ?? {
+                        abastece_ruta: g.abastece_ruta,
+                        abastece_tanque: g.abastece_tanque,
+                      };
+                      return (
+                        <div className="flex flex-wrap items-center gap-4">
+                          <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                            <input
+                              type="checkbox"
+                              checked={b.abastece_ruta}
+                              onChange={(e) =>
+                                setBorradorRolesGrifo({
+                                  ...borradorRolesGrifo,
+                                  [g.id]: { ...b, abastece_ruta: e.target.checked },
+                                })
+                              }
+                            />
+                            En ruta
+                          </label>
+                          <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                            <input
+                              type="checkbox"
+                              checked={b.abastece_tanque}
+                              onChange={(e) =>
+                                setBorradorRolesGrifo({
+                                  ...borradorRolesGrifo,
+                                  [g.id]: { ...b, abastece_tanque: e.target.checked },
+                                })
+                              }
+                            />
+                            Tanque (cisterna)
+                          </label>
+                        </div>
+                      );
+                    })()}
                   </div>
                 ))
               )}
             </div>
+            {grifos.length > 0 && (
+              <div className="sticky bottom-0 bg-white border-t p-4 flex items-center justify-end gap-3 rounded-b-3xl">
+                <button
+                  type="button"
+                  onClick={() => setBorradorRolesGrifo({})}
+                  disabled={grifosConCambios.length === 0 || guardandoRolesGrifo}
+                  className="px-4 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-xl hover:bg-slate-50 disabled:opacity-40"
+                >
+                  Descartar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleGuardarRolesGrifos}
+                  disabled={grifosConCambios.length === 0 || guardandoRolesGrifo}
+                  className="px-4 py-2 text-sm font-bold bg-slate-900 text-white rounded-xl hover:bg-slate-800 disabled:opacity-40"
+                >
+                  {guardandoRolesGrifo
+                    ? "Guardando..."
+                    : grifosConCambios.length > 0
+                      ? `Guardar cambios (${grifosConCambios.length})`
+                      : "Guardar cambios"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
