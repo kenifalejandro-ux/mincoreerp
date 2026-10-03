@@ -32,7 +32,8 @@ export interface UsuarioDelTenant {
   bloqueadoEn: string | null;
 }
 
-export type RolUsuario = "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta";
+export type RolUsuario =
+  "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta" | "encargado_urea";
 
 async function leerRespuesta(res: Response) {
   const data = await res.json().catch(() => ({}));
@@ -197,6 +198,17 @@ export interface PermisosDeUsuario {
   /** Solo los módulos que la empresa tiene contratados. */
   modulos: PermisoDeModulo[];
   alcanceCombustible: AlcanceDeCombustible;
+  pestanas: PermisoDePestana[];
+}
+
+export interface PermisoDePestana {
+  modulo: string;
+  pestana: string;
+  nombre: string;
+  permitido: boolean;
+  predeterminado: boolean;
+  nivel: "submenu" | "pestana" | "accion";
+  padre: string | null;
 }
 
 /** Qué sedes, grifos y surtidores ve en Combustible (migración 0100).
@@ -219,6 +231,7 @@ export async function guardarPermisosApi(
     rol?: RolUsuario;
     modulos: PermisoDeModulo[];
     alcanceCombustible?: AlcanceDeCombustible;
+    pestanas?: { modulo: string; pestana: string; permitido: boolean }[];
     motivo?: string;
   }
 ): Promise<ResultadoDeAccion<{ recorta: boolean }>> {

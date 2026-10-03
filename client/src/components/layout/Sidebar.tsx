@@ -36,6 +36,25 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
   const { usuario } = useAuth();
 
   const tabs = MODULOS_CLIENTE.filter((modulo) => usuario?.modulosPermitidos.includes(modulo.id));
+  const submenusVisibles = SUBMENU_COMBUSTIBLE.filter(({ tab }) => {
+    const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
+    const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
+    if (override !== undefined) return override;
+    if (usuario?.rol === "conductor_ruta") return tab === "combustible";
+    if (usuario?.rol === "grifero") return tab === "combustible";
+    if (usuario?.rol === "encargado_urea") return tab === "combustible:urea";
+    // Operador y Lectura parten con acceso amplio a Combustible (matriz
+    // robusta de perfiles): sin override, ven todos los submenús.
+    return true;
+  });
+  const puedeVerFacturacion = (() => {
+    if (usuario?.rol === "admin") return true;
+    const override = usuario?.permisosPestanas?.["facturacion:principal"];
+    if (override !== undefined) return override;
+    // Exclusiva de Admin por defecto (confirmado por Kenif, 2026-10-01); el
+    // admin del tenant puede habilitarla por usuario desde Configuración.
+    return false;
+  })();
 
   // El submenú de Combustible se abre/cierra con la flechita, no con el
   // click de navegar -- antes se abría solo porque isActive lo forzaba, y
@@ -91,7 +110,16 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
           return (
             <div key={tab.id}>
               <button
-                onClick={() => setActiveTab(esCombustible ? "combustible" : tab.id)}
+                onClick={() => {
+                  if (esCombustible) setCombustibleDesplegado(true);
+                  setActiveTab(
+                    esCombustible && usuario?.rol === "encargado_urea"
+                      ? "combustible:urea"
+                      : esCombustible
+                        ? "combustible"
+                        : tab.id
+                  );
+                }}
                 className={`group w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all relative ${
                   isActive
                     ? "bg-[#BADC1E] text-[#0A1014] hover:bg-[#BADC1E] font-semibold"
@@ -141,7 +169,7 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
                 >
                   <div className="overflow-hidden">
                     <div className="flex flex-col">
-                      {SUBMENU_COMBUSTIBLE.map(({ tab: destino, label, Icono }, i) => {
+                      {submenusVisibles.map(({ tab: destino, label, Icono }, i) => {
                         const activo = activeTab === destino;
                         return (
                           <div
@@ -205,22 +233,26 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
           </button>
         )}
 
-        <button
-          onClick={() => setActiveTab("facturacion")}
-          className={`w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all relative ${
-            activeTab === "facturacion"
-              ? "bg-[#BADC1E] text-[#0A1014] font-semibold"
-              : "text-slate-500 hover:bg-[#BADC1E] hover:text-[#0A1014] font-medium"
-          }`}
-        >
-          {activeTab === "facturacion" && (
-            <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-[#BADC1E]" />
-          )}
-          <span className={`${activeTab === "facturacion" ? "text-[#0A1014]" : "text-slate-400"}`}>
-            <Receipt size={20} strokeWidth={2} />
-          </span>
-          <span className="tracking-tight">Facturación</span>
-        </button>
+        {puedeVerFacturacion && (
+          <button
+            onClick={() => setActiveTab("facturacion")}
+            className={`w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all relative ${
+              activeTab === "facturacion"
+                ? "bg-[#BADC1E] text-[#0A1014] font-semibold"
+                : "text-slate-500 hover:bg-[#BADC1E] hover:text-[#0A1014] font-medium"
+            }`}
+          >
+            {activeTab === "facturacion" && (
+              <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-[#BADC1E]" />
+            )}
+            <span
+              className={`${activeTab === "facturacion" ? "text-[#0A1014]" : "text-slate-400"}`}
+            >
+              <Receipt size={20} strokeWidth={2} />
+            </span>
+            <span className="tracking-tight">Facturación</span>
+          </button>
+        )}
       </nav>
     </aside>
   );

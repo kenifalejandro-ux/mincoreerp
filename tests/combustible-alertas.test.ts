@@ -277,7 +277,10 @@ describe("combustible: alertas (Fase D, migración 0068)", () => {
     expect(segunda.status).toBe(404);
   });
 
-  it("un operador no puede ver ni resolver alertas (visibilidad de gerencia)", async () => {
+  // Matriz robusta de perfiles (profile_user.xlsx, confirmado por Kenif
+  // 2026-10-01): Operador parte con acceso amplio -- Alertas es Visible
+  // para Operador, no exclusivo de gerencia.
+  it("el operador sí puede ver alertas (matriz robusta de perfiles)", async () => {
     const emailOperador = idUnico("operador-alertas") + "@test.local";
     await withTenant(tenantId, (client) =>
       crearUsuarioService(
@@ -291,7 +294,7 @@ describe("combustible: alertas (Fase D, migración 0068)", () => {
       .send({ tenantSlug, email: emailOperador, password });
 
     const listado = await agenteOperador.get("/api/erp/combustible/alertas");
-    expect(listado.status).toBe(403);
+    expect(listado.status).toBe(200);
   });
 
   it("un tenant no ve las alertas de otro (RLS)", async () => {

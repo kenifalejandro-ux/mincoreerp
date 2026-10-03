@@ -30,8 +30,15 @@ import { withTenant } from "../config/database";
 import { MODULOS_ERP } from "../schemas/platform.schema";
 import { AppError } from "../shared/middlewares/error.middleware";
 import { revocarSesionesService, type UsuarioPayload } from "./auth.service";
+import {
+  guardarPermisosPestanas,
+  listarPermisosPestanasEnTransaccion,
+  listarPermisosPestanasService,
+  type PermisoPestana,
+} from "./permisosPestanas.service";
+import { moduloPorDefectoDeRol, type NivelModulo } from "./perfilesDefaults";
 
-export type NivelModulo = "operar" | "consultas";
+export type { NivelModulo };
 
 export interface PermisoDeModulo {
   modulo: string;
@@ -48,6 +55,7 @@ export interface PermisosDeUsuario {
   modulos: PermisoDeModulo[];
   /** Qué sedes, grifos y surtidores ve en Combustible (0100). */
   alcanceCombustible: AlcanceDeCombustible;
+  pestanas: Awaited<ReturnType<typeof listarPermisosPestanasService>>;
 }
 
 /** `todo` = todas las sedes (el valor de todos hasta la migración 0100). */
@@ -120,13 +128,35 @@ export function alcanceRecorta(antes: AlcanceDeCombustible, despues: AlcanceDeCo
  *  lo puede ver", y quién lo ve de verdad lo decide el bucketing en cada
  *  login (ver obtenerModulosConNivel). Un módulo 'deshabilitado' no aparece
  *  siquiera en la pantalla. */
-async function modulosDisponibles(client: PoolClient, tenantId: string): Promise<string[]> {
+export async function modulosDisponibles(client: PoolClient, tenantId: string): Promise<string[]> {
   const result = await client.query(
     `SELECT modulo FROM tenant_modulos WHERE tenant_id = $1 AND estado <> 'deshabilitado'`,
     [tenantId]
   );
   const contratados = new Set(result.rows.map((f) => f.modulo as string));
   return MODULOS_ERP.filter((modulo) => contratados.has(modulo));
+}
+
+/** Deja al usuario con los módulos y pestañas predeterminados de su perfil
+ *  nuevo. Lo usan los dos caminos que cambian el perfil (Administración del
+ *  tenant y "Cambiar perfil" de plataforma): si uno solo lo hiciera, el otro
+ *  dejaba al usuario con los restos del perfil anterior. */
+export async function reiniciarModulosDePerfil(
+  client: PoolClient,
+  usuarioId: string,
+  rolNuevo: UsuarioPayload["rol"],
+  disponibles: Iterable<string>
+): Promise<void> {
+  await client.query(`DELETE FROM usuario_permisos_pestana WHERE usuario_id = $1`, [usuarioId]);
+  await client.query(`DELETE FROM usuario_modulos WHERE usuario_id = $1`, [usuarioId]);
+  for (const modulo of disponibles) {
+    const base = moduloPorDefectoDeRol(rolNuevo, modulo);
+    if (!base.asignado) continue;
+    await client.query(
+      `INSERT INTO usuario_modulos (usuario_id, modulo, nivel) VALUES ($1, $2, $3)`,
+      [usuarioId, modulo, base.nivel]
+    );
+  }
 }
 
 async function perfilDelTenant(client: PoolClient, tenantId: string, usuarioId: string) {
@@ -159,6 +189,7 @@ export async function listarPermisosUsuarioService(
       nombre: perfil.nombre,
       rol: perfil.rol,
       alcanceCombustible: await leerAlcance(client, tenantId, usuarioId),
+      pestanas: await listarPermisosPestanasEnTransaccion(client, tenantId, usuarioId),
       modulos: disponibles.map((modulo) => ({
         modulo,
         asignado: porModulo.has(modulo),
@@ -173,6 +204,7 @@ export interface CambioDePermisos {
   modulos: { modulo: string; asignado: boolean; nivel: NivelModulo }[];
   /** Ausente = no se toca. */
   alcanceCombustible?: AlcanceDeCombustible;
+  pestanas?: PermisoPestana[];
 }
 
 export interface ResultadoPermisos {
@@ -192,12 +224,20 @@ function calcularRecorte(antes: PermisosDeUsuario, despues: PermisosDeUsuario): 
   if (alcanceRecorta(antes.alcanceCombustible, despues.alcanceCombustible)) return true;
 
   const nivelAntes = new Map(antes.modulos.map((m) => [m.modulo, m]));
-  return despues.modulos.some((ahora) => {
+  const recortaModulo = despues.modulos.some((ahora) => {
     const era = nivelAntes.get(ahora.modulo);
     if (!era?.asignado) return false;
     if (!ahora.asignado) return true;
     return era.nivel === "operar" && ahora.nivel === "consultas";
   });
+  if (recortaModulo) return true;
+
+  const pestañasAntes = new Map(
+    antes.pestanas.map((p) => [`${p.modulo}:${p.pestana}`, p.permitido])
+  );
+  return despues.pestanas.some(
+    (p) => pestañasAntes.get(`${p.modulo}:${p.pestana}`) === true && !p.permitido
+  );
 }
 
 export async function guardarPermisosUsuarioService(
@@ -220,8 +260,9 @@ export async function guardarPermisosUsuarioService(
 
   await withTenant(tenantId, async (client) => {
     const disponibles = new Set(await modulosDisponibles(client, tenantId));
+    const cambiaDePerfil = Boolean(cambio.rol && cambio.rol !== antes.rol);
 
-    if (cambio.rol && cambio.rol !== antes.rol) {
+    if (cambio.rol && cambiaDePerfil) {
       await client.query(`UPDATE usuarios SET rol = $1, actualizado_en = now() WHERE id = $2`, [
         cambio.rol,
         usuarioId,
@@ -230,6 +271,26 @@ export async function guardarPermisosUsuarioService(
 
     if (cambio.alcanceCombustible) {
       await guardarAlcance(client, tenantId, usuarioId, cambio.alcanceCombustible);
+    }
+
+    // Cambiar de perfil REHACE la configuración: el perfil nuevo hereda sus
+    // propios predeterminados, no los restos del anterior (Kenif, 2026-10-01
+    // -- "las empresas cambian de perfil, un admin puede pasar a consultas").
+    // Sin esto, alguien que pasa de Lectura a Encargado de Urea se quedaba
+    // con todos sus módulos en "Consultas" y con los overrides de pestañas
+    // del perfil viejo.
+    if (cambiaDePerfil) {
+      await reiniciarModulosDePerfil(
+        client,
+        usuarioId,
+        cambio.rol as UsuarioPayload["rol"],
+        disponibles
+      );
+      return;
+    }
+
+    if (cambio.pestanas) {
+      await guardarPermisosPestanas(client, tenantId, usuarioId, cambio.pestanas);
     }
 
     for (const pedido of cambio.modulos) {

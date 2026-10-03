@@ -36,6 +36,9 @@ import {
   eliminarUsuarioApi,
   obtenerModulosUsuarioApi,
   actualizarModulosUsuarioApi,
+  obtenerPestanasUsuarioApi,
+  actualizarPestanasUsuarioApi,
+  type PermisoPestanaUsuario,
   obtenerSsoTenantApi,
   configurarSsoTenantApi,
   obtenerScimTenantApi,
@@ -957,6 +960,100 @@ function ScimTenant({ tenantId }: { tenantId: string }) {
   );
 }
 
+function ArbolPestanasPlataforma({
+  items,
+  onChange,
+  disabled,
+}: {
+  items: PermisoPestanaUsuario[];
+  onChange: (pestana: string, permitido: boolean) => void;
+  disabled: boolean;
+}) {
+  const submenus = items.filter((item) => item.nivel === "submenu");
+  const fila = (item: PermisoPestanaUsuario) => (
+    <li
+      key={item.pestana}
+      className="flex items-center justify-between gap-3 py-2 pl-7 text-xs text-slate-300"
+    >
+      <span>
+        {item.nombre}
+        {item.permitido === item.predeterminado && (
+          <small className="ml-2 text-slate-500">Predeterminado</small>
+        )}
+      </span>
+      <label className="inline-flex items-center gap-2">
+        <input
+          type="checkbox"
+          checked={item.permitido}
+          disabled={disabled}
+          onChange={(event) => onChange(item.pestana, event.target.checked)}
+          className="h-4 w-4 accent-lime-500"
+        />
+        Visible
+      </label>
+    </li>
+  );
+
+  return (
+    <div className="mt-2 border-t border-slate-800 px-3">
+      <p className="py-2 text-[10px] font-bold uppercase text-slate-500">Submenús</p>
+      <div className="divide-y divide-slate-800">
+        {submenus.map((submenu) => {
+          const children = items.filter((item) => item.padre === submenu.pestana);
+          const tabs = children.filter((item) => item.nivel === "pestana");
+          const actions = children.filter((item) => item.nivel === "accion");
+          return (
+            <details
+              key={submenu.pestana}
+              className="group py-2"
+              open={submenu.pestana === "tanques"}
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 py-1 text-xs text-slate-200">
+                <span className="flex items-center gap-2 font-semibold">
+                  <span className="text-slate-500 transition-transform group-open:rotate-90">
+                    ›
+                  </span>
+                  {submenu.nombre}
+                  {submenu.permitido === submenu.predeterminado && (
+                    <small className="font-normal text-slate-500">Predeterminado</small>
+                  )}
+                </span>
+                <label
+                  className="inline-flex items-center gap-2"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    checked={submenu.permitido}
+                    disabled={disabled}
+                    onChange={(event) => onChange(submenu.pestana, event.target.checked)}
+                    className="h-4 w-4 accent-lime-500"
+                  />
+                  Visible
+                </label>
+              </summary>
+              <ul className="mt-1">
+                {tabs.length > 0 && (
+                  <li className="pl-7 pt-2 text-[10px] font-bold uppercase text-slate-500">
+                    Pestañas
+                  </li>
+                )}
+                {tabs.map((item) => fila(item))}
+                {actions.length > 0 && (
+                  <li className="pl-7 pt-3 text-[10px] font-bold uppercase text-slate-500">
+                    Panel del tanque · Acciones
+                  </li>
+                )}
+                {actions.map((item) => fila(item))}
+              </ul>
+            </details>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ModulosUsuario({
   tenantId,
   usuarioId,
@@ -967,11 +1064,16 @@ function ModulosUsuario({
   onError: (msg: string) => void;
 }) {
   const [modulos, setModulos] = useState<{ modulo: string; asignado: boolean }[]>([]);
+  const [pestanas, setPestanas] = useState<PermisoPestanaUsuario[]>([]);
+  const [guardandoPestanas, setGuardandoPestanas] = useState(false);
 
   useEffect(() => {
     obtenerModulosUsuarioApi(tenantId, usuarioId)
       .then(setModulos)
       .catch((err) => onError(err.message || "No se pudieron cargar los módulos del usuario"));
+    obtenerPestanasUsuarioApi(tenantId, usuarioId)
+      .then(setPestanas)
+      .catch((err) => onError(err.message || "No se pudieron cargar las pestañas del usuario"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, usuarioId]);
 
@@ -986,21 +1088,115 @@ function ModulosUsuario({
     }
   }
 
+  async function togglePestana(pestana: string, permitido: boolean) {
+    // Mismo criterio que el panel del tenant (ConfiguracionView): apagar un
+    // submenú apaga lo de adentro, y prender un hijo prende su submenú --
+    // sin esto no se le puede dar UNA vista del Histórico a un perfil de
+    // cancha, que es lo que la matriz deja a criterio del admin.
+    const padreDe = pestanas.find((item) => item.pestana === pestana)?.padre;
+    const siguiente = pestanas.map((item) => {
+      if (item.pestana === pestana) return { ...item, permitido };
+      if (!permitido && item.modulo === "combustible" && item.padre === pestana) {
+        return { ...item, permitido: false };
+      }
+      if (permitido && padreDe && item.modulo === "combustible" && item.pestana === padreDe) {
+        return { ...item, permitido: true };
+      }
+      return item;
+    });
+    setGuardandoPestanas(true);
+    try {
+      setPestanas(
+        await actualizarPestanasUsuarioApi(
+          tenantId,
+          usuarioId,
+          siguiente.map(({ modulo, pestana: id, permitido: habilitado }) => ({
+            modulo,
+            pestana: id,
+            permitido: habilitado,
+          }))
+        )
+      );
+    } catch (err: any) {
+      onError(err.message || "No se pudieron guardar las pestañas");
+    } finally {
+      setGuardandoPestanas(false);
+    }
+  }
+
+  const itemsCombustible = pestanas.filter((item) => item.modulo === "combustible");
+  const facturacion = pestanas.find((item) => item.modulo === "facturacion");
+
   return (
     <div className="px-4 pb-3 flex flex-wrap gap-2 bg-slate-950/40">
-      {modulos.map((m) => (
-        <button
-          key={m.modulo}
-          onClick={() => toggle(m.modulo)}
-          className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${
-            m.asignado
-              ? "bg-emerald-950 border-emerald-800 text-emerald-400"
-              : "bg-slate-900 border-slate-800 text-slate-500"
-          }`}
-        >
-          {m.modulo}
-        </button>
-      ))}
+      {modulos
+        .filter((m) => m.modulo !== "combustible")
+        .map((m) => (
+          <button
+            key={m.modulo}
+            onClick={() => toggle(m.modulo)}
+            className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${
+              m.asignado
+                ? "bg-emerald-950 border-emerald-800 text-emerald-400"
+                : "bg-slate-900 border-slate-800 text-slate-500"
+            }`}
+          >
+            {m.modulo}
+          </button>
+        ))}
+      {modulos.find((item) => item.modulo === "combustible") && (
+        <section className="basis-full rounded-lg border border-slate-800 px-3 py-2">
+          <div className="flex items-center justify-between gap-3">
+            <details className="group min-w-0 flex-1">
+              <summary className="flex cursor-pointer list-none items-center gap-2 text-xs font-semibold text-slate-200">
+                <span className="text-slate-500 transition-transform group-open:rotate-90">›</span>
+                Menú: Combustible
+              </summary>
+              <ArbolPestanasPlataforma
+                items={itemsCombustible}
+                onChange={(pestana, permitido) => void togglePestana(pestana, permitido)}
+                disabled={
+                  guardandoPestanas ||
+                  !modulos.find((item) => item.modulo === "combustible")?.asignado
+                }
+              />
+            </details>
+            {(() => {
+              const combustible = modulos.find((item) => item.modulo === "combustible")!;
+              return (
+                <button
+                  type="button"
+                  onClick={() => void toggle("combustible")}
+                  className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${
+                    combustible.asignado
+                      ? "bg-emerald-950 border-emerald-800 text-emerald-400"
+                      : "bg-slate-900 border-slate-800 text-slate-500"
+                  }`}
+                >
+                  {combustible.asignado ? "Asignado" : "Sin acceso"}
+                </button>
+              );
+            })()}
+          </div>
+        </section>
+      )}
+      {facturacion && (
+        <section className="basis-full flex items-center justify-between gap-3 border-t border-slate-800 pt-3 text-xs text-slate-300">
+          <span>
+            Menú: Facturación <small className="ml-2 text-slate-500">Solo Admin por defecto</small>
+          </span>
+          <label className="inline-flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={facturacion.permitido}
+              disabled={guardandoPestanas}
+              onChange={(event) => void togglePestana(facturacion.pestana, event.target.checked)}
+              className="h-4 w-4 accent-lime-500"
+            />
+            Visible
+          </label>
+        </section>
+      )}
     </div>
   );
 }
@@ -1069,6 +1265,7 @@ function NuevoUsuarioForm({ tenantId, onCreado }: { tenantId: string; onCreado: 
             personas que rotan, no altas de plataforma. */}
         <option value="grifero">grifero</option>
         <option value="conductor_ruta">conductor de ruta</option>
+        <option value="encargado_urea">Encargado de Urea</option>
       </select>
 
       {error && (

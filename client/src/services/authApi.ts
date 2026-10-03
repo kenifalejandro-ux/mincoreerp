@@ -12,6 +12,7 @@ export interface UsuarioPayload {
   dni?: string | null;
   rol: "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta" | "encargado_urea";
   modulosPermitidos: string[];
+  /** Módulos en nivel "consultas": solo lectura, sin botones de escritura. */
   modulosConsulta?: string[];
   permisosPestanas?: Record<string, boolean>;
   debeCambiarPassword: boolean;

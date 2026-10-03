@@ -124,4 +124,15 @@ export default defineConfig([
       "prettier/prettier": "error",
     },
   },
+  {
+    // eslint-plugin-import@2.x + eslint@10 (flat config): el autofix de
+    // import/order crashea con TypeError en ciertos archivos con imports
+    // multi-línea mezclados (bug de compatibilidad de herramientas, no del
+    // código -- el orden en estos dos está verificado a mano). Mientras no
+    // se actualice eslint-plugin-import, se apaga solo acá.
+    files: ["src/components/UreaPanel.tsx", "src/components/combustible/CombustiblePanel.tsx"],
+    rules: {
+      "import/order": "off",
+    },
+  },
 ]);

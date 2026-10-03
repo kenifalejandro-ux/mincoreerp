@@ -21,6 +21,8 @@ import type {
 import { requerirJwtSecret } from "../shared/utils/jwt-secret";
 import { esViolacionUnicidad } from "../shared/utils/pgError";
 import { escapeHtml } from "../shared/utils/html";
+import { mapaPermisosPestanas } from "./permisosPestanas.service";
+import { moduloPorDefectoDeRol } from "./perfilesDefaults";
 import {
   setCachedTokenVersion,
   invalidateCachedTokenVersion,
@@ -69,8 +71,8 @@ export interface UsuarioPayload {
    *  migración, y ausente significa "puede operar en todos" -- que es lo que
    *  valía hasta entonces. */
   modulosConsulta?: string[];
-  /** Permisos de pestaña por usuario (migración 0104): sobreescribe los
-   *  predeterminados del rol. Clave es `modulo:pestana`. */
+  /** Overrides de navegación por módulo/pestaña, cargados junto con la
+   *  sesión; la ausencia de una clave conserva el valor por defecto del rol. */
   permisosPestanas?: Record<string, boolean>;
   /** Comparado contra usuarios.token_version en cada request (ver
    *  authMiddleware): incrementar esa columna revoca todos los JWT emitidos
@@ -132,6 +134,7 @@ export function enBucketDeRollout(
 const MODULOS_POR_ROL: Partial<Record<UsuarioPayload["rol"], string[]>> = {
   grifero: ["combustible"],
   conductor_ruta: ["combustible"],
+  encargado_urea: ["combustible"],
 };
 
 export async function obtenerModulosPermitidos(
@@ -391,7 +394,7 @@ export async function emitirSesionParaPerfil(
   usuarioId: string,
   tenantId: string
 ): Promise<{ token: string; usuario: UsuarioPayload; refreshToken: string }> {
-  const fila = await withTenant(tenantId, async (client) => {
+  const { fila, pestanas } = await withTenant(tenantId, async (client) => {
     const result = await client.query(
       `SELECT u.id, u.tenant_id, u.cuenta_id, u.nombre, u.email, u.dni, u.rol,
               u.token_version, u.debe_cambiar_password, u.activo,
@@ -403,7 +406,11 @@ export async function emitirSesionParaPerfil(
         WHERE u.id = $1 AND u.tenant_id = $2`,
       [usuarioId, tenantId]
     );
-    return result.rows[0];
+    const fila = result.rows[0];
+    // Bajo la misma transacción: usuario_permisos_pestana tiene FORCE RLS
+    // (migración 0104), pool.query() sin app.tenant_id seteado falla.
+    const pestanas = fila ? await mapaPermisosPestanas(fila.id, fila.tenant_id, client) : {};
+    return { fila, pestanas };
   });
 
   if (!fila || !fila.activo || (fila.cuenta_id && fila.cuenta_activa === false)) {
@@ -424,6 +431,7 @@ export async function emitirSesionParaPerfil(
     rol: fila.rol,
     modulosPermitidos: modulos.map((m) => m.modulo),
     modulosConsulta: soloConsulta(modulos),
+    permisosPestanas: pestanas,
     tokenVersion: fila.token_version,
     debeCambiarPassword: fila.cuenta_id ? fila.cuenta_debe_cambiar : fila.debe_cambiar_password,
   };
@@ -803,7 +811,7 @@ export async function refrescarTokenService(
   }
 
   // Paso 2: ahora sí, con tenant_id ya conocido, leer el usuario bajo RLS.
-  const filaUsuario = await withTenant(filaToken.tenant_id, async (client) => {
+  const { filaUsuario, pestanas } = await withTenant(filaToken.tenant_id, async (client) => {
     const result = await client.query(
       `SELECT u.nombre, u.email, u.dni, u.rol, u.token_version, u.activo,
               u.debe_cambiar_password, u.cuenta_id,
@@ -815,7 +823,12 @@ export async function refrescarTokenService(
         WHERE u.id = $1 AND u.tenant_id = $2`,
       [filaToken.usuario_id, filaToken.tenant_id]
     );
-    return result.rows[0];
+    const filaUsuario = result.rows[0];
+    // Misma transacción: usuario_permisos_pestana tiene FORCE RLS.
+    const pestanas = filaUsuario
+      ? await mapaPermisosPestanas(filaToken.usuario_id, filaToken.tenant_id, client)
+      : {};
+    return { filaUsuario, pestanas };
   });
 
   // Una cuenta desactivada desde plataforma corta también el refresco, no
@@ -845,6 +858,7 @@ export async function refrescarTokenService(
     rol: filaUsuario.rol,
     modulosPermitidos: modulosDelRefresh.map((m) => m.modulo),
     modulosConsulta: soloConsulta(modulosDelRefresh),
+    permisosPestanas: pestanas,
     tokenVersion: filaUsuario.token_version,
     debeCambiarPassword: filaUsuario.cuenta_id
       ? filaUsuario.cuenta_debe_cambiar
@@ -1163,20 +1177,27 @@ export async function crearUsuarioService(
     )
   ).rows.map((r) => r.modulo as string);
 
-  if (modulosHabilitados.length > 0) {
-    const placeholders = modulosHabilitados.map((_, i) => `($1, $${i + 2})`).join(", ");
+  // Cada perfil entra con lo suyo (matriz robusta, ver perfilesDefaults):
+  // Lectura consulta todo, los perfiles de cancha solo tienen Combustible y
+  // del resto ni les aparece la fila. Sin esto mandaba el DEFAULT de la
+  // columna (0089, 'operar') y todos nacían igual, operando de más.
+  const asignacionInicial = modulosHabilitados
+    .map((modulo) => ({ modulo, ...moduloPorDefectoDeRol(fila.rol, modulo) }))
+    .filter((m) => m.asignado);
+
+  if (asignacionInicial.length > 0) {
+    const placeholders = asignacionInicial
+      .map((_, i) => `($1, $${i * 2 + 2}, $${i * 2 + 3})`)
+      .join(", ");
     await db.query(
-      `INSERT INTO usuario_modulos (usuario_id, modulo) VALUES ${placeholders} ON CONFLICT DO NOTHING`,
-      [fila.id, ...modulosHabilitados]
+      `INSERT INTO usuario_modulos (usuario_id, modulo, nivel) VALUES ${placeholders} ON CONFLICT DO NOTHING`,
+      [fila.id, ...asignacionInicial.flatMap((m) => [m.modulo, m.nivel])]
     );
   }
 
-  // Las filas de usuario_modulos se insertan para TODOS los módulos del
-  // tenant, incluso para un rol de cancha: si mañana el admin lo pasa a
-  // operador, la asignación ya está y no hay que reconstruirla. El recorte
-  // por rol se aplica al LEER (ver obtenerModulosPermitidos) -- y acá también,
-  // para que la respuesta del alta no le prometa al grifero ocho módulos que
-  // no va a ver en su primer login.
+  // El recorte por rol se aplica además al LEER (ver obtenerModulosPermitidos)
+  // -- y acá también, para que la respuesta del alta no le prometa al grifero
+  // ocho módulos que no va a ver en su primer login.
   const permitidosPorRol = MODULOS_POR_ROL[fila.rol as UsuarioPayload["rol"]];
 
   return {

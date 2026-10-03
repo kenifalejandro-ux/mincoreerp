@@ -124,7 +124,10 @@ describe("combustible: bitácora del tenant y aviso de aflojamiento", () => {
     }
   });
 
-  it("un operador no puede ver la bitácora: es visibilidad de gerencia", async () => {
+  // Matriz robusta de perfiles (profile_user.xlsx, confirmado por Kenif
+  // 2026-10-01): Operador parte con acceso amplio -- Bitácora es Visible
+  // para Operador, no exclusivo de gerencia.
+  it("el operador sí puede ver la bitácora (matriz robusta de perfiles)", async () => {
     const email = idUnico("operador-bitacora") + "@test.local";
     await withTenant(tenantId, (client) =>
       crearUsuarioService(
@@ -136,7 +139,7 @@ describe("combustible: bitácora del tenant y aviso de aflojamiento", () => {
     await agenteOperador.post("/api/auth/login").send({ tenantSlug, email, password });
 
     const res = await agenteOperador.get("/api/erp/combustible/bitacora");
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
   });
 
   // ── Contenido ─────────────────────────────────────────────────────────

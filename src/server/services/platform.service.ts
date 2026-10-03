@@ -27,7 +27,9 @@ import {
   revocarSesionesDeCuentaService,
   aPublico,
   type UsuarioPublico,
+  type UsuarioPayload,
 } from "./auth.service";
+import { modulosDisponibles, reiniciarModulosDePerfil } from "./permisosTenant.service";
 import { MODULOS_ERP } from "../schemas/platform.schema";
 import { verificarCuota, CuotaExcedidaError, RECURSO_USUARIOS } from "./platformCuotas.service";
 import { esViolacionUnicidad, esViolacionForeignKey } from "../shared/utils/pgError";
@@ -499,6 +501,14 @@ export async function reemplazarAdminService(
                  bloqueado_en AS "bloqueadoEn"`,
       [input.rol, usuarioId, tenantId]
     );
+    if (anterior.rows[0].rol !== input.rol) {
+      await reiniciarModulosDePerfil(
+        client,
+        usuarioId,
+        input.rol as UsuarioPayload["rol"],
+        await modulosDisponibles(client, tenantId)
+      );
+    }
     return { fila: actualizado.rows[0], antes: anterior.rows[0].rol };
   });
 
@@ -772,13 +782,29 @@ export async function actualizarModulosUsuarioService(
     throw new AppError(404, "Usuario no encontrado");
   }
 
+  // Preservar el nivel de lo que ya estaba asignado: un simple DELETE +
+  // re-INSERT con el DEFAULT de la columna (0089, 'operar') le borraría en
+  // silencio el "Consultas" que el admin del tenant ya le había puesto --
+  // por ejemplo, a cualquier módulo nuevo que este endpoint de plataforma le
+  // agregue a un perfil Lectura.
+  const previos = await pool.query<{ modulo: string; nivel: "operar" | "consultas" }>(
+    `SELECT modulo, nivel FROM usuario_modulos WHERE usuario_id = $1`,
+    [usuarioId]
+  );
+  const nivelPorModulo = new Map(previos.rows.map((f) => [f.modulo, f.nivel]));
+  const { rows: filaRol } = await withTenant(tenantId, (client) =>
+    client.query<{ rol: string }>(`SELECT rol FROM usuarios WHERE id = $1`, [usuarioId])
+  );
+  const nivelPorDefecto = filaRol[0]?.rol === "lectura" ? "consultas" : "operar";
+
   await pool.query(`DELETE FROM usuario_modulos WHERE usuario_id = $1`, [usuarioId]);
   if (modulos.length > 0) {
-    const placeholders = modulos.map((_, i) => `($1, $${i + 2})`).join(", ");
-    await pool.query(`INSERT INTO usuario_modulos (usuario_id, modulo) VALUES ${placeholders}`, [
-      usuarioId,
-      ...modulos,
-    ]);
+    const placeholders = modulos.map((_, i) => `($1, $${i + 2}, $${modulos.length + 2 + i})`);
+    const niveles = modulos.map((m) => nivelPorModulo.get(m) ?? nivelPorDefecto);
+    await pool.query(
+      `INSERT INTO usuario_modulos (usuario_id, modulo, nivel) VALUES ${placeholders.join(", ")}`,
+      [usuarioId, ...modulos, ...niveles]
+    );
   }
 
   await registrarAuditoria({

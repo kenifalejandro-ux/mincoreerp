@@ -13,6 +13,7 @@ import {
 } from "../comunes/ImportarExcel";
 import MoverDeGrifo from "../comunes/MoverDeGrifo";
 import { useImportacionExcel, type UtilidadesXlsx } from "../comunes/useImportacionExcel";
+import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 import { useSedes } from "../comunes/useSedes";
 
 interface Equipo {
@@ -169,6 +170,7 @@ function parsearPlanillaEquipos(libro: WorkBook, utils: UtilidadesXlsx): FilaPla
 }
 
 export default function EquiposTable() {
+  const puedeEscribir = usePuedeEscribir("equipos");
   const [equipos, setEquipos] = useState<Equipo[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -540,7 +542,9 @@ export default function EquiposTable() {
           <p className="text-xs sm:text-sm text-slate-500">Vehículos y maquinaria de la flota</p>
         </div>
         <div className="flex  flex-wrap items-center gap-3">
-          <BotonImportarExcel cargando={importacion.cargando} onFile={importacion.handleFile} />
+          {puedeEscribir && (
+            <BotonImportarExcel cargando={importacion.cargando} onFile={importacion.handleFile} />
+          )}
           <button
             type="button"
             onClick={handleExportExcel}
@@ -550,35 +554,37 @@ export default function EquiposTable() {
             <Download className="w-4 h-4 shrink-0" />
             <span>{exportando ? "Exportando..." : "Exportar Excel"}</span>
           </button>
-          <button
-            onClick={() => {
-              setEditingId(null);
-              setFormData({
-                placa_codigo: "",
-                codigo_interno: "",
-                tipo: TIPOS_COMUNES[0],
-                marca: "",
-                modelo: "",
-                tipo_medidor: "",
-                capacidad_tanque: "",
-                capacidad_tanque_unidad: "L",
-                consumo_maximo_l: "",
-                conductor_nombre: "",
-                conductor_dni: "",
-              });
-              setGrifoAlta("");
-              // Se regenera en cada apertura: si no, el segundo equipo
-              // legítimo que se registre reusaría la clave del primero y el
-              // servidor devolvería aquel en silencio -- se perdería un
-              // registro, que es peor que el duplicado que esto evita.
-              setClienteUuid(crypto.randomUUID());
-              setIsModalOpen(true);
-            }}
-            className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
-          >
-            <Plus className="w-4 h-4 shrink-0" />
-            Nuevo Equipo
-          </button>
+          {puedeEscribir && (
+            <button
+              onClick={() => {
+                setEditingId(null);
+                setFormData({
+                  placa_codigo: "",
+                  codigo_interno: "",
+                  tipo: TIPOS_COMUNES[0],
+                  marca: "",
+                  modelo: "",
+                  tipo_medidor: "",
+                  capacidad_tanque: "",
+                  capacidad_tanque_unidad: "L",
+                  consumo_maximo_l: "",
+                  conductor_nombre: "",
+                  conductor_dni: "",
+                });
+                setGrifoAlta("");
+                // Se regenera en cada apertura: si no, el segundo equipo
+                // legítimo que se registre reusaría la clave del primero y el
+                // servidor devolvería aquel en silencio -- se perdería un
+                // registro, que es peor que el duplicado que esto evita.
+                setClienteUuid(crypto.randomUUID());
+                setIsModalOpen(true);
+              }}
+              className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+            >
+              <Plus className="w-4 h-4 shrink-0" />
+              Nuevo Equipo
+            </button>
+          )}
         </div>
       </div>
 
@@ -613,7 +619,7 @@ export default function EquiposTable() {
         )}
       </div>
 
-      {seleccionados.size > 0 && (
+      {puedeEscribir && seleccionados.size > 0 && (
         <div className="mb-4 flex items-center justify-between gap-3 bg-slate-900 text-white rounded-xl px-4 py-3 text-sm">
           <span>
             {seleccionados.size} equipo{seleccionados.size === 1 ? "" : "s"} seleccionado
@@ -645,15 +651,17 @@ export default function EquiposTable() {
           <table className="w-full min-w-max text-left border-collapse">
             <thead className="bg-slate-50">
               <tr>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3">
-                  <input
-                    type="checkbox"
-                    aria-label="Seleccionar todos los equipos de esta página"
-                    checked={todosSeleccionadosEnPagina}
-                    onChange={toggleSeleccionarTodo}
-                    className="w-4 h-4 rounded border-slate-300"
-                  />
-                </th>
+                {puedeEscribir && (
+                  <th className="px-3 sm:px-4 py-2.5 sm:py-3">
+                    <input
+                      type="checkbox"
+                      aria-label="Seleccionar todos los equipos de esta página"
+                      checked={todosSeleccionadosEnPagina}
+                      onChange={toggleSeleccionarTodo}
+                      className="w-4 h-4 rounded border-slate-300"
+                    />
+                  </th>
+                )}
                 <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
                   placa
                 </th>
@@ -688,15 +696,17 @@ export default function EquiposTable() {
             <tbody className="divide-y divide-slate-100">
               {filteredEquipos.map((e) => (
                 <tr key={e.id} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5">
-                    <input
-                      type="checkbox"
-                      aria-label={`Seleccionar ${e.placa_codigo}`}
-                      checked={seleccionados.has(e.id)}
-                      onChange={() => toggleSeleccion(e.id)}
-                      className="w-4 h-4 rounded border-slate-300"
-                    />
-                  </td>
+                  {puedeEscribir && (
+                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5">
+                      <input
+                        type="checkbox"
+                        aria-label={`Seleccionar ${e.placa_codigo}`}
+                        checked={seleccionados.has(e.id)}
+                        onChange={() => toggleSeleccion(e.id)}
+                        className="w-4 h-4 rounded border-slate-300"
+                      />
+                    </td>
+                  )}
                   <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm font-semibold text-slate-800">
                     {e.placa_codigo}
                   </td>
@@ -731,22 +741,24 @@ export default function EquiposTable() {
                       {e.activo ? "Activo" : "Inactivo"}
                     </span>
                   </td>
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-2">
-                    <button
-                      onClick={() => openEditModal(e)}
-                      className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                      title="Editar"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(e.id)}
-                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                      title="Eliminar"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
+                  {puedeEscribir && (
+                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-2">
+                      <button
+                        onClick={() => openEditModal(e)}
+                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                        title="Editar"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(e.id)}
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                        title="Eliminar"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

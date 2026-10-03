@@ -14,6 +14,7 @@ import {
   type ColumnaVistaPreviaExcel,
 } from "../comunes/ImportarExcel";
 import { useImportacionExcel, type UtilidadesXlsx } from "../comunes/useImportacionExcel";
+import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 
 // 1. ESTRUCTURA DE DATOS: Define qué campos tiene un repuesto
 interface Repuesto {
@@ -63,6 +64,7 @@ function parsearPlanillaRepuestos(
 }
 
 export default function RepuestosTable() {
+  const puedeEscribir = usePuedeEscribir("repuestos");
   // --- ESTADOS (CAMPOS DE MEMORIA) ---
   const [repuestos, setRepuestos] = useState<Repuesto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -338,14 +340,18 @@ export default function RepuestosTable() {
         </div>
 
         <div className="flex items-center gap-3">
-          <BotonImportarExcel cargando={importacion.cargando} onFile={importacion.handleFile} />
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
-          >
-            <Plus className="w-4 h-4 shrink-0" />
-            Nuevo Repuesto
-          </button>
+          {puedeEscribir && (
+            <BotonImportarExcel cargando={importacion.cargando} onFile={importacion.handleFile} />
+          )}
+          {puedeEscribir && (
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+            >
+              <Plus className="w-4 h-4 shrink-0" />
+              Nuevo Repuesto
+            </button>
+          )}
         </div>
       </div>
 
@@ -445,27 +451,33 @@ export default function RepuestosTable() {
 
                   {/* ACCIONES (MOVIMIENTO - EDITAR - ELIMINAR) */}
                   <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-2">
-                    <button
-                      onClick={() => abrirModalMovimiento(r)}
-                      className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
-                      title="Registrar movimiento de stock"
-                    >
-                      <ArrowLeftRight className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => openEditModal(r)}
-                      className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                      title="Editar"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(r.id)}
-                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                      title="Eliminar"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {puedeEscribir && (
+                      <button
+                        onClick={() => abrirModalMovimiento(r)}
+                        className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+                        title="Registrar movimiento de stock"
+                      >
+                        <ArrowLeftRight className="w-4 h-4" />
+                      </button>
+                    )}
+                    {puedeEscribir && (
+                      <button
+                        onClick={() => openEditModal(r)}
+                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                        title="Editar"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                    )}
+                    {puedeEscribir && (
+                      <button
+                        onClick={() => handleDelete(r.id)}
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                        title="Eliminar"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}

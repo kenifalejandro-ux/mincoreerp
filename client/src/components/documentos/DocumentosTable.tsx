@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, FileSpreadsheet, Plus, X } from "lucide-reac
 import { useEffect, useState, useCallback } from "react";
 
 import { apiFetch } from "../../services/apiClient";
+import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 
 interface Documento {
   id: number;
@@ -166,6 +167,7 @@ function formatearTamano(bytes: number): string {
 }
 
 export default function DocumentosTable() {
+  const puedeEscribir = usePuedeEscribir("documentos");
   const [docs, setDocs] = useState<Documento[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -565,42 +567,46 @@ export default function DocumentosTable() {
 
         {/* DERECHA (BOTONES) */}
         <div className="flex items-center gap-3 ml-auto">
-          <button
-            onClick={() => {
-              setForm({});
-              setEditId(null);
-              setClienteUuid(crypto.randomUUID());
-              setOpenModal(true);
-            }}
-            className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg transition-colors duration-200"
-          >
-            <Plus className="w-4 h-4 shrink-0" />
-            Nuevo Documento
-          </button>
-
-          <label
-            className={`flex items-center gap-2 px-6 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50  text-sm font-medium rounded-lg ${
-              importando ? " cursor-wait" : " cursor-pointer"
-            }`}
-          >
-            <FileSpreadsheet className="w-4 h-4 shrink-0" />
-            {importando ? "Importando..." : "Excel"}
-            <input
-              type="file"
-              hidden
-              accept=".xlsx,.xls,.csv"
-              disabled={importando}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) uploadExcel(file);
-                // Sin esto, elegir el MISMO archivo dos veces seguidas no
-                // dispara onChange (el value no cambió) -- justo lo que
-                // querría hacer alguien que corrigió su planilla y la
-                // vuelve a subir con el mismo nombre.
-                e.target.value = "";
+          {puedeEscribir && (
+            <button
+              onClick={() => {
+                setForm({});
+                setEditId(null);
+                setClienteUuid(crypto.randomUUID());
+                setOpenModal(true);
               }}
-            />
-          </label>
+              className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg transition-colors duration-200"
+            >
+              <Plus className="w-4 h-4 shrink-0" />
+              Nuevo Documento
+            </button>
+          )}
+
+          {puedeEscribir && (
+            <label
+              className={`flex items-center gap-2 px-6 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50  text-sm font-medium rounded-lg ${
+                importando ? " cursor-wait" : " cursor-pointer"
+              }`}
+            >
+              <FileSpreadsheet className="w-4 h-4 shrink-0" />
+              {importando ? "Importando..." : "Excel"}
+              <input
+                type="file"
+                hidden
+                accept=".xlsx,.xls,.csv"
+                disabled={importando}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) uploadExcel(file);
+                  // Sin esto, elegir el MISMO archivo dos veces seguidas no
+                  // dispara onChange (el value no cambió) -- justo lo que
+                  // querría hacer alguien que corrigió su planilla y la
+                  // vuelve a subir con el mismo nombre.
+                  e.target.value = "";
+                }}
+              />
+            </label>
+          )}
         </div>
       </div>
 
@@ -868,20 +874,24 @@ export default function DocumentosTable() {
                           Archivo
                         </button>
 
-                        <button
-                          className="text-blue-600"
-                          onClick={() => {
-                            setForm(doc);
-                            setEditId(doc.id);
-                            setOpenModal(true);
-                          }}
-                        >
-                          Editar
-                        </button>
+                        {puedeEscribir && (
+                          <button
+                            className="text-blue-600"
+                            onClick={() => {
+                              setForm(doc);
+                              setEditId(doc.id);
+                              setOpenModal(true);
+                            }}
+                          >
+                            Editar
+                          </button>
+                        )}
 
-                        <button className="text-red-600" onClick={() => deleteDoc(doc.id)}>
-                          Eliminar
-                        </button>
+                        {puedeEscribir && (
+                          <button className="text-red-600" onClick={() => deleteDoc(doc.id)}>
+                            Eliminar
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

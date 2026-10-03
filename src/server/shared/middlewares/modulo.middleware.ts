@@ -49,7 +49,13 @@ export function requireNivelParaEscribir(modulo: string) {
     // Ausente = sesión emitida antes de 0089, cuando todo módulo asignado era
     // para operar. Se respeta eso hasta que la sesión se renueve.
     const soloConsulta = usuario.modulosConsulta ?? [];
-    if (!METODOS_DE_LECTURA.has(req.method) && soloConsulta.includes(modulo)) {
+    const moduloEsConsulta = soloConsulta.includes(modulo);
+    // Operador parte con acceso amplio a cualquier módulo (matriz robusta de
+    // perfiles, profile_user.xlsx: "Operador = Sí" en Registrar/Editar/
+    // Eliminar en general) -- lo único que lo frena acá es Lectura (siempre
+    // solo-consulta) o que el admin del tenant le haya puesto el módulo en
+    // nivel "Consultas".
+    if (!METODOS_DE_LECTURA.has(req.method) && (usuario.rol === "lectura" || moduloEsConsulta)) {
       return res.status(403).json({
         ok: false,
         message:

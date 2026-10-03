@@ -25,6 +25,7 @@
 import { ClipboardList, Download, Droplets, PackagePlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { useAuth } from "../context/AuthContext";
 import { apiFetch } from "../services/apiClient";
 
 const PRESENTACIONES = [
@@ -180,6 +181,24 @@ function exportarCsvUrea(filas: Record<string, unknown>[], nombreArchivo: string
 }
 
 export default function UreaPanel() {
+  const { usuario } = useAuth();
+  const esAdmin = usuario?.rol === "admin";
+  // Operador parte con acceso amplio (matriz robusta de perfiles,
+  // profile_user.xlsx): la empresa recorta desde Administración →
+  // Configuración.
+  const permiteUrea = (id: string) => {
+    const clave = `combustible:urea:${id}`;
+    const override = usuario?.permisosPestanas?.[clave];
+    if (override !== undefined) return override;
+    if (esAdmin || usuario?.rol === "encargado_urea") return true;
+    if (usuario?.rol === "operador") return true;
+    // Lectura (matriz robusta, actualizada 2026-10-01): nada de "Registrar
+    // X" -- solo Vista y Exportar siguen siendo "Solo consulta".
+    if (usuario?.rol === "lectura") return id === "vista" || id === "exportar";
+    return false;
+  };
+  const puedeVerUrea = permiteUrea("vista");
+  const vistasVisibles = puedeVerUrea ? VISTAS : [];
   const [vista, setVista] = useState<Vista>("vales");
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
@@ -201,7 +220,7 @@ export default function UreaPanel() {
   const [modalConteo, setModalConteo] = useState(false);
 
   const cargarEquipos = useCallback(async () => {
-    const res = await apiFetch("/api/erp/equipos?pageSize=200");
+    const res = await apiFetch("/api/erp/combustible/equipos-destino?pageSize=200");
     const body = await res.json().catch(() => null);
     setEquipos(Array.isArray(body?.data) ? body.data : []);
   }, []);
@@ -280,26 +299,27 @@ export default function UreaPanel() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     cargarEquipos();
     cargarGrifos();
-    cargarEstado();
-  }, [cargarEquipos, cargarGrifos, cargarEstado]);
+    if (puedeVerUrea) cargarEstado();
+  }, [cargarEquipos, cargarGrifos, cargarEstado, puedeVerUrea]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    cargarVista(vista);
+    if (puedeVerUrea) cargarVista(vista);
     // Solo al cambiar de VISTA, no en cada tecla de las fechas -- esas se
     // aplican con el botón "Consultar" (mismo criterio que
     // HistoricoCliente.tsx).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vista]);
+  }, [vista, puedeVerUrea]);
 
   const recargarTodo = useCallback(() => {
+    if (!puedeVerUrea) return;
     cargarVista(vista);
     cargarEstado();
-  }, [vista, cargarVista, cargarEstado]);
+  }, [vista, cargarVista, cargarEstado, puedeVerUrea]);
 
   return (
     <div className="flex flex-col gap-4">
-      {estado?.sinConteo && (
+      {puedeVerUrea && estado?.sinConteo && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           {estado.sinConteo.diasSinConteo === null ? (
             <>
@@ -317,122 +337,137 @@ export default function UreaPanel() {
       )}
 
       <div className="flex flex-wrap gap-3">
-        <button
-          type="button"
-          onClick={() => setModalVale(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-[#0A1014] text-white font-semibold rounded-xl hover:opacity-90 transition-all text-sm"
-        >
-          <Droplets className="w-4 h-4 shrink-0" />
-          Registrar vale
-        </button>
-        <button
-          type="button"
-          onClick={() => setModalEntrada(true)}
-          className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm"
-        >
-          <PackagePlus className="w-4 h-4 shrink-0" />
-          Registrar entrada
-        </button>
-        <button
-          type="button"
-          onClick={() => setModalConteo(true)}
-          className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm"
-        >
-          <ClipboardList className="w-4 h-4 shrink-0" />
-          Registrar conteo físico
-        </button>
-      </div>
-
-      <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
-        <div className="flex flex-wrap items-end gap-3 border-b border-slate-200 p-4">
-          <label className="flex flex-col text-sm">
-            <span className="text-gray-600">Vista</span>
-            <select
-              value={vista}
-              onChange={(e) => setVista(e.target.value as Vista)}
-              className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
-            >
-              {VISTAS.map((v) => (
-                <option key={v.valor} value={v.valor}>
-                  {v.etiqueta}
-                </option>
-              ))}
-            </select>
-          </label>
-          {!VISTAS_SIN_PERIODO.has(vista) && (
-            <>
-              <label className="flex flex-col text-sm">
-                <span className="text-gray-600">Desde</span>
-                <input
-                  type="date"
-                  value={desde}
-                  onChange={(e) => setDesde(e.target.value)}
-                  className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
-                />
-              </label>
-              <label className="flex flex-col text-sm">
-                <span className="text-gray-600">Hasta</span>
-                <input
-                  type="date"
-                  value={hasta}
-                  onChange={(e) => setHasta(e.target.value)}
-                  className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={() => cargarVista(vista)}
-                disabled={cargando}
-                className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50"
-              >
-                {cargando ? "Cargando…" : "Consultar"}
-              </button>
-            </>
-          )}
+        {permiteUrea("registrar_vale") && (
           <button
             type="button"
-            onClick={() =>
-              exportarCsvUrea(
-                (vista === "vales"
-                  ? vales
-                  : vista === "entradas"
-                    ? entradas
-                    : vista === "por_conductor"
-                      ? porConductor
-                      : vista === "por_vehiculo"
-                        ? porVehiculo
-                        : conteos) as unknown as Record<string, unknown>[],
-                `urea-${vista}-${new Date().toISOString().slice(0, 10)}.csv`
-              )
-            }
-            disabled={
-              (vista === "vales" && vales.length === 0) ||
-              (vista === "entradas" && entradas.length === 0) ||
-              (vista === "conteos" && conteos.length === 0) ||
-              (vista === "por_conductor" && porConductor.length === 0) ||
-              (vista === "por_vehiculo" && porVehiculo.length === 0)
-            }
-            className="ml-auto flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
-            title="Exportar la vista actual a CSV"
+            onClick={() => setModalVale(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-[#0A1014] text-white font-semibold rounded-xl hover:opacity-90 transition-all text-sm"
           >
-            <Download className="w-4 h-4 shrink-0" />
-            Exportar
+            <Droplets className="w-4 h-4 shrink-0" />
+            Registrar vale
           </button>
-        </div>
-
-        {error && <div className="p-4 text-sm text-red-600">{error}</div>}
-        {cargando && <div className="p-4 text-sm text-slate-500">Cargando…</div>}
-
-        {!cargando && vista === "vales" && (
-          <TablaVales filas={vales} equipos={equipos} onAnulado={recargarTodo} />
         )}
-        {!cargando && vista === "entradas" && <TablaEntradas filas={entradas} />}
-        {!cargando && vista === "conteos" && (
-          <TablaConteos filas={conteos} onAnulado={recargarTodo} />
+        {permiteUrea("registrar_entrada") && (
+          <button
+            type="button"
+            onClick={() => setModalEntrada(true)}
+            className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm"
+          >
+            <PackagePlus className="w-4 h-4 shrink-0" />
+            Registrar entrada
+          </button>
         )}
-        {!cargando && vista === "por_conductor" && <TablaPorConductor filas={porConductor} />}
-        {!cargando && vista === "por_vehiculo" && <TablaPorVehiculo filas={porVehiculo} />}
+        {permiteUrea("registrar_conteo_fisico") && (
+          <button
+            type="button"
+            onClick={() => setModalConteo(true)}
+            className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm"
+          >
+            <ClipboardList className="w-4 h-4 shrink-0" />
+            Registrar conteo físico
+          </button>
+        )}
       </div>
+
+      {puedeVerUrea && (
+        <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
+          <div className="flex flex-wrap items-end gap-3 border-b border-slate-200 p-4">
+            <label className="flex flex-col text-sm">
+              <span className="text-gray-600">Vista</span>
+              <select
+                value={vista}
+                onChange={(e) => setVista(e.target.value as Vista)}
+                className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
+              >
+                {vistasVisibles.map((v) => (
+                  <option key={v.valor} value={v.valor}>
+                    {v.etiqueta}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {!VISTAS_SIN_PERIODO.has(vista) && (
+              <>
+                <label className="flex flex-col text-sm">
+                  <span className="text-gray-600">Desde</span>
+                  <input
+                    type="date"
+                    value={desde}
+                    onChange={(e) => setDesde(e.target.value)}
+                    className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
+                  />
+                </label>
+                <label className="flex flex-col text-sm">
+                  <span className="text-gray-600">Hasta</span>
+                  <input
+                    type="date"
+                    value={hasta}
+                    onChange={(e) => setHasta(e.target.value)}
+                    className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => cargarVista(vista)}
+                  disabled={cargando}
+                  className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {cargando ? "Cargando…" : "Consultar"}
+                </button>
+              </>
+            )}
+            {puedeVerUrea && permiteUrea("exportar") && (
+              <button
+                type="button"
+                onClick={() =>
+                  exportarCsvUrea(
+                    (vista === "vales"
+                      ? vales
+                      : vista === "entradas"
+                        ? entradas
+                        : vista === "por_conductor"
+                          ? porConductor
+                          : vista === "por_vehiculo"
+                            ? porVehiculo
+                            : conteos) as unknown as Record<string, unknown>[],
+                    `urea-${vista}-${new Date().toISOString().slice(0, 10)}.csv`
+                  )
+                }
+                disabled={
+                  (vista === "vales" && vales.length === 0) ||
+                  (vista === "entradas" && entradas.length === 0) ||
+                  (vista === "conteos" && conteos.length === 0) ||
+                  (vista === "por_conductor" && porConductor.length === 0) ||
+                  (vista === "por_vehiculo" && porVehiculo.length === 0)
+                }
+                className="ml-auto flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                title="Exportar la vista actual a CSV"
+              >
+                <Download className="w-4 h-4 shrink-0" />
+                Exportar
+              </button>
+            )}
+          </div>
+
+          {error && <div className="p-4 text-sm text-red-600">{error}</div>}
+          {cargando && <div className="p-4 text-sm text-slate-500">Cargando…</div>}
+
+          {!cargando && vista === "vales" && (
+            <TablaVales
+              filas={vales}
+              equipos={equipos}
+              onAnulado={recargarTodo}
+              puedeAnular={esAdmin}
+            />
+          )}
+          {!cargando && vista === "entradas" && <TablaEntradas filas={entradas} />}
+          {!cargando && vista === "conteos" && (
+            <TablaConteos filas={conteos} onAnulado={recargarTodo} puedeAnular={esAdmin} />
+          )}
+          {!cargando && vista === "por_conductor" && <TablaPorConductor filas={porConductor} />}
+          {!cargando && vista === "por_vehiculo" && <TablaPorVehiculo filas={porVehiculo} />}
+        </div>
+      )}
 
       {modalVale && (
         <ModalVale
@@ -477,10 +512,12 @@ function TablaVales({
   filas,
   equipos,
   onAnulado,
+  puedeAnular,
 }: {
   filas: ValeFila[];
   equipos: Equipo[];
   onAnulado: () => void;
+  puedeAnular: boolean;
 }) {
   const [anulando, setAnulando] = useState<ValeFila | null>(null);
   if (filas.length === 0) {
@@ -521,7 +558,7 @@ function TablaVales({
               <td className="px-4 py-2">
                 {f.anulada_en ? (
                   <span className="text-xs text-red-500">anulado</span>
-                ) : (
+                ) : puedeAnular ? (
                   <button
                     type="button"
                     onClick={() => setAnulando(f)}
@@ -529,7 +566,7 @@ function TablaVales({
                   >
                     Anular
                   </button>
-                )}
+                ) : null}
               </td>
             </tr>
           ))}
@@ -678,7 +715,15 @@ function TablaPorVehiculo({ filas }: { filas: VehiculoFila[] }) {
   );
 }
 
-function TablaConteos({ filas, onAnulado }: { filas: ConteoFila[]; onAnulado: () => void }) {
+function TablaConteos({
+  filas,
+  onAnulado,
+  puedeAnular,
+}: {
+  filas: ConteoFila[];
+  onAnulado: () => void;
+  puedeAnular: boolean;
+}) {
   const [anulando, setAnulando] = useState<ConteoFila | null>(null);
   if (filas.length === 0) {
     return (
@@ -709,7 +754,7 @@ function TablaConteos({ filas, onAnulado }: { filas: ConteoFila[]; onAnulado: ()
                   <span className="text-xs text-red-500" title={f.motivo_anulacion ?? ""}>
                     anulado
                   </span>
-                ) : (
+                ) : puedeAnular ? (
                   <button
                     type="button"
                     onClick={() => setAnulando(f)}
@@ -717,7 +762,7 @@ function TablaConteos({ filas, onAnulado }: { filas: ConteoFila[]; onAnulado: ()
                   >
                     Anular
                   </button>
-                )}
+                ) : null}
               </td>
             </tr>
           ))}

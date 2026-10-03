@@ -48,6 +48,18 @@ export const actualizarModulosSchema = z.object({
   modulos: z.array(z.enum(MODULOS_ERP)),
 });
 
+export const actualizarPestanasUsuarioSchema = z.object({
+  pestanas: z
+    .array(
+      z.object({
+        modulo: z.enum(["combustible", "facturacion"]),
+        pestana: z.string().trim().min(1).max(100),
+        permitido: z.boolean(),
+      })
+    )
+    .max(50),
+});
+
 export type ActualizarModulosInput = z.infer<typeof actualizarModulosSchema>;
 
 // Para /tenants/:id/modulos — configuración granular por módulo (ver
@@ -115,7 +127,9 @@ export const crearUsuarioEnTenantSchema = z
       .optional(),
     // grifero / conductor_ruta: los roles de cancha (0085). Se aceptan acá
     // igual que los de oficina -- el alta pasa por el mismo endpoint.
-    rol: z.enum(["admin", "operador", "lectura", "grifero", "conductor_ruta"]).optional(),
+    rol: z
+      .enum(["admin", "operador", "lectura", "grifero", "conductor_ruta", "encargado_urea"])
+      .optional(),
     // Solo cuando el alta la hace MINCORE por pedido del cliente: el número
     // de la carta ES la autorización, y queda en la bitácora de la empresa
     // para que sus administradores vean por qué apareció ese usuario (ver §12
@@ -145,7 +159,7 @@ export const cambiarEstadoUsuarioSchema = z.object({
  *  intervención del proveedor sobre datos del cliente, y el cliente tiene que
  *  poder verla. */
 export const reemplazarAdminSchema = z.object({
-  rol: z.enum(["admin", "operador", "lectura", "grifero", "conductor_ruta"]),
+  rol: z.enum(["admin", "operador", "lectura", "grifero", "conductor_ruta", "encargado_urea"]),
   motivo: z.string().trim().min(1, "El motivo es obligatorio").max(500),
   numeroCarta: z.string().trim().max(60).optional(),
 });

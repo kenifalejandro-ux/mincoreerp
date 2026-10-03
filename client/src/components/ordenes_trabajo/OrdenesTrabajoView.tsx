@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
+import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 
 type Estado = "abierta" | "en_progreso" | "completada" | "cancelada";
 
@@ -68,6 +69,7 @@ const FORM_VACIO = {
 };
 
 export default function OrdenesTrabajoView() {
+  const puedeEscribir = usePuedeEscribir("ordenes_trabajo");
   const [ordenes, setOrdenes] = useState<OrdenTrabajo[]>([]);
   const [equipos, setEquipos] = useState<Equipo[]>([]);
   const [ipercs, setIpercs] = useState<IpercResumen[]>([]);
@@ -304,12 +306,14 @@ export default function OrdenesTrabajoView() {
             Mantenimiento correctivo y preventivo de equipos
           </p>
         </div>
-        <button
-          onClick={abrirModal}
-          className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
-        >
-          + Nueva Orden de Trabajo
-        </button>
+        {puedeEscribir && (
+          <button
+            onClick={abrirModal}
+            className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+          >
+            + Nueva Orden de Trabajo
+          </button>
+        )}
       </div>
 
       <div className="flex flex-col sm:flex-row gap-4 mb-8">
@@ -437,6 +441,7 @@ export default function OrdenesTrabajoView() {
                       className="border border-slate-200 rounded-lg p-2 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                       value={ot.asignado_a ?? ""}
                       onChange={(e) => handleReasignar(ot, e.target.value)}
+                      disabled={!puedeEscribir}
                     >
                       <option value="">Sin asignar</option>
                       {usuariosAsignables.map((u) => (
@@ -447,6 +452,7 @@ export default function OrdenesTrabajoView() {
                     </select>
                   </td>
                   <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-2 whitespace-nowrap">
+                    puedeEscribir &&{" "}
                     {ot.estado === "abierta" && (
                       <>
                         <button
@@ -463,6 +469,7 @@ export default function OrdenesTrabajoView() {
                         </button>
                       </>
                     )}
+                    puedeEscribir &&{" "}
                     {ot.estado === "en_progreso" && (
                       <>
                         <button
@@ -479,13 +486,15 @@ export default function OrdenesTrabajoView() {
                         </button>
                       </>
                     )}
-                    <button
-                      onClick={() => handleEliminar(ot.id)}
-                      className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                      title="Eliminar"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    {puedeEscribir && (
+                      <button
+                        onClick={() => handleEliminar(ot.id)}
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                        title="Eliminar"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
