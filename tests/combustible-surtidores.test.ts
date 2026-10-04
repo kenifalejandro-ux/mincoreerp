@@ -404,6 +404,67 @@ describe("aflojar y permisos", () => {
   });
 });
 
+describe("calibración del contómetro (0108)", () => {
+  it("carga, lee y limpia el certificado; el rango del EMP se valida", async () => {
+    const { admin, grifo } = await empresa();
+    const s = await surtidor(admin, grifo);
+
+    const fueraDeRango = await admin
+      .put(`/api/erp/combustible/surtidores/${s}/calibracion`)
+      .send({ emp_pct: 25, certificado: "C-1", vence: "2027-01-01" });
+    expect(fueraDeRango.status).toBe(400);
+
+    const cargar = await admin
+      .put(`/api/erp/combustible/surtidores/${s}/calibracion`)
+      .send({ emp_pct: 0.5, certificado: "C-1", vence: "2027-01-01" });
+    expect(cargar.status).toBe(200);
+
+    const listado = await admin.get("/api/erp/combustible/surtidores");
+    const propio = (
+      listado.body as {
+        id: number;
+        calibracion_emp_pct: string | null;
+        calibracion_certificado: string | null;
+        calibracion_vence: string | null;
+      }[]
+    ).find((x) => x.id === s)!;
+    expect(Number(propio.calibracion_emp_pct)).toBe(0.5);
+    expect(propio.calibracion_certificado).toBe("C-1");
+    expect(propio.calibracion_vence).toContain("2027-01-01");
+
+    // Los tres campos se PISAN enteros: omitir certificado y vence los borra,
+    // no los conserva (a diferencia de PUT /surtidores/:id).
+    const limpiar = await admin
+      .put(`/api/erp/combustible/surtidores/${s}/calibracion`)
+      .send({ emp_pct: null, certificado: null, vence: null });
+    expect(limpiar.status).toBe(200);
+    const despues = (await admin.get("/api/erp/combustible/surtidores")).body.find(
+      (x: { id: number }) => x.id === s
+    );
+    expect(despues.calibracion_emp_pct).toBeNull();
+    expect(despues.calibracion_certificado).toBeNull();
+    expect(despues.calibracion_vence).toBeNull();
+  });
+
+  it("404 en un surtidor que no existe; el operador también puede cargarla", async () => {
+    const { admin, slug, grifo } = await empresa();
+    const inexistente = await admin
+      .put(`/api/erp/combustible/surtidores/999999/calibracion`)
+      .send({ emp_pct: 1, certificado: null, vence: null });
+    expect(inexistente.status).toBe(404);
+
+    const s = await surtidor(admin, grifo);
+    const operador = request.agent(app);
+    const dni = String(87100000 + Math.floor(Math.random() * 800000));
+    await admin.post("/api/erp/usuarios").send({ nombre: "Op2", dni, password, rol: "operador" });
+    await operador.post("/api/auth/login").send({ tenantSlug: slug, identificador: dni, password });
+    const r = await operador
+      .put(`/api/erp/combustible/surtidores/${s}/calibracion`)
+      .send({ emp_pct: 1.5, certificado: null, vence: null });
+    expect(r.status).toBe(200);
+  });
+});
+
 describe("backup", () => {
   it("clonar a otra empresa remapea surtidores, conexiones y lo que leyó la varilla", async () => {
     const origen = await empresa();

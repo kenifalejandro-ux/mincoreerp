@@ -44,6 +44,7 @@ export async function listarSurtidores(
   const r = await client.query(
     `SELECT s.id, s.grifo_interno_id, s.nombre, s.activo, s.motivo_baja,
             s.usa_totalizador, s.totalizador_tolerancia, s.totalizador_actual,
+            s.calibracion_emp_pct, s.calibracion_certificado, s.calibracion_vence,
             COALESCE((
               SELECT jsonb_agg(jsonb_build_object(
                        'conexion_id', st.id,
@@ -140,6 +141,27 @@ export async function actualizarSurtidor(
     throw err;
   }
   return antes.rows[0];
+}
+
+/** Calibración del contómetro (0108): los tres campos SE PISAN enteros,
+ *  nunca COALESCE -- es la única forma de que el tenant pueda limpiar un
+ *  certificado vencido sin dejar el EMP viejo colgado. Null si no existe. */
+export async function actualizarCalibracionSurtidor(
+  client: PoolClient,
+  tenantId: string,
+  id: number,
+  data: { emp_pct: number | null; certificado: string | null; vence: string | null }
+) {
+  const r = await client.query<{ nombre: string }>(
+    `UPDATE surtidores
+        SET calibracion_emp_pct = $1,
+            calibracion_certificado = $2,
+            calibracion_vence = $3
+      WHERE id = $4 AND tenant_id = $5
+      RETURNING nombre`,
+    [data.emp_pct, data.certificado, data.vence, id, tenantId]
+  );
+  return r.rows[0] ?? null;
 }
 
 /** Conectar un surtidor a un tanque, desde AHORA (no retroactivo: la

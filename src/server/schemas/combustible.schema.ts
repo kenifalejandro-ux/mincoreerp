@@ -1193,3 +1193,16 @@ export const motivoSurtidorSchema = z.object({
 });
 
 export type MotivoSurtidorInput = z.infer<typeof motivoSurtidorSchema>;
+
+/** Calibración del contómetro (0108): los TRES campos van siempre juntos y
+ *  SE PISAN enteros, nunca se combinan con COALESCE -- a diferencia de
+ *  actualizarSurtidorSchema, acá "no mandar un campo" también significa
+ *  "bórralo", porque es la única forma de que el tenant pueda limpiar un
+ *  certificado vencido sin dejar basura de uno viejo. */
+export const calibracionSurtidorSchema = z.object({
+  emp_pct: z.number().min(0).max(20).nullable().default(null),
+  certificado: z.string().trim().min(1).max(80).nullable().default(null),
+  vence: z.string().date().nullable().default(null),
+});
+
+export type CalibracionSurtidorInput = z.infer<typeof calibracionSurtidorSchema>;

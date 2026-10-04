@@ -64,6 +64,7 @@ import type {
   ActualizarSurtidorInput,
   ConectarSurtidorInput,
   MotivoSurtidorInput,
+  CalibracionSurtidorInput,
   CambiarPrecintoInput,
   BajaPuntoPrecintoInput,
   ResolverExcedenteRecepcionInput,
@@ -4121,6 +4122,32 @@ export class CombustibleController {
         contexto: contextoAuditoriaModulo(req),
       });
     }
+    await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
+    res.json({ ok: true });
+  }
+
+  /** PUT /surtidores/:id/calibracion -- el EMP del certificado del contómetro
+   *  (0108). No es "aflojar vigilancia" como el totalizador: cargar, corregir
+   *  o limpiar un dato de certificado no pide motivo, es información, no un
+   *  control que se apaga. */
+  async actualizarCalibracionSurtidor(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.surtidorId);
+    const data = req.validatedBody as CalibracionSurtidorInput;
+    const actualizado = await withTenant(tenantId, (client) =>
+      surtidores.actualizarCalibracionSurtidor(client, tenantId, id, data)
+    );
+    if (!actualizado) {
+      res.status(404).json({ error: "Surtidor no encontrado" });
+      return;
+    }
+    await registrarAuditoria({
+      accion: "combustible.surtidor_calibracion_actualizar",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { surtidorId: id, ...data },
+      contexto: contextoAuditoriaModulo(req),
+    });
     await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
     res.json({ ok: true });
   }
