@@ -11,6 +11,15 @@ export const transporter = emailConfigured
       maxConnections: env.emailMaxConnections,
       maxMessages: env.emailMaxMessages,
       requireTLS: true,
+      // Sin esto nodemailer espera 2 min la conexión y 10 min el socket. Varios
+      // correos de alerta se envían ANTES de responder el request (p. ej. al
+      // registrar un despacho), así que un SMTP lento dejaba colgada la
+      // pantalla del conductor y, con ella, la subida de la foto del
+      // comprobante que va después de la respuesta. Un correo que no sale en
+      // 15 s se da por fallido (los llamadores ya lo capturan y lo loguean).
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 15_000,
       auth: {
         user: env.emailUser,
         pass: env.emailPass,

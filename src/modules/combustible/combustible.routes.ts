@@ -27,6 +27,7 @@ import {
   configCombustibleSchema,
   kardexCombustibleSchema,
   periodoHistorialCombustibleSchema,
+  ultimoMedidorEquipoQuerySchema,
   resolverAlertaCombustibleSchema,
   bajaTanqueCombustibleSchema,
   crearConteoUreaSchema,
@@ -127,6 +128,15 @@ router.get(
 
 // Despachos (Fase B) -- segmentos literales, van ANTES de /:id: si /:id
 // los capturara primero, "despachos" quedaría interpretado como un id
+// La carga anterior de una unidad, para precargar las horas abastecidas. Mismos
+// permisos que registrar una compra en ruta (los roles que pueden hacerla).
+router.get(
+  "/equipos/:equipoId/ultimo-medidor",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  requireRole("admin", "operador", "conductor_ruta"),
+  validateQuery(ultimoMedidorEquipoQuerySchema),
+  asyncHandler(controller.ultimoMedidorEquipo.bind(controller))
+);
 router.get(
   "/despachos",
   requireHistorialDeDespachos,
