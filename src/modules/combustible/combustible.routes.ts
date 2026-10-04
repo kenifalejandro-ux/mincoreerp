@@ -210,6 +210,30 @@ router.post(
   asyncHandler(controller.subirComprobante.bind(controller))
 );
 
+// Mismo endpoint, apuntando a la compra por el uuid del dispositivo: es el que
+// usa la cola offline (la compra aún no tiene id). El uuid se valida en la
+// ruta para que uno mal formado sea un 404 y no un 500 de Postgres, que la
+// cola reintentaría para siempre.
+router.post(
+  "/despachos/por-uuid/:clienteUuid/comprobante",
+  (req: Request, res: Response, next: NextFunction) => {
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        req.params.clienteUuid
+      )
+    ) {
+      res.status(404).json({ error: "Compra no encontrada" });
+      return;
+    }
+    next();
+  },
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  requireRole("admin", "operador", "conductor_ruta"),
+  subirArchivoComprobante,
+  validate(subirComprobanteCompraSchema),
+  asyncHandler(controller.subirComprobante.bind(controller))
+);
+
 // VER: el mismo permiso que el historial de compras. Quien puede ver que la
 // compra existe tiene que poder ver su respaldo -- es justamente la persona
 // de oficina que la cruza contra la factura del proveedor, y separar las dos

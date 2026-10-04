@@ -58,6 +58,11 @@ export const ESCRITURAS_OFFLINE: Record<string, EscrituraOffline[]> = {
   combustible: [
     { metodo: "POST", ruta: "/lecturas" },
     { metodo: "POST", ruta: "/despachos" },
+    // La foto del comprobante de una compra en ruta (0109). Apunta a la
+    // compra por el uuid del dispositivo y no por su id: si se saca sin señal,
+    // la compra todavía no existe en el servidor y no tiene id. La cola drena
+    // en orden, así que el registro llega antes que su foto.
+    { metodo: "POST", ruta: "/despachos/por-uuid/:clienteUuid/comprobante" },
   ],
 
   // Crear el registro (pólizas, SOAT, etc. son `documentos` con otro

@@ -1500,6 +1500,12 @@ export class CombustibleService {
     return { estado: "guardado", fila, reemplazo: yaTeniaArchivo };
   }
 
+  resolverDespachoPorClienteUuid(tenantId: string, clienteUuid: string) {
+    return withTenant(tenantId, (client) =>
+      this.repository.findDespachoIdPorClienteUuid(client, tenantId, clienteUuid)
+    );
+  }
+
   /** El archivo se lee con el driver con el que se ESCRIBIÓ, no con el
    *  configurado hoy -- mismo criterio que documentos_versiones: cambiar
    *  DOCUMENTOS_STORAGE_DRIVER no puede volver ilegible lo ya subido. */

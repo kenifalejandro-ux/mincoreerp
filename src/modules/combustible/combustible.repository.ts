@@ -1262,6 +1262,26 @@ export class CombustibleRepository {
   /** Los campos de storage del comprobante, que COLUMNAS_DESPACHO no
    *  publica. Solo para uso interno del service (subir, reemplazar,
    *  descargar). */
+  /** El id de un despacho a partir del `cliente_uuid` con que lo registró el
+   *  dispositivo (tabla idempotency_keys). Existe para la foto del comprobante
+   *  encolada OFFLINE: cuando el conductor la saca sin señal, la compra todavía
+   *  no tiene id -- el único dato estable que tiene el dispositivo es el uuid.
+   *  Cruza contra la fila real para no devolver un id de una compra ya borrada. */
+  async findDespachoIdPorClienteUuid(
+    client: PoolClient,
+    tenantId: string,
+    clienteUuid: string
+  ): Promise<number | null> {
+    const result = await client.query<{ id: number }>(
+      `SELECT d.id
+         FROM idempotency_keys k
+         JOIN combustible_despachos d ON d.id = k.fila_id AND d.tenant_id = k.tenant_id
+        WHERE k.tenant_id = $1 AND k.modulo = 'combustible' AND k.cliente_uuid = $2`,
+      [tenantId, clienteUuid]
+    );
+    return result.rows[0]?.id ?? null;
+  }
+
   async findComprobanteDeDespacho(
     client: PoolClient,
     tenantId: string,

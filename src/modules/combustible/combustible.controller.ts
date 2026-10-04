@@ -2232,7 +2232,17 @@ export class CombustibleController {
           };
         }
 
-        await service.crearAlertas(client, tenantId, nuevas);
+        // Una compra en ruta no tiene vale: sin esto la alerta se leería "—" en
+        // la columna de referencia y nadie sabría de qué compra habla. Se
+        // copia al detalle el comprobante, que es lo que el papel dice.
+        const detalleDePapel = papel.serieTalonario
+          ? {}
+          : { comprobante: `${papel.comprobanteTipo} ${papel.comprobanteNumero}` };
+        await service.crearAlertas(
+          client,
+          tenantId,
+          nuevas.map((n) => ({ ...n, detalle: { ...n.detalle, ...detalleDePapel } }))
+        );
         const admins = await service.findDestinatariosAlertasCombustible(client, tenantId);
         return {
           huecos,
@@ -3084,9 +3094,20 @@ export class CombustibleController {
   async subirComprobante(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
-      const despachoId = Number(req.params.despachoId);
       const archivo = req.file!;
       const { motivo } = req.validatedBody as SubirComprobanteCompraInput;
+
+      // Dos formas de apuntar a la compra: por id (online) o por el
+      // cliente_uuid con que se registró (la foto encolada offline, cuando la
+      // compra todavía no tenía id). La cola drena en orden, así que el
+      // registro ya está guardado cuando llega la foto.
+      const despachoId = req.params.clienteUuid
+        ? await service.resolverDespachoPorClienteUuid(tenantId, req.params.clienteUuid)
+        : Number(req.params.despachoId);
+      if (despachoId === null) {
+        res.status(404).json({ error: "Compra no encontrada" });
+        return;
+      }
 
       const resultado = await service.subirComprobante(
         tenantId,

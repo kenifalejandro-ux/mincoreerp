@@ -402,6 +402,9 @@ export const MODULOS: ModuloDefinicion[] = [
       escrituras: [
         { metodo: "POST", ruta: "/lecturas" },
         { metodo: "POST", ruta: "/despachos" },
+        // La foto del comprobante de una compra en ruta, apuntada por el uuid
+        // del dispositivo (0109). Espejo de offlineRegistry.ts del cliente.
+        { metodo: "POST", ruta: "/despachos/por-uuid/:clienteUuid/comprobante" },
       ],
     },
   },

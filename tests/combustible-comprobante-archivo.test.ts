@@ -35,8 +35,9 @@ describe("combustible: comprobante adjunto de la compra en ruta (0109)", () => {
   let tenantVecinoId: string;
   const agenteVecino = request.agent(app);
 
-  async function crearCompra(): Promise<number> {
+  async function crearCompra(clienteUuid?: string): Promise<number> {
     const res = await agente.post("/api/erp/combustible/despachos").send({
+      cliente_uuid: clienteUuid,
       origen: "compra_externa",
       grifo_id: grifoId,
       tipo_combustible: "diesel_b5",
@@ -221,5 +222,34 @@ describe("combustible: comprobante adjunto de la compra en ruta (0109)", () => {
     const res = await subir(vale.body.id, FOTO);
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/comprobante de proveedor|compras en ruta/i);
+  });
+
+  describe("por cliente_uuid (la foto encolada offline)", () => {
+    const subirPorUuid = (a: typeof agente, uuid: string, contenido = FOTO) =>
+      a
+        .post(`/api/erp/combustible/despachos/por-uuid/${uuid}/comprobante`)
+        .attach("archivo", contenido, { filename: "boleta.jpg", contentType: "image/jpeg" });
+
+    it("adjunta la foto a la compra registrada con ese uuid", async () => {
+      const uuid = crypto.randomUUID();
+      const despachoId = await crearCompra(uuid);
+      const res = await subirPorUuid(agente, uuid);
+      expect(res.status).toBe(201);
+      expect(res.body.id).toBe(despachoId);
+    });
+
+    it("uuid que no corresponde a ninguna compra: 404", async () => {
+      expect((await subirPorUuid(agente, crypto.randomUUID())).status).toBe(404);
+    });
+
+    it("uuid mal formado: 404 y no 500 (la cola reintenta los 5xx para siempre)", async () => {
+      expect((await subirPorUuid(agente, "no-es-un-uuid")).status).toBe(404);
+    });
+
+    it("el uuid de OTRO tenant no resuelve: 404", async () => {
+      const uuid = crypto.randomUUID();
+      await crearCompra(uuid);
+      expect((await subirPorUuid(agenteVecino, uuid)).status).toBe(404);
+    });
   });
 });
