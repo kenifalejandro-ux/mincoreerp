@@ -784,6 +784,27 @@ export const anularDespachoCombustibleSchema = z.object({
 
 export type AnularDespachoCombustibleInput = z.infer<typeof anularDespachoCombustibleSchema>;
 
+/** Adjuntar la foto/PDF del comprobante de una compra en ruta (0109).
+ *
+ *  El archivo viaja en el multipart (campo "archivo", ver
+ *  combustible.upload.ts); acá solo va el motivo, y SOLO hace falta cuando
+ *  se está REEMPLAZANDO una foto ya adjunta. Por eso es opcional en el
+ *  schema y obligatorio en el service, que es el único que sabe si la
+ *  compra ya tenía archivo.
+ *
+ *  Pedirlo en el adjunto inicial sería ruido --no hay nada que corregir--
+ *  y no pedirlo en el reemplazo rompería el principio del módulo: cambiar
+ *  la evidencia de una compra es una acción correctiva, y toda acción
+ *  correctiva dice por qué.
+ *
+ *  Viene de un FormData, así que todo llega como string: por eso no hay
+ *  ningún campo numérico ni booleano acá. */
+export const subirComprobanteCompraSchema = z.object({
+  motivo: z.string().trim().min(1).max(500).optional(),
+});
+
+export type SubirComprobanteCompraInput = z.infer<typeof subirComprobanteCompraSchema>;
+
 // ── Alertas (migrations/0068) ───────────────────────────────────────────
 // Sin ids, marca TODAS las no leídas del tenant como leídas -- lo que
 // dispara el botón "marcar todas como leídas" de la campanita.

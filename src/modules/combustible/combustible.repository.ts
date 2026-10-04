@@ -998,7 +998,13 @@ export class CombustibleRepository {
     horas_abastecidas,
     presentacion, factor_litros, cantidad_bultos,
     comprobante_tipo, comprobante_numero,
-    comprobante_key, comprobante_mime, comprobante_nombre, comprobante_bytes,
+    -- Del archivo se publica lo que la pantalla necesita para decir "hay
+    -- foto, pesa esto, la subió fulano": NUNCA comprobante_key ni
+    -- comprobante_driver. Son la ubicación interna en el bucket y no le
+    -- sirven a ningún cliente -- la descarga va por su endpoint, con
+    -- permisos. Mismo criterio que documentos_versiones, que tampoco
+    -- devuelve storage_key en su listado.
+    comprobante_mime, comprobante_nombre, comprobante_bytes,
     comprobante_subido_en, comprobante_subido_por,
     costo_unitario, (cantidad * costo_unitario) AS costo_total, observaciones,
     usuario_id, despachado_en, creado_en,
@@ -1199,6 +1205,81 @@ export class CombustibleRepository {
          AND comprobante_tipo = $3 AND comprobante_numero = $4
          AND anulada_en IS NULL`,
       [tenantId, grifoId, comprobanteTipo, comprobanteNumero]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** Pega el archivo del comprobante a la compra (0109).
+   *
+   *  Un solo slot, sin versionado --a diferencia de documentos_versiones--
+   *  porque una boleta no tiene revisiones: o es la que el conductor trajo
+   *  del grifo o es la corrección de una foto ilegible. El reemplazo queda
+   *  en la bitácora con su motivo, que es donde vive esa historia.
+   *
+   *  El WHERE repite las tres condiciones que el service ya verificó
+   *  (comprobante declarado, no anulada) a propósito: entre aquella lectura
+   *  y este UPDATE hay una subida a R2 de por medio, tiempo de sobra para
+   *  que alguien anule la compra. Sin esto, el archivo se pegaría a una
+   *  compra anulada y violaría el CHECK de 0109 con un 500. */
+  async guardarArchivoComprobante(
+    client: PoolClient,
+    tenantId: string,
+    despachoId: number,
+    archivo: {
+      driver: string;
+      key: string;
+      mime: string;
+      bytes: number;
+      nombre: string;
+      sha256: string;
+      subidoPor: string;
+    }
+  ) {
+    const result = await client.query(
+      `UPDATE combustible_despachos
+          SET comprobante_driver = $3, comprobante_key = $4, comprobante_mime = $5,
+              comprobante_bytes = $6, comprobante_nombre = $7, comprobante_sha256 = $8,
+              comprobante_subido_por = $9, comprobante_subido_en = now()
+        WHERE id = $1 AND tenant_id = $2
+          AND comprobante_numero IS NOT NULL
+          AND anulada_en IS NULL
+        RETURNING ${CombustibleRepository.COLUMNAS_DESPACHO}`,
+      [
+        despachoId,
+        tenantId,
+        archivo.driver,
+        archivo.key,
+        archivo.mime,
+        archivo.bytes,
+        archivo.nombre,
+        archivo.sha256,
+        archivo.subidoPor,
+      ]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** Los campos de storage del comprobante, que COLUMNAS_DESPACHO no
+   *  publica. Solo para uso interno del service (subir, reemplazar,
+   *  descargar). */
+  async findComprobanteDeDespacho(
+    client: PoolClient,
+    tenantId: string,
+    id: number
+  ): Promise<{
+    comprobante_numero: string | null;
+    comprobante_driver: string | null;
+    comprobante_key: string | null;
+    comprobante_mime: string | null;
+    comprobante_nombre: string | null;
+    comprobante_sha256: string | null;
+    anulada_en: string | null;
+  } | null> {
+    const result = await client.query(
+      `SELECT comprobante_numero, comprobante_driver, comprobante_key, comprobante_mime,
+              comprobante_nombre, comprobante_sha256, anulada_en
+         FROM combustible_despachos WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
     );
     return result.rows[0] ?? null;
   }

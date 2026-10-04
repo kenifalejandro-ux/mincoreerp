@@ -52,6 +52,7 @@ import type {
   AnularRecepcionCombustibleInput,
   ValidarRecepcionCombustibleInput,
   AnularDespachoCombustibleInput,
+  SubirComprobanteCompraInput,
   MarcarAlertasLeidasCombustibleInput,
   BajaTanqueCombustibleInput,
   ResolverAlertaCombustibleInput,
@@ -3068,6 +3069,115 @@ export class CombustibleController {
       await enviarCorreoAlertaAnulacion(admins, { ...papel, motivo });
     } catch (err) {
       logger.warn({ err, tenantId, despachoId }, "No se pudo procesar la alerta de vale anulado");
+    }
+  }
+
+  // ── Comprobante de la compra externa: el archivo (0109) ──────────────
+
+  /** POST /despachos/:despachoId/comprobante -- adjunta la foto o el PDF de
+   *  la boleta/factura. `req.file` lo deja combustible.upload.ts.
+   *
+   *  Los códigos importan más de lo habitual acá: esta subida puede venir de
+   *  la cola offline, y `esErrorPermanente` descarta todo 4xx y reintenta
+   *  todo 5xx. Un código mal elegido es una foto perdida en silencio o una
+   *  cola que no drena nunca. */
+  async subirComprobante(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const despachoId = Number(req.params.despachoId);
+      const archivo = req.file!;
+      const { motivo } = req.validatedBody as SubirComprobanteCompraInput;
+
+      const resultado = await service.subirComprobante(
+        tenantId,
+        despachoId,
+        {
+          buffer: archivo.buffer,
+          mimeType: archivo.mimetype,
+          nombreOriginal: archivo.originalname,
+        },
+        req.usuario!.id,
+        motivo
+      );
+
+      if (resultado.estado === "no_encontrado") {
+        res.status(404).json({ error: "Compra no encontrada" });
+        return;
+      }
+      if (resultado.estado === "no_aplica") {
+        res.status(400).json({ error: resultado.razon });
+        return;
+      }
+      if (resultado.estado === "falta_motivo") {
+        res.status(400).json({
+          error:
+            "esta compra ya tiene un comprobante adjunto y el que subís es otro archivo -- " +
+            "indicá el motivo del reemplazo (la foto anterior era ilegible, estaba cortada, etc.)",
+        });
+        return;
+      }
+      if (resultado.estado === "reintento") {
+        // Mismo archivo que el ya guardado: es el reenvío de la cola, no un
+        // reemplazo. 200 y no 201 -- esta llamada no creó nada, pero para el
+        // dispositivo es un éxito y saca la entrada de la cola. Mismo
+        // criterio que el reintento de documentos.subirVersion.
+        res.status(200).json(resultado.fila);
+        return;
+      }
+
+      await registrarAuditoria({
+        accion: resultado.reemplazo
+          ? "combustible.comprobante_reemplazar"
+          : "combustible.comprobante_adjuntar",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          despachoId,
+          nombreArchivo: archivo.originalname,
+          bytes: archivo.size,
+          // Solo en el reemplazo: el adjunto inicial no es una acción
+          // correctiva y pedirle un motivo sería ruido. Cambiar la
+          // evidencia de una compra sí lo es.
+          ...(resultado.reemplazo ? { motivo } : {}),
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      await publicarEventoTenant(tenantId, "combustible.comprobante_adjuntado", { despachoId });
+      res.status(201).json(resultado.fila);
+    } catch (err) {
+      logger.warn({ err, tenantId: getTenantId(req) }, "No se pudo subir el comprobante");
+      res.status(500).json({ error: "Error al subir el comprobante" });
+    }
+  }
+
+  /** GET /despachos/:despachoId/comprobante -- redirect a una URL firmada de
+   *  R2 (driver s3) o los bytes servidos acá (driver local). Mismo reparto
+   *  que la descarga de Documentos: con s3 el navegador baja del bucket sin
+   *  pasar por el servidor. */
+  async descargarComprobante(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const despachoId = Number(req.params.despachoId);
+
+      const resultado = await service.obtenerDescargaComprobante(tenantId, despachoId);
+      if (!resultado) {
+        res.status(404).json({ error: "Esta compra no tiene comprobante adjunto" });
+        return;
+      }
+
+      const { descarga, nombreOriginal, mimeType } = resultado;
+      if (descarga.tipo === "redirect") {
+        res.redirect(302, descarga.url);
+        return;
+      }
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${sanearNombreArchivo(nombreOriginal)}"`
+      );
+      res.send(descarga.contenido);
+    } catch {
+      res.status(500).json({ error: "Error al descargar el comprobante" });
     }
   }
 

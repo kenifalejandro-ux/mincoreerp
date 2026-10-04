@@ -117,6 +117,18 @@ ALTER TABLE combustible_despachos
   ADD COLUMN IF NOT EXISTS comprobante_mime       TEXT,
   ADD COLUMN IF NOT EXISTS comprobante_bytes      INTEGER,
   ADD COLUMN IF NOT EXISTS comprobante_nombre     TEXT,
+  -- SHA-256 del archivo. Dos usos, y el primero es el que lo justifica:
+  --
+  --  1. REINTENTO OFFLINE. La foto se sube en una request aparte y la cola
+  --     la puede reenviar si se perdió la respuesta. Sin una forma de saber
+  --     si el archivo que llega es EL MISMO, el servidor no puede
+  --     distinguir "esto ya lo subí" de "quiero reemplazar la foto" -- y
+  --     reemplazar exige motivo (acción correctiva). Con el hash es exacto:
+  --     mismo hash = reintento, se responde 200 sin pedir nada; hash
+  --     distinto = reemplazo de verdad, se exige el motivo.
+  --  2. Integridad: deja ver si el archivo del bucket dejó de ser el que se
+  --     subió.
+  ADD COLUMN IF NOT EXISTS comprobante_sha256     CHAR(64),
   ADD COLUMN IF NOT EXISTS comprobante_subido_en  TIMESTAMPTZ;
 
 -- La FK va dentro de la ventana NO FORCE de abajo (gotcha de 0097): la
@@ -179,6 +191,7 @@ ALTER TABLE combustible_despachos
       AND comprobante_mime IS NULL
       AND comprobante_bytes IS NULL
       AND comprobante_nombre IS NULL
+      AND comprobante_sha256 IS NULL
       AND comprobante_subido_en IS NULL)
     OR
     (comprobante_key IS NOT NULL
@@ -186,6 +199,7 @@ ALTER TABLE combustible_despachos
       AND comprobante_mime IS NOT NULL
       AND comprobante_bytes IS NOT NULL
       AND comprobante_nombre IS NOT NULL
+      AND comprobante_sha256 IS NOT NULL
       AND comprobante_subido_en IS NOT NULL
       AND comprobante_numero IS NOT NULL)
   );

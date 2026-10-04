@@ -22,6 +22,7 @@ import {
   validarRecepcionCombustibleSchema,
   resolverExcedenteRecepcionSchema,
   anularDespachoCombustibleSchema,
+  subirComprobanteCompraSchema,
   marcarAlertasLeidasCombustibleSchema,
   configCombustibleSchema,
   kardexCombustibleSchema,
@@ -41,6 +42,7 @@ import {
 import { moverDeGrifoSchema } from "../../server/schemas/sedes.schema";
 import { cargarAlcance, GUARDIAS, requiereTanqueCompleto } from "./alcance";
 import { CombustibleController } from "./combustible.controller";
+import { subirArchivoComprobante } from "./combustible.upload";
 import { EquiposController } from "../equipos/equipos.controller";
 // Se activa solo con importarse (setInterval + .unref()) -- mismo mecanismo
 // que events.ts con el worker de retención de eventos.
@@ -188,6 +190,36 @@ router.post(
 // es el mismo que anula, no hay segregación, hay autopsia. Decisión de Kenif
 // (2026-09-10): "el grifero no anula sus vales, que dependa del admin".
 // El costo es real: un vale mal tipeado le cuesta un llamado al admin.
+// 📎 Comprobante de la compra en ruta (0109) -- la foto de la boleta.
+//
+// SUBIR: los mismos que pueden registrar una compra externa, más el admin y
+// el operador. El `grifero` queda afuera: su mundo es el tanque propio, no
+// compra en ruta. El `encargado_urea` también -- la urea no lleva
+// comprobante (conserva su talonario).
+//
+// El permiso de pestaña es el de registrar el despacho y no uno nuevo: subir
+// la foto es terminar de registrar la compra, no una facultad aparte. Darle
+// un permiso propio obligaría al admin a habilitar dos cosas para que un
+// conductor pueda hacer una.
+router.post(
+  "/despachos/:despachoId/comprobante",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  requireRole("admin", "operador", "conductor_ruta"),
+  subirArchivoComprobante,
+  validate(subirComprobanteCompraSchema),
+  asyncHandler(controller.subirComprobante.bind(controller))
+);
+
+// VER: el mismo permiso que el historial de compras. Quien puede ver que la
+// compra existe tiene que poder ver su respaldo -- es justamente la persona
+// de oficina que la cruza contra la factura del proveedor, y separar las dos
+// cosas haría que viera el monto sin poder verificarlo.
+router.get(
+  "/despachos/:despachoId/comprobante",
+  requirePestana("combustible", "tanques:historial_despacho"),
+  asyncHandler(controller.descargarComprobante.bind(controller))
+);
+
 router.patch(
   "/despachos/:despachoId/anular",
   requireRole("admin", "operador"),
