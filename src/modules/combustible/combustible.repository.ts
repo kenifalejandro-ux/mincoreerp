@@ -12,6 +12,7 @@ import {
   agregarAmbitoVales,
   filtroHechoDeGrifo,
   filtroTanqueVisible,
+  filtroVale,
   type AlcanceCombustible,
   type AmbitoVales,
 } from "./alcance";
@@ -1040,6 +1041,9 @@ export class CombustibleRepository {
       nVale: number | null;
       comprobanteTipo?: string | null;
       comprobanteNumero?: string | null;
+      /** El uuid del dispositivo (0109): por él la foto encolada offline
+       *  encuentra su compra. Ver findDespachoIdPorClienteUuid. */
+      clienteUuid?: string | null;
       cantidad: number;
       lecturaContometro: number | null;
       totalizadorLectura?: number | null;
@@ -1073,7 +1077,7 @@ export class CombustibleRepository {
           presentacion, factor_litros, cantidad_bultos,
           costo_unitario, observaciones, usuario_id, despachado_en,
           conductor_nombre, conductor_dni, totalizador_lectura, surtidor_id,
-          comprobante_tipo, comprobante_numero
+          comprobante_tipo, comprobante_numero, cliente_uuid
         )
         -- El conductor se COPIA del equipo en este mismo INSERT (0083). Nadie
         -- lo tipea, y no se resuelve después con un JOIN a propósito: los
@@ -1082,7 +1086,7 @@ export class CombustibleRepository {
         -- combustible salió, que es lo único que hace confiable el reporte de
         -- consumo por conductor. Vale también para urea -- mismo equipo_id.
         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
-               e.conductor_nombre, e.conductor_dni, $23::numeric, $24::int, $25, $26
+               e.conductor_nombre, e.conductor_dni, $23::numeric, $24::int, $25, $26, $27::uuid
           FROM (SELECT 1) dummy
           LEFT JOIN equipos e ON e.id = $8::int AND e.tenant_id = $1
         RETURNING ${CombustibleRepository.COLUMNAS_DESPACHO}
@@ -1114,6 +1118,7 @@ export class CombustibleRepository {
           data.surtidorId ?? null,
           data.comprobanteTipo ?? null,
           data.comprobanteNumero ?? null,
+          data.clienteUuid ?? null,
         ]
       );
       const fila = result.rows[0];
@@ -1198,11 +1203,19 @@ export class CombustibleRepository {
     grifoId: number,
     comprobanteTipo: string,
     comprobanteNumero: string
-  ): Promise<{ id: number; despachado_en: string } | null> {
-    const result = await client.query<{ id: number; despachado_en: string }>(
-      `SELECT id, despachado_en FROM combustible_despachos
+  ): Promise<{ id: number; despachado_en: string; comprobante_numero: string } | null> {
+    const result = await client.query<{
+      id: number;
+      despachado_en: string;
+      comprobante_numero: string;
+    }>(
+      `SELECT id, despachado_en, comprobante_numero FROM combustible_despachos
        WHERE tenant_id = $1 AND grifo_id = $2
-         AND comprobante_tipo = $3 AND comprobante_numero = $4
+         AND comprobante_tipo = $3
+         -- La misma función que el índice único (0109): una sola definición
+         -- de "el mismo número", o el 409 y la red de la base no coincidirían.
+         AND combustible_comprobante_canonico(comprobante_numero)
+             = combustible_comprobante_canonico($4)
          AND anulada_en IS NULL`,
       [tenantId, grifoId, comprobanteTipo, comprobanteNumero]
     );
@@ -1233,7 +1246,9 @@ export class CombustibleRepository {
       nombre: string;
       sha256: string;
       subidoPor: string;
-    }
+    },
+    /** El hash del archivo que había al LEER (null = no había). */
+    shaEsperado: string | null
   ) {
     const result = await client.query(
       `UPDATE combustible_despachos
@@ -1243,6 +1258,11 @@ export class CombustibleRepository {
         WHERE id = $1 AND tenant_id = $2
           AND comprobante_numero IS NOT NULL
           AND anulada_en IS NULL
+          -- Concurrencia optimista: solo si el archivo sigue siendo el que
+          -- había al leer. Sin esto, dos fotos DISTINTAS subidas a la vez
+          -- leían las dos "no hay foto" y la segunda pisaba a la primera sin
+          -- motivo -- un reemplazo de evidencia sin rastro.
+          AND comprobante_sha256 IS NOT DISTINCT FROM $10
         RETURNING ${CombustibleRepository.COLUMNAS_DESPACHO}`,
       [
         despachoId,
@@ -1254,6 +1274,7 @@ export class CombustibleRepository {
         archivo.nombre,
         archivo.sha256,
         archivo.subidoPor,
+        shaEsperado,
       ]
     );
     return result.rows[0] ?? null;
@@ -1263,21 +1284,27 @@ export class CombustibleRepository {
    *  publica. Solo para uso interno del service (subir, reemplazar,
    *  descargar). */
   /** El id de un despacho a partir del `cliente_uuid` con que lo registró el
-   *  dispositivo (tabla idempotency_keys). Existe para la foto del comprobante
-   *  encolada OFFLINE: cuando el conductor la saca sin señal, la compra todavía
-   *  no tiene id -- el único dato estable que tiene el dispositivo es el uuid.
-   *  Cruza contra la fila real para no devolver un id de una compra ya borrada. */
+   *  dispositivo. Existe para la foto del comprobante encolada OFFLINE: cuando
+   *  se saca sin señal, la compra todavía no tiene id.
+   *
+   *  Por la columna de la propia fila (0109) y NO por idempotency_keys: esa
+   *  tabla mezcla bajo 'combustible' los uuid de lecturas, despachos y
+   *  recepciones, y su fila_id no dice de qué tabla es.
+   *
+   *  Con el ALCANCE del usuario (0100), igual que la guardia de `:despachoId`:
+   *  esta ruta no tiene ese parámetro, así que router.param no la cubre. Fuera
+   *  del alcance es null -> 404, como algo que no existe. */
   async findDespachoIdPorClienteUuid(
     client: PoolClient,
     tenantId: string,
-    clienteUuid: string
+    clienteUuid: string,
+    ambito: AmbitoVales
   ): Promise<number | null> {
+    const f = filtroVale(ambito.alcance, "d", 3, ambito.usuarioId);
     const result = await client.query<{ id: number }>(
-      `SELECT d.id
-         FROM idempotency_keys k
-         JOIN combustible_despachos d ON d.id = k.fila_id AND d.tenant_id = k.tenant_id
-        WHERE k.tenant_id = $1 AND k.modulo = 'combustible' AND k.cliente_uuid = $2`,
-      [tenantId, clienteUuid]
+      `SELECT d.id FROM combustible_despachos d
+        WHERE d.tenant_id = $1 AND d.cliente_uuid = $2 AND ${f.sql}`,
+      [tenantId, clienteUuid, ...f.valores]
     );
     return result.rows[0]?.id ?? null;
   }

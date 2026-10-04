@@ -1006,7 +1006,8 @@ export class CombustibleService {
           if (previa) {
             throw new Error(
               `la ${data.comprobante_tipo} ${data.comprobante_numero} de este proveedor ya está ` +
-                `registrada (${new Date(previa.despachado_en).toLocaleDateString("es-PE")}). ` +
+                `registrada como "${previa.comprobante_numero}" ` +
+                `(${new Date(previa.despachado_en).toLocaleDateString("es-PE")}). ` +
                 `Puede haberla cargado otra persona, u otro dispositivo que estaba sin red y ` +
                 `recién sincronizó. Si el papel es otro, revisá el número`
             );
@@ -1065,6 +1066,7 @@ export class CombustibleService {
           nVale: data.n_vale ?? null,
           comprobanteTipo: data.comprobante_tipo ?? null,
           comprobanteNumero: data.comprobante_numero ?? null,
+          clienteUuid: data.cliente_uuid ?? null,
           cantidad,
           lecturaContometro: data.lectura_contometro ?? null,
           totalizadorLectura: data.totalizador_lectura ?? null,
@@ -1422,6 +1424,7 @@ export class CombustibleService {
     | { estado: "no_encontrado" }
     | { estado: "no_aplica"; razon: string }
     | { estado: "falta_motivo" }
+    | { estado: "conflicto" }
     | { estado: "reintento"; fila: unknown }
     | { estado: "guardado"; fila: unknown; reemplazo: boolean }
   > {
@@ -1467,22 +1470,49 @@ export class CombustibleService {
     const { driver, bytes } = await guardarArchivoDocumento(key, archivo.buffer, archivo.mimeType);
 
     const fila = await withTenant(tenantId, (client) =>
-      this.repository.guardarArchivoComprobante(client, tenantId, despachoId, {
-        driver,
-        key,
-        mime: archivo.mimeType,
-        bytes,
-        nombre: archivo.nombreOriginal,
-        sha256,
-        subidoPor: usuarioId,
-      })
+      this.repository.guardarArchivoComprobante(
+        client,
+        tenantId,
+        despachoId,
+        {
+          driver,
+          key,
+          mime: archivo.mimeType,
+          bytes,
+          nombre: archivo.nombreOriginal,
+          sha256,
+          subidoPor: usuarioId,
+        },
+        previo.comprobante_sha256
+      )
     );
 
     if (!fila) {
-      // Carrera: alguien anuló o borró la compra entre la lectura y el
-      // UPDATE. El archivo ya está en el bucket y no lo apunta nadie.
+      // Algo cambió entre la lectura y el UPDATE (la subida a R2 queda en el
+      // medio). El archivo recién subido no lo apunta nadie: se borra, y se
+      // relee la fila para decir QUÉ pasó.
       await borrarArchivoDocumento(driver, key).catch(() => {});
-      return { estado: "no_encontrado" };
+      const ahora = await withTenant(tenantId, (client) =>
+        this.repository.findComprobanteDeDespacho(client, tenantId, despachoId)
+      );
+      if (!ahora) return { estado: "no_encontrado" };
+      if (ahora.anulada_en !== null) {
+        return {
+          estado: "no_aplica",
+          razon: "la compra se anuló mientras se subía el comprobante",
+        };
+      }
+      // Otra request subió EL MISMO archivo a la vez: el reintento de la
+      // cola cruzado con el original. Para este dispositivo es un éxito.
+      if (ahora.comprobante_sha256 === sha256) {
+        const actual = await withTenant(tenantId, (client) =>
+          this.repository.findDespachoPorId(client, tenantId, despachoId)
+        );
+        return { estado: "reintento", fila: actual };
+      }
+      // Otra foto DISTINTA ganó la carrera. Esta no la pisa: reemplazar
+      // evidencia pide motivo y alguien tiene que haber visto la que quedó.
+      return { estado: "conflicto" };
     }
 
     if (yaTeniaArchivo && previo.comprobante_key) {
@@ -1500,9 +1530,9 @@ export class CombustibleService {
     return { estado: "guardado", fila, reemplazo: yaTeniaArchivo };
   }
 
-  resolverDespachoPorClienteUuid(tenantId: string, clienteUuid: string) {
+  resolverDespachoPorClienteUuid(tenantId: string, clienteUuid: string, ambito: AmbitoVales) {
     return withTenant(tenantId, (client) =>
-      this.repository.findDespachoIdPorClienteUuid(client, tenantId, clienteUuid)
+      this.repository.findDespachoIdPorClienteUuid(client, tenantId, clienteUuid, ambito)
     );
   }
 

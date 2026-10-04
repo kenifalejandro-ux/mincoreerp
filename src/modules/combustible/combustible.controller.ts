@@ -3102,7 +3102,11 @@ export class CombustibleController {
       // compra todavía no tenía id). La cola drena en orden, así que el
       // registro ya está guardado cuando llega la foto.
       const despachoId = req.params.clienteUuid
-        ? await service.resolverDespachoPorClienteUuid(tenantId, req.params.clienteUuid)
+        ? await service.resolverDespachoPorClienteUuid(
+            tenantId,
+            req.params.clienteUuid,
+            ambitoDe(req)
+          )
         : Number(req.params.despachoId);
       if (despachoId === null) {
         res.status(404).json({ error: "Compra no encontrada" });
@@ -3134,6 +3138,16 @@ export class CombustibleController {
           error:
             "esta compra ya tiene un comprobante adjunto y el que subís es otro archivo -- " +
             "indicá el motivo del reemplazo (la foto anterior era ilegible, estaba cortada, etc.)",
+        });
+        return;
+      }
+      if (resultado.estado === "conflicto") {
+        // 4xx a propósito: la cola offline lo descarta en vez de reintentar.
+        // Ya HAY una foto -- la que ganó --, así que no se pierde evidencia.
+        res.status(409).json({
+          error:
+            "se subió otra foto de esta compra al mismo tiempo y quedó esa. Revisala y, " +
+            "si hay que reemplazarla, indicá el motivo",
         });
         return;
       }

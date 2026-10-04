@@ -305,8 +305,34 @@ ALTER TABLE combustible_despachos
 -- El proveedor entra en la clave: dos grifos distintos numeran sus boletas
 -- cada uno por su cuenta y la boleta 001 de PRIMAX no tiene nada que ver con
 -- la 001 de PETROPLUS -- mismo razonamiento que (serie, n_vale) en 0062.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_combustible_despachos_comprobante_vigente
-  ON combustible_despachos(tenant_id, grifo_id, comprobante_tipo, comprobante_numero)
+--
+-- La clave NO es el texto tal cual se tipeó, es su FORMA CANÓNICA. El mismo
+-- papel se escribe de muchas maneras -- "B001-00012345", "b001-12345",
+-- "B001 - 12345" -- y con el texto literal cada variante era una boleta
+-- "nueva": la misma compra se podía cargar dos veces solo cambiando cómo se
+-- escribe el número. Lo encontró la ronda adversaria (entrega 5).
+--
+-- La canónica: sin espacios, en mayúsculas y sin ceros a la izquierda en cada
+-- tramo numérico que sigue a un guion (o al inicio). En la fila se guarda lo
+-- que se tipeó --es lo que dice el papel y lo que hay que mostrar--; la
+-- canónica solo vive en el índice y en la consulta que da el 409 lindo
+-- (CombustibleRepository.findCompraPorComprobante), que usan ESTA función
+-- para que no haya dos definiciones de "el mismo número".
+CREATE OR REPLACE FUNCTION combustible_comprobante_canonico(numero TEXT)
+RETURNS TEXT
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $fn$
+  SELECT regexp_replace(
+           upper(regexp_replace(numero, '\s+', '', 'g')),
+           '(^|-)0+(\d)', '\1\2', 'g'
+         )
+$fn$;
+
+DROP INDEX IF EXISTS idx_combustible_despachos_comprobante_vigente;
+CREATE UNIQUE INDEX idx_combustible_despachos_comprobante_vigente
+  ON combustible_despachos(
+    tenant_id, grifo_id, comprobante_tipo, combustible_comprobante_canonico(comprobante_numero)
+  )
   WHERE comprobante_numero IS NOT NULL AND anulada_en IS NULL;
 
 -- Cobertura de la FK nueva (tests/db-index-coverage.test.ts lo exige).
@@ -321,6 +347,24 @@ CREATE INDEX IF NOT EXISTS idx_combustible_despachos_comprobante_subido_por
 CREATE INDEX IF NOT EXISTS idx_combustible_despachos_comprobante_sin_archivo
   ON combustible_despachos(tenant_id, despachado_en)
   WHERE comprobante_numero IS NOT NULL AND comprobante_key IS NULL AND anulada_en IS NULL;
+
+-- ── 5b. El uuid del dispositivo, en la fila del despacho ─────────────────
+-- La foto encolada offline apunta a su compra por el uuid con que el
+-- dispositivo la registró (la compra todavía no tiene id). Resolverlo por
+-- idempotency_keys NO alcanza: bajo el módulo 'combustible' esa tabla guarda
+-- los uuid de lecturas, despachos y recepciones, y `fila_id` no dice de qué
+-- tabla es. El uuid de una lectura con id 7 resolvía al DESPACHO 7, y la foto
+-- terminaba colgada de una compra que no tenía nada que ver. Lo encontró la
+-- ronda adversaria (entrega 5).
+--
+-- Con el uuid en la propia fila no hay ambigüedad posible. NULL en lo previo
+-- a 0109 y en lo que se registra sin uuid (online sin cola): nada de eso
+-- recibe fotos por esta vía.
+ALTER TABLE combustible_despachos ADD COLUMN IF NOT EXISTS cliente_uuid UUID;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_combustible_despachos_cliente_uuid
+  ON combustible_despachos(tenant_id, cliente_uuid)
+  WHERE cliente_uuid IS NOT NULL;
 
 -- ── 6. El despacho, quinta ancla de alerta ───────────────────────────────
 -- Ver el encabezado. Sin esto, `medidor_inconsistente` sobre una compra
