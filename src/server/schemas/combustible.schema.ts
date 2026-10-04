@@ -969,6 +969,16 @@ export const periodoHistorialCombustibleSchema = z
 
 export type PeriodoHistorialCombustibleQuery = z.infer<typeof periodoHistorialCombustibleSchema>;
 
+// GET /equipos/:equipoId/ultimo-medidor -- la lectura de la carga anterior de
+// una unidad, para que el formulario calcule las horas abastecidas. `antes_de`
+// es la fecha del despacho que se está cargando: con una fecha retroactiva, la
+// "carga anterior" es la que quedó ANTES de esa fecha, no la más reciente.
+export const ultimoMedidorEquipoQuerySchema = z.object({
+  antes_de: z.string().datetime({ offset: true }).optional(),
+});
+
+export type UltimoMedidorEquipoQuery = z.infer<typeof ultimoMedidorEquipoQuerySchema>;
+
 export type ConfigCombustibleInput = z.infer<typeof configCombustibleSchema>;
 
 // ── Grifos externos (migrations/0063) ───────────────────────────────────

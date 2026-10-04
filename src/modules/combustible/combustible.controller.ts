@@ -59,6 +59,7 @@ import type {
   ConfigCombustibleInput,
   KardexCombustibleQuery,
   PeriodoHistorialCombustibleQuery,
+  UltimoMedidorEquipoQuery,
   CrearConteoUreaInput,
   AnularConteoUreaInput,
   CrearPuntoPrecintoInput,
@@ -3092,6 +3093,22 @@ export class CombustibleController {
    *  la cola offline, y `esErrorPermanente` descarta todo 4xx y reintenta
    *  todo 5xx. Un código mal elegido es una foto perdida en silencio o una
    *  cola que no drena nunca. */
+  async ultimoMedidorEquipo(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const equipoId = Number(req.params.equipoId);
+      if (!Number.isInteger(equipoId) || equipoId <= 0) {
+        res.status(400).json({ error: "equipoId inválido" });
+        return;
+      }
+      const { antes_de } = req.validatedQuery as UltimoMedidorEquipoQuery;
+      const ultimo = await service.getUltimoMedidorEquipo(tenantId, equipoId, antes_de ?? null);
+      res.json({ ultimo });
+    } catch {
+      res.status(500).json({ error: "Error al consultar el último medidor de la unidad" });
+    }
+  }
+
   async subirComprobante(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);

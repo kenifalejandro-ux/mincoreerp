@@ -267,6 +267,12 @@ interface Precio {
  *  del lado del cliente contra `tanques`/`grifos`/`equipos`, que el panel
  *  ya tiene cargados; no hace falta pedirle al backend que haga los JOIN
  *  para esta tabla de solo lectura. */
+interface UltimoMedidor {
+  lectura_horometro: number | null;
+  lectura_odometro: number | null;
+  despachado_en: string;
+}
+
 interface DespachoHistorial {
   id: number;
   origen: OrigenDespacho;
@@ -2115,6 +2121,17 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // conductor puede no tener señal ni el papel a mano al registrar.
   const [fotoComprobante, setFotoComprobante] = useState<File | null>(null);
   const [errorFotoComprobante, setErrorFotoComprobante] = useState<string | null>(null);
+  // La lectura de la carga anterior de la unidad elegida, para calcular solas
+  // las horas abastecidas. undefined = no se pudo saber (sin señal, o todavía
+  // cargando): el campo queda manual, como antes. null = la unidad no tiene
+  // carga anterior.
+  const [medidorCargado, setMedidorCargado] = useState<{
+    clave: string;
+    ultimo: UltimoMedidor | null;
+  } | null>(null);
+  // Mismo patrón que costoEditadoAMano: lo calculado nunca pisa lo que el
+  // conductor escribió.
+  const [horasEditadasAMano, setHorasEditadasAMano] = useState(false);
   // El costo se autocompleta al elegir tanque/grifo -- pero si el operador
   // YA lo tocó a mano, no lo pisamos con un nuevo autocompletado (ej. si
   // cambia el tipo de combustible después de corregir el precio).
@@ -2180,6 +2197,15 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [despachoAAnular, setDespachoAAnular] = useState<DespachoHistorial | null>(null);
   const [motivoAnulacionDespacho, setMotivoAnulacionDespacho] = useState("");
   const [anulandoDespacho, setAnulandoDespacho] = useState(false);
+
+  // --- Reemplazar el comprobante de una compra que YA tiene foto ---
+  // Distinto de "adjuntar" (la compra no tenía foto): reemplazar evidencia pide
+  // motivo, igual que anular, y el servidor lo deja en la bitácora.
+  const [despachoAReemplazar, setDespachoAReemplazar] = useState<DespachoHistorial | null>(null);
+  const [fotoReemplazo, setFotoReemplazo] = useState<File | null>(null);
+  const [motivoReemplazo, setMotivoReemplazo] = useState("");
+  const [reemplazando, setReemplazando] = useState(false);
+  const [errorReemplazo, setErrorReemplazo] = useState<string | null>(null);
 
   // --- Alertas (migrations/0068) ---
   const [modalAlertasAbierto, setModalAlertasAbierto] = useState(false);
@@ -3211,6 +3237,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     setClienteUuidDespacho(crypto.randomUUID());
     setFotoComprobante(null);
     setErrorFotoComprobante(null);
+    setMedidorCargado(null);
+    setHorasEditadasAMano(false);
     setModalDespachoAbierto(true);
   };
 
@@ -3220,6 +3248,68 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     despachoForm.cantidad !== "" && despachoForm.costo_unitario !== ""
       ? Number(despachoForm.cantidad) * Number(despachoForm.costo_unitario)
       : null;
+
+  // Horas abastecidas automáticas: la lectura de la carga anterior de la unidad
+  // y, con ella, "lectura actual - lectura anterior". Solo horómetro: un
+  // odómetro mide kilómetros, de ahí no salen horas. Si no hay señal, el fetch
+  // falla en silencio y el campo sigue siendo manual, como siempre.
+  //
+  // Con la hora del despacho tocada a mano (carga retroactiva), la "anterior"
+  // es la que quedó ANTES de esa hora, no la más reciente de todas.
+  const fechaRetroactiva = horaDespachoEditadaAMano ? new Date(despachadoEn) : null;
+  const antesDeMedidor =
+    fechaRetroactiva && !Number.isNaN(fechaRetroactiva.getTime())
+      ? fechaRetroactiva.toISOString()
+      : "";
+  const claveMedidor = `${despachoForm.equipo_id}|${antesDeMedidor}`;
+
+  useEffect(() => {
+    if (!modalDespachoAbierto || despachoForm.origen !== "compra_externa") return;
+    if (despachoForm.equipo_id === "") return;
+    let cancelado = false;
+    const consulta = antesDeMedidor ? `?antes_de=${encodeURIComponent(antesDeMedidor)}` : "";
+    apiFetch(`/api/erp/combustible/equipos/${despachoForm.equipo_id}/ultimo-medidor${consulta}`)
+      .then(async (res) => {
+        if (!res.ok) return;
+        const cuerpo = (await res.json()) as { ultimo: UltimoMedidor | null };
+        if (!cancelado) setMedidorCargado({ clave: claveMedidor, ultimo: cuerpo.ultimo });
+      })
+      .catch(() => {});
+    return () => {
+      cancelado = true;
+    };
+  }, [
+    modalDespachoAbierto,
+    despachoForm.origen,
+    despachoForm.equipo_id,
+    antesDeMedidor,
+    claveMedidor,
+  ]);
+
+  // undefined = no se sabe (cargando, sin señal, o la respuesta es de otra
+  // unidad): el campo queda manual. null = la unidad no tiene carga anterior.
+  const ultimoMedidor = medidorCargado?.clave === claveMedidor ? medidorCargado.ultimo : undefined;
+
+  const horometroAnterior = ultimoMedidor?.lectura_horometro ?? null;
+  const horometroActual =
+    despachoForm.lectura_horometro === "" ? null : Number(despachoForm.lectura_horometro);
+  const midePorHorometro = equipoSeleccionado?.tipo_medidor === "horometro";
+  const horometroValido = horometroActual !== null && Number.isFinite(horometroActual);
+  const horometroRetrocede =
+    midePorHorometro && horometroAnterior !== null && horometroValido
+      ? horometroActual < horometroAnterior
+      : false;
+  const horasSugeridas =
+    midePorHorometro && horometroAnterior !== null && horometroValido && !horometroRetrocede
+      ? Math.round((horometroActual - horometroAnterior) * 100) / 100
+      : null;
+  // Lo escrito a mano manda; si no, lo calculado. Es lo que se ve Y lo que se
+  // envía: un solo valor, sin efecto que lo copie al formulario.
+  const horasAbastecidas = horasEditadasAMano
+    ? despachoForm.horas_abastecidas
+    : horasSugeridas === null
+      ? ""
+      : String(horasSugeridas);
 
   // Autocompletado del C.U (migrations/0063): apenas hay tanque/grifo +
   // tipo de combustible elegidos, pide el precio vigente A LA FECHA DEL
@@ -3301,15 +3391,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
    *  id y solo online: a esa altura la compra existe en el servidor, y un
    *  adjunto diferido es justo lo que la ruta por uuid ya cubre al registrar. */
   const adjuntarFotoAHistorial = async (despachoId: number, archivo: File) => {
-    if (!["image/jpeg", "image/png", "application/pdf"].includes(archivo.type)) {
-      alert("Solo se acepta foto (JPG/PNG) o PDF.");
+    const r = await prepararComprobante(archivo);
+    if ("error" in r) {
+      alert(r.error);
       return;
     }
-    const lista = await comprimirImagen(archivo);
-    if (lista.size > 6 * 1024 * 1024) {
-      alert("El archivo supera el máximo de 6 MB.");
-      return;
-    }
+    const lista = r.lista;
     const formData = new FormData();
     formData.append("archivo", lista);
     try {
@@ -3329,24 +3416,86 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     }
   };
 
+  /** Valida y comprime el archivo de un comprobante. Una sola definición de
+   *  "qué se acepta" para registrar, adjuntar y reemplazar. */
+  const prepararComprobante = async (
+    archivo: File
+  ): Promise<{ lista: File } | { error: string }> => {
+    if (!["image/jpeg", "image/png", "application/pdf"].includes(archivo.type)) {
+      return { error: "Solo se acepta foto (JPG/PNG) o PDF." };
+    }
+    const lista = await comprimirImagen(archivo);
+    if (lista.size > 6 * 1024 * 1024) return { error: "El archivo supera el máximo de 6 MB." };
+    return { lista };
+  };
+
   const elegirFotoComprobante = async (archivo: File | undefined) => {
     setErrorFotoComprobante(null);
     if (!archivo) {
       setFotoComprobante(null);
       return;
     }
-    if (!["image/jpeg", "image/png", "application/pdf"].includes(archivo.type)) {
-      setErrorFotoComprobante("Solo se acepta foto (JPG/PNG) o PDF.");
+    const r = await prepararComprobante(archivo);
+    if ("error" in r) {
+      setErrorFotoComprobante(r.error);
       setFotoComprobante(null);
       return;
     }
-    const lista = await comprimirImagen(archivo);
-    if (lista.size > 6 * 1024 * 1024) {
-      setErrorFotoComprobante("El archivo supera el máximo de 6 MB.");
-      setFotoComprobante(null);
+    setFotoComprobante(r.lista);
+  };
+
+  const elegirFotoReemplazo = async (archivo: File | undefined) => {
+    setErrorReemplazo(null);
+    if (!archivo) return;
+    const r = await prepararComprobante(archivo);
+    if ("error" in r) {
+      setErrorReemplazo(r.error);
       return;
     }
-    setFotoComprobante(lista);
+    setFotoReemplazo(r.lista);
+  };
+
+  const abrirReemplazoComprobante = (d: DespachoHistorial) => {
+    enfocarPaginaPrincipal();
+    setDespachoAReemplazar(d);
+    setFotoReemplazo(null);
+    setMotivoReemplazo("");
+    setErrorReemplazo(null);
+  };
+
+  /** Reemplazo con motivo. Sin cliente_uuid a propósito: no se encola offline
+   *  (apiFetch lo deja fallar), porque reemplazar evidencia sin conexión
+   *  dejaría una foto "pendiente" que nadie ve mientras la vieja sigue vigente. */
+  const handleReemplazarComprobante = async () => {
+    if (!despachoAReemplazar || !fotoReemplazo || !motivoReemplazo.trim() || reemplazando) return;
+    setReemplazando(true);
+    setErrorReemplazo(null);
+    const formData = new FormData();
+    formData.append("archivo", fotoReemplazo);
+    formData.append("motivo", motivoReemplazo.trim());
+    try {
+      const res = await apiFetch(
+        `/api/erp/combustible/despachos/${despachoAReemplazar.id}/comprobante`,
+        { method: "POST", body: formData }
+      );
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        setErrorReemplazo(errBody.error || "No se pudo reemplazar el comprobante.");
+        return;
+      }
+      setDespachoAReemplazar(null);
+      // 200 y no 201: el servidor reconoció el MISMO archivo que ya estaba.
+      setMensajeExito(
+        res.status === 200
+          ? "Ese archivo es el mismo que ya estaba adjunto: no se cambió nada."
+          : "Comprobante reemplazado. Quedó registrado quién lo cambió y por qué."
+      );
+      await actualizarVistasCombustible();
+    } catch {
+      setErrorReemplazo("Sin conexión: reemplazar el comprobante necesita señal. Intentalo luego.");
+    } finally {
+      setReemplazando(false);
+    }
   };
 
   const handleRegistrarDespacho = async (e: React.FormEvent) => {
@@ -3420,7 +3569,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               equipoSeleccionado?.tipo_medidor === "odometro"
                 ? Number(despachoForm.lectura_odometro)
                 : undefined,
-            horas_abastecidas: Number(despachoForm.horas_abastecidas),
+            horas_abastecidas: Number(horasAbastecidas),
             costo_unitario: Number(despachoForm.costo_unitario),
             observaciones: despachoForm.observaciones || undefined,
             despachado_en: despachadoEnIso,
@@ -6042,9 +6191,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       required
                       className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
                       value={despachoForm.equipo_id}
-                      onChange={(e) =>
-                        setDespachoForm({ ...despachoForm, equipo_id: e.target.value })
-                      }
+                      onChange={(e) => {
+                        // Otra unidad = otro contexto: lo escrito para la
+                        // anterior no aplica.
+                        setHorasEditadasAMano(false);
+                        setDespachoForm({ ...despachoForm, equipo_id: e.target.value });
+                      }}
                     >
                       <option value="" disabled>
                         Elegir unidad
@@ -6142,11 +6294,24 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       step="0.01"
                       required
                       className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
-                      value={despachoForm.horas_abastecidas}
-                      onChange={(e) =>
-                        setDespachoForm({ ...despachoForm, horas_abastecidas: e.target.value })
-                      }
+                      value={horasAbastecidas}
+                      onChange={(e) => {
+                        // Vaciarlo devuelve el campo al cálculo automático.
+                        setHorasEditadasAMano(e.target.value !== "");
+                        setDespachoForm({ ...despachoForm, horas_abastecidas: e.target.value });
+                      }}
                     />
+                    {midePorHorometro && ultimoMedidor !== undefined && (
+                      <p
+                        className={`text-xs ${horometroRetrocede ? "text-amber-600" : "text-slate-400"}`}
+                      >
+                        {horometroAnterior === null
+                          ? "No hay una carga anterior con horómetro de esta unidad: escribí las horas a mano."
+                          : horometroRetrocede
+                            ? `La lectura es menor que la de la carga anterior (${horometroAnterior.toLocaleString("es-PE")} h, ${formatearFecha(ultimoMedidor!.despachado_en)}). Revisala; si es correcta, escribí las horas a mano.`
+                            : `Carga anterior: ${horometroAnterior.toLocaleString("es-PE")} h (${formatearFecha(ultimoMedidor!.despachado_en)}). Las horas se calculan solas (lectura − ${horometroAnterior.toLocaleString("es-PE")}); podés corregirlas.`}
+                      </p>
+                    )}
                   </div>
                 </>
               )}
@@ -6483,13 +6648,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                                 >
                                   Ver comprobante
                                 </button>
-                              ) : (
+                              ) : permiteTanque("registrar_despacho") ? (
                                 <label className="text-amber-600 hover:underline cursor-pointer">
                                   Sin foto -- adjuntar
                                   <input
                                     type="file"
                                     accept="image/jpeg,image/png,application/pdf"
-                                    className="hidden"
+                                    className="sr-only"
                                     onChange={(e) => {
                                       const archivo = e.target.files?.[0];
                                       e.target.value = "";
@@ -6497,6 +6662,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                                     }}
                                   />
                                 </label>
+                              ) : (
+                                // Lectura ve el estado, no la acción (regla
+                                // de perfiles: nace oculta, no solo bloqueada).
+                                <span className="text-amber-600">Sin foto</span>
                               )}
                             </div>
                           )}
@@ -6540,16 +6709,26 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                               Anulado
                             </span>
                           ) : (
-                            <button
-                              onClick={() => {
-                                enfocarPaginaPrincipal();
-                                setDespachoAAnular(d);
-                                setMotivoAnulacionDespacho("");
-                              }}
-                              className="text-xs text-red-500 hover:text-red-700 hover:underline"
-                            >
-                              Anular
-                            </button>
+                            <div className="flex justify-end gap-3">
+                              {d.comprobante_nombre && permiteTanque("registrar_despacho") && (
+                                <button
+                                  onClick={() => abrirReemplazoComprobante(d)}
+                                  className="text-xs text-blue-600 hover:text-blue-800 hover:underline"
+                                >
+                                  Reemplazar
+                                </button>
+                              )}
+                              <button
+                                onClick={() => {
+                                  enfocarPaginaPrincipal();
+                                  setDespachoAAnular(d);
+                                  setMotivoAnulacionDespacho("");
+                                }}
+                                className="text-xs text-red-500 hover:text-red-700 hover:underline"
+                              >
+                                Anular
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -8426,6 +8605,104 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {/* Modal: anular despacho -- la válvula de escape del punto 3. El motivo
           es obligatorio: es lo único que distingue "se mojó con diésel" de
           "estoy borrando un vale que no me conviene". */}
+      {despachoAReemplazar && (
+        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
+          <div
+            role="dialog"
+            aria-labelledby="titulo-reemplazo-comprobante"
+            className="bg-white w-full max-w-lg rounded-3xl shadow-2xl"
+          >
+            <div className="p-6 border-b">
+              <h3 id="titulo-reemplazo-comprobante" className="text-xl font-bold">
+                Reemplazar comprobante
+              </h3>
+              <p className="text-sm text-slate-500">
+                La foto anterior no se pierde de la bitácora: queda registrado quién la cambió y el
+                motivo.
+              </p>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm">
+                <p className="font-mono font-semibold">
+                  {etiquetaPapelDespacho(despachoAReemplazar)}
+                </p>
+                <p className="text-xs text-slate-500">
+                  {Number(despachoAReemplazar.cantidad).toLocaleString("es-PE")}{" "}
+                  {ETIQUETA_TIPO_COMBUSTIBLE[despachoAReemplazar.tipo_combustible]} ·{" "}
+                  {formatearFecha(despachoAReemplazar.despachado_en)}
+                </p>
+              </div>
+              <div className="space-y-1">
+                <label
+                  htmlFor="reemplazo-comprobante-foto"
+                  className="block text-xs font-bold text-slate-700 uppercase"
+                >
+                  Nueva foto o PDF *
+                </label>
+                <label
+                  htmlFor="reemplazo-comprobante-foto"
+                  className="inline-flex items-center gap-2 cursor-pointer rounded-lg bg-slate-900 text-white px-3 py-2 text-xs font-bold hover:bg-slate-800 transition-all focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-slate-900"
+                >
+                  <Camera className="w-4 h-4" aria-hidden="true" />
+                  {fotoReemplazo ? "Cambiar archivo" : "Tomar o elegir foto"}
+                  <input
+                    id="reemplazo-comprobante-foto"
+                    type="file"
+                    accept="image/jpeg,image/png,application/pdf"
+                    className="sr-only"
+                    onChange={(e) => {
+                      void elegirFotoReemplazo(e.target.files?.[0]);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+                {fotoReemplazo && (
+                  <p className="text-xs text-green-700">
+                    {fotoReemplazo.name} ({Math.max(1, Math.round(fotoReemplazo.size / 1024))} kB)
+                  </p>
+                )}
+              </div>
+              <div className="space-y-1">
+                <label
+                  htmlFor="motivo-reemplazo-comprobante"
+                  className="text-xs font-bold text-slate-700 uppercase"
+                >
+                  Motivo del reemplazo *
+                </label>
+                <textarea
+                  id="motivo-reemplazo-comprobante"
+                  rows={3}
+                  maxLength={500}
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                  placeholder="Ej: la foto anterior estaba borrosa / era de otra boleta"
+                  value={motivoReemplazo}
+                  onChange={(e) => setMotivoReemplazo(e.target.value)}
+                />
+              </div>
+              {errorReemplazo && (
+                <p role="alert" className="text-sm text-red-600">
+                  {errorReemplazo}
+                </p>
+              )}
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setDespachoAReemplazar(null)}
+                  className="flex-1 border border-slate-200 text-slate-600 font-medium py-3 rounded-2xl hover:bg-slate-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleReemplazarComprobante}
+                  disabled={reemplazando || !fotoReemplazo || !motivoReemplazo.trim()}
+                  className="flex-1 bg-slate-900 text-white font-bold py-3 rounded-2xl hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {reemplazando ? "Reemplazando..." : "Reemplazar comprobante"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {despachoAAnular && (
         <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl">
