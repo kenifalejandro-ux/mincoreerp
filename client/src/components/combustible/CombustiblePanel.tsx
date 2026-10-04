@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Download,
   Eye,
+  Camera,
   FileSpreadsheet,
   FileText,
   Fuel,
@@ -44,6 +45,7 @@ import UreaPanel from "../UreaPanel";
 import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from "./Precintos";
 import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
 import VentanaSurtidores from "./Surtidores";
+import { comprimirImagen } from "./comprimirImagen";
 
 interface SurtidorDelTanque {
   id: number;
@@ -272,8 +274,14 @@ interface DespachoHistorial {
   grifo_id: number | null;
   equipo_id: number | null;
   tipo_combustible: Tanque["tipo_combustible"];
-  serie_talonario: string;
-  n_vale: number;
+  // Null en una compra en ruta desde 0109: se identifica con el comprobante
+  // del proveedor, no con un vale.
+  serie_talonario: string | null;
+  n_vale: number | null;
+  comprobante_tipo: "boleta" | "factura" | null;
+  comprobante_numero: string | null;
+  comprobante_nombre: string | null;
+  comprobante_subido_en: string | null;
   cantidad: string;
   costo_unitario: string;
   costo_total: string;
@@ -1343,6 +1351,20 @@ const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
 /** El `detalle` es JSONB libre y cada tipo de alerta guarda cosas
  *  distintas, así que la columna se arma por tipo. Devuelve "—" cuando no
  *  hay nada que agregar (un hueco se explica solo con el número de vale). */
+/** Cómo se nombra un despacho en pantalla: por su vale (tanque propio) o por
+ *  su boleta/factura (compra en ruta, desde 0109). */
+function etiquetaPapelDespacho(d: {
+  serie_talonario: string | null;
+  n_vale: number | null;
+  comprobante_tipo: string | null;
+  comprobante_numero: string | null;
+}): string {
+  if (d.comprobante_numero !== null) {
+    return `${d.comprobante_tipo === "factura" ? "Factura" : "Boleta"} ${d.comprobante_numero}`;
+  }
+  return `${d.serie_talonario}-${d.n_vale}`;
+}
+
 /** La columna "Vale" de las tablas de alertas y anomalías. Desde la
  *  migración 0073 no toda alerta tiene vale: las de nivel van contra un
  *  tanque y las de diferencia contra una recepción. */
@@ -1355,6 +1377,8 @@ function referenciaAlerta(a: {
   if (a.serie_talonario !== null && a.n_vale !== null) {
     return `${a.serie_talonario}-${String(a.n_vale).padStart(5, "0")}`;
   }
+  // Compra en ruta (0109): no tiene vale, el detalle trae su comprobante.
+  if (typeof a.detalle.comprobante === "string") return a.detalle.comprobante;
   if (typeof a.detalle.tanqueNombre === "string") return a.detalle.tanqueNombre;
   if (a.recepcion_id != null) return `Recepción #${a.recepcion_id}`;
   return "—";
@@ -1747,6 +1771,8 @@ const DESPACHO_FORM_INICIAL = {
   equipo_id: "",
   serie_talonario: "",
   n_vale: "",
+  comprobante_tipo: "boleta" as "boleta" | "factura",
+  comprobante_numero: "",
   cantidad: "",
   lectura_contometro: "",
   totalizador_lectura: "",
@@ -2085,6 +2111,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [horaDespachoEditadaAMano, setHoraDespachoEditadaAMano] = useState(false);
   const [enviandoDespacho, setEnviandoDespacho] = useState(false);
   const [clienteUuidDespacho, setClienteUuidDespacho] = useState("");
+  // Foto o PDF del comprobante de la compra en ruta (0109). Opcional: el
+  // conductor puede no tener señal ni el papel a mano al registrar.
+  const [fotoComprobante, setFotoComprobante] = useState<File | null>(null);
+  const [errorFotoComprobante, setErrorFotoComprobante] = useState<string | null>(null);
   // El costo se autocompleta al elegir tanque/grifo -- pero si el operador
   // YA lo tocó a mano, no lo pisamos con un nuevo autocompletado (ej. si
   // cambia el tipo de combustible después de corregir el precio).
@@ -3179,6 +3209,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     setCostoEditadoAMano(false);
     setMensajeExito(null);
     setClienteUuidDespacho(crypto.randomUUID());
+    setFotoComprobante(null);
+    setErrorFotoComprobante(null);
     setModalDespachoAbierto(true);
   };
 
@@ -3240,6 +3272,83 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     horaDespachoEditadaAMano,
   ]);
 
+  /** Adjunta la foto a una compra ya registrada, apuntándola por el uuid del
+   *  dispositivo (sirve online y offline). Devuelve qué pasó para que el
+   *  mensaje al conductor sea honesto: una foto que "se enviará sola" es
+   *  distinto de una que no se pudo subir. */
+  const subirFotoComprobante = async (
+    foto: File,
+    uuidDeLaCompra: string
+  ): Promise<"subida" | "encolada" | "fallo"> => {
+    const formData = new FormData();
+    formData.append("archivo", foto);
+    // El uuid de ESTA entrada de la cola, distinto al de la compra: la cola
+    // identifica cada entrada por el suyo y compartirlo pisaría el registro.
+    formData.append("cliente_uuid", crypto.randomUUID());
+    try {
+      const res = await apiFetch(
+        `/api/erp/combustible/despachos/por-uuid/${uuidDeLaCompra}/comprobante`,
+        { method: "POST", body: formData }
+      );
+      if (res.status === 202) return "encolada";
+      return res.ok ? "subida" : "fallo";
+    } catch {
+      return "fallo";
+    }
+  };
+
+  /** Adjuntar la foto a una compra YA registrada, desde el historial. Va por
+   *  id y solo online: a esa altura la compra existe en el servidor, y un
+   *  adjunto diferido es justo lo que la ruta por uuid ya cubre al registrar. */
+  const adjuntarFotoAHistorial = async (despachoId: number, archivo: File) => {
+    if (!["image/jpeg", "image/png", "application/pdf"].includes(archivo.type)) {
+      alert("Solo se acepta foto (JPG/PNG) o PDF.");
+      return;
+    }
+    const lista = await comprimirImagen(archivo);
+    if (lista.size > 6 * 1024 * 1024) {
+      alert("El archivo supera el máximo de 6 MB.");
+      return;
+    }
+    const formData = new FormData();
+    formData.append("archivo", lista);
+    try {
+      const res = await apiFetch(`/api/erp/combustible/despachos/${despachoId}/comprobante`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        alert(errBody.error || "No se pudo subir el comprobante.");
+        return;
+      }
+      setMensajeExito("Comprobante adjuntado.");
+      await actualizarVistasCombustible();
+    } catch {
+      alert("Sin conexión: no se pudo subir. Intentalo cuando vuelva la señal.");
+    }
+  };
+
+  const elegirFotoComprobante = async (archivo: File | undefined) => {
+    setErrorFotoComprobante(null);
+    if (!archivo) {
+      setFotoComprobante(null);
+      return;
+    }
+    if (!["image/jpeg", "image/png", "application/pdf"].includes(archivo.type)) {
+      setErrorFotoComprobante("Solo se acepta foto (JPG/PNG) o PDF.");
+      setFotoComprobante(null);
+      return;
+    }
+    const lista = await comprimirImagen(archivo);
+    if (lista.size > 6 * 1024 * 1024) {
+      setErrorFotoComprobante("El archivo supera el máximo de 6 MB.");
+      setFotoComprobante(null);
+      return;
+    }
+    setFotoComprobante(lista);
+  };
+
   const handleRegistrarDespacho = async (e: React.FormEvent) => {
     e.preventDefault();
     if (enviandoDespacho) return;
@@ -3300,8 +3409,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             tipo_combustible: despachoForm.tipo_combustible,
             tipo_destino: "equipo",
             equipo_id: Number(despachoForm.equipo_id),
-            serie_talonario: despachoForm.serie_talonario,
-            n_vale: Number(despachoForm.n_vale),
+            comprobante_tipo: despachoForm.comprobante_tipo,
+            comprobante_numero: despachoForm.comprobante_numero.trim(),
             cantidad: Number(despachoForm.cantidad),
             lectura_horometro:
               equipoSeleccionado?.tipo_medidor === "horometro"
@@ -3333,18 +3442,38 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
       setModalDespachoAbierto(false);
 
+      // Qué papel identifica este despacho, para los mensajes: una compra en
+      // ruta se nombra por su boleta/factura, un vale del tanque por su serie.
+      const papel =
+        despachoForm.origen === "compra_externa"
+          ? `la ${despachoForm.comprobante_tipo} ${despachoForm.comprobante_numero.trim()}`
+          : `el vale ${despachoForm.n_vale} de la serie ${despachoForm.serie_talonario}`;
+
+      // La foto va DESPUÉS del registro y apunta a la compra por su uuid:
+      // si no hay señal, la compra todavía no tiene id. La cola drena en
+      // orden, así que el registro llega antes que su foto.
+      const resultadoFoto = fotoComprobante
+        ? await subirFotoComprobante(fotoComprobante, clienteUuidDespacho)
+        : null;
+      const avisoFoto =
+        resultadoFoto === "fallo"
+          ? " La foto NO se pudo subir: adjuntala desde el historial de compras."
+          : resultadoFoto === null && despachoForm.origen === "compra_externa"
+            ? " Falta la foto del comprobante: subila apenas puedas, es lo que respalda esta compra."
+            : "";
+
       // 202 = sin red, quedó en la cola del dispositivo -- mismo criterio
       // que registrar una lectura.
       if (res.status === 202) {
         setMensajeExito(
-          `Sin conexión: el vale ${despachoForm.n_vale} de la serie ${despachoForm.serie_talonario} ` +
-            `quedó guardado en este equipo y se enviará solo cuando vuelva la señal.`
+          `Sin conexión: ${papel} quedó guardado en este equipo y se enviará solo cuando vuelva ` +
+            `la señal.${resultadoFoto === "encolada" ? " La foto también." : avisoFoto}`
         );
         return;
       }
 
       setMensajeExito(
-        `Despacho registrado: vale ${despachoForm.n_vale} de la serie ${despachoForm.serie_talonario}.`
+        `Despacho registrado: ${papel}.${resultadoFoto === "encolada" ? " La foto se enviará cuando vuelva la señal." : avisoFoto}`
       );
       await actualizarVistasCombustible();
     } finally {
@@ -6080,44 +6209,137 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label
-                    htmlFor="despacho-serie"
-                    className="text-xs font-bold text-slate-700 uppercase"
-                  >
-                    Serie del talonario
-                  </label>
-                  <input
-                    id="despacho-serie"
-                    type="text"
-                    required
-                    maxLength={20}
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
-                    value={despachoForm.serie_talonario}
-                    onChange={(e) =>
-                      setDespachoForm({ ...despachoForm, serie_talonario: e.target.value })
-                    }
-                  />
+              {despachoForm.origen === "tanque_propio" ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="despacho-serie"
+                      className="text-xs font-bold text-slate-700 uppercase"
+                    >
+                      Serie del talonario
+                    </label>
+                    <input
+                      id="despacho-serie"
+                      type="text"
+                      required
+                      maxLength={20}
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
+                      value={despachoForm.serie_talonario}
+                      onChange={(e) =>
+                        setDespachoForm({ ...despachoForm, serie_talonario: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="despacho-n-vale"
+                      className="text-xs font-bold text-slate-700 uppercase"
+                    >
+                      N° de vale
+                    </label>
+                    <input
+                      id="despacho-n-vale"
+                      type="number"
+                      min={1}
+                      required
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
+                      value={despachoForm.n_vale}
+                      onChange={(e) => setDespachoForm({ ...despachoForm, n_vale: e.target.value })}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <label
-                    htmlFor="despacho-n-vale"
-                    className="text-xs font-bold text-slate-700 uppercase"
-                  >
-                    N° de vale
-                  </label>
-                  <input
-                    id="despacho-n-vale"
-                    type="number"
-                    min={1}
-                    required
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
-                    value={despachoForm.n_vale}
-                    onChange={(e) => setDespachoForm({ ...despachoForm, n_vale: e.target.value })}
-                  />
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="despacho-comprobante-tipo"
+                        className="text-xs font-bold text-slate-700 uppercase"
+                      >
+                        Comprobante
+                      </label>
+                      <select
+                        id="despacho-comprobante-tipo"
+                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white"
+                        value={despachoForm.comprobante_tipo}
+                        onChange={(e) =>
+                          setDespachoForm({
+                            ...despachoForm,
+                            comprobante_tipo: e.target.value as "boleta" | "factura",
+                          })
+                        }
+                      >
+                        <option value="boleta">Boleta</option>
+                        <option value="factura">Factura</option>
+                      </select>
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <label
+                        htmlFor="despacho-comprobante-numero"
+                        className="text-xs font-bold text-slate-700 uppercase"
+                      >
+                        N° del comprobante
+                      </label>
+                      <input
+                        id="despacho-comprobante-numero"
+                        type="text"
+                        required
+                        maxLength={40}
+                        placeholder="Ej. B001-00012345"
+                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
+                        value={despachoForm.comprobante_numero}
+                        onChange={(e) =>
+                          setDespachoForm({ ...despachoForm, comprobante_numero: e.target.value })
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="despacho-comprobante-foto"
+                      className="block text-xs font-bold text-slate-700 uppercase"
+                    >
+                      Foto del comprobante (recomendado)
+                    </label>
+                    <label
+                      htmlFor="despacho-comprobante-foto"
+                      className="inline-flex items-center gap-2 cursor-pointer rounded-lg bg-slate-900 text-white px-3 py-2 text-xs font-bold hover:bg-slate-800 transition-all focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-slate-900"
+                    >
+                      <Camera className="w-4 h-4" aria-hidden="true" />
+                      {fotoComprobante ? "Cambiar foto" : "Tomar o elegir foto"}
+                      {/* Sin `capture`: en el celular deja elegir entre la
+                          cámara, la galería o un PDF; con `capture` solo abría
+                          la cámara. Oculto y no `display:none` para que siga
+                          siendo accesible por teclado. */}
+                      <input
+                        id="despacho-comprobante-foto"
+                        type="file"
+                        accept="image/jpeg,image/png,application/pdf"
+                        className="sr-only"
+                        onChange={(e) => {
+                          void elegirFotoComprobante(e.target.files?.[0]);
+                          // Sin esto, elegir el MISMO archivo dos veces seguidas
+                          // no dispara onChange.
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                    {fotoComprobante && (
+                      <p className="text-xs text-green-700">
+                        {fotoComprobante.name} (
+                        {Math.max(1, Math.round(fotoComprobante.size / 1024))} kB) -- se enviará al
+                        registrar.
+                      </p>
+                    )}
+                    {errorFotoComprobante && (
+                      <p className="text-xs text-red-600">{errorFotoComprobante}</p>
+                    )}
+                    <p className="text-xs text-slate-400">
+                      Si ahora no podés, registrá igual y súbela después desde el historial.
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="space-y-1">
                 <label
@@ -6199,7 +6421,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 <thead className="bg-slate-50">
                   <tr>
                     <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                      Vale
+                      {esHistorialCompras ? "Comprobante" : "Vale"}
                     </th>
                     <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
                       Fecha
@@ -6244,8 +6466,40 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       >
                         <td className="p-3 text-sm font-mono">
                           <span className={anulado ? "line-through" : "text-slate-800"}>
-                            {d.serie_talonario}-{d.n_vale}
+                            {etiquetaPapelDespacho(d)}
                           </span>
+                          {d.comprobante_numero !== null && !anulado && (
+                            <div className="font-sans text-xs mt-0.5">
+                              {d.comprobante_nombre ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    window.open(
+                                      `/api/erp/combustible/despachos/${d.id}/comprobante`,
+                                      "_blank"
+                                    )
+                                  }
+                                  className="text-blue-600 hover:underline"
+                                >
+                                  Ver comprobante
+                                </button>
+                              ) : (
+                                <label className="text-amber-600 hover:underline cursor-pointer">
+                                  Sin foto -- adjuntar
+                                  <input
+                                    type="file"
+                                    accept="image/jpeg,image/png,application/pdf"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      const archivo = e.target.files?.[0];
+                                      e.target.value = "";
+                                      if (archivo) void adjuntarFotoAHistorial(d.id, archivo);
+                                    }}
+                                  />
+                                </label>
+                              )}
+                            </div>
+                          )}
                         </td>
                         <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
                           {formatearFecha(d.despachado_en)}
@@ -8184,9 +8438,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             </div>
             <div className="p-6 space-y-4">
               <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm">
-                <p className="font-mono font-semibold">
-                  {despachoAAnular.serie_talonario}-{despachoAAnular.n_vale}
-                </p>
+                <p className="font-mono font-semibold">{etiquetaPapelDespacho(despachoAAnular)}</p>
                 <p className="text-xs text-slate-500">
                   {Number(despachoAAnular.cantidad).toLocaleString("es-PE")}{" "}
                   {ETIQUETA_TIPO_COMBUSTIBLE[despachoAAnular.tipo_combustible]} ·{" "}

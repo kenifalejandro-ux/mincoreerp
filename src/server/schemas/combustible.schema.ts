@@ -256,6 +256,13 @@ export type AnularLecturaCombustibleInput = z.infer<typeof anularLecturaCombusti
 const ORIGENES_DESPACHO = ["tanque_propio", "compra_externa"] as const;
 const TIPOS_DESTINO_DESPACHO = ["equipo", "planta", "reserva_cubeta"] as const;
 
+// Qué papel entrega el proveedor en la ruta (0109). Mismo vocabulario que
+// `facturas.comprobante_tipo` de billing (0041), que ya usa 'boleta' y
+// 'factura' -- no se inventa un enum paralelo para el mismo concepto.
+// 'comprobante_pago' no entra: ese es un documento que EMITE el sistema,
+// no uno que recibe el conductor en el grifo.
+export const TIPOS_COMPROBANTE_COMPRA = ["boleta", "factura"] as const;
+
 // ── Urea automotriz (migrations/0092) ────────────────────────────────────
 // Discriminador nuevo, ortogonal a `tipo_combustible` -- Kenif fue
 // explícito: la urea NO entra en ese enum (no es "otro combustible", es
@@ -292,6 +299,31 @@ export const FACTOR_LITROS_UREA: Record<(typeof PRESENTACIONES_UREA)[number], nu
  *  odómetro/horas, con presentación/bultos en su lugar) y mezclarlas
  *  campo a campo es como terminó necesitando reescritura el CHECK de la
  *  migración -- ver el comentario de esa migración. */
+/** Serie + número son opcionales a nivel de objeto desde 0109 (la compra
+ *  externa ya no los lleva), así que las tres formas que SÍ los exigen
+ *  --tanque propio, urea, y la compra externa en formato anterior-- lo
+ *  piden por acá en vez de repetir el par de `addIssue`. */
+function exigirVale(
+  data: { serie_talonario?: string; n_vale?: number },
+  ctx: z.RefinementCtx,
+  queEs: string
+) {
+  if (data.serie_talonario === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["serie_talonario"],
+      message: `serie_talonario es obligatoria para ${queEs}`,
+    });
+  }
+  if (data.n_vale === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["n_vale"],
+      message: `n_vale es obligatorio para ${queEs}`,
+    });
+  }
+}
+
 export const crearDespachoCombustibleSchema = z
   .object({
     // Mismo mecanismo que registrarLecturaCombustibleSchema -- lo genera
@@ -327,8 +359,33 @@ export const crearDespachoCombustibleSchema = z
     // el espacio de nombres es (serie_talonario, producto): el cliente
     // aceptó un talonario PROPIO para urea, así que dos series con el
     // mismo nombre en productos distintos no compiten por el mismo número.
-    serie_talonario: z.string().trim().min(1, "La serie del talonario es obligatoria").max(20),
-    n_vale: z.number().int().positive(),
+    //
+    // Opcionales DESDE 0109, no por relajación: la obligatoriedad pasó a
+    // depender del origen y eso solo se puede expresar en el superRefine.
+    // El tanque propio y la urea los siguen exigiendo; la compra externa
+    // los prohíbe (ahí nunca hubo talonario de la empresa -- ver 0109).
+    serie_talonario: z
+      .string()
+      .trim()
+      .min(1, "La serie del talonario es obligatoria")
+      .max(20)
+      .optional(),
+    n_vale: z.number().int().positive().optional(),
+
+    // El comprobante del proveedor (0109) -- el reemplazo del talonario en
+    // la compra externa de combustible. Lo que vuelve de la ruta es una
+    // boleta o una factura de PRIMAX/PETROPLUS, no un vale de la empresa.
+    //
+    // El número es texto libre y no `number`: viene impreso con serie y
+    // ceros a la izquierda ("F001-00012345") y recortarlo a un entero
+    // perdería justo lo que lo hace único y rastreable contra la factura.
+    comprobante_tipo: z.enum(TIPOS_COMPROBANTE_COMPRA).optional(),
+    comprobante_numero: z
+      .string()
+      .trim()
+      .min(1, "El número del comprobante es obligatorio")
+      .max(40)
+      .optional(),
 
     // Litros, siempre -- para combustible lo tipea el cargador; para urea
     // el SERVIDOR lo calcula (cantidad_bultos × factor de la presentación)
@@ -448,6 +505,11 @@ export const crearDespachoCombustibleSchema = z
         ["lectura_horometro", data.lectura_horometro],
         ["lectura_odometro", data.lectura_odometro],
         ["horas_abastecidas", data.horas_abastecidas],
+        // 0109: la urea es compra_externa, pero conserva su talonario
+        // PROPIO (el cliente lo aceptó así en 0092) y por eso NO lleva
+        // comprobante de proveedor.
+        ["comprobante_tipo", data.comprobante_tipo],
+        ["comprobante_numero", data.comprobante_numero],
       ];
       for (const [campo, valor] of camposDeCombustible) {
         if (valor !== undefined) {
@@ -458,6 +520,7 @@ export const crearDespachoCombustibleSchema = z
           });
         }
       }
+      exigirVale(data, ctx, "un vale de urea");
       return;
     }
 
@@ -506,6 +569,21 @@ export const crearDespachoCombustibleSchema = z
     }
 
     if (data.origen === "tanque_propio") {
+      // El talonario es EL control del tanque propio (punto 1): su hueco es
+      // el único mecanismo real contra la fuga. Acá no es negociable.
+      exigirVale(data, ctx, "un vale de tanque propio");
+      for (const [campo, valor] of [
+        ["comprobante_tipo", data.comprobante_tipo],
+        ["comprobante_numero", data.comprobante_numero],
+      ] as [string, unknown][]) {
+        if (valor !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [campo],
+            message: `${campo} no aplica a 'tanque_propio': el comprobante es del proveedor de ruta`,
+          });
+        }
+      }
       if (data.combustible_id === undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -632,6 +710,61 @@ export const crearDespachoCombustibleSchema = z
             "'compra_externa' exige exactamente uno de lectura_horometro/lectura_odometro, nunca los dos ni ninguno",
         });
       }
+
+      // ── Comprobante vs. talonario (0109) ────────────────────────────
+      // Espejo EXACTO del CHECK de la migración: exactamente una de las dos
+      // formas de identificar la compra. Que la API y la base impongan la
+      // misma regla no es redundancia -- es que no haya una forma de fila
+      // que una acepte y la otra no, que es donde nacen los 500 genéricos.
+      //
+      // La forma VIEJA (vale, sin comprobante) se sigue aceptando a
+      // propósito, y es el único motivo por el que esto no es un simple
+      // "comprobante obligatorio": en la cola offline puede haber un
+      // despacho armado por la app ANTERIOR, que mandaba vale. Rechazarlo
+      // sería un 400, y `esErrorPermanente` de offlineSync descarta todo
+      // 4xx: ese despacho se perdería en silencio. Un despacho sin
+      // registrar es peor que uno marcado -- la regla del módulo, la misma
+      // que dejó `lectura_horometro` opcional en 0088.
+      //
+      // El frontend nuevo NUNCA produce la forma vieja. Es un camino de
+      // entrada que solo la cola puede recorrer, y muere solo cuando se
+      // drena.
+      const tieneComprobante =
+        data.comprobante_tipo !== undefined || data.comprobante_numero !== undefined;
+      const tieneVale = data.serie_talonario !== undefined || data.n_vale !== undefined;
+
+      if (tieneComprobante && tieneVale) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["comprobante_numero"],
+          message:
+            "una compra externa se identifica con el comprobante del proveedor O con un vale (formato anterior), nunca con los dos",
+        });
+      } else if (tieneComprobante) {
+        if (data.comprobante_tipo === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["comprobante_tipo"],
+            message: "comprobante_tipo es obligatorio (boleta o factura)",
+          });
+        }
+        if (data.comprobante_numero === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["comprobante_numero"],
+            message: "comprobante_numero es obligatorio",
+          });
+        }
+      } else if (tieneVale) {
+        exigirVale(data, ctx, "una compra externa en formato anterior");
+      } else {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["comprobante_numero"],
+          message:
+            "una compra externa necesita el comprobante del proveedor (boleta o factura): es lo que la identifica y lo que impide cargarla dos veces",
+        });
+      }
     }
   });
 
@@ -650,6 +783,27 @@ export const anularDespachoCombustibleSchema = z.object({
 });
 
 export type AnularDespachoCombustibleInput = z.infer<typeof anularDespachoCombustibleSchema>;
+
+/** Adjuntar la foto/PDF del comprobante de una compra en ruta (0109).
+ *
+ *  El archivo viaja en el multipart (campo "archivo", ver
+ *  combustible.upload.ts); acá solo va el motivo, y SOLO hace falta cuando
+ *  se está REEMPLAZANDO una foto ya adjunta. Por eso es opcional en el
+ *  schema y obligatorio en el service, que es el único que sabe si la
+ *  compra ya tenía archivo.
+ *
+ *  Pedirlo en el adjunto inicial sería ruido --no hay nada que corregir--
+ *  y no pedirlo en el reemplazo rompería el principio del módulo: cambiar
+ *  la evidencia de una compra es una acción correctiva, y toda acción
+ *  correctiva dice por qué.
+ *
+ *  Viene de un FormData, así que todo llega como string: por eso no hay
+ *  ningún campo numérico ni booleano acá. */
+export const subirComprobanteCompraSchema = z.object({
+  motivo: z.string().trim().min(1).max(500).optional(),
+});
+
+export type SubirComprobanteCompraInput = z.infer<typeof subirComprobanteCompraSchema>;
 
 // ── Alertas (migrations/0068) ───────────────────────────────────────────
 // Sin ids, marca TODAS las no leídas del tenant como leídas -- lo que

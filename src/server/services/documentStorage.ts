@@ -40,6 +40,32 @@ export function driverDeEscrituraDocumentos(): DriverDocumento {
   return env.documentosStorageDriver === "s3" ? "s3" : "local";
 }
 
+// ── Red contra la pérdida silenciosa de archivos ─────────────────────────
+// En Railway el disco del contenedor es EFÍMERO (no hay volumen en
+// railway.json). Con el driver "local" en producción, cada deploy se lleva
+// los PDF de los clientes y las fotos de los comprobantes de combustible, y
+// nadie se entera hasta que alguien hace clic en "ver boleta" meses después
+// y no hay nada.
+//
+// Es un fallo de configuración de UNA variable
+// (DOCUMENTOS_STORAGE_DRIVER=s3), silencioso por naturaleza: todo "funciona"
+// hasta el siguiente deploy. Un log de nivel error al arrancar es lo mínimo
+// para que aparezca en Sentry en vez de descubrirse por una boleta perdida.
+//
+// No se lanza una excepción a propósito: tumbar el arranque de TODO el ERP
+// porque los adjuntos no están bien configurados es peor que el problema
+// que evita -- el resto del sistema (vales, tanques, alertas) funciona
+// perfecto sin storage.
+if (env.isProduction && env.documentosStorageDriver !== "s3") {
+  logger.error(
+    { driver: env.documentosStorageDriver },
+    "DOCUMENTOS_STORAGE_DRIVER no es 's3' en producción: los archivos adjuntos " +
+      "(documentos y comprobantes de combustible) se escriben en el disco efímero " +
+      "del contenedor y se PIERDEN en cada deploy. Cargá las variables S3_* y " +
+      "DOCUMENTOS_STORAGE_DRIVER=s3."
+  );
+}
+
 /** Mismo criterio que platformBackupStorage.ts: las keys las genera siempre
  *  el servidor, pero se valida igual como defensa en profundidad. */
 function validarKey(key: string): void {
@@ -61,13 +87,41 @@ export function sanearNombreArchivo(nombre: string): string {
   return base.slice(-100) || "archivo";
 }
 
+/** Dónde viven las fotos/PDF de las boletas y facturas de la compra en
+ *  ruta (0109). Mismo bucket y mismas credenciales que Documentos --
+ *  prefijo distinto para que se puedan listar, cotizar y archivar por
+ *  separado (la regla de ciclo de vida de R2 que los manda a
+ *  almacenamiento frío a los 12 meses se escribe sobre este prefijo). */
+export const PREFIJO_COMPROBANTES = "combustible/comprobantes/tenants";
+
+/** El tenant va en la key, no solo en la fila: si alguna vez hay que
+ *  responder "qué archivos son de este cliente" --borrarlo, exportarlo,
+ *  auditarlo-- se contesta con un prefijo y no con un JOIN. El sufijo
+ *  aleatorio evita que dos subidas del mismo milisegundo se pisen. */
+function construirKey(
+  prefijo: string,
+  tenantId: string,
+  entidadId: number,
+  nombreOriginal: string
+): string {
+  const sufijo = randomBytes(4).toString("hex");
+  return `${prefijo}/${tenantId}/${entidadId}/${Date.now()}-${sufijo}-${sanearNombreArchivo(nombreOriginal)}`;
+}
+
 export function construirKeyDocumento(
   tenantId: string,
   documentoId: number,
   nombreOriginal: string
 ): string {
-  const sufijo = randomBytes(4).toString("hex");
-  return `${PREFIJO_DOCUMENTOS}/${tenantId}/${documentoId}/${Date.now()}-${sufijo}-${sanearNombreArchivo(nombreOriginal)}`;
+  return construirKey(PREFIJO_DOCUMENTOS, tenantId, documentoId, nombreOriginal);
+}
+
+export function construirKeyComprobante(
+  tenantId: string,
+  despachoId: number,
+  nombreOriginal: string
+): string {
+  return construirKey(PREFIJO_COMPROBANTES, tenantId, despachoId, nombreOriginal);
 }
 
 function rutaLocal(key: string): string {

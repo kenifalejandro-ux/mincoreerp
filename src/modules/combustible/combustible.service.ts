@@ -19,6 +19,16 @@ import type {
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import { FACTOR_LITROS_UREA } from "../../server/schemas/combustible.schema";
 import type { UsuarioPayload } from "../../server/services/auth.service";
+import { createHash } from "crypto";
+import { withTenant } from "../../server/config/database";
+import { logger } from "../../server/config/logger";
+import {
+  construirKeyComprobante,
+  guardarArchivoDocumento,
+  borrarArchivoDocumento,
+  obtenerDescarga,
+} from "../../server/services/documentStorage";
+import type { DriverDocumento } from "../../server/services/documentStorage";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { CombustibleRepository } from "./combustible.repository";
 import type { PeriodoHistorial } from "./combustible.repository";
@@ -939,39 +949,70 @@ export class CombustibleService {
             throw new Error(`combustible_id ${data.combustible_id} no existe en este tenant`);
           }
         }
-        // El duplicado le gana a cualquier otro 400 -- ver el comentario de
-        // CombustibleRepository.existeVale. El constraint único de 0062
-        // sigue siendo la red de seguridad real contra una carrera entre
-        // dos requests simultáneos; esto es solo para dar la señal correcta
-        // en el caso común (no concurrente).
-        if (
-          await this.repository.existeVale(
+        // Desde 0109 una compra externa de combustible se identifica con el
+        // comprobante del proveedor, no con un vale: los dos controles de
+        // abajo son del TALONARIO y no tienen nada que mirar ahí. El
+        // chequeo equivalente para la compra es el del comprobante, más
+        // abajo.
+        if (data.serie_talonario !== undefined && data.n_vale !== undefined) {
+          // El duplicado le gana a cualquier otro 400 -- ver el comentario de
+          // CombustibleRepository.existeVale. El constraint único de 0062
+          // sigue siendo la red de seguridad real contra una carrera entre
+          // dos requests simultáneos; esto es solo para dar la señal correcta
+          // en el caso común (no concurrente).
+          if (
+            await this.repository.existeVale(
+              client,
+              tenantId,
+              data.producto,
+              data.serie_talonario,
+              data.n_vale
+            )
+          ) {
+            // El mensaje dice qué hacer, no solo qué pasó: quien lo lee está
+            // parado frente al surtidor con la máquina esperando. Y nombra el
+            // caso que más lo confunde -- que otro dispositivo lo haya cargado
+            // sin red y recién ahora haya sincronizado, así que el número que
+            // el operario tiene en la mano ya está ocupado sin que él lo sepa.
+            throw new Error(
+              `el vale ${data.n_vale} de la serie ${data.serie_talonario} ya está registrado. ` +
+                `Puede haberlo cargado otra persona, u otro dispositivo que estaba sin red y ` +
+                `recién sincronizó. Verificá el talonario y usá el siguiente número libre`
+            );
+          }
+
+          await this.validarSaltoDeTalonario(
             client,
             tenantId,
             data.producto,
             data.serie_talonario,
             data.n_vale
-          )
-        ) {
-          // El mensaje dice qué hacer, no solo qué pasó: quien lo lee está
-          // parado frente al surtidor con la máquina esperando. Y nombra el
-          // caso que más lo confunde -- que otro dispositivo lo haya cargado
-          // sin red y recién ahora haya sincronizado, así que el número que
-          // el operario tiene en la mano ya está ocupado sin que él lo sepa.
-          throw new Error(
-            `el vale ${data.n_vale} de la serie ${data.serie_talonario} ya está registrado. ` +
-              `Puede haberlo cargado otra persona, u otro dispositivo que estaba sin red y ` +
-              `recién sincronizó. Verificá el talonario y usá el siguiente número libre`
           );
         }
 
-        await this.validarSaltoDeTalonario(
-          client,
-          tenantId,
-          data.producto,
-          data.serie_talonario,
-          data.n_vale
-        );
+        // Mismo criterio que el duplicado de vale, para la forma nueva: el
+        // índice único de 0109 es la red real contra la carrera entre dos
+        // requests; esto da el mensaje bueno en el caso común. Y acá importa
+        // más que en el vale, porque este es el control que impide que un
+        // reintento de la cola offline cree una compra gemela.
+        if (data.comprobante_tipo !== undefined && data.comprobante_numero !== undefined) {
+          const previa = await this.repository.findCompraPorComprobante(
+            client,
+            tenantId,
+            data.grifo_id!,
+            data.comprobante_tipo,
+            data.comprobante_numero
+          );
+          if (previa) {
+            throw new Error(
+              `la ${data.comprobante_tipo} ${data.comprobante_numero} de este proveedor ya está ` +
+                `registrada como "${previa.comprobante_numero}" ` +
+                `(${new Date(previa.despachado_en).toLocaleDateString("es-PE")}). ` +
+                `Puede haberla cargado otra persona, u otro dispositivo que estaba sin red y ` +
+                `recién sincronizó. Si el papel es otro, revisá el número`
+            );
+          }
+        }
 
         await this.validarFormaDespacho(client, tenantId, data);
 
@@ -1021,8 +1062,11 @@ export class CombustibleService {
           tipoCombustible: esUrea ? null : data.tipo_combustible!,
           tipoDestino: data.tipo_destino,
           equipoId: data.equipo_id ?? null,
-          serieTalonario: data.serie_talonario,
-          nVale: data.n_vale,
+          serieTalonario: data.serie_talonario ?? null,
+          nVale: data.n_vale ?? null,
+          comprobanteTipo: data.comprobante_tipo ?? null,
+          comprobanteNumero: data.comprobante_numero ?? null,
+          clienteUuid: data.cliente_uuid ?? null,
           cantidad,
           lecturaContometro: data.lectura_contometro ?? null,
           totalizadorLectura: data.totalizador_lectura ?? null,
@@ -1340,6 +1384,178 @@ export class CombustibleService {
 
   getDespachoPorId(client: PoolClient, tenantId: string, id: number) {
     return this.repository.findDespachoPorId(client, tenantId, id);
+  }
+
+  // ── Comprobante de la compra externa: el archivo (0109) ───────────────
+
+  /** Adjunta (o reemplaza) la foto/PDF del comprobante de una compra en
+   *  ruta.
+   *
+   *  Va en una request APARTE del registro de la compra, y es opcional, por
+   *  una razón de cancha: el conductor puede no tener señal, ni batería, ni
+   *  el papel a mano en el momento. Bloquear el registro de la compra por la
+   *  foto es cambiar un dato contable firme por una imagen que puede llegar
+   *  en una hora. Que falte se avisa; no se impide.
+   *
+   *  ── Reintento vs. reemplazo ─────────────────────────────────────────
+   *  La cola offline puede reenviar esta misma subida si se perdió la
+   *  respuesta. El hash distingue los dos casos sin ambigüedad:
+   *
+   *   - mismo SHA-256 que el guardado -> es EL MISMO archivo: reintento.
+   *     Devuelve `reintento` y no toca nada (ni el storage, ni la fila, ni
+   *     la bitácora). Sin esto, un reintento se vería como un reemplazo y
+   *     moriría pidiendo un motivo que la cola no tiene cómo dar.
+   *   - hash distinto con archivo ya presente -> es un REEMPLAZO: acción
+   *     correctiva, y exige motivo. "Auditar quién Y por qué."
+   *
+   *  ── Orden de las operaciones ────────────────────────────────────────
+   *  Se sube el archivo nuevo ANTES de tocar la fila, y el viejo se borra
+   *  al final, best-effort. Si el borrado falla queda un objeto huérfano en
+   *  el bucket --caro en centavos, invisible para el usuario-- y si en
+   *  cambio se borrara primero, un fallo en la subida dejaría a la compra
+   *  sin ninguna foto: se perdería evidencia. */
+  async subirComprobante(
+    tenantId: string,
+    despachoId: number,
+    archivo: { buffer: Buffer; mimeType: string; nombreOriginal: string },
+    usuarioId: string,
+    motivo: string | undefined
+  ): Promise<
+    | { estado: "no_encontrado" }
+    | { estado: "no_aplica"; razon: string }
+    | { estado: "falta_motivo" }
+    | { estado: "conflicto" }
+    | { estado: "reintento"; fila: unknown }
+    | { estado: "guardado"; fila: unknown; reemplazo: boolean }
+  > {
+    const sha256 = createHash("sha256").update(archivo.buffer).digest("hex");
+
+    const previo = await withTenant(tenantId, (client) =>
+      this.repository.findComprobanteDeDespacho(client, tenantId, despachoId)
+    );
+    if (!previo) return { estado: "no_encontrado" };
+
+    // El CHECK de 0109 ya lo impone, pero un 400 con explicación es mejor
+    // que el 500 de una violación de constraint -- y la cola offline
+    // distingue uno de otro: el 4xx lo descarta, el 5xx lo reintenta para
+    // siempre.
+    if (previo.comprobante_numero === null) {
+      return {
+        estado: "no_aplica",
+        razon:
+          "este despacho no tiene comprobante de proveedor: el archivo adjunto es solo de las compras en ruta",
+      };
+    }
+    if (previo.anulada_en !== null) {
+      return {
+        estado: "no_aplica",
+        razon: "la compra está anulada -- no se le puede adjuntar un comprobante",
+      };
+    }
+
+    const yaTeniaArchivo = previo.comprobante_key !== null;
+    if (yaTeniaArchivo && previo.comprobante_sha256 === sha256) {
+      // `previo` no se puede devolver tal cual: trae la key del bucket, que
+      // no se publica. Se relee la fila como la ve cualquier cliente.
+      const fila = await withTenant(tenantId, (client) =>
+        this.repository.findDespachoPorId(client, tenantId, despachoId)
+      );
+      return { estado: "reintento", fila };
+    }
+    if (yaTeniaArchivo && !motivo) {
+      return { estado: "falta_motivo" };
+    }
+
+    const key = construirKeyComprobante(tenantId, despachoId, archivo.nombreOriginal);
+    const { driver, bytes } = await guardarArchivoDocumento(key, archivo.buffer, archivo.mimeType);
+
+    const fila = await withTenant(tenantId, (client) =>
+      this.repository.guardarArchivoComprobante(
+        client,
+        tenantId,
+        despachoId,
+        {
+          driver,
+          key,
+          mime: archivo.mimeType,
+          bytes,
+          nombre: archivo.nombreOriginal,
+          sha256,
+          subidoPor: usuarioId,
+        },
+        previo.comprobante_sha256
+      )
+    );
+
+    if (!fila) {
+      // Algo cambió entre la lectura y el UPDATE (la subida a R2 queda en el
+      // medio). El archivo recién subido no lo apunta nadie: se borra, y se
+      // relee la fila para decir QUÉ pasó.
+      await borrarArchivoDocumento(driver, key).catch(() => {});
+      const ahora = await withTenant(tenantId, (client) =>
+        this.repository.findComprobanteDeDespacho(client, tenantId, despachoId)
+      );
+      if (!ahora) return { estado: "no_encontrado" };
+      if (ahora.anulada_en !== null) {
+        return {
+          estado: "no_aplica",
+          razon: "la compra se anuló mientras se subía el comprobante",
+        };
+      }
+      // Otra request subió EL MISMO archivo a la vez: el reintento de la
+      // cola cruzado con el original. Para este dispositivo es un éxito.
+      if (ahora.comprobante_sha256 === sha256) {
+        const actual = await withTenant(tenantId, (client) =>
+          this.repository.findDespachoPorId(client, tenantId, despachoId)
+        );
+        return { estado: "reintento", fila: actual };
+      }
+      // Otra foto DISTINTA ganó la carrera. Esta no la pisa: reemplazar
+      // evidencia pide motivo y alguien tiene que haber visto la que quedó.
+      return { estado: "conflicto" };
+    }
+
+    if (yaTeniaArchivo && previo.comprobante_key) {
+      await borrarArchivoDocumento(
+        previo.comprobante_driver as DriverDocumento,
+        previo.comprobante_key
+      ).catch((err) => {
+        logger.warn(
+          { err, tenantId, despachoId, key: previo.comprobante_key },
+          "No se pudo borrar el comprobante reemplazado del storage (queda huérfano)"
+        );
+      });
+    }
+
+    return { estado: "guardado", fila, reemplazo: yaTeniaArchivo };
+  }
+
+  resolverDespachoPorClienteUuid(tenantId: string, clienteUuid: string, ambito: AmbitoVales) {
+    return withTenant(tenantId, (client) =>
+      this.repository.findDespachoIdPorClienteUuid(client, tenantId, clienteUuid, ambito)
+    );
+  }
+
+  /** El archivo se lee con el driver con el que se ESCRIBIÓ, no con el
+   *  configurado hoy -- mismo criterio que documentos_versiones: cambiar
+   *  DOCUMENTOS_STORAGE_DRIVER no puede volver ilegible lo ya subido. */
+  async obtenerDescargaComprobante(tenantId: string, despachoId: number) {
+    const fila = await withTenant(tenantId, (client) =>
+      this.repository.findComprobanteDeDespacho(client, tenantId, despachoId)
+    );
+    if (!fila || !fila.comprobante_key) return null;
+
+    const descarga = await obtenerDescarga(
+      fila.comprobante_driver as DriverDocumento,
+      fila.comprobante_key,
+      fila.comprobante_nombre ?? "comprobante",
+      fila.comprobante_mime ?? "application/octet-stream"
+    );
+    return {
+      descarga,
+      nombreOriginal: fila.comprobante_nombre ?? "comprobante",
+      mimeType: fila.comprobante_mime ?? "application/octet-stream",
+    };
   }
 
   /** Punto 1 reescrito: consulta bajo demanda -- ver el comentario de

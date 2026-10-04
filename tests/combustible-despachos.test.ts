@@ -100,6 +100,31 @@ describe("combustible: despachos (Fase B)", () => {
     };
   }
 
+  /** Forma NUEVA (0109): comprobante del proveedor, sin vale. Es la que
+   *  manda el frontend desde que la compra externa dejó de fingir que tenía
+   *  un talonario. */
+  function payloadCompra(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      origen: "compra_externa",
+      grifo_id: grifoId,
+      tipo_combustible: "diesel_b5",
+      tipo_destino: "equipo",
+      equipo_id: equipoVolquete,
+      comprobante_tipo: "boleta",
+      comprobante_numero: `B001-${Math.floor(Math.random() * 1e8)}`,
+      cantidad: 40,
+      lectura_horometro: 9707,
+      horas_abastecidas: 12,
+      costo_unitario: 17.5,
+      despachado_en: new Date().toISOString(),
+      ...overrides,
+    };
+  }
+
+  /** Forma ANTERIOR, con vale. Se conserva en los tests porque la API la
+   *  sigue aceptando a propósito: en la cola offline puede haber despachos
+   *  armados por la app vieja, y descartarlos sería perder un despacho real
+   *  (ver el comentario del superRefine en combustible.schema.ts). */
   function payloadCompraExterna(overrides: Partial<Record<string, unknown>> = {}) {
     return {
       origen: "compra_externa",
@@ -462,6 +487,116 @@ describe("combustible: despachos (Fase B)", () => {
       expect(res.status).toBe(201);
       expect(Number(res.body.costo_unitario)).toBeCloseTo(18.35, 2);
       expect(Number(res.body.costo_total)).toBeCloseTo(40 * 18.35, 2);
+    });
+  });
+
+  describe("comprobante del proveedor (0109)", () => {
+    it("happy path: compra con boleta, sin vale -- 201 y la fila no tiene talonario", async () => {
+      const res = await agente.post("/api/erp/combustible/despachos").send(payloadCompra());
+      expect(res.status).toBe(201);
+      expect(res.body.origen).toBe("compra_externa");
+      expect(res.body.comprobante_tipo).toBe("boleta");
+      expect(res.body.serie_talonario).toBeNull();
+      expect(res.body.n_vale).toBeNull();
+    });
+
+    it("sin comprobante y sin vale: 400 -- la compra tiene que poder identificarse", async () => {
+      const res = await agente
+        .post("/api/erp/combustible/despachos")
+        .send(payloadCompra({ comprobante_tipo: undefined, comprobante_numero: undefined }));
+      expect(res.status).toBe(400);
+    });
+
+    it("comprobante Y vale juntos: 400 -- son dos formas excluyentes", async () => {
+      const res = await agente
+        .post("/api/erp/combustible/despachos")
+        .send(payloadCompra({ serie_talonario: serieUnica(), n_vale: 7 }));
+      expect(res.status).toBe(400);
+    });
+
+    it("el tanque propio rechaza el comprobante: es del proveedor de ruta", async () => {
+      const res = await agente
+        .post("/api/erp/combustible/despachos")
+        .send(payloadTanquePropio({ comprobante_tipo: "boleta", comprobante_numero: "B-1" }));
+      expect(res.status).toBe(400);
+    });
+
+    it("el tanque propio sigue exigiendo el vale", async () => {
+      const res = await agente
+        .post("/api/erp/combustible/despachos")
+        .send(payloadTanquePropio({ serie_talonario: undefined, n_vale: undefined }));
+      expect(res.status).toBe(400);
+    });
+
+    it("la misma boleta del mismo proveedor dos veces: 400 (red anti-duplicado de la cola offline)", async () => {
+      const payload = payloadCompra();
+      expect((await agente.post("/api/erp/combustible/despachos").send(payload)).status).toBe(201);
+      const res = await agente.post("/api/erp/combustible/despachos").send(payload);
+      // 409 y no 400: el dato está bien formado, el papel ya existe. Importa
+      // que sea 4xx -- la cola offline descarta en vez de reintentar.
+      expect(res.status).toBe(409);
+      expect(res.body.error).toMatch(/ya está registrada/i);
+    });
+
+    it("anular libera el comprobante: el mismo papel se puede recargar corregido", async () => {
+      const payload = payloadCompra();
+      const creado = await agente.post("/api/erp/combustible/despachos").send(payload);
+      expect(creado.status).toBe(201);
+      const anulado = await agente
+        .patch(`/api/erp/combustible/despachos/${creado.body.id}/anular`)
+        .send({ motivo: "cantidad mal tipeada" });
+      expect(anulado.status).toBe(200);
+      const recargado = await agente
+        .post("/api/erp/combustible/despachos")
+        .send({ ...payload, cantidad: 45 });
+      expect(recargado.status).toBe(201);
+    });
+
+    it("la misma boleta en OTRO proveedor sí entra: cada grifo numera por su cuenta", async () => {
+      const numero = `B001-${Math.floor(Math.random() * 1e8)}`;
+      expect(
+        (
+          await agente
+            .post("/api/erp/combustible/despachos")
+            .send(payloadCompra({ comprobante_numero: numero }))
+        ).status
+      ).toBe(201);
+      const otroGrifo = await agente
+        .post("/api/erp/combustible/grifos")
+        .send({ nombre: idUnico("PETROPLUS") });
+      const res = await agente
+        .post("/api/erp/combustible/despachos")
+        .send(payloadCompra({ comprobante_numero: numero, grifo_id: otroGrifo.body.id }));
+      expect(res.status).toBe(201);
+    });
+
+    it("un tipo de comprobante inventado se rechaza", async () => {
+      const res = await agente
+        .post("/api/erp/combustible/despachos")
+        .send(payloadCompra({ comprobante_tipo: "recibo" }));
+      expect(res.status).toBe(400);
+    });
+
+    it("una compra sin vale NO entra en la secuencia del talonario", async () => {
+      const serie = serieUnica();
+      // Dos vales reales del tanque propio, 1 y 2: sin huecos.
+      for (const n of [1, 2]) {
+        expect(
+          (
+            await agente
+              .post("/api/erp/combustible/despachos")
+              .send(payloadTanquePropio({ serie_talonario: serie, n_vale: n }))
+          ).status
+        ).toBe(201);
+      }
+      expect(
+        (await agente.post("/api/erp/combustible/despachos").send(payloadCompra())).status
+      ).toBe(201);
+      const huecos = await agente.get(
+        `/api/erp/combustible/despachos/huecos?serie_talonario=${serie}`
+      );
+      expect(huecos.status).toBe(200);
+      expect(huecos.body.huecos).toEqual([]);
     });
   });
 });

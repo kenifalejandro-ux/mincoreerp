@@ -12,6 +12,7 @@ import {
   agregarAmbitoVales,
   filtroHechoDeGrifo,
   filtroTanqueVisible,
+  filtroVale,
   type AlcanceCombustible,
   type AmbitoVales,
 } from "./alcance";
@@ -370,6 +371,20 @@ const LATERAL_DIFERENCIA_RECEPCION = `
     ) grupo ON true
   ) dif ON true
 `;
+
+/** El talonario es del TANQUE PROPIO (y de la urea, que tiene el suyo).
+ *
+ *  Antes de 0109 la compra externa también exigía serie + número, así que
+ *  esos vales inventados en el grifo de PRIMAX entraron en la misma
+ *  secuencia que los vales reales del talonario de la empresa. Dejarlos ahí
+ *  genera huecos fantasma: la secuencia salta porque mezcla dos
+ *  numeraciones que nunca fueron una.
+ *
+ *  Las compras NUEVAS ya no tienen vale y quedan afuera solas (serie NULL).
+ *  Esta condición es para las VIEJAS, que conservan el suyo. La urea no se
+ *  toca: su origen también es compra_externa, pero su talonario sí es real.
+ */
+const SOLO_TALONARIO_REAL = `(producto <> 'combustible' OR origen = 'tanque_propio')`;
 
 export class CombustibleRepository {
   async findAll(client: PoolClient, tenantId: string, alcance?: AlcanceCombustible) {
@@ -983,6 +998,15 @@ export class CombustibleRepository {
     lectura_contometro, totalizador_lectura, surtidor_id, lectura_horometro, lectura_odometro,
     horas_abastecidas,
     presentacion, factor_litros, cantidad_bultos,
+    comprobante_tipo, comprobante_numero,
+    -- Del archivo se publica lo que la pantalla necesita para decir "hay
+    -- foto, pesa esto, la subió fulano": NUNCA comprobante_key ni
+    -- comprobante_driver. Son la ubicación interna en el bucket y no le
+    -- sirven a ningún cliente -- la descarga va por su endpoint, con
+    -- permisos. Mismo criterio que documentos_versiones, que tampoco
+    -- devuelve storage_key en su listado.
+    comprobante_mime, comprobante_nombre, comprobante_bytes,
+    comprobante_subido_en, comprobante_subido_por,
     costo_unitario, (cantidad * costo_unitario) AS costo_total, observaciones,
     usuario_id, despachado_en, creado_en,
     conductor_nombre, conductor_dni,
@@ -1011,8 +1035,15 @@ export class CombustibleRepository {
       tipoCombustible: string | null;
       tipoDestino: string;
       equipoId: number | null;
-      serieTalonario: string;
-      nVale: number;
+      // Desde 0109 son opcionales: la compra externa de combustible se
+      // identifica con el comprobante del proveedor, no con un vale.
+      serieTalonario: string | null;
+      nVale: number | null;
+      comprobanteTipo?: string | null;
+      comprobanteNumero?: string | null;
+      /** El uuid del dispositivo (0109): por él la foto encolada offline
+       *  encuentra su compra. Ver findDespachoIdPorClienteUuid. */
+      clienteUuid?: string | null;
       cantidad: number;
       lecturaContometro: number | null;
       totalizadorLectura?: number | null;
@@ -1045,7 +1076,8 @@ export class CombustibleRepository {
           lectura_contometro, lectura_horometro, lectura_odometro, horas_abastecidas,
           presentacion, factor_litros, cantidad_bultos,
           costo_unitario, observaciones, usuario_id, despachado_en,
-          conductor_nombre, conductor_dni, totalizador_lectura, surtidor_id
+          conductor_nombre, conductor_dni, totalizador_lectura, surtidor_id,
+          comprobante_tipo, comprobante_numero, cliente_uuid
         )
         -- El conductor se COPIA del equipo en este mismo INSERT (0083). Nadie
         -- lo tipea, y no se resuelve después con un JOIN a propósito: los
@@ -1054,7 +1086,7 @@ export class CombustibleRepository {
         -- combustible salió, que es lo único que hace confiable el reporte de
         -- consumo por conductor. Vale también para urea -- mismo equipo_id.
         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
-               e.conductor_nombre, e.conductor_dni, $23::numeric, $24::int
+               e.conductor_nombre, e.conductor_dni, $23::numeric, $24::int, $25, $26, $27::uuid
           FROM (SELECT 1) dummy
           LEFT JOIN equipos e ON e.id = $8::int AND e.tenant_id = $1
         RETURNING ${CombustibleRepository.COLUMNAS_DESPACHO}
@@ -1084,6 +1116,9 @@ export class CombustibleRepository {
           data.despachadoEn,
           data.totalizadorLectura ?? null,
           data.surtidorId ?? null,
+          data.comprobanteTipo ?? null,
+          data.comprobanteNumero ?? null,
+          data.clienteUuid ?? null,
         ]
       );
       const fila = result.rows[0];
@@ -1093,8 +1128,15 @@ export class CombustibleRepository {
       return fila;
     } catch (err) {
       if (esViolacionUnicidad(err)) {
+        // Dos índices únicos distintos pueden saltar acá: el del vale
+        // (0062/0092) y el del comprobante (0109). El mensaje nombra el que
+        // corresponde a la forma que vino, no "vale" siempre -- decirle
+        // "vale duplicado" a quien cargó una boleta lo manda a revisar un
+        // talonario que no tiene en la mano.
         throw new Error(
-          `el vale ${data.nVale} de la serie ${data.serieTalonario} ya está registrado`,
+          data.comprobanteNumero
+            ? `la ${data.comprobanteTipo} ${data.comprobanteNumero} de este proveedor ya está registrada`
+            : `el vale ${data.nVale} de la serie ${data.serieTalonario} ya está registrado`,
           { cause: err }
         );
       }
@@ -1142,6 +1184,151 @@ export class CombustibleRepository {
       [tenantId, producto, serieTalonario, nVale]
     );
     return (result.rowCount ?? 0) > 0;
+  }
+
+  /** El equivalente de `existeVale` para la compra externa (0109): la misma
+   *  boleta del mismo proveedor no entra dos veces.
+   *
+   *  Devuelve la fila y no un booleano a propósito -- el mensaje de error
+   *  nombra la FECHA de la compra previa, que es lo que deja ver de un
+   *  vistazo si esto fue un doble tipeo de hoy o un papel de la semana
+   *  pasada que alguien está volviendo a cargar.
+   *
+   *  Solo cuentan las VIGENTES, espejo exacto del índice único parcial de
+   *  0109: anular una compra libera su comprobante, igual que anular un
+   *  vale libera su número. */
+  async findCompraPorComprobante(
+    client: PoolClient,
+    tenantId: string,
+    grifoId: number,
+    comprobanteTipo: string,
+    comprobanteNumero: string
+  ): Promise<{ id: number; despachado_en: string; comprobante_numero: string } | null> {
+    const result = await client.query<{
+      id: number;
+      despachado_en: string;
+      comprobante_numero: string;
+    }>(
+      `SELECT id, despachado_en, comprobante_numero FROM combustible_despachos
+       WHERE tenant_id = $1 AND grifo_id = $2
+         AND comprobante_tipo = $3
+         -- La misma función que el índice único (0109): una sola definición
+         -- de "el mismo número", o el 409 y la red de la base no coincidirían.
+         AND combustible_comprobante_canonico(comprobante_numero)
+             = combustible_comprobante_canonico($4)
+         AND anulada_en IS NULL`,
+      [tenantId, grifoId, comprobanteTipo, comprobanteNumero]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** Pega el archivo del comprobante a la compra (0109).
+   *
+   *  Un solo slot, sin versionado --a diferencia de documentos_versiones--
+   *  porque una boleta no tiene revisiones: o es la que el conductor trajo
+   *  del grifo o es la corrección de una foto ilegible. El reemplazo queda
+   *  en la bitácora con su motivo, que es donde vive esa historia.
+   *
+   *  El WHERE repite las tres condiciones que el service ya verificó
+   *  (comprobante declarado, no anulada) a propósito: entre aquella lectura
+   *  y este UPDATE hay una subida a R2 de por medio, tiempo de sobra para
+   *  que alguien anule la compra. Sin esto, el archivo se pegaría a una
+   *  compra anulada y violaría el CHECK de 0109 con un 500. */
+  async guardarArchivoComprobante(
+    client: PoolClient,
+    tenantId: string,
+    despachoId: number,
+    archivo: {
+      driver: string;
+      key: string;
+      mime: string;
+      bytes: number;
+      nombre: string;
+      sha256: string;
+      subidoPor: string;
+    },
+    /** El hash del archivo que había al LEER (null = no había). */
+    shaEsperado: string | null
+  ) {
+    const result = await client.query(
+      `UPDATE combustible_despachos
+          SET comprobante_driver = $3, comprobante_key = $4, comprobante_mime = $5,
+              comprobante_bytes = $6, comprobante_nombre = $7, comprobante_sha256 = $8,
+              comprobante_subido_por = $9, comprobante_subido_en = now()
+        WHERE id = $1 AND tenant_id = $2
+          AND comprobante_numero IS NOT NULL
+          AND anulada_en IS NULL
+          -- Concurrencia optimista: solo si el archivo sigue siendo el que
+          -- había al leer. Sin esto, dos fotos DISTINTAS subidas a la vez
+          -- leían las dos "no hay foto" y la segunda pisaba a la primera sin
+          -- motivo -- un reemplazo de evidencia sin rastro.
+          AND comprobante_sha256 IS NOT DISTINCT FROM $10
+        RETURNING ${CombustibleRepository.COLUMNAS_DESPACHO}`,
+      [
+        despachoId,
+        tenantId,
+        archivo.driver,
+        archivo.key,
+        archivo.mime,
+        archivo.bytes,
+        archivo.nombre,
+        archivo.sha256,
+        archivo.subidoPor,
+        shaEsperado,
+      ]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** Los campos de storage del comprobante, que COLUMNAS_DESPACHO no
+   *  publica. Solo para uso interno del service (subir, reemplazar,
+   *  descargar). */
+  /** El id de un despacho a partir del `cliente_uuid` con que lo registró el
+   *  dispositivo. Existe para la foto del comprobante encolada OFFLINE: cuando
+   *  se saca sin señal, la compra todavía no tiene id.
+   *
+   *  Por la columna de la propia fila (0109) y NO por idempotency_keys: esa
+   *  tabla mezcla bajo 'combustible' los uuid de lecturas, despachos y
+   *  recepciones, y su fila_id no dice de qué tabla es.
+   *
+   *  Con el ALCANCE del usuario (0100), igual que la guardia de `:despachoId`:
+   *  esta ruta no tiene ese parámetro, así que router.param no la cubre. Fuera
+   *  del alcance es null -> 404, como algo que no existe. */
+  async findDespachoIdPorClienteUuid(
+    client: PoolClient,
+    tenantId: string,
+    clienteUuid: string,
+    ambito: AmbitoVales
+  ): Promise<number | null> {
+    const f = filtroVale(ambito.alcance, "d", 3, ambito.usuarioId);
+    const result = await client.query<{ id: number }>(
+      `SELECT d.id FROM combustible_despachos d
+        WHERE d.tenant_id = $1 AND d.cliente_uuid = $2 AND ${f.sql}`,
+      [tenantId, clienteUuid, ...f.valores]
+    );
+    return result.rows[0]?.id ?? null;
+  }
+
+  async findComprobanteDeDespacho(
+    client: PoolClient,
+    tenantId: string,
+    id: number
+  ): Promise<{
+    comprobante_numero: string | null;
+    comprobante_driver: string | null;
+    comprobante_key: string | null;
+    comprobante_mime: string | null;
+    comprobante_nombre: string | null;
+    comprobante_sha256: string | null;
+    anulada_en: string | null;
+  } | null> {
+    const result = await client.query(
+      `SELECT comprobante_numero, comprobante_driver, comprobante_key, comprobante_mime,
+              comprobante_nombre, comprobante_sha256, anulada_en
+         FROM combustible_despachos WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+    return result.rows[0] ?? null;
   }
 
   async findDespachoPorId(client: PoolClient, tenantId: string, id: number) {
@@ -1632,7 +1819,8 @@ export class CombustibleRepository {
   ) {
     const limites = await client.query<{ minimo: number | null; maximo: number | null }>(
       `SELECT MIN(n_vale) AS minimo, MAX(n_vale) AS maximo
-       FROM combustible_despachos WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3`,
+       FROM combustible_despachos WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3
+         AND ${SOLO_TALONARIO_REAL}`,
       [tenantId, producto, serieTalonario]
     );
     const { minimo, maximo } = limites.rows[0];
@@ -1647,6 +1835,7 @@ export class CombustibleRepository {
       WHERE NOT EXISTS (
         SELECT 1 FROM combustible_despachos d
         WHERE d.tenant_id = $1 AND d.producto = $2 AND d.serie_talonario = $3 AND d.n_vale = gs
+          AND ${SOLO_TALONARIO_REAL}
       )
       ORDER BY gs
       `,
@@ -1683,7 +1872,8 @@ export class CombustibleRepository {
     const result = await client.query<{ max_anterior: number | null }>(
       `SELECT MAX(n_vale) AS max_anterior
        FROM combustible_despachos
-       WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3 AND id <> $4`,
+       WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3 AND id <> $4
+         AND ${SOLO_TALONARIO_REAL}`,
       [tenantId, producto, serieTalonario, despachoId]
     );
     const maxAnterior = result.rows[0]?.max_anterior;
@@ -1713,7 +1903,8 @@ export class CombustibleRepository {
   ): Promise<number | null> {
     const r = await client.query<{ maximo: number | null }>(
       `SELECT MAX(n_vale) AS maximo FROM combustible_despachos
-        WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3`,
+        WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3
+          AND ${SOLO_TALONARIO_REAL}`,
       [tenantId, producto, serieTalonario]
     );
     return r.rows[0]?.maximo ?? null;
@@ -1739,7 +1930,8 @@ export class CombustibleRepository {
     const result = await client.query<{ max_anterior: number | null }>(
       `SELECT MAX(n_vale) AS max_anterior
        FROM combustible_despachos
-       WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3 AND id <> $4`,
+       WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3 AND id <> $4
+         AND ${SOLO_TALONARIO_REAL}`,
       [tenantId, producto, serieTalonario, despachoId]
     );
     const maxAnterior = result.rows[0]?.max_anterior;
