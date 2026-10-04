@@ -336,6 +336,42 @@ BEGIN
     );
 END $$;
 
+-- ── 7. Si el despacho es el ancla, no puede quedar huérfana ─────────────
+-- `despacho_id` nació en 0068/0072 con ON DELETE SET NULL, y estaba bien:
+-- era decorativo, el ancla real era el vale, así que perderlo no dejaba a
+-- la alerta sin saber de qué hablaba.
+--
+-- Desde el punto 6 el despacho PUEDE ser el único ancla. Con SET NULL,
+-- borrar un despacho deja una fila que viola su propio CHECK: el DELETE
+-- falla y la alerta bloquea para siempre el borrado de su despacho. Lo
+-- encontró el teardown de la suite al borrar un tenant de prueba.
+--
+-- CASCADE es la única opción coherente, y además la que ya usan los otros
+-- cuatro anclas (combustible_id, recepcion_id, urea_conteo_id, ver 0073 y
+-- 0092): una alerta sobre un despacho que ya no existe no tiene de qué
+-- hablar. En operación normal un despacho no se borra nunca --se ANULA, y
+-- anular conserva la fila y su alerta-- así que esto solo se ejecuta al
+-- eliminar datos de prueba o un tenant entero.
+ALTER TABLE combustible_alertas NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE combustible_anomalias NO FORCE ROW LEVEL SECURITY;
+ALTER TABLE combustible_despachos NO FORCE ROW LEVEL SECURITY;
+
+ALTER TABLE combustible_alertas
+  DROP CONSTRAINT IF EXISTS combustible_alertas_despacho_id_fkey;
+ALTER TABLE combustible_alertas
+  ADD CONSTRAINT combustible_alertas_despacho_id_fkey
+  FOREIGN KEY (despacho_id) REFERENCES combustible_despachos(id) ON DELETE CASCADE;
+
+ALTER TABLE combustible_anomalias
+  DROP CONSTRAINT IF EXISTS combustible_anomalias_despacho_id_fkey;
+ALTER TABLE combustible_anomalias
+  ADD CONSTRAINT combustible_anomalias_despacho_id_fkey
+  FOREIGN KEY (despacho_id) REFERENCES combustible_despachos(id) ON DELETE CASCADE;
+
+ALTER TABLE combustible_alertas FORCE ROW LEVEL SECURITY;
+ALTER TABLE combustible_anomalias FORCE ROW LEVEL SECURITY;
+ALTER TABLE combustible_despachos FORCE ROW LEVEL SECURITY;
+
 COMMENT ON COLUMN combustible_despachos.comprobante_tipo IS
   'boleta|factura del proveedor. Solo en compra_externa de combustible; reemplaza al talonario, que ahí nunca existió (0109).';
 COMMENT ON COLUMN combustible_despachos.comprobante_numero IS

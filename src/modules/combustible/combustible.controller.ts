@@ -13,6 +13,7 @@ import { publicarEventoTenant } from "../../server/services/realtimeEvents.servi
 import { logger } from "../../server/config/logger";
 import {
   enviarCorreoAlertaHueco,
+  type PapelDeAlerta,
   enviarCorreoAlertaAnulacion,
   enviarCorreoAlertaSobredespacho,
   enviarCorreoAlertaMedidor,
@@ -1763,8 +1764,14 @@ export class CombustibleController {
         detalle: {
           despachoId: fila!.id,
           origen: data.origen,
-          serieTalonario: data.serie_talonario,
-          nVale: data.n_vale,
+          // Uno de los dos pares identifica el papel, según el origen
+          // (0109). Los dos van siempre: la bitácora tiene que poder decir
+          // QUÉ se registró, y una compra externa sin comprobante en el
+          // detalle sería una línea que no se puede cruzar con nada.
+          serieTalonario: data.serie_talonario ?? null,
+          nVale: data.n_vale ?? null,
+          comprobanteTipo: data.comprobante_tipo ?? null,
+          comprobanteNumero: data.comprobante_numero ?? null,
         },
         contexto: contextoAuditoriaModulo(req),
       });
@@ -1774,9 +1781,19 @@ export class CombustibleController {
       await this.procesarAlertasDespachoCreado(tenantId, fila!.id, data);
       res.status(201).json(fila);
     } catch (err) {
-      if (err instanceof Error && err.message.includes("ya está registrado")) {
-        // 409: no es un dato mal formado, es el mismo vale tipeado dos
-        // veces -- mismo criterio que el vale duplicado del punto 5.
+      if (
+        err instanceof Error &&
+        // "registrado" = vale; "registrada" = boleta/factura (0109). Los dos
+        // géneros a propósito: el mensaje nombra el papel que el cargador
+        // tiene en la mano, y este `includes` es lo único que separa un 409
+        // de un 500 que la cola offline reintentaría para siempre.
+        (err.message.includes("ya está registrado") || err.message.includes("ya está registrada"))
+      ) {
+        // 409: no es un dato mal formado, es el mismo papel cargado dos
+        // veces -- mismo criterio que el vale duplicado del punto 5. Y es un
+        // 4xx a propósito: `esErrorPermanente` de offlineSync descarta la
+        // entrada en vez de reintentarla, que es justo lo que corresponde
+        // cuando el despacho YA está en la base.
         res.status(409).json({ error: err.message });
         return;
       }
@@ -1854,18 +1871,21 @@ export class CombustibleController {
           despachoId,
           serieTalonario: resultado.despacho.serie_talonario,
           nVale: resultado.despacho.n_vale,
+          comprobanteTipo: resultado.despacho.comprobante_tipo,
+          comprobanteNumero: resultado.despacho.comprobante_numero,
           motivo,
         },
         contexto: contextoAuditoriaModulo(req),
       });
       await publicarEventoTenant(tenantId, "combustible.despacho_anulado", { despachoId });
-      await this.procesarAlertaAnulacion(
-        tenantId,
-        despachoId,
-        resultado.despacho.serie_talonario,
-        resultado.despacho.n_vale,
-        motivo
-      );
+      await this.procesarAlertaAnulacion(tenantId, despachoId, motivo, {
+        // 0109: una compra externa anulada no tiene vale. El correo y la
+        // alerta la nombran por su comprobante.
+        serieTalonario: resultado.despacho.serie_talonario,
+        nVale: resultado.despacho.n_vale,
+        comprobanteTipo: resultado.despacho.comprobante_tipo,
+        comprobanteNumero: resultado.despacho.comprobante_numero,
+      });
       res.json(resultado.despacho);
     } catch {
       res.status(500).json({ error: "Error al anular el despacho" });
@@ -1893,6 +1913,29 @@ export class CombustibleController {
 
     const serieTalonario = data.serie_talonario;
     const nVale = data.n_vale;
+
+    // Desde 0109 una compra externa de combustible no trae vale: su papel es
+    // la boleta o la factura del proveedor. Eso parte los controles de abajo
+    // en dos grupos.
+    //
+    //  - Los del TALONARIO (hueco revelado, vale fuera de orden, vale
+    //    recargado, y resolver un hueco ya alertado) miran la SECUENCIA de
+    //    una serie. Sin serie no hay secuencia: se saltean. Meterlos igual
+    //    no solo sería inútil, sería dañino -- una compra en ruta entrando
+    //    en el correlativo del talonario propio genera huecos fantasma en
+    //    el único control del módulo que no puede volverse ruidoso.
+    //
+    //  - Los demás (medidor, consumo, sobredespacho, tope diario,
+    //    retroactivo) son del EQUIPO o de la fecha, no del papel, y aplican
+    //    exactamente igual. Se anclan en `despachoId`, que 0109 sumó como
+    //    ancla válida justo para esto.
+    const tieneVale = serieTalonario !== undefined && nVale !== undefined;
+    const papel = {
+      serieTalonario: serieTalonario ?? null,
+      nVale: nVale ?? null,
+      comprobanteTipo: data.comprobante_tipo ?? null,
+      comprobanteNumero: data.comprobante_numero ?? null,
+    };
     try {
       const {
         huecos,
@@ -1915,42 +1958,44 @@ export class CombustibleController {
         // el despacho_tardio del punto 4 -- que alguien se acuerde de un
         // vale dos días después es una señal, no algo a corregir en
         // silencio.
-        const { llegoTarde } = await service.resolverAlertaHuecoSiExiste(
-          client,
-          tenantId,
-          "combustible",
-          serieTalonario,
-          nVale
-        );
+        const { llegoTarde } = tieneVale
+          ? await service.resolverAlertaHuecoSiExiste(
+              client,
+              tenantId,
+              "combustible",
+              serieTalonario!,
+              nVale!
+            )
+          : { llegoTarde: false };
 
-        const huecos = await service.detectarHuecosRevelados(
-          client,
-          tenantId,
-          "combustible",
-          serieTalonario,
-          despachoId,
-          nVale
-        );
+        const huecos = tieneVale
+          ? await service.detectarHuecosRevelados(
+              client,
+              tenantId,
+              "combustible",
+              serieTalonario!,
+              despachoId,
+              nVale!
+            )
+          : [];
 
         // Vale cargado POR DEBAJO del máximo de su serie (0077). Si venía a
         // llenar un hueco alertado, `llegoTarde`/el UPDATE de arriba ya lo
         // explicaron y no hay nada que reportar: lo sospechoso es el vale
         // desordenado que NADIE estaba esperando.
-        const maxAnterior = await service.detectarValeFueraDeOrden(
-          client,
-          tenantId,
-          "combustible",
-          serieTalonario,
-          despachoId,
-          nVale
-        );
-        const huecoLoEsperaba = await service.existioHuecoPara(
-          client,
-          tenantId,
-          "combustible",
-          serieTalonario,
-          nVale
-        );
+        const maxAnterior = tieneVale
+          ? await service.detectarValeFueraDeOrden(
+              client,
+              tenantId,
+              "combustible",
+              serieTalonario!,
+              despachoId,
+              nVale!
+            )
+          : null;
+        const huecoLoEsperaba = tieneVale
+          ? await service.existioHuecoPara(client, tenantId, "combustible", serieTalonario!, nVale!)
+          : false;
         const fueraDeOrden = maxAnterior !== null && !huecoLoEsperaba ? maxAnterior : null;
 
         // Sobredespacho (0069/0070): solo aplica si el vale fue a un equipo.
@@ -1998,14 +2043,20 @@ export class CombustibleController {
         // El número de vale que vuelve con OTRA cantidad (0081). Reutilizar
         // el número es la corrección de un tipeo funcionando; que la
         // cantidad cambie es lo que hay que mirar.
-        const recargado = await service.evaluarValeRecargado(
-          client,
-          tenantId,
-          "combustible",
-          serieTalonario,
-          nVale,
-          data.cantidad!
-        );
+        // "El mismo número de vale vuelve con OTRA cantidad" solo existe si
+        // hay número de vale. El equivalente de la compra externa --la misma
+        // boleta cargada dos veces-- lo ataja antes el índice único de 0109,
+        // que la rechaza de plano en vez de alertar.
+        const recargado = tieneVale
+          ? await service.evaluarValeRecargado(
+              client,
+              tenantId,
+              "combustible",
+              serieTalonario!,
+              nVale!,
+              data.cantidad!
+            )
+          : null;
 
         // Consumo por hora de motor / por km (0088). Es el único control que
         // ve el combustible que sale CON vale y no llega a la máquina.
@@ -2203,56 +2254,53 @@ export class CombustibleController {
           valesFaltantes: huecos,
         });
         await enviarCorreoAlertaHueco(admins, {
-          serieTalonario,
+          // `huecos` solo se puebla con vale (ver tieneVale arriba), así que
+          // acá los dos están garantizados.
+          serieTalonario: serieTalonario!,
           valesFaltantes: huecos,
-          nValeQueLoRevelo: nVale,
+          nValeQueLoRevelo: nVale!,
         });
       }
 
       if (exceso) {
         await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
           tipo: "sobredespacho",
-          serieTalonario,
-          nVale,
+          ...papel,
         });
-        await enviarCorreoAlertaSobredespacho(admins, {
-          serieTalonario,
-          nVale,
-          ...exceso,
-        });
+        await enviarCorreoAlertaSobredespacho(admins, { ...papel, ...exceso });
       }
 
       if (fueraDeOrden !== null) {
         await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
           tipo: "vale_fuera_de_orden",
-          serieTalonario,
-          nVale,
+          ...papel,
         });
       }
 
       if (retro) {
         await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
           tipo: "despacho_retroactivo",
-          serieTalonario,
-          nVale,
+          ...papel,
         });
-        await enviarCorreoValeRetroactivo(admins, { serieTalonario, nVale, ...retro });
+        await enviarCorreoValeRetroactivo(admins, { ...papel, ...retro });
       }
 
       if (recargado) {
         await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
           tipo: "vale_recargado",
-          serieTalonario,
-          nVale,
+          ...papel,
         });
-        await enviarCorreoValeRecargado(admins, { serieTalonario, nVale, ...recargado });
+        await enviarCorreoValeRecargado(admins, {
+          serieTalonario: serieTalonario!,
+          nVale: nVale!,
+          ...recargado,
+        });
       }
 
       if (tope) {
         await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
           tipo: "tope_diario_excedido",
-          serieTalonario,
-          nVale,
+          ...papel,
         });
         await enviarCorreoTopeDiario(admins, {
           actor: tope.equipoId ? `El equipo #${tope.equipoId}` : `El destino "${tope.tipoDestino}"`,
@@ -2260,36 +2308,36 @@ export class CombustibleController {
           topeL: tope.topeL,
           vales: tope.valesEnLaVentana,
           base: tope.base,
-          serieTalonario,
-          nVale,
+          ...papel,
         });
       }
 
       if (consumo) {
         await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
           tipo: "consumo_excedido",
-          serieTalonario,
-          nVale,
+          ...papel,
         });
-        await enviarCorreoConsumoExcedido(admins, { ...consumo, serieTalonario, nVale });
+        await enviarCorreoConsumoExcedido(admins, { ...consumo, ...papel });
       }
 
       if (totalizador) {
         await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
           tipo: totalizador.motivo === "retroceso" ? "totalizador_retroceso" : "totalizador_salto",
-          serieTalonario,
-          nVale,
+          ...papel,
         });
-        await enviarCorreoTotalizador(admins, { serieTalonario, nVale, ...totalizador });
+        await enviarCorreoTotalizador(admins, {
+          serieTalonario: serieTalonario!,
+          nVale: nVale!,
+          ...totalizador,
+        });
       }
 
       if (medidor) {
         await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
           tipo: "medidor_inconsistente",
-          serieTalonario,
-          nVale,
+          ...papel,
         });
-        await enviarCorreoAlertaMedidor(admins, { serieTalonario, nVale, ...medidor });
+        await enviarCorreoAlertaMedidor(admins, { ...papel, ...medidor });
       }
     } catch (err) {
       logger.warn(
@@ -2312,9 +2360,15 @@ export class CombustibleController {
     despachoId: number,
     data: CrearDespachoCombustibleInput
   ) {
-    const serieTalonario = data.serie_talonario;
-    const nVale = data.n_vale;
-    const equipoId = data.equipo_id!; // el CHECK de 0092 lo garantiza para urea
+    // Los tres son opcionales en el tipo y obligatorios para urea: el
+    // schema (exigirVale + la rama de urea) y el CHECK de forma de 0092/0109
+    // los garantizan antes de llegar acá. La urea conserva su talonario
+    // PROPIO, así que todos los controles de secuencia de abajo siguen
+    // aplicando tal cual -- a diferencia de la compra externa de
+    // combustible, que desde 0109 ya no tiene vale.
+    const serieTalonario = data.serie_talonario!;
+    const nVale = data.n_vale!;
+    const equipoId = data.equipo_id!;
     try {
       const { huecos, fueraDeOrden, recargado, noHabilitado, ratio, tope, admins } =
         await withTenant(tenantId, async (client) => {
@@ -2991,17 +3045,15 @@ export class CombustibleController {
   private async procesarAlertaAnulacion(
     tenantId: string,
     despachoId: number,
-    serieTalonario: string,
-    nVale: number,
-    motivo: string
+    motivo: string,
+    papel: PapelDeAlerta
   ) {
     try {
       const admins = await withTenant(tenantId, async (client) => {
         await service.crearAlertas(client, tenantId, [
           {
             tipo: "vale_anulado",
-            serieTalonario,
-            nVale,
+            ...papel,
             despachoId,
             detalle: { motivo },
           },
@@ -3011,10 +3063,9 @@ export class CombustibleController {
 
       await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
         tipo: "vale_anulado",
-        serieTalonario,
-        nVale,
+        ...papel,
       });
-      await enviarCorreoAlertaAnulacion(admins, { serieTalonario, nVale, motivo });
+      await enviarCorreoAlertaAnulacion(admins, { ...papel, motivo });
     } catch (err) {
       logger.warn({ err, tenantId, despachoId }, "No se pudo procesar la alerta de vale anulado");
     }

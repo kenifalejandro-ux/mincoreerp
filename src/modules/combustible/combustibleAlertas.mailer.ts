@@ -15,6 +15,48 @@ interface Destinatario {
   nombre: string;
 }
 
+/** Qué papel originó la alerta.
+ *
+ *  Hasta 0109 la respuesta era siempre la misma --un vale del talonario-- y
+ *  cada correo la formateaba por su cuenta con un `padStart(5)` repetido.
+ *  La compra externa ya no tiene vale: su papel es la boleta o la factura
+ *  del proveedor, y los correos que pueden dispararse en los dos orígenes
+ *  (medidor, consumo, tope diario, retroactivo, anulación) necesitan nombrar
+ *  el que corresponda.
+ *
+ *  Se nombra con una sola función y no con un `if` en cada correo para que
+ *  "cómo se escribe un vale" siga siendo una sola decisión. */
+export interface PapelDeAlerta {
+  serieTalonario?: string | null;
+  nVale?: number | null;
+  comprobanteTipo?: string | null;
+  comprobanteNumero?: string | null;
+}
+
+/** "vale A-00015" | "boleta B001-00012345" | "la compra en ruta". */
+export function nombrarPapel(p: PapelDeAlerta): string {
+  if (p.serieTalonario && p.nVale != null) {
+    return `vale ${p.serieTalonario}-${String(p.nVale).padStart(5, "0")}`;
+  }
+  if (p.comprobanteTipo && p.comprobanteNumero) {
+    return `${p.comprobanteTipo} ${p.comprobanteNumero}`;
+  }
+  // No debería pasar (la base exige una de las dos formas), pero un correo
+  // de alerta nunca puede quedar en "undefined-NaN": eso es justo lo que
+  // hace que alguien lo ignore.
+  return "la compra en ruta";
+}
+
+/** La misma referencia pero para el TÍTULO, donde antes decía "en la serie
+ *  X". Una compra externa no tiene serie. */
+function nombrarOrigenDelPapel(p: PapelDeAlerta): string {
+  if (p.serieTalonario) return `la serie ${p.serieTalonario}`;
+  if (p.comprobanteTipo && p.comprobanteNumero) {
+    return `la ${p.comprobanteTipo} ${p.comprobanteNumero}`;
+  }
+  return "una compra en ruta";
+}
+
 /** Un vale más allá reveló que uno o más números anteriores nunca se
  *  registraron (ver detectarHuecosRevelados en combustible.repository.ts).
  *  Todavía no se sabe la causa -- puede resolverse solo en unas horas
@@ -45,8 +87,12 @@ export async function enviarCorreoAlertaHueco(
 export async function enviarCorreoAlertaSobredespacho(
   destinatarios: Destinatario[],
   params: {
-    serieTalonario: string;
-    nVale: number;
+    // 0109: puede venir de un vale (tanque propio, urea) o de la boleta/
+    // factura de una compra en ruta. Ver nombrarPapel.
+    serieTalonario?: string | null;
+    nVale?: number | null;
+    comprobanteTipo?: string | null;
+    comprobanteNumero?: string | null;
     cantidad: number;
     unidadDespacho: string;
     capacidad: number;
@@ -56,10 +102,10 @@ export async function enviarCorreoAlertaSobredespacho(
 ) {
   await enviarCorreoAlerta({
     destinatarios,
-    asunto: `Combustible: sobredespacho en vale ${params.serieTalonario}-${String(params.nVale).padStart(5, "0")}`,
-    titulo: `Sobredespacho detectado en la serie ${params.serieTalonario}`,
+    asunto: `Combustible: sobredespacho en ${nombrarPapel(params)}`,
+    titulo: `Sobredespacho detectado en ${nombrarOrigenDelPapel(params)}`,
     lineas: [
-      `El vale ${String(params.nVale).padStart(5, "0")} despachó ${params.cantidad} ` +
+      `El ${nombrarPapel(params)} despachó ${params.cantidad} ` +
         `${params.unidadDespacho} a una unidad cuyo tanque es de ${params.capacidad} ` +
         `${params.unidadCapacidad} -- un ${params.excesoPct}% por encima de su capacidad.`,
       "El vale se registró igual (no se bloquea el abastecimiento). Puede ser un bidón " +
@@ -75,8 +121,12 @@ export async function enviarCorreoAlertaSobredespacho(
 export async function enviarCorreoAlertaMedidor(
   destinatarios: Destinatario[],
   params: {
-    serieTalonario: string;
-    nVale: number;
+    // 0109: puede venir de un vale (tanque propio, urea) o de la boleta/
+    // factura de una compra en ruta. Ver nombrarPapel.
+    serieTalonario?: string | null;
+    nVale?: number | null;
+    comprobanteTipo?: string | null;
+    comprobanteNumero?: string | null;
     medidor: "horometro" | "odometro";
     motivo: "retroceso" | "excede_calendario" | "sin_lectura";
     valorAnterior?: number;
@@ -87,11 +137,11 @@ export async function enviarCorreoAlertaMedidor(
   }
 ) {
   const nombreMedidor = params.medidor === "horometro" ? "horómetro" : "odómetro";
-  const vale = String(params.nVale).padStart(5, "0");
+  const papel = nombrarPapel(params);
 
   const explicacion =
     params.motivo === "sin_lectura"
-      ? `El vale salió sin la lectura del ${nombreMedidor}` +
+      ? `El ${papel} salió sin la lectura del ${nombreMedidor}` +
         `${params.equipo ? ` de ${params.equipo}` : ""}. Sin ese número no se puede calcular el ` +
         `consumo del equipo, que es el único control que ve el combustible que sale con vale y ` +
         `no llega a la máquina.`
@@ -104,11 +154,11 @@ export async function enviarCorreoAlertaMedidor(
 
   await enviarCorreoAlerta({
     destinatarios,
-    asunto: `Combustible: ${nombreMedidor} inconsistente en vale ${params.serieTalonario}-${vale}`,
-    titulo: `Medidor inconsistente en la serie ${params.serieTalonario}`,
+    asunto: `Combustible: ${nombreMedidor} inconsistente en ${papel}`,
+    titulo: `Medidor inconsistente en ${nombrarOrigenDelPapel(params)}`,
     lineas: [
-      `Vale ${vale}. ${explicacion}`,
-      "El vale se registró igual (no se bloquea el abastecimiento). Puede ser un error de " +
+      `${papel.charAt(0).toUpperCase()}${papel.slice(1)}. ${explicacion}`,
+      "Se registró igual (no se bloquea el abastecimiento). Puede ser un error de " +
         "tipeo o un medidor adulterado -- revisar en el ERP.",
     ],
   });
@@ -508,8 +558,12 @@ export async function enviarCorreoTopeDiario(
     topeL: number;
     vales: number;
     base: string;
-    serieTalonario: string;
-    nVale: number;
+    // 0109: puede venir de un vale (tanque propio, urea) o de la boleta/
+    // factura de una compra en ruta. Ver nombrarPapel.
+    serieTalonario?: string | null;
+    nVale?: number | null;
+    comprobanteTipo?: string | null;
+    comprobanteNumero?: string | null;
   }
 ) {
   await enviarCorreoAlerta({
@@ -518,8 +572,8 @@ export async function enviarCorreoTopeDiario(
     titulo: `${params.actor} recibió ${params.acumuladoL} L en 24 horas`,
     lineas: [
       `Su tope es ${params.topeL} L (${params.base}).`,
-      `Se repartió en ${params.vales} vale(s); el que cruzó la línea es el ` +
-        `${params.serieTalonario}-${String(params.nVale).padStart(5, "0")}.`,
+      `Se repartió en ${params.vales} carga(s); la que cruzó la línea es el ` +
+        `${nombrarPapel(params)}.`,
       "Ningún vale por separado excede nada -- el problema es la suma. " +
         "Revisar contra el trabajo real de ese equipo o destino en el período.",
     ],
@@ -582,8 +636,12 @@ export async function enviarCorreoAlertaDescuadreVentana(
 export async function enviarCorreoValeRetroactivo(
   destinatarios: Destinatario[],
   params: {
-    serieTalonario: string;
-    nVale: number;
+    // 0109: puede venir de un vale (tanque propio, urea) o de la boleta/
+    // factura de una compra en ruta. Ver nombrarPapel.
+    serieTalonario?: string | null;
+    nVale?: number | null;
+    comprobanteTipo?: string | null;
+    comprobanteNumero?: string | null;
     diasDeAtraso: number;
     diasTolerados: number;
     despachadoEn: string;
@@ -591,16 +649,16 @@ export async function enviarCorreoValeRetroactivo(
 ) {
   await enviarCorreoAlerta({
     destinatarios,
-    asunto: `Combustible: vale cargado ${params.diasDeAtraso} días después de su fecha`,
+    asunto: `Combustible: carga registrada ${params.diasDeAtraso} días después de su fecha`,
     titulo:
-      `El vale ${params.serieTalonario}-${String(params.nVale).padStart(5, "0")} se cargó ` +
+      `El ${nombrarPapel(params)} se cargó ` +
       `${params.diasDeAtraso} días después de la fecha que declara`,
     lineas: [
       `Fecha declarada del despacho: ${new Date(params.despachadoEn).toLocaleString("es-PE")}.`,
       `Se tolera hasta ${params.diasTolerados} día(s) de atraso, que es lo que puede tardar un ` +
         "equipo sin señal en sincronizar.",
-      "No se bloqueó: perder un vale real de cancha sería peor. Pero una fecha vieja saca al " +
-        "vale de las cuentas del período en que se cargó -- conviene confirmar con el papel.",
+      "No se bloqueó: perder un registro real de cancha sería peor. Pero una fecha vieja lo " +
+        "saca de las cuentas del período en que se cargó -- conviene confirmar con el papel.",
     ],
   });
 }
@@ -674,14 +732,15 @@ export async function enviarCorreoSinVigilancia(
  *  revisión: "todo tiene que tener sustento". */
 export async function enviarCorreoAlertaAnulacion(
   destinatarios: Destinatario[],
-  params: { serieTalonario: string; nVale: number; motivo: string }
+  params: PapelDeAlerta & { motivo: string }
 ) {
+  const papel = nombrarPapel(params);
   await enviarCorreoAlerta({
     destinatarios,
-    asunto: `Combustible: vale anulado en talonario ${params.serieTalonario}`,
-    titulo: `Vale anulado en la serie ${params.serieTalonario}`,
+    asunto: `Combustible: ${papel} anulado`,
+    titulo: `Registro anulado en ${nombrarOrigenDelPapel(params)}`,
     lineas: [
-      `El vale ${String(params.nVale).padStart(5, "0")} fue anulado. Motivo: "${params.motivo}".`,
+      `El ${papel} fue anulado. Motivo: "${params.motivo}".`,
       "Revisar en el ERP y marcarlo como revisado si el motivo es válido.",
     ],
   });
@@ -813,8 +872,12 @@ export async function enviarCorreoConsumoExcedido(
     unidadMedida: string;
     litros: number;
     recorrido: number;
-    serieTalonario: string;
-    nVale: number;
+    // 0109: puede venir de un vale (tanque propio, urea) o de la boleta/
+    // factura de una compra en ruta. Ver nombrarPapel.
+    serieTalonario?: string | null;
+    nVale?: number | null;
+    comprobanteTipo?: string | null;
+    comprobanteNumero?: string | null;
   }
 ) {
   await enviarCorreoAlerta({
@@ -824,8 +887,8 @@ export async function enviarCorreoConsumoExcedido(
     lineas: [
       `Desde las cargas anteriores el equipo recibió ${params.litros} L para ${params.recorrido} ` +
         `${params.unidadMedida} de trabajo: ${params.consumo} L/${params.unidadMedida}, contra un ` +
-        `máximo de ${params.consumoMaximo} L/${params.unidadMedida}. Lo detectó el vale ` +
-        `${params.serieTalonario}-${String(params.nVale).padStart(5, "0")}.`,
+        `máximo de ${params.consumoMaximo} L/${params.unidadMedida}. Lo detectó el ` +
+        `${nombrarPapel(params)}.`,
       "Es el control que ve el combustible que sale CON vale pero no llega al equipo: el tanque " +
         "cuadra perfecto, lo que no cuadra es el trabajo que ese combustible debería haber hecho.",
     ],

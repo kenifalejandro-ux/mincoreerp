@@ -371,6 +371,20 @@ const LATERAL_DIFERENCIA_RECEPCION = `
   ) dif ON true
 `;
 
+/** El talonario es del TANQUE PROPIO (y de la urea, que tiene el suyo).
+ *
+ *  Antes de 0109 la compra externa también exigía serie + número, así que
+ *  esos vales inventados en el grifo de PRIMAX entraron en la misma
+ *  secuencia que los vales reales del talonario de la empresa. Dejarlos ahí
+ *  genera huecos fantasma: la secuencia salta porque mezcla dos
+ *  numeraciones que nunca fueron una.
+ *
+ *  Las compras NUEVAS ya no tienen vale y quedan afuera solas (serie NULL).
+ *  Esta condición es para las VIEJAS, que conservan el suyo. La urea no se
+ *  toca: su origen también es compra_externa, pero su talonario sí es real.
+ */
+const SOLO_TALONARIO_REAL = `(producto <> 'combustible' OR origen = 'tanque_propio')`;
+
 export class CombustibleRepository {
   async findAll(client: PoolClient, tenantId: string, alcance?: AlcanceCombustible) {
     // Solo los tanques que el usuario ve (0100): su grifo o un surtidor suyo.
@@ -983,6 +997,9 @@ export class CombustibleRepository {
     lectura_contometro, totalizador_lectura, surtidor_id, lectura_horometro, lectura_odometro,
     horas_abastecidas,
     presentacion, factor_litros, cantidad_bultos,
+    comprobante_tipo, comprobante_numero,
+    comprobante_key, comprobante_mime, comprobante_nombre, comprobante_bytes,
+    comprobante_subido_en, comprobante_subido_por,
     costo_unitario, (cantidad * costo_unitario) AS costo_total, observaciones,
     usuario_id, despachado_en, creado_en,
     conductor_nombre, conductor_dni,
@@ -1011,8 +1028,12 @@ export class CombustibleRepository {
       tipoCombustible: string | null;
       tipoDestino: string;
       equipoId: number | null;
-      serieTalonario: string;
-      nVale: number;
+      // Desde 0109 son opcionales: la compra externa de combustible se
+      // identifica con el comprobante del proveedor, no con un vale.
+      serieTalonario: string | null;
+      nVale: number | null;
+      comprobanteTipo?: string | null;
+      comprobanteNumero?: string | null;
       cantidad: number;
       lecturaContometro: number | null;
       totalizadorLectura?: number | null;
@@ -1045,7 +1066,8 @@ export class CombustibleRepository {
           lectura_contometro, lectura_horometro, lectura_odometro, horas_abastecidas,
           presentacion, factor_litros, cantidad_bultos,
           costo_unitario, observaciones, usuario_id, despachado_en,
-          conductor_nombre, conductor_dni, totalizador_lectura, surtidor_id
+          conductor_nombre, conductor_dni, totalizador_lectura, surtidor_id,
+          comprobante_tipo, comprobante_numero
         )
         -- El conductor se COPIA del equipo en este mismo INSERT (0083). Nadie
         -- lo tipea, y no se resuelve después con un JOIN a propósito: los
@@ -1054,7 +1076,7 @@ export class CombustibleRepository {
         -- combustible salió, que es lo único que hace confiable el reporte de
         -- consumo por conductor. Vale también para urea -- mismo equipo_id.
         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
-               e.conductor_nombre, e.conductor_dni, $23::numeric, $24::int
+               e.conductor_nombre, e.conductor_dni, $23::numeric, $24::int, $25, $26
           FROM (SELECT 1) dummy
           LEFT JOIN equipos e ON e.id = $8::int AND e.tenant_id = $1
         RETURNING ${CombustibleRepository.COLUMNAS_DESPACHO}
@@ -1084,6 +1106,8 @@ export class CombustibleRepository {
           data.despachadoEn,
           data.totalizadorLectura ?? null,
           data.surtidorId ?? null,
+          data.comprobanteTipo ?? null,
+          data.comprobanteNumero ?? null,
         ]
       );
       const fila = result.rows[0];
@@ -1093,8 +1117,15 @@ export class CombustibleRepository {
       return fila;
     } catch (err) {
       if (esViolacionUnicidad(err)) {
+        // Dos índices únicos distintos pueden saltar acá: el del vale
+        // (0062/0092) y el del comprobante (0109). El mensaje nombra el que
+        // corresponde a la forma que vino, no "vale" siempre -- decirle
+        // "vale duplicado" a quien cargó una boleta lo manda a revisar un
+        // talonario que no tiene en la mano.
         throw new Error(
-          `el vale ${data.nVale} de la serie ${data.serieTalonario} ya está registrado`,
+          data.comprobanteNumero
+            ? `la ${data.comprobanteTipo} ${data.comprobanteNumero} de este proveedor ya está registrada`
+            : `el vale ${data.nVale} de la serie ${data.serieTalonario} ya está registrado`,
           { cause: err }
         );
       }
@@ -1142,6 +1173,34 @@ export class CombustibleRepository {
       [tenantId, producto, serieTalonario, nVale]
     );
     return (result.rowCount ?? 0) > 0;
+  }
+
+  /** El equivalente de `existeVale` para la compra externa (0109): la misma
+   *  boleta del mismo proveedor no entra dos veces.
+   *
+   *  Devuelve la fila y no un booleano a propósito -- el mensaje de error
+   *  nombra la FECHA de la compra previa, que es lo que deja ver de un
+   *  vistazo si esto fue un doble tipeo de hoy o un papel de la semana
+   *  pasada que alguien está volviendo a cargar.
+   *
+   *  Solo cuentan las VIGENTES, espejo exacto del índice único parcial de
+   *  0109: anular una compra libera su comprobante, igual que anular un
+   *  vale libera su número. */
+  async findCompraPorComprobante(
+    client: PoolClient,
+    tenantId: string,
+    grifoId: number,
+    comprobanteTipo: string,
+    comprobanteNumero: string
+  ): Promise<{ id: number; despachado_en: string } | null> {
+    const result = await client.query<{ id: number; despachado_en: string }>(
+      `SELECT id, despachado_en FROM combustible_despachos
+       WHERE tenant_id = $1 AND grifo_id = $2
+         AND comprobante_tipo = $3 AND comprobante_numero = $4
+         AND anulada_en IS NULL`,
+      [tenantId, grifoId, comprobanteTipo, comprobanteNumero]
+    );
+    return result.rows[0] ?? null;
   }
 
   async findDespachoPorId(client: PoolClient, tenantId: string, id: number) {
@@ -1632,7 +1691,8 @@ export class CombustibleRepository {
   ) {
     const limites = await client.query<{ minimo: number | null; maximo: number | null }>(
       `SELECT MIN(n_vale) AS minimo, MAX(n_vale) AS maximo
-       FROM combustible_despachos WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3`,
+       FROM combustible_despachos WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3
+         AND ${SOLO_TALONARIO_REAL}`,
       [tenantId, producto, serieTalonario]
     );
     const { minimo, maximo } = limites.rows[0];
@@ -1647,6 +1707,7 @@ export class CombustibleRepository {
       WHERE NOT EXISTS (
         SELECT 1 FROM combustible_despachos d
         WHERE d.tenant_id = $1 AND d.producto = $2 AND d.serie_talonario = $3 AND d.n_vale = gs
+          AND ${SOLO_TALONARIO_REAL}
       )
       ORDER BY gs
       `,
@@ -1683,7 +1744,8 @@ export class CombustibleRepository {
     const result = await client.query<{ max_anterior: number | null }>(
       `SELECT MAX(n_vale) AS max_anterior
        FROM combustible_despachos
-       WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3 AND id <> $4`,
+       WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3 AND id <> $4
+         AND ${SOLO_TALONARIO_REAL}`,
       [tenantId, producto, serieTalonario, despachoId]
     );
     const maxAnterior = result.rows[0]?.max_anterior;
@@ -1713,7 +1775,8 @@ export class CombustibleRepository {
   ): Promise<number | null> {
     const r = await client.query<{ maximo: number | null }>(
       `SELECT MAX(n_vale) AS maximo FROM combustible_despachos
-        WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3`,
+        WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3
+          AND ${SOLO_TALONARIO_REAL}`,
       [tenantId, producto, serieTalonario]
     );
     return r.rows[0]?.maximo ?? null;
@@ -1739,7 +1802,8 @@ export class CombustibleRepository {
     const result = await client.query<{ max_anterior: number | null }>(
       `SELECT MAX(n_vale) AS max_anterior
        FROM combustible_despachos
-       WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3 AND id <> $4`,
+       WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3 AND id <> $4
+         AND ${SOLO_TALONARIO_REAL}`,
       [tenantId, producto, serieTalonario, despachoId]
     );
     const maxAnterior = result.rows[0]?.max_anterior;

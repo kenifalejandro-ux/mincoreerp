@@ -939,39 +939,69 @@ export class CombustibleService {
             throw new Error(`combustible_id ${data.combustible_id} no existe en este tenant`);
           }
         }
-        // El duplicado le gana a cualquier otro 400 -- ver el comentario de
-        // CombustibleRepository.existeVale. El constraint único de 0062
-        // sigue siendo la red de seguridad real contra una carrera entre
-        // dos requests simultáneos; esto es solo para dar la señal correcta
-        // en el caso común (no concurrente).
-        if (
-          await this.repository.existeVale(
+        // Desde 0109 una compra externa de combustible se identifica con el
+        // comprobante del proveedor, no con un vale: los dos controles de
+        // abajo son del TALONARIO y no tienen nada que mirar ahí. El
+        // chequeo equivalente para la compra es el del comprobante, más
+        // abajo.
+        if (data.serie_talonario !== undefined && data.n_vale !== undefined) {
+          // El duplicado le gana a cualquier otro 400 -- ver el comentario de
+          // CombustibleRepository.existeVale. El constraint único de 0062
+          // sigue siendo la red de seguridad real contra una carrera entre
+          // dos requests simultáneos; esto es solo para dar la señal correcta
+          // en el caso común (no concurrente).
+          if (
+            await this.repository.existeVale(
+              client,
+              tenantId,
+              data.producto,
+              data.serie_talonario,
+              data.n_vale
+            )
+          ) {
+            // El mensaje dice qué hacer, no solo qué pasó: quien lo lee está
+            // parado frente al surtidor con la máquina esperando. Y nombra el
+            // caso que más lo confunde -- que otro dispositivo lo haya cargado
+            // sin red y recién ahora haya sincronizado, así que el número que
+            // el operario tiene en la mano ya está ocupado sin que él lo sepa.
+            throw new Error(
+              `el vale ${data.n_vale} de la serie ${data.serie_talonario} ya está registrado. ` +
+                `Puede haberlo cargado otra persona, u otro dispositivo que estaba sin red y ` +
+                `recién sincronizó. Verificá el talonario y usá el siguiente número libre`
+            );
+          }
+
+          await this.validarSaltoDeTalonario(
             client,
             tenantId,
             data.producto,
             data.serie_talonario,
             data.n_vale
-          )
-        ) {
-          // El mensaje dice qué hacer, no solo qué pasó: quien lo lee está
-          // parado frente al surtidor con la máquina esperando. Y nombra el
-          // caso que más lo confunde -- que otro dispositivo lo haya cargado
-          // sin red y recién ahora haya sincronizado, así que el número que
-          // el operario tiene en la mano ya está ocupado sin que él lo sepa.
-          throw new Error(
-            `el vale ${data.n_vale} de la serie ${data.serie_talonario} ya está registrado. ` +
-              `Puede haberlo cargado otra persona, u otro dispositivo que estaba sin red y ` +
-              `recién sincronizó. Verificá el talonario y usá el siguiente número libre`
           );
         }
 
-        await this.validarSaltoDeTalonario(
-          client,
-          tenantId,
-          data.producto,
-          data.serie_talonario,
-          data.n_vale
-        );
+        // Mismo criterio que el duplicado de vale, para la forma nueva: el
+        // índice único de 0109 es la red real contra la carrera entre dos
+        // requests; esto da el mensaje bueno en el caso común. Y acá importa
+        // más que en el vale, porque este es el control que impide que un
+        // reintento de la cola offline cree una compra gemela.
+        if (data.comprobante_tipo !== undefined && data.comprobante_numero !== undefined) {
+          const previa = await this.repository.findCompraPorComprobante(
+            client,
+            tenantId,
+            data.grifo_id!,
+            data.comprobante_tipo,
+            data.comprobante_numero
+          );
+          if (previa) {
+            throw new Error(
+              `la ${data.comprobante_tipo} ${data.comprobante_numero} de este proveedor ya está ` +
+                `registrada (${new Date(previa.despachado_en).toLocaleDateString("es-PE")}). ` +
+                `Puede haberla cargado otra persona, u otro dispositivo que estaba sin red y ` +
+                `recién sincronizó. Si el papel es otro, revisá el número`
+            );
+          }
+        }
 
         await this.validarFormaDespacho(client, tenantId, data);
 
@@ -1021,8 +1051,10 @@ export class CombustibleService {
           tipoCombustible: esUrea ? null : data.tipo_combustible!,
           tipoDestino: data.tipo_destino,
           equipoId: data.equipo_id ?? null,
-          serieTalonario: data.serie_talonario,
-          nVale: data.n_vale,
+          serieTalonario: data.serie_talonario ?? null,
+          nVale: data.n_vale ?? null,
+          comprobanteTipo: data.comprobante_tipo ?? null,
+          comprobanteNumero: data.comprobante_numero ?? null,
           cantidad,
           lecturaContometro: data.lectura_contometro ?? null,
           totalizadorLectura: data.totalizador_lectura ?? null,
