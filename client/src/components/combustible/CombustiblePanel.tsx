@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Download,
   Eye,
+  Camera,
   FileSpreadsheet,
   FileText,
   Fuel,
@@ -6296,23 +6297,33 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   <div className="space-y-1">
                     <label
                       htmlFor="despacho-comprobante-foto"
-                      className="text-xs font-bold text-slate-700 uppercase"
+                      className="block text-xs font-bold text-slate-700 uppercase"
                     >
                       Foto del comprobante (recomendado)
                     </label>
-                    <input
-                      id="despacho-comprobante-foto"
-                      type="file"
-                      accept="image/jpeg,image/png,application/pdf"
-                      capture="environment"
-                      className="w-full text-sm text-slate-600"
-                      onChange={(e) => {
-                        void elegirFotoComprobante(e.target.files?.[0]);
-                        // Sin esto, elegir el MISMO archivo dos veces seguidas
-                        // no dispara onChange.
-                        e.target.value = "";
-                      }}
-                    />
+                    <label
+                      htmlFor="despacho-comprobante-foto"
+                      className="inline-flex items-center gap-2 cursor-pointer rounded-lg bg-slate-900 text-white px-3 py-2 text-xs font-bold hover:bg-slate-800 transition-all focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-slate-900"
+                    >
+                      <Camera className="w-4 h-4" aria-hidden="true" />
+                      {fotoComprobante ? "Cambiar foto" : "Tomar o elegir foto"}
+                      {/* Sin `capture`: en el celular deja elegir entre la
+                          cámara, la galería o un PDF; con `capture` solo abría
+                          la cámara. Oculto y no `display:none` para que siga
+                          siendo accesible por teclado. */}
+                      <input
+                        id="despacho-comprobante-foto"
+                        type="file"
+                        accept="image/jpeg,image/png,application/pdf"
+                        className="sr-only"
+                        onChange={(e) => {
+                          void elegirFotoComprobante(e.target.files?.[0]);
+                          // Sin esto, elegir el MISMO archivo dos veces seguidas
+                          // no dispara onChange.
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
                     {fotoComprobante && (
                       <p className="text-xs text-green-700">
                         {fotoComprobante.name} (
