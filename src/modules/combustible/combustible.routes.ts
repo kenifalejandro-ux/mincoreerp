@@ -37,6 +37,7 @@ import {
   actualizarSurtidorSchema,
   conectarSurtidorSchema,
   motivoSurtidorSchema,
+  calibracionSurtidorSchema,
 } from "../../server/schemas/combustible.schema";
 import { moverDeGrifoSchema } from "../../server/schemas/sedes.schema";
 import { cargarAlcance, GUARDIAS, requiereTanqueCompleto } from "./alcance";
@@ -216,6 +217,16 @@ router.put(
   requireRole("admin", "operador"),
   validate(actualizarSurtidorSchema),
   asyncHandler(controller.actualizarSurtidor.bind(controller))
+);
+// Calibración del contómetro (0108): mismo permiso que el resto del
+// surtidor, pero sin requireRole más estricto -- cargar un certificado no es
+// una maniobra de fraude, es un dato administrativo.
+router.put(
+  "/surtidores/:surtidorId/calibracion",
+  requirePestana("combustible", "tanques:surtidores"),
+  requireRole("admin", "operador"),
+  validate(calibracionSurtidorSchema),
+  asyncHandler(controller.actualizarCalibracionSurtidor.bind(controller))
 );
 router.post(
   "/surtidores/:surtidorId/conexiones",
