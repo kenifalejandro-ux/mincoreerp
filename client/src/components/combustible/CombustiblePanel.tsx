@@ -217,6 +217,27 @@ interface Equipo {
   tipo_medidor: "horometro" | "odometro" | null;
 }
 
+/** A dónde va el excedente de una recepción que no cabe (migración 0110). */
+type DestinoExcedente = "cubeta" | "equipo" | "devolucion";
+interface LineaReparto {
+  destino: DestinoExcedente;
+  cantidad: string;
+  equipo_id: string;
+}
+interface DetalleExcedente {
+  tanqueNombre: string;
+  unidad: string;
+  capacidad: number;
+  nivelMedido: number;
+  cantidadRecepcion: number;
+  excedenteLitros: number;
+}
+const DESTINOS_EXCEDENTE: Record<DestinoExcedente, string> = {
+  cubeta: "Tanqueta o cubeta (280 gal)",
+  equipo: "Directo a unidades",
+  devolucion: "Devolver al proveedor",
+};
+
 type OrigenDespacho = "tanque_propio" | "compra_externa";
 type TipoDestinoDespacho = "equipo" | "planta" | "reserva_cubeta";
 
@@ -1345,7 +1366,7 @@ const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   precinto_alterado: "Precinto que no coincide",
   precinto_reemplazado: "Precinto cambiado fuera de una recepción",
   equipo_de_otro_grifo: "Equipo cargado en otro grifo",
-  sobrestock_recepcion: "Sobrestock de recepción aceptado",
+  sobrestock_recepcion: "Excedente de recepción repartido",
 };
 
 /** El `detalle` es JSONB libre y cada tipo de alerta guarda cosas
@@ -1448,16 +1469,18 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
     );
   }
   if (a.tipo === "sobrestock_recepcion") {
-    const { cantidadRecepcion, totalTrasRecepcion, excedenteLitros, unidad } = a.detalle as {
+    const { cantidadRecepcion, excedenteLitros, unidad, reparto } = a.detalle as {
       cantidadRecepcion?: number;
-      totalTrasRecepcion?: number;
       excedenteLitros?: number;
       unidad?: string;
+      reparto?: { destino: DestinoExcedente; cantidad: number }[];
     };
+    const partes = (reparto ?? [])
+      .map((l) => `${l.cantidad} ${unidad ?? ""} -> ${DESTINOS_EXCEDENTE[l.destino] ?? l.destino}`)
+      .join("; ");
     return (
-      `Se aceptó una recepción de ${cantidadRecepcion ?? "?"} ${unidad ?? ""} que dejó el ` +
-      `tanque en ${totalTrasRecepcion ?? "?"} ${unidad ?? ""} -- ${excedenteLitros ?? "?"} ` +
-      `${unidad ?? ""} por encima de su capacidad`
+      `De una recepción de ${cantidadRecepcion ?? "?"} ${unidad ?? ""} no cabían ` +
+      `${excedenteLitros ?? "?"} ${unidad ?? ""}. Reparto: ${partes || "sin detalle"}`
     );
   }
   if (a.tipo === "recepcion_sin_validar") {
@@ -1891,7 +1914,7 @@ const FORM_INICIAL = {
   unidad: "gal" as Tanque["unidad"],
   tipo_punto: "fijo" as Tanque["tipo_punto"],
   ubicacion: "",
-  capacidad_total: "",
+  capacidad_total: "10000",
   nivel_actual: "0",
   nivel_minimo: "0",
   moneda: "PEN",
@@ -2314,6 +2337,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // recién cargada quedara fechada ANTES de la última lectura.
   const [horaRecepcionEditadaAMano, setHoraRecepcionEditadaAMano] = useState(false);
   const [enviandoRecepcion, setEnviandoRecepcion] = useState(false);
+  // El excedente que el servidor dejó pendiente de decisión (409) y el
+  // reparto que se está armando (0110).
+  const [excedentePendiente, setExcedentePendiente] = useState<DetalleExcedente | null>(null);
+  const [lineasReparto, setLineasReparto] = useState<LineaReparto[]>([]);
   // Se fija al ABRIR el modal, no al apretar el botón -- ver
   // patron_doble_clic_formularios: el botón bloqueado solo no alcanza.
   const [clienteUuidRecepcion, setClienteUuidRecepcion] = useState("");
@@ -2770,9 +2797,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             nivel_minimo: Number(formData.nivel_minimo),
             moneda: formData.moneda,
             activo: formData.activo,
-            tolerancia_capacidad_pct: Number(formData.tolerancia_capacidad_pct),
+            tolerancia_capacidad_pct: 0,
             modo_excedente_recepcion: formData.modo_excedente_recepcion,
-            limite_excedente_pct: aNumeroONull(formData.limite_excedente_pct),
+            limite_excedente_pct: null,
             requiere_documento: formData.requiere_documento,
             // Con varios surtidores el totalizador se configura en cada uno
             // (0098): no se manda desde acá.
@@ -2807,9 +2834,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             nivel_actual: Number(formData.nivel_actual),
             nivel_minimo: Number(formData.nivel_minimo),
             moneda: formData.moneda,
-            tolerancia_capacidad_pct: Number(formData.tolerancia_capacidad_pct),
+            tolerancia_capacidad_pct: 0,
             modo_excedente_recepcion: formData.modo_excedente_recepcion,
-            limite_excedente_pct: aNumeroONull(formData.limite_excedente_pct),
+            limite_excedente_pct: null,
             requiere_documento: formData.requiere_documento,
             usa_totalizador: formData.usa_totalizador,
             totalizador_tolerancia: Number(formData.totalizador_tolerancia),
@@ -4029,7 +4056,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   /** Espejo en el cliente del bloqueo por capacidad del service: avisa
    *  ANTES de mandar, con el mismo criterio (nivel medido + cantidad contra
-   *  capacidad * (1 + tolerancia)). El servidor lo revalida igual -- esto es
+   *  capacidad). El servidor lo revalida igual -- esto es
    *  para que el usuario lo vea mientras tipea, no una defensa.
    *
    *  Devuelve null si no hay nada que advertir o si falta algún dato. */
@@ -4042,15 +4069,25 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     }
     const nivel = Number(tanqueRecepcion.nivel_actual);
     const capacidad = Number(tanqueRecepcion.capacidad_total);
-    const techo = capacidad * (1 + Number(tanqueRecepcion.tolerancia_capacidad_pct) / 100);
+    const techo = capacidad;
     if (nivel + Number(recepcionForm.cantidad) > techo) {
-      return `No entra: el tanque tiene ${nivel.toLocaleString("es-PE")} ${tanqueRecepcion.unidad} medidos y su tope es ${techo.toLocaleString("es-PE")} ${tanqueRecepcion.unidad}.`;
+      const sobra = nivel + Number(recepcionForm.cantidad) - techo;
+      // Con la casilla "dejar decidir" no se bloquea: al registrar se elige
+      // a dónde va lo que no cabe.
+      if (tanqueRecepcion.modo_excedente_recepcion === "flexible") return null;
+      return `No entra: el tanque tiene ${nivel.toLocaleString("es-PE")} ${tanqueRecepcion.unidad} medidos, su capacidad es ${techo.toLocaleString("es-PE")} ${tanqueRecepcion.unidad} y sobran ${sobra.toLocaleString("es-PE")}.`;
     }
     return null;
   })();
 
   const handleRegistrarRecepcion = async (e: React.FormEvent) => {
     e.preventDefault();
+    await enviarRecepcion();
+  };
+
+  /** Envía la recepción. Con `reparto` es el reenvío del MISMO payload (mismo
+   *  cliente_uuid) después de decidir a dónde va el excedente. */
+  const enviarRecepcion = async (reparto?: LineaReparto[]) => {
     if (enviandoRecepcion) return;
 
     const recibidoEnIso = horaRecepcionEditadaAMano
@@ -4083,15 +4120,36 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 .filter(([, numero]) => numero.trim() !== "")
                 .map(([puntoId, numero]) => ({ punto_id: Number(puntoId), numero: numero.trim() }))
             : undefined,
+          reparto_excedente: reparto?.map((l) => ({
+            destino: l.destino,
+            cantidad: Number(l.cantidad),
+            equipo_id: l.destino === "equipo" ? Number(l.equipo_id) : undefined,
+          })),
         }),
       });
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        // 409 = el excedente espera una decisión (0110), no es un error.
+        if (res.status === 409 && body.requiereDecision) {
+          if (!permiteTanque("decidir_excedente")) {
+            alert(
+              `Esta recepción no cabe: sobran ${Number(body.detalle.excedenteLitros).toLocaleString("es-PE")} ${body.detalle.unidad}. ` +
+                "Tu perfil no puede decidir a dónde va el excedente: pídele a quien tenga ese permiso que registre la recepción."
+            );
+            return;
+          }
+          setExcedentePendiente(body.detalle as DetalleExcedente);
+          setLineasReparto([
+            { destino: "cubeta", cantidad: String(body.detalle.excedenteLitros), equipo_id: "" },
+          ]);
+          return;
+        }
         alert(body.error || body.errors?.[0]?.message || "Error al registrar la recepción.");
         return;
       }
 
+      setExcedentePendiente(null);
       setModalRecepcionAbierto(false);
       // Recargar: el costo promedio del tanque acaba de cambiar y se muestra
       // en la tabla.
@@ -5047,29 +5105,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       <option value="USD">USD ($)</option>
                     </select>
                   </div>
-                  <div className="space-y-1">
-                    <label
-                      htmlFor="tanque-tolerancia"
-                      className="text-xs font-bold text-slate-700 uppercase"
-                    >
-                      Tolerancia de capacidad (%)
-                    </label>
-                    <input
-                      id="tanque-tolerancia"
-                      type="number"
-                      min={0}
-                      max={100}
-                      step="0.01"
-                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-                      value={formData.tolerancia_capacidad_pct}
-                      onChange={(e) =>
-                        setFormData({ ...formData, tolerancia_capacidad_pct: e.target.value })
-                      }
-                    />
-                    <p className="text-xs text-slate-600">
-                      Margen sobre la capacidad antes de rechazar una recepción. 0 = estricto.
-                    </p>
-                  </div>
                   <div className="space-y-1 sm:col-span-2">
                     <label className="flex items-start gap-2 text-sm text-slate-700">
                       <input
@@ -5090,35 +5125,20 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     </label>
                     <p className="text-xs text-slate-600">
                       Sin marcar (default): una recepción que supera la capacidad se rechaza siempre
-                      -- se devuelve al proveedor. Marcado: se pregunta qué hacer (aceptar el
-                      sobrestock, rechazar, o pedirle a un admin que lo resuelva) porque el
-                      combustible ya se descargó.
+                      -- se devuelve al proveedor. Marcado: se pregunta qué hacer con el excedente
+                      porque el combustible ya se descargó.
                     </p>
                     {formData.modo_excedente_recepcion === "flexible" && (
-                      <div className="pt-1">
-                        <label
-                          htmlFor="tanque-limite-excedente"
-                          className="text-xs font-bold text-slate-700 uppercase"
-                        >
-                          Tope adicional del excedente (%)
-                        </label>
-                        <input
-                          id="tanque-limite-excedente"
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          placeholder="Sin tope"
-                          className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-                          value={formData.limite_excedente_pct}
-                          onChange={(e) =>
-                            setFormData({ ...formData, limite_excedente_pct: e.target.value })
-                          }
-                        />
-                        <p className="text-xs text-slate-600">
-                          Un excedente que supere este % de la capacidad se rechaza igual, aunque
-                          esté marcada la casilla de arriba -- es el "hasta acá lo asumimos
-                          nosotros". Vacío = sin tope, cualquier excedente admite decidir.
-                        </p>
+                      <div className="rounded-xl border border-slate-200 p-3 text-xs text-slate-700 space-y-1">
+                        <p className="font-bold uppercase">Ante un excedente se podrá elegir:</p>
+                        <ol className="list-decimal pl-4 space-y-1">
+                          <li>
+                            Pasar el excedente a tanquetas o cubetas (280 gal): se despacha desde
+                            ahí a unidades o se lleva en ruta.
+                          </li>
+                          <li>Cargarlo directamente de la cisterna a las unidades.</li>
+                          <li>Devolverlo al proveedor.</li>
+                        </ol>
                       </div>
                     )}
                   </div>
@@ -8643,8 +8663,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     · <strong>Capacidad:</strong>{" "}
                     {Number(tanqueRecepcion.capacidad_total).toLocaleString("es-PE")}{" "}
                     {tanqueRecepcion.unidad}
-                    {Number(tanqueRecepcion.tolerancia_capacidad_pct) > 0 &&
-                      ` (+${Number(tanqueRecepcion.tolerancia_capacidad_pct)}% tolerancia)`}
                   </p>
                   <p>
                     <strong>Costo promedio actual:</strong>{" "}
@@ -8759,6 +8777,172 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           </div>
         </div>
       )}
+      {/* Modal: a dónde va el excedente de una recepción (0110) */}
+      {excedentePendiente &&
+        (() => {
+          const suma = lineasReparto.reduce((acc, l) => acc + (Number(l.cantidad) || 0), 0);
+          const falta = Number((excedentePendiente.excedenteLitros - suma).toFixed(2));
+          const completo =
+            Math.abs(falta) < 0.01 &&
+            lineasReparto.every(
+              (l) => Number(l.cantidad) > 0 && (l.destino !== "equipo" || l.equipo_id !== "")
+            );
+          const actualizar = (i: number, cambio: Partial<LineaReparto>) =>
+            setLineasReparto(lineasReparto.map((l, j) => (j === i ? { ...l, ...cambio } : l)));
+          const u = excedentePendiente.unidad;
+          return (
+            <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
+              <div className="bg-white w-full max-w-xl rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
+                <div className="p-6 border-b">
+                  <h3 className="text-xl font-bold">La recepción no cabe en el tanque</h3>
+                  <p className="text-sm text-slate-600">
+                    {excedentePendiente.tanqueNombre}: capacidad{" "}
+                    {excedentePendiente.capacidad.toLocaleString("es-PE")} {u}, nivel{" "}
+                    {excedentePendiente.nivelMedido.toLocaleString("es-PE")} {u}. Sobran{" "}
+                    <strong>
+                      {excedentePendiente.excedenteLitros.toLocaleString("es-PE")} {u}
+                    </strong>
+                    : elige a dónde va cada parte. Al tanque entran{" "}
+                    {(
+                      excedentePendiente.cantidadRecepcion - excedentePendiente.excedenteLitros
+                    ).toLocaleString("es-PE")}{" "}
+                    {u}.
+                  </p>
+                </div>
+                <div className="p-6 space-y-3">
+                  {lineasReparto.map((l, i) => (
+                    <div key={i} className="grid grid-cols-12 gap-2 items-end">
+                      <div className="col-span-12 sm:col-span-5 space-y-1">
+                        <label
+                          htmlFor={`exc-destino-${i}`}
+                          className="text-xs font-bold text-slate-700 uppercase"
+                        >
+                          Destino
+                        </label>
+                        <select
+                          id={`exc-destino-${i}`}
+                          className="w-full border border-slate-200 rounded-xl p-3 text-sm"
+                          value={l.destino}
+                          onChange={(e) =>
+                            actualizar(i, { destino: e.target.value as DestinoExcedente })
+                          }
+                        >
+                          {(Object.keys(DESTINOS_EXCEDENTE) as DestinoExcedente[]).map((d) => (
+                            <option key={d} value={d}>
+                              {DESTINOS_EXCEDENTE[d]}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="col-span-6 sm:col-span-3 space-y-1">
+                        <label
+                          htmlFor={`exc-cantidad-${i}`}
+                          className="text-xs font-bold text-slate-700 uppercase"
+                        >
+                          Cantidad ({u})
+                        </label>
+                        <input
+                          id={`exc-cantidad-${i}`}
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          className="w-full border border-slate-200 rounded-xl p-3 text-sm"
+                          value={l.cantidad}
+                          onChange={(e) => actualizar(i, { cantidad: e.target.value })}
+                        />
+                      </div>
+                      <div className="col-span-6 sm:col-span-3 space-y-1">
+                        {l.destino === "equipo" && (
+                          <>
+                            <label
+                              htmlFor={`exc-equipo-${i}`}
+                              className="text-xs font-bold text-slate-700 uppercase"
+                            >
+                              Unidad
+                            </label>
+                            <select
+                              id={`exc-equipo-${i}`}
+                              className="w-full border border-slate-200 rounded-xl p-3 text-sm"
+                              value={l.equipo_id}
+                              onChange={(e) => actualizar(i, { equipo_id: e.target.value })}
+                            >
+                              <option value="">Elegir...</option>
+                              {equipos.map((eq) => (
+                                <option key={eq.id} value={eq.id}>
+                                  {eq.placa_codigo}
+                                </option>
+                              ))}
+                            </select>
+                          </>
+                        )}
+                      </div>
+                      <div className="col-span-12 sm:col-span-1">
+                        {lineasReparto.length > 1 && (
+                          <button
+                            type="button"
+                            aria-label="Quitar línea"
+                            onClick={() =>
+                              setLineasReparto(lineasReparto.filter((_, j) => j !== i))
+                            }
+                            className="text-slate-400 hover:text-red-600 p-2"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setLineasReparto([
+                        ...lineasReparto,
+                        {
+                          destino: "equipo",
+                          cantidad: falta > 0 ? String(falta) : "",
+                          equipo_id: "",
+                        },
+                      ])
+                    }
+                    className="text-sm font-bold text-sky-700 hover:underline"
+                  >
+                    + Dividir en otro destino
+                  </button>
+                  <p
+                    className={`text-sm font-bold ${completo ? "text-emerald-700" : "text-amber-700"}`}
+                  >
+                    {Math.abs(falta) < 0.01
+                      ? "El reparto cubre todo el excedente."
+                      : falta > 0
+                        ? `Faltan ${falta.toLocaleString("es-PE")} ${u} por asignar.`
+                        : `Te pasaste por ${Math.abs(falta).toLocaleString("es-PE")} ${u}.`}
+                  </p>
+                  <p className="text-xs text-slate-600">
+                    El costo es el de la factura para todos los litros. Queda registrado quién
+                    decidió y se avisa por correo.
+                  </p>
+                </div>
+                <div className="p-6 border-t flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setExcedentePendiente(null)}
+                    className="flex-1 border border-slate-200 font-bold py-3 rounded-2xl hover:bg-slate-50"
+                  >
+                    Volver
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!completo || enviandoRecepcion}
+                    onClick={() => enviarRecepcion(lineasReparto)}
+                    className="flex-1 bg-sky-600 text-white font-bold py-3 rounded-2xl hover:bg-sky-700 disabled:opacity-50"
+                  >
+                    {enviandoRecepcion ? "Registrando..." : "Registrar con este reparto"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       {/* Modal: historial de recepciones (con anulación) */}
       {modalHistorialRecepcionesAbierto && (
         <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">

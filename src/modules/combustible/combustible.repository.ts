@@ -4163,7 +4163,8 @@ export class CombustibleRepository {
     presentacion, factor_litros, cantidad_bultos,
     tipo_documento, numero_documento, recibido_en, usuario_id, creado_en,
     anulada_en, anulada_por, motivo_anulacion,
-    requiere_validacion, cantidad_documento, validada_en, validada_por
+    requiere_validacion, cantidad_documento, validada_en, validada_por,
+    cantidad_derivada
   `;
 
   /** Los datos del tanque que la Fase C necesita para validar una recepción
@@ -4389,6 +4390,8 @@ export class CombustibleRepository {
       combustibleId: number | null;
       grifoId: number;
       cantidad: number;
+      /** Litros de la entrega que no entraron al tanque (0110). */
+      cantidadDerivada: number;
       presentacion: string | null;
       factorLitros: number | null;
       cantidadBultos: number | null;
@@ -4408,9 +4411,10 @@ export class CombustibleRepository {
         INSERT INTO combustible_recepciones (
           tenant_id, producto, combustible_id, grifo_id, cantidad,
           presentacion, factor_litros, cantidad_bultos, costo_unitario,
-          tipo_documento, numero_documento, recibido_en, usuario_id, requiere_validacion
+          tipo_documento, numero_documento, recibido_en, usuario_id, requiere_validacion,
+          cantidad_derivada
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
         RETURNING ${CombustibleRepository.COLUMNAS_RECEPCION}
         `,
         [
@@ -4428,6 +4432,7 @@ export class CombustibleRepository {
           data.recibidoEn,
           usuarioId,
           data.requiereValidacion,
+          data.cantidadDerivada,
         ]
       );
       return result.rows[0];
@@ -4513,6 +4518,7 @@ export class CombustibleRepository {
              r.tipo_documento, r.numero_documento, r.recibido_en, r.usuario_id,
              r.creado_en, r.anulada_en, r.anulada_por, r.motivo_anulacion,
              r.requiere_validacion, r.cantidad_documento, r.validada_en, r.validada_por,
+             r.cantidad_derivada,
              c.tanque_nombre, g.nombre AS grifo_nombre,
              c.umbral_diferencia_pct, c.umbral_diferencia_piso,
              autor.nombre AS registrada_por_nombre,
@@ -5395,6 +5401,57 @@ export class CombustibleRepository {
   /** Valida una recepción: guarda la cantidad de la guía que escribió quien
    *  valida. `validada_en IS NULL` en el WHERE: dos validaciones simultáneas
    *  no pueden terminar las dos en 200 (mismo patrón que las anulaciones). */
+  /** Cuántos de estos equipos existen en el tenant (RLS ya filtra, el
+   *  tenant_id es el cinturón). */
+  async contarEquiposDelTenant(client: PoolClient, tenantId: string, ids: number[]) {
+    const r = await client.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM equipos WHERE tenant_id = $1 AND id = ANY($2::int[])`,
+      [tenantId, ids]
+    );
+    return Number(r.rows[0].n);
+  }
+
+  /** Las líneas del reparto del excedente de una recepción (0110). Misma
+   *  transacción que la recepción: si una línea falla, no queda una
+   *  recepción con litros derivados sin destino. */
+  async crearLineasExcedente(
+    client: PoolClient,
+    tenantId: string,
+    recepcionId: number,
+    usuarioId: string,
+    lineas: { destino: string; cantidad: number; equipo_id?: number; observaciones?: string }[]
+  ) {
+    for (const l of lineas) {
+      await client.query(
+        `INSERT INTO combustible_recepcion_excedentes
+           (tenant_id, recepcion_id, destino, cantidad, equipo_id, observaciones, decidido_por)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [
+          tenantId,
+          recepcionId,
+          l.destino,
+          l.cantidad,
+          l.equipo_id ?? null,
+          l.observaciones ?? null,
+          usuarioId,
+        ]
+      );
+    }
+  }
+
+  async findLineasExcedente(client: PoolClient, tenantId: string, recepcionId: number) {
+    const r = await client.query(
+      `SELECT x.id, x.destino, x.cantidad, x.equipo_id, e.placa_codigo AS equipo, x.observaciones,
+              x.creado_en
+         FROM combustible_recepcion_excedentes x
+         LEFT JOIN equipos e ON e.id = x.equipo_id
+        WHERE x.tenant_id = $1 AND x.recepcion_id = $2
+        ORDER BY x.id`,
+      [tenantId, recepcionId]
+    );
+    return r.rows;
+  }
+
   async validarRecepcion(
     client: PoolClient,
     tenantId: string,

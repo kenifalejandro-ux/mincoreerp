@@ -26,6 +26,10 @@ const pestañasTanques: DefinicionPestana[] = [
   ["surtidores", "Surtidores"],
   ["precios", "Precios"],
   ["registrar_recepcion", "Registrar recepción"],
+  // Repartir el excedente de una recepción que no cabe (0110). Solo cuando el
+  // tanque tiene marcada la casilla "dejar decidir". No nace para el grifero:
+  // el Admin decide quién.
+  ["decidir_excedente", "Decidir excedente de recepción"],
   ["registrar_despacho", "Registrar despacho"],
   ["nuevo_tanque", "Nuevo tanque"],
 ].map(([id, nombre]) => ({

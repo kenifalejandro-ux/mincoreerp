@@ -212,6 +212,17 @@ export const MODULOS: ModuloDefinicion[] = [
           grifo_interno_id: "grifos_internos",
         },
       },
+      // Reparto del excedente de una recepción (0110): cubeta, unidades o
+      // devolución. Cascadea desde la recepción.
+      {
+        nombre: "combustible_recepcion_excedentes",
+        pk: "serial",
+        fks: {
+          recepcion_id: "combustible_recepciones",
+          equipo_id: "equipos",
+          decidido_por: "usuarios",
+        },
+      },
       // Precintos numerados (migración 0095). Las tres cascadean desde su
       // padre (el tanque, el punto o la lectura), así que no necesitan
       // entrada en `raices`. Van DESPUÉS de combustible_recepciones y
