@@ -351,6 +351,9 @@ export const crearDespachoCombustibleSchema = z
     // tanqueta sale una carga en ruta (origen 'tanqueta').
     tanqueta_destino_id: z.number().int().positive().optional(),
     tanqueta_origen_id: z.number().int().positive().optional(),
+    // 0115: dónde se cargó desde la tanqueta. 'ruta' (default): sin vale y con
+    // medidor. 'planta': con vale, como el tanque.
+    tanqueta_lugar: z.enum(["ruta", "planta"]).optional(),
     // Solo tanque_propio.
     combustible_id: z.number().int().positive().optional(),
     // compra_externa (combustible) Y urea -- FK al catálogo -- ver
@@ -595,6 +598,13 @@ export const crearDespachoCombustibleSchema = z
         message: "tanqueta_destino_id solo aplica a un vale del tanque a 'reserva_cubeta'",
       });
     }
+    if (data.origen !== "tanqueta" && data.tanqueta_lugar !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["tanqueta_lugar"],
+        message: "tanqueta_lugar solo aplica a una carga desde tanqueta",
+      });
+    }
     if (data.origen !== "tanqueta" && data.tanqueta_origen_id !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -603,10 +613,12 @@ export const crearDespachoCombustibleSchema = z
       });
     }
 
-    // ── CARGA EN RUTA DESDE TANQUETA (0114) ────────────────────────────
-    // La registra el conductor: unidad, medidor y galones. Sin vale (la
-    // salida a ruta ya lo tuvo), sin tanque ni grifo de ruta.
+    // ── CARGA DESDE TANQUETA (0114/0115) ───────────────────────────────
+    // En RUTA la registra el conductor: unidad, medidor y galones, sin vale
+    // (la tanqueta salió con el suyo). En PLANTA es como un vale del tanque:
+    // con vale del talonario, y el medidor según la config (0113).
     if (data.origen === "tanqueta") {
+      const enPlanta = data.tanqueta_lugar === "planta";
       if (data.tanqueta_origen_id === undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -621,12 +633,21 @@ export const crearDespachoCombustibleSchema = z
           message: "la carga desde tanqueta siempre va a una unidad",
         });
       }
-      if ((data.lectura_horometro === undefined) === (data.lectura_odometro === undefined)) {
+      if (enPlanta) {
+        exigirVale(data, ctx, "una carga desde tanqueta en planta");
+        if (data.lectura_horometro !== undefined && data.lectura_odometro !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["lectura_horometro"],
+            message: "Mandá el horómetro o el odómetro, nunca los dos en el mismo vale",
+          });
+        }
+      } else if ((data.lectura_horometro === undefined) === (data.lectura_odometro === undefined)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["lectura_horometro"],
           message:
-            "la carga desde tanqueta exige el horómetro o el odómetro de la unidad: con él se calcula su consumo",
+            "la carga en ruta desde tanqueta exige el horómetro o el odómetro de la unidad: con él se calcula su consumo",
         });
       }
       for (const [campo, valor] of [
@@ -636,8 +657,13 @@ export const crearDespachoCombustibleSchema = z
         ["totalizador_lectura", data.totalizador_lectura],
         ["surtidor_id", data.surtidor_id],
         ["horas_abastecidas", data.horas_abastecidas],
-        ["serie_talonario", data.serie_talonario],
-        ["n_vale", data.n_vale],
+        // En ruta no hay vale; en planta sí (lo exige exigirVale de arriba).
+        ...(enPlanta
+          ? []
+          : ([
+              ["serie_talonario", data.serie_talonario],
+              ["n_vale", data.n_vale],
+            ] as [string, unknown][])),
         ["comprobante_tipo", data.comprobante_tipo],
         ["comprobante_numero", data.comprobante_numero],
         ["excedente_linea_id", data.excedente_linea_id],
@@ -646,7 +672,7 @@ export const crearDespachoCombustibleSchema = z
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: [campo],
-            message: `${campo} no aplica a una carga desde tanqueta`,
+            message: `${campo} no aplica a una carga desde tanqueta${enPlanta ? " en planta" : " en ruta"}`,
           });
         }
       }

@@ -266,6 +266,11 @@ router.patch(
 // Excedentes cargados directo de la cisterna a una unidad, sin vale todavía
 // (0112). Los ve quien registra despachos: es el que los va a regularizar.
 router.get(
+  "/despachos/ultimo-medidor",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  asyncHandler(controller.ultimoMedidorDeEquipo.bind(controller))
+);
+router.get(
   "/despachos/excedentes-pendientes",
   requirePestana("combustible", "tanques:registrar_despacho"),
   asyncHandler(controller.listarExcedentesPendientes.bind(controller))

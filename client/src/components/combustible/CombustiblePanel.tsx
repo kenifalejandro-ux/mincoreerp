@@ -387,6 +387,7 @@ interface DespachoHistorial {
   // o descargó (carga en ruta) el vale.
   tanque_excedente_codigo?: string | null;
   tanqueta_codigo?: string | null;
+  tanqueta_lugar?: "ruta" | "planta" | null;
 }
 
 // migrations/0068 -- mismo shape que AlertaCombustible en
@@ -1407,8 +1408,8 @@ function vigilanciaDe(t: Tanque): {
 const ETIQUETA_ORIGEN_DESPACHO: Record<OrigenDespacho, string> = {
   tanque_propio: "Tanque propio",
   compra_externa: "Compra externa",
-  excedente_recepcion: "Excedente de cisterna",
-  tanqueta: "Desde tanqueta (ruta)",
+  excedente_recepcion: "Excedente directo a unidad",
+  tanqueta: "Desde tanqueta",
 };
 
 const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
@@ -1881,6 +1882,8 @@ const DESPACHO_FORM_INICIAL = {
   // carga en ruta.
   tanqueta_destino_id: "",
   tanqueta_origen_id: "",
+  // 0115: dónde se cargó desde la tanqueta.
+  tanqueta_lugar: "ruta" as "ruta" | "planta",
   combustible_id: "",
   // De qué surtidor salió (0098): solo si el tanque tiene más de uno.
   surtidor_id: "",
@@ -2353,6 +2356,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [pedirMedidorEnDespacho, setPedirMedidorEnDespacho] = useState(false);
   const [formPideMedidor, setFormPideMedidor] = useState(false);
   const [tanquetasFormulario, setTanquetasFormulario] = useState<TanquetaFormulario[]>([]);
+  // La última lectura de medidor de la unidad elegida (0115): el que carga
+  // solo escribe la nueva, viendo la anterior.
+  const [ultimaLectura, setUltimaLectura] = useState<{
+    lectura_horometro: string | null;
+    lectura_odometro: string | null;
+    despachado_en: string;
+  } | null>(null);
   const [horasParaValidar, setHorasParaValidar] = useState("48");
   const [diasVarillaControl, setDiasVarillaControl] = useState("7");
   // El motivo solo se pide cuando el cambio afloja algo; el backend lo dice
@@ -3651,6 +3661,36 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     }
   };
 
+  useEffect(() => {
+    const conMedidor =
+      despachoForm.origen === "tanqueta" || despachoForm.origen === "compra_externa";
+    if (!modalDespachoAbierto || !conMedidor || despachoForm.equipo_id === "") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setUltimaLectura(null);
+      return;
+    }
+    let cancelado = false;
+    apiFetch(`/api/erp/combustible/despachos/ultimo-medidor?equipo_id=${despachoForm.equipo_id}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => {
+        if (!cancelado) setUltimaLectura(b ?? null);
+      })
+      .catch(() => {
+        if (!cancelado) setUltimaLectura(null);
+      });
+    return () => {
+      cancelado = true;
+    };
+  }, [modalDespachoAbierto, despachoForm.origen, despachoForm.equipo_id]);
+
+  const textoUltimaLectura = ultimaLectura
+    ? `Última lectura: ${Number(
+        ultimaLectura.lectura_horometro ?? ultimaLectura.lectura_odometro
+      ).toLocaleString(
+        "es-PE"
+      )} ${ultimaLectura.lectura_horometro !== null ? "h" : "km"} (${formatearFecha(ultimaLectura.despachado_en)})`
+    : null;
+
   /** Precarga el vale con lo que manda el pendiente: unidad, cantidad,
    *  combustible y el costo de la factura (el servidor lo vuelve a fijar). */
   const elegirExcedentePendiente = (lineaId: string) => {
@@ -3692,16 +3732,24 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             cliente_uuid: clienteUuidDespacho,
             origen: "tanqueta",
             tanqueta_origen_id: Number(despachoForm.tanqueta_origen_id),
+            tanqueta_lugar: despachoForm.tanqueta_lugar,
+            // En planta lleva vale, como el tanque (0115); en ruta no.
+            serie_talonario:
+              despachoForm.tanqueta_lugar === "planta" ? despachoForm.serie_talonario : undefined,
+            n_vale:
+              despachoForm.tanqueta_lugar === "planta" ? Number(despachoForm.n_vale) : undefined,
             tipo_combustible: despachoForm.tipo_combustible,
             tipo_destino: "equipo",
             equipo_id: Number(despachoForm.equipo_id),
             cantidad: Number(despachoForm.cantidad),
             lectura_horometro:
-              equipoSeleccionado?.tipo_medidor === "horometro"
+              equipoSeleccionado?.tipo_medidor === "horometro" &&
+              despachoForm.lectura_horometro !== ""
                 ? Number(despachoForm.lectura_horometro)
                 : undefined,
             lectura_odometro:
-              equipoSeleccionado?.tipo_medidor === "odometro"
+              equipoSeleccionado?.tipo_medidor === "odometro" &&
+              despachoForm.lectura_odometro !== ""
                 ? Number(despachoForm.lectura_odometro)
                 : undefined,
             observaciones: despachoForm.observaciones || undefined,
@@ -3826,7 +3874,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       const papel =
         despachoForm.origen === "compra_externa"
           ? `la ${despachoForm.comprobante_tipo} ${despachoForm.comprobante_numero.trim()}`
-          : despachoForm.origen === "tanqueta"
+          : despachoForm.origen === "tanqueta" && despachoForm.tanqueta_lugar === "ruta"
             ? `la carga desde ${
                 tanquetasFormulario.find((t) => String(t.id) === despachoForm.tanqueta_origen_id)
                   ?.codigo ?? "la tanqueta"
@@ -6122,11 +6170,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         setDespachoForm({
                           ...DESPACHO_FORM_INICIAL,
                           origen: e.target.value as OrigenDespacho,
+                          // El grifero carga desde la tanqueta en la planta (0115).
+                          tanqueta_lugar: esGrifero ? "planta" : "ruta",
                         })
                       }
                     >
                       <option value="compra_externa">Compra externa (ruta)</option>
-                      <option value="tanqueta">Desde tanqueta (ruta)</option>
+                      <option value="tanqueta">Desde tanqueta</option>
                     </select>
                   ) : (
                     <select
@@ -6137,14 +6187,16 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         setDespachoForm({
                           ...DESPACHO_FORM_INICIAL,
                           origen: e.target.value as OrigenDespacho,
+                          // El grifero carga desde la tanqueta en la planta (0115).
+                          tanqueta_lugar: esGrifero ? "planta" : "ruta",
                         })
                       }
                     >
                       <option value="tanque_propio">Tanque propio</option>
                       <option value="compra_externa">Compra externa (ruta)</option>
-                      {!esGrifero && <option value="tanqueta">Desde tanqueta (ruta)</option>}
+                      <option value="tanqueta">Desde tanqueta</option>
                       <option value="excedente_recepcion">
-                        Excedente de cisterna
+                        Excedente directo a unidad
                         {excedentesPendientes.length > 0
                           ? ` (${excedentesPendientes.length} pendiente${excedentesPendientes.length === 1 ? "" : "s"})`
                           : ""}
@@ -6275,40 +6327,76 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   const elegida = tanquetasFormulario.find(
                     (t) => String(t.id) === despachoForm.tanqueta_origen_id
                   );
+                  const enRuta = despachoForm.tanqueta_lugar === "ruta";
+                  // En ruta el medidor es el control y siempre se pide; en
+                  // planta sigue la config de la empresa (0113).
+                  const pideMedidor = enRuta || formPideMedidor;
+                  const medidor = equipoSeleccionado?.tipo_medidor ?? null;
                   return (
                     <>
-                      <div className="space-y-1">
-                        <label
-                          htmlFor="despacho-tanqueta-origen"
-                          className="text-xs font-bold text-slate-700 uppercase"
-                        >
-                          Tanqueta
-                        </label>
-                        <select
-                          id="despacho-tanqueta-origen"
-                          required
-                          className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-                          value={despachoForm.tanqueta_origen_id}
-                          onChange={(e) =>
-                            setDespachoForm({ ...despachoForm, tanqueta_origen_id: e.target.value })
-                          }
-                        >
-                          <option value="">
-                            {tanquetasFormulario.length === 0
-                              ? "No hay tanquetas registradas"
-                              : "Elegir tanqueta"}
-                          </option>
-                          {tanquetasFormulario.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              {t.codigo} (quedan {t.saldo.toLocaleString("es-PE")} gal)
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1">
+                          <label
+                            htmlFor="despacho-tanqueta-origen"
+                            className="text-xs font-bold text-slate-700 uppercase"
+                          >
+                            Tanqueta
+                          </label>
+                          <select
+                            id="despacho-tanqueta-origen"
+                            required
+                            className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                            value={despachoForm.tanqueta_origen_id}
+                            onChange={(e) =>
+                              setDespachoForm({
+                                ...despachoForm,
+                                tanqueta_origen_id: e.target.value,
+                              })
+                            }
+                          >
+                            <option value="">
+                              {tanquetasFormulario.length === 0
+                                ? "No hay tanquetas registradas"
+                                : "Elegir tanqueta"}
                             </option>
-                          ))}
-                        </select>
-                        <p className="text-xs text-slate-600">
-                          Lo que cargaste a la unidad desde la tanqueta que va en ruta. No lleva
-                          vale: la tanqueta ya salió con el suyo.
-                        </p>
+                            {tanquetasFormulario.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.codigo} (quedan {t.saldo.toLocaleString("es-PE")} gal)
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label
+                            htmlFor="despacho-tanqueta-lugar"
+                            className="text-xs font-bold text-slate-700 uppercase"
+                          >
+                            ¿Dónde se carga?
+                          </label>
+                          <select
+                            id="despacho-tanqueta-lugar"
+                            disabled={esGrifero}
+                            className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900 disabled:opacity-70"
+                            value={despachoForm.tanqueta_lugar}
+                            onChange={(e) =>
+                              setDespachoForm({
+                                ...despachoForm,
+                                tanqueta_lugar: e.target.value as "ruta" | "planta",
+                                serie_talonario: "",
+                                n_vale: "",
+                              })
+                            }
+                          >
+                            <option value="ruta">En ruta (sin vale)</option>
+                            <option value="planta">En planta (con vale)</option>
+                          </select>
+                        </div>
                       </div>
+                      <p className="text-xs text-slate-600">
+                        {enRuta
+                          ? "Lo que se cargó a la unidad desde la tanqueta que va en ruta. No lleva vale: la tanqueta salió con el suyo."
+                          : "La tanqueta se quedó en la planta y desde ahí se cargó a la unidad: lleva vale del talonario, como un despacho del tanque."}
+                      </p>
                       <div className="space-y-1">
                         <label
                           htmlFor="despacho-equipo-tanqueta"
@@ -6331,7 +6419,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           }
                         >
                           <option value="" disabled>
-                            Elegir unidad
+                            {equipos.length === 0 ? "No hay unidades registradas" : "Elegir unidad"}
                           </option>
                           {equipos.map((eq) => (
                             <option key={eq.id} value={eq.id}>
@@ -6340,7 +6428,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           ))}
                         </select>
                       </div>
-                      {equipoSeleccionado && !equipoSeleccionado.tipo_medidor && (
+                      {equipoSeleccionado && !medidor && pideMedidor && (
                         <p className="text-sm text-amber-700">
                           Esta unidad no tiene horómetro ni odómetro configurado: pedile al
                           administrador que lo cargue en Equipos.
@@ -6373,44 +6461,53 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                             </p>
                           )}
                         </div>
-                        {equipoSeleccionado?.tipo_medidor && (
+                        {pideMedidor && (
                           <div className="space-y-1">
                             <label
                               htmlFor="despacho-medidor-tanqueta"
                               className="text-xs font-bold text-slate-700 uppercase"
                             >
-                              {equipoSeleccionado.tipo_medidor === "horometro"
+                              {medidor === "horometro"
                                 ? "Horómetro de la unidad"
-                                : "Odómetro de la unidad"}
+                                : medidor === "odometro"
+                                  ? "Odómetro de la unidad"
+                                  : "Horómetro / odómetro (según la unidad)"}
                             </label>
                             <input
                               id="despacho-medidor-tanqueta"
                               type="number"
                               min={0}
                               step="0.01"
-                              required
-                              className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
+                              required={enRuta}
+                              disabled={!medidor}
+                              placeholder={medidor ? "" : "Elegí primero la unidad"}
+                              className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none disabled:opacity-60"
                               value={
-                                equipoSeleccionado.tipo_medidor === "horometro"
-                                  ? despachoForm.lectura_horometro
-                                  : despachoForm.lectura_odometro
+                                medidor === "odometro"
+                                  ? despachoForm.lectura_odometro
+                                  : despachoForm.lectura_horometro
                               }
                               onChange={(e) =>
                                 setDespachoForm({
                                   ...despachoForm,
-                                  ...(equipoSeleccionado.tipo_medidor === "horometro"
-                                    ? { lectura_horometro: e.target.value }
-                                    : { lectura_odometro: e.target.value }),
+                                  ...(medidor === "odometro"
+                                    ? { lectura_odometro: e.target.value }
+                                    : { lectura_horometro: e.target.value }),
                                 })
                               }
                             />
+                            {textoUltimaLectura && (
+                              <p className="text-xs text-slate-600">{textoUltimaLectura}</p>
+                            )}
                           </div>
                         )}
                       </div>
-                      <p className="text-xs text-slate-600">
-                        Con el medidor y los galones se calcula cuánto consume la unidad entre una
-                        carga y la siguiente.
-                      </p>
+                      {pideMedidor && (
+                        <p className="text-xs text-slate-600">
+                          Con el medidor y los galones se calcula cuánto consume la unidad entre una
+                          carga y la siguiente.
+                        </p>
+                      )}
                     </>
                   );
                 })()}
@@ -6813,6 +6910,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                             setDespachoForm({ ...despachoForm, lectura_odometro: e.target.value })
                           }
                         />
+                        {textoUltimaLectura && (
+                          <p className="text-xs text-slate-600">{textoUltimaLectura}</p>
+                        )}
                       </div>
                     ) : (
                       <div className="space-y-1">
@@ -6835,6 +6935,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                             setDespachoForm({ ...despachoForm, lectura_horometro: e.target.value })
                           }
                         />
+                        {textoUltimaLectura && (
+                          <p className="text-xs text-slate-600">{textoUltimaLectura}</p>
+                        )}
                       </div>
                     )}
                   </div>
@@ -6940,7 +7043,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 />
               </div>
 
-              {despachoForm.origen === "tanqueta" ? null : despachoForm.origen !==
+              {despachoForm.origen === "tanqueta" &&
+              despachoForm.tanqueta_lugar === "ruta" ? null : despachoForm.origen !==
                 "compra_externa" ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1">
@@ -7249,7 +7353,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           {d.origen === "excedente_recepcion"
                             ? `${d.tanque_excedente_codigo ?? "Tanque"} (excedente)`
                             : d.origen === "tanqueta"
-                              ? `Tanqueta ${d.tanqueta_codigo ?? ""}`
+                              ? `Tanqueta ${d.tanqueta_codigo ?? ""} (${d.tanqueta_lugar === "planta" ? "planta" : "ruta"})`
                               : (tanque?.tanque_nombre ?? grifo?.nombre ?? "—")}
                         </td>
                         <td className="p-3 text-sm text-slate-600">

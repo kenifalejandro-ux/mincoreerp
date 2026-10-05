@@ -34,7 +34,21 @@ const SQL_ENTRADAS = `
      WHERE d.tenant_id = t.tenant_id AND d.tanqueta_destino_id = t.id AND d.anulada_en IS NULL
   ), 0))`;
 
-/** Lo que salió: las cargas en ruta desde la tanqueta (0114). */
+/** Lo que entró por cada camino, para que el panel muestre de dónde vino. */
+const SQL_ENTRADAS_EXCEDENTE = `
+  COALESCE((
+    SELECT SUM(x.cantidad)
+      FROM combustible_recepcion_excedentes x
+      JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
+     WHERE x.tenant_id = t.tenant_id AND x.tanqueta_id = t.id AND r.anulada_en IS NULL
+  ), 0)`;
+const SQL_ENTRADAS_PREVISION = `
+  COALESCE((
+    SELECT SUM(d.cantidad) FROM combustible_despachos d
+     WHERE d.tenant_id = t.tenant_id AND d.tanqueta_destino_id = t.id AND d.anulada_en IS NULL
+  ), 0)`;
+
+/** Lo que salió: las cargas desde la tanqueta, en ruta o en planta (0114/0115). */
 const SQL_SALIDAS = `
   COALESCE((
     SELECT SUM(d.cantidad) FROM combustible_despachos d
@@ -44,6 +58,8 @@ const SQL_SALIDAS = `
 const COLUMNAS = `
   t.id, t.grifo_interno_id, t.codigo, t.capacidad, t.activa, t.motivo_baja, t.creado_en,
   ${SQL_ENTRADAS} AS entradas,
+  ${SQL_ENTRADAS_EXCEDENTE} AS entradas_excedente,
+  ${SQL_ENTRADAS_PREVISION} AS entradas_prevision,
   ${SQL_SALIDAS} AS salidas,
   ${SQL_ENTRADAS} - ${SQL_SALIDAS} AS saldo,
   t.capacidad - (${SQL_ENTRADAS} - ${SQL_SALIDAS}) AS libre`;
@@ -192,9 +208,9 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
          LEFT JOIN usuarios u ON u.id = d.usuario_id
         WHERE d.tenant_id = $1 AND d.tanqueta_destino_id = $2
        UNION ALL
-       SELECT 'carga_ruta', d.id::text, d.cantidad, d.despachado_en, d.anulada_en,
-              NULL, NULL, e.placa_codigo, d.lectura_horometro, d.lectura_odometro,
-              NULL, NULL, u.nombre
+       SELECT 'carga_' || d.tanqueta_lugar, d.id::text, d.cantidad, d.despachado_en,
+              d.anulada_en, NULL, NULL, e.placa_codigo, d.lectura_horometro,
+              d.lectura_odometro, d.serie_talonario, d.n_vale, u.nombre
          FROM combustible_despachos d
          LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
          LEFT JOIN usuarios u ON u.id = d.usuario_id

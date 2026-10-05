@@ -389,8 +389,9 @@ const LATERAL_DIFERENCIA_RECEPCION = `
  */
 // El despacho de un excedente de cisterna (0112) también usa el talonario de
 // la empresa: su vale entra en la misma secuencia que los del tanque.
-const SOLO_TALONARIO_REAL = `(producto <> 'combustible' OR origen IN ('tanque_propio', 'excedente_recepcion'))`;
-// (La carga en ruta desde tanqueta, 0114, no tiene vale: queda afuera.)
+// La carga desde tanqueta EN PLANTA (0115) también lleva vale del talonario;
+// la de ruta no tiene vale y queda afuera.
+const SOLO_TALONARIO_REAL = `(producto <> 'combustible' OR origen IN ('tanque_propio', 'excedente_recepcion') OR (origen = 'tanqueta' AND tanqueta_lugar = 'planta'))`;
 
 export class CombustibleRepository {
   async findAll(client: PoolClient, tenantId: string, alcance?: AlcanceCombustible) {
@@ -1018,7 +1019,7 @@ export class CombustibleRepository {
     conductor_nombre, conductor_dni,
     anulada_en, anulada_por, motivo_anulacion,
     excedente_linea_id, tanque_excedente_id,
-    tanqueta_destino_id, tanqueta_origen_id
+    tanqueta_destino_id, tanqueta_origen_id, tanqueta_lugar
   `;
 
   /** Inserta un despacho. La unicidad de (tenant_id, serie_talonario,
@@ -1075,6 +1076,8 @@ export class CombustibleRepository {
        *  carga en ruta. */
       tanquetaDestinoId?: number | null;
       tanquetaOrigenId?: number | null;
+      /** 0115: 'ruta' o 'planta', solo en la carga desde tanqueta. */
+      tanquetaLugar?: string | null;
     }
   ) {
     try {
@@ -1094,7 +1097,8 @@ export class CombustibleRepository {
           costo_unitario, observaciones, usuario_id, despachado_en,
           conductor_nombre, conductor_dni, totalizador_lectura, surtidor_id,
           comprobante_tipo, comprobante_numero, cliente_uuid,
-          excedente_linea_id, tanque_excedente_id, tanqueta_destino_id, tanqueta_origen_id
+          excedente_linea_id, tanque_excedente_id, tanqueta_destino_id, tanqueta_origen_id,
+          tanqueta_lugar
         )
         -- El conductor se COPIA del equipo en este mismo INSERT (0083). Nadie
         -- lo tipea, y no se resuelve después con un JOIN a propósito: los
@@ -1104,7 +1108,7 @@ export class CombustibleRepository {
         -- consumo por conductor. Vale también para urea -- mismo equipo_id.
         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
                e.conductor_nombre, e.conductor_dni, $23::numeric, $24::int, $25, $26, $27::uuid,
-               $28::bigint, $29::int, $30::bigint, $31::bigint
+               $28::bigint, $29::int, $30::bigint, $31::bigint, $32
           FROM (SELECT 1) dummy
           LEFT JOIN equipos e ON e.id = $8::int AND e.tenant_id = $1
         RETURNING ${CombustibleRepository.COLUMNAS_DESPACHO}
@@ -1141,6 +1145,7 @@ export class CombustibleRepository {
           data.tanqueExcedenteId ?? null,
           data.tanquetaDestinoId ?? null,
           data.tanquetaOrigenId ?? null,
+          data.tanquetaLugar ?? null,
         ]
       );
       const fila = result.rows[0];

@@ -929,12 +929,15 @@ export class CombustibleService {
    *  Devuelve el motivo del rechazo, o null si está permitido. */
   motivoOrigenNoPermitido(
     rol: UsuarioPayload["rol"],
-    origen: "tanque_propio" | "compra_externa" | "excedente_recepcion" | "tanqueta"
+    origen: "tanque_propio" | "compra_externa" | "excedente_recepcion" | "tanqueta",
+    tanquetaLugar?: "ruta" | "planta"
   ): string | null {
-    // La carga en ruta desde una tanqueta (0114) la registra el conductor,
-    // que es quien la hace. El grifero no: él está en la sede, no en ruta.
+    // La carga desde una tanqueta (0114/0115): en ruta la registra el
+    // conductor; en planta, el que despacha ahí (el grifero también).
     if (origen === "tanqueta") {
-      return rol === "grifero" ? "Tu usuario registra vales del tanque, no cargas en ruta" : null;
+      return rol === "grifero" && tanquetaLugar !== "planta"
+        ? "Tu usuario registra lo que se carga en la planta, no las cargas en ruta"
+        : null;
     }
     // El excedente de cisterna (0112) se carga en la sede, al lado del
     // tanque: lo regulariza el mismo que registra los vales del tanque.
@@ -1115,6 +1118,7 @@ export class CombustibleService {
           tanqueExcedenteId: excedente?.tanqueId ?? null,
           tanquetaDestinoId: data.tanqueta_destino_id ?? null,
           tanquetaOrigenId: data.tanqueta_origen_id ?? null,
+          tanquetaLugar: data.origen === "tanqueta" ? (data.tanqueta_lugar ?? "ruta") : null,
           grifoId: data.grifo_id ?? null,
           tipoCombustible: esUrea ? null : data.tipo_combustible!,
           tipoDestino: data.tipo_destino,
@@ -1436,10 +1440,12 @@ export class CombustibleService {
     if (!t.activa) throw new Error(`la tanqueta ${t.codigo} está dada de baja`);
     const equipo = await EquiposRepository.findTipoMedidor(client, tenantId, data.equipo_id!);
     if (!equipo) throw new Error(`equipo_id ${data.equipo_id} no existe en este tenant`);
-    if (equipo.tipo_medidor === "horometro" && data.lectura_horometro === undefined) {
+    // El medidor que llegue tiene que ser el de ESA unidad. En ruta es
+    // obligatorio (el schema exige uno); en planta puede faltar (0113).
+    if (equipo.tipo_medidor === "horometro" && data.lectura_odometro !== undefined) {
       throw new Error(`el equipo ${data.equipo_id} se mide por horómetro, no por odómetro`);
     }
-    if (equipo.tipo_medidor === "odometro" && data.lectura_odometro === undefined) {
+    if (equipo.tipo_medidor === "odometro" && data.lectura_horometro !== undefined) {
       throw new Error(`el equipo ${data.equipo_id} se mide por odómetro, no por horómetro`);
     }
     return {
@@ -1452,6 +1458,12 @@ export class CombustibleService {
   async saldoDeTanqueta(client: PoolClient, tenantId: string, id: number) {
     const t = await tanquetas.getTanqueta(client, tenantId, id);
     return t ? { codigo: t.codigo as string, saldo: Number(t.saldo) } : null;
+  }
+
+  /** La última lectura de medidor de una unidad (0115), para mostrarla en el
+   *  formulario: el que carga solo escribe la nueva. */
+  ultimoMedidorDeEquipo(client: PoolClient, tenantId: string, equipoId: number) {
+    return this.repository.findUltimoMedidorEquipo(client, tenantId, equipoId, null, null);
   }
 
   listarExcedentesPendientes(client: PoolClient, tenantId: string, grifos: number[] | null) {

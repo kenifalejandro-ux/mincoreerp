@@ -231,6 +231,53 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
     expect(alerta.detalle.saldo).toBe(-50);
   });
 
+  it("en planta (0115): lleva vale, sin medidor por defecto, y el grifero la puede registrar", async () => {
+    const tq = await tanque();
+    const tqt = await tanqueta();
+    await llenar(tq, tqt, 280);
+    const enPlanta = (ag: Agente, extra: Record<string, unknown> = {}) =>
+      ag.post("/api/erp/combustible/despachos").send({
+        origen: "tanqueta",
+        tanqueta_lugar: "planta",
+        tanqueta_origen_id: tqt,
+        tipo_combustible: "diesel_b5",
+        tipo_destino: "equipo",
+        equipo_id: volquete,
+        cantidad: 50,
+        serie_talonario: "HMC",
+        n_vale: nVale++,
+        ...extra,
+      });
+
+    const r = await enPlanta(grifero);
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.tanqueta_lugar).toBe("planta");
+    expect(await saldo(tqt)).toBe(230);
+
+    // Sin vale no se acepta en planta.
+    expect(
+      (await enPlanta(grifero, { serie_talonario: undefined, n_vale: undefined })).status
+    ).toBe(400);
+
+    const historial = await admin.get(`/api/erp/combustible/tanquetas/${tqt}/historial`);
+    const carga = historial.body.find((m: { tipo: string }) => m.tipo === "carga_planta");
+    expect(carga).toBeDefined();
+    expect(carga.serie_talonario).toBe("HMC");
+  });
+
+  it("el formulario puede pedir la última lectura de medidor de la unidad", async () => {
+    const tqt = await tanqueta();
+    const tq = await tanque();
+    await llenar(tq, tqt, 100);
+    const carga = await cargarEnRuta(conductor, tqt, 20, { lectura_horometro: 4321 });
+    expect(carga.status).toBe(201);
+    const r = await conductor
+      .get("/api/erp/combustible/despachos/ultimo-medidor")
+      .query({ equipo_id: volquete });
+    expect(r.status).toBe(200);
+    expect(Number(r.body.lectura_horometro)).toBe(4321);
+  });
+
   it("anular la carga en ruta devuelve el saldo; anular el vale de reserva lo quita", async () => {
     const tq = await tanque();
     const tqt = await tanqueta();

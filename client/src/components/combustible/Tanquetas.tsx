@@ -24,12 +24,17 @@ interface Tanqueta {
   motivo_baja: string | null;
   saldo: string;
   libre: string;
+  /** De dónde entró lo que tiene (0115): no se clasifica la tanqueta, se
+   *  muestra cómo se usó. */
+  entradas_excedente: string;
+  entradas_prevision: string;
+  salidas: string;
 }
 
 /** Un movimiento de la tanqueta (0111/0114): lo que entró (excedente de una
  *  recepción, previsión desde el tanque) y lo que salió (carga en ruta). */
 interface MovimientoTanqueta {
-  tipo: "excedente" | "prevision" | "carga_ruta";
+  tipo: "excedente" | "prevision" | "carga_ruta" | "carga_planta";
   id: string;
   cantidad: string;
   fecha: string;
@@ -50,6 +55,9 @@ const describirMovimiento = (m: MovimientoTanqueta) => {
   }
   if (m.tipo === "prevision") {
     return `Previsión desde ${m.tanque_codigo} · vale ${m.serie_talonario}-${m.n_vale}`;
+  }
+  if (m.tipo === "carga_planta") {
+    return `Carga en planta a ${m.equipo ?? "una unidad"} · vale ${m.serie_talonario}-${m.n_vale}`;
   }
   const medidor =
     m.lectura_horometro !== null
@@ -304,6 +312,13 @@ export default function TanquetasPanel() {
                 <p className="text-xs font-mono text-[#94a3b8]">
                   {pct.toFixed(0)}% · libre {formatear(Number(t.libre))} gal
                 </p>
+                {(Number(t.entradas_excedente) > 0 || Number(t.entradas_prevision) > 0) && (
+                  <p className="text-[11px] text-[#64748b] mt-1">
+                    Entró: {formatear(Number(t.entradas_excedente))} de excedente ·{" "}
+                    {formatear(Number(t.entradas_prevision))} de previsión · salió{" "}
+                    {formatear(Number(t.salidas))}
+                  </p>
+                )}
                 <div className="mt-auto pt-3 flex gap-2">
                   <button
                     onClick={() => verHistorial(t)}
@@ -456,7 +471,7 @@ export default function TanquetasPanel() {
         <VentanaFlotante
           id="combustible-tanqueta-historial"
           titulo={`Historial de ${historialDe.codigo}`}
-          subtitulo="Lo que entró (excedente o previsión desde el tanque) y lo que se cargó en ruta"
+          subtitulo="Lo que entró (excedente o previsión desde el tanque) y lo que se cargó a unidades, en ruta o en planta"
           onCerrar={() => setHistorialDe(null)}
           anchoInicial={640}
           altoInicial={460}
@@ -489,10 +504,10 @@ export default function TanquetasPanel() {
                     </td>
                     <td className="p-2">{h.usuario ?? "—"}</td>
                     <td className="p-2 text-right font-mono text-emerald-400">
-                      {h.tipo === "carga_ruta" ? "" : formatear(Number(h.cantidad))}
+                      {h.tipo.startsWith("carga_") ? "" : formatear(Number(h.cantidad))}
                     </td>
                     <td className="p-2 text-right font-mono">
-                      {h.tipo === "carga_ruta" ? formatear(Number(h.cantidad)) : ""}
+                      {h.tipo.startsWith("carga_") ? formatear(Number(h.cantidad)) : ""}
                     </td>
                   </tr>
                 ))}

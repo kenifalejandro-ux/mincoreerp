@@ -10,6 +10,8 @@ import { loginPorUI } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
 
 test("tanqueta: previsión desde el tanque y carga en ruta", async ({ page }) => {
+  // Cuatro formularios seguidos: los 30 s por defecto no alcanzan.
+  test.setTimeout(90_000);
   const marca = randomBytes(3).toString("hex").toUpperCase();
   const admin = adminA();
   await loginPorUI(page, admin.email, admin.password);
@@ -85,6 +87,30 @@ test("tanqueta: previsión desde el tanque y carga en ruta", async ({ page }) =>
   await page.locator("form").getByRole("button", { name: "Registrar despacho" }).click();
   await expect(page.getByText(new RegExp(`la carga desde ${codigoTanqueta}`))).toBeVisible();
 
+  // ── 0115: carga EN PLANTA desde la misma tanqueta, con vale ────────────
+  await page.getByRole("button", { name: "Registrar despacho" }).first().click();
+  await page.locator("#despacho-origen").selectOption("tanqueta");
+  await page.locator("#despacho-tanqueta-lugar").selectOption("planta");
+  await page
+    .locator("#despacho-tanqueta-origen")
+    .selectOption({ label: `${codigoTanqueta} (quedan 180 gal)` });
+  await page.locator("#despacho-equipo-tanqueta").selectOption({ label: `${placa} — VOLQUETE` });
+  await page.locator("#despacho-cantidad-tanqueta").fill("50");
+  // En planta lleva vale; el horómetro no se pide por defecto (0113).
+  await expect(page.locator("#despacho-medidor-tanqueta")).toHaveCount(0);
+  await page.locator("#despacho-serie").fill(`T${marca}`);
+  await page.locator("#despacho-n-vale").fill("1");
+  await page.locator("form").getByRole("button", { name: "Registrar despacho" }).click();
+  await expect(page.getByText(new RegExp(`el vale 1 de la serie T${marca}`))).toBeVisible();
+
+  // ── La última lectura aparece sola al elegir la unidad (en ruta) ───────
+  await page.getByRole("button", { name: "Registrar despacho" }).first().click();
+  await page.locator("#despacho-origen").selectOption("tanqueta");
+  await page.locator("#despacho-equipo-tanqueta").selectOption({ label: `${placa} — VOLQUETE` });
+  await expect(page.getByText(/Última lectura: 1,500 h/)).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+
   // El tanque bajó solo por la previsión (8000 - 280), no por la carga en ruta.
   const ficha = await (await page.request.get(`/api/erp/combustible/${tanqueId}`)).json();
   expect(Number(ficha.nivel_teorico)).toBe(7720);
@@ -94,5 +120,6 @@ test("tanqueta: previsión desde el tanque y carga en ruta", async ({ page }) =>
   const tarjeta = page
     .locator("div", { has: page.getByText(codigoTanqueta, { exact: true }) })
     .last();
-  await expect(tarjeta.getByText(/libre 100 gal/)).toBeVisible();
+  // 280 - 100 en ruta - 50 en planta = 130 → libre 150.
+  await expect(tarjeta.getByText(/libre 150 gal/)).toBeVisible();
 });

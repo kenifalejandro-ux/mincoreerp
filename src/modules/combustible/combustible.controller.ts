@@ -1744,7 +1744,11 @@ export class CombustibleController {
       // depende del body, no de la ruta, así que requireRole no puede
       // verlo. Antes de tocar la base: un permiso que se evalúa después de
       // escribir no es un permiso.
-      const noPermitido = service.motivoOrigenNoPermitido(req.usuario!.rol, data.origen);
+      const noPermitido = service.motivoOrigenNoPermitido(
+        req.usuario!.rol,
+        data.origen,
+        data.tanqueta_lugar
+      );
       if (noPermitido) {
         res.status(403).json({ error: noPermitido });
         return;
@@ -4288,6 +4292,21 @@ export class CombustibleController {
     } catch (err) {
       logger.warn({ err, tenantId, despachoId }, "No se pudo evaluar el saldo de la tanqueta");
     }
+  }
+
+  /** GET /despachos/ultimo-medidor?equipo_id= (0115): la última lectura de
+   *  horómetro/odómetro de la unidad, para que el formulario la muestre. */
+  async ultimoMedidorDeEquipo(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const equipoId = Number(req.query.equipo_id);
+    if (!Number.isInteger(equipoId) || equipoId <= 0) {
+      res.status(400).json({ error: "equipo_id inválido" });
+      return;
+    }
+    const fila = await withTenant(tenantId, (client) =>
+      service.ultimoMedidorDeEquipo(client, tenantId, equipoId)
+    );
+    res.json(fila ?? null);
   }
 
   /** GET /tanquetas/formulario (0114): las tanquetas activas del alcance con
