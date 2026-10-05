@@ -13,6 +13,7 @@ import { randomBytes } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import { loginPorUI } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
+import { primerGrifoActivo } from "./fixtures/grifos";
 
 test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente se reparte", async ({
   page,
@@ -24,14 +25,10 @@ test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente 
   const admin = adminA();
   await loginPorUI(page, admin.email, admin.password);
 
-  // Una sede propia de esta corrida: las tanquetas del tenant e2e sobreviven
-  // entre corridas, y una vieja con espacio cambiaría el reparto propuesto.
-  const sedes = (await (await page.request.get("/api/erp/sedes")).json()).sedes;
-  const grifoSede = await page.request.post("/api/erp/administracion/grifos", {
-    data: { sede_id: sedes[0].id, nombre: `Huamachuco ${marca}` },
-  });
-  expect(grifoSede.status(), "no se pudo crear el grifo de prueba").toBe(201);
-  const grifoInternoId = (await grifoSede.json()).id as number;
+  // El grifo que ya existe. NO se crea uno: con dos grifos activos, el resto
+  // de las specs (que crean equipos sin grifo) empieza a recibir 400 -- el
+  // tenant e2e es compartido y las specs corren en paralelo.
+  const grifoInternoId = await primerGrifoActivo(page);
 
   // Tanque LLENO (2000/2000): toda la entrega es excedente.
   const tanque = await page.request.post("/api/erp/combustible", {
@@ -105,25 +102,45 @@ test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente 
   await expect(page.getByText("La recepción no cabe en el tanque")).toBeVisible();
   const confirmar = page.getByRole("button", { name: "Registrar con este reparto" });
 
-  // El reparto propuesto: cada tanqueta hasta su tope (280 + 280) y el resto
-  // (40) en una línea a unidades sin unidad elegida, para decidir qué hacer.
-  await expect(page.locator("#exc-cantidad-0")).toHaveValue("280");
-  await expect(page.locator("#exc-cantidad-1")).toHaveValue("280");
-  await expect(page.locator("#exc-cantidad-2")).toHaveValue("40");
+  // El reparto propuesto llena tanquetas sin pasar ninguna de su tope. Otras
+  // specs en paralelo pueden tener tanquetas libres en este grifo, así que
+  // no se fija CUÁLES propone: solo que ninguna línea pase de 280.
+  await expect(page.locator("#exc-destino-0")).toHaveValue("cubeta");
+  expect(Number(await page.locator("#exc-cantidad-0").inputValue())).toBeLessThanOrEqual(280);
+
+  // Se arma el reparto con las tanquetas de ESTA corrida: 280 + 280 + 40.
+  const quitar = page.getByRole("button", { name: "Quitar línea" });
+  while ((await quitar.count()) > 0) await quitar.last().click();
+  const elegirTanqueta = async (i: number, codigo: string) => {
+    const valor = await page
+      .locator(`#exc-tanqueta-${i} option`, { hasText: codigo })
+      .getAttribute("value");
+    await page.locator(`#exc-tanqueta-${i}`).selectOption(valor!);
+  };
+  await page.locator("#exc-destino-0").selectOption("cubeta");
+  await elegirTanqueta(0, codigos[0]);
+  await page.locator("#exc-cantidad-0").fill("280");
+
+  await page.getByRole("button", { name: "+ Dividir en otro destino" }).click();
+  await page.locator("#exc-destino-1").selectOption("cubeta");
+  await elegirTanqueta(1, codigos[1]);
+  await page.locator("#exc-cantidad-1").fill("280");
+
+  // El resto va directo de la cisterna a la excavadora.
+  await page.getByRole("button", { name: "+ Dividir en otro destino" }).click();
   await expect(page.locator("#exc-destino-2")).toHaveValue("equipo");
+  await page.locator("#exc-cantidad-2").fill("40");
   await expect(page.getByText(/Completa cada línea/)).toBeVisible();
   await expect(confirmar).toBeDisabled();
+  await page.locator("#exc-equipo-2").selectOption({ label: placa });
 
-  // Una tanqueta no admite más que su espacio libre.
+  // Una tanqueta no admite más que su espacio libre, aunque el total cuadre.
   await page.locator("#exc-cantidad-0").fill("300");
   await page.locator("#exc-cantidad-2").fill("20");
   await expect(page.getByText(/solo admite 280/)).toBeVisible();
   await expect(confirmar).toBeDisabled();
   await page.locator("#exc-cantidad-0").fill("280");
   await page.locator("#exc-cantidad-2").fill("40");
-
-  // El resto va directo de la cisterna a la excavadora.
-  await page.locator("#exc-equipo-2").selectOption({ label: placa });
   await expect(page.getByText("El reparto cubre todo el excedente.")).toBeVisible();
   await expect(confirmar).toBeEnabled();
   await confirmar.click();

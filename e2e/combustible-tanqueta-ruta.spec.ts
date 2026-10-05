@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import { loginPorUI } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
+import { primerGrifoActivo } from "./fixtures/grifos";
 
 test("tanqueta: previsión desde el tanque y carga en ruta", async ({ page }) => {
   // Cuatro formularios seguidos: los 30 s por defecto no alcanzan.
@@ -16,13 +17,9 @@ test("tanqueta: previsión desde el tanque y carga en ruta", async ({ page }) =>
   const admin = adminA();
   await loginPorUI(page, admin.email, admin.password);
 
-  // Sede propia de la corrida: el tenant e2e sobrevive entre corridas.
-  const sedes = (await (await page.request.get("/api/erp/sedes")).json()).sedes;
-  const grifoSede = await page.request.post("/api/erp/administracion/grifos", {
-    data: { sede_id: sedes[0].id, nombre: `Huamachuco ${marca}` },
-  });
-  expect(grifoSede.status()).toBe(201);
-  const grifoInternoId = (await grifoSede.json()).id as number;
+  // El grifo que ya existe: crear otro rompe las specs que crean equipos sin
+  // grifo (el tenant e2e es compartido y todo corre en paralelo).
+  const grifoInternoId = await primerGrifoActivo(page);
 
   const tanque = await page.request.post("/api/erp/combustible", {
     data: {
