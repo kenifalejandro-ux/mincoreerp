@@ -2741,12 +2741,12 @@ export class CombustibleRepository {
    *  no el sistema se comporta distinto según si alguien pasó por la pantalla
    *  de configuración alguna vez. */
   /** Si el vale del tanque pide el medidor de la unidad (0113). Sin fila,
-   *  true: el comportamiento de siempre. */
+   *  false: el default que eligió Kenif (el medidor se toma en ruta). */
   async getDespachoPideMedidor(client: PoolClient, tenantId: string): Promise<boolean> {
     const r = await client.query<{ pide: boolean }>(
       `SELECT COALESCE(
          (SELECT despacho_pide_medidor FROM combustible_config WHERE tenant_id = $1),
-         true
+         false
        ) AS pide`,
       [tenantId]
     );

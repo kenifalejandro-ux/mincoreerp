@@ -158,7 +158,8 @@ test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente 
     page.locator("div.bg-slate-50", { hasText: placa }).filter({ hasText: "40 gal" })
   ).toBeVisible();
   await expect(page.locator("#despacho-costo-unitario")).toHaveValue("17.5");
-  await page.locator("#despacho-excedente-medidor").fill("1520");
+  // Por defecto el despacho interno no pide horómetro (0113): se toma en ruta.
+  await expect(page.locator("#despacho-excedente-medidor")).toHaveCount(0);
   await page.locator("#despacho-serie").fill(`S${marca}`);
   await page.locator("#despacho-n-vale").fill("1");
   await page.locator("form").getByRole("button", { name: "Registrar despacho" }).click();

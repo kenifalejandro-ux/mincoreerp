@@ -1,9 +1,9 @@
 /** tests/combustible-despacho-sin-medidor.test.ts
  *
  * Pedir (o no) el horómetro/odómetro en el vale del tanque (migración 0113).
- * Con la opción apagada el vale entra sin medidor y SIN la alerta "sin
- * lectura": el medidor se toma en las cargas en ruta. Apagarla es un
- * aflojamiento: pide motivo.
+ * Por defecto NO se pide (decisión de Kenif): el vale entra sin medidor y sin
+ * la alerta "sin lectura", porque el medidor se toma en las cargas en ruta.
+ * Prenderlo endurece; volver a apagarlo es un aflojamiento: pide motivo.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
@@ -84,23 +84,32 @@ describe("combustible: horómetro opcional en el despacho del tanque (0113)", ()
     );
   };
 
-  it("por defecto se pide: el vale sin horómetro deja la alerta 'sin lectura'", async () => {
+  it("por defecto NO se pide: el vale sin horómetro entra sin alerta 'sin lectura'", async () => {
     const formulario = await admin.get("/api/erp/combustible/config/formulario-despacho");
-    expect(formulario.body.despacho_pide_medidor).toBe(true);
+    expect(formulario.body.despacho_pide_medidor).toBe(false);
     const v = await valeSinMedidor();
     expect(v.status, JSON.stringify(v.body)).toBe(201);
+    expect(await alertaSinLectura(v.body.id)).toBeUndefined();
+  });
+
+  it("prenderlo endurece (sin motivo) y el vale sin horómetro vuelve a alertar", async () => {
+    const r = await admin
+      .put("/api/erp/combustible/config")
+      .send({ ...configBase, despacho_pide_medidor: true });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.despacho_pide_medidor).toBe(true);
+    const v = await valeSinMedidor();
+    expect(v.status).toBe(201);
     expect(await alertaSinLectura(v.body.id)).toBeDefined();
   });
 
-  it("apagarlo es un aflojamiento: sin motivo da 400", async () => {
-    const r = await admin
+  it("volver a apagarlo es un aflojamiento: sin motivo da 400, con motivo pasa", async () => {
+    const sinMotivo = await admin
       .put("/api/erp/combustible/config")
       .send({ ...configBase, despacho_pide_medidor: false });
-    expect(r.status).toBe(400);
-    expect(r.body.requiere_motivo).toBe(true);
-  });
+    expect(sinMotivo.status).toBe(400);
+    expect(sinMotivo.body.requiere_motivo).toBe(true);
 
-  it("apagado: el vale sin horómetro entra sin alerta, y el grifero lo ve en su formulario", async () => {
     const r = await admin.put("/api/erp/combustible/config").send({
       ...configBase,
       despacho_pide_medidor: false,
@@ -108,11 +117,12 @@ describe("combustible: horómetro opcional en el despacho del tanque (0113)", ()
     });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.despacho_pide_medidor).toBe(false);
-
     const v = await valeSinMedidor();
     expect(v.status).toBe(201);
     expect(await alertaSinLectura(v.body.id)).toBeUndefined();
+  });
 
+  it("el grifero lee la opción por su endpoint, no la config completa", async () => {
     const grifero = request.agent(app);
     const dni = String(89100000 + Math.floor(Math.random() * 800000));
     expect(
@@ -126,7 +136,6 @@ describe("combustible: horómetro opcional en el despacho del tanque (0113)", ()
     const f = await grifero.get("/api/erp/combustible/config/formulario-despacho");
     expect(f.status).toBe(200);
     expect(f.body.despacho_pide_medidor).toBe(false);
-    // La config completa sigue siendo solo del admin.
     expect((await grifero.get("/api/erp/combustible/config")).status).toBe(403);
   });
 });

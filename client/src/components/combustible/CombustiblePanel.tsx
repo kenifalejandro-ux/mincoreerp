@@ -2315,8 +2315,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // 0113: si el vale del tanque pide el medidor de la unidad. Uno para la
   // ventana de config (lo edita el admin) y otro para el formulario del vale
   // (lo lee quien despacha, por su propio endpoint).
-  const [pedirMedidorEnDespacho, setPedirMedidorEnDespacho] = useState(true);
-  const [formPideMedidor, setFormPideMedidor] = useState(true);
+  const [pedirMedidorEnDespacho, setPedirMedidorEnDespacho] = useState(false);
+  const [formPideMedidor, setFormPideMedidor] = useState(false);
   const [horasParaValidar, setHorasParaValidar] = useState("48");
   const [diasVarillaControl, setDiasVarillaControl] = useState("7");
   // El motivo solo se pide cuando el cambio afloja algo; el backend lo dice
@@ -3342,12 +3342,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     setMensajeExito(null);
     setClienteUuidDespacho(crypto.randomUUID());
     setFotoComprobante(null);
-    // Si el vale pide el medidor (0113). Sin respuesta, se pide: el lado
-    // estricto, igual que el default del servidor.
+    // Si el vale pide el medidor (0113). Sin respuesta, no se pide: el mismo
+    // default que el servidor (si la empresa lo prendió, el servidor no
+    // bloquea un vale sin él, solo lo alerta).
     apiFetch("/api/erp/combustible/config/formulario-despacho")
       .then((r) => (r.ok ? r.json() : null))
-      .then((b) => setFormPideMedidor(b?.despacho_pide_medidor !== false))
-      .catch(() => setFormPideMedidor(true));
+      .then((b) => setFormPideMedidor(b?.despacho_pide_medidor === true))
+      .catch(() => setFormPideMedidor(false));
     setErrorFotoComprobante(null);
     setMedidorCargado(null);
     setHorasEditadasAMano(false);

@@ -12,13 +12,16 @@
 -- cargas sin medidor cuentan igual en el numerador) ÷ horas o km recorridos.
 -- Lo que se pierde es la lectura en el punto de partida, no el control.
 --
--- Por EMPRESA y con default true (del lado estricto, como el resto de 0088):
--- un PUT viejo que no mande el campo solo puede endurecer. Apagarlo cuenta
--- como aflojamiento: pide motivo y avisa a los admins.
+-- Por EMPRESA, con default FALSE: decisión de Kenif (2026-10-05) -- es la
+-- configuración predeterminada que quiere para todas las empresas, porque
+-- las unidades cargan en ruta. Es la excepción a "defaults del lado
+-- estricto" de 0088, y queda dicho acá. Lo que sigue protegido: prenderlo es
+-- endurecer (sin motivo), y volver a apagarlo después es un aflojamiento
+-- auditado (pide motivo y avisa a los admins).
 -- ═══════════════════════════════════════════════════════════════════════════
 
 ALTER TABLE combustible_config
-  ADD COLUMN IF NOT EXISTS despacho_pide_medidor BOOLEAN NOT NULL DEFAULT true;
+  ADD COLUMN IF NOT EXISTS despacho_pide_medidor BOOLEAN NOT NULL DEFAULT false;
 
 COMMENT ON COLUMN combustible_config.despacho_pide_medidor IS
   'true: el vale del tanque propio y el del excedente de cisterna piden el horómetro/odómetro de la unidad y alertan "sin lectura" si falta. false: no lo piden ni alertan; el medidor se toma en las cargas en ruta.';
