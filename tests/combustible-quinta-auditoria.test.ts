@@ -268,7 +268,7 @@ describe("combustible: los diez huecos de la 5ª auditoría", () => {
       cantidad: 12000,
       costo_unitario: 16.8,
       recibido_en: en(2),
-      reparto_excedente: [{ destino: "cubeta", cantidad: 2000 }],
+      reparto_excedente: [{ destino: "devolucion", cantidad: 2000 }],
     });
     expect(rec.status, JSON.stringify(rec.body)).toBe(201);
     expect(Number(rec.body.cantidad)).toBe(10000);
@@ -290,7 +290,7 @@ describe("combustible: los diez huecos de la 5ª auditoría", () => {
       cantidad: 12000,
       costo_unitario: 16.8,
       recibido_en: en(2),
-      reparto_excedente: [{ destino: "cubeta", cantidad: 2000 }],
+      reparto_excedente: [{ destino: "devolucion", cantidad: 2000 }],
     };
     const r = await grifero.post("/api/erp/combustible/recepciones").send(cuerpo);
     expect(r.status).toBe(403);

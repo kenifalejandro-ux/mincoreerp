@@ -101,7 +101,8 @@ export function filtroHechoDeGrifo(a: AlcanceCombustible, col: string, desde: nu
 }
 
 /** Un VALE: del tanque propio, por su grifo o su surtidor; de compra externa,
- *  por el grifo del equipo o porque lo cargó el propio usuario. La urea no se
+ *  por el grifo del equipo o porque lo cargó el propio usuario (igual la carga
+ *  en ruta desde tanqueta, 0114: la registra el conductor). La urea no se
  *  filtra: su inventario es de la empresa. */
 export function filtroVale(
   a: AlcanceCombustible,
@@ -114,7 +115,7 @@ export function filtroVale(
     sql: `(${col}.producto = 'urea'
            OR ${col}.grifo_interno_id = ANY($${desde}::int[])
            OR ${col}.surtidor_id = ANY($${desde + 1}::int[])
-           OR (${col}.origen = 'compra_externa' AND ${col}.usuario_id = $${desde + 2}::uuid))`,
+           OR (${col}.origen IN ('compra_externa', 'tanqueta') AND ${col}.usuario_id = $${desde + 2}::uuid))`,
     valores: [a.grifos, a.surtidores, usuarioId],
   };
 }
@@ -251,6 +252,15 @@ export const GUARDIAS: Record<string, RequestParamHandler> = {
       client,
       `SELECT 1 FROM combustible_lecturas l
         WHERE l.id = $1 AND l.tenant_id = $2 AND l.grifo_interno_id = ANY($3::int[])`,
+      [id, tenantId, a.grifos]
+    )
+  ),
+  // Tanqueta (0111): es del grifo donde se llena.
+  tanquetaId: guardia((client, tenantId, a, id) =>
+    existe(
+      client,
+      `SELECT 1 FROM combustible_tanquetas t
+        WHERE t.id = $1 AND t.tenant_id = $2 AND t.grifo_interno_id = ANY($3::int[])`,
       [id, tenantId, a.grifos]
     )
   ),

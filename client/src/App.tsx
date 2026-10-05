@@ -139,13 +139,15 @@ function App() {
           pestanaInicial:
             tabActiva === "combustible:historico"
               ? "historico"
-              : tabActiva === "combustible:urea"
-                ? "urea"
-                : tabActiva === "combustible:auditoria"
-                  ? "auditoria"
-                  : tabActiva === "combustible:bitacora"
-                    ? "bitacora"
-                    : "tanques",
+              : tabActiva === "combustible:tanquetas"
+                ? "tanquetas"
+                : tabActiva === "combustible:urea"
+                  ? "urea"
+                  : tabActiva === "combustible:auditoria"
+                    ? "auditoria"
+                    : tabActiva === "combustible:bitacora"
+                      ? "bitacora"
+                      : "tanques",
         }
       : {};
 

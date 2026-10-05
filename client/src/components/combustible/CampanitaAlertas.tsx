@@ -43,6 +43,7 @@ const ETIQUETA_TIPO: Record<string, string> = {
   tanque_sin_vigilancia: "Tanque despachando sin vigilancia",
   equipo_de_otro_grifo: "Equipo cargado en otro grifo",
   sobrestock_recepcion: "Excedente de recepción repartido",
+  tanqueta_sobregirada: "Tanqueta sobregirada",
 };
 
 /** No toda alerta es sobre un vale (migración 0073): las de nivel bajo van

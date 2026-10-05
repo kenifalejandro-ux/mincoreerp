@@ -161,26 +161,6 @@ export const MODULOS: ModuloDefinicion[] = [
         pk: "serial",
         fks: { usuario_id: "usuarios" },
       },
-      // Fase B (migrations/0062) -- el vale digital. A diferencia de
-      // combustible_lecturas, NO cascadea desde `combustible`:
-      // combustible_id es nullable (solo aplica a origen='tanque_propio',
-      // ver el CHECK de forma en la migración) y sin ON DELETE, así que
-      // necesita su propia entrada en `raices` para el DELETE del wipe de
-      // tenant.
-      {
-        nombre: "combustible_despachos",
-        pk: "serial",
-        fks: {
-          combustible_id: "combustible",
-          equipo_id: "equipos",
-          grifo_id: "combustible_grifos",
-          usuario_id: "usuarios",
-          // 0097: dónde ocurrió el vale y dónde estaba el equipo.
-          grifo_interno_id: "grifos_internos",
-          equipo_grifo_interno_id: "grifos_internos",
-          surtidor_id: "surtidores",
-        },
-      },
       // Precios (migrations/0063) -- historial apilado, nunca se pisa. Sin
       // ON DELETE, mismo motivo que combustible_despachos: necesita su
       // propia entrada en `raices`.
@@ -212,6 +192,13 @@ export const MODULOS: ModuloDefinicion[] = [
           grifo_interno_id: "grifos_internos",
         },
       },
+      // Tanquetas / cubetas (0111). Van ANTES de las líneas del excedente:
+      // estas las referencian.
+      {
+        nombre: "combustible_tanquetas",
+        pk: "serial",
+        fks: { grifo_interno_id: "grifos_internos", creado_por: "usuarios" },
+      },
       // Reparto del excedente de una recepción (0110): cubeta, unidades o
       // devolución. Cascadea desde la recepción.
       {
@@ -220,7 +207,36 @@ export const MODULOS: ModuloDefinicion[] = [
         fks: {
           recepcion_id: "combustible_recepciones",
           equipo_id: "equipos",
+          tanqueta_id: "combustible_tanquetas",
           decidido_por: "usuarios",
+        },
+      },
+      // Fase B (migrations/0062) -- el vale digital. Va DESPUÉS de tanquetas y
+      // de las líneas del excedente (0112/0114): las referencia, y el restore
+      // inserta en este orden con las FK activas. A diferencia de
+      // combustible_lecturas, NO cascadea desde `combustible`:
+      // combustible_id es nullable (solo aplica a origen='tanque_propio',
+      // ver el CHECK de forma en la migración) y sin ON DELETE, así que
+      // necesita su propia entrada en `raices` para el DELETE del wipe de
+      // tenant.
+      {
+        nombre: "combustible_despachos",
+        pk: "serial",
+        fks: {
+          combustible_id: "combustible",
+          equipo_id: "equipos",
+          grifo_id: "combustible_grifos",
+          usuario_id: "usuarios",
+          // 0097: dónde ocurrió el vale y dónde estaba el equipo.
+          grifo_interno_id: "grifos_internos",
+          equipo_grifo_interno_id: "grifos_internos",
+          surtidor_id: "surtidores",
+          // 0112: el excedente que regulariza y el tanque de su recepción.
+          excedente_linea_id: "combustible_recepcion_excedentes",
+          tanque_excedente_id: "combustible",
+          // 0114: la tanqueta que llena (reserva) o de la que sale (en ruta).
+          tanqueta_destino_id: "combustible_tanquetas",
+          tanqueta_origen_id: "combustible_tanquetas",
         },
       },
       // Precintos numerados (migración 0095). Las tres cascadean desde su

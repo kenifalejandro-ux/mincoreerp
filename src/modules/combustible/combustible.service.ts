@@ -1,6 +1,8 @@
 /**src/modules/combutible/combustible.service.ts */
 
 import type { PoolClient } from "pg";
+
+import * as tanquetas from "./tanquetas.service";
 import type { Paginacion } from "../../server/shared/utils/pagination";
 import type {
   RegistrarLecturaCombustibleInput,
@@ -52,6 +54,15 @@ export interface ExcedenteRecepcionDetalle {
   cantidadRecepcion: number;
   totalTrasRecepcion: number;
   excedenteLitros: number;
+  /** Las tanquetas de la sede con espacio libre, para proponer el reparto
+   *  (0111). Solo viaja en el 409. */
+  tanquetasLibres?: {
+    id: number;
+    codigo: string;
+    capacidad: number;
+    saldo: number;
+    libre: number;
+  }[];
 }
 
 export type DestinoExcedente = "cubeta" | "equipo" | "devolucion";
@@ -61,6 +72,7 @@ export interface LineaRepartoExcedente {
   destino: DestinoExcedente;
   cantidad: number;
   equipo_id?: number;
+  tanqueta_id?: number;
   observaciones?: string;
 }
 
@@ -917,8 +929,19 @@ export class CombustibleService {
    *  Devuelve el motivo del rechazo, o null si está permitido. */
   motivoOrigenNoPermitido(
     rol: UsuarioPayload["rol"],
-    origen: "tanque_propio" | "compra_externa"
+    origen: "tanque_propio" | "compra_externa" | "excedente_recepcion" | "tanqueta",
+    tanquetaLugar?: "ruta" | "planta"
   ): string | null {
+    // La carga desde una tanqueta (0114/0115): en ruta la registra el
+    // conductor; en planta, el que despacha ahí (el grifero también).
+    if (origen === "tanqueta") {
+      return rol === "grifero" && tanquetaLugar !== "planta"
+        ? "Tu usuario registra lo que se carga en la planta, no las cargas en ruta"
+        : null;
+    }
+    // El excedente de cisterna (0112) se carga en la sede, al lado del
+    // tanque: lo regulariza el mismo que registra los vales del tanque.
+    if (rol === "grifero" && origen === "excedente_recepcion") return null;
     if (rol === "grifero" && origen !== "tanque_propio") {
       return "Tu usuario registra vales del tanque, no compras en grifos de ruta";
     }
@@ -1031,6 +1054,20 @@ export class CombustibleService {
 
         await this.validarFormaDespacho(client, tenantId, data);
 
+        // El excedente de cisterna (0112): la línea pendiente manda la unidad,
+        // la cantidad, el combustible y el COSTO (el de la factura). Lo que no
+        // coincide es un 400, no un dato a confiar.
+        const excedente =
+          data.origen === "excedente_recepcion"
+            ? await this.validarDespachoDeExcedente(client, tenantId, data, alcance)
+            : null;
+        // La carga en ruta desde tanqueta (0114): su costo es el de lo que
+        // entró a la tanqueta, no un dato del body.
+        const desdeTanqueta =
+          data.origen === "tanqueta"
+            ? await this.validarCargaDesdeTanqueta(client, tenantId, data, alcance)
+            : null;
+
         const despachadoEn = data.despachado_en ?? new Date().toISOString();
         const esUrea = data.producto === "urea";
 
@@ -1056,16 +1093,20 @@ export class CombustibleService {
         // más que el sistema.
         const costoUnitario = esUrea
           ? (data.costo_unitario ?? (await this.resolverCostoUrea(client, tenantId, despachadoEn)))
-          : data.origen === "tanque_propio"
-            ? await this.resolverCostoDelTanque(
-                client,
-                tenantId,
-                data.combustible_id!,
-                data.tipo_combustible!,
-                despachadoEn,
-                data.costo_unitario!
-              )
-            : data.costo_unitario!;
+          : excedente
+            ? excedente.costoUnitario
+            : desdeTanqueta
+              ? desdeTanqueta.costoUnitario
+              : data.origen === "tanque_propio"
+                ? await this.resolverCostoDelTanque(
+                    client,
+                    tenantId,
+                    data.combustible_id!,
+                    data.tipo_combustible!,
+                    despachadoEn,
+                    data.costo_unitario!
+                  )
+                : data.costo_unitario!;
 
         const surtidorId = await this.resolverSurtidorDelVale(client, tenantId, data, despachadoEn);
 
@@ -1073,6 +1114,11 @@ export class CombustibleService {
           producto: data.producto,
           origen: data.origen,
           combustibleId: data.combustible_id ?? null,
+          excedenteLineaId: excedente?.lineaId ?? null,
+          tanqueExcedenteId: excedente?.tanqueId ?? null,
+          tanquetaDestinoId: data.tanqueta_destino_id ?? null,
+          tanquetaOrigenId: data.tanqueta_origen_id ?? null,
+          tanquetaLugar: data.origen === "tanqueta" ? (data.tanqueta_lugar ?? "ruta") : null,
           grifoId: data.grifo_id ?? null,
           tipoCombustible: esUrea ? null : data.tipo_combustible!,
           tipoDestino: data.tipo_destino,
@@ -1234,6 +1280,11 @@ export class CombustibleService {
       return;
     }
 
+    // El excedente de cisterna (0112) y la carga desde tanqueta (0114) se
+    // validan aparte (validarDespachoDeExcedente / validarCargaDesdeTanqueta):
+    // no tienen tanque ni grifo de ruta.
+    if (data.origen === "excedente_recepcion" || data.origen === "tanqueta") return;
+
     if (data.origen === "tanque_propio") {
       if (Number(data.lectura_contometro) !== Number(data.cantidad)) {
         throw new Error(
@@ -1274,6 +1325,23 @@ export class CombustibleService {
             `${data.tipo_combustible} -- corregí el tipo o elegí el tanque correcto`
         );
       }
+
+      // Previsión a una tanqueta (0114): tiene que ser de la sede del tanque y
+      // tener lugar. La tanqueta mide en galones.
+      if (tanque && data.tanqueta_destino_id !== undefined) {
+        if (tanque.unidad !== "gal") {
+          throw new Error(
+            `la tanqueta mide en galones y el tanque ${tanque.codigo} en ${tanque.unidad}: no se puede llenar desde este tanque`
+          );
+        }
+        await tanquetas.validarLlenadoDeTanqueta(
+          client,
+          tenantId,
+          data.tanqueta_destino_id,
+          Number(tanque.grifo_interno_id),
+          data.cantidad!
+        );
+      }
       return;
     }
 
@@ -1300,6 +1368,114 @@ export class CombustibleService {
     if (equipo.tipo_medidor === "odometro" && data.lectura_odometro === undefined) {
       throw new Error(`el equipo ${equipoId} se mide por odómetro, no por horómetro`);
     }
+  }
+
+  /** El despacho que regulariza un excedente cargado directo de la cisterna
+   *  a una unidad (0112). La línea pendiente es la fuente de verdad: unidad,
+   *  cantidad y combustible tienen que coincidir, y el costo es el de la
+   *  factura de esa recepción (no lo que venga en el body). Todos los
+   *  mensajes dicen "el excedente": el controller los traduce a 400. */
+  private async validarDespachoDeExcedente(
+    client: PoolClient,
+    tenantId: string,
+    data: CrearDespachoCombustibleInput,
+    alcance?: AlcanceCombustible
+  ) {
+    const [linea] = await this.repository.findExcedentesPendientes(
+      client,
+      tenantId,
+      alcance && !alcance.todo ? alcance.grifos : null,
+      data.excedente_linea_id!
+    );
+    if (!linea) {
+      throw new Error(
+        "el excedente indicado no está pendiente: no existe, ya se despachó, o su recepción se anuló"
+      );
+    }
+    if (Number(linea.equipo_id) !== data.equipo_id) {
+      throw new Error(
+        `el excedente es para la unidad ${linea.equipo ?? linea.equipo_id}, no para la del vale`
+      );
+    }
+    if (Math.abs(Number(linea.cantidad) - data.cantidad!) > 0.01) {
+      throw new Error(
+        `el excedente pendiente es de ${Number(linea.cantidad)} ${linea.unidad} y el vale dice ${data.cantidad}`
+      );
+    }
+    if (linea.tipo_combustible !== data.tipo_combustible) {
+      throw new Error(
+        `el excedente es de ${linea.tipo_combustible} y el vale dice ${data.tipo_combustible}`
+      );
+    }
+    // El medidor que llegue tiene que ser el de ESA unidad (mismo cruce que la
+    // compra externa); que falte no bloquea, igual que en el vale del tanque.
+    const equipo = await EquiposRepository.findTipoMedidor(client, tenantId, data.equipo_id!);
+    if (equipo?.tipo_medidor === "horometro" && data.lectura_odometro !== undefined) {
+      throw new Error(`el equipo ${data.equipo_id} se mide por horómetro, no por odómetro`);
+    }
+    if (equipo?.tipo_medidor === "odometro" && data.lectura_horometro !== undefined) {
+      throw new Error(`el equipo ${data.equipo_id} se mide por odómetro, no por horómetro`);
+    }
+    return {
+      lineaId: Number(linea.id),
+      tanqueId: Number(linea.combustible_id),
+      costoUnitario: Number(linea.costo_unitario),
+    };
+  }
+
+  /** La carga en ruta desde una tanqueta (0114): la tanqueta existe, está
+   *  activa y en el alcance; el medidor es el de esa unidad. Que la carga
+   *  supere el saldo NO bloquea (los galones en ruta son estimados): lo marca
+   *  la alerta tanqueta_sobregirada. Mensajes con "la tanqueta" (400). */
+  private async validarCargaDesdeTanqueta(
+    client: PoolClient,
+    tenantId: string,
+    data: CrearDespachoCombustibleInput,
+    alcance?: AlcanceCombustible
+  ) {
+    const t = await tanquetas.getTanqueta(client, tenantId, data.tanqueta_origen_id!);
+    if (!t || (alcance && !alcance.todo && !alcance.grifos.includes(Number(t.grifo_interno_id)))) {
+      throw new Error("la tanqueta elegida no existe en este tenant");
+    }
+    if (!t.activa) throw new Error(`la tanqueta ${t.codigo} está dada de baja`);
+    const equipo = await EquiposRepository.findTipoMedidor(client, tenantId, data.equipo_id!);
+    if (!equipo) throw new Error(`equipo_id ${data.equipo_id} no existe en este tenant`);
+    // El medidor que llegue tiene que ser el de ESA unidad. En ruta es
+    // obligatorio (el schema exige uno); en planta puede faltar (0113).
+    if (equipo.tipo_medidor === "horometro" && data.lectura_odometro !== undefined) {
+      throw new Error(`el equipo ${data.equipo_id} se mide por horómetro, no por odómetro`);
+    }
+    if (equipo.tipo_medidor === "odometro" && data.lectura_horometro !== undefined) {
+      throw new Error(`el equipo ${data.equipo_id} se mide por odómetro, no por horómetro`);
+    }
+    return {
+      costoUnitario: await tanquetas.costoPromedioTanqueta(client, tenantId, Number(t.id)),
+    };
+  }
+
+  /** El saldo de una tanqueta después de una carga (0114), para la alerta de
+   *  sobregiro. */
+  async saldoDeTanqueta(client: PoolClient, tenantId: string, id: number) {
+    const t = await tanquetas.getTanqueta(client, tenantId, id);
+    return t ? { codigo: t.codigo as string, saldo: Number(t.saldo) } : null;
+  }
+
+  /** La última lectura de medidor de una unidad (0115), para mostrarla en el
+   *  formulario: el que carga solo escribe la nueva. */
+  ultimoMedidorDeEquipo(client: PoolClient, tenantId: string, equipoId: number) {
+    return this.repository.findUltimoMedidorEquipo(client, tenantId, equipoId, null, null);
+  }
+
+  listarExcedentesPendientes(client: PoolClient, tenantId: string, grifos: number[] | null) {
+    return this.repository.findExcedentesPendientes(client, tenantId, grifos);
+  }
+
+  getDespachoPideMedidor(client: PoolClient, tenantId: string) {
+    return this.repository.getDespachoPideMedidor(client, tenantId);
+  }
+
+  contarDespachosDeExcedente(client: PoolClient, tenantId: string, recepcionId: number) {
+    return this.repository.contarDespachosDeExcedente(client, tenantId, recepcionId);
   }
 
   listarDespachos(
@@ -1727,6 +1903,7 @@ export class CombustibleService {
       topeDiarioUreaL: number | null;
       ratioUreaDieselMaxPct: number | null;
       diasSinConteoUrea: number;
+      despachoPideMedidor: boolean;
     },
     usuarioId: string
   ) {
@@ -1762,6 +1939,7 @@ export class CombustibleService {
       tope_diario_urea_l: number | null;
       ratio_urea_diesel_max_pct: number | null;
       dias_sin_conteo_urea: number;
+      despacho_pide_medidor: boolean;
     },
     ahora: {
       ventana_gracia_horas: number;
@@ -1778,9 +1956,21 @@ export class CombustibleService {
       tope_diario_urea_l: number | null;
       ratio_urea_diesel_max_pct: number | null;
       dias_sin_conteo_urea: number;
+      despacho_pide_medidor: boolean;
     }
   ) {
     const cambios: { control: string; de: string; a: string }[] = [];
+
+    // Dejar de pedir el medidor en el vale del tanque (0113): el consumo
+    // queda medido solo entre las cargas en ruta. Es la operación real de
+    // algunas empresas, pero no puede pasar en silencio.
+    if (antes.despacho_pide_medidor && !ahora.despacho_pide_medidor) {
+      cambios.push({
+        control: "Horómetro/odómetro en los despachos del tanque",
+        de: "se pide y alerta si falta",
+        a: "no se pide (solo en cargas en ruta)",
+      });
+    }
 
     // Devolverle la varilla al grifero afloja: el que despacha vuelve a ser
     // el que mide, y la medición deja de ser un control independiente del
@@ -2193,6 +2383,8 @@ export class CombustibleService {
       despachadoEn: string;
       /** El despacho recién creado, para NO compararlo contra sí mismo. */
       despachoId: number;
+      /** Para saber si la falta de medidor se alerta (0113). */
+      origen?: string;
     }
   ) {
     const esHorometro = data.lecturaHorometro !== undefined && data.lecturaHorometro !== null;
@@ -2205,6 +2397,15 @@ export class CombustibleService {
     // dicho: sin la lectura no hay forma de calcular el consumo, que es el
     // único control del combustible que sale CON vale.
     if (valorNuevo === undefined || valorNuevo === null) {
+      // La empresa decidió no pedir el medidor en el vale del tanque (0113):
+      // que falte ahí es lo esperado, no algo que alertar. La compra externa
+      // lo exige siempre (schema), así que nunca llega acá sin él.
+      if (
+        data.origen !== "compra_externa" &&
+        !(await this.repository.getDespachoPideMedidor(client, tenantId))
+      ) {
+        return null;
+      }
       const equipo = await this.repository.getConsumoMaximoEquipo(client, tenantId, equipoId);
       if (!equipo?.tipoMedidor) return null;
       return {
@@ -5106,6 +5307,11 @@ export class CombustibleService {
     // Primera vez que se ve este excedente: 409, no guarda nada, el cliente
     // decide y reenvía el MISMO payload con `reparto_excedente`.
     if (!data.reparto_excedente) {
+      detalle.tanquetasLibres = await tanquetas.tanquetasLibresDelGrifo(
+        client,
+        tenantId,
+        Number(tanque.grifo_interno_id)
+      );
       throw new RecepcionExcedeCapacidadError(`${mensaje} -- requiere decisión`, detalle);
     }
 
@@ -5116,11 +5322,6 @@ export class CombustibleService {
         `el reparto del excedente suma ${sumaReparto} y el excedente es ${excedenteLitros}: tienen que coincidir`
       );
     }
-    if (data.cantidad! - excedenteLitros <= 0) {
-      throw new Error(
-        "el reparto del excedente no puede ser toda la recepción: al tanque tiene que entrar algo"
-      );
-    }
     const equipoIds = [...new Set(reparto.flatMap((l) => (l.equipo_id ? [l.equipo_id] : [])))];
     if (equipoIds.length > 0) {
       const existentes = await this.repository.contarEquiposDelTenant(client, tenantId, equipoIds);
@@ -5128,6 +5329,17 @@ export class CombustibleService {
         throw new Error("el reparto del excedente nombra un equipo que no existe en este tenant");
       }
     }
+    if (tanque.unidad !== "gal" && reparto.some((l) => l.destino === "cubeta")) {
+      throw new Error(
+        `el reparto del excedente no puede ir a tanquetas: miden en galones y el tanque en ${tanque.unidad}`
+      );
+    }
+    await tanquetas.validarLineasATanquetas(
+      client,
+      tenantId,
+      Number(tanque.grifo_interno_id),
+      reparto
+    );
     return { detalle, reparto };
   }
 

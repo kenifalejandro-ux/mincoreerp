@@ -39,6 +39,8 @@ import {
   conectarSurtidorSchema,
   motivoSurtidorSchema,
   calibracionSurtidorSchema,
+  crearTanquetaSchema,
+  actualizarTanquetaSchema,
 } from "../../server/schemas/combustible.schema";
 import { moverDeGrifoSchema } from "../../server/schemas/sedes.schema";
 import { cargarAlcance, GUARDIAS, requiereTanqueCompleto } from "./alcance";
@@ -259,6 +261,53 @@ router.patch(
   requireRole("admin", "operador"),
   validate(anularDespachoCombustibleSchema),
   asyncHandler(controller.anularDespacho.bind(controller))
+);
+
+// Excedentes cargados directo de la cisterna a una unidad, sin vale todavía
+// (0112). Los ve quien registra despachos: es el que los va a regularizar.
+router.get(
+  "/despachos/ultimo-medidor",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  asyncHandler(controller.ultimoMedidorDeEquipo.bind(controller))
+);
+router.get(
+  "/despachos/excedentes-pendientes",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  asyncHandler(controller.listarExcedentesPendientes.bind(controller))
+);
+
+// Tanquetas / cubetas (migración 0111) -- segmentos literales, ANTES de /:id.
+// El panel lo ve quien tenga la pestaña (Lectura incluida); dar de alta o
+// editar son acciones aparte, que Lectura no recibe por defecto.
+router.get(
+  "/tanquetas",
+  requirePestana("combustible", "tanquetas"),
+  asyncHandler(controller.listarTanquetas.bind(controller))
+);
+// Antes de /tanquetas/:tanquetaId: segmento literal.
+router.get(
+  "/tanquetas/formulario",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  asyncHandler(controller.listarTanquetasParaFormulario.bind(controller))
+);
+router.get(
+  "/tanquetas/:tanquetaId/historial",
+  requirePestana("combustible", "tanquetas"),
+  asyncHandler(controller.historialTanqueta.bind(controller))
+);
+router.post(
+  "/tanquetas",
+  requirePestana("combustible", "tanquetas:nueva"),
+  requireRole("admin", "operador"),
+  validate(crearTanquetaSchema),
+  asyncHandler(controller.crearTanqueta.bind(controller))
+);
+router.put(
+  "/tanquetas/:tanquetaId",
+  requirePestana("combustible", "tanquetas:editar"),
+  requireRole("admin", "operador"),
+  validate(actualizarTanquetaSchema),
+  asyncHandler(controller.actualizarTanqueta.bind(controller))
 );
 
 // Surtidores (migración 0098) -- segmentos literales, ANTES de /:id. La lista
@@ -527,6 +576,13 @@ router.get(
   requirePestana("combustible", "tanques"),
   requireRole("admin"),
   asyncHandler(controller.getConfig.bind(controller))
+);
+// Lo que el formulario del vale necesita de la config (0113): lo lee quien
+// registra despachos, no solo el admin.
+router.get(
+  "/config/formulario-despacho",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  asyncHandler(controller.getConfigFormularioDespacho.bind(controller))
 );
 router.put(
   "/config",

@@ -253,7 +253,16 @@ export type AnularLecturaCombustibleInput = z.infer<typeof anularLecturaCombusti
 // ── Despachos (Fase B, ver docs/architecture/control-de-combustible.md
 // puntos 1, 2 y 5, y migrations/0062) ───────────────────────────────────
 
-const ORIGENES_DESPACHO = ["tanque_propio", "compra_externa"] as const;
+// 'excedente_recepcion' (0112): el vale que regulariza un excedente cargado
+// directo de la cisterna a una unidad. No sale de ningún tanque.
+// 'tanqueta' (0114): la carga en ruta desde una tanqueta, que registra el
+// conductor con el medidor de la unidad. No sale de ningún tanque.
+const ORIGENES_DESPACHO = [
+  "tanque_propio",
+  "compra_externa",
+  "excedente_recepcion",
+  "tanqueta",
+] as const;
 const TIPOS_DESTINO_DESPACHO = ["equipo", "planta", "reserva_cubeta"] as const;
 
 // Qué papel entrega el proveedor en la ruta (0109). Mismo vocabulario que
@@ -336,6 +345,15 @@ export const crearDespachoCombustibleSchema = z
     producto: z.enum(PRODUCTOS_DESPACHO).default("combustible"),
 
     origen: z.enum(ORIGENES_DESPACHO),
+    // Solo excedente_recepcion (0112): la línea del reparto que regulariza.
+    excedente_linea_id: z.number().int().positive().optional(),
+    // 0114: a qué tanqueta va un vale del tanque a "reserva_cubeta", y de qué
+    // tanqueta sale una carga en ruta (origen 'tanqueta').
+    tanqueta_destino_id: z.number().int().positive().optional(),
+    tanqueta_origen_id: z.number().int().positive().optional(),
+    // 0115: dónde se cargó desde la tanqueta. 'ruta' (default): sin vale y con
+    // medidor. 'planta': con vale, como el tanque.
+    tanqueta_lugar: z.enum(["ruta", "planta"]).optional(),
     // Solo tanque_propio.
     combustible_id: z.number().int().positive().optional(),
     // compra_externa (combustible) Y urea -- FK al catálogo -- ver
@@ -539,7 +557,9 @@ export const crearDespachoCombustibleSchema = z
         message: "cantidad es obligatoria para un vale de combustible",
       });
     }
-    if (data.costo_unitario === undefined) {
+    // La carga desde tanqueta (0114) no lo lleva: lo calcula el servidor con
+    // el costo de lo que entró a la tanqueta, y el conductor no lo conoce.
+    if (data.costo_unitario === undefined && data.origen !== "tanqueta") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["costo_unitario"],
@@ -566,6 +586,153 @@ export const crearDespachoCombustibleSchema = z
         path: ["equipo_id"],
         message: "equipo_id solo aplica cuando tipo_destino es 'equipo'",
       });
+    }
+
+    if (
+      data.tanqueta_destino_id !== undefined &&
+      (data.origen !== "tanque_propio" || data.tipo_destino !== "reserva_cubeta")
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["tanqueta_destino_id"],
+        message: "tanqueta_destino_id solo aplica a un vale del tanque a 'reserva_cubeta'",
+      });
+    }
+    if (data.origen !== "tanqueta" && data.tanqueta_lugar !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["tanqueta_lugar"],
+        message: "tanqueta_lugar solo aplica a una carga desde tanqueta",
+      });
+    }
+    if (data.origen !== "tanqueta" && data.tanqueta_origen_id !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["tanqueta_origen_id"],
+        message: "tanqueta_origen_id solo aplica a una carga desde tanqueta",
+      });
+    }
+
+    // ── CARGA DESDE TANQUETA (0114/0115) ───────────────────────────────
+    // En RUTA la registra el conductor: unidad, medidor y galones, sin vale
+    // (la tanqueta salió con el suyo). En PLANTA es como un vale del tanque:
+    // con vale del talonario, y el medidor según la config (0113).
+    if (data.origen === "tanqueta") {
+      const enPlanta = data.tanqueta_lugar === "planta";
+      if (data.tanqueta_origen_id === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["tanqueta_origen_id"],
+          message: "tanqueta_origen_id es obligatorio: de qué tanqueta se cargó",
+        });
+      }
+      if (data.tipo_destino !== "equipo") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["tipo_destino"],
+          message: "la carga desde tanqueta siempre va a una unidad",
+        });
+      }
+      if (enPlanta) {
+        exigirVale(data, ctx, "una carga desde tanqueta en planta");
+        if (data.lectura_horometro !== undefined && data.lectura_odometro !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["lectura_horometro"],
+            message: "Mandá el horómetro o el odómetro, nunca los dos en el mismo vale",
+          });
+        }
+      } else if ((data.lectura_horometro === undefined) === (data.lectura_odometro === undefined)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["lectura_horometro"],
+          message:
+            "la carga en ruta desde tanqueta exige el horómetro o el odómetro de la unidad: con él se calcula su consumo",
+        });
+      }
+      for (const [campo, valor] of [
+        ["combustible_id", data.combustible_id],
+        ["grifo_id", data.grifo_id],
+        ["lectura_contometro", data.lectura_contometro],
+        ["totalizador_lectura", data.totalizador_lectura],
+        ["surtidor_id", data.surtidor_id],
+        ["horas_abastecidas", data.horas_abastecidas],
+        // En ruta no hay vale; en planta sí (lo exige exigirVale de arriba).
+        ...(enPlanta
+          ? []
+          : ([
+              ["serie_talonario", data.serie_talonario],
+              ["n_vale", data.n_vale],
+            ] as [string, unknown][])),
+        ["comprobante_tipo", data.comprobante_tipo],
+        ["comprobante_numero", data.comprobante_numero],
+        ["excedente_linea_id", data.excedente_linea_id],
+      ] as [string, unknown][]) {
+        if (valor !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [campo],
+            message: `${campo} no aplica a una carga desde tanqueta${enPlanta ? " en planta" : " en ruta"}`,
+          });
+        }
+      }
+      return;
+    }
+
+    if (data.origen !== "excedente_recepcion" && data.excedente_linea_id !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["excedente_linea_id"],
+        message: "excedente_linea_id solo aplica a un despacho de excedente de recepción",
+      });
+    }
+
+    // ── EXCEDENTE DE CISTERNA (0112) ───────────────────────────────────
+    // Combustible que la cisterna cargó directo a una unidad porque no cabía
+    // en el tanque. Lleva vale (misma secuencia que el tanque) y el medidor de
+    // la unidad, pero no sale de ningún tanque ni surtidor.
+    if (data.origen === "excedente_recepcion") {
+      exigirVale(data, ctx, "un despacho de excedente");
+      if (data.excedente_linea_id === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["excedente_linea_id"],
+          message: "excedente_linea_id es obligatorio: qué excedente pendiente se despacha",
+        });
+      }
+      if (data.tipo_destino !== "equipo") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["tipo_destino"],
+          message: "el excedente directo a unidades siempre va a un equipo",
+        });
+      }
+      if (data.lectura_horometro !== undefined && data.lectura_odometro !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["lectura_horometro"],
+          message: "Mandá el horómetro o el odómetro, nunca los dos en el mismo vale",
+        });
+      }
+      for (const [campo, valor] of [
+        ["combustible_id", data.combustible_id],
+        ["grifo_id", data.grifo_id],
+        ["lectura_contometro", data.lectura_contometro],
+        ["totalizador_lectura", data.totalizador_lectura],
+        ["surtidor_id", data.surtidor_id],
+        ["horas_abastecidas", data.horas_abastecidas],
+        ["comprobante_tipo", data.comprobante_tipo],
+        ["comprobante_numero", data.comprobante_numero],
+      ] as [string, unknown][]) {
+        if (valor !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [campo],
+            message: `${campo} no aplica a un despacho de excedente: no sale de un tanque ni de un grifo de ruta`,
+          });
+        }
+      }
+      return;
     }
 
     if (data.origen === "tanque_propio") {
@@ -897,6 +1064,13 @@ export const configCombustibleSchema = z.object({
   // Días tolerados sin una varilla tomada por alguien que NO despacha. null =
   // la empresa no tiene a nadie más (queda auditado como aflojamiento).
   dias_sin_varilla_de_control: z.number().int().min(1).max(90).nullable().default(7),
+  // Si el vale del tanque propio (y el del excedente de cisterna) pide el
+  // horómetro/odómetro de la unidad (0113). Default false por decisión de
+  // Kenif: el medidor se toma en las cargas en ruta y el consumo se calcula
+  // entre esas lecturas. Prenderlo endurece; apagarlo después es un
+  // aflojamiento auditado (un PUT viejo sin el campo choca con eso y pide
+  // motivo, no apaga en silencio).
+  despacho_pide_medidor: z.boolean().default(false),
   // ── Urea (migración 0092) ─────────────────────────────────────────────
   // Los dos umbrales arrancan en NULL -- mismo criterio que el resto del
   // módulo desde 0075/0079: el cliente todavía no dio un número operativo
@@ -1133,6 +1307,8 @@ export const crearRecepcionCombustibleSchema = z
             destino: z.enum(["cubeta", "equipo", "devolucion"]),
             cantidad: z.number().positive(),
             equipo_id: z.number().int().positive().optional(),
+            // A cuál tanqueta va una línea de 'cubeta' (0111).
+            tanqueta_id: z.number().int().positive().optional(),
             observaciones: z.string().trim().max(300).optional(),
           })
           .superRefine((l, ctx) => {
@@ -1141,6 +1317,13 @@ export const crearRecepcionCombustibleSchema = z
                 code: z.ZodIssueCode.custom,
                 path: ["equipo_id"],
                 message: "equipo_id va si y solo si el destino es 'equipo'",
+              });
+            }
+            if ((l.destino === "cubeta") !== (l.tanqueta_id !== undefined)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["tanqueta_id"],
+                message: "tanqueta_id va si y solo si el destino es 'cubeta'",
               });
             }
           })
@@ -1378,3 +1561,23 @@ export const calibracionSurtidorSchema = z.object({
 });
 
 export type CalibracionSurtidorInput = z.infer<typeof calibracionSurtidorSchema>;
+
+// ── Tanquetas / cubetas (migración 0111) ─────────────────────────────────
+
+export const crearTanquetaSchema = z.object({
+  grifo_interno_id: z.number().int().positive(),
+  // Sin código, el servidor asigna el siguiente (TQT-001...).
+  codigo: z.string().trim().min(1).max(30).optional(),
+  capacidad: z.number().positive().max(100000).default(280),
+});
+
+export type CrearTanquetaInput = z.infer<typeof crearTanquetaSchema>;
+
+export const actualizarTanquetaSchema = z.object({
+  codigo: z.string().trim().min(1).max(30).optional(),
+  capacidad: z.number().positive().max(100000).optional(),
+  activa: z.boolean().optional(),
+  motivo: z.string().trim().min(1).max(500).optional(),
+});
+
+export type ActualizarTanquetaInput = z.infer<typeof actualizarTanquetaSchema>;

@@ -70,6 +70,8 @@ import type {
   CalibracionSurtidorInput,
   CambiarPrecintoInput,
   BajaPuntoPrecintoInput,
+  CrearTanquetaInput,
+  ActualizarTanquetaInput,
 } from "../../server/schemas/combustible.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import { FACTOR_LITROS_UREA } from "../../server/schemas/combustible.schema";
@@ -88,6 +90,7 @@ import {
   type ExcedenteRepartido,
 } from "./combustible.service";
 import * as surtidores from "./surtidores.service";
+import * as tanquetas from "./tanquetas.service";
 import { alcanceDe, ambitoDe, grifosDelFiltro } from "./alcance";
 
 const service = new CombustibleService();
@@ -1741,7 +1744,11 @@ export class CombustibleController {
       // depende del body, no de la ruta, así que requireRole no puede
       // verlo. Antes de tocar la base: un permiso que se evalúa después de
       // escribir no es un permiso.
-      const noPermitido = service.motivoOrigenNoPermitido(req.usuario!.rol, data.origen);
+      const noPermitido = service.motivoOrigenNoPermitido(
+        req.usuario!.rol,
+        data.origen,
+        data.tanqueta_lugar
+      );
       if (noPermitido) {
         res.status(403).json({ error: noPermitido });
         return;
@@ -1780,7 +1787,15 @@ export class CombustibleController {
       await publicarEventoTenant(tenantId, "combustible.despacho_creado", {
         despachoId: fila!.id,
       });
-      await this.procesarAlertasDespachoCreado(tenantId, fila!.id, data);
+      await this.procesarAlertasDespachoCreado(
+        tenantId,
+        fila!.id,
+        data,
+        fila!.tanque_excedente_id == null ? null : Number(fila!.tanque_excedente_id)
+      );
+      if (data.origen === "tanqueta") {
+        await this.procesarAlertaTanquetaSobregirada(tenantId, Number(fila!.id), data);
+      }
       res.status(201).json(fila);
     } catch (err) {
       if (
@@ -1789,7 +1804,10 @@ export class CombustibleController {
         // géneros a propósito: el mensaje nombra el papel que el cargador
         // tiene en la mano, y este `includes` es lo único que separa un 409
         // de un 500 que la cola offline reintentaría para siempre.
-        (err.message.includes("ya está registrado") || err.message.includes("ya está registrada"))
+        (err.message.includes("ya está registrado") ||
+          err.message.includes("ya está registrada") ||
+          // 0112: la línea del excedente ya tiene su despacho vigente.
+          err.message.includes("ya tiene su despacho registrado"))
       ) {
         // 409: no es un dato mal formado, es el mismo papel cargado dos
         // veces -- mismo criterio que el vale duplicado del punto 5. Y es un
@@ -1802,6 +1820,11 @@ export class CombustibleController {
       if (
         err instanceof Error &&
         (err.message.includes("el contómetro marcó") ||
+          // Tanquetas (0114): llenarla desde el tanque o cargar desde ella.
+          err.message.includes("la tanqueta") ||
+          // Despacho de excedente de cisterna (0112).
+          (err.message.includes("el excedente") &&
+            !err.message.includes("ya tiene su despacho registrado")) ||
           err.message.includes("no existe en este tenant") ||
           err.message.includes("no tiene tipo de medidor configurado") ||
           err.message.includes("se mide por") ||
@@ -1900,7 +1923,8 @@ export class CombustibleController {
   private async procesarAlertasDespachoCreado(
     tenantId: string,
     despachoId: number,
-    data: CrearDespachoCombustibleInput
+    data: CrearDespachoCombustibleInput,
+    tanqueExcedenteId: number | null = null
   ) {
     // UREA: rama completamente separada -- ver procesarAlertasDespachoUrea().
     // Los controles de abajo (sobredespacho, medidor inconsistente, consumo
@@ -2008,7 +2032,9 @@ export class CombustibleController {
               client,
               tenantId,
               data.equipo_id,
-              data.combustible_id ?? null,
+              // El despacho de un excedente (0112) no tiene tanque: la unidad
+              // de `cantidad` es la del tanque de la recepción.
+              data.combustible_id ?? tanqueExcedenteId,
               data.cantidad!
             )
           : null;
@@ -2023,6 +2049,7 @@ export class CombustibleController {
               lecturaOdometro: data.lectura_odometro ?? null,
               despachadoEn: data.despachado_en ?? new Date().toISOString(),
               despachoId,
+              origen: data.origen,
             })
           : null;
 
@@ -3249,7 +3276,12 @@ export class CombustibleController {
         typeof req.query.serie_talonario === "string" ? req.query.serie_talonario : undefined;
       const origenRaw = req.query.origen;
       const origen =
-        origenRaw === "tanque_propio" || origenRaw === "compra_externa" ? origenRaw : undefined;
+        origenRaw === "tanque_propio" ||
+        origenRaw === "compra_externa" ||
+        origenRaw === "excedente_recepcion" ||
+        origenRaw === "tanqueta"
+          ? origenRaw
+          : undefined;
       // Migración 0092: sin filtro, la pestaña de urea (y la de combustible)
       // verían los vales del otro producto mezclados en el mismo listado.
       const producto =
@@ -3636,6 +3668,7 @@ export class CombustibleController {
             topeDiarioUreaL: nueva.tope_diario_urea_l,
             ratioUreaDieselMaxPct: nueva.ratio_urea_diesel_max_pct,
             diasSinConteoUrea: nueva.dias_sin_conteo_urea,
+            despachoPideMedidor: nueva.despacho_pide_medidor,
           },
           req.usuario!.id
         );
@@ -4216,6 +4249,183 @@ export class CombustibleController {
     } catch {
       res.status(500).json({ error: "Error al armar el reporte de segregación" });
     }
+  }
+
+  // ── Tanquetas / cubetas (migración 0111) ─────────────────────────────
+  //
+  // Mismo criterio que surtidores: los errores de negocio salen como AppError
+  // desde tanquetas.service. Fuera del alcance es 404, igual que inexistente.
+
+  /** Se cargó desde una tanqueta más de lo que el sistema cree que tenía
+   *  (0114). No bloquea --los galones en ruta son estimados-- pero queda
+   *  dicho: o la estimación está mal, o entró a la tanqueta combustible que no
+   *  se registró. Mismo contrato "nunca lanza" que el resto de los procesar*. */
+  private async procesarAlertaTanquetaSobregirada(
+    tenantId: string,
+    despachoId: number,
+    data: CrearDespachoCombustibleInput
+  ) {
+    try {
+      const creada = await withTenant(tenantId, async (client) => {
+        const t = await service.saldoDeTanqueta(client, tenantId, data.tanqueta_origen_id!);
+        if (!t || t.saldo >= -0.01) return false;
+        await service.crearAlertas(client, tenantId, [
+          {
+            tipo: "tanqueta_sobregirada",
+            despachoId,
+            detalle: {
+              tanqueta: t.codigo,
+              saldo: t.saldo,
+              cantidad: data.cantidad,
+              equipoId: data.equipo_id,
+            },
+          },
+        ]);
+        return true;
+      });
+      if (creada) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "tanqueta_sobregirada",
+          despachoId,
+        });
+      }
+    } catch (err) {
+      logger.warn({ err, tenantId, despachoId }, "No se pudo evaluar el saldo de la tanqueta");
+    }
+  }
+
+  /** GET /despachos/ultimo-medidor?equipo_id= (0115): la última lectura de
+   *  horómetro/odómetro de la unidad, para que el formulario la muestre. */
+  async ultimoMedidorDeEquipo(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const equipoId = Number(req.query.equipo_id);
+    if (!Number.isInteger(equipoId) || equipoId <= 0) {
+      res.status(400).json({ error: "equipo_id inválido" });
+      return;
+    }
+    const fila = await withTenant(tenantId, (client) =>
+      service.ultimoMedidorDeEquipo(client, tenantId, equipoId)
+    );
+    res.json(fila ?? null);
+  }
+
+  /** GET /tanquetas/formulario (0114): las tanquetas activas del alcance con
+   *  saldo y espacio, para los formularios del vale. Lo lee quien registra
+   *  despachos (el conductor no tiene el panel de Tanquetas). */
+  async listarTanquetasParaFormulario(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    res.json(
+      await withTenant(tenantId, (client) =>
+        tanquetas.tanquetasParaFormulario(client, tenantId, alcanceDe(req))
+      )
+    );
+  }
+
+  /** GET /config/formulario-despacho (0113): lo único de la config que el
+   *  formulario del vale necesita, legible por quien registra despachos (la
+   *  config completa es solo del admin). */
+  async getConfigFormularioDespacho(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const pide = await withTenant(tenantId, (client) =>
+      service.getDespachoPideMedidor(client, tenantId)
+    );
+    res.json({ despacho_pide_medidor: pide });
+  }
+
+  /** GET /despachos/excedentes-pendientes (0112): lo cargado directo de la
+   *  cisterna a una unidad que todavía no tiene su vale. Solo los de las
+   *  sedes del alcance. */
+  async listarExcedentesPendientes(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const alcance = alcanceDe(req);
+    res.json(
+      await withTenant(tenantId, (client) =>
+        service.listarExcedentesPendientes(client, tenantId, alcance.todo ? null : alcance.grifos)
+      )
+    );
+  }
+
+  /** null si no existe o si su grifo está fuera del alcance del usuario. */
+  private async tanquetaVisible(req: Request, id: number) {
+    const tenantId = getTenantId(req);
+    const alcance = alcanceDe(req);
+    const t = await withTenant(tenantId, (client) => tanquetas.getTanqueta(client, tenantId, id));
+    if (!t) return null;
+    if (!alcance.todo && !alcance.grifos.includes(Number(t.grifo_interno_id))) return null;
+    return t;
+  }
+
+  async listarTanquetas(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const grifo = req.query.grifo_interno_id ? Number(req.query.grifo_interno_id) : undefined;
+    res.json(
+      await withTenant(tenantId, (client) =>
+        tanquetas.listarTanquetas(client, tenantId, alcanceDe(req), {
+          grifoInternoId: Number.isInteger(grifo) ? grifo : undefined,
+        })
+      )
+    );
+  }
+
+  async crearTanqueta(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const data = req.validatedBody as CrearTanquetaInput;
+    const alcance = alcanceDe(req);
+    if (!alcance.todo && !alcance.grifos.includes(data.grifo_interno_id)) {
+      res.status(404).json({ error: "El grifo no existe" });
+      return;
+    }
+    const creada = await withTenant(tenantId, (client) =>
+      tanquetas.crearTanqueta(client, tenantId, req.usuario!.id, data)
+    );
+    await registrarAuditoria({
+      accion: "combustible.tanqueta_crear",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { tanquetaId: creada.id, codigo: creada.codigo, ...data },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
+    res.status(201).json(creada);
+  }
+
+  async actualizarTanqueta(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.tanquetaId);
+    const data = req.validatedBody as ActualizarTanquetaInput;
+    const antes = await this.tanquetaVisible(req, id);
+    if (!antes) {
+      res.status(404).json({ error: "La tanqueta no existe" });
+      return;
+    }
+    const despues = await withTenant(tenantId, (client) =>
+      tanquetas.actualizarTanqueta(client, tenantId, id, data)
+    );
+    await registrarAuditoria({
+      accion: "combustible.tanqueta_actualizar",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: {
+        tanquetaId: id,
+        antes: { codigo: antes.codigo, capacidad: antes.capacidad, activa: antes.activa },
+        cambios: data,
+      },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
+    res.json(despues);
+  }
+
+  async historialTanqueta(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.tanquetaId);
+    if (!(await this.tanquetaVisible(req, id))) {
+      res.status(404).json({ error: "La tanqueta no existe" });
+      return;
+    }
+    res.json(
+      await withTenant(tenantId, (client) => tanquetas.historialTanqueta(client, tenantId, id))
+    );
   }
 
   // ── Surtidores (migración 0098) ──────────────────────────────────────
@@ -5393,6 +5603,11 @@ export class CombustibleController {
       const { motivo } = req.validatedBody as AnularRecepcionCombustibleInput;
 
       const resultado = await withTenant(tenantId, async (client) => {
+        // Un excedente suyo ya se despachó con vale (0112): anularla dejaría
+        // ese vale apuntando a una entrega que "no existió". Primero el vale.
+        if ((await service.contarDespachosDeExcedente(client, tenantId, recepcionId)) > 0) {
+          return { estado: "con_despachos" as const };
+        }
         const anulada = await service.anularRecepcion(
           client,
           tenantId,
@@ -5412,6 +5627,13 @@ export class CombustibleController {
       }
       if (resultado.estado === "ya_anulada") {
         res.status(409).json({ error: "Esta recepción ya estaba anulada" });
+        return;
+      }
+      if (resultado.estado === "con_despachos") {
+        res.status(409).json({
+          error:
+            "Parte del excedente de esta recepción ya se despachó con vale: anulá primero ese despacho",
+        });
         return;
       }
 
