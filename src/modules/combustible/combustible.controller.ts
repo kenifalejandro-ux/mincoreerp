@@ -2040,6 +2040,7 @@ export class CombustibleController {
               lecturaOdometro: data.lectura_odometro ?? null,
               despachadoEn: data.despachado_en ?? new Date().toISOString(),
               despachoId,
+              origen: data.origen,
             })
           : null;
 
@@ -3657,6 +3658,7 @@ export class CombustibleController {
             topeDiarioUreaL: nueva.tope_diario_urea_l,
             ratioUreaDieselMaxPct: nueva.ratio_urea_diesel_max_pct,
             diasSinConteoUrea: nueva.dias_sin_conteo_urea,
+            despachoPideMedidor: nueva.despacho_pide_medidor,
           },
           req.usuario!.id
         );
@@ -4243,6 +4245,17 @@ export class CombustibleController {
   //
   // Mismo criterio que surtidores: los errores de negocio salen como AppError
   // desde tanquetas.service. Fuera del alcance es 404, igual que inexistente.
+
+  /** GET /config/formulario-despacho (0113): lo único de la config que el
+   *  formulario del vale necesita, legible por quien registra despachos (la
+   *  config completa es solo del admin). */
+  async getConfigFormularioDespacho(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const pide = await withTenant(tenantId, (client) =>
+      service.getDespachoPideMedidor(client, tenantId)
+    );
+    res.json({ despacho_pide_medidor: pide });
+  }
 
   /** GET /despachos/excedentes-pendientes (0112): lo cargado directo de la
    *  cisterna a una unidad que todavía no tiene su vale. Solo los de las

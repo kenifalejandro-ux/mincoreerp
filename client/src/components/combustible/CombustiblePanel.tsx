@@ -2312,6 +2312,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [grifieroVarilla, setGrifieroVarilla] = useState(true);
   // 5ª auditoría (0088): validación de recepciones y varilla de control.
   const [validarRecepciones, setValidarRecepciones] = useState(true);
+  // 0113: si el vale del tanque pide el medidor de la unidad. Uno para la
+  // ventana de config (lo edita el admin) y otro para el formulario del vale
+  // (lo lee quien despacha, por su propio endpoint).
+  const [pedirMedidorEnDespacho, setPedirMedidorEnDespacho] = useState(true);
+  const [formPideMedidor, setFormPideMedidor] = useState(true);
   const [horasParaValidar, setHorasParaValidar] = useState("48");
   const [diasVarillaControl, setDiasVarillaControl] = useState("7");
   // El motivo solo se pide cuando el cambio afloja algo; el backend lo dice
@@ -3337,6 +3342,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     setMensajeExito(null);
     setClienteUuidDespacho(crypto.randomUUID());
     setFotoComprobante(null);
+    // Si el vale pide el medidor (0113). Sin respuesta, se pide: el lado
+    // estricto, igual que el default del servidor.
+    apiFetch("/api/erp/combustible/config/formulario-despacho")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((b) => setFormPideMedidor(b?.despacho_pide_medidor !== false))
+      .catch(() => setFormPideMedidor(true));
     setErrorFotoComprobante(null);
     setMedidorCargado(null);
     setHorasEditadasAMano(false);
@@ -4120,6 +4131,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       if (bodyConfig?.recepcion_requiere_validacion !== undefined) {
         setValidarRecepciones(Boolean(bodyConfig.recepcion_requiere_validacion));
       }
+      if (bodyConfig?.despacho_pide_medidor !== undefined) {
+        setPedirMedidorEnDespacho(Boolean(bodyConfig.despacho_pide_medidor));
+      }
       if (bodyConfig?.horas_para_validar_recepcion !== undefined) {
         setHorasParaValidar(String(bodyConfig.horas_para_validar_recepcion));
       }
@@ -4205,6 +4219,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           tope_diario_sin_capacidad_l: topeSC,
           grifero_registra_varilla: grifieroVarilla,
           recepcion_requiere_validacion: validarRecepciones,
+          despacho_pide_medidor: pedirMedidorEnDespacho,
           horas_para_validar_recepcion: Number(horasParaValidar) || 48,
           dias_sin_varilla_de_control: aNumeroOVacio(diasVarillaControl),
           // Solo viaja si hay algo escrito: el backend lo exige únicamente
@@ -6058,7 +6073,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   <select
                     id="despacho-tipo-combustible"
                     disabled={despachoForm.origen === "excedente_recepcion"}
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900 disabled:bg-slate-50"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900 disabled:opacity-70"
                     value={despachoForm.tipo_combustible}
                     onChange={(e) =>
                       setDespachoForm({
@@ -6125,7 +6140,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                             factura S/ {Number(p.costo_unitario).toLocaleString("es-PE")}
                             {p.proveedor ? ` (${p.proveedor})` : ""}
                           </div>
-                          {p.tipo_medidor && (
+                          {formPideMedidor && p.tipo_medidor && (
                             <div className="space-y-1">
                               <label
                                 htmlFor="despacho-excedente-medidor"
@@ -6304,47 +6319,49 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       eso el canal principal de salida no tenía ningún control
                       de consumo: el tanque cuadra aunque al volquete le
                       carguen 380 de los 400 que dice el vale. */}
-                  {despachoForm.tipo_destino === "equipo" && equipoSeleccionado?.tipo_medidor && (
-                    <div className="space-y-1">
-                      <label
-                        htmlFor="despacho-medidor-propio"
-                        className="text-xs font-bold text-slate-700 uppercase"
-                      >
-                        {equipoSeleccionado.tipo_medidor === "horometro"
-                          ? "Lectura del horómetro"
-                          : "Lectura del odómetro"}
-                      </label>
-                      <input
-                        id="despacho-medidor-propio"
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        required
-                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
-                        value={
-                          equipoSeleccionado.tipo_medidor === "horometro"
-                            ? despachoForm.lectura_horometro
-                            : despachoForm.lectura_odometro
-                        }
-                        onChange={(e) =>
-                          setDespachoForm({
-                            ...despachoForm,
-                            ...(equipoSeleccionado.tipo_medidor === "horometro"
-                              ? { lectura_horometro: e.target.value }
-                              : { lectura_odometro: e.target.value }),
-                          })
-                        }
-                      />
-                      <p className="text-xs text-slate-600">
-                        Con este número el sistema calcula cuánto consume la unidad por{" "}
-                        {equipoSeleccionado.tipo_medidor === "horometro"
-                          ? "hora de motor"
-                          : "kilómetro"}
-                        . Es lo único que puede ver el combustible que sale con vale y no llega a la
-                        máquina.
-                      </p>
-                    </div>
-                  )}
+                  {formPideMedidor &&
+                    despachoForm.tipo_destino === "equipo" &&
+                    equipoSeleccionado?.tipo_medidor && (
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="despacho-medidor-propio"
+                          className="text-xs font-bold text-slate-700 uppercase"
+                        >
+                          {equipoSeleccionado.tipo_medidor === "horometro"
+                            ? "Lectura del horómetro"
+                            : "Lectura del odómetro"}
+                        </label>
+                        <input
+                          id="despacho-medidor-propio"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          required
+                          className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
+                          value={
+                            equipoSeleccionado.tipo_medidor === "horometro"
+                              ? despachoForm.lectura_horometro
+                              : despachoForm.lectura_odometro
+                          }
+                          onChange={(e) =>
+                            setDespachoForm({
+                              ...despachoForm,
+                              ...(equipoSeleccionado.tipo_medidor === "horometro"
+                                ? { lectura_horometro: e.target.value }
+                                : { lectura_odometro: e.target.value }),
+                            })
+                          }
+                        />
+                        <p className="text-xs text-slate-600">
+                          Con este número el sistema calcula cuánto consume la unidad por{" "}
+                          {equipoSeleccionado.tipo_medidor === "horometro"
+                            ? "hora de motor"
+                            : "kilómetro"}
+                          . Es lo único que puede ver el combustible que sale con vale y no llega a
+                          la máquina.
+                        </p>
+                      </div>
+                    )}
                   <div className="space-y-1">
                     <label
                       htmlFor="despacho-tipo-destino"
@@ -6611,8 +6628,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 </div>
               </div>
               <p className="text-xs text-slate-400">
-                El costo se autocompleta con el precio vigente a la fecha del despacho -- podés
-                corregirlo si ese día pagaste distinto. C.TOTAL sale solo, no se guarda aparte.
+                {despachoForm.origen === "excedente_recepcion"
+                  ? "Costo de la factura de la recepción: no se edita. C.TOTAL sale solo."
+                  : "El costo se autocompleta con el precio vigente a la fecha del despacho -- podés corregirlo si ese día pagaste distinto. C.TOTAL sale solo, no se guarda aparte."}
               </p>
 
               <div className="space-y-1">
@@ -8599,6 +8617,23 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 title="Administración escribe la cantidad que dice la guía, sin ver la que cargó quien recibió. Es lo único que detecta una entrega registrada por menos de lo que entró: la varilla cuadra igual."
               >
                 Validar recepciones contra la guía
+              </span>
+            </label>
+
+            <label className="flex items-center gap-2 ml-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={pedirMedidorEnDespacho}
+                onChange={(e) => {
+                  setPedirMedidorEnDespacho(e.target.checked);
+                  setMensajeVentana(null);
+                }}
+              />
+              <span
+                className="text-xs font-bold text-slate-700 uppercase"
+                title="Desmarcado: el grifero no pide horómetro/odómetro en los despachos del tanque. El medidor se toma en cada carga en ruta (compra externa, tanqueta) y el consumo se calcula entre esas lecturas. Una unidad que solo carga en el tanque queda sin control de consumo."
+              >
+                Pedir horómetro/odómetro en despachos del tanque
               </span>
             </label>
 

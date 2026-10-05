@@ -957,6 +957,11 @@ export const configCombustibleSchema = z.object({
   // Días tolerados sin una varilla tomada por alguien que NO despacha. null =
   // la empresa no tiene a nadie más (queda auditado como aflojamiento).
   dias_sin_varilla_de_control: z.number().int().min(1).max(90).nullable().default(7),
+  // Si el vale del tanque propio (y el del excedente de cisterna) pide el
+  // horómetro/odómetro de la unidad (0113). Default del lado estricto: apagarlo
+  // es un aflojamiento auditado. Con false, el medidor se toma solo en las
+  // cargas en ruta y el consumo se sigue calculando entre esas lecturas.
+  despacho_pide_medidor: z.boolean().default(true),
   // ── Urea (migración 0092) ─────────────────────────────────────────────
   // Los dos umbrales arrancan en NULL -- mismo criterio que el resto del
   // módulo desde 0075/0079: el cliente todavía no dio un número operativo

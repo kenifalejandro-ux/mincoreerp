@@ -2102,7 +2102,9 @@ export class CombustibleRepository {
     const politica = await this.getPoliticaValidacionRecepcion(client, tenantId);
     const diasVarillaControl = await this.getDiasSinVarillaDeControl(client, tenantId);
     const topesUrea = await this.getTopesUrea(client, tenantId);
+    const pideMedidor = await this.getDespachoPideMedidor(client, tenantId);
     return {
+      despacho_pide_medidor: pideMedidor,
       recepcion_requiere_validacion: politica.requiere,
       horas_para_validar_recepcion: politica.horas,
       dias_sin_varilla_de_control: diasVarillaControl,
@@ -2166,6 +2168,7 @@ export class CombustibleRepository {
       topeDiarioUreaL: number | null;
       ratioUreaDieselMaxPct: number | null;
       diasSinConteoUrea: number;
+      despachoPideMedidor: boolean;
     },
     usuarioId: string
   ) {
@@ -2177,8 +2180,8 @@ export class CombustibleRepository {
          tope_diario_sin_capacidad_l, grifero_registra_varilla, actualizado_por,
          recepcion_requiere_validacion, horas_para_validar_recepcion,
          dias_sin_varilla_de_control, tope_diario_urea_l, ratio_urea_diesel_max_pct,
-         dias_sin_conteo_urea)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         dias_sin_conteo_urea, despacho_pide_medidor)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
       ON CONFLICT (tenant_id) DO UPDATE
         SET ventana_gracia_horas = EXCLUDED.ventana_gracia_horas,
             dias_sin_medir = EXCLUDED.dias_sin_medir,
@@ -2194,6 +2197,7 @@ export class CombustibleRepository {
             tope_diario_urea_l = EXCLUDED.tope_diario_urea_l,
             ratio_urea_diesel_max_pct = EXCLUDED.ratio_urea_diesel_max_pct,
             dias_sin_conteo_urea = EXCLUDED.dias_sin_conteo_urea,
+            despacho_pide_medidor = EXCLUDED.despacho_pide_medidor,
             actualizado_por = EXCLUDED.actualizado_por,
             actualizado_en = now()
       RETURNING ventana_gracia_horas, dias_sin_medir, dias_ventana_descuadre,
@@ -2201,7 +2205,7 @@ export class CombustibleRepository {
                 tope_diario_sin_capacidad_l, grifero_registra_varilla,
                 recepcion_requiere_validacion, horas_para_validar_recepcion,
                 dias_sin_varilla_de_control, tope_diario_urea_l,
-                ratio_urea_diesel_max_pct, dias_sin_conteo_urea,
+                ratio_urea_diesel_max_pct, dias_sin_conteo_urea, despacho_pide_medidor,
                 actualizado_en, actualizado_por
       `,
       [
@@ -2221,6 +2225,7 @@ export class CombustibleRepository {
         valores.topeDiarioUreaL,
         valores.ratioUreaDieselMaxPct,
         valores.diasSinConteoUrea,
+        valores.despachoPideMedidor,
       ]
     );
     const fila = result.rows[0];
@@ -2735,6 +2740,19 @@ export class CombustibleRepository {
    *  default del getter tiene que coincidir con el DEFAULT de la columna, si
    *  no el sistema se comporta distinto según si alguien pasó por la pantalla
    *  de configuración alguna vez. */
+  /** Si el vale del tanque pide el medidor de la unidad (0113). Sin fila,
+   *  true: el comportamiento de siempre. */
+  async getDespachoPideMedidor(client: PoolClient, tenantId: string): Promise<boolean> {
+    const r = await client.query<{ pide: boolean }>(
+      `SELECT COALESCE(
+         (SELECT despacho_pide_medidor FROM combustible_config WHERE tenant_id = $1),
+         true
+       ) AS pide`,
+      [tenantId]
+    );
+    return r.rows[0].pide;
+  }
+
   async getGrifieroRegistraVarilla(client: PoolClient, tenantId: string): Promise<boolean> {
     const r = await client.query<{ puede: boolean }>(
       `SELECT COALESCE(

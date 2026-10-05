@@ -566,6 +566,13 @@ router.get(
   requireRole("admin"),
   asyncHandler(controller.getConfig.bind(controller))
 );
+// Lo que el formulario del vale necesita de la config (0113): lo lee quien
+// registra despachos, no solo el admin.
+router.get(
+  "/config/formulario-despacho",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  asyncHandler(controller.getConfigFormularioDespacho.bind(controller))
+);
 router.put(
   "/config",
   requirePestana("combustible", "tanques"),

@@ -1390,6 +1390,10 @@ export class CombustibleService {
     return this.repository.findExcedentesPendientes(client, tenantId, grifos);
   }
 
+  getDespachoPideMedidor(client: PoolClient, tenantId: string) {
+    return this.repository.getDespachoPideMedidor(client, tenantId);
+  }
+
   contarDespachosDeExcedente(client: PoolClient, tenantId: string, recepcionId: number) {
     return this.repository.contarDespachosDeExcedente(client, tenantId, recepcionId);
   }
@@ -1819,6 +1823,7 @@ export class CombustibleService {
       topeDiarioUreaL: number | null;
       ratioUreaDieselMaxPct: number | null;
       diasSinConteoUrea: number;
+      despachoPideMedidor: boolean;
     },
     usuarioId: string
   ) {
@@ -1854,6 +1859,7 @@ export class CombustibleService {
       tope_diario_urea_l: number | null;
       ratio_urea_diesel_max_pct: number | null;
       dias_sin_conteo_urea: number;
+      despacho_pide_medidor: boolean;
     },
     ahora: {
       ventana_gracia_horas: number;
@@ -1870,9 +1876,21 @@ export class CombustibleService {
       tope_diario_urea_l: number | null;
       ratio_urea_diesel_max_pct: number | null;
       dias_sin_conteo_urea: number;
+      despacho_pide_medidor: boolean;
     }
   ) {
     const cambios: { control: string; de: string; a: string }[] = [];
+
+    // Dejar de pedir el medidor en el vale del tanque (0113): el consumo
+    // queda medido solo entre las cargas en ruta. Es la operación real de
+    // algunas empresas, pero no puede pasar en silencio.
+    if (antes.despacho_pide_medidor && !ahora.despacho_pide_medidor) {
+      cambios.push({
+        control: "Horómetro/odómetro en los despachos del tanque",
+        de: "se pide y alerta si falta",
+        a: "no se pide (solo en cargas en ruta)",
+      });
+    }
 
     // Devolverle la varilla al grifero afloja: el que despacha vuelve a ser
     // el que mide, y la medición deja de ser un control independiente del
@@ -2285,6 +2303,8 @@ export class CombustibleService {
       despachadoEn: string;
       /** El despacho recién creado, para NO compararlo contra sí mismo. */
       despachoId: number;
+      /** Para saber si la falta de medidor se alerta (0113). */
+      origen?: string;
     }
   ) {
     const esHorometro = data.lecturaHorometro !== undefined && data.lecturaHorometro !== null;
@@ -2297,6 +2317,15 @@ export class CombustibleService {
     // dicho: sin la lectura no hay forma de calcular el consumo, que es el
     // único control del combustible que sale CON vale.
     if (valorNuevo === undefined || valorNuevo === null) {
+      // La empresa decidió no pedir el medidor en el vale del tanque (0113):
+      // que falte ahí es lo esperado, no algo que alertar. La compra externa
+      // lo exige siempre (schema), así que nunca llega acá sin él.
+      if (
+        data.origen !== "compra_externa" &&
+        !(await this.repository.getDespachoPideMedidor(client, tenantId))
+      ) {
+        return null;
+      }
       const equipo = await this.repository.getConsumoMaximoEquipo(client, tenantId, equipoId);
       if (!equipo?.tipoMedidor) return null;
       return {
