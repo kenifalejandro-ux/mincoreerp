@@ -263,6 +263,14 @@ router.patch(
   asyncHandler(controller.anularDespacho.bind(controller))
 );
 
+// Excedentes cargados directo de la cisterna a una unidad, sin vale todavía
+// (0112). Los ve quien registra despachos: es el que los va a regularizar.
+router.get(
+  "/despachos/excedentes-pendientes",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  asyncHandler(controller.listarExcedentesPendientes.bind(controller))
+);
+
 // Tanquetas / cubetas (migración 0111) -- segmentos literales, ANTES de /:id.
 // El panel lo ve quien tenga la pestaña (Lectura incluida); dar de alta o
 // editar son acciones aparte, que Lectura no recibe por defecto.

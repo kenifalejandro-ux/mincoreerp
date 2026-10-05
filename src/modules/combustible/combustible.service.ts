@@ -929,8 +929,11 @@ export class CombustibleService {
    *  Devuelve el motivo del rechazo, o null si está permitido. */
   motivoOrigenNoPermitido(
     rol: UsuarioPayload["rol"],
-    origen: "tanque_propio" | "compra_externa"
+    origen: "tanque_propio" | "compra_externa" | "excedente_recepcion"
   ): string | null {
+    // El excedente de cisterna (0112) se carga en la sede, al lado del
+    // tanque: lo regulariza el mismo que registra los vales del tanque.
+    if (rol === "grifero" && origen === "excedente_recepcion") return null;
     if (rol === "grifero" && origen !== "tanque_propio") {
       return "Tu usuario registra vales del tanque, no compras en grifos de ruta";
     }
@@ -1043,6 +1046,14 @@ export class CombustibleService {
 
         await this.validarFormaDespacho(client, tenantId, data);
 
+        // El excedente de cisterna (0112): la línea pendiente manda la unidad,
+        // la cantidad, el combustible y el COSTO (el de la factura). Lo que no
+        // coincide es un 400, no un dato a confiar.
+        const excedente =
+          data.origen === "excedente_recepcion"
+            ? await this.validarDespachoDeExcedente(client, tenantId, data, alcance)
+            : null;
+
         const despachadoEn = data.despachado_en ?? new Date().toISOString();
         const esUrea = data.producto === "urea";
 
@@ -1068,16 +1079,18 @@ export class CombustibleService {
         // más que el sistema.
         const costoUnitario = esUrea
           ? (data.costo_unitario ?? (await this.resolverCostoUrea(client, tenantId, despachadoEn)))
-          : data.origen === "tanque_propio"
-            ? await this.resolverCostoDelTanque(
-                client,
-                tenantId,
-                data.combustible_id!,
-                data.tipo_combustible!,
-                despachadoEn,
-                data.costo_unitario!
-              )
-            : data.costo_unitario!;
+          : excedente
+            ? excedente.costoUnitario
+            : data.origen === "tanque_propio"
+              ? await this.resolverCostoDelTanque(
+                  client,
+                  tenantId,
+                  data.combustible_id!,
+                  data.tipo_combustible!,
+                  despachadoEn,
+                  data.costo_unitario!
+                )
+              : data.costo_unitario!;
 
         const surtidorId = await this.resolverSurtidorDelVale(client, tenantId, data, despachadoEn);
 
@@ -1085,6 +1098,8 @@ export class CombustibleService {
           producto: data.producto,
           origen: data.origen,
           combustibleId: data.combustible_id ?? null,
+          excedenteLineaId: excedente?.lineaId ?? null,
+          tanqueExcedenteId: excedente?.tanqueId ?? null,
           grifoId: data.grifo_id ?? null,
           tipoCombustible: esUrea ? null : data.tipo_combustible!,
           tipoDestino: data.tipo_destino,
@@ -1246,6 +1261,10 @@ export class CombustibleService {
       return;
     }
 
+    // El excedente de cisterna (0112) se valida contra su línea pendiente en
+    // validarDespachoDeExcedente: no tiene tanque ni grifo de ruta.
+    if (data.origen === "excedente_recepcion") return;
+
     if (data.origen === "tanque_propio") {
       if (Number(data.lectura_contometro) !== Number(data.cantidad)) {
         throw new Error(
@@ -1312,6 +1331,67 @@ export class CombustibleService {
     if (equipo.tipo_medidor === "odometro" && data.lectura_odometro === undefined) {
       throw new Error(`el equipo ${equipoId} se mide por odómetro, no por horómetro`);
     }
+  }
+
+  /** El despacho que regulariza un excedente cargado directo de la cisterna
+   *  a una unidad (0112). La línea pendiente es la fuente de verdad: unidad,
+   *  cantidad y combustible tienen que coincidir, y el costo es el de la
+   *  factura de esa recepción (no lo que venga en el body). Todos los
+   *  mensajes dicen "el excedente": el controller los traduce a 400. */
+  private async validarDespachoDeExcedente(
+    client: PoolClient,
+    tenantId: string,
+    data: CrearDespachoCombustibleInput,
+    alcance?: AlcanceCombustible
+  ) {
+    const [linea] = await this.repository.findExcedentesPendientes(
+      client,
+      tenantId,
+      alcance && !alcance.todo ? alcance.grifos : null,
+      data.excedente_linea_id!
+    );
+    if (!linea) {
+      throw new Error(
+        "el excedente indicado no está pendiente: no existe, ya se despachó, o su recepción se anuló"
+      );
+    }
+    if (Number(linea.equipo_id) !== data.equipo_id) {
+      throw new Error(
+        `el excedente es para la unidad ${linea.equipo ?? linea.equipo_id}, no para la del vale`
+      );
+    }
+    if (Math.abs(Number(linea.cantidad) - data.cantidad!) > 0.01) {
+      throw new Error(
+        `el excedente pendiente es de ${Number(linea.cantidad)} ${linea.unidad} y el vale dice ${data.cantidad}`
+      );
+    }
+    if (linea.tipo_combustible !== data.tipo_combustible) {
+      throw new Error(
+        `el excedente es de ${linea.tipo_combustible} y el vale dice ${data.tipo_combustible}`
+      );
+    }
+    // El medidor que llegue tiene que ser el de ESA unidad (mismo cruce que la
+    // compra externa); que falte no bloquea, igual que en el vale del tanque.
+    const equipo = await EquiposRepository.findTipoMedidor(client, tenantId, data.equipo_id!);
+    if (equipo?.tipo_medidor === "horometro" && data.lectura_odometro !== undefined) {
+      throw new Error(`el equipo ${data.equipo_id} se mide por horómetro, no por odómetro`);
+    }
+    if (equipo?.tipo_medidor === "odometro" && data.lectura_horometro !== undefined) {
+      throw new Error(`el equipo ${data.equipo_id} se mide por odómetro, no por horómetro`);
+    }
+    return {
+      lineaId: Number(linea.id),
+      tanqueId: Number(linea.combustible_id),
+      costoUnitario: Number(linea.costo_unitario),
+    };
+  }
+
+  listarExcedentesPendientes(client: PoolClient, tenantId: string, grifos: number[] | null) {
+    return this.repository.findExcedentesPendientes(client, tenantId, grifos);
+  }
+
+  contarDespachosDeExcedente(client: PoolClient, tenantId: string, recepcionId: number) {
+    return this.repository.contarDespachosDeExcedente(client, tenantId, recepcionId);
   }
 
   listarDespachos(

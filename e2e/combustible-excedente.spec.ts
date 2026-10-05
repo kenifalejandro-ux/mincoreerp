@@ -55,6 +55,16 @@ test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente 
     expect(t.status(), "no se pudo crear la tanqueta de prueba").toBe(201);
     codigos.push((await t.json()).codigo);
   }
+  const placa = `EX-${marca}`;
+  const equipo = await page.request.post("/api/erp/equipos", {
+    data: {
+      placa_codigo: placa,
+      tipo: "EXCAVADORA",
+      tipo_medidor: "horometro",
+      grifo_interno_id: grifoInternoId,
+    },
+  });
+  expect(equipo.status(), "no se pudo crear el equipo de prueba").toBe(201);
   const grifo = await page.request.post("/api/erp/combustible/grifos", {
     data: { nombre: `CISTERNA ${marca}` },
   });
@@ -109,8 +119,8 @@ test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente 
   await page.locator("#exc-cantidad-0").fill("280");
   await page.locator("#exc-cantidad-2").fill("40");
 
-  // El resto se devuelve al proveedor.
-  await page.locator("#exc-destino-2").selectOption("devolucion");
+  // El resto va directo de la cisterna a la excavadora.
+  await page.locator("#exc-equipo-2").selectOption({ label: placa });
   await expect(page.getByText("El reparto cubre todo el excedente.")).toBeVisible();
   await expect(confirmar).toBeEnabled();
   await confirmar.click();
@@ -125,6 +135,42 @@ test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente 
   expect(filas).toHaveLength(1);
   expect(Number(filas[0].cantidad)).toBe(0);
   expect(Number(filas[0].cantidad_derivada)).toBe(600);
+
+  // ── Los 40 a la unidad quedan pendientes de vale ───────────────────────
+  // Aviso en Tanques -> despacho con origen "Excedente de cisterna", con la
+  // unidad, la cantidad y el costo de la factura precargados.
+  await page.getByRole("button", { name: "Tanques", exact: true }).click();
+  // El tenant e2e sobrevive entre corridas: puede haber otros pendientes, así
+  // que se elige el de esta corrida por su unidad.
+  await expect(page.getByText(/directo a (una unidad|unidades) sin vale/)).toBeVisible();
+  await page
+    .locator("div", { hasText: /sin vale/ })
+    .getByRole("button", { name: "Registrar despacho" })
+    .last()
+    .click();
+  await expect(page.locator("#despacho-origen")).toHaveValue("excedente_recepcion");
+  const opcion = await page
+    .locator("#despacho-excedente option", { hasText: placa })
+    .getAttribute("value");
+  await page.locator("#despacho-excedente").selectOption(opcion!);
+  await expect(page.locator("#despacho-excedente")).not.toHaveValue("");
+  await expect(
+    page.locator("div.bg-slate-50", { hasText: placa }).filter({ hasText: "40 gal" })
+  ).toBeVisible();
+  await expect(page.locator("#despacho-costo-unitario")).toHaveValue("17.5");
+  await page.locator("#despacho-excedente-medidor").fill("1520");
+  await page.locator("#despacho-serie").fill(`S${marca}`);
+  await page.locator("#despacho-n-vale").fill("1");
+  await page.locator("form").getByRole("button", { name: "Registrar despacho" }).click();
+  await expect(page.getByText(/Despacho registrado/)).toBeVisible();
+  const pendientes = await (
+    await page.request.get("/api/erp/combustible/despachos/excedentes-pendientes")
+  ).json();
+  expect(pendientes.some((x: { equipo: string }) => x.equipo === placa)).toBe(false);
+
+  // El vale NO bajó el tanque: sigue lleno (2000).
+  const ficha = await (await page.request.get(`/api/erp/combustible/${tanqueId}`)).json();
+  expect(Number(ficha.nivel_teorico)).toBe(2000);
 
   // ── El panel de Tanquetas: las dos llenas ──────────────────────────────
   await page.getByRole("button", { name: "Tanquetas" }).click();

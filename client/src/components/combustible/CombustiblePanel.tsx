@@ -273,7 +273,24 @@ const DESTINOS_EXCEDENTE: Record<DestinoExcedente, string> = {
   devolucion: "Devolver al proveedor",
 };
 
-type OrigenDespacho = "tanque_propio" | "compra_externa";
+type OrigenDespacho = "tanque_propio" | "compra_externa" | "excedente_recepcion";
+
+/** Lo que la cisterna cargó directo a una unidad (0110) y todavía no tiene su
+ *  vale (0112). El despacho de origen "excedente_recepcion" lo regulariza. */
+interface ExcedentePendiente {
+  id: string;
+  cantidad: string;
+  equipo_id: number;
+  equipo: string | null;
+  tipo_medidor: "horometro" | "odometro" | null;
+  recepcion_id: string;
+  recibido_en: string;
+  costo_unitario: string;
+  tanque_codigo: string;
+  tipo_combustible: "diesel_b5" | "gasolina_90" | "glp";
+  unidad: string;
+  proveedor: string | null;
+}
 type TipoDestinoDespacho = "equipo" | "planta" | "reserva_cubeta";
 
 const ETIQUETA_TIPO_DESTINO: Record<TipoDestinoDespacho, string> = {
@@ -1374,6 +1391,7 @@ function vigilanciaDe(t: Tanque): {
 const ETIQUETA_ORIGEN_DESPACHO: Record<OrigenDespacho, string> = {
   tanque_propio: "Tanque propio",
   compra_externa: "Compra externa",
+  excedente_recepcion: "Excedente de cisterna",
 };
 
 const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
@@ -1826,6 +1844,8 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
 
 const DESPACHO_FORM_INICIAL = {
   origen: "tanque_propio" as OrigenDespacho,
+  // Solo origen "excedente_recepcion" (0112): qué pendiente se regulariza.
+  excedente_linea_id: "",
   combustible_id: "",
   // De qué surtidor salió (0098): solo si el tanque tiene más de uno.
   surtidor_id: "",
@@ -2432,6 +2452,20 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     setTanques(Array.isArray(data) ? data : []);
   }, [esConductor]);
 
+  // Excedentes de cisterna sin vale (0112). Los ve quien registra despachos:
+  // es el que los regulariza.
+  const puedeDespachar = !esConductor && permiteTanque("registrar_despacho");
+  const [excedentesPendientes, setExcedentesPendientes] = useState<ExcedentePendiente[]>([]);
+  const cargarExcedentesPendientes = useCallback(async () => {
+    if (!puedeDespachar) {
+      setExcedentesPendientes([]);
+      return;
+    }
+    const res = await apiFetch("/api/erp/combustible/despachos/excedentes-pendientes");
+    const body = await res.json().catch(() => null);
+    setExcedentesPendientes(Array.isArray(body) ? body : []);
+  }, [puedeDespachar]);
+
   // pageSize=200 (el máximo, ver pagination.ts) alcanza para el <select> de
   // este formulario -- un buscador de equipos aparte es más de lo que Fase
   // B necesita ("solo lo indispensable para que el grifero pueda cargar
@@ -2466,11 +2500,15 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   useEffect(() => {
     // Patrón estándar de carga al montar -- ver IpercView.tsx.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    Promise.all([cargarTanques(), cargarEquipos(), cargarGrifos()]).finally(() =>
-      setLoading(false)
-    );
-  }, [cargarTanques, cargarEquipos, cargarGrifos]);
+    /* eslint-disable react-hooks/set-state-in-effect */
+    Promise.all([
+      cargarTanques(),
+      cargarEquipos(),
+      cargarGrifos(),
+      cargarExcedentesPendientes(),
+    ]).finally(() => setLoading(false));
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [cargarTanques, cargarEquipos, cargarGrifos, cargarExcedentesPendientes]);
 
   /** Lleva la fila resaltada a la vista una vez que la bandeja terminó de
    *  cargar. Sin esto, en una lista larga el usuario aterriza arriba y la
@@ -2573,6 +2611,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       cargarTanques(),
       cargarCriticasAbiertas(),
       recargarAlertasModal(),
+      cargarExcedentesPendientes(),
     ];
     if (modalKardexAbierto && kardexTanqueId !== null) {
       tareas.push(cargarKardex(kardexTanqueId));
@@ -3560,6 +3599,27 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     }
   };
 
+  /** Precarga el vale con lo que manda el pendiente: unidad, cantidad,
+   *  combustible y el costo de la factura (el servidor lo vuelve a fijar). */
+  const elegirExcedentePendiente = (lineaId: string) => {
+    const p = excedentesPendientes.find((x) => x.id === lineaId);
+    setDespachoForm({
+      ...DESPACHO_FORM_INICIAL,
+      origen: "excedente_recepcion",
+      excedente_linea_id: lineaId,
+      tipo_destino: "equipo",
+      equipo_id: p ? String(p.equipo_id) : "",
+      cantidad: p ? String(Number(p.cantidad)) : "",
+      costo_unitario: p ? String(Number(p.costo_unitario)) : "",
+      tipo_combustible: p ? p.tipo_combustible : DESPACHO_FORM_INICIAL.tipo_combustible,
+    });
+  };
+
+  const abrirDespachoDeExcedente = (lineaId: string) => {
+    abrirModalDespacho();
+    elegirExcedentePendiente(lineaId);
+  };
+
   const handleRegistrarDespacho = async (e: React.FormEvent) => {
     e.preventDefault();
     if (enviandoDespacho) return;
@@ -3571,71 +3631,98 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     // Solo se manda lo que aplica al origen elegido -- el resto queda fuera
     // del body en vez de ir como "" o 0, que el schema del servidor
     // rechazaría igual (ver crearDespachoCombustibleSchema.superRefine).
+    const pendienteElegido = excedentesPendientes.find(
+      (x) => x.id === despachoForm.excedente_linea_id
+    );
     const body =
-      despachoForm.origen === "tanque_propio"
+      despachoForm.origen === "excedente_recepcion"
         ? {
             cliente_uuid: clienteUuidDespacho,
-            origen: "tanque_propio",
-            combustible_id: Number(despachoForm.combustible_id),
+            origen: "excedente_recepcion",
+            excedente_linea_id: Number(despachoForm.excedente_linea_id),
             tipo_combustible: despachoForm.tipo_combustible,
-            tipo_destino: despachoForm.tipo_destino,
-            equipo_id:
-              despachoForm.tipo_destino === "equipo" ? Number(despachoForm.equipo_id) : undefined,
+            tipo_destino: "equipo",
+            equipo_id: Number(despachoForm.equipo_id),
             serie_talonario: despachoForm.serie_talonario,
             n_vale: Number(despachoForm.n_vale),
             cantidad: Number(despachoForm.cantidad),
-            lectura_contometro: Number(despachoForm.lectura_contometro),
-            surtidor_id:
-              surtidoresDelVale.length > 1 && despachoForm.surtidor_id !== ""
-                ? Number(despachoForm.surtidor_id)
-                : undefined,
-            totalizador_lectura:
-              surtidorDelVale?.usa_totalizador && despachoForm.totalizador_lectura !== ""
-                ? Number(despachoForm.totalizador_lectura)
-                : undefined,
-            // El medidor del equipo también en el vale del tanque propio
-            // (migración 0088): sin él no se puede calcular el consumo, que
-            // es el único control del combustible que sale CON vale y no
-            // llega a la máquina.
             lectura_horometro:
-              despachoForm.tipo_destino === "equipo" &&
-              equipoSeleccionado?.tipo_medidor === "horometro" &&
+              pendienteElegido?.tipo_medidor === "horometro" &&
               despachoForm.lectura_horometro !== ""
                 ? Number(despachoForm.lectura_horometro)
                 : undefined,
             lectura_odometro:
-              despachoForm.tipo_destino === "equipo" &&
-              equipoSeleccionado?.tipo_medidor === "odometro" &&
-              despachoForm.lectura_odometro !== ""
+              pendienteElegido?.tipo_medidor === "odometro" && despachoForm.lectura_odometro !== ""
                 ? Number(despachoForm.lectura_odometro)
                 : undefined,
             costo_unitario: Number(despachoForm.costo_unitario),
             observaciones: despachoForm.observaciones || undefined,
             despachado_en: despachadoEnIso,
           }
-        : {
-            cliente_uuid: clienteUuidDespacho,
-            origen: "compra_externa",
-            grifo_id: Number(despachoForm.grifo_id),
-            tipo_combustible: despachoForm.tipo_combustible,
-            tipo_destino: "equipo",
-            equipo_id: Number(despachoForm.equipo_id),
-            comprobante_tipo: despachoForm.comprobante_tipo,
-            comprobante_numero: despachoForm.comprobante_numero.trim(),
-            cantidad: Number(despachoForm.cantidad),
-            lectura_horometro:
-              equipoSeleccionado?.tipo_medidor === "horometro"
-                ? Number(despachoForm.lectura_horometro)
-                : undefined,
-            lectura_odometro:
-              equipoSeleccionado?.tipo_medidor === "odometro"
-                ? Number(despachoForm.lectura_odometro)
-                : undefined,
-            horas_abastecidas: Number(horasAbastecidas),
-            costo_unitario: Number(despachoForm.costo_unitario),
-            observaciones: despachoForm.observaciones || undefined,
-            despachado_en: despachadoEnIso,
-          };
+        : despachoForm.origen === "tanque_propio"
+          ? {
+              cliente_uuid: clienteUuidDespacho,
+              origen: "tanque_propio",
+              combustible_id: Number(despachoForm.combustible_id),
+              tipo_combustible: despachoForm.tipo_combustible,
+              tipo_destino: despachoForm.tipo_destino,
+              equipo_id:
+                despachoForm.tipo_destino === "equipo" ? Number(despachoForm.equipo_id) : undefined,
+              serie_talonario: despachoForm.serie_talonario,
+              n_vale: Number(despachoForm.n_vale),
+              cantidad: Number(despachoForm.cantidad),
+              lectura_contometro: Number(despachoForm.lectura_contometro),
+              surtidor_id:
+                surtidoresDelVale.length > 1 && despachoForm.surtidor_id !== ""
+                  ? Number(despachoForm.surtidor_id)
+                  : undefined,
+              totalizador_lectura:
+                surtidorDelVale?.usa_totalizador && despachoForm.totalizador_lectura !== ""
+                  ? Number(despachoForm.totalizador_lectura)
+                  : undefined,
+              // El medidor del equipo también en el vale del tanque propio
+              // (migración 0088): sin él no se puede calcular el consumo, que
+              // es el único control del combustible que sale CON vale y no
+              // llega a la máquina.
+              lectura_horometro:
+                despachoForm.tipo_destino === "equipo" &&
+                equipoSeleccionado?.tipo_medidor === "horometro" &&
+                despachoForm.lectura_horometro !== ""
+                  ? Number(despachoForm.lectura_horometro)
+                  : undefined,
+              lectura_odometro:
+                despachoForm.tipo_destino === "equipo" &&
+                equipoSeleccionado?.tipo_medidor === "odometro" &&
+                despachoForm.lectura_odometro !== ""
+                  ? Number(despachoForm.lectura_odometro)
+                  : undefined,
+              costo_unitario: Number(despachoForm.costo_unitario),
+              observaciones: despachoForm.observaciones || undefined,
+              despachado_en: despachadoEnIso,
+            }
+          : {
+              cliente_uuid: clienteUuidDespacho,
+              origen: "compra_externa",
+              grifo_id: Number(despachoForm.grifo_id),
+              tipo_combustible: despachoForm.tipo_combustible,
+              tipo_destino: "equipo",
+              equipo_id: Number(despachoForm.equipo_id),
+              comprobante_tipo: despachoForm.comprobante_tipo,
+              comprobante_numero: despachoForm.comprobante_numero.trim(),
+              cantidad: Number(despachoForm.cantidad),
+              lectura_horometro:
+                equipoSeleccionado?.tipo_medidor === "horometro"
+                  ? Number(despachoForm.lectura_horometro)
+                  : undefined,
+              lectura_odometro:
+                equipoSeleccionado?.tipo_medidor === "odometro"
+                  ? Number(despachoForm.lectura_odometro)
+                  : undefined,
+              horas_abastecidas: Number(horasAbastecidas),
+              costo_unitario: Number(despachoForm.costo_unitario),
+              observaciones: despachoForm.observaciones || undefined,
+              despachado_en: despachadoEnIso,
+            };
 
     setEnviandoDespacho(true);
     try {
@@ -4591,6 +4678,24 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             aria-label="Cerrar aviso de error"
           >
             <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+      {!esConductor && pestanaCombustible === "tanques" && excedentesPendientes.length > 0 && (
+        <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg p-4 flex flex-wrap items-center gap-3">
+          <p className="text-sm text-amber-900 flex-1">
+            <strong>
+              {excedentesPendientes.length === 1
+                ? "Hay 1 excedente cargado directo a una unidad sin vale."
+                : `Hay ${excedentesPendientes.length} excedentes cargados directo a unidades sin vale.`}
+            </strong>{" "}
+            Registralos como despacho para que cuenten en el consumo de cada unidad.
+          </p>
+          <button
+            onClick={() => abrirDespachoDeExcedente(excedentesPendientes[0].id)}
+            className="text-sm font-bold text-amber-900 underline"
+          >
+            Registrar despacho
           </button>
         </div>
       )}
@@ -5934,6 +6039,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     >
                       <option value="tanque_propio">Tanque propio</option>
                       <option value="compra_externa">Compra externa (ruta)</option>
+                      <option value="excedente_recepcion">
+                        Excedente de cisterna
+                        {excedentesPendientes.length > 0
+                          ? ` (${excedentesPendientes.length} pendiente${excedentesPendientes.length === 1 ? "" : "s"})`
+                          : ""}
+                      </option>
                     </select>
                   )}
                 </div>
@@ -5946,7 +6057,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   </label>
                   <select
                     id="despacho-tipo-combustible"
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    disabled={despachoForm.origen === "excedente_recepcion"}
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900 disabled:bg-slate-50"
                     value={despachoForm.tipo_combustible}
                     onChange={(e) =>
                       setDespachoForm({
@@ -5964,7 +6076,98 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 </div>
               </div>
 
-              {despachoForm.origen === "tanque_propio" ? (
+              {despachoForm.origen === "excedente_recepcion" &&
+                (() => {
+                  const p = excedentesPendientes.find(
+                    (x) => x.id === despachoForm.excedente_linea_id
+                  );
+                  return (
+                    <>
+                      <div className="space-y-1">
+                        <label
+                          htmlFor="despacho-excedente"
+                          className="text-xs font-bold text-slate-700 uppercase"
+                        >
+                          Excedente pendiente
+                        </label>
+                        <select
+                          id="despacho-excedente"
+                          required
+                          className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                          value={despachoForm.excedente_linea_id}
+                          onChange={(e) => elegirExcedentePendiente(e.target.value)}
+                        >
+                          <option value="">
+                            {excedentesPendientes.length === 0
+                              ? "No hay excedentes pendientes"
+                              : "Elegir..."}
+                          </option>
+                          {excedentesPendientes.map((x) => (
+                            <option key={x.id} value={x.id}>
+                              {x.equipo ?? `Equipo ${x.equipo_id}`} ·{" "}
+                              {Number(x.cantidad).toLocaleString("es-PE")} {x.unidad} · recepción #
+                              {x.recepcion_id} ({x.tanque_codigo},{" "}
+                              {new Date(x.recibido_en).toLocaleDateString("es-PE")})
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-slate-600">
+                          Combustible que la cisterna cargó directo a la unidad porque no cabía en
+                          el tanque. Este vale NO descuenta del tanque; sí cuenta en el consumo de
+                          la unidad.
+                        </p>
+                      </div>
+                      {p && (
+                        <>
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                            <strong>{p.equipo ?? `Equipo ${p.equipo_id}`}</strong> ·{" "}
+                            {Number(p.cantidad).toLocaleString("es-PE")} {p.unidad} · costo de la
+                            factura S/ {Number(p.costo_unitario).toLocaleString("es-PE")}
+                            {p.proveedor ? ` (${p.proveedor})` : ""}
+                          </div>
+                          {p.tipo_medidor && (
+                            <div className="space-y-1">
+                              <label
+                                htmlFor="despacho-excedente-medidor"
+                                className="text-xs font-bold text-slate-700 uppercase"
+                              >
+                                Lectura del{" "}
+                                {p.tipo_medidor === "horometro" ? "horómetro" : "odómetro"}
+                              </label>
+                              <input
+                                id="despacho-excedente-medidor"
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                required
+                                className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
+                                value={
+                                  p.tipo_medidor === "horometro"
+                                    ? despachoForm.lectura_horometro
+                                    : despachoForm.lectura_odometro
+                                }
+                                onChange={(e) =>
+                                  setDespachoForm({
+                                    ...despachoForm,
+                                    ...(p.tipo_medidor === "horometro"
+                                      ? { lectura_horometro: e.target.value }
+                                      : { lectura_odometro: e.target.value }),
+                                  })
+                                }
+                              />
+                              <p className="text-xs text-slate-600">
+                                Con este número se calcula el consumo de la unidad.
+                              </p>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
+
+              {despachoForm.origen === "excedente_recepcion" ? null : despachoForm.origen ===
+                "tanque_propio" ? (
                 <>
                   <div className="space-y-1">
                     <label
@@ -6385,6 +6588,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     min={0}
                     step="0.0001"
                     required
+                    // El excedente cuesta lo de la factura de su recepción (0112).
+                    readOnly={despachoForm.origen === "excedente_recepcion"}
                     className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                     value={despachoForm.costo_unitario}
                     onChange={(e) => {
@@ -6429,7 +6634,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 />
               </div>
 
-              {despachoForm.origen === "tanque_propio" ? (
+              {despachoForm.origen !== "compra_externa" ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label

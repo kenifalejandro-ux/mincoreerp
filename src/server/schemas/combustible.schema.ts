@@ -253,7 +253,9 @@ export type AnularLecturaCombustibleInput = z.infer<typeof anularLecturaCombusti
 // ── Despachos (Fase B, ver docs/architecture/control-de-combustible.md
 // puntos 1, 2 y 5, y migrations/0062) ───────────────────────────────────
 
-const ORIGENES_DESPACHO = ["tanque_propio", "compra_externa"] as const;
+// 'excedente_recepcion' (0112): el vale que regulariza un excedente cargado
+// directo de la cisterna a una unidad. No sale de ningún tanque.
+const ORIGENES_DESPACHO = ["tanque_propio", "compra_externa", "excedente_recepcion"] as const;
 const TIPOS_DESTINO_DESPACHO = ["equipo", "planta", "reserva_cubeta"] as const;
 
 // Qué papel entrega el proveedor en la ruta (0109). Mismo vocabulario que
@@ -336,6 +338,8 @@ export const crearDespachoCombustibleSchema = z
     producto: z.enum(PRODUCTOS_DESPACHO).default("combustible"),
 
     origen: z.enum(ORIGENES_DESPACHO),
+    // Solo excedente_recepcion (0112): la línea del reparto que regulariza.
+    excedente_linea_id: z.number().int().positive().optional(),
     // Solo tanque_propio.
     combustible_id: z.number().int().positive().optional(),
     // compra_externa (combustible) Y urea -- FK al catálogo -- ver
@@ -566,6 +570,62 @@ export const crearDespachoCombustibleSchema = z
         path: ["equipo_id"],
         message: "equipo_id solo aplica cuando tipo_destino es 'equipo'",
       });
+    }
+
+    if (data.origen !== "excedente_recepcion" && data.excedente_linea_id !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["excedente_linea_id"],
+        message: "excedente_linea_id solo aplica a un despacho de excedente de recepción",
+      });
+    }
+
+    // ── EXCEDENTE DE CISTERNA (0112) ───────────────────────────────────
+    // Combustible que la cisterna cargó directo a una unidad porque no cabía
+    // en el tanque. Lleva vale (misma secuencia que el tanque) y el medidor de
+    // la unidad, pero no sale de ningún tanque ni surtidor.
+    if (data.origen === "excedente_recepcion") {
+      exigirVale(data, ctx, "un despacho de excedente");
+      if (data.excedente_linea_id === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["excedente_linea_id"],
+          message: "excedente_linea_id es obligatorio: qué excedente pendiente se despacha",
+        });
+      }
+      if (data.tipo_destino !== "equipo") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["tipo_destino"],
+          message: "el excedente directo a unidades siempre va a un equipo",
+        });
+      }
+      if (data.lectura_horometro !== undefined && data.lectura_odometro !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["lectura_horometro"],
+          message: "Mandá el horómetro o el odómetro, nunca los dos en el mismo vale",
+        });
+      }
+      for (const [campo, valor] of [
+        ["combustible_id", data.combustible_id],
+        ["grifo_id", data.grifo_id],
+        ["lectura_contometro", data.lectura_contometro],
+        ["totalizador_lectura", data.totalizador_lectura],
+        ["surtidor_id", data.surtidor_id],
+        ["horas_abastecidas", data.horas_abastecidas],
+        ["comprobante_tipo", data.comprobante_tipo],
+        ["comprobante_numero", data.comprobante_numero],
+      ] as [string, unknown][]) {
+        if (valor !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [campo],
+            message: `${campo} no aplica a un despacho de excedente: no sale de un tanque ni de un grifo de ruta`,
+          });
+        }
+      }
+      return;
     }
 
     if (data.origen === "tanque_propio") {

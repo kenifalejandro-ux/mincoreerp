@@ -1783,7 +1783,12 @@ export class CombustibleController {
       await publicarEventoTenant(tenantId, "combustible.despacho_creado", {
         despachoId: fila!.id,
       });
-      await this.procesarAlertasDespachoCreado(tenantId, fila!.id, data);
+      await this.procesarAlertasDespachoCreado(
+        tenantId,
+        fila!.id,
+        data,
+        fila!.tanque_excedente_id == null ? null : Number(fila!.tanque_excedente_id)
+      );
       res.status(201).json(fila);
     } catch (err) {
       if (
@@ -1792,7 +1797,10 @@ export class CombustibleController {
         // géneros a propósito: el mensaje nombra el papel que el cargador
         // tiene en la mano, y este `includes` es lo único que separa un 409
         // de un 500 que la cola offline reintentaría para siempre.
-        (err.message.includes("ya está registrado") || err.message.includes("ya está registrada"))
+        (err.message.includes("ya está registrado") ||
+          err.message.includes("ya está registrada") ||
+          // 0112: la línea del excedente ya tiene su despacho vigente.
+          err.message.includes("ya tiene su despacho registrado"))
       ) {
         // 409: no es un dato mal formado, es el mismo papel cargado dos
         // veces -- mismo criterio que el vale duplicado del punto 5. Y es un
@@ -1805,6 +1813,9 @@ export class CombustibleController {
       if (
         err instanceof Error &&
         (err.message.includes("el contómetro marcó") ||
+          // Despacho de excedente de cisterna (0112).
+          (err.message.includes("el excedente") &&
+            !err.message.includes("ya tiene su despacho registrado")) ||
           err.message.includes("no existe en este tenant") ||
           err.message.includes("no tiene tipo de medidor configurado") ||
           err.message.includes("se mide por") ||
@@ -1903,7 +1914,8 @@ export class CombustibleController {
   private async procesarAlertasDespachoCreado(
     tenantId: string,
     despachoId: number,
-    data: CrearDespachoCombustibleInput
+    data: CrearDespachoCombustibleInput,
+    tanqueExcedenteId: number | null = null
   ) {
     // UREA: rama completamente separada -- ver procesarAlertasDespachoUrea().
     // Los controles de abajo (sobredespacho, medidor inconsistente, consumo
@@ -2011,7 +2023,9 @@ export class CombustibleController {
               client,
               tenantId,
               data.equipo_id,
-              data.combustible_id ?? null,
+              // El despacho de un excedente (0112) no tiene tanque: la unidad
+              // de `cantidad` es la del tanque de la recepción.
+              data.combustible_id ?? tanqueExcedenteId,
               data.cantidad!
             )
           : null;
@@ -3252,7 +3266,11 @@ export class CombustibleController {
         typeof req.query.serie_talonario === "string" ? req.query.serie_talonario : undefined;
       const origenRaw = req.query.origen;
       const origen =
-        origenRaw === "tanque_propio" || origenRaw === "compra_externa" ? origenRaw : undefined;
+        origenRaw === "tanque_propio" ||
+        origenRaw === "compra_externa" ||
+        origenRaw === "excedente_recepcion"
+          ? origenRaw
+          : undefined;
       // Migración 0092: sin filtro, la pestaña de urea (y la de combustible)
       // verían los vales del otro producto mezclados en el mismo listado.
       const producto =
@@ -4225,6 +4243,19 @@ export class CombustibleController {
   //
   // Mismo criterio que surtidores: los errores de negocio salen como AppError
   // desde tanquetas.service. Fuera del alcance es 404, igual que inexistente.
+
+  /** GET /despachos/excedentes-pendientes (0112): lo cargado directo de la
+   *  cisterna a una unidad que todavía no tiene su vale. Solo los de las
+   *  sedes del alcance. */
+  async listarExcedentesPendientes(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const alcance = alcanceDe(req);
+    res.json(
+      await withTenant(tenantId, (client) =>
+        service.listarExcedentesPendientes(client, tenantId, alcance.todo ? null : alcance.grifos)
+      )
+    );
+  }
 
   /** null si no existe o si su grifo está fuera del alcance del usuario. */
   private async tanquetaVisible(req: Request, id: number) {
@@ -5484,6 +5515,11 @@ export class CombustibleController {
       const { motivo } = req.validatedBody as AnularRecepcionCombustibleInput;
 
       const resultado = await withTenant(tenantId, async (client) => {
+        // Un excedente suyo ya se despachó con vale (0112): anularla dejaría
+        // ese vale apuntando a una entrega que "no existió". Primero el vale.
+        if ((await service.contarDespachosDeExcedente(client, tenantId, recepcionId)) > 0) {
+          return { estado: "con_despachos" as const };
+        }
         const anulada = await service.anularRecepcion(
           client,
           tenantId,
@@ -5503,6 +5539,13 @@ export class CombustibleController {
       }
       if (resultado.estado === "ya_anulada") {
         res.status(409).json({ error: "Esta recepción ya estaba anulada" });
+        return;
+      }
+      if (resultado.estado === "con_despachos") {
+        res.status(409).json({
+          error:
+            "Parte del excedente de esta recepción ya se despachó con vale: anulá primero ese despacho",
+        });
         return;
       }
 
