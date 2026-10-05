@@ -383,6 +383,10 @@ interface DespachoHistorial {
   // recargar con el dato corregido.
   anulada_en: string | null;
   motivo_anulacion: string | null;
+  // 0112/0114: de qué tanque vino un excedente, y qué tanqueta llenó (reserva)
+  // o descargó (carga en ruta) el vale.
+  tanque_excedente_codigo?: string | null;
+  tanqueta_codigo?: string | null;
 }
 
 // migrations/0068 -- mismo shape que AlertaCombustible en
@@ -1456,6 +1460,8 @@ function etiquetaPapelDespacho(d: {
   if (d.comprobante_numero !== null) {
     return `${d.comprobante_tipo === "factura" ? "Factura" : "Boleta"} ${d.comprobante_numero}`;
   }
+  // La carga en ruta desde tanqueta (0114) no tiene vale ni comprobante.
+  if (d.serie_talonario === null) return "Sin vale";
   return `${d.serie_talonario}-${d.n_vale}`;
 }
 
@@ -7240,10 +7246,18 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           </td>
                         )}
                         <td className="p-3 text-sm text-slate-600">
-                          {tanque?.tanque_nombre ?? grifo?.nombre ?? "—"}
+                          {d.origen === "excedente_recepcion"
+                            ? `${d.tanque_excedente_codigo ?? "Tanque"} (excedente)`
+                            : d.origen === "tanqueta"
+                              ? `Tanqueta ${d.tanqueta_codigo ?? ""}`
+                              : (tanque?.tanque_nombre ?? grifo?.nombre ?? "—")}
                         </td>
                         <td className="p-3 text-sm text-slate-600">
-                          {equipo ? `${equipo.placa_codigo} — ${equipo.tipo}` : "—"}
+                          {equipo
+                            ? `${equipo.placa_codigo} — ${equipo.tipo}`
+                            : d.tanqueta_codigo && d.origen === "tanque_propio"
+                              ? `Tanqueta ${d.tanqueta_codigo}`
+                              : "—"}
                           {d.observaciones && (
                             <p className="text-xs text-slate-400 mt-0.5">{d.observaciones}</p>
                           )}

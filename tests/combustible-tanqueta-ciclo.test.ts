@@ -173,6 +173,17 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
     expect(await saldo(tqt)).toBe(180);
     expect(await nivelTeorico(tq)).toBe(nivel);
 
+    // El historial de despachos nombra la tanqueta de la carga y de la previsión.
+    const despachos = await admin
+      .get("/api/erp/combustible/despachos")
+      .query({ origen: "tanque_propio", pageSize: 200 });
+    const conTanqueta = despachos.body.data.filter(
+      (d: { tanqueta_origen_id: string | null; tanqueta_destino_id: string | null }) =>
+        Number(d.tanqueta_origen_id) === tqt || Number(d.tanqueta_destino_id) === tqt
+    );
+    expect(conTanqueta).toHaveLength(2);
+    expect(conTanqueta.every((d: { tanqueta_codigo: string }) => d.tanqueta_codigo)).toBe(true);
+
     const historial = await admin.get(`/api/erp/combustible/tanquetas/${tqt}/historial`);
     expect(historial.status).toBe(200);
     const tipos = historial.body.map((m: { tipo: string }) => m.tipo);

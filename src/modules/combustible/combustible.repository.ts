@@ -1412,7 +1412,14 @@ export class CombustibleRepository {
     valores.push(pageSize, offset);
     const result = await client.query(
       `
-      SELECT ${CombustibleRepository.COLUMNAS_DESPACHO}, COUNT(*) OVER() AS total_count
+      SELECT ${CombustibleRepository.COLUMNAS_DESPACHO}, COUNT(*) OVER() AS total_count,
+        -- Para el historial (0112/0114): de qué tanque vino un excedente y qué
+        -- tanqueta llenó o descargó el vale, sin que la pantalla lo busque.
+        (SELECT c.codigo FROM combustible c
+          WHERE c.id = combustible_despachos.tanque_excedente_id) AS tanque_excedente_codigo,
+        (SELECT tq.codigo FROM combustible_tanquetas tq
+          WHERE tq.id = COALESCE(combustible_despachos.tanqueta_origen_id,
+                                 combustible_despachos.tanqueta_destino_id)) AS tanqueta_codigo
       FROM combustible_despachos
       WHERE ${condiciones.join(" AND ")}
       ORDER BY despachado_en DESC, id DESC

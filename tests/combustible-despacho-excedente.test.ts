@@ -135,7 +135,10 @@ describe("combustible: despacho del excedente directo a unidades (0112)", () => 
     const propios = await admin
       .get("/api/erp/combustible/despachos")
       .query({ origen: "tanque_propio", pageSize: 100 });
-    expect(propios.body.data.some((d: { id: string }) => d.id === r.body.id)).toBe(true);
+    const fila = propios.body.data.find((d: { id: string }) => d.id === r.body.id);
+    expect(fila).toBeDefined();
+    // El historial dice de qué tanque vino el excedente (sin descontarle nada).
+    expect(fila.tanque_excedente_codigo).toBeTruthy();
     const compras = await admin
       .get("/api/erp/combustible/despachos")
       .query({ origen: "compra_externa", pageSize: 100 });
