@@ -5514,27 +5514,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   Recepciones de combustible
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label
-                      htmlFor="tanque-moneda"
-                      className="text-xs font-bold text-slate-700 uppercase"
-                    >
-                      Moneda
-                    </label>
-                    {/* Hasta la Fase C este campo viajaba fijo en "PEN" sin
-                        control visible: `moneda` solo tiene sentido
-                        acompañando a un costo, y no había ninguno. Ahora que
-                        el costo promedio existe de verdad, se muestra. */}
-                    <select
-                      id="tanque-moneda"
-                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-                      value={formData.moneda}
-                      onChange={(e) => setFormData({ ...formData, moneda: e.target.value })}
-                    >
-                      <option value="PEN">PEN (S/)</option>
-                      <option value="USD">USD ($)</option>
-                    </select>
-                  </div>
                   <div className="space-y-1 sm:col-span-2">
                     <label className="flex items-start gap-2 text-sm text-slate-700">
                       <input
