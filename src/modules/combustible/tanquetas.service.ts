@@ -20,22 +20,33 @@ import { ALCANCE_TODO, type AlcanceCombustible } from "./alcance";
 
 export const CAPACIDAD_TANQUETA_DEFECTO = 280;
 
-/** Lo que entró a la tanqueta. Las salidas se suman acá cuando exista la carga
- *  en ruta. Solo cuentan las recepciones vigentes: anular una recepción
- *  devuelve el espacio. */
+/** Lo que entró a la tanqueta: el excedente de recepciones vigentes (0111) y
+ *  los vales del tanque a "reserva en cubeta" que la eligieron (0114). Anular
+ *  una recepción o un vale devuelve el espacio. */
 const SQL_ENTRADAS = `
-  COALESCE((
+  (COALESCE((
     SELECT SUM(x.cantidad)
       FROM combustible_recepcion_excedentes x
       JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
      WHERE x.tenant_id = t.tenant_id AND x.tanqueta_id = t.id AND r.anulada_en IS NULL
+  ), 0) + COALESCE((
+    SELECT SUM(d.cantidad) FROM combustible_despachos d
+     WHERE d.tenant_id = t.tenant_id AND d.tanqueta_destino_id = t.id AND d.anulada_en IS NULL
+  ), 0))`;
+
+/** Lo que salió: las cargas en ruta desde la tanqueta (0114). */
+const SQL_SALIDAS = `
+  COALESCE((
+    SELECT SUM(d.cantidad) FROM combustible_despachos d
+     WHERE d.tenant_id = t.tenant_id AND d.tanqueta_origen_id = t.id AND d.anulada_en IS NULL
   ), 0)`;
 
 const COLUMNAS = `
   t.id, t.grifo_interno_id, t.codigo, t.capacidad, t.activa, t.motivo_baja, t.creado_en,
   ${SQL_ENTRADAS} AS entradas,
-  ${SQL_ENTRADAS} AS saldo,
-  t.capacidad - ${SQL_ENTRADAS} AS libre`;
+  ${SQL_SALIDAS} AS salidas,
+  ${SQL_ENTRADAS} - ${SQL_SALIDAS} AS saldo,
+  t.capacidad - (${SQL_ENTRADAS} - ${SQL_SALIDAS}) AS libre`;
 
 export async function listarTanquetas(
   client: PoolClient,
@@ -158,19 +169,115 @@ export async function actualizarTanqueta(
   return getTanqueta(client, tenantId, id);
 }
 
-/** Cada vez que se llenó: la línea de la recepción que la alimentó. */
+/** Todo lo que entró y salió de la tanqueta, del más reciente al más viejo:
+ *  excedentes de recepción, previsión desde el tanque y cargas en ruta. */
 export async function historialTanqueta(client: PoolClient, tenantId: string, id: number) {
   const r = await client.query(
-    `SELECT x.id, x.cantidad, x.creado_en, r.id AS recepcion_id, r.recibido_en,
-            r.anulada_en, c.codigo AS tanque_codigo, c.tanque_nombre
-       FROM combustible_recepcion_excedentes x
-       JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
-       JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
-      WHERE x.tenant_id = $1 AND x.tanqueta_id = $2
-      ORDER BY r.recibido_en DESC, x.id DESC`,
+    `SELECT * FROM (
+       SELECT 'excedente' AS tipo, x.id::text AS id, x.cantidad, r.recibido_en AS fecha,
+              r.anulada_en, c.codigo AS tanque_codigo, r.id AS recepcion_id,
+              NULL::text AS equipo, NULL::numeric AS lectura_horometro,
+              NULL::numeric AS lectura_odometro, NULL::text AS serie_talonario,
+              NULL::int AS n_vale, u.nombre AS usuario
+         FROM combustible_recepcion_excedentes x
+         JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
+         JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
+         LEFT JOIN usuarios u ON u.id = x.decidido_por
+        WHERE x.tenant_id = $1 AND x.tanqueta_id = $2
+       UNION ALL
+       SELECT 'prevision', d.id::text, d.cantidad, d.despachado_en, d.anulada_en,
+              c.codigo, NULL, NULL, NULL, NULL, d.serie_talonario, d.n_vale, u.nombre
+         FROM combustible_despachos d
+         JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = d.tenant_id
+         LEFT JOIN usuarios u ON u.id = d.usuario_id
+        WHERE d.tenant_id = $1 AND d.tanqueta_destino_id = $2
+       UNION ALL
+       SELECT 'carga_ruta', d.id::text, d.cantidad, d.despachado_en, d.anulada_en,
+              NULL, NULL, e.placa_codigo, d.lectura_horometro, d.lectura_odometro,
+              NULL, NULL, u.nombre
+         FROM combustible_despachos d
+         LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
+         LEFT JOIN usuarios u ON u.id = d.usuario_id
+        WHERE d.tenant_id = $1 AND d.tanqueta_origen_id = $2
+     ) m
+     ORDER BY fecha DESC, id DESC`,
     [tenantId, id]
   );
   return r.rows;
+}
+
+/** El costo de un galón de la tanqueta: el promedio ponderado de lo que
+ *  entró (la factura del excedente, o el costo del vale a reserva). Es el
+ *  costo de la carga en ruta: el conductor no lo conoce ni lo tipea. 0 si
+ *  todavía no entró nada con costo. */
+export async function costoPromedioTanqueta(
+  client: PoolClient,
+  tenantId: string,
+  id: number
+): Promise<number> {
+  const r = await client.query<{ costo: string | null }>(
+    `SELECT SUM(cantidad * costo) / NULLIF(SUM(cantidad), 0) AS costo FROM (
+       SELECT x.cantidad, r.costo_unitario AS costo
+         FROM combustible_recepcion_excedentes x
+         JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
+        WHERE x.tenant_id = $1 AND x.tanqueta_id = $2 AND r.anulada_en IS NULL
+       UNION ALL
+       SELECT d.cantidad, d.costo_unitario
+         FROM combustible_despachos d
+        WHERE d.tenant_id = $1 AND d.tanqueta_destino_id = $2 AND d.anulada_en IS NULL
+     ) e`,
+    [tenantId, id]
+  );
+  return r.rows[0].costo === null ? 0 : Number(Number(r.rows[0].costo).toFixed(4));
+}
+
+/** Para los formularios del vale (0114): las tanquetas activas del alcance,
+ *  con su saldo y espacio. Lo lee quien registra despachos, que no siempre
+ *  tiene el panel de Tanquetas. */
+export async function tanquetasParaFormulario(
+  client: PoolClient,
+  tenantId: string,
+  alcance: AlcanceCombustible
+) {
+  const todas = await listarTanquetas(client, tenantId, alcance, { soloActivas: true });
+  return todas.map((t) => ({
+    id: Number(t.id),
+    codigo: t.codigo as string,
+    grifo_interno_id: Number(t.grifo_interno_id),
+    capacidad: Number(t.capacidad),
+    saldo: Number(t.saldo),
+    libre: Number(t.libre),
+  }));
+}
+
+/** El vale del tanque a "reserva en cubeta" que llena una tanqueta (0114):
+ *  activa, de la sede del tanque y con espacio. Bloquea la tanqueta para que
+ *  dos vales simultáneos no la llenen de más. Lanza Error con "la tanqueta"
+ *  en el mensaje (el controller lo traduce a 400). */
+export async function validarLlenadoDeTanqueta(
+  client: PoolClient,
+  tenantId: string,
+  tanquetaId: number,
+  grifoDelTanque: number,
+  cantidad: number
+) {
+  await client.query(
+    `SELECT id FROM combustible_tanquetas WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+    [tenantId, tanquetaId]
+  );
+  const t = await getTanqueta(client, tenantId, tanquetaId);
+  if (!t) throw new Error("la tanqueta elegida no existe en este tenant");
+  if (!t.activa) throw new Error(`la tanqueta ${t.codigo} está dada de baja`);
+  if (Number(t.grifo_interno_id) !== grifoDelTanque) {
+    throw new Error(
+      `la tanqueta ${t.codigo} es de otra sede: solo se llena desde los tanques de su grifo`
+    );
+  }
+  if (cantidad > Number(t.libre) + 0.001) {
+    throw new Error(
+      `la tanqueta ${t.codigo} solo tiene ${Number(t.libre)} gal libres (capacidad ${Number(t.capacidad)}): no entran ${cantidad}`
+    );
+  }
 }
 
 /** Las tanquetas activas de un grifo con su espacio libre, para proponer el

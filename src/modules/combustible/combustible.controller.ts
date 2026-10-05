@@ -1789,6 +1789,9 @@ export class CombustibleController {
         data,
         fila!.tanque_excedente_id == null ? null : Number(fila!.tanque_excedente_id)
       );
+      if (data.origen === "tanqueta") {
+        await this.procesarAlertaTanquetaSobregirada(tenantId, Number(fila!.id), data);
+      }
       res.status(201).json(fila);
     } catch (err) {
       if (
@@ -1813,6 +1816,8 @@ export class CombustibleController {
       if (
         err instanceof Error &&
         (err.message.includes("el contómetro marcó") ||
+          // Tanquetas (0114): llenarla desde el tanque o cargar desde ella.
+          err.message.includes("la tanqueta") ||
           // Despacho de excedente de cisterna (0112).
           (err.message.includes("el excedente") &&
             !err.message.includes("ya tiene su despacho registrado")) ||
@@ -3269,7 +3274,8 @@ export class CombustibleController {
       const origen =
         origenRaw === "tanque_propio" ||
         origenRaw === "compra_externa" ||
-        origenRaw === "excedente_recepcion"
+        origenRaw === "excedente_recepcion" ||
+        origenRaw === "tanqueta"
           ? origenRaw
           : undefined;
       // Migración 0092: sin filtro, la pestaña de urea (y la de combustible)
@@ -4245,6 +4251,56 @@ export class CombustibleController {
   //
   // Mismo criterio que surtidores: los errores de negocio salen como AppError
   // desde tanquetas.service. Fuera del alcance es 404, igual que inexistente.
+
+  /** Se cargó desde una tanqueta más de lo que el sistema cree que tenía
+   *  (0114). No bloquea --los galones en ruta son estimados-- pero queda
+   *  dicho: o la estimación está mal, o entró a la tanqueta combustible que no
+   *  se registró. Mismo contrato "nunca lanza" que el resto de los procesar*. */
+  private async procesarAlertaTanquetaSobregirada(
+    tenantId: string,
+    despachoId: number,
+    data: CrearDespachoCombustibleInput
+  ) {
+    try {
+      const creada = await withTenant(tenantId, async (client) => {
+        const t = await service.saldoDeTanqueta(client, tenantId, data.tanqueta_origen_id!);
+        if (!t || t.saldo >= -0.01) return false;
+        await service.crearAlertas(client, tenantId, [
+          {
+            tipo: "tanqueta_sobregirada",
+            despachoId,
+            detalle: {
+              tanqueta: t.codigo,
+              saldo: t.saldo,
+              cantidad: data.cantidad,
+              equipoId: data.equipo_id,
+            },
+          },
+        ]);
+        return true;
+      });
+      if (creada) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "tanqueta_sobregirada",
+          despachoId,
+        });
+      }
+    } catch (err) {
+      logger.warn({ err, tenantId, despachoId }, "No se pudo evaluar el saldo de la tanqueta");
+    }
+  }
+
+  /** GET /tanquetas/formulario (0114): las tanquetas activas del alcance con
+   *  saldo y espacio, para los formularios del vale. Lo lee quien registra
+   *  despachos (el conductor no tiene el panel de Tanquetas). */
+  async listarTanquetasParaFormulario(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    res.json(
+      await withTenant(tenantId, (client) =>
+        tanquetas.tanquetasParaFormulario(client, tenantId, alcanceDe(req))
+      )
+    );
+  }
 
   /** GET /config/formulario-despacho (0113): lo único de la config que el
    *  formulario del vale necesita, legible por quien registra despachos (la

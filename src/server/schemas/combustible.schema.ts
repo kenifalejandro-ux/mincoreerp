@@ -255,7 +255,14 @@ export type AnularLecturaCombustibleInput = z.infer<typeof anularLecturaCombusti
 
 // 'excedente_recepcion' (0112): el vale que regulariza un excedente cargado
 // directo de la cisterna a una unidad. No sale de ningún tanque.
-const ORIGENES_DESPACHO = ["tanque_propio", "compra_externa", "excedente_recepcion"] as const;
+// 'tanqueta' (0114): la carga en ruta desde una tanqueta, que registra el
+// conductor con el medidor de la unidad. No sale de ningún tanque.
+const ORIGENES_DESPACHO = [
+  "tanque_propio",
+  "compra_externa",
+  "excedente_recepcion",
+  "tanqueta",
+] as const;
 const TIPOS_DESTINO_DESPACHO = ["equipo", "planta", "reserva_cubeta"] as const;
 
 // Qué papel entrega el proveedor en la ruta (0109). Mismo vocabulario que
@@ -340,6 +347,10 @@ export const crearDespachoCombustibleSchema = z
     origen: z.enum(ORIGENES_DESPACHO),
     // Solo excedente_recepcion (0112): la línea del reparto que regulariza.
     excedente_linea_id: z.number().int().positive().optional(),
+    // 0114: a qué tanqueta va un vale del tanque a "reserva_cubeta", y de qué
+    // tanqueta sale una carga en ruta (origen 'tanqueta').
+    tanqueta_destino_id: z.number().int().positive().optional(),
+    tanqueta_origen_id: z.number().int().positive().optional(),
     // Solo tanque_propio.
     combustible_id: z.number().int().positive().optional(),
     // compra_externa (combustible) Y urea -- FK al catálogo -- ver
@@ -543,7 +554,9 @@ export const crearDespachoCombustibleSchema = z
         message: "cantidad es obligatoria para un vale de combustible",
       });
     }
-    if (data.costo_unitario === undefined) {
+    // La carga desde tanqueta (0114) no lo lleva: lo calcula el servidor con
+    // el costo de lo que entró a la tanqueta, y el conductor no lo conoce.
+    if (data.costo_unitario === undefined && data.origen !== "tanqueta") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["costo_unitario"],
@@ -570,6 +583,74 @@ export const crearDespachoCombustibleSchema = z
         path: ["equipo_id"],
         message: "equipo_id solo aplica cuando tipo_destino es 'equipo'",
       });
+    }
+
+    if (
+      data.tanqueta_destino_id !== undefined &&
+      (data.origen !== "tanque_propio" || data.tipo_destino !== "reserva_cubeta")
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["tanqueta_destino_id"],
+        message: "tanqueta_destino_id solo aplica a un vale del tanque a 'reserva_cubeta'",
+      });
+    }
+    if (data.origen !== "tanqueta" && data.tanqueta_origen_id !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["tanqueta_origen_id"],
+        message: "tanqueta_origen_id solo aplica a una carga desde tanqueta",
+      });
+    }
+
+    // ── CARGA EN RUTA DESDE TANQUETA (0114) ────────────────────────────
+    // La registra el conductor: unidad, medidor y galones. Sin vale (la
+    // salida a ruta ya lo tuvo), sin tanque ni grifo de ruta.
+    if (data.origen === "tanqueta") {
+      if (data.tanqueta_origen_id === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["tanqueta_origen_id"],
+          message: "tanqueta_origen_id es obligatorio: de qué tanqueta se cargó",
+        });
+      }
+      if (data.tipo_destino !== "equipo") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["tipo_destino"],
+          message: "la carga desde tanqueta siempre va a una unidad",
+        });
+      }
+      if ((data.lectura_horometro === undefined) === (data.lectura_odometro === undefined)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["lectura_horometro"],
+          message:
+            "la carga desde tanqueta exige el horómetro o el odómetro de la unidad: con él se calcula su consumo",
+        });
+      }
+      for (const [campo, valor] of [
+        ["combustible_id", data.combustible_id],
+        ["grifo_id", data.grifo_id],
+        ["lectura_contometro", data.lectura_contometro],
+        ["totalizador_lectura", data.totalizador_lectura],
+        ["surtidor_id", data.surtidor_id],
+        ["horas_abastecidas", data.horas_abastecidas],
+        ["serie_talonario", data.serie_talonario],
+        ["n_vale", data.n_vale],
+        ["comprobante_tipo", data.comprobante_tipo],
+        ["comprobante_numero", data.comprobante_numero],
+        ["excedente_linea_id", data.excedente_linea_id],
+      ] as [string, unknown][]) {
+        if (valor !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [campo],
+            message: `${campo} no aplica a una carga desde tanqueta`,
+          });
+        }
+      }
+      return;
     }
 
     if (data.origen !== "excedente_recepcion" && data.excedente_linea_id !== undefined) {

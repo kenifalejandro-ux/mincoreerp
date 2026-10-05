@@ -279,6 +279,12 @@ router.get(
   requirePestana("combustible", "tanquetas"),
   asyncHandler(controller.listarTanquetas.bind(controller))
 );
+// Antes de /tanquetas/:tanquetaId: segmento literal.
+router.get(
+  "/tanquetas/formulario",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  asyncHandler(controller.listarTanquetasParaFormulario.bind(controller))
+);
 router.get(
   "/tanquetas/:tanquetaId/historial",
   requirePestana("combustible", "tanquetas"),

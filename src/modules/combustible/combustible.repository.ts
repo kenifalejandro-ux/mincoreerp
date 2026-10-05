@@ -114,6 +114,8 @@ export const TIPOS_ALERTA = [
   // ── Migración 0106: un perfil de cancha anuló su propia varilla. Puede
   // hacerlo (matriz robusta, fila 21) pero no en silencio.
   "lectura_anulada",
+  // ── Migración 0114: se cargó desde una tanqueta más de lo que tenía.
+  "tanqueta_sobregirada",
 ] as const;
 
 export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];
@@ -189,7 +191,8 @@ export interface AlertaNueva {
  *  compra externa no tiene tanque ni unidad: se toma como litros, igual que
  *  findAcumuladoDiario. `t` es el alias del tanque en la consulta. */
 const sumaLitros = (t: string) =>
-  `SUM(d.cantidad * CASE WHEN ${t}.unidad = 'gal' THEN 3.785411784 ELSE 1 END)`;
+  // La carga en ruta desde una tanqueta (0114) no tiene tanque: la tanqueta mide en galones.
+  `SUM(d.cantidad * CASE WHEN ${t}.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN 3.785411784 ELSE 1 END)`;
 
 const COLUMNAS_TANQUE = `
   c.id, c.codigo, c.tanque_nombre, c.tipo_combustible, c.unidad, c.tipo_punto,
@@ -387,6 +390,7 @@ const LATERAL_DIFERENCIA_RECEPCION = `
 // El despacho de un excedente de cisterna (0112) también usa el talonario de
 // la empresa: su vale entra en la misma secuencia que los del tanque.
 const SOLO_TALONARIO_REAL = `(producto <> 'combustible' OR origen IN ('tanque_propio', 'excedente_recepcion'))`;
+// (La carga en ruta desde tanqueta, 0114, no tiene vale: queda afuera.)
 
 export class CombustibleRepository {
   async findAll(client: PoolClient, tenantId: string, alcance?: AlcanceCombustible) {
@@ -1013,7 +1017,8 @@ export class CombustibleRepository {
     usuario_id, despachado_en, creado_en,
     conductor_nombre, conductor_dni,
     anulada_en, anulada_por, motivo_anulacion,
-    excedente_linea_id, tanque_excedente_id
+    excedente_linea_id, tanque_excedente_id,
+    tanqueta_destino_id, tanqueta_origen_id
   `;
 
   /** Inserta un despacho. La unicidad de (tenant_id, serie_talonario,
@@ -1066,6 +1071,10 @@ export class CombustibleRepository {
        *  regulariza y el tanque de la recepción (para la unidad y la sede). */
       excedenteLineaId?: number | null;
       tanqueExcedenteId?: number | null;
+      /** 0114: la tanqueta que llena un vale a reserva, o de la que sale una
+       *  carga en ruta. */
+      tanquetaDestinoId?: number | null;
+      tanquetaOrigenId?: number | null;
     }
   ) {
     try {
@@ -1085,7 +1094,7 @@ export class CombustibleRepository {
           costo_unitario, observaciones, usuario_id, despachado_en,
           conductor_nombre, conductor_dni, totalizador_lectura, surtidor_id,
           comprobante_tipo, comprobante_numero, cliente_uuid,
-          excedente_linea_id, tanque_excedente_id
+          excedente_linea_id, tanque_excedente_id, tanqueta_destino_id, tanqueta_origen_id
         )
         -- El conductor se COPIA del equipo en este mismo INSERT (0083). Nadie
         -- lo tipea, y no se resuelve después con un JOIN a propósito: los
@@ -1095,7 +1104,7 @@ export class CombustibleRepository {
         -- consumo por conductor. Vale también para urea -- mismo equipo_id.
         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
                e.conductor_nombre, e.conductor_dni, $23::numeric, $24::int, $25, $26, $27::uuid,
-               $28::bigint, $29::int
+               $28::bigint, $29::int, $30::bigint, $31::bigint
           FROM (SELECT 1) dummy
           LEFT JOIN equipos e ON e.id = $8::int AND e.tenant_id = $1
         RETURNING ${CombustibleRepository.COLUMNAS_DESPACHO}
@@ -1130,6 +1139,8 @@ export class CombustibleRepository {
           data.clienteUuid ?? null,
           data.excedenteLineaId ?? null,
           data.tanqueExcedenteId ?? null,
+          data.tanquetaDestinoId ?? null,
+          data.tanquetaOrigenId ?? null,
         ]
       );
       const fila = result.rows[0];
@@ -1386,7 +1397,7 @@ export class CombustibleRepository {
       // propia: aparecen junto a los del tanque, no entre las compras de ruta.
       condiciones.push(
         filtros.origen === "tanque_propio"
-          ? `origen IN ('tanque_propio', 'excedente_recepcion')`
+          ? `origen IN ('tanque_propio', 'excedente_recepcion', 'tanqueta')`
           : `origen = $${valores.length}`
       );
       if (filtros.origen === "tanque_propio") valores.pop();
@@ -1574,11 +1585,11 @@ export class CombustibleRepository {
       SELECT
         ${columnaPeriodo}
         d.origen,
-        CASE WHEN d.origen IN ('tanque_propio', 'excedente_recepcion') THEN 'interno' ELSE 'externo' END AS tipo_grifo,
-        COALESCE(t.tanque_nombre, g.nombre, 'Sin identificar') AS grifo_nombre,
+        CASE WHEN d.origen IN ('tanque_propio', 'excedente_recepcion', 'tanqueta') THEN 'interno' ELSE 'externo' END AS tipo_grifo,
+        COALESCE(t.tanque_nombre, tq.codigo, g.nombre, 'Sin identificar') AS grifo_nombre,
         -- El grifo interno del vale (0097), para desglosar lo interno por
         -- planta. NULL en las compras externas.
-        CASE WHEN d.origen IN ('tanque_propio', 'excedente_recepcion') THEN gi.nombre END AS grifo_interno,
+        CASE WHEN d.origen IN ('tanque_propio', 'excedente_recepcion', 'tanqueta') THEN gi.nombre END AS grifo_interno,
         COUNT(*) AS cantidad_vales,
         SUM(d.cantidad) AS total_cantidad,
         ${sumaLitros("t")} AS total_litros,
@@ -1589,6 +1600,7 @@ export class CombustibleRepository {
       FROM combustible_despachos d
       LEFT JOIN combustible t ON t.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND t.tenant_id = d.tenant_id
       LEFT JOIN combustible_grifos g ON g.id = d.grifo_id AND g.tenant_id = d.tenant_id
+      LEFT JOIN combustible_tanquetas tq ON tq.id = d.tanqueta_origen_id AND tq.tenant_id = d.tenant_id
       LEFT JOIN grifos_internos gi ON gi.id = d.grifo_interno_id AND gi.tenant_id = d.tenant_id
       WHERE ${condiciones.join(" AND ")}
       GROUP BY d.origen, tipo_grifo, grifo_nombre, grifo_interno${groupByPeriodo}
@@ -3059,7 +3071,7 @@ export class CombustibleRepository {
       `
       WITH vales AS (
         SELECT d.id, d.despachado_en,
-               d.cantidad * CASE WHEN c.unidad = 'gal' THEN 3.785411784 ELSE 1 END AS litros
+               d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN 3.785411784 ELSE 1 END AS litros
           FROM combustible_despachos d
           LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1
          WHERE d.tenant_id = $1
@@ -3124,7 +3136,7 @@ export class CombustibleRepository {
       SELECT
         COALESCE(SUM(d.cantidad) FILTER (WHERE d.producto = 'urea'), 0) AS litros_urea,
         COALESCE(
-          SUM(d.cantidad * CASE WHEN c.unidad = 'gal' THEN 3.785411784 ELSE 1 END)
+          SUM(d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN 3.785411784 ELSE 1 END)
             FILTER (WHERE d.producto = 'combustible'),
           0
         ) AS litros_diesel
@@ -3536,7 +3548,7 @@ export class CombustibleRepository {
     const r = await client.query<{ litros: string; vales: string }>(
       `
       SELECT COALESCE(SUM(
-               d.cantidad * CASE WHEN c.unidad = 'gal' THEN 3.785411784 ELSE 1 END
+               d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN 3.785411784 ELSE 1 END
              ), 0) AS litros,
              COUNT(*) AS vales
         FROM combustible_despachos d
@@ -4998,7 +5010,7 @@ export class CombustibleRepository {
                        CASE WHEN e.capacidad_tanque_unidad = 'gal' THEN 3.785411784 ELSE 1 END
              END AS capacidad_l,
              date_trunc('day', d.despachado_en) AS dia,
-             SUM(d.cantidad * CASE WHEN c.unidad = 'gal' THEN 3.785411784 ELSE 1 END) AS litros
+             SUM(d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN 3.785411784 ELSE 1 END) AS litros
         FROM combustible_despachos d
         LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1
         LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1
@@ -5039,7 +5051,9 @@ export class CombustibleRepository {
       lectura_odometro: string | null;
       despachado_en: Date;
     }>(
-      `SELECT d.id, d.cantidad, c.unidad, d.lectura_horometro, d.lectura_odometro,
+      `SELECT d.id, d.cantidad,
+              COALESCE(c.unidad, CASE WHEN d.tanqueta_origen_id IS NOT NULL THEN 'gal' END) AS unidad,
+              d.lectura_horometro, d.lectura_odometro,
               d.despachado_en
          FROM combustible_despachos d
          LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1
@@ -5063,7 +5077,7 @@ export class CombustibleRepository {
   ): Promise<number> {
     const r = await client.query<{ litros: string }>(
       `SELECT COALESCE(SUM(
-                d.cantidad * CASE WHEN c.unidad = 'gal' THEN 3.785411784 ELSE 1 END
+                d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN 3.785411784 ELSE 1 END
               ), 0) AS litros
          FROM combustible_despachos d
          LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1
@@ -5123,7 +5137,7 @@ export class CombustibleRepository {
     }>(
       `SELECT * FROM (
          SELECT d.id, d.equipo_id,
-                d.cantidad * CASE WHEN c.unidad = 'gal' THEN 3.785411784 ELSE 1 END AS litros,
+                d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN 3.785411784 ELSE 1 END AS litros,
                 d.lectura_horometro, d.lectura_odometro, d.despachado_en
            FROM combustible_despachos d
            LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1

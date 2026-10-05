@@ -17,6 +17,9 @@ import { adminA } from "./fixtures/entorno";
 test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente se reparte", async ({
   page,
 }) => {
+  // Recorre cuatro pantallas (nuevo tanque, recepción, despacho, tanquetas):
+  // los 30 s por defecto no alcanzan cuando corre en paralelo con otra spec.
+  test.setTimeout(90_000);
   const marca = randomBytes(3).toString("hex").toUpperCase();
   const admin = adminA();
   await loginPorUI(page, admin.email, admin.password);

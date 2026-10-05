@@ -101,7 +101,8 @@ export function filtroHechoDeGrifo(a: AlcanceCombustible, col: string, desde: nu
 }
 
 /** Un VALE: del tanque propio, por su grifo o su surtidor; de compra externa,
- *  por el grifo del equipo o porque lo cargó el propio usuario. La urea no se
+ *  por el grifo del equipo o porque lo cargó el propio usuario (igual la carga
+ *  en ruta desde tanqueta, 0114: la registra el conductor). La urea no se
  *  filtra: su inventario es de la empresa. */
 export function filtroVale(
   a: AlcanceCombustible,
@@ -114,7 +115,7 @@ export function filtroVale(
     sql: `(${col}.producto = 'urea'
            OR ${col}.grifo_interno_id = ANY($${desde}::int[])
            OR ${col}.surtidor_id = ANY($${desde + 1}::int[])
-           OR (${col}.origen = 'compra_externa' AND ${col}.usuario_id = $${desde + 2}::uuid))`,
+           OR (${col}.origen IN ('compra_externa', 'tanqueta') AND ${col}.usuario_id = $${desde + 2}::uuid))`,
     valores: [a.grifos, a.surtidores, usuarioId],
   };
 }

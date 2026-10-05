@@ -26,15 +26,39 @@ interface Tanqueta {
   libre: string;
 }
 
-interface EntradaHistorial {
+/** Un movimiento de la tanqueta (0111/0114): lo que entró (excedente de una
+ *  recepción, previsión desde el tanque) y lo que salió (carga en ruta). */
+interface MovimientoTanqueta {
+  tipo: "excedente" | "prevision" | "carga_ruta";
   id: string;
   cantidad: string;
-  recibido_en: string;
-  recepcion_id: string;
+  fecha: string;
   anulada_en: string | null;
-  tanque_codigo: string;
-  tanque_nombre: string;
+  tanque_codigo: string | null;
+  recepcion_id: string | null;
+  equipo: string | null;
+  lectura_horometro: string | null;
+  lectura_odometro: string | null;
+  serie_talonario: string | null;
+  n_vale: number | null;
+  usuario: string | null;
 }
+
+const describirMovimiento = (m: MovimientoTanqueta) => {
+  if (m.tipo === "excedente") {
+    return `Excedente de la recepción #${m.recepcion_id} (${m.tanque_codigo})`;
+  }
+  if (m.tipo === "prevision") {
+    return `Previsión desde ${m.tanque_codigo} · vale ${m.serie_talonario}-${m.n_vale}`;
+  }
+  const medidor =
+    m.lectura_horometro !== null
+      ? ` · horómetro ${Number(m.lectura_horometro).toLocaleString("es-PE")}`
+      : m.lectura_odometro !== null
+        ? ` · odómetro ${Number(m.lectura_odometro).toLocaleString("es-PE")}`
+        : "";
+  return `Carga en ruta a ${m.equipo ?? "una unidad"}${medidor}`;
+};
 
 const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
 
@@ -82,7 +106,7 @@ export default function TanquetasPanel() {
   const [form, setForm] = useState(VACIO);
   const [guardando, setGuardando] = useState(false);
   const [historialDe, setHistorialDe] = useState<Tanqueta | null>(null);
-  const [historial, setHistorial] = useState<EntradaHistorial[]>([]);
+  const [historial, setHistorial] = useState<MovimientoTanqueta[]>([]);
 
   const permite = (accion: "nueva" | "editar") => {
     const override = usuario?.permisosPestanas?.[`combustible:tanquetas:${accion}`];
@@ -194,8 +218,8 @@ export default function TanquetasPanel() {
         <div>
           <h2 className="text-2xl font-bold text-white">Tanquetas</h2>
           <p className="text-sm text-[#94a3b8]">
-            Depósitos de 280 gal: guardan el excedente de una recepción y salen a ruta como
-            previsión. El saldo es lo que entró menos lo que salió.
+            Depósitos de 280 gal: se llenan con el excedente de una recepción o como previsión desde
+            el tanque, y salen a ruta. El saldo es lo que entró menos lo que se cargó en ruta.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -432,7 +456,7 @@ export default function TanquetasPanel() {
         <VentanaFlotante
           id="combustible-tanqueta-historial"
           titulo={`Historial de ${historialDe.codigo}`}
-          subtitulo="Cada vez que se llenó con el excedente de una recepción"
+          subtitulo="Lo que entró (excedente o previsión desde el tanque) y lo que se cargó en ruta"
           onCerrar={() => setHistorialDe(null)}
           anchoInicial={640}
           altoInicial={460}
@@ -444,22 +468,32 @@ export default function TanquetasPanel() {
               <thead>
                 <tr className="text-left text-[11px] uppercase text-[#94a3b8]">
                   <th className="p-2">Fecha</th>
-                  <th className="p-2">Origen</th>
-                  <th className="p-2 text-right">Entrada (gal)</th>
+                  <th className="p-2">Movimiento</th>
+                  <th className="p-2">Quién</th>
+                  <th className="p-2 text-right">Entrada</th>
+                  <th className="p-2 text-right">Salida</th>
                 </tr>
               </thead>
               <tbody>
                 {historial.map((h) => (
                   <tr
-                    key={h.id}
+                    key={`${h.tipo}-${h.id}`}
                     className={`border-t border-[#2a2e37] ${h.anulada_en ? "line-through opacity-60" : ""}`}
                   >
-                    <td className="p-2">{new Date(h.recibido_en).toLocaleString("es-PE")}</td>
-                    <td className="p-2">
-                      Excedente de la recepción #{h.recepcion_id} ({h.tanque_codigo})
-                      {h.anulada_en && " · anulada"}
+                    <td className="p-2 whitespace-nowrap">
+                      {new Date(h.fecha).toLocaleString("es-PE")}
                     </td>
-                    <td className="p-2 text-right font-mono">{formatear(Number(h.cantidad))}</td>
+                    <td className="p-2">
+                      {describirMovimiento(h)}
+                      {h.anulada_en && " · anulado"}
+                    </td>
+                    <td className="p-2">{h.usuario ?? "—"}</td>
+                    <td className="p-2 text-right font-mono text-emerald-400">
+                      {h.tipo === "carga_ruta" ? "" : formatear(Number(h.cantidad))}
+                    </td>
+                    <td className="p-2 text-right font-mono">
+                      {h.tipo === "carga_ruta" ? formatear(Number(h.cantidad)) : ""}
+                    </td>
                   </tr>
                 ))}
               </tbody>
