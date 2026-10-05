@@ -284,6 +284,9 @@ interface TanquetaFormulario {
   capacidad: number;
   saldo: number;
   libre: number;
+  /** El costo de un galón de esta tanqueta: el que el servidor le pone a la
+   *  carga. Se muestra, no se edita. */
+  costo_promedio: number;
 }
 
 /** Lo que la cisterna cargó directo a una unidad (0110) y todavía no tiene su
@@ -6351,6 +6354,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                               setDespachoForm({
                                 ...despachoForm,
                                 tanqueta_origen_id: e.target.value,
+                                // El C.U lo fija el servidor con el costo de lo
+                                // que entró a la tanqueta: acá solo se muestra.
+                                costo_unitario: String(
+                                  tanquetasFormulario.find((t) => String(t.id) === e.target.value)
+                                    ?.costo_promedio ?? ""
+                                ),
                               })
                             }
                           >
@@ -6977,8 +6986,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 </>
               )}
 
-              {/* La carga desde tanqueta (0114) no lleva costo: lo pone el servidor. */}
-              {despachoForm.origen !== "tanqueta" && (
+              {/* La carga desde tanqueta (0114) muestra su costo pero no lo edita:
+                  lo pone el servidor con el promedio de lo que entró a ella. */}
+              {(despachoForm.origen !== "tanqueta" || despachoForm.tanqueta_origen_id !== "") && (
                 <>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1">
@@ -6995,7 +7005,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         step="0.0001"
                         required
                         // El excedente cuesta lo de la factura de su recepción (0112).
-                        readOnly={despachoForm.origen === "excedente_recepcion"}
+                        readOnly={
+                          despachoForm.origen === "excedente_recepcion" ||
+                          despachoForm.origen === "tanqueta"
+                        }
                         className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                         value={despachoForm.costo_unitario}
                         onChange={(e) => {
@@ -7019,7 +7032,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   <p className="text-xs text-slate-400">
                     {despachoForm.origen === "excedente_recepcion"
                       ? "Costo de la factura de la recepción: no se edita. C.TOTAL sale solo."
-                      : "El costo se autocompleta con el precio vigente a la fecha del despacho -- podés corregirlo si ese día pagaste distinto. C.TOTAL sale solo, no se guarda aparte."}
+                      : despachoForm.origen === "tanqueta"
+                        ? "Costo promedio de lo que entró a la tanqueta (excedente y previsión): no se edita. C.TOTAL sale solo."
+                        : "El costo se autocompleta con el precio vigente a la fecha del despacho -- podés corregirlo si ese día pagaste distinto. C.TOTAL sale solo, no se guarda aparte."}
                   </p>
                 </>
               )}

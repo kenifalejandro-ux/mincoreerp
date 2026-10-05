@@ -75,14 +75,16 @@ test("tanqueta: previsión desde el tanque y carga en ruta", async ({ page }) =>
   // ── 3b: carga en ruta desde la tanqueta ────────────────────────────────
   await page.getByRole("button", { name: "Registrar despacho" }).first().click();
   await page.locator("#despacho-origen").selectOption("tanqueta");
-  // Sin vale ni costo: la tanqueta ya salió con el suyo.
+  // Sin vale: la tanqueta ya salió con el suyo.
   await expect(page.locator("#despacho-serie")).toHaveCount(0);
-  await expect(page.locator("#despacho-costo-unitario")).toHaveCount(0);
   await page
     .locator("#despacho-tanqueta-origen")
     .selectOption({ label: `${codigoTanqueta} (quedan 280 gal)` });
   await page.locator("#despacho-equipo-tanqueta").selectOption({ label: `${placa} — VOLQUETE` });
   await page.locator("#despacho-cantidad-tanqueta").fill("100");
+  // El costo se ve (el de lo que entró: la previsión a S/ 16) y no se edita.
+  await expect(page.locator("#despacho-costo-unitario")).toHaveValue("16");
+  await expect(page.locator("#despacho-costo-unitario")).toHaveAttribute("readonly", "");
   await page.locator("#despacho-medidor-tanqueta").fill("1500");
   await page.locator("form").getByRole("button", { name: "Registrar despacho" }).click();
   await expect(page.getByText(new RegExp(`la carga desde ${codigoTanqueta}`))).toBeVisible();

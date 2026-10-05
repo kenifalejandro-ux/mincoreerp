@@ -195,6 +195,8 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
     expect(formulario.body.find((t: { id: number }) => t.id === tqt)).toMatchObject({
       saldo: 180,
       libre: 100,
+      // El costo que el formulario muestra: el de la previsión a S/ 16.
+      costo_promedio: 16,
     });
   });
 

@@ -256,14 +256,21 @@ export async function tanquetasParaFormulario(
   alcance: AlcanceCombustible
 ) {
   const todas = await listarTanquetas(client, tenantId, alcance, { soloActivas: true });
-  return todas.map((t) => ({
-    id: Number(t.id),
-    codigo: t.codigo as string,
-    grifo_interno_id: Number(t.grifo_interno_id),
-    capacidad: Number(t.capacidad),
-    saldo: Number(t.saldo),
-    libre: Number(t.libre),
-  }));
+  const resultado = [];
+  for (const t of todas) {
+    resultado.push({
+      id: Number(t.id),
+      codigo: t.codigo as string,
+      grifo_interno_id: Number(t.grifo_interno_id),
+      capacidad: Number(t.capacidad),
+      saldo: Number(t.saldo),
+      libre: Number(t.libre),
+      // El C.U de una carga desde esta tanqueta: el mismo que fija el
+      // servidor al guardarla (0115). El formulario lo muestra, no lo edita.
+      costo_promedio: await costoPromedioTanqueta(client, tenantId, Number(t.id)),
+    });
+  }
+  return resultado;
 }
 
 /** El vale del tanque a "reserva en cubeta" que llena una tanqueta (0114):
