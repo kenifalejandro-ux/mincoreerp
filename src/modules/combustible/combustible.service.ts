@@ -1545,6 +1545,22 @@ export class CombustibleService {
     return { estado: "guardado", fila, reemplazo: yaTeniaArchivo };
   }
 
+  /** La lectura de la carga anterior de una unidad, para precargar las horas
+   *  abastecidas en el formulario. Sin filtro de alcance (0100) a propósito: es
+   *  el medidor de la UNIDAD, no de una planta, y filtrarlo daría una "carga
+   *  anterior" equivocada. Solo expone un número y una fecha. */
+  async getUltimoMedidorEquipo(tenantId: string, equipoId: number, antesDe: string | null) {
+    const fila = await withTenant(tenantId, (client) =>
+      this.repository.findUltimoMedidorEquipo(client, tenantId, equipoId, null, antesDe)
+    );
+    if (!fila) return null;
+    return {
+      lectura_horometro: fila.lectura_horometro === null ? null : Number(fila.lectura_horometro),
+      lectura_odometro: fila.lectura_odometro === null ? null : Number(fila.lectura_odometro),
+      despachado_en: new Date(fila.despachado_en).toISOString(),
+    };
+  }
+
   resolverDespachoPorClienteUuid(tenantId: string, clienteUuid: string, ambito: AmbitoVales) {
     return withTenant(tenantId, (client) =>
       this.repository.findDespachoIdPorClienteUuid(client, tenantId, clienteUuid, ambito)

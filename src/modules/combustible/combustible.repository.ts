@@ -2333,7 +2333,10 @@ export class CombustibleRepository {
     client: PoolClient,
     tenantId: string,
     equipoId: number,
-    excluirDespachoId: number
+    excluirDespachoId: number | null,
+    /** Solo las cargas ANTERIORES a este momento (el formulario con fecha
+     *  retroactiva). null = la más reciente de todas. */
+    antesDe: string | null = null
   ) {
     const result = await client.query<{
       lectura_horometro: string | null;
@@ -2345,11 +2348,14 @@ export class CombustibleRepository {
       // y nunca detectaría nada. Mismo motivo que en detectarHuecosRevelados.
       `SELECT lectura_horometro, lectura_odometro, despachado_en
        FROM combustible_despachos
-       WHERE tenant_id = $1 AND equipo_id = $2 AND id <> $3 AND anulada_en IS NULL
+       WHERE tenant_id = $1 AND equipo_id = $2
+         AND ($3::bigint IS NULL OR id <> $3::bigint)
+         AND ($4::timestamptz IS NULL OR despachado_en < $4::timestamptz)
+         AND anulada_en IS NULL
          AND (lectura_horometro IS NOT NULL OR lectura_odometro IS NOT NULL)
        ORDER BY despachado_en DESC, id DESC
        LIMIT 1`,
-      [tenantId, equipoId, excluirDespachoId]
+      [tenantId, equipoId, excluirDespachoId, antesDe]
     );
     return result.rows[0] ?? null;
   }
