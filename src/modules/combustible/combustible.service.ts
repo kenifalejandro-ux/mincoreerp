@@ -1,6 +1,8 @@
 /**src/modules/combutible/combustible.service.ts */
 
 import type { PoolClient } from "pg";
+
+import * as tanquetas from "./tanquetas.service";
 import type { Paginacion } from "../../server/shared/utils/pagination";
 import type {
   RegistrarLecturaCombustibleInput,
@@ -52,6 +54,15 @@ export interface ExcedenteRecepcionDetalle {
   cantidadRecepcion: number;
   totalTrasRecepcion: number;
   excedenteLitros: number;
+  /** Las tanquetas de la sede con espacio libre, para proponer el reparto
+   *  (0111). Solo viaja en el 409. */
+  tanquetasLibres?: {
+    id: number;
+    codigo: string;
+    capacidad: number;
+    saldo: number;
+    libre: number;
+  }[];
 }
 
 export type DestinoExcedente = "cubeta" | "equipo" | "devolucion";
@@ -61,6 +72,7 @@ export interface LineaRepartoExcedente {
   destino: DestinoExcedente;
   cantidad: number;
   equipo_id?: number;
+  tanqueta_id?: number;
   observaciones?: string;
 }
 
@@ -5106,6 +5118,11 @@ export class CombustibleService {
     // Primera vez que se ve este excedente: 409, no guarda nada, el cliente
     // decide y reenvía el MISMO payload con `reparto_excedente`.
     if (!data.reparto_excedente) {
+      detalle.tanquetasLibres = await tanquetas.tanquetasLibresDelGrifo(
+        client,
+        tenantId,
+        Number(tanque.grifo_interno_id)
+      );
       throw new RecepcionExcedeCapacidadError(`${mensaje} -- requiere decisión`, detalle);
     }
 
@@ -5116,11 +5133,6 @@ export class CombustibleService {
         `el reparto del excedente suma ${sumaReparto} y el excedente es ${excedenteLitros}: tienen que coincidir`
       );
     }
-    if (data.cantidad! - excedenteLitros <= 0) {
-      throw new Error(
-        "el reparto del excedente no puede ser toda la recepción: al tanque tiene que entrar algo"
-      );
-    }
     const equipoIds = [...new Set(reparto.flatMap((l) => (l.equipo_id ? [l.equipo_id] : [])))];
     if (equipoIds.length > 0) {
       const existentes = await this.repository.contarEquiposDelTenant(client, tenantId, equipoIds);
@@ -5128,6 +5140,12 @@ export class CombustibleService {
         throw new Error("el reparto del excedente nombra un equipo que no existe en este tenant");
       }
     }
+    await tanquetas.validarLineasATanquetas(
+      client,
+      tenantId,
+      Number(tanque.grifo_interno_id),
+      reparto
+    );
     return { detalle, reparto };
   }
 

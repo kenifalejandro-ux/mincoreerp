@@ -39,6 +39,8 @@ import {
   conectarSurtidorSchema,
   motivoSurtidorSchema,
   calibracionSurtidorSchema,
+  crearTanquetaSchema,
+  actualizarTanquetaSchema,
 } from "../../server/schemas/combustible.schema";
 import { moverDeGrifoSchema } from "../../server/schemas/sedes.schema";
 import { cargarAlcance, GUARDIAS, requiereTanqueCompleto } from "./alcance";
@@ -259,6 +261,34 @@ router.patch(
   requireRole("admin", "operador"),
   validate(anularDespachoCombustibleSchema),
   asyncHandler(controller.anularDespacho.bind(controller))
+);
+
+// Tanquetas / cubetas (migración 0111) -- segmentos literales, ANTES de /:id.
+// El panel lo ve quien tenga la pestaña (Lectura incluida); dar de alta o
+// editar son acciones aparte, que Lectura no recibe por defecto.
+router.get(
+  "/tanquetas",
+  requirePestana("combustible", "tanquetas"),
+  asyncHandler(controller.listarTanquetas.bind(controller))
+);
+router.get(
+  "/tanquetas/:tanquetaId/historial",
+  requirePestana("combustible", "tanquetas"),
+  asyncHandler(controller.historialTanqueta.bind(controller))
+);
+router.post(
+  "/tanquetas",
+  requirePestana("combustible", "tanquetas:nueva"),
+  requireRole("admin", "operador"),
+  validate(crearTanquetaSchema),
+  asyncHandler(controller.crearTanqueta.bind(controller))
+);
+router.put(
+  "/tanquetas/:tanquetaId",
+  requirePestana("combustible", "tanquetas:editar"),
+  requireRole("admin", "operador"),
+  validate(actualizarTanquetaSchema),
+  asyncHandler(controller.actualizarTanqueta.bind(controller))
 );
 
 // Surtidores (migración 0098) -- segmentos literales, ANTES de /:id. La lista

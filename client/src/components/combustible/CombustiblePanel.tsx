@@ -45,6 +45,7 @@ import UreaPanel from "../UreaPanel";
 import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from "./Precintos";
 import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
 import VentanaSurtidores from "./Surtidores";
+import TanquetasPanel from "./Tanquetas";
 import { comprimirImagen } from "./comprimirImagen";
 
 interface SurtidorDelTanque {
@@ -223,6 +224,14 @@ interface LineaReparto {
   destino: DestinoExcedente;
   cantidad: string;
   equipo_id: string;
+  tanqueta_id: string;
+}
+interface TanquetaLibre {
+  id: number;
+  codigo: string;
+  capacidad: number;
+  saldo: number;
+  libre: number;
 }
 interface DetalleExcedente {
   tanqueNombre: string;
@@ -231,9 +240,35 @@ interface DetalleExcedente {
   nivelMedido: number;
   cantidadRecepcion: number;
   excedenteLitros: number;
+  tanquetasLibres?: TanquetaLibre[];
 }
+
+/** El reparto que se propone al abrir el popup (0111): se llena cada tanqueta
+ *  libre de la sede hasta su espacio (en el orden que manda el servidor), y lo
+ *  que no alcanza queda en una línea "directo a unidades" sin unidad elegida,
+ *  para que se decida qué hacer con ese resto. */
+function repartoPropuesto(detalle: DetalleExcedente): LineaReparto[] {
+  const lineas: LineaReparto[] = [];
+  let resta = detalle.excedenteLitros;
+  for (const t of detalle.tanquetasLibres ?? []) {
+    if (resta <= 0.001) break;
+    const va = Math.min(resta, t.libre);
+    lineas.push({
+      destino: "cubeta",
+      cantidad: String(Number(va.toFixed(2))),
+      equipo_id: "",
+      tanqueta_id: String(t.id),
+    });
+    resta = Number((resta - va).toFixed(2));
+  }
+  if (resta > 0.001) {
+    lineas.push({ destino: "equipo", cantidad: String(resta), equipo_id: "", tanqueta_id: "" });
+  }
+  return lineas;
+}
+
 const DESTINOS_EXCEDENTE: Record<DestinoExcedente, string> = {
-  cubeta: "Tanqueta o cubeta (280 gal)",
+  cubeta: "Tanqueta o cubeta",
   equipo: "Directo a unidades",
   devolucion: "Devolver al proveedor",
 };
@@ -1999,7 +2034,7 @@ export interface CombustiblePanelProps {
    *  "Histórico" ahí adentro cambia esta pestaña aunque el panel ya esté
    *  montado. undefined = comportamiento por defecto (Tanques), para los
    *  pocos lugares que todavía instancian el panel sin pasarlo. */
-  pestanaInicial?: "tanques" | "historico" | "urea" | "auditoria" | "bitacora";
+  pestanaInicial?: "tanques" | "tanquetas" | "historico" | "urea" | "auditoria" | "bitacora";
 }
 
 export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelProps = {}) {
@@ -2205,7 +2240,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // Tanque abierto en la ventana "Ver tanque" (el ojo de la fila).
   const [tanqueVerId, setTanqueVerId] = useState<number | null>(null);
   const [pestanaCombustible, setPestanaCombustible] = useState<
-    "tanques" | "historico" | "urea" | "auditoria" | "bitacora"
+    "tanques" | "tanquetas" | "historico" | "urea" | "auditoria" | "bitacora"
   >(pestanaInicial ?? "tanques");
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -4273,6 +4308,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             destino: l.destino,
             cantidad: Number(l.cantidad),
             equipo_id: l.destino === "equipo" ? Number(l.equipo_id) : undefined,
+            tanqueta_id: l.destino === "cubeta" ? Number(l.tanqueta_id) : undefined,
           })),
         }),
       });
@@ -4289,9 +4325,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             return;
           }
           setExcedentePendiente(body.detalle as DetalleExcedente);
-          setLineasReparto([
-            { destino: "cubeta", cantidad: String(body.detalle.excedenteLitros), equipo_id: "" },
-          ]);
+          setLineasReparto(repartoPropuesto(body.detalle as DetalleExcedente));
           return;
         }
         alert(body.error || body.errors?.[0]?.message || "Error al registrar la recepción.");
@@ -4547,6 +4581,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       </div>
       {pestanaCombustible === "historico" && <HistoricoCliente />}
       {pestanaCombustible === "urea" && <UreaPanel />}
+      {pestanaCombustible === "tanquetas" && <TanquetasPanel />}
       {!esConductor && pestanaCombustible === "tanques" && importacion.error && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-red-900 font-light flex-1">{importacion.error}</p>
@@ -9059,11 +9094,21 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         (() => {
           const suma = lineasReparto.reduce((acc, l) => acc + (Number(l.cantidad) || 0), 0);
           const falta = Number((excedentePendiente.excedenteLitros - suma).toFixed(2));
-          const completo =
-            Math.abs(falta) < 0.01 &&
-            lineasReparto.every(
-              (l) => Number(l.cantidad) > 0 && (l.destino !== "equipo" || l.equipo_id !== "")
-            );
+          const libres = excedentePendiente.tanquetasLibres ?? [];
+          // Lo que cada tanqueta recibe sumando todas las líneas que la usan:
+          // el tope es su espacio libre (el servidor lo vuelve a validar).
+          const usoDe = (id: string) =>
+            lineasReparto
+              .filter((l) => l.destino === "cubeta" && l.tanqueta_id === id)
+              .reduce((acc, l) => acc + (Number(l.cantidad) || 0), 0);
+          const pasadas = libres.filter((t) => usoDe(String(t.id)) > t.libre + 0.001);
+          const lineasCompletas = lineasReparto.every(
+            (l) =>
+              Number(l.cantidad) > 0 &&
+              (l.destino !== "equipo" || l.equipo_id !== "") &&
+              (l.destino !== "cubeta" || l.tanqueta_id !== "")
+          );
+          const completo = Math.abs(falta) < 0.01 && lineasCompletas && pasadas.length === 0;
           const actualizar = (i: number, cambio: Partial<LineaReparto>) =>
             setLineasReparto(lineasReparto.map((l, j) => (j === i ? { ...l, ...cambio } : l)));
           const u = excedentePendiente.unidad;
@@ -9101,7 +9146,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           className="w-full border border-slate-200 rounded-xl p-3 text-sm"
                           value={l.destino}
                           onChange={(e) =>
-                            actualizar(i, { destino: e.target.value as DestinoExcedente })
+                            actualizar(i, {
+                              destino: e.target.value as DestinoExcedente,
+                              equipo_id: "",
+                              tanqueta_id: "",
+                            })
                           }
                         >
                           {(Object.keys(DESTINOS_EXCEDENTE) as DestinoExcedente[]).map((d) => (
@@ -9129,6 +9178,29 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         />
                       </div>
                       <div className="col-span-6 sm:col-span-3 space-y-1">
+                        {l.destino === "cubeta" && (
+                          <>
+                            <label
+                              htmlFor={`exc-tanqueta-${i}`}
+                              className="text-xs font-bold text-slate-700 uppercase"
+                            >
+                              Tanqueta
+                            </label>
+                            <select
+                              id={`exc-tanqueta-${i}`}
+                              className="w-full border border-slate-200 rounded-xl p-3 text-sm"
+                              value={l.tanqueta_id}
+                              onChange={(e) => actualizar(i, { tanqueta_id: e.target.value })}
+                            >
+                              <option value="">Elegir...</option>
+                              {libres.map((t) => (
+                                <option key={t.id} value={t.id}>
+                                  {t.codigo} (libre {t.libre.toLocaleString("es-PE")})
+                                </option>
+                              ))}
+                            </select>
+                          </>
+                        )}
                         {l.destino === "equipo" && (
                           <>
                             <label
@@ -9178,6 +9250,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           destino: "equipo",
                           cantidad: falta > 0 ? String(falta) : "",
                           equipo_id: "",
+                          tanqueta_id: "",
                         },
                       ])
                     }
@@ -9188,12 +9261,22 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   <p
                     className={`text-sm font-bold ${completo ? "text-emerald-700" : "text-amber-700"}`}
                   >
-                    {Math.abs(falta) < 0.01
-                      ? "El reparto cubre todo el excedente."
-                      : falta > 0
-                        ? `Faltan ${falta.toLocaleString("es-PE")} ${u} por asignar.`
-                        : `Te pasaste por ${Math.abs(falta).toLocaleString("es-PE")} ${u}.`}
+                    {falta > 0.001
+                      ? `Faltan ${falta.toLocaleString("es-PE")} ${u} por asignar.`
+                      : falta < -0.001
+                        ? `Te pasaste por ${Math.abs(falta).toLocaleString("es-PE")} ${u}.`
+                        : pasadas.length > 0
+                          ? `${pasadas.map((t) => `${t.codigo} solo admite ${t.libre.toLocaleString("es-PE")} ${u}`).join("; ")}.`
+                          : !lineasCompletas
+                            ? "Completa cada línea: cantidad, y la tanqueta o la unidad."
+                            : "El reparto cubre todo el excedente."}
                   </p>
+                  {libres.length === 0 && (
+                    <p className="text-xs text-amber-700">
+                      No hay tanquetas con espacio libre en esta sede. Dalas de alta en Combustible
+                      › Tanquetas, o reparte a unidades o devolución.
+                    </p>
+                  )}
                   <p className="text-xs text-slate-600">
                     El costo es el de la factura para todos los litros. Queda registrado quién
                     decidió y se avisa por correo.

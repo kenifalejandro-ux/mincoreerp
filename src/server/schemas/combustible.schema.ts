@@ -1133,6 +1133,8 @@ export const crearRecepcionCombustibleSchema = z
             destino: z.enum(["cubeta", "equipo", "devolucion"]),
             cantidad: z.number().positive(),
             equipo_id: z.number().int().positive().optional(),
+            // A cuál tanqueta va una línea de 'cubeta' (0111).
+            tanqueta_id: z.number().int().positive().optional(),
             observaciones: z.string().trim().max(300).optional(),
           })
           .superRefine((l, ctx) => {
@@ -1141,6 +1143,13 @@ export const crearRecepcionCombustibleSchema = z
                 code: z.ZodIssueCode.custom,
                 path: ["equipo_id"],
                 message: "equipo_id va si y solo si el destino es 'equipo'",
+              });
+            }
+            if ((l.destino === "cubeta") !== (l.tanqueta_id !== undefined)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["tanqueta_id"],
+                message: "tanqueta_id va si y solo si el destino es 'cubeta'",
               });
             }
           })
@@ -1378,3 +1387,23 @@ export const calibracionSurtidorSchema = z.object({
 });
 
 export type CalibracionSurtidorInput = z.infer<typeof calibracionSurtidorSchema>;
+
+// ── Tanquetas / cubetas (migración 0111) ─────────────────────────────────
+
+export const crearTanquetaSchema = z.object({
+  grifo_interno_id: z.number().int().positive(),
+  // Sin código, el servidor asigna el siguiente (TQT-001...).
+  codigo: z.string().trim().min(1).max(30).optional(),
+  capacidad: z.number().positive().max(100000).default(280),
+});
+
+export type CrearTanquetaInput = z.infer<typeof crearTanquetaSchema>;
+
+export const actualizarTanquetaSchema = z.object({
+  codigo: z.string().trim().min(1).max(30).optional(),
+  capacidad: z.number().positive().max(100000).optional(),
+  activa: z.boolean().optional(),
+  motivo: z.string().trim().min(1).max(500).optional(),
+});
+
+export type ActualizarTanquetaInput = z.infer<typeof actualizarTanquetaSchema>;

@@ -74,6 +74,17 @@ const accionesTanque: DefinicionPestana[] = [
   padre: "tanques",
 }));
 
+const accionesTanquetas: DefinicionPestana[] = [
+  ["nueva", "Nueva tanqueta"],
+  ["editar", "Editar tanqueta"],
+].map(([id, nombre]) => ({
+  modulo: "combustible",
+  pestana: `tanquetas:${id}`,
+  nombre,
+  nivel: "accion",
+  padre: "tanquetas",
+}));
+
 const pestañasUrea: DefinicionPestana[] = [
   ["registrar_vale", "Registrar vale"],
   ["registrar_entrada", "Registrar entrada"],
@@ -107,6 +118,16 @@ export const PESTANAS_CONFIGURABLES: DefinicionPestana[] = [
     padre: null,
   },
   ...vistasHistorico,
+  // Tanquetas / cubetas (0111): el panel con su saldo. Lectura la ve; dar de
+  // alta o editar es una acción aparte que Lectura no recibe.
+  {
+    modulo: "combustible",
+    pestana: "tanquetas",
+    nombre: "Tanquetas",
+    nivel: "submenu",
+    padre: null,
+  },
+  ...accionesTanquetas,
   { modulo: "combustible", pestana: "urea", nombre: "Urea", nivel: "submenu", padre: null },
   ...pestañasUrea,
   {
@@ -205,6 +226,7 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
     "tanques:acciones:kardex",
     "tanques:acciones:historial_varilla",
     "tanques:acciones:ver_tanque",
+    "tanquetas",
     "historico",
     ...vistasHistorico.map((item) => item.pestana),
     "urea",

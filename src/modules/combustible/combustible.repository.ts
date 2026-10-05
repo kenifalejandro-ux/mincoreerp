@@ -4190,9 +4190,10 @@ export class CombustibleRepository {
       requiere_documento: boolean;
       modo_excedente_recepcion: "estricto" | "flexible";
       limite_excedente_pct: string | null;
+      grifo_interno_id: number;
     }>(
       `SELECT id, tanque_nombre, unidad, capacidad_total, tolerancia_capacidad_pct,
-              requiere_documento, modo_excedente_recepcion, limite_excedente_pct
+              grifo_interno_id, requiere_documento, modo_excedente_recepcion, limite_excedente_pct
        FROM combustible WHERE id = $1 AND tenant_id = $2`,
       [combustibleId, tenantId]
     );
@@ -5425,19 +5426,26 @@ export class CombustibleRepository {
     tenantId: string,
     recepcionId: number,
     usuarioId: string,
-    lineas: { destino: string; cantidad: number; equipo_id?: number; observaciones?: string }[]
+    lineas: {
+      destino: string;
+      cantidad: number;
+      equipo_id?: number;
+      tanqueta_id?: number;
+      observaciones?: string;
+    }[]
   ) {
     for (const l of lineas) {
       await client.query(
         `INSERT INTO combustible_recepcion_excedentes
-           (tenant_id, recepcion_id, destino, cantidad, equipo_id, observaciones, decidido_por)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+           (tenant_id, recepcion_id, destino, cantidad, equipo_id, tanqueta_id, observaciones, decidido_por)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
         [
           tenantId,
           recepcionId,
           l.destino,
           l.cantidad,
           l.equipo_id ?? null,
+          l.tanqueta_id ?? null,
           l.observaciones ?? null,
           usuarioId,
         ]
@@ -5447,10 +5455,11 @@ export class CombustibleRepository {
 
   async findLineasExcedente(client: PoolClient, tenantId: string, recepcionId: number) {
     const r = await client.query(
-      `SELECT x.id, x.destino, x.cantidad, x.equipo_id, e.placa_codigo AS equipo, x.observaciones,
-              x.creado_en
+      `SELECT x.id, x.destino, x.cantidad, x.equipo_id, e.placa_codigo AS equipo,
+              x.tanqueta_id, tq.codigo AS tanqueta, x.observaciones, x.creado_en
          FROM combustible_recepcion_excedentes x
          LEFT JOIN equipos e ON e.id = x.equipo_id
+         LEFT JOIN combustible_tanquetas tq ON tq.id = x.tanqueta_id AND tq.tenant_id = x.tenant_id
         WHERE x.tenant_id = $1 AND x.recepcion_id = $2
         ORDER BY x.id`,
       [tenantId, recepcionId]

@@ -21,6 +21,16 @@ test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente 
   const admin = adminA();
   await loginPorUI(page, admin.email, admin.password);
 
+  // Una sede propia de esta corrida: las tanquetas del tenant e2e sobreviven
+  // entre corridas, y una vieja con espacio cambiaría el reparto propuesto.
+  const sedes = (await (await page.request.get("/api/erp/sedes")).json()).sedes;
+  const grifoSede = await page.request.post("/api/erp/administracion/grifos", {
+    data: { sede_id: sedes[0].id, nombre: `Huamachuco ${marca}` },
+  });
+  expect(grifoSede.status(), "no se pudo crear el grifo de prueba").toBe(201);
+  const grifoInternoId = (await grifoSede.json()).id as number;
+
+  // Tanque LLENO (2000/2000): toda la entrega es excedente.
   const tanque = await page.request.post("/api/erp/combustible", {
     data: {
       codigo: `EX-${marca}`,
@@ -28,14 +38,23 @@ test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente 
       tipo_combustible: "diesel_b5",
       unidad: "gal",
       tipo_punto: "fijo",
-      capacidad_total: 10000,
-      nivel_actual: 9000,
+      capacidad_total: 2000,
+      nivel_actual: 2000,
       requiere_documento: false,
       modo_excedente_recepcion: "flexible",
+      grifo_interno_id: grifoInternoId,
     },
   });
   expect(tanque.status(), "no se pudo crear el tanque de prueba").toBe(201);
   const tanqueId = (await tanque.json()).id as number;
+  const codigos: string[] = [];
+  for (const sufijo of ["A", "B"]) {
+    const t = await page.request.post("/api/erp/combustible/tanquetas", {
+      data: { grifo_interno_id: grifoInternoId, codigo: `TQ-${marca}-${sufijo}` },
+    });
+    expect(t.status(), "no se pudo crear la tanqueta de prueba").toBe(201);
+    codigos.push((await t.json()).codigo);
+  }
   const grifo = await page.request.post("/api/erp/combustible/grifos", {
     data: { nombre: `CISTERNA ${marca}` },
   });
@@ -58,12 +77,12 @@ test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente 
   await expect(page.getByText("Tope adicional del excedente")).toHaveCount(0);
   await page.reload();
 
-  // ── La recepción que no cabe: 9000 + 1200 = 10200, sobran 200 ──────────
+  // ── La recepción que no cabe: tanque lleno, llegan 600 ─────────────────
   await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
   await page.getByRole("button", { name: "Registrar recepción" }).first().click();
   await page.locator("#recepcion-tanque").selectOption(String(tanqueId));
   await page.locator("#recepcion-grifo").selectOption({ label: `CISTERNA ${marca}` });
-  await page.locator("#recepcion-cantidad").fill("1200");
+  await page.locator("#recepcion-cantidad").fill("600");
   await page.locator("#recepcion-costo").fill("17.5");
 
   const registrar = page.locator("form").getByRole("button", { name: "Registrar recepción" });
@@ -72,28 +91,45 @@ test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente 
 
   await expect(page.getByText("La recepción no cabe en el tanque")).toBeVisible();
   const confirmar = page.getByRole("button", { name: "Registrar con este reparto" });
-  // Vino precargado con todo el excedente a cubeta: cuadra.
-  await expect(confirmar).toBeEnabled();
 
-  // Un reparto que no cuadra no se puede guardar.
-  await page.locator("#exc-cantidad-0").fill("150");
-  await expect(page.getByText(/Faltan 50/)).toBeVisible();
+  // El reparto propuesto: cada tanqueta hasta su tope (280 + 280) y el resto
+  // (40) en una línea a unidades sin unidad elegida, para decidir qué hacer.
+  await expect(page.locator("#exc-cantidad-0")).toHaveValue("280");
+  await expect(page.locator("#exc-cantidad-1")).toHaveValue("280");
+  await expect(page.locator("#exc-cantidad-2")).toHaveValue("40");
+  await expect(page.locator("#exc-destino-2")).toHaveValue("equipo");
+  await expect(page.getByText(/Completa cada línea/)).toBeVisible();
   await expect(confirmar).toBeDisabled();
 
-  // Dividir: 150 a cubeta + 50 devueltos.
-  await page.getByRole("button", { name: "+ Dividir en otro destino" }).click();
-  await page.locator("#exc-destino-1").selectOption("devolucion");
+  // Una tanqueta no admite más que su espacio libre.
+  await page.locator("#exc-cantidad-0").fill("300");
+  await page.locator("#exc-cantidad-2").fill("20");
+  await expect(page.getByText(/solo admite 280/)).toBeVisible();
+  await expect(confirmar).toBeDisabled();
+  await page.locator("#exc-cantidad-0").fill("280");
+  await page.locator("#exc-cantidad-2").fill("40");
+
+  // El resto se devuelve al proveedor.
+  await page.locator("#exc-destino-2").selectOption("devolucion");
   await expect(page.getByText("El reparto cubre todo el excedente.")).toBeVisible();
+  await expect(confirmar).toBeEnabled();
   await confirmar.click();
 
   await expect(page.getByText(/Recepción registrada/)).toBeVisible();
 
-  // Al tanque entraron los 1000 que caben; la entrega fue de 1200.
+  // Al tanque no entró nada; los 600 se derivaron.
   const lista = await page.request.get(
     `/api/erp/combustible/recepciones?combustible_id=${tanqueId}`
   );
   const filas = (await lista.json()).data as { cantidad: string; cantidad_derivada: string }[];
   expect(filas).toHaveLength(1);
-  expect(Number(filas[0].cantidad)).toBe(1000);
-  expect(Number(filas[0].cantidad_derivada)).toBe(200);
+  expect(Number(filas[0].cantidad)).toBe(0);
+  expect(Number(filas[0].cantidad_derivada)).toBe(600);
+
+  // ── El panel de Tanquetas: las dos llenas ──────────────────────────────
+  await page.getByRole("button", { name: "Tanquetas" }).click();
+  for (const codigo of codigos) {
+    const tarjeta = page.locator("div", { has: page.getByText(codigo, { exact: true }) }).last();
+    await expect(tarjeta.getByText(/100% · libre 0 gal/)).toBeVisible();
+  }
 });

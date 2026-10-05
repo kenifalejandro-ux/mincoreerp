@@ -212,6 +212,13 @@ export const MODULOS: ModuloDefinicion[] = [
           grifo_interno_id: "grifos_internos",
         },
       },
+      // Tanquetas / cubetas (0111). Van ANTES de las líneas del excedente:
+      // estas las referencian.
+      {
+        nombre: "combustible_tanquetas",
+        pk: "serial",
+        fks: { grifo_interno_id: "grifos_internos", creado_por: "usuarios" },
+      },
       // Reparto del excedente de una recepción (0110): cubeta, unidades o
       // devolución. Cascadea desde la recepción.
       {
@@ -220,6 +227,7 @@ export const MODULOS: ModuloDefinicion[] = [
         fks: {
           recepcion_id: "combustible_recepciones",
           equipo_id: "equipos",
+          tanqueta_id: "combustible_tanquetas",
           decidido_por: "usuarios",
         },
       },

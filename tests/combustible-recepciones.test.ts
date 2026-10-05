@@ -345,10 +345,16 @@ describe("combustible: recepciones y costo ponderado (Fase C)", () => {
     const tanqueId = await tanqueFlexible();
     const payload = payloadRecepcion(tanqueId, { cantidad: 300 });
 
+    // La tanqueta tiene que ser de la sede del tanque (0111).
+    const sede = (await agente.get("/api/erp/sedes")).body.sedes[0];
+    const tq = await agente
+      .post("/api/erp/combustible/tanquetas")
+      .send({ grifo_interno_id: sede.grifos[0].id });
+    expect(tq.status).toBe(201);
     const repartido = await agente.post("/api/erp/combustible/recepciones").send({
       ...payload,
       reparto_excedente: [
-        { destino: "cubeta", cantidad: 60 },
+        { destino: "cubeta", cantidad: 60, tanqueta_id: Number(tq.body.id) },
         { destino: "devolucion", cantidad: 40, observaciones: "sobró de la cisterna" },
       ],
     });
@@ -371,7 +377,7 @@ describe("combustible: recepciones y costo ponderado (Fase C)", () => {
     const tanqueId = await tanqueFlexible();
     const res = await agente.post("/api/erp/combustible/recepciones").send({
       ...payloadRecepcion(tanqueId, { cantidad: 300 }),
-      reparto_excedente: [{ destino: "cubeta", cantidad: 90 }],
+      reparto_excedente: [{ destino: "devolucion", cantidad: 90 }],
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("el reparto del excedente");
@@ -386,7 +392,7 @@ describe("combustible: recepciones y costo ponderado (Fase C)", () => {
     const tanqueId = await tanqueFlexible();
     const res = await agente.post("/api/erp/combustible/recepciones").send({
       ...payloadRecepcion(tanqueId, { cantidad: 100 }),
-      reparto_excedente: [{ destino: "cubeta", cantidad: 10 }],
+      reparto_excedente: [{ destino: "devolucion", cantidad: 10 }],
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("no hay excedente que repartir");

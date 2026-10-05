@@ -1,6 +1,7 @@
 import {
   ChevronDown,
   ChevronsLeft,
+  Cylinder,
   Droplets,
   Fuel,
   History,
@@ -19,6 +20,7 @@ import { MODULOS_CLIENTE } from "../../modules/registry";
 // usan las acciones de la tabla de tanques.
 const SUBMENU_COMBUSTIBLE: { tab: string; label: string; Icono: LucideIcon }[] = [
   { tab: "combustible", label: "Tanques", Icono: Fuel },
+  { tab: "combustible:tanquetas", label: "Tanquetas", Icono: Cylinder },
   { tab: "combustible:historico", label: "Histórico", Icono: History },
   { tab: "combustible:urea", label: "Urea", Icono: Droplets },
   { tab: "combustible:auditoria", label: "Auditoría", Icono: SearchCheck },

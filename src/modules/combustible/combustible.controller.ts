@@ -70,6 +70,8 @@ import type {
   CalibracionSurtidorInput,
   CambiarPrecintoInput,
   BajaPuntoPrecintoInput,
+  CrearTanquetaInput,
+  ActualizarTanquetaInput,
 } from "../../server/schemas/combustible.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import { FACTOR_LITROS_UREA } from "../../server/schemas/combustible.schema";
@@ -88,6 +90,7 @@ import {
   type ExcedenteRepartido,
 } from "./combustible.service";
 import * as surtidores from "./surtidores.service";
+import * as tanquetas from "./tanquetas.service";
 import { alcanceDe, ambitoDe, grifosDelFiltro } from "./alcance";
 
 const service = new CombustibleService();
@@ -4216,6 +4219,94 @@ export class CombustibleController {
     } catch {
       res.status(500).json({ error: "Error al armar el reporte de segregación" });
     }
+  }
+
+  // ── Tanquetas / cubetas (migración 0111) ─────────────────────────────
+  //
+  // Mismo criterio que surtidores: los errores de negocio salen como AppError
+  // desde tanquetas.service. Fuera del alcance es 404, igual que inexistente.
+
+  /** null si no existe o si su grifo está fuera del alcance del usuario. */
+  private async tanquetaVisible(req: Request, id: number) {
+    const tenantId = getTenantId(req);
+    const alcance = alcanceDe(req);
+    const t = await withTenant(tenantId, (client) => tanquetas.getTanqueta(client, tenantId, id));
+    if (!t) return null;
+    if (!alcance.todo && !alcance.grifos.includes(Number(t.grifo_interno_id))) return null;
+    return t;
+  }
+
+  async listarTanquetas(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const grifo = req.query.grifo_interno_id ? Number(req.query.grifo_interno_id) : undefined;
+    res.json(
+      await withTenant(tenantId, (client) =>
+        tanquetas.listarTanquetas(client, tenantId, alcanceDe(req), {
+          grifoInternoId: Number.isInteger(grifo) ? grifo : undefined,
+        })
+      )
+    );
+  }
+
+  async crearTanqueta(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const data = req.validatedBody as CrearTanquetaInput;
+    const alcance = alcanceDe(req);
+    if (!alcance.todo && !alcance.grifos.includes(data.grifo_interno_id)) {
+      res.status(404).json({ error: "El grifo no existe" });
+      return;
+    }
+    const creada = await withTenant(tenantId, (client) =>
+      tanquetas.crearTanqueta(client, tenantId, req.usuario!.id, data)
+    );
+    await registrarAuditoria({
+      accion: "combustible.tanqueta_crear",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { tanquetaId: creada.id, codigo: creada.codigo, ...data },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
+    res.status(201).json(creada);
+  }
+
+  async actualizarTanqueta(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.tanquetaId);
+    const data = req.validatedBody as ActualizarTanquetaInput;
+    const antes = await this.tanquetaVisible(req, id);
+    if (!antes) {
+      res.status(404).json({ error: "La tanqueta no existe" });
+      return;
+    }
+    const despues = await withTenant(tenantId, (client) =>
+      tanquetas.actualizarTanqueta(client, tenantId, id, data)
+    );
+    await registrarAuditoria({
+      accion: "combustible.tanqueta_actualizar",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: {
+        tanquetaId: id,
+        antes: { codigo: antes.codigo, capacidad: antes.capacidad, activa: antes.activa },
+        cambios: data,
+      },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
+    res.json(despues);
+  }
+
+  async historialTanqueta(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.tanquetaId);
+    if (!(await this.tanquetaVisible(req, id))) {
+      res.status(404).json({ error: "La tanqueta no existe" });
+      return;
+    }
+    res.json(
+      await withTenant(tenantId, (client) => tanquetas.historialTanqueta(client, tenantId, id))
+    );
   }
 
   // ── Surtidores (migración 0098) ──────────────────────────────────────

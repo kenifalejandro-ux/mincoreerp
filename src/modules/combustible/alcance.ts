@@ -254,6 +254,15 @@ export const GUARDIAS: Record<string, RequestParamHandler> = {
       [id, tenantId, a.grifos]
     )
   ),
+  // Tanqueta (0111): es del grifo donde se llena.
+  tanquetaId: guardia((client, tenantId, a, id) =>
+    existe(
+      client,
+      `SELECT 1 FROM combustible_tanquetas t
+        WHERE t.id = $1 AND t.tenant_id = $2 AND t.grifo_interno_id = ANY($3::int[])`,
+      [id, tenantId, a.grifos]
+    )
+  ),
   recepcionId: guardia((client, tenantId, a, id) =>
     existe(
       client,
