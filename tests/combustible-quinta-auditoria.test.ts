@@ -257,6 +257,49 @@ describe("combustible: los diez huecos de la 5ª auditoría", () => {
     expect(repetida.status).toBe(409);
   });
 
+  it("una recepción con excedente repartido se valida contra la guía por la entrega completa (0110)", async () => {
+    // Capacidad 20.000, nivel 10.000: de una entrega de 12.000 solo caben
+    // 10.000. Los 2.000 restantes van a cubeta.
+    const tq = await tanque({ modo_excedente_recepcion: "flexible" });
+    await leer(grifero, tq.id, 10000, en(1));
+    const rec = await admin.post("/api/erp/combustible/recepciones").send({
+      combustible_id: tq.id,
+      grifo_id: grifoId,
+      cantidad: 12000,
+      costo_unitario: 16.8,
+      recibido_en: en(2),
+      reparto_excedente: [{ destino: "cubeta", cantidad: 2000 }],
+    });
+    expect(rec.status, JSON.stringify(rec.body)).toBe(201);
+    expect(Number(rec.body.cantidad)).toBe(10000);
+
+    // La guía dice 12.000: coincide con 10.000 + 2.000, no hay discrepancia.
+    const validada = await admin
+      .patch(`/api/erp/combustible/recepciones/${rec.body.id}/validar`)
+      .send({ cantidad_documento: 12000 });
+    expect(validada.status).toBe(200);
+    expect(validada.body.discrepancia).toBeNull();
+  });
+
+  it("el grifero NO puede repartir un excedente salvo que el admin le dé el permiso (0110)", async () => {
+    const tq = await tanque({ modo_excedente_recepcion: "flexible" });
+    await leer(grifero, tq.id, 10000, en(1));
+    const cuerpo = {
+      combustible_id: tq.id,
+      grifo_id: grifoId,
+      cantidad: 12000,
+      costo_unitario: 16.8,
+      recibido_en: en(2),
+      reparto_excedente: [{ destino: "cubeta", cantidad: 2000 }],
+    };
+    const r = await grifero.post("/api/erp/combustible/recepciones").send(cuerpo);
+    expect(r.status).toBe(403);
+    // Sin reparto, el grifero sí recibe el 409 que le dice que alguien con el
+    // permiso tiene que decidir.
+    const sinReparto = await recibir(grifero, tq.id, 12000, en(3));
+    expect(sinReparto.status).toBe(409);
+  });
+
   it("validar con la cantidad correcta no genera ninguna alerta", async () => {
     const tq = await tanque();
     await leer(grifero, tq.id, 10000, en(1));

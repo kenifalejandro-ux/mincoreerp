@@ -1,5 +1,6 @@
 /**src/modules/combutible/combustible.controller.ts */
 
+import { pestanaPermitida } from "../../server/services/permisosPestanas.service";
 import { Request, Response } from "express";
 import { withTenant } from "../../server/config/database";
 import { getTenantId } from "../../server/shared/utils/request";
@@ -35,7 +36,6 @@ import {
   enviarCorreoPrecintoAlterado,
   enviarCorreoPrecintoReemplazado,
   enviarCorreoSobrestockRecepcion,
-  enviarCorreoExcedenteRecepcionPendiente,
 } from "./combustibleAlertas.mailer";
 import type {
   RegistrarLecturaCombustibleInput,
@@ -70,7 +70,6 @@ import type {
   CalibracionSurtidorInput,
   CambiarPrecintoInput,
   BajaPuntoPrecintoInput,
-  ResolverExcedenteRecepcionInput,
 } from "../../server/schemas/combustible.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import { FACTOR_LITROS_UREA } from "../../server/schemas/combustible.schema";
@@ -86,7 +85,7 @@ import { sanearNombreArchivo } from "../../server/services/documentStorage";
 import {
   CombustibleService,
   RecepcionExcedeCapacidadError,
-  type ExcedenteRecepcionDetalle,
+  type ExcedenteRepartido,
 } from "./combustible.service";
 import * as surtidores from "./surtidores.service";
 import { alcanceDe, ambitoDe, grifosDelFiltro } from "./alcance";
@@ -4991,6 +4990,22 @@ export class CombustibleController {
           .json({ error: "El Encargado de Urea solo puede registrar entradas de Urea" });
         return;
       }
+      // Repartir un excedente es una decisión con permiso propio: el Admin
+      // elige quién (no nace para el grifero). Sin él, el 409 le avisa que
+      // alguien con el permiso tiene que decidir.
+      if (
+        data.reparto_excedente &&
+        !pestanaPermitida(
+          { rol: req.usuario!.rol, permisosPestanas: req.usuario!.permisosPestanas },
+          "combustible",
+          "tanques:decidir_excedente"
+        )
+      ) {
+        res
+          .status(403)
+          .json({ error: "Tu perfil no tiene permiso para decidir el excedente de una recepción" });
+        return;
+      }
       const { fila, creado, excedenteAceptado } = await withTenant(tenantId, (client) =>
         service.crearRecepcion(client, tenantId, req.usuario!.id, data, alcanceDe(req))
       );
@@ -5012,6 +5027,8 @@ export class CombustibleController {
           combustibleId: data.combustible_id,
           cantidad: data.cantidad,
           costoUnitario: data.costo_unitario,
+          // Quién decidió a dónde fue el excedente, y qué eligió (0110).
+          repartoExcedente: data.reparto_excedente ?? null,
         },
         contexto: contextoAuditoriaModulo(req),
       });
@@ -5057,6 +5074,9 @@ export class CombustibleController {
           err.message.includes("exige factura o guía") ||
           err.message.includes("no tiene ninguna lectura vigente") ||
           err.message.includes("supera la capacidad del tanque") ||
+          // Reparto del excedente (0110).
+          err.message.includes("el reparto del excedente") ||
+          err.message.includes("no hay excedente que repartir") ||
           // Grifo del rol equivocado (migrations/0065).
           err.message.includes("no está marcado como") ||
           // Precintos de la recepción (0095).
@@ -5083,12 +5103,12 @@ export class CombustibleController {
   }
 
   /** Mismo contrato best-effort que el resto de los procesar*: la recepción
-   *  ya se guardó con el sobrestock adentro, esto solo avisa (0102). */
+   *  ya se guardó con su reparto, esto solo avisa (0102/0110). */
   private async procesarAlertaSobrestockRecepcion(
     tenantId: string,
     combustibleId: number,
     recepcionId: number,
-    detalle: ExcedenteRecepcionDetalle
+    excedente: ExcedenteRepartido
   ) {
     try {
       const admins = await withTenant(tenantId, async (client) => {
@@ -5097,7 +5117,7 @@ export class CombustibleController {
             tipo: "sobrestock_recepcion",
             recepcionId,
             combustibleId,
-            detalle: { ...detalle, decision: "aceptado" },
+            detalle: { ...excedente.detalle, reparto: excedente.reparto },
           },
         ]);
         return service.findDestinatariosAlertasCombustible(client, tenantId);
@@ -5106,62 +5126,12 @@ export class CombustibleController {
         tipo: "sobrestock_recepcion",
         recepcionId,
       });
-      await enviarCorreoSobrestockRecepcion(admins, detalle);
+      await enviarCorreoSobrestockRecepcion(admins, {
+        ...excedente.detalle,
+        reparto: excedente.reparto,
+      });
     } catch (err) {
       logger.warn({ err, tenantId, combustibleId }, "No se pudo procesar la alerta de sobrestock");
-    }
-  }
-
-  /** POST /recepciones/resolver-excedente -- las otras dos decisiones frente
-   *  al 409 de crearRecepcion (0102). Ninguna guarda una recepción: "rechazar"
-   *  es la constancia de que se optó por devolver al proveedor, y
-   *  "contactar_admin" avisa por correo para que alguien lo resuelva a mano
-   *  (por ejemplo, dividiendo la entrega entre dos tanques). */
-  async resolverExcedenteRecepcion(req: Request, res: Response) {
-    try {
-      const tenantId = getTenantId(req);
-      const data = req.validatedBody as ResolverExcedenteRecepcionInput;
-
-      const tanque = await withTenant(tenantId, (client) =>
-        service.getById(client, tenantId, data.combustible_id)
-      );
-      if (!tanque) {
-        res
-          .status(400)
-          .json({ error: `combustible_id ${data.combustible_id} no existe en este tenant` });
-        return;
-      }
-
-      await registrarAuditoria({
-        accion:
-          data.decision === "rechazar"
-            ? "combustible.recepcion_excedente_rechazado"
-            : "combustible.recepcion_excedente_contactar_admin",
-        tenantId,
-        usuarioId: req.usuario!.id,
-        detalle: {
-          combustibleId: data.combustible_id,
-          cantidad: data.cantidad,
-          motivo: data.motivo ?? null,
-        },
-        contexto: contextoAuditoriaModulo(req),
-      });
-
-      if (data.decision === "contactar_admin") {
-        const admins = await withTenant(tenantId, (client) =>
-          service.findDestinatariosAlertasCombustible(client, tenantId)
-        );
-        await enviarCorreoExcedenteRecepcionPendiente(admins, {
-          tanqueNombre: tanque.tanque_nombre,
-          unidad: tanque.unidad,
-          cantidadRecepcion: data.cantidad,
-          motivo: data.motivo ?? null,
-        });
-      }
-
-      res.json({ ok: true });
-    } catch {
-      res.status(500).json({ error: "Error al registrar la decisión sobre el excedente" });
     }
   }
 

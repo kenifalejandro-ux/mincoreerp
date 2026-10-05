@@ -20,7 +20,6 @@ import {
   crearRecepcionCombustibleSchema,
   anularRecepcionCombustibleSchema,
   validarRecepcionCombustibleSchema,
-  resolverExcedenteRecepcionSchema,
   anularDespachoCombustibleSchema,
   subirComprobanteCompraSchema,
   marcarAlertasLeidasCombustibleSchema,
@@ -425,17 +424,6 @@ router.post(
   requireRole("admin", "operador", "grifero", "encargado_urea"),
   validate(crearRecepcionCombustibleSchema),
   asyncHandler(controller.crearRecepcion.bind(controller))
-);
-// El resto de la decisión sobre un excedente (0102) que el 409 de arriba
-// deja pendiente -- "aceptar" es un re-POST a /recepciones, este endpoint es
-// solo para "rechazar" y "contactar_admin", que no guardan nada. Mismo
-// reparto de roles que /recepciones: quien puede recibir, puede decidir.
-router.post(
-  "/recepciones/resolver-excedente",
-  requirePestanaSegunProducto("tanques:registrar_recepcion", "urea:registrar_entrada"),
-  requireRole("admin", "operador", "grifero"),
-  validate(resolverExcedenteRecepcionSchema),
-  asyncHandler(controller.resolverExcedenteRecepcion.bind(controller))
 );
 // ✅ VALIDAR la recepción contra la guía (5ª auditoría, migración 0088).
 //

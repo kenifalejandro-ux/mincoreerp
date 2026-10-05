@@ -1119,13 +1119,35 @@ export const crearRecepcionCombustibleSchema = z
       })
       .optional(),
 
-    // Migración 0102. Solo tiene sentido en el reintento: la primera vez
-    // que una recepción excede capacidad+tolerancia en un tanque en modo
-    // 'flexible', la API responde 409 con el detalle y NO guarda nada. El
-    // cliente decide y reenvía el MISMO payload con este campo en
-    // "aceptar" para confirmar el sobrestock (genera alerta + correo). No
-    // hay valor para "rechazar" -- eso es simplemente no reenviar.
-    decision_excedente: z.literal("aceptar").optional(),
+    // Migración 0110. Solo tiene sentido en el reintento: la primera vez que
+    // una recepción no cabe en un tanque en modo 'flexible', la API responde
+    // 409 con el detalle y NO guarda nada. Quien tiene el permiso "decidir
+    // excedente" reparte el excedente y reenvía el MISMO payload con esto:
+    // `cantidad` sigue siendo lo que entregó la cisterna (lo de la factura) y
+    // el servidor guarda en el tanque lo que cabe. Las líneas suman
+    // exactamente el excedente.
+    reparto_excedente: z
+      .array(
+        z
+          .object({
+            destino: z.enum(["cubeta", "equipo", "devolucion"]),
+            cantidad: z.number().positive(),
+            equipo_id: z.number().int().positive().optional(),
+            observaciones: z.string().trim().max(300).optional(),
+          })
+          .superRefine((l, ctx) => {
+            if ((l.destino === "equipo") !== (l.equipo_id !== undefined)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["equipo_id"],
+                message: "equipo_id va si y solo si el destino es 'equipo'",
+              });
+            }
+          })
+      )
+      .min(1)
+      .max(10)
+      .optional(),
 
     // El precinto NUEVO de cada punto que se abrió para recibir (0095). Los
     // puntos marcados "se abre en recepción" lo exigen; lo valida el
@@ -1209,20 +1231,6 @@ export const crearRecepcionCombustibleSchema = z
   });
 
 export type CrearRecepcionCombustibleInput = z.infer<typeof crearRecepcionCombustibleSchema>;
-
-/** Migración 0102: las otras dos decisiones frente a un excedente de
- *  recepción que el 409 de POST /recepciones deja pendiente. "rechazar" no
- *  guarda nada -- solo deja auditoría de que se optó por devolver al
- *  proveedor. "contactar_admin" tampoco guarda la recepción: avisa por
- *  correo para que alguien la resuelva a mano (dividir entre tanques, etc). */
-export const resolverExcedenteRecepcionSchema = z.object({
-  combustible_id: z.number().int().positive(),
-  cantidad: z.number().positive(),
-  decision: z.enum(["rechazar", "contactar_admin"]),
-  motivo: z.string().trim().max(500).optional(),
-});
-
-export type ResolverExcedenteRecepcionInput = z.infer<typeof resolverExcedenteRecepcionSchema>;
 
 /** Anular una recepción mal cargada -- mismo criterio que lecturas y
  *  precios: `motivo` obligatorio, la fila NUNCA se borra ni se edita. Al

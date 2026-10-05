@@ -14,7 +14,6 @@ import type {
   CrearConteoUreaInput,
   CrearPuntoPrecintoInput,
   CambiarPrecintoInput,
-  ResolverExcedenteRecepcionInput,
 } from "../../server/schemas/combustible.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import { FACTOR_LITROS_UREA } from "../../server/schemas/combustible.schema";
@@ -42,22 +41,38 @@ import {
 } from "../../server/services/sedes.service";
 
 /** Lo que la pantalla necesita para mostrar (o registrar) la decisión sobre
- *  un excedente de recepción, sin volver a calcular nada (migración 0102). */
+ *  un excedente de recepción, sin volver a calcular nada (0102, rediseñado en
+ *  0110: ya no hay tolerancia, el techo es la capacidad). */
 export interface ExcedenteRecepcionDetalle {
   tanqueNombre: string;
   unidad: string;
   capacidad: number;
-  toleranciaCapacidadPct: number;
   nivelMedido: number;
   nivelTeorico: number;
   cantidadRecepcion: number;
   totalTrasRecepcion: number;
-  techo: number;
   excedenteLitros: number;
 }
 
-/** Una recepción que supera capacidad + tolerancia en un tanque con
- *  `modo_excedente_recepcion = 'flexible'` y dentro de `limite_excedente_pct`.
+export type DestinoExcedente = "cubeta" | "equipo" | "devolucion";
+
+/** Una línea del reparto del excedente (migración 0110). */
+export interface LineaRepartoExcedente {
+  destino: DestinoExcedente;
+  cantidad: number;
+  equipo_id?: number;
+  observaciones?: string;
+}
+
+/** El excedente ya decidido: lo que `crearRecepcion` necesita para guardar la
+ *  recepción por lo que SÍ entró al tanque y las líneas del resto. */
+export interface ExcedenteRepartido {
+  detalle: ExcedenteRecepcionDetalle;
+  reparto: LineaRepartoExcedente[];
+}
+
+/** Una recepción que supera la capacidad en un tanque con
+ *  `modo_excedente_recepcion = 'flexible'`.
  *  No es un dato mal formado -- el combustible ya entró -- así que el
  *  controller la traduce a 409, no a 400: el cliente tiene que DECIDIR, no
  *  corregir. */
@@ -4891,7 +4906,7 @@ export class CombustibleService {
     // idempotentInsert porque su tipo genérico solo transporta la fila de
     // negocio (T); esto es una segunda salida que no tiene que sobrevivir
     // un reintento (si ya se creó, la alerta también, no hay que repetirla).
-    let excedenteAceptado: ExcedenteRecepcionDetalle | null = null;
+    let excedenteAceptado: ExcedenteRepartido | null = null;
 
     const resultado = await idempotentInsert({
       client,
@@ -4934,13 +4949,22 @@ export class CombustibleService {
         const politica = await this.repository.getPoliticaValidacionRecepcion(client, tenantId);
 
         const factorLitros = esUrea ? FACTOR_LITROS_UREA[data.presentacion!] : null;
-        const cantidad = esUrea ? data.cantidad_bultos! * factorLitros! : data.cantidad!;
+        const cantidadEntregada = esUrea ? data.cantidad_bultos! * factorLitros! : data.cantidad!;
+        // Lo que entró al TANQUE: la entrega menos lo que se derivó (0110).
+        // `cantidad` sigue siendo lo que mueve el kardex y el nivel teórico.
+        const cantidadDerivada = excedenteAceptado
+          ? Number(
+              excedenteAceptado.reparto.reduce((suma, linea) => suma + linea.cantidad, 0).toFixed(2)
+            )
+          : 0;
+        const cantidad = Number((cantidadEntregada - cantidadDerivada).toFixed(2));
 
         const fila = await this.repository.crearRecepcion(client, tenantId, usuarioId, {
           producto: data.producto,
           combustibleId: esUrea ? null : data.combustible_id!,
           grifoId: data.grifo_id,
           cantidad,
+          cantidadDerivada,
           presentacion: esUrea ? data.presentacion! : null,
           factorLitros,
           cantidadBultos: esUrea ? data.cantidad_bultos! : null,
@@ -4955,6 +4979,16 @@ export class CombustibleService {
         // urea no se mezcla físicamente, cada recepción guarda su propio
         // costo y el promedio se deriva al vuelo (ver resolverCostoUrea) --
         // no hay nada que recalcular acá.
+        if (excedenteAceptado) {
+          await this.repository.crearLineasExcedente(
+            client,
+            tenantId,
+            Number(fila.id),
+            usuarioId,
+            excedenteAceptado.reparto
+          );
+        }
+
         if (!esUrea) {
           await this.repository.recalcularCostoPromedio(client, tenantId, data.combustible_id!);
           // Los sellos nuevos de los puntos que se abrieron para recibir
@@ -4996,7 +5030,7 @@ export class CombustibleService {
     tenantId: string,
     data: CrearRecepcionCombustibleInput,
     recibidoEn: string
-  ): Promise<ExcedenteRecepcionDetalle | null> {
+  ): Promise<ExcedenteRepartido | null> {
     const tanque = await this.repository.findTanqueParaRecepcion(
       client,
       tenantId,
@@ -5035,61 +5069,66 @@ export class CombustibleService {
     }
 
     const capacidad = Number(tanque.capacidad_total);
-    const toleranciaPct = Number(tanque.tolerancia_capacidad_pct);
-    const techo = capacidad * (1 + toleranciaPct / 100);
     const totalTrasRecepcion = nivelTeorico + data.cantidad!;
+    const excedenteLitros = Number((totalTrasRecepcion - capacidad).toFixed(2));
 
-    if (totalTrasRecepcion <= techo) return null;
-
-    const detalleTolerancia =
-      toleranciaPct > 0 ? ` + ${toleranciaPct}% de tolerancia (${techo.toFixed(2)})` : "";
-    const excedenteLitros = Number((totalTrasRecepcion - techo).toFixed(2));
-
-    // Modo 'flexible' (0102): el combustible YA entró -- el error casi
-    // siempre es de cálculo de quien pidió la compra, no del proveedor que
-    // cumplió la entrega. `limite_excedente_pct` es el "hasta acá lo
-    // asumimos nosotros": un excedente que lo supera se rechaza IGUAL que en
-    // modo estricto, aunque el tanque esté marcado como flexible.
-    if (tanque.modo_excedente_recepcion === "flexible") {
-      const limitePct =
-        tanque.limite_excedente_pct === null ? null : Number(tanque.limite_excedente_pct);
-      const limiteLitros = limitePct === null ? null : capacidad * (limitePct / 100);
-      const dentroDelLimite = limiteLitros === null || excedenteLitros <= limiteLitros;
-
-      if (dentroDelLimite) {
-        const detalle = {
-          tanqueNombre: tanque.tanque_nombre,
-          unidad: tanque.unidad,
-          capacidad,
-          toleranciaCapacidadPct: toleranciaPct,
-          nivelMedido: nivelTeorico,
-          nivelTeorico,
-          cantidadRecepcion: data.cantidad!,
-          totalTrasRecepcion,
-          techo,
-          excedenteLitros,
-        };
-
-        // Ya decidió: reenvió el mismo payload con "aceptar" -- guardar y
-        // dejar que el controller genere la alerta + el correo.
-        if (data.decision_excedente === "aceptar") return detalle;
-
-        // Primera vez que se ve este excedente: 409, no guarda nada, el
-        // cliente decide (ver resolverExcedenteRecepcionSchema para las
-        // otras dos opciones).
-        throw new RecepcionExcedeCapacidadError(
-          `la recepción de ${data.cantidad} sobre un saldo teórico de ${nivelTeorico} supera la capacidad del tanque (${capacidad}${detalleTolerancia}) -- requiere decisión`,
-          detalle
+    if (excedenteLitros <= 0) {
+      if (data.reparto_excedente) {
+        throw new Error(
+          "no hay excedente que repartir: la recepción cabe en el tanque -- quitá el reparto"
         );
       }
+      return null;
     }
 
     // El mensaje incluye los tres números porque el operario tiene que
     // poder ver de un vistazo cuál está mal: puede ser la cantidad
     // tipeada, o una lectura vieja que ya no refleja lo que hay.
-    throw new Error(
-      `la recepción de ${data.cantidad} sobre un saldo teórico de ${nivelTeorico} supera la capacidad del tanque (${capacidad}${detalleTolerancia})`
-    );
+    const mensaje = `la recepción de ${data.cantidad} sobre un saldo teórico de ${nivelTeorico} supera la capacidad del tanque (${capacidad})`;
+
+    // Modo estricto: se rechaza siempre, se devuelve al proveedor.
+    if (tanque.modo_excedente_recepcion !== "flexible") throw new Error(mensaje);
+
+    // Modo 'flexible' (0102/0110): el combustible YA entró a la cisterna --
+    // quien tiene el permiso reparte el excedente entre cubetas, unidades o
+    // devolución.
+    const detalle: ExcedenteRecepcionDetalle = {
+      tanqueNombre: tanque.tanque_nombre,
+      unidad: tanque.unidad,
+      capacidad,
+      nivelMedido: nivelTeorico,
+      nivelTeorico,
+      cantidadRecepcion: data.cantidad!,
+      totalTrasRecepcion,
+      excedenteLitros,
+    };
+
+    // Primera vez que se ve este excedente: 409, no guarda nada, el cliente
+    // decide y reenvía el MISMO payload con `reparto_excedente`.
+    if (!data.reparto_excedente) {
+      throw new RecepcionExcedeCapacidadError(`${mensaje} -- requiere decisión`, detalle);
+    }
+
+    const reparto = data.reparto_excedente;
+    const sumaReparto = Number(reparto.reduce((suma, l) => suma + l.cantidad, 0).toFixed(2));
+    if (Math.abs(sumaReparto - excedenteLitros) > 0.01) {
+      throw new Error(
+        `el reparto del excedente suma ${sumaReparto} y el excedente es ${excedenteLitros}: tienen que coincidir`
+      );
+    }
+    if (data.cantidad! - excedenteLitros <= 0) {
+      throw new Error(
+        "el reparto del excedente no puede ser toda la recepción: al tanque tiene que entrar algo"
+      );
+    }
+    const equipoIds = [...new Set(reparto.flatMap((l) => (l.equipo_id ? [l.equipo_id] : [])))];
+    if (equipoIds.length > 0) {
+      const existentes = await this.repository.contarEquiposDelTenant(client, tenantId, equipoIds);
+      if (existentes !== equipoIds.length) {
+        throw new Error("el reparto del excedente nombra un equipo que no existe en este tenant");
+      }
+    }
+    return { detalle, reparto };
   }
 
   listarRecepciones(
@@ -5143,7 +5182,9 @@ export class CombustibleService {
 
     await this.repository.resolverRecepcionSinValidarSiExiste(client, tenantId, recepcionId);
 
-    const cantidadRegistrada = Number(fila.cantidad);
+    // Lo que dice la guía es la entrega completa: lo que entró al tanque más
+    // el excedente que se derivó (0110).
+    const cantidadRegistrada = Number(fila.cantidad) + Number(fila.cantidad_derivada ?? 0);
     const diferencia = Number((cantidadDocumento - cantidadRegistrada).toFixed(2));
     const autovalidacion = fila.usuario_id !== null && fila.usuario_id === usuarioId;
 
