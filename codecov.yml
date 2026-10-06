@@ -26,6 +26,10 @@ coverage:
       default:
         target: auto
         threshold: 1%
+        # Informativo: muestra el % pero no pone el check en rojo. El gate
+        # real es vitest.config.mts; un PR grande de UI/rutas no debe verse
+        # como fallido solo por cobertura del parche.
+        informational: true
         flags:
           - backend
 
