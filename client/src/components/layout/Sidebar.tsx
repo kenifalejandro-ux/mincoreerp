@@ -69,6 +69,7 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
 
   return (
     <aside
+      data-menu-lateral
       className={`absolute inset-y-0 left-0 z-40 w-64 max-w-[85vw] shrink-0 overflow-y-auto pb-6 bg-[#192526] border-l-3 border-[#BADC1E] flex flex-col shadow-[4px_0_24px_rgba(0,0,0,0.02)] transition-transform duration-300 ease-out lg:static lg:transition-[width] ${
         abierto
           ? "translate-x-0 lg:w-64"

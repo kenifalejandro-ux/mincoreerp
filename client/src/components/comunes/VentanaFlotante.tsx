@@ -50,6 +50,7 @@ const MARGEN_VISIBLE = 140;
 const ALTO_BARRA = 56;
 
 const X_INICIAL = 96;
+const MARGEN_AL_MENU = 24;
 const Y_INICIAL = 88;
 const PASO_CASCADA = 30;
 
@@ -86,6 +87,15 @@ function pantallaAngosta(): boolean {
  *  barra con la X queda tapada. */
 function bordeInferiorDelHeader(): number {
   return document.querySelector("header")?.getBoundingClientRect().bottom ?? 0;
+}
+
+/** Hasta dónde llega el menú lateral. Un panel nuevo se abre a su derecha: con
+ *  un x fijo, el menú (z-40, por encima de cualquier panel) tapaba su borde
+ *  izquierdo y los botones de ese lado quedaban sin poder pulsarse. En
+ *  pantalla angosta el menú es un cajón cerrado y el panel va a pantalla
+ *  completa, así que el valor no se usa. */
+function bordeDerechoDelMenu(): number {
+  return document.querySelector("[data-menu-lateral]")?.getBoundingClientRect().right ?? 0;
 }
 
 function limitar(valor: number, minimo: number, maximo: number): number {
@@ -249,7 +259,10 @@ export default function VentanaFlotante({
     // respecto de los que ya están abiertos, para que el de abajo no quede
     // escondido justo detrás del de arriba.
     const paso = reservarSlotCascada(id) * PASO_CASCADA;
-    return { x: X_INICIAL + paso, y: Y_INICIAL + paso, ancho: anchoInicial, alto: altoInicial };
+    const x = Math.max(X_INICIAL, bordeDerechoDelMenu() + MARGEN_AL_MENU) + paso;
+    // Si el panel ya no entra a la derecha del menú, se achica en vez de salirse.
+    const ancho = limitar(anchoInicial, ANCHO_MIN, window.innerWidth - x - MARGEN_AL_MENU);
+    return { x, y: Y_INICIAL + paso, ancho, alto: altoInicial };
   });
 
   // Solo fuerza un re-render al cambiar el tamaño de la ventana: la
