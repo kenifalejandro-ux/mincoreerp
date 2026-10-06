@@ -50,6 +50,7 @@ const vistasHistorico: DefinicionPestana[] = [
   ["por_conductor", "Ranking de consumo por conductor"],
   ["por_vehiculo", "Ranking de consumo por vehículo"],
   ["por_grifo", "Ranking de consumo por origen"],
+  ["por_viaje", "Consumo por viaje"],
 ].map(([id, nombre]) => ({
   modulo: "combustible",
   pestana: `historico:${id}`,
@@ -83,6 +84,19 @@ const accionesTanquetas: DefinicionPestana[] = [
   nombre,
   nivel: "accion",
   padre: "tanquetas",
+}));
+
+const accionesViajes: DefinicionPestana[] = [
+  ["nuevo", "Nuevo viaje"],
+  // Cerrar, editar y anular: las tres corrigen un viaje ya abierto.
+  ["editar", "Editar, cerrar o anular viaje"],
+  ["lugares", "Catálogo de lugares"],
+].map(([id, nombre]) => ({
+  modulo: "combustible",
+  pestana: `viajes:${id}`,
+  nombre,
+  nivel: "accion",
+  padre: "viajes",
 }));
 
 const pestañasUrea: DefinicionPestana[] = [
@@ -142,6 +156,10 @@ export const PESTANAS_CONFIGURABLES: DefinicionPestana[] = [
     padre: null,
   },
   ...accionesTanquetas,
+  // Viajes (0123): A → B de una unidad. Lectura los ve; crearlos o corregirlos
+  // es una acción aparte.
+  { modulo: "combustible", pestana: "viajes", nombre: "Viajes", nivel: "submenu", padre: null },
+  ...accionesViajes,
   { modulo: "combustible", pestana: "urea", nombre: "Urea", nivel: "submenu", padre: null },
   ...pestañasUrea,
   {
@@ -241,6 +259,7 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
     "tanques:acciones:historial_varilla",
     "tanques:acciones:ver_tanque",
     "tanquetas",
+    "viajes",
     "historico",
     ...vistasHistorico.map((item) => item.pestana),
     "urea",

@@ -263,6 +263,27 @@ export const MODULOS: ModuloDefinicion[] = [
           tanqueta_origen_id: "combustible_tanquetas",
         },
       },
+      // Viajes (0123): lugares primero (los viajes los referencian). Los viajes
+      // referencian equipos sin ON DELETE y no cascadean desde ninguna tabla
+      // del módulo, así que ambas necesitan su entrada en `raices`.
+      {
+        nombre: "combustible_lugares",
+        pk: "serial",
+        fks: { creado_por: "usuarios" },
+      },
+      {
+        nombre: "combustible_viajes",
+        pk: "serial",
+        fks: {
+          equipo_id: "equipos",
+          origen_id: "combustible_lugares",
+          destino_id: "combustible_lugares",
+          creado_por: "usuarios",
+          iniciado_por: "usuarios",
+          cerrado_por: "usuarios",
+          anulado_por: "usuarios",
+        },
+      },
       // Renglones de la compra de urea en ruta (0120): "2 cajas + 3 bolsas".
       // Van DESPUÉS de combustible_despachos (la referencian) y cascadean
       // desde ahí, así que no necesitan entrada en `raices`. La presentación
@@ -407,6 +428,10 @@ export const MODULOS: ModuloDefinicion[] = [
       "combustible_alertas",
       "combustible_anomalias",
       "combustible_config",
+      // 0123: RAICES_WIPE invierte este orden, así que los viajes se borran
+      // antes que los lugares y que los equipos.
+      "combustible_lugares",
+      "combustible_viajes",
     ],
     // Fase A (migrations/0057) le dio a Combustible su propio POST / y
     // POST /bulk que crean el recurso base -- un solo `cuota.tabla`

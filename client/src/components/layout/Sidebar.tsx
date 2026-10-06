@@ -5,6 +5,7 @@ import {
   Droplets,
   Fuel,
   History,
+  Route,
   Receipt,
   ScrollText,
   SearchCheck,
@@ -21,6 +22,7 @@ import { MODULOS_CLIENTE } from "../../modules/registry";
 const SUBMENU_COMBUSTIBLE: { tab: string; label: string; Icono: LucideIcon }[] = [
   { tab: "combustible", label: "Tanques", Icono: Fuel },
   { tab: "combustible:tanquetas", label: "Tanquetas", Icono: Cylinder },
+  { tab: "combustible:viajes", label: "Viajes", Icono: Route },
   { tab: "combustible:historico", label: "Histórico", Icono: History },
   { tab: "combustible:urea", label: "Urea", Icono: Droplets },
   { tab: "combustible:auditoria", label: "Auditoría", Icono: SearchCheck },
@@ -104,14 +106,10 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
           // "combustible:<nombre>" -- CombustiblePanel la lee vía la prop
           // pestanaInicial (ver App.tsx). isActive compara por prefijo para
           // que el resaltado del ítem padre siga encendido con cualquiera
-          // de las cinco sub-pestañas.
+          // de sus sub-pestañas.
           const esCombustible = tab.id === "combustible";
           const isActive = esCombustible
-            ? activeTab === "combustible" ||
-              activeTab === "combustible:historico" ||
-              activeTab === "combustible:urea" ||
-              activeTab === "combustible:auditoria" ||
-              activeTab === "combustible:bitacora"
+            ? activeTab === "combustible" || activeTab.startsWith("combustible:")
             : activeTab === tab.id;
           return (
             <div key={tab.id}>

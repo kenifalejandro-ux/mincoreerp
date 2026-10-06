@@ -46,6 +46,7 @@ import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from
 import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
 import VentanaSurtidores from "./Surtidores";
 import TanquetasPanel from "./Tanquetas";
+import ViajesPanel from "./ViajesPanel";
 import { comprimirImagen } from "./comprimirImagen";
 
 interface SurtidorDelTanque {
@@ -2185,7 +2186,8 @@ export interface CombustiblePanelProps {
    *  "Histórico" ahí adentro cambia esta pestaña aunque el panel ya esté
    *  montado. undefined = comportamiento por defecto (Tanques), para los
    *  pocos lugares que todavía instancian el panel sin pasarlo. */
-  pestanaInicial?: "tanques" | "tanquetas" | "historico" | "urea" | "auditoria" | "bitacora";
+  pestanaInicial?:
+    "tanques" | "tanquetas" | "viajes" | "historico" | "urea" | "auditoria" | "bitacora";
 }
 
 export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelProps = {}) {
@@ -2396,7 +2398,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // Tanque abierto en la ventana "Ver tanque" (el ojo de la fila).
   const [tanqueVerId, setTanqueVerId] = useState<number | null>(null);
   const [pestanaCombustible, setPestanaCombustible] = useState<
-    "tanques" | "tanquetas" | "historico" | "urea" | "auditoria" | "bitacora"
+    "tanques" | "tanquetas" | "viajes" | "historico" | "urea" | "auditoria" | "bitacora"
   >(pestanaInicial ?? "tanques");
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -4922,6 +4924,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {pestanaCombustible === "historico" && <HistoricoCliente />}
       {pestanaCombustible === "urea" && <UreaPanel />}
       {pestanaCombustible === "tanquetas" && <TanquetasPanel />}
+      {pestanaCombustible === "viajes" && <ViajesPanel />}
       {!esConductor && pestanaCombustible === "tanques" && importacion.error && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-red-900 font-light flex-1">{importacion.error}</p>

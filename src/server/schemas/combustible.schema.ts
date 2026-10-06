@@ -1852,3 +1852,111 @@ export const actualizarTanquetaSchema = z.object({
 });
 
 export type ActualizarTanquetaInput = z.infer<typeof actualizarTanquetaSchema>;
+
+// ── Viajes (0123) ──────────────────────────────────────────────────────────
+const fechaHora = z.string().datetime({ offset: true });
+const medidor = z.number().min(0).max(99999999).nullable().optional();
+const motivo = z.string().trim().min(3).max(500);
+
+export const crearLugarSchema = z.object({
+  nombre: z.string().trim().min(1).max(80),
+});
+export type CrearLugarInput = z.infer<typeof crearLugarSchema>;
+
+export const crearViajeSchema = z
+  .object({
+    equipo_id: z.number().int().positive(),
+    conductor_nombre: z.string().trim().max(150).nullable().optional(),
+    conductor_dni: z.string().trim().max(15).nullable().optional(),
+    origen_id: z.number().int().positive(),
+    destino_id: z.number().int().positive(),
+    // Sin salida el viaje queda PROGRAMADO: la hora la pone el servidor cuando
+    // alguien lo inicia. Con salida es un registro retroactivo (viaje ya hecho).
+    inicio_en: fechaHora.optional(),
+    fin_en: fechaHora.nullable().optional(),
+    medidor_inicio: medidor,
+    medidor_fin: medidor,
+    cuenta_como: z.number().positive().max(10).default(1),
+    observaciones: z.string().trim().max(1000).nullable().optional(),
+  })
+  .refine((v) => v.origen_id !== v.destino_id, {
+    message: "El origen y el destino tienen que ser distintos",
+    path: ["destino_id"],
+  })
+  .refine((v) => v.inicio_en || (!v.fin_en && v.medidor_inicio == null && v.medidor_fin == null), {
+    message: "Un viaje programado no lleva llegada ni medidores: se cargan al iniciarlo",
+    path: ["inicio_en"],
+  })
+  .refine((v) => !v.fin_en || !v.inicio_en || Date.parse(v.fin_en) > Date.parse(v.inicio_en), {
+    message: "La llegada tiene que ser posterior a la salida",
+    path: ["fin_en"],
+  });
+export type CrearViajeInput = z.infer<typeof crearViajeSchema>;
+
+// Hora manual (la oficina marca por alguien que se olvidó): pide motivo. Sin
+// hora, la pone el servidor.
+const conMotivoSiHoraManual = <T extends { motivo?: string }>(
+  v: T,
+  hora: string | undefined | null
+) => !hora || (v.motivo?.length ?? 0) >= 3;
+const MENSAJE_MOTIVO_HORA = {
+  message: "Poner la hora a mano pide un motivo",
+  path: ["motivo"],
+};
+
+export const iniciarViajeSchema = z
+  .object({
+    medidor_inicio: medidor,
+    inicio_en: fechaHora.optional(),
+    motivo: motivo.optional(),
+    // El conductor salió con la ruta o la unidad mal cargada y avisó a la oficina.
+    ruta_por_confirmar: z.boolean().optional(),
+    nota_ruta: z.string().trim().max(500).nullable().optional(),
+  })
+  .refine((v) => conMotivoSiHoraManual(v, v.inicio_en), MENSAJE_MOTIVO_HORA);
+export type IniciarViajeInput = z.infer<typeof iniciarViajeSchema>;
+
+export const cerrarViajeSchema = z
+  .object({
+    fin_en: fechaHora.optional(),
+    motivo: motivo.optional(),
+    medidor_fin: medidor,
+  })
+  .refine((v) => conMotivoSiHoraManual(v, v.fin_en), MENSAJE_MOTIVO_HORA);
+export type CerrarViajeInput = z.infer<typeof cerrarViajeSchema>;
+
+// Editar un viaje: el motivo es obligatorio siempre -- corrige lo que otro
+// (o uno mismo) ya registró, y mueve qué cargas caen en el viaje.
+export const editarViajeSchema = z.object({
+  equipo_id: z.number().int().positive().optional(),
+  conductor_nombre: z.string().trim().max(150).nullable().optional(),
+  conductor_dni: z.string().trim().max(15).nullable().optional(),
+  origen_id: z.number().int().positive().optional(),
+  destino_id: z.number().int().positive().optional(),
+  inicio_en: fechaHora.optional(),
+  fin_en: fechaHora.nullable().optional(),
+  medidor_inicio: medidor,
+  medidor_fin: medidor,
+  cuenta_como: z.number().positive().max(10).optional(),
+  observaciones: z.string().trim().max(1000).nullable().optional(),
+  ruta_por_confirmar: z.boolean().optional(),
+  motivo,
+});
+export type EditarViajeInput = z.infer<typeof editarViajeSchema>;
+
+export const anularViajeSchema = z.object({ motivo });
+export type AnularViajeInput = z.infer<typeof anularViajeSchema>;
+
+export const listarViajesQuerySchema = z
+  .object({
+    desde: fechaHora.optional(),
+    hasta: fechaHora.optional(),
+    equipo_id: z.coerce.number().int().positive().optional(),
+    estado: z.enum(["programado", "en_curso", "cerrado", "anulado"]).optional(),
+    producto: z.enum(["combustible", "urea"]).default("combustible"),
+  })
+  .refine((v) => !v.desde || !v.hasta || Date.parse(v.desde) <= Date.parse(v.hasta), {
+    message: "La fecha de inicio tiene que ser anterior a la de fin",
+    path: ["desde"],
+  });
+export type ListarViajesQuery = z.infer<typeof listarViajesQuerySchema>;

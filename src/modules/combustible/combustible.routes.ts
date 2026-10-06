@@ -44,10 +44,18 @@ import {
   calibracionSurtidorSchema,
   crearTanquetaSchema,
   actualizarTanquetaSchema,
+  crearLugarSchema,
+  crearViajeSchema,
+  cerrarViajeSchema,
+  iniciarViajeSchema,
+  editarViajeSchema,
+  anularViajeSchema,
+  listarViajesQuerySchema,
 } from "../../server/schemas/combustible.schema";
 import { moverDeGrifoSchema } from "../../server/schemas/sedes.schema";
 import { cargarAlcance, GUARDIAS, requiereTanqueCompleto } from "./alcance";
 import { CombustibleController } from "./combustible.controller";
+import { viajesController } from "./viajes.controller";
 import { subirArchivoComprobante } from "./combustible.upload";
 import { EquiposController } from "../equipos/equipos.controller";
 // Se activa solo con importarse (setInterval + .unref()) -- mismo mecanismo
@@ -331,6 +339,78 @@ router.put(
   requireRole("admin", "operador"),
   validate(actualizarTanquetaSchema),
   asyncHandler(controller.actualizarTanqueta.bind(controller))
+);
+
+// Viajes (0123) -- segmentos literales, ANTES de /:id. Lectura ve el panel;
+// crear y corregir son acciones aparte.
+router.get(
+  "/lugares",
+  requirePestana("combustible", "viajes"),
+  asyncHandler(viajesController.listarLugares)
+);
+router.post(
+  "/lugares",
+  requirePestana("combustible", "viajes:lugares"),
+  requireRole("admin", "operador"),
+  validate(crearLugarSchema),
+  asyncHandler(viajesController.crearLugar)
+);
+router.get(
+  "/viajes",
+  requirePestana("combustible", "viajes"),
+  validateQuery(listarViajesQuerySchema),
+  asyncHandler(viajesController.listar)
+);
+// El permiso depende del producto: lo resuelve el controller.
+router.get(
+  "/viajes/consumo",
+  validateQuery(listarViajesQuerySchema),
+  asyncHandler(viajesController.listarConsumo)
+);
+router.get(
+  "/viajes/:viajeId(\\d+)",
+  requirePestana("combustible", "viajes"),
+  asyncHandler(viajesController.detalle)
+);
+router.post(
+  "/viajes",
+  requirePestana("combustible", "viajes:nuevo"),
+  requireRole("admin", "operador"),
+  validate(crearViajeSchema),
+  asyncHandler(viajesController.crear)
+);
+router.get(
+  "/viajes/:viajeId(\\d+)/medidor-previo",
+  requirePestana("combustible", "viajes"),
+  asyncHandler(viajesController.medidorPrevio)
+);
+router.post(
+  "/viajes/:viajeId(\\d+)/iniciar",
+  requirePestana("combustible", "viajes:editar"),
+  requireRole("admin", "operador"),
+  validate(iniciarViajeSchema),
+  asyncHandler(viajesController.iniciar)
+);
+router.post(
+  "/viajes/:viajeId(\\d+)/cerrar",
+  requirePestana("combustible", "viajes:editar"),
+  requireRole("admin", "operador"),
+  validate(cerrarViajeSchema),
+  asyncHandler(viajesController.cerrar)
+);
+router.put(
+  "/viajes/:viajeId(\\d+)",
+  requirePestana("combustible", "viajes:editar"),
+  requireRole("admin", "operador"),
+  validate(editarViajeSchema),
+  asyncHandler(viajesController.editar)
+);
+router.post(
+  "/viajes/:viajeId(\\d+)/anular",
+  requirePestana("combustible", "viajes:editar"),
+  requireRole("admin", "operador"),
+  validate(anularViajeSchema),
+  asyncHandler(viajesController.anular)
 );
 
 // Surtidores (migración 0098) -- segmentos literales, ANTES de /:id. La lista
