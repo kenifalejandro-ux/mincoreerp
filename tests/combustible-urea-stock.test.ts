@@ -98,8 +98,12 @@ describe("combustible: stock de urea y sus umbrales (migración 0117)", () => {
     };
   };
 
-  const guardarConfig = async (cambios: Record<string, unknown>) =>
-    agente.put("/api/erp/combustible/config").send(await configCon(cambios));
+  // El cuerpo se arma ANTES de crear el request: un request del mismo agent
+  // dentro de .send() cierra el servidor del PUT y da ECONNREFUSED.
+  const guardarConfig = async (cambios: Record<string, unknown>) => {
+    const cuerpo = await configCon(cambios);
+    return agente.put("/api/erp/combustible/config").send(cuerpo);
+  };
 
   /** Una entrada de urea: `cantidad_bultos` baldes de 20 L. */
   const entrada = (baldes: number) =>
