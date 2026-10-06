@@ -39,6 +39,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "../context/AuthContext";
 import { comprimirImagen } from "./combustible/comprimirImagen";
+import ConsumoPorViaje from "./combustible/ConsumoPorViaje";
 import VentanaFlotante from "./comunes/VentanaFlotante";
 import { AlmacenUrea, ResumenUrea, type EstadoStockUrea } from "./UreaAlmacen";
 import { apiFetch } from "../services/apiClient";
@@ -157,6 +158,7 @@ type Vista =
   | "conteos"
   | "por_conductor"
   | "por_vehiculo"
+  | "por_viaje"
   | "kardex"
   | "precios"
   | "presentaciones";
@@ -168,6 +170,7 @@ const VISTAS: { valor: Vista; etiqueta: string }[] = [
   { valor: "conteos", etiqueta: "Conteos físicos" },
   { valor: "por_conductor", etiqueta: "Por conductor" },
   { valor: "por_vehiculo", etiqueta: "Por vehículo" },
+  { valor: "por_viaje", etiqueta: "Por viaje" },
 ];
 
 /** Fuera de VISTAS: no es una consulta del historial, es la configuración
@@ -1097,6 +1100,7 @@ export default function UreaPanel() {
     null
   );
   const [vista, setVista] = useState<Vista>("vales");
+  const [periodoViaje, setPeriodoViaje] = useState({ desde: "", hasta: "", n: 0 });
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
   const [cargando, setCargando] = useState(false);
@@ -1202,6 +1206,16 @@ export default function UreaPanel() {
       // Los catálogos no se cargan por acá: los traen cargarPresentaciones()
       // y cargarPrecios() al montar y después de cada guardado.
       if (v === "presentaciones" || v === "precios") return;
+      // La vista por viaje trae sus datos sola con el período aplicado.
+      if (v === "por_viaje") {
+        const q = paramsDePeriodo({});
+        setPeriodoViaje((p) => ({
+          desde: q.get("desde") ?? "",
+          hasta: q.get("hasta") ?? "",
+          n: p.n + 1,
+        }));
+        return;
+      }
       setCargando(true);
       setError(null);
       try {
@@ -1497,7 +1511,7 @@ export default function UreaPanel() {
                 </button>
               </>
             )}
-            {permiteUrea("exportar") && (
+            {permiteUrea("exportar") && vista !== "por_viaje" && (
               <button
                 type="button"
                 onClick={() =>
@@ -1566,6 +1580,17 @@ export default function UreaPanel() {
           )}
           {!cargando && vista === "por_conductor" && <TablaPorConductor filas={porConductor} />}
           {!cargando && vista === "por_vehiculo" && <TablaPorVehiculo filas={porVehiculo} />}
+          {vista === "por_viaje" && (
+            <div className="p-4">
+              <ConsumoPorViaje
+                producto="urea"
+                desde={periodoViaje.desde}
+                hasta={periodoViaje.hasta}
+                recargar={periodoViaje.n}
+                puedeExportar={permiteUrea("exportar")}
+              />
+            </div>
+          )}
         </div>
       )}
 

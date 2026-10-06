@@ -144,13 +144,15 @@ function App() {
               ? "historico"
               : tabActiva === "combustible:tanquetas"
                 ? "tanquetas"
-                : tabActiva === "combustible:urea"
-                  ? "urea"
-                  : tabActiva === "combustible:auditoria"
-                    ? "auditoria"
-                    : tabActiva === "combustible:bitacora"
-                      ? "bitacora"
-                      : "tanques",
+                : tabActiva === "combustible:viajes"
+                  ? "viajes"
+                  : tabActiva === "combustible:urea"
+                    ? "urea"
+                    : tabActiva === "combustible:auditoria"
+                      ? "auditoria"
+                      : tabActiva === "combustible:bitacora"
+                        ? "bitacora"
+                        : "tanques",
         }
       : {};
 

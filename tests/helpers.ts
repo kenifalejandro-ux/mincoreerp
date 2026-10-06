@@ -166,6 +166,7 @@ export async function borrarTenantDePrueba(tenantId: string) {
     // combustible y combustible_grifos, ídem -- tiene que borrarse antes que
     // los dos padres, igual que las otras dos.
     await client.query("DELETE FROM combustible_precios WHERE tenant_id = $1", [tenantId]);
+    await client.query("DELETE FROM combustible_viajes WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM combustible_despachos WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM combustible_recepciones WHERE tenant_id = $1", [tenantId]);
     // El catálogo de precios de urea (0121) referencia proveedores sin ON

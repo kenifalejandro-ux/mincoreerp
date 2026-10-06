@@ -431,11 +431,11 @@ describe("permisos por perfil (autonomías)", () => {
       expect(nivelDe(grifero, "equipos")).toBe("sin-acceso");
     });
 
-    it("las seis vistas del Histórico nacen apagadas para los perfiles de cancha", async () => {
+    it("las vistas del Histórico nacen apagadas para los perfiles de cancha", async () => {
       const conductorId = await alta("conductor_ruta", "Conductor de ruta");
       const conductor = await permisosDe(conductorId);
       const vistas = conductor.pestanas.filter((p) => p.pestana.startsWith("historico:"));
-      expect(vistas).toHaveLength(6);
+      expect(vistas).toHaveLength(7);
       expect(vistas.every((v) => !v.permitido)).toBe(true);
 
       const lecturaId = await alta("lectura", "Consulta con histórico");

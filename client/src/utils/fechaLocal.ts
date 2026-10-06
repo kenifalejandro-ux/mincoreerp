@@ -7,7 +7,11 @@
  * (Combustible, Repuestos) -- antes vivía duplicado en CombustiblePanel.tsx.
  */
 export function ahoraParaInputLocal(): string {
-  const ahora = new Date();
-  ahora.setMinutes(ahora.getMinutes() - ahora.getTimezoneOffset());
-  return ahora.toISOString().slice(0, 16);
+  return paraInputLocal(new Date());
+}
+
+export function paraInputLocal(fecha: Date | string): string {
+  const d = new Date(fecha);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 16);
 }
