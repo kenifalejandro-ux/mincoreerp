@@ -42,7 +42,10 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
     const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
     const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
     if (override !== undefined) return override;
-    if (usuario?.rol === "conductor_ruta") return tab === "combustible";
+    // 0119: el conductor también ve Urea, solo para registrar la compra en
+    // ruta (el panel le muestra únicamente ese botón).
+    if (usuario?.rol === "conductor_ruta")
+      return tab === "combustible" || tab === "combustible:urea";
     if (usuario?.rol === "grifero") return tab === "combustible";
     if (usuario?.rol === "encargado_urea") return tab === "combustible:urea";
     // Operador y Lectura parten con acceso amplio a Combustible (matriz

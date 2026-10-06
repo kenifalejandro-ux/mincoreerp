@@ -161,6 +161,30 @@ export const MODULOS: ModuloDefinicion[] = [
         pk: "serial",
         fks: { usuario_id: "usuarios" },
       },
+      // Presentaciones de urea (0116) -- cuántos litros trae cada envase.
+      // Va ANTES de combustible_recepciones y combustible_despachos: los dos
+      // la referencian con una FK COMPUESTA (tenant_id, presentacion) y el
+      // restore necesita padres antes que hijos. `presentacion` no entra en
+      // `fks` a propósito: es el código del envase, no un id que haya que
+      // remapear -- viaja tal cual y la FK compuesta lo valida contra la
+      // presentación del MISMO tenant.
+      {
+        nombre: "combustible_urea_presentaciones",
+        pk: "serial",
+        fks: { actualizado_por: "usuarios" },
+      },
+      // Catálogo de precios de urea (0121): después de proveedores y de
+      // presentaciones (referencia a las dos). grifo_id sin ON DELETE, igual
+      // que combustible_precios, así que necesita su entrada en `raices`.
+      {
+        nombre: "combustible_urea_precios",
+        pk: "serial",
+        fks: {
+          grifo_id: "combustible_grifos",
+          usuario_id: "usuarios",
+          anulada_por: "usuarios",
+        },
+      },
       // Precios (migrations/0063) -- historial apilado, nunca se pisa. Sin
       // ON DELETE, mismo motivo que combustible_despachos: necesita su
       // propia entrada en `raices`.
@@ -238,6 +262,16 @@ export const MODULOS: ModuloDefinicion[] = [
           tanqueta_destino_id: "combustible_tanquetas",
           tanqueta_origen_id: "combustible_tanquetas",
         },
+      },
+      // Renglones de la compra de urea en ruta (0120): "2 cajas + 3 bolsas".
+      // Van DESPUÉS de combustible_despachos (la referencian) y cascadean
+      // desde ahí, así que no necesitan entrada en `raices`. La presentación
+      // es un código, no un id: viaja tal cual (ver la nota de
+      // combustible_urea_presentaciones).
+      {
+        nombre: "combustible_despacho_urea_lineas",
+        pk: "serial",
+        fks: { despacho_id: "combustible_despachos" },
       },
       // Precintos numerados (migración 0095). Las tres cascadean desde su
       // padre (el tanque, el punto o la lectura), así que no necesitan
@@ -354,6 +388,14 @@ export const MODULOS: ModuloDefinicion[] = [
       // de ellos (este orden se invierte al vaciar).
       "surtidores",
       "combustible_grifos",
+      // 0116: cascadea desde `tenants`, no desde ninguna tabla de este
+      // módulo, así que el wipe necesita borrarla explícitamente. Va antes de
+      // los vales y las recepciones -- la referencian, y RAICES_WIPE invierte
+      // este orden para borrar hijos primero.
+      "combustible_urea_presentaciones",
+      // 0121: referencia a proveedores sin ON DELETE -- se borra antes que
+      // ellos (RAICES_WIPE invierte este orden).
+      "combustible_urea_precios",
       "combustible_despachos",
       "combustible_precios",
       "combustible_recepciones",
@@ -432,6 +474,8 @@ export const MODULOS: ModuloDefinicion[] = [
         // La foto del comprobante de una compra en ruta, apuntada por el uuid
         // del dispositivo (0109). Espejo de offlineRegistry.ts del cliente.
         { metodo: "POST", ruta: "/despachos/por-uuid/:clienteUuid/comprobante" },
+        // La foto de la boleta de una compra de UREA en ruta (0119).
+        { metodo: "POST", ruta: "/urea/compras/por-uuid/:clienteUuid/comprobante" },
       ],
     },
   },

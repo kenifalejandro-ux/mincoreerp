@@ -31,6 +31,9 @@ import {
   bajaTanqueCombustibleSchema,
   crearConteoUreaSchema,
   anularConteoUreaSchema,
+  crearPresentacionUreaSchema,
+  actualizarPresentacionUreaSchema,
+  crearPrecioUreaSchema,
   crearPuntoPrecintoSchema,
   cambiarPrecintoSchema,
   bajaPuntoPrecintoSchema,
@@ -180,9 +183,29 @@ router.get(
 // conductor de ruta podría despachar del tanque de la empresa pasando por
 // esta misma URL, y el rol parecería restringido sin serlo. Ver
 // validarOrigenPermitidoParaRol() en combustible.service.ts.
+/** El permiso de pestaña del POST /despachos, por TIPO de salida (0119):
+ *  combustible, reparto de urea del almacén, o compra de urea en ruta. Son
+ *  tres facultades distintas -- el conductor compra urea en ruta pero no
+ *  reparte del almacén, y el encargado de urea no despacha diésel.
+ *
+ *  Corre ANTES de validar, sobre el body crudo: la compra en ruta es la que
+ *  trae comprobante. Un vale viejo de urea ('compra_externa' + vale, de una
+ *  cola offline anterior a 0119) cae en el reparto, que es lo que era. */
+const requirePestanaDelDespacho = (req: Request, res: Response, next: NextFunction) => {
+  const b = req.body ?? {};
+  const pestana =
+    b.producto !== "urea"
+      ? "tanques:registrar_despacho"
+      : b.origen === "compra_externa" &&
+          (b.comprobante_tipo !== undefined || b.comprobante_numero !== undefined)
+        ? "urea:registrar_compra"
+        : "urea:registrar_vale";
+  return requirePestana("combustible", pestana)(req, res, next);
+};
+
 router.post(
   "/despachos",
-  requirePestanaSegunProducto("tanques:registrar_despacho", "urea:registrar_vale"),
+  requirePestanaDelDespacho,
   requireRole("admin", "operador", "grifero", "conductor_ruta", "encargado_urea"),
   validate(crearDespachoCombustibleSchema),
   asyncHandler(controller.crearDespacho.bind(controller))
@@ -219,7 +242,7 @@ router.post(
   requireRole("admin", "operador", "conductor_ruta"),
   subirArchivoComprobante,
   validate(subirComprobanteCompraSchema),
-  asyncHandler(controller.subirComprobante.bind(controller))
+  asyncHandler((req, res) => controller.subirComprobante(req, res, "combustible"))
 );
 
 // Mismo endpoint, apuntando a la compra por el uuid del dispositivo: es el que
@@ -243,7 +266,7 @@ router.post(
   requireRole("admin", "operador", "conductor_ruta"),
   subirArchivoComprobante,
   validate(subirComprobanteCompraSchema),
-  asyncHandler(controller.subirComprobante.bind(controller))
+  asyncHandler((req, res) => controller.subirComprobante(req, res, "combustible"))
 );
 
 // VER: el mismo permiso que el historial de compras. Quien puede ver que la
@@ -253,7 +276,7 @@ router.post(
 router.get(
   "/despachos/:despachoId/comprobante",
   requirePestana("combustible", "tanques:historial_despacho"),
-  asyncHandler(controller.descargarComprobante.bind(controller))
+  asyncHandler((req, res) => controller.descargarComprobante(req, res, "combustible"))
 );
 
 router.patch(
@@ -508,10 +531,160 @@ router.patch(
 // conocido del módulo ("si el admin es el dueño nadie lo vigila"); lo que
 // se puede hacer es que quede visible, no impedirlo. Pendiente: si esta
 // persona (¿logística?) recibe su propio acceso, revisar este reparto.
+// Catálogo de presentaciones (migración 0116). El GET lo pide cualquiera que
+// tenga ALGO de Urea -- los tres formularios de carga llenan su desplegable
+// con esto, así que gatearlo por "urea:vista" dejaría sin envases al grifero
+// a quien el admin le habilitó solo "Registrar vale". De ahí el padre
+// "urea": pestanaPermitida() abre el submenú cuando hay un hijo habilitado.
+//
+// Los write son admin, igual que PUT /config y por el mismo motivo: cambiar
+// los litros de un envase mueve el stock teórico de todo lo que se cargue
+// después. El historial NO se reinterpreta (cada movimiento guardó su
+// factor), pero el número contra el que se compara el próximo conteo sí.
+router.get(
+  "/urea/presentaciones",
+  requirePestana("combustible", "urea"),
+  asyncHandler(controller.listarPresentacionesUrea.bind(controller))
+);
+router.post(
+  "/urea/presentaciones",
+  requirePestana("combustible", "urea:configuracion"),
+  requireRole("admin"),
+  validate(crearPresentacionUreaSchema),
+  asyncHandler(controller.crearPresentacionUrea.bind(controller))
+);
+router.put(
+  "/urea/presentaciones/:id",
+  requirePestana("combustible", "urea:configuracion"),
+  requireRole("admin"),
+  validate(actualizarPresentacionUreaSchema),
+  asyncHandler(controller.actualizarPresentacionUrea.bind(controller))
+);
+
+// Proveedores de urea para los formularios (0119): cualquiera que tenga algo
+// de Urea. Ver listarProveedoresUrea -- el GET /grifos completo pide
+// "tanques:proveedores" y dejaba el desplegable vacío al encargado y al
+// conductor.
+router.get(
+  "/urea/proveedores",
+  requirePestana("combustible", "urea"),
+  asyncHandler(controller.listarProveedoresUrea.bind(controller))
+);
+
+// Catálogo de precios de urea (0121). LEER: cualquiera con algo de Urea (los
+// formularios autocompletan desde acá). CARGAR y ANULAR: admin y operador con
+// la pestaña "urea:precios", mismo reparto que el catálogo de combustible.
+// El encargado de urea NO la recibe por defecto: el precio de catálogo es
+// contra lo que se compara su propia boleta.
+router.get(
+  "/urea/precios",
+  requirePestana("combustible", "urea"),
+  asyncHandler(controller.listarPreciosUrea.bind(controller))
+);
+router.post(
+  "/urea/precios",
+  requirePestana("combustible", "urea:precios"),
+  requireRole("admin", "operador"),
+  validate(crearPrecioUreaSchema),
+  asyncHandler(controller.crearPrecioUrea.bind(controller))
+);
+router.patch(
+  "/urea/precios/:precioUreaId/anular",
+  requirePestana("combustible", "urea:precios"),
+  requireRole("admin", "operador"),
+  validate(anularPrecioCombustibleSchema),
+  asyncHandler(controller.anularPrecioUrea.bind(controller))
+);
+
+// El historial de compras de urea en ruta (0120): quien ve los listados de
+// urea, que es quien coteja la compra contra la factura.
+router.get(
+  "/urea/compras",
+  requirePestana("combustible", "urea:vista"),
+  validateQuery(periodoHistorialCombustibleSchema),
+  asyncHandler(controller.listarComprasUrea.bind(controller))
+);
+
+// La foto de la boleta de una compra de urea en ruta (0119). Rutas propias y
+// no las de combustible: el permiso es otro ("urea:registrar_compra" y no
+// "tanques:registrar_despacho"), y el service verifica que la compra sea de
+// urea -- cada ruta toca solo las compras de su producto.
+router.post(
+  "/urea/compras/:despachoId/comprobante",
+  requirePestana("combustible", "urea:registrar_compra"),
+  requireRole("admin", "operador", "conductor_ruta", "encargado_urea"),
+  subirArchivoComprobante,
+  validate(subirComprobanteCompraSchema),
+  asyncHandler((req, res) => controller.subirComprobante(req, res, "urea"))
+);
+// La que usa la cola offline: la compra todavía no tiene id.
+router.post(
+  "/urea/compras/por-uuid/:clienteUuid/comprobante",
+  (req: Request, res: Response, next: NextFunction) => {
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        req.params.clienteUuid
+      )
+    ) {
+      res.status(404).json({ error: "Compra no encontrada" });
+      return;
+    }
+    next();
+  },
+  requirePestana("combustible", "urea:registrar_compra"),
+  requireRole("admin", "operador", "conductor_ruta", "encargado_urea"),
+  subirArchivoComprobante,
+  validate(subirComprobanteCompraSchema),
+  asyncHandler((req, res) => controller.subirComprobante(req, res, "urea"))
+);
+// Ver la boleta: quien ve el listado de urea, que es quien la cruza contra la
+// factura del proveedor.
+router.get(
+  "/urea/compras/:despachoId/comprobante",
+  requirePestana("combustible", "urea:vista"),
+  asyncHandler((req, res) => controller.descargarComprobante(req, res, "urea"))
+);
+
+// Hallazgos de urea abiertos (entrega 4). Mismo reparto que /alertas:
+// admin y operador. El encargado de urea no: son las alertas sobre su propio
+// trabajo (ver permisosPestanas.service.ts).
+router.get(
+  "/urea/hallazgos",
+  requirePestana("combustible", "urea:hallazgos"),
+  requireRole("admin", "operador"),
+  asyncHandler(controller.listarHallazgosUrea.bind(controller))
+);
+
+// Kardex de urea. Dos permisos: ver el libro es "urea:kardex"; llevárselo
+// además exige "urea:exportar" (mismo reparto que el kardex del tanque).
+router.get(
+  "/urea/kardex",
+  requirePestana("combustible", "urea:kardex"),
+  validateQuery(kardexCombustibleSchema),
+  asyncHandler(controller.getKardexUrea.bind(controller))
+);
+router.get(
+  "/urea/kardex/xlsx",
+  requirePestana("combustible", "urea:kardex"),
+  requirePestana("combustible", "urea:exportar"),
+  validateQuery(kardexCombustibleSchema),
+  asyncHandler(controller.getKardexUreaXlsx.bind(controller))
+);
+
 router.get(
   "/urea/estado",
   requirePestana("combustible", "urea:vista"),
   asyncHandler(controller.getEstadoUrea.bind(controller))
+);
+// Los cuatro umbrales sugeridos desde el historial (0117). Mismo permiso que
+// la pantalla donde se aplican --configuración, solo admin-- y no "urea:vista":
+// la sugerencia incluye el consumo de cada equipo y el ratio urea/diésel de la
+// flota, que es información de gerencia, no de cancha.
+router.get(
+  "/urea/sugerencia-umbrales",
+  requirePestana("combustible", "urea:configuracion"),
+  requireRole("admin"),
+  asyncHandler(controller.sugerirUmbralesUrea.bind(controller))
 );
 router.get(
   "/urea/conteos",

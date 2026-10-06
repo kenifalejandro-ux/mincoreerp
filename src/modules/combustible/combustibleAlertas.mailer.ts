@@ -947,3 +947,239 @@ export async function enviarCorreoSobrestockRecepcion(
     ],
   });
 }
+
+// ── Urea (migraciones 0092 y 0117) ────────────────────────────────────────
+//
+// Hasta acá las alertas de urea nacían, se guardaban y se publicaban por SSE,
+// pero NO se mandaban por correo: procesarAlertasDespachoUrea terminaba en un
+// `void admins` con un comentario de "queda para una entrega posterior".
+//
+// Se cierra ahora porque Kenif lo dio por supuesto (2026-10-04): "las alertas
+// por ahora está activa para el módulo de combustible, así que al usuario que
+// le dé check le llegarán las alertas de urea ya que está dentro de
+// combustible". Los destinatarios son los mismos de combustible (0107,
+// findDestinatariosAlertasCombustible) -- la urea no tiene lista propia
+// todavía, y el cliente pidió explícitamente que no la tenga por ahora.
+//
+// Los asuntos dicen "Urea:" y no "Combustible:" a propósito: quien los recibe
+// los recibe mezclados con los del tanque, y el producto es lo primero que
+// necesita saber para decidir si le toca a él.
+
+/** Vale de urea a una unidad marcada como que NO usa urea (0092). */
+export async function enviarCorreoUreaEquipoNoHabilitado(
+  destinatarios: Destinatario[],
+  params: { papel: PapelDeAlerta; placa: string | null; cantidadL: number }
+) {
+  const unidad = params.placa ?? "una unidad sin placa cargada";
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Urea: vale a ${unidad}, que no usa urea`,
+    titulo: `${unidad} recibió urea y no debería`,
+    lineas: [
+      `El ${nombrarPapel(params.papel)} cargó ${params.cantidadL} L de urea a ${unidad}, que ` +
+        `está marcada en su ficha como que NO usa urea.`,
+      "O la ficha del equipo está mal (y hay que corregirla), o la urea fue a otra parte. " +
+        "Las dos cosas se arreglan, pero no son la misma.",
+    ],
+  });
+}
+
+/** La urea de una unidad se disparó contra su propio diésel (0092). */
+export async function enviarCorreoUreaRatioExcedido(
+  destinatarios: Destinatario[],
+  params: {
+    papel: PapelDeAlerta;
+    placa: string | null;
+    ureaL: number;
+    dieselL: number;
+    ratioPct: number;
+    ratioMaxPct: number;
+    diasVentana: number;
+  }
+) {
+  const unidad = params.placa ?? "una unidad";
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Urea: ${unidad} consumió ${params.ratioPct}% de urea sobre su diésel`,
+    titulo: `Proporción urea/diésel fuera de rango en ${unidad}`,
+    lineas: [
+      `En los últimos ${params.diasVentana} días ${unidad} recibió ${params.ureaL} L de urea ` +
+        `contra ${params.dieselL} L de diésel: ${params.ratioPct}%, por encima del máximo ` +
+        `configurado de ${params.ratioMaxPct}%.`,
+      "Un motor SCR consume urea en proporción bastante estable al diésel. Que la proporción " +
+        "se dispare suele ser una de tres: urea que se cargó al papel y no al tanque de la " +
+        "unidad, un vale mal tipeado, o una falla real del sistema de postratamiento.",
+    ],
+  });
+}
+
+/** El conteo físico no cuadra con el stock teórico (0092). Es el equivalente
+ *  del descuadre de inventario del tanque, y el correo muestra la cuenta
+ *  completa por el mismo motivo: la primera reacción útil es acordarse de un
+ *  movimiento que no se cargó, y para eso hay que ver qué sí se contó. */
+export async function enviarCorreoUreaDescuadreConteo(
+  destinatarios: Destinatario[],
+  params: { contadoL: number; esperadoL: number; descuadreL: number }
+) {
+  const falta = params.descuadreL < 0;
+  const magnitud = Math.abs(params.descuadreL);
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Urea: el conteo físico no cuadra (${falta ? "faltan" : "sobran"} ${magnitud} L)`,
+    titulo: `El conteo de urea ${falta ? "da menos" : "da más"} que lo que los papeles explican`,
+    lineas: [
+      `Contado en almacén: ${params.contadoL} L.`,
+      `Lo que los movimientos registrados explican: ${params.esperadoL} L.`,
+      `Diferencia: ${falta ? "-" : "+"}${magnitud} L.`,
+      falta
+        ? "Falta urea: o salió algo que nadie registró, o una entrada se cargó por más de lo " +
+          "que realmente llegó."
+        : "Sobra urea: los vales dicen más de lo que realmente salió, o una entrada se cargó " +
+          "por menos de lo que llegó.",
+      "El conteo NO ajusta el inventario: queda registrado como está y esta alerta queda " +
+        "abierta hasta que alguien la explique.",
+    ],
+  });
+}
+
+/** Queda poca urea (0117). Es un ESTADO: se cierra solo cuando entra una
+ *  compra que devuelve el stock sobre el mínimo, así que este correo sale UNA
+ *  vez por episodio, no en cada vale. */
+export async function enviarCorreoUreaStockBajo(
+  destinatarios: Destinatario[],
+  params: {
+    stockL: number;
+    stockMinimoL: number;
+    faltanL: number;
+    /** "≈ 3 cajas", si la empresa marcó una unidad de referencia. */
+    equivalente: string | null;
+  }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Urea: queda poca (${params.stockL} L)`,
+    titulo: "Hay que reabastecer urea",
+    lineas: [
+      `El stock de urea quedó en ${params.stockL} L` +
+        (params.equivalente ? ` (${params.equivalente})` : "") +
+        `, por debajo del mínimo configurado de ${params.stockMinimoL} L.`,
+      `Faltan ${params.faltanL} L para volver al mínimo.`,
+      "Conviene programar la compra antes de que las unidades queden sin urea: un motor SCR " +
+        "sin urea entra en modo degradado y pierde potencia.",
+      "Este aviso se cierra solo cuando entre una compra que devuelva el stock sobre el mínimo.",
+    ],
+  });
+}
+
+/** Una entrada dejó el depósito por encima del techo configurado (0117).
+ *
+ *  El correo nombra el stock PREVIO y lo que entró por separado: el pedido
+ *  del cliente era "que la empresa no compre más de lo que consume", y lo
+ *  que hay que poder ver es si esta compra sola pasó el techo o si lo pasó
+ *  sumándose a lo que ya estaba sin consumirse. */
+export async function enviarCorreoUreaStockExcedido(
+  destinatarios: Destinatario[],
+  params: {
+    stockPrevioL: number;
+    litrosQueEntraron: number;
+    stockProyectadoL: number;
+    stockMaximoL: number;
+    excesoL: number;
+    proveedor: string | null;
+  }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Urea: la compra dejó el depósito ${params.excesoL} L por encima del máximo`,
+    titulo: "Se compró más urea de la que el depósito tiene como techo",
+    lineas: [
+      `Antes de esta entrada había ${params.stockPrevioL} L. Entraron ` +
+        `${params.litrosQueEntraron} L` +
+        (params.proveedor ? ` de ${params.proveedor}` : "") +
+        `, así que el depósito quedó en ${params.stockProyectadoL} L.`,
+      `El máximo configurado es ${params.stockMaximoL} L: hay ${params.excesoL} L de exceso.`,
+      "La entrada se registró igual, a propósito: no hay nada físicamente imposible en apilar " +
+        "otra caja, y una compra sin registrar sería peor que una compra de más registrada.",
+      "Vale la pena mirar si el exceso viene de esta compra sola o de que la anterior todavía " +
+        "no se consumió: el techo mira el total del depósito, no la compra aislada.",
+    ],
+  });
+}
+
+/** Un conteo anulado y vuelto a cargar MÁS CERCA DE CUADRAR (0118). El
+ *  correo pone los dos conteos uno al lado del otro, con el motivo de la
+ *  anulación: es lo que separa "conté mal una caja" de "el primero no
+ *  cuadraba y lo reemplacé por uno que sí". */
+export async function enviarCorreoUreaConteoRecargado(
+  destinatarios: Destinatario[],
+  params: {
+    contadoAnuladoL: number;
+    descuadreAnuladoL: number;
+    contadoNuevoL: number;
+    descuadreNuevoL: number;
+    descuadreQueSeAchicoL: number;
+    motivoAnulacion: string | null;
+    anuladoPor: string | null;
+    anulacionesEnLaVentana: number;
+    ventanaHoras: number;
+  }
+) {
+  const signo = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Urea: se anuló un conteo y el que lo reemplaza cuadra mejor (${params.descuadreQueSeAchicoL} L menos de diferencia)`,
+    titulo: "Un conteo de urea se anuló y se volvió a cargar",
+    lineas: [
+      `Conteo anulado: ${params.contadoAnuladoL} L, diferencia contra los papeles ` +
+        `${signo(params.descuadreAnuladoL)} L.`,
+      `Motivo de la anulación: "${params.motivoAnulacion ?? "sin motivo"}"` +
+        (params.anuladoPor ? ` (${params.anuladoPor}).` : "."),
+      `Conteo nuevo: ${params.contadoNuevoL} L, diferencia ${signo(params.descuadreNuevoL)} L.`,
+      params.anulacionesEnLaVentana > 1
+        ? `Es la anulación número ${params.anulacionesEnLaVentana} en ${params.ventanaHoras} horas.`
+        : `Pasó dentro de las últimas ${params.ventanaHoras} horas.`,
+      "Puede ser una corrección legítima. Pero anular el conteo que no cuadra y cargar uno que " +
+        "sí es exactamente cómo se tapa un faltante cuando el que cuenta es el mismo que " +
+        "reparte: vale la pena ir a contar con otra persona.",
+    ],
+  });
+}
+
+/** Una compra de urea en ruta con un precio por bulto que se aparta del
+ *  catálogo del proveedor más que la tolerancia (0121). Va renglón por
+ *  renglón: en una boleta de "2 cajas + 3 bolsas" puede desviarse una sola. */
+export async function enviarCorreoUreaPrecioFueraDeCatalogo(
+  destinatarios: Destinatario[],
+  params: {
+    papel: PapelDeAlerta;
+    toleranciaPct: number;
+    desvios: {
+      presentacion: string;
+      precioBoleta: number;
+      precioCatalogo: number;
+      marca: string | null;
+      desvioPct: number;
+    }[];
+  }
+) {
+  const peor = params.desvios.reduce((a, d) =>
+    Math.abs(d.desvioPct) > Math.abs(a.desvioPct) ? d : a
+  );
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Urea: la ${nombrarPapel(params.papel)} declara un precio ${peor.desvioPct > 0 ? "+" : ""}${peor.desvioPct}% distinto del catálogo`,
+    titulo: "Compra de urea en ruta con precio fuera del catálogo",
+    lineas: [
+      `La compra registrada con la ${nombrarPapel(params.papel)} declara precios que se apartan ` +
+        `del catálogo del proveedor más del ${params.toleranciaPct}% tolerado:`,
+      ...params.desvios.map(
+        (d) =>
+          `- ${d.presentacion}${d.marca ? ` (${d.marca})` : ""}: S/ ${d.precioBoleta} por bulto ` +
+          `contra S/ ${d.precioCatalogo} del catálogo (${d.desvioPct > 0 ? "+" : ""}${d.desvioPct}%).`
+      ),
+      "La compra se registró igual. Puede ser que el proveedor haya cambiado el precio (y haya " +
+        "que actualizar el catálogo), o que la boleta declare más de lo que se pagó. La foto del " +
+        "comprobante está en Urea → Compras en ruta.",
+    ],
+  });
+}

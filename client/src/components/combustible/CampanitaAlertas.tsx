@@ -44,6 +44,14 @@ const ETIQUETA_TIPO: Record<string, string> = {
   equipo_de_otro_grifo: "Equipo cargado en otro grifo",
   sobrestock_recepcion: "Excedente de recepción repartido",
   tanqueta_sobregirada: "Tanqueta sobregirada",
+  // Urea (0092, 0117, 0118).
+  urea_equipo_no_habilitado: "Urea a una unidad que no usa urea",
+  urea_ratio_excedido: "Urea/diésel fuera de rango",
+  urea_descuadre_conteo: "El conteo de urea no cuadra",
+  urea_stock_bajo: "Queda poca urea",
+  urea_stock_excedido: "Depósito de urea por encima del máximo",
+  urea_conteo_recargado: "Conteo de urea anulado y vuelto a cargar",
+  urea_precio_fuera_de_catalogo: "Compra de urea con precio fuera del catálogo",
 };
 
 /** No toda alerta es sobre un vale (migración 0073): las de nivel bajo van

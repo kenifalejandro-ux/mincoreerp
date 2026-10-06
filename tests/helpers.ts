@@ -168,6 +168,9 @@ export async function borrarTenantDePrueba(tenantId: string) {
     await client.query("DELETE FROM combustible_precios WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM combustible_despachos WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM combustible_recepciones WHERE tenant_id = $1", [tenantId]);
+    // El catálogo de precios de urea (0121) referencia proveedores sin ON
+    // DELETE, igual que combustible_precios: va antes que ellos.
+    await client.query("DELETE FROM combustible_urea_precios WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM combustible_grifos WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM combustible WHERE tenant_id = $1", [tenantId]);
     // Orden importa: checklists/ipercs/ordenes_trabajo referencian equipos y
