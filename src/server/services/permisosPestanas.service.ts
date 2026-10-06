@@ -88,9 +88,23 @@ const accionesTanquetas: DefinicionPestana[] = [
 const pestañasUrea: DefinicionPestana[] = [
   ["registrar_vale", "Registrar vale"],
   ["registrar_entrada", "Registrar entrada"],
+  // La compra de urea en ruta, con boleta o factura (0119). Aparte del vale:
+  // el conductor compra en ruta pero no reparte del almacén.
+  ["registrar_compra", "Registrar compra en ruta"],
   ["registrar_conteo_fisico", "Registrar conteo físico"],
   ["vista", "Vista"],
   ["exportar", "Exportar"],
+  // El libro de entradas, vales y conteos con saldo corriente. Consulta pura.
+  ["kardex", "Kardex"],
+  // La franja de hallazgos abiertos del panel. Es visibilidad de gerencia,
+  // igual que "tanques:alertas": ver el reparto por rol más abajo.
+  ["hallazgos", "Hallazgos"],
+  // El catálogo de precios por proveedor y presentación (0121).
+  ["precios", "Precios"],
+  // Los litros que trae cada envase (migración 0116). Separado de "vista"
+  // porque es la palanca que mueve el stock teórico de todo lo que se
+  // cargue después: ver el reparto por rol más abajo.
+  ["configuracion", "Configuración"],
 ].map(([id, nombre]) => ({
   modulo: "combustible",
   pestana: `urea:${id}`,
@@ -232,11 +246,33 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
     "urea",
     "urea:vista",
     "urea:exportar",
+    "urea:kardex",
     "auditoria",
     "bitacora",
   ];
-  // Encargado de Urea: solo Urea, nada de Tanques ni Histórico.
-  const urea = ["urea", ...pestañasUrea.map((item) => item.pestana)];
+  // Encargado de Urea: solo Urea, nada de Tanques ni Histórico. El catálogo
+  // de presentaciones queda AFUERA: cambiar los litros de la caja corre el
+  // stock teórico de todo lo que se cargue después, y el encargado es la
+  // misma persona que recibe, reparte y cuenta (cero segregación, ver
+  // combustible.routes.ts). Darle también el número contra el que se compara
+  // su propio conteo sería cerrarle el círculo. El admin se lo puede
+  // habilitar a mano si decide lo contrario.
+  //
+  // Los HALLAZGOS también quedan afuera, por el mismo motivo que el grifero no
+  // ve las alertas de combustible: son las alertas sobre el trabajo de la
+  // propia persona. Que el controlado vea en tiempo real qué disparó una
+  // alerta le enseña exactamente qué no repetir.
+  //
+  // Y el catálogo de PRECIOS (0121): es la referencia contra la que se compara
+  // la boleta de cada compra en ruta. Cargarlo también el encargado sería,
+  // otra vez, darle el número contra el que se lo controla.
+  const fueraDelEncargado = new Set(["urea:configuracion", "urea:hallazgos", "urea:precios"]);
+  const urea = [
+    "urea",
+    ...pestañasUrea
+      .filter((item) => !fueraDelEncargado.has(item.pestana))
+      .map((item) => item.pestana),
+  ];
   // Grifero: lo de cancha. Anular su propia varilla mal tipeada entra, con
   // motivo obligatorio y dejando alerta (nota de la fila 21 de la matriz).
   const grifero = [
@@ -251,7 +287,10 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
   // Conductor: solo el despacho externo. Las vistas del Histórico nacen
   // apagadas para los tres perfiles de cancha -- "el Admin decide si les da
   // acceso a consultar", nota de las filas 24-29.
-  const conductor = ["tanques", "tanques:registrar_despacho"];
+  //
+  // 0119: también la compra de urea en ruta -- Kenif: "igual que combustible".
+  // Solo eso de Urea: ni el reparto del almacén, ni los listados, ni el stock.
+  const conductor = ["tanques", "tanques:registrar_despacho", "urea", "urea:registrar_compra"];
   switch (rol) {
     case "admin":
       return new Set(admin);

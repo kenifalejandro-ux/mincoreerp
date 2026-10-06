@@ -31,6 +31,7 @@ import {
 } from "./auth.service";
 import { modulosDisponibles, reiniciarModulosDePerfil } from "./permisosTenant.service";
 import { MODULOS_ERP } from "../schemas/platform.schema";
+import { PRESENTACIONES_UREA_INICIALES } from "../schemas/combustible.schema";
 import { verificarCuota, CuotaExcedidaError, RECURSO_USUARIOS } from "./platformCuotas.service";
 import { esViolacionUnicidad, esViolacionForeignKey } from "../shared/utils/pgError";
 import type { CrearTenantInput, CrearUsuarioEnTenantInput } from "../schemas/platform.schema";
@@ -110,6 +111,22 @@ export async function crearTenantConAdminService(
       `INSERT INTO grifos_internos (tenant_id, sede_id, nombre) VALUES ($1, $2, 'Principal')`,
       [tenant.id, sede.rows[0].id]
     );
+
+    // Y con las tres presentaciones de urea del mercado peruano (0116). Sin
+    // esto, el primer vale de urea de una empresa nueva se rechazaría: la FK
+    // compuesta (tenant_id, presentacion) no tendría contra qué validar.
+    // Son un PUNTO DE PARTIDA, no un dato nuestro -- la empresa corrige los
+    // litros desde Urea → Configuración, con motivo y bitácora.
+    // `actualizado_por` queda NULL: nadie los editó todavía, y el admin de
+    // este tenant ni existe aún en este punto de la transacción.
+    for (const p of PRESENTACIONES_UREA_INICIALES) {
+      await client.query(
+        `INSERT INTO combustible_urea_presentaciones
+           (tenant_id, codigo, nombre, litros, es_referencia)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [tenant.id, p.codigo, p.nombre, p.litros, p.esReferencia]
+      );
+    }
 
     // Mismo client/transacción: si crear el admin falla, el tenant tampoco
     // queda creado — nunca un tenant huérfano sin nadie que pueda entrar.

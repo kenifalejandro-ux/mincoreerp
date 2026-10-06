@@ -63,6 +63,9 @@ export const ESCRITURAS_OFFLINE: Record<string, EscrituraOffline[]> = {
     // la compra todavía no existe en el servidor y no tiene id. La cola drena
     // en orden, así que el registro llega antes que su foto.
     { metodo: "POST", ruta: "/despachos/por-uuid/:clienteUuid/comprobante" },
+    // La foto de la boleta de una compra de UREA en ruta (0119): misma idea,
+    // ruta propia porque el permiso es otro (urea:registrar_compra).
+    { metodo: "POST", ruta: "/urea/compras/por-uuid/:clienteUuid/comprobante" },
   ],
 
   // Crear el registro (pólizas, SOAT, etc. son `documentos` con otro

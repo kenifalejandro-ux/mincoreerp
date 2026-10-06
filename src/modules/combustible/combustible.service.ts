@@ -14,11 +14,13 @@ import type {
   CrearGrifoCombustibleInput,
   ActualizarGrifoCombustibleInput,
   CrearConteoUreaInput,
+  CrearPresentacionUreaInput,
+  CrearPrecioUreaInput,
+  ActualizarPresentacionUreaInput,
   CrearPuntoPrecintoInput,
   CambiarPrecintoInput,
 } from "../../server/schemas/combustible.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
-import { FACTOR_LITROS_UREA } from "../../server/schemas/combustible.schema";
 import type { UsuarioPayload } from "../../server/services/auth.service";
 import { createHash } from "crypto";
 import { withTenant } from "../../server/config/database";
@@ -31,6 +33,7 @@ import {
 } from "../../server/services/documentStorage";
 import type { DriverDocumento } from "../../server/services/documentStorage";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
+import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { CombustibleRepository } from "./combustible.repository";
 import type { PeriodoHistorial } from "./combustible.repository";
 import { EquiposRepository } from "../equipos/equipos.repository";
@@ -129,6 +132,24 @@ function resumirHistorico(
     desde: new Date(Math.min(...fechas)).toISOString(),
     hasta: new Date(Math.max(...fechas)).toISOString(),
   };
+}
+
+/** El costo de la urea entra POR BULTO y se guarda POR LITRO (0119).
+ *
+ *  Los tres formularios de urea preguntan "costo por caja" -- es el número que
+ *  trae la boleta y el único que el que carga sabe. Pero `costo_total` en todo
+ *  el módulo es `cantidad (L) × costo_unitario`, así que guardar el precio de la
+ *  caja tal cual lo multiplicaba por los litros: 10 cajas a S/ 40 se
+ *  valorizaban en S/ 6.400 en vez de S/ 400. Estuvo así desde 0092; el test de
+ *  entonces incluso decía "el service la convierte a costo/litro al vuelo", y
+ *  la conversión no existía.
+ *
+ *  Se convierte con el factor CONGELADO de la fila, no con el del catálogo de
+ *  hoy, por el mismo motivo que los litros: si mañana la caja pasa a 20 L, el
+ *  costo por litro de lo ya cargado no se mueve. Cuatro decimales: los de la
+ *  columna. */
+function costoPorLitroUrea(costoPorBulto: number, factorLitros: number): number {
+  return Number((costoPorBulto / factorLitros).toFixed(4));
 }
 
 export class CombustibleService {
@@ -929,9 +950,20 @@ export class CombustibleService {
    *  Devuelve el motivo del rechazo, o null si está permitido. */
   motivoOrigenNoPermitido(
     rol: UsuarioPayload["rol"],
-    origen: "tanque_propio" | "compra_externa" | "excedente_recepcion" | "tanqueta",
+    origen: "tanque_propio" | "compra_externa" | "excedente_recepcion" | "tanqueta" | "almacen",
     tanquetaLugar?: "ruta" | "planta"
   ): string | null {
+    // El reparto del almacén de urea (0119): el conductor no reparte del
+    // depósito -- compra en ruta, como con el combustible. El grifero tampoco:
+    // su mundo es el tanque. Lo registran el encargado de urea, el admin y el
+    // operador.
+    if (origen === "almacen") {
+      if (rol === "conductor_ruta") {
+        return "Tu usuario registra compras de urea en ruta, no repartos del almacén";
+      }
+      if (rol === "grifero") return "Tu usuario registra vales del tanque, no repartos de urea";
+      return null;
+    }
     // La carga desde una tanqueta (0114/0115): en ruta la registra el
     // conductor; en planta, el que despacha ahí (el grifero también).
     if (origen === "tanqueta") {
@@ -1037,6 +1069,7 @@ export class CombustibleService {
           const previa = await this.repository.findCompraPorComprobante(
             client,
             tenantId,
+            data.producto,
             data.grifo_id!,
             data.comprobante_tipo,
             data.comprobante_numero
@@ -1076,8 +1109,38 @@ export class CombustibleService {
         // congela el factor usado en la fila (ver FACTOR_LITROS_UREA en el
         // schema y el encabezado de la migración 0092). El costo, si no
         // vino en el vale, se deriva promediando las recepciones vigentes.
-        const factorLitros = esUrea ? FACTOR_LITROS_UREA[data.presentacion!] : null;
-        const cantidad = esUrea ? data.cantidad_bultos! * factorLitros! : data.cantidad!;
+        // La compra de urea en ruta (0120) viene con RENGLONES -- el schema la
+        // normaliza así aunque llegue con una sola presentación. Cada renglón
+        // resuelve y congela su propio factor; el despacho guarda el total.
+        const renglones =
+          esUrea && data.lineas !== undefined
+            ? await Promise.all(
+                data.lineas.map(async (l) => {
+                  const factor = await this.resolverFactorPresentacionUrea(
+                    client,
+                    tenantId,
+                    l.presentacion
+                  );
+                  return {
+                    presentacion: l.presentacion,
+                    factorLitros: factor,
+                    cantidadBultos: l.cantidad_bultos,
+                    litros: Number((l.cantidad_bultos * factor).toFixed(2)),
+                    costoPorBulto: l.costo_unitario,
+                  };
+                })
+              )
+            : null;
+
+        const factorLitros =
+          esUrea && !renglones
+            ? await this.resolverFactorPresentacionUrea(client, tenantId, data.presentacion!)
+            : null;
+        const cantidad = renglones
+          ? Number(renglones.reduce((a, r) => a + r.litros, 0).toFixed(2))
+          : esUrea
+            ? data.cantidad_bultos! * factorLitros!
+            : data.cantidad!;
 
         // EL COSTO DEL VALE DEL TANQUE PROPIO LO PONE EL SERVIDOR.
         //
@@ -1091,22 +1154,38 @@ export class CombustibleService {
         // Si no hay ninguno de los dos (tanque nuevo, sin compras ni catálogo)
         // se respeta lo que vino: es el único caso en que el cargador sabe
         // más que el sistema.
-        const costoUnitario = esUrea
-          ? (data.costo_unitario ?? (await this.resolverCostoUrea(client, tenantId, despachadoEn)))
-          : excedente
-            ? excedente.costoUnitario
-            : desdeTanqueta
-              ? desdeTanqueta.costoUnitario
-              : data.origen === "tanque_propio"
-                ? await this.resolverCostoDelTanque(
-                    client,
-                    tenantId,
-                    data.combustible_id!,
-                    data.tipo_combustible!,
-                    despachadoEn,
-                    data.costo_unitario!
-                  )
-                : data.costo_unitario!;
+        // UREA: el costo que viene en el body es POR BULTO (lo que dice la
+        // boleta: "S/ 40 la caja") y se guarda POR LITRO, igual que el
+        // combustible -- costo_total se calcula como cantidad (L) × unitario.
+        // Ver costoPorLitroUrea. El promedio de resolverCostoUrea ya está en
+        // litros, porque sale de recepciones guardadas en litros.
+        // Con renglones: el costo por litro del TOTAL de la boleta. Cada
+        // renglón guarda además su precio por bulto, que es el que se coteja
+        // contra el papel.
+        const costoUnitario = renglones
+          ? Number(
+              (
+                renglones.reduce((a, r) => a + r.cantidadBultos * r.costoPorBulto, 0) / cantidad
+              ).toFixed(4)
+            )
+          : esUrea
+            ? data.costo_unitario !== undefined
+              ? costoPorLitroUrea(data.costo_unitario, factorLitros!)
+              : await this.resolverCostoUrea(client, tenantId, despachadoEn)
+            : excedente
+              ? excedente.costoUnitario
+              : desdeTanqueta
+                ? desdeTanqueta.costoUnitario
+                : data.origen === "tanque_propio"
+                  ? await this.resolverCostoDelTanque(
+                      client,
+                      tenantId,
+                      data.combustible_id!,
+                      data.tipo_combustible!,
+                      despachadoEn,
+                      data.costo_unitario!
+                    )
+                  : data.costo_unitario!;
 
         const surtidorId = await this.resolverSurtidorDelVale(client, tenantId, data, despachadoEn);
 
@@ -1135,13 +1214,26 @@ export class CombustibleService {
           lecturaHorometro: data.lectura_horometro ?? null,
           lecturaOdometro: data.lectura_odometro ?? null,
           horasAbastecidas: data.horas_abastecidas ?? null,
-          presentacion: esUrea ? data.presentacion! : null,
+          // Con renglones, el detalle vive en combustible_despacho_urea_lineas
+          // y estas tres quedan en NULL (CHECK de forma de 0120).
+          presentacion: esUrea && !renglones ? data.presentacion! : null,
           factorLitros,
-          cantidadBultos: esUrea ? data.cantidad_bultos! : null,
+          cantidadBultos: esUrea && !renglones ? data.cantidad_bultos! : null,
           costoUnitario,
           observaciones: data.observaciones ?? null,
           despachadoEn,
         });
+        // Misma transacción que el despacho: si un renglón falla, la compra
+        // entera se deshace. La suma de los renglones es `cantidad` por
+        // construcción (se calculó arriba de los mismos números).
+        if (renglones) {
+          await this.repository.crearRenglonesCompraUrea(
+            client,
+            tenantId,
+            Number(fila.id),
+            renglones
+          );
+        }
         return { id: Number(fila.id), fila };
       },
       recuperar: (filaId) => this.repository.findDespachoPorId(client, tenantId, filaId),
@@ -1214,6 +1306,114 @@ export class CombustibleService {
     const tanque = await this.repository.findById(client, tenantId, combustibleId);
     const promedio = tanque ? Number(tanque.costo_promedio) : 0;
     return promedio > 0 ? promedio : declarado;
+  }
+
+  // ── Catálogo de presentaciones de urea (migración 0116) ──────────────
+
+  listarPresentacionesUrea(client: PoolClient, tenantId: string) {
+    return this.repository.findPresentacionesUrea(client, tenantId);
+  }
+
+  getPresentacionUreaPorId(client: PoolClient, tenantId: string, id: number) {
+    return this.repository.findPresentacionUreaPorId(client, tenantId, id);
+  }
+
+  crearPresentacionUrea(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: CrearPresentacionUreaInput
+  ) {
+    return this.repository.crearPresentacionUrea(client, tenantId, usuarioId, {
+      codigo: data.codigo,
+      nombre: data.nombre,
+      litros: data.litros,
+      esReferencia: data.es_referencia,
+    });
+  }
+
+  /** Devuelve además CUÁNTO cambió el factor y cuántos movimientos ya usan
+   *  esta presentación -- las dos cosas van a la bitácora. Que un cambio de
+   *  litros quede registrado con su motivo es lo único que distingue
+   *  "corregimos el envase" de "alguien infló el stock antes del conteo".
+   *
+   *  `null` si la presentación no existe en este tenant: el controller lo
+   *  traduce a 404, mismo criterio que el resto del módulo. */
+  async actualizarPresentacionUrea(
+    client: PoolClient,
+    tenantId: string,
+    id: number,
+    usuarioId: string,
+    data: ActualizarPresentacionUreaInput
+  ) {
+    const antes = await this.repository.findPresentacionUreaPorId(client, tenantId, id);
+    if (!antes) return null;
+
+    const fila = await this.repository.actualizarPresentacionUrea(client, tenantId, id, usuarioId, {
+      nombre: data.nombre,
+      litros: data.litros,
+      esReferencia: data.es_referencia,
+      activa: data.activa,
+    });
+    if (!fila) return null;
+
+    const litrosAntes = Number(antes.litros);
+    const movimientos = await this.repository.contarMovimientosDePresentacionUrea(
+      client,
+      tenantId,
+      antes.codigo
+    );
+    return {
+      fila,
+      cambioDeFactor:
+        litrosAntes === data.litros ? null : { de: litrosAntes, a: data.litros, movimientos },
+      seDesactivo: antes.activa && !data.activa,
+    };
+  }
+
+  /** Los litros que vale UN bulto de esta presentación, HOY, para esta
+   *  empresa (migración 0116). El valor que devuelve se CONGELA en la fila
+   *  del movimiento: cambiar la caja de 16 a 20 L mañana afecta a los
+   *  movimientos nuevos y a ninguno de los ya cargados.
+   *
+   *  Bloquea (400) en dos casos, los dos "el dato se contradice a sí mismo":
+   *  la presentación no existe en esta empresa, o está desactivada. Una
+   *  presentación desactivada sigue siendo legible en el historial --
+   *  desactivar no borra-- pero no se puede usar para cargar algo nuevo, que
+   *  es exactamente para lo que se desactiva.
+   *
+   *  Sale como `AppError(400)`, no como Error pelado: los tres handlers que
+   *  llaman acá (vale, entrada, conteo) mandan al 500 cualquier error que no
+   *  reconozcan, y un 500 lo reintenta la cola offline para siempre -- con
+   *  un dato que nunca va a pasar por más que se reintente. Mismo criterio
+   *  que tanquetas.service.ts (0111).
+   *
+   *  Es el reemplazo de `FACTOR_LITROS_UREA`, que era una constante del
+   *  código y por eso obligaba a una migración cada vez que el cliente
+   *  cambiaba de envase. */
+  private async resolverFactorPresentacionUrea(
+    client: PoolClient,
+    tenantId: string,
+    codigo: string
+  ): Promise<number> {
+    const presentacion = await this.repository.findPresentacionUreaPorCodigo(
+      client,
+      tenantId,
+      codigo
+    );
+    if (!presentacion) {
+      throw new AppError(
+        400,
+        `la presentación "${codigo}" no existe en esta empresa -- dala de alta en Urea → Configuración de envases`
+      );
+    }
+    if (!presentacion.activa) {
+      throw new AppError(
+        400,
+        `la presentación "${presentacion.nombre}" está desactivada y no se puede usar para cargar -- reactivala en Urea → Configuración de envases o elegí otra`
+      );
+    }
+    return Number(presentacion.litros);
   }
 
   /** El costo de un litro de urea que sale a un vale, cuando el vale no
@@ -1610,7 +1810,13 @@ export class CombustibleService {
     despachoId: number,
     archivo: { buffer: Buffer; mimeType: string; nombreOriginal: string },
     usuarioId: string,
-    motivo: string | undefined
+    motivo: string | undefined,
+    // 0119: cada ruta toca SOLO las compras de su producto. La de urea se
+    // gatea con "urea:registrar_compra" y la de combustible con
+    // "tanques:registrar_despacho"; sin este chequeo, el permiso de una
+    // abriría la foto de la otra. Distinto producto = 404, igual que
+    // inexistente: no se confirma que la compra exista.
+    producto: "combustible" | "urea" = "combustible"
   ): Promise<
     | { estado: "no_encontrado" }
     | { estado: "no_aplica"; razon: string }
@@ -1624,7 +1830,7 @@ export class CombustibleService {
     const previo = await withTenant(tenantId, (client) =>
       this.repository.findComprobanteDeDespacho(client, tenantId, despachoId)
     );
-    if (!previo) return { estado: "no_encontrado" };
+    if (!previo || previo.producto !== producto) return { estado: "no_encontrado" };
 
     // El CHECK de 0109 ya lo impone, pero un 400 con explicación es mejor
     // que el 500 de una violación de constraint -- y la cola offline
@@ -1746,11 +1952,16 @@ export class CombustibleService {
   /** El archivo se lee con el driver con el que se ESCRIBIÓ, no con el
    *  configurado hoy -- mismo criterio que documentos_versiones: cambiar
    *  DOCUMENTOS_STORAGE_DRIVER no puede volver ilegible lo ya subido. */
-  async obtenerDescargaComprobante(tenantId: string, despachoId: number) {
+  async obtenerDescargaComprobante(
+    tenantId: string,
+    despachoId: number,
+    producto: "combustible" | "urea" = "combustible"
+  ) {
     const fila = await withTenant(tenantId, (client) =>
       this.repository.findComprobanteDeDespacho(client, tenantId, despachoId)
     );
-    if (!fila || !fila.comprobante_key) return null;
+    // Mismo criterio que en subirComprobante: cada ruta, su producto (0119).
+    if (!fila || !fila.comprobante_key || fila.producto !== producto) return null;
 
     const descarga = await obtenerDescarga(
       fila.comprobante_driver as DriverDocumento,
@@ -1903,6 +2114,9 @@ export class CombustibleService {
       topeDiarioUreaL: number | null;
       ratioUreaDieselMaxPct: number | null;
       diasSinConteoUrea: number;
+      stockMinimoUreaL: number | null;
+      stockMaximoUreaL: number | null;
+      toleranciaPrecioUreaPct: number | null;
       despachoPideMedidor: boolean;
     },
     usuarioId: string
@@ -1939,6 +2153,9 @@ export class CombustibleService {
       tope_diario_urea_l: number | null;
       ratio_urea_diesel_max_pct: number | null;
       dias_sin_conteo_urea: number;
+      stock_minimo_urea_l: number | null;
+      stock_maximo_urea_l: number | null;
+      tolerancia_precio_urea_pct: number | null;
       despacho_pide_medidor: boolean;
     },
     ahora: {
@@ -1956,6 +2173,9 @@ export class CombustibleService {
       tope_diario_urea_l: number | null;
       ratio_urea_diesel_max_pct: number | null;
       dias_sin_conteo_urea: number;
+      stock_minimo_urea_l: number | null;
+      stock_maximo_urea_l: number | null;
+      tolerancia_precio_urea_pct: number | null;
       despacho_pide_medidor: boolean;
     }
   ) {
@@ -2089,6 +2309,19 @@ export class CombustibleService {
         ahora.ratio_urea_diesel_max_pct,
         "%",
       ],
+      // El MÁXIMO de stock de urea (0117) entra acá porque afloja en la
+      // misma dirección que los topes: subirlo deja comprar más antes de
+      // que alguien se entere. El MÍNIMO va aparte, abajo -- ahí afloja al
+      // BAJAR, y meterlo en este loop lo habría dejado sin vigilancia justo
+      // en el movimiento que importa.
+      ["Stock máximo de urea", antes.stock_maximo_urea_l, ahora.stock_maximo_urea_l, " L"],
+      // 0121: subir la tolerancia deja pasar boletas más lejos del catálogo.
+      [
+        "Tolerancia de precio de urea contra el catálogo",
+        antes.tolerancia_precio_urea_pct,
+        ahora.tolerancia_precio_urea_pct,
+        "%",
+      ],
     ] as const;
 
     for (const [control, viejo, nuevo, sufijo] of topes) {
@@ -2102,6 +2335,24 @@ export class CombustibleService {
           a: nuevo === null ? "sin configurar (no alerta)" : `${nuevo}${sufijo}`,
         });
       }
+    }
+
+    // STOCK MÍNIMO DE UREA (0117): afloja al BAJAR, al revés que todos los
+    // topes de arriba. El mínimo es un piso de aviso, no un techo: bajarlo de
+    // 200 a 20 L no restringe nada, atrasa el aviso hasta que ya no haya con
+    // qué trabajar. Apagarlo (null) lo saca del todo.
+    if (
+      antes.stock_minimo_urea_l !== null &&
+      (ahora.stock_minimo_urea_l === null || ahora.stock_minimo_urea_l < antes.stock_minimo_urea_l)
+    ) {
+      cambios.push({
+        control: "Stock mínimo de urea",
+        de: `${antes.stock_minimo_urea_l} L`,
+        a:
+          ahora.stock_minimo_urea_l === null
+            ? "sin configurar (no alerta)"
+            : `${ahora.stock_minimo_urea_l} L`,
+      });
     }
 
     return cambios;
@@ -3981,7 +4232,12 @@ export class CombustibleService {
       modulo: "combustible",
       clienteUuid: data.cliente_uuid,
       insertar: async () => {
-        const cantidadLitros = data.cantidad_bultos * FACTOR_LITROS_UREA[data.presentacion];
+        const factorLitros = await this.resolverFactorPresentacionUrea(
+          client,
+          tenantId,
+          data.presentacion
+        );
+        const cantidadLitros = data.cantidad_bultos * factorLitros;
         const fila = await this.repository.crearConteoUrea(client, tenantId, usuarioId, {
           cantidadLitros,
           contadoEn: data.contado_en ?? new Date().toISOString(),
@@ -4039,6 +4295,710 @@ export class CombustibleService {
       contadoL: cantidadLitros,
       esperadoL: Number(esperado.toFixed(2)),
       descuadreL: descuadre,
+    };
+  }
+
+  /** ASISTENTE DE LOS CUATRO UMBRALES DE UREA (migración 0117).
+   *
+   *  Mismo contrato que `sugerirTopesDiarios` y que el asistente del tanque:
+   *  promedio + 2 desvíos donde corresponde, mínimo de muestra, la muestra
+   *  entera en la respuesta, la fórmula dicha en texto, y **NUNCA se aplica
+   *  solo** -- sugiere, una persona decide.
+   *
+   *  ── Va a nacer sin nada que sugerir, y eso no es un bug ──────────────
+   *
+   *  El cliente arranca de cero: respondió "de cero" a la pregunta del stock
+   *  inicial y no tiene historial de urea cargado. Cada número va a salir con
+   *  `muestraSuficiente: false` y cuántos días faltan. El día que haya
+   *  operación real, el mismo botón empieza a dar números -- es el mismo
+   *  estado "muestra insuficiente" que el asistente de combustible ya
+   *  resuelve, no un camino nuevo.
+   *
+   *  ── Por qué cada número se calcula distinto ──────────────────────────
+   *
+   *  No son cuatro variantes de la misma cuenta, y forzarlos a una sola
+   *  fórmula daría tres umbrales malos:
+   *
+   *  `topeDiarioUreaL` — promedio + 2σ del consumo diario POR EQUIPO, y se
+   *    sugiere el del equipo que más consume legítimamente. Mismo criterio y
+   *    mismo motivo que `tope_diario_sin_capacidad_l` en sugerirTopesDiarios:
+   *    es UN número para todos los equipos, así que mezclar sus días en una
+   *    muestra sola daría un valor intermedio que alertaría todos los días
+   *    en el volquete grande y nunca en la camioneta.
+   *
+   *  `ratioUreaDieselPct` — promedio + 2σ de (urea / diésel) por equipo sobre
+   *    la ventana entera, no día por día: un equipo carga diésel un día y
+   *    urea al siguiente, y el ratio diario daría 0% y 400% alternados. La
+   *    proporción tiene sentido acumulada, igual que la evalúa
+   *    evaluarUreaRatioExcedido (ventana de 30 días).
+   *
+   *  `stockMinimoL` — la PEOR SEMANA observada: el máximo consumo en
+   *    cualquier ventana móvil de 7 días. No un promedio + 2σ de días
+   *    sueltos, porque el mínimo de stock no protege contra un día pico:
+   *    protege contra quedarse sin urea hasta la próxima compra. "Con esto en
+   *    el depósito aguantás la peor semana que tuviste" es una frase que el
+   *    cliente puede evaluar; "promedio más dos desvíos" no.
+   *
+   *  `stockMaximoL` — un MES de consumo al ritmo actual (promedio diario ×
+   *    30). El pedido era "que la empresa no compre más de lo que consume":
+   *    tener más de un mes de urea parada en el depósito es exactamente eso.
+   *    Deliberadamente NO lleva + 2σ: acá el desvío empujaría el techo para
+   *    ARRIBA, o sea aflojaría el control que se está calibrando.
+   *
+   *  ── La muestra puede tener robo ──────────────────────────────────────
+   *
+   *  Igual que en el asistente de combustible: si alguien ya venía sacando
+   *  urea de más, su consumo está en el promedio y el umbral sugerido lo
+   *  tolera. Por eso la respuesta trae el día máximo y la muestra entera --
+   *  un día muy por encima del resto es lo primero que hay que mirar antes
+   *  de aceptar cualquiera de estos números. */
+  async sugerirUmbralesUrea(client: PoolClient, tenantId: string) {
+    const dias = CombustibleService.DIAS_HISTORIAL_TOPES;
+    const filas = await this.repository.findUreaPorDiaYEquipo(client, tenantId, dias);
+    const minimo = CombustibleService.MINIMO_MUESTRA;
+
+    const estadistico = (valores: number[]) => {
+      const n = valores.length;
+      const promedio = valores.reduce((a, b) => a + b, 0) / n;
+      const varianza = n > 1 ? valores.reduce((a, v) => a + (v - promedio) ** 2, 0) / (n - 1) : 0;
+      return { promedio, desviacion: Math.sqrt(varianza), maximo: Math.max(...valores) };
+    };
+
+    // ── Tope diario: por equipo, se sugiere el del que más consume ───────
+    const diasConUreaPorEquipo = new Map<string, number[]>();
+    for (const f of filas) {
+      if (f.ureaL <= 0) continue;
+      const clave = f.placaCodigo ?? `equipo #${f.equipoId ?? "?"}`;
+      const lista = diasConUreaPorEquipo.get(clave) ?? [];
+      lista.push(f.ureaL);
+      diasConUreaPorEquipo.set(clave, lista);
+    }
+    const porEquipo = [...diasConUreaPorEquipo.entries()].map(([equipo, litros]) => {
+      if (litros.length < minimo) {
+        return { equipo, diasConUrea: litros.length, muestraSuficiente: false as const };
+      }
+      const e = estadistico(litros);
+      return {
+        equipo,
+        diasConUrea: litros.length,
+        muestraSuficiente: true as const,
+        promedioL: Number(e.promedio.toFixed(1)),
+        diaMaximoL: Number(e.maximo.toFixed(1)),
+        topeSugeridoL: Number((e.promedio + 2 * e.desviacion).toFixed(0)),
+      };
+    });
+    const conMuestra = porEquipo.filter((x) => x.muestraSuficiente) as Extract<
+      (typeof porEquipo)[number],
+      { muestraSuficiente: true }
+    >[];
+    const equipoMasAlto = [...conMuestra].sort((a, b) => b.topeSugeridoL - a.topeSugeridoL)[0];
+
+    const topeDiario = equipoMasAlto
+      ? {
+          muestraSuficiente: true as const,
+          sugeridoL: equipoMasAlto.topeSugeridoL,
+          formula: "promedio + 2 desvíos del consumo diario del equipo que más urea consume",
+          equipoQueLoDefine: equipoMasAlto.equipo,
+          porEquipo,
+          nota:
+            conMuestra.length > 1
+              ? `Se sugiere el de ${equipoMasAlto.equipo}, el que más consume. Para los equipos ` +
+                `más chicos este tope va a quedar holgado: es el precio de que sea UN número ` +
+                `para todos.`
+              : null,
+        }
+      : {
+          muestraSuficiente: false as const,
+          minimoRequerido: minimo,
+          porEquipo,
+          nota:
+            porEquipo.length === 0
+              ? `Todavía no hay ningún vale de urea en los últimos ${dias} días.`
+              : `Ningún equipo llega a ${minimo} días con vales de urea todavía.`,
+        };
+
+    // ── Ratio urea/diésel: acumulado por equipo, no día por día ─────────
+    const acumuladoPorEquipo = new Map<string, { urea: number; diesel: number }>();
+    for (const f of filas) {
+      const clave = f.placaCodigo ?? `equipo #${f.equipoId ?? "?"}`;
+      const acc = acumuladoPorEquipo.get(clave) ?? { urea: 0, diesel: 0 };
+      acc.urea += f.ureaL;
+      acc.diesel += f.dieselL;
+      acumuladoPorEquipo.set(clave, acc);
+    }
+    // Solo los equipos que cargaron LOS DOS productos: con diésel 0 el ratio
+    // es una división por cero, y con urea 0 el equipo probablemente no usa
+    // urea -- meterlo con 0% bajaría el promedio y haría el umbral más
+    // estricto de lo real, alertando por trabajo normal.
+    const ratiosPorEquipo = [...acumuladoPorEquipo.entries()]
+      .filter(([, a]) => a.diesel > 0 && a.urea > 0)
+      .map(([equipo, a]) => ({
+        equipo,
+        ureaL: Number(a.urea.toFixed(1)),
+        dieselL: Number(a.diesel.toFixed(1)),
+        ratioPct: Number(((a.urea / a.diesel) * 100).toFixed(2)),
+      }));
+    // MINIMO_MUESTRA son 10 DÍAS cuando la muestra es de días; acá la muestra
+    // es de EQUIPOS, y pedir 10 equipos con los dos productos dejaría el
+    // asistente apagado en una flota chica. Tres es el mínimo con el que un
+    // desvío significa algo.
+    const MIN_EQUIPOS_RATIO = 3;
+    const ratio =
+      ratiosPorEquipo.length < MIN_EQUIPOS_RATIO
+        ? {
+            muestraSuficiente: false as const,
+            equiposConLosDosProductos: ratiosPorEquipo.length,
+            minimoRequerido: MIN_EQUIPOS_RATIO,
+            porEquipo: ratiosPorEquipo,
+            nota:
+              `Hacen falta al menos ${MIN_EQUIPOS_RATIO} equipos con vales de urea Y de diésel ` +
+              `en los últimos ${dias} días para que la proporción signifique algo.`,
+          }
+        : (() => {
+            const e = estadistico(ratiosPorEquipo.map((r) => r.ratioPct));
+            return {
+              muestraSuficiente: true as const,
+              sugeridoPct: Number((e.promedio + 2 * e.desviacion).toFixed(1)),
+              promedioPct: Number(e.promedio.toFixed(2)),
+              maximoObservadoPct: Number(e.maximo.toFixed(2)),
+              formula: "promedio + 2 desvíos de la proporción urea/diésel de cada equipo",
+              porEquipo: ratiosPorEquipo,
+              nota: null as string | null,
+            };
+          })();
+
+    // ── Stock mínimo y máximo: consumo TOTAL de la empresa por día ───────
+    // Acá el equipo no importa: el depósito es uno, y lo que lo vacía es la
+    // suma de todo lo que sale.
+    // Solo lo que salió del DEPÓSITO (0119): la urea comprada en ruta no
+    // vacía el almacén, y sumarla inflaría el mínimo y el máximo sugeridos.
+    const ureaPorDia = new Map<string, number>();
+    for (const f of filas) {
+      if (f.ureaAlmacenL <= 0) continue;
+      const clave = new Date(f.dia).toISOString().slice(0, 10);
+      ureaPorDia.set(clave, (ureaPorDia.get(clave) ?? 0) + f.ureaAlmacenL);
+    }
+    const diasOrdenados = [...ureaPorDia.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+
+    const stock =
+      diasOrdenados.length < minimo
+        ? {
+            muestraSuficiente: false as const,
+            diasConConsumo: diasOrdenados.length,
+            minimoRequerido: minimo,
+            nota:
+              `Hacen falta al menos ${minimo} días con consumo de urea. Van ` +
+              `${diasOrdenados.length} en los últimos ${dias} días.`,
+          }
+        : (() => {
+            // La PEOR SEMANA: máximo de todas las ventanas móviles de 7 días
+            // CALENDARIO, no de 7 filas con movimiento. La diferencia importa:
+            // siete días con consumo salteados a lo largo de un mes no son una
+            // semana, y tomarlos como tal infla el mínimo sugerido.
+            const porFecha = new Map(diasOrdenados);
+            const primera = new Date(`${diasOrdenados[0][0]}T00:00:00Z`);
+            const ultima = new Date(`${diasOrdenados[diasOrdenados.length - 1][0]}T00:00:00Z`);
+            const DIA_MS = 24 * 3600 * 1000;
+            const totalDias = Math.round((ultima.getTime() - primera.getTime()) / DIA_MS) + 1;
+            const serie: number[] = [];
+            for (let i = 0; i < totalDias; i++) {
+              const fecha = new Date(primera.getTime() + i * DIA_MS).toISOString().slice(0, 10);
+              serie.push(porFecha.get(fecha) ?? 0);
+            }
+            let peorSemana = 0;
+            let ventana = 0;
+            for (let i = 0; i < serie.length; i++) {
+              ventana += serie[i];
+              if (i >= 7) ventana -= serie[i - 7];
+              peorSemana = Math.max(peorSemana, ventana);
+            }
+
+            const litrosTotales = diasOrdenados.reduce((a, [, l]) => a + l, 0);
+            // Promedio sobre los días CALENDARIO del período observado, no
+            // sobre los días con movimiento: un depósito se vacía también los
+            // días que nadie carga nada, y dividir solo por los días activos
+            // daría un consumo diario inflado y un techo demasiado alto.
+            const promedioDiario = litrosTotales / totalDias;
+            const e = estadistico(diasOrdenados.map(([, l]) => l));
+
+            return {
+              muestraSuficiente: true as const,
+              diasConConsumo: diasOrdenados.length,
+              diasObservados: totalDias,
+              promedioDiarioL: Number(promedioDiario.toFixed(1)),
+              diaMaximoL: Number(e.maximo.toFixed(1)),
+              peorSemanaL: Number(peorSemana.toFixed(1)),
+              minimoSugeridoL: Number(peorSemana.toFixed(0)),
+              minimoFormula:
+                "el consumo de la peor semana observada -- con eso en el depósito se aguanta " +
+                "la semana más fuerte que tuvo la empresa",
+              maximoSugeridoL: Number((promedioDiario * 30).toFixed(0)),
+              maximoFormula:
+                "un mes de consumo al ritmo actual (promedio diario x 30) -- más que eso es " +
+                "urea parada en el depósito",
+              nota:
+                peorSemana >= promedioDiario * 30
+                  ? "Ojo: la peor semana observada es tan alta que el mínimo sugerido alcanza " +
+                    "al máximo sugerido. Suele significar que hubo un pico muy fuera de lo " +
+                    "normal (o un vale mal tipeado) -- miralo antes de aceptar cualquiera de " +
+                    "los dos."
+                  : (null as string | null),
+            };
+          })();
+
+    return {
+      diasHistorial: dias,
+      topeDiario,
+      ratio,
+      stock,
+      // El recordatorio no es decorativo: es el único lugar donde queda
+      // dicho, en la respuesta misma, que estos números pueden estar
+      // tolerando lo que vinieron a detectar.
+      advertencia:
+        "Estos números salen del historial de la empresa. Si ya se venía sacando urea de más, " +
+        "ese consumo está en el promedio y el umbral sugerido lo va a tolerar. Mirá el día " +
+        "máximo y la muestra antes de aceptar.",
+    };
+  }
+
+  /** TODO lo que el panel de urea necesita saber de un vistazo (0117): el
+   *  stock de hoy, contra qué se compara, y qué tan cerca está de los
+   *  límites. Una sola llamada porque la pantalla los muestra juntos y
+   *  partirla en tres endpoints haría tres viajes para armar una barra.
+   *
+   *  `stockL` puede ser NEGATIVO y eso no es un error que haya que esconder:
+   *  significa que los vales declaran más urea de la que las entradas
+   *  explican. Mostrarlo en 0 sería tapar justo el síntoma que el módulo
+   *  existe para encontrar -- mismo criterio que el saldo con signo del
+   *  kardex (ver la 2ª simulación de robo: SUMA CON SIGNO).
+   *
+   *  Los dos umbrales viajan como `null` si la empresa no los configuró, y
+   *  la pantalla tiene que saber distinguir eso de un 0: null = ese control
+   *  está apagado, no "el límite es cero". */
+  async getEstadoStockUrea(client: PoolClient, tenantId: string) {
+    const ahora = new Date().toISOString();
+    const [stock, { stockMinimoUreaL, stockMaximoUreaL }, ultimoConteo, presentaciones] =
+      await Promise.all([
+        this.repository.findStockTeoricoUrea(client, tenantId, ahora),
+        this.repository.getTopesUrea(client, tenantId),
+        this.repository.findUltimoConteoUreaVigente(client, tenantId),
+        this.repository.findPresentacionesUrea(client, tenantId),
+      ]);
+
+    const referencia = presentaciones.find((p) => p.es_referencia && p.activa) ?? null;
+    const litrosPorBulto = referencia ? Number(referencia.litros) : null;
+
+    return {
+      stockL: Number(stock.toFixed(2)),
+      stockMinimoL: stockMinimoUreaL,
+      stockMaximoL: stockMaximoUreaL,
+      // La unidad en la que la empresa piensa su urea. La pantalla arma
+      // "≈ 18 cajas" con esto -- y si no hay referencia marcada, muestra
+      // litros solos, que nunca están mal.
+      referencia:
+        referencia && litrosPorBulto && litrosPorBulto > 0
+          ? {
+              nombre: referencia.nombre,
+              litros: litrosPorBulto,
+              bultos: Number((stock / litrosPorBulto).toFixed(1)),
+            }
+          : null,
+      // El último conteo FÍSICO y su diferencia contra lo que los papeles
+      // decían EN ESE MOMENTO -- no contra el stock de ahora, que ya se
+      // movió. Es el dato que contesta "¿la última vez que fuimos a contar,
+      // cuadró?".
+      ultimoConteo: ultimoConteo
+        ? {
+            contadoL: ultimoConteo.cantidadLitros,
+            contadoEn: new Date(ultimoConteo.contadoEn).toISOString(),
+            diferenciaL: Number(
+              (
+                ultimoConteo.cantidadLitros -
+                (await this.repository.findStockTeoricoUrea(
+                  client,
+                  tenantId,
+                  new Date(ultimoConteo.contadoEn).toISOString()
+                ))
+              ).toFixed(2)
+            ),
+          }
+        : null,
+    };
+  }
+
+  /** KARDEX DE UREA (entrega 3) -- el del tanque, con el conteo físico donde el
+   *  tanque pone la varilla. El saldo teórico es corriente desde el saldo
+   *  inicial del período; un movimiento anulado se VE (es evidencia) pero no
+   *  mueve el saldo. El conteo NO lo corrige: la diferencia se muestra contra
+   *  lo que los papeles decían en ese momento, y el saldo sigue su curso.
+   *
+   *  Cada fila lleva su `factor_litros` congelado: el kardex tiene que poder
+   *  mostrar con qué número se convirtió cada bulto (vector 2 del ADR). */
+  async armarKardexUrea(client: PoolClient, tenantId: string, desde: string, hasta: string) {
+    const { filas: crudas, saldoInicial } = await this.repository.findKardexUrea(
+      client,
+      tenantId,
+      desde,
+      hasta
+    );
+    let saldo = saldoInicial;
+    const filas = crudas.map((f) => {
+      const anulada = f.anulada_en !== null;
+      const litros = Number(f.cantidad);
+      const esConteo = f.tipo === "conteo";
+      const entrada = f.tipo === "entrada" ? litros : 0;
+      const salida = f.tipo === "vale" ? litros : 0;
+      if (!anulada) saldo += entrada - salida;
+      return {
+        ocurrido_en: f.ocurrido_en as Date,
+        tipo: f.tipo as "entrada" | "vale" | "conteo",
+        referencia_id: Number(f.id),
+        documento: f.documento as string,
+        detalle: f.detalle as string,
+        entrada: anulada ? 0 : entrada,
+        salida: anulada ? 0 : salida,
+        // Anulado: se ve lo que habría movido, pero no participa del saldo.
+        litros_declarados: esConteo ? null : litros,
+        bultos: f.cantidad_bultos === null ? null : Number(f.cantidad_bultos),
+        presentacion: (f.presentacion as string | null) ?? null,
+        factor_litros: f.factor_litros === null ? null : Number(f.factor_litros),
+        saldo_teorico: anulada || esConteo ? null : Number(saldo.toFixed(2)),
+        contado: esConteo && !anulada ? litros : null,
+        diferencia:
+          esConteo && !anulada ? Number((litros - saldo).toFixed(2)) : (null as number | null),
+        usuario: (f.usuario as string | null) ?? "Sistema",
+        anulada,
+        motivo_anulacion: (f.motivo_anulacion as string | null) ?? null,
+      };
+    });
+    const conteos = filas.filter((f) => f.tipo === "conteo" && !f.anulada);
+    return {
+      periodo: { desde, hasta },
+      saldo_inicial: Number(saldoInicial.toFixed(2)),
+      filas,
+      resumen: {
+        entradas: Number(filas.reduce((a, f) => a + f.entrada, 0).toFixed(2)),
+        salidas: Number(filas.reduce((a, f) => a + f.salida, 0).toFixed(2)),
+        saldo_final: Number(saldo.toFixed(2)),
+        conteos: conteos.length,
+        anulados: filas.filter((f) => f.anulada).length,
+        // El número que hay que explicar: la diferencia del ÚLTIMO conteo
+        // vigente. null si no se contó nada -- "0" afirmaría que cuadra.
+        diferencia_final: conteos.length ? conteos[conteos.length - 1].diferencia : null,
+      },
+    };
+  }
+
+  /** "≈ 3 cajas" -- los litros traducidos a la unidad en la que la empresa
+   *  piensa su urea (la presentación marcada `es_referencia`, 0116).
+   *
+   *  Existe porque nadie en almacén cuenta litros: cuenta cajas. Un correo
+   *  que dice "quedan 48 L" obliga a hacer la división a mano para saber si
+   *  eso es mucho o poco; "quedan 48 L (≈ 3 cajas)" se entiende de una.
+   *
+   *  `null` si la empresa no marcó ninguna de referencia o si la marcada
+   *  tiene litros raros -- en ese caso el texto se queda con los litros
+   *  solos, que nunca están mal. */
+  async equivalenteEnBultosDeReferencia(
+    client: PoolClient,
+    tenantId: string,
+    litros: number
+  ): Promise<string | null> {
+    const presentaciones = await this.repository.findPresentacionesUrea(client, tenantId);
+    const referencia = presentaciones.find((p) => p.es_referencia && p.activa);
+    if (!referencia) return null;
+    const porBulto = Number(referencia.litros);
+    if (!Number.isFinite(porBulto) || porBulto <= 0) return null;
+    const bultos = litros / porBulto;
+    // Un decimal: "≈ 2.5 cajas" es información real (media caja abierta);
+    // "≈ 2.4857 cajas" es ruido que finge una precisión que el conteo de
+    // bultos no tiene.
+    return `≈ ${Number(bultos.toFixed(1))} ${referencia.nombre.toLowerCase()}s`;
+  }
+
+  /** STOCK BAJO DE UREA (migración 0117) -- "queda poca urea, hay que
+   *  reabastecer". Es el `nivel_bajo` del tanque trasladado a un depósito de
+   *  bultos, y comparte su mecánica de ESTADO al pie de la letra:
+   *
+   *    1. Sin mínimo configurado (NULL) no se evalúa nada. Regla del módulo
+   *       desde 0075: no se inventa un umbral.
+   *    2. Si el stock volvió a estar SOBRE el mínimo, cierra la alerta
+   *       abierta si había y devuelve null. Nadie la cierra a mano.
+   *    3. Si ya hay una abierta, devuelve null: una sola alerta por episodio.
+   *       Sin esto, diez vales en un día por debajo del mínimo serían diez
+   *       avisos del mismo faltante.
+   *
+   *  Corre después de cada vale de urea (el movimiento que baja el stock) y
+   *  después de cada entrada (el que lo sube, y por eso cierra la alerta).
+   *  `hasta` es la fecha del movimiento, no `now()`: con un vale retroactivo
+   *  el stock que importa es el de ESE momento en adelante -- y el stock
+   *  teórico se deriva por fecha (findStockTeoricoUrea), así que preguntarle
+   *  por "ahora" cuando el vale es de hace tres días daría otro número. */
+  async evaluarUreaStockBajo(client: PoolClient, tenantId: string, hasta: string) {
+    const { stockMinimoUreaL } = await this.repository.getTopesUrea(client, tenantId);
+    if (stockMinimoUreaL === null) return null;
+
+    const stock = await this.repository.findStockTeoricoUrea(client, tenantId, hasta);
+
+    if (stock >= stockMinimoUreaL) {
+      await this.repository.resolverAlertaUreaStockBajoSiExiste(client, tenantId);
+      return null;
+    }
+    if (await this.repository.existeAlertaUreaStockBajoAbierta(client, tenantId)) return null;
+
+    return {
+      stockL: Number(stock.toFixed(2)),
+      stockMinimoL: stockMinimoUreaL,
+      faltanL: Number((stockMinimoUreaL - stock).toFixed(2)),
+    };
+  }
+
+  /** STOCK EXCEDIDO (migración 0117) -- el techo de ALMACÉN, no de compra.
+   *
+   *  Se evalúa al registrar una ENTRADA y compara contra el stock PROYECTADO
+   *  (`lo que ya había + lo que entra`), no contra la entrada sola. Esa es la
+   *  única diferencia que importa y es deliberada: un tope por entrada se
+   *  esquiva comprando de a poco varias veces, y el pedido del cliente era
+   *  justamente "que la empresa no compre más de lo que consume".
+   *
+   *  NO bloquea, a diferencia del sobrestock del tanque (0102). Ahí hay una
+   *  imposibilidad física --no entran más litros de los que caben--; acá
+   *  siempre se puede apilar otra caja, y rechazar la entrada lograría que no
+   *  se registre. Una compra de más registrada es mucho mejor que una compra
+   *  sin registrar.
+   *
+   *  A diferencia del stock bajo, este NO se deduplica ni se auto-resuelve:
+   *  es un hallazgo sobre una entrada concreta, sigue siendo cierto para
+   *  siempre, y se congela como anomalía si nadie lo explica (ver 0117). */
+  async evaluarUreaStockExcedido(
+    client: PoolClient,
+    tenantId: string,
+    recibidoEn: string,
+    litrosQueEntran: number
+  ) {
+    const { stockMaximoUreaL } = await this.repository.getTopesUrea(client, tenantId);
+    if (stockMaximoUreaL === null) return null;
+
+    // `findStockTeoricoUrea(hasta = recibidoEn)` YA incluye esta recepción:
+    // corre después de que la transacción la confirmó. Así que el proyectado
+    // es el stock a esa fecha, sin volver a sumar los litros que entraron --
+    // sumarlos otra vez los contaría doble y alertaría de más.
+    const proyectado = await this.repository.findStockTeoricoUrea(client, tenantId, recibidoEn);
+    if (proyectado <= stockMaximoUreaL) return null;
+
+    return {
+      stockProyectadoL: Number(proyectado.toFixed(2)),
+      stockMaximoL: stockMaximoUreaL,
+      excesoL: Number((proyectado - stockMaximoUreaL).toFixed(2)),
+      litrosQueEntraron: Number(litrosQueEntran.toFixed(2)),
+      stockPrevioL: Number((proyectado - litrosQueEntran).toFixed(2)),
+    };
+  }
+
+  /** Cuánto tiempo hacia atrás se busca el conteo anulado que el nuevo
+   *  podría estar reemplazando (0118). 72 h: cubre "conté el viernes, lo
+   *  anulé el lunes", y deja afuera un conteo de hace semanas, que ya no es
+   *  el mismo acto de contar. */
+  static readonly HORAS_VENTANA_CONTEO_RECARGADO = 72;
+
+  /** EL CONTEO QUE SE ANULA Y SE VUELVE A CARGAR (0118) -- vector 4 del ADR,
+   *  "anular conteos hasta que uno cuadre".
+   *
+   *  NO se compara la cantidad, como en vale_recargado: entre un conteo y otro
+   *  salen vales, y 80 L y 64 L pueden ser los dos correctos. Se compara el
+   *  DESCUADRE de cada uno contra el stock teórico de su propia hora.
+   *
+   *  Y se alerta SOLO si el nuevo queda MÁS CERCA de cuadrar que el anulado.
+   *  Es el patrón exacto del fraude: tirar el conteo que no cuadra y cargar
+   *  uno que sí. Un recuento que muestra más faltante admite una pérdida
+   *  mayor, no la esconde -- alertarlo sería castigar la corrección honesta
+   *  hasta que nadie quiera corregir.
+   *
+   *  Contra el ÚLTIMO anulado de la ventana, pero informando cuántos hubo:
+   *  tres anulaciones seguidas antes de un conteo que cuadra es el dato que
+   *  convierte una duda en un patrón. */
+  async evaluarUreaConteoRecargado(
+    client: PoolClient,
+    tenantId: string,
+    conteoNuevo: { id: number; contadoL: number; contadoEn: string }
+  ) {
+    const anulados = await this.repository.findConteosUreaAnuladosRecientes(
+      client,
+      tenantId,
+      conteoNuevo.contadoEn,
+      CombustibleService.HORAS_VENTANA_CONTEO_RECARGADO
+    );
+    if (anulados.length === 0) return null;
+
+    const esperadoNuevo = await this.repository.findStockTeoricoUrea(
+      client,
+      tenantId,
+      conteoNuevo.contadoEn
+    );
+    const descuadreNuevo = Number((conteoNuevo.contadoL - esperadoNuevo).toFixed(2));
+    const ultimo = anulados[0];
+
+    // Medio litro de margen: menos que eso es redondeo de bultos, no una
+    // historia distinta.
+    const MARGEN_L = 0.5;
+    if (Math.abs(descuadreNuevo) >= Math.abs(ultimo.descuadreL) - MARGEN_L) return null;
+
+    return {
+      conteoNuevoId: conteoNuevo.id,
+      contadoNuevoL: conteoNuevo.contadoL,
+      descuadreNuevoL: descuadreNuevo,
+      conteoAnuladoId: ultimo.id,
+      contadoAnuladoL: ultimo.contadoL,
+      descuadreAnuladoL: ultimo.descuadreL,
+      anuladoEn: ultimo.anuladaEn,
+      anuladoPor: ultimo.anuladoPor,
+      motivoAnulacion: ultimo.motivo,
+      // Cuánto faltante (o sobrante) "desapareció" con la recarga.
+      descuadreQueSeAchicoL: Number(
+        (Math.abs(ultimo.descuadreL) - Math.abs(descuadreNuevo)).toFixed(2)
+      ),
+      anulacionesEnLaVentana: anulados.length,
+      motivosPrevios: anulados.map((a) => a.motivo).filter(Boolean),
+      ventanaHoras: CombustibleService.HORAS_VENTANA_CONTEO_RECARGADO,
+    };
+  }
+
+  // ── Precios de urea (migración 0121) ─────────────────────────────────
+
+  listarPreciosUrea(client: PoolClient, tenantId: string) {
+    return this.repository.findPreciosUrea(client, tenantId);
+  }
+
+  /** Alta de un precio. El proveedor tiene que vender urea y la presentación
+   *  existir en esta empresa: un precio de un envase que no existe no se
+   *  podría usar nunca, y uno de un proveedor que no vende urea sería un
+   *  precio para compras que el servidor rechaza. */
+  async crearPrecioUrea(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: CrearPrecioUreaInput
+  ) {
+    await this.validarRolGrifo(client, tenantId, data.grifo_id, "urea");
+    await this.resolverFactorPresentacionUrea(client, tenantId, data.presentacion);
+    return this.repository.crearPrecioUrea(client, tenantId, usuarioId, {
+      grifoId: data.grifo_id,
+      presentacion: data.presentacion,
+      marca: data.marca?.trim() || null,
+      precioPorBulto: data.precio_por_bulto,
+      vigenteDesde: data.vigente_desde ?? new Date().toISOString(),
+    });
+  }
+
+  anularPrecioUrea(
+    client: PoolClient,
+    tenantId: string,
+    id: number,
+    usuarioId: string,
+    motivo: string
+  ) {
+    return this.repository.anularPrecioUrea(client, tenantId, id, usuarioId, motivo);
+  }
+
+  existePrecioUrea(client: PoolClient, tenantId: string, id: number) {
+    return this.repository.existePrecioUrea(client, tenantId, id);
+  }
+
+  /** PRECIO FUERA DE CATÁLOGO (0121): alguna presentación de una compra en
+   *  ruta declara un precio por bulto que se aparta del catálogo vigente de
+   *  ese proveedor, a la fecha de la compra, más que la tolerancia.
+   *
+   *  Se mira en las DOS direcciones: por arriba es el caso obvio (declarar
+   *  S/ 80 la caja pactada a S/ 50), pero por abajo también dice algo -- o el
+   *  catálogo quedó viejo, o la boleta no es de urea de verdad.
+   *
+   *  Sin tolerancia configurada (NULL) o sin precio de catálogo para esa
+   *  presentación, no se evalúa: no hay contra qué comparar, y la regla del
+   *  módulo es no inventar la referencia. */
+  async evaluarUreaPrecioFueraDeCatalogo(
+    client: PoolClient,
+    tenantId: string,
+    compra: {
+      grifoId: number;
+      fecha: string;
+      renglones: { presentacion: string; costoPorBulto: number }[];
+    }
+  ) {
+    const { toleranciaPrecioUreaPct } = await this.repository.getTopesUrea(client, tenantId);
+    if (toleranciaPrecioUreaPct === null) return null;
+
+    const desvios: {
+      presentacion: string;
+      precioBoleta: number;
+      precioCatalogo: number;
+      marca: string | null;
+      desvioPct: number;
+    }[] = [];
+    for (const r of compra.renglones) {
+      const vigente = await this.repository.findPrecioUreaVigente(
+        client,
+        tenantId,
+        compra.grifoId,
+        r.presentacion,
+        compra.fecha
+      );
+      if (!vigente) continue;
+      const desvioPct = ((r.costoPorBulto - vigente.precio) / vigente.precio) * 100;
+      if (Math.abs(desvioPct) > toleranciaPrecioUreaPct) {
+        desvios.push({
+          presentacion: r.presentacion,
+          precioBoleta: r.costoPorBulto,
+          precioCatalogo: vigente.precio,
+          marca: vigente.marca,
+          desvioPct: Number(desvioPct.toFixed(1)),
+        });
+      }
+    }
+    if (desvios.length === 0) return null;
+    return { toleranciaPct: toleranciaPrecioUreaPct, desvios };
+  }
+
+  /** Historial de compras de urea en ruta (0120). */
+  listarComprasUrea(
+    client: PoolClient,
+    tenantId: string,
+    filtros: { desde?: string; hasta?: string }
+  ) {
+    return this.repository.findComprasUrea(client, tenantId, filtros, 100);
+  }
+
+  /** Proveedores activos con el rol de urea (0119) -- solo id y nombre. */
+  async listarProveedoresUrea(client: PoolClient, tenantId: string) {
+    const r = await client.query<{ id: number; nombre: string }>(
+      `SELECT id, nombre FROM combustible_grifos
+        WHERE tenant_id = $1 AND activo AND abastece_urea
+        ORDER BY nombre`,
+      [tenantId]
+    );
+    return r.rows;
+  }
+
+  /** La franja de hallazgos del panel (0118): lo de urea que sigue sin
+   *  explicar. Solo lectura -- se revisa desde Combustible → Alertas, donde
+   *  está el cierre con motivo. */
+  async listarHallazgosUrea(client: PoolClient, tenantId: string) {
+    const filas = await this.repository.findHallazgosUreaAbiertos(client, tenantId, 20);
+    return {
+      total: filas.length ? Number(filas[0].total) : 0,
+      hallazgos: filas.map((f) => ({
+        id: Number(f.id),
+        tipo: f.tipo as string,
+        detalle: f.detalle as Record<string, unknown>,
+        creado_en: f.creado_en as Date,
+        congelada: f.congelada_en !== null,
+        despacho_id: f.despacho_id === null ? null : Number(f.despacho_id),
+        recepcion_id: f.recepcion_id === null ? null : Number(f.recepcion_id),
+        urea_conteo_id: f.urea_conteo_id === null ? null : Number(f.urea_conteo_id),
+        vale:
+          f.serie_talonario && f.n_vale !== null
+            ? `${f.serie_talonario}-${String(f.n_vale).padStart(5, "0")}`
+            : null,
+      })),
     };
   }
 
@@ -5149,7 +6109,9 @@ export class CombustibleService {
         // tenant, no del tanque.
         const politica = await this.repository.getPoliticaValidacionRecepcion(client, tenantId);
 
-        const factorLitros = esUrea ? FACTOR_LITROS_UREA[data.presentacion!] : null;
+        const factorLitros = esUrea
+          ? await this.resolverFactorPresentacionUrea(client, tenantId, data.presentacion!)
+          : null;
         const cantidadEntregada = esUrea ? data.cantidad_bultos! * factorLitros! : data.cantidad!;
         // Lo que entró al TANQUE: la entrega menos lo que se derivó (0110).
         // `cantidad` sigue siendo lo que mueve el kardex y el nivel teórico.
@@ -5169,7 +6131,11 @@ export class CombustibleService {
           presentacion: esUrea ? data.presentacion! : null,
           factorLitros,
           cantidadBultos: esUrea ? data.cantidad_bultos! : null,
-          costoUnitario: data.costo_unitario,
+          // Por bulto en el formulario, por litro en la fila -- ver
+          // costoPorLitroUrea.
+          costoUnitario: esUrea
+            ? costoPorLitroUrea(data.costo_unitario, factorLitros!)
+            : data.costo_unitario,
           tipoDocumento: data.tipo_documento ?? null,
           numeroDocumento: data.numero_documento ?? null,
           recibidoEn,

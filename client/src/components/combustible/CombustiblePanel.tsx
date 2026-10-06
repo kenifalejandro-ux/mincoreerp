@@ -475,6 +475,10 @@ interface FilaSegregacion {
   recepciones_cargadas: number;
   lecturas_cargadas: number;
   precintos_colocados: number;
+  // Entrega 4 de urea: el conteo físico es el único control independiente
+  // de la urea; "sobre lo propio" = contó quien también movió urea.
+  conteos_urea: number;
+  conteos_urea_sobre_lo_propio: number;
   anulaciones: number;
   anulaciones_propias: number;
   alertas_revisadas: number;
@@ -703,7 +707,14 @@ interface AlertaCombustible {
     | "precinto_reemplazado"
     | "equipo_de_otro_grifo"
     | "sobrestock_recepcion"
-    | "tanqueta_sobregirada";
+    | "tanqueta_sobregirada"
+    | "urea_equipo_no_habilitado"
+    | "urea_ratio_excedido"
+    | "urea_descuadre_conteo"
+    | "urea_stock_bajo"
+    | "urea_stock_excedido"
+    | "urea_conteo_recargado"
+    | "urea_precio_fuera_de_catalogo";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -1448,6 +1459,14 @@ const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   equipo_de_otro_grifo: "Equipo cargado en otro grifo",
   sobrestock_recepcion: "Excedente de recepción repartido",
   tanqueta_sobregirada: "Tanqueta sobregirada",
+  // Urea (0092, 0117, 0118).
+  urea_equipo_no_habilitado: "Urea a una unidad que no usa urea",
+  urea_ratio_excedido: "Urea/diésel fuera de rango",
+  urea_descuadre_conteo: "El conteo de urea no cuadra",
+  urea_stock_bajo: "Queda poca urea",
+  urea_stock_excedido: "Depósito de urea por encima del máximo",
+  urea_conteo_recargado: "Conteo de urea anulado y vuelto a cargar",
+  urea_precio_fuera_de_catalogo: "Compra de urea con precio fuera del catálogo",
 };
 
 /** El `detalle` es JSONB libre y cada tipo de alerta guarda cosas
@@ -1550,6 +1569,77 @@ function describirDetalleAlerta(a: AlertaCombustible): string {
       `Se registraron ${cantidadRegistrada ?? "?"} ${unidad ?? ""} y la guía dice ` +
       `${cantidadDocumento ?? "?"} (${(diferencia ?? 0) > 0 ? "+" : ""}${diferencia ?? "?"})`
     );
+  }
+  // Urea: la frase con el número que importa. Los nombres de campo son los
+  // del `detalle` que arma cada evaluador en combustible.service.ts.
+  if (a.tipo === "urea_descuadre_conteo") {
+    const { contadoL, esperadoL, descuadreL } = a.detalle as {
+      contadoL?: number;
+      esperadoL?: number;
+      descuadreL?: number;
+    };
+    return `Contados ${contadoL ?? "?"} L, los papeles explican ${esperadoL ?? "?"} L (${(descuadreL ?? 0) > 0 ? "+" : ""}${descuadreL ?? "?"} L)`;
+  }
+  if (a.tipo === "urea_conteo_recargado") {
+    const { descuadreAnuladoL, descuadreNuevoL, motivoAnulacion, anulacionesEnLaVentana } =
+      a.detalle as {
+        descuadreAnuladoL?: number;
+        descuadreNuevoL?: number;
+        motivoAnulacion?: string | null;
+        anulacionesEnLaVentana?: number;
+      };
+    return (
+      `Diferencia ${descuadreAnuladoL ?? "?"} L -> ${descuadreNuevoL ?? "?"} L tras anular ` +
+      `("${motivoAnulacion ?? "sin motivo"}"), ${anulacionesEnLaVentana ?? "?"} anulación(es) en la ventana`
+    );
+  }
+  if (a.tipo === "urea_precio_fuera_de_catalogo") {
+    const { desvios, toleranciaPct, comprobanteNumero } = a.detalle as {
+      desvios?: {
+        presentacion: string;
+        precioBoleta: number;
+        precioCatalogo: number;
+        desvioPct: number;
+      }[];
+      toleranciaPct?: number;
+      comprobanteNumero?: string | null;
+    };
+    return (
+      `${comprobanteNumero ?? "Compra"}: ` +
+      (desvios ?? [])
+        .map(
+          (d) =>
+            `${d.presentacion} S/ ${d.precioBoleta} vs S/ ${d.precioCatalogo} del catálogo (${d.desvioPct > 0 ? "+" : ""}${d.desvioPct}%)`
+        )
+        .join("; ") +
+      ` -- tolerancia ${toleranciaPct ?? "?"}%`
+    );
+  }
+  if (a.tipo === "urea_stock_bajo") {
+    const { stockL, stockMinimoL } = a.detalle as { stockL?: number; stockMinimoL?: number };
+    return `Stock ${stockL ?? "?"} L, mínimo ${stockMinimoL ?? "?"} L`;
+  }
+  if (a.tipo === "urea_stock_excedido") {
+    const { stockPrevioL, litrosQueEntraron, stockMaximoL, excesoL } = a.detalle as {
+      stockPrevioL?: number;
+      litrosQueEntraron?: number;
+      stockMaximoL?: number;
+      excesoL?: number;
+    };
+    return `Había ${stockPrevioL ?? "?"} L, entraron ${litrosQueEntraron ?? "?"} L: ${excesoL ?? "?"} L sobre el máximo de ${stockMaximoL ?? "?"} L`;
+  }
+  if (a.tipo === "urea_ratio_excedido") {
+    const { ratioPct, maxPct, litrosUrea, litrosDiesel } = a.detalle as {
+      ratioPct?: number;
+      maxPct?: number;
+      litrosUrea?: number;
+      litrosDiesel?: number;
+    };
+    return `${litrosUrea ?? "?"} L de urea sobre ${litrosDiesel ?? "?"} L de diésel: ${ratioPct ?? "?"}% (máximo ${maxPct ?? "?"}%)`;
+  }
+  if (a.tipo === "urea_equipo_no_habilitado") {
+    const { placaCodigo } = a.detalle as { placaCodigo?: string };
+    return `${placaCodigo ?? "La unidad"} está marcada como que no usa urea`;
   }
   if (a.tipo === "tanqueta_sobregirada") {
     const { tanqueta, saldo, cantidad } = a.detalle as {
@@ -2266,6 +2356,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [rolesGrifoNuevo, setRolesGrifoNuevo] = useState({
     abastece_ruta: true,
     abastece_tanque: true,
+    // 0119: el tercer rol existía en la base desde 0092 pero no tenía casilla
+    // en esta pantalla -- nadie podía marcar un proveedor para urea, y los
+    // formularios de urea mostraban el desplegable vacío. Nace apagado: la
+    // mayoría de los grifos no venden urea.
+    abastece_urea: false,
   });
   const [guardandoGrifo, setGuardandoGrifo] = useState(false);
 
@@ -3920,7 +4015,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   const abrirModalGrifos = () => {
     setNombreGrifoNuevo("");
-    setRolesGrifoNuevo({ abastece_ruta: true, abastece_tanque: true });
+    setRolesGrifoNuevo({ abastece_ruta: true, abastece_tanque: true, abastece_urea: false });
     setBorradorRolesGrifo({});
     setModalGrifosAbierto(true);
     cargarGrifos();
@@ -3931,8 +4026,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     if (guardandoGrifo || !nombreGrifoNuevo.trim()) return;
     // Un grifo sin ningún rol no sirve para nada: no aparecería en ningún
     // desplegable y el servidor lo rechazaría en los dos casos.
-    if (!rolesGrifoNuevo.abastece_ruta && !rolesGrifoNuevo.abastece_tanque) {
-      alert("Marcá al menos un rol: abastece unidades en ruta, el tanque, o los dos.");
+    if (
+      !rolesGrifoNuevo.abastece_ruta &&
+      !rolesGrifoNuevo.abastece_tanque &&
+      !rolesGrifoNuevo.abastece_urea
+    ) {
+      alert("Marcá al menos un rol: unidades en ruta, el tanque o urea.");
       return;
     }
     setGuardandoGrifo(true);
@@ -3944,6 +4043,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           nombre: nombreGrifoNuevo.trim(),
           abastece_ruta: rolesGrifoNuevo.abastece_ruta,
           abastece_tanque: rolesGrifoNuevo.abastece_tanque,
+          abastece_urea: rolesGrifoNuevo.abastece_urea,
         }),
       });
       if (!res.ok) {
@@ -3952,7 +4052,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         return;
       }
       setNombreGrifoNuevo("");
-      setRolesGrifoNuevo({ abastece_ruta: true, abastece_tanque: true });
+      setRolesGrifoNuevo({ abastece_ruta: true, abastece_tanque: true, abastece_urea: false });
       await cargarGrifos();
     } finally {
       setGuardandoGrifo(false);
@@ -3984,7 +4084,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   /** Roles editados en la lista pero todavía sin guardar, por id de proveedor.
    *  Las casillas solo tocan este borrador; el PUT sale con "Guardar". */
   const [borradorRolesGrifo, setBorradorRolesGrifo] = useState<
-    Record<number, { abastece_ruta: boolean; abastece_tanque: boolean }>
+    Record<number, { abastece_ruta: boolean; abastece_tanque: boolean; abastece_urea: boolean }>
   >({});
 
   /** Proveedores con casillas distintas a las guardadas. */
@@ -3992,7 +4092,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     const b = borradorRolesGrifo[g.id];
     return (
       b !== undefined &&
-      (b.abastece_ruta !== g.abastece_ruta || b.abastece_tanque !== g.abastece_tanque)
+      (b.abastece_ruta !== g.abastece_ruta ||
+        b.abastece_tanque !== g.abastece_tanque ||
+        b.abastece_urea !== g.abastece_urea)
     );
   });
 
@@ -4002,10 +4104,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
    *  fila completa); el que falla conserva su borrador y se nombra. */
   const handleGuardarRolesGrifos = async () => {
     const sinRol = grifosConCambios.find(
-      (g) => !borradorRolesGrifo[g.id].abastece_ruta && !borradorRolesGrifo[g.id].abastece_tanque
+      (g) =>
+        !borradorRolesGrifo[g.id].abastece_ruta &&
+        !borradorRolesGrifo[g.id].abastece_tanque &&
+        !borradorRolesGrifo[g.id].abastece_urea
     );
     if (sinRol) {
-      alert(`"${sinRol.nombre}": marcá al menos un rol (en ruta, tanque, o los dos).`);
+      alert(`"${sinRol.nombre}": marcá al menos un rol (en ruta, tanque o urea).`);
       return;
     }
     setGuardandoRolesGrifo(true);
@@ -4021,7 +4126,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           activo: g.activo,
           abastece_ruta: b.abastece_ruta,
           abastece_tanque: b.abastece_tanque,
-          abastece_urea: g.abastece_urea,
+          abastece_urea: b.abastece_urea,
         }),
       });
       if (res.ok) delete restante[g.id];
@@ -4698,7 +4803,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           <span className="text-xs font-semibold text-red-800 underline">Revisar</span>
         </button>
       )}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-10">
+      {/* Urea tiene su propio encabezado con su barra de herramientas
+          (UreaPanel), como Tanques tiene el suyo acá: dos títulos apilados
+          confundían de qué pantalla se trataba. */}
+      <div
+        className={`flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-10 ${
+          pestanaCombustible === "urea" ? "hidden" : ""
+        }`}
+      >
         <div className="shrink-0">
           <h1 className="text-lg sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight">
             {esConductor ? "Registrar despacho" : "Control de Combustible"}
@@ -7480,8 +7592,19 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   />
                   Abastece el tanque (cisterna)
                 </label>
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={rolesGrifoNuevo.abastece_urea}
+                    onChange={(e) =>
+                      setRolesGrifoNuevo({ ...rolesGrifoNuevo, abastece_urea: e.target.checked })
+                    }
+                  />
+                  Vende urea
+                </label>
                 <p className="text-xs text-slate-600">
-                  Marcá los dos si el mismo proveedor te vende en ruta y a granel.
+                  Marcá todos los que correspondan: el mismo proveedor puede venderte en ruta, a
+                  granel y urea.
                 </p>
               </div>
             </form>
@@ -7514,6 +7637,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       const b = borradorRolesGrifo[g.id] ?? {
                         abastece_ruta: g.abastece_ruta,
                         abastece_tanque: g.abastece_tanque,
+                        abastece_urea: g.abastece_urea,
                       };
                       return (
                         <div className="flex flex-wrap items-center gap-4">
@@ -7542,6 +7666,19 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                               }
                             />
                             Tanque (cisterna)
+                          </label>
+                          <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                            <input
+                              type="checkbox"
+                              checked={b.abastece_urea}
+                              onChange={(e) =>
+                                setBorradorRolesGrifo({
+                                  ...borradorRolesGrifo,
+                                  [g.id]: { ...b, abastece_urea: e.target.checked },
+                                })
+                              }
+                            />
+                            Urea
                           </label>
                         </div>
                       );
@@ -8457,6 +8594,15 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                             <th className="p-2 text-right" title="Precintos que colocó">
                               Precintos
                             </th>
+                            <th className="p-2 text-right" title="Conteos físicos de urea">
+                              Conteos urea
+                            </th>
+                            <th
+                              className="p-2 text-right"
+                              title="Contó la urea y también registró vales o entradas de urea en el período: el conteo deja de ser un control independiente"
+                            >
+                              …sobre lo propio
+                            </th>
                             <th className="p-2 text-right">Anulaciones</th>
                             <th
                               className="p-2 text-right"
@@ -8481,6 +8627,16 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                               <td className="p-2 text-right">{p.recepciones_cargadas}</td>
                               <td className="p-2 text-right">{p.lecturas_cargadas}</td>
                               <td className="p-2 text-right">{p.precintos_colocados}</td>
+                              <td className="p-2 text-right">{p.conteos_urea}</td>
+                              <td
+                                className={`p-2 text-right font-bold ${
+                                  p.conteos_urea_sobre_lo_propio > 0
+                                    ? "text-amber-600"
+                                    : "text-slate-300"
+                                }`}
+                              >
+                                {p.conteos_urea_sobre_lo_propio}
+                              </td>
                               <td className="p-2 text-right">{p.anulaciones}</td>
                               <td
                                 className={`p-2 text-right font-bold ${

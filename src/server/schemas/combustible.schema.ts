@@ -257,11 +257,16 @@ export type AnularLecturaCombustibleInput = z.infer<typeof anularLecturaCombusti
 // directo de la cisterna a una unidad. No sale de ningún tanque.
 // 'tanqueta' (0114): la carga en ruta desde una tanqueta, que registra el
 // conductor con el medidor de la unidad. No sale de ningún tanque.
+// 'almacen' (0119): solo urea -- el reparto desde el depósito de la empresa,
+// con talonario propio. Es el análogo de tanque_propio y es lo único que baja
+// el stock de urea. La urea comprada en ruta es 'compra_externa', con el
+// mismo significado que en combustible.
 const ORIGENES_DESPACHO = [
   "tanque_propio",
   "compra_externa",
   "excedente_recepcion",
   "tanqueta",
+  "almacen",
 ] as const;
 const TIPOS_DESTINO_DESPACHO = ["equipo", "planta", "reserva_cubeta"] as const;
 
@@ -278,21 +283,35 @@ export const TIPOS_COMPROBANTE_COMPRA = ["boleta", "factura"] as const;
 // otro producto que comparte la misma tabla).
 const PRODUCTOS_DESPACHO = ["combustible", "urea"] as const;
 
-// bolsa (4 L), caja (16 L, SIEMPRE 4 bolsas -- el cliente lo confirmó sin
-// el "por lo general" de la respuesta de agosto), balde (20 L, es Green 32
-// y en Perú los baldes vienen en ese tamaño). Fuente única de verdad para
-// el factor de conversión -- el cliente NO lo manda: mandaría lo mismo que
-// el sistema ya sabe, y dejar que lo mande abriría la puerta a que alguien
-// declare una caja de 30 L el día que le convenga. El servidor lo resuelve
-// y lo CONGELA en la fila (ver el encabezado de 0092) -- si el cliente
-// confirma otro tamaño de envase el día de mañana, este mapa cambia pero
-// las filas viejas no se reinterpretan solas.
-export const PRESENTACIONES_UREA = ["bolsa", "caja", "balde"] as const;
-export const FACTOR_LITROS_UREA: Record<(typeof PRESENTACIONES_UREA)[number], number> = {
-  bolsa: 4,
-  caja: 16,
-  balde: 20,
-};
+// ── Presentaciones de urea: SEMILLA, no fuente de verdad (0116) ──────────
+//
+// Hasta 0116 este mapa ERA la fuente de verdad del factor de conversión, y
+// `presentacion` era un enum de tres valores fijos. Dejó de serlo: los
+// litros por bulto viven en `combustible_urea_presentaciones`, una por
+// empresa y editable desde la pantalla, porque la caja cambió de 16 a 20 L
+// a los veinte días de arrancar y el próximo envase no debería costar una
+// migración (ver docs/architecture/urea-industrial.md, decisión 3).
+//
+// Esto queda SOLO como semilla: lo usa el alta de un tenant nuevo
+// (platform.service.ts) para crearle su catálogo inicial, igual que el seed
+// de la migración. NADIE debe usarlo para calcular litros -- el factor sale
+// del catálogo del tenant y se CONGELA en cada fila (combustible.service.ts,
+// resolverFactorPresentacionUrea).
+export const PRESENTACIONES_UREA_INICIALES = [
+  { codigo: "bolsa", nombre: "Bolsa", litros: 4, esReferencia: false },
+  { codigo: "caja", nombre: "Caja", litros: 16, esReferencia: true },
+  { codigo: "balde", nombre: "Balde", litros: 20, esReferencia: false },
+] as const;
+
+/** Forma del código de presentación -- espejo exacto del CHECK
+ *  `combustible_urea_presentaciones_codigo_check` de 0116. Que EXISTA en el
+ *  catálogo del tenant y esté activa lo valida el service (necesita leer
+ *  otra tabla, que es justo lo que Zod no puede hacer); esto solo ataja la
+ *  forma, para dar un 400 legible antes de tocar la base. */
+const codigoPresentacionUrea = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9_]{2,20}$/, "El código de presentación va en minúsculas, sin espacios");
 
 /** Reglas cruzadas que Zod no expresa "limpio" solo con tipos -- por eso
  *  van en `.superRefine()` en vez de intentar dos schemas con `.and()`/
@@ -432,8 +451,27 @@ export const crearDespachoCombustibleSchema = z
     // Solo producto='urea' -- cómo se dispensó y cuántas unidades. El
     // factor de conversión NO viaja acá (ver FACTOR_LITROS_UREA): lo
     // resuelve el servidor a partir de `presentacion`, nunca el cliente.
-    presentacion: z.enum(PRESENTACIONES_UREA).optional(),
+    presentacion: codigoPresentacionUrea.optional(),
     cantidad_bultos: z.number().int().positive().optional(),
+
+    // Solo la compra de urea en ruta (0120): una boleta puede traer varias
+    // presentaciones -- "2 cajas + 3 bolsas". Cada renglón con su precio por
+    // bulto tal como figura en el papel. Hasta 10: una boleta de grifo no
+    // tiene más, y el techo corta un body inflado antes de tocar la base.
+    // La forma de UNA presentación (presentacion + cantidad_bultos +
+    // costo_unitario sueltos) se sigue aceptando y el .transform() la
+    // convierte en un renglón.
+    lineas: z
+      .array(
+        z.object({
+          presentacion: codigoPresentacionUrea,
+          cantidad_bultos: z.number().int().positive(),
+          costo_unitario: z.number().positive(),
+        })
+      )
+      .min(1, "la compra necesita al menos un renglón")
+      .max(10, "una compra no puede tener más de 10 renglones")
+      .optional(),
 
     // Cuándo se hizo el despacho en cancha -- opcional, mismo criterio que
     // `leido_en` de una lectura: sin dato, el service usa now().
@@ -473,11 +511,19 @@ export const crearDespachoCombustibleSchema = z
   .superRefine((data, ctx) => {
     // ── UREA: rama separada, ver el comentario de arriba del schema ──────
     if (data.producto === "urea") {
-      if (data.origen !== "compra_externa") {
+      // Dos orígenes (0119). 'compra_externa' con vale y SIN comprobante es
+      // la forma vieja del reparto del almacén -- la puede traer la cola
+      // offline de un dispositivo que se quedó sin red antes del deploy. Se
+      // acepta y el .transform() de abajo la normaliza a 'almacen'.
+      const esCompraEnRuta =
+        data.origen === "compra_externa" &&
+        (data.comprobante_tipo !== undefined || data.comprobante_numero !== undefined);
+      if (data.origen !== "almacen" && data.origen !== "compra_externa") {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["origen"],
-          message: "la urea siempre es 'compra_externa' -- no hay tanque propio de urea",
+          message:
+            "la urea sale del almacén ('almacen') o se compra en ruta ('compra_externa') -- no hay tanque de urea",
         });
       }
       if (data.tipo_destino !== "equipo" || data.equipo_id === undefined) {
@@ -494,19 +540,44 @@ export const crearDespachoCombustibleSchema = z
           message: "grifo_id (el proveedor de urea) es obligatorio",
         });
       }
-      if (data.presentacion === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["presentacion"],
-          message: "presentacion es obligatoria para un vale de urea (bolsa, caja o balde)",
-        });
-      }
-      if (data.cantidad_bultos === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["cantidad_bultos"],
-          message: "cantidad_bultos es obligatoria para un vale de urea",
-        });
+      // Con renglones (0120), la presentación va en cada renglón y no suelta.
+      // Las dos formas a la vez serían dos respuestas a la misma pregunta.
+      if (data.lineas !== undefined) {
+        if (
+          data.presentacion !== undefined ||
+          data.cantidad_bultos !== undefined ||
+          data.costo_unitario !== undefined
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["lineas"],
+            message:
+              "con renglones, la presentación, la cantidad y el precio van en cada renglón, no sueltos",
+          });
+        }
+        const codigos = data.lineas.map((l) => l.presentacion);
+        if (new Set(codigos).size !== codigos.length) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["lineas"],
+            message: "la misma presentación aparece en dos renglones -- sumalos en uno",
+          });
+        }
+      } else {
+        if (data.presentacion === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["presentacion"],
+            message: "presentacion es obligatoria para un vale de urea (bolsa, caja o balde)",
+          });
+        }
+        if (data.cantidad_bultos === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["cantidad_bultos"],
+            message: "cantidad_bultos es obligatoria para un vale de urea",
+          });
+        }
       }
       // Campos exclusivos de combustible -- ninguno aplica acá. Que el
       // servidor los rechace y no simplemente los ignore importa: un
@@ -523,11 +594,6 @@ export const crearDespachoCombustibleSchema = z
         ["lectura_horometro", data.lectura_horometro],
         ["lectura_odometro", data.lectura_odometro],
         ["horas_abastecidas", data.horas_abastecidas],
-        // 0109: la urea es compra_externa, pero conserva su talonario
-        // PROPIO (el cliente lo aceptó así en 0092) y por eso NO lleva
-        // comprobante de proveedor.
-        ["comprobante_tipo", data.comprobante_tipo],
-        ["comprobante_numero", data.comprobante_numero],
       ];
       for (const [campo, valor] of camposDeCombustible) {
         if (valor !== undefined) {
@@ -538,11 +604,90 @@ export const crearDespachoCombustibleSchema = z
           });
         }
       }
+
+      if (esCompraEnRuta) {
+        // Compra en ruta (0119): el papel es la boleta o factura del
+        // proveedor, nunca un vale de la empresa -- mismo criterio que la
+        // compra externa de combustible (0109). Y el costo es OBLIGATORIO:
+        // es lo que dice el comprobante, no un promedio que el servidor
+        // pueda estimar como en el reparto del almacén.
+        if (data.comprobante_tipo === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["comprobante_tipo"],
+            message: "comprobante_tipo es obligatorio (boleta o factura)",
+          });
+        }
+        if (data.comprobante_numero === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["comprobante_numero"],
+            message: "el número de la boleta o factura es obligatorio",
+          });
+        }
+        if (data.serie_talonario !== undefined || data.n_vale !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["serie_talonario"],
+            message:
+              "una compra en ruta se identifica con el comprobante del proveedor, no con un vale de la empresa",
+          });
+        }
+        if (data.lineas === undefined && data.costo_unitario === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["costo_unitario"],
+            message: "el costo por bulto de la boleta es obligatorio en una compra en ruta",
+          });
+        }
+        return;
+      }
+
+      // Los renglones son de la compra en ruta: el reparto del almacén sale
+      // con una presentación por vale (0120, decisión de Kenif).
+      if (data.lineas !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["lineas"],
+          message:
+            "los renglones son de la compra en ruta; el vale del almacén lleva una presentación",
+        });
+      }
+
+      // Reparto del almacén: el talonario propio (0092), sin comprobante.
+      for (const [campo, valor] of [
+        ["comprobante_tipo", data.comprobante_tipo],
+        ["comprobante_numero", data.comprobante_numero],
+      ] as const) {
+        if (valor !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [campo],
+            message: `${campo} no aplica al reparto del almacén -- es de la compra en ruta`,
+          });
+        }
+      }
       exigirVale(data, ctx, "un vale de urea");
       return;
     }
 
     // ── COMBUSTIBLE: la validación de siempre, sin cambios ───────────────
+    if (data.origen === "almacen") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["origen"],
+        message: "'almacen' es el reparto de urea; el combustible sale de 'tanque_propio'",
+      });
+      return;
+    }
+    if (data.lineas !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["lineas"],
+        message: "lineas es de la compra de urea en ruta",
+      });
+      return;
+    }
     if (data.tipo_combustible === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -933,6 +1078,40 @@ export const crearDespachoCombustibleSchema = z
         });
       }
     }
+  })
+  // La forma vieja del reparto del almacén de urea ('compra_externa' + vale,
+  // anterior a 0119) se normaliza ACÁ, una sola vez, para que el resto del
+  // código nunca la vea: el servicio, las alertas y la fila guardada dicen
+  // 'almacen'. Si cada lugar tuviera que reconocer las dos formas, el primero
+  // que se olvide haría bajar el stock por una compra en ruta o al revés.
+  .transform((data) => {
+    if (data.producto !== "urea") return data;
+    if (
+      data.origen === "compra_externa" &&
+      data.comprobante_tipo === undefined &&
+      data.comprobante_numero === undefined
+    ) {
+      return { ...data, origen: "almacen" as const };
+    }
+    // La compra en ruta SIEMPRE llega al servicio con renglones (0120): la
+    // forma de una sola presentación es un renglón. Un solo camino de código
+    // para "de qué está hecha esta compra".
+    if (data.origen === "compra_externa" && data.lineas === undefined) {
+      return {
+        ...data,
+        lineas: [
+          {
+            presentacion: data.presentacion!,
+            cantidad_bultos: data.cantidad_bultos!,
+            costo_unitario: data.costo_unitario!,
+          },
+        ],
+        presentacion: undefined,
+        cantidad_bultos: undefined,
+        costo_unitario: undefined,
+      };
+    }
+    return data;
   });
 
 export type CrearDespachoCombustibleInput = z.infer<typeof crearDespachoCombustibleSchema>;
@@ -1008,87 +1187,128 @@ export const resolverAlertaCombustibleSchema = z.object({
 
 export type ResolverAlertaCombustibleInput = z.infer<typeof resolverAlertaCombustibleSchema>;
 
-export const configCombustibleSchema = z.object({
-  ventana_gracia_horas: z.number().int().min(1).max(8760),
-  // Cada cuántos días se exige tomar varilla (migración 0076). Sin lecturas
-  // no hay descuadre que calcular ni diferencia de recepción que comparar:
-  // dejar de medir apaga las dos detecciones de una, y eso es exactamente
-  // lo que esta alerta vigila.
-  dias_sin_medir: z.number().int().min(1).max(365),
-  // Cuántos días mira para atrás el acumulado de 0080. BAJARLO afloja: con 7
-  // días en vez de 30 el que roba de a poco nunca junta lo suficiente.
-  dias_ventana_descuadre: z.number().int().min(7).max(365),
-  // Días tolerados entre la fecha del vale y su carga (0081). A diferencia de
-  // los umbrales, acá SÍ hay default: el límite lo pone la tecnología (cuánto
-  // tarda una cola offline en sincronizar), no la operación.
-  dias_carga_retroactiva: z.number().int().min(1).max(90),
-  // Días que un tanque puede despachar con los tres umbrales apagados antes
-  // de que el sistema insista (0082). Default 7.
-  dias_sin_vigilancia: z.number().int().min(1).max(90),
-  // Los dos topes diarios de la migración 0079. Nullable con la misma
-  // semántica que los umbrales del tanque desde 0075: null = sin configurar
-  // = no alerta. No se les pone default -- un techo inventado o alerta por
-  // trabajo normal (y entonces se ignora) o queda tan alto que no atrapa
-  // nada. El mínimo de 0.1 en los llenados es a propósito: 0 acá no
-  // significa "estricto", significa "nadie puede recibir nada".
-  llenados_por_dia_max: z.number().min(0.1).max(50).nullable(),
-  tope_diario_sin_capacidad_l: z.number().positive().max(9_999_999).nullable(),
-  // Si el rol `grifero` (0085) puede tomar varilla. Decisión de Kenif: en la
-  // operación real de este cliente la toma el mismo que despacha, así que la
-  // separación entre quien mide y quien despacha es una POLÍTICA que cada
-  // empresa elige, no una regla que el sistema imponga.
-  //
-  // .default(true) y no requerido: es el ÚNICO campo opcional de este schema,
-  // a propósito. Agregarlo como requerido rompía todo llamador existente del
-  // PUT --incluida la pantalla vieja que siga abierta en un navegador-- y el
-  // default coincide con el comportamiento que ya había. El riesgo conocido
-  // es el inverso: un cliente viejo que mande la config SIN este campo se lo
-  // vuelve a poner en true sin que nadie lo pida. Por eso pasar de false a
-  // true cuenta como aflojamiento y queda auditado (ver
-  // evaluarAflojamientoConfig).
-  grifero_registra_varilla: z.boolean().default(true),
-  // ── 5ª auditoría (migración 0088) ──────────────────────────────────────
-  //
-  // Los tres con default DEL LADO ESTRICTO, y eso es lo que los hace seguros
-  // como opcionales: este PUT reemplaza la fila entera, así que un llamador
-  // viejo que no los mande solo puede ENDURECER la vigilancia, nunca aflojarla
-  // en silencio. Es la vuelta al problema que dejó `grifero_registra_varilla`.
-  //
-  // Si la recepción tiene que validarla alguien distinto del que la registró,
-  // contra la guía del proveedor. Es el control que cierra la recepción
-  // sub-declarada: registrar 9.000 de una entrega de 10.000 y llevarse la
-  // diferencia no disparaba NADA, porque el mismo que recibía escribía el
-  // único número que existía.
-  recepcion_requiere_validacion: z.boolean().default(true),
-  horas_para_validar_recepcion: z.number().int().min(1).max(720).default(48),
-  // Días tolerados sin una varilla tomada por alguien que NO despacha. null =
-  // la empresa no tiene a nadie más (queda auditado como aflojamiento).
-  dias_sin_varilla_de_control: z.number().int().min(1).max(90).nullable().default(7),
-  // Si el vale del tanque propio (y el del excedente de cisterna) pide el
-  // horómetro/odómetro de la unidad (0113). Default false por decisión de
-  // Kenif: el medidor se toma en las cargas en ruta y el consumo se calcula
-  // entre esas lecturas. Prenderlo endurece; apagarlo después es un
-  // aflojamiento auditado (un PUT viejo sin el campo choca con eso y pide
-  // motivo, no apaga en silencio).
-  despacho_pide_medidor: z.boolean().default(false),
-  // ── Urea (migración 0092) ─────────────────────────────────────────────
-  // Los dos umbrales arrancan en NULL -- mismo criterio que el resto del
-  // módulo desde 0075/0079: el cliente todavía no dio un número operativo
-  // real (respondió "un aproximado de 4 bolsas" y "según la distancia
-  // recorrida", ninguno es un techo), así que no se inventa uno.
-  tope_diario_urea_l: z.number().positive().max(9_999_999).nullable().default(null),
-  ratio_urea_diesel_max_pct: z.number().min(0).max(100).nullable().default(null),
-  // Este SÍ lleva default (30): a diferencia de la varilla del tanque, que
-  // ya era la práctica antes del sistema, el conteo físico de urea es un
-  // control que el sistema introduce -- dejarlo en NULL lo apagaría desde
-  // el día uno sin que nadie lo decidiera.
-  dias_sin_conteo_urea: z.number().int().min(1).max(365).default(30),
-  /** Obligatorio SOLO si el cambio AFLOJA algún control, igual que en la
-   *  ficha del tanque. Hasta la 5ª auditoría la config era la excepción:
-   *  apagar un tope o alargar la ventana de gracia se guardaba sin explicar
-   *  nada, aunque el tanque sí lo exigiera. Mismo acto, mismo trato. */
-  motivo_ajuste: z.string().trim().min(1).max(500).optional(),
-});
+export const configCombustibleSchema = z
+  .object({
+    ventana_gracia_horas: z.number().int().min(1).max(8760),
+    // Cada cuántos días se exige tomar varilla (migración 0076). Sin lecturas
+    // no hay descuadre que calcular ni diferencia de recepción que comparar:
+    // dejar de medir apaga las dos detecciones de una, y eso es exactamente
+    // lo que esta alerta vigila.
+    dias_sin_medir: z.number().int().min(1).max(365),
+    // Cuántos días mira para atrás el acumulado de 0080. BAJARLO afloja: con 7
+    // días en vez de 30 el que roba de a poco nunca junta lo suficiente.
+    dias_ventana_descuadre: z.number().int().min(7).max(365),
+    // Días tolerados entre la fecha del vale y su carga (0081). A diferencia de
+    // los umbrales, acá SÍ hay default: el límite lo pone la tecnología (cuánto
+    // tarda una cola offline en sincronizar), no la operación.
+    dias_carga_retroactiva: z.number().int().min(1).max(90),
+    // Días que un tanque puede despachar con los tres umbrales apagados antes
+    // de que el sistema insista (0082). Default 7.
+    dias_sin_vigilancia: z.number().int().min(1).max(90),
+    // Los dos topes diarios de la migración 0079. Nullable con la misma
+    // semántica que los umbrales del tanque desde 0075: null = sin configurar
+    // = no alerta. No se les pone default -- un techo inventado o alerta por
+    // trabajo normal (y entonces se ignora) o queda tan alto que no atrapa
+    // nada. El mínimo de 0.1 en los llenados es a propósito: 0 acá no
+    // significa "estricto", significa "nadie puede recibir nada".
+    llenados_por_dia_max: z.number().min(0.1).max(50).nullable(),
+    tope_diario_sin_capacidad_l: z.number().positive().max(9_999_999).nullable(),
+    // Si el rol `grifero` (0085) puede tomar varilla. Decisión de Kenif: en la
+    // operación real de este cliente la toma el mismo que despacha, así que la
+    // separación entre quien mide y quien despacha es una POLÍTICA que cada
+    // empresa elige, no una regla que el sistema imponga.
+    //
+    // .default(true) y no requerido: es el ÚNICO campo opcional de este schema,
+    // a propósito. Agregarlo como requerido rompía todo llamador existente del
+    // PUT --incluida la pantalla vieja que siga abierta en un navegador-- y el
+    // default coincide con el comportamiento que ya había. El riesgo conocido
+    // es el inverso: un cliente viejo que mande la config SIN este campo se lo
+    // vuelve a poner en true sin que nadie lo pida. Por eso pasar de false a
+    // true cuenta como aflojamiento y queda auditado (ver
+    // evaluarAflojamientoConfig).
+    grifero_registra_varilla: z.boolean().default(true),
+    // ── 5ª auditoría (migración 0088) ──────────────────────────────────────
+    //
+    // Los tres con default DEL LADO ESTRICTO, y eso es lo que los hace seguros
+    // como opcionales: este PUT reemplaza la fila entera, así que un llamador
+    // viejo que no los mande solo puede ENDURECER la vigilancia, nunca aflojarla
+    // en silencio. Es la vuelta al problema que dejó `grifero_registra_varilla`.
+    //
+    // Si la recepción tiene que validarla alguien distinto del que la registró,
+    // contra la guía del proveedor. Es el control que cierra la recepción
+    // sub-declarada: registrar 9.000 de una entrega de 10.000 y llevarse la
+    // diferencia no disparaba NADA, porque el mismo que recibía escribía el
+    // único número que existía.
+    recepcion_requiere_validacion: z.boolean().default(true),
+    horas_para_validar_recepcion: z.number().int().min(1).max(720).default(48),
+    // Días tolerados sin una varilla tomada por alguien que NO despacha. null =
+    // la empresa no tiene a nadie más (queda auditado como aflojamiento).
+    dias_sin_varilla_de_control: z.number().int().min(1).max(90).nullable().default(7),
+    // Si el vale del tanque propio (y el del excedente de cisterna) pide el
+    // horómetro/odómetro de la unidad (0113). Default false por decisión de
+    // Kenif: el medidor se toma en las cargas en ruta y el consumo se calcula
+    // entre esas lecturas. Prenderlo endurece; apagarlo después es un
+    // aflojamiento auditado (un PUT viejo sin el campo choca con eso y pide
+    // motivo, no apaga en silencio).
+    despacho_pide_medidor: z.boolean().default(false),
+    // ── Urea (migración 0092) ─────────────────────────────────────────────
+    // Los dos umbrales arrancan en NULL -- mismo criterio que el resto del
+    // módulo desde 0075/0079: el cliente todavía no dio un número operativo
+    // real (respondió "un aproximado de 4 bolsas" y "según la distancia
+    // recorrida", ninguno es un techo), así que no se inventa uno.
+    tope_diario_urea_l: z.number().positive().max(9_999_999).nullable().default(null),
+    ratio_urea_diesel_max_pct: z.number().min(0).max(100).nullable().default(null),
+    // Este SÍ lleva default (30): a diferencia de la varilla del tanque, que
+    // ya era la práctica antes del sistema, el conteo físico de urea es un
+    // control que el sistema introduce -- dejarlo en NULL lo apagaría desde
+    // el día uno sin que nadie lo decidiera.
+    dias_sin_conteo_urea: z.number().int().min(1).max(365).default(30),
+    // ── Stock de urea (migración 0117) ────────────────────────────────────
+    //
+    // Los dos GLOBALES por empresa, no por equipo: el depósito de urea es uno
+    // (el tope diario por unidad ya cubre la otra mitad del problema). NULL =
+    // sin configurar = no alerta, como el resto.
+    //
+    // `stock_minimo_urea_l` avisa que hay que reabastecer; BAJARLO afloja (el
+    // aviso llega más tarde, o nunca). `stock_maximo_urea_l` es un techo de
+    // ALMACÉN, no de compra: al registrar una entrada se compara contra
+    // `stock + lo que entra`, así que también atrapa comprar de a poco hasta
+    // llenar el depósito. SUBIRLO afloja. Las dos direcciones opuestas están
+    // en evaluarAflojamientoConfig, cada una por separado.
+    //
+    // El orden (mínimo < máximo) lo valida el .refine() de abajo además del
+    // CHECK de la base: un mínimo por encima del máximo dispararía las dos
+    // alertas en cada movimiento.
+    stock_minimo_urea_l: z.number().positive().max(9_999_999).nullable().default(null),
+    stock_maximo_urea_l: z.number().positive().max(9_999_999).nullable().default(null),
+    // Tolerancia de precio de la compra de urea en ruta contra el catálogo
+    // (0121). .default(10) y no null: es el valor que Kenif aprobó, y el
+    // default va DEL LADO ESTRICTO (5ª auditoría) -- un llamador viejo que no
+    // mande el campo vuelve a 10, nunca apaga el control en silencio. Subirla
+    // o ponerla en null afloja y pide motivo.
+    tolerancia_precio_urea_pct: z.number().positive().max(100).nullable().default(10),
+    /** Obligatorio SOLO si el cambio AFLOJA algún control, igual que en la
+     *  ficha del tanque. Hasta la 5ª auditoría la config era la excepción:
+     *  apagar un tope o alargar la ventana de gracia se guardaba sin explicar
+     *  nada, aunque el tanque sí lo exigiera. Mismo acto, mismo trato. */
+    motivo_ajuste: z.string().trim().min(1).max(500).optional(),
+  })
+  // 0117: el único caso de esta config que se RECHAZA en vez de alertar. No
+  // es una política de la empresa, es un dato que se contradice a sí mismo:
+  // con el mínimo por encima del máximo el stock estaría en falta Y excedido
+  // al mismo tiempo, y las dos alertas saldrían juntas en cada movimiento.
+  // Mismo criterio que bloquear un cambio de unidad con historial.
+  .refine(
+    (v) =>
+      v.stock_minimo_urea_l === null ||
+      v.stock_maximo_urea_l === null ||
+      v.stock_minimo_urea_l < v.stock_maximo_urea_l,
+    {
+      message:
+        "El stock mínimo de urea tiene que ser menor que el máximo -- con el mínimo más alto, el depósito estaría en falta y excedido a la vez",
+      path: ["stock_minimo_urea_l"],
+    }
+  );
 
 // ── Kardex del tanque ───────────────────────────────────────────────────
 // Las dos fechas son OBLIGATORIAS: un kardex sin período no es un reporte,
@@ -1230,6 +1450,21 @@ export const anularPrecioCombustibleSchema = z.object({
 
 export type AnularPrecioCombustibleInput = z.infer<typeof anularPrecioCombustibleSchema>;
 
+// ── Precios de urea (migración 0121) ─────────────────────────────────────
+// Por proveedor y presentación: cada grifo cobra distinto. Se apila con su
+// vigencia, igual que crearPrecioCombustibleSchema. El precio es POR BULTO,
+// el número que trae la boleta ("S/ 50 la caja").
+export const crearPrecioUreaSchema = z.object({
+  grifo_id: z.number().int().positive(),
+  presentacion: codigoPresentacionUrea,
+  // Referencia libre ("Green 32", "AdBlue"): no hay reportes por marca.
+  marca: z.string().trim().max(80).optional(),
+  precio_por_bulto: z.number().positive().max(100_000),
+  vigente_desde: z.string().datetime({ offset: true }).optional(),
+});
+
+export type CrearPrecioUreaInput = z.infer<typeof crearPrecioUreaSchema>;
+
 // ── Recepciones (Fase C, ver migrations/0064) ───────────────────────────
 // Cuánto ENTRA al tanque propio y a qué costo -- lo único que escribe
 // `combustible.costo_promedio`. Una compra en grifo de ruta NO pasa por
@@ -1267,7 +1502,7 @@ export const crearRecepcionCombustibleSchema = z
 
     // Solo producto='urea' -- mismo mecanismo que en el despacho: el
     // factor de conversión lo resuelve el servidor, nunca el cliente.
-    presentacion: z.enum(PRESENTACIONES_UREA).optional(),
+    presentacion: codigoPresentacionUrea.optional(),
     cantidad_bultos: z.number().int().positive().optional(),
 
     // Opcionales acá porque la obligatoriedad NO es fija: depende de
@@ -1441,6 +1676,42 @@ export const anularRecepcionCombustibleSchema = z.object({
 
 export type AnularRecepcionCombustibleInput = z.infer<typeof anularRecepcionCombustibleSchema>;
 
+// ── Catálogo de presentaciones de urea (migración 0116) ──────────────────
+// Los litros por bulto dejaron de ser una constante del código. El motivo y
+// las alternativas descartadas están en docs/architecture/urea-industrial.md
+// y en el encabezado de la migración.
+
+/** El `codigo` NO se puede cambiar una vez creado: es lo que queda escrito
+ *  en cada movimiento (`combustible_despachos.presentacion`), y es la mitad
+ *  de la clave foránea. Renombrarlo rompería el vínculo de todo el historial
+ *  que lo usa -- por eso el PUT recibe solo lo editable. Para "renombrar"
+ *  una presentación se cambia su `nombre`, que es lo que ve el usuario. */
+export const crearPresentacionUreaSchema = z.object({
+  codigo: codigoPresentacionUrea,
+  nombre: z.string().trim().min(1, "El nombre es obligatorio").max(60),
+  // Mismo techo que el CHECK de la migración: un IBC industrial son 1.000 L,
+  // así que 2.000 cubre cualquier envase real. Sin techo, un dedo de más
+  // (200 en vez de 20) multiplica por diez todo el stock declarado.
+  litros: z.number().positive().max(2000),
+  es_referencia: z.boolean().default(false),
+});
+
+export type CrearPresentacionUreaInput = z.infer<typeof crearPresentacionUreaSchema>;
+
+/** Cambiar los litros de una presentación NO reinterpreta el historial: cada
+ *  movimiento guardó su propio `factor_litros` al crearse. Pero sí cambia lo
+ *  que van a declarar los movimientos NUEVOS, así que lleva motivo
+ *  obligatorio y queda en bitácora -- mismo trato que aflojar un umbral. */
+export const actualizarPresentacionUreaSchema = z.object({
+  nombre: z.string().trim().min(1, "El nombre es obligatorio").max(60),
+  litros: z.number().positive().max(2000),
+  es_referencia: z.boolean(),
+  activa: z.boolean(),
+  motivo: z.string().trim().min(1, "El motivo del cambio es obligatorio").max(500),
+});
+
+export type ActualizarPresentacionUreaInput = z.infer<typeof actualizarPresentacionUreaSchema>;
+
 // ── Conteo físico de urea (migración 0092) ───────────────────────────────
 // El reemplazo de la varilla: combustible se mide con una regla, urea se
 // cuenta en cajas/bolsas/baldes. Es el único acto que le da al inventario
@@ -1451,7 +1722,7 @@ export const crearConteoUreaSchema = z.object({
   // El que carga el conteo cuenta bultos, no litros -- igual que un vale.
   // El factor de conversión lo resuelve el servidor (ver FACTOR_LITROS_UREA),
   // nunca el cliente.
-  presentacion: z.enum(PRESENTACIONES_UREA),
+  presentacion: codigoPresentacionUrea,
   cantidad_bultos: z.number().int().nonnegative(),
   // Cuándo se hizo el conteo físico -- mismo criterio que leido_en/
   // despachado_en/recibido_en: opcional, el service usa now() sin dato, y

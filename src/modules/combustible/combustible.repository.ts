@@ -98,6 +98,18 @@ export const TIPOS_ALERTA = [
   "urea_equipo_no_habilitado",
   "urea_ratio_excedido",
   "urea_descuadre_conteo",
+  // ── Urea, stock (migración 0117). Uno de cada lado de la frontera
+  // estado/hallazgo, ver TIPOS_ESTADO justo abajo y el encabezado de 0117:
+  // "queda poca urea" deja de ser verdad cuando llega la compra, "esta
+  // entrada pasó el techo del depósito" no deja de serlo nunca.
+  "urea_stock_bajo",
+  "urea_stock_excedido",
+  // ── 0118: un conteo anulado y vuelto a cargar más cerca de cuadrar. El
+  // `vale_recargado` del conteo físico -- hallazgo, se congela.
+  "urea_conteo_recargado",
+  // ── 0121: una compra en ruta declaró un precio por bulto que se aparta del
+  // catálogo del proveedor más que la tolerancia. Hallazgo, se congela.
+  "urea_precio_fuera_de_catalogo",
   // ── Migración 0093: consumo anterior a la primera varilla del tanque.
   "historial_sin_contrastar",
   // ── Migración 0094: el totalizador acumulativo del surtidor.
@@ -130,6 +142,11 @@ export const TIPOS_ESTADO = [
   "tanque_sin_vigilancia",
   "recepcion_sin_validar",
   "varilla_sin_control",
+  // 0117: el `nivel_bajo` de la urea. Se auto-resuelve cuando entra una
+  // compra que devuelve el stock sobre el mínimo, igual que el del tanque
+  // cuando lo llenan. `urea_stock_excedido` NO está acá a propósito: es un
+  // hecho sobre una entrada concreta y se congela como cualquier hallazgo.
+  "urea_stock_bajo",
 ] as const satisfies readonly TipoAlertaCombustible[];
 
 /** Todo lo que no es estado es un HALLAZGO: si nadie lo explica dentro de la
@@ -1233,6 +1250,9 @@ export class CombustibleRepository {
   async findCompraPorComprobante(
     client: PoolClient,
     tenantId: string,
+    // 0119: la misma boleta puede traer diésel Y urea -- un renglón por
+    // producto, igual que el índice único.
+    producto: string,
     grifoId: number,
     comprobanteTipo: string,
     comprobanteNumero: string
@@ -1249,8 +1269,9 @@ export class CombustibleRepository {
          -- de "el mismo número", o el 409 y la red de la base no coincidirían.
          AND combustible_comprobante_canonico(comprobante_numero)
              = combustible_comprobante_canonico($4)
+         AND producto = $5
          AND anulada_en IS NULL`,
-      [tenantId, grifoId, comprobanteTipo, comprobanteNumero]
+      [tenantId, grifoId, comprobanteTipo, comprobanteNumero, producto]
     );
     return result.rows[0] ?? null;
   }
@@ -1354,10 +1375,11 @@ export class CombustibleRepository {
     comprobante_nombre: string | null;
     comprobante_sha256: string | null;
     anulada_en: string | null;
+    producto: string;
   } | null> {
     const result = await client.query(
       `SELECT comprobante_numero, comprobante_driver, comprobante_key, comprobante_mime,
-              comprobante_nombre, comprobante_sha256, anulada_en
+              comprobante_nombre, comprobante_sha256, anulada_en, producto
          FROM combustible_despachos WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId]
     );
@@ -2143,22 +2165,32 @@ export class CombustibleRepository {
       tope_diario_urea_l: topesUrea.topeDiarioUreaL,
       ratio_urea_diesel_max_pct: topesUrea.ratioUreaDieselMaxPct,
       dias_sin_conteo_urea: topesUrea.diasSinConteoUrea,
+      stock_minimo_urea_l: topesUrea.stockMinimoUreaL,
+      stock_maximo_urea_l: topesUrea.stockMaximoUreaL,
+      tolerancia_precio_urea_pct: topesUrea.toleranciaPrecioUreaPct,
       actualizado_en: result.rows[0]?.actualizado_en ?? null,
       actualizado_por: result.rows[0]?.actualizado_por ?? null,
     };
   }
 
-  /** Los tres campos de urea de la config -- separados en su propia lectura
+  /** Los cinco campos de urea de la config -- separados en su propia lectura
    *  igual que getTopesDiarios, mismo criterio: el default (72h, etc.) se
-   *  resuelve acá con COALESCE, sin sembrar fila por tenant (ver 0071). */
+   *  resuelve acá con COALESCE, sin sembrar fila por tenant (ver 0071).
+   *
+   *  Los dos del stock (0117) son los únicos GLOBALES por empresa: el
+   *  depósito de urea es uno. Los otros tres son por equipo o de política. */
   async getTopesUrea(client: PoolClient, tenantId: string) {
     const result = await client.query<{
       tope_diario_urea_l: string | null;
       ratio_urea_diesel_max_pct: string | null;
       dias_sin_conteo_urea: number;
+      stock_minimo_urea_l: string | null;
+      stock_maximo_urea_l: string | null;
+      tolerancia_precio_urea_pct: string | null;
     }>(
       `SELECT tope_diario_urea_l, ratio_urea_diesel_max_pct,
-              COALESCE(dias_sin_conteo_urea, 30) AS dias_sin_conteo_urea
+              COALESCE(dias_sin_conteo_urea, 30) AS dias_sin_conteo_urea,
+              stock_minimo_urea_l, stock_maximo_urea_l, tolerancia_precio_urea_pct
        FROM combustible_config WHERE tenant_id = $1`,
       [tenantId]
     );
@@ -2169,6 +2201,17 @@ export class CombustibleRepository {
         ? Number(fila.ratio_urea_diesel_max_pct)
         : null,
       diasSinConteoUrea: fila?.dias_sin_conteo_urea ?? 30,
+      stockMinimoUreaL: fila?.stock_minimo_urea_l ? Number(fila.stock_minimo_urea_l) : null,
+      stockMaximoUreaL: fila?.stock_maximo_urea_l ? Number(fila.stock_maximo_urea_l) : null,
+      // 0121: sin fila de config, el default de la migración (10 %). CON fila,
+      // NULL significa "apagado" -- no se le pone default encima, la regla de
+      // siempre: NULL nunca lleva default.
+      toleranciaPrecioUreaPct:
+        fila === undefined
+          ? 10
+          : fila.tolerancia_precio_urea_pct === null
+            ? null
+            : Number(fila.tolerancia_precio_urea_pct),
     };
   }
 
@@ -2192,6 +2235,9 @@ export class CombustibleRepository {
       topeDiarioUreaL: number | null;
       ratioUreaDieselMaxPct: number | null;
       diasSinConteoUrea: number;
+      stockMinimoUreaL: number | null;
+      stockMaximoUreaL: number | null;
+      toleranciaPrecioUreaPct: number | null;
       despachoPideMedidor: boolean;
     },
     usuarioId: string
@@ -2204,8 +2250,10 @@ export class CombustibleRepository {
          tope_diario_sin_capacidad_l, grifero_registra_varilla, actualizado_por,
          recepcion_requiere_validacion, horas_para_validar_recepcion,
          dias_sin_varilla_de_control, tope_diario_urea_l, ratio_urea_diesel_max_pct,
-         dias_sin_conteo_urea, despacho_pide_medidor)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+         dias_sin_conteo_urea, despacho_pide_medidor,
+         stock_minimo_urea_l, stock_maximo_urea_l, tolerancia_precio_urea_pct)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+              $18, $19, $20)
       ON CONFLICT (tenant_id) DO UPDATE
         SET ventana_gracia_horas = EXCLUDED.ventana_gracia_horas,
             dias_sin_medir = EXCLUDED.dias_sin_medir,
@@ -2222,6 +2270,9 @@ export class CombustibleRepository {
             ratio_urea_diesel_max_pct = EXCLUDED.ratio_urea_diesel_max_pct,
             dias_sin_conteo_urea = EXCLUDED.dias_sin_conteo_urea,
             despacho_pide_medidor = EXCLUDED.despacho_pide_medidor,
+            stock_minimo_urea_l = EXCLUDED.stock_minimo_urea_l,
+            stock_maximo_urea_l = EXCLUDED.stock_maximo_urea_l,
+            tolerancia_precio_urea_pct = EXCLUDED.tolerancia_precio_urea_pct,
             actualizado_por = EXCLUDED.actualizado_por,
             actualizado_en = now()
       RETURNING ventana_gracia_horas, dias_sin_medir, dias_ventana_descuadre,
@@ -2230,6 +2281,7 @@ export class CombustibleRepository {
                 recepcion_requiere_validacion, horas_para_validar_recepcion,
                 dias_sin_varilla_de_control, tope_diario_urea_l,
                 ratio_urea_diesel_max_pct, dias_sin_conteo_urea, despacho_pide_medidor,
+                stock_minimo_urea_l, stock_maximo_urea_l, tolerancia_precio_urea_pct,
                 actualizado_en, actualizado_por
       `,
       [
@@ -2250,6 +2302,9 @@ export class CombustibleRepository {
         valores.ratioUreaDieselMaxPct,
         valores.diasSinConteoUrea,
         valores.despachoPideMedidor,
+        valores.stockMinimoUreaL,
+        valores.stockMaximoUreaL,
+        valores.toleranciaPrecioUreaPct,
       ]
     );
     const fila = result.rows[0];
@@ -2265,6 +2320,10 @@ export class CombustibleRepository {
       ratio_urea_diesel_max_pct: fila.ratio_urea_diesel_max_pct
         ? Number(fila.ratio_urea_diesel_max_pct)
         : null,
+      stock_minimo_urea_l: fila.stock_minimo_urea_l ? Number(fila.stock_minimo_urea_l) : null,
+      stock_maximo_urea_l: fila.stock_maximo_urea_l ? Number(fila.stock_maximo_urea_l) : null,
+      tolerancia_precio_urea_pct:
+        fila.tolerancia_precio_urea_pct === null ? null : Number(fila.tolerancia_precio_urea_pct),
     };
   }
 
@@ -2927,6 +2986,228 @@ export class CombustibleRepository {
     );
   }
 
+  // ── Precios de urea (migración 0121) ──────────────────────────────────
+
+  /** El catálogo completo, vigentes y anulados, del más nuevo al más viejo:
+   *  la pantalla muestra la historia, y los formularios eligen el vigente a
+   *  la fecha (el más reciente <= fecha, no anulado) del lado del cliente --
+   *  mismo criterio que el catálogo de combustible (0063). */
+  async findPreciosUrea(client: PoolClient, tenantId: string) {
+    const r = await client.query(
+      `SELECT p.id, p.grifo_id, g.nombre AS proveedor, p.presentacion,
+              pr.nombre AS presentacion_nombre, pr.litros AS presentacion_litros,
+              p.marca, p.precio_por_bulto, p.vigente_desde, p.creado_en,
+              u.nombre AS cargado_por, p.anulada_en, p.motivo_anulacion
+         FROM combustible_urea_precios p
+         LEFT JOIN combustible_grifos g ON g.id = p.grifo_id AND g.tenant_id = p.tenant_id
+         LEFT JOIN combustible_urea_presentaciones pr
+                ON pr.tenant_id = p.tenant_id AND pr.codigo = p.presentacion
+         LEFT JOIN usuarios u ON u.id = p.usuario_id
+        WHERE p.tenant_id = $1
+        ORDER BY p.vigente_desde DESC, p.id DESC`,
+      [tenantId]
+    );
+    return r.rows;
+  }
+
+  /** El precio vigente de UNA presentación en UN proveedor a una fecha. Lo
+   *  usa la alerta de precio fuera de catálogo: la compra se compara contra
+   *  el precio de SU día, no el de hoy (una compra offline llega tarde). */
+  async findPrecioUreaVigente(
+    client: PoolClient,
+    tenantId: string,
+    grifoId: number,
+    presentacion: string,
+    fecha: string
+  ): Promise<{ id: number; precio: number; marca: string | null } | null> {
+    const r = await client.query<{ id: number; precio_por_bulto: string; marca: string | null }>(
+      `SELECT id, precio_por_bulto, marca FROM combustible_urea_precios
+        WHERE tenant_id = $1 AND grifo_id = $2 AND presentacion = $3
+          AND anulada_en IS NULL AND vigente_desde <= $4::timestamptz
+        ORDER BY vigente_desde DESC, id DESC
+        LIMIT 1`,
+      [tenantId, grifoId, presentacion, fecha]
+    );
+    const f = r.rows[0];
+    return f ? { id: f.id, precio: Number(f.precio_por_bulto), marca: f.marca } : null;
+  }
+
+  async crearPrecioUrea(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: {
+      grifoId: number;
+      presentacion: string;
+      marca: string | null;
+      precioPorBulto: number;
+      vigenteDesde: string;
+    }
+  ) {
+    const r = await client.query(
+      `INSERT INTO combustible_urea_precios
+         (tenant_id, grifo_id, presentacion, marca, precio_por_bulto, vigente_desde, usuario_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, grifo_id, presentacion, marca, precio_por_bulto, vigente_desde, creado_en`,
+      [
+        tenantId,
+        data.grifoId,
+        data.presentacion,
+        data.marca,
+        data.precioPorBulto,
+        data.vigenteDesde,
+        usuarioId,
+      ]
+    );
+    return r.rows[0];
+  }
+
+  /** Anula con motivo. `null` si no existe en este tenant o ya estaba anulado
+   *  -- el controller distingue los dos casos releyendo. */
+  async anularPrecioUrea(
+    client: PoolClient,
+    tenantId: string,
+    id: number,
+    usuarioId: string,
+    motivo: string
+  ) {
+    const r = await client.query(
+      `UPDATE combustible_urea_precios
+          SET anulada_en = now(), anulada_por = $1, motivo_anulacion = $2
+        WHERE id = $3 AND tenant_id = $4 AND anulada_en IS NULL
+        RETURNING id, grifo_id, presentacion, precio_por_bulto, anulada_en`,
+      [usuarioId, motivo, id, tenantId]
+    );
+    return r.rows[0] ?? null;
+  }
+
+  async existePrecioUrea(client: PoolClient, tenantId: string, id: number): Promise<boolean> {
+    const r = await client.query(
+      `SELECT 1 FROM combustible_urea_precios WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+    return r.rowCount === 1;
+  }
+
+  /** Los renglones de una compra de urea en ruta (0120). */
+  async crearRenglonesCompraUrea(
+    client: PoolClient,
+    tenantId: string,
+    despachoId: number,
+    renglones: {
+      presentacion: string;
+      factorLitros: number;
+      cantidadBultos: number;
+      litros: number;
+      costoPorBulto: number;
+    }[]
+  ) {
+    for (const r of renglones) {
+      await client.query(
+        `INSERT INTO combustible_despacho_urea_lineas
+           (tenant_id, despacho_id, presentacion, factor_litros, cantidad_bultos, litros,
+            costo_por_bulto)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          tenantId,
+          despachoId,
+          r.presentacion,
+          r.factorLitros,
+          r.cantidadBultos,
+          r.litros,
+          r.costoPorBulto,
+        ]
+      );
+    }
+  }
+
+  /** HISTORIAL DE COMPRAS DE UREA EN RUTA (0120) -- el equivalente del
+   *  historial de compras externas de combustible: comprobante, proveedor,
+   *  unidad, conductor, renglones y si tiene foto. Período opcional, mismo
+   *  criterio que los otros historiales (sin fechas: las últimas N). */
+  async findComprasUrea(
+    client: PoolClient,
+    tenantId: string,
+    filtros: { desde?: string; hasta?: string },
+    limite: number
+  ) {
+    const condiciones = ["d.tenant_id = $1", "d.producto = 'urea'", "d.origen = 'compra_externa'"];
+    const valores: unknown[] = [tenantId];
+    if (filtros.desde) {
+      valores.push(filtros.desde);
+      condiciones.push(`d.despachado_en >= $${valores.length}::timestamptz`);
+    }
+    if (filtros.hasta) {
+      valores.push(filtros.hasta);
+      condiciones.push(`d.despachado_en <= $${valores.length}::timestamptz`);
+    }
+    valores.push(limite);
+    const r = await client.query(
+      `SELECT d.id, d.despachado_en, d.comprobante_tipo, d.comprobante_numero,
+              d.comprobante_nombre, d.comprobante_subido_en,
+              d.cantidad, d.costo_unitario, (d.cantidad * d.costo_unitario) AS costo_total,
+              d.conductor_nombre, d.observaciones, d.anulada_en, d.motivo_anulacion,
+              g.nombre AS proveedor, e.placa_codigo, e.tipo AS equipo_tipo,
+              u.nombre AS registrado_por,
+              COALESCE((
+                SELECT json_agg(json_build_object(
+                         'presentacion', l.presentacion,
+                         'nombre', p.nombre,
+                         'factor_litros', l.factor_litros,
+                         'cantidad_bultos', l.cantidad_bultos,
+                         'litros', l.litros,
+                         'costo_por_bulto', l.costo_por_bulto
+                       ) ORDER BY l.id)
+                  FROM combustible_despacho_urea_lineas l
+                  LEFT JOIN combustible_urea_presentaciones p
+                         ON p.tenant_id = l.tenant_id AND p.codigo = l.presentacion
+                 WHERE l.despacho_id = d.id
+              ), '[]'::json) AS lineas
+         FROM combustible_despachos d
+         LEFT JOIN combustible_grifos g ON g.id = d.grifo_id AND g.tenant_id = d.tenant_id
+         LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
+         LEFT JOIN usuarios u ON u.id = d.usuario_id
+        WHERE ${condiciones.join(" AND ")}
+        ORDER BY d.despachado_en DESC, d.id DESC
+        LIMIT $${valores.length}`,
+      valores
+    );
+    return r.rows;
+  }
+
+  /** ¿Hay una alerta de stock bajo de urea abierta ahora mismo? (0117)
+   *
+   *  Es el equivalente de `alerta_abierta` en findEstadoNivelTanque, pero sin
+   *  `combustible_id`: el depósito de urea es UNO por empresa, así que la
+   *  pregunta es por tenant. Sin esto, cada vale de urea cargado por debajo
+   *  del mínimo crearía una alerta nueva -- diez vales en un día serían diez
+   *  avisos de lo mismo, y el control moriría por ruidoso igual que si no
+   *  existiera.
+   *
+   *  Usa el índice parcial de 0117. */
+  async existeAlertaUreaStockBajoAbierta(client: PoolClient, tenantId: string): Promise<boolean> {
+    const result = await client.query(
+      `SELECT 1 FROM combustible_alertas
+       WHERE tenant_id = $1 AND tipo = 'urea_stock_bajo' AND resuelta_en IS NULL
+       LIMIT 1`,
+      [tenantId]
+    );
+    return result.rowCount === 1;
+  }
+
+  /** Cierra la alerta de stock bajo cuando el stock volvió sobre el mínimo
+   *  -- calco de resolverAlertaNivelSiExiste. Se resuelve SOLA, no a mano:
+   *  dejar que alguien la cierre sería dejar que tape un faltante que el
+   *  sistema sabe contestar solo (ver TIPOS_ESTADO). */
+  async resolverAlertaUreaStockBajoSiExiste(client: PoolClient, tenantId: string): Promise<void> {
+    await client.query(
+      `UPDATE combustible_alertas
+       SET resuelta_en = now()
+       WHERE tenant_id = $1 AND tipo = 'urea_stock_bajo' AND resuelta_en IS NULL`,
+      [tenantId]
+    );
+  }
+
   /** Congela UNA alerta: inserta la anomalía y marca la alerta. Las dos
    *  cosas en la misma transacción del `client` que recibe -- si el UPDATE
    *  fallara después del INSERT, la próxima corrida volvería a congelar la
@@ -3191,6 +3472,140 @@ export class CombustibleRepository {
     return promedio ? Number(promedio) : null;
   }
 
+  // ── Catálogo de presentaciones de urea (migración 0116) ────────────────
+  // Los litros por bulto son un dato de la empresa, no una constante del
+  // código. Ver docs/architecture/urea-industrial.md (decisión 3).
+
+  private static readonly COLUMNAS_PRESENTACION_UREA = `
+    id, codigo, nombre, litros, es_referencia, activa, creado_en,
+    actualizado_en, actualizado_por
+  `;
+
+  /** Todas las del tenant, activas e inactivas -- la pantalla de
+   *  configuración tiene que poder reactivar una. Los desplegables de carga
+   *  filtran las activas del lado del cliente. */
+  async findPresentacionesUrea(client: PoolClient, tenantId: string) {
+    const result = await client.query(
+      `SELECT ${CombustibleRepository.COLUMNAS_PRESENTACION_UREA}
+       FROM combustible_urea_presentaciones
+       WHERE tenant_id = $1
+       ORDER BY activa DESC, nombre ASC`,
+      [tenantId]
+    );
+    return result.rows;
+  }
+
+  async findPresentacionUreaPorCodigo(client: PoolClient, tenantId: string, codigo: string) {
+    const result = await client.query<{
+      id: number;
+      codigo: string;
+      nombre: string;
+      litros: string;
+      activa: boolean;
+    }>(
+      `SELECT id, codigo, nombre, litros, activa
+       FROM combustible_urea_presentaciones
+       WHERE tenant_id = $1 AND codigo = $2`,
+      [tenantId, codigo]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async crearPresentacionUrea(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: { codigo: string; nombre: string; litros: number; esReferencia: boolean }
+  ) {
+    try {
+      // Una sola presentación de referencia por empresa (índice único
+      // parcial de 0116): si la nueva se marca, la que estaba se desmarca en
+      // la misma transacción. Sin esto el INSERT chocaría contra el índice y
+      // el usuario vería un 500 en vez del cambio que pidió.
+      if (data.esReferencia) {
+        await client.query(
+          `UPDATE combustible_urea_presentaciones SET es_referencia = false
+           WHERE tenant_id = $1 AND es_referencia`,
+          [tenantId]
+        );
+      }
+      const result = await client.query(
+        `INSERT INTO combustible_urea_presentaciones
+           (tenant_id, codigo, nombre, litros, es_referencia, actualizado_por)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING ${CombustibleRepository.COLUMNAS_PRESENTACION_UREA}`,
+        [tenantId, data.codigo, data.nombre, data.litros, data.esReferencia, usuarioId]
+      );
+      return result.rows[0];
+    } catch (err) {
+      if (esViolacionUnicidad(err)) {
+        throw new Error(
+          `ya existe una presentación con el código "${data.codigo}" en esta empresa`,
+          { cause: err }
+        );
+      }
+      throw err;
+    }
+  }
+
+  /** El `codigo` NO se actualiza: es la mitad de la clave foránea que usa
+   *  cada movimiento de urea. Lo editable es el nombre, los litros, la
+   *  referencia y si sigue activa. */
+  async actualizarPresentacionUrea(
+    client: PoolClient,
+    tenantId: string,
+    id: number,
+    usuarioId: string,
+    data: { nombre: string; litros: number; esReferencia: boolean; activa: boolean }
+  ) {
+    if (data.esReferencia) {
+      await client.query(
+        `UPDATE combustible_urea_presentaciones SET es_referencia = false
+         WHERE tenant_id = $1 AND es_referencia AND id <> $2`,
+        [tenantId, id]
+      );
+    }
+    const result = await client.query(
+      `UPDATE combustible_urea_presentaciones
+       SET nombre = $1, litros = $2, es_referencia = $3, activa = $4,
+           actualizado_por = $5, actualizado_en = now()
+       WHERE id = $6 AND tenant_id = $7
+       RETURNING ${CombustibleRepository.COLUMNAS_PRESENTACION_UREA}`,
+      [data.nombre, data.litros, data.esReferencia, data.activa, usuarioId, id, tenantId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async findPresentacionUreaPorId(client: PoolClient, tenantId: string, id: number) {
+    const result = await client.query(
+      `SELECT ${CombustibleRepository.COLUMNAS_PRESENTACION_UREA}
+       FROM combustible_urea_presentaciones WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** Cuántos movimientos ya usan esta presentación. Lo necesita la pantalla
+   *  para explicar por qué desactivar no es borrar: el historial que la usa
+   *  sigue existiendo y su factor quedó congelado en cada fila. */
+  async contarMovimientosDePresentacionUrea(
+    client: PoolClient,
+    tenantId: string,
+    codigo: string
+  ): Promise<number> {
+    const result = await client.query<{ n: string }>(
+      `SELECT (
+         (SELECT COUNT(*) FROM combustible_despachos
+           WHERE tenant_id = $1 AND presentacion = $2)
+         +
+         (SELECT COUNT(*) FROM combustible_recepciones
+           WHERE tenant_id = $1 AND presentacion = $2)
+       ) AS n`,
+      [tenantId, codigo]
+    );
+    return Number(result.rows[0].n);
+  }
+
   // ── Conteo físico de urea (migración 0092) ─────────────────────────────
   // Es a la urea lo que combustible_lecturas es al tanque: la contraparte
   // FÍSICA independiente. Append-only, mismo mecanismo de anulación con
@@ -3265,6 +3680,72 @@ export class CombustibleRepository {
     return result.rows[0] ?? null;
   }
 
+  /** Los conteos ANULADOS en la ventana de recarga (0118): anulados en las
+   *  últimas `horas` y con una fecha de conteo a menos de `horas` de la del
+   *  conteo nuevo. Del más reciente al más viejo. Cada uno con su descuadre
+   *  ya calculado contra el stock teórico de SU hora, que es lo único
+   *  comparable entre dos conteos (el stock se mueve entre uno y otro). */
+  async findConteosUreaAnuladosRecientes(
+    client: PoolClient,
+    tenantId: string,
+    contadoEn: string,
+    horas: number
+  ) {
+    const r = await client.query<{
+      id: string;
+      cantidad_litros: string;
+      contado_en: Date;
+      anulada_en: Date;
+      motivo_anulacion: string | null;
+      anulado_por: string | null;
+      esperado: string;
+    }>(
+      `
+      SELECT c.id, c.cantidad_litros, c.contado_en, c.anulada_en, c.motivo_anulacion,
+             u.nombre AS anulado_por,
+             COALESCE((SELECT SUM(r.cantidad) FROM combustible_recepciones r
+                        WHERE r.tenant_id = $1 AND r.producto = 'urea' AND r.anulada_en IS NULL
+                          AND r.recibido_en <= c.contado_en), 0)
+             - COALESCE((SELECT SUM(d.cantidad) FROM combustible_despachos d
+                        WHERE d.tenant_id = $1 AND d.producto = 'urea' AND d.origen = 'almacen'
+                          AND d.anulada_en IS NULL
+                          AND d.despachado_en <= c.contado_en), 0) AS esperado
+        FROM combustible_conteos_urea c
+        LEFT JOIN usuarios u ON u.id = c.anulada_por
+       WHERE c.tenant_id = $1
+         AND c.anulada_en IS NOT NULL
+         AND c.anulada_en >= now() - make_interval(hours => $3)
+         AND abs(extract(epoch FROM (c.contado_en - $2::timestamptz))) <= $3 * 3600
+       ORDER BY c.anulada_en DESC, c.id DESC
+      `,
+      [tenantId, contadoEn, horas]
+    );
+    return r.rows.map((f) => ({
+      id: Number(f.id),
+      contadoL: Number(f.cantidad_litros),
+      contadoEn: new Date(f.contado_en).toISOString(),
+      anuladaEn: new Date(f.anulada_en).toISOString(),
+      motivo: f.motivo_anulacion,
+      anuladoPor: f.anulado_por,
+      descuadreL: Number((Number(f.cantidad_litros) - Number(f.esperado)).toFixed(2)),
+    }));
+  }
+
+  /** Hallazgos de urea ABIERTOS, para la franja del panel (0118). Abiertos =
+   *  sin resolver; los congelados también (siguen sin explicar). */
+  async findHallazgosUreaAbiertos(client: PoolClient, tenantId: string, limite: number) {
+    const r = await client.query(
+      `SELECT id, tipo, detalle, creado_en, despacho_id, recepcion_id, urea_conteo_id,
+              serie_talonario, n_vale, congelada_en, COUNT(*) OVER() AS total
+         FROM combustible_alertas
+        WHERE tenant_id = $1 AND producto = 'urea' AND resuelta_en IS NULL
+        ORDER BY creado_en DESC, id DESC
+        LIMIT $2`,
+      [tenantId, limite]
+    );
+    return r.rows;
+  }
+
   /** El último conteo VIGENTE -- es contra el que se compara el stock
    *  teórico. `null` si nunca se contó nada todavía (ver
    *  evaluarUreaDescuadreConteo: sin conteo previo no hay nada que
@@ -3298,9 +3779,14 @@ export class CombustibleRepository {
               AND recibido_en <= $2::timestamptz),
           0
         ) AS entradas,
+        -- Solo el ALMACÉN (0119): la urea comprada en ruta nunca entró al
+        -- depósito, así que tampoco puede salir de él. Contarla haría que el
+        -- primer conteo físico diera un sobrante falso -- que además taparía
+        -- un faltante real del mismo tamaño.
         COALESCE(
           (SELECT SUM(cantidad) FROM combustible_despachos
-            WHERE tenant_id = $1 AND producto = 'urea' AND anulada_en IS NULL
+            WHERE tenant_id = $1 AND producto = 'urea' AND origen = 'almacen'
+              AND anulada_en IS NULL
               AND despachado_en <= $2::timestamptz),
           0
         ) AS salidas
@@ -3309,6 +3795,76 @@ export class CombustibleRepository {
     );
     const fila = result.rows[0];
     return Number(fila.entradas) - Number(fila.salidas);
+  }
+
+  /** KARDEX DE UREA (entrega 3): entradas, vales y conteos del período en UNA
+   *  línea de tiempo. Es el libro del ALMACÉN: las compras en ruta (0119) no
+   *  aparecen, porque nunca entraron ni salieron del depósito; más el saldo con el que arranca (todo lo vigente
+   *  ANTERIOR a `desde`). El saldo corriente se arma en el service, no acá:
+   *  la urea es un solo depósito por empresa y no hace falta una ventana SQL.
+   *
+   *  Orden dentro del mismo instante: entrada (1), vale (2), conteo (3). El
+   *  conteo va último porque compara contra lo que los papeles ya explican a
+   *  esa hora -- igual que la varilla en el kardex del tanque. */
+  async findKardexUrea(client: PoolClient, tenantId: string, desde: string, hasta: string) {
+    const [movs, previo] = await Promise.all([
+      client.query(
+        `
+        SELECT * FROM (
+          SELECT 1 AS orden, 'entrada' AS tipo, r.id, r.recibido_en AS ocurrido_en,
+                 COALESCE(r.tipo_documento || ' ' || r.numero_documento, 'sin documento') AS documento,
+                 g.nombre AS detalle,
+                 r.cantidad, r.cantidad_bultos, r.presentacion, r.factor_litros,
+                 u.nombre AS usuario, r.anulada_en, r.motivo_anulacion
+            FROM combustible_recepciones r
+            LEFT JOIN combustible_grifos g ON g.id = r.grifo_id AND g.tenant_id = $1
+            LEFT JOIN usuarios u ON u.id = r.usuario_id
+           WHERE r.tenant_id = $1 AND r.producto = 'urea'
+             AND r.recibido_en >= $2::timestamptz AND r.recibido_en <= $3::timestamptz
+          UNION ALL
+          SELECT 2, 'vale', d.id, d.despachado_en,
+                 d.serie_talonario || '-' || lpad(d.n_vale::text, 5, '0'),
+                 COALESCE(e.placa_codigo, 'sin unidad')
+                   || COALESCE(' · ' || d.conductor_nombre, ''),
+                 d.cantidad, d.cantidad_bultos, d.presentacion, d.factor_litros,
+                 u.nombre, d.anulada_en, d.motivo_anulacion
+            FROM combustible_despachos d
+            LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1
+            LEFT JOIN usuarios u ON u.id = d.usuario_id
+           WHERE d.tenant_id = $1 AND d.producto = 'urea' AND d.origen = 'almacen'
+             AND d.despachado_en >= $2::timestamptz AND d.despachado_en <= $3::timestamptz
+          UNION ALL
+          SELECT 3, 'conteo', c.id, c.contado_en, 'conteo físico',
+                 COALESCE(c.observaciones, ''),
+                 c.cantidad_litros, NULL, NULL, NULL,
+                 u.nombre, c.anulada_en, c.motivo_anulacion
+            FROM combustible_conteos_urea c
+            LEFT JOIN usuarios u ON u.id = c.usuario_id
+           WHERE c.tenant_id = $1
+             AND c.contado_en >= $2::timestamptz AND c.contado_en <= $3::timestamptz
+        ) k
+        ORDER BY ocurrido_en, orden, id
+        `,
+        [tenantId, desde, hasta]
+      ),
+      client.query<{ entradas: string; salidas: string }>(
+        `
+        SELECT
+          COALESCE((SELECT SUM(cantidad) FROM combustible_recepciones
+                     WHERE tenant_id = $1 AND producto = 'urea' AND anulada_en IS NULL
+                       AND recibido_en < $2::timestamptz), 0) AS entradas,
+          COALESCE((SELECT SUM(cantidad) FROM combustible_despachos
+                     WHERE tenant_id = $1 AND producto = 'urea' AND origen = 'almacen'
+                       AND anulada_en IS NULL
+                       AND despachado_en < $2::timestamptz), 0) AS salidas
+        `,
+        [tenantId, desde]
+      ),
+    ]);
+    return {
+      filas: movs.rows,
+      saldoInicial: Number(previo.rows[0].entradas) - Number(previo.rows[0].salidas),
+    };
   }
 
   /** Días desde el último conteo VIGENTE -- alimenta la alerta de "días sin
@@ -3621,46 +4177,71 @@ export class CombustibleRepository {
       WITH movimientos AS (
         -- Lo que cada uno CARGÓ.
         SELECT d.usuario_id AS usuario, 'despacho' AS que, 'carga' AS accion,
-               NULL::uuid AS autor_original
+               NULL::uuid AS autor_original, false AS cuenta_lo_propio
           FROM combustible_despachos d
          WHERE d.tenant_id = $1 AND d.despachado_en BETWEEN $2::timestamptz AND $3::timestamptz
         UNION ALL
-        SELECT r.usuario_id, 'recepcion', 'carga', NULL::uuid
+        SELECT r.usuario_id, 'recepcion', 'carga', NULL::uuid, false
           FROM combustible_recepciones r
          WHERE r.tenant_id = $1 AND r.recibido_en BETWEEN $2::timestamptz AND $3::timestamptz
         UNION ALL
-        SELECT l.usuario_id, 'lectura', 'carga', NULL::uuid
+        SELECT l.usuario_id, 'lectura', 'carga', NULL::uuid, false
           FROM combustible_lecturas l
          WHERE l.tenant_id = $1 AND l.leido_en BETWEEN $2::timestamptz AND $3::timestamptz
            AND l.origen <> 'inicial'
         UNION ALL
         -- Los precintos que cada uno COLOCÓ (0095): quien cambia el sello y
         -- quien lo verifica en la varilla no deberían ser la misma persona.
-        SELECT p.colocado_por, 'precinto', 'carga', NULL::uuid
+        SELECT p.colocado_por, 'precinto', 'carga', NULL::uuid, false
           FROM combustible_precintos p
          WHERE p.tenant_id = $1 AND p.colocado_en BETWEEN $2::timestamptz AND $3::timestamptz
 
         UNION ALL
+        -- Los conteos físicos de urea (entrega 4). cuenta_lo_propio: el que
+        -- contó también registró vales o entradas de urea en el período. Es
+        -- el riesgo que el cliente confirmó (la misma persona recibe, reparte
+        -- y cuenta) y el único control independiente de la urea es ese
+        -- conteo -- si lo hace quien movió la urea, deja de serlo.
+        SELECT c.usuario_id, 'conteo_urea', 'carga', NULL::uuid,
+               EXISTS (
+                 SELECT 1 FROM combustible_despachos d2
+                  WHERE d2.tenant_id = $1 AND d2.producto = 'urea' AND d2.origen = 'almacen'
+                    AND d2.usuario_id = c.usuario_id
+                    AND d2.despachado_en BETWEEN $2::timestamptz AND $3::timestamptz
+                 UNION ALL
+                 SELECT 1 FROM combustible_recepciones r2
+                  WHERE r2.tenant_id = $1 AND r2.producto = 'urea' AND r2.usuario_id = c.usuario_id
+                    AND r2.recibido_en BETWEEN $2::timestamptz AND $3::timestamptz
+               )
+          FROM combustible_conteos_urea c
+         WHERE c.tenant_id = $1 AND c.contado_en BETWEEN $2::timestamptz AND $3::timestamptz
+
+        UNION ALL
 
         -- Lo que cada uno ANULÓ, y de quién era.
-        SELECT d.anulada_por, 'despacho', 'anulacion', d.usuario_id
+        SELECT d.anulada_por, 'despacho', 'anulacion', d.usuario_id, false
           FROM combustible_despachos d
          WHERE d.tenant_id = $1 AND d.anulada_en BETWEEN $2::timestamptz AND $3::timestamptz
         UNION ALL
-        SELECT r.anulada_por, 'recepcion', 'anulacion', r.usuario_id
+        SELECT r.anulada_por, 'recepcion', 'anulacion', r.usuario_id, false
           FROM combustible_recepciones r
          WHERE r.tenant_id = $1 AND r.anulada_en BETWEEN $2::timestamptz AND $3::timestamptz
         UNION ALL
-        SELECT l.anulada_por, 'lectura', 'anulacion', l.usuario_id
+        SELECT l.anulada_por, 'lectura', 'anulacion', l.usuario_id, false
           FROM combustible_lecturas l
          WHERE l.tenant_id = $1 AND l.anulada_en BETWEEN $2::timestamptz AND $3::timestamptz
+        UNION ALL
+        SELECT c.anulada_por, 'conteo_urea', 'anulacion', c.usuario_id, false
+          FROM combustible_conteos_urea c
+         WHERE c.tenant_id = $1 AND c.anulada_en BETWEEN $2::timestamptz AND $3::timestamptz
 
         UNION ALL
 
         -- Lo que cada uno DIO POR REVISADO. La marca de autorrevision la pone
         -- el propio cierre (ver resolverAlertaManual): aca solo se cuenta.
         SELECT a.resuelta_por, 'alerta', 'revision',
-               CASE WHEN (a.detalle->>'autorevision')::boolean THEN a.resuelta_por END
+               CASE WHEN (a.detalle->>'autorevision')::boolean THEN a.resuelta_por END,
+               false
           FROM combustible_alertas a
          WHERE a.tenant_id = $1 AND a.resuelta_en BETWEEN $2::timestamptz AND $3::timestamptz
       )
@@ -3670,6 +4251,9 @@ export class CombustibleRepository {
              COUNT(*) FILTER (WHERE m.accion = 'carga' AND m.que = 'recepcion') AS recepciones_cargadas,
              COUNT(*) FILTER (WHERE m.accion = 'carga' AND m.que = 'lectura') AS lecturas_cargadas,
              COUNT(*) FILTER (WHERE m.accion = 'carga' AND m.que = 'precinto') AS precintos_colocados,
+             COUNT(*) FILTER (WHERE m.accion = 'carga' AND m.que = 'conteo_urea') AS conteos_urea,
+             COUNT(*) FILTER (WHERE m.accion = 'carga' AND m.que = 'conteo_urea' AND m.cuenta_lo_propio)
+               AS conteos_urea_sobre_lo_propio,
              COUNT(*) FILTER (WHERE m.accion = 'anulacion') AS anulaciones,
              COUNT(*) FILTER (WHERE m.accion = 'anulacion' AND m.autor_original = m.usuario)
                AS anulaciones_propias,
@@ -5039,6 +5623,70 @@ export class CombustibleRepository {
       capacidadL: f.capacidad_l === null ? null : Number(f.capacidad_l),
       dia: f.dia,
       litros: Number(f.litros),
+    }));
+  }
+
+  /** El historial de urea que alimenta el asistente de umbrales (0117), en
+   *  UN viaje: litros de urea por día y por equipo, más los litros de diésel
+   *  del mismo equipo el mismo día (para poder sugerir el ratio).
+   *
+   *  Todo en litros y sin conversiones: la urea se registra siempre en litros
+   *  (el factor del envase se aplica al crear el movimiento, ver 0092), a
+   *  diferencia del combustible, que puede estar en galones según el tanque.
+   *  El diésel SÍ se convierte, por eso el CASE -- compararlos sin convertir
+   *  daría un ratio tres veces y media más chico de lo real en los tanques en
+   *  galones, y el umbral sugerido saldría absurdamente holgado.
+   *
+   *  Devuelve una fila por (equipo, día) con movimiento de CUALQUIERA de los
+   *  dos productos: el ratio necesita los días en que hubo diésel aunque no
+   *  hubiera urea, y el tope diario los días en que hubo urea aunque no
+   *  hubiera diésel. */
+  async findUreaPorDiaYEquipo(client: PoolClient, tenantId: string, dias: number) {
+    const r = await client.query<{
+      equipo_id: number | null;
+      placa_codigo: string | null;
+      dia: Date;
+      urea_l: string;
+      urea_almacen_l: string;
+      diesel_l: string;
+    }>(
+      `
+      SELECT d.equipo_id,
+             e.placa_codigo,
+             date_trunc('day', d.despachado_en) AS dia,
+             COALESCE(SUM(CASE WHEN d.producto = 'urea' THEN d.cantidad END), 0) AS urea_l,
+             -- 0119: lo que salió del DEPÓSITO, para sugerir el stock mínimo y
+             -- máximo. El tope diario y el ratio usan urea_l (todo lo que
+             -- recibió la unidad, también lo comprado en ruta).
+             COALESCE(SUM(CASE WHEN d.producto = 'urea' AND d.origen = 'almacen'
+                               THEN d.cantidad END), 0) AS urea_almacen_l,
+             COALESCE(SUM(
+               CASE WHEN d.producto <> 'urea'
+                 THEN d.cantidad * CASE
+                        WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL
+                          THEN 3.785411784
+                        ELSE 1
+                      END
+               END
+             ), 0) AS diesel_l
+        FROM combustible_despachos d
+        LEFT JOIN combustible c
+               ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1
+        LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1
+       WHERE d.tenant_id = $1 AND d.anulada_en IS NULL
+         AND d.despachado_en > now() - make_interval(days => $2)
+       GROUP BY 1, 2, 3
+       ORDER BY 3
+      `,
+      [tenantId, dias]
+    );
+    return r.rows.map((f) => ({
+      equipoId: f.equipo_id,
+      placaCodigo: f.placa_codigo,
+      dia: f.dia,
+      ureaL: Number(f.urea_l),
+      ureaAlmacenL: Number(f.urea_almacen_l),
+      dieselL: Number(f.diesel_l),
     }));
   }
 
