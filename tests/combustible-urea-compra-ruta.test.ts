@@ -557,4 +557,32 @@ describe("combustible: compra de urea en ruta (migración 0119)", () => {
     });
     expect(r.status).toBe(400);
   });
+
+  // ── 8. Lo que muestra el panel: autonomía y compras del mes ───────────
+
+  it("el estado separa el consumo del almacén de lo comprado en ruta", async () => {
+    const leer = async () => (await agente.get("/api/erp/combustible/urea/estado")).body.stock;
+    const antes = await leer();
+    // Los vales de beforeAll ya dejaron un consumo medible.
+    expect(antes.consumoDiarioL).toBeGreaterThan(0);
+
+    const c = await compra({ cantidad_bultos: 2, costo_unitario: 50 });
+    expect(c.status).toBe(201);
+    const despues = await leer();
+
+    // La compra suma al "en ruta del mes": 2 cajas = 32 L, S/ 100, 1 compra.
+    expect(despues.enRutaMes.litros).toBe(antes.enRutaMes.litros + 32);
+    expect(despues.enRutaMes.compras).toBe(antes.enRutaMes.compras + 1);
+    expect(despues.enRutaMes.total).toBeCloseTo(antes.enRutaMes.total + 100, 2);
+    // Y NO toca el depósito: ni el stock ni el ritmo de consumo ni la autonomía.
+    expect(despues.stockL).toBe(antes.stockL);
+    expect(despues.consumoDiarioL).toBe(antes.consumoDiarioL);
+    expect(despues.autonomiaDias).toBe(antes.autonomiaDias);
+  });
+
+  it("la autonomía es stock sobre el consumo diario, y es null sin stock", async () => {
+    const s = (await agente.get("/api/erp/combustible/urea/estado")).body.stock;
+    expect(s.stockL).toBeGreaterThan(0);
+    expect(s.autonomiaDias).toBeCloseTo(s.stockL / s.consumoDiarioL, 0);
+  });
 });

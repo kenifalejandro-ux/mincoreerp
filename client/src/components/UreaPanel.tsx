@@ -40,6 +40,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { comprimirImagen } from "./combustible/comprimirImagen";
 import VentanaFlotante from "./comunes/VentanaFlotante";
+import { AlmacenUrea, ResumenUrea, type EstadoStockUrea } from "./UreaAlmacen";
 import { apiFetch } from "../services/apiClient";
 
 /** Los envases ya NO son una constante del cliente (migración 0116): los
@@ -116,6 +117,30 @@ function AvisoSinProveedores() {
   );
 }
 
+const COLOR_TIPO_MOVIMIENTO: Record<string, string> = {
+  entrada: "bg-emerald-500",
+  vale: "bg-[#4f8fdc]",
+  conteo: "bg-[#a3e635]",
+};
+
+/** El marco de VentanaFlotante es overflow-hidden: el contenido tiene que
+ *  traer su propia zona con scroll o lo que no entra se corta y los botones
+ *  de abajo (Guardar) quedan inalcanzables. */
+function CuerpoVentana({ children }: { children: React.ReactNode }) {
+  return <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>;
+}
+
+function TipoMovimiento({ tipo }: { tipo: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 font-medium capitalize">
+      <span
+        className={`h-2 w-2 shrink-0 rounded-full ${COLOR_TIPO_MOVIMIENTO[tipo] ?? "bg-slate-400"}`}
+      />
+      {tipo}
+    </span>
+  );
+}
+
 function etiquetaMovimiento(
   presentaciones: PresentacionFila[],
   codigo: string,
@@ -137,12 +162,12 @@ type Vista =
   | "presentaciones";
 
 const VISTAS: { valor: Vista; etiqueta: string }[] = [
-  { valor: "vales", etiqueta: "Vales del almacén (salidas a unidades)" },
-  { valor: "compras", etiqueta: "Compras en ruta (con comprobante)" },
-  { valor: "entradas", etiqueta: "Entradas (compras)" },
-  { valor: "conteos", etiqueta: "Conteos físicos de almacén" },
-  { valor: "por_conductor", etiqueta: "Ranking de consumo por conductor" },
-  { valor: "por_vehiculo", etiqueta: "Ranking de consumo por vehículo" },
+  { valor: "vales", etiqueta: "Vales del almacén" },
+  { valor: "compras", etiqueta: "Compras en ruta" },
+  { valor: "entradas", etiqueta: "Entradas" },
+  { valor: "conteos", etiqueta: "Conteos físicos" },
+  { valor: "por_conductor", etiqueta: "Por conductor" },
+  { valor: "por_vehiculo", etiqueta: "Por vehículo" },
 ];
 
 /** Fuera de VISTAS: no es una consulta del historial, es la configuración
@@ -346,16 +371,6 @@ interface EstadoUrea {
   // `stockMaximoL` en null significa "ese control está apagado", NO "el
   // límite es cero" -- la barra lo tiene que distinguir.
   stock: EstadoStockUrea;
-}
-
-interface EstadoStockUrea {
-  /** Puede ser NEGATIVO: los vales declaran más urea de la que las entradas
-   *  explican. Se muestra con signo, no se tapa en 0 (ver el service). */
-  stockL: number;
-  stockMinimoL: number | null;
-  stockMaximoL: number | null;
-  referencia: { nombre: string; litros: number; bultos: number } | null;
-  ultimoConteo: { contadoL: number; contadoEn: string; diferenciaL: number } | null;
 }
 
 function ahoraParaInputLocal(): string {
@@ -771,7 +786,7 @@ function ModalReemplazarComprobante({
             type="button"
             disabled={!archivo || (esReemplazo && !motivo.trim()) || enviando}
             onClick={enviar}
-            className="px-4 py-2 bg-[#0A1014] text-white rounded-xl text-sm font-semibold disabled:opacity-50"
+            className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed"
           >
             {enviando ? "Subiendo…" : esReemplazo ? "Reemplazar" : "Adjuntar"}
           </button>
@@ -915,7 +930,7 @@ function MovimientosRecientes({ clave, onVerKardex }: { clave: number; onVerKard
         <button
           type="button"
           onClick={onVerKardex}
-          className="text-xs font-semibold text-slate-600 underline hover:text-slate-900"
+          className="text-xs font-semibold text-slate-600 underline hover:text-white"
         >
           Ver kardex completo
         </button>
@@ -943,7 +958,9 @@ function MovimientosRecientes({ clave, onVerKardex }: { clave: number; onVerKard
               {filas.map((f) => (
                 <tr key={`${f.tipo}-${f.referencia_id}`} className={f.anulada ? "opacity-50" : ""}>
                   <td className="px-4 py-2 whitespace-nowrap">{formatearFecha(f.ocurrido_en)}</td>
-                  <td className="px-4 py-2 capitalize">{f.tipo}</td>
+                  <td className="px-4 py-2">
+                    <TipoMovimiento tipo={f.tipo} />
+                  </td>
                   <td className="px-4 py-2 font-mono text-xs">{f.documento}</td>
                   <td className="px-4 py-2">{f.detalle}</td>
                   <td className="px-4 py-2 text-right">{f.entrada ? n(f.entrada) : ""}</td>
@@ -1006,7 +1023,9 @@ function TablaKardex({ kardex, sinFechas }: { kardex: KardexUrea | null; sinFech
               {kardex.filas.map((f) => (
                 <tr key={`${f.tipo}-${f.referencia_id}`} className={f.anulada ? "opacity-50" : ""}>
                   <td className="px-4 py-2 whitespace-nowrap">{formatearFecha(f.ocurrido_en)}</td>
-                  <td className="px-4 py-2 capitalize">{f.tipo}</td>
+                  <td className="px-4 py-2">
+                    <TipoMovimiento tipo={f.tipo} />
+                  </td>
                   <td className="px-4 py-2">{f.documento}</td>
                   <td className="px-4 py-2">
                     {f.detalle}
@@ -1269,101 +1288,122 @@ export default function UreaPanel() {
     cargarEstado();
   }, [vista, cargarVista, cargarEstado, cargarHallazgos, puedeVerUrea, puedeVerHallazgos]);
 
+  const botonAccion =
+    "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all active:scale-95 bg-[#192526] text-white hover:bg-[#0D1719] border border-[#2a2e37] hover:border-[#a3e635]";
   const botonHerramienta =
-    "flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-700 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm";
+    "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all active:scale-95 bg-[#192526] text-slate-500 hover:bg-[#1e2128] border border-[#2a2e37]";
+  const hayRegistrar =
+    permiteUrea("registrar_vale") ||
+    permiteUrea("registrar_compra") ||
+    permiteUrea("registrar_entrada") ||
+    permiteUrea("registrar_conteo_fisico");
+  const hayHerramientas = puedeVerKardex || puedeGestionarPrecios || puedeConfigurar;
+  const etiquetaGrupo = "text-[11px] font-semibold uppercase tracking-[0.09em] text-slate-500";
 
   return (
     <div className="flex flex-col gap-4">
-      {/* ── Encabezado y barra de herramientas, calcado de Tanques ── */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-lg sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight">
-            Control de Urea
-          </h1>
-          <p className="text-xs sm:text-sm text-[#94a3b8]">
-            Almacén, compras en ruta y consumo por unidad
-          </p>
-        </div>
-        <div className="flex flex-col items-end gap-2">
-          <div className="flex flex-wrap justify-end gap-2">
-            {puedeVerKardex && (
-              <button
-                type="button"
-                onClick={() => setPanelAbierto("kardex")}
-                className={botonHerramienta}
-              >
-                <BookOpen className="w-4 h-4 shrink-0" />
-                Kardex
-              </button>
-            )}
-            {puedeGestionarPrecios && (
-              <button
-                type="button"
-                onClick={() => setPanelAbierto("precios")}
-                className={botonHerramienta}
-              >
-                <Tag className="w-4 h-4 shrink-0" />
-                Precios
-              </button>
-            )}
-            {puedeConfigurar && (
-              <button
-                type="button"
-                onClick={() => setPanelAbierto("configuracion")}
-                className={botonHerramienta}
-              >
-                <Settings className="w-4 h-4 shrink-0" />
-                Configuración
-              </button>
-            )}
-          </div>
-          <div className="flex flex-wrap justify-end gap-2">
-            {permiteUrea("registrar_conteo_fisico") && (
-              <button
-                type="button"
-                onClick={() => setModalConteo(true)}
-                className={botonHerramienta}
-              >
-                <ClipboardList className="w-4 h-4 shrink-0" />
-                Registrar conteo físico
-              </button>
-            )}
-            {permiteUrea("registrar_entrada") && (
-              <button
-                type="button"
-                onClick={() => setModalEntrada(true)}
-                className={botonHerramienta}
-              >
-                <PackagePlus className="w-4 h-4 shrink-0" />
-                Registrar entrada
-              </button>
-            )}
-            {permiteUrea("registrar_compra") && (
-              <button
-                type="button"
-                onClick={() => {
-                  setMensajeCompra(null);
-                  setModalCompra(true);
-                }}
-                className={botonHerramienta}
-              >
-                <Receipt className="w-4 h-4 shrink-0" />
-                Registrar compra en ruta
-              </button>
-            )}
-            {permiteUrea("registrar_vale") && (
-              <button
-                type="button"
-                onClick={() => setModalVale(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-[#BADC1E] text-[#0A1014] font-semibold rounded-xl hover:opacity-90 transition-all text-sm"
-              >
-                <Droplets className="w-4 h-4 shrink-0" />
-                Registrar vale
-              </button>
-            )}
-          </div>
-        </div>
+      {/* ── Encabezado y barra de acciones: lo que se REGISTRA a la izquierda,
+          lo que se CONSULTA y se CONFIGURA a la derecha. ── */}
+      <div>
+        <h1 className="text-lg sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight">
+          Control de Urea
+        </h1>
+        <p className="text-xs sm:text-sm text-[#94a3b8]">
+          Almacén, compras en ruta y consumo por unidad
+        </p>
       </div>
+
+      {(hayRegistrar || hayHerramientas) && (
+        <div className="flex flex-wrap items-end justify-between gap-x-7 gap-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          {hayRegistrar && (
+            <div className="flex min-w-0 flex-col gap-2">
+              <span className={etiquetaGrupo}>Registrar</span>
+              <div className="flex flex-wrap gap-2">
+                {permiteUrea("registrar_vale") && (
+                  <button
+                    type="button"
+                    onClick={() => setModalVale(true)}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all active:scale-95 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d]"
+                  >
+                    <Droplets className="w-4 h-4 shrink-0" />
+                    Vale del almacén
+                  </button>
+                )}
+                {permiteUrea("registrar_compra") && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMensajeCompra(null);
+                      setModalCompra(true);
+                    }}
+                    className={botonAccion}
+                  >
+                    <Receipt className="w-4 h-4 shrink-0" />
+                    Compra en ruta
+                  </button>
+                )}
+                {permiteUrea("registrar_entrada") && (
+                  <button
+                    type="button"
+                    onClick={() => setModalEntrada(true)}
+                    className={botonAccion}
+                  >
+                    <PackagePlus className="w-4 h-4 shrink-0" />
+                    Entrada
+                  </button>
+                )}
+                {permiteUrea("registrar_conteo_fisico") && (
+                  <button
+                    type="button"
+                    onClick={() => setModalConteo(true)}
+                    className={botonAccion}
+                  >
+                    <ClipboardList className="w-4 h-4 shrink-0" />
+                    Conteo físico
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          {hayHerramientas && (
+            <div className="flex min-w-0 flex-col gap-2">
+              <span className={etiquetaGrupo}>Herramientas</span>
+              <div className="flex flex-wrap gap-2">
+                {puedeVerKardex && (
+                  <button
+                    type="button"
+                    onClick={() => setPanelAbierto("kardex")}
+                    className={botonHerramienta}
+                  >
+                    <BookOpen className="w-4 h-4 shrink-0" />
+                    Kardex
+                  </button>
+                )}
+                {puedeGestionarPrecios && (
+                  <button
+                    type="button"
+                    onClick={() => setPanelAbierto("precios")}
+                    className={botonHerramienta}
+                  >
+                    <Tag className="w-4 h-4 shrink-0" />
+                    Precios
+                  </button>
+                )}
+                {puedeConfigurar && (
+                  <button
+                    type="button"
+                    onClick={() => setPanelAbierto("configuracion")}
+                    className={botonHerramienta}
+                  >
+                    <Settings className="w-4 h-4 shrink-0" />
+                    Configuración
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {puedeVerHallazgos && hallazgos && <FranjaHallazgos datos={hallazgos} />}
 
@@ -1386,7 +1426,12 @@ export default function UreaPanel() {
 
       {/* ── El panel a primera vista: el stock y lo último que pasó en el
           almacén, como el cilindro y la tabla de Tanques. ── */}
-      {puedeVerUrea && estado?.stock && <BarraStockUrea stock={estado.stock} />}
+      {puedeVerUrea && estado?.stock && (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.9fr)_minmax(0,1fr)]">
+          <AlmacenUrea stock={estado.stock} envases={presentaciones.filter((p) => p.activa)} />
+          <ResumenUrea stock={estado.stock} />
+        </div>
+      )}
       {puedeVerUrea && puedeVerKardex && (
         <MovimientosRecientes clave={recargas} onVerKardex={() => setPanelAbierto("kardex")} />
       )}
@@ -1399,21 +1444,29 @@ export default function UreaPanel() {
 
       {puedeVerUrea && (
         <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
-          <div className="flex flex-wrap items-end gap-3 border-b border-slate-200 p-4">
-            <label className="flex flex-col text-sm">
-              <span className="text-gray-600">Historial</span>
-              <select
-                value={vista}
-                onChange={(e) => setVista(e.target.value as Vista)}
-                className="rounded border border-gray-300 px-2 py-1 text-xs sm:text-sm"
+          <div
+            className="flex gap-1 overflow-x-auto border-b border-slate-200 px-3.5 pt-2.5"
+            role="tablist"
+            aria-label="Historial"
+          >
+            {vistasVisibles.map((v) => (
+              <button
+                key={v.valor}
+                type="button"
+                role="tab"
+                aria-selected={vista === v.valor}
+                onClick={() => setVista(v.valor)}
+                className={`-mb-px whitespace-nowrap border-b-2 px-3.5 py-2 text-sm font-medium ${
+                  vista === v.valor
+                    ? "border-[#a3e635] text-slate-800"
+                    : "border-transparent text-slate-500 hover:text-white"
+                }`}
               >
-                {vistasVisibles.map((v) => (
-                  <option key={v.valor} value={v.valor}>
-                    {v.etiqueta}
-                  </option>
-                ))}
-              </select>
-            </label>
+                {v.etiqueta}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-end gap-3 border-b border-slate-200 p-4">
             {!VISTAS_SIN_PERIODO.has(vista) && (
               <>
                 <label className="flex flex-col text-sm">
@@ -1527,7 +1580,9 @@ export default function UreaPanel() {
           anchoInicial={1000}
           altoInicial={560}
         >
-          <PanelKardexUrea puedeExportar={permiteUrea("exportar")} />
+          <CuerpoVentana>
+            <PanelKardexUrea puedeExportar={permiteUrea("exportar")} />
+          </CuerpoVentana>
         </VentanaFlotante>
       )}
       {panelAbierto === "precios" && puedeGestionarPrecios && (
@@ -1539,12 +1594,14 @@ export default function UreaPanel() {
           anchoInicial={980}
           altoInicial={600}
         >
-          <CatalogoPreciosUrea
-            precios={precios}
-            grifos={grifos}
-            presentaciones={presentaciones}
-            onCambio={cargarPrecios}
-          />
+          <CuerpoVentana>
+            <CatalogoPreciosUrea
+              precios={precios}
+              grifos={grifos}
+              presentaciones={presentaciones}
+              onCambio={cargarPrecios}
+            />
+          </CuerpoVentana>
         </VentanaFlotante>
       )}
       {panelAbierto === "configuracion" && puedeConfigurar && (
@@ -1556,10 +1613,16 @@ export default function UreaPanel() {
           anchoInicial={980}
           altoInicial={640}
         >
-          <div className="flex flex-col">
-            <UmbralesUrea onGuardado={cargarEstado} presentaciones={presentaciones} />
+          <CuerpoVentana>
+            <UmbralesUrea
+              onGuardado={() => {
+                cargarEstado();
+                setPanelAbierto(null);
+              }}
+              presentaciones={presentaciones}
+            />
             <ConfiguracionPresentaciones filas={presentaciones} onCambio={cargarPresentaciones} />
-          </div>
+          </CuerpoVentana>
         </VentanaFlotante>
       )}
 
@@ -2055,146 +2118,6 @@ function FranjaHallazgos({ datos }: { datos: HallazgosUrea }) {
   );
 }
 
-// ── La barra de stock (migración 0117) ──────────────────────────────────
-//
-// Decisión 7 del ADR: NO es un cilindro con líquido. La urea no tiene un
-// nivel continuo -- tiene cajas enteras, y un dibujo de tanque sugeriría que
-// se puede medir con una varilla. Es una barra de inventario con las dos
-// marcas (mínimo y máximo) encima, más la traducción a bultos: nadie en
-// almacén cuenta litros, cuenta cajas.
-//
-// Las marcas se dibujan SOLO si la empresa configuró ese umbral. Un mínimo
-// sin configurar no se pinta en 0: no está apagado "en cero", está apagado.
-
-function BarraStockUrea({ stock }: { stock: EstadoStockUrea }) {
-  const { stockL, stockMinimoL, stockMaximoL } = stock;
-  const negativo = stockL < 0;
-  const bajoMinimo = stockMinimoL !== null && stockL < stockMinimoL;
-  const sobreMaximo = stockMaximoL !== null && stockL > stockMaximoL;
-
-  // La escala: el máximo configurado si existe, y si no, lo que haya de
-  // stock con aire arriba para que la barra no se vea siempre llena.
-  const escala = Math.max(stockMaximoL ?? 0, stockL, stockMinimoL ?? 0, 1) * 1.1;
-  const pct = (valor: number) => Math.min(100, Math.max(0, (valor / escala) * 100));
-
-  const color =
-    negativo || bajoMinimo ? "bg-red-500" : sobreMaximo ? "bg-amber-500" : "bg-emerald-500";
-
-  return (
-    <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <div className="text-xs uppercase tracking-wider text-slate-500">Urea en almacén</div>
-          <div className="flex items-baseline gap-2">
-            <span
-              className={`text-3xl font-bold ${negativo || bajoMinimo ? "text-red-600" : "text-slate-800"}`}
-            >
-              {formatearNumero(String(stockL), 1)} L
-            </span>
-            {stock.referencia && (
-              <span className="text-sm text-slate-500">
-                ≈ {formatearNumero(String(stock.referencia.bultos), 1)}{" "}
-                {stock.referencia.nombre.toLowerCase()}s de {stock.referencia.litros} L
-              </span>
-            )}
-          </div>
-        </div>
-        {stock.ultimoConteo ? (
-          <div className="text-right text-xs text-slate-500">
-            <div>
-              Último conteo físico: {formatearNumero(String(stock.ultimoConteo.contadoL), 1)} L el{" "}
-              {formatearFecha(stock.ultimoConteo.contadoEn)}
-            </div>
-            <div
-              className={
-                stock.ultimoConteo.diferenciaL === 0 ? "text-emerald-700" : "text-amber-700"
-              }
-            >
-              {stock.ultimoConteo.diferenciaL === 0
-                ? "Cuadró con los papeles."
-                : `Diferencia contra los papeles: ${stock.ultimoConteo.diferenciaL > 0 ? "+" : ""}${formatearNumero(String(stock.ultimoConteo.diferenciaL), 1)} L`}
-            </div>
-          </div>
-        ) : (
-          <div className="text-right text-xs text-slate-400">
-            Todavía no hay ningún conteo físico.
-          </div>
-        )}
-      </div>
-
-      {/* El stock negativo no se puede dibujar en una barra (no hay "menos
-          que vacío"), y forzarlo a 0 sería mentir justo en el caso que más
-          importa. Se dice con palabras. */}
-      {negativo ? (
-        <div className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          El stock de urea da <strong>negativo</strong>: los vales declaran más urea de la que las
-          entradas registradas explican. O falta cargar una compra, o hay vales por más litros de
-          los que realmente salieron.
-        </div>
-      ) : (
-        <div className="mt-4">
-          <div className="relative h-4 w-full rounded-full bg-slate-100">
-            <div
-              className={`h-4 rounded-full transition-all ${color}`}
-              style={{ width: `${pct(stockL)}%` }}
-            />
-            {stockMinimoL !== null && (
-              <div
-                className="absolute -top-1 h-6 w-0.5 bg-slate-700"
-                style={{ left: `${pct(stockMinimoL)}%` }}
-                title={`Mínimo: ${stockMinimoL} L`}
-              />
-            )}
-            {stockMaximoL !== null && (
-              <div
-                className="absolute -top-1 h-6 w-0.5 bg-slate-400"
-                style={{ left: `${pct(stockMaximoL)}%` }}
-                title={`Máximo: ${stockMaximoL} L`}
-              />
-            )}
-          </div>
-          <div className="mt-2 flex flex-wrap gap-4 text-xs text-slate-500">
-            <span>
-              Mínimo:{" "}
-              {stockMinimoL === null ? (
-                <span className="text-slate-400">sin configurar</span>
-              ) : (
-                `${stockMinimoL} L`
-              )}
-            </span>
-            <span>
-              Máximo:{" "}
-              {stockMaximoL === null ? (
-                <span className="text-slate-400">sin configurar</span>
-              ) : (
-                `${stockMaximoL} L`
-              )}
-            </span>
-            {stockMinimoL === null && stockMaximoL === null && (
-              <span className="text-slate-400">
-                Sin umbrales configurados no se avisa nada: definilos en Configuración.
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-
-      {bajoMinimo && !negativo && (
-        <div className="mt-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          Queda poca urea: faltan {formatearNumero(String(stockMinimoL! - stockL), 1)} L para volver
-          al mínimo. Conviene programar la compra.
-        </div>
-      )}
-      {sobreMaximo && (
-        <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          Hay {formatearNumero(String(stockL - stockMaximoL!), 1)} L más que el máximo definido para
-          el depósito.
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ── Los cuatro umbrales de urea (migración 0117) ────────────────────────
 //
 // Dos por equipo (tope diario y ratio urea/diésel, de 0092) y dos globales
@@ -2494,7 +2417,7 @@ function UmbralesUrea({
           type="button"
           onClick={guardar}
           disabled={guardando || !configCompleta}
-          className="px-4 py-2 bg-[#0A1014] text-white rounded-xl text-sm font-semibold disabled:opacity-50"
+          className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed"
         >
           {guardando ? "Guardando…" : "Guardar umbrales"}
         </button>
@@ -2873,7 +2796,7 @@ function CatalogoPreciosUrea({
             type="button"
             disabled={!grifoId || !presentacion || !(Number(precio) > 0) || enviando}
             onClick={guardar}
-            className="px-4 py-2 bg-[#0A1014] text-white rounded-xl text-sm font-semibold disabled:opacity-50"
+            className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold"
           >
             {enviando ? "Guardando…" : "Agregar precio"}
           </button>
@@ -3214,7 +3137,7 @@ function ModalVale({
         <h3 className="text-lg font-bold text-slate-800">Registrar vale de urea</h3>
         <p className="-mt-2 text-sm text-slate-500">
           Urea que sale del almacén de la empresa, con vale del talonario. Si la unidad la compró en
-          ruta, usá <strong>Registrar compra en ruta</strong>: esa no baja el stock del almacén.
+          ruta, usá <strong>Compra en ruta</strong>: esa no baja el stock del almacén.
         </p>
         {error && <div className="text-sm text-red-600 bg-red-50 rounded p-2">{error}</div>}
         {activas.length === 0 && <AvisoSinEnvases />}
@@ -3339,7 +3262,7 @@ function ModalVale({
               enviando
             }
             onClick={enviar}
-            className="px-4 py-2 bg-[#0A1014] text-white rounded-xl text-sm font-semibold disabled:opacity-50"
+            className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed"
           >
             {enviando ? "Guardando…" : "Registrar vale"}
           </button>
@@ -3792,7 +3715,7 @@ function ModalCompraUrea({
             }
             title={!foto ? "Falta la foto del comprobante" : undefined}
             onClick={enviar}
-            className="px-4 py-2 bg-[#0A1014] text-white rounded-xl text-sm font-semibold disabled:opacity-50"
+            className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed"
           >
             {enviando ? "Guardando…" : "Registrar compra"}
           </button>
@@ -3991,7 +3914,7 @@ function ModalEntrada({
               enviando
             }
             onClick={enviar}
-            className="px-4 py-2 bg-[#0A1014] text-white rounded-xl text-sm font-semibold disabled:opacity-50"
+            className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed"
           >
             {enviando ? "Guardando…" : "Registrar entrada"}
           </button>
@@ -4113,7 +4036,7 @@ function ModalConteo({
             type="button"
             disabled={!presentacion || cantidadBultos === "" || enviando}
             onClick={enviar}
-            className="px-4 py-2 bg-[#0A1014] text-white rounded-xl text-sm font-semibold disabled:opacity-50"
+            className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed"
           >
             {enviando ? "Guardando…" : "Registrar conteo"}
           </button>
@@ -4269,7 +4192,7 @@ function ModalCrearPresentacion({
               enviando
             }
             onClick={enviar}
-            className="px-4 py-2 bg-[#0A1014] text-white rounded-xl text-sm font-semibold disabled:opacity-50"
+            className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed"
           >
             {enviando ? "Guardando…" : "Agregar envase"}
           </button>
@@ -4423,7 +4346,7 @@ function ModalEditarPresentacion({
             type="button"
             disabled={!nombre.trim() || !motivo.trim() || !litros || !(litrosAhora > 0) || enviando}
             onClick={enviar}
-            className="px-4 py-2 bg-[#0A1014] text-white rounded-xl text-sm font-semibold disabled:opacity-50"
+            className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed"
           >
             {enviando ? "Guardando…" : "Guardar cambio"}
           </button>

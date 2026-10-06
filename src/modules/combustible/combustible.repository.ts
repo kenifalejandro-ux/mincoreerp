@@ -3797,6 +3797,55 @@ export class CombustibleRepository {
     return Number(fila.entradas) - Number(fila.salidas);
   }
 
+  /** Lo que sale del almacén en los últimos 30 días (para la autonomía) y lo
+   *  comprado en ruta en el mes calendario de Lima. Son dos cosas separadas a
+   *  propósito: la compra en ruta nunca pasa por el depósito (0119), así que
+   *  no entra en el consumo del almacén ni en la autonomía. */
+  async findResumenConsumoUrea(client: PoolClient, tenantId: string, ahora: string) {
+    const r = await client.query<{
+      salidas_30d: string;
+      ruta_litros: string;
+      ruta_compras: string;
+      ruta_total: string;
+    }>(
+      `
+      SELECT
+        COALESCE(SUM(cantidad) FILTER (
+          WHERE origen = 'almacen'
+            AND despachado_en > $2::timestamptz - INTERVAL '30 days'
+        ), 0) AS salidas_30d,
+        COALESCE(SUM(cantidad) FILTER (
+          WHERE origen = 'compra_externa'
+            AND despachado_en >= date_trunc('month', $2::timestamptz AT TIME ZONE 'America/Lima')
+                                 AT TIME ZONE 'America/Lima'
+        ), 0) AS ruta_litros,
+        COUNT(*) FILTER (
+          WHERE origen = 'compra_externa'
+            AND despachado_en >= date_trunc('month', $2::timestamptz AT TIME ZONE 'America/Lima')
+                                 AT TIME ZONE 'America/Lima'
+        ) AS ruta_compras,
+        COALESCE(SUM(cantidad * costo_unitario) FILTER (
+          WHERE origen = 'compra_externa'
+            AND despachado_en >= date_trunc('month', $2::timestamptz AT TIME ZONE 'America/Lima')
+                                 AT TIME ZONE 'America/Lima'
+        ), 0) AS ruta_total
+      FROM combustible_despachos
+      WHERE tenant_id = $1 AND producto = 'urea' AND anulada_en IS NULL
+        AND despachado_en <= $2::timestamptz
+      `,
+      [tenantId, ahora]
+    );
+    const f = r.rows[0];
+    return {
+      salidas30dL: Number(f.salidas_30d),
+      enRutaMes: {
+        litros: Number(f.ruta_litros),
+        compras: Number(f.ruta_compras),
+        total: Number(Number(f.ruta_total).toFixed(2)),
+      },
+    };
+  }
+
   /** KARDEX DE UREA (entrega 3): entradas, vales y conteos del período en UNA
    *  línea de tiempo. Es el libro del ALMACÉN: las compras en ruta (0119) no
    *  aparecen, porque nunca entraron ni salieron del depósito; más el saldo con el que arranca (todo lo vigente

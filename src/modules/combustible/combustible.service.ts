@@ -4577,18 +4577,29 @@ export class CombustibleService {
    *  está apagado, no "el límite es cero". */
   async getEstadoStockUrea(client: PoolClient, tenantId: string) {
     const ahora = new Date().toISOString();
-    const [stock, { stockMinimoUreaL, stockMaximoUreaL }, ultimoConteo, presentaciones] =
+    const [stock, { stockMinimoUreaL, stockMaximoUreaL }, ultimoConteo, presentaciones, resumen] =
       await Promise.all([
         this.repository.findStockTeoricoUrea(client, tenantId, ahora),
         this.repository.getTopesUrea(client, tenantId),
         this.repository.findUltimoConteoUreaVigente(client, tenantId),
         this.repository.findPresentacionesUrea(client, tenantId),
+        this.repository.findResumenConsumoUrea(client, tenantId, ahora),
       ]);
 
     const referencia = presentaciones.find((p) => p.es_referencia && p.activa) ?? null;
     const litrosPorBulto = referencia ? Number(referencia.litros) : null;
 
+    // Sin salidas en 30 días no hay ritmo del que extrapolar: null, no
+    // "infinitos días". Con stock en cero o negativo no queda autonomía que
+    // mostrar, tampoco.
+    const consumoDiarioL = resumen.salidas30dL > 0 ? resumen.salidas30dL / 30 : null;
+    const autonomiaDias =
+      consumoDiarioL !== null && stock > 0 ? Number((stock / consumoDiarioL).toFixed(1)) : null;
+
     return {
+      consumoDiarioL: consumoDiarioL === null ? null : Number(consumoDiarioL.toFixed(2)),
+      autonomiaDias,
+      enRutaMes: resumen.enRutaMes,
       stockL: Number(stock.toFixed(2)),
       stockMinimoL: stockMinimoUreaL,
       stockMaximoL: stockMaximoUreaL,
