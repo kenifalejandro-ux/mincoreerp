@@ -43,8 +43,10 @@ const FIRMAS: Record<string, (b: Buffer) => boolean> = {
 };
 
 export function contenidoCoincideConTipo(contenido: Buffer, mimeType: string): boolean {
-  const firma = FIRMAS[mimeType];
-  return firma !== undefined && firma(contenido);
+  // mimeType lo declara el cliente: con "constructor" o "toString" el
+  // índice devolvería un método heredado del prototipo, no una firma.
+  if (!Object.hasOwn(FIRMAS, mimeType)) return false;
+  return FIRMAS[mimeType](contenido);
 }
 
 export interface OpcionesDeSubida {
