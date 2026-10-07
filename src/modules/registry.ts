@@ -52,7 +52,15 @@ export const MODULOS: ModuloDefinicion[] = [
     router: equiposRoutes,
     // El grifo interno del equipo (0097) vive en platformBackup.service.ts,
     // que se restaura antes que cualquier módulo.
-    tablas: [{ nombre: "equipos", pk: "serial", fks: { grifo_interno_id: "grifos_internos" } }],
+    tablas: [
+      { nombre: "equipos", pk: "serial", fks: { grifo_interno_id: "grifos_internos" } },
+      // Historial de conductor (0126): cascadea desde el equipo, no necesita raíz.
+      {
+        nombre: "equipo_conductores",
+        pk: "serial",
+        fks: { equipo_id: "equipos", usuario_id: "usuarios", cerrado_por: "usuarios" },
+      },
+    ],
     raices: ["equipos"],
     cuota: { tabla: "equipos", porDefecto: 2_000 },
     // Solo crear el equipo califica para offline -- ver ADR-0002 §8. Dar de
@@ -284,6 +292,20 @@ export const MODULOS: ModuloDefinicion[] = [
           anulado_por: "usuarios",
         },
       },
+      // Rutas habituales de cada unidad (0126): referencian equipos Y lugares
+      // (sin ON DELETE sobre lugares), así que van después de los dos y
+      // necesitan su propia raíz para borrarse antes que los lugares.
+      {
+        nombre: "equipo_rutas",
+        pk: "serial",
+        fks: {
+          equipo_id: "equipos",
+          origen_id: "combustible_lugares",
+          destino_id: "combustible_lugares",
+          usuario_id: "usuarios",
+          cerrado_por: "usuarios",
+        },
+      },
       // Renglones de la compra de urea en ruta (0120): "2 cajas + 3 bolsas".
       // Van DESPUÉS de combustible_despachos (la referencian) y cascadean
       // desde ahí, así que no necesitan entrada en `raices`. La presentación
@@ -431,6 +453,7 @@ export const MODULOS: ModuloDefinicion[] = [
       // 0123: RAICES_WIPE invierte este orden, así que los viajes se borran
       // antes que los lugares y que los equipos.
       "combustible_lugares",
+      "equipo_rutas",
       "combustible_viajes",
     ],
     // Fase A (migrations/0057) le dio a Combustible su propio POST / y

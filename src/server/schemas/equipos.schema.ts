@@ -40,6 +40,20 @@ const camposCapacidadTanque = {
   usa_urea: z.boolean().optional(),
 };
 
+// Rutas habituales de la unidad (0126): origen → destino, lugares del catálogo
+// de Viajes. Una unidad puede tener varias o ninguna. `undefined` = no tocar
+// las rutas; `[]` = quitarlas todas.
+const rutaHabitualSchema = z
+  .object({
+    origen_id: z.number().int().positive(),
+    destino_id: z.number().int().positive(),
+  })
+  .refine((r) => r.origen_id !== r.destino_id, "El origen y el destino no pueden ser el mismo");
+
+const camposRutas = {
+  rutas: z.array(rutaHabitualSchema).max(20, "Máximo 20 rutas por unidad").optional(),
+};
+
 /** Espejo en Zod del CHECK `equipos_capacidad_tanque_check` de la migración
  *  0069 -- sin esto, mandar solo uno de los dos campos moriría con un 500
  *  de constraint en vez de un 400 explicando qué falta. */
@@ -75,6 +89,7 @@ export const crearEquipoSchema = z
     modelo: z.string().trim().max(100).optional(),
     tipo_medidor: z.enum(TIPOS_MEDIDOR).optional(),
     ...camposCapacidadTanque,
+    ...camposRutas,
     // El grifo interno al que pertenece (0097). Opcional: con un solo grifo en
     // la empresa lo asigna la base; con más de uno el servicio lo exige.
     grifo_interno_id: z.number().int().positive().optional(),
@@ -92,6 +107,10 @@ export const actualizarEquipoSchema = z
     modelo: z.string().trim().max(100).optional(),
     tipo_medidor: z.enum(TIPOS_MEDIDOR).optional(),
     ...camposCapacidadTanque,
+    ...camposRutas,
+    // Obligatorio cuando cambia el conductor o las rutas (0126): lo exige el
+    // servicio, que es quien sabe qué había antes. Queda en el historial.
+    motivo_cambio: z.string().trim().min(1).max(500).optional(),
     // Cambiar de grifo tiene su propio endpoint, con motivo (0097).
     grifo_interno_id: grifoNoEditable,
   })

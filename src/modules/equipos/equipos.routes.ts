@@ -20,6 +20,9 @@ router.get("/", asyncHandler(EquiposController.getAll));
 // 📊 exportar a Excel -- ANTES de "/:id" (si no, "export" matchea como id).
 router.get("/export/xlsx", asyncHandler(EquiposController.exportXlsx));
 
+// Solo lectura del catálogo de Viajes, para el selector de ruta -- ANTES de "/:id".
+router.get("/lugares", asyncHandler(EquiposController.lugares));
+
 router.post(
   "/",
   requireRole("admin", "operador"),
@@ -60,6 +63,8 @@ router.post(
   validate(moverDeGrifoSchema),
   asyncHandler(EquiposController.moverDeGrifo)
 );
+// Historial de conductor y rutas de la unidad (0126): lo ve cualquiera que vea Equipos.
+router.get("/:id/historial", asyncHandler(EquiposController.historial));
 router.get("/:id/movimientos-grifo", asyncHandler(EquiposController.listarMovimientosDeGrifo));
 
 export default router;

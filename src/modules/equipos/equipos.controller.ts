@@ -18,7 +18,16 @@ import { findDestinatariosAlertas } from "../../server/shared/utils/destinatario
 import { enviarCorreoAlerta } from "../../server/shared/utils/alertaMailer";
 import { logger } from "../../server/config/logger";
 import { armarXlsx, CONTENT_TYPE_XLSX } from "../../server/shared/utils/xlsx.util";
-import { EquiposService } from "./equipos.service";
+import { AppError } from "../../server/shared/middlewares/error.middleware";
+import { EquiposService, type CambiosHistorial } from "./equipos.service";
+
+/** Un AppError (p. ej. "falta el motivo") sale con su código y su mensaje; lo
+ *  demás sigue siendo un 500 genérico. Devuelve true si ya respondió. */
+function responderAppError(err: unknown, res: Response): boolean {
+  if (!(err instanceof AppError)) return false;
+  res.status(err.statusCode).json({ message: err.message, error: err.message });
+  return true;
+}
 
 /** ¿Este PUT le AMPLÍA el techo diario de combustible al equipo?
  *
@@ -107,7 +116,7 @@ export const EquiposController = {
       const tenantId = getTenantId(req);
       const data = req.validatedBody as CrearEquipoInput;
       const { fila: nuevo, creado } = await withTenant(tenantId, (client) =>
-        EquiposService.create(client, tenantId, data)
+        EquiposService.create(client, tenantId, req.usuario!.id, data)
       );
 
       // Reintento de un envío que ya se había guardado (la respuesta
@@ -135,6 +144,7 @@ export const EquiposController = {
       // Grifo interno (0097): falta con más de un grifo, no existe o está dado
       // de baja. 400 y no 500: la cola offline descarta los 4xx y los reporta
       // en vez de reintentarlos para siempre.
+      if (responderAppError(err, res)) return;
       if (err instanceof Error && err.message.includes("grifo interno")) {
         res.status(400).json({ message: err.message, error: err.message });
         return;
@@ -199,16 +209,27 @@ export const EquiposController = {
       //
       // Por eso hace falta el estado ANTERIOR: sin él no hay forma de saber
       // si el cambio amplió o estrechó el techo.
-      const { actualizado, antes } = await withTenant(tenantId, async (client) => {
+      const resultado = await withTenant(tenantId, async (client) => {
         const antes = await EquiposService.getById(client, tenantId, id);
-        const actualizado = await EquiposService.update(client, tenantId, id, data);
+        const actualizado = await EquiposService.update(
+          client,
+          tenantId,
+          req.usuario!.id,
+          id,
+          data
+        );
         return { actualizado, antes };
       });
+      const { antes } = resultado;
 
-      if (!actualizado) {
+      if (!resultado.actualizado) {
         res.status(404).json({ message: "Equipo no encontrado" });
         return;
       }
+      const { fila: actualizado, cambios } = resultado.actualizado as {
+        fila: Record<string, unknown> & { placa_codigo: string };
+        cambios: CambiosHistorial;
+      };
 
       const ampliacion = detectarAmpliacionDeTecho(antes, data);
       // Subir (o quitar) el consumo máximo afloja igual que subir la
@@ -239,6 +260,28 @@ export const EquiposController = {
         },
         contexto: contextoAuditoriaModulo(req),
       });
+
+      // Cambiar el conductor o las rutas de una unidad es un hecho propio en la
+      // bitácora, con el "de qué a qué" y el motivo: es lo que gerencia busca
+      // cuando investiga una incidencia.
+      if (cambios.conductor) {
+        await registrarAuditoria({
+          accion: "equipos.cambiar_conductor",
+          tenantId,
+          usuarioId: req.usuario!.id,
+          detalle: { equipoId: id, ...cambios.conductor, motivo: cambios.motivo },
+          contexto: contextoAuditoriaModulo(req),
+        });
+      }
+      if (cambios.rutas) {
+        await registrarAuditoria({
+          accion: "equipos.cambiar_rutas",
+          tenantId,
+          usuarioId: req.usuario!.id,
+          detalle: { equipoId: id, ...cambios.rutas, motivo: cambios.motivo },
+          contexto: contextoAuditoriaModulo(req),
+        });
+      }
 
       if (consumoAflojado) {
         try {
@@ -295,9 +338,31 @@ export const EquiposController = {
       }
       await publicarEventoTenant(tenantId, "equipos.actualizado", { equipoId: id });
       res.json(actualizado);
-    } catch {
+    } catch (err) {
+      if (responderAppError(err, res)) return;
       res.status(500).json({ message: "Error al actualizar equipo" });
     }
+  },
+
+  /** GET /:id/historial -- quién manejó la unidad y con qué rutas, y cuándo. */
+  async historial(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const h = await withTenant(tenantId, (client) =>
+      EquiposService.historial(client, tenantId, Number(req.params.id))
+    );
+    if (!h) {
+      res.status(404).json({ message: "Equipo no encontrado", error: "Equipo no encontrado" });
+      return;
+    }
+    res.json(h);
+  },
+
+  /** GET /lugares -- el catálogo de Viajes, de solo lectura, para el selector
+   *  de ruta de la unidad. */
+  async lugares(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const filas = await withTenant(tenantId, (client) => EquiposService.lugares(client, tenantId));
+    res.json(filas);
   },
 
   async delete(req: Request, res: Response) {
@@ -389,7 +454,7 @@ export const EquiposController = {
       const libro = armarXlsx([
         {
           nombre: "Equipos",
-          anchos: [16, 14, 22, 18, 22, 14, 12],
+          anchos: [16, 14, 22, 18, 22, 14, 28, 14, 40, 12],
           filas: [
             [
               { valor: "Placa", negrita: true },
@@ -398,6 +463,9 @@ export const EquiposController = {
               { valor: "Marca", negrita: true },
               { valor: "Modelo", negrita: true },
               { valor: "Medidor", negrita: true },
+              { valor: "Conductor", negrita: true },
+              { valor: "DNI", negrita: true },
+              { valor: "Rutas", negrita: true },
               { valor: "Estado", negrita: true },
             ],
             ...filas.map((e) => [
@@ -411,6 +479,11 @@ export const EquiposController = {
                 : e.tipo_medidor === "odometro"
                   ? "Odómetro"
                   : "",
+              e.conductor_nombre ?? "",
+              e.conductor_dni ?? "",
+              ((e.rutas ?? []) as { origen: string; destino: string }[])
+                .map((r) => `${r.origen} → ${r.destino}`)
+                .join("; "),
               e.activo ? "Activo" : "Inactivo",
             ]),
           ],

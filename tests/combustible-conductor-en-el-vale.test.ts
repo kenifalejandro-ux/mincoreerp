@@ -116,6 +116,8 @@ describe("combustible: el conductor queda estampado en el vale (migración 0083)
     const cambio = await editarEquipo(eq.body.id, {
       conductor_nombre: "Pedro Ramírez",
       conductor_dni: "87654321",
+      // Desde 0126 todo cambio de conductor pide motivo.
+      motivo_cambio: "La unidad pasa a Pedro",
     });
     expect(cambio.status).toBe(200);
     expect(cambio.body.conductor_nombre).toBe("Pedro Ramírez");
