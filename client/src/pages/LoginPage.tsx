@@ -1,5 +1,4 @@
 // client/src/pages/LoginPage.tsx
-/* eslint-disable import/order */
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
