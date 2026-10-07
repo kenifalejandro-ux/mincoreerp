@@ -19,9 +19,16 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
+import bcrypt from "bcrypt";
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, extraerCookie } from "./helpers";
 import { env } from "../src/server/config/env";
-import { closeDatabase, pool, withTenant, withCuenta } from "../src/server/config/database";
+import {
+  closeDatabase,
+  pool,
+  withTenant,
+  withCuenta,
+  withDniLogin,
+} from "../src/server/config/database";
 
 const PASSWORD = "ClaveDePrueba123";
 
@@ -273,13 +280,88 @@ describe("auth: cuentas y perfiles por empresa", () => {
       expect(res.body.usuario.tenantId).toBe(empresaA.tenant.id);
     });
 
-    it("sin empresa le dice por dónde entrar, no 'credenciales inválidas'", async () => {
-      // El DNI no es único entre empresas: sin empresa no hay a quién buscar.
-      // Decirle "credenciales inválidas" lo mandaría a probar su clave diez
-      // veces por un problema que no es de su clave.
+    it("desde el portal único (sin empresa) entra igual: la clave ubica su empresa", async () => {
       const res = await login({ identificador: dni, password: claveGrifero });
-      expect(res.status).toBe(400);
-      expect(res.body.message ?? res.body.error).toMatch(/dirección de tu empresa/i);
+      expect(res.status).toBe(200);
+      expect(res.body.usuario.tenantId).toBe(empresaA.tenant.id);
+    });
+
+    it("el mismo DNI en otra empresa: cada clave lleva a la suya y a ninguna otra", async () => {
+      const claveEnB = "OtraClaveEnB123";
+      const agenteB = await sesionDe(empresaB.tenant.slug, empresaB.usuario.email);
+      const alta = await agenteB.post("/api/erp/usuarios").send({
+        nombre: "El mismo, en otra mina",
+        dni,
+        password: claveEnB,
+        rol: "conductor_ruta",
+      });
+      expect(alta.status).toBe(201);
+
+      const enA = await login({ identificador: dni, password: claveGrifero });
+      expect(enA.status).toBe(200);
+      expect(enA.body.usuario.tenantId).toBe(empresaA.tenant.id);
+
+      const enB = await login({ identificador: dni, password: claveEnB });
+      expect(enB.status).toBe(200);
+      expect(enB.body.usuario.tenantId).toBe(empresaB.tenant.id);
+
+      // Con la dirección de A, la clave de B no sirve: la empresa la fija la dirección.
+      const cruzado = await login({
+        tenantSlug: empresaA.tenant.slug,
+        identificador: dni,
+        password: claveEnB,
+      });
+      expect(cruzado.status).toBe(401);
+
+      // Clave equivocada: el error se cuenta en las dos, y no entra a ninguna.
+      const mal = await login({ identificador: dni, password: "NoEsNinguna999" });
+      expect(mal.status).toBe(401);
+      for (const empresa of [empresaA, empresaB]) {
+        const intentos = await withTenant(empresa.tenant.id, async (client) => {
+          const r = await client.query(
+            `SELECT intentos_fallidos FROM usuarios WHERE tenant_id = $1 AND dni = $2`,
+            [empresa.tenant.id, dni]
+          );
+          return r.rows[0].intentos_fallidos;
+        });
+        expect(intentos).toBeGreaterThan(0);
+      }
+
+      // Misma clave en las dos: no se adivina a cuál quiere entrar.
+      await withTenant(empresaB.tenant.id, async (client) => {
+        const hash = await bcrypt.hash(claveGrifero, 4);
+        await client.query(
+          `UPDATE usuarios SET password_hash = $1 WHERE tenant_id = $2 AND dni = $3`,
+          [hash, empresaB.tenant.id, dni]
+        );
+      });
+      const ambigua = await login({ identificador: dni, password: claveGrifero });
+      expect(ambigua.status).toBe(400);
+      expect(ambigua.body.message ?? ambigua.body.error).toMatch(/más de una empresa/i);
+
+      // Y por la dirección de su empresa sigue entrando sin ambigüedad.
+      const porDireccion = await login({
+        tenantSlug: empresaA.tenant.slug,
+        identificador: dni,
+        password: claveGrifero,
+      });
+      expect(porDireccion.status).toBe(200);
+      expect(porDireccion.body.usuario.tenantId).toBe(empresaA.tenant.id);
+    });
+
+    it("la búsqueda por DNI solo ve ese DNI, sin cuenta, y no escribe", async () => {
+      const filas = await withDniLogin(dni, async (client) => {
+        const r = await client.query(`SELECT dni, cuenta_id FROM usuarios`);
+        return r.rows;
+      });
+      expect(filas.length).toBeGreaterThan(0);
+      expect(filas.every((f) => f.dni === dni && f.cuenta_id === null)).toBe(true);
+
+      await expect(
+        withDniLogin(dni, (client) =>
+          client.query(`UPDATE usuarios SET nombre = 'x' WHERE dni = $1`, [dni])
+        )
+      ).rejects.toThrow();
     });
 
     it("alguien con cuenta NO entra por DNI aunque lo tenga cargado", async () => {

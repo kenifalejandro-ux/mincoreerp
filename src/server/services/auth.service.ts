@@ -5,7 +5,7 @@ import jwt from "jsonwebtoken";
 import { OAuth2Client } from "google-auth-library";
 import { randomBytes, randomUUID, createHash } from "crypto";
 import type { Pool, PoolClient } from "pg";
-import { pool, withTenant, withCuenta } from "../config/database";
+import { pool, withTenant, withCuenta, withDniLogin } from "../config/database";
 import { env, emailConfigured } from "../config/env";
 import { transporter } from "../config/mailer";
 import { getRedis } from "../config/redis";
@@ -529,8 +529,9 @@ export async function elegirEmpresaService(input: ElegirEmpresaInput): Promise<S
  *  - **Correo** (administrativos): la persona tiene UNA cuenta y sus perfiles
  *    cuelgan de ella. No hace falta decir la empresa: si tiene una, entra
  *    directo; si tiene varias, las elige DESPUÉS de validar la clave.
- *  - **DNI** (operativos de cancha): sigue siendo por empresa, y la empresa
- *    tiene que venir de la dirección por la que entró.
+ *  - **DNI** (operativos de cancha): el perfil se busca en todas las
+ *    empresas y decide la clave; si viene la empresa en la dirección, solo
+ *    en esa.
  *
  *  Lo que decide es la presencia de "@": un DNI nunca lo tiene y un correo
  *  siempre sí. */
@@ -583,66 +584,90 @@ async function loginConCorreo(input: LoginInput): Promise<ResultadoAutenticacion
   };
 }
 
-/** El DNI no es único entre empresas: dos mineras pueden tener cargado al
- *  mismo conductor. Sin la empresa no hay a quién buscar, y como ya no existe
- *  el campo "Empresa" en el login, la respuesta no es "credenciales
- *  inválidas" --que mandaría al grifero a probar su clave diez veces-- sino
- *  decirle por dónde entrar. */
-export const MENSAJE_DNI_SIN_EMPRESA =
-  "Entrá desde la dirección de tu empresa para ingresar con tu DNI";
+/** El mismo DNI con la misma clave en dos empresas: no hay cómo saber a cuál
+ *  quiere entrar. Es raro (cada empresa le da su propia clave temporal), y la
+ *  salida es entrar por la dirección de una de ellas. */
+export const MENSAJE_DNI_VARIAS_EMPRESAS =
+  "Tu DNI está en más de una empresa: entrá desde la dirección de la empresa que quieras usar";
 
-async function loginConDni(input: LoginInput): Promise<ResultadoAutenticacion> {
-  if (!input.tenantSlug) {
-    throw new AppError(400, MENSAJE_DNI_SIN_EMPRESA);
-  }
+interface PerfilPorDni {
+  id: string;
+  tenant_id: string;
+  password_hash: string | null;
+  estado: "activo" | "inactivo" | "bloqueado";
+  intentos_fallidos: number;
+}
 
-  const tenant = await resolverTenantActivoPorSlug(input.tenantSlug);
-
-  let fila:
-    | {
-        id: string;
-        tenant_id: string;
-        password_hash: string | null;
-        estado: "activo" | "inactivo" | "bloqueado";
-        intentos_fallidos: number;
-      }
-    | undefined;
-  if (tenant) {
-    try {
-      fila = await withTenant(tenant.id, async (client) => {
-        // `cuenta_id IS NULL`: un perfil con cuenta entra por su correo. Sin
-        // esto, alguien administrativo con DNI cargado tendría dos puertas, y
-        // la del DNI usaría la clave vieja del perfil en vez de la de su
-        // cuenta.
+/** Los perfiles de ese DNI que pueden entrar con él. Con empresa (subdominio
+ *  o dominio propio), solo el de esa empresa. Sin empresa (el portal único),
+ *  los de todas las empresas activas, vía la política de 0125.
+ *
+ *  `cuenta_id IS NULL`: un perfil con cuenta entra por su correo. Sin esto,
+ *  alguien administrativo con DNI cargado tendría dos puertas, y la del DNI
+ *  usaría la clave vieja del perfil en vez de la de su cuenta. */
+async function perfilesParaDni(input: LoginInput): Promise<PerfilPorDni[]> {
+  const columnas = `u.id, u.tenant_id, u.password_hash, u.estado, u.intentos_fallidos`;
+  try {
+    if (input.tenantSlug) {
+      const tenant = await resolverTenantActivoPorSlug(input.tenantSlug);
+      if (!tenant) return [];
+      return await withTenant(tenant.id, async (client) => {
         const result = await client.query(
-          `SELECT id, tenant_id, password_hash, estado, intentos_fallidos
-             FROM usuarios
-            WHERE tenant_id = $1 AND dni = $2 AND cuenta_id IS NULL`,
+          `SELECT ${columnas} FROM usuarios u
+            WHERE u.tenant_id = $1 AND u.dni = $2 AND u.cuenta_id IS NULL`,
           [tenant.id, input.identificador]
         );
-        return result.rows[0];
+        return result.rows;
       });
-    } catch (err) {
-      // Nunca reenviar al cliente el error crudo de la BD.
-      logger.error({ err }, "Error de BD durante login por DNI");
-      throw new AppError(401, "Credenciales inválidas");
+    }
+    return await withDniLogin(input.identificador, async (client) => {
+      const result = await client.query(
+        `SELECT ${columnas} FROM usuarios u
+           JOIN tenants t ON t.id = u.tenant_id
+          WHERE u.dni = $1 AND u.cuenta_id IS NULL AND t.activo = true`,
+        [input.identificador]
+      );
+      return result.rows;
+    });
+  } catch (err) {
+    // Nunca reenviar al cliente el error crudo de la BD.
+    logger.error({ err }, "Error de BD durante login por DNI");
+    throw new AppError(401, "Credenciales inválidas");
+  }
+}
+
+async function loginConDni(input: LoginInput): Promise<ResultadoAutenticacion> {
+  const perfiles = await perfilesParaDni(input);
+
+  const conClaveValida: PerfilPorDni[] = [];
+  if (perfiles.length === 0) {
+    await bcrypt.compare(input.password, HASH_SEÑUELO);
+  }
+  for (const perfil of perfiles) {
+    if (await bcrypt.compare(input.password, perfil.password_hash ?? HASH_SEÑUELO)) {
+      conClaveValida.push(perfil);
     }
   }
 
-  const claveValida = await bcrypt.compare(input.password, fila?.password_hash ?? HASH_SEÑUELO);
-
-  if (fila && !claveValida) {
-    await contarIntentoFallido(fila);
+  // El error se cuenta solo si la clave no sirvió en NINGUNA empresa: si sirvió
+  // en una, no es alguien probando claves, y no se le bloquea el perfil de otra.
+  if (conClaveValida.length === 0) {
+    for (const perfil of perfiles) await contarIntentoFallido(perfil);
   }
 
-  if (!fila || !claveValida || fila.estado !== "activo") {
+  const activos = conClaveValida.filter((perfil) => perfil.estado === "activo");
+  if (activos.length === 0) {
     // El mismo 401 esté bloqueado, dado de baja o con la clave mal: decirle
     // "estás bloqueado" a quien está probando claves le confirma que ese DNI
     // existe. Quien se bloqueó de verdad lo va a saber por su supervisor,
     // que es quien lo desbloquea.
     throw new AppError(401, "Credenciales inválidas");
   }
+  if (activos.length > 1) {
+    throw new AppError(400, MENSAJE_DNI_VARIAS_EMPRESAS);
+  }
 
+  const fila = activos[0];
   if (fila.intentos_fallidos > 0) await limpiarIntentosFallidos(fila.id, fila.tenant_id);
 
   const sesion = await emitirSesionParaPerfil(fila.id, fila.tenant_id);

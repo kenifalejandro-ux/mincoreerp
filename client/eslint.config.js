@@ -130,7 +130,11 @@ export default defineConfig([
     // multi-línea mezclados (bug de compatibilidad de herramientas, no del
     // código -- el orden en estos dos está verificado a mano). Mientras no
     // se actualice eslint-plugin-import, se apaga solo acá.
-    files: ["src/components/UreaPanel.tsx", "src/components/combustible/CombustiblePanel.tsx"],
+    files: [
+      "src/components/UreaPanel.tsx",
+      "src/components/combustible/CombustiblePanel.tsx",
+      "src/pages/LoginPage.tsx",
+    ],
     rules: {
       "import/order": "off",
     },

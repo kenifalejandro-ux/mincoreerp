@@ -59,7 +59,7 @@ import {
   actualizarModulosTenantSchema,
   actualizarModuloGlobalSchema,
   MODULOS_ERP,
-  crearUsuarioEnTenantSchema,
+  crearUsuarioManualSchema,
   reemplazarAdminSchema,
   cambiarEstadoCuentaSchema,
   type ReemplazarAdminInput,
@@ -1749,7 +1749,7 @@ export function createPlatformRouter() {
 
   router.post(
     "/tenants/:id/usuarios",
-    validarConAuditoria(crearUsuarioEnTenantSchema, "crear_usuario", (req) => ({
+    validarConAuditoria(crearUsuarioManualSchema, "crear_usuario", (req) => ({
       tenantId: req.params.id,
     })),
     asyncHandler(async (req, res, next) => {

@@ -48,7 +48,7 @@ import {
   actualizarPerfilUsuarioService,
 } from "../services/platform.service";
 import {
-  crearUsuarioEnTenantSchema,
+  crearUsuarioManualSchema,
   MODULOS_ERP,
   type CrearUsuarioEnTenantInput,
 } from "../schemas/platform.schema";
@@ -195,7 +195,7 @@ export function createUsuariosTenantRouter() {
   router.post(
     "/",
     requireRole("admin"),
-    validate(crearUsuarioEnTenantSchema),
+    validate(crearUsuarioManualSchema),
     asyncHandler(async (req, res) => {
       const input = req.validatedBody as CrearUsuarioEnTenantInput;
       await responderConOrden(
