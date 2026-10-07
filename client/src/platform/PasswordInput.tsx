@@ -44,7 +44,7 @@ export default function PasswordInput({
         type="button"
         onClick={() => setVisible((v) => !v)}
         tabIndex={-1}
-        aria-label={visible ? "Ocultar contraseña" : "Mostrar contraseña"}
+        aria-label={visible ? "Ocultar clave" : "Mostrar clave"}
         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
       >
         {visible ? (
