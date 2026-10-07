@@ -34,17 +34,31 @@ export type EquipoPayload = {
   grifo_interno_id?: number;
 };
 
+// Las rutas vigentes de la unidad (0126), ya con los nombres de los lugares,
+// para que la tabla las muestre sin una segunda consulta por fila.
+const RUTAS_VIGENTES = `COALESCE((
+    SELECT json_agg(json_build_object(
+             'origen_id', r.origen_id, 'destino_id', r.destino_id,
+             'origen', lo.nombre, 'destino', ld.nombre) ORDER BY r.id)
+      FROM equipo_rutas r
+      JOIN combustible_lugares lo ON lo.id = r.origen_id  AND lo.tenant_id = r.tenant_id
+      JOIN combustible_lugares ld ON ld.id = r.destino_id AND ld.tenant_id = r.tenant_id
+     WHERE r.equipo_id = equipos.id AND r.tenant_id = equipos.tenant_id AND r.hasta IS NULL
+  ), '[]'::json) AS rutas`;
+
 // Todas las columnas devueltas por el ABM -- centralizadas para que agregar
 // una no obligue a tocar cuatro queries y olvidarse de la quinta.
 const COLUMNAS_EQUIPO = `id, placa_codigo, codigo_interno, tipo, marca, modelo, tipo_medidor,
   capacidad_tanque, capacidad_tanque_unidad, consumo_maximo_l,
   conductor_nombre, conductor_dni, usa_urea, activo, creado_en, grifo_interno_id`;
 
+const COLUMNAS_EQUIPO_CON_RUTAS = `${COLUMNAS_EQUIPO}, ${RUTAS_VIGENTES}`;
+
 export const EquiposRepository = {
   async findAll(client: PoolClient, tenantId: string, { pageSize, offset }: Paginacion) {
     const result = await client.query(
       `
-      SELECT ${COLUMNAS_EQUIPO},
+      SELECT ${COLUMNAS_EQUIPO_CON_RUTAS},
         COUNT(*) OVER() AS total_count
       FROM equipos
       WHERE tenant_id = $1
@@ -62,7 +76,7 @@ export const EquiposRepository = {
    *  archivo lo abre en una planilla, así que tiene que traer todo de una. */
   async findAllParaExportar(client: PoolClient, tenantId: string) {
     const result = await client.query(
-      `SELECT ${COLUMNAS_EQUIPO} FROM equipos WHERE tenant_id = $1 ORDER BY tipo, placa_codigo`,
+      `SELECT ${COLUMNAS_EQUIPO_CON_RUTAS} FROM equipos WHERE tenant_id = $1 ORDER BY tipo, placa_codigo`,
       [tenantId]
     );
     return result.rows;
@@ -70,7 +84,7 @@ export const EquiposRepository = {
 
   async findById(client: PoolClient, tenantId: string, id: number) {
     const result = await client.query(
-      `SELECT ${COLUMNAS_EQUIPO}
+      `SELECT ${COLUMNAS_EQUIPO_CON_RUTAS}
        FROM equipos WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId]
     );

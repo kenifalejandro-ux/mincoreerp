@@ -1,8 +1,19 @@
 // client/src/components/equipos/EquiposTable.tsx
-import { ChevronLeft, ChevronRight, Download, Pencil, Plus, Trash2, X } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  History,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import type { WorkBook } from "xlsx";
 
+import HistorialEquipo from "./HistorialEquipo";
+import RutasEditor, { type LugarOpcion, type RutaForm } from "./RutasEditor";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import {
@@ -41,6 +52,8 @@ interface Equipo {
   consumo_maximo_l: string | null;
   conductor_nombre: string | null;
   conductor_dni: string | null;
+  /** Rutas habituales vigentes (0126): cero, una o varias. */
+  rutas: { origen_id: number; destino_id: number; origen: string; destino: string }[];
   activo: boolean;
   creado_en: string;
   // El grifo interno al que pertenece (0097). Se cambia con "Mover de grifo".
@@ -62,25 +75,26 @@ const TIPOS_COMUNES = [
   "Otro",
 ];
 
-/** Punto de partida por tipo, en litros -- NO es el dato real de ninguna
- *  unidad. Son capacidades de catálogo de la industria, para que el campo
- *  no arranque vacío al dar de alta; hay que confirmarlas contra la ficha
- *  técnica de cada máquina antes de guardar.
+/** Medidor que le corresponde a cada tipo de unidad (pedido del cliente):
+ *  horómetro en volquete, excavadora y retroexcavadora; odómetro en camioneta y
+ *  tracto remolcador; bombona y carreta no llevan. Es una PRECARGA al elegir el
+ *  tipo, editable: una empresa con otros tipos no recibe nada y lo elige a mano.
  *
- *  Rango real que existe, para dimensionar cuánto varían: camioneta 70-80,
- *  volquete 200-400, tráiler 300-800 (a veces dos tanques), excavadora
- *  300-640, cargador 250-440, perforadora 150-800 (el más variable). */
-const CAPACIDAD_SUGERIDA_L: Record<string, number> = {
-  Camioneta: 80,
-  "Cargador frontal": 300,
-  Excavadora: 400,
-  Volquete: 300,
-  Tráiler: 400,
-  Perforadora: 300,
+ *  La capacidad del tanque NO se precarga: no hay dato real todavía y un número
+ *  de catálogo guardado sin mirar parecería un dato verdadero (queda vacía hasta
+ *  que se cargue a mano). */
+const MEDIDOR_POR_TIPO: Record<string, "horometro" | "odometro" | ""> = {
+  Volquete: "horometro",
+  Excavadora: "horometro",
+  Retroexcavadora: "horometro",
+  Camioneta: "odometro",
+  "Tracto remolcadores": "odometro",
+  Bombona: "",
+  Carretas: "",
 };
 
 const ETIQUETA_TIPO_MEDIDOR: Record<"" | "horometro" | "odometro", string> = {
-  "": "No configurado",
+  "": "Sin medidor / no configurado",
   horometro: "Horómetro (horas de motor)",
   odometro: "Odómetro (kilometraje)",
 };
@@ -208,6 +222,11 @@ export default function EquiposTable() {
   const [grifoAlta, setGrifoAlta] = useState("");
   const [filtroGrifo, setFiltroGrifo] = useState("");
   const [equipoAMover, setEquipoAMover] = useState<Equipo | null>(null);
+  // Conductor y rutas con historial (0126).
+  const [equipoHistorial, setEquipoHistorial] = useState<Equipo | null>(null);
+  const [lugares, setLugares] = useState<LugarOpcion[]>([]);
+  const [formRutas, setFormRutas] = useState<RutaForm[]>([]);
+  const [motivoCambio, setMotivoCambio] = useState("");
   const [formData, setFormData] = useState({
     placa_codigo: "",
     codigo_interno: "",
@@ -233,6 +252,19 @@ export default function EquiposTable() {
       console.error("Error al obtener equipos:", err);
       setLoading(false);
     }
+  }, []);
+
+  // El catálogo de lugares (el de Viajes) para el selector de ruta. Si falla, el
+  // formulario sigue funcionando sin rutas: no bloquea cargar un equipo.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await apiFetch("/api/erp/equipos/lugares");
+        if (res.ok) setLugares(await res.json());
+      } catch {
+        /* sin lugares no hay selector de ruta, nada más */
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -301,8 +333,31 @@ export default function EquiposTable() {
       conductor_dni: e.conductor_dni ?? "",
       capacidad_tanque_unidad: e.capacidad_tanque_unidad ?? "L",
     });
+    setFormRutas(
+      (e.rutas ?? []).map((r) => ({
+        origen_id: String(r.origen_id),
+        destino_id: String(r.destino_id),
+      }))
+    );
+    setMotivoCambio("");
     setIsModalOpen(true);
   };
+
+  // ¿Cambió el conductor o las rutas respecto de lo guardado? Entonces el
+  // servidor exige el motivo (queda en el historial y en la bitácora).
+  const equipoEnEdicion = editingId === null ? null : equipos.find((x) => x.id === editingId);
+  const conductorCambio =
+    !!equipoEnEdicion &&
+    (formData.conductor_nombre.trim() !== (equipoEnEdicion.conductor_nombre ?? "") ||
+      formData.conductor_dni.trim() !== (equipoEnEdicion.conductor_dni ?? ""));
+  const clavesRutas = (rs: { origen_id: unknown; destino_id: unknown }[]) =>
+    rs
+      .map((r) => `${r.origen_id}>${r.destino_id}`)
+      .sort()
+      .join("|");
+  const rutasCambiaron =
+    !!equipoEnEdicion && clavesRutas(formRutas) !== clavesRutas(equipoEnEdicion.rutas ?? []);
+  const exigeMotivo = conductorCambio || rutasCambiaron;
 
   const handleDelete = async (id: number) => {
     if (!window.confirm("¿Estás seguro de que deseas eliminar este equipo?")) return;
@@ -453,6 +508,18 @@ export default function EquiposTable() {
     // como undefined, no solo el número -- el schema los exige de a pares
     // (espejo del CHECK de migrations/0069).
     const capacidadCargada = formData.capacidad_tanque.trim() !== "";
+    // Una ruta a medio elegir no se manda ni se descarta en silencio: se avisa.
+    if (formRutas.some((r) => (r.origen_id === "") !== (r.destino_id === ""))) {
+      alert("Hay una ruta con solo origen o solo destino: completala o quitala.");
+      return;
+    }
+    if (editingId && exigeMotivo && motivoCambio.trim() === "") {
+      alert("Indicá el motivo del cambio de conductor o rutas: queda en el historial.");
+      return;
+    }
+    const rutasValidas = formRutas
+      .filter((r) => r.origen_id !== "" && r.destino_id !== "")
+      .map((r) => ({ origen_id: Number(r.origen_id), destino_id: Number(r.destino_id) }));
     const datosFormulario = {
       ...formData,
       tipo_medidor: formData.tipo_medidor === "" ? undefined : formData.tipo_medidor,
@@ -467,6 +534,9 @@ export default function EquiposTable() {
       conductor_nombre: formData.conductor_nombre.trim() || undefined,
       conductor_dni: formData.conductor_dni.trim() || undefined,
       codigo_interno: formData.codigo_interno.trim() || undefined,
+      rutas: rutasValidas,
+      // Solo al EDITAR y solo si cambió el conductor o las rutas.
+      motivo_cambio: editingId && exigeMotivo ? motivoCambio.trim() : undefined,
     };
     // cliente_uuid solo viaja al crear -- editar no pasa por
     // idempotentInsert() del lado del servidor.
@@ -507,6 +577,8 @@ export default function EquiposTable() {
         conductor_nombre: "",
         conductor_dni: "",
       });
+      setFormRutas([]);
+      setMotivoCambio("");
 
       // 202 = no había red y quedó en la cola del dispositivo (ver
       // apiFetch). No se recarga: sin señal el GET también falla, y el
@@ -530,16 +602,18 @@ export default function EquiposTable() {
     }
   };
 
-  if (loading) return <div className="p-20 text-center text-slate-500">Cargando...</div>;
+  if (loading) return <div className="p-20 text-center text-[#94a3b8]">Cargando...</div>;
 
   return (
     <div className="p-2 sm:p-4 lg:p-8 animate-in fade-in duration-500">
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-10">
         <div>
-          <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-slate-800 tracking-tight">
+          <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-white tracking-tight">
             Equipos
           </h1>
-          <p className="text-xs sm:text-sm text-slate-500">Vehículos y maquinaria de la flota</p>
+          <p className="text-xs sm:text-sm text-[#94a3b8]">
+            Maestro de la flota: datos de cada unidad, su conductor y sus rutas, con historial
+          </p>
         </div>
         <div className="flex  flex-wrap items-center gap-3">
           {puedeEscribir && (
@@ -549,7 +623,7 @@ export default function EquiposTable() {
             type="button"
             onClick={handleExportExcel}
             disabled={exportando}
-            className="px-4 py-2.5 border rounded-xl flex items-center gap-2 transition-all bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100 disabled:opacity-50 disabled:cursor-wait"
+            className="px-4 py-2.5 border rounded-xl flex items-center gap-2 transition-all border-[#334155] text-[#cbd5e1] hover:text-white disabled:opacity-50 disabled:cursor-wait"
           >
             <Download className="w-4 h-4 shrink-0" />
             <span>{exportando ? "Exportando..." : "Exportar Excel"}</span>
@@ -572,6 +646,8 @@ export default function EquiposTable() {
                   conductor_dni: "",
                 });
                 setGrifoAlta("");
+                setFormRutas([]);
+                setMotivoCambio("");
                 // Se regenera en cada apertura: si no, el segundo equipo
                 // legítimo que se registre reusaría la clave del primero y el
                 // servidor devolvería aquel en silencio -- se perdería un
@@ -579,7 +655,7 @@ export default function EquiposTable() {
                 setClienteUuid(crypto.randomUUID());
                 setIsModalOpen(true);
               }}
-              className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+              className="flex items-center gap-2 px-6 py-2.5 bg-[#BADC1E] text-[#0D1719] font-bold rounded-xl hover:brightness-110 transition-all"
             >
               <Plus className="w-4 h-4 shrink-0" />
               Nuevo Equipo
@@ -594,17 +670,20 @@ export default function EquiposTable() {
         <input
           type="text"
           placeholder="Buscar por placa, código o tipo..."
-          className="w-full bg-white border border-slate-200 rounded-2xl px-4 sm:px-5 py-3 sm:py-4 text-sm outline-none focus:ring-2 focus:ring-slate-900 transition-all shadow-sm"
+          className="w-full bg-[#0D1719] border border-[#334155] text-white rounded-2xl px-4 sm:px-5 py-3 sm:py-4 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E] transition-all"
           onChange={(e) => setSearchTerm(e.target.value)}
         />
         {grifosInternos.hayVarios && (
           <div className="mt-3 flex items-center gap-2">
-            <label htmlFor="filtro-grifo-equipos" className="text-xs font-bold uppercase">
+            <label
+              htmlFor="filtro-grifo-equipos"
+              className="text-xs font-bold uppercase text-[#94a3b8]"
+            >
               Grifo
             </label>
             <select
               id="filtro-grifo-equipos"
-              className="border border-slate-200 rounded-lg p-2 text-sm bg-white"
+              className="border border-[#334155] rounded-lg p-2 text-sm bg-[#0D1719] text-white"
               value={filtroGrifo}
               onChange={(e) => setFiltroGrifo(e.target.value)}
             >
@@ -620,7 +699,7 @@ export default function EquiposTable() {
       </div>
 
       {puedeEscribir && seleccionados.size > 0 && (
-        <div className="mb-4 flex items-center justify-between gap-3 bg-slate-900 text-white rounded-xl px-4 py-3 text-sm">
+        <div className="mb-4 flex items-center justify-between gap-3 bg-[#192526] border border-[#2a2e37] text-white rounded-xl px-4 py-3 text-sm">
           <span>
             {seleccionados.size} equipo{seleccionados.size === 1 ? "" : "s"} seleccionado
             {seleccionados.size === 1 ? "" : "s"}
@@ -637,7 +716,7 @@ export default function EquiposTable() {
               type="button"
               onClick={handleEliminarSeleccionados}
               disabled={eliminandoMasivo}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#BADC1E] text-[#0D1719] hover:brightness-110 disabled:opacity-50"
             >
               <Trash2 className="w-3.5 h-3.5" />
               {eliminandoMasivo ? "Eliminando..." : "Eliminar seleccionados"}
@@ -646,10 +725,10 @@ export default function EquiposTable() {
         </div>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
+      <div className="bg-[#192526] border border-[#2a2e37] rounded-2xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full min-w-max text-left border-collapse">
-            <thead className="bg-slate-50">
+            <thead className="border-b border-[#2a2e37]">
               <tr>
                 {puedeEscribir && (
                   <th className="px-3 sm:px-4 py-2.5 sm:py-3">
@@ -662,40 +741,49 @@ export default function EquiposTable() {
                     />
                   </th>
                 )}
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
                   placa
                 </th>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
                   código
                 </th>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
                   tipo
                 </th>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
                   marca
                 </th>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
                   modelo
                 </th>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
                   medidor
                 </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
+                  conductor
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
+                  dni
+                </th>
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
+                  ruta
+                </th>
                 {grifosInternos.hayVarios && (
-                  <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
                     grifo
                   </th>
                 )}
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
                   estado
                 </th>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                  editar-eliminar
+                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest text-right">
+                  acciones
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-[#2a2e37]">
               {filteredEquipos.map((e) => (
-                <tr key={e.id} className="hover:bg-slate-50/50 transition-colors">
+                <tr key={e.id} className="hover:bg-[#1f2c2e] transition-colors">
                   {puedeEscribir && (
                     <td className="px-3 sm:px-4 py-2.5 sm:py-3.5">
                       <input
@@ -707,58 +795,86 @@ export default function EquiposTable() {
                       />
                     </td>
                   )}
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm font-semibold text-slate-800">
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm font-semibold text-white">
                     {e.placa_codigo}
                   </td>
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm text-slate-500">
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm text-[#94a3b8]">
                     {e.codigo_interno || "---"}
                   </td>
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-600">
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-[#e2e8f0]">
                     {e.tipo}
                   </td>
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500">
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-[#94a3b8]">
                     {e.marca || "---"}
                   </td>
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500">
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-[#94a3b8]">
                     {e.modelo || "---"}
                   </td>
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500">
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-[#94a3b8]">
                     {e.tipo_medidor === "horometro"
                       ? "Horómetro"
                       : e.tipo_medidor === "odometro"
                         ? "Odómetro"
                         : "---"}
                   </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-[#e2e8f0]">
+                    {e.conductor_nombre || "---"}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm text-[#94a3b8]">
+                    {e.conductor_dni || "---"}
+                  </td>
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-[#e2e8f0]">
+                    {(e.rutas ?? []).length === 0 ? (
+                      "---"
+                    ) : (
+                      <ul className="space-y-0.5">
+                        {e.rutas.map((r) => (
+                          <li key={`${r.origen_id}>${r.destino_id}`} className="whitespace-nowrap">
+                            {r.origen} → {r.destino}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </td>
                   {grifosInternos.hayVarios && (
-                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500">
+                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-[#94a3b8]">
                       {grifosInternos.nombreDeGrifo(e.grifo_interno_id)}
                     </td>
                   )}
                   <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
-                    <span
-                      className={`font-bold ${e.activo ? "text-emerald-600" : "text-slate-400"}`}
-                    >
+                    <span className={`font-bold ${e.activo ? "text-[#BADC1E]" : "text-[#64748b]"}`}>
                       {e.activo ? "Activo" : "Inactivo"}
                     </span>
                   </td>
-                  {puedeEscribir && (
-                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-2">
-                      <button
-                        onClick={() => openEditModal(e)}
-                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                        title="Editar"
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(e.id)}
-                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                        title="Eliminar"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </td>
-                  )}
+                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-2 whitespace-nowrap">
+                    {/* El historial es una consulta: Lectura también lo ve. */}
+                    <button
+                      onClick={() => setEquipoHistorial(e)}
+                      className="p-2 text-slate-400 hover:text-[#BADC1E] rounded-lg transition-all"
+                      title="Historial de conductor y rutas"
+                      aria-label={`Historial de ${e.placa_codigo}`}
+                    >
+                      <History className="w-4 h-4" />
+                    </button>
+                    {puedeEscribir && (
+                      <>
+                        <button
+                          onClick={() => openEditModal(e)}
+                          className="p-2 text-slate-400 hover:text-[#BADC1E] rounded-lg transition-all"
+                          title="Editar"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(e.id)}
+                          className="p-2 text-slate-400 hover:text-[#BADC1E] rounded-lg transition-all"
+                          title="Eliminar"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -770,18 +886,18 @@ export default function EquiposTable() {
         <button
           onClick={() => setPage((p) => Math.max(1, p - 1))}
           disabled={page <= 1}
-          className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+          className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-[#cbd5e1] border border-[#334155] rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:text-white"
         >
           <ChevronLeft className="w-4 h-4" />
           Anterior
         </button>
-        <span className="text-sm text-slate-400">
+        <span className="text-sm text-[#94a3b8]">
           Página {page} de {totalPages}
         </span>
         <button
           onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
           disabled={page >= totalPages}
-          className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-50"
+          className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-[#cbd5e1] border border-[#334155] rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:text-white"
         >
           Siguiente
           <ChevronRight className="w-4 h-4" />
@@ -789,14 +905,16 @@ export default function EquiposTable() {
       </div>
 
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white overflow-x-auto h-full w-full max-w-lg shadow-2xl animate-in zoom-in duration-200">
-            <div className="p-6 border-b flex justify-between items-center">
-              <h3 className="text-xl font-bold">{editingId ? "Editar Equipo" : "Nuevo Equipo"}</h3>
+        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-[#192526] text-[#e2e8f0] border border-[#2a2e37] overflow-x-auto h-full w-full max-w-lg shadow-2xl animate-in zoom-in duration-200">
+            <div className="p-6 border-b border-[#2a2e37] flex justify-between items-center">
+              <h3 className="text-xl font-bold text-white">
+                {editingId ? "Editar Equipo" : "Nuevo Equipo"}
+              </h3>
               <button
                 onClick={() => setIsModalOpen(false)}
                 aria-label="Cerrar"
-                className="text-slate-400 hover:text-slate-900"
+                className="text-[#94a3b8] hover:text-white"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -805,7 +923,7 @@ export default function EquiposTable() {
               <div className="space-y-1">
                 <label
                   htmlFor="equipo-placa-codigo"
-                  className="text-xs font-bold text-slate-500 uppercase"
+                  className="text-xs font-bold text-[#94a3b8] uppercase"
                 >
                   Placa
                 </label>
@@ -814,7 +932,7 @@ export default function EquiposTable() {
                   type="text"
                   placeholder="Ej: V-014"
                   required
-                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
                   value={formData.placa_codigo}
                   onChange={(e) => setFormData({ ...formData, placa_codigo: e.target.value })}
                 />
@@ -822,7 +940,7 @@ export default function EquiposTable() {
               <div className="space-y-1">
                 <label
                   htmlFor="equipo-codigo-interno"
-                  className="text-xs font-bold text-slate-500 uppercase"
+                  className="text-xs font-bold text-[#94a3b8] uppercase"
                 >
                   Código interno
                 </label>
@@ -830,34 +948,29 @@ export default function EquiposTable() {
                   id="equipo-codigo-interno"
                   type="text"
                   placeholder="Ej: CU-14 (opcional)"
-                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                  className="w-full bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
                   value={formData.codigo_interno}
                   onChange={(e) => setFormData({ ...formData, codigo_interno: e.target.value })}
                 />
               </div>
               <div className="space-y-1">
-                <label htmlFor="equipo-tipo" className="text-xs font-bold text-slate-500 uppercase">
+                <label htmlFor="equipo-tipo" className="text-xs font-bold text-[#94a3b8] uppercase">
                   Tipo
                 </label>
                 <select
                   id="equipo-tipo"
-                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                  className="w-full bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
                   value={formData.tipo}
                   onChange={(e) => {
                     const tipo = e.target.value;
-                    const sugerida = CAPACIDAD_SUGERIDA_L[tipo];
-                    // La sugerencia solo precarga un campo VACÍO: si el
-                    // usuario ya escribió una capacidad (o está editando un
-                    // equipo que la tenía), cambiar el tipo no se la pisa.
-                    const debeSugerir = formData.capacidad_tanque.trim() === "" && sugerida;
+                    // Al DAR DE ALTA, el tipo precarga su medidor. Al editar no
+                    // se toca: lo configurado a mano manda.
+                    const medidor = MEDIDOR_POR_TIPO[tipo];
                     setFormData({
                       ...formData,
                       tipo,
-                      ...(debeSugerir
-                        ? {
-                            capacidad_tanque: String(sugerida),
-                            capacidad_tanque_unidad: "L" as const,
-                          }
+                      ...(editingId === null && medidor !== undefined
+                        ? { tipo_medidor: medidor }
                         : {}),
                     });
                   }}
@@ -875,7 +988,7 @@ export default function EquiposTable() {
               <div className="space-y-1">
                 <label
                   htmlFor="equipo-capacidad-tanque"
-                  className="text-xs font-bold text-slate-500 uppercase"
+                  className="text-xs font-bold text-[#94a3b8] uppercase"
                 >
                   Capacidad de tanque
                 </label>
@@ -886,13 +999,13 @@ export default function EquiposTable() {
                     min={0}
                     step="0.01"
                     placeholder="Dejar vacío si no se conoce"
-                    className="flex-1 border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                    className="flex-1 bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
                     value={formData.capacidad_tanque}
                     onChange={(e) => setFormData({ ...formData, capacidad_tanque: e.target.value })}
                   />
                   <select
                     aria-label="Unidad de la capacidad de tanque"
-                    className="border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    className="bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
                     value={formData.capacidad_tanque_unidad}
                     onChange={(e) =>
                       setFormData({
@@ -905,17 +1018,16 @@ export default function EquiposTable() {
                     <option value="gal">gal</option>
                   </select>
                 </div>
-                <p className="text-[11px] text-slate-400">
-                  Sirve para avisar cuando un vale despacha más de lo que entra en el tanque. El
-                  número sugerido es de catálogo:{" "}
-                  <strong>confirmalo contra la ficha técnica de la unidad</strong>. Si no se conoce,
-                  mejor dejarlo vacío que poner uno aproximado.
+                <p className="text-[11px] text-[#94a3b8]">
+                  Sirve para avisar cuando un vale despacha más de lo que entra en el tanque.{" "}
+                  <strong>Cargalo de la ficha técnica de la unidad</strong>. Si todavía no se
+                  conoce, dejalo vacío: es mejor que un número aproximado.
                 </p>
               </div>
               <div className="space-y-1">
                 <label
                   htmlFor="equipo-consumo-maximo"
-                  className="text-xs font-bold text-slate-500 uppercase"
+                  className="text-xs font-bold text-[#94a3b8] uppercase"
                 >
                   Consumo máximo
                 </label>
@@ -926,18 +1038,18 @@ export default function EquiposTable() {
                     min={0}
                     step="0.01"
                     placeholder="Dejar vacío si todavía no se sabe"
-                    className="flex-1 border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                    className="flex-1 bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
                     value={formData.consumo_maximo_l}
                     onChange={(e) => setFormData({ ...formData, consumo_maximo_l: e.target.value })}
                   />
-                  <span className="text-sm text-slate-500">
+                  <span className="text-sm text-[#94a3b8]">
                     L / {formData.tipo_medidor === "odometro" ? "km" : "hora"}
                   </span>
                   {editingId !== null && (
                     <button
                       type="button"
                       onClick={() => sugerirConsumo(editingId)}
-                      className="text-xs font-semibold text-slate-700 underline"
+                      className="text-xs font-semibold text-[#BADC1E] underline"
                       title="Calculado con las cargas anteriores de ESTA unidad"
                     >
                       Sugerir
@@ -945,9 +1057,9 @@ export default function EquiposTable() {
                   )}
                 </div>
                 {sugerenciaConsumo && (
-                  <p className="text-[11px] text-slate-600">{sugerenciaConsumo}</p>
+                  <p className="text-[11px] text-[#94a3b8]">{sugerenciaConsumo}</p>
                 )}
-                <p className="text-[11px] text-slate-600">
+                <p className="text-[11px] text-[#94a3b8]">
                   Compara los litros cargados contra el trabajo que hizo la unidad. Es el único
                   control que ve el combustible que sale <strong>con vale</strong> y no llega a la
                   máquina: el tanque cuadra igual. Sin dato no alerta; el número se puede sugerir
@@ -958,13 +1070,13 @@ export default function EquiposTable() {
               <div className="space-y-1">
                 <label
                   htmlFor="equipo-tipo-medidor"
-                  className="text-xs font-bold text-slate-500 uppercase"
+                  className="text-xs font-bold text-[#94a3b8] uppercase"
                 >
                   Tipo de medidor
                 </label>
                 <select
                   id="equipo-tipo-medidor"
-                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                  className="w-full bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
                   value={formData.tipo_medidor}
                   onChange={(e) =>
                     setFormData({
@@ -979,7 +1091,7 @@ export default function EquiposTable() {
                     </option>
                   ))}
                 </select>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-[#94a3b8]">
                   Solo hace falta para despachar combustible de compra externa a este equipo (ruta
                   Bambamarca). Un volquete se mide por horómetro, un tráiler por odómetro.
                 </p>
@@ -991,7 +1103,7 @@ export default function EquiposTable() {
                 <div className="space-y-1">
                   <label
                     htmlFor="equipo-conductor"
-                    className="text-xs font-bold text-slate-700 uppercase"
+                    className="text-xs font-bold text-[#cbd5e1] uppercase"
                   >
                     Conductor
                   </label>
@@ -999,7 +1111,7 @@ export default function EquiposTable() {
                     id="equipo-conductor"
                     type="text"
                     placeholder="Nombre y apellidos"
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
                     value={formData.conductor_nombre}
                     onChange={(e) => setFormData({ ...formData, conductor_nombre: e.target.value })}
                   />
@@ -1007,7 +1119,7 @@ export default function EquiposTable() {
                 <div className="space-y-1">
                   <label
                     htmlFor="equipo-dni"
-                    className="text-xs font-bold text-slate-700 uppercase"
+                    className="text-xs font-bold text-[#cbd5e1] uppercase"
                   >
                     DNI
                   </label>
@@ -1015,29 +1127,54 @@ export default function EquiposTable() {
                     id="equipo-dni"
                     type="text"
                     placeholder="Ej: 12345678"
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
                     value={formData.conductor_dni}
                     onChange={(e) => setFormData({ ...formData, conductor_dni: e.target.value })}
                   />
                 </div>
               </div>
-              <p className="text-xs text-slate-600 -mt-2">
+              <p className="text-xs text-[#94a3b8] -mt-2">
                 Queda copiado en cada vale que se despache a esta unidad, así el consumo por
                 conductor sigue siendo correcto aunque después cambie de chofer.
               </p>
+              <RutasEditor lugares={lugares} value={formRutas} onChange={setFormRutas} />
+              {editingId !== null && exigeMotivo && (
+                <div className="space-y-1 border border-[#BADC1E]/40 rounded-xl p-3 bg-[#BADC1E]/5">
+                  <label
+                    htmlFor="equipo-motivo-cambio"
+                    className="text-xs font-bold text-[#BADC1E] uppercase"
+                  >
+                    Motivo del cambio (obligatorio)
+                  </label>
+                  <input
+                    id="equipo-motivo-cambio"
+                    type="text"
+                    maxLength={500}
+                    required
+                    placeholder="Ej.: Juan pasó a la unidad V-9"
+                    className="w-full bg-[#0D1719] border border-[#334155] rounded-xl p-3 text-sm text-white outline-none focus:ring-2 focus:ring-[#BADC1E]"
+                    value={motivoCambio}
+                    onChange={(e) => setMotivoCambio(e.target.value)}
+                  />
+                  <p className="text-[11px] text-[#94a3b8]">
+                    Cambiar el conductor o las rutas deja registro: quién, cuándo y por qué. Lo
+                    anterior se conserva en el historial.
+                  </p>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="equipo-marca"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-[#94a3b8] uppercase"
                   >
                     Marca
                   </label>
                   <input
                     id="equipo-marca"
                     type="text"
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
                     value={formData.marca}
                     onChange={(e) => setFormData({ ...formData, marca: e.target.value })}
                   />
@@ -1045,14 +1182,14 @@ export default function EquiposTable() {
                 <div className="space-y-1">
                   <label
                     htmlFor="equipo-modelo"
-                    className="text-xs font-bold text-slate-500 uppercase"
+                    className="text-xs font-bold text-[#94a3b8] uppercase"
                   >
                     Modelo
                   </label>
                   <input
                     id="equipo-modelo"
                     type="text"
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                    className="w-full bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
                     value={formData.modelo}
                     onChange={(e) => setFormData({ ...formData, modelo: e.target.value })}
                   />
@@ -1065,14 +1202,14 @@ export default function EquiposTable() {
                   <div className="space-y-1">
                     <label
                       htmlFor="equipo-grifo-interno"
-                      className="text-xs font-bold text-slate-500 uppercase"
+                      className="text-xs font-bold text-[#94a3b8] uppercase"
                     >
                       Grifo interno
                     </label>
                     <select
                       id="equipo-grifo-interno"
                       required
-                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                      className="w-full bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
                       value={grifoAlta}
                       onChange={(e) => setGrifoAlta(e.target.value)}
                     >
@@ -1085,9 +1222,9 @@ export default function EquiposTable() {
                     </select>
                   </div>
                 ) : (
-                  <div className="flex items-center justify-between gap-2 text-sm bg-slate-50 border border-slate-200 rounded-xl p-3">
+                  <div className="flex items-center justify-between gap-2 text-sm bg-[#0D1719] border border-[#334155] rounded-xl p-3">
                     <span>
-                      <span className="text-xs font-bold text-slate-500 uppercase block">
+                      <span className="text-xs font-bold text-[#94a3b8] uppercase block">
                         Grifo interno
                       </span>
                       {grifosInternos.nombreDeGrifo(
@@ -1099,7 +1236,7 @@ export default function EquiposTable() {
                       onClick={() =>
                         setEquipoAMover(equipos.find((x) => x.id === editingId) ?? null)
                       }
-                      className="px-3 py-1.5 text-xs border border-slate-300 rounded-lg hover:bg-white"
+                      className="px-3 py-1.5 text-xs border border-[#334155] text-[#cbd5e1] rounded-lg hover:text-white"
                     >
                       Mover de grifo
                     </button>
@@ -1108,13 +1245,20 @@ export default function EquiposTable() {
               <button
                 type="submit"
                 disabled={enviando}
-                className="w-full bg-slate-900 text-white font-bold py-4 rounded-2xl hover:bg-slate-800 transition-all mt-4 disabled:opacity-50"
+                className="w-full bg-[#BADC1E] text-[#0D1719] font-bold py-4 rounded-2xl hover:brightness-110 transition-all mt-4 disabled:opacity-50"
               >
                 {editingId ? "Guardar Cambios" : "Registrar Equipo"}
               </button>
             </form>
           </div>
         </div>
+      )}
+      {equipoHistorial && (
+        <HistorialEquipo
+          equipoId={equipoHistorial.id}
+          placa={equipoHistorial.placa_codigo}
+          onCerrar={() => setEquipoHistorial(null)}
+        />
       )}
       {equipoAMover && (
         <MoverDeGrifo
