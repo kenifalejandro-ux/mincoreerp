@@ -669,10 +669,6 @@ function ModalAlta({
   const [error, setError] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
 
-  // Con correo, la clave la define la persona desde su invitación: no hay
-  // clave que mostrar ni dictar (ver §10 del documento de arquitectura).
-  const porInvitacion = email.trim().length > 0;
-
   const enviar = async (e: React.FormEvent) => {
     e.preventDefault();
     if (enviando) return;
@@ -683,14 +679,11 @@ function ModalAlta({
     setEnviando(true);
     setError(null);
     try {
-      // Con correo no se manda clave: la define la persona desde la
-      // invitación que le llega. Mandarla igual, "por las dudas", volvería a
-      // dejar al administrador sabiendo con qué clave firma su gente.
       const creado = await crearUsuarioApi({
         nombre: nombre.trim(),
         dni: dni.trim() || undefined,
         email: email.trim() || undefined,
-        password: porInvitacion ? undefined : clave,
+        password: clave,
         rol,
       });
       await onCreado({
@@ -777,37 +770,30 @@ function ModalAlta({
           />
         </fieldset>
 
-        {porInvitacion ? (
-          <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
-            No le pongas clave: le llega un correo para que elija la suya. Nadie de la empresa la ve
-            ni la puede elegir por ella — así su firma en un vale significa algo.
-          </p>
-        ) : (
-          <Campo
-            id="usuario-clave"
-            etiqueta="Clave temporal"
-            ayuda="Se la vas a dictar a la persona. El sistema la obliga a cambiarla apenas entre."
-          >
-            <div className="flex gap-2">
-              <input
-                id="usuario-clave"
-                type="text"
-                required
-                minLength={8}
-                className={`${ESTILO_INPUT} font-mono`}
-                value={clave}
-                onChange={(e) => setClave(e.target.value)}
-              />
-              <button
-                type="button"
-                onClick={() => setClave(generarClaveTemporal())}
-                className="px-3 py-2 text-xs font-bold text-slate-700 border border-slate-200 rounded-xl hover:bg-slate-50 whitespace-nowrap"
-              >
-                Otra
-              </button>
-            </div>
-          </Campo>
-        )}
+        <Campo
+          id="usuario-clave"
+          etiqueta="Clave temporal"
+          ayuda="Se la vas a dictar a la persona. El sistema la obliga a cambiarla apenas entre."
+        >
+          <div className="flex gap-2">
+            <input
+              id="usuario-clave"
+              type="text"
+              required
+              minLength={8}
+              className={`${ESTILO_INPUT} font-mono`}
+              value={clave}
+              onChange={(e) => setClave(e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={() => setClave(generarClaveTemporal())}
+              className="px-3 py-2 text-xs font-bold text-slate-700 border border-slate-200 rounded-xl hover:bg-slate-50 whitespace-nowrap"
+            >
+              Otra
+            </button>
+          </div>
+        </Campo>
 
         {error && <p className="text-sm font-semibold text-red-700">{error}</p>}
 
@@ -1113,6 +1099,13 @@ function ClaveParaDictar({
           Esta clave no se vuelve a mostrar. Si se pierde, se resetea de nuevo — nadie, ni vos ni el
           soporte, puede verla después.
         </p>
+
+        {datos.esAlta && datos.identificador.includes("@") && (
+          <p className="text-sm text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3">
+            Si la persona ya usaba Mincore con este correo, entra con la clave de siempre: la
+            temporal solo sirve en su primer acceso. Si no puede entrar, resetéale la clave.
+          </p>
+        )}
 
         <div className="flex justify-end gap-2">
           <button

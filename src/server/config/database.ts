@@ -149,6 +149,29 @@ export async function withCuenta<T>(
   }
 }
 
+/** Busca los perfiles sin cuenta de UN DNI en todas las empresas (migración
+ *  0125), para el login desde el portal único. Solo lectura y solo ese DNI:
+ *  quién entra lo decide la clave, que compara el llamador. */
+export async function withDniLogin<T>(
+  dni: string,
+  fn: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN READ ONLY");
+    await client.query("SELECT set_config('app.tenant_id', $1, true)", [TENANT_NINGUNO]);
+    await client.query("SELECT set_config('app.dni_login', $1, true)", [dni]);
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // ====================== FUNCIÓN PARA CERRAR ======================
 export async function closeDatabase(): Promise<void> {
   try {

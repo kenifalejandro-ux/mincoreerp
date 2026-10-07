@@ -323,45 +323,40 @@ describe("permisos por perfil (autonomías)", () => {
     expect(detalle.motivo).toBe("prueba automatizada");
   });
 
-  // ── 4. Alta por invitación ────────────────────────────────────────────
+  // ── 4. Alta con clave temporal ────────────────────────────────────────────
 
   describe("alta de alguien con correo", () => {
     const emailNuevo = () => `invitado-${empresa.tenant.slug}@test.local`;
 
-    it("no le pone clave: le manda una invitación", async () => {
+    it("con correo también lleva clave temporal para dictar, igual que en plataforma", async () => {
       const alta = await admin.post("/api/erp/usuarios").send({
-        nombre: "Persona invitada",
+        nombre: "Persona con correo",
         email: emailNuevo(),
+        password: "ClaveTemporal123",
         rol: "operador",
       });
 
       expect(alta.status).toBe(201);
-      expect(alta.body.modo).toBe("invitacion-enviada");
+      expect(alta.body.modo).toBe("clave-temporal");
 
-      // La cuenta existe pero todavía no tiene clave, así que no puede entrar.
       const cuenta = (
-        await pool.query(`SELECT id, password_hash FROM cuentas WHERE email = $1`, [emailNuevo()])
+        await pool.query(
+          `SELECT password_hash, debe_cambiar_password FROM cuentas WHERE email = $1`,
+          [emailNuevo()]
+        )
       ).rows[0];
-      expect(cuenta).toBeDefined();
-      expect(cuenta.password_hash).toBeNull();
+      expect(cuenta.password_hash).not.toBeNull();
+      expect(cuenta.debe_cambiar_password).toBe(true);
+    });
 
-      const intento = await request(app).post("/api/auth/login").send({
-        tenantSlug: empresa.tenant.slug,
-        email: emailNuevo(),
-        password: "LoQueSea12345",
+    it("con correo y sin clave, la pantalla ya no manda invitación: se rechaza", async () => {
+      const alta = await admin.post("/api/erp/usuarios").send({
+        nombre: "Sin clave",
+        email: `sinclave-${empresa.tenant.slug}@test.local`,
+        rol: "operador",
       });
-      expect(intento.status).toBe(401);
 
-      // Y hay un enlace esperándola, que es lo que le deja definir la suya.
-      const invitacion = await pool.query(
-        `SELECT expira_en FROM reset_tokens WHERE cuenta_id = $1 AND usado_en IS NULL`,
-        [cuenta.id]
-      );
-      expect(invitacion.rowCount).toBe(1);
-      // Una semana, no una hora: la pide un admin, no la persona.
-      const horas =
-        (new Date(invitacion.rows[0].expira_en).getTime() - Date.now()) / (60 * 60 * 1000);
-      expect(horas).toBeGreaterThan(24);
+      expect(alta.status).toBe(400);
     });
 
     it("sin correo (personal de cancha) sigue siendo clave para dictar", async () => {

@@ -148,6 +148,15 @@ export const crearUsuarioEnTenantSchema = z
 
 export type CrearUsuarioEnTenantInput = z.infer<typeof crearUsuarioEnTenantSchema>;
 
+/** Las pantallas (plataforma y Administración del ERP) siempre dan una clave
+ *  temporal que el administrador dicta. Solo SCIM da de alta sin clave, porque
+ *  el proveedor de identidad no la manda: por eso la exigencia vive acá y no en
+ *  el esquema base, que SCIM comparte. */
+export const crearUsuarioManualSchema = crearUsuarioEnTenantSchema.refine(
+  (v) => Boolean(v.password),
+  { message: "Poné una clave temporal para dictarle", path: ["password"] }
+);
+
 export const cambiarEstadoUsuarioSchema = z.object({
   activo: z.boolean(),
   motivo: z.string().trim().max(500).optional(),

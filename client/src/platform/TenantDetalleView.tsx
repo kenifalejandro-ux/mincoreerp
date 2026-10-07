@@ -1204,6 +1204,7 @@ function ModulosUsuario({
 function NuevoUsuarioForm({ tenantId, onCreado }: { tenantId: string; onCreado: () => void }) {
   const [nombre, setNombre] = useState("");
   const [email, setEmail] = useState("");
+  const [dni, setDni] = useState("");
   const [password, setPassword] = useState("");
   const [rol, setRol] = useState("operador");
   const [error, setError] = useState<string | null>(null);
@@ -1212,9 +1213,19 @@ function NuevoUsuarioForm({ tenantId, onCreado }: { tenantId: string; onCreado: 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!email.trim() && !dni.trim()) {
+      setError("Cargá un correo o un DNI: sin ninguno de los dos no podría entrar.");
+      return;
+    }
     setEnviando(true);
     try {
-      await crearUsuarioApi(tenantId, { nombre, email, password, rol });
+      await crearUsuarioApi(tenantId, {
+        nombre,
+        email: email.trim() || undefined,
+        dni: dni.trim() || undefined,
+        password,
+        rol,
+      });
       onCreado();
     } catch (err: any) {
       setError(err.message || "No se pudo crear el usuario");
@@ -1236,15 +1247,25 @@ function NuevoUsuarioForm({ tenantId, onCreado }: { tenantId: string; onCreado: 
         className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-950 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-500/30"
       />
       <input
-        required
         type="email"
         value={email}
         onChange={(e) => setEmail(e.target.value)}
         placeholder="Correo"
+        autoComplete="off"
+        className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-950 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-500/30"
+      />
+      <input
+        value={dni}
+        onChange={(e) => setDni(e.target.value)}
+        placeholder="DNI"
+        name="dni-nuevo-usuario"
+        autoComplete="off"
+        inputMode="numeric"
         className="px-3 py-2 rounded-lg border border-slate-700 bg-slate-950 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-500/30"
       />
       <PasswordInput
         id="nuevoUsuarioPassword"
+        autoComplete="new-password"
         required
         minLength={8}
         value={password}

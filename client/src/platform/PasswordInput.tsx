@@ -14,6 +14,7 @@ export default function PasswordInput({
   required,
   minLength,
   autoComplete,
+  inputClassName,
 }: {
   id: string;
   value: string;
@@ -22,6 +23,7 @@ export default function PasswordInput({
   required?: boolean;
   minLength?: number;
   autoComplete?: string;
+  inputClassName?: string;
 }) {
   const [visible, setVisible] = useState(false);
 
@@ -36,7 +38,7 @@ export default function PasswordInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full px-3 py-2 pr-10 rounded-lg border border-slate-700 bg-slate-950 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-500/30"
+        className={`w-full pr-10 ${inputClassName ?? "px-3 py-2 rounded-lg border border-slate-700 bg-slate-950 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-500/30"}`}
       />
       <button
         type="button"

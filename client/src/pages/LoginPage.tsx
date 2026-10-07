@@ -1,4 +1,5 @@
 // client/src/pages/LoginPage.tsx
+/* eslint-disable import/order */
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
@@ -13,6 +14,7 @@ import {
   type EmpresaDeLaCuenta,
 } from "../services/authApi";
 import { obtenerTokenRecaptcha } from "../services/recaptcha";
+import PasswordInput from "../platform/PasswordInput";
 
 declare global {
   interface Window {
@@ -463,14 +465,13 @@ export default function LoginPage() {
                   ¿Olvidaste tu contraseña?
                 </button>
               </div>
-              <input
+              <PasswordInput
                 id="password"
-                type="password"
                 required
                 autoComplete="current-password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400"
+                onChange={setPassword}
+                inputClassName="px-3 py-2 rounded-lg border border-slate-200 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400"
                 placeholder="••••••••"
               />
             </div>

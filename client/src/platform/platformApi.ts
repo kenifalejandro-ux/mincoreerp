@@ -265,7 +265,7 @@ export async function listarUsuariosTenantApi(tenantId: string): Promise<Usuario
 
 export async function crearUsuarioApi(
   tenantId: string,
-  input: { nombre: string; email: string; password: string; rol: string }
+  input: { nombre: string; email?: string; dni?: string; password: string; rol: string }
 ): Promise<void> {
   const res = await platformFetch(`/tenants/${tenantId}/usuarios`, jsonInit("POST", input));
   await parseOrThrow(res);
