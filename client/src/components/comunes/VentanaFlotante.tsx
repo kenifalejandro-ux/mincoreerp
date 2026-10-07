@@ -498,11 +498,17 @@ export default function VentanaFlotante({
     </div>
   );
 
+  // El cuerpo ocupa lo que deja la barra y hace scroll si el contenido no
+  // entra: sin esto, lo de abajo de un panel largo quedaba cortado. Es flex
+  // en columna para que los paneles con su propio scroll interno (encabezado
+  // fijo + lista que se desplaza) sigan funcionando igual.
+  const cuerpo = <div className="flex-1 min-h-0 flex flex-col overflow-y-auto">{children}</div>;
+
   if (host) {
     return createPortal(
       <>
         {barra}
-        {children}
+        {cuerpo}
       </>,
       host
     );
@@ -532,7 +538,7 @@ export default function VentanaFlotante({
       aria-label={titulo}
     >
       {barra}
-      {children}
+      {cuerpo}
       {/* La esquina para agrandar. Es de 20px y no de 16 porque el
           `overflow-hidden` del marco, combinado con las esquinas
           redondeadas, recorta justo la punta -- que es adonde apunta el

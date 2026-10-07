@@ -5,6 +5,7 @@ import {
   Droplets,
   Fuel,
   History,
+  Navigation,
   Route,
   Receipt,
   ScrollText,
@@ -20,6 +21,7 @@ import { MODULOS_CLIENTE } from "../../modules/registry";
 // Submenú de Combustible. Los íconos son de trazo (lucide), los mismos que
 // usan las acciones de la tabla de tanques.
 const SUBMENU_COMBUSTIBLE: { tab: string; label: string; Icono: LucideIcon }[] = [
+  { tab: "combustible:mi_viaje", label: "Mi viaje", Icono: Navigation },
   { tab: "combustible", label: "Tanques", Icono: Fuel },
   { tab: "combustible:tanquetas", label: "Tanquetas", Icono: Cylinder },
   { tab: "combustible:viajes", label: "Viajes", Icono: Route },
@@ -44,10 +46,11 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
     const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
     const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
     if (override !== undefined) return override;
+    if (tab === "combustible:mi_viaje") return usuario?.rol === "conductor_ruta";
     // 0119: el conductor también ve Urea, solo para registrar la compra en
     // ruta (el panel le muestra únicamente ese botón).
     if (usuario?.rol === "conductor_ruta")
-      return tab === "combustible" || tab === "combustible:urea";
+      return tab === "combustible" || tab === "combustible:urea" || tab === "combustible:mi_viaje";
     if (usuario?.rol === "grifero") return tab === "combustible";
     if (usuario?.rol === "encargado_urea") return tab === "combustible:urea";
     // Operador y Lectura parten con acceso amplio a Combustible (matriz

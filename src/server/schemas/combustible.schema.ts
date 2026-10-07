@@ -1960,3 +1960,23 @@ export const listarViajesQuerySchema = z
     path: ["desde"],
   });
 export type ListarViajesQuery = z.infer<typeof listarViajesQuerySchema>;
+
+// ── El conductor marca su propio viaje (0124) ──────────────────────────────
+// Sin hora manual: la pone el servidor, o vale la del celular si la marca
+// llegó tarde desde la cola sin señal (`marcado_en`). `cliente_uuid` hace que
+// el reintento de la cola no falle.
+export const iniciarMiViajeSchema = z.object({
+  medidor_inicio: medidor,
+  marcado_en: fechaHora.optional(),
+  cliente_uuid: z.string().uuid().optional(),
+  ruta_por_confirmar: z.boolean().optional(),
+  nota_ruta: z.string().trim().max(500).nullable().optional(),
+});
+export type IniciarMiViajeInput = z.infer<typeof iniciarMiViajeSchema>;
+
+export const cerrarMiViajeSchema = z.object({
+  medidor_fin: medidor,
+  marcado_en: fechaHora.optional(),
+  cliente_uuid: z.string().uuid().optional(),
+});
+export type CerrarMiViajeInput = z.infer<typeof cerrarMiViajeSchema>;

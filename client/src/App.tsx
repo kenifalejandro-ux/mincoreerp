@@ -49,6 +49,8 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
     const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
     const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
     if (override !== undefined) return override;
+    // "Mi viaje" (0124) es del conductor: el resto gestiona desde Viajes.
+    if (tab === "combustible:mi_viaje") return usuario?.rol === "conductor_ruta";
     // Operador y Lectura parten con acceso amplio a Combustible (matriz
     // robusta de perfiles): sin override, caen al fallback de abajo (ve
     // cualquier sub-pestaña mientras tenga el módulo asignado).
@@ -66,6 +68,8 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
  *  que sí, en el orden del menú. */
 function primeraPestania(usuario: UsuarioDeSesion): string {
   const override = (pestana: string) => usuario?.permisosPestanas?.[`combustible:${pestana}`];
+  if (usuario?.rol === "conductor_ruta" && override("mi_viaje") !== false)
+    return "combustible:mi_viaje";
   if (usuario?.rol === "conductor_ruta" && override("tanques") !== false) return "combustible";
   if (usuario?.rol === "encargado_urea" && override("urea") !== false) return "combustible:urea";
   if (usuario?.rol === "grifero" && override("tanques") !== false) return "combustible";
@@ -146,13 +150,15 @@ function App() {
                 ? "tanquetas"
                 : tabActiva === "combustible:viajes"
                   ? "viajes"
-                  : tabActiva === "combustible:urea"
-                    ? "urea"
-                    : tabActiva === "combustible:auditoria"
-                      ? "auditoria"
-                      : tabActiva === "combustible:bitacora"
-                        ? "bitacora"
-                        : "tanques",
+                  : tabActiva === "combustible:mi_viaje"
+                    ? "mi_viaje"
+                    : tabActiva === "combustible:urea"
+                      ? "urea"
+                      : tabActiva === "combustible:auditoria"
+                        ? "auditoria"
+                        : tabActiva === "combustible:bitacora"
+                          ? "bitacora"
+                          : "tanques",
         }
       : {};
 

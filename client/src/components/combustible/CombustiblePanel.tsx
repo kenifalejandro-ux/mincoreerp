@@ -46,6 +46,7 @@ import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from
 import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
 import VentanaSurtidores from "./Surtidores";
 import TanquetasPanel from "./Tanquetas";
+import MiViaje from "./MiViaje";
 import ViajesPanel from "./ViajesPanel";
 import { comprimirImagen } from "./comprimirImagen";
 
@@ -2187,7 +2188,14 @@ export interface CombustiblePanelProps {
    *  montado. undefined = comportamiento por defecto (Tanques), para los
    *  pocos lugares que todavía instancian el panel sin pasarlo. */
   pestanaInicial?:
-    "tanques" | "tanquetas" | "viajes" | "historico" | "urea" | "auditoria" | "bitacora";
+    | "tanques"
+    | "tanquetas"
+    | "viajes"
+    | "mi_viaje"
+    | "historico"
+    | "urea"
+    | "auditoria"
+    | "bitacora";
 }
 
 export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelProps = {}) {
@@ -2398,7 +2406,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // Tanque abierto en la ventana "Ver tanque" (el ojo de la fila).
   const [tanqueVerId, setTanqueVerId] = useState<number | null>(null);
   const [pestanaCombustible, setPestanaCombustible] = useState<
-    "tanques" | "tanquetas" | "viajes" | "historico" | "urea" | "auditoria" | "bitacora"
+    | "tanques"
+    | "tanquetas"
+    | "viajes"
+    | "mi_viaje"
+    | "historico"
+    | "urea"
+    | "auditoria"
+    | "bitacora"
   >(pestanaInicial ?? "tanques");
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -4810,7 +4825,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           confundían de qué pantalla se trataba. */}
       <div
         className={`flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-10 ${
-          pestanaCombustible === "urea" ? "hidden" : ""
+          pestanaCombustible === "urea" || pestanaCombustible === "mi_viaje" ? "hidden!" : ""
         }`}
       >
         <div className="shrink-0">
@@ -4925,6 +4940,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {pestanaCombustible === "urea" && <UreaPanel />}
       {pestanaCombustible === "tanquetas" && <TanquetasPanel />}
       {pestanaCombustible === "viajes" && <ViajesPanel />}
+      {pestanaCombustible === "mi_viaje" && <MiViaje />}
       {!esConductor && pestanaCombustible === "tanques" && importacion.error && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-red-900 font-light flex-1">{importacion.error}</p>
