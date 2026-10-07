@@ -4,6 +4,7 @@
 import { Download, Eye } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { DetalleViajeVentana } from "./DetalleViaje";
 import {
   desvio,
   MIN_VIAJES_PARA_COMPARAR,
@@ -18,21 +19,6 @@ import {
 } from "./viajesFormato";
 import { apiFetch } from "../../services/apiClient";
 import { exportarCsv } from "../../utils/exportarCsv";
-import VentanaFlotante from "../comunes/VentanaFlotante";
-
-interface CargaViaje {
-  id: string;
-  producto: Producto;
-  origen: string;
-  despachado_en: string;
-  cantidad: string;
-  unidad: string;
-  serie_talonario: string | null;
-  n_vale: number | null;
-  conductor_nombre: string | null;
-  tanque_nombre: string | null;
-  grifo: string | null;
-}
 
 const UMBRAL_DESVIO_PCT = 20;
 
@@ -48,131 +34,6 @@ export function CeldaDesvio({ v }: { v: FilaViaje }) {
       {d.pct > 0 ? "+" : ""}
       {fmt(d.pct, 0)}%
     </span>
-  );
-}
-
-export function DetalleViajeVentana({
-  viajeId,
-  onCerrar,
-}: {
-  viajeId: string;
-  onCerrar: () => void;
-}) {
-  const [datos, setDatos] = useState<{ viaje: FilaViaje; cargas: CargaViaje[] } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    void (async () => {
-      const res = await apiFetch(`/api/erp/combustible/viajes/${viajeId}`);
-      const body = await res.json().catch(() => null);
-      if (!res.ok) setError(body?.error ?? "No se pudo cargar el viaje.");
-      else setDatos(body);
-    })();
-  }, [viajeId]);
-
-  const v = datos?.viaje;
-  const total = (p: Producto) =>
-    (datos?.cargas ?? [])
-      .filter((c) => c.producto === p)
-      .reduce(
-        (s, c) =>
-          s + Number(c.cantidad) * (p === "combustible" && c.unidad === "L" ? 1 / 3.785411784 : 1),
-        0
-      );
-
-  return (
-    <VentanaFlotante
-      id={`combustible-viaje-${viajeId}`}
-      titulo={v ? `Viaje V-${v.numero} · ${ruta(v)}` : "Viaje"}
-      subtitulo={
-        v
-          ? `${unidadLabel(v)} · ${v.conductor_nombre ?? "sin conductor"} · ${
-              v.inicio_en
-                ? `${fechaHora(v.inicio_en)} → ${fechaHora(v.fin_en)}`
-                : "programado, aún no sale"
-            }`
-          : undefined
-      }
-      onCerrar={onCerrar}
-      anchoInicial={720}
-      altoInicial={480}
-    >
-      {error && <p className="p-4 text-sm text-red-400">{error}</p>}
-      {datos && (
-        <div className="p-3 space-y-3">
-          <div className="flex flex-wrap gap-5 text-sm text-[#94a3b8]">
-            <span>
-              Combustible:{" "}
-              <strong className="text-white font-mono">{fmt(total("combustible"))} gal</strong>
-            </span>
-            <span>
-              Urea: <strong className="text-white font-mono">{fmt(total("urea"))} L</strong>
-            </span>
-            {v?.recorrido && (
-              <span>
-                Recorrido:{" "}
-                <strong className="text-white font-mono">
-                  {fmt(Number(v.recorrido), 1)} {v.tipo_medidor === "horometro" ? "h" : "km"}
-                </strong>
-              </span>
-            )}
-            {v?.recorrido_sin_viaje != null && (
-              <span title="Lo que anduvo la unidad desde su última lectura hasta que salió">
-                Fuera de viaje:{" "}
-                <strong className="text-white font-mono">
-                  {fmt(Number(v.recorrido_sin_viaje), 1)}{" "}
-                  {v.tipo_medidor === "horometro" ? "h" : "km"}
-                </strong>
-              </span>
-            )}
-            {v?.ruta_por_confirmar && (
-              <span className="text-amber-400">
-                Ruta por confirmar{v.nota_ruta ? `: ${v.nota_ruta}` : ""}
-              </span>
-            )}
-            {v?.estado === "anulado" && (
-              <span className="text-red-400">Anulado: {v.motivo_anulacion}</span>
-            )}
-          </div>
-          {datos.cargas.length === 0 ? (
-            <p className="text-sm text-[#94a3b8]">
-              Sin cargas de esta unidad entre la salida (con su margen previo) y la llegada.
-            </p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-left text-[11px] uppercase text-[#94a3b8]">
-                  <th className="p-2">Fecha</th>
-                  <th className="p-2">Producto</th>
-                  <th className="p-2">De dónde</th>
-                  <th className="p-2">Vale</th>
-                  <th className="p-2 text-right">Cantidad</th>
-                </tr>
-              </thead>
-              <tbody>
-                {datos.cargas.map((c) => (
-                  <tr key={c.id} className="border-t border-[#2a2e37]">
-                    <td className="p-2 whitespace-nowrap">{fechaHora(c.despachado_en)}</td>
-                    <td className="p-2">{c.producto === "urea" ? "Urea" : "Combustible"}</td>
-                    <td className="p-2">
-                      {c.grifo ??
-                        c.tanque_nombre ??
-                        (c.origen === "tanqueta" ? "Tanqueta" : c.origen)}
-                    </td>
-                    <td className="p-2 font-mono">
-                      {c.serie_talonario ? `${c.serie_talonario}-${c.n_vale}` : "—"}
-                    </td>
-                    <td className="p-2 text-right font-mono">
-                      {fmt(Number(c.cantidad))} {c.unidad}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      )}
-    </VentanaFlotante>
   );
 }
 
@@ -336,7 +197,11 @@ export default function ConsumoPorViaje({
             </thead>
             <tbody>
               {filas.map((v) => (
-                <tr key={v.id} className="border-t border-slate-100">
+                <tr
+                  key={v.id}
+                  onClick={() => setVerId(v.id)}
+                  className="border-t border-slate-100 cursor-pointer hover:bg-slate-50"
+                >
                   <td className="p-2 font-mono whitespace-nowrap">
                     V-{v.numero}
                     {v.estado === "en_curso" && (

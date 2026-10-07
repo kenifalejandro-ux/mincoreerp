@@ -1,6 +1,4 @@
 // Formato compartido de la vista por viaje (0123): panel Viajes e Histórico.
-import { Car, Container, Tractor, Truck, type LucideIcon } from "lucide-react";
-
 export type Producto = "combustible" | "urea";
 
 export interface FilaViaje {
@@ -25,6 +23,8 @@ export interface FilaViaje {
   recorrido: string | null;
   recorrido_sin_viaje: string | null;
   ruta_por_confirmar: boolean;
+  inicio_origen_hora: "servidor" | "manual" | "dispositivo" | null;
+  fin_origen_hora: "servidor" | "manual" | "dispositivo" | null;
   nota_ruta: string | null;
   cuenta_como: string;
   estado: "programado" | "en_curso" | "cerrado" | "anulado";
@@ -76,15 +76,35 @@ export function desvio(v: FilaViaje): { pct: number; contra: string } | null {
   };
 }
 
-/** El ícono según el tipo de unidad: volquete y tracto son camión; camioneta,
- *  auto; excavadora, retro y cargador, maquinaria; carretas y bombonas,
- *  contenedor. */
-export function iconoDeUnidad(tipo: string | null): LucideIcon {
+export type ClaseDeUnidad = "camion" | "auto" | "maquina" | "contenedor";
+
+/** La familia de la unidad, para su ícono: volquete y tracto son camión;
+ *  camioneta, auto; excavadora, retro y cargador, maquinaria; carretas y
+ *  bombonas, contenedor. */
+export function claseDeUnidad(tipo: string | null): ClaseDeUnidad {
   const t = (tipo ?? "").toLowerCase();
-  if (/camioneta|pickup|auto|van\b/.test(t)) return Car;
+  if (/camioneta|pickup|auto|van\b/.test(t)) return "auto";
   if (/excavadora|retro|cargador|tractor(?!.*remolc)|motoniveladora|rodillo|bulldozer/.test(t)) {
-    return Tractor;
+    return "maquina";
   }
-  if (/carreta|bombona|cisterna|tanque|semi|remolque/.test(t)) return Container;
-  return Truck;
+  if (/carreta|bombona|cisterna|tanque|semi|remolque/.test(t)) return "contenedor";
+  return "camion";
+}
+
+export const hora = (iso: string | number) =>
+  new Date(iso).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
+
+export const diaHora = (iso: string) =>
+  new Date(iso).toLocaleString("es-PE", { dateStyle: "short", timeStyle: "short" });
+
+export function duracion(min: number) {
+  const m = Math.max(0, Math.round(min));
+  const h = Math.floor(m / 60);
+  return h > 0 ? `${h} h ${m % 60} min` : `${m} min`;
+}
+
+export function iniciales(nombre: string | null) {
+  if (!nombre) return "?";
+  const partes = nombre.trim().split(/\s+/);
+  return (partes[0][0] + (partes[1]?.[0] ?? "")).toUpperCase();
 }

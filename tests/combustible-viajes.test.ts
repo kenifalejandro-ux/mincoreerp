@@ -39,6 +39,18 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     return agente;
   }
 
+  /** Un conductor de ruta con su DNI: el viaje le aparece por ese DNI. */
+  async function conductor(): Promise<{ agente: Agente; dni: string }> {
+    const agente = request.agent(app);
+    const dni = String(85100000 + Math.floor(Math.random() * 800000) + seq++);
+    const alta = await admin
+      .post("/api/erp/usuarios")
+      .send({ nombre: `Conductor ${dni}`, dni, password, rol: "conductor_ruta" });
+    expect(alta.status).toBe(201);
+    await agente.post("/api/auth/login").send({ tenantSlug: slug, identificador: dni, password });
+    return { agente, dni };
+  }
+
   const lugar = async (nombre: string) =>
     Number((await admin.post("/api/erp/combustible/lugares").send({ nombre })).body.id);
 
@@ -467,5 +479,205 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
         })
       ).status
     ).toBe(404);
+  });
+
+  // ── "Mi viaje": el conductor marca su propio viaje (0124) ────────────────
+  const hace = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
+  const marcar = (a: Agente, id: string, accion: "iniciar-mio" | "cerrar-mio", body: object) =>
+    a.post(`/api/erp/combustible/viajes/${id}/${accion}`).send(body);
+
+  it("el conductor ve solo sus viajes (por su DNI) y no puede marcar los de otro", async () => {
+    const yo = await conductor();
+    const otro = await conductor();
+    const eq = await unidad();
+    const eq2 = await unidad();
+    const mio = (
+      await admin.post("/api/erp/combustible/viajes").send({
+        equipo_id: eq,
+        origen_id: huamachuco,
+        destino_id: bambamarca,
+        conductor_nombre: "Yo",
+        conductor_dni: yo.dni,
+      })
+    ).body;
+    const ajeno = (
+      await admin.post("/api/erp/combustible/viajes").send({
+        equipo_id: eq2,
+        origen_id: huamachuco,
+        destino_id: bambamarca,
+        conductor_dni: otro.dni,
+      })
+    ).body;
+
+    const lista = await yo.agente.get("/api/erp/combustible/viajes/mios");
+    expect(lista.status).toBe(200);
+    expect(lista.body.data.map((v: { id: string }) => v.id)).toEqual([mio.id]);
+    expect(lista.body.data[0].previo).toMatchObject({ tipo_medidor: "odometro" });
+
+    expect((await marcar(yo.agente, ajeno.id, "iniciar-mio", { medidor_inicio: 10 })).status).toBe(
+      404
+    );
+    const ok = await marcar(yo.agente, mio.id, "iniciar-mio", { medidor_inicio: 10 });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(ok.body.estado).toBe("en_curso");
+    expect(ok.body.inicio_origen_hora).toBe("servidor");
+  });
+
+  it("el reintento de la cola con el mismo uuid no falla; otra marca distinta sí", async () => {
+    const yo = await conductor();
+    const eq = await unidad();
+    const v = (
+      await admin.post("/api/erp/combustible/viajes").send({
+        equipo_id: eq,
+        origen_id: huamachuco,
+        destino_id: bambamarca,
+        conductor_dni: yo.dni,
+      })
+    ).body;
+    const uuid = crypto.randomUUID();
+    const a = await marcar(yo.agente, v.id, "iniciar-mio", {
+      medidor_inicio: 50,
+      cliente_uuid: uuid,
+    });
+    const b = await marcar(yo.agente, v.id, "iniciar-mio", {
+      medidor_inicio: 50,
+      cliente_uuid: uuid,
+    });
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(b.body.inicio_en).toBe(a.body.inicio_en);
+    const c = await marcar(yo.agente, v.id, "iniciar-mio", {
+      medidor_inicio: 50,
+      cliente_uuid: crypto.randomUUID(),
+    });
+    expect(c.status).toBe(409);
+
+    const fin = crypto.randomUUID();
+    expect(
+      (await marcar(yo.agente, v.id, "cerrar-mio", { medidor_fin: 90, cliente_uuid: fin })).status
+    ).toBe(200);
+    expect(
+      (await marcar(yo.agente, v.id, "cerrar-mio", { medidor_fin: 90, cliente_uuid: fin })).status
+    ).toBe(200);
+  });
+
+  it("sin señal: la marca que llega tarde vale con la hora del celular, marcada como tal", async () => {
+    const yo = await conductor();
+    const eq = await unidad();
+    const v = (
+      await admin.post("/api/erp/combustible/viajes").send({
+        equipo_id: eq,
+        origen_id: huamachuco,
+        destino_id: bambamarca,
+        conductor_dni: yo.dni,
+      })
+    ).body;
+    // Hora adelantada o vieja de más: se rechaza.
+    expect(
+      (await marcar(yo.agente, v.id, "iniciar-mio", { medidor_inicio: 1, marcado_en: hace(-60) }))
+        .status
+    ).toBe(400);
+    expect(
+      (
+        await marcar(yo.agente, v.id, "iniciar-mio", {
+          medidor_inicio: 1,
+          marcado_en: hace(8 * 24 * 60),
+        })
+      ).status
+    ).toBe(400);
+
+    const salida = hace(180);
+    const ini = await marcar(yo.agente, v.id, "iniciar-mio", {
+      medidor_inicio: 1,
+      marcado_en: salida,
+    });
+    expect(ini.status, JSON.stringify(ini.body)).toBe(200);
+    expect(ini.body.inicio_origen_hora).toBe("dispositivo");
+    expect(Date.parse(ini.body.inicio_en)).toBe(Date.parse(salida));
+
+    // Una carga en ruta entra al viaje y el conductor la ve en su tarjeta.
+    expect((await cargar(eq, 30, (Date.parse(hace(120)) - T0) / H)).status).toBe(201);
+    const enCurso = (await yo.agente.get("/api/erp/combustible/viajes/mios")).body.data[0];
+    expect(Number(enCurso.combustible_gal)).toBeCloseTo(30, 1);
+    // Ve sus propias cargas y lo que suele tardar la ruta (para estimar la
+    // llegada), pero NADA de promedios de consumo ni comparaciones.
+    expect(enCurso.cargas_detalle).toHaveLength(1);
+    expect(enCurso).toHaveProperty("duracion_ruta_min");
+    for (const prohibido of ["promedio_ruta", "promedio_ruta_unidad", "viajes_ruta", "ruta"]) {
+      expect(enCurso).not.toHaveProperty(prohibido);
+    }
+
+    // Un reloj algo corrido (2 min) en línea no cuenta como "sin señal".
+    const fin = await marcar(yo.agente, v.id, "cerrar-mio", {
+      medidor_fin: 40,
+      marcado_en: hace(2),
+    });
+    expect(fin.status).toBe(200);
+    expect(fin.body.fin_origen_hora).toBe("servidor");
+  });
+
+  it("el conductor no toca la gestión de viajes; grifero y Lectura no ven Mi viaje", async () => {
+    const yo = await conductor();
+    const eq = await unidad();
+    const v = (
+      await admin.post("/api/erp/combustible/viajes").send({
+        equipo_id: eq,
+        origen_id: huamachuco,
+        destino_id: bambamarca,
+        conductor_dni: yo.dni,
+      })
+    ).body;
+    expect((await yo.agente.get("/api/erp/combustible/viajes")).status).toBe(403);
+    expect(
+      (
+        await yo.agente
+          .post(`/api/erp/combustible/viajes/${v.id}/iniciar`)
+          .send({ medidor_inicio: 1 })
+      ).status
+    ).toBe(403);
+    expect(
+      (
+        await yo.agente
+          .post("/api/erp/combustible/viajes")
+          .send({ equipo_id: eq, origen_id: huamachuco, destino_id: bambamarca })
+      ).status
+    ).toBe(403);
+    expect((await (await conRol("grifero")).get("/api/erp/combustible/viajes/mios")).status).toBe(
+      403
+    );
+    expect((await (await conRol("lectura")).get("/api/erp/combustible/viajes/mios")).status).toBe(
+      403
+    );
+
+    const lista = await admin.get("/api/erp/combustible/viajes/conductores");
+    expect(lista.status).toBe(200);
+    expect(lista.body.data.map((c: { dni: string }) => c.dni)).toContain(yo.dni);
+  });
+
+  it("el detalle trae cuánto suele durar y consumir la ruta (para la llegada estimada)", async () => {
+    const eq = await unidad();
+    const a = await lugar(idUnico("Cajabamba"));
+    const b = await lugar(idUnico("Celendin"));
+    // Tres viajes cerrados de 3, 5 y 4 horas, con 30, 40 y 50 gal.
+    for (const [ini, dur, gal] of [
+      [10, 3, 30],
+      [20, 5, 40],
+      [30, 4, 50],
+    ]) {
+      const v = await viaje(eq, {
+        origen_id: a,
+        destino_id: b,
+        inicio_en: hora(ini),
+        fin_en: hora(ini + dur),
+      });
+      expect(v.status, JSON.stringify(v.body)).toBe(201);
+      expect((await cargar(eq, gal, ini + 1)).status).toBe(201);
+    }
+    const p = (await programar(eq, { origen_id: a, destino_id: b })).body;
+    const det = await admin.get(`/api/erp/combustible/viajes/${p.id}`);
+    expect(det.status).toBe(200);
+    expect(det.body.ruta.viajes).toBe(3);
+    expect(det.body.ruta.duracion_min).toBeCloseTo(240, 0);
+    expect(det.body.ruta.combustible_gal).toBeCloseTo(40, 1);
   });
 });

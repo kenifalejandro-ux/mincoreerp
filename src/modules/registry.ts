@@ -501,6 +501,11 @@ export const MODULOS: ModuloDefinicion[] = [
         { metodo: "POST", ruta: "/despachos/por-uuid/:clienteUuid/comprobante" },
         // La foto de la boleta de una compra de UREA en ruta (0119).
         { metodo: "POST", ruta: "/urea/compras/por-uuid/:clienteUuid/comprobante" },
+        // "Mi viaje" (0124): el conductor marca salida y llegada en ruta, donde
+        // puede no haber señal. El reintento no duplica: el service reconoce el
+        // cliente_uuid de la marca. Espejo de offlineRegistry.ts del cliente.
+        { metodo: "POST", ruta: "/viajes/:viajeId/iniciar-mio" },
+        { metodo: "POST", ruta: "/viajes/:viajeId/cerrar-mio" },
       ],
     },
   },

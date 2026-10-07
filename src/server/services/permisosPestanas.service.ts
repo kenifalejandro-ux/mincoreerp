@@ -159,6 +159,9 @@ export const PESTANAS_CONFIGURABLES: DefinicionPestana[] = [
   // Viajes (0123): A → B de una unidad. Lectura los ve; crearlos o corregirlos
   // es una acción aparte.
   { modulo: "combustible", pestana: "viajes", nombre: "Viajes", nivel: "submenu", padre: null },
+  // "Mi viaje" (0124): el panel del conductor para iniciar y terminar SUS
+  // viajes. Nace solo para el conductor de ruta.
+  { modulo: "combustible", pestana: "mi_viaje", nombre: "Mi viaje", nivel: "submenu", padre: null },
   ...accionesViajes,
   { modulo: "combustible", pestana: "urea", nombre: "Urea", nivel: "submenu", padre: null },
   ...pestañasUrea,
@@ -246,7 +249,8 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
   // Todo menos Facturación (admin-only por defecto, ver pestanaPermitida):
   // Operador ve y opera cualquier módulo -- incluye crear/editar/eliminar en
   // Combustible (ver requireRole en combustible.routes.ts).
-  const amplio = admin.filter((item) => item !== "principal");
+  // "Mi viaje" es del conductor: el operador programa y cierra desde Viajes.
+  const amplio = admin.filter((item) => item !== "principal" && item !== "mi_viaje");
   // Lectura: solo lo informativo. Ni "Registrar X", ni Alertas/Proveedores/
   // Surtidores/Precios/Nuevo tanque, ni las acciones de escritura del panel
   // ("No visible / acción bloqueada" en la matriz, distinto de "Solo
@@ -309,7 +313,13 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
   //
   // 0119: también la compra de urea en ruta -- Kenif: "igual que combustible".
   // Solo eso de Urea: ni el reparto del almacén, ni los listados, ni el stock.
-  const conductor = ["tanques", "tanques:registrar_despacho", "urea", "urea:registrar_compra"];
+  const conductor = [
+    "tanques",
+    "tanques:registrar_despacho",
+    "urea",
+    "urea:registrar_compra",
+    "mi_viaje",
+  ];
   switch (rol) {
     case "admin":
       return new Set(admin);

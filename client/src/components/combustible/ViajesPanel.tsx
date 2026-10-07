@@ -1,10 +1,12 @@
 // Combustible › Viajes (0123): registrar, cerrar, corregir y anular viajes.
 // El análisis (ranking, desvío) vive en el Histórico de cada producto.
-import { Ban, Eye, Flag, MapPin, Pencil, Play, Plus, X } from "lucide-react";
+import { Ban, Eye, Flag, Lock, MapPin, Pencil, Play, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
-import { CeldaDesvio, DetalleViajeVentana } from "./ConsumoPorViaje";
-import { fechaHora, fmt, iconoDeUnidad, ruta, unidadLabel, type FilaViaje } from "./viajesFormato";
+import { CeldaDesvio } from "./ConsumoPorViaje";
+import { DetalleViajeVentana } from "./DetalleViaje";
+import { IconoUnidad } from "./IconoUnidad";
+import { fechaHora, fmt, ruta, unidadLabel, type FilaViaje } from "./viajesFormato";
 import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
 import { ahoraParaInputLocal, paraInputLocal } from "../../utils/fechaLocal";
@@ -49,6 +51,12 @@ const FORM_VACIO = {
   motivo: "",
 };
 
+interface Conductor {
+  id: string;
+  nombre: string;
+  dni: string;
+}
+
 interface MedidorPrevio {
   tipo_medidor: "horometro" | "odometro" | null;
   valor: number | null;
@@ -67,6 +75,23 @@ const LABEL = "text-xs font-bold text-slate-700 uppercase";
 
 const numeroONull = (s: string) => (s.trim() === "" ? null : Number(s));
 const isoONull = (s: string) => (s ? new Date(s).toISOString() : null);
+
+/** La hora no la puso el servidor en el momento: se avisa de dónde salió. */
+function MarcaHora({ origen }: { origen: FilaViaje["inicio_origen_hora"] }) {
+  if (origen !== "dispositivo" && origen !== "manual") return null;
+  return (
+    <span
+      title={
+        origen === "dispositivo"
+          ? "Marcada sin señal: vale la hora del celular del conductor"
+          : "Puesta a mano por la oficina, con motivo en la bitácora"
+      }
+      className="ml-1.5 px-1 py-0.5 rounded text-[10px] uppercase bg-slate-500/20 text-slate-300"
+    >
+      {origen === "dispositivo" ? "celular" : "manual"}
+    </span>
+  );
+}
 
 export default function ViajesPanel() {
   const { usuario } = useAuth();
@@ -88,6 +113,11 @@ export default function ViajesPanel() {
   const [horaManual, setHoraManual] = useState(false);
   const [rutaDudosa, setRutaDudosa] = useState(false);
   const [previo, setPrevio] = useState<MedidorPrevio | null>(null);
+  // Salida, llegada y medidores de un viaje YA registrado nacen bloqueados:
+  // un clic de más no cambia lo que ya ocurrió. Desbloquear es una acción a
+  // propósito, y guardar sigue pidiendo motivo igual que el resto del form.
+  const [desbloqueado, setDesbloqueado] = useState(false);
+  const [conductores, setConductores] = useState<Conductor[]>([]);
 
   const permite = (accion: "nuevo" | "editar" | "lugares") => {
     const override = usuario?.permisosPestanas?.[`combustible:viajes:${accion}`];
@@ -151,6 +181,14 @@ export default function ViajesPanel() {
     setHoraManual(false);
     setRutaDudosa(false);
     setPrevio(null);
+    setDesbloqueado(false);
+    if ((m.tipo === "nuevo" || m.tipo === "editar") && permite("nuevo")) {
+      void (async () => {
+        const res = await apiFetch("/api/erp/combustible/viajes/conductores");
+        const body = await res.json().catch(() => null);
+        if (res.ok) setConductores(Array.isArray(body?.data) ? body.data : []);
+      })();
+    }
     if (m.tipo === "nuevo") {
       setForm({ ...FORM_VACIO, inicio_en: ahoraParaInputLocal() });
     } else if (m.tipo === "editar") {
@@ -462,7 +500,12 @@ export default function ViajesPanel() {
               {viajes.map((v) => (
                 <tr
                   key={v.id}
-                  className={`border-t border-[#2a2e37] ${v.estado === "anulado" ? "opacity-60" : ""}`}
+                  // Un toque en la fila abre el tablero del viaje: en el celular
+                  // la gerencia no tiene que buscar el ojo al final de la tabla.
+                  onClick={() => setVerId(v.id)}
+                  className={`border-t border-[#2a2e37] cursor-pointer hover:bg-[#1f2c2e] ${
+                    v.estado === "anulado" ? "opacity-60" : ""
+                  }`}
                 >
                   <td className="p-3 font-mono whitespace-nowrap">V-{v.numero}</td>
                   <td className="p-3">
@@ -483,17 +526,20 @@ export default function ViajesPanel() {
                   </td>
                   <td className="p-3">{unidadLabel(v)}</td>
                   <td className="p-3">{v.conductor_nombre ?? "—"}</td>
-                  <td className="p-3 whitespace-nowrap">{fechaHora(v.inicio_en)}</td>
-                  <td className="p-3 whitespace-nowrap">{fechaHora(v.fin_en)}</td>
+                  <td className="p-3 whitespace-nowrap">
+                    {fechaHora(v.inicio_en)}
+                    <MarcaHora origen={v.inicio_origen_hora} />
+                  </td>
+                  <td className="p-3 whitespace-nowrap">
+                    {fechaHora(v.fin_en)}
+                    <MarcaHora origen={v.fin_origen_hora} />
+                  </td>
                   <td className="p-3">
                     <span
                       title={v.motivo_anulacion ?? undefined}
                       className={`inline-flex items-center gap-1.5 whitespace-nowrap px-2 py-0.5 rounded text-xs ${ESTADOS[v.estado].clase}`}
                     >
-                      {(() => {
-                        const Icono = iconoDeUnidad(v.equipo_tipo);
-                        return <Icono className="w-3.5 h-3.5" aria-hidden />;
-                      })()}
+                      <IconoUnidad tipo={v.equipo_tipo} className="w-3.5 h-3.5" />
                       {ESTADOS[v.estado].texto}
                     </span>
                   </td>
@@ -503,7 +549,7 @@ export default function ViajesPanel() {
                     <CeldaDesvio v={v} />
                   </td>
                   <td className="p-3">
-                    <div className="flex justify-end gap-1">
+                    <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={() => setVerId(v.id)}
                         aria-label={`Ver viaje V-${v.numero}`}
@@ -650,8 +696,42 @@ export default function ViajesPanel() {
                       {selectLugar("origen_id", "Origen")}
                       {selectLugar("destino_id", "Destino")}
                     </div>
+                    {conductores.length > 0 && (
+                      <div className="space-y-1">
+                        <label htmlFor="viaje-conductor-lista" className={LABEL}>
+                          Conductor
+                        </label>
+                        <select
+                          id="viaje-conductor-lista"
+                          className={INPUT}
+                          value={
+                            conductores.find((c) => c.dni === form.conductor_dni.trim())?.id ?? ""
+                          }
+                          onChange={(e) => {
+                            const c = conductores.find((x) => x.id === e.target.value);
+                            setForm({
+                              ...form,
+                              conductor_nombre: c?.nombre ?? "",
+                              conductor_dni: c?.dni ?? "",
+                            });
+                          }}
+                        >
+                          <option value="">Otro (escribir abajo)</option>
+                          {conductores.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.nombre} · DNI {c.dni}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-slate-600">
+                          El viaje le aparece en “Mi viaje” al conductor con este DNI.
+                        </p>
+                      </div>
+                    )}
                     <div className="grid grid-cols-2 gap-3">
-                      {campo("conductor_nombre", "Conductor", { maxLength: 150 })}
+                      {campo("conductor_nombre", conductores.length > 0 ? "Nombre" : "Conductor", {
+                        maxLength: 150,
+                      })}
                       {campo("conductor_dni", "DNI", { maxLength: 15 })}
                     </div>
                     {modal.tipo === "nuevo" && (
@@ -664,7 +744,51 @@ export default function ViajesPanel() {
                         Registrar un viaje que ya se hizo (con sus horas y medidores)
                       </label>
                     )}
-                    {(retro || (modal.tipo === "editar" && modal.v.estado !== "programado")) && (
+                    {modal.tipo === "editar" &&
+                      modal.v.estado !== "programado" &&
+                      !desbloqueado && (
+                        <div className="space-y-2">
+                          <dl className="rounded-xl bg-slate-100 p-4 text-sm space-y-2">
+                            {[
+                              ["Salida", fechaHora(modal.v.inicio_en)],
+                              ["Llegada", fechaHora(modal.v.fin_en)],
+                              ...(modal.v.medidor_inicio
+                                ? [
+                                    [
+                                      `${medidorEtiqueta} salida`,
+                                      `${fmt(Number(modal.v.medidor_inicio), 1)}`,
+                                    ],
+                                  ]
+                                : []),
+                              ...(modal.v.medidor_fin
+                                ? [
+                                    [
+                                      `${medidorEtiqueta} llegada`,
+                                      `${fmt(Number(modal.v.medidor_fin), 1)}`,
+                                    ],
+                                  ]
+                                : []),
+                            ].map(([k, valor]) => (
+                              <div key={k} className="flex justify-between gap-3">
+                                <dt className="text-slate-500 flex items-center gap-1">
+                                  <Lock className="w-3 h-3" /> {k}
+                                </dt>
+                                <dd className="text-slate-900 font-mono">{valor}</dd>
+                              </div>
+                            ))}
+                          </dl>
+                          <button
+                            type="button"
+                            onClick={() => setDesbloqueado(true)}
+                            className="text-sm text-sky-700 underline"
+                          >
+                            Editar estos datos
+                          </button>
+                        </div>
+                      )}
+                    {(retro ||
+                      desbloqueado ||
+                      (modal.tipo === "editar" && modal.v.estado === "programado")) && (
                       <>
                         <div className="grid grid-cols-2 gap-3">
                           {campo("inicio_en", "Salida", { type: "datetime-local", required: true })}
@@ -685,6 +809,12 @@ export default function ViajesPanel() {
                             step: "0.1",
                           })}
                         </div>
+                        {modal.tipo === "editar" && modal.v.estado !== "programado" && (
+                          <p className="text-xs text-amber-700">
+                            Vas a cambiar algo ya registrado: el motivo de abajo queda en la
+                            bitácora.
+                          </p>
+                        )}
                       </>
                     )}
                     <div className="grid grid-cols-2 gap-3">

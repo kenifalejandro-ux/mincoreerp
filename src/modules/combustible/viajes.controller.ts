@@ -7,10 +7,12 @@ import { publicarEventoTenant } from "../../server/services/realtimeEvents.servi
 import { pestanaPermitida } from "../../server/services/permisosPestanas.service";
 import type {
   AnularViajeInput,
+  CerrarMiViajeInput,
   CerrarViajeInput,
   CrearLugarInput,
   CrearViajeInput,
   EditarViajeInput,
+  IniciarMiViajeInput,
   IniciarViajeInput,
   ListarViajesQuery,
 } from "../../server/schemas/combustible.schema";
@@ -129,6 +131,58 @@ export const viajesController = {
       medidor_previo: despues?.medidor_previo ?? null,
     });
     res.json(despues);
+  },
+
+  /** GET /viajes/mios: lo que ve el conductor en "Mi viaje", por su DNI. */
+  async mios(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const dni = req.usuario!.dni ?? "";
+    const data = await withTenant(tenantId, (c) => viajes.viajesDelConductor(c, tenantId, dni));
+    res.json({ data, sinDni: !dni.trim() });
+  },
+
+  async conductores(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    res.json({ data: await withTenant(tenantId, (c) => viajes.listarConductores(c, tenantId)) });
+  },
+
+  async iniciarMio(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.viajeId);
+    const data = req.validatedBody as IniciarMiViajeInput;
+    const r = await withTenant(tenantId, (c) =>
+      viajes.iniciarViaje(c, tenantId, req.usuario!.id, id, data, req.usuario!.dni ?? "")
+    );
+    if (!r.repetido) {
+      await auditar(req, "viaje_iniciar", {
+        viajeId: id,
+        numero: r.antes.numero,
+        por: "conductor",
+        origen_hora: r.despues?.inicio_origen_hora,
+        ...data,
+        medidor_previo: r.despues?.medidor_previo ?? null,
+      });
+    }
+    res.json(r.despues);
+  },
+
+  async cerrarMio(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.viajeId);
+    const data = req.validatedBody as CerrarMiViajeInput;
+    const r = await withTenant(tenantId, (c) =>
+      viajes.cerrarViaje(c, tenantId, req.usuario!.id, id, data, req.usuario!.dni ?? "")
+    );
+    if (!r.repetido) {
+      await auditar(req, "viaje_cerrar", {
+        viajeId: id,
+        numero: r.antes.numero,
+        por: "conductor",
+        origen_hora: r.despues?.fin_origen_hora,
+        ...data,
+      });
+    }
+    res.json(r.despues);
   },
 
   async cerrar(req: Request, res: Response) {

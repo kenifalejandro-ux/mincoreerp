@@ -66,6 +66,9 @@ export const ESCRITURAS_OFFLINE: Record<string, EscrituraOffline[]> = {
     // La foto de la boleta de una compra de UREA en ruta (0119): misma idea,
     // ruta propia porque el permiso es otro (urea:registrar_compra).
     { metodo: "POST", ruta: "/urea/compras/por-uuid/:clienteUuid/comprobante" },
+    // "Mi viaje" (0124): salida y llegada del conductor, sin señal en ruta.
+    { metodo: "POST", ruta: "/viajes/:viajeId/iniciar-mio" },
+    { metodo: "POST", ruta: "/viajes/:viajeId/cerrar-mio" },
   ],
 
   // Crear el registro (pólizas, SOAT, etc. son `documentos` con otro

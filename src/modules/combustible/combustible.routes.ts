@@ -47,6 +47,8 @@ import {
   crearLugarSchema,
   crearViajeSchema,
   cerrarViajeSchema,
+  iniciarMiViajeSchema,
+  cerrarMiViajeSchema,
   iniciarViajeSchema,
   editarViajeSchema,
   anularViajeSchema,
@@ -366,6 +368,30 @@ router.get(
   "/viajes/consumo",
   validateQuery(listarViajesQuerySchema),
   asyncHandler(viajesController.listarConsumo)
+);
+// "Mi viaje" (0124): el conductor ve y marca SOLO sus viajes (cruce por DNI en
+// el service). Sin requireRole: alcanza con la pestaña, el dueño lo decide el DNI.
+router.get(
+  "/viajes/mios",
+  requirePestana("combustible", "mi_viaje"),
+  asyncHandler(viajesController.mios)
+);
+router.get(
+  "/viajes/conductores",
+  requirePestana("combustible", "viajes:nuevo"),
+  asyncHandler(viajesController.conductores)
+);
+router.post(
+  "/viajes/:viajeId(\\d+)/iniciar-mio",
+  requirePestana("combustible", "mi_viaje"),
+  validate(iniciarMiViajeSchema),
+  asyncHandler(viajesController.iniciarMio)
+);
+router.post(
+  "/viajes/:viajeId(\\d+)/cerrar-mio",
+  requirePestana("combustible", "mi_viaje"),
+  validate(cerrarMiViajeSchema),
+  asyncHandler(viajesController.cerrarMio)
 );
 router.get(
   "/viajes/:viajeId(\\d+)",

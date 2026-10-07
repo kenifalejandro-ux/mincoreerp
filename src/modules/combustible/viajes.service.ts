@@ -4,10 +4,8 @@ import type { PoolClient } from "pg";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { esViolacionUnicidad } from "../../server/shared/utils/pgError";
 import type {
-  CerrarViajeInput,
   CrearViajeInput,
   EditarViajeInput,
-  IniciarViajeInput,
   ListarViajesQuery,
 } from "../../server/schemas/combustible.schema";
 import { agregarAmbitoVales, type AmbitoVales } from "./alcance";
@@ -209,6 +207,67 @@ async function ahora(client: PoolClient): Promise<string> {
   return new Date(r.rows[0].t).toISOString();
 }
 
+// Un reloj de celular algo corrido no convierte una marca en línea en una
+// "sin señal"; más de esto sí.
+const TOLERANCIA_RELOJ_MS = 5 * 60_000;
+// Una marca encolada que llega después de una semana ya no se puede creer.
+const MAX_ATRASO_COLA_MS = 7 * 24 * 3_600_000;
+
+export type OrigenHora = "servidor" | "manual" | "dispositivo";
+
+/** Qué hora vale para una marca de salida o llegada. `manual` es la oficina
+ *  corrigiendo un olvido (con motivo). `marcadoEn` es la hora del celular: solo
+ *  vale si la marca llegó TARDE (estuvo en la cola sin señal); si llegó en el
+ *  momento, manda el reloj del servidor. */
+async function horaDeLaMarca(
+  client: PoolClient,
+  manual: string | undefined,
+  marcadoEn: string | undefined
+): Promise<{ hora: string; origen: OrigenHora }> {
+  if (manual) return { hora: manual, origen: "manual" };
+  const servidor = await ahora(client);
+  if (marcadoEn) {
+    const atraso = Date.parse(servidor) - Date.parse(marcadoEn);
+    if (atraso < -TOLERANCIA_RELOJ_MS) {
+      throw new AppError(
+        400,
+        "La hora del celular está adelantada: revisa la fecha y hora del equipo"
+      );
+    }
+    if (atraso > MAX_ATRASO_COLA_MS) {
+      throw new AppError(400, "La marca tiene más de 7 días: pide a la oficina que la registre");
+    }
+    if (atraso > TOLERANCIA_RELOJ_MS) return { hora: marcadoEn, origen: "dispositivo" };
+  }
+  return { hora: servidor, origen: "servidor" };
+}
+
+const normalizarDni = (dni: unknown) => String(dni ?? "").trim();
+
+/** El conductor solo marca SUS viajes. 404 y no 403: no confirma que exista. */
+function exigirConductor(v: { conductor_dni: string | null }, dni: string | undefined) {
+  if (dni === undefined) return;
+  if (!normalizarDni(dni) || normalizarDni(v.conductor_dni) !== normalizarDni(dni)) {
+    throw new AppError(404, "El viaje no existe");
+  }
+}
+
+export interface MarcaInicio {
+  medidor_inicio?: number | null;
+  inicio_en?: string;
+  marcado_en?: string;
+  cliente_uuid?: string;
+  ruta_por_confirmar?: boolean;
+  nota_ruta?: string | null;
+}
+
+export interface MarcaFin {
+  medidor_fin?: number | null;
+  fin_en?: string;
+  marcado_en?: string;
+  cliente_uuid?: string;
+}
+
 /** La lectura con que la unidad llegó del viaje anterior; si ese viaje no la
  *  tiene, la de su última carga. Es lo que el conductor ve colapsado antes de
  *  escribir lo que marca su tablero. */
@@ -256,11 +315,18 @@ export async function iniciarViaje(
   tenantId: string,
   usuarioId: string,
   id: number,
-  data: IniciarViajeInput
+  data: MarcaInicio,
+  /** Presente cuando marca el propio conductor: solo su viaje. */
+  dniConductor?: string
 ) {
   const v = await viajeParaCambiar(client, tenantId, id);
+  exigirConductor(v, dniConductor);
+  // Reintento de la cola: la marca ya entró, se devuelve como quedó.
+  if (data.cliente_uuid && v.inicio_cliente_uuid === data.cliente_uuid) {
+    return { antes: v, despues: await getViaje(client, tenantId, id), repetido: true };
+  }
   if (v.estado !== "programado") throw new AppError(409, "El viaje ya salió");
-  const inicio = data.inicio_en ?? (await ahora(client));
+  const { hora: inicio, origen } = await horaDeLaMarca(client, data.inicio_en, data.marcado_en);
   const previo = await medidorPrevio(client, tenantId, v.equipo_id, inicio);
   if (previo.tipo_medidor && data.medidor_inicio == null) {
     throw new AppError(
@@ -278,7 +344,8 @@ export async function iniciarViaje(
   await client.query(
     `UPDATE combustible_viajes
         SET inicio_en = $2, medidor_previo = $3, medidor_inicio = $4, estado = 'en_curso',
-            iniciado_por = $5, ruta_por_confirmar = $6, nota_ruta = $7
+            iniciado_por = $5, ruta_por_confirmar = $6, nota_ruta = $7,
+            inicio_origen_hora = $8, inicio_cliente_uuid = $9
       WHERE id = $1`,
     [
       id,
@@ -288,9 +355,11 @@ export async function iniciarViaje(
       usuarioId,
       data.ruta_por_confirmar ?? false,
       data.nota_ruta || null,
+      origen,
+      data.cliente_uuid ?? null,
     ]
   );
-  return { antes: v, despues: await getViaje(client, tenantId, id) };
+  return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
 }
 
 export async function cerrarViaje(
@@ -298,12 +367,18 @@ export async function cerrarViaje(
   tenantId: string,
   usuarioId: string,
   id: number,
-  data: CerrarViajeInput
+  data: MarcaFin,
+  dniConductor?: string
 ) {
   const v = await viajeParaCambiar(client, tenantId, id);
+  exigirConductor(v, dniConductor);
+  if (data.cliente_uuid && v.fin_cliente_uuid === data.cliente_uuid) {
+    const despues = await getViaje(client, tenantId, id);
+    return { antes: v, despues, fin: despues.fin_en, repetido: true };
+  }
   if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
   if (v.estado !== "en_curso") throw new AppError(409, "El viaje ya está cerrado");
-  const fin = data.fin_en ?? (await ahora(client));
+  const { hora: fin, origen } = await horaDeLaMarca(client, data.fin_en, data.marcado_en);
   if (Date.parse(fin) <= new Date(v.inicio_en).getTime()) {
     throw new AppError(400, "La llegada tiene que ser posterior a la salida");
   }
@@ -314,11 +389,12 @@ export async function cerrarViaje(
   await validarSinTraslape(client, tenantId, v.equipo_id, v.inicio_en, fin, id);
   await client.query(
     `UPDATE combustible_viajes
-        SET fin_en = $2, medidor_fin = $3, estado = 'cerrado', cerrado_por = $4
+        SET fin_en = $2, medidor_fin = $3, estado = 'cerrado', cerrado_por = $4,
+            fin_origen_hora = $5, fin_cliente_uuid = $6
       WHERE id = $1`,
-    [id, fin, data.medidor_fin ?? null, usuarioId]
+    [id, fin, data.medidor_fin ?? null, usuarioId, origen, data.cliente_uuid ?? null]
   );
-  return { antes: v, despues: await getViaje(client, tenantId, id), fin };
+  return { antes: v, despues: await getViaje(client, tenantId, id), fin, repetido: false };
 }
 
 export async function editarViaje(
@@ -452,7 +528,7 @@ const COLUMNAS_VIAJE = `
   v.inicio_en, v.fin_en, v.medidor_previo, v.medidor_inicio, v.medidor_fin,
   v.medidor_fin - v.medidor_inicio AS recorrido,
   v.medidor_inicio - v.medidor_previo AS recorrido_sin_viaje,
-  v.ruta_por_confirmar, v.nota_ruta,
+  v.ruta_por_confirmar, v.nota_ruta, v.inicio_origen_hora, v.fin_origen_hora,
   v.cuenta_como, v.estado, v.observaciones, v.motivo_anulacion,
   v.ventana_desde, v.ventana_hasta`;
 
@@ -558,7 +634,14 @@ export async function cargasDelViaje(
 ) {
   const viaje = await getViaje(client, tenantId, id);
   if (!viaje) return null;
-  if (!viaje.inicio_en) return { viaje, cargas: [] };
+  const ruta = await estadisticasRuta(
+    client,
+    tenantId,
+    Number(viaje.origen_id),
+    Number(viaje.destino_id),
+    Number(viaje.id)
+  );
+  if (!viaje.inicio_en) return { viaje, cargas: [], ruta };
   const valores: unknown[] = [tenantId, viaje.equipo_id, viaje.ventana_desde, viaje.ventana_hasta];
   const cond = [
     "d.tenant_id = $1",
@@ -574,6 +657,7 @@ export async function cargasDelViaje(
                  WHEN d.producto = 'urea' THEN 'L' ELSE COALESCE(c.unidad, 'L') END AS unidad,
             ${LITROS_DE_D} AS litros,
             d.serie_talonario, d.n_vale, d.conductor_nombre,
+            d.lectura_horometro, d.lectura_odometro,
             c.tanque_nombre, g.nombre AS grifo
        FROM combustible_despachos d
        LEFT JOIN combustible c
@@ -583,5 +667,123 @@ export async function cargasDelViaje(
       ORDER BY d.despachado_en`,
     valores
   );
-  return { viaje, cargas: r.rows };
+  return { viaje, cargas: r.rows, ruta };
+}
+
+/** Cuánto suele durar y consumir esta ruta: los últimos 20 viajes cerrados y
+ *  confirmados (sin el propio). Da la llegada estimada de un viaje en curso y
+ *  la comparación de uno cerrado. */
+export async function estadisticasRuta(
+  client: PoolClient,
+  tenantId: string,
+  origenId: number,
+  destinoId: number,
+  excluirId: number
+) {
+  const margen = await margenPrevioHoras(client, tenantId);
+  const r = await client.query(
+    `WITH v AS (${VENTANAS_SQL}
+       WHERE v.tenant_id = $1 AND v.origen_id = $3 AND v.destino_id = $4 AND v.id <> $5
+         AND v.estado = 'cerrado' AND NOT v.ruta_por_confirmar
+       ORDER BY v.fin_en DESC LIMIT 20)
+     SELECT count(*)::int AS viajes,
+            avg(extract(epoch FROM v.fin_en - v.inicio_en) / 60) AS duracion_min,
+            avg(COALESCE(cg.combustible_l, 0) / ${LITROS_POR_GALON} / v.cuenta_como) AS combustible_gal,
+            avg(COALESCE(cg.urea_l, 0) / v.cuenta_como) AS urea_l
+       FROM v
+       LEFT JOIN LATERAL (
+         SELECT SUM(${LITROS_DE_D}) FILTER (WHERE d.producto = 'combustible') AS combustible_l,
+                SUM(${LITROS_DE_D}) FILTER (WHERE d.producto = 'urea') AS urea_l
+           FROM combustible_despachos d
+           LEFT JOIN combustible c
+             ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = d.tenant_id
+          WHERE d.tenant_id = v.tenant_id AND d.equipo_id = v.equipo_id AND d.anulada_en IS NULL
+            AND d.despachado_en > v.ventana_desde AND d.despachado_en <= v.ventana_hasta
+       ) cg ON true`,
+    [tenantId, margen, origenId, destinoId, excluirId]
+  );
+  const f = r.rows[0];
+  const num = (x: unknown) => (x === null || x === undefined ? null : Number(x));
+  return {
+    viajes: Number(f?.viajes ?? 0),
+    duracion_min: num(f?.duracion_min),
+    combustible_gal: num(f?.combustible_gal),
+    urea_l: num(f?.urea_l),
+  };
+}
+
+// ── El conductor ───────────────────────────────────────────────────────────
+
+/** Lo que ve el conductor: sus viajes programados y en curso, y el último que
+ *  cerró, con lo cargado de cada producto. Los programados traen el medidor
+ *  previo para mostrarlo bloqueado. */
+export async function viajesDelConductor(client: PoolClient, tenantId: string, dni: string) {
+  const d = normalizarDni(dni);
+  if (!d) return [];
+  const margen = await margenPrevioHoras(client, tenantId);
+  const r = await client.query(
+    `WITH v AS (${VENTANAS_SQL}
+       WHERE v.tenant_id = $1 AND trim(v.conductor_dni) = $3
+         AND (v.estado IN ('programado', 'en_curso') OR v.id = (
+           SELECT u.id FROM combustible_viajes u
+            WHERE u.tenant_id = $1 AND trim(u.conductor_dni) = $3 AND u.estado = 'cerrado'
+            ORDER BY u.fin_en DESC LIMIT 1)))
+     SELECT ${COLUMNAS_VIAJE},
+            COALESCE(cg.cargas, 0) AS cargas,
+            COALESCE(cg.combustible_l, 0) / ${LITROS_POR_GALON} AS combustible_gal,
+            COALESCE(cg.urea_l, 0) AS urea_l
+       FROM v ${JOINS_VIAJE}
+       LEFT JOIN LATERAL (
+         SELECT count(*) AS cargas,
+                SUM(${LITROS_DE_D}) FILTER (WHERE d.producto = 'combustible') AS combustible_l,
+                SUM(${LITROS_DE_D}) FILTER (WHERE d.producto = 'urea') AS urea_l
+           FROM combustible_despachos d
+           LEFT JOIN combustible c
+             ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = d.tenant_id
+          WHERE d.tenant_id = v.tenant_id AND d.equipo_id = v.equipo_id AND d.anulada_en IS NULL
+            AND d.despachado_en > v.ventana_desde AND d.despachado_en <= v.ventana_hasta
+       ) cg ON true
+      ORDER BY CASE v.estado WHEN 'en_curso' THEN 0 WHEN 'programado' THEN 1 ELSE 2 END,
+               v.creado_en`,
+    [tenantId, margen, d]
+  );
+  const filas = [];
+  for (const fila of r.rows) {
+    // Sus cargas y cuánto suele tardar la ruta (solo para estimar la llegada):
+    // nada de promedios de consumo ni comparaciones con otros conductores.
+    const detalle =
+      fila.inicio_en && fila.estado !== "programado"
+        ? await cargasDelViaje(client, tenantId, Number(fila.id))
+        : null;
+    const ruta =
+      fila.estado === "programado" || fila.estado === "en_curso"
+        ? await estadisticasRuta(
+            client,
+            tenantId,
+            Number(fila.origen_id),
+            Number(fila.destino_id),
+            Number(fila.id)
+          )
+        : null;
+    filas.push({
+      ...fila,
+      previo:
+        fila.estado === "programado" ? await medidorPrevio(client, tenantId, fila.equipo_id) : null,
+      cargas_detalle: detalle?.cargas ?? [],
+      duracion_ruta_min: ruta?.duracion_min ?? null,
+    });
+  }
+  return filas;
+}
+
+/** Los perfiles de conductor con DNI, para elegirlos al programar: el viaje le
+ *  aparece al conductor por su DNI, así que tipearlo a mano es el punto débil. */
+export async function listarConductores(client: PoolClient, tenantId: string) {
+  const r = await client.query(
+    `SELECT id, nombre, dni FROM usuarios
+      WHERE tenant_id = $1 AND rol = 'conductor_ruta' AND activo AND dni IS NOT NULL
+      ORDER BY lower(nombre)`,
+    [tenantId]
+  );
+  return r.rows;
 }
