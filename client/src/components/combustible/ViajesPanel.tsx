@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CeldaDesvio } from "./ConsumoPorViaje";
 import { DetalleViajeVentana } from "./DetalleViaje";
 import { IconoUnidad } from "./IconoUnidad";
+import { SelectorConductor, type OpcionConductor } from "./SelectorConductor";
 import { fechaHora, fmt, ruta, unidadLabel, type FilaViaje } from "./viajesFormato";
 import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
@@ -25,6 +26,14 @@ interface Equipo {
   tipo_medidor: "horometro" | "odometro" | null;
   conductor_nombre: string | null;
   conductor_dni: string | null;
+  activo?: boolean;
+  /** Rutas vigentes de la unidad en Equipos. */
+  rutas?: {
+    origen_id: number | string;
+    destino_id: number | string;
+    origen: string;
+    destino: string;
+  }[];
 }
 
 type Modal =
@@ -234,6 +243,19 @@ export default function ViajesPanel() {
     }));
   };
 
+  const elegirConductor = (o: OpcionConductor) => {
+    const e = equipos.find((x) => x.id === o.equipoId);
+    const rutas = e?.rutas ?? [];
+    setForm((f) => ({
+      ...f,
+      equipo_id: String(o.equipoId),
+      conductor_nombre: e?.conductor_nombre ?? "",
+      conductor_dni: e?.conductor_dni ?? "",
+      origen_id: rutas.length === 1 ? String(rutas[0].origen_id) : "",
+      destino_id: rutas.length === 1 ? String(rutas[0].destino_id) : "",
+    }));
+  };
+
   const enviar = async (url: string, method: string, body: unknown) => {
     if (guardando) return false;
     setGuardando(true);
@@ -260,6 +282,14 @@ export default function ViajesPanel() {
     let ok = false;
     const base = "/api/erp/combustible/viajes";
     if (modal.tipo === "nuevo") {
+      if (!form.equipo_id) {
+        alert("Elige el conductor: de ahí salen la unidad y la ruta.");
+        return;
+      }
+      if (!form.origen_id || !form.destino_id) {
+        alert("Falta la ruta: elígela, o cárgala a la unidad en Equipos.");
+        return;
+      }
       ok = await enviar(base, "POST", {
         equipo_id: Number(form.equipo_id),
         conductor_nombre: form.conductor_nombre.trim() || null,
@@ -332,6 +362,18 @@ export default function ViajesPanel() {
 
   const lugaresActivos = lugares.filter((l) => l.activo);
   const equipoDelForm = equipos.find((x) => String(x.id) === form.equipo_id);
+  const dnisConUsuario = new Set(conductores.map((c) => c.dni));
+  const opcionesConductor: OpcionConductor[] = equipos
+    .filter((e) => e.activo !== false && (e.conductor_nombre || e.conductor_dni))
+    .map((e) => ({
+      equipoId: e.id,
+      nombre: e.conductor_nombre ?? `DNI ${e.conductor_dni}`,
+      dni: e.conductor_dni ?? "",
+      unidad: `${unidadLabel(e)}${e.tipo ? ` (${e.tipo})` : ""}`,
+      sinUsuario: !e.conductor_dni || !dnisConUsuario.has(e.conductor_dni),
+    }))
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+  const rutasDeLaUnidad = equipoDelForm?.rutas ?? [];
   const tipoMedidor =
     modal && "v" in modal ? modal.v.tipo_medidor : (equipoDelForm?.tipo_medidor ?? null);
   const medidorEtiqueta = tipoMedidor === "horometro" ? "horómetro" : "odómetro";
@@ -657,7 +699,52 @@ export default function ViajesPanel() {
               </div>
             ) : (
               <form onSubmit={guardar} className="p-6 space-y-4">
-                {(modal.tipo === "nuevo" || modal.tipo === "editar") && (
+                {modal.tipo === "nuevo" && (
+                  <div className="space-y-1">
+                    <label htmlFor="viaje-conductor" className={LABEL}>
+                      Conductor
+                    </label>
+                    <SelectorConductor
+                      opciones={opcionesConductor}
+                      valor={form.equipo_id ? Number(form.equipo_id) : null}
+                      onElegir={elegirConductor}
+                    />
+                    {equipoDelForm ? (
+                      <div className="rounded-xl bg-slate-50/5 border border-slate-200 p-3 text-sm space-y-1">
+                        <p>
+                          <span className="font-semibold">Unidad:</span>{" "}
+                          {unidadLabel(equipoDelForm)}
+                          {equipoDelForm.tipo ? ` (${equipoDelForm.tipo})` : ""}
+                        </p>
+                        <p>
+                          <span className="font-semibold">DNI:</span>{" "}
+                          {equipoDelForm.conductor_dni ?? "—"}
+                        </p>
+                        {rutasDeLaUnidad.length === 1 && (
+                          <p>
+                            <span className="font-semibold">Ruta:</span> {rutasDeLaUnidad[0].origen}{" "}
+                            → {rutasDeLaUnidad[0].destino}
+                          </p>
+                        )}
+                        {equipoDelForm.conductor_dni &&
+                          !dnisConUsuario.has(equipoDelForm.conductor_dni) && (
+                            <p className="text-amber-600">
+                              Este conductor no tiene usuario: no verá el viaje en “Mi viaje”.
+                            </p>
+                          )}
+                        <p className="text-xs text-slate-500">
+                          Estos datos vienen de Equipos. Si algo no es correcto, corrígelo allá.
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-600">
+                        Al elegirlo se cargan la unidad, el DNI y la ruta desde Equipos.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {modal.tipo === "editar" && (
                   <div className="space-y-1">
                     <label htmlFor="viaje-equipo" className={LABEL}>
                       Unidad
@@ -692,48 +779,114 @@ export default function ViajesPanel() {
                         Primero carga al menos dos lugares en “Lugares”.
                       </p>
                     )}
-                    <div className="grid grid-cols-2 gap-3">
-                      {selectLugar("origen_id", "Origen")}
-                      {selectLugar("destino_id", "Destino")}
-                    </div>
-                    {conductores.length > 0 && (
-                      <div className="space-y-1">
-                        <label htmlFor="viaje-conductor-lista" className={LABEL}>
-                          Conductor
-                        </label>
-                        <select
-                          id="viaje-conductor-lista"
-                          className={INPUT}
-                          value={
-                            conductores.find((c) => c.dni === form.conductor_dni.trim())?.id ?? ""
-                          }
-                          onChange={(e) => {
-                            const c = conductores.find((x) => x.id === e.target.value);
-                            setForm({
-                              ...form,
-                              conductor_nombre: c?.nombre ?? "",
-                              conductor_dni: c?.dni ?? "",
-                            });
-                          }}
-                        >
-                          <option value="">Otro (escribir abajo)</option>
-                          {conductores.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.nombre} · DNI {c.dni}
-                            </option>
-                          ))}
-                        </select>
-                        <p className="text-xs text-slate-600">
-                          El viaje le aparece en “Mi viaje” al conductor con este DNI.
-                        </p>
-                      </div>
+                    {modal.tipo === "nuevo" ? (
+                      <>
+                        {equipoDelForm && rutasDeLaUnidad.length > 1 && (
+                          <div className="space-y-1">
+                            <label htmlFor="viaje-ruta" className={LABEL}>
+                              Ruta
+                            </label>
+                            <select
+                              id="viaje-ruta"
+                              required
+                              className={INPUT}
+                              value={
+                                rutasDeLaUnidad.findIndex(
+                                  (r) =>
+                                    String(r.origen_id) === form.origen_id &&
+                                    String(r.destino_id) === form.destino_id
+                                ) >= 0
+                                  ? String(
+                                      rutasDeLaUnidad.findIndex(
+                                        (r) =>
+                                          String(r.origen_id) === form.origen_id &&
+                                          String(r.destino_id) === form.destino_id
+                                      )
+                                    )
+                                  : ""
+                              }
+                              onChange={(e) => {
+                                const r = rutasDeLaUnidad[Number(e.target.value)];
+                                setForm({
+                                  ...form,
+                                  origen_id: r ? String(r.origen_id) : "",
+                                  destino_id: r ? String(r.destino_id) : "",
+                                });
+                              }}
+                            >
+                              <option value="">Elegir...</option>
+                              {rutasDeLaUnidad.map((r, i) => (
+                                <option key={i} value={i}>
+                                  {r.origen} → {r.destino}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+                        {equipoDelForm && rutasDeLaUnidad.length === 0 && (
+                          <>
+                            <p className="text-sm text-amber-700 bg-amber-50 rounded-xl p-3">
+                              Esta unidad no tiene ruta en Equipos: elígela aquí y, cuando puedas,
+                              cárgala en Equipos.
+                            </p>
+                            <div className="grid grid-cols-2 gap-3">
+                              {selectLugar("origen_id", "Origen")}
+                              {selectLugar("destino_id", "Destino")}
+                            </div>
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-2 gap-3">
+                          {selectLugar("origen_id", "Origen")}
+                          {selectLugar("destino_id", "Destino")}
+                        </div>
+                        {conductores.length > 0 && (
+                          <div className="space-y-1">
+                            <label htmlFor="viaje-conductor-lista" className={LABEL}>
+                              Conductor
+                            </label>
+                            <select
+                              id="viaje-conductor-lista"
+                              className={INPUT}
+                              value={
+                                conductores.find((c) => c.dni === form.conductor_dni.trim())?.id ??
+                                ""
+                              }
+                              onChange={(e) => {
+                                const c = conductores.find((x) => x.id === e.target.value);
+                                setForm({
+                                  ...form,
+                                  conductor_nombre: c?.nombre ?? "",
+                                  conductor_dni: c?.dni ?? "",
+                                });
+                              }}
+                            >
+                              <option value="">Otro (escribir abajo)</option>
+                              {conductores.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.nombre} · DNI {c.dni}
+                                </option>
+                              ))}
+                            </select>
+                            <p className="text-xs text-slate-600">
+                              El viaje le aparece en “Mi viaje” al conductor con este DNI.
+                            </p>
+                          </div>
+                        )}
+                        <div className="grid grid-cols-2 gap-3">
+                          {campo(
+                            "conductor_nombre",
+                            conductores.length > 0 ? "Nombre" : "Conductor",
+                            {
+                              maxLength: 150,
+                            }
+                          )}
+                          {campo("conductor_dni", "DNI", { maxLength: 15 })}
+                        </div>
+                      </>
                     )}
-                    <div className="grid grid-cols-2 gap-3">
-                      {campo("conductor_nombre", conductores.length > 0 ? "Nombre" : "Conductor", {
-                        maxLength: 150,
-                      })}
-                      {campo("conductor_dni", "DNI", { maxLength: 15 })}
-                    </div>
                     {modal.tipo === "nuevo" && (
                       <label className="flex items-center gap-2 text-sm text-slate-700">
                         <input
