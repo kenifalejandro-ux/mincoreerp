@@ -107,6 +107,7 @@ export default function ViajesPanel() {
   const [viajes, setViajes] = useState<FilaViaje[]>([]);
   const [lugares, setLugares] = useState<Lugar[]>([]);
   const [equipos, setEquipos] = useState<Equipo[]>([]);
+  const [totalEquipos, setTotalEquipos] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(true);
   const [filtroEstado, setFiltroEstado] = useState("");
@@ -177,7 +178,10 @@ export default function ViajesPanel() {
     void (async () => {
       const res = await apiFetch("/api/erp/combustible/equipos-destino?pageSize=200");
       const body = await res.json().catch(() => null);
-      if (res.ok) setEquipos(Array.isArray(body?.data) ? body.data : []);
+      if (res.ok) {
+        setEquipos(Array.isArray(body?.data) ? body.data : []);
+        setTotalEquipos(Number(body?.pagination?.total ?? 0));
+      }
     })();
   }, [cargarLugares]);
 
@@ -725,6 +729,12 @@ export default function ViajesPanel() {
                     <label htmlFor="viaje-conductor" className={LABEL}>
                       Conductor
                     </label>
+                    {totalEquipos > equipos.length && (
+                      <p className="text-xs text-amber-600">
+                        Hay {totalEquipos} unidades pero aquí solo caben {equipos.length}: algunas
+                        no aparecen en la lista. Avisa a soporte para ampliarla.
+                      </p>
+                    )}
                     <SelectorConductor
                       opciones={opcionesConductor}
                       valor={form.equipo_id ? Number(form.equipo_id) : null}
