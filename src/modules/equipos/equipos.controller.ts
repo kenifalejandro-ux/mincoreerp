@@ -19,6 +19,7 @@ import { enviarCorreoAlerta } from "../../server/shared/utils/alertaMailer";
 import { logger } from "../../server/config/logger";
 import { armarXlsx, CONTENT_TYPE_XLSX } from "../../server/shared/utils/xlsx.util";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
+import { estadoDeUnidad } from "./equipos.estado";
 import { EquiposService, type CambiosHistorial } from "./equipos.service";
 
 /** Un AppError (p. ej. "falta el motivo") sale con su código y su mensaje; lo
@@ -357,6 +358,20 @@ export const EquiposController = {
     res.json(h);
   },
 
+  /** GET /conductor/:dni -- las unidades que maneja o manejó ese conductor. */
+  async unidadesDeConductor(req: Request, res: Response) {
+    const dni = String(req.params.dni ?? "").trim();
+    if (!/^[0-9A-Za-z-]{1,15}$/.test(dni)) {
+      res.status(400).json({ message: "DNI inválido", error: "DNI inválido" });
+      return;
+    }
+    const tenantId = getTenantId(req);
+    const filas = await withTenant(tenantId, (client) =>
+      EquiposService.unidadesDeConductor(client, tenantId, dni)
+    );
+    res.json(filas);
+  },
+
   /** GET /lugares -- el catálogo de Viajes, de solo lectura, para el selector
    *  de ruta de la unidad. */
   async lugares(req: Request, res: Response) {
@@ -442,19 +457,32 @@ export const EquiposController = {
     }
   },
 
-  /** GET /export/xlsx -- toda la flota del tenant, en el mismo orden de
-   *  columnas que se ve en pantalla. */
+  /** GET /export/xlsx -- la flota del tenant, en el mismo orden de columnas que
+   *  se ve en pantalla. Con `?ids=1,2,3` exporta solo esas unidades (lo que la
+   *  pantalla tiene filtrado, hasta 1000: van en la URL); ids de otra empresa
+   *  simplemente no aparecen. */
   async exportXlsx(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
+      let ids: number[] | undefined;
+      if (typeof req.query.ids === "string" && req.query.ids !== "") {
+        const partes = req.query.ids.split(",");
+        if (partes.length > 1000 || !partes.every((p) => /^\d{1,9}$/.test(p))) {
+          res
+            .status(400)
+            .json({ message: "Lista de ids inválida", error: "Lista de ids inválida" });
+          return;
+        }
+        ids = partes.map(Number);
+      }
       const filas = await withTenant(tenantId, (client) =>
-        EquiposService.getAllParaExportar(client, tenantId)
+        EquiposService.getAllParaExportar(client, tenantId, ids)
       );
 
       const libro = armarXlsx([
         {
           nombre: "Equipos",
-          anchos: [16, 14, 22, 18, 22, 14, 28, 14, 40, 12],
+          anchos: [16, 14, 22, 18, 22, 14, 14, 28, 14, 40, 14],
           filas: [
             [
               { valor: "Placa", negrita: true },
@@ -463,6 +491,7 @@ export const EquiposController = {
               { valor: "Marca", negrita: true },
               { valor: "Modelo", negrita: true },
               { valor: "Medidor", negrita: true },
+              { valor: "Tanque", negrita: true },
               { valor: "Conductor", negrita: true },
               { valor: "DNI", negrita: true },
               { valor: "Rutas", negrita: true },
@@ -479,12 +508,15 @@ export const EquiposController = {
                 : e.tipo_medidor === "odometro"
                   ? "Odómetro"
                   : "",
+              e.capacidad_tanque !== null
+                ? `${Number(e.capacidad_tanque)} ${e.capacidad_tanque_unidad ?? ""}`.trim()
+                : "",
               e.conductor_nombre ?? "",
               e.conductor_dni ?? "",
               ((e.rutas ?? []) as { origen: string; destino: string }[])
                 .map((r) => `${r.origen} → ${r.destino}`)
                 .join("; "),
-              e.activo ? "Activo" : "Inactivo",
+              estadoDeUnidad(e),
             ]),
           ],
         },

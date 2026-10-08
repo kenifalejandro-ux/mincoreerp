@@ -220,3 +220,23 @@ export async function listarHistorial(client: PoolClient, tenantId: string, equi
   );
   return { conductores: conductores.rows, rutas: rutas.rows };
 }
+
+/** Las unidades que manejó (o maneja) un conductor, buscadas por DNI: sirve
+ *  para "¿qué manejó Juan este mes?" en una incidencia. Usa el índice por DNI de
+ *  la migración 0126. Vigentes primero, luego las cerradas del más nuevo al más
+ *  viejo. */
+export async function listarUnidadesDeConductor(client: PoolClient, tenantId: string, dni: string) {
+  const r = await client.query(
+    `SELECT c.id, c.equipo_id, e.placa_codigo, e.tipo, c.conductor_nombre,
+            c.desde, c.hasta, c.motivo, u.nombre AS usuario,
+            c.motivo_cierre, uc.nombre AS cerrado_por
+       FROM equipo_conductores c
+       JOIN equipos e ON e.id = c.equipo_id AND e.tenant_id = $1
+       LEFT JOIN usuarios u  ON u.id  = c.usuario_id  AND u.tenant_id  = $1
+       LEFT JOIN usuarios uc ON uc.id = c.cerrado_por AND uc.tenant_id = $1
+      WHERE c.tenant_id = $1 AND c.conductor_dni = $2
+      ORDER BY (c.hasta IS NULL) DESC, c.desde DESC, c.id DESC`,
+    [tenantId, dni]
+  );
+  return r.rows;
+}

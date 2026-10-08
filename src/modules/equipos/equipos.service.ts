@@ -18,6 +18,7 @@ import {
   aplicarRutas,
   listarHistorial,
   listarLugaresActivos,
+  listarUnidadesDeConductor,
   type RutaAsignada,
 } from "./equipos.historial";
 import { EquiposRepository, type EquipoPayload } from "./equipos.repository";
@@ -34,8 +35,8 @@ export const EquiposService = {
     return EquiposRepository.findAll(client, tenantId, paginacion);
   },
 
-  getAllParaExportar(client: PoolClient, tenantId: string) {
-    return EquiposRepository.findAllParaExportar(client, tenantId);
+  getAllParaExportar(client: PoolClient, tenantId: string, ids?: number[]) {
+    return EquiposRepository.findAllParaExportar(client, tenantId, ids);
   },
 
   /** Devuelve `creado: false` cuando el equipo ya se había creado con este
@@ -137,6 +138,10 @@ export const EquiposService = {
 
   lugares(client: PoolClient, tenantId: string) {
     return listarLugaresActivos(client, tenantId);
+  },
+
+  unidadesDeConductor(client: PoolClient, tenantId: string, dni: string) {
+    return listarUnidadesDeConductor(client, tenantId, dni);
   },
 
   delete(client: PoolClient, tenantId: string, id: number) {

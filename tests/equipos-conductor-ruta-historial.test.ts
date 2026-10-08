@@ -12,6 +12,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
 import { closeDatabase, pool, withTenant } from "../src/server/config/database";
+import { estadoDeUnidad, tipoLlevaConductor } from "../src/modules/equipos/equipos.estado";
+import { EquiposRepository } from "../src/modules/equipos/equipos.repository";
 
 const password = "ClaveDePrueba123";
 
@@ -397,6 +399,87 @@ describe("equipos: conductor y rutas con historial (0126)", () => {
     expect(res.status).toBe(403);
     expect((await lectura.get(`/api/erp/equipos/${e.id}/historial`)).status).toBe(200);
     expect((await historial(e.id)).conductores).toHaveLength(1);
+  });
+
+  it("las unidades de un conductor, por DNI: las actuales primero y las pasadas con su cierre", async () => {
+    const dni = String(70000000 + Math.floor(Math.random() * 999999));
+    const a = await crear({ conductor_nombre: "Luis Quispe", conductor_dni: dni });
+    const b = await crear({ conductor_nombre: "Luis Quispe", conductor_dni: dni });
+    // El conductor deja la unidad A y pasa Marco.
+    const cambio = await editar(a, {
+      conductor_nombre: "Marco Vásquez",
+      conductor_dni: "40000777",
+      motivo_cambio: "Rotación de turno",
+    });
+    expect(cambio.status, JSON.stringify(cambio.body)).toBe(200);
+
+    const res = await admin.get(`/api/erp/equipos/conductor/${dni}`);
+    expect(res.status).toBe(200);
+    const filas = res.body as {
+      equipo_id: number;
+      hasta: string | null;
+      motivo_cierre: string | null;
+    }[];
+    expect(filas).toHaveLength(2);
+    // La vigente (B) va primero; la pasada (A) trae por qué se cerró.
+    expect(filas[0]).toMatchObject({ equipo_id: b.id, hasta: null });
+    expect(filas[1]).toMatchObject({ equipo_id: a.id, motivo_cierre: "Rotación de turno" });
+    expect(filas[1].hasta).not.toBeNull();
+  });
+
+  it("las unidades de un conductor: un DNI raro da 400 y otra empresa no ve nada", async () => {
+    const dni = String(71000000 + Math.floor(Math.random() * 999999));
+    await crear({ conductor_nombre: "Solo Mío", conductor_dni: dni });
+    expect((await admin.get("/api/erp/equipos/conductor/12'%3B--")).status).toBe(400);
+    expect((await admin.get(`/api/erp/equipos/conductor/${"9".repeat(16)}`)).status).toBe(400);
+
+    const ajena = await ajeno.get(`/api/erp/equipos/conductor/${dni}`);
+    expect(ajena.status).toBe(200);
+    expect(ajena.body).toEqual([]);
+  });
+
+  it("exportar con ids trae solo esas unidades; sin ids, toda la flota; ids malos dan 400", async () => {
+    const x = await crear();
+    const y = await crear();
+    const solo = await withTenant(tenantId, (c) =>
+      EquiposRepository.findAllParaExportar(c, tenantId, [x.id])
+    );
+    expect(solo.map((f: { id: number }) => f.id)).toEqual([x.id]);
+    const todo = await withTenant(tenantId, (c) =>
+      EquiposRepository.findAllParaExportar(c, tenantId)
+    );
+    const idsTodo = todo.map((f: { id: number }) => f.id);
+    expect(idsTodo).toEqual(expect.arrayContaining([x.id, y.id]));
+
+    // Un id de otra empresa no devuelve nada, ni siquiera por el export.
+    const ajenaFlota = await ajeno
+      .post("/api/erp/equipos")
+      .send({ placa_codigo: idUnico("AJ"), tipo: "Volquete" });
+    const deOtro = await withTenant(tenantId, (c) =>
+      EquiposRepository.findAllParaExportar(c, tenantId, [ajenaFlota.body.id])
+    );
+    expect(deOtro).toEqual([]);
+
+    expect((await admin.get(`/api/erp/equipos/export/xlsx?ids=${x.id},${y.id}`)).status).toBe(200);
+    expect((await admin.get("/api/erp/equipos/export/xlsx?ids=1,abc")).status).toBe(400);
+    expect((await admin.get("/api/erp/equipos/export/xlsx?ids=1;DROP")).status).toBe(400);
+    // Más de 1000 ids no entran en una URL razonable: se rechaza, no se corta.
+    const muchos = Array.from({ length: 1001 }, (_, i) => i + 1).join(",");
+    expect((await admin.get(`/api/erp/equipos/export/xlsx?ids=${muchos}`)).status).toBe(400);
+  });
+
+  it("'Activo' significa conductor vigente; bombonas y carretas siempre activas; baja = Inactivo", () => {
+    const base = { activo: true, conductor_nombre: null, conductor_dni: null };
+    expect(estadoDeUnidad({ ...base, tipo: "Volquete" })).toBe("Sin asignar");
+    expect(estadoDeUnidad({ ...base, tipo: "Volquete", conductor_nombre: "Ana" })).toBe("Activo");
+    expect(estadoDeUnidad({ ...base, tipo: "Volquete", conductor_dni: "40000001" })).toBe("Activo");
+    expect(estadoDeUnidad({ ...base, tipo: "BOMBONA" })).toBe("Activo");
+    expect(estadoDeUnidad({ ...base, tipo: "Carretas" })).toBe("Activo");
+    expect(
+      estadoDeUnidad({ ...base, tipo: "Volquete", activo: false, conductor_nombre: "Ana" })
+    ).toBe("Inactivo");
+    expect(tipoLlevaConductor("Perforadora")).toBe(true);
+    expect(tipoLlevaConductor("Cargador frontal")).toBe(true);
   });
 
   it("el export a Excel no se rompe con conductor y rutas cargados", async () => {

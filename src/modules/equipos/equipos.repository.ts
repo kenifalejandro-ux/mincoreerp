@@ -74,10 +74,12 @@ export const EquiposRepository = {
   /** Toda la flota, sin paginar -- para el export a Excel. La lista visible
    *  en pantalla pagina de a 50 porque el operario la recorre a ojo; el
    *  archivo lo abre en una planilla, así que tiene que traer todo de una. */
-  async findAllParaExportar(client: PoolClient, tenantId: string) {
+  async findAllParaExportar(client: PoolClient, tenantId: string, ids?: number[]) {
     const result = await client.query(
-      `SELECT ${COLUMNAS_EQUIPO_CON_RUTAS} FROM equipos WHERE tenant_id = $1 ORDER BY tipo, placa_codigo`,
-      [tenantId]
+      `SELECT ${COLUMNAS_EQUIPO_CON_RUTAS} FROM equipos
+        WHERE tenant_id = $1 AND ($2::int[] IS NULL OR id = ANY($2::int[]))
+        ORDER BY tipo, placa_codigo`,
+      [tenantId, ids ?? null]
     );
     return result.rows;
   },
