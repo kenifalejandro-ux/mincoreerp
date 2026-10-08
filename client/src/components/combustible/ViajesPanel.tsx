@@ -127,12 +127,17 @@ export default function ViajesPanel() {
   // propósito, y guardar sigue pidiendo motivo igual que el resto del form.
   const [desbloqueado, setDesbloqueado] = useState(false);
   const [conductores, setConductores] = useState<Conductor[]>([]);
+  // Hasta que llegue la lista de usuarios no se sabe quién tiene cuenta: sin
+  // esto, al abrir el formulario todos saldrían marcados como "sin usuario".
+  const [conductoresListos, setConductoresListos] = useState(false);
 
   const permite = (accion: "nuevo" | "editar" | "lugares") => {
     const override = usuario?.permisosPestanas?.[`combustible:viajes:${accion}`];
     if (override !== undefined) return override;
     return usuario?.rol === "admin" || usuario?.rol === "operador";
   };
+
+  const puedeProgramar = permite("nuevo");
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -177,6 +182,17 @@ export default function ViajesPanel() {
   }, [cargarLugares]);
 
   useEffect(() => {
+    if (!puedeProgramar) return;
+    void (async () => {
+      const res = await apiFetch("/api/erp/combustible/viajes/conductores");
+      const body = await res.json().catch(() => null);
+      if (!res.ok) return;
+      setConductores(Array.isArray(body?.data) ? body.data : []);
+      setConductoresListos(true);
+    })();
+  }, [puedeProgramar]);
+
+  useEffect(() => {
     const es = new EventSource("/api/eventos/stream", { withCredentials: true });
     const refrescar = () => void cargar();
     es.addEventListener("combustible.viaje_actualizado", refrescar);
@@ -191,13 +207,6 @@ export default function ViajesPanel() {
     setRutaDudosa(false);
     setPrevio(null);
     setDesbloqueado(false);
-    if ((m.tipo === "nuevo" || m.tipo === "editar") && permite("nuevo")) {
-      void (async () => {
-        const res = await apiFetch("/api/erp/combustible/viajes/conductores");
-        const body = await res.json().catch(() => null);
-        if (res.ok) setConductores(Array.isArray(body?.data) ? body.data : []);
-      })();
-    }
     if (m.tipo === "nuevo") {
       setForm({ ...FORM_VACIO, inicio_en: ahoraParaInputLocal() });
     } else if (m.tipo === "editar") {
@@ -243,9 +252,19 @@ export default function ViajesPanel() {
     }));
   };
 
+  // Una ruta cuyo origen o destino se desactivó no sirve: el alta de viajes
+  // exige lugares activos, así que ofrecerla solo llevaría a un error al
+  // guardar sin manera de corregirlo desde aquí.
+  const rutasUsables = (e?: Equipo) => {
+    const activos = new Set(lugares.filter((l) => l.activo).map((l) => String(l.id)));
+    return (e?.rutas ?? []).filter(
+      (r) => activos.has(String(r.origen_id)) && activos.has(String(r.destino_id))
+    );
+  };
+
   const elegirConductor = (o: OpcionConductor) => {
     const e = equipos.find((x) => x.id === o.equipoId);
-    const rutas = e?.rutas ?? [];
+    const rutas = rutasUsables(e);
     setForm((f) => ({
       ...f,
       equipo_id: String(o.equipoId),
@@ -370,10 +389,12 @@ export default function ViajesPanel() {
       nombre: e.conductor_nombre ?? `DNI ${e.conductor_dni}`,
       dni: e.conductor_dni ?? "",
       unidad: `${unidadLabel(e)}${e.tipo ? ` (${e.tipo})` : ""}`,
-      sinUsuario: !e.conductor_dni || !dnisConUsuario.has(e.conductor_dni),
+      sinUsuario: conductoresListos && (!e.conductor_dni || !dnisConUsuario.has(e.conductor_dni)),
     }))
     .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
-  const rutasDeLaUnidad = equipoDelForm?.rutas ?? [];
+  const rutasDeLaUnidad = rutasUsables(equipoDelForm);
+  // Tenía rutas en Equipos, pero ninguna usable: hay que decir por qué.
+  const rutasDeBaja = (equipoDelForm?.rutas ?? []).length > 0 && rutasDeLaUnidad.length === 0;
   const tipoMedidor =
     modal && "v" in modal ? modal.v.tipo_medidor : (equipoDelForm?.tipo_medidor ?? null);
   const medidorEtiqueta = tipoMedidor === "horometro" ? "horómetro" : "odómetro";
@@ -726,8 +747,9 @@ export default function ViajesPanel() {
                             → {rutasDeLaUnidad[0].destino}
                           </p>
                         )}
-                        {equipoDelForm.conductor_dni &&
-                          !dnisConUsuario.has(equipoDelForm.conductor_dni) && (
+                        {conductoresListos &&
+                          (!equipoDelForm.conductor_dni ||
+                            !dnisConUsuario.has(equipoDelForm.conductor_dni)) && (
                             <p className="text-amber-600">
                               Este conductor no tiene usuario: no verá el viaje en “Mi viaje”.
                             </p>
@@ -826,8 +848,9 @@ export default function ViajesPanel() {
                         {equipoDelForm && rutasDeLaUnidad.length === 0 && (
                           <>
                             <p className="text-sm text-amber-700 bg-amber-50 rounded-xl p-3">
-                              Esta unidad no tiene ruta en Equipos: elígela aquí y, cuando puedas,
-                              cárgala en Equipos.
+                              {rutasDeBaja
+                                ? "La ruta que tiene esta unidad en Equipos usa un lugar desactivado: elige otra aquí y corrígela en Equipos."
+                                : "Esta unidad no tiene ruta en Equipos: elígela aquí y, cuando puedas, cárgala en Equipos."}
                             </p>
                             <div className="grid grid-cols-2 gap-3">
                               {selectLugar("origen_id", "Origen")}

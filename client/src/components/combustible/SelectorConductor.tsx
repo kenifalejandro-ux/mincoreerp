@@ -13,7 +13,9 @@ export interface OpcionConductor {
 const sinAcentos = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 /** Desplegable con buscador: la encargada escribe parte del nombre, DNI o
- *  placa y elige. Los datos de la unidad y la ruta vienen de Equipos. */
+ *  placa y elige. Los datos de la unidad y la ruta vienen de Equipos.
+ *  Vive dentro del formulario de programar viaje, así que el buscador se
+ *  queda con Enter: si no, elegir conductor enviaría el formulario a medias. */
 export function SelectorConductor({
   opciones,
   valor,
@@ -25,7 +27,9 @@ export function SelectorConductor({
 }) {
   const [abierto, setAbierto] = useState(false);
   const [q, setQ] = useState("");
+  const [resaltada, setResaltada] = useState(0);
   const caja = useRef<HTMLDivElement>(null);
+  const boton = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!abierto) return;
@@ -43,15 +47,50 @@ export function SelectorConductor({
   }, [opciones, q]);
 
   const elegida = opciones.find((o) => o.equipoId === valor) ?? null;
+  const indice = Math.min(resaltada, Math.max(0, filtradas.length - 1));
+
+  const cerrar = () => {
+    setAbierto(false);
+    setQ("");
+    boton.current?.focus();
+  };
+
+  const elegir = (o: OpcionConductor) => {
+    onElegir(o);
+    setAbierto(false);
+    setQ("");
+    boton.current?.focus();
+  };
+
+  const teclas = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      cerrar();
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setResaltada(Math.min(indice + 1, filtradas.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setResaltada(Math.max(indice - 1, 0));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (filtradas[indice]) elegir(filtradas[indice]);
+    }
+  };
 
   return (
     <div className="relative" ref={caja}>
       <button
         type="button"
         id="viaje-conductor"
+        ref={boton}
         aria-haspopup="listbox"
         aria-expanded={abierto}
-        onClick={() => setAbierto((a) => !a)}
+        aria-controls="viaje-conductor-lista"
+        onClick={() => {
+          setResaltada(0);
+          setAbierto((a) => !a);
+        }}
         className="w-full border border-slate-200 rounded-xl p-3 text-sm flex items-center justify-between gap-2 text-left"
       >
         <span className={elegida ? "" : "text-slate-500"}>
@@ -67,13 +106,21 @@ export function SelectorConductor({
             <input
               autoFocus
               value={q}
-              onChange={(e) => setQ(e.target.value)}
+              onChange={(e) => {
+                setQ(e.target.value);
+                setResaltada(0);
+              }}
+              onKeyDown={teclas}
               placeholder="Buscar nombre, DNI o placa"
               aria-label="Buscar conductor"
+              aria-controls="viaje-conductor-lista"
+              aria-activedescendant={
+                filtradas[indice] ? `viaje-conductor-op-${filtradas[indice].equipoId}` : undefined
+              }
               className="w-full bg-transparent text-sm outline-none"
             />
           </div>
-          <ul role="listbox" className="max-h-60 overflow-y-auto py-1">
+          <ul id="viaje-conductor-lista" role="listbox" className="max-h-60 overflow-y-auto py-1">
             {filtradas.length === 0 && (
               <li className="px-3 py-3 text-sm text-slate-500">
                 {opciones.length === 0
@@ -81,26 +128,26 @@ export function SelectorConductor({
                   : "Sin coincidencias."}
               </li>
             )}
-            {filtradas.map((o) => (
-              <li key={o.equipoId} role="option" aria-selected={o.equipoId === valor}>
-                <button
-                  type="button"
-                  className="w-full px-3 py-2 text-left text-sm hover:bg-white/10 flex items-start justify-between gap-2"
-                  onClick={() => {
-                    onElegir(o);
-                    setAbierto(false);
-                    setQ("");
-                  }}
-                >
-                  <span>
-                    <span className="font-semibold">{o.nombre}</span>
-                    <span className="block text-xs text-slate-400">
-                      DNI {o.dni || "—"} · {o.unidad}
-                      {o.sinUsuario && " · sin usuario"}
-                    </span>
+            {filtradas.map((o, i) => (
+              <li
+                key={o.equipoId}
+                id={`viaje-conductor-op-${o.equipoId}`}
+                role="option"
+                aria-selected={o.equipoId === valor}
+                onClick={() => elegir(o)}
+                onMouseEnter={() => setResaltada(i)}
+                className={`px-3 py-2 text-sm cursor-pointer flex items-start justify-between gap-2 ${
+                  i === indice ? "bg-white/10" : ""
+                }`}
+              >
+                <span>
+                  <span className="font-semibold">{o.nombre}</span>
+                  <span className="block text-xs text-slate-400">
+                    DNI {o.dni || "—"} · {o.unidad}
+                    {o.sinUsuario && " · sin usuario"}
                   </span>
-                  {o.equipoId === valor && <Check className="w-4 h-4 shrink-0" aria-hidden />}
-                </button>
+                </span>
+                {o.equipoId === valor && <Check className="w-4 h-4 shrink-0" aria-hidden />}
               </li>
             ))}
           </ul>
