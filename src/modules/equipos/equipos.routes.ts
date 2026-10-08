@@ -23,6 +23,9 @@ router.get("/export/xlsx", asyncHandler(EquiposController.exportXlsx));
 // Solo lectura del catálogo de Viajes, para el selector de ruta -- ANTES de "/:id".
 router.get("/lugares", asyncHandler(EquiposController.lugares));
 
+// Unidades de un conductor (por DNI), actuales y pasadas -- ANTES de "/:id".
+router.get("/conductor/:dni", asyncHandler(EquiposController.unidadesDeConductor));
+
 router.post(
   "/",
   requireRole("admin", "operador"),

@@ -1,19 +1,41 @@
 // client/src/components/equipos/EquiposTable.tsx
 import {
-  ChevronLeft,
-  ChevronRight,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   Download,
   History,
+  LayoutGrid,
+  List,
   Pencil,
   Plus,
   Trash2,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 import type { WorkBook } from "xlsx";
 
+import ConductorUnidades from "./ConductorUnidades";
+import EquipoIcono from "./EquipoIcono";
+import {
+  estadoDeUnidad,
+  normalizarTexto,
+  ordenarEquipos,
+  sinConductor,
+  sinRuta,
+  textoBuscable,
+  textoMedidor,
+  textoTanque,
+  type ColumnaOrden,
+  type Equipo,
+  type FocoFlota,
+  type TamTarjeta,
+  type VistaEquipos,
+} from "./equiposVista";
 import HistorialEquipo from "./HistorialEquipo";
 import RutasEditor, { type LugarOpcion, type RutaForm } from "./RutasEditor";
+import TarjetaEquipo, { EstadoUnidadBadge } from "./TarjetaEquipo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import {
@@ -27,37 +49,31 @@ import { useImportacionExcel, type UtilidadesXlsx } from "../comunes/useImportac
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 import { useSedes } from "../comunes/useSedes";
 
-interface Equipo {
-  id: number;
-  placa_codigo: string;
-  // Código interno de la empresa (ej. "CU-14"), distinto de la placa --
-  // columna CODIGO de la planilla de flota real (migración 0103).
-  codigo_interno: string | null;
-  tipo: string;
-  marca: string | null;
-  modelo: string | null;
-  // Fase B de combustible (migrations/0062): qué instrumento mide este
-  // equipo en un despacho de compra externa -- horómetro (horas de motor)
-  // u odómetro (kilometraje), nunca los dos. null = no configurado, y un
-  // despacho compra_externa a este equipo se rechaza hasta que se cargue.
-  tipo_medidor: "horometro" | "odometro" | null;
-  // Fase D de combustible (migrations/0069): capacidad del tanque de ESTA
-  // unidad, para detectar sobredespacho. null = sin configurar, y entonces
-  // no se valida nada para este equipo -- que es el estado inicial de todos
-  // a propósito: un dato inventado sería peor que ninguno.
-  capacidad_tanque: string | null;
-  capacidad_tanque_unidad: "gal" | "L" | null;
-  /** Litros por hora de motor (horómetro) o por km (odómetro) que se toleran.
-   *  null = sin configurar, no alerta (migración 0088). */
-  consumo_maximo_l: string | null;
-  conductor_nombre: string | null;
-  conductor_dni: string | null;
-  /** Rutas habituales vigentes (0126): cero, una o varias. */
-  rutas: { origen_id: number; destino_id: number; origen: string; destino: string }[];
-  activo: boolean;
-  creado_en: string;
-  // El grifo interno al que pertenece (0097). Se cambia con "Mover de grifo".
-  grifo_interno_id: number | null;
+/** La lista se trae ENTERA (de a 200 por pedido): el resumen, los filtros por
+ *  tipo y el orden necesitan ver toda la flota, no solo una página. */
+const TAMANO_PEDIDO = 200;
+const MAX_PEDIDOS = 10;
+/** Espejo del tope de ids del export en equipos.controller.ts. */
+const MAX_IDS_EXPORT = 1000;
+
+/** Ancho mínimo de cada tarjeta, por tamaño. */
+const COLUMNA_TARJETA: Record<TamTarjeta, number> = { amplia: 380, normal: 300, compacta: 215 };
+
+const CLAVE_PREFERENCIA = "mincore.equipos.";
+function leerPreferencia<T extends string>(clave: string, validos: readonly T[], porDefecto: T): T {
+  try {
+    const v = localStorage.getItem(CLAVE_PREFERENCIA + clave);
+    return validos.includes(v as T) ? (v as T) : porDefecto;
+  } catch {
+    return porDefecto;
+  }
+}
+function guardarPreferencia(clave: string, valor: string) {
+  try {
+    localStorage.setItem(CLAVE_PREFERENCIA + clave, valor);
+  } catch {
+    /* sin almacenamiento: la preferencia solo dura esta visita */
+  }
 }
 
 const TIPOS_COMUNES = [
@@ -190,8 +206,23 @@ export default function EquiposTable() {
   const [searchTerm, setSearchTerm] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  // La vista abre en TABLA (con cientos de unidades las tarjetas obligan a
+  // recorrer demasiado); cada persona recuerda la que eligió por último.
+  const [vista, setVista] = useState<VistaEquipos>(() =>
+    leerPreferencia<VistaEquipos>("vista", ["tabla", "tarjetas"], "tabla")
+  );
+  const [tam, setTam] = useState<TamTarjeta>(() =>
+    leerPreferencia<TamTarjeta>("tam", ["amplia", "normal", "compacta"], "normal")
+  );
+  const [tipoFiltro, setTipoFiltro] = useState("");
+  const [foco, setFoco] = useState<FocoFlota>("todos");
+  const [orden, setOrden] = useState<{ col: ColumnaOrden | null; dir: 1 | -1 }>({
+    col: null,
+    dir: 1,
+  });
+  const [errorCarga, setErrorCarga] = useState(false);
+  const [flotaIncompleta, setFlotaIncompleta] = useState(false);
+  const [conductorVer, setConductorVer] = useState<{ dni: string; nombre: string } | null>(null);
   const [enviando, setEnviando] = useState(false);
 
   // 📦 EXPORTAR (Excel) -- IMPORTAR vive en `importacion` más abajo, con el
@@ -241,15 +272,26 @@ export default function EquiposTable() {
     conductor_dni: "",
   });
 
-  const fetchEquipos = useCallback(async (paginaAConsultar: number) => {
+  const fetchEquipos = useCallback(async () => {
     try {
-      const res = await apiFetch(`/api/erp/equipos?page=${paginaAConsultar}&pageSize=50`);
-      const body = await res.json();
-      setEquipos(Array.isArray(body.data) ? body.data : []);
-      setTotalPages(body.pagination?.totalPages ?? 1);
-      setLoading(false);
+      const todos: Equipo[] = [];
+      let paginas = 1;
+      for (let pedido = 1; pedido <= Math.min(paginas, MAX_PEDIDOS); pedido++) {
+        const res = await apiFetch(`/api/erp/equipos?page=${pedido}&pageSize=${TAMANO_PEDIDO}`);
+        // Una flota a medias daría un resumen falso ("3 sin conductor" cuando
+        // son 30): si un pedido falla, se queda la lista anterior y se avisa.
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = await res.json();
+        todos.push(...(Array.isArray(body.data) ? (body.data as Equipo[]) : []));
+        paginas = body.pagination?.totalPages ?? 1;
+      }
+      setEquipos(todos);
+      setFlotaIncompleta(paginas > MAX_PEDIDOS);
+      setErrorCarga(false);
     } catch (err) {
       console.error("Error al obtener equipos:", err);
+      setErrorCarga(true);
+    } finally {
       setLoading(false);
     }
   }, []);
@@ -268,15 +310,11 @@ export default function EquiposTable() {
   }, []);
 
   useEffect(() => {
-    // Patrón estándar de carga al montar/cambiar de página (setLoading(true)
-    // -> fetch -> setLoading(false)), usado en toda la app.
+    // Patrón estándar de carga al montar (setLoading(true) -> fetch ->
+    // setLoading(false)), usado en toda la app.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchEquipos(page);
-    // La selección es por id de fila -- cambiar de página muestra otras
-    // filas, así que arrastrar la selección de la página anterior sería
-    // borrar equipos que el usuario ya no ve en pantalla.
-    setSeleccionados(new Set());
-  }, [page, fetchEquipos]);
+    fetchEquipos();
+  }, [fetchEquipos]);
 
   // Cuando la cola offline termina de drenar, los equipos que se dieron de
   // alta sin señal ya existen del lado del servidor -- recargar es lo que
@@ -284,9 +322,9 @@ export default function EquiposTable() {
   // refrescar a mano.
   useEffect(() => {
     return suscribirseASincronizacion(({ sincronizadas }) => {
-      if (sincronizadas > 0) fetchEquipos(page);
+      if (sincronizadas > 0) fetchEquipos();
     });
-  }, [page, fetchEquipos]);
+  }, [fetchEquipos]);
 
   /** Pide al servidor el consumo sugerido para ESTE equipo, con su muestra.
    *  Igual que el asistente de umbrales del tanque: propone, no aplica. */
@@ -369,7 +407,7 @@ export default function EquiposTable() {
           copia.delete(id);
           return copia;
         });
-        fetchEquipos(page);
+        fetchEquipos();
       } else {
         alert("Error: el servidor no permitió eliminar el equipo.");
       }
@@ -378,23 +416,93 @@ export default function EquiposTable() {
     }
   };
 
-  // Filtro de búsqueda -- se define acá (y no más abajo, junto al JSX) porque
-  // "seleccionar todo" necesita saber qué filas están visibles ANTES del
-  // return. Búsqueda solo en la página actual (50 filas), como el resto del
-  // listado paginado en servidor.
-  const filteredEquipos = equipos.filter(
-    (e) =>
-      (e.placa_codigo.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (e.codigo_interno ?? "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-        e.tipo.toLowerCase().includes(searchTerm.toLowerCase())) &&
-      // El filtro por grifo (0097) solo existe con más de un grifo.
-      (!grifosInternos.hayVarios ||
-        filtroGrifo === "" ||
-        e.grifo_interno_id === Number(filtroGrifo))
+  // Filtros y orden -- se definen acá (y no junto al JSX) porque "seleccionar
+  // todo" y el export necesitan saber qué filas están visibles ANTES del return.
+  const termino = searchTerm.trim().toLowerCase();
+  const filteredEquipos = ordenarEquipos(
+    equipos.filter(
+      (e) =>
+        (tipoFiltro === "" || normalizarTexto(e.tipo) === tipoFiltro) &&
+        (foco === "todos" || (foco === "sinConductor" ? sinConductor(e) : sinRuta(e))) &&
+        (termino === "" || textoBuscable(e).includes(termino)) &&
+        // El filtro por grifo (0097) solo existe con más de un grifo.
+        (!grifosInternos.hayVarios ||
+          filtroGrifo === "" ||
+          e.grifo_interno_id === Number(filtroGrifo))
+    ),
+    orden.col,
+    orden.dir
+  );
+  const hayFiltros = filteredEquipos.length !== equipos.length;
+
+  const totalActivas = equipos.filter((e) => estadoDeUnidad(e) === "Activo").length;
+  const totalSinConductor = equipos.filter(sinConductor).length;
+  const totalSinRuta = equipos.filter(sinRuta).length;
+  // Un chip por tipo. "EXCAVADORA" de una planilla y "Excavadora" escrito a
+  // mano son el mismo tipo: se agrupan sin mayúsculas ni tildes.
+  const tiposPresentes = new Map<string, { etiqueta: string; cantidad: number }>();
+  for (const e of equipos) {
+    const clave = normalizarTexto(e.tipo);
+    const previo = tiposPresentes.get(clave);
+    if (previo) previo.cantidad += 1;
+    else tiposPresentes.set(clave, { etiqueta: e.tipo, cantidad: 1 });
+  }
+  const chipsTipo = [...tiposPresentes.entries()].sort((a, b) =>
+    a[1].etiqueta.localeCompare(b[1].etiqueta, "es")
   );
 
-  // ☑️ Selección múltiple: por fila, y "seleccionar todo" cubre solo la
-  // página visible (la tabla pagina de a 50, como el resto del listado).
+  const ordenarPor = (col: ColumnaOrden) =>
+    setOrden((previo) =>
+      previo.col !== col
+        ? { col, dir: 1 }
+        : previo.dir === 1
+          ? { col, dir: -1 }
+          : { col: null, dir: 1 }
+    );
+  const encabezadoOrden = (col: ColumnaOrden, texto: string) => (
+    <th
+      key={col}
+      aria-sort={orden.col === col ? (orden.dir === 1 ? "ascending" : "descending") : undefined}
+      className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest sticky top-0 z-10 bg-[#192526] border-b border-[#2a2e37] whitespace-nowrap"
+    >
+      <button
+        type="button"
+        onClick={() => ordenarPor(col)}
+        className={`inline-flex items-center gap-1.5 uppercase tracking-widest hover:text-white ${
+          orden.col === col ? "text-[#BADC1E]" : ""
+        }`}
+      >
+        {texto}
+        {orden.col !== col ? (
+          <ArrowUpDown className="w-3 h-3 opacity-50" aria-hidden="true" />
+        ) : orden.dir === 1 ? (
+          <ArrowUp className="w-3 h-3" aria-hidden="true" />
+        ) : (
+          <ArrowDown className="w-3 h-3" aria-hidden="true" />
+        )}
+      </button>
+    </th>
+  );
+
+  const cambiarVista = (v: VistaEquipos) => {
+    setVista(v);
+    guardarPreferencia("vista", v);
+  };
+  const cambiarTam = (t: TamTarjeta) => {
+    setTam(t);
+    guardarPreferencia("tam", t);
+  };
+  const verConductor = (e: Equipo) => {
+    if (e.conductor_dni)
+      setConductorVer({ dni: e.conductor_dni, nombre: e.conductor_nombre ?? "" });
+  };
+
+  // ☑️ Selección múltiple: por fila, y "seleccionar todo" cubre solo lo que
+  // se ve. Lo marcado que un filtro deja oculto NO cuenta ni se borra: si no,
+  // marcar tres volquetes, pasar al chip Camioneta y "Eliminar seleccionados"
+  // borraría unidades que el usuario ya no tiene delante.
+  const idsVisibles = new Set(filteredEquipos.map((e) => e.id));
+  const seleccionVisible = [...seleccionados].filter((id) => idsVisibles.has(id));
   const toggleSeleccion = (id: number) => {
     setSeleccionados((prev) => {
       const copia = new Set(prev);
@@ -422,7 +530,7 @@ export default function EquiposTable() {
   };
 
   const handleEliminarSeleccionados = async () => {
-    const ids = [...seleccionados];
+    const ids = seleccionVisible;
     if (ids.length === 0) return;
     if (
       !window.confirm(
@@ -443,7 +551,7 @@ export default function EquiposTable() {
         return;
       }
       setSeleccionados(new Set());
-      fetchEquipos(page);
+      fetchEquipos();
     } catch {
       alert("Error de conexión con el backend.");
     } finally {
@@ -461,7 +569,7 @@ export default function EquiposTable() {
     maxFilas: MAX_FILAS_IMPORTACION,
     etiquetaEntidad: "equipos",
     onImportado: () => {
-      void fetchEquipos(page);
+      void fetchEquipos();
     },
   });
 
@@ -473,22 +581,35 @@ export default function EquiposTable() {
     { encabezado: "Modelo", render: (f) => f.modelo || "---" },
   ];
 
-  // 📤 Exportar la flota entera (no solo la página visible) a Excel.
+  // 📤 Exportar a Excel lo que se está viendo: con filtros puestos viajan solo
+  // los ids de esas unidades; sin filtros, la flota entera.
   const handleExportExcel = async () => {
     setExportando(true);
     try {
-      const res = await apiFetch("/api/erp/equipos/export/xlsx");
+      // Los ids viajan en la URL (GET: Lectura también exporta, y su perfil no
+      // admite POST). Más de MAX_IDS_EXPORT la haría demasiado larga.
+      if (hayFiltros && filteredEquipos.length > MAX_IDS_EXPORT) {
+        alert(
+          `Hay ${filteredEquipos.length} unidades filtradas: para exportar de a más de ${MAX_IDS_EXPORT}, ` +
+            "quita los filtros y exporta la flota entera."
+        );
+        return;
+      }
+      const url = hayFiltros
+        ? `/api/erp/equipos/export/xlsx?ids=${filteredEquipos.map((e) => e.id).join(",")}`
+        : "/api/erp/equipos/export/xlsx";
+      const res = await apiFetch(url);
       if (!res.ok) {
         alert("No se pudo generar el archivo de exportación.");
         return;
       }
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      const enlace = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url;
+      a.href = enlace;
       a.download = "equipos.xlsx";
       a.click();
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(enlace);
     } catch {
       alert("Error de conexión con el backend.");
     } finally {
@@ -594,7 +715,7 @@ export default function EquiposTable() {
         return;
       }
 
-      fetchEquipos(page);
+      fetchEquipos();
     } catch {
       alert("Error de conexión con el backend.");
     } finally {
@@ -622,11 +743,17 @@ export default function EquiposTable() {
           <button
             type="button"
             onClick={handleExportExcel}
-            disabled={exportando}
-            className="px-4 py-2.5 border rounded-xl flex items-center gap-2 transition-all border-[#334155] text-[#cbd5e1] hover:text-white disabled:opacity-50 disabled:cursor-wait"
+            disabled={exportando || filteredEquipos.length === 0}
+            className="px-4 py-2.5 border rounded-xl flex items-center gap-2 transition-all border-[#334155] text-[#cbd5e1] hover:text-white hover:bg-[#1f2e2b] disabled:opacity-50 disabled:cursor-wait"
           >
             <Download className="w-4 h-4 shrink-0" />
-            <span>{exportando ? "Exportando..." : "Exportar Excel"}</span>
+            <span>
+              {exportando
+                ? "Exportando..."
+                : hayFiltros
+                  ? `Exportar Excel (${filteredEquipos.length})`
+                  : "Exportar Excel"}
+            </span>
           </button>
           {puedeEscribir && (
             <button
@@ -665,44 +792,171 @@ export default function EquiposTable() {
       </div>
 
       <BannerImportacion error={importacion.error} resultado={importacion.resultado} />
+      {errorCarga && (
+        <div
+          role="alert"
+          className="mb-4 rounded-xl border border-[#f0b429]/40 bg-[#192526] px-4 py-3 text-sm text-[#f0b429]"
+        >
+          No se pudo cargar la flota completa. Lo que ves puede estar desactualizado: recarga la
+          página.
+        </div>
+      )}
+      {flotaIncompleta && (
+        <div className="mb-4 rounded-xl border border-[#f0b429]/40 bg-[#192526] px-4 py-3 text-sm text-[#f0b429]">
+          Se muestran las primeras {MAX_PEDIDOS * TAMANO_PEDIDO} unidades: el resumen y los filtros
+          cuentan solo esas.
+        </div>
+      )}
 
-      <div className="mb-8">
-        <input
-          type="text"
-          placeholder="Buscar por placa, código o tipo..."
-          className="w-full bg-[#0D1719] border border-[#334155] text-white rounded-2xl px-4 sm:px-5 py-3 sm:py-4 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E] transition-all"
-          onChange={(e) => setSearchTerm(e.target.value)}
+      {/* Resumen de la flota: cada celda con faltantes filtra la lista. */}
+      <section
+        aria-label="Resumen de la flota"
+        className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5"
+      >
+        <CeldaResumen etiqueta="Unidades" valor={equipos.length} detalle="en la flota" />
+        <CeldaResumen etiqueta="Activas" valor={totalActivas} detalle="con conductor vigente" />
+        <CeldaResumen
+          etiqueta="Sin conductor"
+          valor={totalSinConductor}
+          detalle={totalSinConductor > 0 ? "unidades por asignar" : "todas asignadas"}
+          alerta={totalSinConductor > 0}
+          activa={foco === "sinConductor"}
+          onClick={() => setFoco(foco === "sinConductor" ? "todos" : "sinConductor")}
         />
-        {grifosInternos.hayVarios && (
-          <div className="mt-3 flex items-center gap-2">
-            <label
-              htmlFor="filtro-grifo-equipos"
-              className="text-xs font-bold uppercase text-[#94a3b8]"
-            >
-              Grifo
-            </label>
-            <select
-              id="filtro-grifo-equipos"
-              className="border border-[#334155] rounded-lg p-2 text-sm bg-[#0D1719] text-white"
-              value={filtroGrifo}
-              onChange={(e) => setFiltroGrifo(e.target.value)}
-            >
-              <option value="">Todos</option>
-              {grifosInternos.grifosActivos.map((g) => (
-                <option key={g.id} value={g.id}>
-                  {g.etiqueta}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-      </div>
+        <CeldaResumen
+          etiqueta="Sin ruta"
+          valor={totalSinRuta}
+          detalle={totalSinRuta > 0 ? "unidades por asignar" : "todas asignadas"}
+          alerta={totalSinRuta > 0}
+          activa={foco === "sinRuta"}
+          onClick={() => setFoco(foco === "sinRuta" ? "todos" : "sinRuta")}
+        />
+      </section>
 
-      {puedeEscribir && seleccionados.size > 0 && (
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div
+          className="flex gap-2 overflow-x-auto pb-1 max-w-full"
+          role="group"
+          aria-label="Filtrar por tipo"
+        >
+          <ChipTipo activo={tipoFiltro === ""} onClick={() => setTipoFiltro("")}>
+            Todos <b className="font-mono ml-1.5">{equipos.length}</b>
+          </ChipTipo>
+          {chipsTipo.map(([clave, t]) => (
+            <ChipTipo
+              key={clave}
+              activo={tipoFiltro === clave}
+              onClick={() => setTipoFiltro(clave)}
+            >
+              {t.etiqueta} <b className="font-mono ml-1.5">{t.cantidad}</b>
+            </ChipTipo>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <input
+            type="text"
+            aria-label="Buscar equipos"
+            placeholder="Buscar placa, conductor, ruta..."
+            className="w-56 max-w-full bg-[#0D1719] border border-[#334155] text-white rounded-xl px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E] transition-all"
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+          <div
+            className="inline-flex border border-[#334155] rounded-xl overflow-hidden"
+            role="group"
+            aria-label="Tipo de vista"
+          >
+            {(
+              [
+                ["tabla", "Tabla", List],
+                ["tarjetas", "Tarjetas", LayoutGrid],
+              ] as const
+            ).map(([v, texto, Icono]) => (
+              <button
+                key={v}
+                type="button"
+                aria-pressed={vista === v}
+                onClick={() => cambiarVista(v)}
+                className={`flex items-center gap-2 px-3.5 py-2.5 text-sm transition-colors ${
+                  vista === v
+                    ? "bg-[#BADC1E] text-[#0D1719] font-bold"
+                    : "text-[#94a3b8] hover:bg-[#1f2e2b] hover:text-white"
+                }`}
+              >
+                <Icono className="w-4 h-4" />
+                {texto}
+              </button>
+            ))}
+          </div>
+          {vista === "tarjetas" && (
+            <div
+              className="inline-flex border border-[#334155] rounded-xl overflow-hidden"
+              role="group"
+              aria-label="Tamaño de las tarjetas"
+            >
+              {(["amplia", "normal", "compacta"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  aria-pressed={tam === t}
+                  onClick={() => cambiarTam(t)}
+                  className={`px-3 py-2.5 text-sm capitalize transition-colors ${
+                    tam === t
+                      ? "bg-[#BADC1E] text-[#0D1719] font-bold"
+                      : "text-[#94a3b8] hover:bg-[#1f2e2b] hover:text-white"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      {grifosInternos.hayVarios && (
+        <div className="mb-4 flex items-center gap-2">
+          <label
+            htmlFor="filtro-grifo-equipos"
+            className="text-xs font-bold uppercase text-[#94a3b8]"
+          >
+            Grifo
+          </label>
+          <select
+            id="filtro-grifo-equipos"
+            className="border border-[#334155] rounded-lg p-2 text-sm bg-[#0D1719] text-white"
+            value={filtroGrifo}
+            onChange={(e) => setFiltroGrifo(e.target.value)}
+          >
+            <option value="">Todos</option>
+            {grifosInternos.grifosActivos.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.etiqueta}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {foco !== "todos" && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#223033] bg-[#192526] px-4 py-2.5 text-sm text-[#94a3b8]">
+          <span>
+            Mostrando solo unidades{" "}
+            <b className="text-white">{foco === "sinConductor" ? "sin conductor" : "sin ruta"}</b>:{" "}
+            {filteredEquipos.length}
+          </span>
+          <button
+            type="button"
+            onClick={() => setFoco("todos")}
+            className="font-semibold text-[#BADC1E] underline"
+          >
+            Quitar filtro
+          </button>
+        </div>
+      )}
+
+      {puedeEscribir && seleccionVisible.length > 0 && (
         <div className="mb-4 flex items-center justify-between gap-3 bg-[#192526] border border-[#2a2e37] text-white rounded-xl px-4 py-3 text-sm">
           <span>
-            {seleccionados.size} equipo{seleccionados.size === 1 ? "" : "s"} seleccionado
-            {seleccionados.size === 1 ? "" : "s"}
+            {seleccionVisible.length} equipo{seleccionVisible.length === 1 ? "" : "s"} seleccionado
+            {seleccionVisible.length === 1 ? "" : "s"}
           </span>
           <div className="flex items-center gap-2">
             <button
@@ -725,184 +979,207 @@ export default function EquiposTable() {
         </div>
       )}
 
-      <div className="bg-[#192526] border border-[#2a2e37] rounded-2xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-max text-left border-collapse">
-            <thead className="border-b border-[#2a2e37]">
-              <tr>
-                {puedeEscribir && (
-                  <th className="px-3 sm:px-4 py-2.5 sm:py-3">
-                    <input
-                      type="checkbox"
-                      aria-label="Seleccionar todos los equipos de esta página"
-                      checked={todosSeleccionadosEnPagina}
-                      onChange={toggleSeleccionarTodo}
-                      className="w-4 h-4 rounded border-slate-300"
-                    />
-                  </th>
-                )}
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
-                  placa
-                </th>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
-                  código
-                </th>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
-                  tipo
-                </th>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
-                  marca
-                </th>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
-                  modelo
-                </th>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
-                  medidor
-                </th>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
-                  conductor
-                </th>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
-                  dni
-                </th>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
-                  ruta
-                </th>
-                {grifosInternos.hayVarios && (
-                  <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
-                    grifo
-                  </th>
-                )}
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest">
-                  estado
-                </th>
-                <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest text-right">
-                  acciones
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#2a2e37]">
-              {filteredEquipos.map((e) => (
-                <tr key={e.id} className="hover:bg-[#1f2c2e] transition-colors">
+      {filteredEquipos.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-[#334155] px-4 py-12 text-center text-[#94a3b8]">
+          {equipos.length === 0
+            ? "Todavía no hay equipos. Registra el primero con Nuevo Equipo o importa tu planilla."
+            : "Ninguna unidad coincide con estos filtros."}
+        </div>
+      ) : vista === "tarjetas" ? (
+        <div
+          className="grid gap-3.5"
+          style={{
+            gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${COLUMNA_TARJETA[tam]}px), 1fr))`,
+          }}
+        >
+          {filteredEquipos.map((e) => (
+            <TarjetaEquipo
+              key={e.id}
+              equipo={e}
+              tam={tam}
+              puedeEscribir={puedeEscribir}
+              seleccionado={seleccionados.has(e.id)}
+              onToggleSeleccion={() => toggleSeleccion(e.id)}
+              onConductor={verConductor}
+              onHistorial={setEquipoHistorial}
+              onEditar={openEditModal}
+              onEliminar={(x) => handleDelete(x.id)}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="bg-[#192526] border border-[#2a2e37] rounded-2xl overflow-hidden">
+          <div className="overflow-auto max-h-[68vh]">
+            <table className="w-full min-w-max text-left border-separate border-spacing-0">
+              <thead>
+                <tr>
                   {puedeEscribir && (
-                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5">
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 sticky top-0 z-10 bg-[#192526] border-b border-[#2a2e37]">
                       <input
                         type="checkbox"
-                        aria-label={`Seleccionar ${e.placa_codigo}`}
-                        checked={seleccionados.has(e.id)}
-                        onChange={() => toggleSeleccion(e.id)}
+                        aria-label="Seleccionar todos los equipos de la lista"
+                        checked={todosSeleccionadosEnPagina}
+                        onChange={toggleSeleccionarTodo}
                         className="w-4 h-4 rounded border-slate-300"
                       />
-                    </td>
+                    </th>
                   )}
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm font-semibold text-white">
-                    {e.placa_codigo}
-                  </td>
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm text-[#94a3b8]">
-                    {e.codigo_interno || "---"}
-                  </td>
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-[#e2e8f0]">
-                    {e.tipo}
-                  </td>
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-[#94a3b8]">
-                    {e.marca || "---"}
-                  </td>
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-[#94a3b8]">
-                    {e.modelo || "---"}
-                  </td>
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-[#94a3b8]">
-                    {e.tipo_medidor === "horometro"
-                      ? "Horómetro"
-                      : e.tipo_medidor === "odometro"
-                        ? "Odómetro"
-                        : "---"}
-                  </td>
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-[#e2e8f0]">
-                    {e.conductor_nombre || "---"}
-                  </td>
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm text-[#94a3b8]">
-                    {e.conductor_dni || "---"}
-                  </td>
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-[#e2e8f0]">
-                    {(e.rutas ?? []).length === 0 ? (
-                      "---"
-                    ) : (
-                      <ul className="space-y-0.5">
-                        {e.rutas.map((r) => (
-                          <li key={`${r.origen_id}>${r.destino_id}`} className="whitespace-nowrap">
-                            {r.origen} → {r.destino}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </td>
+                  {encabezadoOrden("placa", "placa")}
+                  {encabezadoOrden("tipo", "tipo")}
+                  <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest sticky top-0 z-10 bg-[#192526] border-b border-[#2a2e37] whitespace-nowrap">
+                    estado
+                  </th>
+                  {encabezadoOrden("conductor", "conductor")}
+                  <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest sticky top-0 z-10 bg-[#192526] border-b border-[#2a2e37] whitespace-nowrap">
+                    dni
+                  </th>
+                  <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest sticky top-0 z-10 bg-[#192526] border-b border-[#2a2e37] whitespace-nowrap">
+                    ruta
+                  </th>
+                  {encabezadoOrden("tanque", "tanque")}
+                  {encabezadoOrden("medidor", "medidor")}
+                  {encabezadoOrden("marca", "marca / modelo")}
                   {grifosInternos.hayVarios && (
-                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-[#94a3b8]">
-                      {grifosInternos.nombreDeGrifo(e.grifo_interno_id)}
-                    </td>
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest sticky top-0 z-10 bg-[#192526] border-b border-[#2a2e37] whitespace-nowrap">
+                      grifo
+                    </th>
                   )}
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
-                    <span className={`font-bold ${e.activo ? "text-[#BADC1E]" : "text-[#64748b]"}`}>
-                      {e.activo ? "Activo" : "Inactivo"}
-                    </span>
-                  </td>
-                  <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-2 whitespace-nowrap">
-                    {/* El historial es una consulta: Lectura también lo ve. */}
-                    <button
-                      onClick={() => setEquipoHistorial(e)}
-                      className="p-2 text-slate-400 hover:text-[#BADC1E] rounded-lg transition-all"
-                      title="Historial de conductor y rutas"
-                      aria-label={`Historial de ${e.placa_codigo}`}
-                    >
-                      <History className="w-4 h-4" />
-                    </button>
-                    {puedeEscribir && (
-                      <>
-                        <button
-                          onClick={() => openEditModal(e)}
-                          className="p-2 text-slate-400 hover:text-[#BADC1E] rounded-lg transition-all"
-                          title="Editar"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(e.id)}
-                          className="p-2 text-slate-400 hover:text-[#BADC1E] rounded-lg transition-all"
-                          title="Eliminar"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </>
-                    )}
-                  </td>
+                  <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest sticky top-0 z-10 bg-[#192526] border-b border-[#2a2e37] whitespace-nowrap !z-20 right-0 text-right shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.6)]">
+                    acciones
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filteredEquipos.map((e) => (
+                  <tr key={e.id} className="group">
+                    {puedeEscribir && (
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors">
+                        <input
+                          type="checkbox"
+                          aria-label={`Seleccionar ${e.placa_codigo}`}
+                          checked={seleccionados.has(e.id)}
+                          onChange={() => toggleSeleccion(e.id)}
+                          className="w-4 h-4 rounded border-slate-300"
+                        />
+                      </td>
+                    )}
+                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors">
+                      <div className="font-mono text-xs sm:text-sm font-semibold text-white">
+                        {e.placa_codigo}
+                      </div>
+                      {e.codigo_interno && (
+                        <div className="font-mono text-[11px] text-[#94a3b8]">
+                          {e.codigo_interno}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors text-xs sm:text-sm text-[#e2e8f0]">
+                      <span className="inline-flex items-center gap-2.5">
+                        <EquipoIcono tipo={e.tipo} className="w-8 h-5 shrink-0 text-[#BADC1E]" />
+                        {e.tipo}
+                      </span>
+                    </td>
+                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors text-xs sm:text-sm">
+                      <EstadoUnidadBadge equipo={e} />
+                    </td>
+                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors text-xs sm:text-sm text-[#e2e8f0]">
+                      {e.conductor_nombre ? (
+                        e.conductor_dni ? (
+                          <button
+                            type="button"
+                            onClick={() => verConductor(e)}
+                            title={`Ver las unidades de ${e.conductor_nombre}`}
+                            className="text-left underline decoration-[#334155] underline-offset-4 hover:text-[#BADC1E] hover:decoration-[#BADC1E]"
+                          >
+                            {e.conductor_nombre}
+                          </button>
+                        ) : (
+                          e.conductor_nombre
+                        )
+                      ) : sinConductor(e) ? (
+                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#f0b429]">
+                          <TriangleAlert className="w-3.5 h-3.5" aria-hidden="true" />
+                          Sin conductor
+                        </span>
+                      ) : (
+                        "---"
+                      )}
+                    </td>
+                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors font-mono text-xs sm:text-sm text-[#94a3b8]">
+                      {e.conductor_dni || "---"}
+                    </td>
+                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors text-xs sm:text-sm text-[#e2e8f0]">
+                      {(e.rutas ?? []).length > 0 ? (
+                        <ul className="space-y-0.5">
+                          {e.rutas.map((r) => (
+                            <li
+                              key={`${r.origen_id}>${r.destino_id}`}
+                              className="whitespace-nowrap"
+                            >
+                              {r.origen} → {r.destino}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : sinRuta(e) ? (
+                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#f0b429]">
+                          <TriangleAlert className="w-3.5 h-3.5" aria-hidden="true" />
+                          Sin ruta
+                        </span>
+                      ) : (
+                        "---"
+                      )}
+                    </td>
+                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors font-mono text-xs sm:text-sm text-[#e2e8f0]">
+                      {textoTanque(e) ?? <span className="font-sans text-[#64748b]">Sin dato</span>}
+                    </td>
+                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors text-xs sm:text-sm text-[#94a3b8]">
+                      {textoMedidor(e) ?? "---"}
+                    </td>
+                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors text-xs sm:text-sm">
+                      <div className="text-[#e2e8f0]">{e.marca || "---"}</div>
+                      {e.modelo && <div className="text-[11px] text-[#94a3b8]">{e.modelo}</div>}
+                    </td>
+                    {grifosInternos.hayVarios && (
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors text-xs sm:text-sm text-[#94a3b8]">
+                        {grifosInternos.nombreDeGrifo(e.grifo_interno_id)}
+                      </td>
+                    )}
+                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors sticky right-0 text-right space-x-2 whitespace-nowrap !bg-[#192526] group-hover:!bg-[#1f2e2b] shadow-[-12px_0_12px_-12px_rgba(0,0,0,0.6)]">
+                      {/* El historial es una consulta: Lectura también lo ve. */}
+                      <button
+                        onClick={() => setEquipoHistorial(e)}
+                        className="p-2 text-slate-400 hover:text-[#BADC1E] rounded-lg transition-all"
+                        title="Historial de conductor y rutas"
+                        aria-label={`Historial de ${e.placa_codigo}`}
+                      >
+                        <History className="w-4 h-4" />
+                      </button>
+                      {puedeEscribir && (
+                        <>
+                          <button
+                            onClick={() => openEditModal(e)}
+                            className="p-2 text-slate-400 hover:text-[#BADC1E] rounded-lg transition-all"
+                            title="Editar"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(e.id)}
+                            className="p-2 text-slate-400 hover:text-[#BADC1E] rounded-lg transition-all"
+                            title="Eliminar"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
-
-      <div className="flex items-center justify-between mt-4 px-1">
-        <button
-          onClick={() => setPage((p) => Math.max(1, p - 1))}
-          disabled={page <= 1}
-          className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-[#cbd5e1] border border-[#334155] rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:text-white"
-        >
-          <ChevronLeft className="w-4 h-4" />
-          Anterior
-        </button>
-        <span className="text-sm text-[#94a3b8]">
-          Página {page} de {totalPages}
-        </span>
-        <button
-          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-          disabled={page >= totalPages}
-          className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-[#cbd5e1] border border-[#334155] rounded-lg disabled:opacity-40 disabled:cursor-not-allowed hover:text-white"
-        >
-          Siguiente
-          <ChevronRight className="w-4 h-4" />
-        </button>
-      </div>
+      )}
 
       {isModalOpen && (
         <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
@@ -1260,6 +1537,13 @@ export default function EquiposTable() {
           onCerrar={() => setEquipoHistorial(null)}
         />
       )}
+      {conductorVer && (
+        <ConductorUnidades
+          dni={conductorVer.dni}
+          nombre={conductorVer.nombre}
+          onCerrar={() => setConductorVer(null)}
+        />
+      )}
       {equipoAMover && (
         <MoverDeGrifo
           que="equipo"
@@ -1271,7 +1555,7 @@ export default function EquiposTable() {
           onMovido={() => {
             setEquipoAMover(null);
             grifosInternos.recargar();
-            void fetchEquipos(page);
+            void fetchEquipos();
           }}
         />
       )}
@@ -1286,5 +1570,77 @@ export default function EquiposTable() {
         />
       )}
     </div>
+  );
+}
+
+function CeldaResumen({
+  etiqueta,
+  valor,
+  detalle,
+  alerta,
+  activa,
+  onClick,
+}: {
+  etiqueta: string;
+  valor: number;
+  detalle: string;
+  alerta?: boolean;
+  activa?: boolean;
+  onClick?: () => void;
+}) {
+  const contenido = (
+    <>
+      <span className="text-[11px] uppercase tracking-widest text-[#94a3b8]">{etiqueta}</span>
+      <span
+        className={`font-mono text-3xl font-bold leading-none tabular-nums ${
+          alerta ? "text-[#f0b429]" : onClick ? "text-[#BADC1E]" : "text-white"
+        }`}
+      >
+        {valor}
+      </span>
+      <span className="text-xs text-[#94a3b8]">{detalle}</span>
+    </>
+  );
+  const base =
+    "flex flex-col gap-1 text-left min-w-0 rounded-2xl border bg-[#192526] px-4 py-4 transition-colors";
+  if (!onClick) {
+    return <div className={`${base} border-[#223033]`}>{contenido}</div>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={!!activa}
+      className={`${base} hover:bg-[#1f2e2b] hover:border-[#BADC1E]/35 ${
+        activa ? "border-[#BADC1E] ring-1 ring-inset ring-[#BADC1E]" : "border-[#223033]"
+      }`}
+    >
+      {contenido}
+    </button>
+  );
+}
+
+function ChipTipo({
+  activo,
+  onClick,
+  children,
+}: {
+  activo: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={activo}
+      className={`whitespace-nowrap px-3.5 py-1.5 rounded-full border text-[13px] transition-colors ${
+        activo
+          ? "bg-[#BADC1E] border-[#BADC1E] text-[#0D1719] font-semibold"
+          : "border-[#334155] text-[#94a3b8] hover:bg-[#1f2e2b] hover:text-white"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
