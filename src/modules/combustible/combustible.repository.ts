@@ -1,7 +1,6 @@
 /**src/modules/combutible/combustible.repository.ts */
 
 import type { PoolClient } from "pg";
-import { findDestinatariosAlertas } from "../../server/shared/utils/destinatariosAlertas";
 import type {
   CrearTanqueCombustibleInput,
   ActualizarTanqueCombustibleInput,
@@ -10,6 +9,8 @@ import type { Paginacion } from "../../server/shared/utils/pagination";
 import { esViolacionUnicidad, esViolacionForeignKey } from "../../server/shared/utils/pgError";
 import {
   agregarAmbitoVales,
+  destinatariosDeAlertasEnGrifo,
+  filtroAlertaVisible,
   filtroHechoDeGrifo,
   filtroTanqueVisible,
   filtroVale,
@@ -3272,18 +3273,27 @@ export class CombustibleRepository {
     return anomaliaId ?? null;
   }
 
-  async findAnomalias(client: PoolClient, tenantId: string, { pageSize, offset }: Paginacion) {
+  async findAnomalias(
+    client: PoolClient,
+    tenantId: string,
+    { pageSize, offset }: Paginacion,
+    alcance: AlcanceCombustible
+  ) {
+    // La anomalía es la alerta congelada y hereda su grifo (trigger de 0097):
+    // se ve con la MISMA regla que la campanita, o una alerta escondida
+    // reaparecería para todos al pasar la ventana de gracia.
+    const f = filtroAlertaVisible(alcance, "combustible_anomalias", 4);
     const result = await client.query(
       `
       SELECT id, tipo, serie_talonario, n_vale, despacho_id, combustible_id,
              recepcion_id, lectura_id, alerta_id, detalle, detectada_en, congelada_en,
              ventana_horas, COUNT(*) OVER() AS total_count
       FROM combustible_anomalias
-      WHERE tenant_id = $1
+      WHERE tenant_id = $1 AND ${f.sql}
       ORDER BY congelada_en DESC, id DESC
       LIMIT $2 OFFSET $3
       `,
-      [tenantId, pageSize, offset]
+      [tenantId, pageSize, offset, ...f.valores]
     );
     return result.rows;
   }
@@ -4475,18 +4485,22 @@ export class CombustibleRepository {
          lectura_id, urea_conteo_id, producto, detalle)
       VALUES ${placeholders.join(",")}
       RETURNING id, tipo, serie_talonario, n_vale, despacho_id, combustible_id, recepcion_id,
-        lectura_id, urea_conteo_id, producto, detalle, creado_en
+        lectura_id, urea_conteo_id, producto, detalle, creado_en, grifo_interno_id
       `,
       valores
     );
     return result.rows;
   }
 
+  /** La campanita, acotada al alcance de quien mira (ver filtroAlertaVisible).
+   *  Sin esto mostraba las alertas de TODOS los grifos de la empresa, aunque
+   *  el tanque de abajo diera 404 al abrirlo. */
   async findAlertas(
     client: PoolClient,
     tenantId: string,
     filtros: { soloNoLeidas?: boolean; producto?: string },
-    { pageSize, offset }: Paginacion
+    { pageSize, offset }: Paginacion,
+    alcance: AlcanceCombustible
   ) {
     const condiciones: string[] = ["tenant_id = $1"];
     const valores: unknown[] = [tenantId];
@@ -4498,6 +4512,9 @@ export class CombustibleRepository {
       valores.push(filtros.producto);
       condiciones.push(`producto = $${valores.length}`);
     }
+    const fAlcance = filtroAlertaVisible(alcance, "combustible_alertas", valores.length + 1);
+    condiciones.push(fAlcance.sql);
+    valores.push(...fAlcance.valores);
 
     valores.push(pageSize, offset);
     const result = await client.query(
@@ -4515,19 +4532,31 @@ export class CombustibleRepository {
     return result.rows;
   }
 
-  async marcarAlertasLeidas(client: PoolClient, tenantId: string, ids?: number[]) {
+  /** "Marcar todas como leídas" ahora marca todas LAS QUE SE VEN. Sin el
+   *  filtro, el usuario de una sede le apagaba la campanita a la otra: el
+   *  estado de leída es compartido (ver 0068), así que la alerta que él no
+   *  podía ni ver desaparecía del tablero del que sí tenía que atenderla. */
+  async marcarAlertasLeidas(
+    client: PoolClient,
+    tenantId: string,
+    alcance: AlcanceCombustible,
+    ids?: number[]
+  ) {
     if (ids && ids.length > 0) {
+      const f = filtroAlertaVisible(alcance, "combustible_alertas", 3);
       await client.query(
         `UPDATE combustible_alertas SET leida_en = now()
-         WHERE tenant_id = $1 AND id = ANY($2::bigint[]) AND leida_en IS NULL`,
-        [tenantId, ids]
+         WHERE tenant_id = $1 AND id = ANY($2::bigint[]) AND leida_en IS NULL
+           AND ${f.sql}`,
+        [tenantId, ids, ...f.valores]
       );
       return;
     }
+    const f = filtroAlertaVisible(alcance, "combustible_alertas", 2);
     await client.query(
       `UPDATE combustible_alertas SET leida_en = now()
-       WHERE tenant_id = $1 AND leida_en IS NULL`,
-      [tenantId]
+       WHERE tenant_id = $1 AND leida_en IS NULL AND ${f.sql}`,
+      [tenantId, ...f.valores]
     );
   }
 
@@ -4585,8 +4614,13 @@ export class CombustibleRepository {
     alertaId: number,
     usuarioId: string,
     motivo: string,
-    autorevision: boolean
+    autorevision: boolean,
+    alcance: AlcanceCombustible
   ) {
+    // Cerrar una alerta ajena es la forma de taparla: lo que el alcance
+    // esconde no se puede cerrar por id. Fuera del alcance = 404, igual que
+    // una alerta que no existe.
+    const f = filtroAlertaVisible(alcance, "combustible_alertas", 7);
     const result = await client.query(
       `
       UPDATE combustible_alertas
@@ -4600,10 +4634,10 @@ export class CombustibleRepository {
             'autorevision', $6::boolean
           )
       WHERE id = $2 AND tenant_id = $3
-        AND tipo = ANY($5::text[]) AND resuelta_en IS NULL
+        AND tipo = ANY($5::text[]) AND resuelta_en IS NULL AND ${f.sql}
       RETURNING id, tipo, serie_talonario, n_vale, despacho_id, detalle, creado_en, leida_en, resuelta_en, resuelta_por
       `,
-      [usuarioId, alertaId, tenantId, motivo, TIPOS_REVISABLES, autorevision]
+      [usuarioId, alertaId, tenantId, motivo, TIPOS_REVISABLES, autorevision, ...f.valores]
     );
     return result.rows[0] ?? null;
   }
@@ -4612,9 +4646,59 @@ export class CombustibleRepository {
    *  rol: es la marca explícita de cada persona (`usuario_alertas_correo`),
    *  así que un jefe de planta que no administra nada puede recibirlas y un
    *  admin puede no recibirlas. Delega en el helper compartido, que no tiene
-   *  nada de combustible salvo el nombre del módulo. */
-  async findDestinatariosAlertasCombustible(client: PoolClient, tenantId: string) {
-    return findDestinatariosAlertas(client, tenantId, "combustible");
+   *  nada de combustible salvo el nombre del módulo.
+   *
+   *  `grifoInternoId` ENRUTA el aviso. Hasta ahora no existía y todos los
+   *  correos del módulo iban a todos los marcados: el jefe de planta de una
+   *  sede recibía el descuadre de la otra y, si hacía clic, le salía 404
+   *  porque el alcance sí se respeta en el tanque. Avisar de algo que el
+   *  destinatario no puede abrir es la forma más rápida de que se arme un
+   *  filtro en el correo y las alertas dejen de existir.
+   *
+   *  - `null` -> toda la empresa. Es una alerta sin grifo (urea, hechos de
+   *    talonario): no es de nadie en particular, así que es de todos.
+   *  - un grifo -> solo quienes lo ven (ver usuariosQueVenElGrifo).
+   *
+   *  Son dos consultas y no una a propósito: la primera es el helper
+   *  compartido, que vale para cualquier módulo y no se toca, y la segunda es
+   *  la regla de alcance, que es solo de combustible. Fusionarlas obligaría a
+   *  meterle a ese helper un fragmento de SQL de este módulo. Los dos caminos
+   *  que las llaman (crear una alerta, la corrida del worker) son de baja
+   *  frecuencia. */
+  /** El grifo de un tanque y el de un surtidor, para enrutar un aviso que
+   *  cuelga de uno de los dos y no de una alerta (un umbral que se aflojó,
+   *  por ejemplo). Consultas mínimas a propósito: findById arrastra los joins
+   *  de última lectura, nivel teórico y surtidores, que acá no hacen falta. */
+  async findGrifoDeTanque(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number
+  ): Promise<number | null> {
+    const r = await client.query<{ grifo_interno_id: number | null }>(
+      `SELECT grifo_interno_id FROM combustible WHERE id = $1 AND tenant_id = $2`,
+      [combustibleId, tenantId]
+    );
+    return r.rows[0]?.grifo_interno_id ?? null;
+  }
+
+  async findGrifoDeSurtidor(
+    client: PoolClient,
+    tenantId: string,
+    surtidorId: number
+  ): Promise<number | null> {
+    const r = await client.query<{ grifo_interno_id: number | null }>(
+      `SELECT grifo_interno_id FROM surtidores WHERE id = $1 AND tenant_id = $2`,
+      [surtidorId, tenantId]
+    );
+    return r.rows[0]?.grifo_interno_id ?? null;
+  }
+
+  async findDestinatariosAlertasCombustible(
+    client: PoolClient,
+    tenantId: string,
+    grifoInternoId: number | null
+  ) {
+    return destinatariosDeAlertasEnGrifo(client, tenantId, grifoInternoId);
   }
 
   // ── Grifos externos (migrations/0063) ────────────────────────────────
@@ -6335,13 +6419,16 @@ export class CombustibleRepository {
     client: PoolClient,
     tenantId: string,
     fila: AlertaNueva & { combustibleId: number }
-  ): Promise<{ nueva: boolean; id: string }> {
+  ): Promise<{ nueva: boolean; id: string; grifoInternoId: number | null }> {
     await client.query(`SELECT id FROM combustible WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [
       fila.combustibleId,
       tenantId,
     ]);
-    const abierta = await client.query<{ id: string }>(
-      `SELECT id FROM combustible_alertas
+    // El grifo viaja de vuelta para poder ENRUTAR el aviso, y sale de la
+    // propia fila de la alerta (la nueva o la que ya estaba abierta): la
+    // misma columna que filtra la campanita.
+    const abierta = await client.query<{ id: string; grifo_interno_id: number | null }>(
+      `SELECT id, grifo_interno_id FROM combustible_alertas
         WHERE tenant_id = $1 AND combustible_id = $2 AND tipo = $3
           AND resuelta_en IS NULL AND congelada_en IS NULL
         ORDER BY creado_en DESC, id DESC
@@ -6360,10 +6447,14 @@ export class CombustibleRepository {
           WHERE id = $3 AND tenant_id = $4`,
         [JSON.stringify(fila.detalle), fila.lecturaId ?? null, abierta.rows[0].id, tenantId]
       );
-      return { nueva: false, id: abierta.rows[0].id };
+      return {
+        nueva: false,
+        id: abierta.rows[0].id,
+        grifoInternoId: abierta.rows[0].grifo_interno_id,
+      };
     }
     const [creada] = await this.crearAlertas(client, tenantId, [fila]);
-    return { nueva: true, id: String(creada.id) };
+    return { nueva: true, id: String(creada.id), grifoInternoId: creada.grifo_interno_id };
   }
 
   /** Los últimos `n` tramos del tanque que TERMINAN en esta lectura o antes

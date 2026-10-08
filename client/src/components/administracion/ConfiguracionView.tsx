@@ -156,6 +156,7 @@ export default function ConfiguracionView() {
   const [pestanas, setPestanas] = useState<PermisoDePestana[]>([]);
   const [alertas, setAlertas] = useState<AlertaDeModulo[]>([]);
   const [sinDestinatarios, setSinDestinatarios] = useState<string[]>([]);
+  const [grifosSinNadie, setGrifosSinNadie] = useState<string[]>([]);
   const [esAdmin, setEsAdmin] = useState(false);
   const [motivo, setMotivo] = useState("");
   const [cargando, setCargando] = useState(true);
@@ -192,6 +193,7 @@ export default function ConfiguracionView() {
       setPestanas(permisos.pestanas ?? []);
       setAlertas(permisos.alertasCorreo ?? []);
       setSinDestinatarios(permisos.modulosSinDestinatarios ?? []);
+      setGrifosSinNadie(permisos.grifosSinDestinatarios ?? []);
       setEsAdmin(permisos.rol === "admin");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudieron cargar los permisos.");
@@ -289,6 +291,7 @@ export default function ConfiguracionView() {
       const frescos = await permisosDeUsuarioApi(elegido);
       setAlertas(frescos.alertasCorreo ?? []);
       setSinDestinatarios(frescos.modulosSinDestinatarios ?? []);
+      setGrifosSinNadie(frescos.grifosSinDestinatarios ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo guardar.");
     } finally {
@@ -502,6 +505,13 @@ export default function ConfiguracionView() {
                     <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">
                       Nadie recibe las alertas de {sinDestinatarios.map(nombreDeModulo).join(", ")}.
                       Si algo se descuadra, no se va a enterar nadie por correo.
+                    </p>
+                  )}
+                  {grifosSinNadie.length > 0 && (
+                    <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900">
+                      Las alertas de combustible van a quien tiene ese punto en su alcance, y estos
+                      no le quedaron a cargo de nadie: {grifosSinNadie.join(", ")}. Lo que pase ahí
+                      no se lo va a avisar nadie por correo.
                     </p>
                   )}
                 </section>

@@ -2036,13 +2036,19 @@ export class CombustibleService {
     client: PoolClient,
     tenantId: string,
     filtros: { soloNoLeidas?: boolean; producto?: string },
-    paginacion: Paginacion
+    paginacion: Paginacion,
+    alcance: AlcanceCombustible
   ) {
-    return this.repository.findAlertas(client, tenantId, filtros, paginacion);
+    return this.repository.findAlertas(client, tenantId, filtros, paginacion, alcance);
   }
 
-  marcarAlertasLeidas(client: PoolClient, tenantId: string, ids?: number[]) {
-    return this.repository.marcarAlertasLeidas(client, tenantId, ids);
+  marcarAlertasLeidas(
+    client: PoolClient,
+    tenantId: string,
+    alcance: AlcanceCombustible,
+    ids?: number[]
+  ) {
+    return this.repository.marcarAlertasLeidas(client, tenantId, alcance, ids);
   }
 
   /** Cerrar una alerta a mano. Devuelve además si fue AUTORREVISIÓN: el que
@@ -2057,7 +2063,8 @@ export class CombustibleService {
     tenantId: string,
     alertaId: number,
     usuarioId: string,
-    motivo: string
+    motivo: string,
+    alcance: AlcanceCombustible
   ) {
     // ¿El que cierra participó del hecho (lo cargó, lo anuló, midió la
     // varilla o validó la recepción)? Se resuelve ACÁ y no en el controlador
@@ -2076,13 +2083,39 @@ export class CombustibleService {
       alertaId,
       usuarioId,
       motivo,
-      autorevision
+      autorevision,
+      alcance
     );
     return fila ? { ...fila, autorevision } : null;
   }
 
-  findDestinatariosAlertasCombustible(client: PoolClient, tenantId: string) {
-    return this.repository.findDestinatariosAlertasCombustible(client, tenantId);
+  /** `grifoInternoId` es OBLIGATORIO de pensar, no opcional: `null` significa
+   *  "esta alerta es de la empresa entera" y hay que haberlo decidido, no
+   *  haberlo omitido. Ver el comentario del repositorio. */
+  findDestinatariosAlertasCombustible(
+    client: PoolClient,
+    tenantId: string,
+    grifoInternoId: number | null
+  ) {
+    return this.repository.findDestinatariosAlertasCombustible(client, tenantId, grifoInternoId);
+  }
+
+  /** Los destinatarios de un aviso que es DE UN TANQUE: los que ven su grifo.
+   *  Es el atajo de los avisos que cuelgan del tanque y no de una alerta ya
+   *  creada (de esas, el grifo sale de la propia fila -- ver grifoDeAlertas). */
+  async destinatariosDeAlertasDeTanque(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number
+  ) {
+    const grifo = await this.repository.findGrifoDeTanque(client, tenantId, combustibleId);
+    return this.findDestinatariosAlertasCombustible(client, tenantId, grifo);
+  }
+
+  /** Igual, para un aviso que es de un SURTIDOR. */
+  async destinatariosDeAlertasDeSurtidor(client: PoolClient, tenantId: string, surtidorId: number) {
+    const grifo = await this.repository.findGrifoDeSurtidor(client, tenantId, surtidorId);
+    return this.findDestinatariosAlertasCombustible(client, tenantId, grifo);
   }
 
   // ── Conciliación (migraciones 0071/0072) ──────────────────────────────
@@ -2358,8 +2391,13 @@ export class CombustibleService {
     return cambios;
   }
 
-  listarAnomalias(client: PoolClient, tenantId: string, paginacion: Paginacion) {
-    return this.repository.findAnomalias(client, tenantId, paginacion);
+  listarAnomalias(
+    client: PoolClient,
+    tenantId: string,
+    paginacion: Paginacion,
+    alcance: AlcanceCombustible
+  ) {
+    return this.repository.findAnomalias(client, tenantId, paginacion, alcance);
   }
 
   /** Congela todas las alertas de ESTE tenant que ya pasaron su ventana de
@@ -3304,10 +3342,29 @@ export class CombustibleService {
    *  - `varilla_sin_control`: el tanque lleva N días medido solo por los que
    *    despachan. */
   async evaluarControlesPeriodicos(client: PoolClient, tenantId: string) {
+    // `grifoInternoId` viaja con cada hallazgo para que el worker pueda
+    // ENRUTAR su correo: estos dos controles recorren los tanques de TODA la
+    // empresa, así que un solo lote puede tocar varios grifos y el aviso de
+    // cada tanque tiene que ir a quien vigila el suyo. Sale de la fila de la
+    // alerta --la columna que puso el trigger-- y no del caso de uso.
     const creadas: {
       tipo: "recepcion_sin_validar" | "varilla_sin_control";
       detalle: Record<string, unknown>;
+      grifoInternoId: number | null;
     }[] = [];
+
+    /** El grifo que quedó en cada alerta, indexado por tanque. Por tanque y
+     *  no por posición: el orden de las filas que devuelve un INSERT múltiple
+     *  no es algo que convenga dar por sentado. */
+    const conGrifo = <T extends { combustibleId: number }>(
+      filas: T[],
+      insertadas: { combustible_id: number | null; grifo_interno_id: number | null }[]
+    ) => {
+      const porTanque = new Map(
+        insertadas.map((a) => [Number(a.combustible_id), a.grifo_interno_id])
+      );
+      return filas.map((f) => ({ ...f, grifoInternoId: porTanque.get(f.combustibleId) ?? null }));
+    };
 
     const politica = await this.repository.getPoliticaValidacionRecepcion(client, tenantId);
     // Se evalúa aunque la política esté apagada HOY: una recepción que se
@@ -3331,8 +3388,8 @@ export class CombustibleService {
           plazoHoras: politica.horas,
         },
       }));
-      await this.repository.crearAlertas(client, tenantId, filas);
-      creadas.push(...filas);
+      const insertadas = await this.repository.crearAlertas(client, tenantId, filas);
+      creadas.push(...conGrifo(filas, insertadas));
     }
 
     const dias = await this.repository.getDiasSinVarillaDeControl(client, tenantId);
@@ -3352,8 +3409,8 @@ export class CombustibleService {
             plazoDias: dias,
           },
         }));
-        await this.repository.crearAlertas(client, tenantId, filas);
-        creadas.push(...filas);
+        const insertadas = await this.repository.crearAlertas(client, tenantId, filas);
+        creadas.push(...conGrifo(filas, insertadas));
       }
     }
 
