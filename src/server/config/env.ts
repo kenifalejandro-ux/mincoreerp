@@ -20,7 +20,11 @@ function readNumber(value: string | undefined, fallback: number) {
 }
 
 const contactDestination =
-  process.env.CONTACT_EMAIL_TO || process.env.FORM_EMAIL_TO || process.env.EMAIL_USER || "";
+  process.env.CONTACT_EMAIL_TO ||
+  process.env.FORM_EMAIL_TO ||
+  process.env.EMAIL_USER ||
+  process.env.EMAIL_FROM ||
+  "";
 
 const allowedOrigins = new Set(
   (process.env.ALLOWED_ORIGINS || "")
@@ -73,6 +77,11 @@ export const env = {
   emailPort: readNumber(process.env.EMAIL_PORT, 465),
   emailUser: process.env.EMAIL_USER || "",
   emailPass: process.env.EMAIL_PASS || "",
+  // Envío por API HTTPS de Brevo (ver brevoTransport.ts). Con la clave puesta
+  // reemplaza al SMTP; `emailFrom` debe ser una dirección de un dominio
+  // verificado en Brevo. Sin EMAIL_FROM cae a EMAIL_USER, que es lo de siempre.
+  emailApiKey: process.env.BREVO_API_KEY || "",
+  emailFrom: process.env.EMAIL_FROM || process.env.EMAIL_USER || "",
   emailMaxConnections: readNumber(process.env.EMAIL_MAX_CONNECTIONS, 5),
   emailMaxMessages: readNumber(process.env.EMAIL_MAX_MESSAGES, 100),
   contactDestination,
@@ -336,11 +345,13 @@ const pgVarsRequeridas = process.env.DATABASE_URL
   ? []
   : ["PG_HOST", "PG_USER", "PG_PASSWORD", "PG_DATABASE"];
 
+// Con la API de Brevo configurada el SMTP deja de ser obligatorio.
+const smtpRequerido = process.env.BREVO_API_KEY
+  ? ["EMAIL_FROM"]
+  : ["EMAIL_HOST", "EMAIL_PORT", "EMAIL_USER", "EMAIL_PASS"];
+
 export const requiredEnvNames = [
-  "EMAIL_HOST",
-  "EMAIL_PORT",
-  "EMAIL_USER",
-  "EMAIL_PASS",
+  ...smtpRequerido,
   "RECAPTCHA_SITE_KEY",
   "RECAPTCHA_SECRET_KEY",
   ...pgVarsRequeridas,
@@ -350,5 +361,7 @@ export const requiredEnvNames = [
 export const missingRequiredEnv = requiredEnvNames.filter((name) => !process.env[name]);
 
 export const emailConfigured = Boolean(
-  env.emailHost && env.emailPort && env.emailUser && env.emailPass && env.contactDestination
+  env.contactDestination &&
+  ((env.emailApiKey && env.emailFrom) ||
+    (env.emailHost && env.emailPort && env.emailUser && env.emailPass))
 );
