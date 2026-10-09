@@ -331,6 +331,24 @@ describe("combustible: los correos nuevos van a quien tiene ese grifo", () => {
       expect((await cargar(10)).status).toBe(201);
       expect(correosCon("saldo negativo")).toHaveLength(0);
     });
+
+    it("cargas SIMULTÁNEAS que la sobregiran avisan exactamente una vez", async () => {
+      // Auditoría: decidir "esta carga cruzó" leyendo el saldo DESPUÉS de
+      // guardar falla con cargas concurrentes (cola offline, dos equipos):
+      // cada una ve un saldo que ya incluye a las otras. Con tres de 80 sobre
+      // 100, las tres ven -140 y ninguna se cree la que cruzó.
+      const t = await admin
+        .post("/api/erp/combustible/tanquetas")
+        .send({ grifo_interno_id: grifoA });
+      expect(t.status).toBe(201);
+      tanquetaId = Number(t.body.id);
+      expect((await llenar(100)).status).toBe(201);
+      correos.length = 0;
+
+      const r = await Promise.all([cargar(80), cargar(80), cargar(80)]);
+      expect(r.map((x) => x.status)).toEqual([201, 201, 201]);
+      expect(correosCon("saldo negativo")).toHaveLength(1);
+    });
   });
 
   // ── diferencia de recepción ───────────────────────────────────────────

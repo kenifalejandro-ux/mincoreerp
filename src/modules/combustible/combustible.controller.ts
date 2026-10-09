@@ -4735,6 +4735,9 @@ export class CombustibleController {
   ) {
     try {
       const creada = await withTenant(tenantId, async (client) => {
+        // Primero el bloqueo: con cargas simultáneas la segunda espera a que la
+        // primera confirme su alerta, y así ve que el aviso ya salió.
+        await service.bloquearTanqueta(client, tenantId, data.tanqueta_origen_id!);
         const t = await service.saldoDeTanqueta(client, tenantId, data.tanqueta_origen_id!);
         if (!t || t.saldo >= -0.01) return null;
         const creadas = await service.crearAlertas(client, tenantId, [
@@ -4749,11 +4752,15 @@ export class CombustibleController {
             },
           },
         ]);
-        // Un correo por sobregiro, no por vale: avisa solo si ESTA carga fue
-        // la que cruzó a negativo. Las siguientes, con la tanqueta ya en rojo,
-        // quedan en el panel. Vuelve a avisar cuando el saldo regresó a >= 0
-        // y se cruza otra vez.
-        const cruzo = t.saldo + Number(data.cantidad) >= -0.01;
+        // Un correo por sobregiro, no por vale: solo la primera alerta del
+        // episodio avisa; las siguientes, con la tanqueta ya en rojo, quedan
+        // en el panel. Una entrada a la tanqueta abre un episodio nuevo.
+        const cruzo = !(await service.sobregiroYaAvisado(
+          client,
+          tenantId,
+          data.tanqueta_origen_id!,
+          Number(creadas[0].id)
+        ));
         const admins = cruzo
           ? await service.findDestinatariosAlertasCombustible(
               client,

@@ -275,19 +275,24 @@ async function avisarDiferenciasDeRecepcion(
       porGrifo.set(g, [...(porGrifo.get(g) ?? []), a]);
     }
     for (const [grifo, delGrifo] of porGrifo) {
-      const admins = await withTenant(tenantId, (client) =>
-        service.findDestinatariosAlertasCombustible(client, tenantId, grifo)
-      );
-      await enviarCorreoDiferenciaRecepcion(
-        admins,
-        delGrifo.map((a) => ({
-          tanqueNombre: String(a.detalle.tanqueNombre),
-          unidad: String(a.detalle.unidad),
-          diferenciaLitros: Number(a.detalle.diferenciaLitros),
-          diferenciaPct: Number(a.detalle.diferenciaPct),
-          toleradoLitros: Number(a.detalle.toleradoLitros),
-        }))
-      );
+      // Por grifo: que falle uno no puede dejar sin aviso a los demás.
+      try {
+        const admins = await withTenant(tenantId, (client) =>
+          service.findDestinatariosAlertasCombustible(client, tenantId, grifo)
+        );
+        await enviarCorreoDiferenciaRecepcion(
+          admins,
+          delGrifo.map((a) => ({
+            tanqueNombre: String(a.detalle.tanqueNombre),
+            unidad: String(a.detalle.unidad),
+            diferenciaLitros: Number(a.detalle.diferenciaLitros),
+            diferenciaPct: Number(a.detalle.diferenciaPct),
+            toleradoLitros: Number(a.detalle.toleradoLitros),
+          }))
+        );
+      } catch (err) {
+        logger.warn({ err, tenantId, grifo }, "No se pudo avisar la diferencia de un grifo");
+      }
     }
     await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
       tipo: "diferencia_recepcion",

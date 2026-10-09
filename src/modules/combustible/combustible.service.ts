@@ -1655,6 +1655,14 @@ export class CombustibleService {
 
   /** El saldo de una tanqueta después de una carga (0114), para la alerta de
    *  sobregiro. */
+  bloquearTanqueta(client: PoolClient, tenantId: string, id: number) {
+    return tanquetas.bloquearTanqueta(client, tenantId, id);
+  }
+
+  sobregiroYaAvisado(client: PoolClient, tenantId: string, tanquetaId: number, alertaId: number) {
+    return tanquetas.sobregiroYaAvisado(client, tenantId, tanquetaId, alertaId);
+  }
+
   async saldoDeTanqueta(client: PoolClient, tenantId: string, id: number) {
     const t = await tanquetas.getTanqueta(client, tenantId, id);
     return t ? { codigo: t.codigo as string, saldo: Number(t.saldo) } : null;
