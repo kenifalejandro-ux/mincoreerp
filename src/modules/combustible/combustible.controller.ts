@@ -102,7 +102,7 @@ import {
 } from "./combustible.service";
 import * as surtidores from "./surtidores.service";
 import * as tanquetas from "./tanquetas.service";
-import { alcanceDe, ambitoDe, grifosDelFiltro } from "./alcance";
+import { alcanceDe, ambitoDe, grifoDeAlertas, grifosDelFiltro } from "./alcance";
 
 const service = new CombustibleService();
 
@@ -888,8 +888,14 @@ export class CombustibleController {
 
       if (sinVigilancia) {
         try {
+          // Al grifo del tanque que nace ciego: el aviso es para quien vigila
+          // ese punto, no para los jefes de las otras sedes.
           const admins = await withTenant(tenantId, (client) =>
-            service.findDestinatariosAlertasCombustible(client, tenantId)
+            service.findDestinatariosAlertasCombustible(
+              client,
+              tenantId,
+              data.grifo_interno_id ?? null
+            )
           );
           await enviarCorreoVigilanciaReducida(admins, {
             quien: req.usuario!.nombre ?? req.usuario!.email ?? "Un administrador",
@@ -1023,9 +1029,14 @@ export class CombustibleController {
         // Que falle el SMTP no puede deshacer eso ni devolverle un error al
         // admin por algo que sí se aplicó.
         try {
-          const admins = await withTenant(tenantId, (client) =>
-            service.findDestinatariosAlertasCombustible(client, tenantId)
-          );
+          const admins = await withTenant(tenantId, async (client) => {
+            const tanque = await service.getById(client, tenantId, id);
+            return service.findDestinatariosAlertasCombustible(
+              client,
+              tenantId,
+              tanque?.grifo_interno_id ?? null
+            );
+          });
           await enviarCorreoVigilanciaReducida(admins, {
             quien: req.usuario!.nombre ?? req.usuario!.email ?? "Un administrador",
             objeto: `${actualizado.codigo} — ${actualizado.tanque_nombre}`,
@@ -1088,9 +1099,14 @@ export class CombustibleController {
         contexto: contextoAuditoriaModulo(req),
       });
       try {
-        const admins = await withTenant(tenantId, (client) =>
-          service.findDestinatariosAlertasCombustible(client, tenantId)
-        );
+        const admins = await withTenant(tenantId, async (client) => {
+          const tanque = await service.getById(client, tenantId, id);
+          return service.findDestinatariosAlertasCombustible(
+            client,
+            tenantId,
+            tanque?.grifo_interno_id ?? null
+          );
+        });
         await enviarCorreoVigilanciaReducida(admins, {
           quien: req.usuario!.nombre ?? req.usuario!.email ?? "Un administrador",
           objeto: `${desactivado.codigo} — ${desactivado.tanque_nombre}`,
@@ -1161,8 +1177,12 @@ export class CombustibleController {
       // entrar por Excel no puede ser la forma de esquivar el aviso.
       if (sinVigilancia > 0) {
         try {
+          // A toda la empresa, y es deliberado: una planilla puede traer
+          // tanques de varios grifos y el correo es UNO que los resume. Para
+          // enrutarlo habría que partirlo en un correo por grifo, que es
+          // cambiarle el contenido -- queda para cuando se decida eso.
           const admins = await withTenant(tenantId, (client) =>
-            service.findDestinatariosAlertasCombustible(client, tenantId)
+            service.findDestinatariosAlertasCombustible(client, tenantId, null)
           );
           await enviarCorreoVigilanciaReducida(admins, {
             quien: req.usuario!.nombre ?? req.usuario!.email ?? "Un administrador",
@@ -2291,12 +2311,16 @@ export class CombustibleController {
         const detalleDePapel = papel.serieTalonario
           ? {}
           : { comprobante: `${papel.comprobanteTipo} ${papel.comprobanteNumero}` };
-        await service.crearAlertas(
+        const creadas = await service.crearAlertas(
           client,
           tenantId,
           nuevas.map((n) => ({ ...n, detalle: { ...n.detalle, ...detalleDePapel } }))
         );
-        const admins = await service.findDestinatariosAlertasCombustible(client, tenantId);
+        const admins = await service.findDestinatariosAlertasCombustible(
+          client,
+          tenantId,
+          grifoDeAlertas(creadas)
+        );
         return {
           huecos,
           exceso,
@@ -2677,8 +2701,12 @@ export class CombustibleController {
           };
         }
 
-        await service.crearAlertas(client, tenantId, nuevas);
-        const admins = await service.findDestinatariosAlertasCombustible(client, tenantId);
+        const creadas = await service.crearAlertas(client, tenantId, nuevas);
+        const admins = await service.findDestinatariosAlertasCombustible(
+          client,
+          tenantId,
+          grifoDeAlertas(creadas)
+        );
         return {
           huecos,
           fueraDeOrden,
@@ -2916,7 +2944,11 @@ export class CombustibleController {
             detalle: { ...t } as Record<string, unknown>,
           }))
         );
-        const admins = await service.findDestinatariosAlertasCombustible(client, tenantId);
+        const admins = await service.destinatariosDeAlertasDeTanque(
+          client,
+          tenantId,
+          l.combustibleId
+        );
         return { hallazgos, admins };
       });
       if (!resultado) return;
@@ -2958,14 +2990,22 @@ export class CombustibleController {
           quienMidio,
           puntos: fallidas,
         };
-        const { nueva } = await service.registrarAlertaDeEstadoAcumulado(client, tenantId, {
-          tipo: "precinto_alterado",
-          combustibleId,
-          lecturaId,
-          detalle,
-        });
+        const { nueva, grifoInternoId } = await service.registrarAlertaDeEstadoAcumulado(
+          client,
+          tenantId,
+          {
+            tipo: "precinto_alterado",
+            combustibleId,
+            lecturaId,
+            detalle,
+          }
+        );
         if (!nueva) return null;
-        const admins = await service.findDestinatariosAlertasCombustible(client, tenantId);
+        const admins = await service.findDestinatariosAlertasCombustible(
+          client,
+          tenantId,
+          grifoInternoId
+        );
         return { detalle, admins };
       });
       if (!resultado) return;
@@ -3005,14 +3045,18 @@ export class CombustibleController {
           lecturaId
         );
         if (!exacta) return { exacta, admins: [] as { email: string; nombre: string }[] };
-        const { nueva } = await service.registrarAlertaDeEstadoAcumulado(client, tenantId, {
-          tipo: "varilla_exacta",
-          combustibleId,
-          lecturaId,
-          detalle: { ...exacta },
-        });
+        const { nueva, grifoInternoId } = await service.registrarAlertaDeEstadoAcumulado(
+          client,
+          tenantId,
+          {
+            tipo: "varilla_exacta",
+            combustibleId,
+            lecturaId,
+            detalle: { ...exacta },
+          }
+        );
         const admins = nueva
-          ? await service.findDestinatariosAlertasCombustible(client, tenantId)
+          ? await service.findDestinatariosAlertasCombustible(client, tenantId, grifoInternoId)
           : [];
         return { exacta: nueva ? exacta : null, admins };
       });
@@ -3051,7 +3095,11 @@ export class CombustibleController {
             detalle: { ...bajo },
           },
         ]);
-        const admins = await service.findDestinatariosAlertasCombustible(client, tenantId);
+        const admins = await service.destinatariosDeAlertasDeTanque(
+          client,
+          tenantId,
+          combustibleId
+        );
         return { bajo, admins };
       });
 
@@ -3102,7 +3150,11 @@ export class CombustibleController {
             detalle: { ...descuadre },
           },
         ]);
-        const admins = await service.findDestinatariosAlertasCombustible(client, tenantId);
+        const admins = await service.destinatariosDeAlertasDeTanque(
+          client,
+          tenantId,
+          combustibleId
+        );
         return { descuadre, admins };
       });
 
@@ -3153,14 +3205,22 @@ export class CombustibleController {
         // misma alerta con los números al día y la vuelve a marcar como no
         // leída, pero no manda otro correo. Cinco varillas eran cinco alertas
         // y cinco correos iguales -- el ruido que hace que nadie las mire.
-        const { nueva } = await service.registrarAlertaDeEstadoAcumulado(client, tenantId, {
-          tipo: "descuadre_ciclo",
-          combustibleId,
-          lecturaId,
-          detalle: { ...ciclo },
-        });
+        const { nueva, grifoInternoId } = await service.registrarAlertaDeEstadoAcumulado(
+          client,
+          tenantId,
+          {
+            tipo: "descuadre_ciclo",
+            combustibleId,
+            lecturaId,
+            detalle: { ...ciclo },
+          }
+        );
         if (!nueva) return { ciclo: null, admins: [] as { email: string; nombre: string }[] };
-        const admins = await service.findDestinatariosAlertasCombustible(client, tenantId);
+        const admins = await service.findDestinatariosAlertasCombustible(
+          client,
+          tenantId,
+          grifoInternoId
+        );
         return { ciclo, admins };
       });
 
@@ -3200,14 +3260,22 @@ export class CombustibleController {
         if (!ventana) return { ventana, admins: [] as { email: string; nombre: string }[] };
 
         // Misma deduplicación que el ciclo: una alerta abierta por tanque.
-        const { nueva } = await service.registrarAlertaDeEstadoAcumulado(client, tenantId, {
-          tipo: "descuadre_ventana",
-          combustibleId,
-          lecturaId,
-          detalle: { ...ventana },
-        });
+        const { nueva, grifoInternoId } = await service.registrarAlertaDeEstadoAcumulado(
+          client,
+          tenantId,
+          {
+            tipo: "descuadre_ventana",
+            combustibleId,
+            lecturaId,
+            detalle: { ...ventana },
+          }
+        );
         if (!nueva) return { ventana: null, admins: [] as { email: string; nombre: string }[] };
-        const admins = await service.findDestinatariosAlertasCombustible(client, tenantId);
+        const admins = await service.findDestinatariosAlertasCombustible(
+          client,
+          tenantId,
+          grifoInternoId
+        );
         return { ventana, admins };
       });
 
@@ -3262,7 +3330,11 @@ export class CombustibleController {
             },
           },
         ]);
-        const admins = await service.findDestinatariosAlertasCombustible(client, tenantId);
+        const admins = await service.destinatariosDeAlertasDeTanque(
+          client,
+          tenantId,
+          combustibleId
+        );
         return { retro, tanque, admins };
       });
 
@@ -3296,7 +3368,7 @@ export class CombustibleController {
   ) {
     try {
       const admins = await withTenant(tenantId, async (client) => {
-        await service.crearAlertas(client, tenantId, [
+        const creadas = await service.crearAlertas(client, tenantId, [
           {
             tipo: "vale_anulado",
             ...papel,
@@ -3304,7 +3376,11 @@ export class CombustibleController {
             detalle: { motivo },
           },
         ]);
-        return service.findDestinatariosAlertasCombustible(client, tenantId);
+        return service.findDestinatariosAlertasCombustible(
+          client,
+          tenantId,
+          grifoDeAlertas(creadas)
+        );
       });
 
       await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
@@ -3674,7 +3750,13 @@ export class CombustibleController {
           : undefined;
 
       const filas = await withTenant(tenantId, (client) =>
-        service.listarAlertas(client, tenantId, { soloNoLeidas, producto }, paginacion)
+        service.listarAlertas(
+          client,
+          tenantId,
+          { soloNoLeidas, producto },
+          paginacion,
+          alcanceDe(req)
+        )
       );
       res.json(armarRespuestaPaginada(filas, paginacion));
     } catch {
@@ -3682,14 +3764,20 @@ export class CombustibleController {
     }
   }
 
-  /** PATCH /alertas/leidas -- sin `ids` marca TODAS las no leídas del
-   *  tenant (el botón "marcar todas como leídas" de la campanita). Estado
-   *  compartido entre admins, no por usuario (ver migrations/0068). */
+  /** PATCH /alertas/leidas -- sin `ids` marca TODAS las no leídas QUE ESTÁN
+   *  EN EL ALCANCE de quien aprieta (el botón "marcar todas como leídas" de
+   *  la campanita). El estado de leída es compartido entre quienes las ven,
+   *  no por usuario (ver migrations/0068), y justamente por eso el alcance
+   *  importa: sin él, el usuario de una sede marcaba como leída la alerta de
+   *  otra, que él no podía ni abrir, y la hacía desaparecer del tablero de
+   *  quien sí tenía que atenderla. */
   async marcarAlertasLeidas(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
       const { ids } = req.validatedBody as MarcarAlertasLeidasCombustibleInput;
-      await withTenant(tenantId, (client) => service.marcarAlertasLeidas(client, tenantId, ids));
+      await withTenant(tenantId, (client) =>
+        service.marcarAlertasLeidas(client, tenantId, alcanceDe(req), ids)
+      );
       await publicarEventoTenant(tenantId, "combustible.alertas_actualizadas", {
         ids: ids ?? null,
       });
@@ -3714,7 +3802,14 @@ export class CombustibleController {
       const { motivo } = req.validatedBody as ResolverAlertaCombustibleInput;
 
       const resuelta = await withTenant(tenantId, (client) =>
-        service.resolverAlertaManual(client, tenantId, alertaId, req.usuario!.id, motivo)
+        service.resolverAlertaManual(
+          client,
+          tenantId,
+          alertaId,
+          req.usuario!.id,
+          motivo,
+          alcanceDe(req)
+        )
       );
       if (!resuelta) {
         res
@@ -3918,7 +4013,7 @@ export class CombustibleController {
         // criterio que el aflojamiento del tanque).
         try {
           const admins = await withTenant(tenantId, (client) =>
-            service.findDestinatariosAlertasCombustible(client, tenantId)
+            service.findDestinatariosAlertasCombustible(client, tenantId, null)
           );
           await enviarCorreoVigilanciaReducida(admins, {
             quien: req.usuario!.nombre ?? req.usuario!.email ?? "Un administrador",
@@ -4793,7 +4888,7 @@ export class CombustibleController {
     });
     try {
       const admins = await withTenant(tenantId, (client) =>
-        service.findDestinatariosAlertasCombustible(client, tenantId)
+        service.destinatariosDeAlertasDeSurtidor(client, tenantId, datos.surtidorId)
       );
       await enviarCorreoVigilanciaReducida(admins, {
         quien: req.usuario!.nombre ?? req.usuario!.email ?? "Un administrador",
@@ -5175,7 +5270,11 @@ export class CombustibleController {
             detalle: { ...detalle, puntoId, precintoId: Number(cambio.precinto.id) },
           },
         ]);
-        const admins = await service.findDestinatariosAlertasCombustible(client, tenantId);
+        const admins = await service.destinatariosDeAlertasDeTanque(
+          client,
+          tenantId,
+          cambio.punto.combustible_id
+        );
         return { cambio, detalle, admins };
       });
       if (!resultado) {
@@ -5249,7 +5348,11 @@ export class CombustibleController {
       });
       try {
         const { admins, tanque } = await withTenant(tenantId, async (client) => ({
-          admins: await service.findDestinatariosAlertasCombustible(client, tenantId),
+          admins: await service.destinatariosDeAlertasDeTanque(
+            client,
+            tenantId,
+            baja.combustible_id
+          ),
           tanque: await service.getById(client, tenantId, baja.combustible_id),
         }));
         await enviarCorreoVigilanciaReducida(admins, {
@@ -5300,7 +5403,7 @@ export class CombustibleController {
       const tenantId = getTenantId(req);
       const paginacion = parsePaginacion(req.query);
       const filas = await withTenant(tenantId, (client) =>
-        service.listarAnomalias(client, tenantId, paginacion)
+        service.listarAnomalias(client, tenantId, paginacion, alcanceDe(req))
       );
       res.json(armarRespuestaPaginada(filas, paginacion));
     } catch {
@@ -5714,7 +5817,7 @@ export class CombustibleController {
         const recepcion = await service.getRecepcionPorId(client, tenantId, recepcionId);
         return {
           excedido,
-          admins: await service.findDestinatariosAlertasCombustible(client, tenantId),
+          admins: await service.findDestinatariosAlertasCombustible(client, tenantId, null),
           proveedor: (recepcion?.grifo_nombre as string | undefined) ?? null,
         };
       });
@@ -5755,7 +5858,7 @@ export class CombustibleController {
             detalle: { ...excedente.detalle, reparto: excedente.reparto },
           },
         ]);
-        return service.findDestinatariosAlertasCombustible(client, tenantId);
+        return service.destinatariosDeAlertasDeTanque(client, tenantId, combustibleId);
       });
       await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
         tipo: "sobrestock_recepcion",
@@ -5868,7 +5971,11 @@ export class CombustibleController {
           },
         ]);
         return {
-          admins: await service.findDestinatariosAlertasCombustible(client, tenantId),
+          admins: await service.destinatariosDeAlertasDeTanque(
+            client,
+            tenantId,
+            recepcion.combustible_id
+          ),
           tanque,
         };
       });
@@ -5914,7 +6021,11 @@ export class CombustibleController {
         // alerta reportaba dejó de existir.
         await service.resolverRecepcionSinValidarSiExiste(client, tenantId, recepcion.id);
         return {
-          admins: await service.findDestinatariosAlertasCombustible(client, tenantId),
+          admins: await service.destinatariosDeAlertasDeTanque(
+            client,
+            tenantId,
+            recepcion.combustible_id
+          ),
           tanque,
         };
       });
@@ -5963,7 +6074,7 @@ export class CombustibleController {
         ]);
         return {
           retro,
-          admins: await service.findDestinatariosAlertasCombustible(client, tenantId),
+          admins: await service.destinatariosDeAlertasDeTanque(client, tenantId, combustibleId),
           tanque,
         };
       });
@@ -6435,11 +6546,15 @@ export class CombustibleController {
               admins: [] as { email: string; nombre: string }[],
             };
           }
-          await service.crearAlertas(client, tenantId, nuevas);
+          const creadas = await service.crearAlertas(client, tenantId, nuevas);
           return {
             descuadre,
             recargado,
-            admins: await service.findDestinatariosAlertasCombustible(client, tenantId),
+            admins: await service.findDestinatariosAlertasCombustible(
+              client,
+              tenantId,
+              grifoDeAlertas(creadas)
+            ),
           };
         });
         if (descuadre) {

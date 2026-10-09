@@ -48,6 +48,7 @@ import {
   enviarCorreoVarillaSinControl,
 } from "../../modules/combustible/combustibleAlertas.mailer";
 import { publicarEventoTenant } from "./realtimeEvents.service";
+import type { DestinatarioDeAlerta } from "../shared/utils/destinatariosAlertas";
 
 const service = new CombustibleService();
 
@@ -259,13 +260,26 @@ async function avisarControlesPeriodicos(
   creadas: {
     tipo: "recepcion_sin_validar" | "varilla_sin_control";
     detalle: Record<string, unknown>;
+    grifoInternoId: number | null;
   }[]
 ): Promise<void> {
   try {
-    const admins = await withTenant(tenantId, (client) =>
-      service.findDestinatariosAlertasCombustible(client, tenantId)
-    );
+    // Los destinatarios se piden POR GRIFO y no una vez para todos: este paso
+    // recorre los tanques de toda la empresa, y el aviso de cada uno va a
+    // quien vigila su grifo. Se cachean por grifo para no repetir la consulta
+    // cuando varios hallazgos son del mismo punto.
+    const porGrifo = new Map<number | null, DestinatarioDeAlerta[]>();
+    const destinatarios = async (grifoInternoId: number | null) => {
+      const cacheado = porGrifo.get(grifoInternoId);
+      if (cacheado) return cacheado;
+      const lista = await withTenant(tenantId, (client) =>
+        service.findDestinatariosAlertasCombustible(client, tenantId, grifoInternoId)
+      );
+      porGrifo.set(grifoInternoId, lista);
+      return lista;
+    };
     for (const alerta of creadas) {
+      const admins = await destinatarios(alerta.grifoInternoId);
       const d = alerta.detalle;
       if (alerta.tipo === "recepcion_sin_validar") {
         await enviarCorreoRecepcionSinValidar(admins, {
@@ -293,6 +307,7 @@ async function avisarControlesPeriodicos(
 async function avisarSinVigilancia(
   tenantId: string,
   tanques: {
+    id: number;
     codigo: string;
     tanque_nombre: string;
     unidad: string;
@@ -302,10 +317,11 @@ async function avisarSinVigilancia(
   plazoDias: number
 ): Promise<void> {
   try {
-    const admins = await withTenant(tenantId, (client) =>
-      service.findDestinatariosAlertasCombustible(client, tenantId)
-    );
     for (const t of tanques) {
+      // Por tanque: los tanques de este lote pueden ser de grifos distintos.
+      const admins = await withTenant(tenantId, (client) =>
+        service.destinatariosDeAlertasDeTanque(client, tenantId, t.id)
+      );
       await enviarCorreoSinVigilancia(admins, {
         codigo: t.codigo,
         tanqueNombre: t.tanque_nombre,
@@ -337,14 +353,19 @@ async function avisarSinVigilancia(
  *  puede tumbar la corrida ni impedir que se congele lo vencido. */
 async function avisarSinMedir(
   tenantId: string,
-  tanques: { tanque_nombre: string; dias_sin_medir: string | null; ultima_lectura: Date | null }[],
+  tanques: {
+    id: number;
+    tanque_nombre: string;
+    dias_sin_medir: string | null;
+    ultima_lectura: Date | null;
+  }[],
   plazoDias: number
 ): Promise<void> {
   try {
-    const admins = await withTenant(tenantId, (client) =>
-      service.findDestinatariosAlertasCombustible(client, tenantId)
-    );
     for (const tanque of tanques) {
+      const admins = await withTenant(tenantId, (client) =>
+        service.destinatariosDeAlertasDeTanque(client, tenantId, tanque.id)
+      );
       await enviarCorreoAlertaSinMedir(admins, {
         tanqueNombre: tanque.tanque_nombre,
         diasSinMedir: tanque.dias_sin_medir === null ? null : Number(tanque.dias_sin_medir),

@@ -22,6 +22,10 @@ import type { NextFunction, Request, RequestParamHandler, Response } from "expre
 import type { PoolClient } from "pg";
 
 import { withTenant } from "../../server/config/database";
+import {
+  findDestinatariosAlertas,
+  type DestinatarioDeAlerta,
+} from "../../server/shared/utils/destinatariosAlertas";
 import { getTenantId } from "../../server/shared/utils/request";
 
 export type AlcanceCombustible =
@@ -120,7 +124,176 @@ export function filtroVale(
   };
 }
 
+/** Una ALERTA (o una anomalía, que es una alerta congelada y hereda su grifo):
+ *  la de su grifo, la de un vale cargado por un surtidor asignado, y las que no
+ *  tienen grifo. El trigger
+ *  `copiar_grifo_alerta` (0097) le estampa a cada alerta el grifo del hecho
+ *  que la disparó y deja en NULL la urea y los hechos de talonario, que son
+ *  de la empresa entera. Un NULL se ve SIEMPRE: filtrarlo esconderia justo
+ *  las alertas que no son de nadie en particular. */
+export function filtroAlertaVisible(a: AlcanceCombustible, col: string, desde: number): Filtro {
+  if (a.todo) return { sql: "TRUE", valores: [] };
+  // El surtidor suelto: ve el vale por su surtidor (filtroVale), así que
+  // también ve la alerta de ese vale, aunque no tenga el grifo entero.
+  return {
+    sql: `(${col}.grifo_interno_id IS NULL
+           OR ${col}.grifo_interno_id = ANY($${desde}::int[])
+           OR EXISTS (SELECT 1 FROM combustible_despachos dv
+                       WHERE dv.id = ${col}.despacho_id AND dv.tenant_id = ${col}.tenant_id
+                         AND dv.surtidor_id = ANY($${desde + 1}::int[])))`,
+    valores: [a.grifos, a.surtidores],
+  };
+}
+
+/** El grifo de un lote de alertas RECIÉN CREADAS, para enrutar su aviso.
+ *
+ *  Se lee de las filas que devuelve crearAlertas(), ya con el grifo que les
+ *  puso el trigger `copiar_grifo_alerta` -- la MISMA columna que ve la
+ *  campanita. Derivarlo de la alerta y no del caso de uso es lo que impide
+ *  que el correo y el panel discrepen: si el trigger cambia, cambian los dos.
+ *
+ *  `null` --o sea "toda la empresa"-- en los dos casos en que no hay un grifo
+ *  del que hablar:
+ *  - ninguna alerta del lote tiene grifo (urea, hechos de talonario);
+ *  - el lote abarca MÁS DE UN grifo. No debería pasar (un lote sale de un
+ *    solo hecho), pero si pasa se avisa a todos: dejar a alguien sin su aviso
+ *    es peor que mandarle uno de más, y acá el error no se vería nunca. */
+export function grifoDeAlertas(alertas: { grifo_interno_id: number | null }[]): number | null {
+  // Un lote MEZCLADO (alguna alerta sin grifo) también es de toda la empresa:
+  // comparte una sola lista de destinatarios, y enrutarlo al único grifo
+  // presente dejaría sin aviso a los demás por la alerta que sí era de todos.
+  if (alertas.some((a) => a.grifo_interno_id === null)) return null;
+  const grifos = new Set(alertas.map((a) => a.grifo_interno_id));
+  return grifos.size === 1 ? [...grifos][0] : null;
+}
+
 // ── Chequeos puntuales ───────────────────────────────────────────────────
+
+/** resolverAlcance() AL REVÉS: en vez de "qué grifos ve este usuario",
+ *  "cuáles de estos usuarios ven este grifo".
+ *
+ *  Es la MISMA regla --el grifo asignado, o la sede que lo contiene-- y vive
+ *  acá, al lado de resolverAlcance(), justamente para que no se puedan
+ *  separar: el día que cambie cómo se asigna el alcance, el enrutamiento de
+ *  los avisos cambia con ella y no queda una segunda definición en otro
+ *  archivo diciendo otra cosa.
+ *
+ *  Quien tiene asignado SOLO un surtidor queda afuera: su alcance es más
+ *  chico que el grifo y el aviso le hablaría de tanques que no ve. Hoy no
+ *  cambia nada en la práctica -- el personal de surtidor entra con DNI y sin
+ *  correo, y findDestinatariosAlertas ya excluye a quien no tiene correo.
+ *
+ *  `usuarioIds` vacío devuelve un Set vacío sin tocar la base. */
+export async function usuariosQueVenElGrifo(
+  client: PoolClient,
+  tenantId: string,
+  usuarioIds: string[],
+  grifoInternoId: number
+): Promise<Set<string>> {
+  if (usuarioIds.length === 0) return new Set();
+  const r = await client.query<{ id: string }>(
+    `SELECT u.id
+       FROM usuarios u
+      WHERE u.tenant_id = $1
+        AND u.id = ANY($2::uuid[])
+        AND (
+          u.rol = 'admin'
+          OR u.alcance_combustible <> 'asignado'
+          OR EXISTS (
+            SELECT 1
+              FROM usuario_accesos_combustible ac
+             WHERE ac.usuario_id = u.id
+               AND ac.tenant_id = u.tenant_id
+               AND (ac.grifo_interno_id = $3
+                    OR ac.sede_id = (SELECT g.sede_id FROM grifos_internos g
+                                      WHERE g.id = $3 AND g.tenant_id = u.tenant_id))
+          )
+        )`,
+    [tenantId, usuarioIds, grifoInternoId]
+  );
+  return new Set(r.rows.map((x) => x.id));
+}
+
+/** Los destinatarios de alertas de COMBUSTIBLE que ven un grifo dado: la
+ *  marca explícita de 0107 (`usuario_alertas_correo`, vía el helper
+ *  compartido) filtrada por el alcance de cada uno.
+ *
+ *  `grifoInternoId` en `null` = toda la empresa, para los avisos que no son
+ *  de un punto (urea, talonario, la config del módulo).
+ *
+ *  Vive acá, y no en el repositorio, porque la usan DOS módulos: combustible
+ *  y equipos --aflojar el consumo máximo de una unidad despierta a los
+ *  destinatarios de combustible, no a los de equipos, porque el control que
+ *  se ensancha es de ellos. Una sola definición para que no se puedan ir
+ *  separando. */
+export async function destinatariosDeAlertasEnGrifo(
+  client: PoolClient,
+  tenantId: string,
+  grifoInternoId: number | null
+): Promise<DestinatarioDeAlerta[]> {
+  const marcados = await findDestinatariosAlertas(client, tenantId, "combustible");
+  if (grifoInternoId === null || marcados.length === 0) return marcados;
+  const ven = await usuariosQueVenElGrifo(
+    client,
+    tenantId,
+    marcados.map((m) => m.id),
+    grifoInternoId
+  );
+  return marcados.filter((m) => ven.has(m.id));
+}
+
+/** Los grifos activos a los que, con el alcance de cada uno, NO les quedó
+ *  ningún destinatario de alertas: lo que pase ahí no se lo avisa a nadie por
+ *  correo.
+ *
+ *  Es el agujero que abre el propio enrutamiento, y por eso se vigila. Antes
+ *  el correo iba a todos los marcados, así que alcanzaba con que hubiera UNO
+ *  en la empresa; ahora cada punto necesita a alguien que lo mire, y un grifo
+ *  nuevo --o alguien que se queda sin su sede-- puede quedar en silencio sin
+ *  que nadie lo note. `modulosSinDestinatarios` responde la misma pregunta un
+ *  nivel más arriba, para el módulo entero.
+ *
+ *  Devuelve "Sede - Grifo" para que el aviso diga dónde, no un id. */
+export async function grifosSinDestinatariosDeAlertas(
+  client: PoolClient,
+  tenantId: string
+): Promise<string[]> {
+  const r = await client.query<{ etiqueta: string }>(
+    `SELECT s.nombre || ' - ' || g.nombre AS etiqueta
+       FROM grifos_internos g
+       JOIN sedes s ON s.tenant_id = g.tenant_id AND s.id = g.sede_id
+      WHERE g.tenant_id = $1
+        AND g.activo
+        AND EXISTS (SELECT 1 FROM tenant_modulos tm
+                     WHERE tm.tenant_id = g.tenant_id
+                       AND tm.modulo = 'combustible'::modulo_erp
+                       AND tm.estado = 'habilitado')
+        AND NOT EXISTS (
+          SELECT 1
+            FROM usuarios u
+            JOIN usuario_alertas_correo a
+              ON a.usuario_id = u.id AND a.tenant_id = u.tenant_id
+             AND a.modulo = 'combustible'::modulo_erp AND a.recibe_alertas
+            JOIN usuario_modulos um
+              ON um.usuario_id = u.id AND um.modulo = 'combustible'::modulo_erp
+           WHERE u.tenant_id = g.tenant_id
+             AND u.activo = true
+             AND u.email IS NOT NULL
+             AND (
+               u.rol = 'admin'
+               OR u.alcance_combustible <> 'asignado'
+               OR EXISTS (
+                 SELECT 1 FROM usuario_accesos_combustible ac
+                  WHERE ac.usuario_id = u.id AND ac.tenant_id = u.tenant_id
+                    AND (ac.grifo_interno_id = g.id OR ac.sede_id = g.sede_id)
+               )
+             )
+        )
+      ORDER BY s.nombre, g.nombre`,
+    [tenantId]
+  );
+  return r.rows.map((f) => f.etiqueta);
+}
 
 export async function tanqueEnAlcance(
   client: PoolClient,

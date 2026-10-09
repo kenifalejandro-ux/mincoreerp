@@ -204,6 +204,9 @@ export interface PermisosDeUsuario {
   /** De la EMPRESA: módulos habilitados a los que no les quedó ningún
    *  destinatario de alertas. */
   modulosSinDestinatarios: string[];
+  /** De la EMPRESA: grifos de combustible que, con el alcance de cada
+   *  destinatario, no le quedaron a cargo de nadie. */
+  grifosSinDestinatarios: string[];
 }
 
 /** Recibir los avisos de un módulo es independiente del rol y del nivel: un

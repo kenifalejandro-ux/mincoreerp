@@ -33,6 +33,7 @@ import {
   MODULOS_CON_ALERTAS_POR_CORREO,
   modulosSinDestinatarios,
 } from "../shared/utils/destinatariosAlertas";
+import { grifosSinDestinatariosDeAlertas } from "../../modules/combustible/alcance";
 import { revocarSesionesService, type UsuarioPayload } from "./auth.service";
 import {
   guardarPermisosPestanas,
@@ -68,6 +69,11 @@ export interface PermisosDeUsuario {
    *  pantalla de Configuración ya pide, y el aviso tiene que aparecer justo
    *  donde el admin acaba de dejar a un módulo sin nadie mirándolo. */
   modulosSinDestinatarios: string[];
+  /** También de la EMPRESA: los grifos de combustible que, con el alcance de
+   *  cada destinatario, no le quedaron a cargo de nadie. El nivel de abajo de
+   *  `modulosSinDestinatarios` -- el módulo puede tener gente y aun así haber
+   *  un punto que nadie mira. */
+  grifosSinDestinatarios: string[];
 }
 
 export interface AlertaDeModulo {
@@ -236,6 +242,7 @@ export async function listarPermisosUsuarioService(
           recibeAlertas: alertaPorModulo.get(modulo) ?? false,
         })),
       modulosSinDestinatarios: await modulosSinDestinatarios(client, tenantId),
+      grifosSinDestinatarios: await grifosSinDestinatariosDeAlertas(client, tenantId),
     };
   });
 }

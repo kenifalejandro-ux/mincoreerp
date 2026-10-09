@@ -14,7 +14,9 @@ import type {
   EliminarMasivoEquiposInput,
 } from "../../server/schemas/equipos.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
-import { findDestinatariosAlertas } from "../../server/shared/utils/destinatariosAlertas";
+// El correo de estos dos cambios es de los destinatarios de COMBUSTIBLE (el
+// control que se afloja es suyo) y va ENRUTADO al grifo donde está la unidad.
+import { destinatariosDeAlertasEnGrifo } from "../combustible/alcance";
 import { enviarCorreoAlerta } from "../../server/shared/utils/alertaMailer";
 import { logger } from "../../server/config/logger";
 import { armarXlsx, CONTENT_TYPE_XLSX } from "../../server/shared/utils/xlsx.util";
@@ -228,7 +230,12 @@ export const EquiposController = {
         return;
       }
       const { fila: actualizado, cambios } = resultado.actualizado as {
-        fila: Record<string, unknown> & { placa_codigo: string };
+        // `grifo_interno_id` se nombra porque enruta los dos correos de más
+        // abajo: el aviso va a quien vigila el punto donde está la unidad.
+        fila: Record<string, unknown> & {
+          placa_codigo: string;
+          grifo_interno_id: number | null;
+        };
         cambios: CambiosHistorial;
       };
 
@@ -287,7 +294,7 @@ export const EquiposController = {
       if (consumoAflojado) {
         try {
           const admins = await withTenant(tenantId, (client) =>
-            findDestinatariosAlertas(client, tenantId, "combustible")
+            destinatariosDeAlertasEnGrifo(client, tenantId, actualizado.grifo_interno_id ?? null)
           );
           await enviarCorreoAlerta({
             destinatarios: admins,
@@ -316,7 +323,7 @@ export const EquiposController = {
         // que se acaba de ensanchar es de ellos.
         try {
           const admins = await withTenant(tenantId, (client) =>
-            findDestinatariosAlertas(client, tenantId, "combustible")
+            destinatariosDeAlertasEnGrifo(client, tenantId, actualizado.grifo_interno_id ?? null)
           );
           await enviarCorreoAlerta({
             destinatarios: admins,
