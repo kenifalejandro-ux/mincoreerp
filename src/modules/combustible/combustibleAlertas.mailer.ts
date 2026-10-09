@@ -409,7 +409,7 @@ export async function enviarCorreoAlertaDescuadreCiclo(
   const u = params.unidad;
   const faltante = params.sentido === "falta";
   const magnitud = Math.abs(params.descuadreLitros);
-  const desde = new Date(params.cicloDesde).toLocaleString("es-PE");
+  const desde = new Date(params.cicloDesde).toLocaleString("es-PE", { timeZone: "America/Lima" });
 
   await enviarCorreoAlerta({
     destinatarios,
@@ -458,7 +458,7 @@ export async function enviarCorreoAlertaSinMedir(
   const cuando =
     params.ultimaLectura === null
       ? "Nunca se registró una lectura de varilla en este tanque."
-      : `La última lectura fue el ${new Date(params.ultimaLectura).toLocaleString("es-PE")}` +
+      : `La última lectura fue el ${new Date(params.ultimaLectura).toLocaleString("es-PE", { timeZone: "America/Lima" })}` +
         (params.diasSinMedir === null ? "." : `, hace ${params.diasSinMedir} días.`);
 
   await enviarCorreoAlerta({
@@ -499,7 +499,7 @@ export async function enviarCorreoLecturaRetroactiva(
     titulo: `Lectura fuera de orden en ${params.tanqueNombre}`,
     lineas: [
       `Se registró una lectura de ${params.nivel} ${params.unidad} fechada el ` +
-        `${new Date(params.leidoEn).toLocaleString("es-PE")}, cuando ya había ` +
+        `${new Date(params.leidoEn).toLocaleString("es-PE", { timeZone: "America/Lima" })}, cuando ya había ` +
         `${params.posteriores} medición(es) posterior(es) en este mismo período.`,
       "Lo más probable es que venga de la cola offline: una varilla tomada sin señal " +
         "que recién ahora sincronizó. Eso es normal y no hay nada que corregir.",
@@ -654,7 +654,7 @@ export async function enviarCorreoValeRetroactivo(
       `El ${nombrarPapel(params)} se cargó ` +
       `${params.diasDeAtraso} días después de la fecha que declara`,
     lineas: [
-      `Fecha declarada del despacho: ${new Date(params.despachadoEn).toLocaleString("es-PE")}.`,
+      `Fecha declarada del despacho: ${new Date(params.despachadoEn).toLocaleString("es-PE", { timeZone: "America/Lima" })}.`,
       `Se tolera hasta ${params.diasTolerados} día(s) de atraso, que es lo que puede tardar un ` +
         "equipo sin señal en sincronizar.",
       "No se bloqueó: perder un registro real de cancha sería peor. Pero una fecha vieja lo " +
@@ -792,7 +792,7 @@ export async function enviarCorreoRecepcionSinValidar(
     titulo: `Recepción pendiente de validación en ${params.tanqueNombre}`,
     lineas: [
       `La recepción${params.numeroDocumento ? ` con documento ${params.numeroDocumento}` : ""} ` +
-        `registrada el ${new Date(params.registradaEn).toLocaleString("es-PE")} sigue sin validar ` +
+        `registrada el ${new Date(params.registradaEn).toLocaleString("es-PE", { timeZone: "America/Lima" })} sigue sin validar ` +
         `después de ${params.plazoHoras} horas.`,
       "Validarla es escribir la cantidad que dice la guía o la factura. Es el único control que " +
         "detecta una recepción registrada por menos de lo que entró: la varilla no lo puede ver, " +
@@ -853,7 +853,7 @@ export async function enviarCorreoRecepcionRetroactiva(
     asunto: `Combustible: recepción cargada con atraso en ${params.tanqueNombre}`,
     titulo: `Recepción fechada ${params.diasDeAtraso} días atrás en ${params.tanqueNombre}`,
     lineas: [
-      `Se registró una recepción con fecha ${new Date(params.recibidoEn).toLocaleString("es-PE")}, ` +
+      `Se registró una recepción con fecha ${new Date(params.recibidoEn).toLocaleString("es-PE", { timeZone: "America/Lima" })}, ` +
         `${params.diasDeAtraso} días antes de su carga (se toleran ${params.diasTolerados}), ` +
         "cuando el tanque ya tenía movimientos posteriores.",
       "Una recepción insertada atrás cambia el punto de partida del ciclo y la cuenta de los " +
@@ -907,7 +907,7 @@ export async function enviarCorreoVarillaSinControl(
     lineas: [
       `En los últimos ${params.plazoDias} días todas las varillas las tomó personal de grifo. ` +
         (params.ultimaVarillaDeControl
-          ? `La última medición de alguien que no despacha fue el ${new Date(params.ultimaVarillaDeControl).toLocaleDateString("es-PE")}.`
+          ? `La última medición de alguien que no despacha fue el ${new Date(params.ultimaVarillaDeControl).toLocaleDateString("es-PE", { timeZone: "America/Lima" })}.`
           : "Nunca midió alguien que no despacha."),
       "Cuando mide el mismo que despacha, la varilla deja de ser un control: puede anotar lo que " +
         "el sistema espera. Una medición sin aviso de otra persona (la encargada de combustible, " +
@@ -1180,6 +1180,95 @@ export async function enviarCorreoUreaPrecioFueraDeCatalogo(
       "La compra se registró igual. Puede ser que el proveedor haya cambiado el precio (y haya " +
         "que actualizar el catálogo), o que la boleta declare más de lo que se pagó. La foto del " +
         "comprobante está en Urea → Compras en ruta.",
+    ],
+  });
+}
+
+/** El número de un vale es menor que el mayor ya registrado de su serie. */
+export async function enviarCorreoValeFueraDeOrden(
+  destinatarios: Destinatario[],
+  params: PapelDeAlerta & { maxAnteriorDeLaSerie: number }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: ${nombrarPapel(params)} fuera de orden`,
+    titulo: `El ${nombrarPapel(params)} llegó fuera del orden de su talonario`,
+    lineas: [
+      `La serie ya tenía registrado hasta el vale ${String(params.maxAnteriorDeLaSerie).padStart(5, "0")}, ` +
+        "y este tiene un número menor.",
+      "Puede ser un vale que se sincronizó tarde (equipo sin señal) o un talonario usado sin " +
+        "seguir el correlativo. El vale se registró igual -- conviene confirmar con el papel.",
+    ],
+  });
+}
+
+/** Un vale llegó después de que el hueco que dejaba ya se había congelado como anomalía. */
+export async function enviarCorreoDespachoTardio(
+  destinatarios: Destinatario[],
+  params: PapelDeAlerta
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: ${nombrarPapel(params)} llegó tarde`,
+    titulo: `El ${nombrarPapel(params)} llegó después de que su hueco se congelara como anomalía`,
+    lineas: [
+      "El hueco de este número ya se había dado por no explicado y quedó fijo en las anomalías.",
+      "Que alguien se acuerde de un vale días después es una señal, no algo a corregir en " +
+        "silencio: conviene confirmar cuándo y por qué se cargó.",
+    ],
+  });
+}
+
+/** Una carga dejó la tanqueta en negativo. Avisa solo al cruzar (ver
+ *  procesarAlertaTanquetaSobregirada); las cargas siguientes quedan en el panel. */
+export async function enviarCorreoTanquetaSobregirada(
+  destinatarios: Destinatario[],
+  params: { tanqueta: string; saldo: number; cantidad: number }
+) {
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: la tanqueta ${params.tanqueta} quedó con saldo negativo`,
+    titulo: `La tanqueta ${params.tanqueta} despachó más de lo que el sistema creía que tenía`,
+    lineas: [
+      `Tras una carga de ${params.cantidad} gal, el saldo quedó en ${params.saldo} gal.`,
+      "No se bloqueó (los galones en ruta son estimados). O la estimación está mal, o entró a la " +
+        "tanqueta combustible que no se registró. No se vuelve a avisar por correo hasta que el " +
+        "saldo vuelva a cero; las cargas siguientes quedan en el panel de Alertas.",
+    ],
+  });
+}
+
+const MAX_RECEPCIONES_EN_CORREO = 10;
+
+/** Un correo por grifo con las recepciones cuya diferencia contra la varilla
+ *  superó la tolerancia. Se corta en 10 para que cargar un histórico de golpe
+ *  no produzca un correo ilegible. */
+export async function enviarCorreoDiferenciaRecepcion(
+  destinatarios: Destinatario[],
+  recepciones: {
+    tanqueNombre: string;
+    unidad: string;
+    diferenciaLitros: number;
+    diferenciaPct: number;
+    toleradoLitros: number;
+  }[]
+) {
+  const visibles = recepciones.slice(0, MAX_RECEPCIONES_EN_CORREO);
+  const resto = recepciones.length - visibles.length;
+  await enviarCorreoAlerta({
+    destinatarios,
+    asunto: `Combustible: ${recepciones.length} recepci${recepciones.length === 1 ? "ón" : "ones"} con diferencia contra la varilla`,
+    titulo: "Recepciones que no cuadran con la varilla",
+    lineas: [
+      "Lo recibido y lo que midió la varilla después de la descarga difieren más de la tolerancia:",
+      ...visibles.map(
+        (r) =>
+          `- ${r.tanqueNombre}: ${r.diferenciaLitros > 0 ? "+" : ""}${r.diferenciaLitros} ${r.unidad} ` +
+          `(${r.diferenciaPct}% de lo facturado; se toleraban ${r.toleradoLitros} ${r.unidad}).`
+      ),
+      ...(resto > 0 ? [`... y ${resto} más en el panel de Alertas.`] : []),
+      "Puede ser el medidor del camión, una varilla mal tomada, o combustible que entró o salió " +
+        "sin registrarse -- revisar en el ERP.",
     ],
   });
 }

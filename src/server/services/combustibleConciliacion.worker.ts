@@ -46,6 +46,7 @@ import {
   enviarCorreoAlertaSinMedir,
   enviarCorreoRecepcionSinValidar,
   enviarCorreoVarillaSinControl,
+  enviarCorreoDiferenciaRecepcion,
 } from "../../modules/combustible/combustibleAlertas.mailer";
 import { publicarEventoTenant } from "./realtimeEvents.service";
 import type { DestinatarioDeAlerta } from "../shared/utils/destinatariosAlertas";
@@ -164,11 +165,14 @@ async function conciliarTenant(
     }
   }
 
-  await paso(
+  const diferencias = await paso(
     "diferencias_de_recepcion",
     () => service.alertarDiferenciasDeRecepcion(client, tenantId),
     {
       creadas: 0,
+      alertas: [] as Awaited<
+        ReturnType<CombustibleService["alertarDiferenciasDeRecepcion"]>
+      >["alertas"],
     }
   );
   // Tanques que dejaron de medirse (migración 0076). Va en el worker y no
@@ -230,7 +234,7 @@ async function conciliarTenant(
     capturarError(e.error, { worker: "combustibleConciliacion", tenantId, alertaId: e.alertaId });
   }
 
-  return { ...congelado, sinMedir, sinVigilancia, vigilanciaExtra, historial };
+  return { ...congelado, sinMedir, sinVigilancia, vigilanciaExtra, historial, diferencias };
 }
 
 /** Los avisos salen FUERA de la transacción: mandarlos adentro la dejaría
@@ -250,6 +254,46 @@ async function avisarResultado(tenantId: string, r: ResultadoTenant): Promise<vo
   }
   if (r.vigilanciaExtra.creadas.length > 0) {
     await avisarControlesPeriodicos(tenantId, r.vigilanciaExtra.creadas);
+  }
+  if (r.diferencias.alertas.length > 0) {
+    await avisarDiferenciasDeRecepcion(tenantId, r.diferencias.alertas);
+  }
+}
+
+/** Un correo POR GRIFO con las recepciones recién alertadas. Solo avisa de
+ *  alertas que nacen en esta corrida (el NOT EXISTS de la consulta impide
+ *  recrear las ya hechas), así que lo histórico no vuelve a sonar. Fuera de la
+ *  transacción y nunca lanza, como los demás avisos. */
+async function avisarDiferenciasDeRecepcion(
+  tenantId: string,
+  alertas: { grifo_interno_id: number | null; detalle: Record<string, unknown> }[]
+): Promise<void> {
+  try {
+    const porGrifo = new Map<number | null, typeof alertas>();
+    for (const a of alertas) {
+      const g = a.grifo_interno_id ?? null;
+      porGrifo.set(g, [...(porGrifo.get(g) ?? []), a]);
+    }
+    for (const [grifo, delGrifo] of porGrifo) {
+      const admins = await withTenant(tenantId, (client) =>
+        service.findDestinatariosAlertasCombustible(client, tenantId, grifo)
+      );
+      await enviarCorreoDiferenciaRecepcion(
+        admins,
+        delGrifo.map((a) => ({
+          tanqueNombre: String(a.detalle.tanqueNombre),
+          unidad: String(a.detalle.unidad),
+          diferenciaLitros: Number(a.detalle.diferenciaLitros),
+          diferenciaPct: Number(a.detalle.diferenciaPct),
+          toleradoLitros: Number(a.detalle.toleradoLitros),
+        }))
+      );
+    }
+    await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+      tipo: "diferencia_recepcion",
+    });
+  } catch (err) {
+    logger.warn({ err, tenantId }, "No se pudo avisar de las diferencias de recepción");
   }
 }
 
