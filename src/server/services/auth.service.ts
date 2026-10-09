@@ -1316,7 +1316,7 @@ async function enviarCorreoRecuperacion(params: {
 
   try {
     await transporter.sendMail({
-      from: `"MinCore ERP" <${env.emailUser}>`,
+      from: `"MinCore ERP" <${env.emailFrom}>`,
       to: params.email,
       subject: "Recuperar contraseña - MinCore ERP",
       text,
@@ -1431,7 +1431,7 @@ async function enviarCorreoInvitacion(params: {
 
   try {
     await transporter.sendMail({
-      from: `"MinCore ERP" <${env.emailUser}>`,
+      from: `"MinCore ERP" <${env.emailFrom}>`,
       to: params.email,
       subject: `Definí tu contraseña - ${params.tenant.nombre}`,
       text,
@@ -1477,7 +1477,7 @@ async function enviarCorreoAccesoNuevo(params: {
 
   try {
     await transporter.sendMail({
-      from: `"MinCore ERP" <${env.emailUser}>`,
+      from: `"MinCore ERP" <${env.emailFrom}>`,
       to: params.email,
       subject: `Tenés acceso a ${params.tenant.nombre} - MinCore ERP`,
       text,

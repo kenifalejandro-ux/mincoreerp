@@ -81,7 +81,7 @@ export async function sendFormulario(req: Request, formData: FormularioData) {
   }
 
   await transporter.sendMail({
-    from: `"Formulario Web" <${env.emailUser}>`,
+    from: `"Formulario Web" <${env.emailFrom}>`,
     to: "contacto@zincelideas.com",
     replyTo: formData.Correo,
     subject: `Nueva consulta minera - ${formData.Producto}`.slice(0, 180),
