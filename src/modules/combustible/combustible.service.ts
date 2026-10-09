@@ -1655,6 +1655,14 @@ export class CombustibleService {
 
   /** El saldo de una tanqueta después de una carga (0114), para la alerta de
    *  sobregiro. */
+  bloquearTanqueta(client: PoolClient, tenantId: string, id: number) {
+    return tanquetas.bloquearTanqueta(client, tenantId, id);
+  }
+
+  sobregiroYaAvisado(client: PoolClient, tenantId: string, tanquetaId: number, alertaId: number) {
+    return tanquetas.sobregiroYaAvisado(client, tenantId, tanquetaId, alertaId);
+  }
+
   async saldoDeTanqueta(client: PoolClient, tenantId: string, id: number) {
     const t = await tanquetas.getTanqueta(client, tenantId, id);
     return t ? { codigo: t.codigo as string, saldo: Number(t.saldo) } : null;
@@ -2461,14 +2469,11 @@ export class CombustibleService {
    *
    *  Devuelve cuántas alertas creó. El `NOT EXISTS` de la consulta hace que
    *  no se repita: una recepción alerta una sola vez. */
-  async alertarDiferenciasDeRecepcion(
-    client: PoolClient,
-    tenantId: string
-  ): Promise<{ creadas: number }> {
+  async alertarDiferenciasDeRecepcion(client: PoolClient, tenantId: string) {
     const excedidas = await this.repository.findRecepcionesConDiferenciaExcedida(client, tenantId);
-    if (excedidas.length === 0) return { creadas: 0 };
+    if (excedidas.length === 0) return { creadas: 0, alertas: [] };
 
-    await this.repository.crearAlertas(
+    const alertas = await this.repository.crearAlertas(
       client,
       tenantId,
       excedidas.map((r) => {
@@ -2506,7 +2511,7 @@ export class CombustibleService {
         };
       })
     );
-    return { creadas: excedidas.length };
+    return { creadas: excedidas.length, alertas };
   }
 
   /** EL TOTALIZADOR CONTRA LOS VALES (0094). Se evalúa DESPUÉS de crear el vale

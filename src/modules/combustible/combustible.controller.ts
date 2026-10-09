@@ -37,6 +37,9 @@ import {
   enviarCorreoPrecintoAlterado,
   enviarCorreoPrecintoReemplazado,
   enviarCorreoSobrestockRecepcion,
+  enviarCorreoValeFueraDeOrden,
+  enviarCorreoDespachoTardio,
+  enviarCorreoTanquetaSobregirada,
   // Urea: los cuatro de 0092 que nunca se habían enganchado y los dos de 0117.
   enviarCorreoUreaEquipoNoHabilitado,
   enviarCorreoUreaRatioExcedido,
@@ -2018,6 +2021,7 @@ export class CombustibleController {
         recargado,
         consumo,
         totalizador,
+        llegoTarde,
         admins,
       } = await withTenant(tenantId, async (client) => {
         // El vale que acaba de llegar puede estar llenando un hueco ya
@@ -2301,6 +2305,7 @@ export class CombustibleController {
             recargado,
             consumo,
             totalizador,
+            llegoTarde,
             admins: [] as { email: string; nombre: string }[],
           };
         }
@@ -2331,6 +2336,7 @@ export class CombustibleController {
           recargado,
           consumo,
           totalizador,
+          llegoTarde,
           admins,
         };
       });
@@ -2363,6 +2369,18 @@ export class CombustibleController {
           tipo: "vale_fuera_de_orden",
           ...papel,
         });
+        await enviarCorreoValeFueraDeOrden(admins, {
+          ...papel,
+          maxAnteriorDeLaSerie: fueraDeOrden,
+        });
+      }
+
+      if (llegoTarde) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "despacho_tardio",
+          ...papel,
+        });
+        await enviarCorreoDespachoTardio(admins, papel);
       }
 
       if (retro) {
@@ -2469,6 +2487,7 @@ export class CombustibleController {
       const {
         huecos,
         fueraDeOrden,
+        llegoTarde,
         recargado,
         noHabilitado,
         ratio,
@@ -2691,6 +2710,7 @@ export class CombustibleController {
           return {
             huecos,
             fueraDeOrden,
+            llegoTarde,
             recargado,
             noHabilitado,
             ratio,
@@ -2710,6 +2730,7 @@ export class CombustibleController {
         return {
           huecos,
           fueraDeOrden,
+          llegoTarde,
           recargado,
           noHabilitado,
           ratio,
@@ -2731,6 +2752,14 @@ export class CombustibleController {
       if (fueraDeOrden !== null) {
         await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
           tipo: "vale_fuera_de_orden",
+          producto: "urea",
+          serieTalonario,
+          nVale,
+        });
+      }
+      if (llegoTarde) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "despacho_tardio",
           producto: "urea",
           serieTalonario,
           nVale,
@@ -2800,6 +2829,15 @@ export class CombustibleController {
             valesFaltantes: huecos,
             nValeQueLoRevelo: nVale!,
           });
+        }
+        if (fueraDeOrden !== null) {
+          await enviarCorreoValeFueraDeOrden(admins, {
+            ...papel,
+            maxAnteriorDeLaSerie: fueraDeOrden,
+          });
+        }
+        if (llegoTarde) {
+          await enviarCorreoDespachoTardio(admins, papel);
         }
         if (recargado) {
           await enviarCorreoValeRecargado(admins, {
@@ -4697,9 +4735,12 @@ export class CombustibleController {
   ) {
     try {
       const creada = await withTenant(tenantId, async (client) => {
+        // Primero el bloqueo: con cargas simultáneas la segunda espera a que la
+        // primera confirme su alerta, y así ve que el aviso ya salió.
+        await service.bloquearTanqueta(client, tenantId, data.tanqueta_origen_id!);
         const t = await service.saldoDeTanqueta(client, tenantId, data.tanqueta_origen_id!);
-        if (!t || t.saldo >= -0.01) return false;
-        await service.crearAlertas(client, tenantId, [
+        if (!t || t.saldo >= -0.01) return null;
+        const creadas = await service.crearAlertas(client, tenantId, [
           {
             tipo: "tanqueta_sobregirada",
             despachoId,
@@ -4711,13 +4752,36 @@ export class CombustibleController {
             },
           },
         ]);
-        return true;
+        // Un correo por sobregiro, no por vale: solo la primera alerta del
+        // episodio avisa; las siguientes, con la tanqueta ya en rojo, quedan
+        // en el panel. Una entrada a la tanqueta abre un episodio nuevo.
+        const cruzo = !(await service.sobregiroYaAvisado(
+          client,
+          tenantId,
+          data.tanqueta_origen_id!,
+          Number(creadas[0].id)
+        ));
+        const admins = cruzo
+          ? await service.findDestinatariosAlertasCombustible(
+              client,
+              tenantId,
+              grifoDeAlertas(creadas)
+            )
+          : [];
+        return { t, cruzo, admins };
       });
       if (creada) {
         await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
           tipo: "tanqueta_sobregirada",
           despachoId,
         });
+        if (creada.cruzo) {
+          await enviarCorreoTanquetaSobregirada(creada.admins, {
+            tanqueta: creada.t.codigo,
+            saldo: creada.t.saldo,
+            cantidad: Number(data.cantidad),
+          });
+        }
       }
     } catch (err) {
       logger.warn({ err, tenantId, despachoId }, "No se pudo evaluar el saldo de la tanqueta");

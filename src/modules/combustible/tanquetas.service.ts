@@ -100,6 +100,59 @@ export async function getTanqueta(client: PoolClient, tenantId: string, id: numb
   return r.rows[0] ?? null;
 }
 
+/** ¿Ya se avisó por correo el sobregiro en curso de esta tanqueta?
+ *
+ *  Un "episodio" de sobregiro empieza después de la última vez que el saldo
+ *  SUBIÓ: una entrada (excedente o vale a reserva) o una carga anulada. Si ya
+ *  hay otra alerta de sobregiro posterior a eso, el aviso de este episodio ya
+ *  salió. Se cuentan también las entradas que luego se anularon: sobran
+ *  límites, y eso a lo sumo repite un correo, nunca lo pierde.
+ *
+ *  No se decide con "el saldo antes de este vale" porque con cargas
+ *  simultáneas cada una lee un saldo que ya incluye a las otras y ninguna se
+ *  cree la que cruzó. Llamar con la tanqueta bloqueada (bloquearTanqueta) en la
+ *  misma transacción que crea la alerta: así la segunda carga ve la alerta de
+ *  la primera y sale exactamente un correo. */
+export async function sobregiroYaAvisado(
+  client: PoolClient,
+  tenantId: string,
+  tanquetaId: number,
+  alertaId: number
+): Promise<boolean> {
+  const r = await client.query<{ previa: boolean }>(
+    `
+    WITH ultima_subida AS (
+      SELECT COALESCE(GREATEST(
+        (SELECT max(x.creado_en) FROM combustible_recepcion_excedentes x
+          WHERE x.tenant_id = $1 AND x.tanqueta_id = $2),
+        (SELECT max(d.creado_en) FROM combustible_despachos d
+          WHERE d.tenant_id = $1 AND d.tanqueta_destino_id = $2),
+        (SELECT max(d.anulada_en) FROM combustible_despachos d
+          WHERE d.tenant_id = $1 AND d.tanqueta_origen_id = $2)
+      ), '1900-01-01'::timestamptz) AS en
+    )
+    SELECT EXISTS (
+      SELECT 1
+        FROM combustible_alertas a
+        JOIN combustible_despachos d ON d.tenant_id = a.tenant_id AND d.id = a.despacho_id
+       WHERE a.tenant_id = $1 AND a.tipo = 'tanqueta_sobregirada'
+         AND d.tanqueta_origen_id = $2 AND a.id <> $3
+         AND a.creado_en >= (SELECT en FROM ultima_subida)
+    ) AS previa
+    `,
+    [tenantId, tanquetaId, alertaId]
+  );
+  return r.rows[0].previa;
+}
+
+/** Serializa las decisiones sobre UNA tanqueta (ver sobregiroYaAvisado). */
+export async function bloquearTanqueta(client: PoolClient, tenantId: string, id: number) {
+  await client.query(
+    `SELECT 1 FROM combustible_tanquetas WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+    [tenantId, id]
+  );
+}
+
 /** El siguiente código libre "TQT-001". Mira solo los que ya siguen el
  *  patrón: un código a mano ("CUBETA ROJA") no lo altera. */
 async function siguienteCodigo(client: PoolClient, tenantId: string): Promise<string> {
