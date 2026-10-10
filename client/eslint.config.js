@@ -133,6 +133,8 @@ export default defineConfig([
     files: [
       "src/components/UreaPanel.tsx",
       "src/components/combustible/CombustiblePanel.tsx",
+      "src/components/combustible/Bandeja.tsx",
+      "src/components/bandeja/BandejaView.tsx",
       "src/pages/LoginPage.tsx",
     ],
     rules: {

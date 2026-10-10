@@ -9,7 +9,7 @@ import { Bell } from "lucide-react";
 import { useState } from "react";
 
 import { esCritica } from "./gravedadAlertas";
-import { useAlertasCombustibleStream } from "./useAlertasCombustibleStream";
+import { CLAVE_ALERTA_PENDIENTE, useAlertasCombustibleStream } from "./useAlertasCombustibleStream";
 
 const ETIQUETA_TIPO: Record<string, string> = {
   hueco_detectado: "Hueco de talonario",
@@ -99,9 +99,18 @@ export default function CampanitaAlertas({ activo, onIrACombustible }: Campanita
   const abrirAlerta = (alertaId: number) => {
     setAbierta(false);
     void marcarUnaLeida(alertaId);
+    // Lleva a la Bandeja con esa alerta abierta. Va por las dos vías: el
+    // sessionStorage la encuentra si la Bandeja recién se monta, el aviso por
+    // `window` si ya estaba abierta.
+    try {
+      sessionStorage.setItem(CLAVE_ALERTA_PENDIENTE, String(alertaId));
+    } catch {
+      // Sin sessionStorage (modo privado estricto): la Bandeja abre sin selección.
+    }
     onIrACombustible?.();
-    // El panel escucha por `window` -- ver el comentario en CombustiblePanel.
-    window.dispatchEvent(new CustomEvent("combustible:abrir-alerta", { detail: { alertaId } }));
+    window.dispatchEvent(
+      new CustomEvent("combustible:abrir-alerta", { detail: { alertaId: Number(alertaId) } })
+    );
   };
   // Un contador solo no distingue "tres avisos de reposición" de "tres
   // sospechas de robo". El color del badge sí.
@@ -189,7 +198,7 @@ export default function CampanitaAlertas({ activo, onIrACombustible }: Campanita
                 }}
                 className="w-full p-3 text-xs font-semibold text-center text-slate-600 hover:bg-slate-50 border-t border-slate-100"
               >
-                Ver todas en Combustible
+                Ver todas en la Bandeja
               </button>
             )}
           </div>

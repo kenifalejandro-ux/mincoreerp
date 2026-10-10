@@ -14,6 +14,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { apiFetch } from "../../services/apiClient";
 
+/** La campanita deja acá el id de la alerta que se clickeó antes de llevar al
+ *  usuario a la Bandeja: puede que la Bandeja todavía no esté montada cuando
+ *  sale el aviso por `window`. */
+export const CLAVE_ALERTA_PENDIENTE = "combustible:bandeja:abrir";
+
 export interface AlertaCombustible {
   id: number;
   tipo:

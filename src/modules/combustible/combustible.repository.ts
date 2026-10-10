@@ -162,6 +162,25 @@ export const TIPOS_CONGELABLES = TIPOS_ALERTA.filter(
  *  hueco que en realidad sigue abierto. */
 export const TIPOS_REVISABLES = TIPOS_CONGELABLES.filter((t) => t !== "hueco_detectado");
 
+/** Estados de la Bandeja: sin leer, pendientes de resolver, resueltas, todas. */
+export const ESTADOS_ALERTAS = ["sin_leer", "pendientes", "resueltas", "todas"] as const;
+export type EstadoAlertas = (typeof ESTADOS_ALERTAS)[number];
+
+export interface FiltrosAlertas {
+  /** Una alerta puntual: la Bandeja la pide al llegar desde la campanita, que
+   *  puede apuntar a una que no está en la página cargada. */
+  id?: number;
+  soloNoLeidas?: boolean;
+  producto?: string;
+  estado?: EstadoAlertas;
+  tipo?: string;
+  grifoInternoId?: number;
+  /** Días de Lima, "AAAA-MM-DD", ambos inclusive. */
+  desde?: string;
+  hasta?: string;
+  texto?: string;
+}
+
 /** Una alerta por crear. Las anclas son todas opcionales en el tipo, pero
  *  el CHECK de la base exige al menos una (vale, tanque o recepción). */
 export interface AlertaNueva {
@@ -4492,44 +4511,139 @@ export class CombustibleRepository {
     return result.rows;
   }
 
-  /** La campanita, acotada al alcance de quien mira (ver filtroAlertaVisible).
-   *  Sin esto mostraba las alertas de TODOS los grifos de la empresa, aunque
-   *  el tanque de abajo diera 404 al abrirlo. */
+  /** WHERE común de la campanita, la Bandeja y su resumen. Siempre acotado al
+   *  alcance de quien mira (ver filtroAlertaVisible): sin eso se veían las
+   *  alertas de TODOS los grifos de la empresa, aunque el tanque de abajo diera
+   *  404 al abrirlo. `incluirEstado` en false lo usa el resumen, que cuenta
+   *  cada estado por separado con los demás filtros aplicados. */
+  private static condicionesAlertas(
+    tenantId: string,
+    filtros: FiltrosAlertas,
+    alcance: AlcanceCombustible,
+    incluirEstado: boolean
+  ) {
+    const condiciones: string[] = ["a.tenant_id = $1"];
+    const valores: unknown[] = [tenantId];
+    const param = (v: unknown) => {
+      valores.push(v);
+      return `$${valores.length}`;
+    };
+
+    if (filtros.id !== undefined) condiciones.push(`a.id = ${param(filtros.id)}`);
+    if (filtros.soloNoLeidas) condiciones.push("a.leida_en IS NULL");
+    if (incluirEstado && filtros.estado === "sin_leer") condiciones.push("a.leida_en IS NULL");
+    if (incluirEstado && filtros.estado === "pendientes") condiciones.push("a.resuelta_en IS NULL");
+    if (incluirEstado && filtros.estado === "resueltas")
+      condiciones.push("a.resuelta_en IS NOT NULL");
+    if (filtros.producto !== undefined) condiciones.push(`a.producto = ${param(filtros.producto)}`);
+    if (filtros.tipo !== undefined) condiciones.push(`a.tipo = ${param(filtros.tipo)}`);
+    if (filtros.grifoInternoId !== undefined) {
+      condiciones.push(`a.grifo_interno_id = ${param(filtros.grifoInternoId)}`);
+    }
+    // Días de LIMA, no de UTC: "hoy" para quien revisa es su día.
+    if (filtros.desde !== undefined) {
+      condiciones.push(
+        `a.creado_en >= (${param(filtros.desde)}::date::timestamp AT TIME ZONE 'America/Lima')`
+      );
+    }
+    if (filtros.hasta !== undefined) {
+      condiciones.push(
+        `a.creado_en < ((${param(filtros.hasta)}::date + 1)::timestamp AT TIME ZONE 'America/Lima')`
+      );
+    }
+    if (filtros.texto !== undefined) {
+      const patron = param(`%${filtros.texto.replace(/[\\%_]/g, "\\$&")}%`);
+      condiciones.push(
+        `(a.tipo ILIKE ${patron} OR a.serie_talonario ILIKE ${patron}
+          OR a.detalle::text ILIKE ${patron} OR gi.nombre ILIKE ${patron})`
+      );
+    }
+    const fAlcance = filtroAlertaVisible(alcance, "a", valores.length + 1);
+    condiciones.push(fAlcance.sql);
+    valores.push(...fAlcance.valores);
+    return { condiciones, valores };
+  }
+
+  /** La campanita y la Bandeja. `revisable` dice si se puede cerrar a mano
+   *  con motivo (ver TIPOS_REVISABLES): el cliente no repite la lista. */
   async findAlertas(
     client: PoolClient,
     tenantId: string,
-    filtros: { soloNoLeidas?: boolean; producto?: string },
+    filtros: FiltrosAlertas,
     { pageSize, offset }: Paginacion,
     alcance: AlcanceCombustible
   ) {
-    const condiciones: string[] = ["tenant_id = $1"];
-    const valores: unknown[] = [tenantId];
-
-    if (filtros.soloNoLeidas) {
-      condiciones.push("leida_en IS NULL");
-    }
-    if (filtros.producto !== undefined) {
-      valores.push(filtros.producto);
-      condiciones.push(`producto = $${valores.length}`);
-    }
-    const fAlcance = filtroAlertaVisible(alcance, "combustible_alertas", valores.length + 1);
-    condiciones.push(fAlcance.sql);
-    valores.push(...fAlcance.valores);
-
-    valores.push(pageSize, offset);
+    const { condiciones, valores } = CombustibleRepository.condicionesAlertas(
+      tenantId,
+      filtros,
+      alcance,
+      true
+    );
+    valores.push(TIPOS_REVISABLES, pageSize, offset);
+    const n = valores.length;
     const result = await client.query(
       `
-      SELECT id, tipo, serie_talonario, n_vale, despacho_id, combustible_id,
-        recepcion_id, lectura_id, producto, detalle, creado_en, leida_en, resuelta_en,
-        resuelta_por, congelada_en, COUNT(*) OVER() AS total_count
-      FROM combustible_alertas
+      SELECT a.id, a.tipo, a.serie_talonario, a.n_vale, a.despacho_id, a.combustible_id,
+        a.recepcion_id, a.lectura_id, a.producto, a.detalle, a.creado_en, a.leida_en,
+        a.resuelta_en, a.resuelta_por, a.congelada_en, a.grifo_interno_id,
+        gi.nombre AS grifo_nombre, s.nombre AS sede_nombre,
+        (a.tipo = ANY($${n - 2}::text[])) AS revisable,
+        COUNT(*) OVER() AS total_count
+      FROM combustible_alertas a
+      LEFT JOIN grifos_internos gi ON gi.id = a.grifo_interno_id AND gi.tenant_id = a.tenant_id
+      LEFT JOIN sedes s ON s.id = gi.sede_id AND s.tenant_id = gi.tenant_id
       WHERE ${condiciones.join(" AND ")}
-      ORDER BY creado_en DESC, id DESC
-      LIMIT $${valores.length - 1} OFFSET $${valores.length}
+      ORDER BY a.creado_en DESC, a.id DESC
+      LIMIT $${n - 1} OFFSET $${n}
       `,
       valores
     );
     return result.rows;
+  }
+
+  /** Los contadores de la Bandeja: cuántas hay en cada estado con los demás
+   *  filtros aplicados, dentro del alcance de quien mira. */
+  async contarAlertas(
+    client: PoolClient,
+    tenantId: string,
+    filtros: FiltrosAlertas,
+    alcance: AlcanceCombustible
+  ) {
+    const { condiciones, valores } = CombustibleRepository.condicionesAlertas(
+      tenantId,
+      filtros,
+      alcance,
+      false
+    );
+    valores.push(TIPOS_REVISABLES);
+    const r = await client.query<{
+      sin_leer: string;
+      pendientes: string;
+      por_revisar: string;
+      resueltas: string;
+      total: string;
+    }>(
+      `
+      SELECT count(*) FILTER (WHERE a.leida_en IS NULL) AS sin_leer,
+             count(*) FILTER (WHERE a.resuelta_en IS NULL) AS pendientes,
+             count(*) FILTER (WHERE a.resuelta_en IS NULL
+                                AND a.tipo = ANY($${valores.length}::text[])) AS por_revisar,
+             count(*) FILTER (WHERE a.resuelta_en IS NOT NULL) AS resueltas,
+             count(*) AS total
+      FROM combustible_alertas a
+      LEFT JOIN grifos_internos gi ON gi.id = a.grifo_interno_id AND gi.tenant_id = a.tenant_id
+      WHERE ${condiciones.join(" AND ")}
+      `,
+      valores
+    );
+    const f = r.rows[0];
+    return {
+      sinLeer: Number(f.sin_leer),
+      pendientes: Number(f.pendientes),
+      porRevisar: Number(f.por_revisar),
+      resueltas: Number(f.resueltas),
+      total: Number(f.total),
+    };
   }
 
   /** "Marcar todas como leídas" ahora marca todas LAS QUE SE VEN. Sin el

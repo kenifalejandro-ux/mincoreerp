@@ -55,7 +55,7 @@ export default function Layout({ activeTab, setActiveTab, children }: LayoutProp
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-[#0D1719] text-[#e2e8f0] font-sans">
-      <Header onIrACombustible={() => setActiveTab("combustible")} />
+      <Header onIrACombustible={() => setActiveTab("bandeja")} />
       <EstadoOffline />
 
       <div className="flex flex-1 min-h-0 relative">

@@ -35,7 +35,7 @@ import type { DriverDocumento } from "../../server/services/documentStorage";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { CombustibleRepository } from "./combustible.repository";
-import type { PeriodoHistorial } from "./combustible.repository";
+import type { FiltrosAlertas, PeriodoHistorial } from "./combustible.repository";
 import { EquiposRepository } from "../equipos/equipos.repository";
 import { tanqueEnAlcance, valeEnAlcance } from "./alcance";
 import type { AlcanceCombustible, AmbitoVales } from "./alcance";
@@ -2043,11 +2043,20 @@ export class CombustibleService {
   listarAlertas(
     client: PoolClient,
     tenantId: string,
-    filtros: { soloNoLeidas?: boolean; producto?: string },
+    filtros: FiltrosAlertas,
     paginacion: Paginacion,
     alcance: AlcanceCombustible
   ) {
     return this.repository.findAlertas(client, tenantId, filtros, paginacion, alcance);
+  }
+
+  contarAlertas(
+    client: PoolClient,
+    tenantId: string,
+    filtros: FiltrosAlertas,
+    alcance: AlcanceCombustible
+  ) {
+    return this.repository.contarAlertas(client, tenantId, filtros, alcance);
   }
 
   marcarAlertasLeidas(
