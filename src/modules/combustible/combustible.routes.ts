@@ -823,6 +823,13 @@ router.get(
   requireRole("admin", "operador"),
   asyncHandler(controller.listarAlertas.bind(controller))
 );
+// Los contadores de la Bandeja. Mismo permiso que el listado.
+router.get(
+  "/alertas/resumen",
+  requirePestana("combustible", "tanques:alertas"),
+  requireRole("admin", "operador"),
+  asyncHandler(controller.resumenAlertas.bind(controller))
+);
 router.patch(
   "/alertas/leidas",
   requirePestana("combustible", "tanques:alertas"),

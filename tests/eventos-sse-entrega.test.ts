@@ -66,7 +66,10 @@ describe("SSE: los eventos llegan al cliente en vivo", () => {
           host: "127.0.0.1",
           port: puerto,
           path: "/api/eventos/stream",
-          headers: { Cookie: cookie },
+          // Como un navegador: TODOS piden gzip. Sin esta cabecera el
+          // middleware de compresión nunca actúa, y el test pasaba aunque en
+          // el navegador los eventos se quedaran retenidos en el compresor.
+          headers: { Cookie: cookie, "Accept-Encoding": "gzip, deflate, br" },
         },
         (res) => {
           let recibido = "";
@@ -105,13 +108,11 @@ describe("SSE: los eventos llegan al cliente en vivo", () => {
 
   it("la respuesta NO va comprimida: comprimir un stream lo bufferea y no llega nada", async () => {
     // `compression` está aplicado globalmente en app.ts y bufferea hasta
-    // juntar 1 KB, así que sería la explicación obvia de una campanita que
-    // no actualiza. NO lo es -- `text/event-stream` no figura como
-    // comprimible en mime-db y el middleware lo saltea solo.
-    //
-    // El test se queda igual: es la clase de cosa que alguien "arregla"
-    // bajando el threshold o agregando un tipo a la config y rompe sin
-    // enterarse.
+    // juntar 1 KB. Este test decía que el middleware salteaba solo el
+    // `text/event-stream`, pero NO mandaba `Accept-Encoding`, así que el
+    // compresor nunca entraba en juego. Con la cabecera que manda cualquier
+    // navegador, el stream SÍ salía comprimido y los eventos (de pocos
+    // bytes) no llegaban nunca: la campanita vivía del repaso cada 60 s.
     const { headers } = await escucharStream(800);
     expect(headers["content-type"]).toContain("text/event-stream");
     expect(headers["content-encoding"]).toBeUndefined();

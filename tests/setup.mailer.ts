@@ -33,3 +33,6 @@ process.env.EMAIL_HOST = "";
 process.env.EMAIL_USER = "";
 process.env.EMAIL_PASS = "";
 process.env.EMAIL_PORT = "";
+// Y la API de Brevo: sin clave ningún test puede mandar un correo real por ahí.
+process.env.BREVO_API_KEY = "";
+process.env.EMAIL_FROM = "";

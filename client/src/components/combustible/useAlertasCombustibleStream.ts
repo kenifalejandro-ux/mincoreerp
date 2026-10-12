@@ -10,9 +10,16 @@
 // (admin) y módulo habilitado, para no abrir el stream de nada para
 // operador/lectura.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { apiFetch } from "../../services/apiClient";
+
+import { suscribirseAlStreamDeAlertas } from "./streamDeAlertas";
+
+/** La campanita deja acá el id de la alerta que se clickeó antes de llevar al
+ *  usuario a la Bandeja: puede que la Bandeja todavía no esté montada cuando
+ *  sale el aviso por `window`. */
+export const CLAVE_ALERTA_PENDIENTE = "combustible:bandeja:abrir";
 
 export interface AlertaCombustible {
   id: number;
@@ -56,7 +63,6 @@ interface RespuestaAlertas {
 export function useAlertasCombustibleStream(activo: boolean) {
   const [alertas, setAlertas] = useState<AlertaCombustible[]>([]);
   const [noLeidas, setNoLeidas] = useState(0);
-  const eventSourceRef = useRef<EventSource | null>(null);
 
   const cargar = useCallback(async () => {
     try {
@@ -78,17 +84,7 @@ export function useAlertasCombustibleStream(activo: boolean) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     cargar();
 
-    const es = new EventSource("/api/eventos/stream", { withCredentials: true });
-    eventSourceRef.current = es;
-    es.addEventListener("combustible.alerta_creada", () => {
-      cargar();
-    });
-    es.addEventListener("combustible.alerta_resuelta", () => {
-      cargar();
-    });
-    es.addEventListener("combustible.alertas_actualizadas", () => {
-      cargar();
-    });
+    const darDeBajaDelStream = suscribirseAlStreamDeAlertas(cargar);
 
     const alActualizarLocal = () => cargar();
     window.addEventListener("combustible:actualizado", alActualizarLocal);
@@ -119,8 +115,7 @@ export function useAlertasCombustibleStream(activo: boolean) {
     const repaso = setInterval(cargar, 60_000);
 
     return () => {
-      es.close();
-      eventSourceRef.current = null;
+      darDeBajaDelStream();
       window.removeEventListener("combustible:actualizado", alActualizarLocal);
       document.removeEventListener("visibilitychange", alVolver);
       window.removeEventListener("focus", alVolver);

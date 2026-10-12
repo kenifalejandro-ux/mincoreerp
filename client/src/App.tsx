@@ -1,6 +1,7 @@
 // client/src/App.tsx
 import { Suspense, lazy, useState, type ComponentType } from "react";
 
+import { puedeVerBandeja } from "./components/bandeja/bandejaAcceso";
 import Layout from "./components/layout/Layout";
 import { useAuth } from "./context/AuthContext";
 import { MODULOS_CLIENTE } from "./modules/registry";
@@ -17,6 +18,8 @@ const FacturacionView = lazy(() => import("./components/facturacion/FacturacionV
 // Sidebar no la muestra si no sos admin, y el backend la rechaza igual
 // (requireRole).
 const AdministracionView = lazy(() => import("./components/administracion/AdministracionView"));
+
+const BandejaView = lazy(() => import("./components/bandeja/BandejaView"));
 
 type UsuarioDeSesion = {
   rol: string;
@@ -45,6 +48,8 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
     return false;
   }
   if (moduloId === "administracion") return usuario?.rol === "admin";
+  // La Bandeja no es un módulo: junta las alertas de los que sí lo son.
+  if (moduloId === "bandeja") return puedeVerBandeja(usuario);
   if (moduloId === "combustible") {
     const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
     const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
@@ -135,7 +140,9 @@ function App() {
       ? FacturacionView
       : moduloIdActivo === "administracion"
         ? AdministracionView
-        : moduloActivo?.componente;
+        : moduloIdActivo === "bandeja"
+          ? BandejaView
+          : moduloActivo?.componente;
   // Combustible es, por ahora, el único módulo con sub-pestaña (ver
   // Sidebar.tsx) -- se la pasamos como prop en vez de que el panel la lea
   // de activeTab directamente, para no acoplar ese componente al formato
