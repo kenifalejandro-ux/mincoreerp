@@ -806,6 +806,17 @@ const HOJA_COMO_LEERLO: HojaXlsx = {
   ],
 };
 
+/** "AAAA-MM-DD" que es un día REAL del calendario. Date.parse acepta
+ *  "2026-02-31" (lo corre al 3 de marzo) y Postgres no, y daba 500: se arma la
+ *  fecha y se comprueba que al volver a escribirla sea la misma. Una sola
+ *  comparación: si el día o el mes se corrieron, el texto ya no coincide. */
+export function esDiaDeCalendario(fecha: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return false;
+  const [a, m, d] = fecha.split("-").map(Number);
+  const real = new Date(Date.UTC(a, m - 1, d));
+  return real.toISOString().slice(0, 10) === fecha;
+}
+
 /** Los filtros de la Bandeja desde la query. Un valor malformado es 400 y no
  *  se ignora: un filtro descartado en silencio muestra "no hay alertas" cuando
  *  sí las hay, que es justo lo que no puede pasar en esta pantalla. */
@@ -845,18 +856,7 @@ function filtrosAlertasDe(q: Request["query"]): FiltrosAlertas | { error: string
   for (const campo of ["desde", "hasta"] as const) {
     const fecha = texto(q[campo]);
     if (fecha === undefined) continue;
-    // Date.parse acepta "2026-02-31" (lo corre al 3 de marzo) y Postgres no:
-    // se comprueba que la fecha sea un día REAL del calendario.
-    const [a, m, d] = fecha.split("-").map(Number);
-    const real = new Date(Date.UTC(a, m - 1, d));
-    if (
-      !/^\d{4}-\d{2}-\d{2}$/.test(fecha) ||
-      real.getUTCFullYear() !== a ||
-      real.getUTCMonth() !== m - 1 ||
-      real.getUTCDate() !== d
-    ) {
-      return { error: `${campo} inválido (AAAA-MM-DD)` };
-    }
+    if (!esDiaDeCalendario(fecha)) return { error: `${campo} inválido (AAAA-MM-DD)` };
     filtros[campo] = fecha;
   }
   const buscar = texto(q.q);

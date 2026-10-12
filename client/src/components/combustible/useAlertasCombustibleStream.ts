@@ -10,7 +10,7 @@
 // (admin) y módulo habilitado, para no abrir el stream de nada para
 // operador/lectura.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { apiFetch } from "../../services/apiClient";
 
@@ -58,10 +58,46 @@ interface RespuestaAlertas {
   pagination: { total: number };
 }
 
+// ── Una sola conexión por pestaña ───────────────────────────────────────
+//
+// La campanita (admin) y la Bandeja (admin y operador) usan este hook al mismo
+// tiempo. Cada uno abría SU EventSource: dos conexiones por pestaña, y con
+// HTTP/1.1 el navegador permite 6 por origen, así que tres pestañas agotaban
+// el cupo y dejaban sin conexión a todo lo demás. Ahora hay UNA, que se abre
+// con el primer suscriptor y se cierra con el último; cada uno recibe el aviso
+// y recarga lo suyo.
+const EVENTOS_DE_ALERTAS = [
+  "combustible.alerta_creada",
+  "combustible.alerta_resuelta",
+  "combustible.alertas_actualizadas",
+] as const;
+const suscriptoresDelStream = new Set<() => void>();
+let fuenteCompartida: EventSource | null = null;
+
+function avisarASuscriptores() {
+  for (const alAvisar of suscriptoresDelStream) alAvisar();
+}
+
+/** Devuelve la función que da de baja la suscripción. */
+export function suscribirseAlStreamDeAlertas(alAvisar: () => void): () => void {
+  suscriptoresDelStream.add(alAvisar);
+  if (fuenteCompartida === null) {
+    const es = new EventSource("/api/eventos/stream", { withCredentials: true });
+    for (const evento of EVENTOS_DE_ALERTAS) es.addEventListener(evento, avisarASuscriptores);
+    fuenteCompartida = es;
+  }
+  return () => {
+    suscriptoresDelStream.delete(alAvisar);
+    if (suscriptoresDelStream.size === 0 && fuenteCompartida !== null) {
+      fuenteCompartida.close();
+      fuenteCompartida = null;
+    }
+  };
+}
+
 export function useAlertasCombustibleStream(activo: boolean) {
   const [alertas, setAlertas] = useState<AlertaCombustible[]>([]);
   const [noLeidas, setNoLeidas] = useState(0);
-  const eventSourceRef = useRef<EventSource | null>(null);
 
   const cargar = useCallback(async () => {
     try {
@@ -83,17 +119,7 @@ export function useAlertasCombustibleStream(activo: boolean) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     cargar();
 
-    const es = new EventSource("/api/eventos/stream", { withCredentials: true });
-    eventSourceRef.current = es;
-    es.addEventListener("combustible.alerta_creada", () => {
-      cargar();
-    });
-    es.addEventListener("combustible.alerta_resuelta", () => {
-      cargar();
-    });
-    es.addEventListener("combustible.alertas_actualizadas", () => {
-      cargar();
-    });
+    const darDeBajaDelStream = suscribirseAlStreamDeAlertas(cargar);
 
     const alActualizarLocal = () => cargar();
     window.addEventListener("combustible:actualizado", alActualizarLocal);
@@ -124,8 +150,7 @@ export function useAlertasCombustibleStream(activo: boolean) {
     const repaso = setInterval(cargar, 60_000);
 
     return () => {
-      es.close();
-      eventSourceRef.current = null;
+      darDeBajaDelStream();
       window.removeEventListener("combustible:actualizado", alActualizarLocal);
       document.removeEventListener("visibilitychange", alVolver);
       window.removeEventListener("focus", alVolver);

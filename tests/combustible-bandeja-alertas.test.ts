@@ -343,12 +343,27 @@ describe("Bandeja de alertas: auditoría adversaria", () => {
     expect((await adminA.get("/api/erp/combustible/alertas")).body.data.length).toBeGreaterThan(0);
   });
 
-  it("una fecha que no existe es 400 y no un error del servidor", async () => {
+  it("las fechas válidas pasan, bisiestas incluidas, y las imposibles son 400", async () => {
+    // El lado que faltaba: una validación que rechaza TODO también "pasa" los 400.
+    for (const q of [
+      "desde=2028-02-29",
+      "hasta=2026-12-31",
+      "desde=2026-01-01&hasta=2026-01-01",
+      "desde=2024-02-29",
+    ]) {
+      const r = await adminA.get(`/api/erp/combustible/alertas?${q}`);
+      expect(r.status, q).toBe(200);
+    }
     for (const q of [
       "desde=2026-02-31",
       "hasta=2026-13-01",
       "desde=2026-00-10",
       "hasta=2026-04-31",
+      "desde=2026-03-00",
+      "desde=2027-02-29", // 2027 no es bisiesto
+      "desde=2100-02-29", // ni 2100 (divisible por 100 y no por 400)
+      "hasta=2026-1-5",
+      "desde=hoy",
     ]) {
       const r = await adminA.get(`/api/erp/combustible/alertas?${q}`);
       expect(r.status, q).toBe(400);
