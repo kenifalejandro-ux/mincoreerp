@@ -825,7 +825,8 @@ function filtrosAlertasDe(q: Request["query"]): FiltrosAlertas | { error: string
   const id = texto(q.id);
   if (id !== undefined) {
     const n = Number(id);
-    if (!Number.isInteger(n) || n <= 0) return { error: "id inválido" };
+    // Seguro y no solo entero: un 1e20 es "entero" para JS y desborda el BIGINT.
+    if (!Number.isSafeInteger(n) || n <= 0) return { error: "id inválido" };
     filtros.id = n;
   }
   const tipo = texto(q.tipo);
@@ -836,13 +837,24 @@ function filtrosAlertasDe(q: Request["query"]): FiltrosAlertas | { error: string
   const grifo = texto(q.grifo_interno_id);
   if (grifo !== undefined) {
     const n = Number(grifo);
-    if (!Number.isInteger(n) || n <= 0) return { error: "grifo_interno_id inválido" };
+    if (!Number.isSafeInteger(n) || n <= 0 || n > 2_147_483_647) {
+      return { error: "grifo_interno_id inválido" };
+    }
     filtros.grifoInternoId = n;
   }
   for (const campo of ["desde", "hasta"] as const) {
     const fecha = texto(q[campo]);
     if (fecha === undefined) continue;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || Number.isNaN(Date.parse(fecha))) {
+    // Date.parse acepta "2026-02-31" (lo corre al 3 de marzo) y Postgres no:
+    // se comprueba que la fecha sea un día REAL del calendario.
+    const [a, m, d] = fecha.split("-").map(Number);
+    const real = new Date(Date.UTC(a, m - 1, d));
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(fecha) ||
+      real.getUTCFullYear() !== a ||
+      real.getUTCMonth() !== m - 1 ||
+      real.getUTCDate() !== d
+    ) {
       return { error: `${campo} inválido (AAAA-MM-DD)` };
     }
     filtros[campo] = fecha;

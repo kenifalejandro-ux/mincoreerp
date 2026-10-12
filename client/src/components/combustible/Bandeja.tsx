@@ -10,7 +10,7 @@
 // servidor filtra en GET /alertas y /alertas/resumen).
 
 import { ArrowLeft, CheckCircle2, Search, TriangleAlert } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { apiFetch } from "../../services/apiClient";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
@@ -128,7 +128,14 @@ export default function BandejaAlertas() {
     return p;
   }, [tipo, grifo, desde, hasta, busquedaAplicada]);
 
+  // Número de la última petición: una respuesta lenta de un filtro anterior no
+  // puede pisar la de lo que el usuario tiene seleccionado ahora (pasa al
+  // cambiar de pestaña o de filtro rápido, o cuando llega un aviso en vivo).
+  const peticionActual = useRef(0);
+
   const cargar = useCallback(async () => {
+    const mia = ++peticionActual.current;
+    const vigente = () => mia === peticionActual.current;
     setCargando(true);
     setError(null);
     try {
@@ -140,22 +147,25 @@ export default function BandejaAlertas() {
         apiFetch(`/api/erp/combustible/alertas?${lista.toString()}`),
         apiFetch(`/api/erp/combustible/alertas/resumen?${filtrosQuery.toString()}`),
       ]);
+      if (!vigente()) return;
       if (!resLista.ok || !resResumen.ok) {
         const cuerpo = await (resLista.ok ? resResumen : resLista).json().catch(() => ({}));
-        setError(cuerpo.error || "No se pudo cargar la bandeja.");
+        if (vigente()) setError(cuerpo.error || "No se pudo cargar la bandeja.");
         return;
       }
       const cuerpoLista = await resLista.json();
+      const cuerpoResumen = await resResumen.json();
+      if (!vigente()) return;
       // El id es BIGINT y llega como texto; la campanita lo pasa como número.
       // Sin normalizar, "123" === 123 nunca coincide y la alerta que se
       // clickeó en la campanita no queda seleccionada.
       setAlertas((cuerpoLista.data as AlertaBandeja[]).map((a) => ({ ...a, id: Number(a.id) })));
       setTotal(cuerpoLista.pagination.total);
-      setResumen(await resResumen.json());
+      setResumen(cuerpoResumen);
     } catch {
-      setError("No se pudo cargar la bandeja. Revisa tu conexión.");
+      if (vigente()) setError("No se pudo cargar la bandeja. Revisa tu conexión.");
     } finally {
-      setCargando(false);
+      if (vigente()) setCargando(false);
     }
   }, [filtrosQuery, estado, pagina]);
 

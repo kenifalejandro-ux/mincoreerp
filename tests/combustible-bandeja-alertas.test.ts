@@ -252,3 +252,113 @@ describe("Bandeja de alertas: filtros y contadores dentro del alcance", () => {
     expect(r.status).toBe(400);
   });
 });
+
+describe("Bandeja de alertas: auditoría adversaria", () => {
+  let tenantA: string;
+  let tenantB: string;
+  const adminA = request.agent(app);
+  const adminB = request.agent(app);
+  let alertaDeA: string;
+
+  // Cada empresa lleva SU marca: con la misma en las dos, "no la encontró B"
+  // no se distingue de "B encontró la suya".
+  const alerta = (tenantId: string, combustibleId: number, marca: string) =>
+    withTenant(tenantId, async (client) => {
+      const r = await client.query<{ id: string }>(
+        `INSERT INTO combustible_alertas (tenant_id, tipo, combustible_id, producto, detalle)
+         VALUES ($1, 'descuadre_inventario', $2, 'combustible', jsonb_build_object('secreto', $3::text))
+         RETURNING id`,
+        [tenantId, combustibleId, marca]
+      );
+      return r.rows[0].id;
+    });
+
+  async function tanqueDe(agente: ReturnType<typeof request.agent>) {
+    const sedes = (await agente.get("/api/erp/sedes")).body.sedes;
+    const r = await agente.post("/api/erp/combustible").send({
+      codigo: idUnico("TQ"),
+      tanque_nombre: "Tanque",
+      tipo_combustible: "diesel_b5",
+      unidad: "L",
+      tipo_punto: "fijo",
+      capacidad_total: 20000,
+      nivel_actual: 10000,
+      requiere_documento: false,
+      modo_vigilancia: "sin_vigilar",
+      grifo_interno_id: sedes[0].grifos[0].id,
+    });
+    expect(r.status).toBe(201);
+    return r.body.id as number;
+  }
+
+  beforeAll(async () => {
+    const a = await crearTenantDePrueba(PASSWORD);
+    const b = await crearTenantDePrueba(PASSWORD);
+    tenantA = a.tenant.id;
+    tenantB = b.tenant.id;
+    await adminA
+      .post("/api/auth/login")
+      .send({ tenantSlug: a.tenant.slug, email: a.usuario.email, password: PASSWORD });
+    await adminB
+      .post("/api/auth/login")
+      .send({ tenantSlug: b.tenant.slug, email: b.usuario.email, password: PASSWORD });
+    alertaDeA = await alerta(tenantA, await tanqueDe(adminA), "marca-solo-de-A");
+    await alerta(tenantB, await tanqueDe(adminB), "marca-solo-de-B");
+  });
+
+  afterAll(async () => {
+    await borrarTenantDePrueba(tenantA);
+    await borrarTenantDePrueba(tenantB);
+  });
+
+  it("otra empresa no ve la alerta ni por id, ni por búsqueda, ni en los contadores", async () => {
+    const porId = await adminB.get(`/api/erp/combustible/alertas?id=${alertaDeA}&estado=todas`);
+    expect(porId.status).toBe(200);
+    expect(porId.body.data).toEqual([]);
+
+    const porTexto = await adminB.get(
+      "/api/erp/combustible/alertas?q=marca-solo-de-A&estado=todas"
+    );
+    expect(porTexto.body.data).toEqual([]);
+
+    // El gemelo: la dueña sí la ve por esas mismas vías.
+    const suya = await adminA.get(`/api/erp/combustible/alertas?id=${alertaDeA}&estado=todas`);
+    expect(suya.body.data).toHaveLength(1);
+    expect(
+      (await adminA.get("/api/erp/combustible/alertas?q=marca-solo-de-A")).body.data
+    ).toHaveLength(1);
+
+    const resumenB = (await adminB.get("/api/erp/combustible/alertas/resumen")).body;
+    expect(resumenB.total).toBe(1);
+  });
+
+  it("la búsqueda trata todo como texto: comillas, comodines y barras no rompen la consulta", async () => {
+    for (const q of ["'; DROP TABLE combustible_alertas;--", "\\", "100%", "_", "a\\%b", '"x"']) {
+      const r = await adminA.get(`/api/erp/combustible/alertas?q=${encodeURIComponent(q)}`);
+      expect(r.status, q).toBe(200);
+      const c = await adminA.get(`/api/erp/combustible/alertas/resumen?q=${encodeURIComponent(q)}`);
+      expect(c.status, q).toBe(200);
+    }
+    // La tabla sigue ahí.
+    expect((await adminA.get("/api/erp/combustible/alertas")).body.data.length).toBeGreaterThan(0);
+  });
+
+  it("una fecha que no existe es 400 y no un error del servidor", async () => {
+    for (const q of [
+      "desde=2026-02-31",
+      "hasta=2026-13-01",
+      "desde=2026-00-10",
+      "hasta=2026-04-31",
+    ]) {
+      const r = await adminA.get(`/api/erp/combustible/alertas?${q}`);
+      expect(r.status, q).toBe(400);
+    }
+  });
+
+  it("un id fuera de rango no revienta", async () => {
+    for (const id of ["0", "-3", "1.5", "99999999999999999999", "1e3"]) {
+      const r = await adminA.get(`/api/erp/combustible/alertas?id=${id}`);
+      expect([200, 400], id).toContain(r.status);
+    }
+  });
+});
