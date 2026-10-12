@@ -103,6 +103,8 @@ import {
   RecepcionExcedeCapacidadError,
   type ExcedenteRepartido,
 } from "./combustible.service";
+import { ESTADOS_ALERTAS } from "./combustible.repository";
+import type { EstadoAlertas, FiltrosAlertas } from "./combustible.repository";
 import * as surtidores from "./surtidores.service";
 import * as tanquetas from "./tanquetas.service";
 import { alcanceDe, ambitoDe, grifoDeAlertas, grifosDelFiltro } from "./alcance";
@@ -803,6 +805,64 @@ const HOJA_COMO_LEERLO: HojaXlsx = {
     ],
   ],
 };
+
+/** "AAAA-MM-DD" que es un día REAL del calendario. Date.parse acepta
+ *  "2026-02-31" (lo corre al 3 de marzo) y Postgres no, y daba 500: se arma la
+ *  fecha y se comprueba que al volver a escribirla sea la misma. Una sola
+ *  comparación: si el día o el mes se corrieron, el texto ya no coincide. */
+export function esDiaDeCalendario(fecha: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return false;
+  const [a, m, d] = fecha.split("-").map(Number);
+  const real = new Date(Date.UTC(a, m - 1, d));
+  return real.toISOString().slice(0, 10) === fecha;
+}
+
+/** Los filtros de la Bandeja desde la query. Un valor malformado es 400 y no
+ *  se ignora: un filtro descartado en silencio muestra "no hay alertas" cuando
+ *  sí las hay, que es justo lo que no puede pasar en esta pantalla. */
+function filtrosAlertasDe(q: Request["query"]): FiltrosAlertas | { error: string } {
+  const texto = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v.trim() : undefined);
+  const filtros: FiltrosAlertas = { soloNoLeidas: q.solo_no_leidas === "true" };
+  // Filtro por producto (migración 0092): sin él, la pestaña de urea vería
+  // mezcladas sus propias alertas con las de diésel/gasolina/glp.
+  if (q.producto === "urea" || q.producto === "combustible") filtros.producto = q.producto;
+
+  const estado = texto(q.estado);
+  if (estado !== undefined) {
+    if (!(ESTADOS_ALERTAS as readonly string[]).includes(estado))
+      return { error: "estado inválido" };
+    filtros.estado = estado as EstadoAlertas;
+  }
+  const id = texto(q.id);
+  if (id !== undefined) {
+    const n = Number(id);
+    // Seguro y no solo entero: un 1e20 es "entero" para JS y desborda el BIGINT.
+    if (!Number.isSafeInteger(n) || n <= 0) return { error: "id inválido" };
+    filtros.id = n;
+  }
+  const tipo = texto(q.tipo);
+  if (tipo !== undefined) {
+    if (!/^[a-z_]{1,60}$/.test(tipo)) return { error: "tipo inválido" };
+    filtros.tipo = tipo;
+  }
+  const grifo = texto(q.grifo_interno_id);
+  if (grifo !== undefined) {
+    const n = Number(grifo);
+    if (!Number.isSafeInteger(n) || n <= 0 || n > 2_147_483_647) {
+      return { error: "grifo_interno_id inválido" };
+    }
+    filtros.grifoInternoId = n;
+  }
+  for (const campo of ["desde", "hasta"] as const) {
+    const fecha = texto(q[campo]);
+    if (fecha === undefined) continue;
+    if (!esDiaDeCalendario(fecha)) return { error: `${campo} inválido (AAAA-MM-DD)` };
+    filtros[campo] = fecha;
+  }
+  const buscar = texto(q.q);
+  if (buscar !== undefined) filtros.texto = buscar.slice(0, 100);
+  return filtros;
+}
 
 export class CombustibleController {
   async getAll(req: Request, res: Response) {
@@ -3772,33 +3832,44 @@ export class CombustibleController {
 
   // ── Alertas (migrations/0068) ─────────────────────────────────────────
 
-  /** GET /alertas -- pantalla y campanita comparten este mismo listado
-   *  (la campanita solo pide ?solo_no_leidas=true). Visibilidad de
-   *  gerencia, no del operador (ver combustible.routes.ts). */
+  /** GET /alertas -- la campanita, la Bandeja y el panel de Tanques
+   *  comparten este listado (la campanita solo pide ?solo_no_leidas=true).
+   *  Visibilidad de gerencia, no del operador (ver combustible.routes.ts). */
   async listarAlertas(req: Request, res: Response) {
+    const filtros = filtrosAlertasDe(req.query);
+    if ("error" in filtros) {
+      res.status(400).json({ error: filtros.error });
+      return;
+    }
     try {
       const tenantId = getTenantId(req);
       const paginacion = parsePaginacion(req.query);
-      const soloNoLeidas = req.query.solo_no_leidas === "true";
-      // Filtro por producto (migración 0092): sin él, la pestaña de urea
-      // vería mezcladas sus propias alertas con las de diésel/gasolina/glp.
-      const producto =
-        req.query.producto === "urea" || req.query.producto === "combustible"
-          ? req.query.producto
-          : undefined;
-
       const filas = await withTenant(tenantId, (client) =>
-        service.listarAlertas(
-          client,
-          tenantId,
-          { soloNoLeidas, producto },
-          paginacion,
-          alcanceDe(req)
-        )
+        service.listarAlertas(client, tenantId, filtros, paginacion, alcanceDe(req))
       );
       res.json(armarRespuestaPaginada(filas, paginacion));
     } catch {
       res.status(500).json({ error: "Error al listar alertas" });
+    }
+  }
+
+  /** GET /alertas/resumen -- los contadores de la Bandeja (sin leer,
+   *  pendientes, por revisar, resueltas), con los mismos filtros que el
+   *  listado salvo el estado, y dentro del alcance de quien mira. */
+  async resumenAlertas(req: Request, res: Response) {
+    const filtros = filtrosAlertasDe(req.query);
+    if ("error" in filtros) {
+      res.status(400).json({ error: filtros.error });
+      return;
+    }
+    try {
+      const tenantId = getTenantId(req);
+      const resumen = await withTenant(tenantId, (client) =>
+        service.contarAlertas(client, tenantId, filtros, alcanceDe(req))
+      );
+      res.json(resumen);
+    } catch {
+      res.status(500).json({ error: "Error al contar alertas" });
     }
   }
 
