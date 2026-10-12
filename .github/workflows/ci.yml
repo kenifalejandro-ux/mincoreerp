@@ -10,8 +10,11 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
+      # Imágenes desde el espejo público de AWS (mismas imágenes oficiales):
+      # Docker Hub corta las descargas sin sesión (toomanyrequests) en los
+      # runners compartidos y tumbaba "Initialize containers" al azar.
       postgres:
-        image: postgres:16
+        image: public.ecr.aws/docker/library/postgres:16
         # POSTGRES_USER queda como "postgres" (el bootstrap por default) a
         # propósito: Postgres exige que el bootstrap user tenga SUPERUSER
         # ("The bootstrap user must have the SUPERUSER attribute") y lo
@@ -37,7 +40,7 @@ jobs:
       # solo el de fallback. Efímero, se borra al terminar el job, igual
       # que Postgres arriba.
       redis:
-        image: redis:7
+        image: public.ecr.aws/docker/library/redis:7
         ports:
           - 6379:6379
         options: >-
@@ -217,7 +220,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        image: public.ecr.aws/docker/library/postgres:16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ci_only_password
@@ -230,7 +233,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: redis:7
+        image: public.ecr.aws/docker/library/redis:7
         ports:
           - 6379:6379
         options: >-

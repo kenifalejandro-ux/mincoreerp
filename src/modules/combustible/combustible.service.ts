@@ -35,7 +35,7 @@ import type { DriverDocumento } from "../../server/services/documentStorage";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { CombustibleRepository } from "./combustible.repository";
-import type { PeriodoHistorial } from "./combustible.repository";
+import type { FiltrosAlertas, PeriodoHistorial } from "./combustible.repository";
 import { EquiposRepository } from "../equipos/equipos.repository";
 import { tanqueEnAlcance, valeEnAlcance } from "./alcance";
 import type { AlcanceCombustible, AmbitoVales } from "./alcance";
@@ -1655,6 +1655,14 @@ export class CombustibleService {
 
   /** El saldo de una tanqueta después de una carga (0114), para la alerta de
    *  sobregiro. */
+  bloquearTanqueta(client: PoolClient, tenantId: string, id: number) {
+    return tanquetas.bloquearTanqueta(client, tenantId, id);
+  }
+
+  sobregiroYaAvisado(client: PoolClient, tenantId: string, tanquetaId: number, alertaId: number) {
+    return tanquetas.sobregiroYaAvisado(client, tenantId, tanquetaId, alertaId);
+  }
+
   async saldoDeTanqueta(client: PoolClient, tenantId: string, id: number) {
     const t = await tanquetas.getTanqueta(client, tenantId, id);
     return t ? { codigo: t.codigo as string, saldo: Number(t.saldo) } : null;
@@ -2035,11 +2043,20 @@ export class CombustibleService {
   listarAlertas(
     client: PoolClient,
     tenantId: string,
-    filtros: { soloNoLeidas?: boolean; producto?: string },
+    filtros: FiltrosAlertas,
     paginacion: Paginacion,
     alcance: AlcanceCombustible
   ) {
     return this.repository.findAlertas(client, tenantId, filtros, paginacion, alcance);
+  }
+
+  contarAlertas(
+    client: PoolClient,
+    tenantId: string,
+    filtros: FiltrosAlertas,
+    alcance: AlcanceCombustible
+  ) {
+    return this.repository.contarAlertas(client, tenantId, filtros, alcance);
   }
 
   marcarAlertasLeidas(
@@ -2461,14 +2478,11 @@ export class CombustibleService {
    *
    *  Devuelve cuántas alertas creó. El `NOT EXISTS` de la consulta hace que
    *  no se repita: una recepción alerta una sola vez. */
-  async alertarDiferenciasDeRecepcion(
-    client: PoolClient,
-    tenantId: string
-  ): Promise<{ creadas: number }> {
+  async alertarDiferenciasDeRecepcion(client: PoolClient, tenantId: string) {
     const excedidas = await this.repository.findRecepcionesConDiferenciaExcedida(client, tenantId);
-    if (excedidas.length === 0) return { creadas: 0 };
+    if (excedidas.length === 0) return { creadas: 0, alertas: [] };
 
-    await this.repository.crearAlertas(
+    const alertas = await this.repository.crearAlertas(
       client,
       tenantId,
       excedidas.map((r) => {
@@ -2506,7 +2520,7 @@ export class CombustibleService {
         };
       })
     );
-    return { creadas: excedidas.length };
+    return { creadas: excedidas.length, alertas };
   }
 
   /** EL TOTALIZADOR CONTRA LOS VALES (0094). Se evalúa DESPUÉS de crear el vale

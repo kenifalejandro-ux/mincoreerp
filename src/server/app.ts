@@ -104,7 +104,19 @@ const helmetMiddleware = helmet({
     : false,
 }) as unknown as RequestHandler;
 
-const compressionMiddleware = compression({ threshold: 1024 }) as unknown as RequestHandler;
+// El stream de eventos NO se comprime. El compresor junta la salida hasta
+// tener 1 KB, y un evento SSE pesa menos: con un navegador (que siempre pide
+// gzip/br) los eventos se quedaban retenidos y nunca llegaban. La campanita y
+// la Bandeja vivían solo del repaso cada 60 s. Se decide por Content-Type, que
+// ya está puesto cuando el compresor pregunta: cubre el stream del tenant y el
+// de la plataforma sin listar rutas.
+const compressionMiddleware = compression({
+  threshold: 1024,
+  filter: (req, res) => {
+    if (String(res.getHeader("Content-Type") ?? "").startsWith("text/event-stream")) return false;
+    return compression.filter(req, res);
+  },
+}) as unknown as RequestHandler;
 const corsMiddleware = cors(corsOptions) as unknown as RequestHandler;
 // Guarda el body crudo para poder validar firmas HMAC de futuros webhooks
 // (pagos, integraciones) sin tener que reserializar el JSON parseado.

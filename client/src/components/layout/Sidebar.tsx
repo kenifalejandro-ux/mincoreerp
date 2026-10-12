@@ -5,6 +5,7 @@ import {
   Droplets,
   Fuel,
   History,
+  Inbox,
   Navigation,
   Route,
   Receipt,
@@ -13,10 +14,11 @@ import {
   ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
 import { useAuth } from "../../context/AuthContext";
 import { MODULOS_CLIENTE } from "../../modules/registry";
+import { puedeVerBandeja } from "../bandeja/bandejaAcceso";
 
 // Submenú de Combustible. Los íconos son de trazo (lucide), los mismos que
 // usan las acciones de la tabla de tanques.
@@ -57,6 +59,30 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
     // robusta de perfiles): sin override, ven todos los submenús.
     return true;
   });
+  // La Bandeja junta las alertas de todos los módulos: es un ítem propio y no
+  // un submenú de Combustible. Quién la ve: bandejaAcceso.ts.
+  const verBandeja = puedeVerBandeja(usuario);
+  const hayDashboard = tabs.some((m) => m.id === "dashboard");
+  const botonBandeja = verBandeja ? (
+    <button
+      key="bandeja"
+      onClick={() => setActiveTab("bandeja")}
+      className={`w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all relative ${
+        activeTab === "bandeja"
+          ? "bg-[#BADC1E] text-[#0A1014] font-semibold"
+          : "text-slate-500 hover:bg-[#BADC1E] hover:text-[#0A1014] font-medium"
+      }`}
+    >
+      {activeTab === "bandeja" && (
+        <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-[#BADC1E]" />
+      )}
+      <span className={activeTab === "bandeja" ? "text-[#0A1014]" : "text-slate-400"}>
+        <Inbox size={18} strokeWidth={2} />
+      </span>
+      <span className="tracking-tight">Bandeja</span>
+    </button>
+  ) : null;
+
   const puedeVerFacturacion = (() => {
     if (usuario?.rol === "admin") return true;
     const override = usuario?.permisosPestanas?.["facturacion:principal"];
@@ -96,6 +122,7 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
       </div>
 
       <nav className="flex-1 py-4 flex flex-col gap-1">
+        {!hayDashboard && botonBandeja}
         {tabs.map((tab) => {
           // Combustible es, por ahora, el único módulo con submenú: adentro
           // viven el Histórico que pidió el cliente (consumo, recepciones,
@@ -115,101 +142,106 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
             ? activeTab === "combustible" || activeTab.startsWith("combustible:")
             : activeTab === tab.id;
           return (
-            <div key={tab.id}>
-              <button
-                onClick={() => {
-                  if (esCombustible) setCombustibleDesplegado(true);
-                  setActiveTab(
-                    esCombustible && usuario?.rol === "encargado_urea"
-                      ? "combustible:urea"
-                      : esCombustible
-                        ? "combustible"
-                        : tab.id
-                  );
-                }}
-                className={`group w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all relative ${
-                  isActive
-                    ? "bg-[#BADC1E] text-[#0A1014] hover:bg-[#BADC1E] font-semibold"
-                    : "text-slate-500  hover:bg-[#BADC1E] font-medium"
-                }`}
-              >
-                {isActive && (
-                  <div className="absolute left-0 top-0 bottom-0 w-1.5 z-2 bg-[#BADC1E]" />
-                )}
+            <Fragment key={tab.id}>
+              <div>
+                <button
+                  onClick={() => {
+                    if (esCombustible) setCombustibleDesplegado(true);
+                    setActiveTab(
+                      esCombustible && usuario?.rol === "encargado_urea"
+                        ? "combustible:urea"
+                        : esCombustible
+                          ? "combustible"
+                          : tab.id
+                    );
+                  }}
+                  className={`group w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all relative ${
+                    isActive
+                      ? "bg-[#BADC1E] text-[#0A1014] hover:bg-[#BADC1E] font-semibold"
+                      : "text-slate-500  hover:bg-[#BADC1E] font-medium"
+                  }`}
+                >
+                  {isActive && (
+                    <div className="absolute left-0 top-0 bottom-0 w-1.5 z-2 bg-[#BADC1E]" />
+                  )}
 
-                <tab.icono
-                  size={18}
-                  strokeWidth={2}
-                  className={`shrink-0 ${isActive ? "text-[#0A1014]" : "text-slate-400 group-hover:text-[#0A1014]"}`}
-                />
-                <span className="tracking-tight flex-1">{tab.label}</span>
+                  <tab.icono
+                    size={18}
+                    strokeWidth={2}
+                    className={`shrink-0 ${isActive ? "text-[#0A1014]" : "text-slate-400 group-hover:text-[#0A1014]"}`}
+                  />
+                  <span className="tracking-tight flex-1">{tab.label}</span>
+                  {esCombustible && (
+                    <span
+                      role="button"
+                      aria-label={combustibleDesplegado ? "Cerrar submenú" : "Abrir submenú"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCombustibleDesplegado((v) => !v);
+                      }}
+                      className={`p-1 rounded transition-transform ${combustibleDesplegado ? "rotate-180" : ""}`}
+                    >
+                      <ChevronDown
+                        size={16}
+                        className={
+                          isActive ? "text-[#0A1014]" : "text-slate-400 group-hover:text-[#0A1014]"
+                        }
+                      />
+                    </span>
+                  )}
+                </button>
                 {esCombustible && (
-                  <span
-                    role="button"
-                    aria-label={combustibleDesplegado ? "Cerrar submenú" : "Abrir submenú"}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setCombustibleDesplegado((v) => !v);
-                    }}
-                    className={`p-1 rounded transition-transform ${combustibleDesplegado ? "rotate-180" : ""}`}
-                  >
-                    <ChevronDown
-                      size={16}
-                      className={
-                        isActive ? "text-[#0A1014]" : "text-slate-400 group-hover:text-[#0A1014]"
-                      }
-                    />
-                  </span>
-                )}
-              </button>
-              {esCombustible && (
-                /* Despliegue animado: la altura pasa de 0fr a 1fr (así no hace
+                  /* Despliegue animado: la altura pasa de 0fr a 1fr (así no hace
                    falta medir nada) y cada subitem entra con un pequeño
                    desfase, deslizándose desde la izquierda. `invisible` con
                    la misma transición saca los ítems ocultos del foco de
                    teclado recién cuando terminó de cerrarse. */
-                <div
-                  aria-hidden={!combustibleDesplegado}
-                  className={`grid transition-[grid-template-rows,visibility] duration-300 ease-out motion-reduce:transition-none ${
-                    combustibleDesplegado ? "grid-rows-[1fr] visible" : "grid-rows-[0fr] invisible"
-                  }`}
-                >
-                  <div className="overflow-hidden">
-                    <div className="flex flex-col">
-                      {submenusVisibles.map(({ tab: destino, label, Icono }, i) => {
-                        const activo = activeTab === destino;
-                        return (
-                          <div
-                            key={destino}
-                            style={{
-                              transitionDelay: combustibleDesplegado ? `${80 + i * 50}ms` : "0ms",
-                            }}
-                            className={`transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none ${
-                              combustibleDesplegado
-                                ? "opacity-100 translate-x-0"
-                                : "opacity-0 -translate-x-3"
-                            }`}
-                          >
-                            <button
-                              onClick={() => setActiveTab(destino)}
-                              tabIndex={combustibleDesplegado ? 0 : -1}
-                              className={`group w-full text-left pl-12 pr-6 py-2.5 text-sm flex items-center gap-3 transition-all ${
-                                activo
-                                  ? "text-[#BADC1E] font-semibold"
-                                  : "text-slate-500 hover:text-[#BADC1E] font-medium"
+                  <div
+                    aria-hidden={!combustibleDesplegado}
+                    className={`grid transition-[grid-template-rows,visibility] duration-300 ease-out motion-reduce:transition-none ${
+                      combustibleDesplegado
+                        ? "grid-rows-[1fr] visible"
+                        : "grid-rows-[0fr] invisible"
+                    }`}
+                  >
+                    <div className="overflow-hidden">
+                      <div className="flex flex-col">
+                        {submenusVisibles.map(({ tab: destino, label, Icono }, i) => {
+                          const activo = activeTab === destino;
+                          return (
+                            <div
+                              key={destino}
+                              style={{
+                                transitionDelay: combustibleDesplegado ? `${80 + i * 50}ms` : "0ms",
+                              }}
+                              className={`transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none ${
+                                combustibleDesplegado
+                                  ? "opacity-100 translate-x-0"
+                                  : "opacity-0 -translate-x-3"
                               }`}
                             >
-                              <Icono className="w-4 h-4 shrink-0" />
-                              {label}
-                            </button>
-                          </div>
-                        );
-                      })}
+                              <button
+                                onClick={() => setActiveTab(destino)}
+                                tabIndex={combustibleDesplegado ? 0 : -1}
+                                className={`group w-full text-left pl-12 pr-6 py-2.5 text-sm flex items-center gap-3 transition-all ${
+                                  activo
+                                    ? "text-[#BADC1E] font-semibold"
+                                    : "text-slate-500 hover:text-[#BADC1E] font-medium"
+                                }`}
+                              >
+                                <Icono className="w-4 h-4 shrink-0" />
+                                {label}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
-            </div>
+                )}
+              </div>
+              {tab.id === "dashboard" && botonBandeja}
+            </Fragment>
           );
         })}
 
