@@ -134,6 +134,7 @@ export default defineConfig([
       "src/components/UreaPanel.tsx",
       "src/components/combustible/CombustiblePanel.tsx",
       "src/components/combustible/Bandeja.tsx",
+      "src/components/combustible/useAlertasCombustibleStream.ts",
       "src/components/bandeja/BandejaView.tsx",
       "src/pages/LoginPage.tsx",
     ],

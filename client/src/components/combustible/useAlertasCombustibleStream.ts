@@ -14,6 +14,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { apiFetch } from "../../services/apiClient";
 
+import { suscribirseAlStreamDeAlertas } from "./streamDeAlertas";
+
 /** La campanita deja acá el id de la alerta que se clickeó antes de llevar al
  *  usuario a la Bandeja: puede que la Bandeja todavía no esté montada cuando
  *  sale el aviso por `window`. */
@@ -56,43 +58,6 @@ export interface AlertaCombustible {
 interface RespuestaAlertas {
   data: AlertaCombustible[];
   pagination: { total: number };
-}
-
-// ── Una sola conexión por pestaña ───────────────────────────────────────
-//
-// La campanita (admin) y la Bandeja (admin y operador) usan este hook al mismo
-// tiempo. Cada uno abría SU EventSource: dos conexiones por pestaña, y con
-// HTTP/1.1 el navegador permite 6 por origen, así que tres pestañas agotaban
-// el cupo y dejaban sin conexión a todo lo demás. Ahora hay UNA, que se abre
-// con el primer suscriptor y se cierra con el último; cada uno recibe el aviso
-// y recarga lo suyo.
-const EVENTOS_DE_ALERTAS = [
-  "combustible.alerta_creada",
-  "combustible.alerta_resuelta",
-  "combustible.alertas_actualizadas",
-] as const;
-const suscriptoresDelStream = new Set<() => void>();
-let fuenteCompartida: EventSource | null = null;
-
-function avisarASuscriptores() {
-  for (const alAvisar of suscriptoresDelStream) alAvisar();
-}
-
-/** Devuelve la función que da de baja la suscripción. */
-export function suscribirseAlStreamDeAlertas(alAvisar: () => void): () => void {
-  suscriptoresDelStream.add(alAvisar);
-  if (fuenteCompartida === null) {
-    const es = new EventSource("/api/eventos/stream", { withCredentials: true });
-    for (const evento of EVENTOS_DE_ALERTAS) es.addEventListener(evento, avisarASuscriptores);
-    fuenteCompartida = es;
-  }
-  return () => {
-    suscriptoresDelStream.delete(alAvisar);
-    if (suscriptoresDelStream.size === 0 && fuenteCompartida !== null) {
-      fuenteCompartida.close();
-      fuenteCompartida = null;
-    }
-  };
 }
 
 export function useAlertasCombustibleStream(activo: boolean) {
