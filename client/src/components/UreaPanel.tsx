@@ -3960,10 +3960,12 @@ function ModalConteo({
 }) {
   const [clienteUuid] = useState(() => crypto.randomUUID());
   const activas = presentacionesActivas(presentaciones);
-  const [presentacion, setPresentacion] = useState<Presentacion>(() =>
-    presentacionPorDefecto(presentaciones)
-  );
-  const [cantidadBultos, setCantidadBultos] = useState("");
+  // Lo que hay en el almacén es "1 caja + 2 bolsas": un campo por presentación.
+  // Vacío = no se contó esa presentación (cuenta como 0).
+  const [cantidades, setCantidades] = useState<Record<string, string>>({});
+  const lineas = activas
+    .filter((p) => cantidades[p.codigo] !== undefined && cantidades[p.codigo] !== "")
+    .map((p) => ({ presentacion: p.codigo, cantidad_bultos: Number(cantidades[p.codigo]) }));
   const [contadoEn, setContadoEn] = useState(ahoraParaInputLocal());
   const [observaciones, setObservaciones] = useState("");
   const [enviando, setEnviando] = useState(false);
@@ -3978,8 +3980,7 @@ function ModalConteo({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           cliente_uuid: clienteUuid,
-          presentacion,
-          cantidad_bultos: Number(cantidadBultos),
+          lineas,
           contado_en: new Date(contadoEn).toISOString(),
           observaciones: observaciones.trim() || undefined,
         }),
@@ -4000,37 +4001,26 @@ function ModalConteo({
       <div className="p-6 flex flex-col gap-4">
         <h3 className="text-lg font-bold text-slate-800">Registrar conteo físico de urea</h3>
         <p className="text-sm text-slate-500">
-          Contá lo que queda en almacén AHORA MISMO, en la presentación que sea más fácil de contar.
-          Es el reemplazo de la varilla del tanque: si no cuadra con lo que el sistema espera, va a
-          quedar una alerta para revisar.
+          Contá lo que queda en almacén AHORA MISMO, todas las presentaciones que haya (por ejemplo
+          1 caja y 2 bolsas); las que no tengas, dejalas vacías. Es el reemplazo de la varilla del
+          tanque: si no cuadra con lo que el sistema espera, va a quedar una alerta para revisar.
         </p>
         {error && <div className="text-sm text-red-600 bg-red-50 rounded p-2">{error}</div>}
         {activas.length === 0 && <AvisoSinEnvases />}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <label className="flex flex-col text-sm gap-1">
-            <span className="text-gray-600">Presentación contada</span>
-            <select
-              value={presentacion}
-              onChange={(e) => setPresentacion(e.target.value as Presentacion)}
-              className="rounded border border-gray-300 px-3 py-2"
-            >
-              {activas.map((p) => (
-                <option key={p.codigo} value={p.codigo}>
-                  {etiquetaPresentacion(p)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex flex-col text-sm gap-1">
-            <span className="text-gray-600">Cantidad contada</span>
-            <input
-              type="number"
-              min={0}
-              value={cantidadBultos}
-              onChange={(e) => setCantidadBultos(e.target.value)}
-              className="rounded border border-gray-300 px-3 py-2"
-            />
-          </label>
+          {activas.map((p) => (
+            <label key={p.codigo} className="flex flex-col text-sm gap-1">
+              <span className="text-gray-600">{etiquetaPresentacion(p)} contadas</span>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={cantidades[p.codigo] ?? ""}
+                onChange={(e) => setCantidades((c) => ({ ...c, [p.codigo]: e.target.value }))}
+                className="rounded border border-gray-300 px-3 py-2"
+              />
+            </label>
+          ))}
         </div>
         <label className="flex flex-col text-sm gap-1">
           <span className="text-gray-600">Fecha y hora del conteo</span>
@@ -4059,7 +4049,7 @@ function ModalConteo({
           </button>
           <button
             type="button"
-            disabled={!presentacion || cantidadBultos === "" || enviando}
+            disabled={lineas.length === 0 || enviando}
             onClick={enviar}
             className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed"
           >

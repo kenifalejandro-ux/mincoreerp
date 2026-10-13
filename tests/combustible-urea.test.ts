@@ -331,6 +331,36 @@ describe("combustible: urea automotriz (migración 0092)", () => {
     expect(Number(res.body.cantidad_litros)).toBe(160);
   });
 
+  it("conteo físico con varias presentaciones: 1 caja + 2 bolsas suman 24 L", async () => {
+    const res = await agente.post("/api/erp/combustible/urea/conteos").send({
+      lineas: [
+        { presentacion: "caja", cantidad_bultos: 1 },
+        { presentacion: "bolsa", cantidad_bultos: 2 },
+      ],
+      contado_en: new Date().toISOString(),
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(Number(res.body.cantidad_litros)).toBe(24);
+  });
+
+  it("conteo físico: no se mezclan renglones con presentación suelta ni se repite una", async () => {
+    const mezcla = await agente.post("/api/erp/combustible/urea/conteos").send({
+      presentacion: "caja",
+      cantidad_bultos: 1,
+      lineas: [{ presentacion: "bolsa", cantidad_bultos: 2 }],
+    });
+    expect(mezcla.status).toBe(400);
+    const repetida = await agente.post("/api/erp/combustible/urea/conteos").send({
+      lineas: [
+        { presentacion: "caja", cantidad_bultos: 1 },
+        { presentacion: "caja", cantidad_bultos: 2 },
+      ],
+    });
+    expect(repetida.status).toBe(400);
+    const vacio = await agente.post("/api/erp/combustible/urea/conteos").send({});
+    expect(vacio.status).toBe(400);
+  });
+
   it("un descuadre entre el conteo físico y el stock teórico dispara urea_descuadre_conteo", async () => {
     // Tenant nuevo y limpio para que el stock teórico sea determinístico.
     const otro = await crearTenantDePrueba(password);
