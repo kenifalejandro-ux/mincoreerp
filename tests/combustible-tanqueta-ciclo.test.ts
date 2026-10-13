@@ -57,6 +57,8 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
         tipo: "VOLQUETE",
         tipo_medidor: "horometro",
         grifo_interno_id: principal,
+        conductor_nombre: "Juan Pérez",
+        conductor_dni: "40000001",
       })
     ).body.id;
     conductor = await conRol("conductor_ruta");
@@ -189,6 +191,10 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
     const tipos = historial.body.map((m: { tipo: string }) => m.tipo);
     expect(tipos).toContain("prevision");
     expect(tipos).toContain("carga_ruta");
+    // La cadena llega hasta quien recibió: el conductor que quedó en el vale.
+    const cargaRuta = historial.body.find((m: { tipo: string }) => m.tipo === "carga_ruta");
+    expect(cargaRuta.conductor_nombre).toBe("Juan Pérez");
+    expect(cargaRuta.conductor_dni).toBe("40000001");
 
     const formulario = await conductor.get("/api/erp/combustible/tanquetas/formulario");
     expect(formulario.status).toBe(200);

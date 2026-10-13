@@ -2718,11 +2718,16 @@ export class CombustibleService {
       };
     }
 
+    // El anterior es el de ANTES de la fecha de este vale, no el último cargado:
+    // un vale que llega tarde (la cola offline, el papel del día anterior) se
+    // compara contra lo que había en su momento. Comparado contra el último de
+    // todos, un vale viejo siempre parecía un retroceso del medidor.
     const anterior = await this.repository.findUltimoMedidorEquipo(
       client,
       tenantId,
       equipoId,
-      data.despachoId
+      data.despachoId,
+      data.despachadoEn
     );
     if (!anterior) return null;
 
