@@ -322,6 +322,22 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(Number(fin.body.recorrido)).toBeCloseTo(287.5, 1);
   });
 
+  it("no se programa un viaje para una unidad sin conductor (nadie lo vería en Mi viaje)", async () => {
+    const sin = await admin
+      .post("/api/erp/equipos")
+      .send({ placa_codigo: idUnico("VQ"), tipo: "VOLQUETE" });
+    expect(sin.status).toBe(201);
+    const r = await programar(Number(sin.body.id));
+    expect(r.status).toBe(400);
+    expect(r.body.message ?? r.body.error).toContain("no tiene conductor asignado");
+    // Con el conductor indicado en el propio viaje, sí se puede.
+    const con = await programar(Number(sin.body.id), {
+      conductor_nombre: "Luis Rojas",
+      conductor_dni: "40000099",
+    });
+    expect(con.status, JSON.stringify(con.body)).toBe(201);
+  });
+
   it("un viaje programado de la misma unidad no impide cerrar ni iniciar otro (regresión: rango sin salida chocaba con todo)", async () => {
     const eq = await unidad();
     const a = (await programar(eq)).body;
