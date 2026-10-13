@@ -22,6 +22,7 @@ export interface AlertaCombustible {
     | "hueco_detectado"
     | "vale_anulado"
     | "sobredespacho"
+    | "vale_excede_tanque"
     | "despacho_tardio"
     | "diferencia_recepcion"
     | "nivel_bajo"
@@ -76,6 +77,7 @@ export const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   hueco_detectado: "Hueco de talonario",
   vale_anulado: "Vale anulado",
   sobredespacho: "Sobredespacho",
+  vale_excede_tanque: "Vale mayor que el tanque",
   despacho_tardio: "Despacho tardío",
   diferencia_recepcion: "Diferencia en recepción",
   nivel_bajo: "Nivel bajo de tanque",
@@ -140,6 +142,19 @@ export function referenciaAlerta(a: {
 export function describirDetalleAlerta(a: AlertaCombustible): string {
   if (a.tipo === "vale_anulado" && typeof a.detalle.motivo === "string") {
     return `Motivo: ${a.detalle.motivo}`;
+  }
+  if (a.tipo === "vale_excede_tanque") {
+    const { tanque, unidad, cantidad, capacidad, motivo, nivelAntes } = a.detalle as {
+      tanque?: string;
+      unidad?: string;
+      cantidad?: number;
+      capacidad?: number;
+      motivo?: string;
+      nivelAntes?: number;
+    };
+    return motivo === "excede_capacidad"
+      ? `El vale dice ${cantidad ?? "?"} ${unidad ?? ""} y todo el tanque ${tanque ?? ""} es de ${capacidad ?? "?"} ${unidad ?? ""}`
+      : `El vale dice ${cantidad ?? "?"} ${unidad ?? ""} y el tanque ${tanque ?? ""} tenía ${nivelAntes ?? "?"} ${unidad ?? ""} ese día`;
   }
   if (a.tipo === "sobredespacho") {
     const { cantidad, unidadDespacho, capacidad, unidadCapacidad, excesoPct } = a.detalle as {

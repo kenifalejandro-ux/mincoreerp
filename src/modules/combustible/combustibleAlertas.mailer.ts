@@ -131,6 +131,37 @@ export async function enviarCorreoAlertaSobredespacho(
   });
 }
 
+/** El vale no cabe en el tanque de origen, o saca más de lo que tenía ese día
+ *  (0128). A diferencia del sobredespacho, que mira el tanque de la unidad. */
+export async function enviarCorreoValeExcedeTanque(
+  destinatarios: Destinatario[],
+  params: PapelDeAlerta & {
+    tanque: string;
+    unidad: string;
+    cantidad: number;
+    capacidad: number;
+    motivo: "excede_capacidad" | "excede_nivel";
+    nivelAntes?: number;
+  }
+) {
+  const porCapacidad = params.motivo === "excede_capacidad";
+  await avisar("vale_excede_tanque", {
+    destinatarios,
+    asunto: `Combustible: ${nombrarPapel(params)} es mayor que el tanque ${params.tanque}`,
+    titulo: `El ${nombrarPapel(params)} sacó más de lo que el tanque ${params.tanque} puede dar`,
+    lineas: [
+      porCapacidad
+        ? `El vale dice ${params.cantidad} ${params.unidad} y el tanque entero es de ` +
+          `${params.capacidad} ${params.unidad}: físicamente no pudo salir de ahí.`
+        : `El vale dice ${params.cantidad} ${params.unidad} y el tanque tenía ` +
+          `${params.nivelAntes ?? "?"} ${params.unidad} ese día.`,
+      "El vale se registró igual (el combustible ya salió). Puede ser un error de tipeo, " +
+        "una recepción o varilla sin cargar, o combustible que no salió de este tanque -- " +
+        "revisar en el ERP.",
+    ],
+  });
+}
+
 /** El horómetro/odómetro no cierra con el del despacho anterior de esa
  *  misma unidad (punto 5 del documento). El vale NO se bloqueó: puede ser
  *  un tipeo, pero también adulteración -- por eso lo mira una persona. */

@@ -41,6 +41,7 @@ import {
   enviarCorreoValeFueraDeOrden,
   enviarCorreoDespachoTardio,
   enviarCorreoTanquetaSobregirada,
+  enviarCorreoValeExcedeTanque,
   // Urea: los cuatro de 0092 que nunca se habían enganchado y los dos de 0117.
   enviarCorreoUreaEquipoNoHabilitado,
   enviarCorreoUreaRatioExcedido,
@@ -2098,6 +2099,7 @@ export class CombustibleController {
       const {
         huecos,
         exceso,
+        excedeTanque,
         medidor,
         fueraDeOrden,
         tope,
@@ -2168,6 +2170,18 @@ export class CombustibleController {
               // El despacho de un excedente (0112) no tiene tanque: la unidad
               // de `cantidad` es la del tanque de la recepción.
               data.combustible_id ?? tanqueExcedenteId,
+              data.cantidad!
+            )
+          : null;
+
+        // El vale contra el tanque de ORIGEN (0128): mayor que su capacidad o
+        // que su nivel de ese día. No bloquea; el vale es la evidencia.
+        const excedeTanque = data.combustible_id
+          ? await service.evaluarValeExcedeTanque(
+              client,
+              tenantId,
+              data.combustible_id,
+              data.despachado_en ?? new Date().toISOString(),
               data.cantidad!
             )
           : null;
@@ -2293,6 +2307,18 @@ export class CombustibleController {
                 },
               ]
             : []),
+          ...(excedeTanque
+            ? [
+                {
+                  tipo: "vale_excede_tanque" as const,
+                  serieTalonario,
+                  nVale,
+                  despachoId,
+                  combustibleId: data.combustible_id ?? null,
+                  detalle: { ...excedeTanque } as Record<string, unknown>,
+                },
+              ]
+            : []),
           ...(tope
             ? [
                 {
@@ -2382,6 +2408,7 @@ export class CombustibleController {
           return {
             huecos,
             exceso,
+            excedeTanque,
             medidor,
             fueraDeOrden,
             tope,
@@ -2413,6 +2440,7 @@ export class CombustibleController {
         return {
           huecos,
           exceso,
+          excedeTanque,
           medidor,
           fueraDeOrden,
           tope,
@@ -2446,6 +2474,14 @@ export class CombustibleController {
           ...papel,
         });
         await enviarCorreoAlertaSobredespacho(admins, { ...papel, ...exceso });
+      }
+
+      if (excedeTanque) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "vale_excede_tanque",
+          ...papel,
+        });
+        await enviarCorreoValeExcedeTanque(admins, { ...papel, ...excedeTanque });
       }
 
       if (fueraDeOrden !== null) {

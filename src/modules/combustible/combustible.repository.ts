@@ -130,6 +130,9 @@ export const TIPOS_ALERTA = [
   "lectura_anulada",
   // ── Migración 0114: se cargó desde una tanqueta más de lo que tenía.
   "tanqueta_sobregirada",
+  // ── Migración 0128: un vale de tanque propio que no cabe en el tanque o
+  // que saca más de lo que el tanque tenía ese día.
+  "vale_excede_tanque",
 ] as const;
 
 export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];

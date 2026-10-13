@@ -5262,6 +5262,49 @@ export class CombustibleService {
     };
   }
 
+  /** Un vale de tanque propio que el tanque no puede haber entregado.
+   *
+   *  `sobredespacho` compara contra el tanque de la UNIDAD que recibe; esto
+   *  compara contra el tanque de ORIGEN, que es donde se ve un vale inventado
+   *  o mal tipeado (5000 gal contra un tanque de 2000):
+   *   - `excede_capacidad`: el vale solo ya es mayor que el tanque entero.
+   *   - `excede_nivel`: el tanque tenía menos de lo que el vale dice que salió
+   *     ese día, con la tolerancia de capacidad del tanque como margen para el
+   *     ruido de la varilla.
+   *  No bloquea: el combustible ya salió y el vale es la evidencia. Sin
+   *  lectura ni movimientos previos el nivel es desconocido y no se inventa.
+   *  El despacho ya está insertado, así que el nivel teórico a su fecha ya lo
+   *  descuenta: lo que había ANTES es ese nivel más la cantidad. */
+  async evaluarValeExcedeTanque(
+    client: PoolClient,
+    tenantId: string,
+    combustibleId: number,
+    despachadoEn: string,
+    cantidad: number
+  ) {
+    const tanque = await this.repository.findTanqueParaRecepcion(client, tenantId, combustibleId);
+    if (!tanque) return null;
+    const capacidad = Number(tanque.capacidad_total);
+    const base = { tanque: tanque.tanque_nombre, unidad: tanque.unidad, cantidad, capacidad };
+
+    if (cantidad > capacidad) return { ...base, motivo: "excede_capacidad" as const };
+
+    const despues = await this.repository.findNivelTeoricoVigenteA(
+      client,
+      tenantId,
+      combustibleId,
+      despachadoEn
+    );
+    if (despues === null) return null;
+    const margen = (capacidad * Number(tanque.tolerancia_capacidad_pct)) / 100;
+    if (despues >= -margen) return null;
+    return {
+      ...base,
+      motivo: "excede_nivel" as const,
+      nivelAntes: Number((despues + cantidad).toFixed(2)),
+    };
+  }
+
   /** EL VALE RETRO-FECHADO (migración 0081).
    *
    *  `despachado_en` lo escribe quien carga; `creado_en` lo pone el servidor.
