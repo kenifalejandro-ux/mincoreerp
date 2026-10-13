@@ -156,6 +156,15 @@ export async function crearViaje(
     data.conductor_nombre !== undefined ? data.conductor_nombre : equipo.rows[0].conductor_nombre;
   const conductorDni =
     data.conductor_dni !== undefined ? data.conductor_dni : equipo.rows[0].conductor_dni;
+  // El conductor se identifica por su DNI ("Mi viaje" lo busca por ahí): un
+  // viaje sin él no lo ve nadie y no se puede iniciar. Mejor frenarlo al
+  // programarlo que descubrirlo cuando el conductor no encuentra su viaje.
+  if (!String(conductorDni ?? "").trim()) {
+    throw new AppError(
+      400,
+      "La unidad no tiene conductor asignado: asígnalo en Equipos antes de programar el viaje"
+    );
+  }
   const estado = !data.inicio_en ? "programado" : data.fin_en ? "cerrado" : "en_curso";
 
   const r = await client.query(
