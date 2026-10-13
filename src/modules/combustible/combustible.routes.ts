@@ -63,6 +63,7 @@ import { EquiposController } from "../equipos/equipos.controller";
 // Se activa solo con importarse (setInterval + .unref()) -- mismo mecanismo
 // que events.ts con el worker de retención de eventos.
 import "../../server/services/combustibleConciliacion.worker";
+import "../../server/services/combustibleResumenAlertas.worker";
 
 const router = Router();
 const controller = new CombustibleController();

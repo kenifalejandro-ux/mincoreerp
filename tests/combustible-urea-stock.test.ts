@@ -410,7 +410,7 @@ describe("combustible: stock de urea y sus umbrales (migración 0117)", () => {
 
   // ── Los correos ───────────────────────────────────────────────────────
 
-  it("con el admin marcado como destinatario, las dos alertas de stock SÍ mandan correo", async () => {
+  it("con un destinatario marcado: el stock bajo sale al momento; el exceso espera al resumen", async () => {
     // Un tenant nuevo arranca SIN destinatarios, ni el admin (0107). Mientras
     // nadie esté marcado, `admins` viene vacío y el bloque de correos no
     // corre -- que es exactamente por lo que este test existe aparte: sin
@@ -450,14 +450,10 @@ describe("combustible: stock de urea y sus umbrales (migración 0117)", () => {
     correosEnviados.length = 0;
     expect((await entrada(45)).status).toBe(201); // -240 + 900 = 660 > 500
 
-    const excedido = correosEnviados.find((c) => c.asunto.includes("por encima del máximo"));
-    expect(excedido).toBeTruthy();
-    // Que el correo nombre el stock previo y lo que entró POR SEPARADO es el
-    // punto: hay que poder ver si el exceso vino de esta compra sola o de que
-    // la anterior no se consumió.
-    expect(excedido!.lineas.join(" ")).toContain("900");
-    expect(excedido!.lineas.join(" ")).toContain("660");
-    expect(excedido!.lineas.join(" ")).toContain("500");
+    // Desde la Entrega 2 de la Bandeja, una compra que pasa el máximo del
+    // depósito es de las que esperan al resumen diario de las 7:00
+    // (canalesAlertas.ts): queda en la Bandeja, pero no interrumpe a nadie.
+    expect(correosEnviados.find((c) => c.asunto.includes("por encima del máximo"))).toBeUndefined();
 
     // Y ahora el stock bajo: un vale que cruza los 150 L hacia abajo.
     correosEnviados.length = 0;

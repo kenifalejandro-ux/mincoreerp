@@ -58,6 +58,7 @@ export const LOCK_IDS = {
   eventosTiempoRealRetention: 483926,
   idempotencyKeysRetention: 483927,
   combustibleConciliacion: 483928,
+  combustibleResumenAlertas: 483929,
 } as const;
 
 /** Corre `fn(client)` solo si logra tomar el lock `lockId`, dentro de una

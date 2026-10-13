@@ -10,9 +10,25 @@
 // que sí son de combustible.
 import { enviarCorreoAlerta } from "../../server/shared/utils/alertaMailer";
 
+import { vaAlMomento, type AvisoPorCorreo } from "./canalesAlertas";
+
 interface Destinatario {
   email: string;
   nombre: string;
+}
+
+/** El ÚNICO camino por el que sale un correo de este archivo. Cada aviso dice
+ *  de qué tipo es, y el catálogo (canalesAlertas.ts) decide si interrumpe a
+ *  alguien ahora o espera al resumen diario de las 7:00. Ponerlo acá y no en
+ *  cada llamador es lo que impide que un aviso nuevo se lo salte: un
+ *  `enviarCorreoAlerta(` suelto en este archivo rompe
+ *  tests/combustible-canales-alertas.test.ts.
+ *
+ *  La alerta ya quedó guardada (y en la Bandeja) antes de llegar acá: no
+ *  mandar el correo no la oculta, solo la deja para el resumen. */
+async function avisar(tipo: AvisoPorCorreo, params: Parameters<typeof enviarCorreoAlerta>[0]) {
+  if (!vaAlMomento(tipo)) return;
+  await enviarCorreoAlerta(params);
 }
 
 /** Qué papel originó la alerta.
@@ -67,7 +83,7 @@ export async function enviarCorreoAlertaHueco(
   params: { serieTalonario: string; valesFaltantes: number[]; nValeQueLoRevelo: number }
 ) {
   const listaVales = params.valesFaltantes.map((n) => String(n).padStart(5, "0")).join(", ");
-  await enviarCorreoAlerta({
+  await avisar("hueco_detectado", {
     destinatarios,
     asunto: `Combustible: hueco en talonario ${params.serieTalonario}`,
     titulo: `Hueco detectado en la serie ${params.serieTalonario}`,
@@ -100,7 +116,7 @@ export async function enviarCorreoAlertaSobredespacho(
     excesoPct: number;
   }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("sobredespacho", {
     destinatarios,
     asunto: `Combustible: sobredespacho en ${nombrarPapel(params)}`,
     titulo: `Sobredespacho detectado en ${nombrarOrigenDelPapel(params)}`,
@@ -152,7 +168,7 @@ export async function enviarCorreoAlertaMedidor(
           `anterior solo pasaron ${params.horasCalendario} horas de reloj. Una máquina no puede ` +
           `acumular más horas de motor que las que pasaron.`;
 
-  await enviarCorreoAlerta({
+  await avisar("medidor_inconsistente", {
     destinatarios,
     asunto: `Combustible: ${nombreMedidor} inconsistente en ${papel}`,
     titulo: `Medidor inconsistente en ${nombrarOrigenDelPapel(params)}`,
@@ -211,7 +227,7 @@ export async function enviarCorreoTotalizador(
             `vale declara ${params.declarado}: el vale dice ${Math.abs(params.diferencia ?? 0)} ` +
             `${params.unidad} más de lo que el surtidor entregó.`;
 
-  await enviarCorreoAlerta({
+  await avisar(params.motivo === "retroceso" ? "totalizador_retroceso" : "totalizador_salto", {
     destinatarios,
     asunto: deVarilla
       ? `Combustible: totalizador no cierra al medir el tanque ${params.tanque}`
@@ -243,7 +259,7 @@ export async function enviarCorreoPrecintoAlterado(
     puntos: { nombre: string; numero_visto: string | null; numero_esperado: string }[];
   }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("precinto_alterado", {
     destinatarios,
     asunto: `Combustible: precinto alterado en el tanque ${params.tanque}`,
     titulo: `Precinto que no coincide en ${params.tanque}`,
@@ -274,7 +290,7 @@ export async function enviarCorreoPrecintoReemplazado(
     motivo: string;
   }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("precinto_reemplazado", {
     destinatarios,
     asunto: `Combustible: se cambió un precinto del tanque ${params.tanque}`,
     titulo: `Cambio de precinto fuera de una recepción en ${params.tanque}`,
@@ -294,7 +310,7 @@ export async function enviarCorreoAlertaNivelBajo(
   destinatarios: Destinatario[],
   params: { tanqueNombre: string; nivel: number; nivelMinimo: number; unidad: string }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("nivel_bajo", {
     destinatarios,
     asunto: `Combustible: nivel bajo en ${params.tanqueNombre}`,
     titulo: `Nivel bajo en ${params.tanqueNombre}`,
@@ -344,7 +360,7 @@ export async function enviarCorreoAlertaDescuadre(
   const magnitud = Math.abs(params.descuadreLitros);
   const d = params.desglose;
 
-  await enviarCorreoAlerta({
+  await avisar("descuadre_inventario", {
     destinatarios,
     asunto: `Combustible: ${faltante ? "faltan" : "sobran"} ${magnitud} ${u} en ${params.tanqueNombre}`,
     titulo: `El balance de ${params.tanqueNombre} no cierra`,
@@ -411,7 +427,7 @@ export async function enviarCorreoAlertaDescuadreCiclo(
   const magnitud = Math.abs(params.descuadreLitros);
   const desde = new Date(params.cicloDesde).toLocaleString("es-PE", { timeZone: "America/Lima" });
 
-  await enviarCorreoAlerta({
+  await avisar("descuadre_ciclo", {
     destinatarios,
     asunto:
       `Combustible: ${faltante ? "faltan" : "sobran"} ${magnitud} ${u} ` +
@@ -461,7 +477,7 @@ export async function enviarCorreoAlertaSinMedir(
       : `La última lectura fue el ${new Date(params.ultimaLectura).toLocaleString("es-PE", { timeZone: "America/Lima" })}` +
         (params.diasSinMedir === null ? "." : `, hace ${params.diasSinMedir} días.`);
 
-  await enviarCorreoAlerta({
+  await avisar("tanque_sin_medir", {
     destinatarios,
     asunto: `Combustible: ${params.tanqueNombre} lleva días sin medirse`,
     titulo: `Sin lecturas de varilla en ${params.tanqueNombre}`,
@@ -472,6 +488,37 @@ export async function enviarCorreoAlertaSinMedir(
         "facturó el proveedor contra lo que realmente entró: las dos verificaciones " +
         "dependen de la varilla.",
       "Tomar la lectura cierra esta alerta automáticamente.",
+    ],
+  });
+}
+
+/** Un perfil de cancha anuló su propia varilla (0106). Puede hacerlo --una
+ *  varilla mal tipeada se corrige en el momento--, pero no en silencio: anular
+ *  la medición que mostraba un faltante es la forma más simple de borrarlo.
+ *  Por eso sale al momento y no en el resumen: el correo queda fuera del
+ *  sistema aunque alguien cierre la alerta. */
+export async function enviarCorreoLecturaAnulada(
+  destinatarios: Destinatario[],
+  params: {
+    tanqueNombre: string;
+    unidad: string;
+    nivel: number;
+    leidoEn: string;
+    anuladaPor: string;
+    motivo: string;
+  }
+) {
+  await avisar("lectura_anulada", {
+    destinatarios,
+    asunto: `Combustible: ${params.anuladaPor} anuló una varilla de ${params.tanqueNombre}`,
+    titulo: `Varilla anulada en ${params.tanqueNombre}`,
+    lineas: [
+      `${params.anuladaPor} anuló la lectura de ${params.nivel} ${params.unidad} tomada el ` +
+        `${new Date(params.leidoEn).toLocaleString("es-PE", { timeZone: "America/Lima" })}.`,
+      `Motivo que dejó: ${params.motivo}`,
+      "Corregir una varilla mal tipeada es normal. Se avisa porque anular la medición " +
+        "que mostraba un faltante también es la forma más simple de borrarlo: revísala " +
+        "en la Bandeja y ciérrala con motivo.",
     ],
   });
 }
@@ -493,7 +540,7 @@ export async function enviarCorreoLecturaRetroactiva(
     posteriores: number;
   }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("lectura_retroactiva", {
     destinatarios,
     asunto: `Combustible: varilla cargada hacia atrás en ${params.tanqueNombre}`,
     titulo: `Lectura fuera de orden en ${params.tanqueNombre}`,
@@ -533,7 +580,7 @@ export async function enviarCorreoVigilanciaReducida(
     cambios: { control: string; de: string; a: string }[];
   }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("aviso_configuracion", {
     destinatarios,
     asunto: `Combustible: se redujo la vigilancia de ${params.objeto}`,
     titulo: `${params.quien} redujo la vigilancia de ${params.objeto}`,
@@ -566,7 +613,7 @@ export async function enviarCorreoTopeDiario(
     comprobanteNumero?: string | null;
   }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("tope_diario_excedido", {
     destinatarios,
     asunto: `Combustible: ${params.actor} pasó su tope diario`,
     titulo: `${params.actor} recibió ${params.acumuladoL} L en 24 horas`,
@@ -602,7 +649,7 @@ export async function enviarCorreoAlertaDescuadreVentana(
   }
 ) {
   const verbo = params.sentido === "falta" ? "faltan" : "sobran";
-  await enviarCorreoAlerta({
+  await avisar("descuadre_ventana", {
     destinatarios,
     asunto: `Combustible: descuadre acumulado en ${params.tanqueNombre}`,
     titulo:
@@ -647,7 +694,7 @@ export async function enviarCorreoValeRetroactivo(
     despachadoEn: string;
   }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("despacho_retroactivo", {
     destinatarios,
     asunto: `Combustible: carga registrada ${params.diasDeAtraso} días después de su fecha`,
     titulo:
@@ -677,7 +724,7 @@ export async function enviarCorreoValeRecargado(
   }
 ) {
   const vale = `${params.serieTalonario}-${String(params.nVale).padStart(5, "0")}`;
-  await enviarCorreoAlerta({
+  await avisar("vale_recargado", {
     destinatarios,
     asunto: `Combustible: el vale ${vale} volvió con otra cantidad`,
     titulo: `El vale ${vale} se anuló y se volvió a cargar con una cantidad distinta`,
@@ -712,7 +759,7 @@ export async function enviarCorreoSinVigilancia(
     plazoDias: number;
   }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("tanque_sin_vigilancia", {
     destinatarios,
     asunto: `Combustible: ${params.codigo} está despachando sin vigilancia`,
     titulo: `${params.codigo} — ${params.tanqueNombre} lleva ${params.plazoDias} días operando sin umbrales`,
@@ -735,7 +782,7 @@ export async function enviarCorreoAlertaAnulacion(
   params: PapelDeAlerta & { motivo: string }
 ) {
   const papel = nombrarPapel(params);
-  await enviarCorreoAlerta({
+  await avisar("vale_anulado", {
     destinatarios,
     asunto: `Combustible: ${papel} anulado`,
     titulo: `Registro anulado en ${nombrarOrigenDelPapel(params)}`,
@@ -760,7 +807,7 @@ export async function enviarCorreoVarillaExacta(
     toleranciaLitros: number;
   }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("varilla_exacta", {
     destinatarios,
     asunto: `Combustible: varillas que cuadran al litro en ${params.tanqueNombre}`,
     titulo: `${params.varillasSeguidas} varillas seguidas exactas en ${params.tanqueNombre}`,
@@ -786,7 +833,7 @@ export async function enviarCorreoRecepcionSinValidar(
     plazoHoras: number;
   }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("recepcion_sin_validar", {
     destinatarios,
     asunto: `Combustible: recepción sin validar en ${params.tanqueNombre}`,
     titulo: `Recepción pendiente de validación en ${params.tanqueNombre}`,
@@ -812,7 +859,7 @@ export async function enviarCorreoRecepcionDiscrepante(
     diferencia: number;
   }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("recepcion_discrepante", {
     destinatarios,
     asunto: `Combustible: la guía no coincide con la recepción en ${params.tanqueNombre}`,
     titulo: `Recepción con cantidad distinta a la guía en ${params.tanqueNombre}`,
@@ -831,7 +878,7 @@ export async function enviarCorreoRecepcionAnulada(
   destinatarios: Destinatario[],
   params: { tanqueNombre: string; unidad: string; cantidad: number; motivo: string; quien: string }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("recepcion_anulada", {
     destinatarios,
     asunto: `Combustible: recepción anulada en ${params.tanqueNombre}`,
     titulo: `Recepción de ${params.cantidad} ${params.unidad} anulada en ${params.tanqueNombre}`,
@@ -848,7 +895,7 @@ export async function enviarCorreoRecepcionRetroactiva(
   destinatarios: Destinatario[],
   params: { tanqueNombre: string; recibidoEn: string; diasDeAtraso: number; diasTolerados: number }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("recepcion_retroactiva", {
     destinatarios,
     asunto: `Combustible: recepción cargada con atraso en ${params.tanqueNombre}`,
     titulo: `Recepción fechada ${params.diasDeAtraso} días atrás en ${params.tanqueNombre}`,
@@ -880,7 +927,7 @@ export async function enviarCorreoConsumoExcedido(
     comprobanteNumero?: string | null;
   }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("consumo_excedido", {
     destinatarios,
     asunto: `Combustible: consumo excedido en ${params.equipo}`,
     titulo: `${params.equipo} consumió ${params.consumo} L/${params.unidadMedida}`,
@@ -900,7 +947,7 @@ export async function enviarCorreoVarillaSinControl(
   destinatarios: Destinatario[],
   params: { tanqueNombre: string; plazoDias: number; ultimaVarillaDeControl: string | null }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("varilla_sin_control", {
     destinatarios,
     asunto: `Combustible: ${params.tanqueNombre} sin varilla de control`,
     titulo: `${params.tanqueNombre}: ${params.plazoDias} días medido solo por quien despacha`,
@@ -934,7 +981,7 @@ export async function enviarCorreoSobrestockRecepcion(
     equipo: "directo a unidades",
     devolucion: "devuelto al proveedor",
   };
-  await enviarCorreoAlerta({
+  await avisar("sobrestock_recepcion", {
     destinatarios,
     asunto: `Combustible: excedente de recepción repartido en ${params.tanqueNombre}`,
     titulo: `${params.excedenteLitros} ${params.unidad} no cabían en ${params.tanqueNombre}`,
@@ -971,7 +1018,7 @@ export async function enviarCorreoUreaEquipoNoHabilitado(
   params: { papel: PapelDeAlerta; placa: string | null; cantidadL: number }
 ) {
   const unidad = params.placa ?? "una unidad sin placa cargada";
-  await enviarCorreoAlerta({
+  await avisar("urea_equipo_no_habilitado", {
     destinatarios,
     asunto: `Urea: vale a ${unidad}, que no usa urea`,
     titulo: `${unidad} recibió urea y no debería`,
@@ -998,7 +1045,7 @@ export async function enviarCorreoUreaRatioExcedido(
   }
 ) {
   const unidad = params.placa ?? "una unidad";
-  await enviarCorreoAlerta({
+  await avisar("urea_ratio_excedido", {
     destinatarios,
     asunto: `Urea: ${unidad} consumió ${params.ratioPct}% de urea sobre su diésel`,
     titulo: `Proporción urea/diésel fuera de rango en ${unidad}`,
@@ -1023,7 +1070,7 @@ export async function enviarCorreoUreaDescuadreConteo(
 ) {
   const falta = params.descuadreL < 0;
   const magnitud = Math.abs(params.descuadreL);
-  await enviarCorreoAlerta({
+  await avisar("urea_descuadre_conteo", {
     destinatarios,
     asunto: `Urea: el conteo físico no cuadra (${falta ? "faltan" : "sobran"} ${magnitud} L)`,
     titulo: `El conteo de urea ${falta ? "da menos" : "da más"} que lo que los papeles explican`,
@@ -1055,7 +1102,7 @@ export async function enviarCorreoUreaStockBajo(
     equivalente: string | null;
   }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("urea_stock_bajo", {
     destinatarios,
     asunto: `Urea: queda poca (${params.stockL} L)`,
     titulo: "Hay que reabastecer urea",
@@ -1088,7 +1135,7 @@ export async function enviarCorreoUreaStockExcedido(
     proveedor: string | null;
   }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("urea_stock_excedido", {
     destinatarios,
     asunto: `Urea: la compra dejó el depósito ${params.excesoL} L por encima del máximo`,
     titulo: "Se compró más urea de la que el depósito tiene como techo",
@@ -1125,7 +1172,7 @@ export async function enviarCorreoUreaConteoRecargado(
   }
 ) {
   const signo = (n: number) => (n > 0 ? `+${n}` : `${n}`);
-  await enviarCorreoAlerta({
+  await avisar("urea_conteo_recargado", {
     destinatarios,
     asunto: `Urea: se anuló un conteo y el que lo reemplaza cuadra mejor (${params.descuadreQueSeAchicoL} L menos de diferencia)`,
     titulo: "Un conteo de urea se anuló y se volvió a cargar",
@@ -1165,7 +1212,7 @@ export async function enviarCorreoUreaPrecioFueraDeCatalogo(
   const peor = params.desvios.reduce((a, d) =>
     Math.abs(d.desvioPct) > Math.abs(a.desvioPct) ? d : a
   );
-  await enviarCorreoAlerta({
+  await avisar("urea_precio_fuera_de_catalogo", {
     destinatarios,
     asunto: `Urea: la ${nombrarPapel(params.papel)} declara un precio ${peor.desvioPct > 0 ? "+" : ""}${peor.desvioPct}% distinto del catálogo`,
     titulo: "Compra de urea en ruta con precio fuera del catálogo",
@@ -1189,7 +1236,7 @@ export async function enviarCorreoValeFueraDeOrden(
   destinatarios: Destinatario[],
   params: PapelDeAlerta & { maxAnteriorDeLaSerie: number }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("vale_fuera_de_orden", {
     destinatarios,
     asunto: `Combustible: ${nombrarPapel(params)} fuera de orden`,
     titulo: `El ${nombrarPapel(params)} llegó fuera del orden de su talonario`,
@@ -1207,7 +1254,7 @@ export async function enviarCorreoDespachoTardio(
   destinatarios: Destinatario[],
   params: PapelDeAlerta
 ) {
-  await enviarCorreoAlerta({
+  await avisar("despacho_tardio", {
     destinatarios,
     asunto: `Combustible: ${nombrarPapel(params)} llegó tarde`,
     titulo: `El ${nombrarPapel(params)} llegó después de que su hueco se congelara como anomalía`,
@@ -1225,7 +1272,7 @@ export async function enviarCorreoTanquetaSobregirada(
   destinatarios: Destinatario[],
   params: { tanqueta: string; saldo: number; cantidad: number }
 ) {
-  await enviarCorreoAlerta({
+  await avisar("tanqueta_sobregirada", {
     destinatarios,
     asunto: `Combustible: la tanqueta ${params.tanqueta} quedó con saldo negativo`,
     titulo: `La tanqueta ${params.tanqueta} despachó más de lo que el sistema creía que tenía`,
@@ -1255,7 +1302,7 @@ export async function enviarCorreoDiferenciaRecepcion(
 ) {
   const visibles = recepciones.slice(0, MAX_RECEPCIONES_EN_CORREO);
   const resto = recepciones.length - visibles.length;
-  await enviarCorreoAlerta({
+  await avisar("diferencia_recepcion", {
     destinatarios,
     asunto: `Combustible: ${recepciones.length} recepci${recepciones.length === 1 ? "ón" : "ones"} con diferencia contra la varilla`,
     titulo: "Recepciones que no cuadran con la varilla",
