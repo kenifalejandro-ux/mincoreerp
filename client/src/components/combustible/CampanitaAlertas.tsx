@@ -14,6 +14,7 @@ const ETIQUETA_TIPO: Record<string, string> = {
   hueco_detectado: "Hueco de talonario",
   vale_anulado: "Vale anulado",
   sobredespacho: "Sobredespacho",
+  vale_excede_tanque: "Vale mayor que el tanque",
   despacho_tardio: "Despacho tardío",
   diferencia_recepcion: "Diferencia en recepción",
   nivel_bajo: "Nivel bajo de tanque",
