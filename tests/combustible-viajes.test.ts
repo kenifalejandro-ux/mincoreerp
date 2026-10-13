@@ -322,6 +322,21 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(Number(fin.body.recorrido)).toBeCloseTo(287.5, 1);
   });
 
+  it("un viaje programado de la misma unidad no impide cerrar ni iniciar otro (regresión: rango sin salida chocaba con todo)", async () => {
+    const eq = await unidad();
+    const a = (await programar(eq)).body;
+    const b = (await programar(eq)).body; // queda programado, sin salida
+    expect((await admin.post(url(a.id, "/iniciar")).send({ medidor_inicio: 100 })).status).toBe(
+      200
+    );
+    const fin = await admin.post(url(a.id, "/cerrar")).send({ medidor_fin: 150 });
+    expect(fin.status, JSON.stringify(fin.body)).toBe(200);
+    expect(fin.body.estado).toBe("cerrado");
+    // El programado sigue libre y ahora sí puede iniciar.
+    const ini = await admin.post(url(b.id, "/iniciar")).send({ medidor_inicio: 150 });
+    expect(ini.status, JSON.stringify(ini.body)).toBe(200);
+  });
+
   it("si el viaje anterior no tiene medidor, el previo sale de la última carga de la unidad", async () => {
     const eq = await unidad();
     const c = await admin.post("/api/erp/combustible/despachos").send({

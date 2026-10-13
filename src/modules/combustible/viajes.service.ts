@@ -101,6 +101,7 @@ async function validarSinTraslape(
   const r = await client.query(
     `SELECT numero FROM combustible_viajes
       WHERE tenant_id = $1 AND equipo_id = $2 AND estado <> 'anulado'
+        AND inicio_en IS NOT NULL
         AND ($5::bigint IS NULL OR id <> $5)
         AND tstzrange(inicio_en, COALESCE(fin_en, 'infinity')) &&
             tstzrange($3::timestamptz, COALESCE($4::timestamptz, 'infinity'))
