@@ -10,10 +10,18 @@
  * el rol `conductor_ruta` sigue existiendo, la pantalla sigue mostrándolo
  * restringido, y un conductor puede vaciar el tanque de la empresa.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import request from "supertest";
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
+
+// Para ver el correo de la varilla anulada (Entrega 2 de la Bandeja).
+const correos = vi.hoisted(() => [] as { destinatarios: { email: string }[]; asunto: string }[]);
+vi.mock("../src/server/shared/utils/alertaMailer", () => ({
+  enviarCorreoAlerta: vi.fn(async (a: { destinatarios: { email: string }[]; asunto: string }) => {
+    correos.push({ destinatarios: a.destinatarios, asunto: a.asunto });
+  }),
+}));
 
 function serieUnica(): string {
   return `S${Math.floor(Math.random() * 1e8).toString(36)}`;
@@ -420,6 +428,52 @@ describe("combustible: roles de cancha (migración 0085)", () => {
       (a) => a.tipo === "lectura_anulada"
     );
     expect(dejada?.detalle.motivo).toBe("Leí mal la regla");
+  });
+
+  // Entrega 2 de la Bandeja: la varilla anulada por cancha sale por correo AL
+  // MOMENTO (canalesAlertas.ts) -- anular la medición que mostraba un faltante
+  // es la forma más simple de borrarlo. El gemelo: la que anula un admin no
+  // deja alerta ni correo, porque el admin ES quien revisa.
+  it("la varilla anulada por el grifero avisa por correo al momento; la del admin, no", async () => {
+    const email = `jefe-varilla-${idUnico("x")}@test.local`;
+    const jefe = await admin
+      .post("/api/erp/usuarios")
+      .send({ nombre: "Jefe de planta", email, password, rol: "operador" });
+    expect(jefe.status).toBe(201);
+    const p = await admin.get(`/api/erp/usuarios/${jefe.body.id}/permisos`);
+    const marcar = await admin.put(`/api/erp/usuarios/${jefe.body.id}/permisos`).send({
+      modulos: p.body.modulos.map((m: { modulo: string; asignado: boolean; nivel: string }) => ({
+        modulo: m.modulo,
+        asignado: m.modulo === "combustible" ? true : m.asignado,
+        nivel: m.nivel,
+      })),
+      alertasCorreo: p.body.alertasCorreo.map((a: { modulo: string }) => ({
+        modulo: a.modulo,
+        recibeAlertas: a.modulo === "combustible",
+      })),
+      motivo: "prueba automatizada: correo de varilla anulada",
+    });
+    expect(marcar.status).toBe(200);
+
+    const propia = await grifero.post("/api/erp/combustible/lecturas").send(varilla(8650));
+    expect(propia.status).toBe(201);
+    correos.length = 0;
+    const res = await grifero
+      .patch(`/api/erp/combustible/lecturas/${propia.body.lectura.id}/anular`)
+      .send({ motivo: "Me equivoqué de tanque" });
+    expect(res.status).toBe(200);
+    const aviso = correos.filter((c) => c.asunto.includes("anuló una varilla"));
+    expect(aviso).toHaveLength(1);
+    expect(aviso[0].destinatarios.map((d) => d.email)).toContain(email);
+
+    const delAdmin = await admin.post("/api/erp/combustible/lecturas").send(varilla(8640));
+    expect(delAdmin.status).toBe(201);
+    correos.length = 0;
+    const anuladaPorAdmin = await admin
+      .patch(`/api/erp/combustible/lecturas/${delAdmin.body.lectura.id}/anular`)
+      .send({ motivo: "Corrección de oficina" });
+    expect(anuladaPorAdmin.status).toBe(200);
+    expect(correos.filter((c) => c.asunto.includes("anuló una varilla"))).toHaveLength(0);
   });
 
   // El motivo no es opcional: sin él la anulación no se puede auditar.

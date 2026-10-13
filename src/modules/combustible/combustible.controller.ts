@@ -17,6 +17,7 @@ import {
   enviarCorreoAlertaHueco,
   type PapelDeAlerta,
   enviarCorreoAlertaAnulacion,
+  enviarCorreoLecturaAnulada,
   enviarCorreoAlertaSobredespacho,
   enviarCorreoAlertaMedidor,
   enviarCorreoTotalizador,
@@ -1676,8 +1677,16 @@ export class CombustibleController {
                 detalle: { motivo, anuladaPor: req.usuario!.nombre },
               },
             ]);
+            // A quién avisar se resuelve acá adentro, con el mismo client;
+            // el correo sale después del COMMIT (mismo patrón que nivel bajo).
+            const destinatarios = await service.destinatariosDeAlertasDeTanque(
+              client,
+              tenantId,
+              anulada.lectura.combustible_id
+            );
+            return { estado: "anulada" as const, ...anulada, destinatarios };
           }
-          return { estado: "anulada" as const, ...anulada };
+          return { estado: "anulada" as const, ...anulada, destinatarios: null };
         }
 
         // El UPDATE no afectó nada: o la lectura no existe en este tenant,
@@ -1716,6 +1725,21 @@ export class CombustibleController {
         lecturaId,
         combustibleId: resultado.lectura.combustible_id,
       });
+
+      if (resultado.destinatarios) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo: "lectura_anulada",
+          combustibleId: resultado.lectura.combustible_id,
+        });
+        await enviarCorreoLecturaAnulada(resultado.destinatarios, {
+          tanqueNombre: resultado.tanque.tanque_nombre,
+          unidad: resultado.tanque.unidad,
+          nivel: Number(resultado.lectura.nivel),
+          leidoEn: new Date(resultado.lectura.leido_en).toISOString(),
+          anuladaPor: req.usuario!.nombre,
+          motivo,
+        });
+      }
 
       res.json({ lectura: resultado.lectura, tanque: resultado.tanque });
     } catch {

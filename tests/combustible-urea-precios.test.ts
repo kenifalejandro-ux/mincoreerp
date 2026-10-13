@@ -324,7 +324,7 @@ describe("combustible: precios de urea (migración 0121)", () => {
 
   // ── El correo ─────────────────────────────────────────────────────────
 
-  it("con un destinatario marcado, la alerta de precio sale por correo", async () => {
+  it("con un destinatario marcado, la alerta de precio NO sale al momento: espera al resumen", async () => {
     // Un tenant nuevo no tiene destinatarios (0107), y el admin no puede
     // editar sus propios permisos: se marca a un jefe de planta.
     const email = `jefe-precio-${idUnico("u")}@test.local`;
@@ -350,10 +350,9 @@ describe("combustible: precios de urea (migración 0121)", () => {
     // Tolerancia en 5 % (test anterior); catálogo de la caja en 50.
     const r = await compra([{ presentacion: "caja", precio: 70 }]);
     expect(r.status).toBe(201);
-    const correo = correos.find((c) => c.asunto.includes("distinto del catálogo"));
-    expect(correo).toBeTruthy();
-    expect(correo!.lineas.join(" ")).toContain("S/ 70");
-    expect(correo!.lineas.join(" ")).toContain("S/ 50");
+    // Desde la Entrega 2 de la Bandeja, el precio fuera de catálogo es de las
+    // que esperan al resumen diario de las 7:00 (canalesAlertas.ts).
+    expect(correos.find((c) => c.asunto.includes("distinto del catálogo"))).toBeUndefined();
   });
 
   // ── 5. Permisos ───────────────────────────────────────────────────────

@@ -14,6 +14,16 @@ vi.mock("../src/server/shared/utils/alertaMailer", () => ({
   }),
 }));
 
+// Este archivo prueba cómo se escribe la hora, no el canal: desde la Entrega 2 este
+// tipo espera al resumen diario (canalesAlertas.ts) y no saldría al momento.
+// Se fuerza "al momento" para seguir ejercitando el correo, que vuelve a
+// usarse si el tipo cambia de canal. Que de verdad NO salga lo prueba
+// tests/combustible-canales-alertas.test.ts.
+vi.mock("../src/modules/combustible/canalesAlertas", async (original) => ({
+  ...(await original<typeof import("../src/modules/combustible/canalesAlertas")>()),
+  vaAlMomento: () => true,
+}));
+
 import { enviarCorreoValeRetroactivo } from "../src/modules/combustible/combustibleAlertas.mailer";
 
 describe("correos de combustible: la hora se escribe en Lima", () => {

@@ -4601,6 +4601,95 @@ export class CombustibleRepository {
     return result.rows;
   }
 
+  /** El resumen diario por correo, por tipo y dentro del alcance de quien lo
+   *  recibe -- el MISMO WHERE que la Bandeja, así el correo no puede contar
+   *  algo que esa persona no ve al abrirla:
+   *  - `nuevas`: creadas en [desde, hasta).
+   *  - `pendientes`: sin resolver al corte (creadas antes de `hasta`).
+   *  - `vencidas`: sin resolver y creadas antes de `vencidasAntesDe`. */
+  async resumenDiarioPorTipo(
+    client: PoolClient,
+    tenantId: string,
+    alcance: AlcanceCombustible,
+    cortes: { desde: Date; hasta: Date; vencidasAntesDe: Date }
+  ) {
+    const { condiciones, valores } = CombustibleRepository.condicionesAlertas(
+      tenantId,
+      {},
+      alcance,
+      false
+    );
+    valores.push(cortes.desde, cortes.hasta, cortes.vencidasAntesDe);
+    const n = valores.length;
+    const r = await client.query<{
+      tipo: string;
+      nuevas: string;
+      pendientes: string;
+      vencidas: string;
+    }>(
+      `
+      SELECT a.tipo,
+             count(*) FILTER (WHERE a.creado_en >= $${n - 2} AND a.creado_en < $${n - 1}) AS nuevas,
+             count(*) FILTER (WHERE a.resuelta_en IS NULL AND a.creado_en < $${n - 1}) AS pendientes,
+             count(*) FILTER (WHERE a.resuelta_en IS NULL AND a.creado_en < $${n}) AS vencidas
+      FROM combustible_alertas a
+      LEFT JOIN grifos_internos gi ON gi.id = a.grifo_interno_id AND gi.tenant_id = a.tenant_id
+      WHERE ${condiciones.join(" AND ")}
+        AND a.creado_en < $${n - 1}
+        AND (a.resuelta_en IS NULL OR a.creado_en >= $${n - 2})
+      GROUP BY a.tipo
+      ORDER BY a.tipo
+      `,
+      valores
+    );
+    return r.rows.map((f) => ({
+      tipo: f.tipo,
+      nuevas: Number(f.nuevas),
+      pendientes: Number(f.pendientes),
+      vencidas: Number(f.vencidas),
+    }));
+  }
+
+  /** Reclama el resumen de un día para la empresa: devuelve el corte desde el
+   *  que se cuenta "lo nuevo" (el envío anterior, o 24 h atrás si es el
+   *  primero), o `null` si ese día ya se reclamó. La PRIMARY KEY hace que dos
+   *  corridas simultáneas no puedan reclamarlo las dos (migración 0127). */
+  async reclamarResumenDelDia(
+    client: PoolClient,
+    tenantId: string,
+    fecha: string,
+    ahora: Date
+  ): Promise<{ desde: Date } | null> {
+    const previo = await client.query<{ enviado_en: Date }>(
+      `SELECT enviado_en FROM combustible_resumen_alertas_envios
+        WHERE tenant_id = $1 AND fecha < $2::date
+        ORDER BY fecha DESC LIMIT 1`,
+      [tenantId, fecha]
+    );
+    const reclamo = await client.query(
+      `INSERT INTO combustible_resumen_alertas_envios (tenant_id, fecha, enviado_en)
+       VALUES ($1, $2::date, $3)
+       ON CONFLICT (tenant_id, fecha) DO NOTHING`,
+      [tenantId, fecha, ahora]
+    );
+    if (reclamo.rowCount === 0) return null;
+    const desde = previo.rows[0]?.enviado_en ?? new Date(ahora.getTime() - 24 * 3600 * 1000);
+    return { desde: new Date(desde) };
+  }
+
+  async anotarDestinatariosDelResumen(
+    client: PoolClient,
+    tenantId: string,
+    fecha: string,
+    destinatarios: number
+  ) {
+    await client.query(
+      `UPDATE combustible_resumen_alertas_envios SET destinatarios = $3
+        WHERE tenant_id = $1 AND fecha = $2::date`,
+      [tenantId, fecha, destinatarios]
+    );
+  }
+
   /** Los contadores de la Bandeja: cuántas hay en cada estado con los demás
    *  filtros aplicados, dentro del alcance de quien mira. */
   async contarAlertas(

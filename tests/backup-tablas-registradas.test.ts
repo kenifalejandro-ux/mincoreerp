@@ -68,6 +68,10 @@ const ALLOWLIST_FUERA_DEL_BACKUP = new Set([
   "eventos_tiempo_real",
   "idempotency_keys",
   "auditoria",
+  // Marca de "el resumen diario de alertas de este día ya salió" (0127). Es
+  // del worker, no del negocio: si no se restaura, lo peor que pasa es que
+  // el resumen de ese día salga una vez más. Las alertas sí viajan.
+  "combustible_resumen_alertas_envios",
   // Facturación (migrations/0054): es la relación COMERCIAL entre el dueño
   // del ERP y el tenant, no datos operativos del tenant. Un tenant no
   // debería poder respaldar ni --sobre todo-- restaurar sus propias

@@ -230,6 +230,15 @@ export const env = {
     process.env.COMBUSTIBLE_CONCILIACION_CHECK_INTERVAL_MS,
     60 * 60_000
   ),
+  // Resumen diario de alertas por correo (combustibleResumenAlertas.worker.ts).
+  // La hora es de Lima; el intervalo es cada cuánto se revisa si ya toca:
+  // con 10 min el correo sale entre las 7:00 y las 7:10, y la tabla de 0127
+  // garantiza que salga una sola vez por día.
+  combustibleResumenHoraLima: readNumber(process.env.COMBUSTIBLE_RESUMEN_HORA_LIMA, 7),
+  combustibleResumenCheckIntervalMs: readNumber(
+    process.env.COMBUSTIBLE_RESUMEN_CHECK_INTERVAL_MS,
+    10 * 60_000
+  ),
   // Backups de tenant (platformBackup.service.ts) — filesystem local por
   // default. El storage queda detrás de platformBackupStorage.ts a
   // propósito, para que pasar a S3-compatible el día que haga falta sea

@@ -22,6 +22,17 @@ vi.mock("../src/server/shared/utils/alertaMailer", () => ({
   }),
 }));
 
+// El único test de correo de este archivo prueba a quién va el de "tanque sin
+// medir", no el canal: desde la Entrega 2 ese tipo espera al resumen diario
+// (canalesAlertas.ts) y no saldría al momento. Se fuerza "al momento" para
+// seguir ejercitando el reparto por tanque, que vuelve a usarse si el tipo
+// cambia de canal. Que de verdad NO salga lo prueba
+// tests/combustible-canales-alertas.test.ts.
+vi.mock("../src/modules/combustible/canalesAlertas", async (original) => ({
+  ...(await original<typeof import("../src/modules/combustible/canalesAlertas")>()),
+  vaAlMomento: () => true,
+}));
+
 const PASSWORD = "ClaveDePrueba123";
 
 afterAll(async () => {
