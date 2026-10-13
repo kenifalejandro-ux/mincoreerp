@@ -4303,14 +4303,18 @@ export class CombustibleService {
       modulo: "combustible",
       clienteUuid: data.cliente_uuid,
       insertar: async () => {
-        const factorLitros = await this.resolverFactorPresentacionUrea(
-          client,
-          tenantId,
-          data.presentacion
-        );
-        const cantidadLitros = data.cantidad_bultos * factorLitros;
+        // Un renglón por presentación: lo contado es la SUMA de todos.
+        let cantidadLitros = 0;
+        for (const l of data.lineas) {
+          const factorLitros = await this.resolverFactorPresentacionUrea(
+            client,
+            tenantId,
+            l.presentacion
+          );
+          cantidadLitros += l.cantidad_bultos * factorLitros;
+        }
         const fila = await this.repository.crearConteoUrea(client, tenantId, usuarioId, {
-          cantidadLitros,
+          cantidadLitros: Number(cantidadLitros.toFixed(2)),
           contadoEn: data.contado_en ?? new Date().toISOString(),
           observaciones: data.observaciones ?? null,
         });
