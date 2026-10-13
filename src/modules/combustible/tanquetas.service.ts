@@ -239,7 +239,9 @@ export async function actualizarTanqueta(
 }
 
 /** Todo lo que entró y salió de la tanqueta, del más reciente al más viejo:
- *  excedentes de recepción, previsión desde el tanque y cargas en ruta. */
+ *  excedentes de recepción, previsión desde el tanque y cargas en ruta. Las
+ *  cargas y la previsión traen el conductor que quedó estampado en el vale
+ *  (0083): es lo que permite seguir el combustible hasta quien lo recibió. */
 export async function historialTanqueta(client: PoolClient, tenantId: string, id: number) {
   const r = await client.query(
     `SELECT * FROM (
@@ -247,7 +249,8 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
               r.anulada_en, c.codigo AS tanque_codigo, r.id AS recepcion_id,
               NULL::text AS equipo, NULL::numeric AS lectura_horometro,
               NULL::numeric AS lectura_odometro, NULL::text AS serie_talonario,
-              NULL::int AS n_vale, u.nombre AS usuario
+              NULL::int AS n_vale, u.nombre AS usuario,
+              NULL::text AS conductor_nombre, NULL::text AS conductor_dni
          FROM combustible_recepcion_excedentes x
          JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
          JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
@@ -255,7 +258,8 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
         WHERE x.tenant_id = $1 AND x.tanqueta_id = $2
        UNION ALL
        SELECT 'prevision', d.id::text, d.cantidad, d.despachado_en, d.anulada_en,
-              c.codigo, NULL, NULL, NULL, NULL, d.serie_talonario, d.n_vale, u.nombre
+              c.codigo, NULL, NULL, NULL, NULL, d.serie_talonario, d.n_vale, u.nombre,
+              d.conductor_nombre, d.conductor_dni
          FROM combustible_despachos d
          JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = d.tenant_id
          LEFT JOIN usuarios u ON u.id = d.usuario_id
@@ -263,7 +267,8 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
        UNION ALL
        SELECT 'carga_' || d.tanqueta_lugar, d.id::text, d.cantidad, d.despachado_en,
               d.anulada_en, NULL, NULL, e.placa_codigo, d.lectura_horometro,
-              d.lectura_odometro, d.serie_talonario, d.n_vale, u.nombre
+              d.lectura_odometro, d.serie_talonario, d.n_vale, u.nombre,
+              d.conductor_nombre, d.conductor_dni
          FROM combustible_despachos d
          LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
          LEFT JOIN usuarios u ON u.id = d.usuario_id

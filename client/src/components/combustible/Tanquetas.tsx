@@ -47,7 +47,13 @@ interface MovimientoTanqueta {
   serie_talonario: string | null;
   n_vale: number | null;
   usuario: string | null;
+  conductor_nombre: string | null;
+  conductor_dni: string | null;
 }
+
+/** A quién se le entregó: el conductor que quedó en el vale, si lo había. */
+const conductor = (m: MovimientoTanqueta) =>
+  m.conductor_nombre ? ` · conductor ${m.conductor_nombre}` : "";
 
 const describirMovimiento = (m: MovimientoTanqueta) => {
   if (m.tipo === "excedente") {
@@ -57,7 +63,7 @@ const describirMovimiento = (m: MovimientoTanqueta) => {
     return `Previsión desde ${m.tanque_codigo} · vale ${m.serie_talonario}-${m.n_vale}`;
   }
   if (m.tipo === "carga_planta") {
-    return `Carga en planta a ${m.equipo ?? "una unidad"} · vale ${m.serie_talonario}-${m.n_vale}`;
+    return `Carga en planta a ${m.equipo ?? "una unidad"} · vale ${m.serie_talonario}-${m.n_vale}${conductor(m)}`;
   }
   const medidor =
     m.lectura_horometro !== null
@@ -65,7 +71,7 @@ const describirMovimiento = (m: MovimientoTanqueta) => {
       : m.lectura_odometro !== null
         ? ` · odómetro ${Number(m.lectura_odometro).toLocaleString("es-PE")}`
         : "";
-  return `Carga en ruta a ${m.equipo ?? "una unidad"}${medidor}`;
+  return `Carga en ruta a ${m.equipo ?? "una unidad"}${medidor}${conductor(m)}`;
 };
 
 const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
