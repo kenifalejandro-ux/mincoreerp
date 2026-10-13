@@ -3431,6 +3431,41 @@ export class CombustibleService {
     return { creadas };
   }
 
+  /** Horas que se espera la foto del comprobante de una compra externa antes
+   *  de alertar (0129). El papel existe desde el momento de la compra: la foto
+   *  es subirlo, y 24 horas cubren el viaje de vuelta y la falta de señal. */
+  static readonly HORAS_PARA_FOTO_DE_COMPROBANTE = 24;
+
+  /** COMPROBANTE SIN FOTO (0129). Primero cierra las alertas cuya foto ya
+   *  llegó, después abre las que vencieron. Sin correo propio: va a la campanita
+   *  y al resumen diario, no es un robo en curso sino un papel por subir. */
+  async evaluarComprobantesSinFoto(client: PoolClient, tenantId: string) {
+    await this.repository.resolverComprobantesConFoto(client, tenantId);
+    const compras = await this.repository.findComprobantesSinFoto(
+      client,
+      tenantId,
+      CombustibleService.HORAS_PARA_FOTO_DE_COMPROBANTE
+    );
+    if (compras.length === 0) return { alertas: [] as typeof compras };
+    await this.repository.crearAlertas(
+      client,
+      tenantId,
+      compras.map((c) => ({
+        tipo: "comprobante_sin_foto" as const,
+        despachoId: c.id,
+        producto: c.producto,
+        combustibleId: c.combustible_id,
+        detalle: {
+          comprobanteTipo: c.comprobante_tipo,
+          comprobanteNumero: c.comprobante_numero,
+          registradaEn: new Date(c.creado_en).toISOString(),
+          plazoHoras: CombustibleService.HORAS_PARA_FOTO_DE_COMPROBANTE,
+        },
+      }))
+    );
+    return { alertas: compras };
+  }
+
   /** Avisa, UNA vez por tanque, que hay consumo anterior a su primera varilla
    *  (0093). El kardex ya lo muestra como "consumo histórico" sin mover el
    *  saldo; esto es para que nadie lo lea como auditado. */

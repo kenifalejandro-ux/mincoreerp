@@ -40,6 +40,7 @@ export interface AlertaCombustible {
     | "recepcion_anulada"
     | "recepcion_discrepante"
     | "recepcion_sin_validar"
+    | "comprobante_sin_foto"
     | "recepcion_retroactiva"
     | "consumo_excedido"
     | "varilla_sin_control"
@@ -95,6 +96,7 @@ export const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   recepcion_anulada: "Recepción anulada",
   recepcion_discrepante: "La guía no coincide con la recepción",
   recepcion_sin_validar: "Recepción sin validar",
+  comprobante_sin_foto: "Comprobante sin foto",
   recepcion_retroactiva: "Recepción cargada con atraso",
   consumo_excedido: "Consumo por encima del máximo",
   varilla_sin_control: "Solo mide quien despacha",
@@ -310,6 +312,17 @@ export function describirDetalleAlerta(a: AlertaCombustible): string {
     return (
       `De una recepción de ${cantidadRecepcion ?? "?"} ${unidad ?? ""} no cabían ` +
       `${excedenteLitros ?? "?"} ${unidad ?? ""}. Reparto: ${partes || "sin detalle"}`
+    );
+  }
+  if (a.tipo === "comprobante_sin_foto") {
+    const { comprobanteTipo, comprobanteNumero, plazoHoras } = a.detalle as {
+      comprobanteTipo?: string;
+      comprobanteNumero?: string;
+      plazoHoras?: number;
+    };
+    return (
+      `La ${comprobanteTipo ?? "boleta/factura"} ${comprobanteNumero ?? ""} sigue sin foto ` +
+      `después de ${plazoHoras ?? "?"} horas: subirla desde el vale`
     );
   }
   if (a.tipo === "recepcion_sin_validar") {

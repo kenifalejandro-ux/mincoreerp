@@ -216,6 +216,16 @@ async function conciliarTenant(
       >["creadas"],
     }
   );
+  // Comprobante sin foto (0129): sin correo propio, solo campanita y resumen.
+  const sinFoto = await paso(
+    "comprobante_sin_foto",
+    () => service.evaluarComprobantesSinFoto(client, tenantId),
+    {
+      alertas: [] as Awaited<
+        ReturnType<CombustibleService["evaluarComprobantesSinFoto"]>
+      >["alertas"],
+    }
+  );
   const congelado = await paso(
     "congelar_vencidas",
     () => service.congelarAlertasVencidas(client, tenantId),
@@ -234,7 +244,15 @@ async function conciliarTenant(
     capturarError(e.error, { worker: "combustibleConciliacion", tenantId, alertaId: e.alertaId });
   }
 
-  return { ...congelado, sinMedir, sinVigilancia, vigilanciaExtra, historial, diferencias };
+  return {
+    ...congelado,
+    sinMedir,
+    sinVigilancia,
+    vigilanciaExtra,
+    historial,
+    diferencias,
+    sinFoto,
+  };
 }
 
 /** Los avisos salen FUERA de la transacción: mandarlos adentro la dejaría
@@ -257,6 +275,11 @@ async function avisarResultado(tenantId: string, r: ResultadoTenant): Promise<vo
   }
   if (r.diferencias.alertas.length > 0) {
     await avisarDiferenciasDeRecepcion(tenantId, r.diferencias.alertas);
+  }
+  if (r.sinFoto.alertas.length > 0) {
+    await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+      tipo: "comprobante_sin_foto",
+    }).catch((err) => logger.warn({ err, tenantId }, "No se pudo publicar el evento"));
   }
 }
 
