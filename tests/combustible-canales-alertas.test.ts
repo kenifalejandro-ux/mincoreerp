@@ -45,11 +45,11 @@ describe("catálogo de canales", () => {
     expect(Object.keys(CATALOGO_ALERTAS).sort()).toEqual([...TIPOS_ALERTA].sort());
   });
 
-  it("el reparto decidido con Kenif: 24 al momento, 15 al resumen, 2 solo en el ERP", () => {
+  it("el reparto decidido con Kenif: 24 al momento, 16 al resumen, 2 solo en el ERP", () => {
     const cuenta = (canal: string) =>
       Object.values(CATALOGO_ALERTAS).filter((c) => c.canal === canal).length;
     expect(cuenta("al_momento")).toBe(24);
-    expect(cuenta("resumen")).toBe(15);
+    expect(cuenta("resumen")).toBe(16);
     expect(cuenta("solo_erp")).toBe(2);
   });
 
