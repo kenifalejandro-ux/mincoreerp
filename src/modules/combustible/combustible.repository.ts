@@ -2510,6 +2510,51 @@ export class CombustibleRepository {
     return result.rows[0] ?? null;
   }
 
+  /** La última lectura del medidor de la unidad ANTES de `antesDe`, mirando los
+   *  vales Y las marcas de los viajes (salida y llegada), con la misma
+   *  unidad de medida que el vale que se está evaluando.
+   *
+   *  Un viaje guarda lo que marcaba el tablero al salir y al llegar: si el
+   *  vale siguiente marca menos, el medidor retrocedió igual que entre dos
+   *  vales. Solo se mezclan los viajes cuando `tipo` es el instrumento
+   *  configurado en el equipo (el viaje guarda un solo medidor). */
+  async findUltimaLecturaMedidorPorFecha(
+    client: PoolClient,
+    tenantId: string,
+    equipoId: number,
+    tipo: "horometro" | "odometro",
+    antesDe: string,
+    excluirDespachoId: number
+  ) {
+    const columna = tipo === "horometro" ? "lectura_horometro" : "lectura_odometro";
+    const result = await client.query<{ valor: string; en: Date; fuente: "vale" | "viaje" }>(
+      `SELECT valor, en, fuente FROM (
+         SELECT ${columna} AS valor, despachado_en AS en, 'vale' AS fuente, id
+           FROM combustible_despachos
+          WHERE tenant_id = $1 AND equipo_id = $2 AND id <> $3 AND anulada_en IS NULL
+            AND ${columna} IS NOT NULL AND despachado_en < $4::timestamptz
+         UNION ALL
+         SELECT v.medidor_inicio, v.inicio_en, 'viaje', v.id
+           FROM combustible_viajes v
+           JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+          WHERE v.tenant_id = $1 AND v.equipo_id = $2 AND v.estado <> 'anulado'
+            AND e.tipo_medidor = $5 AND v.medidor_inicio IS NOT NULL
+            AND v.inicio_en IS NOT NULL AND v.inicio_en < $4::timestamptz
+         UNION ALL
+         SELECT v.medidor_fin, v.fin_en, 'viaje', v.id
+           FROM combustible_viajes v
+           JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+          WHERE v.tenant_id = $1 AND v.equipo_id = $2 AND v.estado <> 'anulado'
+            AND e.tipo_medidor = $5 AND v.medidor_fin IS NOT NULL
+            AND v.fin_en IS NOT NULL AND v.fin_en < $4::timestamptz
+       ) t
+       ORDER BY en DESC, id DESC
+       LIMIT 1`,
+      [tenantId, equipoId, excluirDespachoId, antesDe, tipo]
+    );
+    return result.rows[0] ?? null;
+  }
+
   /** Datos del tanque para evaluar nivel bajo, más si YA hay una alerta de
    *  nivel abierta -- la deduplicación es lo que evita que cada lectura por
    *  debajo del mínimo genere una alerta nueva. */
