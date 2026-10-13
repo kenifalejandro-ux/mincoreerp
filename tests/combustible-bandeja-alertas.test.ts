@@ -26,8 +26,10 @@ type Fila = {
   grifo_interno_id: number | null;
   grifo_nombre: string | null;
   revisable: boolean;
+  critica: boolean;
   leida_en: string | null;
   resuelta_en: string | null;
+  congelada_en: string | null;
 };
 
 describe("Bandeja de alertas: filtros y contadores dentro del alcance", () => {
@@ -224,6 +226,62 @@ describe("Bandeja de alertas: filtros y contadores dentro del alcance", () => {
     const resA = (await jefeA.get("/api/erp/combustible/alertas/resumen")).body;
     expect(resA.resueltas).toBeGreaterThanOrEqual(1);
     expect(resA.pendientes).toBe(resA.total - resA.resueltas);
+  });
+
+  // ── Alertas centralizadas: gravedad del catálogo, contador del menú y congeladas ──
+
+  it("la gravedad la dice el servidor con el catálogo: crítica = sale por correo al momento", async () => {
+    const filas = await listar(admin, "estado=todas");
+    const de = (id: string) => filas.find((f) => String(f.id) === id)!;
+    // descuadre_inventario y nivel_bajo salen al momento; descuadre_ciclo espera al resumen.
+    expect(de(ids.aNueva).critica).toBe(true);
+    expect(de(ids.aLeida).critica).toBe(true);
+    expect(de(ids.aVieja).critica).toBe(false);
+  });
+
+  it("el contador de críticas pendientes (el número rojo del menú) respeta el alcance", async () => {
+    const criticasVistas = async (ag: ReturnType<typeof request.agent>) =>
+      (await listar(ag, "estado=pendientes")).filter((f) => f.critica).length;
+
+    const todo = (await admin.get("/api/erp/combustible/alertas/resumen")).body;
+    expect(todo.criticasPendientes).toBe(await criticasVistas(admin));
+    // "Por revisar" = pendientes que se pueden cerrar a mano. Contra la lista,
+    // que dice `revisable` fila por fila: si el contador usara otro conjunto
+    // de tipos (como el de críticas), no coincidirían.
+    const pendientes = await listar(admin, "estado=pendientes");
+    expect(todo.porRevisar).toBe(pendientes.filter((f) => f.revisable).length);
+    expect(todo.porRevisar).not.toBe(todo.pendientes);
+    expect(todo.criticasPendientes).toBeGreaterThan(0);
+
+    const soloA = (await jefeA.get("/api/erp/combustible/alertas/resumen")).body;
+    expect(soloA.criticasPendientes).toBe(await criticasVistas(jefeA));
+    // La de B (descuadre de inventario, crítica y sin resolver) no le cuenta.
+    expect(soloA.criticasPendientes).toBe(todo.criticasPendientes - 1);
+  });
+
+  it("congeladas: el historial de lo no explicado a tiempo, que sigue pendiente y se cierra ahí", async () => {
+    const congelada = await alerta(tanqueA, "descuadre_ciclo");
+    await withTenant(tenantId, (client) =>
+      client.query(`UPDATE combustible_alertas SET congelada_en = now() WHERE id = $1`, [congelada])
+    );
+
+    const lista = await listar(admin, "estado=congeladas");
+    expect(idsDe(lista)).toEqual([congelada]);
+    expect(lista[0].congelada_en).not.toBeNull();
+    // El gemelo: las no congeladas no aparecen ahí, pero la congelada sigue pendiente.
+    expect(idsDe(lista)).not.toContain(ids.aNueva);
+    expect(idsDe(await listar(admin, "estado=pendientes"))).toContain(congelada);
+
+    const res = (await admin.get("/api/erp/combustible/alertas/resumen")).body;
+    expect(res.congeladas).toBe(1);
+
+    // Se cierra desde la Bandeja como cualquier otra, con motivo.
+    const cierre = await admin
+      .patch(`/api/erp/combustible/alertas/${congelada}/resolver`)
+      .send({ motivo: "explicada tarde: el papel estaba en la oficina" });
+    expect(cierre.status).toBe(200);
+    expect(idsDe(await listar(admin, "estado=congeladas"))).toEqual([congelada]);
+    expect(idsDe(await listar(admin, "estado=pendientes"))).not.toContain(congelada);
   });
 
   it("pide una alerta por su id (la Bandeja la necesita aunque no esté en la página), dentro del alcance", async () => {

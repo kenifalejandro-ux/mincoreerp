@@ -22,6 +22,9 @@ import { suscribirseAlStreamDeAlertas } from "./streamDeAlertas";
 export const CLAVE_ALERTA_PENDIENTE = "combustible:bandeja:abrir";
 
 export interface AlertaCombustible {
+  /** Lo decide el servidor con el catálogo de canales (canalesAlertas.ts):
+   *  crítica = sale por correo al momento. El cliente no tiene lista propia. */
+  critica: boolean;
   id: number;
   tipo:
     | "hueco_detectado"

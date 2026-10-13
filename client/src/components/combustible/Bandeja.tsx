@@ -22,10 +22,9 @@ import {
   referenciaAlerta,
   type AlertaCombustible,
 } from "./alertasTexto";
-import { esCritica } from "./gravedadAlertas";
 import { CLAVE_ALERTA_PENDIENTE, useAlertasCombustibleStream } from "./useAlertasCombustibleStream";
 
-type Estado = "sin_leer" | "pendientes" | "resueltas" | "todas";
+type Estado = "sin_leer" | "pendientes" | "resueltas" | "congeladas" | "todas";
 
 interface AlertaBandeja extends AlertaCombustible {
   grifo_interno_id: number | null;
@@ -40,6 +39,8 @@ interface Resumen {
   pendientes: number;
   porRevisar: number;
   resueltas: number;
+  congeladas: number;
+  criticasPendientes: number;
   total: number;
 }
 
@@ -49,6 +50,9 @@ const PESTANAS: { estado: Estado; etiqueta: string; contador: keyof Resumen }[] 
   { estado: "pendientes", etiqueta: "Pendientes", contador: "pendientes" },
   { estado: "sin_leer", etiqueta: "Sin leer", contador: "sinLeer" },
   { estado: "resueltas", etiqueta: "Resueltas", contador: "resueltas" },
+  // El historial de lo que nadie explicó a tiempo (antes, abajo del modal de
+  // Tanques). Las que siguen pendientes se cierran desde acá como cualquier otra.
+  { estado: "congeladas", etiqueta: "Congeladas", contador: "congeladas" },
   { estado: "todas", etiqueta: "Todas", contador: "total" },
 ];
 
@@ -267,7 +271,7 @@ export default function BandejaAlertas() {
           ? "Quedó revisada. Como participaste en el hecho, la bitácora la marca como autorrevisión."
           : "Quedó revisada, con tu nombre y el motivo en la bitácora."
       );
-      // El panel de Tanques cuenta los hallazgos abiertos: se entera por acá.
+      // El contador de la Bandeja en el menú y la campanita se enteran por acá.
       window.dispatchEvent(new Event("combustible:actualizado"));
       await cargar();
       // La copia pedida por id no se recarga con la lista: se refresca aparte.
@@ -414,7 +418,7 @@ export default function BandejaAlertas() {
           ) : (
             <ul className="divide-y divide-slate-100">
               {alertas.map((a) => {
-                const critica = esCritica(a.tipo);
+                const critica = a.critica;
                 const activa = a.id === seleccionadaId;
                 return (
                   <li key={a.id}>
@@ -448,6 +452,7 @@ export default function BandejaAlertas() {
                           <span className="font-bold uppercase text-red-600">Revisar</span>
                         )}
                         {a.resuelta_en && <span className="text-emerald-600">Resuelta</span>}
+                        {a.congelada_en && <span className="text-amber-600">Congelada</span>}
                         <span className="font-mono truncate">{referenciaAlerta(a)}</span>
                         {a.grifo_nombre && <span className="truncate">· {a.grifo_nombre}</span>}
                       </div>
@@ -501,7 +506,7 @@ export default function BandejaAlertas() {
               </button>
               <div>
                 <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
-                  {esCritica(seleccionada.tipo) && (
+                  {seleccionada.critica && (
                     <TriangleAlert className="w-5 h-5 text-red-600" aria-hidden="true" />
                   )}
                   {ETIQUETA_TIPO_ALERTA[seleccionada.tipo] ?? seleccionada.tipo}
@@ -539,6 +544,13 @@ export default function BandejaAlertas() {
                   {describirDetalleAlerta(seleccionada)}
                 </p>
               </div>
+              {seleccionada.congelada_en && (
+                <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  Congelada el {fechaHora(seleccionada.congelada_en)}: pasó su plazo sin explicación
+                  y quedó como anomalía. Esa copia es evidencia permanente: no se borra aunque la
+                  alerta se revise después.
+                </p>
+              )}
 
               {!seleccionada.resuelta_en && seleccionada.revisable && puedeEscribir && (
                 <div className="space-y-2 border-t border-slate-100 pt-4">

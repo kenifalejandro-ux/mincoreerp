@@ -225,7 +225,14 @@ describe("combustible: resumen diario de alertas por correo", () => {
 
   it("una sola vez por día: la segunda corrida del mismo día no manda nada", async () => {
     const r = await correrResumenDiario({
-      ahora: new Date(primerMomento.getTime() + 30 * 60_000),
+      // Misma fecha de Lima aunque se corra tarde: pasada la medianoche sería
+      // otro día, y "no manda nada" se cumpliría sin probar nada.
+      ahora: new Date(
+        Math.min(
+          primerMomento.getTime() + 30 * 60_000,
+          new Date(`${diaYHoraEnLima(primerMomento).fecha}T23:59:59-05:00`).getTime()
+        )
+      ),
       soloTenantId: tenantId,
     });
     expect(r.correos).toBe(0);
@@ -297,8 +304,11 @@ describe("combustible: resumen diario cuando todavía nadie está marcado", () =
   });
 
   it("sin destinatarios a las 7:00 no se quema el día: si alguien se marca a las 9:00, sale", async () => {
-    const hoy = momentoDeResumen();
-    const r1 = await correrResumenDiario({ ahora: hoy, soloTenantId: tenantId });
+    // Horas explícitas de Lima, no "ahora + 2 h": con el reloj después de las
+    // 22:00 eso caía al día siguiente antes de las 7:00 y el test fallaba.
+    const dia = masUnDia(diaYHoraEnLima(momentoDeResumen()).fecha);
+    const alas7 = new Date(`${dia}T07:00:00-05:00`);
+    const r1 = await correrResumenDiario({ ahora: alas7, soloTenantId: tenantId });
     expect(r1.correos).toBe(0);
 
     const email = `jefe-tarde-${slug}@test.local`.toLowerCase();
@@ -326,7 +336,7 @@ describe("combustible: resumen diario cuando todavía nadie está marcado", () =
 
     // Mismo día, un poco después: ahora sí hay a quién mandarle.
     const r2 = await correrResumenDiario({
-      ahora: new Date(hoy.getTime() + 2 * 3600 * 1000),
+      ahora: new Date(`${dia}T09:00:00-05:00`),
       soloTenantId: tenantId,
     });
     expect(r2.correos).toBe(1);

@@ -96,6 +96,14 @@ export const CATALOGO_ALERTAS: Record<
   historial_sin_contrastar: { canal: "solo_erp", nombre: "Consumo previo a la primera varilla" },
 };
 
+/** Lo que la campanita y la Bandeja pintan como CRÍTICO: exactamente lo que
+ *  sale por correo al momento. Lo rojo de la pantalla y lo que interrumpe por
+ *  correo tienen que coincidir; antes eran dos listas (esta y la del cliente,
+ *  gravedadAlertas.ts) y se habían separado en 14 tipos. */
+export const TIPOS_CRITICOS: readonly TipoAlertaCombustible[] = (
+  Object.keys(CATALOGO_ALERTAS) as TipoAlertaCombustible[]
+).filter((t) => CATALOGO_ALERTAS[t].canal === "al_momento");
+
 export function canalDe(tipo: AvisoPorCorreo): CanalAlerta {
   return tipo === "aviso_configuracion" ? "al_momento" : CATALOGO_ALERTAS[tipo].canal;
 }

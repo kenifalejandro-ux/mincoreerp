@@ -13,8 +13,8 @@
 // OJO con los imports: este archivo y ventanasFlotantesEstado.ts son
 // HERMANOS, y eslint-plugin-import + ESLint 10 crashea cuando un archivo
 // mezcla imports padre (../../x) con hermanos (./x). Si algún día hace
-// falta traer algo de más arriba, hay que meterlo por props o duplicarlo,
-// como se hizo en components/combustible/gravedadAlertas.ts.
+// falta traer algo de más arriba, hay que meterlo por props o sumar este
+// archivo a la lista de `import/order: off` de client/eslint.config.js.
 
 import { ExternalLink, Minimize2, X } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";

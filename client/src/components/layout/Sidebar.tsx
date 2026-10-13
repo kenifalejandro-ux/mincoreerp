@@ -19,6 +19,7 @@ import { Fragment, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { MODULOS_CLIENTE } from "../../modules/registry";
 import { puedeVerBandeja } from "../bandeja/bandejaAcceso";
+import { useContadorBandeja } from "../bandeja/useContadorBandeja";
 
 // Submenú de Combustible. Los íconos son de trazo (lucide), los mismos que
 // usan las acciones de la tabla de tanques.
@@ -62,6 +63,7 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
   // La Bandeja junta las alertas de todos los módulos: es un ítem propio y no
   // un submenú de Combustible. Quién la ve: bandejaAcceso.ts.
   const verBandeja = puedeVerBandeja(usuario);
+  const contador = useContadorBandeja(verBandeja);
   const hayDashboard = tabs.some((m) => m.id === "dashboard");
   const botonBandeja = verBandeja ? (
     <button
@@ -80,6 +82,25 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
         <Inbox size={18} strokeWidth={2} />
       </span>
       <span className="tracking-tight">Bandeja</span>
+      {contador.pendientes > 0 && (
+        <span
+          className={`ml-auto min-w-[22px] h-5 px-1.5 rounded-full text-[11px] font-bold tabular-nums flex items-center justify-center ${
+            contador.criticas > 0 ? "bg-red-600 text-white" : "bg-slate-600 text-white"
+          }`}
+          title={
+            contador.criticas > 0
+              ? `${contador.pendientes} sin resolver, ${contador.criticas} crítica(s)`
+              : `${contador.pendientes} sin resolver`
+          }
+          aria-label={
+            contador.criticas > 0
+              ? `${contador.pendientes} alertas sin resolver, ${contador.criticas} críticas`
+              : `${contador.pendientes} alertas sin resolver`
+          }
+        >
+          {contador.pendientes > 99 ? "99+" : contador.pendientes}
+        </span>
+      )}
     </button>
   ) : null;
 
