@@ -1717,25 +1717,73 @@ export type ActualizarPresentacionUreaInput = z.infer<typeof actualizarPresentac
 // cuenta en cajas/bolsas/baldes. Es el único acto que le da al inventario
 // de urea una contraparte FÍSICA -- sin esto, un stock que solo sale de
 // restar movimientos nunca se puede contradecir a sí mismo.
-export const crearConteoUreaSchema = z.object({
-  cliente_uuid: z.string().uuid().optional(),
-  // El que carga el conteo cuenta bultos, no litros -- igual que un vale.
-  // El factor de conversión lo resuelve el servidor (ver FACTOR_LITROS_UREA),
-  // nunca el cliente.
-  presentacion: codigoPresentacionUrea,
-  cantidad_bultos: z.number().int().nonnegative(),
-  // Cuándo se hizo el conteo físico -- mismo criterio que leido_en/
-  // despachado_en/recibido_en: opcional, el service usa now() sin dato, y
-  // no puede ser futuro (el margen de 1h cubre el reloj del dispositivo).
-  contado_en: z
-    .string()
-    .datetime()
-    .refine((valor) => new Date(valor).getTime() <= Date.now() + 60 * 60 * 1000, {
-      message: "La fecha del conteo no puede estar en el futuro",
-    })
-    .optional(),
-  observaciones: z.string().trim().max(500).optional(),
-});
+export const crearConteoUreaSchema = z
+  .object({
+    cliente_uuid: z.string().uuid().optional(),
+    // El que carga el conteo cuenta bultos, no litros -- igual que un vale.
+    // El factor de conversión lo resuelve el servidor (ver FACTOR_LITROS_UREA),
+    // nunca el cliente.
+    //
+    // Un almacén real tiene "1 caja + 2 bolsas": el conteo es lo que hay en
+    // TOTAL, así que lleva un renglón por presentación. Contar solo una y
+    // compararla contra el stock completo producía descuadres falsos. La forma
+    // de UNA presentación (presentacion + cantidad_bultos sueltos) se sigue
+    // aceptando y se convierte en un renglón.
+    presentacion: codigoPresentacionUrea.optional(),
+    cantidad_bultos: z.number().int().nonnegative().optional(),
+    lineas: z
+      .array(
+        z.object({
+          presentacion: codigoPresentacionUrea,
+          cantidad_bultos: z.number().int().nonnegative(),
+        })
+      )
+      .min(1, "el conteo necesita al menos un renglón")
+      .max(10, "un conteo no puede tener más de 10 renglones")
+      .optional(),
+    // Cuándo se hizo el conteo físico -- mismo criterio que leido_en/
+    // despachado_en/recibido_en: opcional, el service usa now() sin dato, y
+    // no puede ser futuro (el margen de 1h cubre el reloj del dispositivo).
+    contado_en: z
+      .string()
+      .datetime()
+      .refine((valor) => new Date(valor).getTime() <= Date.now() + 60 * 60 * 1000, {
+        message: "La fecha del conteo no puede estar en el futuro",
+      })
+      .optional(),
+    observaciones: z.string().trim().max(500).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.lineas !== undefined) {
+      if (data.presentacion !== undefined || data.cantidad_bultos !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["lineas"],
+          message: "con renglones, la presentación y la cantidad van en cada renglón, no sueltas",
+        });
+      }
+      const codigos = data.lineas.map((l) => l.presentacion);
+      if (new Set(codigos).size !== codigos.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["lineas"],
+          message: "la misma presentación aparece en dos renglones -- sumalos en uno",
+        });
+      }
+    } else if (data.presentacion === undefined || data.cantidad_bultos === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["lineas"],
+        message: "el conteo necesita sus renglones (presentación y cantidad contada)",
+      });
+    }
+  })
+  .transform((data) => ({
+    ...data,
+    lineas: data.lineas ?? [
+      { presentacion: data.presentacion!, cantidad_bultos: data.cantidad_bultos! },
+    ],
+  }));
 
 export type CrearConteoUreaInput = z.infer<typeof crearConteoUreaSchema>;
 
