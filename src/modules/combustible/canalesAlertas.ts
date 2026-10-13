@@ -84,6 +84,7 @@ export const CATALOGO_ALERTAS: Record<
   tanque_sin_vigilancia: { canal: "resumen", nombre: "Tanque despachando sin vigilancia" },
   varilla_sin_control: { canal: "resumen", nombre: "Tanque sin varilla de control" },
   recepcion_sin_validar: { canal: "resumen", nombre: "Recepción sin validar" },
+  comprobante_sin_foto: { canal: "resumen", nombre: "Comprobante sin foto" },
   // ── Resumen: compras y saldos ──────────────────────────────────────────
   urea_stock_excedido: { canal: "resumen", nombre: "Urea: compra sobre el máximo del depósito" },
   urea_precio_fuera_de_catalogo: { canal: "resumen", nombre: "Urea: precio fuera de catálogo" },

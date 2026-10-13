@@ -133,6 +133,8 @@ export const TIPOS_ALERTA = [
   // ── Migración 0128: un vale de tanque propio que no cabe en el tanque o
   // que saca más de lo que el tanque tenía ese día.
   "vale_excede_tanque",
+  // ── Migración 0129: compra externa con comprobante sin foto pasadas 24 h.
+  "comprobante_sin_foto",
 ] as const;
 
 export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];
@@ -152,6 +154,8 @@ export const TIPOS_ESTADO = [
   // cuando lo llenan. `urea_stock_excedido` NO está acá a propósito: es un
   // hecho sobre una entrada concreta y se congela como cualquier hallazgo.
   "urea_stock_bajo",
+  // 0129: se resuelve sola al subir la foto del comprobante.
+  "comprobante_sin_foto",
 ] as const satisfies readonly TipoAlertaCombustible[];
 
 /** Todo lo que no es estado es un HALLAZGO: si nadie lo explica dentro de la
@@ -6745,6 +6749,54 @@ export class CombustibleRepository {
       despachos: Number(f.despachos),
       recepciones: Number(f.recepciones),
     }));
+  }
+
+  /** Compras externas cuyo comprobante sigue sin foto pasadas `horas` horas y
+   *  todavía sin alerta abierta por eso (0129). La foto se sube DESPUÉS de
+   *  registrar la compra, por eso se espera un plazo. */
+  async findComprobantesSinFoto(client: PoolClient, tenantId: string, horas: number) {
+    const r = await client.query<{
+      id: number;
+      producto: "combustible" | "urea";
+      comprobante_tipo: string;
+      comprobante_numero: string;
+      creado_en: Date;
+      combustible_id: number | null;
+    }>(
+      `SELECT d.id, d.producto, d.comprobante_tipo, d.comprobante_numero, d.creado_en,
+              d.combustible_id
+         FROM combustible_despachos d
+        WHERE d.tenant_id = $1
+          AND d.origen = 'compra_externa'
+          AND d.comprobante_numero IS NOT NULL
+          AND d.comprobante_key IS NULL
+          AND d.anulada_en IS NULL
+          AND d.creado_en < now() - make_interval(hours => $2)
+          AND NOT EXISTS (
+            SELECT 1 FROM combustible_alertas a
+             WHERE a.tenant_id = $1 AND a.despacho_id = d.id
+               AND a.tipo = 'comprobante_sin_foto' AND a.resuelta_en IS NULL
+          )
+        ORDER BY d.creado_en`,
+      [tenantId, horas]
+    );
+    return r.rows;
+  }
+
+  /** Cierra las alertas de "sin foto" cuya compra ya tiene su foto o se anuló.
+   *  Lo resuelve el hecho, no una persona (igual que varilla_sin_control). */
+  async resolverComprobantesConFoto(client: PoolClient, tenantId: string): Promise<number> {
+    const r = await client.query(
+      `UPDATE combustible_alertas a SET resuelta_en = now()
+        WHERE a.tenant_id = $1 AND a.tipo = 'comprobante_sin_foto' AND a.resuelta_en IS NULL
+          AND EXISTS (
+            SELECT 1 FROM combustible_despachos d
+             WHERE d.tenant_id = $1 AND d.id = a.despacho_id
+               AND (d.comprobante_key IS NOT NULL OR d.anulada_en IS NOT NULL)
+          )`,
+      [tenantId]
+    );
+    return r.rowCount ?? 0;
   }
 
   /** Una varilla tomada por alguien que NO es grifero cierra la alerta de

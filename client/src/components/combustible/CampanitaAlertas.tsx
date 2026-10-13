@@ -31,6 +31,7 @@ const ETIQUETA_TIPO: Record<string, string> = {
   recepcion_anulada: "Recepción anulada",
   recepcion_discrepante: "La guía no coincide con la recepción",
   recepcion_sin_validar: "Recepción sin validar",
+  comprobante_sin_foto: "Comprobante sin foto",
   recepcion_retroactiva: "Recepción cargada con atraso",
   consumo_excedido: "Consumo por encima del máximo",
   varilla_sin_control: "Solo mide quien despacha",
