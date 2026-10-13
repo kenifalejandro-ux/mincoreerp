@@ -16,7 +16,6 @@ import {
   Plus,
   Tag,
   Trash2,
-  TriangleAlert,
   Truck,
   Wrench,
   X,
@@ -46,14 +45,7 @@ import TanquetasPanel from "./Tanquetas";
 import MiViaje from "./MiViaje";
 import ViajesPanel from "./ViajesPanel";
 import { comprimirImagen } from "./comprimirImagen";
-import {
-  DESTINOS_EXCEDENTE,
-  ETIQUETA_TIPO_ALERTA,
-  describirDetalleAlerta,
-  referenciaAlerta,
-  type AlertaCombustible,
-  type DestinoExcedente,
-} from "./alertasTexto";
+import { DESTINOS_EXCEDENTE, type DestinoExcedente } from "./alertasTexto";
 
 interface SurtidorDelTanque {
   id: number;
@@ -393,10 +385,6 @@ interface DespachoHistorial {
   tanqueta_lugar?: "ruta" | "planta" | null;
 }
 
-// migrations/0068 -- mismo shape que AlertaCombustible en
-// useAlertasCombustibleStream.ts, duplicado a propósito: este archivo no
-// importa tipos de un hermano en ningún otro lado, siempre define su
-// propia interfaz local (ver DespachoHistorial arriba).
 // Fase D, entrega 3 -- mismo shape que devuelve GET /:id/sugerencia-umbral.
 // Discriminado por `muestraSuficiente`: con muestra chica el backend ni
 // siquiera calcula un número, así que las demás propiedades son opcionales.
@@ -648,62 +636,6 @@ interface SugerenciasUmbral {
    *  apaga esta sugerencia, no las otras. */
   ventana?: SugerenciaUmbral;
 }
-
-// Fase D (migrations/0072) -- el hallazgo YA congelado, a diferencia de
-// AlertaCombustible que es el aviso vivo. Append-only: no tiene estado de
-// resolución porque no se puede resolver, es evidencia.
-interface AnomaliaCombustible {
-  id: number;
-  // Los cinco tipos que se congelan: los FALTANTES. `nivel_bajo` y
-  // `despacho_tardio` nunca llegan acá -- ver el CHECK de tipos en 0073/0074.
-  tipo:
-    | "hueco_detectado"
-    | "sobredespacho"
-    | "diferencia_recepcion"
-    | "medidor_inconsistente"
-    | "descuadre_inventario"
-    | "descuadre_ciclo";
-  serie_talonario: string | null;
-  n_vale: number | null;
-  recepcion_id: number | null;
-  combustible_id: number | null;
-  detalle: Record<string, unknown>;
-  detectada_en: string;
-  congelada_en: string;
-  ventana_horas: number;
-}
-
-/** Copia de `gravedadAlertas.ts` (mismo directorio). No se importa porque
- *  este archivo solo tiene imports padre y agregarle uno hermano crashea
- *  eslint-plugin-import -- ver el encabezado de ese archivo, que es la
- *  fuente de verdad. Si cambia la lista de allá, cambiar también acá. */
-const TIPOS_CRITICOS = new Set([
-  "hueco_detectado",
-  "vale_anulado",
-  "sobredespacho",
-  "diferencia_recepcion",
-  "medidor_inconsistente",
-  "descuadre_inventario",
-  "descuadre_ciclo",
-  "vale_fuera_de_orden",
-  "lectura_retroactiva",
-  "tope_diario_excedido",
-  "descuadre_ventana",
-  "vale_recargado",
-  "tanque_sin_vigilancia",
-  "tanque_sin_medir",
-  "recepcion_anulada",
-  "recepcion_discrepante",
-  "recepcion_retroactiva",
-  "consumo_excedido",
-  "varilla_exacta",
-  "varilla_sin_control",
-  "totalizador_salto",
-  "totalizador_retroceso",
-  "precinto_alterado",
-  "precinto_reemplazado",
-]);
-const esCritica = (tipo: string) => TIPOS_CRITICOS.has(tipo);
 
 /** Qué vigilancia tiene realmente un tanque. Deriva de los tres umbrales, no
  *  se guarda en ningún lado: es un ESTADO, no un evento.
@@ -1857,15 +1789,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   // --- Alertas (migrations/0068) ---
   const [modalAlertasAbierto, setModalAlertasAbierto] = useState(false);
-  const [alertasCombustible, setAlertasCombustible] = useState<AlertaCombustible[]>([]);
-  const [cargandoAlertas, setCargandoAlertas] = useState(false);
-  const [resolviendoAlertaId, setResolviendoAlertaId] = useState<number | null>(null);
 
   // --- Conciliación (Fase D, migraciones 0071/0072) ---
-  // La ventana y las anomalías viven en el MISMO modal que las alertas: la
-  // ventana gobierna cuándo una alerta se vuelve anomalía, así que verlas
-  // juntas es lo que hace entendible el mecanismo.
-  const [anomalias, setAnomalias] = useState<AnomaliaCombustible[]>([]);
+  // La configuración de alertas (ventana de gracia y demás umbrales) tiene
+  // su modal; las alertas y las anomalías se ven y se cierran en la Bandeja.
   const [ventanaGraciaHoras, setVentanaGraciaHoras] = useState("72");
   const [guardandoVentana, setGuardandoVentana] = useState(false);
   // Plazo sin varilla (migración 0076). Comparte el mismo formulario y el
@@ -1907,9 +1834,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [pidiendoMotivoConfig, setPidiendoMotivoConfig] = useState(false);
   const [llenadosPorDia, setLlenadosPorDia] = useState("");
   const [topeSinCapacidad, setTopeSinCapacidad] = useState("");
-  /** Hallazgos críticos SIN RESOLVER -- distinto de "sin leer": una alerta
-   *  leída sigue abierta hasta que alguien la revisa y la cierra. */
-  const [criticasAbiertas, setCriticasAbiertas] = useState(0);
   // Kardex: el período arranca 30 días atrás porque es el ciclo con el que
   // ya razona la operación (cierre, factura, planilla de vales).
   // Los dos reportes de auditoría comparten período y modal: se leen juntos
@@ -2088,40 +2012,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     /* eslint-enable react-hooks/set-state-in-effect */
   }, [cargarTanques, cargarEquipos, cargarGrifos, cargarExcedentesPendientes]);
 
-  /** Cuenta los hallazgos críticos abiertos para la franja de arriba. Pide
-   *  TODAS las alertas y no solo las no leídas: el punto de la franja es que
-   *  marcarlas leídas no las hace desaparecer. */
-  const cargarCriticasAbiertas = useCallback(async () => {
-    try {
-      const res = await apiFetch("/api/erp/combustible/alertas?pageSize=200");
-      if (!res.ok) return;
-      const body = await res.json();
-      const abiertas = (Array.isArray(body?.data) ? body.data : []).filter(
-        (a: { tipo: string; resuelta_en: string | null }) =>
-          a.resuelta_en === null && esCritica(a.tipo)
-      );
-      setCriticasAbiertas(abiertas.length);
-    } catch {
-      // Sin red la franja simplemente no aparece; no rompe la pantalla.
-    }
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    cargarCriticasAbiertas();
-    // Mismo criterio que la campanita: el stream es el camino rápido, pero
-    // el número no puede depender de que un socket haya sobrevivido.
-    const repaso = setInterval(cargarCriticasAbiertas, 60_000);
-    const alVolver = () => {
-      if (document.visibilityState === "visible") cargarCriticasAbiertas();
-    };
-    document.addEventListener("visibilitychange", alVolver);
-    return () => {
-      clearInterval(repaso);
-      document.removeEventListener("visibilitychange", alVolver);
-    };
-  }, [cargarCriticasAbiertas]);
-
   // Cuando la cola offline termina de drenar, una lectura cargada sin señal
   // ya existe del lado del servidor -- recargar pone nivel_actual al día
   // sin que el operario tenga que refrescar.
@@ -2160,26 +2050,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     [kardexDesde, kardexHasta]
   );
 
-  const recargarAlertasModal = useCallback(async () => {
-    if (!modalAlertasAbierto) return;
-    try {
-      const res = await apiFetch("/api/erp/combustible/alertas?pageSize=100");
-      if (!res.ok) return;
-      const body = await res.json();
-      setAlertasCombustible(Array.isArray(body?.data) ? body.data : []);
-    } catch {
-      // Se conserva la última lista visible si falla el refresco.
-    }
-  }, [modalAlertasAbierto]);
-
   const actualizarVistasCombustible = async () => {
     window.dispatchEvent(new Event("combustible:actualizado"));
-    const tareas: Promise<void>[] = [
-      cargarTanques(),
-      cargarCriticasAbiertas(),
-      recargarAlertasModal(),
-      cargarExcedentesPendientes(),
-    ];
+    const tareas: Promise<void>[] = [cargarTanques(), cargarExcedentesPendientes()];
     if (modalKardexAbierto && kardexTanqueId !== null) {
       tareas.push(cargarKardex(kardexTanqueId));
     }
@@ -2194,8 +2067,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       temporizador = window.setTimeout(() => {
         void Promise.allSettled([
           cargarTanques(),
-          cargarCriticasAbiertas(),
-          recargarAlertasModal(),
           ...(modalKardexAbierto && kardexTanqueId !== null ? [cargarKardex(kardexTanqueId)] : []),
         ]);
       }, 100);
@@ -2229,14 +2100,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       document.removeEventListener("visibilitychange", alVolver);
       window.removeEventListener("focus", alVolver);
     };
-  }, [
-    cargarTanques,
-    cargarCriticasAbiertas,
-    recargarAlertasModal,
-    cargarKardex,
-    modalKardexAbierto,
-    kardexTanqueId,
-  ]);
+  }, [cargarTanques, cargarKardex, modalKardexAbierto, kardexTanqueId]);
 
   /** Descarga el kardex del período que está en pantalla.
    *
@@ -3744,21 +3608,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const abrirModalAlertas = async () => {
     setModalAlertasAbierto(true);
     setMensajeVentana(null);
-    setCargandoAlertas(true);
     try {
-      // Las tres cosas del mismo modal, en paralelo: los avisos vivos, los
-      // hallazgos ya congelados, y la ventana que separa unos de otros.
-      const [resAlertas, resAnomalias, resConfig] = await Promise.all([
-        apiFetch("/api/erp/combustible/alertas?pageSize=100"),
-        apiFetch("/api/erp/combustible/anomalias?pageSize=100"),
-        apiFetch("/api/erp/combustible/config"),
-      ]);
-      const bodyAlertas = await resAlertas.json().catch(() => null);
-      const bodyAnomalias = await resAnomalias.json().catch(() => null);
+      const resConfig = await apiFetch("/api/erp/combustible/config");
       const bodyConfig = await resConfig.json().catch(() => null);
 
-      setAlertasCombustible(Array.isArray(bodyAlertas?.data) ? bodyAlertas.data : []);
-      setAnomalias(Array.isArray(bodyAnomalias?.data) ? bodyAnomalias.data : []);
       if (bodyConfig?.ventana_gracia_horas !== undefined) {
         setVentanaGraciaHoras(String(bodyConfig.ventana_gracia_horas));
       }
@@ -3803,8 +3656,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           ? ""
           : String(bodyConfig.tope_diario_sin_capacidad_l)
       );
-    } finally {
-      setCargandoAlertas(false);
+    } catch {
+      // Sin red el modal queda con los valores por defecto; guardar avisa.
     }
   };
 
@@ -3877,47 +3730,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       setMensajeVentana(`Guardado: ventana ${horas} h, aviso sin medir a los ${dias} días`);
     } finally {
       setGuardandoVentana(false);
-    }
-  };
-
-  /** Aplica a los siete tipos que alguien tiene que mirar (0077 sumó los
-   *  cuatro que habían quedado sin camino de cierre). Los que se resuelven
-   *  solos no están: el hueco cuando llega el vale, el nivel bajo cuando se
-   *  repone, el "sin medir" cuando se mide.
-   *
-   *  El MOTIVO es obligatorio desde 0077: cerrar una alerta anti-fraude sin
-   *  decir por qué es indistinguible de taparla. Es la misma regla que ya
-   *  regía para anular una lectura o un vale. */
-  const handleResolverAlerta = async (alertaId: number) => {
-    if (resolviendoAlertaId !== null) return;
-
-    // El prompt del navegador sale en la página, no en el panel desprendido.
-    enfocarPaginaPrincipal();
-    const motivo = window.prompt(
-      "¿Por qué se da por revisada esta alerta?\n\nQueda registrado con tu nombre.",
-      ""
-    );
-    if (!motivo || !motivo.trim()) return;
-
-    setResolviendoAlertaId(alertaId);
-    try {
-      const res = await apiFetch(`/api/erp/combustible/alertas/${alertaId}/resolver`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ motivo: motivo.trim() }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        alert(body.error || "No se pudo resolver la alerta.");
-        return;
-      }
-      await abrirModalAlertas();
-      // La franja de arriba tiene que bajar el conteo en el momento: si
-      // sigue mostrando el número viejo, el usuario cree que no se guardó.
-      await cargarCriticasAbiertas();
-      window.dispatchEvent(new Event("combustible:actualizado"));
-    } finally {
-      setResolviendoAlertaId(null);
     }
   };
 
@@ -4175,34 +3987,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   return (
     <div className="p-2 sm:p-4 lg:p-8 animate-in fade-in duration-500">
-      {/* Franja de hallazgos SIN RESOLVER. No se puede cerrar y no se va
-          sola: desaparece cuando alguien resuelve las alertas, que es la
-          única forma de que el problema deje de existir.
-
-          Va acá arriba y no en la campanita porque una alerta anti-fraude
-          leída sigue estando abierta -- "leí" no es "revisé", y esa
-          confusión es justo la que hizo desaparecer una alerta de descuadre
-          nueve segundos después de nacer. */}
-      {criticasAbiertas > 0 && (
-        <button
-          onClick={abrirModalAlertas}
-          className="w-full mb-6 flex items-center gap-3 rounded-xl border-2 border-red-300 bg-red-50 px-5 py-4 text-left hover:bg-red-100 transition-colors"
-        >
-          <TriangleAlert className="w-6 h-6 shrink-0 text-red-600" />
-          <span className="flex-1">
-            <span className="block text-sm font-bold text-red-800">
-              {criticasAbiertas === 1
-                ? "Hay 1 hallazgo sin resolver"
-                : `Hay ${criticasAbiertas} hallazgos sin resolver`}
-            </span>
-            <span className="block text-xs text-red-700">
-              Combustible o vales que no cuadran. Requieren que alguien los revise y los cierre
-              indicando el motivo.
-            </span>
-          </span>
-          <span className="text-xs font-semibold text-red-800 underline">Revisar</span>
-        </button>
-      )}
       {/* Urea tiene su propio encabezado con su barra de herramientas
           (UreaPanel), como Tanques tiene el suyo acá: dos títulos apilados
           confundían de qué pantalla se trataba. */}
@@ -4274,7 +4058,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             )}
             {permiteTanque("alertas") && (
               <button onClick={abrirModalAlertas} className={`${BTN_BASE} ${BTN_ESTILO.lime}`}>
-                <Bell className="w-4 h-4 shrink-0" /> Alertas
+                <Bell className="w-4 h-4 shrink-0" /> Configurar alertas
               </button>
             )}
             {permiteTanque("proveedores") && (
@@ -8378,8 +8162,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {modalAlertasAbierto && (
         <VentanaFlotante
           id="combustible-alertas"
-          titulo="Alertas de combustible"
-          subtitulo="Huecos de talonario, vales anulados, sobredespachos y despachos tardíos, del más reciente al más antiguo"
+          titulo="Configurar alertas"
+          subtitulo="Cuándo se avisa y cuánto plazo hay para explicar. Las alertas se revisan y se cierran en la Bandeja."
           onCerrar={cerrarModalAlertas}
           anchoInicial={980}
           altoInicial={640}
@@ -8703,146 +8487,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 administradores y operadores.
               </p>
             </details>
-          </div>
-
-          <div className="flex-1 min-h-0 overflow-auto p-6">
-            {/* Anomalías: los hallazgos ya congelados. Van ARRIBA de las
-                  alertas porque son las que de verdad importan -- una fila
-                  acá es un faltante que nadie explicó en su plazo. */}
-            {anomalias.length > 0 && (
-              <div className="mb-8">
-                <h4 className="text-sm font-bold text-red-700 uppercase tracking-wide mb-1">
-                  Anomalías congeladas ({anomalias.length})
-                </h4>
-                <p className="text-xs text-slate-500 mb-3">
-                  Pasaron su ventana de gracia sin explicación. No se pueden editar ni borrar: son
-                  evidencia.
-                </p>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-max text-left border-collapse">
-                    <thead className="bg-red-50">
-                      <tr>
-                        <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
-                          Tipo
-                        </th>
-                        <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
-                          Vale
-                        </th>
-                        <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
-                          Detectada
-                        </th>
-                        <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest">
-                          Congelada
-                        </th>
-                        <th className="p-3 text-xs font-bold text-red-400 uppercase tracking-widest text-right">
-                          Sin explicar
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-red-100">
-                      {anomalias.map((a) => (
-                        <tr key={a.id} className="align-top">
-                          <td className="p-3 text-sm text-slate-800">
-                            {ETIQUETA_TIPO_ALERTA[a.tipo]}
-                          </td>
-                          <td className="p-3 text-sm text-slate-800 font-mono">
-                            {referenciaAlerta(a)}
-                          </td>
-                          <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
-                            {new Date(a.detectada_en).toLocaleString("es-PE")}
-                          </td>
-                          <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
-                            {new Date(a.congelada_en).toLocaleString("es-PE")}
-                          </td>
-                          <td className="p-3 text-sm text-right text-red-600 font-semibold whitespace-nowrap">
-                            {a.ventana_horas} h
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {anomalias.length > 0 && (
-              <h4 className="text-sm font-bold text-slate-500 uppercase tracking-wide mb-3">
-                Alertas activas
-              </h4>
-            )}
-
-            {cargandoAlertas ? (
-              <p className="text-center text-slate-500 py-8">Cargando alertas...</p>
-            ) : alertasCombustible.length === 0 ? (
-              <p className="text-center text-slate-500 py-8">No hay alertas registradas.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-max text-left border-collapse">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Tipo
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Vale
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Detalle
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Detectada
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Estado
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                        Acciones
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {alertasCombustible.map((a) => (
-                      <tr
-                        key={a.id}
-                        id={`alerta-${a.id}`}
-                        className="align-top hover:bg-slate-50/50 transition-colors"
-                      >
-                        <td className="p-3 text-sm text-slate-800">
-                          {ETIQUETA_TIPO_ALERTA[a.tipo]}
-                        </td>
-                        <td className="p-3 text-sm text-slate-800 font-mono">
-                          {referenciaAlerta(a)}
-                        </td>
-                        <td className="p-3 text-sm text-slate-600">{describirDetalleAlerta(a)}</td>
-                        <td className="p-3 text-sm text-slate-600 whitespace-nowrap">
-                          {new Date(a.creado_en).toLocaleString("es-PE")}
-                        </td>
-                        <td className="p-3 text-sm">
-                          {a.resuelta_en ? (
-                            <span className="text-emerald-600 font-medium">
-                              {a.resuelta_por ? "Revisada" : "Resuelta sola"}
-                            </span>
-                          ) : (
-                            <span className="text-amber-600 font-medium">Pendiente</span>
-                          )}
-                        </td>
-                        <td className="p-3 text-sm text-right whitespace-nowrap">
-                          {a.tipo !== "hueco_detectado" && !a.resuelta_en && (
-                            <button
-                              onClick={() => handleResolverAlerta(a.id)}
-                              disabled={resolviendoAlertaId === a.id}
-                              className="text-xs text-slate-500 hover:text-slate-900 hover:underline disabled:opacity-50"
-                            >
-                              {resolviendoAlertaId === a.id ? "Marcando..." : "Marcar revisado"}
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </div>
         </VentanaFlotante>
       )}

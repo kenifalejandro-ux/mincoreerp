@@ -14,6 +14,9 @@ export const DESTINOS_EXCEDENTE: Record<DestinoExcedente, string> = {
 };
 
 export interface AlertaCombustible {
+  /** Lo decide el servidor con el catálogo de canales (canalesAlertas.ts):
+   *  crítica = sale por correo al momento. El cliente no tiene lista propia. */
+  critica: boolean;
   id: number;
   tipo:
     | "hueco_detectado"

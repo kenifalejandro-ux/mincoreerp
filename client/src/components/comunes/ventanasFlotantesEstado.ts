@@ -12,8 +12,8 @@
 // OJO con los imports si algún día hay que agregarle alguno: este archivo y
 // VentanaFlotante.tsx son HERMANOS, y eslint-plugin-import + ESLint 10
 // crashea cuando un archivo mezcla imports padre (../../x) con hermanos
-// (./x). Ver el encabezado de components/combustible/gravedadAlertas.ts,
-// donde el mismo problema obligó a duplicar una lista.
+// (./x). Los archivos que necesitan las dos cosas van en la lista de
+// `import/order: off` de client/eslint.config.js.
 
 /** Dónde arranca la franja de z-index de los paneles flotantes. */
 export const Z_BASE = 30;

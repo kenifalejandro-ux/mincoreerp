@@ -8,7 +8,6 @@
 import { Bell } from "lucide-react";
 import { useState } from "react";
 
-import { esCritica } from "./gravedadAlertas";
 import { CLAVE_ALERTA_PENDIENTE, useAlertasCombustibleStream } from "./useAlertasCombustibleStream";
 
 const ETIQUETA_TIPO: Record<string, string> = {
@@ -114,7 +113,7 @@ export default function CampanitaAlertas({ activo, onIrACombustible }: Campanita
   };
   // Un contador solo no distingue "tres avisos de reposición" de "tres
   // sospechas de robo". El color del badge sí.
-  const criticasSinLeer = alertas.filter((a) => esCritica(a.tipo)).length;
+  const criticasSinLeer = alertas.filter((a) => a.critica).length;
 
   if (!activo) return null;
 
@@ -159,7 +158,7 @@ export default function CampanitaAlertas({ activo, onIrACombustible }: Campanita
                 <p className="p-4 text-sm text-slate-400 text-center">Sin alertas pendientes</p>
               ) : (
                 [...alertas]
-                  .sort((x, y) => Number(esCritica(y.tipo)) - Number(esCritica(x.tipo)))
+                  .sort((x, y) => Number(y.critica) - Number(x.critica))
                   .map((a) => (
                     <button
                       key={a.id}
@@ -168,12 +167,12 @@ export default function CampanitaAlertas({ activo, onIrACombustible }: Campanita
                       title="Ver en la bandeja de alertas"
                       className={
                         "w-full text-left cursor-pointer hover:bg-slate-100/70 transition-colors " +
-                        (esCritica(a.tipo)
+                        (a.critica
                           ? "p-3 border-b border-slate-50 last:border-0 border-l-4 border-l-red-500 bg-red-50/40"
                           : "p-3 border-b border-slate-50 last:border-0 border-l-4 border-l-transparent")
                       }
                     >
-                      {esCritica(a.tipo) && (
+                      {a.critica && (
                         <p className="text-[10px] font-bold text-red-600 uppercase tracking-wide">
                           Requiere revisión
                         </p>

@@ -17,6 +17,7 @@ import {
   type AlcanceCombustible,
   type AmbitoVales,
 } from "./alcance";
+import { TIPOS_CRITICOS } from "./canalesAlertas";
 
 /** El período con el que se acota un historial. Las dos puntas son
  *  opcionales y se pueden usar sueltas: "de marzo en adelante" y "hasta
@@ -162,8 +163,18 @@ export const TIPOS_CONGELABLES = TIPOS_ALERTA.filter(
  *  hueco que en realidad sigue abierto. */
 export const TIPOS_REVISABLES = TIPOS_CONGELABLES.filter((t) => t !== "hueco_detectado");
 
-/** Estados de la Bandeja: sin leer, pendientes de resolver, resueltas, todas. */
-export const ESTADOS_ALERTAS = ["sin_leer", "pendientes", "resueltas", "todas"] as const;
+/** Estados de la Bandeja: sin leer, pendientes de resolver, resueltas,
+ *  congeladas y todas. `congeladas`: las que pasaron su ventana de gracia sin explicación y ya
+ *  tienen su copia como evidencia en `combustible_anomalias` (1 a 1 por
+ *  `alerta_id`). Es el historial de lo que nadie explicó a tiempo; las que
+ *  siguen pendientes se cierran desde ahí mismo, como cualquier otra. */
+export const ESTADOS_ALERTAS = [
+  "sin_leer",
+  "pendientes",
+  "resueltas",
+  "congeladas",
+  "todas",
+] as const;
 export type EstadoAlertas = (typeof ESTADOS_ALERTAS)[number];
 
 export interface FiltrosAlertas {
@@ -4535,6 +4546,8 @@ export class CombustibleRepository {
     if (incluirEstado && filtros.estado === "pendientes") condiciones.push("a.resuelta_en IS NULL");
     if (incluirEstado && filtros.estado === "resueltas")
       condiciones.push("a.resuelta_en IS NOT NULL");
+    if (incluirEstado && filtros.estado === "congeladas")
+      condiciones.push("a.congelada_en IS NOT NULL");
     if (filtros.producto !== undefined) condiciones.push(`a.producto = ${param(filtros.producto)}`);
     if (filtros.tipo !== undefined) condiciones.push(`a.tipo = ${param(filtros.tipo)}`);
     if (filtros.grifoInternoId !== undefined) {
@@ -4579,7 +4592,7 @@ export class CombustibleRepository {
       alcance,
       true
     );
-    valores.push(TIPOS_REVISABLES, pageSize, offset);
+    valores.push(TIPOS_CRITICOS, TIPOS_REVISABLES, pageSize, offset);
     const n = valores.length;
     const result = await client.query(
       `
@@ -4588,6 +4601,7 @@ export class CombustibleRepository {
         a.resuelta_en, a.resuelta_por, a.congelada_en, a.grifo_interno_id,
         gi.nombre AS grifo_nombre, s.nombre AS sede_nombre,
         (a.tipo = ANY($${n - 2}::text[])) AS revisable,
+        (a.tipo = ANY($${n - 3}::text[])) AS critica,
         COUNT(*) OVER() AS total_count
       FROM combustible_alertas a
       LEFT JOIN grifos_internos gi ON gi.id = a.grifo_interno_id AND gi.tenant_id = a.tenant_id
@@ -4704,20 +4718,25 @@ export class CombustibleRepository {
       alcance,
       false
     );
-    valores.push(TIPOS_REVISABLES);
+    valores.push(TIPOS_REVISABLES, TIPOS_CRITICOS);
     const r = await client.query<{
       sin_leer: string;
       pendientes: string;
       por_revisar: string;
       resueltas: string;
+      congeladas: string;
+      criticas_pendientes: string;
       total: string;
     }>(
       `
       SELECT count(*) FILTER (WHERE a.leida_en IS NULL) AS sin_leer,
              count(*) FILTER (WHERE a.resuelta_en IS NULL) AS pendientes,
              count(*) FILTER (WHERE a.resuelta_en IS NULL
-                                AND a.tipo = ANY($${valores.length}::text[])) AS por_revisar,
+                                AND a.tipo = ANY($${valores.length - 1}::text[])) AS por_revisar,
              count(*) FILTER (WHERE a.resuelta_en IS NOT NULL) AS resueltas,
+             count(*) FILTER (WHERE a.congelada_en IS NOT NULL) AS congeladas,
+             count(*) FILTER (WHERE a.resuelta_en IS NULL
+                                AND a.tipo = ANY($${valores.length}::text[])) AS criticas_pendientes,
              count(*) AS total
       FROM combustible_alertas a
       LEFT JOIN grifos_internos gi ON gi.id = a.grifo_interno_id AND gi.tenant_id = a.tenant_id
@@ -4731,6 +4750,9 @@ export class CombustibleRepository {
       pendientes: Number(f.pendientes),
       porRevisar: Number(f.por_revisar),
       resueltas: Number(f.resueltas),
+      congeladas: Number(f.congeladas),
+      // Lo que pinta de rojo el contador de la Bandeja en el menú.
+      criticasPendientes: Number(f.criticas_pendientes),
       total: Number(f.total),
     };
   }
