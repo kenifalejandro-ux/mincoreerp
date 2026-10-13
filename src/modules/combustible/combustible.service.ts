@@ -2720,24 +2720,21 @@ export class CombustibleService {
 
     // El anterior es el de ANTES de la fecha de este vale, no el último cargado:
     // un vale que llega tarde (la cola offline, el papel del día anterior) se
-    // compara contra lo que había en su momento. Comparado contra el último de
-    // todos, un vale viejo siempre parecía un retroceso del medidor.
-    const anterior = await this.repository.findUltimoMedidorEquipo(
+    // compara contra lo que había en su momento. Y cuenta también lo que
+    // marcó el tablero en los viajes (salida y llegada): un vale por debajo de
+    // la llegada del viaje anterior es un retroceso igual que entre dos vales.
+    const medidor = esHorometro ? ("horometro" as const) : ("odometro" as const);
+    const anterior = await this.repository.findUltimaLecturaMedidorPorFecha(
       client,
       tenantId,
       equipoId,
-      data.despachoId,
-      data.despachadoEn
+      medidor,
+      data.despachadoEn,
+      data.despachoId
     );
     if (!anterior) return null;
 
-    const crudo = esHorometro ? anterior.lectura_horometro : anterior.lectura_odometro;
-    // El equipo tenía despachos, pero medidos con el OTRO instrumento (por
-    // ejemplo si se le cambió el tipo_medidor): no son comparables.
-    if (crudo === null) return null;
-
-    const valorAnterior = Number(crudo);
-    const medidor = esHorometro ? ("horometro" as const) : ("odometro" as const);
+    const valorAnterior = Number(anterior.valor);
 
     if (valorNuevo < valorAnterior) {
       return {
@@ -2745,14 +2742,13 @@ export class CombustibleService {
         motivo: "retroceso" as const,
         valorAnterior,
         valorNuevo,
-        leidoAnteriorEn: anterior.despachado_en,
+        leidoAnteriorEn: anterior.en,
       };
     }
 
     if (esHorometro) {
       const horasCalendario =
-        (new Date(data.despachadoEn).getTime() - new Date(anterior.despachado_en).getTime()) /
-        3_600_000;
+        (new Date(data.despachadoEn).getTime() - new Date(anterior.en).getTime()) / 3_600_000;
       const horasDeclaradas = valorNuevo - valorAnterior;
       // Solo si el calendario avanzó: dos vales con la misma marca de tiempo
       // (una carga masiva, por ejemplo) darían 0 horas disponibles y
@@ -2765,7 +2761,7 @@ export class CombustibleService {
           valorNuevo,
           horasDeclaradas: Number(horasDeclaradas.toFixed(2)),
           horasCalendario: Number(horasCalendario.toFixed(2)),
-          leidoAnteriorEn: anterior.despachado_en,
+          leidoAnteriorEn: anterior.en,
         };
       }
     }

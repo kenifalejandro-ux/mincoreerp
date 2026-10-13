@@ -93,4 +93,49 @@ describe("combustible: medidor inconsistente se evalúa por fecha del vale", () 
     expect(real.res.status).toBe(201);
     expect(real.propia).toBeDefined();
   });
+
+  // ── El viaje también marca el tablero ──────────────────────────────────
+
+  async function unidadConViajeCerrado() {
+    const eq = (
+      await agente.post("/api/erp/equipos").send({
+        placa_codigo: idUnico("VJ"),
+        tipo: "Volquete",
+        tipo_medidor: "horometro",
+        conductor_nombre: "Luis Rojas",
+        conductor_dni: "40000077",
+      })
+    ).body.id as number;
+    const origen = (
+      await agente.post("/api/erp/combustible/lugares").send({ nombre: idUnico("Origen") })
+    ).body.id;
+    const destino = (
+      await agente.post("/api/erp/combustible/lugares").send({ nombre: idUnico("Destino") })
+    ).body.id;
+    const v = await agente.post("/api/erp/combustible/viajes").send({
+      equipo_id: eq,
+      origen_id: Number(origen),
+      destino_id: Number(destino),
+      inicio_en: hace(12),
+      fin_en: hace(6),
+      medidor_inicio: 1900,
+      medidor_fin: 1905,
+    });
+    expect(v.status, JSON.stringify(v.body)).toBe(201);
+    return eq;
+  }
+
+  it("un vale por debajo de lo que marcó el viaje anterior al llegar es un retroceso", async () => {
+    const eq = await unidadConViajeCerrado();
+    const r = await vale(eq, 1850, hace(2));
+    expect(r.res.status, JSON.stringify(r.res.body)).toBe(201);
+    expect(r.propia).toBeDefined();
+  });
+
+  it("gemelo: un vale coherente con la llegada del viaje no alerta", async () => {
+    const eq = await unidadConViajeCerrado();
+    const r = await vale(eq, 1908, hace(2));
+    expect(r.res.status, JSON.stringify(r.res.body)).toBe(201);
+    expect(r.propia).toBeUndefined();
+  });
 });
