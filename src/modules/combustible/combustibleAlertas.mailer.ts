@@ -1129,8 +1129,8 @@ export async function enviarCorreoUreaStockBajo(
     stockL: number;
     stockMinimoL: number;
     faltanL: number;
-    /** "≈ 3 cajas", si la empresa marcó una unidad de referencia. */
-    equivalente: string | null;
+    /** Lo que queda en físico: "17 cajas y 34 bolsas". `null` sin saldo. */
+    composicion: string | null;
   }
 ) {
   await avisar("urea_stock_bajo", {
@@ -1139,7 +1139,7 @@ export async function enviarCorreoUreaStockBajo(
     titulo: "Hay que reabastecer urea",
     lineas: [
       `El stock de urea quedó en ${params.stockL} L` +
-        (params.equivalente ? ` (${params.equivalente})` : "") +
+        (params.composicion ? `: ${params.composicion}` : "") +
         `, por debajo del mínimo configurado de ${params.stockMinimoL} L.`,
       `Faltan ${params.faltanL} L para volver al mínimo.`,
       "Conviene programar la compra antes de que las unidades queden sin urea: un motor SCR " +

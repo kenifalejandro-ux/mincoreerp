@@ -324,6 +324,23 @@ Pedido de Kenif (2026-10-05): "una pestaña donde se grabe el precio de la urea,
 - **Permisos:** leer el catálogo, cualquiera con algo de Urea (lo necesitan los formularios). Cargar y anular, admin y operador con la pestaña `urea:precios`, mismo reparto que el catálogo de combustible. El encargado de urea **no** por defecto: el precio de catálogo es contra lo que se compara su propia boleta.
 - `tests/combustible-urea-precios.test.ts`, 18 casos, incluido el correo con destinatario real.
 
+### Entrega 8 — el almacén en físico (sin migración)
+
+Pedido de Kenif (2026-10-13), con prototipo aprobado: "que aparezca lo que realmente tengo, no las equivalencias". El panel dividía el total en litros por cada envase (408 L ÷ 4 = "102 bolsas", 408 L ÷ 20 = "20.4 cajas"): bolsas y cajas que nadie compró.
+
+- **El stock se lleva por envase y los litros se suman** (`findStockUreaPorEnvase`). Unidades = bultos que entraron menos bultos que salieron por vale del almacén; litros = suma de lo que cada movimiento registró. Nunca se divide. El total del almacén es la suma de los envases, y un test lo exige. No hizo falta migración: cada entrada y cada vale ya guardaban presentación, bultos y factor desde 0092.
+- **Con signo**: un envase del que salió más de lo que entró queda negativo y se ve en rojo. Un envase inactivo con saldo se sigue listando: un saldo nunca se esconde.
+- **Se retiró el velocímetro** y el selector Estantería/Tablero. Su única información (el total contra mínimo y máximo) pasó a una barra con zonas de color que además dice de qué envases está hecho el total.
+- **Una estantería por envase**: el principal se abre grande (las cajas, en Kenif), los demás al costado en tarjetas chicas con unidades y litros; un clic los cambia. "Ampliar" abre la ventana flotante con todas las unidades y los movimientos de ese envase (del kardex, con saldo en unidades). Se dibuja solo lo que hay, sin lugares vacíos: 200 bolsas no inflan la pantalla.
+- **"Unidad de referencia" pasó a ser "envase principal"**: el que se abre primero y viene elegido en los formularios. Ya no convierte litros a nada. Mismo campo (`es_referencia`), sin migración.
+- **Los litros de un envase con movimientos son fijos (409).** Antes se podían cambiar con motivo y "solo afectaban a lo nuevo", pero eso deja el envase con tamaños mezclados: con la caja en 20 L y 17 cajas registradas a 16 L, contar 17 cajas daría 340 L contra 272 L en papeles, un sobrante falso. Si el envase cambió de tamaño es otro envase (alta nueva). Si fue un error al darlo de alta, la corrección del historial es la entrega siguiente: una operación aparte, con motivo, vista previa del impacto y hallazgo para gerencia, que ejecuta el encargado con un permiso propio (hoy Noemí).
+- **Un envase con unidades en el almacén no se desactiva (409)**: quedarían atrapadas, porque un envase inactivo no se puede despachar.
+- **El motivo se pide solo cuando corresponde**: cambiar litros (envase sin uso) o desactivar. Renombrar o elegir el principal no lo pide.
+- **Configuración en dos pestañas**, Umbrales y Envases. Juntos, el motivo de los umbrales aparecía al dar de alta un envase y la ventana no cerraba.
+- **El correo de stock bajo dice lo que queda en físico** ("3 baldes", "17 cajas y 34 bolsas") en vez de "≈ 3.8 cajas".
+- Si un envase quedó con tamaños mezclados de antes de esta regla, la pantalla lo avisa en vez de mostrar 17 cajas = 272 L sin explicación.
+- `tests/combustible-urea-presentaciones.test.ts` y `-stock.test.ts` reescritos para la regla nueva; `e2e/urea-almacen-fisico.spec.ts`.
+
 ## Preguntas abiertas
 
 - ~~¿Adjuntar la factura o guía en las entradas al almacén?~~ **Resuelto (2026-10-05): no.** El cliente quiere un módulo de **órdenes de compra** propio, para repuestos, servicios, combustible y urea. El cruce OC ↔ guía ↔ factura, con sus archivos, va a vivir ahí, en un solo lugar para todos los productos. Adjuntarlo además en las recepciones dejaría el mismo papel en dos lugares. Lo que queda como está: las entradas siguen guardando tipo y número de documento, y cuando exista el módulo se les suma un vínculo a su OC. La compra en ruta conserva su boleta y su foto: es una compra de urgencia sin OC, y ahí la boleta es el único respaldo.

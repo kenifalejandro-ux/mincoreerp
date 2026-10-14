@@ -1332,13 +1332,24 @@ export class CombustibleService {
     });
   }
 
-  /** Devuelve además CUÁNTO cambió el factor y cuántos movimientos ya usan
-   *  esta presentación -- las dos cosas van a la bitácora. Que un cambio de
-   *  litros quede registrado con su motivo es lo único que distingue
-   *  "corregimos el envase" de "alguien infló el stock antes del conteo".
+  /** Editar un envase del catálogo. Dos cambios se BLOQUEAN, porque dejarían
+   *  el almacén diciendo algo falso:
    *
-   *  `null` si la presentación no existe en este tenant: el controller lo
-   *  traduce a 404, mismo criterio que el resto del módulo. */
+   *  1. Los litros de un envase que ya tiene movimientos. Cada movimiento
+   *     congeló sus litros, así que el cambio no corregiría el pasado: lo
+   *     dejaría MEZCLADO. Con la caja en 20 L y 17 cajas registradas a 16 L,
+   *     contar "17 cajas" daría 340 L contra 272 L en papeles -- un sobrante
+   *     falso de 68 L. Si el envase cambió de tamaño es OTRO envase (alta
+   *     nueva); si fue un error de digitación, la corrección del historial es
+   *     una operación aparte, con motivo y vista previa del impacto.
+   *  2. Desactivar un envase al que todavía le quedan unidades: quedarían en
+   *     el almacén sin poder despacharse (resolverFactorPresentacionUrea
+   *     rechaza envases inactivos).
+   *
+   *  El motivo es obligatorio cuando cambian los litros (envase sin uso) o
+   *  se desactiva; renombrar o elegir el envase principal no lo pide.
+   *
+   *  `null` si la presentación no existe en este tenant (404). */
   async actualizarPresentacionUrea(
     client: PoolClient,
     tenantId: string,
@@ -1346,8 +1357,62 @@ export class CombustibleService {
     usuarioId: string,
     data: ActualizarPresentacionUreaInput
   ) {
-    const antes = await this.repository.findPresentacionUreaPorId(client, tenantId, id);
+    // Trabado hasta el COMMIT: lo que se cuenta abajo no cambia por un vale
+    // que llegue en paralelo.
+    const antes = await this.repository.findPresentacionUreaPorId(client, tenantId, id, {
+      paraEditar: true,
+    });
     if (!antes) return null;
+
+    const litrosAntes = Number(antes.litros);
+    const cambiaLitros = litrosAntes !== data.litros;
+    const seDesactiva = antes.activa && !data.activa;
+
+    let movimientos = 0;
+    if (cambiaLitros) {
+      movimientos = await this.repository.contarMovimientosDePresentacionUrea(
+        client,
+        tenantId,
+        antes.codigo
+      );
+      if (movimientos > 0) {
+        throw new AppError(
+          409,
+          `"${antes.nombre}" ya tiene ${movimientos} ${movimientos === 1 ? "movimiento registrado" : "movimientos registrados"} ` +
+            `con ${litrosAntes} L por bulto: sus litros ya no se cambian. Si el envase cambió de tamaño, ` +
+            `da de alta otro envase (por ejemplo "${antes.nombre} ${data.litros} L"). Si fue un error ` +
+            `al darlo de alta, la corrección del historial es una operación aparte, con motivo.`
+        );
+      }
+    }
+
+    if (seDesactiva) {
+      const stock = await this.repository.findStockUreaPorEnvase(
+        client,
+        tenantId,
+        new Date().toISOString()
+      );
+      const propio = stock.find((e) => e.codigo === antes.codigo);
+      // Solo bloquea si QUEDAN unidades. Un saldo negativo no deja nada
+      // atrapado, y el estado lo sigue mostrando aunque el envase esté
+      // inactivo (un saldo nunca se esconde).
+      if (propio && propio.unidades > 0) {
+        throw new AppError(
+          409,
+          `Quedan ${propio.unidades} de "${antes.nombre}" en el almacén: desactivarlo dejaría ese ` +
+            `stock sin poder despacharse. Desactívalo cuando se agote.`
+        );
+      }
+    }
+
+    if ((cambiaLitros || seDesactiva) && !data.motivo) {
+      throw new AppError(
+        400,
+        cambiaLitros
+          ? "El motivo es obligatorio para cambiar los litros de un envase"
+          : "El motivo es obligatorio para desactivar un envase"
+      );
+    }
 
     const fila = await this.repository.actualizarPresentacionUrea(client, tenantId, id, usuarioId, {
       nombre: data.nombre,
@@ -1357,17 +1422,10 @@ export class CombustibleService {
     });
     if (!fila) return null;
 
-    const litrosAntes = Number(antes.litros);
-    const movimientos = await this.repository.contarMovimientosDePresentacionUrea(
-      client,
-      tenantId,
-      antes.codigo
-    );
     return {
       fila,
-      cambioDeFactor:
-        litrosAntes === data.litros ? null : { de: litrosAntes, a: data.litros, movimientos },
-      seDesactivo: antes.activa && !data.activa,
+      cambioDeFactor: cambiaLitros ? { de: litrosAntes, a: data.litros, movimientos } : null,
+      seDesactivo: seDesactiva,
     };
   }
 
@@ -4688,17 +4746,14 @@ export class CombustibleService {
    *  está apagado, no "el límite es cero". */
   async getEstadoStockUrea(client: PoolClient, tenantId: string) {
     const ahora = new Date().toISOString();
-    const [stock, { stockMinimoUreaL, stockMaximoUreaL }, ultimoConteo, presentaciones, resumen] =
+    const [stock, { stockMinimoUreaL, stockMaximoUreaL }, ultimoConteo, porEnvase, resumen] =
       await Promise.all([
         this.repository.findStockTeoricoUrea(client, tenantId, ahora),
         this.repository.getTopesUrea(client, tenantId),
         this.repository.findUltimoConteoUreaVigente(client, tenantId),
-        this.repository.findPresentacionesUrea(client, tenantId),
+        this.repository.findStockUreaPorEnvase(client, tenantId, ahora),
         this.repository.findResumenConsumoUrea(client, tenantId, ahora),
       ]);
-
-    const referencia = presentaciones.find((p) => p.es_referencia && p.activa) ?? null;
-    const litrosPorBulto = referencia ? Number(referencia.litros) : null;
 
     // Sin salidas en 30 días no hay ritmo del que extrapolar: null, no
     // "infinitos días". Con stock en cero o negativo no queda autonomía que
@@ -4714,17 +4769,26 @@ export class CombustibleService {
       stockL: Number(stock.toFixed(2)),
       stockMinimoL: stockMinimoUreaL,
       stockMaximoL: stockMaximoUreaL,
-      // La unidad en la que la empresa piensa su urea. La pantalla arma
-      // "≈ 18 cajas" con esto -- y si no hay referencia marcada, muestra
-      // litros solos, que nunca están mal.
-      referencia:
-        referencia && litrosPorBulto && litrosPorBulto > 0
-          ? {
-              nombre: referencia.nombre,
-              litros: litrosPorBulto,
-              bultos: Number((stock / litrosPorBulto).toFixed(1)),
-            }
-          : null,
+      // Lo que hay en FÍSICO, envase por envase (ver findStockUreaPorEnvase).
+      // Se listan los envases activos y cualquiera que tenga saldo, aunque
+      // esté inactivo: un saldo nunca se esconde. El primero es el envase
+      // principal (es_referencia), el que la pantalla abre grande.
+      envases: porEnvase
+        .filter((e) => e.activa || e.unidades !== 0 || e.litros !== 0)
+        .map((e) => ({
+          codigo: e.codigo,
+          nombre: e.nombre ?? "Sin envase registrado",
+          litrosPorBulto: e.litrosPorBulto,
+          activa: e.activa,
+          principal: e.esReferencia,
+          unidades: e.unidades,
+          litros: Number(e.litros.toFixed(2)),
+          entraronMes: e.entraronMes,
+          salieronMes: e.salieronMes,
+          // Litros por bulto con los que se registró ese stock y que NO son
+          // los del catálogo: el envase quedó con tamaños mezclados.
+          litrosRegistradosDistintos: e.factores.filter((f) => f !== e.litrosPorBulto),
+        })),
       // El último conteo FÍSICO y su diferencia contra lo que los papeles
       // decían EN ESE MOMENTO -- no contra el stock de ahora, que ya se
       // movió. Es el dato que contesta "¿la última vez que fuimos a contar,
@@ -4811,31 +4875,25 @@ export class CombustibleService {
     };
   }
 
-  /** "≈ 3 cajas" -- los litros traducidos a la unidad en la que la empresa
-   *  piensa su urea (la presentación marcada `es_referencia`, 0116).
+  /** "17 cajas y 34 bolsas" -- lo que queda en el almacén, en FÍSICO, para el
+   *  correo de stock bajo. Reemplaza al viejo "≈ 25 cajas", que dividía los
+   *  litros por la caja y nombraba cajas que nadie compró.
    *
-   *  Existe porque nadie en almacén cuenta litros: cuenta cajas. Un correo
-   *  que dice "quedan 48 L" obliga a hacer la división a mano para saber si
-   *  eso es mucho o poco; "quedan 48 L (≈ 3 cajas)" se entiende de una.
-   *
-   *  `null` si la empresa no marcó ninguna de referencia o si la marcada
-   *  tiene litros raros -- en ese caso el texto se queda con los litros
-   *  solos, que nunca están mal. */
-  async equivalenteEnBultosDeReferencia(
-    client: PoolClient,
-    tenantId: string,
-    litros: number
-  ): Promise<string | null> {
-    const presentaciones = await this.repository.findPresentacionesUrea(client, tenantId);
-    const referencia = presentaciones.find((p) => p.es_referencia && p.activa);
-    if (!referencia) return null;
-    const porBulto = Number(referencia.litros);
-    if (!Number.isFinite(porBulto) || porBulto <= 0) return null;
-    const bultos = litros / porBulto;
-    // Un decimal: "≈ 2.5 cajas" es información real (media caja abierta);
-    // "≈ 2.4857 cajas" es ruido que finge una precisión que el conteo de
-    // bultos no tiene.
-    return `≈ ${Number(bultos.toFixed(1))} ${referencia.nombre.toLowerCase()}s`;
+   *  Solo envases con saldo; `null` si no queda nada (el correo dice los
+   *  litros, que nunca están mal). */
+  async composicionStockUrea(client: PoolClient, tenantId: string): Promise<string | null> {
+    const porEnvase = await this.repository.findStockUreaPorEnvase(
+      client,
+      tenantId,
+      new Date().toISOString()
+    );
+    const partes = porEnvase
+      .filter((e) => e.unidades !== 0)
+      .map((e) => `${e.unidades} ${pluralEnvase(e.nombre ?? "envase", e.unidades)}`);
+    if (partes.length === 0) return null;
+    return partes.length === 1
+      ? partes[0]
+      : `${partes.slice(0, -1).join(", ")} y ${partes[partes.length - 1]}`;
   }
 
   /** STOCK BAJO DE UREA (migración 0117) -- "queda poca urea, hay que
@@ -6602,4 +6660,16 @@ export class CombustibleService {
   ) {
     return this.repository.anularRecepcion(client, tenantId, recepcionId, usuarioId, motivo);
   }
+}
+
+/** "Caja" -> "cajas", "Bidón" -> "bidones", y singular si es uno. Solo se
+ *  pluraliza la PRIMERA palabra: "Caja 20 L" es "cajas 20 L", no "caja 20 les". */
+export function pluralEnvase(nombre: string, n: number): string {
+  const [primera, ...resto] = nombre.trim().toLowerCase().split(/\s+/);
+  let palabra = primera;
+  if (Math.abs(n) !== 1) {
+    if (/ón$/.test(primera)) palabra = primera.replace(/ón$/, "ones");
+    else palabra = /[aeiouáéíóú]$/.test(primera) ? `${primera}s` : `${primera}es`;
+  }
+  return [palabra, ...resto].join(" ");
 }
