@@ -17,6 +17,7 @@ import type {
   CrearPresentacionUreaInput,
   CrearPrecioUreaInput,
   ActualizarPresentacionUreaInput,
+  CorregirLitrosUreaInput,
   CrearPuntoPrecintoInput,
   CambiarPrecintoInput,
 } from "../../server/schemas/combustible.schema";
@@ -1198,6 +1199,14 @@ export class CombustibleService {
           tanquetaDestinoId: data.tanqueta_destino_id ?? null,
           tanquetaOrigenId: data.tanqueta_origen_id ?? null,
           tanquetaLugar: data.origen === "tanqueta" ? (data.tanqueta_lugar ?? "ruta") : null,
+          // 0130: de dónde salió el costo, misma rama que costoUnitario arriba.
+          costoOrigen: !esUrea
+            ? null
+            : renglones
+              ? "boleta"
+              : data.costo_unitario !== undefined
+                ? "declarado"
+                : "promedio",
           grifoId: data.grifo_id ?? null,
           tipoCombustible: esUrea ? null : data.tipo_combustible!,
           tipoDestino: data.tipo_destino,
@@ -1381,7 +1390,7 @@ export class CombustibleService {
           `"${antes.nombre}" ya tiene ${movimientos} ${movimientos === 1 ? "movimiento registrado" : "movimientos registrados"} ` +
             `con ${litrosAntes} L por bulto: sus litros ya no se cambian. Si el envase cambió de tamaño, ` +
             `da de alta otro envase (por ejemplo "${antes.nombre} ${data.litros} L"). Si fue un error ` +
-            `al darlo de alta, la corrección del historial es una operación aparte, con motivo.`
+            `al darlo de alta, se corrige con "Corregir litros", que recalcula su historial con motivo.`
         );
       }
     }
@@ -1427,6 +1436,410 @@ export class CombustibleService {
       cambioDeFactor: cambiaLitros ? { de: litrosAntes, a: data.litros, movimientos } : null,
       seDesactivo: seDesactiva,
     };
+  }
+
+  /** CORREGIR LOS LITROS DE UN ENVASE (migración 0130).
+   *
+   *  Para "se dio de alta mal": la caja siempre fue de 20 L y alguien digitó
+   *  16. Reescribe TODO el historial del envase en una transacción, con cada
+   *  valor anterior guardado en combustible_urea_correccion_filas:
+   *
+   *    • entrada: litros = bultos × nuevo; el precio POR BULTO se conserva,
+   *      así que el costo por litro baja o sube en proporción;
+   *    • vale del almacén: litros = bultos × nuevo; su costo según de dónde
+   *      salió (ver costoDeValeCorregido);
+   *    • renglón de compra en ruta: litros = bultos × nuevo, y el total de la
+   *      compra se recalcula con sus otros renglones (el precio por bulto de
+   *      la boleta no cambia);
+   *    • renglón de conteo: litros = bultos × nuevo, y el total contado se
+   *      recalcula. Los conteos sin detalle (anteriores a 0130) no se pueden:
+   *      se informan;
+   *    • el catálogo queda en el valor nuevo.
+   *
+   *  `aplicar = false` es la VISTA PREVIA: calcula todo, no escribe nada y
+   *  devuelve el mismo resumen que va a quedar guardado. Las alertas ya
+   *  emitidas NO se reescriben (son evidencia); el stock bajo, que es un
+   *  estado, sí se reevalúa.
+   *
+   *  `null` si el envase no existe en esta empresa (404). */
+  async corregirLitrosEnvaseUrea(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    presentacionId: number,
+    data: CorregirLitrosUreaInput,
+    aplicar: boolean
+  ) {
+    // Trabado hasta el COMMIT: ningún vale ni entrada de este envase entra en
+    // el medio (toman FOR SHARE, ver findPresentacionUreaPorCodigo).
+    const envase = await this.repository.findPresentacionUreaPorId(
+      client,
+      tenantId,
+      presentacionId,
+      {
+        paraEditar: true,
+      }
+    );
+    if (!envase) return null;
+    const codigo = envase.codigo as string;
+    const nombre = envase.nombre as string;
+    const litrosCatalogo = Number(envase.litros);
+    const nuevo = data.litros;
+    const red2 = (n: number) => Number(n.toFixed(2));
+    const red4 = (n: number) => Number(n.toFixed(4));
+
+    const filas = await this.repository.findFilasDeEnvaseUrea(client, tenantId, codigo);
+    const total =
+      filas.entradas.length +
+      filas.vales.length +
+      filas.renglonesCompra.length +
+      filas.renglonesConteo.length;
+    if (total === 0) {
+      throw new AppError(
+        409,
+        `"${nombre}" no tiene movimientos: sus litros se editan directamente en Configuración → Envases.`
+      );
+    }
+    const factores = [
+      ...filas.entradas,
+      ...filas.vales,
+      ...filas.renglonesCompra,
+      ...filas.renglonesConteo,
+    ].map((f) => Number(f.factor_litros));
+    const litrosRegistrados = [...new Set(factores)].sort((a, b) => a - b);
+    const cambia = (factor: string) => Number(factor) !== nuevo;
+    if (litrosCatalogo === nuevo && factores.every((f) => f === nuevo)) {
+      throw new AppError(
+        400,
+        `"${nombre}" ya está en ${nuevo} L en el catálogo y en todos sus movimientos: no hay nada que corregir.`
+      );
+    }
+    if (aplicar && !data.motivo) {
+      throw new AppError(400, "El motivo es obligatorio para corregir los litros de un envase");
+    }
+
+    const registro: {
+      tabla: string;
+      filaId: number;
+      antes: Record<string, unknown>;
+      despues: Record<string, unknown>;
+      regla?: string | null;
+    }[] = [];
+    const escrituras: (() => Promise<void>)[] = [];
+
+    // ── Entradas: se conserva el precio por bulto ───────────────────────
+    const costoNuevoDeEntrada = new Map<number, number>();
+    let deltaStock = 0;
+    for (const e of filas.entradas.filter((x) => cambia(x.factor_litros))) {
+      const id = Number(e.id);
+      const factor = Number(e.factor_litros);
+      const cantidad = red2(e.cantidad_bultos * nuevo);
+      const costo = red4((Number(e.costo_unitario) * factor) / nuevo);
+      costoNuevoDeEntrada.set(id, costo);
+      if (e.anulada_en === null) deltaStock += cantidad - Number(e.cantidad);
+      registro.push({
+        tabla: "entrada",
+        filaId: id,
+        antes: {
+          factor_litros: factor,
+          cantidad: Number(e.cantidad),
+          costo_unitario: Number(e.costo_unitario),
+        },
+        despues: { factor_litros: nuevo, cantidad, costo_unitario: costo },
+      });
+      escrituras.push(() =>
+        this.repository.actualizarEntradaUreaCorregida(client, tenantId, id, {
+          factorLitros: nuevo,
+          cantidad,
+          costoUnitario: costo,
+        })
+      );
+    }
+
+    // ── El promedio de las entradas, antes y después ────────────────────
+    // resolverCostoUrea: AVG del costo por litro de las entradas vigentes
+    // hasta la fecha del vale. Se rearma con las mismas reglas.
+    const vigentes = await this.repository.findEntradasUreaVigentesConCosto(client, tenantId);
+    const promedio = (fecha: Date, corregido: boolean): number | null => {
+      const hasta = vigentes.filter((v) => v.recibido_en.getTime() <= fecha.getTime());
+      if (hasta.length === 0) return null;
+      const suma = hasta.reduce((a, v) => {
+        const id = Number(v.id);
+        return (
+          a +
+          (corregido && costoNuevoDeEntrada.has(id)
+            ? costoNuevoDeEntrada.get(id)!
+            : Number(v.costo_unitario))
+        );
+      }, 0);
+      return red4(suma / hasta.length);
+    };
+
+    // ── Vales: los del envase cambian litros; los que van a promedio, de
+    //    cualquier envase, cambian costo si el promedio se movió ────────
+    const aPromedio = await this.repository.findValesUreaAPromedio(client, tenantId);
+    const valesDelEnvase = new Map(filas.vales.map((v) => [Number(v.id), v]));
+    const valesARevisar = new Map<
+      number,
+      (typeof aPromedio)[number] | (typeof filas.vales)[number]
+    >();
+    for (const v of filas.vales) valesARevisar.set(Number(v.id), v);
+    for (const v of aPromedio) valesARevisar.set(Number(v.id), v);
+
+    let valesRecosteados = 0;
+    let valesDeducidos = 0;
+    for (const [id, v] of valesARevisar) {
+      const propio = valesDelEnvase.get(id);
+      const costoAntes = Number(v.costo_unitario);
+      const antesPromedio = promedio(v.despachado_en, false);
+      let regla: string;
+      if (v.costo_origen === "declarado" || v.costo_origen === "promedio") {
+        regla = v.costo_origen;
+      } else {
+        // Vale viejo sin costo_origen: si su costo es exactamente el promedio
+        // de ese día (o 0 sin entradas, que es lo que resolverCostoUrea
+        // devuelve), salió del promedio.
+        const esPromedio =
+          antesPromedio === null
+            ? costoAntes === 0
+            : Math.abs(antesPromedio - costoAntes) < 0.00005;
+        regla = esPromedio ? "inferido_promedio" : "inferido_declarado";
+        valesDeducidos++;
+      }
+
+      let costoDespues = costoAntes;
+      const cambiaFactor = propio !== undefined && cambia(propio.factor_litros);
+      if (regla === "declarado" || regla === "inferido_declarado") {
+        // El precio por bulto que trajo el vale se conserva.
+        if (cambiaFactor) costoDespues = red4((costoAntes * Number(propio!.factor_litros)) / nuevo);
+      } else {
+        const despuesPromedio = promedio(v.despachado_en, true);
+        if (antesPromedio !== null && despuesPromedio !== null) {
+          // Solo el efecto de ESTA corrección sobre el promedio: una entrada
+          // anulada después del vale no tiene por qué moverle el costo hoy.
+          costoDespues = red4(costoAntes - antesPromedio + despuesPromedio);
+        }
+      }
+
+      const cantidadAntes = Number(propio?.cantidad ?? (v as { cantidad: string }).cantidad);
+      const cantidadDespues = cambiaFactor ? red2(propio!.cantidad_bultos * nuevo) : cantidadAntes;
+      if (!cambiaFactor && costoDespues === costoAntes) continue;
+      if (costoDespues !== costoAntes) valesRecosteados++;
+      if (cambiaFactor && propio!.origen === "almacen" && propio!.anulada_en === null) {
+        deltaStock -= cantidadDespues - cantidadAntes;
+      }
+      const origenDeducido =
+        regla === "inferido_promedio"
+          ? "promedio"
+          : regla === "inferido_declarado"
+            ? "declarado"
+            : null;
+      registro.push({
+        tabla: "vale",
+        filaId: id,
+        antes: {
+          ...(cambiaFactor ? { factor_litros: Number(propio!.factor_litros) } : {}),
+          cantidad: cantidadAntes,
+          costo_unitario: costoAntes,
+          costo_origen: v.costo_origen,
+        },
+        despues: {
+          ...(cambiaFactor ? { factor_litros: nuevo } : {}),
+          cantidad: cantidadDespues,
+          costo_unitario: costoDespues,
+          costo_origen: v.costo_origen ?? origenDeducido,
+        },
+        regla,
+      });
+      escrituras.push(() =>
+        this.repository.actualizarDespachoUreaCorregido(client, tenantId, id, {
+          ...(cambiaFactor ? { factorLitros: nuevo, cantidad: cantidadDespues } : {}),
+          costoUnitario: costoDespues,
+          // El origen deducido queda guardado: la próxima corrección ya no
+          // tiene que adivinar.
+          costoOrigen: v.costo_origen ?? origenDeducido,
+        })
+      );
+    }
+
+    // ── Compras en ruta: el renglón cambia litros, la compra su total ───
+    const renglonesCompra = filas.renglonesCompra.filter((r) => cambia(r.factor_litros));
+    const litrosNuevosDeRenglon = new Map<number, number>();
+    for (const r of renglonesCompra) {
+      const id = Number(r.id);
+      const litros = red2(r.cantidad_bultos * nuevo);
+      litrosNuevosDeRenglon.set(id, litros);
+      registro.push({
+        tabla: "compra_renglon",
+        filaId: id,
+        antes: { factor_litros: Number(r.factor_litros), litros: Number(r.litros) },
+        despues: { factor_litros: nuevo, litros },
+      });
+      escrituras.push(() =>
+        this.repository.actualizarRenglonCompraCorregido(client, tenantId, id, {
+          factorLitros: nuevo,
+          litros,
+        })
+      );
+    }
+    const comprasIds = [...new Set(renglonesCompra.map((r) => Number(r.despacho_id)))];
+    const compras = await this.repository.findComprasConRenglones(client, tenantId, comprasIds);
+    for (const c of compras.compras) {
+      const id = Number(c.id);
+      const suyos = compras.renglones.filter((r) => Number(r.despacho_id) === id);
+      const cantidad = red2(
+        suyos.reduce((a, r) => a + (litrosNuevosDeRenglon.get(Number(r.id)) ?? Number(r.litros)), 0)
+      );
+      // Misma cuenta que al registrar la compra: el costo por litro del TOTAL.
+      const costo = red4(
+        suyos.reduce((a, r) => a + r.cantidad_bultos * Number(r.costo_por_bulto), 0) / cantidad
+      );
+      registro.push({
+        tabla: "compra",
+        filaId: id,
+        antes: { cantidad: Number(c.cantidad), costo_unitario: Number(c.costo_unitario) },
+        despues: { cantidad, costo_unitario: costo },
+      });
+      escrituras.push(() =>
+        this.repository.actualizarDespachoUreaCorregido(client, tenantId, id, {
+          cantidad,
+          costoUnitario: costo,
+        })
+      );
+    }
+
+    // ── Conteos: el renglón cambia litros, el conteo su total ───────────
+    const renglonesConteo = filas.renglonesConteo.filter((r) => cambia(r.factor_litros));
+    const litrosNuevosDeConteo = new Map<number, number>();
+    for (const r of renglonesConteo) {
+      const id = Number(r.id);
+      const litros = red2(r.cantidad_bultos * nuevo);
+      litrosNuevosDeConteo.set(id, litros);
+      registro.push({
+        tabla: "conteo_renglon",
+        filaId: id,
+        antes: { factor_litros: Number(r.factor_litros), litros: Number(r.litros) },
+        despues: { factor_litros: nuevo, litros },
+      });
+      escrituras.push(() =>
+        this.repository.actualizarRenglonConteoCorregido(client, tenantId, id, {
+          factorLitros: nuevo,
+          litros,
+        })
+      );
+    }
+    const conteosIds = [...new Set(renglonesConteo.map((r) => Number(r.conteo_id)))];
+    const conteos = await this.repository.findConteosConRenglones(client, tenantId, conteosIds);
+    for (const c of conteos.conteos) {
+      const id = Number(c.id);
+      const litros = red2(
+        conteos.renglones
+          .filter((r) => Number(r.conteo_id) === id)
+          .reduce((a, r) => a + (litrosNuevosDeConteo.get(Number(r.id)) ?? Number(r.litros)), 0)
+      );
+      registro.push({
+        tabla: "conteo",
+        filaId: id,
+        antes: { cantidad_litros: Number(c.cantidad_litros) },
+        despues: { cantidad_litros: litros },
+      });
+      escrituras.push(() =>
+        this.repository.actualizarConteoUreaLitros(client, tenantId, id, litros)
+      );
+    }
+
+    // ── El resumen: lo mismo en la vista previa y en lo guardado ────────
+    const ahora = new Date().toISOString();
+    const [stockAntes, conteosSinDetalle, porEnvase] = await Promise.all([
+      this.repository.findStockTeoricoUrea(client, tenantId, ahora),
+      this.repository.contarConteosUreaSinDetalle(client, tenantId),
+      this.repository.findStockUreaPorEnvase(client, tenantId, ahora),
+    ]);
+    const delEnvase = porEnvase.find((e) => e.codigo === codigo);
+    const avisos: string[] = [];
+    if (conteosSinDetalle > 0) {
+      avisos.push(
+        `${conteosSinDetalle} ${conteosSinDetalle === 1 ? "conteo físico anterior no guarda" : "conteos físicos anteriores no guardan"} ` +
+          "el detalle por envase: su total no se puede recalcular y su diferencia contra los papeles puede cambiar."
+      );
+    }
+    if (valesDeducidos > 0) {
+      avisos.push(
+        `${valesDeducidos} ${valesDeducidos === 1 ? "vale viejo no guardaba" : "vales viejos no guardaban"} de dónde ` +
+          "salió su costo: se dedujo comparándolo con el promedio de su día, y queda escrito en cada fila."
+      );
+    }
+    const resumen = {
+      envase: { codigo, nombre },
+      litrosCatalogoAntes: litrosCatalogo,
+      litrosDespues: nuevo,
+      litrosRegistrados,
+      stockAlmacenL: { antes: red2(stockAntes), despues: red2(stockAntes + deltaStock) },
+      envaseL: {
+        unidades: delEnvase?.unidades ?? 0,
+        antes: red2(delEnvase?.litros ?? 0),
+        despues: red2((delEnvase?.litros ?? 0) + deltaStock),
+      },
+      filas: {
+        entradas: registro.filter((r) => r.tabla === "entrada").length,
+        vales: filas.vales.filter((v) => cambia(v.factor_litros)).length,
+        comprasEnRuta: renglonesCompra.length,
+        conteos: renglonesConteo.length,
+      },
+      valesRecosteados,
+      conteosSinDetalle,
+      avisos,
+    };
+
+    if (!aplicar) return { aplicada: false as const, resumen };
+
+    for (const escribir of escrituras) await escribir();
+    await this.repository.fijarLitrosPresentacionUrea(client, tenantId, codigo, nuevo, usuarioId);
+    const correccion = await this.repository.crearCorreccionUrea(client, tenantId, usuarioId, {
+      presentacion: codigo,
+      litrosAntes: litrosCatalogo,
+      litrosDespues: nuevo,
+      motivo: data.motivo!,
+      resumen,
+    });
+    await this.repository.crearFilasCorreccionUrea(client, tenantId, correccion.id, registro);
+
+    const alertas = await this.repository.crearAlertas(client, tenantId, [
+      {
+        tipo: "urea_litros_corregidos",
+        ureaCorreccionId: correccion.id,
+        producto: "urea",
+        detalle: { ...resumen, motivo: data.motivo, correccionId: correccion.id },
+      },
+    ]);
+    // El stock bajo es un ESTADO: con los litros corregidos puede dejar de
+    // serlo (se cierra solo) o empezar a serlo (se abre, anclado acá).
+    const stockBajo = await this.evaluarUreaStockBajo(client, tenantId, ahora);
+    if (stockBajo) {
+      alertas.push(
+        ...(await this.repository.crearAlertas(client, tenantId, [
+          {
+            tipo: "urea_stock_bajo",
+            ureaCorreccionId: correccion.id,
+            producto: "urea",
+            detalle: { ...stockBajo },
+          },
+        ]))
+      );
+    }
+
+    return {
+      aplicada: true as const,
+      correccionId: correccion.id,
+      resumen,
+      motivo: data.motivo!,
+      alertas,
+      stockBajo,
+    };
+  }
+
+  listarCorreccionesUrea(client: PoolClient, tenantId: string) {
+    return this.repository.findCorreccionesUrea(client, tenantId);
   }
 
   /** Los litros que vale UN bulto de esta presentación, HOY, para esta
@@ -4399,6 +4812,8 @@ export class CombustibleService {
       insertar: async () => {
         // Un renglón por presentación: lo contado es la SUMA de todos.
         let cantidadLitros = 0;
+        const renglones: { presentacion: string; factorLitros: number; cantidadBultos: number }[] =
+          [];
         for (const l of data.lineas) {
           const factorLitros = await this.resolverFactorPresentacionUrea(
             client,
@@ -4406,12 +4821,20 @@ export class CombustibleService {
             l.presentacion
           );
           cantidadLitros += l.cantidad_bultos * factorLitros;
+          renglones.push({
+            presentacion: l.presentacion,
+            factorLitros,
+            cantidadBultos: l.cantidad_bultos,
+          });
         }
         const fila = await this.repository.crearConteoUrea(client, tenantId, usuarioId, {
           cantidadLitros: Number(cantidadLitros.toFixed(2)),
           contadoEn: data.contado_en ?? new Date().toISOString(),
           observaciones: data.observaciones ?? null,
         });
+        // El detalle por envase (0130), en la misma transacción: sin él, una
+        // corrección de litros no podría recalcular este conteo.
+        await this.repository.crearLineasConteoUrea(client, tenantId, Number(fila.id), renglones);
         return { id: Number(fila.id), fila };
       },
       recuperar: (filaId) => this.repository.findConteoUreaPorId(client, tenantId, filaId),
@@ -4776,6 +5199,7 @@ export class CombustibleService {
       envases: porEnvase
         .filter((e) => e.activa || e.unidades !== 0 || e.litros !== 0)
         .map((e) => ({
+          presentacionId: e.presentacionId,
           codigo: e.codigo,
           nombre: e.nombre ?? "Sin envase registrado",
           litrosPorBulto: e.litrosPorBulto,

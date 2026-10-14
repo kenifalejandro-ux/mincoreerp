@@ -53,6 +53,7 @@ const ETIQUETA_TIPO: Record<string, string> = {
   urea_stock_excedido: "Depósito de urea por encima del máximo",
   urea_conteo_recargado: "Conteo de urea anulado y vuelto a cargar",
   urea_precio_fuera_de_catalogo: "Compra de urea con precio fuera del catálogo",
+  urea_litros_corregidos: "Litros de un envase de urea corregidos",
 };
 
 /** No toda alerta es sobre un vale (migración 0073): las de nivel bajo van

@@ -41,7 +41,7 @@ import { useAuth } from "../context/AuthContext";
 import { comprimirImagen } from "./combustible/comprimirImagen";
 import ConsumoPorViaje from "./combustible/ConsumoPorViaje";
 import VentanaFlotante from "./comunes/VentanaFlotante";
-import { AlmacenUrea, ResumenUrea, type EstadoStockUrea } from "./UreaAlmacen";
+import { AlmacenUrea, ModalCorregirLitros, ResumenUrea, type EstadoStockUrea } from "./UreaAlmacen";
 import { apiFetch } from "../services/apiClient";
 
 /** Los envases ya NO son una constante del cliente (migración 0116): los
@@ -1098,6 +1098,12 @@ export default function UreaPanel() {
   // flotante, igual que "Precios" o "Historial de compras" en Tanques.
   const vistasVisibles = puedeVerUrea ? VISTAS : [];
   const puedeVerKardex = permiteUrea("kardex");
+  // Corregir los litros de un envase con historial (0130): SOLO con el check
+  // explícito. Nace apagado para todos, admin incluido -- ni el rol ni el
+  // default lo dan (ver NACEN_APAGADAS en permisosPestanas.service.ts).
+  const puedeCorregirLitros =
+    usuario?.permisosPestanas?.["combustible:urea:corregir_litros"] === true &&
+    (esAdmin || usuario?.rol === "operador" || usuario?.rol === "encargado_urea");
   const [panelAbierto, setPanelAbierto] = useState<null | "kardex" | "precios" | "configuracion">(
     null
   );
@@ -1444,7 +1450,15 @@ export default function UreaPanel() {
           almacén, como el cilindro y la tabla de Tanques. ── */}
       {puedeVerUrea && estado?.stock && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.9fr)_minmax(0,1fr)]">
-          <AlmacenUrea stock={estado.stock} puedeVerKardex={puedeVerKardex} />
+          <AlmacenUrea
+            stock={estado.stock}
+            puedeVerKardex={puedeVerKardex}
+            puedeCorregirLitros={puedeCorregirLitros}
+            onCorregido={() => {
+              cargarEstado();
+              cargarPresentaciones();
+            }}
+          />
           <ResumenUrea stock={estado.stock} />
         </div>
       )}
@@ -1646,6 +1660,7 @@ export default function UreaPanel() {
               setPanelAbierto(null);
             }}
             presentaciones={presentaciones}
+            puedeCorregirLitros={puedeCorregirLitros}
             onEnvasesCambiaron={() => {
               cargarPresentaciones();
               cargarEstado();
@@ -2058,6 +2073,7 @@ const NOMBRE_HALLAZGO: Record<string, string> = {
   urea_descuadre_conteo: "El conteo no cuadra",
   urea_conteo_recargado: "Conteo anulado y vuelto a cargar",
   urea_precio_fuera_de_catalogo: "Precio fuera del catálogo",
+  urea_litros_corregidos: "Litros de un envase corregidos",
   urea_stock_bajo: "Queda poca urea",
   urea_stock_excedido: "Depósito por encima del máximo",
   urea_equipo_no_habilitado: "Urea a una unidad que no usa",
@@ -2094,6 +2110,13 @@ function resumirHallazgo(h: HallazgoUrea): string | null {
         ? desvios
             .map((x) => `${x.presentacion} ${x.desvioPct > 0 ? "+" : ""}${x.desvioPct}%`)
             .join(", ") + (d.comprobanteNumero ? ` (${String(d.comprobanteNumero)})` : "")
+        : null;
+    }
+    case "urea_litros_corregidos": {
+      const envase = d.envase as { nombre?: string } | undefined;
+      const stock = d.stockAlmacenL as { antes: number; despues: number } | undefined;
+      return stock
+        ? `${envase?.nombre ?? "Envase"} a ${n(d.litrosDespues)} L; stock ${stock.antes} → ${stock.despues} L`
         : null;
     }
     case "urea_ratio_excedido":
@@ -2868,10 +2891,12 @@ function CatalogoPreciosUrea({
 function ConfiguracionUrea({
   onUmbralesGuardados,
   presentaciones,
+  puedeCorregirLitros,
   onEnvasesCambiaron,
 }: {
   onUmbralesGuardados: () => void;
   presentaciones: PresentacionFila[];
+  puedeCorregirLitros: boolean;
   onEnvasesCambiaron: () => void;
 }) {
   const [pestana, setPestana] = useState<"umbrales" | "envases">("umbrales");
@@ -2908,7 +2933,11 @@ function ConfiguracionUrea({
         {pestana === "umbrales" ? (
           <UmbralesUrea onGuardado={onUmbralesGuardados} />
         ) : (
-          <ConfiguracionPresentaciones filas={presentaciones} onCambio={onEnvasesCambiaron} />
+          <ConfiguracionPresentaciones
+            filas={presentaciones}
+            puedeCorregirLitros={puedeCorregirLitros}
+            onCambio={onEnvasesCambiaron}
+          />
         )}
       </CuerpoVentana>
     </>
@@ -2917,12 +2946,15 @@ function ConfiguracionUrea({
 
 function ConfiguracionPresentaciones({
   filas,
+  puedeCorregirLitros,
   onCambio,
 }: {
   filas: PresentacionFila[];
+  puedeCorregirLitros: boolean;
   onCambio: () => void;
 }) {
   const [editando, setEditando] = useState<PresentacionFila | null>(null);
+  const [corrigiendo, setCorrigiendo] = useState<PresentacionFila | null>(null);
   const [creando, setCreando] = useState(false);
 
   return (
@@ -3006,6 +3038,15 @@ function ConfiguracionPresentaciones({
                     >
                       Editar
                     </button>
+                    {puedeCorregirLitros && (p.movimientos ?? 0) > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setCorrigiendo(p)}
+                        className="ml-3 text-xs font-semibold text-slate-600 hover:text-slate-900 underline"
+                      >
+                        Corregir litros
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -3020,6 +3061,18 @@ function ConfiguracionPresentaciones({
           onCerrar={() => setCreando(false)}
           onCreado={() => {
             setCreando(false);
+            onCambio();
+          }}
+        />
+      )}
+      {corrigiendo && (
+        <ModalCorregirLitros
+          presentacionId={corrigiendo.id}
+          nombre={corrigiendo.nombre}
+          litrosRegistrados={[Number(corrigiendo.litros)]}
+          onCerrar={() => setCorrigiendo(null)}
+          onCorregido={() => {
+            setCorrigiendo(null);
             onCambio();
           }}
         />
@@ -4334,8 +4387,8 @@ function ModalEditarPresentacion({
               Fijo: este envase ya tiene {fila.movimientos}{" "}
               {fila.movimientos === 1 ? "movimiento" : "movimientos"} registrados con{" "}
               {formatearNumero(fila.litros, 2)} L. Si el envase cambió de tamaño, da de alta otro
-              envase. Si fue un error al darlo de alta, la corrección del historial la hace el
-              encargado, con motivo.
+              envase. Si fue un error al darlo de alta, se corrige con &quot;Corregir litros&quot;,
+              que recalcula su historial con motivo (requiere ese permiso).
             </span>
           )}
         </label>

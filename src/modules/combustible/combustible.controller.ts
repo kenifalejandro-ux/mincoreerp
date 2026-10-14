@@ -47,6 +47,7 @@ import {
   enviarCorreoUreaRatioExcedido,
   enviarCorreoUreaDescuadreConteo,
   enviarCorreoUreaStockBajo,
+  enviarCorreoUreaLitrosCorregidos,
   enviarCorreoUreaStockExcedido,
   enviarCorreoUreaConteoRecargado,
   enviarCorreoUreaPrecioFueraDeCatalogo,
@@ -78,6 +79,7 @@ import type {
   AnularConteoUreaInput,
   CrearPresentacionUreaInput,
   ActualizarPresentacionUreaInput,
+  CorregirLitrosUreaInput,
   CrearPrecioUreaInput,
   CrearPuntoPrecintoInput,
   CrearSurtidorInput,
@@ -6600,6 +6602,126 @@ export class CombustibleController {
         return;
       }
       res.status(500).json({ error: "Error al crear la presentación de urea" });
+    }
+  }
+
+  /** POST /urea/presentaciones/:id/correccion/vista-previa -- lo que va a
+   *  cambiar si se corrigen los litros del envase, sin escribir nada. Es lo
+   *  que la persona confirma antes de aplicar (ver corregirLitrosEnvaseUrea). */
+  async vistaPreviaCorreccionUrea(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const id = Number(req.params.id);
+      const data = req.validatedBody as CorregirLitrosUreaInput;
+      const r = await withTenant(tenantId, (client) =>
+        service.corregirLitrosEnvaseUrea(client, tenantId, req.usuario!.id, id, data, false)
+      );
+      if (!r) {
+        res.status(404).json({ error: "Presentación no encontrada" });
+        return;
+      }
+      res.json(r.resumen);
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
+      }
+      logger.error({ err }, "No se pudo calcular la vista previa de la corrección de urea");
+      res.status(500).json({ error: "Error al calcular la corrección" });
+    }
+  }
+
+  /** POST /urea/presentaciones/:id/correccion -- corrige los litros del
+   *  envase en todo su historial. Bitácora con el resumen, hallazgo para
+   *  gerencia y correo al momento: reescribir el historial de un envase nunca
+   *  es silencioso. */
+  async corregirLitrosUrea(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const id = Number(req.params.id);
+      const data = req.validatedBody as CorregirLitrosUreaInput;
+      const r = await withTenant(tenantId, (client) =>
+        service.corregirLitrosEnvaseUrea(client, tenantId, req.usuario!.id, id, data, true)
+      );
+      if (!r) {
+        res.status(404).json({ error: "Presentación no encontrada" });
+        return;
+      }
+      if (!r.aplicada) throw new Error("la corrección no se aplicó");
+
+      await registrarAuditoria({
+        accion: "combustible.urea_litros_corregidos",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          presentacionId: id,
+          correccionId: r.correccionId,
+          motivo: r.motivo,
+          resumen: r.resumen,
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      await publicarEventoTenant(tenantId, "combustible.urea_presentaciones_cambiaron", {
+        presentacionId: id,
+      });
+      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+        tipo: "urea_litros_corregidos",
+        producto: "urea",
+        correccionId: r.correccionId,
+      });
+
+      // El correo no puede tumbar una corrección ya guardada: best-effort,
+      // pero con log visible.
+      try {
+        const destinatarios = await withTenant(tenantId, (client) =>
+          service.findDestinatariosAlertasCombustible(client, tenantId, null)
+        );
+        await enviarCorreoUreaLitrosCorregidos(destinatarios, {
+          quien: req.usuario!.nombre ?? req.usuario!.email ?? "Un usuario",
+          envase: r.resumen.envase.nombre,
+          litrosRegistrados: r.resumen.litrosRegistrados,
+          litrosDespues: r.resumen.litrosDespues,
+          stockAntesL: r.resumen.stockAlmacenL.antes,
+          stockDespuesL: r.resumen.stockAlmacenL.despues,
+          filas: r.resumen.filas,
+          motivo: r.motivo,
+        });
+        if (r.stockBajo) {
+          await enviarCorreoUreaStockBajo(destinatarios, {
+            ...r.stockBajo,
+            composicion: await withTenant(tenantId, (client) =>
+              service.composicionStockUrea(client, tenantId)
+            ),
+          });
+        }
+      } catch (err) {
+        logger.warn(
+          { err, tenantId, correccionId: r.correccionId },
+          "No se pudo enviar el correo de la corrección de litros de urea"
+        );
+      }
+
+      res.status(201).json({ correccionId: r.correccionId, resumen: r.resumen });
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
+      }
+      logger.error({ err }, "No se pudo corregir los litros del envase de urea");
+      res.status(500).json({ error: "Error al corregir los litros del envase" });
+    }
+  }
+
+  /** GET /urea/correcciones -- el historial de correcciones de litros. */
+  async listarCorreccionesUrea(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const filas = await withTenant(tenantId, (client) =>
+        service.listarCorreccionesUrea(client, tenantId)
+      );
+      res.json(filas);
+    } catch {
+      res.status(500).json({ error: "Error al listar las correcciones de urea" });
     }
   }
 

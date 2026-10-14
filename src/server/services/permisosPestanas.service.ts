@@ -119,6 +119,10 @@ const pestañasUrea: DefinicionPestana[] = [
   // porque es la palanca que mueve el stock teórico de todo lo que se
   // cargue después: ver el reparto por rol más abajo.
   ["configuracion", "Configuración"],
+  // Corregir los litros de un envase con historial (0130). Reescribe
+  // entradas, vales y conteos: nace apagado para TODOS, admin incluido (ver
+  // NACEN_APAGADAS).
+  ["corregir_litros", "Corregir litros de envases"],
 ].map(([id, nombre]) => ({
   modulo: "combustible",
   pestana: `urea:${id}`,
@@ -197,12 +201,20 @@ export function claveDePestana(modulo: string, pestana: string): string {
   return `${modulo}:${pestana}`;
 }
 
+/** Pestañas que nadie recibe por defecto, ni el admin: se habilitan a mano,
+ *  persona por persona. Corregir los litros de un envase reescribe su
+ *  historial entero; Kenif (2026-10-13): "la persona encargada tendría que
+ *  tener habilitado el check". */
+const NACEN_APAGADAS: ReadonlySet<string> = new Set(["urea:corregir_litros"]);
+
 export function pestanaPermitida(
   usuario: Pick<UsuarioPayload, "rol" | "permisosPestanas">,
   modulo: string,
   pestana: string
 ): boolean {
-  if (usuario.rol === "admin") return true;
+  // El admin ve todo, MENOS lo que nace apagado para todos: eso también se
+  // lo tienen que habilitar a él, persona por persona.
+  if (usuario.rol === "admin" && !NACEN_APAGADAS.has(pestana)) return true;
   const clave = claveDePestana(modulo, pestana);
   const definition = PESTANAS_CONFIGURABLES.find(
     (item) => item.modulo === modulo && item.pestana === pestana
@@ -245,7 +257,9 @@ export function pestanaPermitida(
  *  entrada -- sin él, `pestanaPermitida` cortaría por el padre y el rol no
  *  podría llegar a lo único que la matriz sí le concede. */
 function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
-  const admin = PESTANAS_CONFIGURABLES.map((item) => item.pestana);
+  const admin = PESTANAS_CONFIGURABLES.map((item) => item.pestana).filter(
+    (pestana) => !NACEN_APAGADAS.has(pestana)
+  );
   // Todo menos Facturación (admin-only por defecto, ver pestanaPermitida):
   // Operador ve y opera cualquier módulo -- incluye crear/editar/eliminar en
   // Combustible (ver requireRole en combustible.routes.ts).
@@ -293,7 +307,7 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
   const urea = [
     "urea",
     ...pestañasUrea
-      .filter((item) => !fueraDelEncargado.has(item.pestana))
+      .filter((item) => !fueraDelEncargado.has(item.pestana) && !NACEN_APAGADAS.has(item.pestana))
       .map((item) => item.pestana),
   ];
   // Grifero: lo de cancha. Anular su propia varilla mal tipeada entra, con

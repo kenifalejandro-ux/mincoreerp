@@ -1718,6 +1718,30 @@ export const actualizarPresentacionUreaSchema = z.object({
 
 export type ActualizarPresentacionUreaInput = z.infer<typeof actualizarPresentacionUreaSchema>;
 
+/** Corregir los litros de un envase con historial (0130): el mismo cuerpo
+ *  para la vista previa y para aplicar. El motivo lo exige el service solo al
+ *  aplicar: la vista previa se pide antes de escribirlo. */
+export const corregirLitrosUreaSchema = z.object({
+  // Dos decimales, como la columna del catálogo: con 3.785 las filas se
+  // calcularían con un número y el factor se guardaría redondeado a 3.79, y
+  // el CHECK `cantidad = bultos × factor` rechazaría la corrección.
+  litros: z
+    .number()
+    .positive()
+    .max(2000)
+    .refine((v) => Math.abs(Math.round(v * 100) - v * 100) < 1e-6, {
+      message: "Los litros por bulto van con dos decimales como máximo",
+    }),
+  motivo: z
+    .string()
+    .trim()
+    .max(500)
+    .optional()
+    .transform((m) => (m ? m : undefined)),
+});
+
+export type CorregirLitrosUreaInput = z.infer<typeof corregirLitrosUreaSchema>;
+
 // ── Conteo físico de urea (migración 0092) ───────────────────────────────
 // El reemplazo de la varilla: combustible se mide con una regla, urea se
 // cuenta en cajas/bolsas/baldes. Es el único acto que le da al inventario

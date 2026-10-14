@@ -1350,3 +1350,37 @@ export async function enviarCorreoDiferenciaRecepcion(
     ],
   });
 }
+
+/** Se corrigieron los litros de un envase con historial (0130). Sale al
+ *  momento: reescribe entradas, vales y conteos, y subir los litros de un
+ *  envase es la forma más rápida de tapar un faltante. */
+export async function enviarCorreoUreaLitrosCorregidos(
+  destinatarios: Destinatario[],
+  params: {
+    quien: string;
+    envase: string;
+    litrosRegistrados: number[];
+    litrosDespues: number;
+    stockAntesL: number;
+    stockDespuesL: number;
+    filas: { entradas: number; vales: number; comprasEnRuta: number; conteos: number };
+    motivo: string;
+  }
+) {
+  const registrados = params.litrosRegistrados.map((l) => `${l} L`).join(" y ");
+  await avisar("urea_litros_corregidos", {
+    destinatarios,
+    asunto: `Urea: se corrigieron los litros de "${params.envase}" a ${params.litrosDespues} L`,
+    titulo: "Litros de un envase de urea corregidos",
+    lineas: [
+      `${params.quien} corrigió "${params.envase}": estaba registrado con ${registrados} por bulto ` +
+        `y pasa a ${params.litrosDespues} L, en todo su historial.`,
+      `Motivo: ${params.motivo}`,
+      `Filas corregidas: ${params.filas.entradas} entradas, ${params.filas.vales} vales, ` +
+        `${params.filas.comprasEnRuta} renglones de compra en ruta y ${params.filas.conteos} renglones de conteo.`,
+      `El stock del almacén pasa de ${params.stockAntesL} L a ${params.stockDespuesL} L.`,
+      "Cada valor anterior quedó guardado. Si nadie esperaba este cambio, revíselo: subir los litros " +
+        "de un envase hace aparecer stock que nadie compró.",
+    ],
+  });
+}

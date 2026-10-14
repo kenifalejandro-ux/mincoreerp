@@ -341,6 +341,22 @@ Pedido de Kenif (2026-10-13), con prototipo aprobado: "que aparezca lo que realm
 - Si un envase quedó con tamaños mezclados de antes de esta regla, la pantalla lo avisa en vez de mostrar 17 cajas = 272 L sin explicación.
 - `tests/combustible-urea-presentaciones.test.ts` y `-stock.test.ts` reescritos para la regla nueva; `e2e/urea-almacen-fisico.spec.ts`.
 
+### Entrega 9 — corregir los litros de un envase con historial (migración 0130)
+
+Pedido de Kenif (2026-10-13): "¿qué pasa si las cajas son de 20 L y digitaron 16?". La entrega 8 dejó fijos los litros de un envase con movimientos (un envase de otro tamaño es otro envase); faltaba el caso del error de digitación.
+
+- **Una operación aparte, no la edición del catálogo.** Recalcula TODO el historial del envase en una transacción: entradas (litros = bultos × nuevo; el precio POR BULTO se conserva), vales del almacén, renglones de compra en ruta (y el total de cada compra), renglones de conteo (y el total contado), y el catálogo.
+- **Dos pasos.** Vista previa (no escribe nada: stock antes y después, cuántas filas, vales que cambian de costo, avisos) y aplicar, con motivo obligatorio. El resumen que se ve es el que se guarda.
+- **Nada se pierde.** `combustible_urea_correcciones` guarda quién, cuándo, de cuánto a cuánto, por qué y el resumen; `combustible_urea_correccion_filas` guarda cada fila tocada con su valor antes y después.
+- **Nunca silenciosa.** Hallazgo `urea_litros_corregidos` para gerencia (sexta ancla de alertas: `urea_correccion_id`), correo al momento, bitácora. Se congela si nadie lo explica: subir los litros de un envase hace aparecer stock que nadie compró.
+- **El permiso nace apagado para todos, admin incluido** (`urea:corregir_litros`). Se habilita persona por persona: el encargado, sea admin o no. Un admin no puede habilitárselo a sí mismo (la API no deja editar los permisos propios): se lo habilita otro admin.
+- **El costo de un vale depende de dónde salió** y ahora se guarda (`costo_origen`): declarado (se conserva el precio por bulto) o promedio de las entradas (se le suma solo el efecto de esta corrección sobre el promedio de su día, así una entrada anulada después no le mueve el costo). Los vales viejos sin el dato se deducen comparando contra el promedio de su día, y la regla aplicada queda escrita en cada fila. Corregir el costo de una entrada mueve el promedio de TODOS los vales a promedio, de cualquier envase: también se recalculan.
+- **El conteo guarda su detalle por envase** (`combustible_conteo_urea_lineas`), adelantado de la entrega de conteo: sin él, corregir la caja dejaba el conteo viejo con un faltante falso. Los conteos anteriores, sin detalle, no se recalculan y la vista previa los informa.
+- **Concurrencia:** la corrección traba el envase FOR UPDATE (los movimientos toman FOR SHARE) y cada fila que reescribe.
+- **El caso real admite "de 20 a 20"**: catálogo ya en 20 L con filas a 16 L. La corrección deja las filas en 20 aunque el catálogo no cambie; sin nada distinto, es 400.
+- **Arreglado en el camino (estaba en main):** el congelado de un hallazgo no copiaba `urea_conteo_id`. Un `urea_descuadre_conteo` anclado solo al conteo violaba el CHECK de anclas y el worker lo salteaba cada hora: nunca quedaba como anomalía.
+- `tests/combustible-urea-corregir-litros.test.ts` (el caso de Kenif de punta a punta) y `tests/combustible-urea-congelado-conteo.test.ts`.
+
 ## Preguntas abiertas
 
 - ~~¿Adjuntar la factura o guía en las entradas al almacén?~~ **Resuelto (2026-10-05): no.** El cliente quiere un módulo de **órdenes de compra** propio, para repuestos, servicios, combustible y urea. El cruce OC ↔ guía ↔ factura, con sus archivos, va a vivir ahí, en un solo lugar para todos los productos. Adjuntarlo además en las recepciones dejaría el mismo papel en dos lugares. Lo que queda como está: las entradas siguen guardando tipo y número de documento, y cuando exista el módulo se les suma un vínculo a su OC. La compra en ruta conserva su boleta y su foto: es una compra de urgencia sin OC, y ahí la boleta es el único respaldo.
