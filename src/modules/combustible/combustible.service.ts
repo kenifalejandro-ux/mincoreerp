@@ -137,20 +137,24 @@ function resumirHistorico(
 
 /** El costo de la urea entra POR BULTO y se guarda POR LITRO (0119).
  *
- *  Los tres formularios de urea preguntan "costo por caja" -- es el número que
- *  trae la boleta y el único que el que carga sabe. Pero `costo_total` en todo
- *  el módulo es `cantidad (L) × costo_unitario`, así que guardar el precio de la
+ *  Los formularios de urea preguntan "costo por caja" -- es el número que trae
+ *  el papel y el único que el que carga sabe. Pero `costo_total` en todo el
+ *  módulo es `cantidad (L) × costo_unitario`, así que guardar el precio de la
  *  caja tal cual lo multiplicaba por los litros: 10 cajas a S/ 40 se
- *  valorizaban en S/ 6.400 en vez de S/ 400. Estuvo así desde 0092; el test de
- *  entonces incluso decía "el service la convierte a costo/litro al vuelo", y
- *  la conversión no existía.
+ *  valorizaban en S/ 6.400 en vez de S/ 400 (estuvo así desde 0092).
  *
- *  Se convierte con el factor CONGELADO de la fila, no con el del catálogo de
- *  hoy, por el mismo motivo que los litros: si mañana la caja pasa a 20 L, el
- *  costo por litro de lo ya cargado no se mueve. Cuatro decimales: los de la
+ *  Con renglones (0120 la compra, 0131 vale y entrada) es el costo por litro
+ *  del TOTAL: lo que dice el papel, dividido por los litros que suman sus
+ *  renglones. Es la MISMA cuenta para la entrada, el vale declarado, la compra
+ *  en ruta y la corrección de litros (0130) -- una sola función para que no
+ *  haya dos maneras de valorizar el mismo papel. Cuatro decimales: los de la
  *  columna. */
-function costoPorLitroUrea(costoPorBulto: number, factorLitros: number): number {
-  return Number((costoPorBulto / factorLitros).toFixed(4));
+export function costoPorLitroDelTotal(
+  renglones: { cantidadBultos: number; costoPorBulto: number }[],
+  litros: number
+): number {
+  const total = renglones.reduce((a, r) => a + r.cantidadBultos * r.costoPorBulto, 0);
+  return Number((total / litros).toFixed(4));
 }
 
 export class CombustibleService {
@@ -1110,9 +1114,10 @@ export class CombustibleService {
         // congela el factor usado en la fila (ver FACTOR_LITROS_UREA en el
         // schema y el encabezado de la migración 0092). El costo, si no
         // vino en el vale, se deriva promediando las recepciones vigentes.
-        // La compra de urea en ruta (0120) viene con RENGLONES -- el schema la
-        // normaliza así aunque llegue con una sola presentación. Cada renglón
-        // resuelve y congela su propio factor; el despacho guarda el total.
+        // La urea viene SIEMPRE con renglones (compra en ruta desde 0120, vale
+        // del almacén desde 0131) -- el schema la normaliza así aunque llegue
+        // con una sola presentación. Cada renglón resuelve y congela su propio
+        // factor; el despacho guarda el total.
         const renglones =
           esUrea && data.lineas !== undefined
             ? await Promise.all(
@@ -1127,21 +1132,36 @@ export class CombustibleService {
                     factorLitros: factor,
                     cantidadBultos: l.cantidad_bultos,
                     litros: Number((l.cantidad_bultos * factor).toFixed(2)),
-                    costoPorBulto: l.costo_unitario,
+                    costoPorBulto: l.costo_unitario ?? null,
                   };
                 })
               )
             : null;
 
-        const factorLitros =
-          esUrea && !renglones
-            ? await this.resolverFactorPresentacionUrea(client, tenantId, data.presentacion!)
-            : null;
         const cantidad = renglones
           ? Number(renglones.reduce((a, r) => a + r.litros, 0).toFixed(2))
-          : esUrea
-            ? data.cantidad_bultos! * factorLitros!
-            : data.cantidad!;
+          : data.cantidad!;
+        // Con precio por bulto en los renglones (la compra, o un vale del
+        // almacén declarado), el costo por litro es el del TOTAL. Sin precio,
+        // el vale del almacén toma el promedio de las entradas.
+        const urea: { costo: number; origen: "declarado" | "promedio" | "boleta" } | null =
+          renglones
+            ? renglones.every((r) => r.costoPorBulto !== null)
+              ? {
+                  costo: costoPorLitroDelTotal(
+                    renglones.map((r) => ({
+                      cantidadBultos: r.cantidadBultos,
+                      costoPorBulto: r.costoPorBulto!,
+                    })),
+                    cantidad
+                  ),
+                  origen: data.origen === "compra_externa" ? "boleta" : "declarado",
+                }
+              : {
+                  costo: await this.resolverCostoUrea(client, tenantId, despachadoEn),
+                  origen: "promedio",
+                }
+            : null;
 
         // EL COSTO DEL VALE DEL TANQUE PROPIO LO PONE EL SERVIDOR.
         //
@@ -1158,35 +1178,27 @@ export class CombustibleService {
         // UREA: el costo que viene en el body es POR BULTO (lo que dice la
         // boleta: "S/ 40 la caja") y se guarda POR LITRO, igual que el
         // combustible -- costo_total se calcula como cantidad (L) × unitario.
-        // Ver costoPorLitroUrea. El promedio de resolverCostoUrea ya está en
+        // Ver costoPorLitroDelTotal. El promedio de resolverCostoUrea ya está en
         // litros, porque sale de recepciones guardadas en litros.
         // Con renglones: el costo por litro del TOTAL de la boleta. Cada
         // renglón guarda además su precio por bulto, que es el que se coteja
         // contra el papel.
-        const costoUnitario = renglones
-          ? Number(
-              (
-                renglones.reduce((a, r) => a + r.cantidadBultos * r.costoPorBulto, 0) / cantidad
-              ).toFixed(4)
-            )
-          : esUrea
-            ? data.costo_unitario !== undefined
-              ? costoPorLitroUrea(data.costo_unitario, factorLitros!)
-              : await this.resolverCostoUrea(client, tenantId, despachadoEn)
-            : excedente
-              ? excedente.costoUnitario
-              : desdeTanqueta
-                ? desdeTanqueta.costoUnitario
-                : data.origen === "tanque_propio"
-                  ? await this.resolverCostoDelTanque(
-                      client,
-                      tenantId,
-                      data.combustible_id!,
-                      data.tipo_combustible!,
-                      despachadoEn,
-                      data.costo_unitario!
-                    )
-                  : data.costo_unitario!;
+        const costoUnitario = urea
+          ? urea.costo
+          : excedente
+            ? excedente.costoUnitario
+            : desdeTanqueta
+              ? desdeTanqueta.costoUnitario
+              : data.origen === "tanque_propio"
+                ? await this.resolverCostoDelTanque(
+                    client,
+                    tenantId,
+                    data.combustible_id!,
+                    data.tipo_combustible!,
+                    despachadoEn,
+                    data.costo_unitario!
+                  )
+                : data.costo_unitario!;
 
         const surtidorId = await this.resolverSurtidorDelVale(client, tenantId, data, despachadoEn);
 
@@ -1200,13 +1212,7 @@ export class CombustibleService {
           tanquetaOrigenId: data.tanqueta_origen_id ?? null,
           tanquetaLugar: data.origen === "tanqueta" ? (data.tanqueta_lugar ?? "ruta") : null,
           // 0130: de dónde salió el costo, misma rama que costoUnitario arriba.
-          costoOrigen: !esUrea
-            ? null
-            : renglones
-              ? "boleta"
-              : data.costo_unitario !== undefined
-                ? "declarado"
-                : "promedio",
+          costoOrigen: urea?.origen ?? null,
           grifoId: data.grifo_id ?? null,
           tipoCombustible: esUrea ? null : data.tipo_combustible!,
           tipoDestino: data.tipo_destino,
@@ -1223,11 +1229,11 @@ export class CombustibleService {
           lecturaHorometro: data.lectura_horometro ?? null,
           lecturaOdometro: data.lectura_odometro ?? null,
           horasAbastecidas: data.horas_abastecidas ?? null,
-          // Con renglones, el detalle vive en combustible_despacho_urea_lineas
-          // y estas tres quedan en NULL (CHECK de forma de 0120).
-          presentacion: esUrea && !renglones ? data.presentacion! : null,
-          factorLitros,
-          cantidadBultos: esUrea && !renglones ? data.cantidad_bultos! : null,
+          // El detalle de la urea vive en combustible_despacho_urea_lineas y
+          // estas tres quedan en NULL (CHECK de forma de 0131).
+          presentacion: null,
+          factorLitros: null,
+          cantidadBultos: null,
           costoUnitario,
           observaciones: data.observaciones ?? null,
           despachadoEn,
@@ -1243,9 +1249,18 @@ export class CombustibleService {
             renglones
           );
         }
-        return { id: Number(fila.id), fila };
+        return {
+          id: Number(fila.id),
+          fila: await this.conRenglonesUrea(client, tenantId, "despacho", fila),
+        };
       },
-      recuperar: (filaId) => this.repository.findDespachoPorId(client, tenantId, filaId),
+      recuperar: async (filaId) =>
+        this.conRenglonesUrea(
+          client,
+          tenantId,
+          "despacho",
+          await this.repository.findDespachoPorId(client, tenantId, filaId)
+        ),
     });
   }
 
@@ -1438,6 +1453,21 @@ export class CombustibleService {
     };
   }
 
+  /** La fila de un vale o una entrada con sus `renglones` (0131). Solo la
+   *  urea los tiene; el combustible vuelve tal cual. */
+  private async conRenglonesUrea<T extends { id: number | string; producto?: string } | null>(
+    client: PoolClient,
+    tenantId: string,
+    tipo: "despacho" | "recepcion",
+    fila: T
+  ) {
+    if (!fila || fila.producto !== "urea") return fila;
+    return {
+      ...fila,
+      renglones: await this.repository.findRenglonesUrea(client, tenantId, tipo, Number(fila.id)),
+    };
+  }
+
   /** CORREGIR LOS LITROS DE UN ENVASE (migración 0130).
    *
    *  Para "se dio de alta mal": la caja siempre fue de 20 L y alguien digitó
@@ -1488,24 +1518,17 @@ export class CombustibleService {
     const red2 = (n: number) => Number(n.toFixed(2));
     const red4 = (n: number) => Number(n.toFixed(4));
 
-    const filas = await this.repository.findFilasDeEnvaseUrea(client, tenantId, codigo);
-    const total =
-      filas.entradas.length +
-      filas.vales.length +
-      filas.renglonesCompra.length +
-      filas.renglonesConteo.length;
+    const filas = await this.repository.findRenglonesDeEnvaseUrea(client, tenantId, codigo);
+    const total = filas.entradas.length + filas.despachos.length + filas.conteos.length;
     if (total === 0) {
       throw new AppError(
         409,
         `"${nombre}" no tiene movimientos: sus litros se editan directamente en Configuración → Envases.`
       );
     }
-    const factores = [
-      ...filas.entradas,
-      ...filas.vales,
-      ...filas.renglonesCompra,
-      ...filas.renglonesConteo,
-    ].map((f) => Number(f.factor_litros));
+    const factores = [...filas.entradas, ...filas.despachos, ...filas.conteos].map((f) =>
+      Number(f.factor_litros)
+    );
     const litrosRegistrados = [...new Set(factores)].sort((a, b) => a - b);
     const cambia = (factor: string) => Number(factor) !== nuevo;
     if (litrosCatalogo === nuevo && factores.every((f) => f === nuevo)) {
@@ -1526,30 +1549,69 @@ export class CombustibleService {
       regla?: string | null;
     }[] = [];
     const escrituras: (() => Promise<void>)[] = [];
-
-    // ── Entradas: se conserva el precio por bulto ───────────────────────
-    const costoNuevoDeEntrada = new Map<number, number>();
     let deltaStock = 0;
-    for (const e of filas.entradas.filter((x) => cambia(x.factor_litros))) {
+
+    // Los litros nuevos de cada renglón del envase que cambia.
+    const litrosNuevos = new Map<string, number>();
+    const corregirRenglones = (
+      renglones: { id: string; cantidad_bultos: number; factor_litros: string; litros: string }[],
+      tabla: "entrada_renglon" | "vale_renglon" | "compra_renglon" | "conteo_renglon",
+      escribir: (id: number, litros: number) => Promise<void>
+    ) => {
+      for (const r of renglones.filter((x) => cambia(x.factor_litros))) {
+        const id = Number(r.id);
+        const litros = red2(r.cantidad_bultos * nuevo);
+        litrosNuevos.set(`${tabla}:${id}`, litros);
+        registro.push({
+          tabla,
+          filaId: id,
+          antes: { factor_litros: Number(r.factor_litros), litros: Number(r.litros) },
+          despues: { factor_litros: nuevo, litros },
+        });
+        escrituras.push(() => escribir(id, litros));
+      }
+    };
+
+    // ── Entradas: el precio por bulto de la factura se conserva ─────────
+    corregirRenglones(filas.entradas, "entrada_renglon", (id, litros) =>
+      this.repository.actualizarRenglonEntradaCorregido(client, tenantId, id, {
+        factorLitros: nuevo,
+        litros,
+      })
+    );
+    const entradasIds = [
+      ...new Set(
+        filas.entradas.filter((r) => cambia(r.factor_litros)).map((r) => Number(r.padre_id))
+      ),
+    ];
+    const entradas = await this.repository.findEntradasConRenglones(client, tenantId, entradasIds);
+    const costoNuevoDeEntrada = new Map<number, number>();
+    for (const e of entradas.entradas) {
       const id = Number(e.id);
-      const factor = Number(e.factor_litros);
-      const cantidad = red2(e.cantidad_bultos * nuevo);
-      const costo = red4((Number(e.costo_unitario) * factor) / nuevo);
+      const suyos = entradas.renglones.filter((r) => Number(r.padre_id) === id);
+      const cantidad = red2(
+        suyos.reduce(
+          (a, r) => a + (litrosNuevos.get(`entrada_renglon:${Number(r.id)}`) ?? Number(r.litros)),
+          0
+        )
+      );
+      const costo = costoPorLitroDelTotal(
+        suyos.map((r) => ({
+          cantidadBultos: r.cantidad_bultos,
+          costoPorBulto: Number(r.costo_por_bulto),
+        })),
+        cantidad
+      );
       costoNuevoDeEntrada.set(id, costo);
       if (e.anulada_en === null) deltaStock += cantidad - Number(e.cantidad);
       registro.push({
         tabla: "entrada",
         filaId: id,
-        antes: {
-          factor_litros: factor,
-          cantidad: Number(e.cantidad),
-          costo_unitario: Number(e.costo_unitario),
-        },
-        despues: { factor_litros: nuevo, cantidad, costo_unitario: costo },
+        antes: { cantidad: Number(e.cantidad), costo_unitario: Number(e.costo_unitario) },
+        despues: { cantidad, costo_unitario: costo },
       });
       escrituras.push(() =>
         this.repository.actualizarEntradaUreaCorregida(client, tenantId, id, {
-          factorLitros: nuevo,
           cantidad,
           costoUnitario: costo,
         })
@@ -1575,30 +1637,67 @@ export class CombustibleService {
       return red4(suma / hasta.length);
     };
 
-    // ── Vales: los del envase cambian litros; los que van a promedio, de
-    //    cualquier envase, cambian costo si el promedio se movió ────────
+    // ── Despachos: vales del almacén y compras en ruta ──────────────────
+    const valeOCompra = new Map<number, "vale_renglon" | "compra_renglon">();
+    const despachosIds = [...new Set(filas.despachos.map((r) => Number(r.padre_id)))];
+    const despachos = await this.repository.findDespachosConRenglones(
+      client,
+      tenantId,
+      despachosIds
+    );
+    for (const d of despachos.despachos) {
+      valeOCompra.set(Number(d.id), d.origen === "almacen" ? "vale_renglon" : "compra_renglon");
+    }
+    for (const tabla of ["vale_renglon", "compra_renglon"] as const) {
+      corregirRenglones(
+        filas.despachos.filter((r) => valeOCompra.get(Number(r.padre_id)) === tabla),
+        tabla,
+        (id, litros) =>
+          this.repository.actualizarRenglonDespachoCorregido(client, tenantId, id, {
+            factorLitros: nuevo,
+            litros,
+          })
+      );
+    }
+
+    // Más los vales a promedio de cualquier envase: corregir el costo de una
+    // entrada mueve el promedio para todos.
     const aPromedio = await this.repository.findValesUreaAPromedio(client, tenantId);
-    const valesDelEnvase = new Map(filas.vales.map((v) => [Number(v.id), v]));
-    const valesARevisar = new Map<
-      number,
-      (typeof aPromedio)[number] | (typeof filas.vales)[number]
-    >();
-    for (const v of filas.vales) valesARevisar.set(Number(v.id), v);
-    for (const v of aPromedio) valesARevisar.set(Number(v.id), v);
+    const otros = aPromedio.filter((v) => !despachosIds.includes(Number(v.id)));
 
     let valesRecosteados = 0;
     let valesDeducidos = 0;
-    for (const [id, v] of valesARevisar) {
-      const propio = valesDelEnvase.get(id);
-      const costoAntes = Number(v.costo_unitario);
-      const antesPromedio = promedio(v.despachado_en, false);
+    let valesCambiados = 0;
+    let comprasCambiadas = 0;
+    const revisar = [
+      ...despachos.despachos.map((d) => ({ ...d, propio: true })),
+      ...otros.map((d) => ({ ...d, origen: "almacen", anulada_en: null, propio: false })),
+    ];
+    for (const d of revisar) {
+      const id = Number(d.id);
+      const tabla = d.origen === "almacen" ? "vale_renglon" : "compra_renglon";
+      const suyos = despachos.renglones.filter((r) => Number(r.padre_id) === id);
+      const cantidadAntes = Number(d.cantidad);
+      const cantidadDespues = d.propio
+        ? red2(
+            suyos.reduce(
+              (a, r) => a + (litrosNuevos.get(`${tabla}:${Number(r.id)}`) ?? Number(r.litros)),
+              0
+            )
+          )
+        : cantidadAntes;
+      const costoAntes = Number(d.costo_unitario);
+      const antesPromedio = promedio(d.despachado_en, false);
+
+      // De dónde sale el costo: la compra y el vale declarado tienen precio
+      // por bulto en sus renglones; el vale a promedio no; el vale viejo sin
+      // costo_origen se deduce comparando contra el promedio de su día (o 0
+      // sin entradas, que es lo que resolverCostoUrea devuelve).
       let regla: string;
-      if (v.costo_origen === "declarado" || v.costo_origen === "promedio") {
-        regla = v.costo_origen;
-      } else {
-        // Vale viejo sin costo_origen: si su costo es exactamente el promedio
-        // de ese día (o 0 sin entradas, que es lo que resolverCostoUrea
-        // devuelve), salió del promedio.
+      if (d.origen !== "almacen") regla = "boleta";
+      else if (d.costo_origen === "declarado" || d.costo_origen === "promedio")
+        regla = d.costo_origen;
+      else {
         const esPromedio =
           antesPromedio === null
             ? costoAntes === 0
@@ -1608,25 +1707,52 @@ export class CombustibleService {
       }
 
       let costoDespues = costoAntes;
-      const cambiaFactor = propio !== undefined && cambia(propio.factor_litros);
-      if (regla === "declarado" || regla === "inferido_declarado") {
-        // El precio por bulto que trajo el vale se conserva.
-        if (cambiaFactor) costoDespues = red4((costoAntes * Number(propio!.factor_litros)) / nuevo);
-      } else {
-        const despuesPromedio = promedio(v.despachado_en, true);
+      const deducidos = new Map<number, number>();
+      if (regla === "promedio" || regla === "inferido_promedio") {
+        const despuesPromedio = promedio(d.despachado_en, true);
         if (antesPromedio !== null && despuesPromedio !== null) {
           // Solo el efecto de ESTA corrección sobre el promedio: una entrada
           // anulada después del vale no tiene por qué moverle el costo hoy.
           costoDespues = red4(costoAntes - antesPromedio + despuesPromedio);
         }
+      } else if (cantidadDespues !== cantidadAntes) {
+        // Precio por bulto conservado: la misma cuenta que al registrarlo.
+        // Un vale viejo declarado no guardaba el precio por bulto: se deduce
+        // de su costo por litro y del factor con que se registró, y queda
+        // guardado en el renglón.
+        costoDespues = costoPorLitroDelTotal(
+          suyos.map((r) => {
+            let porBulto = r.costo_por_bulto === null ? null : Number(r.costo_por_bulto);
+            if (porBulto === null) {
+              porBulto = red4(costoAntes * Number(r.factor_litros));
+              deducidos.set(Number(r.id), porBulto);
+            }
+            return { cantidadBultos: r.cantidad_bultos, costoPorBulto: porBulto };
+          }),
+          cantidadDespues
+        );
       }
 
-      const cantidadAntes = Number(propio?.cantidad ?? (v as { cantidad: string }).cantidad);
-      const cantidadDespues = cambiaFactor ? red2(propio!.cantidad_bultos * nuevo) : cantidadAntes;
-      if (!cambiaFactor && costoDespues === costoAntes) continue;
-      if (costoDespues !== costoAntes) valesRecosteados++;
-      if (cambiaFactor && propio!.origen === "almacen" && propio!.anulada_en === null) {
+      if (cantidadDespues === cantidadAntes && costoDespues === costoAntes) continue;
+      if (costoDespues !== costoAntes && d.origen === "almacen") valesRecosteados++;
+      if (cantidadDespues !== cantidadAntes) {
+        if (d.origen === "almacen") valesCambiados++;
+        else comprasCambiadas++;
+      }
+      if (d.origen === "almacen" && d.anulada_en === null) {
         deltaStock -= cantidadDespues - cantidadAntes;
+      }
+      for (const [renglonId, porBulto] of deducidos) {
+        escrituras.push(async () => {
+          const r = suyos.find((x) => Number(x.id) === renglonId)!;
+          await this.repository.actualizarRenglonDespachoCorregido(client, tenantId, renglonId, {
+            factorLitros: litrosNuevos.has(`${tabla}:${renglonId}`)
+              ? nuevo
+              : Number(r.factor_litros),
+            litros: litrosNuevos.get(`${tabla}:${renglonId}`) ?? Number(r.litros),
+            costoPorBulto: porBulto,
+          });
+        });
       }
       const origenDeducido =
         regla === "inferido_promedio"
@@ -1635,107 +1761,53 @@ export class CombustibleService {
             ? "declarado"
             : null;
       registro.push({
-        tabla: "vale",
+        tabla: d.origen === "almacen" ? "vale" : "compra",
         filaId: id,
         antes: {
-          ...(cambiaFactor ? { factor_litros: Number(propio!.factor_litros) } : {}),
           cantidad: cantidadAntes,
           costo_unitario: costoAntes,
-          costo_origen: v.costo_origen,
+          costo_origen: d.costo_origen,
         },
         despues: {
-          ...(cambiaFactor ? { factor_litros: nuevo } : {}),
           cantidad: cantidadDespues,
           costo_unitario: costoDespues,
-          costo_origen: v.costo_origen ?? origenDeducido,
+          costo_origen: d.costo_origen ?? origenDeducido,
         },
         regla,
       });
       escrituras.push(() =>
         this.repository.actualizarDespachoUreaCorregido(client, tenantId, id, {
-          ...(cambiaFactor ? { factorLitros: nuevo, cantidad: cantidadDespues } : {}),
+          cantidad: cantidadDespues,
           costoUnitario: costoDespues,
           // El origen deducido queda guardado: la próxima corrección ya no
           // tiene que adivinar.
-          costoOrigen: v.costo_origen ?? origenDeducido,
-        })
-      );
-    }
-
-    // ── Compras en ruta: el renglón cambia litros, la compra su total ───
-    const renglonesCompra = filas.renglonesCompra.filter((r) => cambia(r.factor_litros));
-    const litrosNuevosDeRenglon = new Map<number, number>();
-    for (const r of renglonesCompra) {
-      const id = Number(r.id);
-      const litros = red2(r.cantidad_bultos * nuevo);
-      litrosNuevosDeRenglon.set(id, litros);
-      registro.push({
-        tabla: "compra_renglon",
-        filaId: id,
-        antes: { factor_litros: Number(r.factor_litros), litros: Number(r.litros) },
-        despues: { factor_litros: nuevo, litros },
-      });
-      escrituras.push(() =>
-        this.repository.actualizarRenglonCompraCorregido(client, tenantId, id, {
-          factorLitros: nuevo,
-          litros,
-        })
-      );
-    }
-    const comprasIds = [...new Set(renglonesCompra.map((r) => Number(r.despacho_id)))];
-    const compras = await this.repository.findComprasConRenglones(client, tenantId, comprasIds);
-    for (const c of compras.compras) {
-      const id = Number(c.id);
-      const suyos = compras.renglones.filter((r) => Number(r.despacho_id) === id);
-      const cantidad = red2(
-        suyos.reduce((a, r) => a + (litrosNuevosDeRenglon.get(Number(r.id)) ?? Number(r.litros)), 0)
-      );
-      // Misma cuenta que al registrar la compra: el costo por litro del TOTAL.
-      const costo = red4(
-        suyos.reduce((a, r) => a + r.cantidad_bultos * Number(r.costo_por_bulto), 0) / cantidad
-      );
-      registro.push({
-        tabla: "compra",
-        filaId: id,
-        antes: { cantidad: Number(c.cantidad), costo_unitario: Number(c.costo_unitario) },
-        despues: { cantidad, costo_unitario: costo },
-      });
-      escrituras.push(() =>
-        this.repository.actualizarDespachoUreaCorregido(client, tenantId, id, {
-          cantidad,
-          costoUnitario: costo,
+          costoOrigen: d.costo_origen ?? origenDeducido,
         })
       );
     }
 
     // ── Conteos: el renglón cambia litros, el conteo su total ───────────
-    const renglonesConteo = filas.renglonesConteo.filter((r) => cambia(r.factor_litros));
-    const litrosNuevosDeConteo = new Map<number, number>();
-    for (const r of renglonesConteo) {
-      const id = Number(r.id);
-      const litros = red2(r.cantidad_bultos * nuevo);
-      litrosNuevosDeConteo.set(id, litros);
-      registro.push({
-        tabla: "conteo_renglon",
-        filaId: id,
-        antes: { factor_litros: Number(r.factor_litros), litros: Number(r.litros) },
-        despues: { factor_litros: nuevo, litros },
-      });
-      escrituras.push(() =>
-        this.repository.actualizarRenglonConteoCorregido(client, tenantId, id, {
-          factorLitros: nuevo,
-          litros,
-        })
-      );
-    }
-    const conteosIds = [...new Set(renglonesConteo.map((r) => Number(r.conteo_id)))];
+    corregirRenglones(filas.conteos, "conteo_renglon", (id, litros) =>
+      this.repository.actualizarRenglonConteoCorregido(client, tenantId, id, {
+        factorLitros: nuevo,
+        litros,
+      })
+    );
+    const conteosIds = [
+      ...new Set(
+        filas.conteos.filter((r) => cambia(r.factor_litros)).map((r) => Number(r.padre_id))
+      ),
+    ];
     const conteos = await this.repository.findConteosConRenglones(client, tenantId, conteosIds);
     for (const c of conteos.conteos) {
       const id = Number(c.id);
       const litros = red2(
         conteos.renglones
           .filter((r) => Number(r.conteo_id) === id)
-          .reduce((a, r) => a + (litrosNuevosDeConteo.get(Number(r.id)) ?? Number(r.litros)), 0)
+          .reduce(
+            (a, r) => a + (litrosNuevos.get(`conteo_renglon:${Number(r.id)}`) ?? Number(r.litros)),
+            0
+          )
       );
       registro.push({
         tabla: "conteo",
@@ -1780,11 +1852,13 @@ export class CombustibleService {
         antes: red2(delEnvase?.litros ?? 0),
         despues: red2((delEnvase?.litros ?? 0) + deltaStock),
       },
+      // Documentos (no renglones): una factura con cajas y bolsas es UNA
+      // entrada corregida.
       filas: {
-        entradas: registro.filter((r) => r.tabla === "entrada").length,
-        vales: filas.vales.filter((v) => cambia(v.factor_litros)).length,
-        comprasEnRuta: renglonesCompra.length,
-        conteos: renglonesConteo.length,
+        entradas: entradas.entradas.length,
+        vales: valesCambiados,
+        comprasEnRuta: comprasCambiadas,
+        conteos: conteos.conteos.length,
       },
       valesRecosteados,
       conteosSinDetalle,
@@ -5269,9 +5343,24 @@ export class CombustibleService {
         salida: anulada ? 0 : salida,
         // Anulado: se ve lo que habría movido, pero no participa del saldo.
         litros_declarados: esConteo ? null : litros,
-        bultos: f.cantidad_bultos === null ? null : Number(f.cantidad_bultos),
-        presentacion: (f.presentacion as string | null) ?? null,
-        factor_litros: f.factor_litros === null ? null : Number(f.factor_litros),
+        // De qué está hecho el movimiento (0131): "1 caja + 2 bolsas". Cada
+        // renglón con su factor congelado -- el kardex tiene que poder mostrar
+        // con qué número se convirtió cada bulto.
+        renglones: (
+          (f.renglones ?? []) as {
+            presentacion: string;
+            nombre: string | null;
+            bultos: number;
+            factor_litros: string | number;
+            litros: string | number;
+          }[]
+        ).map((r) => ({
+          presentacion: r.presentacion,
+          nombre: r.nombre ?? r.presentacion,
+          bultos: Number(r.bultos),
+          factor_litros: Number(r.factor_litros),
+          litros: Number(r.litros),
+        })),
         saldo_teorico: anulada || esConteo ? null : Number(saldo.toFixed(2)),
         contado: esConteo && !anulada ? litros : null,
         diferencia:
@@ -6756,10 +6845,30 @@ export class CombustibleService {
         // tenant, no del tanque.
         const politica = await this.repository.getPoliticaValidacionRecepcion(client, tenantId);
 
-        const factorLitros = esUrea
-          ? await this.resolverFactorPresentacionUrea(client, tenantId, data.presentacion!)
+        // Urea (0131): siempre con renglones -- el schema normaliza la forma de
+        // una sola presentación. Cada renglón congela su factor y su precio
+        // por bulto; la entrada guarda el total.
+        const renglones = esUrea
+          ? await Promise.all(
+              data.lineas!.map(async (l) => {
+                const factor = await this.resolverFactorPresentacionUrea(
+                  client,
+                  tenantId,
+                  l.presentacion
+                );
+                return {
+                  presentacion: l.presentacion,
+                  factorLitros: factor,
+                  cantidadBultos: l.cantidad_bultos,
+                  litros: Number((l.cantidad_bultos * factor).toFixed(2)),
+                  costoPorBulto: l.costo_unitario,
+                };
+              })
+            )
           : null;
-        const cantidadEntregada = esUrea ? data.cantidad_bultos! * factorLitros! : data.cantidad!;
+        const cantidadEntregada = renglones
+          ? Number(renglones.reduce((a, r) => a + r.litros, 0).toFixed(2))
+          : data.cantidad!;
         // Lo que entró al TANQUE: la entrega menos lo que se derivó (0110).
         // `cantidad` sigue siendo lo que mueve el kardex y el nivel teórico.
         const cantidadDerivada = excedenteAceptado
@@ -6775,14 +6884,16 @@ export class CombustibleService {
           grifoId: data.grifo_id,
           cantidad,
           cantidadDerivada,
-          presentacion: esUrea ? data.presentacion! : null,
-          factorLitros,
-          cantidadBultos: esUrea ? data.cantidad_bultos! : null,
-          // Por bulto en el formulario, por litro en la fila -- ver
-          // costoPorLitroUrea.
-          costoUnitario: esUrea
-            ? costoPorLitroUrea(data.costo_unitario, factorLitros!)
-            : data.costo_unitario,
+          // El detalle de la urea vive en combustible_recepcion_urea_lineas
+          // (CHECK de forma de 0131).
+          presentacion: null,
+          factorLitros: null,
+          cantidadBultos: null,
+          // Por bulto en la factura, por litro en la fila: el costo por litro
+          // del TOTAL, igual que la compra en ruta.
+          costoUnitario: renglones
+            ? costoPorLitroDelTotal(renglones, cantidadEntregada)
+            : data.costo_unitario!,
           tipoDocumento: data.tipo_documento ?? null,
           numeroDocumento: data.numero_documento ?? null,
           recibidoEn,
@@ -6793,6 +6904,15 @@ export class CombustibleService {
         // urea no se mezcla físicamente, cada recepción guarda su propio
         // costo y el promedio se deriva al vuelo (ver resolverCostoUrea) --
         // no hay nada que recalcular acá.
+        // Misma transacción: si un renglón falla, la entrada entera se deshace.
+        if (renglones) {
+          await this.repository.crearRenglonesRecepcionUrea(
+            client,
+            tenantId,
+            Number(fila.id),
+            renglones
+          );
+        }
         if (excedenteAceptado) {
           await this.repository.crearLineasExcedente(
             client,
@@ -6819,9 +6939,18 @@ export class CombustibleService {
             });
           }
         }
-        return { id: Number(fila.id), fila };
+        return {
+          id: Number(fila.id),
+          fila: await this.conRenglonesUrea(client, tenantId, "recepcion", fila),
+        };
       },
-      recuperar: (filaId) => this.repository.findRecepcionPorId(client, tenantId, filaId),
+      recuperar: async (filaId) =>
+        this.conRenglonesUrea(
+          client,
+          tenantId,
+          "recepcion",
+          await this.repository.findRecepcionPorId(client, tenantId, filaId)
+        ),
     });
     return { ...resultado, excedenteAceptado };
   }

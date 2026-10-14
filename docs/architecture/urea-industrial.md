@@ -357,6 +357,21 @@ Pedido de Kenif (2026-10-13): "¿qué pasa si las cajas son de 20 L y digitaron 
 - **Arreglado en el camino (estaba en main):** el congelado de un hallazgo no copiaba `urea_conteo_id`. Un `urea_descuadre_conteo` anclado solo al conteo violaba el CHECK de anclas y el worker lo salteaba cada hora: nunca quedaba como anomalía.
 - `tests/combustible-urea-corregir-litros.test.ts` (el caso de Kenif de punta a punta) y `tests/combustible-urea-congelado-conteo.test.ts`.
 
+### Entrega 10 — renglones en el vale del almacén y en la entrada (migración 0131)
+
+Pedido de Kenif (2026-10-07): "un tráiler consume 1 caja + 2 bolsas". Y una factura trae cajas y bolsas juntas.
+
+- **Una sola forma.** El vale del almacén y la entrada guardan su detalle SIEMPRE en renglones, aunque sea uno, igual que la compra en ruta desde 0120: el vale en `combustible_despacho_urea_lineas` (el `origen` dice si es vale o compra), la entrada en `combustible_recepcion_urea_lineas` (nueva). La fila guarda el total; presentación, factor y bultos quedan en NULL (CHECK de forma). Dos formas a la vez obligarían a cada reporte a leer de dos lugares.
+- **Un papel, varios envases.** Un número de talonario es un vale, con los renglones que tenga; cada envase baja su propio stock. Una factura es una entrada, con el precio por bulto de cada renglón tal como figura en ella.
+- **Una sola cuenta de costo** (`costoPorLitroDelTotal`): lo que dice el papel dividido por los litros que suman sus renglones. La usan la entrada, el vale declarado, la compra en ruta y la corrección de litros. En el vale del almacén el precio va en todos los renglones o en ninguno (sin precio, va a promedio): mezclado no se podría recalcular bien.
+- **La cola offline vieja sigue entrando.** El schema acepta la forma de un solo envase (también el "compra_externa sin comprobante" de antes de 0119) y la convierte en un renglón. Encontrado al probar: el transform de esa forma vieja salía antes de convertir a renglones y el vale llegaba sin detalle (500); corregido y con test.
+- **La copia de lo existente no mueve nada.** Cada vale y entrada pasa a tener un renglón con sus mismos datos. Verificado contra una base con datos reales, dentro de una transacción con rollback: stock por envase, cantidades y costos idénticos; cada documento con renglones que suman su total; los precios por bulto rearman el costo por litro.
+- **La respuesta del alta trae `renglones`**, también en el reintento idempotente: una pantalla o un celular que lea la respuesta sigue sabiendo de qué está hecho el vale.
+- **Lectores adaptados:** stock por envase, kardex (una fila por papel con sus renglones; en la ventana de un envase, cada vale con su parte), Excel del kardex (mismas columnas: las fórmulas no se mueven), listados de vales y entradas, corrección de litros (recalcula el papel entero con todos sus renglones; el precio por bulto de un vale viejo se deduce y queda guardado).
+- **Hueco cerrado en el camino:** el conteo de movimientos de un envase no contaba los renglones de conteo (0130): un envase usado solo en conteos podía cambiar de litros y quedar mezclado.
+- **Despliegue:** la migración no es aditiva. El código viejo no puede registrar vales ni entradas de urea contra el esquema nuevo: el tramo entre la migración y el arranque del código nuevo tiene que ser corto (hacerlo fuera del horario de carga).
+- `tests/combustible-urea-renglones.test.ts`; `e2e/urea-vale-renglones.spec.ts`.
+
 ## Preguntas abiertas
 
 - ~~¿Adjuntar la factura o guía en las entradas al almacén?~~ **Resuelto (2026-10-05): no.** El cliente quiere un módulo de **órdenes de compra** propio, para repuestos, servicios, combustible y urea. El cruce OC ↔ guía ↔ factura, con sus archivos, va a vivir ahí, en un solo lugar para todos los productos. Adjuntarlo además en las recepciones dejaría el mismo papel en dos lugares. Lo que queda como está: las entradas siguen guardando tipo y número de documento, y cuando exista el módulo se les suma un vínculo a su OC. La compra en ruta conserva su boleta y su foto: es una compra de urgencia sin OC, y ahí la boleta es el único respaldo.

@@ -1066,6 +1066,8 @@ export class CombustibleRepository {
     lectura_contometro, totalizador_lectura, surtidor_id, lectura_horometro, lectura_odometro,
     horas_abastecidas,
     presentacion, factor_litros, cantidad_bultos,
+    -- 0130: de dónde salió el costo de la urea (declarado, promedio, boleta).
+    costo_origen,
     comprobante_tipo, comprobante_numero,
     -- Del archivo se publica lo que la pantalla necesita para decir "hay
     -- foto, pesa esto, la subió fulano": NUNCA comprobante_key ni
@@ -1489,6 +1491,16 @@ export class CombustibleRepository {
     const result = await client.query(
       `
       SELECT ${CombustibleRepository.COLUMNAS_DESPACHO}, COUNT(*) OVER() AS total_count,
+        -- Urea (0131): de qué está hecho el vale -- "1 caja + 2 bolsas".
+        (SELECT COALESCE(json_agg(json_build_object(
+                'presentacion', l.presentacion, 'nombre', pr.nombre,
+                'cantidad_bultos', l.cantidad_bultos, 'factor_litros', l.factor_litros,
+                'litros', l.litros, 'costo_por_bulto', l.costo_por_bulto)
+                ORDER BY l.presentacion), '[]'::json)
+               FROM combustible_despacho_urea_lineas l
+               LEFT JOIN combustible_urea_presentaciones pr
+                 ON pr.tenant_id = l.tenant_id AND pr.codigo = l.presentacion
+              WHERE l.despacho_id = combustible_despachos.id AND l.tenant_id = combustible_despachos.tenant_id) AS renglones,
         -- Para el historial (0112/0114): de qué tanque vino un excedente y qué
         -- tanqueta llenó o descargó el vale, sin que la pantalla lo busque.
         (SELECT c.codigo FROM combustible c
@@ -3186,6 +3198,66 @@ export class CombustibleRepository {
   }
 
   /** Los renglones de una compra de urea en ruta (0120). */
+  /** De qué está hecho un vale o una entrada de urea (0131), en la forma que
+   *  devuelve la API: el alta, el reintento idempotente y los listados dicen
+   *  lo mismo. */
+  async findRenglonesUrea(
+    client: PoolClient,
+    tenantId: string,
+    tipo: "despacho" | "recepcion",
+    id: number
+  ) {
+    const tabla =
+      tipo === "despacho"
+        ? "combustible_despacho_urea_lineas"
+        : "combustible_recepcion_urea_lineas";
+    const fk = tipo === "despacho" ? "despacho_id" : "recepcion_id";
+    const r = await client.query(
+      `SELECT l.presentacion, pr.nombre, l.cantidad_bultos, l.factor_litros, l.litros,
+              l.costo_por_bulto
+         FROM ${tabla} l
+         LEFT JOIN combustible_urea_presentaciones pr
+           ON pr.tenant_id = l.tenant_id AND pr.codigo = l.presentacion
+        WHERE l.tenant_id = $1 AND l.${fk} = $2
+        ORDER BY l.presentacion`,
+      [tenantId, id]
+    );
+    return r.rows;
+  }
+
+  /** Los renglones de una entrada de urea (0131): "20 cajas + 40 bolsas" de
+   *  una misma factura, cada uno con su factor y su precio por bulto. */
+  async crearRenglonesRecepcionUrea(
+    client: PoolClient,
+    tenantId: string,
+    recepcionId: number,
+    renglones: {
+      presentacion: string;
+      factorLitros: number;
+      cantidadBultos: number;
+      litros: number;
+      costoPorBulto: number;
+    }[]
+  ) {
+    for (const r of renglones) {
+      await client.query(
+        `INSERT INTO combustible_recepcion_urea_lineas
+           (tenant_id, recepcion_id, presentacion, factor_litros, cantidad_bultos, litros,
+            costo_por_bulto)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          tenantId,
+          recepcionId,
+          r.presentacion,
+          r.factorLitros,
+          r.cantidadBultos,
+          r.litros,
+          r.costoPorBulto,
+        ]
+      );
+    }
+  }
+
   async crearRenglonesCompraUrea(
     client: PoolClient,
     tenantId: string,
@@ -3195,7 +3267,8 @@ export class CombustibleRepository {
       factorLitros: number;
       cantidadBultos: number;
       litros: number;
-      costoPorBulto: number;
+      /** NULL: vale del almacén que tomó el promedio (0131). */
+      costoPorBulto: number | null;
     }[]
   ) {
     for (const r of renglones) {
@@ -3611,6 +3684,10 @@ export class CombustibleRepository {
                     WHERE r.tenant_id = p.tenant_id AND r.presentacion = p.codigo)
                 + (SELECT COUNT(*) FROM combustible_despacho_urea_lineas l
                     WHERE l.tenant_id = p.tenant_id AND l.presentacion = p.codigo)
+                + (SELECT COUNT(*) FROM combustible_recepcion_urea_lineas l
+                    WHERE l.tenant_id = p.tenant_id AND l.presentacion = p.codigo)
+                + (SELECT COUNT(*) FROM combustible_conteo_urea_lineas l
+                    WHERE l.tenant_id = p.tenant_id AND l.presentacion = p.codigo)
               )::int AS movimientos
        FROM combustible_urea_presentaciones p
        WHERE p.tenant_id = $1
@@ -3728,107 +3805,98 @@ export class CombustibleRepository {
   // Todo FOR UPDATE: la corrección lee, recalcula y reescribe en la misma
   // transacción, y nada de lo que lee puede cambiar en el medio.
 
-  /** Las filas de un envase que congelaron sus litros: entradas, vales,
-   *  renglones de compra en ruta y renglones de conteo. Las anuladas TAMBIÉN:
-   *  el kardex las muestra con sus litros, y una anulada a 16 L junto a las
-   *  vigentes a 20 L sería otra mezcla. */
-  async findFilasDeEnvaseUrea(client: PoolClient, tenantId: string, codigo: string) {
+  /** Los renglones de un envase que congelaron sus litros (0131): de
+   *  entradas, de despachos (vales del almacén y compras en ruta) y de
+   *  conteos. Los de documentos anulados TAMBIÉN: el kardex los muestra con
+   *  sus litros, y uno anulado a 16 L junto a los vigentes a 20 L sería otra
+   *  mezcla. */
+  async findRenglonesDeEnvaseUrea(client: PoolClient, tenantId: string, codigo: string) {
+    const consulta = (tabla: string, padre: string) =>
+      client.query<{
+        id: string;
+        padre_id: string;
+        cantidad_bultos: number;
+        factor_litros: string;
+        litros: string;
+      }>(
+        `SELECT id, ${padre} AS padre_id, cantidad_bultos, factor_litros, litros
+           FROM ${tabla}
+          WHERE tenant_id = $1 AND presentacion = $2
+          ORDER BY id
+          FOR UPDATE`,
+        [tenantId, codigo]
+      );
+    const entradas = await consulta("combustible_recepcion_urea_lineas", "recepcion_id");
+    const despachos = await consulta("combustible_despacho_urea_lineas", "despacho_id");
+    const conteos = await consulta("combustible_conteo_urea_lineas", "conteo_id");
+    return { entradas: entradas.rows, despachos: despachos.rows, conteos: conteos.rows };
+  }
+
+  /** Las entradas con algún renglón del envase, y TODOS sus renglones: el
+   *  total y el costo por litro de la entrada se recalculan con los de otros
+   *  envases también. */
+  async findEntradasConRenglones(client: PoolClient, tenantId: string, ids: number[]) {
+    if (ids.length === 0) return { entradas: [], renglones: [] };
     const entradas = await client.query<{
       id: string;
-      cantidad_bultos: number;
-      factor_litros: string;
       cantidad: string;
       costo_unitario: string;
-      recibido_en: Date;
       anulada_en: Date | null;
     }>(
-      `SELECT id, cantidad_bultos, factor_litros, cantidad, costo_unitario, recibido_en, anulada_en
-         FROM combustible_recepciones
-        WHERE tenant_id = $1 AND producto = 'urea' AND presentacion = $2
+      `SELECT id, cantidad, costo_unitario, anulada_en FROM combustible_recepciones
+        WHERE tenant_id = $1 AND id = ANY($2::bigint[])
         ORDER BY id
         FOR UPDATE`,
-      [tenantId, codigo]
+      [tenantId, ids]
     );
-    const vales = await client.query<{
+    const renglones = await client.query<{
+      id: string;
+      padre_id: string;
+      cantidad_bultos: number;
+      litros: string;
+      costo_por_bulto: string;
+    }>(
+      `SELECT id, recepcion_id AS padre_id, cantidad_bultos, litros, costo_por_bulto
+         FROM combustible_recepcion_urea_lineas
+        WHERE tenant_id = $1 AND recepcion_id = ANY($2::bigint[])`,
+      [tenantId, ids]
+    );
+    return { entradas: entradas.rows, renglones: renglones.rows };
+  }
+
+  /** Lo mismo para los despachos: vales del almacén y compras en ruta. */
+  async findDespachosConRenglones(client: PoolClient, tenantId: string, ids: number[]) {
+    if (ids.length === 0) return { despachos: [], renglones: [] };
+    const despachos = await client.query<{
       id: string;
       origen: string;
-      cantidad_bultos: number;
-      factor_litros: string;
       cantidad: string;
       costo_unitario: string;
       costo_origen: string | null;
       despachado_en: Date;
       anulada_en: Date | null;
     }>(
-      `SELECT id, origen, cantidad_bultos, factor_litros, cantidad, costo_unitario, costo_origen,
-              despachado_en, anulada_en
+      `SELECT id, origen, cantidad, costo_unitario, costo_origen, despachado_en, anulada_en
          FROM combustible_despachos
-        WHERE tenant_id = $1 AND producto = 'urea' AND presentacion = $2
-        ORDER BY id
-        FOR UPDATE`,
-      [tenantId, codigo]
-    );
-    const renglonesCompra = await client.query<{
-      id: string;
-      despacho_id: string;
-      cantidad_bultos: number;
-      factor_litros: string;
-      litros: string;
-    }>(
-      `SELECT id, despacho_id, cantidad_bultos, factor_litros, litros
-         FROM combustible_despacho_urea_lineas
-        WHERE tenant_id = $1 AND presentacion = $2
-        ORDER BY id
-        FOR UPDATE`,
-      [tenantId, codigo]
-    );
-    const renglonesConteo = await client.query<{
-      id: string;
-      conteo_id: string;
-      cantidad_bultos: number;
-      factor_litros: string;
-      litros: string;
-    }>(
-      `SELECT id, conteo_id, cantidad_bultos, factor_litros, litros
-         FROM combustible_conteo_urea_lineas
-        WHERE tenant_id = $1 AND presentacion = $2
-        ORDER BY id
-        FOR UPDATE`,
-      [tenantId, codigo]
-    );
-    return {
-      entradas: entradas.rows,
-      vales: vales.rows,
-      renglonesCompra: renglonesCompra.rows,
-      renglonesConteo: renglonesConteo.rows,
-    };
-  }
-
-  /** Las compras en ruta con algún renglón del envase, y TODOS sus
-   *  renglones: el total de la compra se recalcula con los de otros envases
-   *  también. */
-  async findComprasConRenglones(client: PoolClient, tenantId: string, despachoIds: number[]) {
-    if (despachoIds.length === 0) return { compras: [], renglones: [] };
-    const compras = await client.query<{ id: string; cantidad: string; costo_unitario: string }>(
-      `SELECT id, cantidad, costo_unitario FROM combustible_despachos
         WHERE tenant_id = $1 AND id = ANY($2::bigint[])
         ORDER BY id
         FOR UPDATE`,
-      [tenantId, despachoIds]
+      [tenantId, ids]
     );
     const renglones = await client.query<{
       id: string;
-      despacho_id: string;
+      padre_id: string;
       cantidad_bultos: number;
+      factor_litros: string;
       litros: string;
-      costo_por_bulto: string;
+      costo_por_bulto: string | null;
     }>(
-      `SELECT id, despacho_id, cantidad_bultos, litros, costo_por_bulto
+      `SELECT id, despacho_id AS padre_id, cantidad_bultos, factor_litros, litros, costo_por_bulto
          FROM combustible_despacho_urea_lineas
         WHERE tenant_id = $1 AND despacho_id = ANY($2::bigint[])`,
-      [tenantId, despachoIds]
+      [tenantId, ids]
     );
-    return { compras: compras.rows, renglones: renglones.rows };
+    return { despachos: despachos.rows, renglones: renglones.rows };
   }
 
   /** Los conteos con algún renglón del envase, y todos sus renglones: el total
@@ -3869,13 +3937,12 @@ export class CombustibleRepository {
   async findValesUreaAPromedio(client: PoolClient, tenantId: string) {
     const r = await client.query<{
       id: string;
-      presentacion: string;
       cantidad: string;
       costo_unitario: string;
       costo_origen: string | null;
       despachado_en: Date;
     }>(
-      `SELECT id, presentacion, cantidad, costo_unitario, costo_origen, despachado_en
+      `SELECT id, cantidad, costo_unitario, costo_origen, despachado_en
          FROM combustible_despachos
         WHERE tenant_id = $1 AND producto = 'urea' AND origen = 'almacen'
           AND (costo_origen = 'promedio' OR costo_origen IS NULL)
@@ -3901,13 +3968,25 @@ export class CombustibleRepository {
     client: PoolClient,
     tenantId: string,
     id: number,
-    f: { factorLitros: number; cantidad: number; costoUnitario: number }
+    f: { cantidad: number; costoUnitario: number }
   ) {
     await client.query(
-      `UPDATE combustible_recepciones
-          SET factor_litros = $3, cantidad = $4, costo_unitario = $5
+      `UPDATE combustible_recepciones SET cantidad = $3, costo_unitario = $4
         WHERE id = $1 AND tenant_id = $2`,
-      [id, tenantId, f.factorLitros, f.cantidad, f.costoUnitario]
+      [id, tenantId, f.cantidad, f.costoUnitario]
+    );
+  }
+
+  async actualizarRenglonEntradaCorregido(
+    client: PoolClient,
+    tenantId: string,
+    id: number,
+    f: { factorLitros: number; litros: number }
+  ) {
+    await client.query(
+      `UPDATE combustible_recepcion_urea_lineas SET factor_litros = $3, litros = $4
+        WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId, f.factorLitros, f.litros]
     );
   }
 
@@ -3915,41 +3994,32 @@ export class CombustibleRepository {
     client: PoolClient,
     tenantId: string,
     id: number,
-    f: {
-      factorLitros?: number;
-      cantidad?: number;
-      costoUnitario: number;
-      costoOrigen?: string | null;
-    }
+    f: { cantidad?: number; costoUnitario: number; costoOrigen?: string | null }
   ) {
     await client.query(
       `UPDATE combustible_despachos
-          SET factor_litros = COALESCE($3, factor_litros),
-              cantidad = COALESCE($4, cantidad),
-              costo_unitario = $5,
-              costo_origen = COALESCE($6, costo_origen)
+          SET cantidad = COALESCE($3, cantidad),
+              costo_unitario = $4,
+              costo_origen = COALESCE($5, costo_origen)
         WHERE id = $1 AND tenant_id = $2`,
-      [
-        id,
-        tenantId,
-        f.factorLitros ?? null,
-        f.cantidad ?? null,
-        f.costoUnitario,
-        f.costoOrigen ?? null,
-      ]
+      [id, tenantId, f.cantidad ?? null, f.costoUnitario, f.costoOrigen ?? null]
     );
   }
 
-  async actualizarRenglonCompraCorregido(
+  /** Renglón de un vale del almacén o de una compra en ruta. `costoPorBulto`
+   *  solo cuando la corrección lo deduce de un vale viejo (queda guardado
+   *  para la próxima). */
+  async actualizarRenglonDespachoCorregido(
     client: PoolClient,
     tenantId: string,
     id: number,
-    f: { factorLitros: number; litros: number }
+    f: { factorLitros: number; litros: number; costoPorBulto?: number | null }
   ) {
     await client.query(
-      `UPDATE combustible_despacho_urea_lineas SET factor_litros = $3, litros = $4
+      `UPDATE combustible_despacho_urea_lineas
+          SET factor_litros = $3, litros = $4, costo_por_bulto = COALESCE($5, costo_por_bulto)
         WHERE id = $1 AND tenant_id = $2`,
-      [id, tenantId, f.factorLitros, f.litros]
+      [id, tenantId, f.factorLitros, f.litros, f.costoPorBulto ?? null]
     );
   }
 
@@ -4080,8 +4150,10 @@ export class CombustibleRepository {
     codigo: string
   ): Promise<number> {
     const result = await client.query<{ n: string }>(
-      // Los renglones de la compra en ruta (0120) también congelan los
-      // litros por bulto: cuentan igual que un vale o una entrada.
+      // Todo lo que congeló los litros por bulto del envase: los renglones de
+      // vales y compras (0120/0131), de entradas (0131) y de conteos (0130).
+      // Las filas sueltas con presentación ya no existen desde 0131; se
+      // siguen contando por si una base vieja llegara sin migrar.
       `SELECT (
          (SELECT COUNT(*) FROM combustible_despachos
            WHERE tenant_id = $1 AND presentacion = $2)
@@ -4090,6 +4162,12 @@ export class CombustibleRepository {
            WHERE tenant_id = $1 AND presentacion = $2)
          +
          (SELECT COUNT(*) FROM combustible_despacho_urea_lineas
+           WHERE tenant_id = $1 AND presentacion = $2)
+         +
+         (SELECT COUNT(*) FROM combustible_recepcion_urea_lineas
+           WHERE tenant_id = $1 AND presentacion = $2)
+         +
+         (SELECT COUNT(*) FROM combustible_conteo_urea_lineas
            WHERE tenant_id = $1 AND presentacion = $2)
        ) AS n`,
       [tenantId, codigo]
@@ -4133,18 +4211,22 @@ export class CombustibleRepository {
         SELECT date_trunc('month', $2::timestamptz AT TIME ZONE 'America/Lima')
                  AT TIME ZONE 'America/Lima' AS inicio_mes
       ),
+      -- Los renglones (0131): un vale o una entrada puede traer varios
+      -- envases, y cada uno suma en el suyo.
       mov AS (
-        SELECT presentacion, cantidad_bultos AS bultos, cantidad AS litros,
-               factor_litros, recibido_en AS fecha, 1 AS signo
-          FROM combustible_recepciones
-         WHERE tenant_id = $1 AND producto = 'urea' AND anulada_en IS NULL
-           AND recibido_en <= $2::timestamptz
+        SELECT l.presentacion, l.cantidad_bultos AS bultos, l.litros,
+               l.factor_litros, r.recibido_en AS fecha, 1 AS signo
+          FROM combustible_recepcion_urea_lineas l
+          JOIN combustible_recepciones r ON r.id = l.recepcion_id AND r.tenant_id = l.tenant_id
+         WHERE l.tenant_id = $1 AND r.producto = 'urea' AND r.anulada_en IS NULL
+           AND r.recibido_en <= $2::timestamptz
         UNION ALL
         -- Solo el ALMACÉN (0119): la compra en ruta nunca entró al depósito.
-        SELECT presentacion, cantidad_bultos, cantidad, factor_litros, despachado_en, -1
-          FROM combustible_despachos
-         WHERE tenant_id = $1 AND producto = 'urea' AND origen = 'almacen'
-           AND anulada_en IS NULL AND despachado_en <= $2::timestamptz
+        SELECT l.presentacion, l.cantidad_bultos, l.litros, l.factor_litros, d.despachado_en, -1
+          FROM combustible_despacho_urea_lineas l
+          JOIN combustible_despachos d ON d.id = l.despacho_id AND d.tenant_id = l.tenant_id
+         WHERE l.tenant_id = $1 AND d.producto = 'urea' AND d.origen = 'almacen'
+           AND d.anulada_en IS NULL AND d.despachado_en <= $2::timestamptz
       ),
       por_envase AS (
         SELECT m.presentacion,
@@ -4451,6 +4533,9 @@ export class CombustibleRepository {
   }
 
   /** KARDEX DE UREA (entrega 3): entradas, vales y conteos del período en UNA
+   *  línea de tiempo, cada uno con sus `renglones` (0131: "1 caja + 2
+   *  bolsas" es una fila con dos renglones).
+   *
    *  línea de tiempo. Es el libro del ALMACÉN: las compras en ruta (0119) no
    *  aparecen, porque nunca entraron ni salieron del depósito; más el saldo con el que arranca (todo lo vigente
    *  ANTERIOR a `desde`). El saldo corriente se arma en el service, no acá:
@@ -4467,7 +4552,15 @@ export class CombustibleRepository {
           SELECT 1 AS orden, 'entrada' AS tipo, r.id, r.recibido_en AS ocurrido_en,
                  COALESCE(r.tipo_documento || ' ' || r.numero_documento, 'sin documento') AS documento,
                  g.nombre AS detalle,
-                 r.cantidad, r.cantidad_bultos, r.presentacion, r.factor_litros,
+                 r.cantidad,
+                 (SELECT COALESCE(json_agg(json_build_object(
+                     'presentacion', l.presentacion, 'nombre', pr.nombre,
+                     'bultos', l.cantidad_bultos, 'factor_litros', l.factor_litros,
+                     'litros', l.litros) ORDER BY l.presentacion), '[]'::json)
+                    FROM combustible_recepcion_urea_lineas l
+                    LEFT JOIN combustible_urea_presentaciones pr
+                      ON pr.tenant_id = l.tenant_id AND pr.codigo = l.presentacion
+                   WHERE l.recepcion_id = r.id AND l.tenant_id = $1) AS renglones,
                  u.nombre AS usuario, r.anulada_en, r.motivo_anulacion
             FROM combustible_recepciones r
             LEFT JOIN combustible_grifos g ON g.id = r.grifo_id AND g.tenant_id = $1
@@ -4479,7 +4572,15 @@ export class CombustibleRepository {
                  d.serie_talonario || '-' || lpad(d.n_vale::text, 5, '0'),
                  COALESCE(e.placa_codigo, 'sin unidad')
                    || COALESCE(' · ' || d.conductor_nombre, ''),
-                 d.cantidad, d.cantidad_bultos, d.presentacion, d.factor_litros,
+                 d.cantidad,
+                 (SELECT COALESCE(json_agg(json_build_object(
+                     'presentacion', l.presentacion, 'nombre', pr.nombre,
+                     'bultos', l.cantidad_bultos, 'factor_litros', l.factor_litros,
+                     'litros', l.litros) ORDER BY l.presentacion), '[]'::json)
+                    FROM combustible_despacho_urea_lineas l
+                    LEFT JOIN combustible_urea_presentaciones pr
+                      ON pr.tenant_id = l.tenant_id AND pr.codigo = l.presentacion
+                   WHERE l.despacho_id = d.id AND l.tenant_id = $1),
                  u.nombre, d.anulada_en, d.motivo_anulacion
             FROM combustible_despachos d
             LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1
@@ -4489,7 +4590,15 @@ export class CombustibleRepository {
           UNION ALL
           SELECT 3, 'conteo', c.id, c.contado_en, 'conteo físico',
                  COALESCE(c.observaciones, ''),
-                 c.cantidad_litros, NULL, NULL, NULL,
+                 c.cantidad_litros,
+                 (SELECT COALESCE(json_agg(json_build_object(
+                     'presentacion', l.presentacion, 'nombre', pr.nombre,
+                     'bultos', l.cantidad_bultos, 'factor_litros', l.factor_litros,
+                     'litros', l.litros) ORDER BY l.presentacion), '[]'::json)
+                    FROM combustible_conteo_urea_lineas l
+                    LEFT JOIN combustible_urea_presentaciones pr
+                      ON pr.tenant_id = l.tenant_id AND pr.codigo = l.presentacion
+                   WHERE l.conteo_id = c.id AND l.tenant_id = $1),
                  u.nombre, c.anulada_en, c.motivo_anulacion
             FROM combustible_conteos_urea c
             LEFT JOIN usuarios u ON u.id = c.usuario_id
@@ -6097,6 +6206,16 @@ export class CombustibleRepository {
       SELECT r.id, r.producto, r.combustible_id, r.grifo_id, r.cantidad, r.costo_unitario,
              (r.cantidad * r.costo_unitario) AS costo_total,
              r.presentacion, r.factor_litros, r.cantidad_bultos,
+             -- Urea (0131): de qué está hecha la entrada.
+             (SELECT COALESCE(json_agg(json_build_object(
+                'presentacion', l.presentacion, 'nombre', pr.nombre,
+                'cantidad_bultos', l.cantidad_bultos, 'factor_litros', l.factor_litros,
+                'litros', l.litros, 'costo_por_bulto', l.costo_por_bulto)
+                ORDER BY l.presentacion), '[]'::json)
+               FROM combustible_recepcion_urea_lineas l
+               LEFT JOIN combustible_urea_presentaciones pr
+                 ON pr.tenant_id = l.tenant_id AND pr.codigo = l.presentacion
+              WHERE l.recepcion_id = r.id AND l.tenant_id = r.tenant_id) AS renglones,
              r.tipo_documento, r.numero_documento, r.recibido_en, r.usuario_id,
              r.creado_en, r.anulada_en, r.anulada_por, r.motivo_anulacion,
              r.requiere_validacion, r.cantidad_documento, r.validada_en, r.validada_por,

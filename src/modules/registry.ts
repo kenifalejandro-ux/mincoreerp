@@ -316,6 +316,14 @@ export const MODULOS: ModuloDefinicion[] = [
         pk: "serial",
         fks: { despacho_id: "combustible_despachos" },
       },
+      // Renglones de la entrada de urea (0131): "20 cajas + 40 bolsas" de una
+      // factura. Cascadean desde la recepción (que ya está en `raices`); la
+      // presentación es un código y viaja tal cual.
+      {
+        nombre: "combustible_recepcion_urea_lineas",
+        pk: "serial",
+        fks: { recepcion_id: "combustible_recepciones" },
+      },
       // Precintos numerados (migración 0095). Las tres cascadean desde su
       // padre (el tanque, el punto o la lectura), así que no necesitan
       // entrada en `raices`. Van DESPUÉS de combustible_recepciones y

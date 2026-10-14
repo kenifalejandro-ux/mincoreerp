@@ -144,13 +144,26 @@ function TipoMovimiento({ tipo }: { tipo: string }) {
   );
 }
 
-function etiquetaMovimiento(
-  presentaciones: PresentacionFila[],
-  codigo: string,
-  factorLitros: string | null
-): string {
-  const nombre = presentaciones.find((p) => p.codigo === codigo)?.nombre ?? codigo;
-  return factorLitros ? `${nombre} (${formatearNumero(factorLitros)} L)` : nombre;
+/** Un renglón de urea tal como lo devuelve la API (0131). */
+interface RenglonApi {
+  presentacion: string;
+  nombre: string | null;
+  cantidad_bultos: number;
+  factor_litros: string;
+  litros: string;
+  costo_por_bulto: string | null;
+}
+
+/** "1× Caja (20 L) + 2× Bolsa (4 L)": de qué está hecho un vale o una
+ *  entrada, con los litros por bulto CONGELADOS en cada renglón (no los del
+ *  catálogo de hoy). */
+function etiquetaRenglones(renglones: RenglonApi[] | undefined): string {
+  return (renglones ?? [])
+    .map(
+      (r) =>
+        `${formatearNumero(String(r.cantidad_bultos), 0)}× ${r.nombre ?? r.presentacion} (${formatearNumero(r.factor_litros)} L)`
+    )
+    .join(" + ");
 }
 
 type Vista =
@@ -266,11 +279,9 @@ interface ValeFila {
   comprobante_numero: string | null;
   comprobante_subido_en: string | null;
   equipo_id: number | null;
-  presentacion: Presentacion;
-  // Los litros por bulto VIGENTES cuando se cargó el vale (0092). La
-  // pantalla muestra estos, no los del catálogo de hoy.
-  factor_litros: string | null;
-  cantidad_bultos: string;
+  // De qué está hecho el vale (0131), con los litros por bulto VIGENTES
+  // cuando se cargó. La pantalla muestra estos, no los del catálogo de hoy.
+  renglones: RenglonApi[];
   cantidad: string;
   costo_total: string;
   conductor_nombre: string | null;
@@ -282,9 +293,7 @@ interface ValeFila {
 interface EntradaFila {
   id: number;
   grifo_nombre: string;
-  presentacion: Presentacion;
-  factor_litros: string | null;
-  cantidad_bultos: string;
+  renglones: RenglonApi[];
   cantidad: string;
   costo_total: string;
   tipo_documento: string | null;
@@ -332,9 +341,14 @@ interface KardexFila {
   detalle: string;
   entrada: number;
   salida: number;
-  bultos: number | null;
-  presentacion: string | null;
-  factor_litros: number | null;
+  /** De qué está hecho el movimiento (0131). */
+  renglones: {
+    presentacion: string;
+    nombre: string;
+    bultos: number;
+    factor_litros: number;
+    litros: number;
+  }[];
   saldo_teorico: number | null;
   contado: number | null;
   diferencia: number | null;
@@ -1034,9 +1048,11 @@ function TablaKardex({ kardex, sinFechas }: { kardex: KardexUrea | null; sinFech
                   <td className="px-4 py-2">{f.documento}</td>
                   <td className="px-4 py-2">
                     {f.detalle}
-                    {f.bultos !== null && f.factor_litros !== null && (
+                    {f.renglones.length > 0 && (
                       <span className="block text-xs text-slate-400">
-                        {n(f.bultos)} × {n(f.factor_litros)} L
+                        {f.renglones
+                          .map((r) => `${n(r.bultos)} × ${r.nombre} (${n(r.factor_litros)} L)`)
+                          .join(" + ")}
                       </span>
                     )}
                     {f.anulada && (
@@ -1575,7 +1591,6 @@ export default function UreaPanel() {
             <TablaVales
               filas={vales}
               equipos={equipos}
-              presentaciones={presentaciones}
               onAnulado={recargarTodo}
               puedeAnular={esAdmin}
             />
@@ -1588,9 +1603,7 @@ export default function UreaPanel() {
               onCambio={recargarTodo}
             />
           )}
-          {!cargando && vista === "entradas" && (
-            <TablaEntradas filas={entradas} presentaciones={presentaciones} />
-          )}
+          {!cargando && vista === "entradas" && <TablaEntradas filas={entradas} />}
           {!cargando && vista === "conteos" && (
             <TablaConteos filas={conteos} onAnulado={recargarTodo} puedeAnular={esAdmin} />
           )}
@@ -1730,13 +1743,11 @@ export default function UreaPanel() {
 function TablaVales({
   filas,
   equipos,
-  presentaciones,
   onAnulado,
   puedeAnular,
 }: {
   filas: ValeFila[];
   equipos: Equipo[];
-  presentaciones: PresentacionFila[];
   onAnulado: () => void;
   puedeAnular: boolean;
 }) {
@@ -1801,10 +1812,7 @@ function TablaVales({
               </td>
               <td className="px-4 py-2">{formatearFecha(f.despachado_en)}</td>
               <td className="px-4 py-2">{placaDe(f.equipo_id)}</td>
-              <td className="px-4 py-2">
-                {formatearNumero(f.cantidad_bultos, 0)}×{" "}
-                {etiquetaMovimiento(presentaciones, f.presentacion, f.factor_litros)}
-              </td>
+              <td className="px-4 py-2">{etiquetaRenglones(f.renglones)}</td>
               <td className="px-4 py-2 text-right">{formatearNumero(f.cantidad)} L</td>
               <td className="px-4 py-2 text-right">S/ {formatearNumero(f.costo_total, 2)}</td>
               <td className="px-4 py-2">{f.conductor_nombre ?? "—"}</td>
@@ -1848,13 +1856,7 @@ function TablaVales({
   );
 }
 
-function TablaEntradas({
-  filas,
-  presentaciones,
-}: {
-  filas: EntradaFila[];
-  presentaciones: PresentacionFila[];
-}) {
+function TablaEntradas({ filas }: { filas: EntradaFila[] }) {
   if (filas.length === 0) {
     return (
       <div className="p-6 text-sm text-slate-500">Todavía no hay entradas de urea cargadas.</div>
@@ -1878,10 +1880,7 @@ function TablaEntradas({
             <tr key={f.id} className={f.anulada_en ? "opacity-50" : ""}>
               <td className="px-4 py-2">{formatearFecha(f.recibido_en)}</td>
               <td className="px-4 py-2">{f.grifo_nombre}</td>
-              <td className="px-4 py-2">
-                {formatearNumero(f.cantidad_bultos, 0)}×{" "}
-                {etiquetaMovimiento(presentaciones, f.presentacion, f.factor_litros)}
-              </td>
+              <td className="px-4 py-2">{etiquetaRenglones(f.renglones)}</td>
               <td className="px-4 py-2 text-right">{formatearNumero(f.cantidad)} L</td>
               <td className="px-4 py-2 text-right">S/ {formatearNumero(f.costo_total, 2)}</td>
               <td className="px-4 py-2">
@@ -3183,10 +3182,12 @@ function ModalVale({
   const [equipoId, setEquipoId] = useState("");
   const [grifoId, setGrifoId] = useState("");
   const activas = presentacionesActivas(presentaciones);
-  const [presentacion, setPresentacion] = useState<Presentacion>(() =>
-    presentacionPorDefecto(presentaciones)
-  );
-  const [cantidadBultos, setCantidadBultos] = useState("");
+  // "1 caja + 2 bolsas" en un mismo vale (0131). Sin precio: el vale del
+  // almacén toma el promedio de lo que la empresa pagó por la urea.
+  const [renglones, setRenglones] = useState<RenglonCompra[]>(() => [
+    nuevoRenglon(presentacionPorDefecto(presentaciones)),
+  ]);
+  const { listos: renglonesListos } = estadoRenglones(renglones, false);
   const [despachadoEn, setDespachadoEn] = useState(ahoraParaInputLocal());
   const [observaciones, setObservaciones] = useState("");
   const [enviando, setEnviando] = useState(false);
@@ -3212,8 +3213,10 @@ function ModalVale({
           equipo_id: Number(equipoId),
           serie_talonario: serie.trim(),
           n_vale: Number(nVale),
-          presentacion,
-          cantidad_bultos: Number(cantidadBultos),
+          lineas: renglones.map((r) => ({
+            presentacion: r.presentacion,
+            cantidad_bultos: Number(r.cantidad),
+          })),
           despachado_en: new Date(despachadoEn).toISOString(),
           observaciones: observaciones.trim() || undefined,
         }),
@@ -3297,32 +3300,13 @@ function ModalVale({
           </select>
           {grifos.length === 0 && <AvisoSinProveedores />}
         </label>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <label className="flex flex-col text-sm gap-1">
-            <span className="text-gray-600">Presentación</span>
-            <select
-              value={presentacion}
-              onChange={(e) => setPresentacion(e.target.value as Presentacion)}
-              className="rounded border border-gray-300 px-3 py-2"
-            >
-              {activas.map((p) => (
-                <option key={p.codigo} value={p.codigo}>
-                  {etiquetaPresentacion(p)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex flex-col text-sm gap-1">
-            <span className="text-gray-600">Cantidad</span>
-            <input
-              type="number"
-              min={1}
-              value={cantidadBultos}
-              onChange={(e) => setCantidadBultos(e.target.value)}
-              className="rounded border border-gray-300 px-3 py-2"
-            />
-          </label>
-        </div>
+        <RenglonesUrea
+          renglones={renglones}
+          setRenglones={setRenglones}
+          activas={activas}
+          conPrecio={false}
+          titulo="Qué salió del almacén"
+        />
         <label className="flex flex-col text-sm gap-1">
           <span className="text-gray-600">Fecha y hora del vale</span>
           <input
@@ -3351,13 +3335,7 @@ function ModalVale({
           <button
             type="button"
             disabled={
-              !presentacion ||
-              !serie.trim() ||
-              !nVale ||
-              !equipoId ||
-              !grifoId ||
-              !cantidadBultos ||
-              enviando
+              !renglonesListos || !serie.trim() || !nVale || !equipoId || !grifoId || enviando
             }
             onClick={enviar}
             className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed"
@@ -3399,6 +3377,187 @@ interface RenglonCompra {
   precioAuto: boolean;
 }
 
+function nuevoRenglon(presentacion: string, precio = ""): RenglonCompra {
+  return { clave: crypto.randomUUID(), presentacion, cantidad: "", precio, precioAuto: true };
+}
+
+/** Si los renglones se pueden mandar: cada uno con su cantidad (y su precio,
+ *  si el papel lo trae), y sin el mismo envase dos veces -- el servidor lo
+ *  rechaza igual, pero la persona se entera antes. */
+function estadoRenglones(renglones: RenglonCompra[], conPrecio: boolean) {
+  const codigos = renglones.map((r) => r.presentacion);
+  const repetida = new Set(codigos).size !== codigos.length;
+  const completos = renglones.every(
+    (r) => r.presentacion && Number(r.cantidad) > 0 && (!conPrecio || Number(r.precio) > 0)
+  );
+  return { repetida, listos: completos && !repetida };
+}
+
+/** "1 caja + 2 bolsas" (0120 la compra, 0131 el vale y la entrada): un
+ *  renglón por envase, con su cantidad, su precio por bulto si el papel lo
+ *  trae, y debajo la suma en litros (y en soles). El mismo bloque en los tres
+ *  formularios, para que se lean igual. */
+function RenglonesUrea({
+  renglones,
+  setRenglones,
+  activas,
+  conPrecio,
+  vigentePara,
+  titulo,
+}: {
+  renglones: RenglonCompra[];
+  setRenglones: React.Dispatch<React.SetStateAction<RenglonCompra[]>>;
+  activas: PresentacionFila[];
+  conPrecio: boolean;
+  /** El precio de catálogo vigente para un envase (0121), si hay. */
+  vigentePara?: (presentacion: string) => PrecioUrea | null;
+  titulo: string;
+}) {
+  const envaseDe = (codigo: string) => activas.find((p) => p.codigo === codigo);
+  const litrosDe = (r: RenglonCompra) => {
+    const envase = envaseDe(r.presentacion);
+    return envase && r.cantidad ? Number(r.cantidad) * Number(envase.litros) : 0;
+  };
+  const totalLitros = renglones.reduce((a, r) => a + litrosDe(r), 0);
+  const totalSoles = renglones.reduce(
+    (a, r) => a + (r.cantidad && r.precio ? Number(r.cantidad) * Number(r.precio) : 0),
+    0
+  );
+  const codigosUsados = renglones.map((r) => r.presentacion);
+  const { repetida } = estadoRenglones(renglones, conPrecio);
+  const precioDe = (codigo: string) => {
+    const v = vigentePara?.(codigo);
+    return v ? String(Number(v.precio_por_bulto)) : "";
+  };
+  const actualizar = (clave: string, cambios: Partial<RenglonCompra>) =>
+    setRenglones((rs) => rs.map((r) => (r.clave === clave ? { ...r, ...cambios } : r)));
+  const agregar = () => {
+    // Arranca en el primer envase que todavía no se usó: dos renglones del
+    // mismo envase son uno solo.
+    const libre = activas.find((p) => !codigosUsados.includes(p.codigo));
+    setRenglones((rs) => [
+      ...rs,
+      nuevoRenglon(libre?.codigo ?? "", libre && conPrecio ? precioDe(libre.codigo) : ""),
+    ]);
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-sm text-gray-600">{titulo}</span>
+      {renglones.map((r) => {
+        const envase = envaseDe(r.presentacion);
+        return (
+          <div
+            key={r.clave}
+            className={`grid items-end gap-2 rounded-xl border border-slate-200 p-2 ${
+              conPrecio ? "grid-cols-[1fr_5rem_6rem_auto]" : "grid-cols-[1fr_6rem_auto]"
+            }`}
+          >
+            <label className="flex flex-col text-xs gap-1">
+              <span className="text-gray-500">Presentación</span>
+              <select
+                value={r.presentacion}
+                onChange={(e) =>
+                  actualizar(r.clave, {
+                    presentacion: e.target.value,
+                    ...(conPrecio && r.precioAuto ? { precio: precioDe(e.target.value) } : {}),
+                  })
+                }
+                className="rounded border border-gray-300 px-2 py-2 text-sm"
+              >
+                {activas.map((p) => (
+                  <option key={p.codigo} value={p.codigo}>
+                    {etiquetaPresentacion(p)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col text-xs gap-1">
+              <span className="text-gray-500">Cantidad</span>
+              <input
+                type="number"
+                min={1}
+                value={r.cantidad}
+                onChange={(e) => actualizar(r.clave, { cantidad: e.target.value })}
+                className="rounded border border-gray-300 px-2 py-2 text-sm"
+              />
+            </label>
+            {conPrecio && (
+              <label className="flex flex-col text-xs gap-1">
+                <span className="text-gray-500">
+                  S/ por {envase?.nombre.toLowerCase() ?? "bulto"}
+                </span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={r.precio}
+                  onChange={(e) =>
+                    actualizar(r.clave, { precio: e.target.value, precioAuto: false })
+                  }
+                  className="rounded border border-gray-300 px-2 py-2 text-sm"
+                />
+              </label>
+            )}
+            <button
+              type="button"
+              onClick={() => setRenglones((rs) => rs.filter((x) => x.clave !== r.clave))}
+              disabled={renglones.length === 1}
+              title="Quitar renglón"
+              aria-label="Quitar renglón"
+              className="mb-1 p-2 text-slate-400 hover:text-red-600 disabled:opacity-30"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+            <div className={`${conPrecio ? "col-span-4" : "col-span-3"} flex flex-wrap gap-x-3`}>
+              {litrosDe(r) > 0 && (
+                <span className="text-xs text-slate-500">
+                  = {formatearNumero(String(litrosDe(r)))} L
+                </span>
+              )}
+              {conPrecio && vigentePara && (
+                <PistaPrecioCatalogo
+                  vigente={vigentePara(r.presentacion)}
+                  precioTipeado={r.precio}
+                />
+              )}
+            </div>
+          </div>
+        );
+      })}
+      {renglones.length < Math.min(10, activas.length) && (
+        <button
+          type="button"
+          onClick={agregar}
+          className="inline-flex w-fit items-center gap-1 text-sm font-medium text-slate-600 hover:text-slate-900"
+        >
+          <Plus className="h-4 w-4" />
+          Agregar otra presentación
+        </button>
+      )}
+      {repetida && (
+        <span className="text-xs text-red-600">
+          La misma presentación está en dos renglones: súmalos en uno.
+        </span>
+      )}
+      {totalLitros > 0 && (
+        <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">
+          Total: <strong>{formatearNumero(String(totalLitros))} L</strong>
+          {conPrecio && totalSoles > 0 && <> · S/ {formatearNumero(String(totalSoles), 2)}</>}
+          {renglones.length > 1 && (
+            <span className="block text-xs text-slate-500">
+              {renglones
+                .filter((r) => litrosDe(r) > 0)
+                .map((r) => `${formatearNumero(String(litrosDe(r)))} L`)
+                .join(" + ")}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ModalCompraUrea({
   equipos,
   grifos,
@@ -3437,25 +3596,7 @@ function ModalCompraUrea({
   const [error, setError] = useState<string | null>(null);
 
   const equipoElegido = equipos.find((e) => String(e.id) === equipoId);
-  const envaseDe = (codigo: string) => activas.find((p) => p.codigo === codigo);
-
-  const litrosDe = (r: RenglonCompra) => {
-    const envase = envaseDe(r.presentacion);
-    return envase && r.cantidad ? Number(r.cantidad) * Number(envase.litros) : 0;
-  };
-  const totalLitros = renglones.reduce((a, r) => a + litrosDe(r), 0);
-  const totalSoles = renglones.reduce(
-    (a, r) => a + (r.cantidad && r.precio ? Number(r.cantidad) * Number(r.precio) : 0),
-    0
-  );
-  const codigosUsados = renglones.map((r) => r.presentacion);
-  const repetida = new Set(codigosUsados).size !== codigosUsados.length;
-  const renglonesCompletos = renglones.every(
-    (r) => r.presentacion && Number(r.cantidad) > 0 && Number(r.precio) > 0
-  );
-
-  const actualizar = (clave: string, cambios: Partial<RenglonCompra>) =>
-    setRenglones((rs) => rs.map((r) => (r.clave === clave ? { ...r, ...cambios } : r)));
+  const { listos: renglonesListos } = estadoRenglones(renglones, true);
 
   /** El precio de catálogo para un renglón, con el proveedor y la fecha que
    *  estén elegidos ahora. */
@@ -3471,24 +3612,6 @@ function ModalCompraUrea({
       const v = precioVigenteUrea(precios, grifo, r.presentacion, fecha);
       return { ...r, precio: v ? String(Number(v.precio_por_bulto)) : "" };
     });
-  const agregarRenglon = () => {
-    // Arranca en la primera presentación que todavía no se usó: dos renglones
-    // de la misma presentación son uno solo (el servidor lo rechaza).
-    const libre = activas.find((p) => !codigosUsados.includes(p.codigo));
-    setRenglones((rs) => [
-      ...rs,
-      {
-        clave: crypto.randomUUID(),
-        presentacion: libre?.codigo ?? "",
-        cantidad: "",
-        precio: libre
-          ? String(Number(vigentePara(libre.codigo)?.precio_por_bulto ?? "") || "")
-          : "",
-        precioAuto: true,
-      },
-    ]);
-  };
-
   /** Mismo criterio que la foto de combustible: JPG/PNG o PDF, comprimida en
    *  el teléfono antes de subir (la señal en ruta es mala), máximo 6 MB. */
   const elegirFoto = async (archivo: File | undefined) => {
@@ -3654,115 +3777,14 @@ function ModalCompraUrea({
           </label>
         </div>
 
-        <div className="flex flex-col gap-2">
-          <span className="text-sm text-gray-600">Qué se compró</span>
-          {renglones.map((r) => {
-            const envase = envaseDe(r.presentacion);
-            return (
-              <div
-                key={r.clave}
-                className="grid grid-cols-[1fr_5rem_6rem_auto] items-end gap-2 rounded-xl border border-slate-200 p-2"
-              >
-                <label className="flex flex-col text-xs gap-1">
-                  <span className="text-gray-500">Presentación</span>
-                  <select
-                    value={r.presentacion}
-                    onChange={(e) => {
-                      const v = vigentePara(e.target.value);
-                      actualizar(r.clave, {
-                        presentacion: e.target.value,
-                        ...(r.precioAuto
-                          ? { precio: v ? String(Number(v.precio_por_bulto)) : "" }
-                          : {}),
-                      });
-                    }}
-                    className="rounded border border-gray-300 px-2 py-2 text-sm"
-                  >
-                    {activas.map((p) => (
-                      <option key={p.codigo} value={p.codigo}>
-                        {etiquetaPresentacion(p)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col text-xs gap-1">
-                  <span className="text-gray-500">Cantidad</span>
-                  <input
-                    type="number"
-                    min={1}
-                    value={r.cantidad}
-                    onChange={(e) => actualizar(r.clave, { cantidad: e.target.value })}
-                    className="rounded border border-gray-300 px-2 py-2 text-sm"
-                  />
-                </label>
-                <label className="flex flex-col text-xs gap-1">
-                  <span className="text-gray-500">
-                    S/ por {envase?.nombre.toLowerCase() ?? "bulto"}
-                  </span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min={0}
-                    value={r.precio}
-                    onChange={(e) =>
-                      actualizar(r.clave, { precio: e.target.value, precioAuto: false })
-                    }
-                    className="rounded border border-gray-300 px-2 py-2 text-sm"
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setRenglones((rs) => rs.filter((x) => x.clave !== r.clave))}
-                  disabled={renglones.length === 1}
-                  title="Quitar renglón"
-                  className="mb-1 p-2 text-slate-400 hover:text-red-600 disabled:opacity-30"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-                <div className="col-span-4 flex flex-wrap gap-x-3">
-                  {litrosDe(r) > 0 && (
-                    <span className="text-xs text-slate-500">
-                      = {formatearNumero(String(litrosDe(r)))} L
-                    </span>
-                  )}
-                  <PistaPrecioCatalogo
-                    vigente={vigentePara(r.presentacion)}
-                    precioTipeado={r.precio}
-                  />
-                </div>
-              </div>
-            );
-          })}
-          {renglones.length < Math.min(10, activas.length) && (
-            <button
-              type="button"
-              onClick={agregarRenglon}
-              className="inline-flex w-fit items-center gap-1 text-sm font-medium text-slate-600 hover:text-slate-900"
-            >
-              <Plus className="h-4 w-4" />
-              Agregar otra presentación
-            </button>
-          )}
-          {repetida && (
-            <span className="text-xs text-red-600">
-              La misma presentación está en dos renglones: sumalos en uno.
-            </span>
-          )}
-          {totalLitros > 0 && (
-            <div className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">
-              Total: <strong>{formatearNumero(String(totalLitros))} L</strong>
-              {totalSoles > 0 && <> · S/ {formatearNumero(String(totalSoles), 2)}</>}
-              {renglones.length > 1 && (
-                <span className="block text-xs text-slate-500">
-                  {renglones
-                    .filter((r) => litrosDe(r) > 0)
-                    .map((r) => `${formatearNumero(String(litrosDe(r)))} L`)
-                    .join(" + ")}
-                </span>
-              )}
-            </div>
-          )}
-        </div>
+        <RenglonesUrea
+          renglones={renglones}
+          setRenglones={setRenglones}
+          activas={activas}
+          conPrecio
+          vigentePara={(codigo) => vigentePara(codigo)}
+          titulo="Qué se compró"
+        />
 
         <div className="flex flex-col text-sm gap-1">
           <span className="text-gray-600">Foto o PDF del comprobante (obligatoria)</span>
@@ -3805,8 +3827,7 @@ function ModalCompraUrea({
             disabled={
               !equipoId ||
               !grifoId ||
-              !renglonesCompletos ||
-              repetida ||
+              !renglonesListos ||
               !comprobanteNumero.trim() ||
               !foto ||
               enviando
@@ -3839,19 +3860,22 @@ function ModalEntrada({
   const [clienteUuid] = useState(() => crypto.randomUUID());
   const [grifoId, setGrifoId] = useState("");
   const activas = presentacionesActivas(presentaciones);
-  const [presentacion, setPresentacion] = useState<Presentacion>(() =>
-    presentacionPorDefecto(presentaciones)
-  );
-  const [cantidadBultos, setCantidadBultos] = useState("");
-  const [costoUnitario, setCostoUnitario] = useState("");
-  // Mismo criterio que en la compra (0121): el catálogo propone, el papel
-  // manda. Tipear el costo lo saca del autocompletado.
-  const [costoAuto, setCostoAuto] = useState(true);
-  const proponer = (grifo: string, pres: string, fecha: string) => {
-    if (!costoAuto) return;
-    const v = precioVigenteUrea(precios, grifo, pres, fecha);
-    setCostoUnitario(v ? String(Number(v.precio_por_bulto)) : "");
-  };
+  // Una factura con "20 cajas + 40 bolsas" es UNA entrada (0131), cada
+  // renglón con su precio por bulto. Mismo criterio que la compra (0121): el
+  // catálogo propone, la factura manda -- tipear un precio lo saca del
+  // autocompletado.
+  const [renglones, setRenglones] = useState<RenglonCompra[]>(() => [
+    nuevoRenglon(presentacionPorDefecto(presentaciones)),
+  ]);
+  const { listos: renglonesListos } = estadoRenglones(renglones, true);
+  const proponer = (grifo: string, fecha: string) =>
+    setRenglones((rs) =>
+      rs.map((r) => {
+        if (!r.precioAuto) return r;
+        const v = precioVigenteUrea(precios, grifo, r.presentacion, fecha);
+        return { ...r, precio: v ? String(Number(v.precio_por_bulto)) : "" };
+      })
+    );
   const [tipoDocumento, setTipoDocumento] = useState<"" | "factura" | "guia_remision">("");
   const [numeroDocumento, setNumeroDocumento] = useState("");
   const [recibidoEn, setRecibidoEn] = useState(ahoraParaInputLocal());
@@ -3869,9 +3893,13 @@ function ModalEntrada({
           cliente_uuid: clienteUuid,
           producto: "urea",
           grifo_id: Number(grifoId),
-          presentacion,
-          cantidad_bultos: Number(cantidadBultos),
-          costo_unitario: Number(costoUnitario),
+          // POR BULTO cada uno: el servidor suma los litros y guarda el costo
+          // por litro del total de la factura.
+          lineas: renglones.map((r) => ({
+            presentacion: r.presentacion,
+            cantidad_bultos: Number(r.cantidad),
+            costo_unitario: Number(r.precio),
+          })),
           tipo_documento: tipoDocumento || undefined,
           numero_documento: numeroDocumento.trim() || undefined,
           recibido_en: new Date(recibidoEn).toISOString(),
@@ -3900,7 +3928,7 @@ function ModalEntrada({
             value={grifoId}
             onChange={(e) => {
               setGrifoId(e.target.value);
-              proponer(e.target.value, presentacion, recibidoEn);
+              proponer(e.target.value, recibidoEn);
             }}
             className="rounded border border-gray-300 px-3 py-2"
           >
@@ -3913,54 +3941,14 @@ function ModalEntrada({
           </select>
           {grifos.length === 0 && <AvisoSinProveedores />}
         </label>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <label className="flex flex-col text-sm gap-1">
-            <span className="text-gray-600">Presentación</span>
-            <select
-              value={presentacion}
-              onChange={(e) => {
-                setPresentacion(e.target.value as Presentacion);
-                proponer(grifoId, e.target.value, recibidoEn);
-              }}
-              className="rounded border border-gray-300 px-3 py-2"
-            >
-              {activas.map((p) => (
-                <option key={p.codigo} value={p.codigo}>
-                  {etiquetaPresentacion(p)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex flex-col text-sm gap-1">
-            <span className="text-gray-600">Cantidad recibida</span>
-            <input
-              type="number"
-              min={1}
-              value={cantidadBultos}
-              onChange={(e) => setCantidadBultos(e.target.value)}
-              className="rounded border border-gray-300 px-3 py-2"
-            />
-          </label>
-        </div>
-        <label className="flex flex-col text-sm gap-1">
-          <span className="text-gray-600">
-            Costo por {activas.find((p) => p.codigo === presentacion)?.nombre ?? "bulto"} (S/.)
-          </span>
-          <input
-            type="number"
-            step="0.01"
-            value={costoUnitario}
-            onChange={(e) => {
-              setCostoUnitario(e.target.value);
-              setCostoAuto(false);
-            }}
-            className="rounded border border-gray-300 px-3 py-2"
-          />
-          <PistaPrecioCatalogo
-            vigente={precioVigenteUrea(precios, grifoId, presentacion, recibidoEn)}
-            precioTipeado={costoUnitario}
-          />
-        </label>
+        <RenglonesUrea
+          renglones={renglones}
+          setRenglones={setRenglones}
+          activas={activas}
+          conPrecio
+          vigentePara={(codigo) => precioVigenteUrea(precios, grifoId, codigo, recibidoEn)}
+          titulo="Qué llegó"
+        />
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="flex flex-col text-sm gap-1">
             <span className="text-gray-600">Documento</span>
@@ -3989,7 +3977,11 @@ function ModalEntrada({
           <input
             type="datetime-local"
             value={recibidoEn}
-            onChange={(e) => setRecibidoEn(e.target.value)}
+            onChange={(e) => {
+              setRecibidoEn(e.target.value);
+              // El precio de catálogo es el de la fecha de la entrega.
+              proponer(grifoId, e.target.value);
+            }}
             className="rounded border border-gray-300 px-3 py-2"
           />
         </label>
@@ -4004,10 +3996,8 @@ function ModalEntrada({
           <button
             type="button"
             disabled={
-              !presentacion ||
+              !renglonesListos ||
               !grifoId ||
-              !cantidadBultos ||
-              !costoUnitario ||
               (!!tipoDocumento && !numeroDocumento.trim()) ||
               enviando
             }

@@ -294,7 +294,9 @@ describe("combustible: el almacén de urea en físico", () => {
       c.query<{ n: string }>(
         `SELECT (SELECT COUNT(*) FROM combustible_despachos WHERE tenant_id = $1 AND presentacion = 'caja')
               + (SELECT COUNT(*) FROM combustible_recepciones WHERE tenant_id = $1 AND presentacion = 'caja')
-              + (SELECT COUNT(*) FROM combustible_despacho_urea_lineas WHERE tenant_id = $1 AND presentacion = 'caja') AS n`,
+              + (SELECT COUNT(*) FROM combustible_despacho_urea_lineas WHERE tenant_id = $1 AND presentacion = 'caja')
+              + (SELECT COUNT(*) FROM combustible_recepcion_urea_lineas WHERE tenant_id = $1 AND presentacion = 'caja')
+              + (SELECT COUNT(*) FROM combustible_conteo_urea_lineas WHERE tenant_id = $1 AND presentacion = 'caja') AS n`,
         [tenantId]
       )
     );

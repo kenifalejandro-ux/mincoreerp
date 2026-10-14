@@ -800,20 +800,27 @@ interface FilaKardexEnvase {
   referencia_id: number;
   documento: string;
   detalle: string;
-  bultos: number | null;
-  presentacion: string | null;
+  /** De qué está hecho el movimiento (0131): un vale mixto aparece en cada
+   *  envase con SU parte. */
+  renglones: { presentacion: string; bultos: number; litros: number }[];
   entrada: number;
   salida: number;
   anulada: boolean;
 }
 
+/** Una fila del kardex vista desde UN envase: sus bultos y sus litros. */
+interface FilaDelEnvase extends FilaKardexEnvase {
+  bultos: number;
+  litros: number;
+}
+
 /** Del más nuevo al más viejo: cada fila lleva el saldo que dejó, partiendo
  *  de las unidades de hoy. */
-function saldosHaciaAtras(masNuevoPrimero: FilaKardexEnvase[], unidadesHoy: number) {
-  const salida: (FilaKardexEnvase & { delta: number; saldo: number })[] = [];
+function saldosHaciaAtras(masNuevoPrimero: FilaDelEnvase[], unidadesHoy: number) {
+  const salida: (FilaDelEnvase & { delta: number; saldo: number })[] = [];
   let saldo = unidadesHoy;
   for (const f of masNuevoPrimero) {
-    const delta = (f.bultos ?? 0) * (f.tipo === "entrada" ? 1 : -1);
+    const delta = f.bultos * (f.tipo === "entrada" ? 1 : -1);
     salida.push({ ...f, delta, saldo });
     saldo -= delta;
   }
@@ -854,9 +861,12 @@ function DetalleEnvase({
   // Los movimientos de ESTE envase, con su saldo en unidades. El saldo se
   // arma hacia atrás desde las unidades de hoy: el kardex trae el saldo en
   // litros del almacén entero, no por envase.
-  const propios = (filas ?? [])
-    .filter((f) => !f.anulada && f.tipo !== "conteo" && f.presentacion === envase.codigo)
-    .slice()
+  const propios: FilaDelEnvase[] = (filas ?? [])
+    .filter((f) => !f.anulada && f.tipo !== "conteo")
+    .flatMap((f) => {
+      const suyo = f.renglones.find((r) => r.presentacion === envase.codigo);
+      return suyo ? [{ ...f, bultos: suyo.bultos, litros: suyo.litros }] : [];
+    })
     .reverse();
   const conSaldo = saldosHaciaAtras(propios, envase.unidades);
 
@@ -919,9 +929,7 @@ function DetalleEnvase({
                     {f.delta > 0 ? "+" : "−"}
                     {fmt(Math.abs(f.delta), 0)}
                   </td>
-                  <td className="px-3 py-2 text-right tabular-nums">
-                    {fmt(f.tipo === "entrada" ? f.entrada : f.salida, 1)}
-                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">{fmt(f.litros, 1)}</td>
                   <td className="px-3 py-2 text-right font-semibold tabular-nums">
                     {fmt(f.saldo, 0)}
                   </td>
