@@ -59,7 +59,8 @@ export interface AlertaCombustible {
     | "urea_stock_bajo"
     | "urea_stock_excedido"
     | "urea_conteo_recargado"
-    | "urea_precio_fuera_de_catalogo";
+    | "urea_precio_fuera_de_catalogo"
+    | "urea_litros_corregidos";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -117,6 +118,7 @@ export const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   urea_stock_excedido: "Depósito de urea por encima del máximo",
   urea_conteo_recargado: "Conteo de urea anulado y vuelto a cargar",
   urea_precio_fuera_de_catalogo: "Compra de urea con precio fuera del catálogo",
+  urea_litros_corregidos: "Litros de un envase de urea corregidos",
 };
 
 /** La columna "Vale" de las tablas de alertas y anomalías. Desde la
@@ -238,6 +240,20 @@ export function describirDetalleAlerta(a: AlertaCombustible): string {
     return (
       `Diferencia ${descuadreAnuladoL ?? "?"} L -> ${descuadreNuevoL ?? "?"} L tras anular ` +
       `("${motivoAnulacion ?? "sin motivo"}"), ${anulacionesEnLaVentana ?? "?"} anulación(es) en la ventana`
+    );
+  }
+  if (a.tipo === "urea_litros_corregidos") {
+    const { envase, litrosRegistrados, litrosDespues, stockAlmacenL, motivo } = a.detalle as {
+      envase?: { nombre: string };
+      litrosRegistrados?: number[];
+      litrosDespues?: number;
+      stockAlmacenL?: { antes: number; despues: number };
+      motivo?: string;
+    };
+    return (
+      `${envase?.nombre ?? "Envase"}: ${(litrosRegistrados ?? []).join(" y ")} L → ${litrosDespues ?? "?"} L` +
+      (stockAlmacenL ? `; stock ${stockAlmacenL.antes} → ${stockAlmacenL.despues} L` : "") +
+      (motivo ? `. Motivo: ${motivo}` : "")
     );
   }
   if (a.tipo === "urea_precio_fuera_de_catalogo") {

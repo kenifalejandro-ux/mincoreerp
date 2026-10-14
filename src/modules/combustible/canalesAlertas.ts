@@ -66,6 +66,8 @@ export const CATALOGO_ALERTAS: Record<
   urea_descuadre_conteo: { canal: "al_momento", nombre: "Urea: conteo físico que no cuadra" },
   urea_conteo_recargado: { canal: "al_momento", nombre: "Urea: conteo anulado y recargado" },
   urea_equipo_no_habilitado: { canal: "al_momento", nombre: "Urea: vale a equipo que no la usa" },
+  // Reescribe el historial de un envase: inflar sus litros tapa un faltante.
+  urea_litros_corregidos: { canal: "al_momento", nombre: "Urea: litros de un envase corregidos" },
   // ── Al momento: operativo urgente (si nadie repone, se para la operación)
   nivel_bajo: { canal: "al_momento", nombre: "Nivel bajo de tanque" },
   urea_stock_bajo: { canal: "al_momento", nombre: "Urea: stock bajo" },

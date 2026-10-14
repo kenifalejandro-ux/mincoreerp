@@ -19,6 +19,8 @@ import { apiFetch } from "../services/apiClient";
 
 /** Un envase del almacén, contado (ver findStockUreaPorEnvase). */
 export interface EnvaseStock {
+  /** El id en el catálogo: con él se pide la corrección de litros. */
+  presentacionId: number | null;
   codigo: string | null;
   nombre: string;
   /** Litros por bulto del catálogo, hoy. */
@@ -266,15 +268,222 @@ function Estanteria({
 
 /** El envase quedó con tamaños mezclados (se registró a 16 L y el catálogo
  *  dice 20 L): los litros mostrados son los registrados, y hay que decirlo. */
-function AvisoTamanosMezclados({ envase }: { envase: EnvaseStock }) {
+function AvisoTamanosMezclados({
+  envase,
+  onCorregir,
+}: {
+  envase: EnvaseStock;
+  /** Solo con el check `urea:corregir_litros`. */
+  onCorregir: (() => void) | null;
+}) {
   if (envase.litrosRegistradosDistintos.length === 0) return null;
   return (
-    <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-      Parte de estas {plural(envase.nombre)} se registró con{" "}
-      <strong>{envase.litrosRegistradosDistintos.map((l) => `${fmt(l, 2)} L`).join(" y ")}</strong>{" "}
-      por bulto, y el catálogo dice <strong>{fmt(envase.litrosPorBulto ?? 0, 2)} L</strong>. Los
-      litros mostrados son los registrados. Si fue un error al darlo de alta, la corrección del
-      historial la hace el encargado, con motivo.
+    <div className="flex flex-col gap-2 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+      <span>
+        Parte de estas {plural(envase.nombre)} se registró con{" "}
+        <strong>
+          {envase.litrosRegistradosDistintos.map((l) => `${fmt(l, 2)} L`).join(" y ")}
+        </strong>{" "}
+        por bulto, y el catálogo dice <strong>{fmt(envase.litrosPorBulto ?? 0, 2)} L</strong>. Los
+        litros mostrados son los registrados. Si fue un error al darlo de alta, se corrige con
+        &quot;Corregir litros&quot;, que recalcula todo su historial con motivo.
+      </span>
+      {onCorregir && (
+        <button
+          type="button"
+          onClick={onCorregir}
+          className="self-start rounded-xl border border-[#65a30d] bg-[#a3e635] px-3 py-1.5 text-xs font-semibold text-black hover:bg-[#bef264]"
+        >
+          Corregir litros
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Corregir los litros de un envase con historial (0130) ───────────────
+
+interface ResumenCorreccion {
+  envase: { codigo: string; nombre: string };
+  litrosCatalogoAntes: number;
+  litrosDespues: number;
+  litrosRegistrados: number[];
+  stockAlmacenL: { antes: number; despues: number };
+  envaseL: { unidades: number; antes: number; despues: number };
+  filas: { entradas: number; vales: number; comprasEnRuta: number; conteos: number };
+  valesRecosteados: number;
+  conteosSinDetalle: number;
+  avisos: string[];
+}
+
+/** Dos pasos a propósito: primero se VE el impacto (sin escribir nada), y
+ *  recién después se aplica, con motivo. Reescribe el historial del envase:
+ *  nadie debería hacerlo sin ver antes cuánto stock aparece o desaparece. */
+export function ModalCorregirLitros({
+  presentacionId,
+  nombre,
+  litrosRegistrados,
+  onCerrar,
+  onCorregido,
+}: {
+  presentacionId: number;
+  nombre: string;
+  litrosRegistrados: number[];
+  onCerrar: () => void;
+  onCorregido: () => void;
+}) {
+  const [litros, setLitros] = useState("");
+  const [motivo, setMotivo] = useState("");
+  const [resumen, setResumen] = useState<ResumenCorreccion | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const valor = Number(litros);
+  const valido = litros.trim() !== "" && Number.isFinite(valor) && valor > 0 && valor <= 2000;
+
+  const pedir = async (aplicar: boolean) => {
+    setEnviando(true);
+    setError(null);
+    try {
+      const res = await apiFetch(
+        `/api/erp/combustible/urea/presentaciones/${presentacionId}/correccion${aplicar ? "" : "/vista-previa"}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ litros: valor, ...(aplicar ? { motivo: motivo.trim() } : {}) }),
+        }
+      );
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(body?.error ?? "No se pudo calcular la corrección.");
+        return;
+      }
+      if (aplicar) onCorregido();
+      else setResumen(body as ResumenCorreccion);
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  const cambio = (a: number, b: number) => (
+    <>
+      <strong>{fmt(a, 2)} L</strong> → <strong>{fmt(b, 2)} L</strong>
+    </>
+  );
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+      role="dialog"
+      aria-label={`Corregir litros de ${nombre}`}
+    >
+      <div className="flex max-h-[90vh] w-full max-w-lg flex-col gap-4 overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+        <h3 className="text-lg font-bold text-slate-800">
+          Corregir litros de &quot;{nombre}&quot;
+        </h3>
+        <p className="text-sm text-slate-600">
+          Hoy está registrado con{" "}
+          <strong>{litrosRegistrados.map((l) => `${fmt(l, 2)} L`).join(" y ")}</strong> por bulto.
+          La corrección recalcula <strong>todo su historial</strong>: entradas, vales, compras en
+          ruta y conteos. El precio por bulto se conserva, cada valor anterior queda guardado, y
+          gerencia recibe el aviso.
+        </p>
+        {error && <div className="rounded bg-red-50 p-2 text-sm text-red-600">{error}</div>}
+
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="text-gray-600">Litros reales por bulto</span>
+          <input
+            type="number"
+            step="0.01"
+            min={0}
+            value={litros}
+            onChange={(e) => {
+              setLitros(e.target.value);
+              setResumen(null);
+            }}
+            className="rounded border border-gray-300 px-3 py-2"
+          />
+        </label>
+
+        {!resumen ? (
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={onCerrar}
+              className="rounded-xl px-4 py-2 text-sm text-slate-600 hover:bg-slate-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={!valido || enviando}
+              onClick={() => pedir(false)}
+              className="rounded-xl border border-[#65a30d] bg-[#a3e635] px-4 py-2 text-sm font-semibold text-black hover:bg-[#bef264] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {enviando ? "Calculando…" : "Ver impacto"}
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-col gap-1.5 rounded-xl border border-slate-200 p-3 text-sm text-slate-700">
+              <span>
+                Stock del almacén:{" "}
+                {cambio(resumen.stockAlmacenL.antes, resumen.stockAlmacenL.despues)}
+              </span>
+              <span>
+                {resumen.envaseL.unidades} {plural(nombre, resumen.envaseL.unidades)}:{" "}
+                {cambio(resumen.envaseL.antes, resumen.envaseL.despues)}
+              </span>
+              <span>
+                Se corrigen {resumen.filas.entradas} entradas, {resumen.filas.vales} vales,{" "}
+                {resumen.filas.comprasEnRuta} renglones de compra en ruta y {resumen.filas.conteos}{" "}
+                renglones de conteo.
+              </span>
+              {resumen.valesRecosteados > 0 && (
+                <span>
+                  Cambia el costo de {resumen.valesRecosteados}{" "}
+                  {resumen.valesRecosteados === 1 ? "vale" : "vales"} (el promedio de las entradas
+                  se mueve).
+                </span>
+              )}
+            </div>
+            {resumen.avisos.map((a) => (
+              <div
+                key={a}
+                className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800"
+              >
+                {a}
+              </div>
+            ))}
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-gray-600">Motivo</span>
+              <input
+                value={motivo}
+                onChange={(e) => setMotivo(e.target.value)}
+                placeholder="Las cajas siempre fueron de 20 L; se dieron de alta con 16"
+                className="rounded border border-gray-300 px-3 py-2"
+              />
+              <span className="text-xs text-slate-500">Queda en la bitácora con tu nombre.</span>
+            </label>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={onCerrar}
+                className="rounded-xl px-4 py-2 text-sm text-slate-600 hover:bg-slate-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={!motivo.trim() || enviando}
+                onClick={() => pedir(true)}
+                className="rounded-xl border border-[#65a30d] bg-[#a3e635] px-4 py-2 text-sm font-semibold text-black hover:bg-[#bef264] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {enviando ? "Aplicando…" : "Aplicar corrección"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -380,10 +589,18 @@ function BarraNivel({ stock, colores }: { stock: EstadoStockUrea; colores: strin
 export function AlmacenUrea({
   stock,
   puedeVerKardex,
+  puedeCorregirLitros,
+  onCorregido,
 }: {
   stock: EstadoStockUrea;
   puedeVerKardex: boolean;
+  /** El check `urea:corregir_litros`, que nace apagado para todos. */
+  puedeCorregirLitros: boolean;
+  onCorregido: () => void;
 }) {
+  const [corrigiendo, setCorrigiendo] = useState<EnvaseStock | null>(null);
+  const corregir = (e: EnvaseStock) =>
+    puedeCorregirLitros && e.presentacionId !== null ? () => setCorrigiendo(e) : null;
   const nivel = nivelDe(stock);
   const colores = stock.envases.map((_, i) => COLORES[i % COLORES.length]);
   const porDefecto = stock.envases.find((e) => e.principal) ?? stock.envases[0] ?? null;
@@ -470,7 +687,7 @@ export function AlmacenUrea({
               porFila={POR_FILA[tipoDeEnvase(grande)].tarjeta}
               maximo={MAX_EN_TARJETA}
             />
-            <AvisoTamanosMezclados envase={grande} />
+            <AvisoTamanosMezclados envase={grande} onCorregir={corregir(grande)} />
             <div className="flex flex-wrap items-center justify-between gap-2">
               <MovidoEsteMes envase={grande} />
               <button
@@ -546,9 +763,30 @@ export function AlmacenUrea({
           altoInicial={620}
         >
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            <DetalleEnvase envase={grande} puedeVerKardex={puedeVerKardex} />
+            <DetalleEnvase
+              envase={grande}
+              puedeVerKardex={puedeVerKardex}
+              onCorregir={corregir(grande)}
+            />
           </div>
         </VentanaFlotante>
+      )}
+      {corrigiendo && corrigiendo.presentacionId !== null && (
+        <ModalCorregirLitros
+          presentacionId={corrigiendo.presentacionId}
+          nombre={corrigiendo.nombre}
+          litrosRegistrados={[
+            ...new Set([
+              ...corrigiendo.litrosRegistradosDistintos,
+              ...(corrigiendo.litrosPorBulto !== null ? [corrigiendo.litrosPorBulto] : []),
+            ]),
+          ].sort((a, b) => a - b)}
+          onCerrar={() => setCorrigiendo(null)}
+          onCorregido={() => {
+            setCorrigiendo(null);
+            onCorregido();
+          }}
+        />
       )}
     </section>
   );
@@ -585,7 +823,9 @@ function saldosHaciaAtras(masNuevoPrimero: FilaKardexEnvase[], unidadesHoy: numb
 function DetalleEnvase({
   envase,
   puedeVerKardex,
+  onCorregir,
 }: {
+  onCorregir: (() => void) | null;
   envase: EnvaseStock;
   puedeVerKardex: boolean;
 }) {
@@ -627,7 +867,18 @@ function DetalleEnvase({
         porFila={POR_FILA[tipoDeEnvase(envase)].ventana}
         maximo={MAX_EN_VENTANA}
       />
-      <AvisoTamanosMezclados envase={envase} />
+      <AvisoTamanosMezclados envase={envase} onCorregir={onCorregir} />
+      {/* Sin tamaños mezclados también puede estar mal (todo a 16 L y la caja
+          es de 20): desde el detalle se puede corregir igual. */}
+      {onCorregir && envase.litrosRegistradosDistintos.length === 0 && (
+        <button
+          type="button"
+          onClick={onCorregir}
+          className="self-start rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:border-[#a3e635]"
+        >
+          Corregir litros de este envase
+        </button>
+      )}
       <div>
         <MovidoEsteMes envase={envase} />
       </div>

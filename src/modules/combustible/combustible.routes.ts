@@ -33,6 +33,7 @@ import {
   anularConteoUreaSchema,
   crearPresentacionUreaSchema,
   actualizarPresentacionUreaSchema,
+  corregirLitrosUreaSchema,
   crearPrecioUreaSchema,
   crearPuntoPrecintoSchema,
   cambiarPrecintoSchema,
@@ -666,6 +667,30 @@ router.put(
   requireRole("admin"),
   validate(actualizarPresentacionUreaSchema),
   asyncHandler(controller.actualizarPresentacionUrea.bind(controller))
+);
+// Corregir los litros de un envase con historial (0130). Lo decide el check
+// `urea:corregir_litros`, que nace apagado para todos y se habilita persona
+// por persona (el encargado, sea admin o no). El rol solo pone el piso: un
+// perfil Lectura, de cancha o de ruta nunca reescribe el historial, aunque
+// alguien le marque el check por error.
+router.post(
+  "/urea/presentaciones/:id/correccion/vista-previa",
+  requirePestana("combustible", "urea:corregir_litros"),
+  requireRole("admin", "operador", "encargado_urea"),
+  validate(corregirLitrosUreaSchema),
+  asyncHandler(controller.vistaPreviaCorreccionUrea.bind(controller))
+);
+router.post(
+  "/urea/presentaciones/:id/correccion",
+  requirePestana("combustible", "urea:corregir_litros"),
+  requireRole("admin", "operador", "encargado_urea"),
+  validate(corregirLitrosUreaSchema),
+  asyncHandler(controller.corregirLitrosUrea.bind(controller))
+);
+router.get(
+  "/urea/correcciones",
+  requirePestana("combustible", "urea:configuracion"),
+  asyncHandler(controller.listarCorreccionesUrea.bind(controller))
 );
 
 // Proveedores de urea para los formularios (0119): cualquiera que tenga algo

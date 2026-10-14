@@ -368,6 +368,30 @@ export const MODULOS: ModuloDefinicion[] = [
         pk: "serial",
         fks: { usuario_id: "usuarios", anulada_por: "usuarios" },
       },
+      // Renglones del conteo (0130): "17 cajas + 32 bolsas". Cascadean desde
+      // el conteo; la presentación es un código, viaja tal cual.
+      {
+        nombre: "combustible_conteo_urea_lineas",
+        pk: "serial",
+        fks: { conteo_id: "combustible_conteos_urea" },
+      },
+      // Corrección de litros de un envase (0130). Va ANTES de
+      // combustible_alertas, que la referencia (urea_correccion_id, el ancla
+      // de urea_litros_corregidos).
+      {
+        nombre: "combustible_urea_correcciones",
+        pk: "serial",
+        fks: { usuario_id: "usuarios" },
+      },
+      // Cada fila que tocó una corrección, con su valor antes y después.
+      // `fila_id` apunta a cinco tablas distintas, así que no es una FK que el
+      // backup pueda remapear: al clonar a OTRA empresa queda como referencia
+      // histórica, y el detalle completo viaja en `antes` / `despues`.
+      {
+        nombre: "combustible_urea_correccion_filas",
+        pk: "serial",
+        fks: { correccion_id: "combustible_urea_correcciones" },
+      },
       // Fase D (migrations/0068) -- el aviso vivo: hueco de talonario, vale
       // anulado, sobredespacho, despacho tardío. Va ANTES de
       // combustible_anomalias, que la referencia por FK.
@@ -391,6 +415,7 @@ export const MODULOS: ModuloDefinicion[] = [
           recepcion_id: "combustible_recepciones",
           lectura_id: "combustible_lecturas",
           urea_conteo_id: "combustible_conteos_urea",
+          urea_correccion_id: "combustible_urea_correcciones",
           resuelta_por: "usuarios",
           grifo_interno_id: "grifos_internos",
         },
@@ -410,6 +435,7 @@ export const MODULOS: ModuloDefinicion[] = [
           recepcion_id: "combustible_recepciones",
           lectura_id: "combustible_lecturas",
           urea_conteo_id: "combustible_conteos_urea",
+          urea_correccion_id: "combustible_urea_correcciones",
           alerta_id: "combustible_alertas",
           grifo_interno_id: "grifos_internos",
         },
@@ -449,6 +475,10 @@ export const MODULOS: ModuloDefinicion[] = [
       "combustible_conteos_urea",
       "combustible_alertas",
       "combustible_anomalias",
+      // 0130: referencia a las presentaciones sin ON DELETE, así que se
+      // borra antes que ellas (RAICES_WIPE invierte este orden). Sus filas y
+      // las alertas que la anclan cascadean.
+      "combustible_urea_correcciones",
       "combustible_config",
       // 0123: RAICES_WIPE invierte este orden, así que los viajes se borran
       // antes que los lugares y que los equipos.
