@@ -134,6 +134,39 @@ describe("combustible: el conductor queda estampado en el vale (migración 0083)
     expect(valeDePedro.body.conductor_nombre).toBe("Pedro Ramírez");
   });
 
+  it("un vale cargado TARDE se atribuye al conductor que la unidad tenía en la fecha del vale", async () => {
+    // Juan maneja; la unidad pasa a Pedro; después llega el vale de papel de
+    // cuando todavía era de Juan. No debe quedar a nombre de Pedro.
+    const eq = await crearEquipo({ conductor_nombre: "Juan Pérez", conductor_dni: "12345678" });
+    const pausa = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    await pausa(60);
+    const cuandoSalio = new Date().toISOString();
+    await pausa(60);
+    const cambio = await editarEquipo(eq.body.id, {
+      conductor_nombre: "Pedro Ramírez",
+      conductor_dni: "87654321",
+      motivo_cambio: "La unidad pasa a Pedro",
+    });
+    expect(cambio.status).toBe(200);
+
+    const tarde = await ag.post("/api/erp/combustible/despachos").send({
+      origen: "tanque_propio",
+      combustible_id: tq,
+      tipo_combustible: "diesel_b5",
+      tipo_destino: "equipo",
+      equipo_id: eq.body.id,
+      serie_talonario: serie(),
+      n_vale: 1,
+      cantidad: 200,
+      lectura_contometro: 200,
+      costo_unitario: 16,
+      despachado_en: cuandoSalio,
+    });
+    expect(tarde.status, JSON.stringify(tarde.body)).toBe(201);
+    expect(tarde.body.conductor_nombre).toBe("Juan Pérez");
+    expect(tarde.body.conductor_dni).toBe("12345678");
+  });
+
   it("un equipo sin conductor deja el vale en NULL, no en vacío inventado", async () => {
     const eq = await crearEquipo();
     const d = await despachar(eq.body.id);

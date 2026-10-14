@@ -1173,11 +1173,29 @@ export class CombustibleRepository {
         -- vale de hace tres meses. El vale guarda quién manejaba cuando el
         -- combustible salió, que es lo único que hace confiable el reporte de
         -- consumo por conductor. Vale también para urea -- mismo equipo_id.
+        --
+        -- "Cuando el combustible salió" es la fecha del VALE, no la de hoy:
+        -- un vale cargado tarde (la cola offline, o el papel que llega al día
+        -- siguiente) se atribuye al conductor que la unidad tenía ESA fecha
+        -- según el historial (0126). Si el historial no cubre esa fecha (un
+        -- vale anterior a que existiera el historial), cae al conductor actual
+        -- del equipo, que es lo que se hacía antes.
         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
-               e.conductor_nombre, e.conductor_dni, $23::numeric, $24::int, $25, $26, $27::uuid,
+               CASE WHEN h.id IS NOT NULL THEN h.conductor_nombre ELSE e.conductor_nombre END,
+               CASE WHEN h.id IS NOT NULL THEN h.conductor_dni ELSE e.conductor_dni END,
+               $23::numeric, $24::int, $25, $26, $27::uuid,
                $28::bigint, $29::int, $30::bigint, $31::bigint, $32, $33
           FROM (SELECT 1) dummy
           LEFT JOIN equipos e ON e.id = $8::int AND e.tenant_id = $1
+          LEFT JOIN LATERAL (
+            SELECT ec.id, ec.conductor_nombre, ec.conductor_dni
+              FROM equipo_conductores ec
+             WHERE ec.tenant_id = $1 AND ec.equipo_id = e.id
+               AND ec.desde <= $22::timestamptz
+               AND (ec.hasta IS NULL OR ec.hasta > $22::timestamptz)
+             ORDER BY ec.desde DESC
+             LIMIT 1
+          ) h ON true
         RETURNING ${CombustibleRepository.COLUMNAS_DESPACHO}
         `,
         [
