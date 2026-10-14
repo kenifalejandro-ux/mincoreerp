@@ -2709,7 +2709,8 @@ export class CombustibleController {
                 fecha: despachadoEn,
                 renglones: data.lineas.map((l) => ({
                   presentacion: l.presentacion,
-                  costoPorBulto: l.costo_unitario,
+                  // La compra en ruta trae precio en cada renglón (schema).
+                  costoPorBulto: l.costo_unitario!,
                 })),
               })
             : null;
@@ -4566,9 +4567,16 @@ export class CombustibleController {
         f.tipo === "entrada" ? "Entrada" : f.tipo === "vale" ? "Vale" : "Conteo",
         f.documento,
         f.detalle,
-        f.presentacion,
-        f.bultos === null ? null : { valor: f.bultos, formato: "decimal" },
-        l(f.factor_litros),
+        // Las columnas no se mueven (las fórmulas de abajo apuntan a H, I y
+        // K): "Presentación" lleva el detalle de los renglones (0131), los
+        // bultos son la suma, y el factor sale solo si hay un único renglón.
+        f.renglones.length
+          ? f.renglones.map((r) => `${r.bultos} × ${r.nombre} (${r.factor_litros} L)`).join(" + ")
+          : null,
+        f.renglones.length
+          ? { valor: f.renglones.reduce((a, r) => a + r.bultos, 0), formato: "decimal" }
+          : null,
+        f.renglones.length === 1 ? l(f.renglones[0].factor_litros) : null,
         l(f.entrada || null),
         l(f.salida || null),
         l(f.saldo_teorico),

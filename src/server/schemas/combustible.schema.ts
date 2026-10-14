@@ -454,23 +454,24 @@ export const crearDespachoCombustibleSchema = z
     presentacion: codigoPresentacionUrea.optional(),
     cantidad_bultos: z.number().int().positive().optional(),
 
-    // Solo la compra de urea en ruta (0120): una boleta puede traer varias
-    // presentaciones -- "2 cajas + 3 bolsas". Cada renglón con su precio por
-    // bulto tal como figura en el papel. Hasta 10: una boleta de grifo no
-    // tiene más, y el techo corta un body inflado antes de tocar la base.
-    // La forma de UNA presentación (presentacion + cantidad_bultos +
-    // costo_unitario sueltos) se sigue aceptando y el .transform() la
-    // convierte en un renglón.
+    // Urea: "1 caja + 2 bolsas" (la compra en ruta desde 0120, el vale del
+    // almacén desde 0131). Cada renglón con su precio por bulto: obligatorio
+    // en la compra (es lo que dice la boleta); en el vale del almacén, o van
+    // todos o ninguno (sin precio, el vale toma el promedio de las entradas).
+    // Hasta 10. La forma de UNA presentación (presentacion + cantidad_bultos +
+    // costo_unitario sueltos) se sigue aceptando -- la trae la cola offline de
+    // un dispositivo con la app vieja -- y el .transform() la convierte en un
+    // renglón.
     lineas: z
       .array(
         z.object({
           presentacion: codigoPresentacionUrea,
           cantidad_bultos: z.number().int().positive(),
-          costo_unitario: z.number().positive(),
+          costo_unitario: z.number().positive().optional(),
         })
       )
-      .min(1, "la compra necesita al menos un renglón")
-      .max(10, "una compra no puede tener más de 10 renglones")
+      .min(1, "el vale necesita al menos un renglón")
+      .max(10, "un vale no puede tener más de 10 renglones")
       .optional(),
 
     // Cuándo se hizo el despacho en cancha -- opcional, mismo criterio que
@@ -640,18 +641,29 @@ export const crearDespachoCombustibleSchema = z
             message: "el costo por bulto de la boleta es obligatorio en una compra en ruta",
           });
         }
+        if (data.lineas?.some((l) => l.costo_unitario === undefined)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["lineas"],
+            message: "cada renglón de la compra en ruta lleva el precio por bulto de la boleta",
+          });
+        }
         return;
       }
 
-      // Los renglones son de la compra en ruta: el reparto del almacén sale
-      // con una presentación por vale (0120, decisión de Kenif).
+      // Vale del almacén con renglones (0131): el precio por bulto va en todos
+      // o en ninguno. Mezclado, el costo del vale sería mitad declarado y
+      // mitad promedio, y no habría forma de recalcularlo bien después.
       if (data.lineas !== undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["lineas"],
-          message:
-            "los renglones son de la compra en ruta; el vale del almacén lleva una presentación",
-        });
+        const conPrecio = data.lineas.filter((l) => l.costo_unitario !== undefined).length;
+        if (conPrecio > 0 && conPrecio < data.lineas.length) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["lineas"],
+            message:
+              "el precio por bulto va en todos los renglones o en ninguno (sin precio, el vale toma el promedio)",
+          });
+        }
       }
 
       // Reparto del almacén: el talonario propio (0092), sin comprobante.
@@ -1084,26 +1096,28 @@ export const crearDespachoCombustibleSchema = z
   // código nunca la vea: el servicio, las alertas y la fila guardada dicen
   // 'almacen'. Si cada lugar tuviera que reconocer las dos formas, el primero
   // que se olvide haría bajar el stock por una compra en ruta o al revés.
-  .transform((data) => {
-    if (data.producto !== "urea") return data;
-    if (
-      data.origen === "compra_externa" &&
-      data.comprobante_tipo === undefined &&
-      data.comprobante_numero === undefined
-    ) {
-      return { ...data, origen: "almacen" as const };
-    }
-    // La compra en ruta SIEMPRE llega al servicio con renglones (0120): la
-    // forma de una sola presentación es un renglón. Un solo camino de código
-    // para "de qué está hecha esta compra".
-    if (data.origen === "compra_externa" && data.lineas === undefined) {
+  .transform((input) => {
+    if (input.producto !== "urea") return input;
+    // Primero el origen, DESPUÉS los renglones: si la forma vieja del reparto
+    // volviera acá sin pasar a renglones, el vale llegaría al servicio sin
+    // detalle (0131) -- justo el que trae la cola offline de la app vieja.
+    const data =
+      input.origen === "compra_externa" &&
+      input.comprobante_tipo === undefined &&
+      input.comprobante_numero === undefined
+        ? { ...input, origen: "almacen" as const }
+        : input;
+    // La urea SIEMPRE llega al servicio con renglones (compra en ruta desde
+    // 0120, vale del almacén desde 0131): la forma de una sola presentación es
+    // un renglón. Un solo camino de código para "de qué está hecho este vale".
+    if (data.lineas === undefined) {
       return {
         ...data,
         lineas: [
           {
             presentacion: data.presentacion!,
             cantidad_bultos: data.cantidad_bultos!,
-            costo_unitario: data.costo_unitario!,
+            costo_unitario: data.costo_unitario,
           },
         ],
         presentacion: undefined,
@@ -1498,12 +1512,30 @@ export const crearRecepcionCombustibleSchema = z
     // Litros, para combustible. Para urea el servidor lo calcula (ver
     // presentacion/cantidad_bultos abajo), así que queda opcional acá.
     cantidad: z.number().positive().optional(),
-    costo_unitario: z.number().positive(),
+    // Obligatorio salvo en la urea con renglones, donde cada renglón trae el
+    // suyo (ver `lineas`).
+    costo_unitario: z.number().positive().optional(),
 
     // Solo producto='urea' -- mismo mecanismo que en el despacho: el
     // factor de conversión lo resuelve el servidor, nunca el cliente.
     presentacion: codigoPresentacionUrea.optional(),
     cantidad_bultos: z.number().int().positive().optional(),
+
+    // Urea (0131): una factura con "20 cajas + 40 bolsas" es UNA entrada con
+    // dos renglones, cada uno con su precio por bulto tal como figura en la
+    // factura. La forma de una sola presentación se sigue aceptando y el
+    // .transform() la convierte en un renglón.
+    lineas: z
+      .array(
+        z.object({
+          presentacion: codigoPresentacionUrea,
+          cantidad_bultos: z.number().int().positive(),
+          costo_unitario: z.number().positive(),
+        })
+      )
+      .min(1, "la entrada necesita al menos un renglón")
+      .max(10, "una entrada no puede tener más de 10 renglones")
+      .optional(),
 
     // Opcionales acá porque la obligatoriedad NO es fija: depende de
     // `combustible.requiere_documento` de ESE tanque, un dato de otra fila
@@ -1602,19 +1634,49 @@ export const crearRecepcionCombustibleSchema = z
           message: "combustible_id no aplica a una recepción de urea -- no hay tanque que llenar",
         });
       }
-      if (data.presentacion === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["presentacion"],
-          message: "presentacion es obligatoria para una recepción de urea",
-        });
-      }
-      if (data.cantidad_bultos === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["cantidad_bultos"],
-          message: "cantidad_bultos es obligatoria para una recepción de urea",
-        });
+      if (data.lineas !== undefined) {
+        if (
+          data.presentacion !== undefined ||
+          data.cantidad_bultos !== undefined ||
+          data.costo_unitario !== undefined
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["lineas"],
+            message:
+              "con renglones, la presentación, la cantidad y el precio van en cada renglón, no sueltos",
+          });
+        }
+        const codigos = data.lineas.map((l) => l.presentacion);
+        if (new Set(codigos).size !== codigos.length) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["lineas"],
+            message: "la misma presentación aparece en dos renglones -- súmalos en uno",
+          });
+        }
+      } else {
+        if (data.presentacion === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["presentacion"],
+            message: "presentacion es obligatoria para una recepción de urea",
+          });
+        }
+        if (data.cantidad_bultos === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["cantidad_bultos"],
+            message: "cantidad_bultos es obligatoria para una recepción de urea",
+          });
+        }
+        if (data.costo_unitario === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["costo_unitario"],
+            message: "el costo por bulto de la factura es obligatorio",
+          });
+        }
       }
       if (data.cantidad !== undefined) {
         ctx.addIssue({
@@ -1638,14 +1700,43 @@ export const crearRecepcionCombustibleSchema = z
           message: "cantidad es obligatoria para una recepción de combustible",
         });
       }
-      if (data.presentacion !== undefined || data.cantidad_bultos !== undefined) {
+      if (
+        data.presentacion !== undefined ||
+        data.cantidad_bultos !== undefined ||
+        data.lineas !== undefined
+      ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["presentacion"],
-          message: "presentacion/cantidad_bultos solo aplican a una recepción de urea",
+          message: "presentacion/cantidad_bultos/lineas solo aplican a una recepción de urea",
+        });
+      }
+      if (data.costo_unitario === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["costo_unitario"],
+          message: "costo_unitario es obligatorio para una recepción de combustible",
         });
       }
     }
+  })
+  // La entrada de urea SIEMPRE llega al servicio con renglones (0131): la
+  // forma de una sola presentación es un renglón.
+  .transform((data) => {
+    if (data.producto !== "urea" || data.lineas !== undefined) return data;
+    return {
+      ...data,
+      lineas: [
+        {
+          presentacion: data.presentacion!,
+          cantidad_bultos: data.cantidad_bultos!,
+          costo_unitario: data.costo_unitario!,
+        },
+      ],
+      presentacion: undefined,
+      cantidad_bultos: undefined,
+      costo_unitario: undefined,
+    };
   });
 
 export type CrearRecepcionCombustibleInput = z.infer<typeof crearRecepcionCombustibleSchema>;

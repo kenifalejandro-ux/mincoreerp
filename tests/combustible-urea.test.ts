@@ -109,9 +109,11 @@ describe("combustible: urea automotriz (migración 0092)", () => {
     const res = await agente.post("/api/erp/combustible/despachos").send(payloadUrea());
     expect(res.status).toBe(201);
     expect(res.body.producto).toBe("urea");
-    expect(res.body.presentacion).toBe("bolsa");
-    expect(Number(res.body.factor_litros)).toBe(4);
-    expect(Number(res.body.cantidad_bultos)).toBe(4);
+    // El detalle va en renglones (0131): la fila guarda el total.
+    expect(res.body.renglones).toHaveLength(1);
+    expect(res.body.renglones[0].presentacion).toBe("bolsa");
+    expect(Number(res.body.renglones[0].factor_litros)).toBe(4);
+    expect(Number(res.body.renglones[0].cantidad_bultos)).toBe(4);
     expect(Number(res.body.cantidad)).toBe(16);
     // Nunca lleva nada de combustible.
     expect(res.body.tipo_combustible).toBeNull();

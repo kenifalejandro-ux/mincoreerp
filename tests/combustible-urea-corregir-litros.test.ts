@@ -245,14 +245,24 @@ describe("combustible: corregir los litros de un envase de urea", () => {
     expect(r.body.resumen.stockAlmacenL).toEqual({ antes: 304, despues: 372 });
 
     // Entrada: 20 cajas × 20 L; S/ 20 la caja → 1.00 por litro.
-    const e = await fila(
-      "combustible_recepciones",
-      entradaCajas,
-      "cantidad, factor_litros, costo_unitario"
-    );
+    const e = await fila("combustible_recepciones", entradaCajas, "cantidad, costo_unitario");
     expect(Number(e.cantidad)).toBe(400);
-    expect(Number(e.factor_litros)).toBe(20);
     expect(Number(e.costo_unitario)).toBe(1);
+    const renglonEntrada = await withTenant(tenantId, (c) =>
+      c.query<{ factor_litros: string; litros: string; costo_por_bulto: string }>(
+        `SELECT factor_litros, litros, costo_por_bulto FROM combustible_recepcion_urea_lineas
+          WHERE recepcion_id = $1 AND tenant_id = $2`,
+        [entradaCajas, tenantId]
+      )
+    );
+    // El precio por caja de la factura no se toca: S/ 20.
+    expect(
+      renglonEntrada.rows.map((x) => [
+        Number(x.factor_litros),
+        Number(x.litros),
+        Number(x.costo_por_bulto),
+      ])
+    ).toEqual([[20, 400, 20]]);
     // La entrada de bolsas no se toca.
     expect(
       Number((await fila("combustible_recepciones", entradaBolsas, "cantidad")).cantidad)
@@ -308,18 +318,21 @@ describe("combustible: corregir los litros de un envase de urea", () => {
         "conteo",
         "conteo_renglon",
         "entrada",
+        "entrada_renglon",
+        // 3 vales de caja (litros y costo) + el de bolsas (solo costo).
         "vale",
         "vale",
         "vale",
         "vale",
+        "vale_renglon",
+        "vale_renglon",
+        "vale_renglon",
       ].sort()
     );
     const laEntrada = r.rows.find((x) => x.tabla === "entrada")!;
-    expect(laEntrada.antes).toMatchObject({
-      factor_litros: 16,
-      cantidad: 320,
-      costo_unitario: 1.25,
-    });
+    expect(laEntrada.antes).toMatchObject({ cantidad: 320, costo_unitario: 1.25 });
+    const suRenglon = r.rows.find((x) => x.tabla === "entrada_renglon")!;
+    expect(suRenglon.antes).toMatchObject({ factor_litros: 16, litros: 320 });
   });
 
   // ── 6. Nunca silenciosa ──────────────────────────────────────────────
@@ -384,9 +397,17 @@ describe("combustible: corregir los litros de un envase de urea", () => {
     expect((await entrada("balde", 5, 40)).status).toBe(201);
     const v = await vale("balde", 1, { costo_unitario: 60 });
     expect(v.status).toBe(201);
-    await withTenant(tenantId, (c) =>
-      c.query(`UPDATE combustible_despachos SET costo_origen = NULL WHERE id = $1`, [v.body.id])
-    );
+    // Así quedó un vale viejo después de 0131: sin costo_origen y con su
+    // renglón SIN precio por bulto (antes de 0130 no se sabía de dónde salía).
+    await withTenant(tenantId, async (c) => {
+      await c.query(`UPDATE combustible_despachos SET costo_origen = NULL WHERE id = $1`, [
+        v.body.id,
+      ]);
+      await c.query(
+        `UPDATE combustible_despacho_urea_lineas SET costo_por_bulto = NULL WHERE despacho_id = $1`,
+        [v.body.id]
+      );
+    });
 
     const baldeId = (await admin.get("/api/erp/combustible/urea/presentaciones")).body.find(
       (p: { codigo: string }) => p.codigo === "balde"
@@ -415,6 +436,15 @@ describe("combustible: corregir los litros de un envase de urea", () => {
       )
     );
     expect(regla.rows.map((x) => x.regla)).toContain("inferido_declarado");
+    // El precio por balde deducido queda guardado en el renglón: la próxima
+    // corrección ya no tiene que adivinar.
+    const renglon = await withTenant(tenantId, (c) =>
+      c.query<{ costo_por_bulto: string }>(
+        `SELECT costo_por_bulto FROM combustible_despacho_urea_lineas WHERE despacho_id = $1`,
+        [v.body.id]
+      )
+    );
+    expect(Number(renglon.rows[0].costo_por_bulto)).toBe(60);
   });
 
   it("más de dos decimales es 400: el catálogo guarda dos y la fila no cuadraría", async () => {

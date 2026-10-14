@@ -153,7 +153,7 @@ describe("combustible: catálogo de presentaciones de urea (migración 0116)", (
       .post("/api/erp/combustible/despachos")
       .send(payloadUrea({ n_vale: 1 }));
     expect(vale.status).toBe(201);
-    expect(Number(vale.body.factor_litros)).toBe(16);
+    expect(Number(vale.body.renglones[0].factor_litros)).toBe(16);
 
     // Si se dejara, la caja quedaría mezclada: 16 L en el historial, 20 L en
     // el catálogo, y contar cajas daría un sobrante falso.
@@ -166,9 +166,13 @@ describe("combustible: catálogo de presentaciones de urea (migración 0116)", (
 
     expect(Number((await porCodigo("caja")).litros)).toBe(16);
     const releido = await withTenant(tenantId, (c) =>
-      c.query(`SELECT factor_litros, cantidad FROM combustible_despachos WHERE id = $1`, [
-        vale.body.id,
-      ])
+      c.query(
+        `SELECT l.factor_litros, d.cantidad
+           FROM combustible_despachos d
+           JOIN combustible_despacho_urea_lineas l ON l.despacho_id = d.id
+          WHERE d.id = $1`,
+        [vale.body.id]
+      )
     );
     expect(Number(releido.rows[0].factor_litros)).toBe(16);
     expect(Number(releido.rows[0].cantidad)).toBe(32);
@@ -323,7 +327,7 @@ describe("combustible: catálogo de presentaciones de urea (migración 0116)", (
       .query({ producto: "urea", pageSize: "200" });
     const fila = listado.body.data.find((d: { id: number }) => d.id === valeViejo.body.id);
     expect(fila).toBeTruthy();
-    expect(Number(fila.factor_litros)).toBe(4);
+    expect(Number(fila.renglones[0].factor_litros)).toBe(4);
 
     await editar(await porCodigo("bolsa"), { activa: true, motivo: "revertir: fin del test" });
   });
@@ -351,7 +355,7 @@ describe("combustible: catálogo de presentaciones de urea (migración 0116)", (
       .post("/api/erp/combustible/despachos")
       .send(payloadUrea({ presentacion: "bidon", cantidad_bultos: 3, n_vale: 30 }));
     expect(vale.status).toBe(201);
-    expect(Number(vale.body.factor_litros)).toBe(10);
+    expect(Number(vale.body.renglones[0].factor_litros)).toBe(10);
     expect(Number(vale.body.cantidad)).toBe(30);
   });
 

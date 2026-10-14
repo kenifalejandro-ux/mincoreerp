@@ -453,11 +453,32 @@ describe("combustible: compra de urea en ruta (migración 0119)", () => {
     expect(mezclada.status).toBe(400);
   });
 
-  it("el vale del almacén no acepta renglones: una presentación por vale", async () => {
+  it("el vale del almacén acepta renglones (0131): 1 caja + 2 bolsas en un solo vale", async () => {
     const r = await vale(1, {
       presentacion: undefined,
       cantidad_bultos: undefined,
-      lineas: [{ presentacion: "caja", cantidad_bultos: 1, costo_unitario: 40 }],
+      lineas: [
+        { presentacion: "caja", cantidad_bultos: 1 },
+        { presentacion: "bolsa", cantidad_bultos: 2 },
+      ],
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(Number(r.body.cantidad)).toBe(16 + 8);
+    expect(r.body.origen).toBe("almacen");
+    expect(r.body.renglones.map((x: { presentacion: string }) => x.presentacion)).toEqual([
+      "bolsa",
+      "caja",
+    ]);
+  });
+
+  it("en el vale del almacén el precio por bulto va en todos los renglones o en ninguno", async () => {
+    const r = await vale(1, {
+      presentacion: undefined,
+      cantidad_bultos: undefined,
+      lineas: [
+        { presentacion: "caja", cantidad_bultos: 1, costo_unitario: 40 },
+        { presentacion: "bolsa", cantidad_bultos: 2 },
+      ],
     });
     expect(r.status).toBe(400);
   });

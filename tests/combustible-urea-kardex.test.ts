@@ -96,7 +96,9 @@ describe("combustible: kardex de urea", () => {
     const [e, v] = r.body.filas;
     expect(e.tipo).toBe("entrada");
     expect(e.saldo_teorico).toBe(160);
-    expect(e.factor_litros).toBe(16);
+    expect(e.renglones).toEqual([
+      expect.objectContaining({ presentacion: "caja", bultos: 10, factor_litros: 16, litros: 160 }),
+    ]);
     expect(v.tipo).toBe("vale");
     expect(v.saldo_teorico).toBe(112);
     expect(r.body.resumen.saldo_final).toBe(112);
