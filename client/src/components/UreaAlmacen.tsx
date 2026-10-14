@@ -1,24 +1,50 @@
 // client/src/components/UreaAlmacen.tsx
 //
-// El almacén de urea a primera vista: la estantería de cajas (o el tablero) y
-// las tarjetas de estado de al lado. Reemplaza a la barra horizontal de
-// antes, que decía "porcentaje de algo" cuando la urea no es un nivel
-// continuo sino cajas apiladas.
+// El almacén de urea a primera vista, EN FÍSICO: cuántas cajas, cuántas
+// bolsas, cuántos baldes hay, cada envase en su estantería. Los litros son la
+// suma de lo que cada movimiento registró -- nunca una división.
 //
-// Solo dibuja: todo sale de GET /urea/estado, no hay estado de negocio acá.
+// Reemplaza al velocímetro y a las "equivalencias" (408 L ÷ 4 = "102 bolsas"):
+// eran bolsas que nadie compró. El total contra mínimo y máximo vive en una
+// sola barra, que además dice de qué envases está hecho.
 //
-// Los colores de las cajas van en hex a propósito: el tema oscuro remapea la
-// paleta de Tailwind, y el lima de la marca no debe cambiar de tono con el tema.
+// Solo dibuja: todo sale de GET /urea/estado (y del kardex para el detalle de
+// un envase). Los colores del dibujo van en hex a propósito: el tema oscuro
+// remapea la paleta de Tailwind y una caja de cartón no cambia de color.
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
+
+import VentanaFlotante from "./comunes/VentanaFlotante";
+import { apiFetch } from "../services/apiClient";
+
+/** Un envase del almacén, contado (ver findStockUreaPorEnvase). */
+export interface EnvaseStock {
+  codigo: string | null;
+  nombre: string;
+  /** Litros por bulto del catálogo, hoy. */
+  litrosPorBulto: number | null;
+  activa: boolean;
+  /** El envase principal: el que se abre grande y viene elegido en los formularios. */
+  principal: boolean;
+  /** Con signo: negativo = salieron más de las que entraron. */
+  unidades: number;
+  /** Suma de los litros que registró cada movimiento. */
+  litros: number;
+  entraronMes: number;
+  salieronMes: number;
+  /** Litros por bulto con los que se registró stock y que no son los del
+   *  catálogo: el envase quedó con tamaños mezclados. */
+  litrosRegistradosDistintos: number[];
+}
 
 export interface EstadoStockUrea {
   /** Puede ser NEGATIVO: los vales declaran más urea de la que las entradas
-   *  explican. Se muestra con signo, no se tapa en 0 (ver el service). */
+   *  explican. Se muestra con signo, no se tapa en 0 (ver el service). Es la
+   *  suma de `envases[].litros`. */
   stockL: number;
   stockMinimoL: number | null;
   stockMaximoL: number | null;
-  referencia: { nombre: string; litros: number; bultos: number } | null;
+  envases: EnvaseStock[];
   ultimoConteo: { contadoL: number; contadoEn: string; diferenciaL: number } | null;
   /** null = sin salidas en 30 días: no hay ritmo del que extrapolar. */
   consumoDiarioL: number | null;
@@ -27,19 +53,21 @@ export interface EstadoStockUrea {
   enRutaMes: { litros: number; compras: number; total: number };
 }
 
-interface EnvaseResumen {
-  nombre: string;
-  litros: string;
-  activa: boolean;
-}
-
 type Nivel = "ok" | "bajo" | "alto" | "neg";
+type TipoEnvase = "caja" | "bolsa" | "balde" | "bidon";
 
 const fmt = (n: number, d = 1) => n.toLocaleString("es-PE", { maximumFractionDigits: d });
 const fmtSoles = (n: number) =>
   `S/ ${n.toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDiaMes = (iso: string) =>
   new Date(iso).toLocaleDateString("es-PE", { day: "2-digit", month: "2-digit" });
+const fmtFechaHora = (iso: string) =>
+  new Date(iso).toLocaleString("es-PE", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
 const ETIQUETA_NIVEL: Record<Nivel, string> = {
   ok: "Normal",
@@ -55,6 +83,14 @@ const CLASE_NIVEL: Record<Nivel, string> = {
   alto: "text-amber-800 bg-amber-50",
 };
 
+/** Un color por envase, en el orden en que llegan (el principal primero). */
+const COLORES = ["#4f8fdc", "#2dd4bf", "#a78bfa", "#f472b6", "#facc15", "#fb923c"];
+
+/** Cuántos se dibujan uno por uno. Más que esto, el número exacto sigue
+ *  arriba y el resto se ve en la ventana ampliada. */
+const MAX_EN_TARJETA = 96;
+const MAX_EN_VENTANA = 600;
+
 function nivelDe(s: EstadoStockUrea): Nivel {
   if (s.stockL < 0) return "neg";
   if (s.stockMinimoL !== null && s.stockL < s.stockMinimoL) return "bajo";
@@ -62,313 +98,278 @@ function nivelDe(s: EstadoStockUrea): Nivel {
   return "ok";
 }
 
-/** Más lugares que esto y la grilla deja de ser legible (y pesa en el DOM):
- *  se cae al tablero, que escala a cualquier tamaño. */
-const MAX_LUGARES = 600;
-
-/** "caja" -> "cajas", "balde" -> "baldes", "bidón" -> "bidones". */
-function plural(nombre: string): string {
-  const n = nombre.toLowerCase();
-  if (/ón$/.test(n)) return n.replace(/ón$/, "ones");
-  return /[aeiouáéíóú]$/.test(n) ? `${n}s` : `${n}es`;
+/** "caja" -> "cajas", "bidón" -> "bidones"; singular si es uno. Solo se
+ *  pluraliza la primera palabra: "Caja 20 L" es "cajas 20 L", no "caja 20 les". */
+function plural(nombre: string, n = 2): string {
+  const [primera, ...resto] = nombre.trim().toLowerCase().split(/\s+/);
+  let palabra = primera;
+  if (Math.abs(n) !== 1) {
+    if (/ón$/.test(primera)) palabra = primera.replace(/ón$/, "ones");
+    else palabra = /[aeiouáéíóú]$/.test(primera) ? `${primera}s` : `${primera}es`;
+  }
+  return [palabra, ...resto].join(" ");
 }
 
-interface EnvaseElegido {
-  nombre: string;
-  litros: number;
+/** Qué dibujo le toca a un envase. El catálogo es libre (0116), así que se
+ *  reconoce por el nombre; lo que no se reconoce se dibuja como caja. */
+function tipoDeEnvase(e: Pick<EnvaseStock, "codigo" | "nombre">): TipoEnvase {
+  const t = `${e.codigo ?? ""} ${e.nombre}`.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  if (/bols|doypack|sach|saco/.test(t)) return "bolsa";
+  if (/bald|cubet/.test(t)) return "balde";
+  if (/bidon|galon|garraf|cilindr|tambor|ibc/.test(t)) return "bidon";
+  return "caja";
 }
 
-function useColumnas(): number {
-  const calc = () => (typeof window !== "undefined" && window.innerWidth < 640 ? 10 : 20);
-  const [cols, setCols] = useState(calc);
-  useEffect(() => {
-    const onResize = () => setCols(calc());
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-  return cols;
+const POR_FILA: Record<TipoEnvase, { tarjeta: number; ventana: number }> = {
+  caja: { tarjeta: 8, ventana: 12 },
+  bolsa: { tarjeta: 12, ventana: 16 },
+  balde: { tarjeta: 8, ventana: 12 },
+  bidon: { tarjeta: 8, ventana: 12 },
+};
+
+// ── El dibujo de cada envase, con su líquido adentro ────────────────────
+
+/** Un envase cerrado, lleno. viewBox de 48: cada forma deja una "ventana"
+ *  donde se ve el líquido (en la caja, un corte del cartón). */
+function IconoEnvase({ tipo }: { tipo: TipoEnvase }) {
+  const id = useId().replace(/:/g, "");
+  const liq = `url(#liq-${id})`;
+  return (
+    <svg viewBox="0 0 48 48" className="block h-auto w-full" aria-hidden="true">
+      <defs>
+        <linearGradient id={`liq-${id}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#7dd3fc" />
+          <stop offset="1" stopColor="#0284c7" />
+        </linearGradient>
+      </defs>
+      {tipo === "caja" && (
+        <>
+          <path d="M7 15 L12 8 H36 L41 15 Z" fill="#d9ab74" />
+          <rect x="7" y="15" width="34" height="27" rx="2.5" fill="#b98a55" stroke="#8a6238" />
+          <rect x="11" y="19" width="26" height="19" rx="3" fill="#0b2f43" />
+          <rect x="11" y="20" width="26" height="18" rx="3" fill={liq} />
+          <rect x="11" y="20" width="26" height="1.4" fill="#bae6fd" />
+          <rect x="7" y="38.5" width="34" height="3.5" fill="#3fae49" />
+        </>
+      )}
+      {tipo === "bolsa" && (
+        <>
+          <rect x="21" y="5" width="6" height="6" rx="1" fill="#e5e7eb" />
+          <path
+            d="M12 10 H36 L39 14 V40 Q39 43 36 43 H12 Q9 43 9 40 V14 Z"
+            fill="#2f7d3b"
+            stroke="#1f5a2a"
+          />
+          <rect x="12" y="10" width="24" height="3" fill="#1f5a2a" />
+          <rect x="14" y="17" width="20" height="21" rx="4" fill="#0b2f43" />
+          <rect x="14" y="18" width="20" height="20" rx="4" fill={liq} />
+          <rect x="14" y="18" width="20" height="1.4" fill="#bae6fd" />
+          <rect x="11" y="14" width="2" height="26" fill="#ffffff" opacity="0.14" />
+        </>
+      )}
+      {tipo === "balde" && (
+        <>
+          <path d="M12 11 Q24 1 36 11" fill="none" stroke="#9ca3af" strokeWidth="1.6" />
+          <path d="M9 16 H39 L36 43 H12 Z" fill="#1f2937" stroke="#0b1220" />
+          <rect x="7" y="11" width="34" height="6" rx="3" fill="#374151" />
+          <rect x="14" y="22" width="20" height="16" rx="3" fill="#0b2f43" />
+          <rect x="14" y="23" width="20" height="15" rx="3" fill={liq} />
+          <rect x="14" y="23" width="20" height="1.4" fill="#bae6fd" />
+          <rect x="12.6" y="39.5" width="22.8" height="3" fill="#3fae49" />
+        </>
+      )}
+      {tipo === "bidon" && (
+        <>
+          <rect x="19" y="5" width="10" height="4" rx="1" fill="#2563eb" />
+          <rect x="19" y="9" width="10" height="5" fill="#e8f1f5" />
+          <path
+            d="M34 18 Q43 18 43 26 Q43 33 37 33"
+            fill="none"
+            stroke="#9fb6c1"
+            strokeWidth="1.6"
+          />
+          <path
+            d="M14 14 H34 Q39 14 39 19 V39 Q39 43 35 43 H13 Q9 43 9 39 V19 Q9 14 14 14 Z"
+            fill="#e8f1f5"
+            fillOpacity="0.92"
+            stroke="#9fb6c1"
+          />
+          <rect x="11.5" y="19" width="25" height="22" rx="3" fill={liq} />
+          <rect x="11.5" y="19" width="25" height="1.4" fill="#bae6fd" />
+          <rect x="15" y="26" width="18" height="8" rx="1.5" fill="#3fae49" />
+        </>
+      )}
+    </svg>
+  );
 }
 
-// ── Estantería ──────────────────────────────────────────────────────────
-
+/** Las unidades sobre repisas, en filas. Solo lo que hay: sin lugares
+ *  vacíos, así 200 bolsas no ocupan media pantalla en lugares que no existen. */
 function Estanteria({
-  stock,
-  nivel,
   envase,
+  porFila,
+  maximo,
 }: {
-  stock: EstadoStockUrea;
-  nivel: Nivel;
-  envase: EnvaseElegido;
+  envase: EnvaseStock;
+  porFila: number;
+  maximo: number;
 }) {
-  const cols = useColumnas();
-  const litrosCaja = envase.litros;
-  const unidades = plural(envase.nombre);
-  const cajas = Math.max(stock.stockL, 0) / litrosCaja;
-  const enteras = Math.floor(cajas);
-  const frac = cajas - enteras;
-  const maxCajas = stock.stockMaximoL !== null ? stock.stockMaximoL / litrosCaja : null;
-  const minCajas = stock.stockMinimoL !== null ? stock.stockMinimoL / litrosCaja : null;
+  const tipo = tipoDeEnvase(envase);
+  const dibujadas = Math.min(Math.max(envase.unidades, 0), maximo);
+  const filas: number[] = [];
+  for (let k = 0; k < dibujadas; k += porFila) filas.push(Math.min(porFila, dibujadas - k));
 
-  const lugares = lugaresDe(stock, litrosCaja, cols);
-  const filas = lugares / cols;
-  const filaMinimo = minCajas !== null ? Math.round(minCajas / cols) : 0;
-  const filaMaximo = maxCajas !== null ? Math.round(maxCajas / cols) : 0;
-  const hayExcedente = maxCajas !== null && cajas > maxCajas;
-
-  const colorCaja = (i: number) =>
-    nivel === "bajo"
-      ? "from-[#ff8f82] to-[#d65a4c] border-[#8a352c]"
-      : maxCajas !== null && i >= maxCajas
-        ? "from-[#f6c65c] to-[#c78f1f] border-[#7a5710]"
-        : "from-[#4f8fdc] to-[#3a72b8] border-[#2f5f9c]";
-
-  const filasJsx: React.ReactNode[] = [];
-  for (let r = filas - 1; r >= 0; r--) {
-    filasJsx.push(
+  if (envase.unidades <= 0) {
+    return (
       <div
-        key={`f${r}`}
-        className="grid gap-[3px]"
-        style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+        className={`rounded-xl border border-dashed p-6 text-center text-sm ${
+          envase.unidades < 0 ? "border-red-300 text-red-700" : "border-slate-300 text-slate-500"
+        }`}
       >
-        {Array.from({ length: cols }, (_, c) => {
-          const i = r * cols + c;
-          if (i < enteras) {
-            return (
-              <div
-                key={i}
-                className={`relative aspect-[1.3] overflow-hidden rounded-[3px] border bg-gradient-to-br ${colorCaja(i)}`}
-              >
-                <div className="absolute inset-y-0 left-[42%] w-[16%] bg-white/20" />
-              </div>
-            );
-          }
-          if (i === enteras && frac >= 0.1) {
-            return (
-              <div
-                key={i}
-                className="relative aspect-[1.3] overflow-hidden rounded-[3px] border border-slate-200 bg-slate-100"
-                title="Envase abierto o con sobrante"
-              >
-                <div
-                  className={`absolute inset-x-0 bottom-0 bg-gradient-to-br ${colorCaja(i)}`}
-                  style={{ height: `${frac * 100}%` }}
-                />
-              </div>
-            );
-          }
-          return (
-            <div
-              key={i}
-              className="aspect-[1.3] rounded-[3px] border border-slate-200 bg-slate-100"
-            />
-          );
-        })}
+        {envase.unidades < 0 ? (
+          <>
+            Salieron <strong>{fmt(-envase.unidades, 0)}</strong> {plural(envase.nombre)} más de las
+            que entraron: o falta registrar una entrada, o hay vales por más de lo que salió.
+          </>
+        ) : (
+          <>Sin stock. Aparece aquí al registrar una entrada de este envase.</>
+        )}
       </div>
     );
-    // Las dos marcas, cada una del color de lo que avisa: el mínimo en rojo
-    // (hay que comprar) y el máximo en ámbar, el mismo de los lugares que lo
-    // pasan. Compartir el ámbar hacía que el mismo color significara dos cosas.
-    if (maxCajas !== null && r === filaMaximo && filaMaximo > 0 && filaMaximo < filas) {
-      filasJsx.push(
-        <div key="max" className="relative z-10 flex h-0 items-center">
-          <div className="flex-1 border-t-2 border-dashed border-amber-500" />
-          <span className="absolute -top-2.5 right-0 rounded-full border border-amber-500 bg-white px-2 text-[11px] font-semibold text-amber-700">
-            Máximo · {fmt(stock.stockMaximoL!, 0)} L · {fmt(maxCajas, 0)} {unidades}
-          </span>
-        </div>
-      );
-    }
-    if (minCajas !== null && r === filaMinimo && filaMinimo > 0 && filaMinimo < filas) {
-      filasJsx.push(
-        <div key="min" className="relative z-10 flex h-0 items-center">
-          <div className="flex-1 border-t-2 border-dashed border-red-500" />
-          <span className="absolute -top-2.5 right-0 rounded-full border border-red-500 bg-white px-2 text-[11px] font-semibold text-red-700">
-            Mínimo · {fmt(stock.stockMinimoL!, 0)} L · {fmt(minCajas, 0)} {unidades}
-          </span>
-        </div>
-      );
-    }
   }
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex justify-between px-0.5 text-[11px] text-slate-500">
-        <span>
-          {maxCajas !== null
-            ? `Máximo · ${fmt(stock.stockMaximoL!, 0)} L · ${fmt(maxCajas, 0)} ${unidades}`
-            : "Máximo sin configurar"}
-        </span>
-        <span>{lugares} lugares</span>
-      </div>
-      <div
-        className="flex flex-col gap-[3px] rounded-xl border border-slate-200 bg-slate-50 px-3 pt-3"
-        role="img"
-        aria-label={`Estantería con ${fmt(cajas, 1)} ${unidades} de urea`}
-      >
-        {filasJsx}
-        <div className="-mx-3 mt-1.5 h-2.5 rounded-b-xl border-t border-slate-200 bg-slate-200" />
-      </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-        <span className="flex items-center gap-1.5">
-          <i className="inline-block h-2 w-2.5 rounded-sm bg-[#4f8fdc]" />
-          {envase.nombre} de {fmt(litrosCaja, 0)} L
-        </span>
-        <span className="flex items-center gap-1.5">
-          <i className="inline-block h-2 w-2.5 rounded-sm border border-slate-300 bg-slate-100" />
-          Lugar libre
-        </span>
-        {hayExcedente && (
-          <span className="flex items-center gap-1.5">
-            <i className="inline-block h-2 w-2.5 rounded-sm bg-[#f6c65c]" />
-            Pasa del máximo
-          </span>
-        )}
-        {minCajas !== null && (
-          <span className="flex items-center gap-1.5">
-            <i className="inline-block w-3.5 border-t-2 border-dashed border-red-500" />
-            Mínimo de aviso
-          </span>
-        )}
-        <span>Un lugar parcial es un envase abierto o con sobrante.</span>
-      </div>
+    <div
+      className="rounded-xl border border-[#2a2e37] bg-[#0f1c1f] px-3.5 pb-3.5 pt-1"
+      role="img"
+      aria-label={`${fmt(envase.unidades, 0)} ${plural(envase.nombre, envase.unidades)} en la estantería`}
+    >
+      {filas.map((n, i) => (
+        <div
+          key={i}
+          className="grid gap-2 border-b-[7px] border-[#4d5f66] pb-1.5 pt-3.5 shadow-[0_9px_9px_-7px_rgba(0,0,0,0.6)]"
+          style={{ gridTemplateColumns: `repeat(${porFila}, minmax(0, 1fr))` }}
+        >
+          {Array.from({ length: n }, (_, j) => (
+            <IconoEnvase key={j} tipo={tipo} />
+          ))}
+        </div>
+      ))}
+      {envase.unidades > dibujadas && (
+        <div className="pt-3 text-center text-xs text-slate-400">
+          + {fmt(envase.unidades - dibujadas, 0)} {plural(envase.nombre)} más
+        </div>
+      )}
     </div>
   );
 }
 
-/** Cuántos lugares dibuja la estantería: los que hacen falta para el máximo
- *  configurado Y para lo que haya (si hay más que el máximo, se ven pasados
- *  en ámbar en vez de esconderse). Sin máximo, el stock con un poco de aire. */
-function lugaresDe(stock: EstadoStockUrea, litrosCaja: number, cols: number): number {
-  const cajas = Math.max(stock.stockL, 0) / litrosCaja;
-  const maxCajas = stock.stockMaximoL !== null ? stock.stockMaximoL / litrosCaja : cajas * 1.15;
-  return Math.max(Math.ceil(Math.max(maxCajas, cajas, 1) / cols), 1) * cols;
+/** El envase quedó con tamaños mezclados (se registró a 16 L y el catálogo
+ *  dice 20 L): los litros mostrados son los registrados, y hay que decirlo. */
+function AvisoTamanosMezclados({ envase }: { envase: EnvaseStock }) {
+  if (envase.litrosRegistradosDistintos.length === 0) return null;
+  return (
+    <div className="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+      Parte de estas {plural(envase.nombre)} se registró con{" "}
+      <strong>{envase.litrosRegistradosDistintos.map((l) => `${fmt(l, 2)} L`).join(" y ")}</strong>{" "}
+      por bulto, y el catálogo dice <strong>{fmt(envase.litrosPorBulto ?? 0, 2)} L</strong>. Los
+      litros mostrados son los registrados. Si fue un error al darlo de alta, la corrección del
+      historial la hace el encargado, con motivo.
+    </div>
+  );
 }
 
-// ── Tablero ─────────────────────────────────────────────────────────────
+/** "Cajas de 20 L". Si el nombre ya trae los litros ("Caja 20 L"), no se
+ *  repiten: "Cajas 20 L de 20 L" no dice nada nuevo. */
+function TituloEnvase(e: EnvaseStock) {
+  const p = plural(e.nombre);
+  const nombre = p.charAt(0).toUpperCase() + p.slice(1);
+  const yaLoDice = /\d\s*(l|lt|lts|litros?)\b/i.test(e.nombre);
+  return e.litrosPorBulto !== null && !yaLoDice
+    ? `${nombre} de ${fmt(e.litrosPorBulto, 2)} L`
+    : nombre;
+}
 
-function Tablero({ stock, envases }: { stock: EstadoStockUrea; envases: EnvaseResumen[] }) {
-  const { stockL, stockMinimoL, stockMaximoL } = stock;
-  const escala = Math.max(stockMaximoL ?? 0, stockL, stockMinimoL ?? 0, 1) * 1.2;
-  const cx = 150;
-  const cy = 150;
-  const R = 118;
-  const ang = (v: number) => 180 - (Math.min(Math.max(v, 0), escala) / escala) * 180;
-  const pt = (a: number, r: number): [number, number] => [
-    cx + r * Math.cos((a * Math.PI) / 180),
-    cy - r * Math.sin((a * Math.PI) / 180),
-  ];
-  const arco = (v0: number, v1: number, color: string) => {
-    if (v1 <= v0) return null;
-    const [x0, y0] = pt(ang(v0), R);
-    const [x1, y1] = pt(ang(v1), R);
-    return (
-      <path
-        d={`M${x0.toFixed(1)} ${y0.toFixed(1)} A${R} ${R} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}`}
-        stroke={color}
-        strokeWidth={18}
-        fill="none"
-      />
-    );
-  };
-  const [nx, ny] = pt(ang(stockL), R - 26);
-  const minimo = stockMinimoL ?? 0;
-  const maximo = stockMaximoL ?? escala;
-
+/** "Este mes: +20 entraron · 3 salieron" -- sin "+0" ni "−0". */
+function MovidoEsteMes({ envase }: { envase: EnvaseStock }) {
   return (
-    <div className="flex flex-col items-center gap-2.5 pt-2">
-      <svg
-        viewBox="-30 0 360 198"
-        className="h-auto w-full max-w-[460px]"
-        role="img"
-        aria-label={`Medidor de stock: ${fmt(stockL, 0)} litros`}
-      >
-        {stockMinimoL === null && stockMaximoL === null
-          ? arco(0, escala, "#94a3b8")
-          : [
-              arco(0, minimo, "#ff7a6b"),
-              arco(minimo, maximo, "#3fd0a4"),
-              arco(maximo, escala, "#f0b544"),
-            ].map((a, i) => a && <g key={i}>{a}</g>)}
-        <line
-          x1={cx}
-          y1={cy}
-          x2={nx.toFixed(1)}
-          y2={ny.toFixed(1)}
-          stroke="currentColor"
-          strokeWidth={3}
-          strokeLinecap="round"
-          className="text-slate-800"
-        />
-        <circle cx={cx} cy={cy} r={7} fill="currentColor" className="text-slate-800" />
-        {stockMinimoL !== null && (
-          <text
-            x={pt(ang(stockMinimoL), R + 22)[0].toFixed(1)}
-            y={pt(ang(stockMinimoL), R + 22)[1].toFixed(1)}
-            fill="currentColor"
-            fontSize={9}
-            textAnchor={ang(stockMinimoL) > 90 ? "end" : "start"}
-            className="text-slate-500"
-          >
-            Mín {fmt(stockMinimoL, 0)}
-          </text>
+    <span className="text-xs text-slate-500">
+      Este mes: {envase.entraronMes > 0 ? "+" : ""}
+      {fmt(envase.entraronMes, 0)} {envase.entraronMes === 1 ? "entró" : "entraron"} ·{" "}
+      {envase.salieronMes > 0 ? "−" : ""}
+      {fmt(envase.salieronMes, 0)} {envase.salieronMes === 1 ? "salió" : "salieron"}
+    </span>
+  );
+}
+
+// ── La barra del total: nivel contra mínimo y máximo, y de qué está hecho ──
+
+function BarraNivel({ stock, colores }: { stock: EstadoStockUrea; colores: string[] }) {
+  const { stockMinimoL: min, stockMaximoL: max } = stock;
+  const positivos = stock.envases.filter((e) => e.litros > 0);
+  const totalPositivo = positivos.reduce((a, e) => a + e.litros, 0);
+  const escala = Math.max(
+    max !== null ? max : Math.max(totalPositivo, min ?? 0) * 1.25,
+    totalPositivo,
+    min ?? 0,
+    1
+  );
+  const pct = (l: number) => `${Math.min(100, (l / escala) * 100)}%`;
+
+  // Dónde arranca cada segmento: la suma de los anteriores.
+  const inicios = positivos.map((_, i) => positivos.slice(0, i).reduce((a, e) => a + e.litros, 0));
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="relative h-4 overflow-hidden rounded-full border border-slate-200 bg-slate-100">
+        {/* Las zonas de fondo: la lectura "estoy bien o mal" del velocímetro. */}
+        {min !== null && (
+          <div
+            className="absolute inset-y-0 left-0 bg-[#f87171] opacity-25"
+            style={{ width: pct(min) }}
+          />
         )}
-        {stockMaximoL !== null && (
-          <text
-            x={pt(ang(stockMaximoL), R + 22)[0].toFixed(1)}
-            y={pt(ang(stockMaximoL), R + 22)[1].toFixed(1)}
-            fill="currentColor"
-            fontSize={9}
-            textAnchor={ang(stockMaximoL) > 90 ? "end" : "start"}
-            className="text-slate-500"
-          >
-            Máx {fmt(stockMaximoL, 0)}
-          </text>
+        {max !== null && (
+          <div
+            className="absolute inset-y-0 bg-[#34d399] opacity-20"
+            style={{ left: pct(min ?? 0), width: `calc(${pct(max)} - ${pct(min ?? 0)})` }}
+          />
         )}
-        <text
-          x={cx}
-          y={188}
-          fill="currentColor"
-          fontSize={26}
-          fontWeight={700}
-          textAnchor="middle"
-          className="text-slate-800"
-        >
-          {fmt(stockL, 0)} L
-        </text>
-      </svg>
-      {envases.length > 0 && (
-        <>
-          <div className="flex flex-wrap justify-center gap-2">
-            {envases.map((e) => (
-              <div
-                key={e.nombre}
-                className="rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-500"
-              >
-                <strong className="mr-1 text-sm font-semibold text-slate-800">
-                  {fmt(stockL / Number(e.litros), 1)}
-                </strong>
-                {plural(e.nombre)} de {fmt(Number(e.litros), 0)} L
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-slate-500">
-            Son equivalencias del total en litros, no el conteo de cada envase.
-          </p>
-        </>
-      )}
-      <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 text-xs text-slate-500">
-        <span className="flex items-center gap-1.5">
-          <i className="inline-block h-2 w-2.5 rounded-sm bg-[#ff7a6b]" />
-          Bajo el mínimo
-        </span>
-        <span className="flex items-center gap-1.5">
-          <i className="inline-block h-2 w-2.5 rounded-sm bg-[#3fd0a4]" />
-          Rango normal
-        </span>
-        <span className="flex items-center gap-1.5">
-          <i className="inline-block h-2 w-2.5 rounded-sm bg-[#f0b544]" />
-          Sobre el máximo
-        </span>
+        {positivos.map((e, i) => {
+          const izq = inicios[i];
+          return (
+            <div
+              key={e.codigo ?? "sin-envase"}
+              className="absolute inset-y-0"
+              style={{
+                left: pct(izq),
+                width: pct(e.litros),
+                background: colores[stock.envases.indexOf(e)],
+              }}
+              title={`${e.nombre}: ${fmt(e.litros, 1)} L`}
+            />
+          );
+        })}
+        {min !== null && (
+          <div className="absolute inset-y-0 w-0.5 bg-[#ef4444]" style={{ left: pct(min) }} />
+        )}
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+        {positivos.map((e) => (
+          <span key={e.codigo ?? "sin-envase"} className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block h-2.5 w-2.5 rounded-sm"
+              style={{ background: colores[stock.envases.indexOf(e)] }}
+            />
+            {e.nombre} {fmt(e.litros, 1)} L
+          </span>
+        ))}
+        {min !== null && (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-2.5 w-0.5 bg-[#ef4444]" />
+            Mínimo {fmt(min, 0)} L
+          </span>
+        )}
+        {max !== null && <span>Máximo {fmt(max, 0)} L</span>}
       </div>
     </div>
   );
@@ -378,30 +379,24 @@ function Tablero({ stock, envases }: { stock: EstadoStockUrea; envases: EnvaseRe
 
 export function AlmacenUrea({
   stock,
-  envases,
+  puedeVerKardex,
 }: {
   stock: EstadoStockUrea;
-  envases: EnvaseResumen[];
+  puedeVerKardex: boolean;
 }) {
-  const cols = useColumnas();
   const nivel = nivelDe(stock);
-  const { referencia } = stock;
+  const colores = stock.envases.map((_, i) => COLORES[i % COLORES.length]);
+  const porDefecto = stock.envases.find((e) => e.principal) ?? stock.envases[0] ?? null;
+  const [elegido, setElegido] = useState<string | null>(porDefecto?.codigo ?? null);
+  const [ampliado, setAmpliado] = useState(false);
 
-  // La estantería necesita la unidad de referencia (la caja) para dibujar
-  // "cajas", y un máximo razonable para no pintar miles de lugares. Sin eso,
-  // el tablero en litros, que nunca está mal.
-  const envase: EnvaseElegido | null =
-    referencia && referencia.litros > 0
-      ? { nombre: referencia.nombre, litros: referencia.litros }
-      : null;
-  const puedeEstanteria =
-    envase !== null && stock.stockL >= 0 && lugaresDe(stock, envase.litros, cols) <= MAX_LUGARES;
-  const [modo, setModo] = useState<"estanteria" | "tablero">("estanteria");
-  const verEstanteria = puedeEstanteria && modo === "estanteria";
+  const grande =
+    stock.envases.find((e) => e.codigo === elegido) ?? porDefecto ?? stock.envases[0] ?? null;
+  const pequenos = stock.envases.filter((e) => e !== grande);
 
   return (
     <section
-      className="flex min-w-0 flex-col gap-3.5 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"
+      className="flex min-w-0 flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm"
       aria-label="Almacén de urea"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -409,70 +404,31 @@ export function AlmacenUrea({
           <div className="text-[11px] font-semibold uppercase tracking-[0.09em] text-slate-500">
             Almacén central · Green 32 (AdBlue)
           </div>
-          <div className="flex flex-wrap items-baseline gap-x-3">
-            <span
-              className={`text-3xl font-bold tracking-tight sm:text-4xl ${
-                nivel === "bajo" || nivel === "neg" ? "text-red-600" : "text-slate-800"
-              }`}
-            >
-              {fmt(stock.stockL, 1)} L
-            </span>
-            {referencia && (
-              <span className="text-sm text-slate-500">
-                ≈ {fmt(referencia.bultos, 1)} {plural(referencia.nombre)} de{" "}
-                {fmt(referencia.litros, 0)} L
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2.5">
           <span
-            className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${CLASE_NIVEL[nivel]}`}
+            className={`text-3xl font-bold tracking-tight sm:text-4xl ${
+              nivel === "bajo" || nivel === "neg" ? "text-red-600" : "text-slate-800"
+            }`}
           >
-            {ETIQUETA_NIVEL[nivel]}
+            {fmt(stock.stockL, 1)} L
           </span>
-          {puedeEstanteria && (
-            <div
-              className="inline-flex gap-0.5 rounded-[10px] border border-slate-200 bg-slate-50 p-0.5"
-              role="group"
-              aria-label="Forma de ver el almacén"
-            >
-              {(["estanteria", "tablero"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  aria-pressed={modo === m}
-                  onClick={() => setModo(m)}
-                  className={`rounded-lg px-3 py-1 text-xs font-medium ${
-                    modo === m ? "bg-[#a3e635] text-black" : "text-slate-500 hover:text-white"
-                  }`}
-                >
-                  {m === "estanteria" ? "Estantería" : "Tablero"}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
+        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${CLASE_NIVEL[nivel]}`}>
+          {ETIQUETA_NIVEL[nivel]}
+        </span>
       </div>
 
-      {/* El stock negativo no se puede dibujar (no hay "menos que vacío") y
-          forzarlo a 0 sería mentir justo en el caso que más importa. Se dice
-          con palabras. */}
-      {nivel === "neg" ? (
-        <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          El stock de urea da <strong>negativo</strong>: los vales declaran más urea de la que las
-          entradas registradas explican. O falta cargar una compra, o hay vales por más litros de
-          los que realmente salieron.
-        </div>
-      ) : verEstanteria ? (
-        <Estanteria stock={stock} nivel={nivel} envase={envase!} />
-      ) : (
-        <Tablero stock={stock} envases={envases} />
-      )}
+      <BarraNivel stock={stock} colores={colores} />
 
       {stock.stockMinimoL === null && stock.stockMaximoL === null && (
         <div className="text-xs text-slate-400">
-          Sin umbrales configurados no se avisa nada: definilos en Configuración.
+          Sin umbrales configurados no se avisa nada: defínelos en Configuración.
+        </div>
+      )}
+      {nivel === "neg" && (
+        <div className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          El stock de urea da <strong>negativo</strong>: los vales declaran más urea de la que las
+          entradas registradas explican. O falta cargar una compra, o hay vales por más de lo que
+          realmente salió.
         </div>
       )}
       {nivel === "bajo" && (
@@ -487,7 +443,244 @@ export function AlmacenUrea({
           depósito.
         </div>
       )}
+
+      {grande === null ? (
+        <div className="text-sm text-slate-500">
+          No hay envases dados de alta. Agrégalos en Configuración → Envases.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          {/* El envase en grande: su estantería. */}
+          <div className="flex min-w-0 flex-col gap-3 rounded-2xl border border-slate-200 p-4">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.09em] text-slate-500">
+                  {TituloEnvase(grande)}
+                </div>
+                <div
+                  className={`text-2xl font-bold ${grande.unidades < 0 ? "text-red-600" : "text-slate-800"}`}
+                >
+                  {fmt(grande.unidades, 0)} {plural(grande.nombre, grande.unidades)}
+                </div>
+              </div>
+              <div className="text-lg font-semibold text-slate-500">{fmt(grande.litros, 1)} L</div>
+            </div>
+            <Estanteria
+              envase={grande}
+              porFila={POR_FILA[tipoDeEnvase(grande)].tarjeta}
+              maximo={MAX_EN_TARJETA}
+            />
+            <AvisoTamanosMezclados envase={grande} />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <MovidoEsteMes envase={grande} />
+              <button
+                type="button"
+                onClick={() => setAmpliado(true)}
+                className="inline-flex items-center gap-2 rounded-xl border border-[#65a30d] bg-[#a3e635] px-3.5 py-1.5 text-sm font-semibold text-black hover:bg-[#bef264]"
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M4 9V4h5M20 15v5h-5M4 4l6 6M20 20l-6-6" />
+                </svg>
+                Ampliar
+              </button>
+            </div>
+          </div>
+
+          {/* Los otros, chicos pero con lo esencial: unidades y litros. */}
+          {pequenos.length > 0 && (
+            <div className="flex min-w-0 flex-col gap-3">
+              {pequenos.map((e) => (
+                <button
+                  key={e.codigo ?? "sin-envase"}
+                  type="button"
+                  onClick={() => setElegido(e.codigo)}
+                  className="flex items-center gap-3 rounded-2xl border border-slate-200 p-3 text-left hover:border-[#a3e635] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#a3e635]"
+                >
+                  <span className="w-11 shrink-0">
+                    <IconoEnvase tipo={tipoDeEnvase(e)} />
+                  </span>
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate text-[11px] font-semibold uppercase tracking-[0.09em] text-slate-500">
+                      {TituloEnvase(e)}
+                    </span>
+                    <span
+                      className={`text-lg font-bold ${e.unidades < 0 ? "text-red-600" : "text-slate-800"}`}
+                    >
+                      {fmt(e.unidades, 0)} {plural(e.nombre, e.unidades)}
+                    </span>
+                    <span className="text-xs text-slate-500">{fmt(e.litros, 1)} L</span>
+                    <span className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                      <span
+                        className="block h-full rounded-full"
+                        style={{
+                          width: `${stock.stockL > 0 ? Math.max(0, Math.min(100, (e.litros / stock.stockL) * 100)) : 0}%`,
+                          background: colores[stock.envases.indexOf(e)],
+                        }}
+                      />
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {ampliado && grande && (
+        <VentanaFlotante
+          id="urea-envase-detalle"
+          titulo={TituloEnvase(grande)}
+          subtitulo={`${fmt(grande.unidades, 0)} ${plural(grande.nombre, grande.unidades)} · ${fmt(grande.litros, 1)} L`}
+          onCerrar={() => setAmpliado(false)}
+          anchoInicial={880}
+          altoInicial={620}
+        >
+          <div className="min-h-0 flex-1 overflow-y-auto p-4">
+            <DetalleEnvase envase={grande} puedeVerKardex={puedeVerKardex} />
+          </div>
+        </VentanaFlotante>
+      )}
     </section>
+  );
+}
+
+// ── La ventana ampliada de un envase ────────────────────────────────────
+
+interface FilaKardexEnvase {
+  ocurrido_en: string;
+  tipo: "entrada" | "vale" | "conteo";
+  referencia_id: number;
+  documento: string;
+  detalle: string;
+  bultos: number | null;
+  presentacion: string | null;
+  entrada: number;
+  salida: number;
+  anulada: boolean;
+}
+
+/** Del más nuevo al más viejo: cada fila lleva el saldo que dejó, partiendo
+ *  de las unidades de hoy. */
+function saldosHaciaAtras(masNuevoPrimero: FilaKardexEnvase[], unidadesHoy: number) {
+  const salida: (FilaKardexEnvase & { delta: number; saldo: number })[] = [];
+  let saldo = unidadesHoy;
+  for (const f of masNuevoPrimero) {
+    const delta = (f.bultos ?? 0) * (f.tipo === "entrada" ? 1 : -1);
+    salida.push({ ...f, delta, saldo });
+    saldo -= delta;
+  }
+  return salida;
+}
+
+function DetalleEnvase({
+  envase,
+  puedeVerKardex,
+}: {
+  envase: EnvaseStock;
+  puedeVerKardex: boolean;
+}) {
+  const [filas, setFilas] = useState<FilaKardexEnvase[] | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (!puedeVerKardex) return;
+    let vivo = true;
+    // Los últimos 30 días (el kardex exige el período explícito).
+    const hasta = new Date();
+    const desde = new Date(hasta.getTime() - 30 * 86400000);
+    const q = new URLSearchParams({ desde: desde.toISOString(), hasta: hasta.toISOString() });
+    apiFetch(`/api/erp/combustible/urea/kardex?${q}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(String(res.status));
+        const body = (await res.json()) as { filas: FilaKardexEnvase[] };
+        if (vivo) setFilas(body.filas);
+      })
+      .catch(() => vivo && setError(true));
+    return () => {
+      vivo = false;
+    };
+  }, [puedeVerKardex]);
+
+  // Los movimientos de ESTE envase, con su saldo en unidades. El saldo se
+  // arma hacia atrás desde las unidades de hoy: el kardex trae el saldo en
+  // litros del almacén entero, no por envase.
+  const propios = (filas ?? [])
+    .filter((f) => !f.anulada && f.tipo !== "conteo" && f.presentacion === envase.codigo)
+    .slice()
+    .reverse();
+  const conSaldo = saldosHaciaAtras(propios, envase.unidades);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Estanteria
+        envase={envase}
+        porFila={POR_FILA[tipoDeEnvase(envase)].ventana}
+        maximo={MAX_EN_VENTANA}
+      />
+      <AvisoTamanosMezclados envase={envase} />
+      <div>
+        <MovidoEsteMes envase={envase} />
+      </div>
+
+      <div className="text-[11px] font-semibold uppercase tracking-[0.09em] text-slate-500">
+        Movimientos de este envase · últimos 30 días
+      </div>
+      {!puedeVerKardex ? (
+        <div className="text-sm text-slate-500">Ver los movimientos requiere acceso al kardex.</div>
+      ) : error ? (
+        <div className="text-sm text-red-600">No se pudieron cargar los movimientos.</div>
+      ) : filas === null ? (
+        <div className="text-sm text-slate-500">Cargando…</div>
+      ) : conSaldo.length === 0 ? (
+        <div className="text-sm text-slate-500">Sin movimientos de este envase en el período.</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+              <tr>
+                <th className="px-3 py-2 text-left">Fecha</th>
+                <th className="px-3 py-2 text-left">Movimiento</th>
+                <th className="px-3 py-2 text-left">Documento</th>
+                <th className="px-3 py-2 text-left">Detalle</th>
+                <th className="px-3 py-2 text-right">Cantidad</th>
+                <th className="px-3 py-2 text-right">Litros</th>
+                <th className="px-3 py-2 text-right">Saldo</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {conSaldo.map((f) => (
+                <tr key={`${f.tipo}-${f.referencia_id}`}>
+                  <td className="whitespace-nowrap px-3 py-2">{fmtFechaHora(f.ocurrido_en)}</td>
+                  <td className="px-3 py-2">{f.tipo === "entrada" ? "Entrada" : "Vale"}</td>
+                  <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">{f.documento}</td>
+                  <td className="px-3 py-2 text-slate-500">{f.detalle}</td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {f.delta > 0 ? "+" : "−"}
+                    {fmt(Math.abs(f.delta), 0)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {fmt(f.tipo === "entrada" ? f.entrada : f.salida, 1)}
+                  </td>
+                  <td className="px-3 py-2 text-right font-semibold tabular-nums">
+                    {fmt(f.saldo, 0)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -505,11 +698,7 @@ function Dato({ titulo, children }: { titulo: string; children: React.ReactNode 
 }
 
 export function ResumenUrea({ stock }: { stock: EstadoStockUrea }) {
-  const { autonomiaDias, consumoDiarioL, ultimoConteo, enRutaMes, referencia } = stock;
-  const enCajas = (l: number) =>
-    referencia && referencia.litros > 0
-      ? ` (${fmt(l / referencia.litros, 0)} ${plural(referencia.nombre)})`
-      : "";
+  const { autonomiaDias, consumoDiarioL, ultimoConteo, enRutaMes } = stock;
   const colorAutonomia =
     autonomiaDias === null
       ? "bg-slate-300"
@@ -547,7 +736,8 @@ export function ResumenUrea({ stock }: { stock: EstadoStockUrea }) {
               <span className="text-xs text-slate-500">
                 Al ritmo de los últimos 30 días:{" "}
                 <b className="font-semibold text-slate-800">
-                  {fmt(consumoDiarioL ?? 0, 0)} L por día
+                  {/* Un decimal: con 2.4 L/día, "2 L" no explica los 170 días. */}
+                  {fmt(consumoDiarioL ?? 0, 1)} L por día
                 </b>{" "}
                 salen del almacén.
               </span>
@@ -590,17 +780,13 @@ export function ResumenUrea({ stock }: { stock: EstadoStockUrea }) {
             {stock.stockMinimoL === null ? (
               <span className="text-slate-400">sin configurar</span>
             ) : (
-              <b className="font-semibold text-slate-800">
-                {fmt(stock.stockMinimoL, 0)} L{enCajas(stock.stockMinimoL)}
-              </b>
+              <b className="font-semibold text-slate-800">{fmt(stock.stockMinimoL, 0)} L</b>
             )}{" "}
             · Máximo{" "}
             {stock.stockMaximoL === null ? (
               <span className="text-slate-400">sin configurar</span>
             ) : (
-              <b className="font-semibold text-slate-800">
-                {fmt(stock.stockMaximoL, 0)} L{enCajas(stock.stockMaximoL)}
-              </b>
+              <b className="font-semibold text-slate-800">{fmt(stock.stockMaximoL, 0)} L</b>
             )}
           </span>
           <span className="text-xs text-slate-500">Avisan, no bloquean ningún registro.</span>

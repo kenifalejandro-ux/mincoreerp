@@ -6,13 +6,16 @@
  *
  * Lo que estos tests defienden, en orden de importancia:
  *
- *   1. CAMBIAR EL FACTOR NO REINTERPRETA EL HISTORIAL. Es la razón de ser de
- *      `factor_litros` en cada fila (0092) y el único motivo por el que esta
- *      pantalla se puede dar a un cliente sin romper el módulo anti-fraude.
+ *   1. LOS LITROS DE UN ENVASE CON MOVIMIENTOS NO SE CAMBIAN (409). Cada
+ *      movimiento congeló sus litros (`factor_litros`, 0092): cambiarlos no
+ *      corregiría el pasado, lo dejaría mezclado, y contar bultos daría un
+ *      sobrante o faltante falso. Un envase de otro tamaño es OTRO envase.
  *      Si este test se cae, el cambio está mal hecho, no el test.
- *   2. Y sí mueve los movimientos NUEVOS -- si no, la pantalla no sirve.
- *   3. El motivo es obligatorio: sin él no se puede distinguir después
- *      "corregimos el envase" de "alguien movió el número antes del conteo".
+ *   2. Un envase SIN uso sí cambia de litros, con motivo y en auditoría.
+ *   3. El motivo es obligatorio para cambiar litros o desactivar: sin él no
+ *      se puede distinguir después "corregimos el envase" de "alguien movió
+ *      el número antes del conteo". Renombrar no lo pide.
+ *   3b. Un envase con stock en el almacén no se desactiva (409).
  *   4. El código no se puede cambiar: es la mitad de la FK compuesta.
  *   5. Un envase desactivado no se puede usar para cargar, pero su historial
  *      se sigue leyendo.
@@ -20,9 +23,10 @@
  *   7. Solo admin configura.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import crypto from "node:crypto";
 import request from "supertest";
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
-import { closeDatabase, withTenant } from "../src/server/config/database";
+import { closeDatabase, pool, withTenant } from "../src/server/config/database";
 
 function serieUnica(): string {
   return `P${Math.floor(Math.random() * 1e8).toString(36)}`;
@@ -35,6 +39,7 @@ interface PresentacionApi {
   litros: string;
   es_referencia: boolean;
   activa: boolean;
+  movimientos?: number;
 }
 
 describe("combustible: catálogo de presentaciones de urea (migración 0116)", () => {
@@ -133,48 +138,64 @@ describe("combustible: catálogo de presentaciones de urea (migración 0116)", (
 
   // ── 1 y 2: el histórico no se mueve, lo nuevo sí ──────────────────────
 
-  it("cambiar la caja de 16 a 20 L NO toca el vale ya cargado, y sí el siguiente", async () => {
-    const antes = await agente
+  /** Un envase nuevo, sin movimientos: el único al que se le pueden cambiar
+   *  los litros. */
+  const envaseSinUso = async (codigo: string, litros: number) => {
+    const alta = await agente
+      .post("/api/erp/combustible/urea/presentaciones")
+      .send({ codigo, nombre: codigo, litros, es_referencia: false });
+    expect(alta.status).toBe(201);
+    return porCodigo(codigo);
+  };
+
+  it("un envase con movimientos NO cambia de litros (409) y no toca nada", async () => {
+    const vale = await agente
       .post("/api/erp/combustible/despachos")
       .send(payloadUrea({ n_vale: 1 }));
-    expect(antes.status).toBe(201);
-    expect(Number(antes.body.factor_litros)).toBe(16);
-    expect(Number(antes.body.cantidad)).toBe(32);
+    expect(vale.status).toBe(201);
+    expect(Number(vale.body.factor_litros)).toBe(16);
 
-    const caja = await porCodigo("caja");
-    const cambio = await editar(caja, {
+    // Si se dejara, la caja quedaría mezclada: 16 L en el historial, 20 L en
+    // el catálogo, y contar cajas daría un sobrante falso.
+    const cambio = await editar(await porCodigo("caja"), {
       litros: 20,
-      motivo: "El proveedor cambió la caja: 5 bolsas de 4 L en vez de 4",
+      motivo: "el proveedor cambió la caja",
     });
-    expect(cambio.status).toBe(200);
-    expect(Number(cambio.body.litros)).toBe(20);
+    expect(cambio.status).toBe(409);
+    expect(cambio.body.error).toMatch(/otro envase/i);
 
-    // El vale viejo, releído de la base: intacto. Esto es lo que hace que
-    // la pantalla sea segura -- el factor está CONGELADO en la fila.
+    expect(Number((await porCodigo("caja")).litros)).toBe(16);
     const releido = await withTenant(tenantId, (c) =>
       c.query(`SELECT factor_litros, cantidad FROM combustible_despachos WHERE id = $1`, [
-        antes.body.id,
+        vale.body.id,
       ])
     );
     expect(Number(releido.rows[0].factor_litros)).toBe(16);
     expect(Number(releido.rows[0].cantidad)).toBe(32);
 
-    // Y el siguiente ya usa el factor nuevo.
-    const despues = await agente
-      .post("/api/erp/combustible/despachos")
-      .send(payloadUrea({ n_vale: 2 }));
-    expect(despues.status).toBe(201);
-    expect(Number(despues.body.factor_litros)).toBe(20);
-    expect(Number(despues.body.cantidad)).toBe(40);
-
-    // Vuelta atrás para no condicionar los tests de abajo.
-    await editar(await porCodigo("caja"), { litros: 16, motivo: "revertir: fin del test" });
+    // El listado avisa cuántos movimientos tiene, para que la pantalla no
+    // ofrezca el cambio.
+    expect(Number((await porCodigo("caja")).movimientos)).toBeGreaterThan(0);
   });
 
-  it("el cambio de factor queda en auditoría con los dos valores y el motivo", async () => {
-    const caja = await porCodigo("caja");
-    const res = await editar(caja, { litros: 18, motivo: "pesaje del lote de agosto" });
+  it("si la caja cambió de tamaño, es OTRO envase: se da de alta y convive con la vieja", async () => {
+    const alta = await agente
+      .post("/api/erp/combustible/urea/presentaciones")
+      .send({ codigo: "caja20", nombre: "Caja 20 L", litros: 20, es_referencia: false });
+    expect(alta.status).toBe(201);
+    const vale = await agente
+      .post("/api/erp/combustible/despachos")
+      .send(payloadUrea({ presentacion: "caja20", n_vale: 2 }));
+    expect(vale.status).toBe(201);
+    expect(Number(vale.body.cantidad)).toBe(40);
+    expect(Number((await porCodigo("caja")).litros)).toBe(16);
+  });
+
+  it("un envase SIN uso sí cambia de litros, con motivo, y queda en auditoría", async () => {
+    const lata = await envaseSinUso("lata", 10);
+    const res = await editar(lata, { litros: 12, motivo: "se dio de alta con el número mal" });
     expect(res.status).toBe(200);
+    expect(Number(res.body.litros)).toBe(12);
 
     const log = await withTenant(tenantId, (c) =>
       c.query<{ detalle: Record<string, unknown> }>(
@@ -185,20 +206,22 @@ describe("combustible: catálogo de presentaciones de urea (migración 0116)", (
       )
     );
     expect(log.rowCount).toBe(1);
-    expect(log.rows[0].detalle.litrosDe).toBe(16);
-    expect(log.rows[0].detalle.litrosA).toBe(18);
-    expect(log.rows[0].detalle.motivo).toContain("pesaje");
-    // Cuántos movimientos quedaron con el factor viejo: es el dato que
-    // distingue "lo corregimos antes de usarlo" de "lo movimos con 300
-    // vales cargados encima".
-    expect(Number(log.rows[0].detalle.movimientosConElFactorViejo)).toBeGreaterThan(0);
-
-    await editar(await porCodigo("caja"), { litros: 16, motivo: "revertir: fin del test" });
+    expect(log.rows[0].detalle.litrosDe).toBe(10);
+    expect(log.rows[0].detalle.litrosA).toBe(12);
+    expect(log.rows[0].detalle.motivo).toContain("número mal");
+    expect(Number(log.rows[0].detalle.movimientosConElFactorViejo)).toBe(0);
   });
 
-  it("una edición que NO mueve los litros se audita como edición común, no como cambio de factor", async () => {
-    const balde = await porCodigo("balde");
-    const res = await editar(balde, { nombre: "Balde grande", motivo: "así lo llaman en almacén" });
+  it("cambiar los litros sin motivo es 400, aunque el envase no tenga uso", async () => {
+    const tambor = await envaseSinUso("tambor", 50);
+    const res = await editar(tambor, { litros: 55 });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/motivo/i);
+    expect(Number((await porCodigo("tambor")).litros)).toBe(50);
+  });
+
+  it("renombrar no pide motivo y se audita como edición común", async () => {
+    const res = await editar(await porCodigo("balde"), { nombre: "Balde grande" });
     expect(res.status).toBe(200);
 
     const log = await withTenant(tenantId, (c) =>
@@ -212,20 +235,53 @@ describe("combustible: catálogo de presentaciones de urea (migración 0116)", (
     expect(log.rows[0].accion).toBe("combustible.urea_presentacion_actualizar");
   });
 
-  // ── 3: el motivo ──────────────────────────────────────────────────────
+  it("un cambio de litros ESPERA al movimiento que está congelando esos litros: no hay carrera", async () => {
+    // Un vale y un cambio de litros en el mismo instante: sin bloqueo, el
+    // chequeo "no tiene movimientos" y el cambio no son atómicos y el vale
+    // se cuela con el factor viejo. El movimiento toma la fila FOR SHARE
+    // (resolverFactorPresentacionUrea) y el cambio FOR UPDATE.
+    const bidon = await envaseSinUso("bidonx", 10);
+    const movimiento = await pool.connect();
+    try {
+      await movimiento.query("BEGIN");
+      await movimiento.query("SELECT set_config('app.tenant_id', $1, true)", [tenantId]);
+      await movimiento.query(
+        `SELECT id FROM combustible_urea_presentaciones
+          WHERE tenant_id = $1 AND codigo = 'bidonx' FOR SHARE`,
+        [tenantId]
+      );
 
-  it("editar sin motivo es 400", async () => {
-    const caja = await porCodigo("caja");
-    const res = await agente.put(`/api/erp/combustible/urea/presentaciones/${caja.id}`).send({
-      nombre: caja.nombre,
-      litros: 20,
-      es_referencia: caja.es_referencia,
-      activa: caja.activa,
+      const cambio = editar(bidon, { litros: 12, motivo: "prueba de bloqueo" }).then((r) => r);
+      const primero = await Promise.race([
+        cambio.then(() => "terminó"),
+        new Promise((r) => setTimeout(() => r("esperando"), 500)),
+      ]);
+      expect(primero).toBe("esperando");
+
+      await movimiento.query("COMMIT");
+      expect((await cambio).status).toBe(200);
+    } finally {
+      movimiento.release();
+    }
+  });
+
+  it("desactivar un envase con stock en el almacén es 409: sus unidades quedarían atrapadas", async () => {
+    const saco = await envaseSinUso("saco", 5);
+    const entrada = await agente.post("/api/erp/combustible/recepciones").send({
+      cliente_uuid: crypto.randomUUID(),
+      producto: "urea",
+      grifo_id: grifoUrea,
+      presentacion: "saco",
+      cantidad_bultos: 2,
+      costo_unitario: 20,
+      recibido_en: new Date().toISOString(),
     });
-    expect(res.status).toBe(400);
+    expect(entrada.status).toBe(201);
 
-    // Y no cambió nada.
-    expect(Number((await porCodigo("caja")).litros)).toBe(16);
+    const baja = await editar(saco, { activa: false, motivo: "ya no lo compramos" });
+    expect(baja.status).toBe(409);
+    expect(baja.body.error).toMatch(/Quedan 2/);
+    expect((await porCodigo("saco")).activa).toBe(true);
   });
 
   // ── 4: el código es inmutable ─────────────────────────────────────────

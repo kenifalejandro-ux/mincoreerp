@@ -1698,16 +1698,22 @@ export const crearPresentacionUreaSchema = z.object({
 
 export type CrearPresentacionUreaInput = z.infer<typeof crearPresentacionUreaSchema>;
 
-/** Cambiar los litros de una presentación NO reinterpreta el historial: cada
- *  movimiento guardó su propio `factor_litros` al crearse. Pero sí cambia lo
- *  que van a declarar los movimientos NUEVOS, así que lleva motivo
- *  obligatorio y queda en bitácora -- mismo trato que aflojar un umbral. */
+/** Los litros de un envase con movimientos NO se cambian, y uno con stock no
+ *  se desactiva: el service lo rechaza con 409 (ver actualizarPresentacionUrea).
+ *  El motivo es obligatorio solo para cambiar los litros (envase sin uso) o
+ *  desactivar -- lo exige el service, porque depende del estado anterior.
+ *  Renombrar o elegir el envase principal no lo pide. */
 export const actualizarPresentacionUreaSchema = z.object({
   nombre: z.string().trim().min(1, "El nombre es obligatorio").max(60),
   litros: z.number().positive().max(2000),
   es_referencia: z.boolean(),
   activa: z.boolean(),
-  motivo: z.string().trim().min(1, "El motivo del cambio es obligatorio").max(500),
+  motivo: z
+    .string()
+    .trim()
+    .max(500)
+    .optional()
+    .transform((m) => (m ? m : undefined)),
 });
 
 export type ActualizarPresentacionUreaInput = z.infer<typeof actualizarPresentacionUreaSchema>;

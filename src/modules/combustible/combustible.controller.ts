@@ -3006,14 +3006,13 @@ export class CombustibleController {
           });
         }
         if (stockBajo) {
-          // El equivalente en bultos se resuelve acá y no en el evaluador: es
-          // texto para el correo, no parte del hallazgo. El `detalle` de la
-          // alerta guarda litros, que es lo que no cambia de significado si
-          // mañana la empresa cambia su unidad de referencia.
-          const equivalente = await withTenant(tenantId, (client) =>
-            service.equivalenteEnBultosDeReferencia(client, tenantId, stockBajo.stockL)
+          // Lo que queda en físico ("17 cajas y 34 bolsas") se resuelve acá y
+          // no en el evaluador: es texto para el correo, no parte del
+          // hallazgo. El `detalle` de la alerta guarda litros.
+          const composicion = await withTenant(tenantId, (client) =>
+            service.composicionStockUrea(client, tenantId)
           );
-          await enviarCorreoUreaStockBajo(admins, { ...stockBajo, equivalente });
+          await enviarCorreoUreaStockBajo(admins, { ...stockBajo, composicion });
         }
       }
     } catch (err) {
@@ -6653,7 +6652,13 @@ export class CombustibleController {
         presentacionId: id,
       });
       res.json(resultado.fila);
-    } catch {
+    } catch (err) {
+      // 409: litros de un envase con historial, o desactivar con stock.
+      // 400: falta el motivo. Ver actualizarPresentacionUrea.
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
+      }
       res.status(500).json({ error: "Error al actualizar la presentación de urea" });
     }
   }

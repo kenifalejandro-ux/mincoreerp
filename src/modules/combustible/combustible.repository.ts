@@ -3576,12 +3576,24 @@ export class CombustibleRepository {
   /** Todas las del tenant, activas e inactivas -- la pantalla de
    *  configuración tiene que poder reactivar una. Los desplegables de carga
    *  filtran las activas del lado del cliente. */
+  /** Con `movimientos`: cuántas filas ya congelaron los litros de este
+   *  envase. La pantalla lo usa para no ofrecer un cambio de litros que el
+   *  servidor va a rechazar (ver actualizarPresentacionUrea). */
   async findPresentacionesUrea(client: PoolClient, tenantId: string) {
     const result = await client.query(
-      `SELECT ${CombustibleRepository.COLUMNAS_PRESENTACION_UREA}
-       FROM combustible_urea_presentaciones
-       WHERE tenant_id = $1
-       ORDER BY activa DESC, nombre ASC`,
+      `SELECT p.id, p.codigo, p.nombre, p.litros, p.es_referencia, p.activa, p.creado_en,
+              p.actualizado_en, p.actualizado_por,
+              (
+                (SELECT COUNT(*) FROM combustible_despachos d
+                  WHERE d.tenant_id = p.tenant_id AND d.presentacion = p.codigo)
+                + (SELECT COUNT(*) FROM combustible_recepciones r
+                    WHERE r.tenant_id = p.tenant_id AND r.presentacion = p.codigo)
+                + (SELECT COUNT(*) FROM combustible_despacho_urea_lineas l
+                    WHERE l.tenant_id = p.tenant_id AND l.presentacion = p.codigo)
+              )::int AS movimientos
+       FROM combustible_urea_presentaciones p
+       WHERE p.tenant_id = $1
+       ORDER BY p.activa DESC, p.nombre ASC`,
       [tenantId]
     );
     return result.rows;
@@ -3595,9 +3607,14 @@ export class CombustibleRepository {
       litros: string;
       activa: boolean;
     }>(
+      // FOR SHARE: el movimiento que está por congelar estos litros traba la
+      // fila hasta su COMMIT. Un cambio de litros o una baja en paralelo
+      // (que toma FOR UPDATE, ver findPresentacionUreaPorId) espera y después
+      // VE este movimiento: no puede colarse un vale con el factor viejo.
       `SELECT id, codigo, nombre, litros, activa
        FROM combustible_urea_presentaciones
-       WHERE tenant_id = $1 AND codigo = $2`,
+       WHERE tenant_id = $1 AND codigo = $2
+       FOR SHARE`,
       [tenantId, codigo]
     );
     return result.rows[0] ?? null;
@@ -3668,10 +3685,19 @@ export class CombustibleRepository {
     return result.rows[0] ?? null;
   }
 
-  async findPresentacionUreaPorId(client: PoolClient, tenantId: string, id: number) {
+  /** `paraEditar`: FOR UPDATE, para que contar los movimientos y el stock del
+   *  envase y después cambiarlo sea atómico frente a un vale o una entrada
+   *  en paralelo (que toman FOR SHARE, ver findPresentacionUreaPorCodigo). */
+  async findPresentacionUreaPorId(
+    client: PoolClient,
+    tenantId: string,
+    id: number,
+    opciones: { paraEditar?: boolean } = {}
+  ) {
     const result = await client.query(
       `SELECT ${CombustibleRepository.COLUMNAS_PRESENTACION_UREA}
-       FROM combustible_urea_presentaciones WHERE id = $1 AND tenant_id = $2`,
+       FROM combustible_urea_presentaciones WHERE id = $1 AND tenant_id = $2
+       ${opciones.paraEditar ? "FOR UPDATE" : ""}`,
       [id, tenantId]
     );
     return result.rows[0] ?? null;
@@ -3686,16 +3712,113 @@ export class CombustibleRepository {
     codigo: string
   ): Promise<number> {
     const result = await client.query<{ n: string }>(
+      // Los renglones de la compra en ruta (0120) también congelan los
+      // litros por bulto: cuentan igual que un vale o una entrada.
       `SELECT (
          (SELECT COUNT(*) FROM combustible_despachos
            WHERE tenant_id = $1 AND presentacion = $2)
          +
          (SELECT COUNT(*) FROM combustible_recepciones
            WHERE tenant_id = $1 AND presentacion = $2)
+         +
+         (SELECT COUNT(*) FROM combustible_despacho_urea_lineas
+           WHERE tenant_id = $1 AND presentacion = $2)
        ) AS n`,
       [tenantId, codigo]
     );
     return Number(result.rows[0].n);
+  }
+
+  /** STOCK DEL ALMACÉN POR ENVASE, hasta una fecha: lo que hay en FÍSICO.
+   *
+   *  Las unidades son la suma de bultos (entradas menos vales del almacén) y
+   *  los litros la suma de lo que cada movimiento guardó. Nunca se divide
+   *  litros por un factor: eso es una equivalencia, y "102 bolsas" sacadas
+   *  de 408 L son bolsas que nadie compró. Por la misma razón el total del
+   *  almacén es la SUMA de estas filas -- coincide con findStockTeoricoUrea
+   *  por construcción (mismos filtros), y un test lo exige.
+   *
+   *  Con signo: un envase del que salió más de lo que entró queda negativo.
+   *  Un FULL JOIN contra el catálogo para que un envase sin movimientos
+   *  aparezca en 0 y un movimiento cuyo envase ya no esté en el catálogo
+   *  (no debería pasar: hay FK) no desaparezca del total.
+   *
+   *  `factores`: con qué litros por bulto se registró ese stock. Si no
+   *  coincide con el catálogo, el envase quedó con tamaños mezclados y la
+   *  pantalla tiene que decirlo en vez de mostrar 17 cajas = 272 L. */
+  async findStockUreaPorEnvase(client: PoolClient, tenantId: string, hasta: string) {
+    const r = await client.query<{
+      codigo: string | null;
+      nombre: string | null;
+      litros_por_bulto: string | null;
+      activa: boolean | null;
+      es_referencia: boolean | null;
+      unidades: string;
+      litros: string;
+      entraron_mes: string;
+      salieron_mes: string;
+      factores: string[] | null;
+    }>(
+      `
+      WITH lim AS (
+        SELECT date_trunc('month', $2::timestamptz AT TIME ZONE 'America/Lima')
+                 AT TIME ZONE 'America/Lima' AS inicio_mes
+      ),
+      mov AS (
+        SELECT presentacion, cantidad_bultos AS bultos, cantidad AS litros,
+               factor_litros, recibido_en AS fecha, 1 AS signo
+          FROM combustible_recepciones
+         WHERE tenant_id = $1 AND producto = 'urea' AND anulada_en IS NULL
+           AND recibido_en <= $2::timestamptz
+        UNION ALL
+        -- Solo el ALMACÉN (0119): la compra en ruta nunca entró al depósito.
+        SELECT presentacion, cantidad_bultos, cantidad, factor_litros, despachado_en, -1
+          FROM combustible_despachos
+         WHERE tenant_id = $1 AND producto = 'urea' AND origen = 'almacen'
+           AND anulada_en IS NULL AND despachado_en <= $2::timestamptz
+      ),
+      por_envase AS (
+        SELECT m.presentacion,
+               SUM(m.signo * COALESCE(m.bultos, 0)) AS unidades,
+               SUM(m.signo * m.litros) AS litros,
+               COALESCE(SUM(m.bultos) FILTER (WHERE m.signo = 1 AND m.fecha >= lim.inicio_mes), 0)
+                 AS entraron_mes,
+               COALESCE(SUM(m.bultos) FILTER (WHERE m.signo = -1 AND m.fecha >= lim.inicio_mes), 0)
+                 AS salieron_mes,
+               ARRAY_AGG(DISTINCT m.factor_litros) FILTER (WHERE m.factor_litros IS NOT NULL)
+                 AS factores
+          FROM mov m CROSS JOIN lim
+         GROUP BY m.presentacion
+      ),
+      catalogo AS (
+        SELECT codigo, nombre, litros, activa, es_referencia
+          FROM combustible_urea_presentaciones
+         WHERE tenant_id = $1
+      )
+      SELECT COALESCE(c.codigo, e.presentacion) AS codigo, c.nombre,
+             c.litros AS litros_por_bulto, c.activa, c.es_referencia,
+             COALESCE(e.unidades, 0) AS unidades, COALESCE(e.litros, 0) AS litros,
+             COALESCE(e.entraron_mes, 0) AS entraron_mes,
+             COALESCE(e.salieron_mes, 0) AS salieron_mes,
+             e.factores
+        FROM catalogo c
+        FULL JOIN por_envase e ON e.presentacion = c.codigo
+       ORDER BY c.es_referencia DESC NULLS LAST, COALESCE(e.litros, 0) DESC, c.nombre
+      `,
+      [tenantId, hasta]
+    );
+    return r.rows.map((f) => ({
+      codigo: f.codigo,
+      nombre: f.nombre,
+      litrosPorBulto: f.litros_por_bulto === null ? null : Number(f.litros_por_bulto),
+      activa: f.activa ?? false,
+      esReferencia: f.es_referencia ?? false,
+      unidades: Number(f.unidades),
+      litros: Number(f.litros),
+      entraronMes: Number(f.entraron_mes),
+      salieronMes: Number(f.salieron_mes),
+      factores: (f.factores ?? []).map(Number),
+    }));
   }
 
   // ── Conteo físico de urea (migración 0092) ─────────────────────────────

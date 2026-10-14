@@ -58,6 +58,8 @@ interface PresentacionFila {
   litros: string;
   es_referencia: boolean;
   activa: boolean;
+  /** Filas que ya congelaron sus litros: con > 0 los litros no se cambian. */
+  movimientos?: number;
 }
 
 /** "Caja (20 L)". El nombre NO lleva los litros escritos adentro (ver el
@@ -1442,7 +1444,7 @@ export default function UreaPanel() {
           almacén, como el cilindro y la tabla de Tanques. ── */}
       {puedeVerUrea && estado?.stock && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1.9fr)_minmax(0,1fr)]">
-          <AlmacenUrea stock={estado.stock} envases={presentaciones.filter((p) => p.activa)} />
+          <AlmacenUrea stock={estado.stock} puedeVerKardex={puedeVerKardex} />
           <ResumenUrea stock={estado.stock} />
         </div>
       )}
@@ -1638,16 +1640,17 @@ export default function UreaPanel() {
           anchoInicial={980}
           altoInicial={640}
         >
-          <CuerpoVentana>
-            <UmbralesUrea
-              onGuardado={() => {
-                cargarEstado();
-                setPanelAbierto(null);
-              }}
-              presentaciones={presentaciones}
-            />
-            <ConfiguracionPresentaciones filas={presentaciones} onCambio={cargarPresentaciones} />
-          </CuerpoVentana>
+          <ConfiguracionUrea
+            onUmbralesGuardados={() => {
+              cargarEstado();
+              setPanelAbierto(null);
+            }}
+            presentaciones={presentaciones}
+            onEnvasesCambiaron={() => {
+              cargarPresentaciones();
+              cargarEstado();
+            }}
+          />
         </VentanaFlotante>
       )}
 
@@ -2180,36 +2183,7 @@ function aNumeroOpcional(texto: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** "= 10 cajas de 16 L · 40 bolsas de 4 L · 8 baldes de 20 L" -- la opción A
- *  que eligió Kenif para los umbrales en litros: el número se guarda en
- *  LITROS (si se guardara "10 cajas", corregir la caja de 16 a 20 L movería el
- *  umbral solo, sin motivo ni bitácora), pero se lee en la unidad en que la
- *  empresa piensa. La de referencia va primero. */
-function equivalenciaEnEnvases(texto: string, presentaciones: PresentacionFila[]): string | null {
-  const litros = Number(texto);
-  if (texto.trim() === "" || !Number.isFinite(litros) || litros <= 0) return null;
-  const activas = presentacionesActivas(presentaciones).sort(
-    (a, b) => Number(b.es_referencia) - Number(a.es_referencia)
-  );
-  if (activas.length === 0) return null;
-  return (
-    "= " +
-    activas
-      .map((p) => {
-        const n = Number((litros / Number(p.litros)).toFixed(1));
-        return `${n.toLocaleString("es-PE")} ${p.nombre.toLowerCase()}${n === 1 ? "" : "s"} de ${formatearNumero(p.litros)} L`;
-      })
-      .join(" · ")
-  );
-}
-
-function UmbralesUrea({
-  onGuardado,
-  presentaciones,
-}: {
-  onGuardado: () => void;
-  presentaciones: PresentacionFila[];
-}) {
+function UmbralesUrea({ onGuardado }: { onGuardado: () => void }) {
   // La config completa tal como vino del servidor -- se devuelve igual salvo
   // los cuatro campos de urea. Ver el comentario de arriba.
   const [configCompleta, setConfigCompleta] = useState<Record<string, unknown> | null>(null);
@@ -2334,11 +2308,6 @@ function UmbralesUrea({
             onChange={(e) => setTope(e.target.value)}
             className="rounded border border-gray-300 px-3 py-2"
           />
-          {equivalenciaEnEnvases(tope, presentaciones) && (
-            <span className="text-xs font-medium text-slate-700">
-              {equivalenciaEnEnvases(tope, presentaciones)}
-            </span>
-          )}
           <span className="text-xs text-slate-500">
             Si una unidad recibe más que esto en 24 horas (sumando vales del almacén y compras en
             ruta), queda una alerta. No se le niega la urea.
@@ -2371,11 +2340,6 @@ function UmbralesUrea({
             onChange={(e) => setMinimo(e.target.value)}
             className="rounded border border-gray-300 px-3 py-2"
           />
-          {equivalenciaEnEnvases(minimo, presentaciones) && (
-            <span className="text-xs font-medium text-slate-700">
-              {equivalenciaEnEnvases(minimo, presentaciones)}
-            </span>
-          )}
           <span className="text-xs text-slate-500">
             Cuando el almacén queda por debajo, avisa que hay que reabastecer. El aviso se cierra
             solo cuando entra la compra.
@@ -2391,11 +2355,6 @@ function UmbralesUrea({
             onChange={(e) => setMaximo(e.target.value)}
             className="rounded border border-gray-300 px-3 py-2"
           />
-          {equivalenciaEnEnvases(maximo, presentaciones) && (
-            <span className="text-xs font-medium text-slate-700">
-              {equivalenciaEnEnvases(maximo, presentaciones)}
-            </span>
-          )}
           <span className="text-xs text-slate-500">
             Al registrar una entrada al almacén, si el depósito queda por encima, avisa. Mira el
             total, no la compra sola, así que también atrapa comprar de a poco. La entrada se
@@ -2902,6 +2861,60 @@ function CatalogoPreciosUrea({
 // obligatorio: es la única forma de distinguir después "corregimos el envase
 // que vino distinto" de "alguien movió el número justo antes del conteo".
 
+/** Configuración de urea en DOS pestañas que no se mezclan: los umbrales
+ *  (política de vigilancia: aflojarlos pide motivo) y el catálogo de envases
+ *  (dato maestro). Juntos en un solo formulario, el motivo de los umbrales
+ *  aparecía al dar de alta un envase y la ventana no cerraba. */
+function ConfiguracionUrea({
+  onUmbralesGuardados,
+  presentaciones,
+  onEnvasesCambiaron,
+}: {
+  onUmbralesGuardados: () => void;
+  presentaciones: PresentacionFila[];
+  onEnvasesCambiaron: () => void;
+}) {
+  const [pestana, setPestana] = useState<"umbrales" | "envases">("umbrales");
+  return (
+    <>
+      <div
+        className="flex shrink-0 gap-1 border-b border-slate-200 px-4 pt-3"
+        role="tablist"
+        aria-label="Configuración de urea"
+      >
+        {(
+          [
+            ["umbrales", "Umbrales"],
+            ["envases", "Envases"],
+          ] as const
+        ).map(([clave, etiqueta]) => (
+          <button
+            key={clave}
+            type="button"
+            role="tab"
+            aria-selected={pestana === clave}
+            onClick={() => setPestana(clave)}
+            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
+              pestana === clave
+                ? "border-[#a3e635] text-slate-800"
+                : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            {etiqueta}
+          </button>
+        ))}
+      </div>
+      <CuerpoVentana>
+        {pestana === "umbrales" ? (
+          <UmbralesUrea onGuardado={onUmbralesGuardados} />
+        ) : (
+          <ConfiguracionPresentaciones filas={presentaciones} onCambio={onEnvasesCambiaron} />
+        )}
+      </CuerpoVentana>
+    </>
+  );
+}
+
 function ConfiguracionPresentaciones({
   filas,
   onCambio,
@@ -2916,14 +2929,14 @@ function ConfiguracionPresentaciones({
     <div className="flex flex-col">
       <div className="border-b border-slate-100 bg-slate-50/60 p-4 text-sm text-slate-600">
         <p>
-          Cuántos litros trae cada envase <strong>en esta empresa</strong>. Es el número con el que
-          el sistema convierte &quot;3 cajas&quot; en litros.
+          Cuántos litros trae cada envase <strong>en esta empresa</strong>. Con ese número el
+          sistema convierte &quot;3 cajas&quot; en litros al registrar un vale, una entrada o un
+          conteo.
         </p>
         <p className="mt-2">
-          Corregirlo <strong>no cambia nada de lo ya cargado</strong>: cada vale y cada entrada
-          guardaron los litros que estaban vigentes el día que se registraron. Afecta a los
-          movimientos nuevos y al stock contra el que se compara el próximo conteo físico, así que
-          pide un motivo y queda en la bitácora.
+          Una vez que un envase tiene movimientos, <strong>sus litros quedan fijos</strong>: cada
+          movimiento guardó los suyos, y cambiarlos dejaría el envase con tamaños mezclados. Si el
+          proveedor cambió el tamaño, da de alta otro envase (por ejemplo &quot;Caja 20 L&quot;).
         </p>
       </div>
 
@@ -2951,7 +2964,7 @@ function ConfiguracionPresentaciones({
                 <th className="text-left px-4 py-2">Envase</th>
                 <th className="text-left px-4 py-2">Código</th>
                 <th className="text-right px-4 py-2">Litros por bulto</th>
-                <th className="text-left px-4 py-2">Unidad de referencia</th>
+                <th className="text-left px-4 py-2">Principal</th>
                 <th className="text-left px-4 py-2">Estado</th>
                 <th className="text-left px-4 py-2"></th>
               </tr>
@@ -2961,11 +2974,18 @@ function ConfiguracionPresentaciones({
                 <tr key={p.id} className={p.activa ? "" : "opacity-50"}>
                   <td className="px-4 py-2 font-medium text-slate-700">{p.nombre}</td>
                   <td className="px-4 py-2 font-mono text-xs text-slate-500">{p.codigo}</td>
-                  <td className="px-4 py-2 text-right">{formatearNumero(p.litros, 2)} L</td>
+                  <td className="px-4 py-2 text-right">
+                    {formatearNumero(p.litros, 2)} L
+                    {(p.movimientos ?? 0) > 0 && (
+                      <span className="block text-[11px] text-slate-400">
+                        fijo · {p.movimientos} {p.movimientos === 1 ? "movimiento" : "movimientos"}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-2">
                     {p.es_referencia ? (
                       <span className="text-xs font-semibold text-slate-700">
-                        Sí — el stock se muestra en {p.nombre.toLowerCase()}s
+                        Sí — se abre primero en la estantería
                       </span>
                     ) : (
                       <span className="text-xs text-slate-400">—</span>
@@ -4177,13 +4197,11 @@ function ModalCrearPresentacion({
             className="mt-1"
           />
           <span className="text-gray-600">
-            Mostrar el stock en esta unidad
+            Envase principal: se abre primero en la estantería y viene elegido en los formularios
             {referenciaActual && (
               <>
                 {" "}
-                <strong>
-                  (hoy se muestra en {referenciaActual.nombre.toLowerCase()}s; se va a cambiar)
-                </strong>
+                <strong>(hoy es {referenciaActual.nombre}; pasa a ser este)</strong>
               </>
             )}
           </span>
@@ -4239,9 +4257,15 @@ function ModalEditarPresentacion({
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Con movimientos, los litros quedan fijos (el servidor lo rechaza con 409):
+  // la pantalla no ofrece un cambio que no se puede hacer.
+  const litrosFijos = (fila.movimientos ?? 0) > 0;
   const litrosAntes = Number(fila.litros);
   const litrosAhora = Number(litros);
   const cambiaElFactor = Number.isFinite(litrosAhora) && litrosAhora !== litrosAntes;
+  const seDesactiva = fila.activa && !activa;
+  // El motivo solo se pide para lo que lo necesita: cambiar litros o desactivar.
+  const pideMotivo = cambiaElFactor || seDesactiva;
 
   const enviar = async () => {
     setEnviando(true);
@@ -4255,7 +4279,7 @@ function ModalEditarPresentacion({
           litros: litrosAhora,
           es_referencia: esReferencia,
           activa,
-          motivo: motivo.trim(),
+          ...(pideMotivo ? { motivo: motivo.trim() } : {}),
         }),
       });
       if (!res.ok) {
@@ -4281,17 +4305,8 @@ function ModalEditarPresentacion({
         {cambiaElFactor && (
           <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
             Vas a pasar este envase de <strong>{formatearNumero(fila.litros, 2)} L</strong> a{" "}
-            <strong>{formatearNumero(litros, 2)} L</strong>.
-            <ul className="mt-2 list-disc pl-5 space-y-1 text-xs">
-              <li>
-                Los vales y las entradas ya cargados <strong>no cambian</strong>: cada uno guardó
-                los litros que estaban vigentes ese día.
-              </li>
-              <li>
-                Los movimientos nuevos van a declarar {formatearNumero(litros, 2)} L por bulto, así
-                que el stock contra el que se compara el próximo conteo físico se mueve.
-              </li>
-            </ul>
+            <strong>{formatearNumero(litros, 2)} L</strong>. Todavía no tiene movimientos, así que
+            no cambia nada ya cargado. Queda en la bitácora con el motivo.
           </div>
         )}
 
@@ -4310,9 +4325,19 @@ function ModalEditarPresentacion({
             step="0.01"
             min={0}
             value={litros}
+            disabled={litrosFijos}
             onChange={(e) => setLitros(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2"
+            className="rounded border border-gray-300 px-3 py-2 disabled:cursor-not-allowed disabled:opacity-60"
           />
+          {litrosFijos && (
+            <span className="text-xs text-slate-500">
+              Fijo: este envase ya tiene {fila.movimientos}{" "}
+              {fila.movimientos === 1 ? "movimiento" : "movimientos"} registrados con{" "}
+              {formatearNumero(fila.litros, 2)} L. Si el envase cambió de tamaño, da de alta otro
+              envase. Si fue un error al darlo de alta, la corrección del historial la hace el
+              encargado, con motivo.
+            </span>
+          )}
         </label>
         <label className="flex items-start gap-2 text-sm">
           <input
@@ -4321,7 +4346,9 @@ function ModalEditarPresentacion({
             onChange={(e) => setEsReferencia(e.target.checked)}
             className="mt-1"
           />
-          <span className="text-gray-600">Mostrar el stock en esta unidad</span>
+          <span className="text-gray-600">
+            Envase principal: se abre primero en la estantería y viene elegido en los formularios
+          </span>
         </label>
         <label className="flex items-start gap-2 text-sm">
           <input
@@ -4334,20 +4361,24 @@ function ModalEditarPresentacion({
             Activo
             <span className="block text-xs text-slate-500">
               Desactivarlo lo saca de los formularios de carga. No borra nada: el historial que lo
-              usó se sigue leyendo igual.
+              usó se sigue leyendo igual. Solo se puede si no le quedan unidades en el almacén.
             </span>
           </span>
         </label>
-        <label className="flex flex-col text-sm gap-1">
-          <span className="text-gray-600">Motivo del cambio</span>
-          <input
-            value={motivo}
-            onChange={(e) => setMotivo(e.target.value)}
-            placeholder="El proveedor cambió la caja de 16 a 20 L"
-            className="rounded border border-gray-300 px-3 py-2"
-          />
-          <span className="text-xs text-slate-500">Queda en la bitácora con tu nombre.</span>
-        </label>
+        {pideMotivo && (
+          <label className="flex flex-col text-sm gap-1">
+            <span className="text-gray-600">Motivo</span>
+            <input
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+              placeholder={
+                cambiaElFactor ? "Se dio de alta con los litros mal" : "Ya no se compra este envase"
+              }
+              className="rounded border border-gray-300 px-3 py-2"
+            />
+            <span className="text-xs text-slate-500">Queda en la bitácora con tu nombre.</span>
+          </label>
+        )}
 
         <div className="flex justify-end gap-2 pt-2">
           <button
@@ -4359,7 +4390,13 @@ function ModalEditarPresentacion({
           </button>
           <button
             type="button"
-            disabled={!nombre.trim() || !motivo.trim() || !litros || !(litrosAhora > 0) || enviando}
+            disabled={
+              !nombre.trim() ||
+              (pideMotivo && !motivo.trim()) ||
+              !litros ||
+              !(litrosAhora > 0) ||
+              enviando
+            }
             onClick={enviar}
             className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed"
           >

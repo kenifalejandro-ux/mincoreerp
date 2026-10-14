@@ -353,15 +353,32 @@ describe("combustible: stock de urea y sus umbrales (migración 0117)", () => {
 
   // ── El estado que lee el panel ────────────────────────────────────────
 
-  it("el estado trae el stock, los dos límites y la traducción a bultos", async () => {
+  /** Cada envase del estado, por código. */
+  const envasesDelEstado = (body: {
+    stock: { envases: { codigo: string; unidades: number; litros: number }[] };
+  }) => new Map(body.stock.envases.map((e) => [e.codigo, e]));
+
+  it("el estado trae el stock, los dos límites y lo que hay EN FÍSICO por envase", async () => {
     const res = await agente.get("/api/erp/combustible/urea/estado");
     expect(res.status).toBe(200);
     expect(res.body.stock.stockL).toBe(160);
     expect(Number(res.body.stock.stockMinimoL)).toBe(150);
     expect(Number(res.body.stock.stockMaximoL)).toBe(500);
-    // La caja es la de referencia por default (16 L): 160 / 16 = 10.
-    expect(res.body.stock.referencia.nombre).toBe("Caja");
-    expect(res.body.stock.referencia.bultos).toBe(10);
+
+    // Todo lo de este archivo se movió en baldes de 20 L: 160 L son 8 baldes
+    // contados, no "10 cajas" sacadas de dividir por la caja.
+    const envases = envasesDelEstado(res.body);
+    expect(envases.get("balde")!.unidades).toBe(8);
+    expect(envases.get("balde")!.litros).toBe(160);
+    expect(envases.get("caja")!.unidades).toBe(0);
+    expect(res.body.stock.referencia).toBeUndefined();
+
+    // El total del almacén ES la suma de los envases, siempre.
+    const suma = res.body.stock.envases.reduce(
+      (a: number, e: { litros: number }) => a + e.litros,
+      0
+    );
+    expect(suma).toBe(res.body.stock.stockL);
   });
 
   it("el stock NEGATIVO se muestra con signo, no se tapa en 0", async () => {
@@ -371,7 +388,8 @@ describe("combustible: stock de urea y sus umbrales (migración 0117)", () => {
     expect((await vale(20)).status).toBe(201); // 160 - 400 = -240
     const res = await agente.get("/api/erp/combustible/urea/estado");
     expect(res.body.stock.stockL).toBe(-240);
-    expect(res.body.stock.referencia.bultos).toBe(-15);
+    // Y por envase también con signo: salieron 12 baldes más de los que entraron.
+    expect(envasesDelEstado(res.body).get("balde")!.unidades).toBe(-12);
   });
 
   // ── 6. El asistente ───────────────────────────────────────────────────
@@ -462,9 +480,10 @@ describe("combustible: stock de urea y sus umbrales (migración 0117)", () => {
     const bajo = correosEnviados.find((c) => c.asunto.includes("queda poca"));
     expect(bajo).toBeTruthy();
     expect(bajo!.lineas.join(" ")).toContain("60 L");
-    // La traducción a la unidad de la empresa: 60 / 16 = 3.8 cajas. Nadie en
-    // almacén cuenta litros, cuenta cajas.
-    expect(bajo!.lineas.join(" ")).toContain("cajas");
+    // Lo que queda EN FÍSICO, contado: 3 baldes de 20 L. Nunca "3.8 cajas"
+    // sacadas de dividir los litros por la caja.
+    expect(bajo!.lineas.join(" ")).toContain("3 baldes");
+    expect(bajo!.lineas.join(" ")).not.toContain("≈");
   });
 
   it("el asistente es solo de admin: un operador recibe 403", async () => {
