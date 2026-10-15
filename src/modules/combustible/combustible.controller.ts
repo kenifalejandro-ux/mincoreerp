@@ -80,6 +80,7 @@ import type {
   AnularConteoUreaInput,
   CrearPresentacionUreaInput,
   ActualizarPresentacionUreaInput,
+  EliminarPresentacionUreaInput,
   CorregirLitrosUreaInput,
   CrearPrecioUreaInput,
   CrearPuntoPrecintoInput,
@@ -6898,6 +6899,49 @@ export class CombustibleController {
         return;
       }
       res.status(500).json({ error: "Error al actualizar la presentación de urea" });
+    }
+  }
+
+  /** DELETE /urea/presentaciones/:id -- elimina un envase que nunca se usó.
+   *  Con uso, principal o sin motivo se rechaza (409/400) y se da de baja con
+   *  el PUT. La fila desaparece, así que la bitácora guarda su foto. */
+  async eliminarPresentacionUrea(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const id = Number(req.params.id);
+      const data = req.validatedBody as EliminarPresentacionUreaInput;
+
+      const eliminado = await withTenant(tenantId, (client) =>
+        service.eliminarPresentacionUrea(client, tenantId, id)
+      );
+      if (!eliminado) {
+        res.status(404).json({ error: "Presentación no encontrada" });
+        return;
+      }
+
+      await registrarAuditoria({
+        accion: "combustible.urea_presentacion_eliminar",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          presentacionId: eliminado.id,
+          codigo: eliminado.codigo,
+          nombre: eliminado.nombre,
+          litros: eliminado.litros,
+          motivo: data.motivo,
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      await publicarEventoTenant(tenantId, "combustible.urea_presentaciones_cambiaron", {
+        presentacionId: eliminado.id,
+      });
+      res.json({ ok: true });
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
+      }
+      res.status(500).json({ error: "Error al eliminar el envase de urea" });
     }
   }
 

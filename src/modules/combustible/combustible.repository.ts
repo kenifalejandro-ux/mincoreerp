@@ -3689,6 +3689,52 @@ export class CombustibleRepository {
     actualizado_en, actualizado_por
   `;
 
+  /** Cuántas filas, de CUALQUIER tabla, apuntan a este envase (alias `p`).
+   *  Son las siete claves foráneas compuestas (tenant_id, codigo) del
+   *  catálogo: despachos y recepciones (columnas de 0092), renglones de vale,
+   *  de entrada y de conteo, precios del catálogo (0121) y correcciones de
+   *  litros (0130). Cuenta también lo anulado: un renglón anulado sigue en el
+   *  kardex con sus litros. Un envase con usos > 0 no se elimina, se da de
+   *  baja. NO es `movimientos`: ese decide si los litros se pueden cambiar, y
+   *  un precio del catálogo no congela litros pero sí impide borrar. */
+  private static readonly SQL_USOS_ENVASE_UREA = `(
+      (SELECT COUNT(*) FROM combustible_despachos x
+        WHERE x.tenant_id = p.tenant_id AND x.presentacion = p.codigo)
+    + (SELECT COUNT(*) FROM combustible_recepciones x
+        WHERE x.tenant_id = p.tenant_id AND x.presentacion = p.codigo)
+    + (SELECT COUNT(*) FROM combustible_despacho_urea_lineas x
+        WHERE x.tenant_id = p.tenant_id AND x.presentacion = p.codigo)
+    + (SELECT COUNT(*) FROM combustible_recepcion_urea_lineas x
+        WHERE x.tenant_id = p.tenant_id AND x.presentacion = p.codigo)
+    + (SELECT COUNT(*) FROM combustible_conteo_urea_lineas x
+        WHERE x.tenant_id = p.tenant_id AND x.presentacion = p.codigo)
+    + (SELECT COUNT(*) FROM combustible_urea_precios x
+        WHERE x.tenant_id = p.tenant_id AND x.presentacion = p.codigo)
+    + (SELECT COUNT(*) FROM combustible_urea_correcciones x
+        WHERE x.tenant_id = p.tenant_id AND x.presentacion = p.codigo)
+  )`;
+
+  /** Los usos de un envase, con la fila ya trabada FOR UPDATE por quien
+   *  llama (ver eliminarPresentacionUrea). */
+  async contarUsosDeEnvaseUrea(client: PoolClient, tenantId: string, id: number) {
+    const result = await client.query<{ usos: number }>(
+      `SELECT ${CombustibleRepository.SQL_USOS_ENVASE_UREA}::int AS usos
+         FROM combustible_urea_presentaciones p
+        WHERE p.id = $1 AND p.tenant_id = $2`,
+      [id, tenantId]
+    );
+    return result.rows[0]?.usos ?? 0;
+  }
+
+  /** DELETE real. Solo se llama sin usos y con la fila trabada; si una
+   *  clave foránea igual lo rechaza (23503), el service lo traduce a 409. */
+  async eliminarPresentacionUrea(client: PoolClient, tenantId: string, id: number) {
+    await client.query(
+      `DELETE FROM combustible_urea_presentaciones WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+  }
+
   /** Todas las del tenant, activas e inactivas -- la pantalla de
    *  configuración tiene que poder reactivar una. Los desplegables de carga
    *  filtran las activas del lado del cliente. */
@@ -3710,7 +3756,8 @@ export class CombustibleRepository {
                     WHERE l.tenant_id = p.tenant_id AND l.presentacion = p.codigo)
                 + (SELECT COUNT(*) FROM combustible_conteo_urea_lineas l
                     WHERE l.tenant_id = p.tenant_id AND l.presentacion = p.codigo)
-              )::int AS movimientos
+              )::int AS movimientos,
+              ${CombustibleRepository.SQL_USOS_ENVASE_UREA}::int AS usos
        FROM combustible_urea_presentaciones p
        WHERE p.tenant_id = $1
        ORDER BY p.activa DESC, p.nombre ASC`,
