@@ -199,7 +199,12 @@ export default function TanquetasPanel() {
       );
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert(body.error || body.errors?.[0]?.message || "No se pudo guardar la tanqueta.");
+        alert(
+          body.message ||
+            body.error ||
+            body.errors?.[0]?.message ||
+            "No se pudo guardar la tanqueta."
+        );
         return;
       }
       setFormAbierto(null);

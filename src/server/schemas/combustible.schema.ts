@@ -1596,7 +1596,7 @@ export const crearRecepcionCombustibleSchema = z
           })
       )
       .min(1)
-      .max(10)
+      .max(50)
       .optional(),
 
     // El precinto NUEVO de cada punto que se abrió para recibir (0095). Los
