@@ -26,6 +26,7 @@ import { useAuth } from "../../context/AuthContext";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { ahoraParaInputLocal } from "../../utils/fechaLocal";
+import { mensajeDeError } from "../../utils/mensajeDeError";
 import {
   ModalVistaPreviaImportacion,
   type ColumnaVistaPreviaExcel,
@@ -2038,7 +2039,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         );
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
-          setErrorKardex(body.errors?.[0]?.message || body.error || "No se pudo armar el kardex.");
+          setErrorKardex(mensajeDeError(body, "No se pudo armar el kardex."));
           setKardex(null);
           return;
         }
@@ -2420,7 +2421,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           });
           if (!reintento.ok) {
             const errReintento = await reintento.json().catch(() => ({}));
-            alert(errReintento.error || "Error al guardar el tanque.");
+            alert(mensajeDeError(errReintento, "Error al guardar el tanque."));
             return;
           }
           setModalTanqueAbierto(false);
@@ -2429,7 +2430,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           return;
         }
 
-        alert(errBody.error || "Error al guardar el tanque.");
+        alert(mensajeDeError(errBody, "Error al guardar el tanque."));
         return;
       }
 
@@ -2616,7 +2617,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        alert(body.error || "No se pudo anular la lectura.");
+        alert(mensajeDeError(body, "No se pudo anular la lectura."));
         return;
       }
 
@@ -2712,7 +2713,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        alert(body.error || "Error al registrar la lectura.");
+        alert(mensajeDeError(body, "Error al registrar la lectura."));
         return;
       }
 
@@ -2949,7 +2950,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       });
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
-        alert(errBody.error || "No se pudo subir el comprobante.");
+        alert(mensajeDeError(errBody, "No se pudo subir el comprobante."));
         return;
       }
       setMensajeExito("Comprobante adjuntado.");
@@ -3023,7 +3024,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       );
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
-        setErrorReemplazo(errBody.error || "No se pudo reemplazar el comprobante.");
+        setErrorReemplazo(mensajeDeError(errBody, "No se pudo reemplazar el comprobante."));
         return;
       }
       setDespachoAReemplazar(null);
@@ -3243,7 +3244,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
-        alert(errBody.error || errBody.errors?.[0]?.message || "Error al registrar el despacho.");
+        alert(mensajeDeError(errBody, "Error al registrar el despacho."));
         return;
       }
 
@@ -3330,7 +3331,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        alert(body.error || "No se pudo crear el proveedor.");
+        alert(mensajeDeError(body, "No se pudo crear el proveedor."));
         return;
       }
       setNombreGrifoNuevo("");
@@ -3467,7 +3468,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        alert(body.error || body.errors?.[0]?.message || "No se pudo cargar el precio.");
+        alert(mensajeDeError(body, "No se pudo cargar el precio."));
         return;
       }
       setPrecioForm({ ...precioForm, precio_unitario: "" });
@@ -3488,7 +3489,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        alert(body.error || "No se pudo anular el precio.");
+        alert(mensajeDeError(body, "No se pudo anular el precio."));
         return;
       }
       setPrecioAAnular(null);
@@ -3546,7 +3547,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        alert(body.error || "No se pudo anular el despacho.");
+        alert(mensajeDeError(body, "No se pudo anular el despacho."));
         return;
       }
       setDespachoAAnular(null);
@@ -3722,7 +3723,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           setMensajeVentana(body.error);
           return;
         }
-        setMensajeVentana(body.error || "No se pudo guardar la configuración.");
+        setMensajeVentana(mensajeDeError(body, "No se pudo guardar la configuración."));
         return;
       }
       setPidiendoMotivoConfig(false);
@@ -3873,7 +3874,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           setLineasReparto(repartoPropuesto(body.detalle as DetalleExcedente));
           return;
         }
-        alert(body.error || body.errors?.[0]?.message || "Error al registrar la recepción.");
+        alert(mensajeDeError(body, "Error al registrar la recepción."));
         return;
       }
 
@@ -3932,7 +3933,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       );
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert(body.error || "No se pudo validar la recepción.");
+        alert(mensajeDeError(body, "No se pudo validar la recepción."));
         return;
       }
       setRecepcionAValidar(null);
@@ -3965,7 +3966,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        alert(body.error || "No se pudo anular la recepción.");
+        alert(mensajeDeError(body, "No se pudo anular la recepción."));
         return;
       }
       setRecepcionAAnular(null);
