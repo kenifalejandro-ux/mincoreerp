@@ -80,8 +80,14 @@ test("un vale con 1 caja + 2 bolsas baja cada envase en lo suyo", async ({ page 
     // 1 caja de 16 L + 2 bolsas de 4 L, antes de guardar.
     await expect(page.getByText(/Total:\s*24 L/)).toBeVisible();
 
+    // Se espera la RESPUESTA, no que desaparezca el botón: mientras guarda,
+    // el botón dice "Guardando…" y el stock se leería a mitad de la
+    // transacción.
+    const guardado = page.waitForResponse(
+      (r) => r.url().endsWith("/api/erp/combustible/despachos") && r.request().method() === "POST"
+    );
     await page.getByRole("button", { name: "Registrar vale" }).click();
-    await expect(page.getByRole("button", { name: "Registrar vale" })).toHaveCount(0);
+    expect((await guardado).status()).toBe(201);
 
     const despues = await unidades();
     expect(despues.caja).toBe(antes.caja - 1);

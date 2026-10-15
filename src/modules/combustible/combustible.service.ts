@@ -36,7 +36,7 @@ import type { DriverDocumento } from "../../server/services/documentStorage";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { CombustibleRepository } from "./combustible.repository";
-import type { FiltrosAlertas, PeriodoHistorial } from "./combustible.repository";
+import type { AlertaNueva, FiltrosAlertas, PeriodoHistorial } from "./combustible.repository";
 import { EquiposRepository } from "../equipos/equipos.repository";
 import { tanqueEnAlcance, valeEnAlcance } from "./alcance";
 import type { AlcanceCombustible, AmbitoVales } from "./alcance";
@@ -1888,6 +1888,22 @@ export class CombustibleService {
     ]);
     // El stock bajo es un ESTADO: con los litros corregidos puede dejar de
     // serlo (se cierra solo) o empezar a serlo (se abre, anclado acá).
+    // Los conteos ya hechos cambian de resultado con los litros nuevos (0132):
+    // se recalculan acá mismo. Sin hallazgo de "conteo alterado": la
+    // corrección ya deja el suyo, y es la misma historia.
+    const recalculo = await this.reevaluarConteosUrea(
+      client,
+      tenantId,
+      "1900-01-01T00:00:00Z",
+      {
+        tipo: "correccion_litros",
+        id: correccion.id,
+        fecha: ahora,
+        descripcion: `la corrección de litros de "${nombre}"`,
+      },
+      { hallazgo: false }
+    );
+    alertas.push(...recalculo.creadas);
     const stockBajo = await this.evaluarUreaStockBajo(client, tenantId, ahora);
     if (stockBajo) {
       alertas.push(
@@ -4901,10 +4917,13 @@ export class CombustibleService {
             cantidadBultos: l.cantidad_bultos,
           });
         }
+        // Lo contado es la suma de los envases enteros MÁS el suelto (0132).
+        cantidadLitros += data.suelto_litros ?? 0;
         const fila = await this.repository.crearConteoUrea(client, tenantId, usuarioId, {
           cantidadLitros: Number(cantidadLitros.toFixed(2)),
           contadoEn: data.contado_en ?? new Date().toISOString(),
           observaciones: data.observaciones ?? null,
+          sueltoLitros: data.suelto_litros ?? null,
         });
         // El detalle por envase (0130), en la misma transacción: sin él, una
         // corrección de litros no podría recalcular este conteo.
@@ -4933,35 +4952,201 @@ export class CombustibleService {
     return this.repository.anularConteoUrea(client, tenantId, id, usuarioId, motivo);
   }
 
-  /** EL DESCUADRE DE UREA -- el equivalente exacto del descuadre de
-   *  inventario del tanque (0074), pero contra el conteo físico de cajas en
-   *  vez de la varilla. `esperado` = stock teórico A LA FECHA DEL CONTEO
-   *  (entradas - salidas vigentes hasta ese momento); `descuadre` =
-   *  contado - esperado.
+  /** EL DESCUADRE DE UN CONTEO DE UREA, envase por envase (0132).
    *
-   *  Arranca en NULL (`ratio_urea_diesel_max_pct` reusa el mismo criterio,
-   *  pero acá el umbral es el de RATIO -- no hay un umbral propio de
-   *  descuadre de urea todavía: el cliente nunca dio un número, y este
-   *  control recién nace con esta migración. Se alerta con un criterio
-   *  conservador fijo (cualquier diferencia > 0) hasta que haya una
-   *  calibración real -- mismo espíritu que "estricto por default" de
-   *  0088, nunca al revés. */
-  async evaluarUreaDescuadreConteo(
-    client: PoolClient,
-    tenantId: string,
-    conteoId: number,
-    cantidadLitros: number,
-    contadoEn: string
-  ) {
-    const esperado = await this.repository.findStockTeoricoUrea(client, tenantId, contadoEn);
-    const descuadre = Number((cantidadLitros - esperado).toFixed(2));
-    if (descuadre === 0) return null;
+   *  Es el descuadre de inventario del tanque (0074) contra el conteo físico:
+   *  contado − esperado A LA FECHA DEL CONTEO. Pero solo de los envases que
+   *  se contaron: un conteo de cajas no dice nada de las bolsas, y compararlo
+   *  contra el stock total las daba a todas como faltantes. El suelto (una
+   *  caja abierta, una bolsa rota) suma a lo contado en litros.
+   *
+   *  Un conteo viejo, sin detalle por envase (antes de 0130), se compara como
+   *  antes: total contra total.
+   *
+   *  `null` si el conteo no existe en esta empresa. Vale para un conteo
+   *  anulado (la comparación de conteos recargados lo usa). */
+  async descuadreDeConteoUrea(client: PoolClient, tenantId: string, conteoId: number) {
+    const conteo = await this.repository.findConteoUreaConRenglones(client, tenantId, conteoId);
+    if (!conteo) return null;
+    const red2 = (n: number) => Number(n.toFixed(2));
+    const contadoEn = new Date(conteo.contadoEn).toISOString();
+
+    if (conteo.renglones.length === 0) {
+      const esperado = await this.repository.findStockTeoricoUrea(client, tenantId, contadoEn);
+      return {
+        conteoId,
+        contadoEn,
+        contadoL: red2(conteo.cantidadLitros),
+        esperadoL: red2(esperado),
+        descuadreL: red2(conteo.cantidadLitros - esperado),
+        sueltoL: conteo.sueltoLitros,
+        porEnvase: [] as {
+          presentacion: string;
+          nombre: string;
+          contadas: number;
+          esperadas: number;
+          diferencia: number;
+          contadosL: number;
+          esperadosL: number;
+        }[],
+        sinDetalle: true,
+      };
+    }
+
+    // Se compara contra TODO lo que tenía que haber, no solo contra lo que
+    // la persona escribió: el formulario dice "las que no tengas, dejalas
+    // vacías", así que un envase con stock que no aparece en el conteo se
+    // contó en CERO. Comparar solo los renglones escritos dejaría esconder un
+    // faltante entero (las 20 bolsas que no están) con no anotarlas.
+    const stock = await this.repository.findStockUreaPorEnvase(client, tenantId, contadoEn);
+    const codigos = [
+      ...conteo.renglones.map((r) => r.presentacion),
+      ...stock
+        .filter((e) => e.codigo && (e.unidades !== 0 || e.litros !== 0))
+        .map((e) => e.codigo as string),
+    ].filter((c, i, todos) => todos.indexOf(c) === i);
+    const porEnvase = codigos.map((codigo) => {
+      const r = conteo.renglones.find((x) => x.presentacion === codigo);
+      const e = stock.find((x) => x.codigo === codigo);
+      const contadas = r?.bultos ?? 0;
+      const esperadas = e?.unidades ?? 0;
+      return {
+        presentacion: codigo,
+        nombre: r?.nombre ?? e?.nombre ?? codigo,
+        contadas,
+        esperadas,
+        diferencia: contadas - esperadas,
+        contadosL: red2(r?.litros ?? 0),
+        esperadosL: red2(e?.litros ?? 0),
+      };
+    });
+    const contadoL = red2(
+      porEnvase.reduce((a, x) => a + x.contadosL, 0) + (conteo.sueltoLitros ?? 0)
+    );
+    const esperadoL = red2(porEnvase.reduce((a, x) => a + x.esperadosL, 0));
     return {
       conteoId,
-      contadoL: cantidadLitros,
-      esperadoL: Number(esperado.toFixed(2)),
-      descuadreL: descuadre,
+      contadoEn,
+      contadoL,
+      esperadoL,
+      descuadreL: red2(contadoL - esperadoL),
+      sueltoL: conteo.sueltoLitros,
+      porEnvase,
+      sinDetalle: false,
     };
+  }
+
+  /** Alerta solo si el descuadre en litros no es cero. Criterio conservador
+   *  fijo (cualquier diferencia) hasta que haya calibración -- mismo
+   *  espíritu que "estricto por default" de 0088, nunca al revés. Un envase
+   *  con una unidad menos que aparece entera en el suelto (la caja abierta)
+   *  no es faltante: los litros cuadran. */
+  async evaluarUreaDescuadreConteo(client: PoolClient, tenantId: string, conteoId: number) {
+    const d = await this.descuadreDeConteoUrea(client, tenantId, conteoId);
+    return d && d.descuadreL !== 0 ? d : null;
+  }
+
+  /** CUANDO CAMBIA EL PASADO DE UN CONTEO (0132). Una entrada o un vale con
+   *  fecha anterior a un conteo ya hecho, o su anulación, cambia lo que ese
+   *  conteo tenía que encontrar. Se recalcula cada conteo afectado:
+   *
+   *    • si su alerta de descuadre sigue abierta: pasa a decir el número de
+   *      hoy (el que se vio ese día queda adentro como `original`), o se
+   *      CIERRA SOLA si ahora cuadra -- la factura que llegó tarde lo explicó;
+   *    • si no tenía alerta y ahora no cuadra: nace una;
+   *    • y si el resultado cambió, queda un hallazgo `urea_conteo_alterado`.
+   *      Ese es el freno: una entrada falsa fechada atrás también "explicaría"
+   *      un faltante, así que cambiar el pasado de un conteo nunca es
+   *      silencioso.
+   *
+   *  `hallazgo: false` lo usa la corrección de litros (0130), que deja su
+   *  propio hallazgo. Devuelve las alertas creadas y qué conteos cambiaron,
+   *  para los correos. */
+  async reevaluarConteosUrea(
+    client: PoolClient,
+    tenantId: string,
+    desde: string,
+    causa: { tipo: string; id: number; fecha: string; descripcion: string },
+    opciones: { hallazgo: boolean } = { hallazgo: true }
+  ) {
+    await this.repository.bloquearReevaluacionConteosUrea(client, tenantId);
+    const ids = await this.repository.findConteosUreaVigentesDesde(client, tenantId, desde);
+    const nuevas: AlertaNueva[] = [];
+    const alterados: {
+      conteoId: number;
+      contadoEn: string;
+      antesL: number;
+      despuesL: number;
+      porEnvase: unknown[];
+    }[] = [];
+    for (const conteoId of ids) {
+      const actual = await this.descuadreDeConteoUrea(client, tenantId, conteoId);
+      if (!actual) continue;
+      const alerta = await this.repository.findAlertaDescuadreConteo(client, tenantId, conteoId);
+      const antes = alerta ? Number(alerta.detalle.descuadreL ?? 0) : 0;
+      if (actual.descuadreL === antes) continue;
+
+      // Toda rama deja el número de hoy en la ÚLTIMA alerta del conteo (o
+      // crea una): es el "antes" de la próxima re-evaluación.
+      if (alerta?.abierta && actual.descuadreL === 0) {
+        await this.repository.cerrarAlertaDescuadrePorSistema(
+          client,
+          tenantId,
+          alerta.id,
+          { ...actual, recalculado_por: causa },
+          `El conteo cuadra desde que se registró ${causa.descripcion}.`
+        );
+      } else if (alerta && (alerta.abierta || actual.descuadreL === 0)) {
+        // Abierta: pasa a decir el número nuevo. Cerrada a mano y ahora cuadra:
+        // sigue cerrada (nadie tiene nada que revisar), con el número al día.
+        await this.repository.actualizarDescuadreDeAlerta(client, tenantId, alerta.id, {
+          ...actual,
+          recalculado_por: causa,
+        });
+      } else if (actual.descuadreL !== 0) {
+        // Sin alerta, o cerrada a mano y vuelve a no cuadrar: otra historia,
+        // alerta nueva.
+        nuevas.push({
+          tipo: "urea_descuadre_conteo",
+          producto: "urea",
+          ureaConteoId: conteoId,
+          detalle: { ...actual, aparecio_por: causa },
+        });
+      }
+      alterados.push({
+        conteoId,
+        contadoEn: actual.contadoEn,
+        antesL: antes,
+        despuesL: actual.descuadreL,
+        porEnvase: actual.porEnvase,
+      });
+    }
+    // UN hallazgo por movimiento, no uno por conteo: una entrada fechada
+    // atrás cambia el resultado de TODOS los conteos posteriores, y doce
+    // avisos (y doce correos) por un solo hecho tapan lo que importa. Se
+    // ancla al primer conteo afectado -- el que vio el faltante -- y lleva
+    // la lista entera.
+    if (opciones.hallazgo && alterados.length > 0) {
+      const primero = alterados[0];
+      nuevas.push({
+        tipo: "urea_conteo_alterado",
+        producto: "urea",
+        ureaConteoId: primero.conteoId,
+        detalle: {
+          conteoId: primero.conteoId,
+          contadoEn: primero.contadoEn,
+          antesL: primero.antesL,
+          despuesL: primero.despuesL,
+          porEnvase: primero.porEnvase,
+          conteos: alterados.map(({ porEnvase: _p, ...c }) => c),
+          causa,
+        },
+      });
+    }
+    const creadas = nuevas.length
+      ? await this.repository.crearAlertas(client, tenantId, nuevas)
+      : [];
+    return { creadas, alterados };
   }
 
   /** ASISTENTE DE LOS CUATRO UMBRALES DE UREA (migración 0117).
@@ -5252,6 +5437,12 @@ export class CombustibleService {
         this.repository.findResumenConsumoUrea(client, tenantId, ahora),
       ]);
 
+    // El último conteo, envase por envase (0132): "bolsas: contaste 32,
+    // esperabas 34". La misma cuenta que la alerta.
+    const conteo = ultimoConteo
+      ? await this.descuadreDeConteoUrea(client, tenantId, ultimoConteo.id)
+      : null;
+
     // Sin salidas en 30 días no hay ritmo del que extrapolar: null, no
     // "infinitos días". Con stock en cero o negativo no queda autonomía que
     // mostrar, tampoco.
@@ -5286,25 +5477,36 @@ export class CombustibleService {
           // Litros por bulto con los que se registró ese stock y que NO son
           // los del catálogo: el envase quedó con tamaños mezclados.
           litrosRegistradosDistintos: e.factores.filter((f) => f !== e.litrosPorBulto),
+          // Lo que encontró el último conteo de ESTE envase. Un envase con
+          // stock que el conteo dejó vacío se contó en cero (ver
+          // descuadreDeConteoUrea). null: sin conteo, conteo de antes de los
+          // renglones, o envase sin stock ni conteo.
+          ultimoConteo: (() => {
+            const c = conteo?.porEnvase.find((x) => x.presentacion === e.codigo);
+            return c && conteo
+              ? {
+                  contadoEn: conteo.contadoEn,
+                  contadas: c.contadas,
+                  esperadas: c.esperadas,
+                  diferencia: c.diferencia,
+                  // El suelto no es de ningún envase: un faltante acá puede
+                  // estar abierto en el suelto. La pantalla lo dice al lado.
+                  sueltoL: conteo.sueltoL,
+                }
+              : null;
+          })(),
         })),
       // El último conteo FÍSICO y su diferencia contra lo que los papeles
       // decían EN ESE MOMENTO -- no contra el stock de ahora, que ya se
       // movió. Es el dato que contesta "¿la última vez que fuimos a contar,
       // cuadró?".
-      ultimoConteo: ultimoConteo
+      ultimoConteo: conteo
         ? {
-            contadoL: ultimoConteo.cantidadLitros,
-            contadoEn: new Date(ultimoConteo.contadoEn).toISOString(),
-            diferenciaL: Number(
-              (
-                ultimoConteo.cantidadLitros -
-                (await this.repository.findStockTeoricoUrea(
-                  client,
-                  tenantId,
-                  new Date(ultimoConteo.contadoEn).toISOString()
-                ))
-              ).toFixed(2)
-            ),
+            contadoL: conteo.contadoL,
+            contadoEn: conteo.contadoEn,
+            diferenciaL: conteo.descuadreL,
+            sueltoL: conteo.sueltoL,
+            porEnvase: conteo.porEnvase,
           }
         : null,
     };
@@ -5325,6 +5527,18 @@ export class CombustibleService {
       desde,
       hasta
     );
+    // La diferencia de cada conteo es la misma que la de su alerta (0132):
+    // envase por envase con el suelto sumado, y calculada con los papeles de
+    // HOY -- si un vale tardío la cambió, el kardex lo muestra igual que la
+    // alerta. Un solo cálculo (descuadreDeConteoUrea) para los tres lugares.
+    const descuadres = new Map<number, number>();
+    for (const f of crudas) {
+      if (f.tipo === "conteo" && f.anulada_en === null) {
+        const d = await this.descuadreDeConteoUrea(client, tenantId, Number(f.id));
+        if (d) descuadres.set(Number(f.id), d.descuadreL);
+      }
+    }
+
     let saldo = saldoInicial;
     const filas = crudas.map((f) => {
       const anulada = f.anulada_en !== null;
@@ -5364,7 +5578,9 @@ export class CombustibleService {
         saldo_teorico: anulada || esConteo ? null : Number(saldo.toFixed(2)),
         contado: esConteo && !anulada ? litros : null,
         diferencia:
-          esConteo && !anulada ? Number((litros - saldo).toFixed(2)) : (null as number | null),
+          esConteo && !anulada
+            ? (descuadres.get(Number(f.id)) ?? Number((litros - saldo).toFixed(2)))
+            : (null as number | null),
         usuario: (f.usuario as string | null) ?? "Sistema",
         anulada,
         motivo_anulacion: (f.motivo_anulacion as string | null) ?? null,
@@ -5523,13 +5739,17 @@ export class CombustibleService {
     );
     if (anulados.length === 0) return null;
 
-    const esperadoNuevo = await this.repository.findStockTeoricoUrea(
-      client,
-      tenantId,
-      conteoNuevo.contadoEn
-    );
-    const descuadreNuevo = Number((conteoNuevo.contadoL - esperadoNuevo).toFixed(2));
-    const ultimo = anulados[0];
+    // La misma cuenta que la alerta de descuadre (0132): envase por envase,
+    // solo lo contado. Comparar con dos cuentas distintas haría parecer que
+    // "cuadra mejor" un conteo que solo contó menos envases.
+    const descuadreNuevo =
+      (await this.descuadreDeConteoUrea(client, tenantId, conteoNuevo.id))?.descuadreL ?? 0;
+    const ultimo = {
+      ...anulados[0],
+      descuadreL:
+        (await this.descuadreDeConteoUrea(client, tenantId, anulados[0].id))?.descuadreL ??
+        anulados[0].descuadreL,
+    };
 
     // Medio litro de margen: menos que eso es redondeo de bultos, no una
     // historia distinta.

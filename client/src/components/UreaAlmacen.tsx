@@ -37,6 +37,16 @@ export interface EnvaseStock {
   /** Litros por bulto con los que se registró stock y que no son los del
    *  catálogo: el envase quedó con tamaños mezclados. */
   litrosRegistradosDistintos: number[];
+  /** Lo que dio el último conteo para este envase, contra lo que los papeles
+   *  esperaban ese día. null = ese conteo no tiene detalle por envase. */
+  ultimoConteo?: {
+    contadoEn: string;
+    contadas: number;
+    esperadas: number;
+    diferencia: number;
+    /** Litros sueltos de ese conteo: una caja abierta cuenta ahí, no acá. */
+    sueltoL?: number | null;
+  } | null;
 }
 
 export interface EstadoStockUrea {
@@ -47,7 +57,13 @@ export interface EstadoStockUrea {
   stockMinimoL: number | null;
   stockMaximoL: number | null;
   envases: EnvaseStock[];
-  ultimoConteo: { contadoL: number; contadoEn: string; diferenciaL: number } | null;
+  ultimoConteo: {
+    contadoL: number;
+    contadoEn: string;
+    diferenciaL: number;
+    /** 0132: litros fuera de un envase entero, ya sumados en contadoL. */
+    sueltoL?: number | null;
+  } | null;
   /** null = sin salidas en 30 días: no hay ritmo del que extrapolar. */
   consumoDiarioL: number | null;
   autonomiaDias: number | null;
@@ -511,6 +527,32 @@ function MovidoEsteMes({ envase }: { envase: EnvaseStock }) {
   );
 }
 
+/** "Último conteo (14 oct): 9 de 10 — falta 1". El conteo no ajusta el
+ *  stock: esto dice si la última vez que se fue a contar, este envase cuadró. */
+function ConteoDelEnvase({ envase }: { envase: EnvaseStock }) {
+  const c = envase.ultimoConteo;
+  if (!c) return null;
+  const n = Math.abs(c.diferencia);
+  return (
+    <span className="block text-xs text-slate-500">
+      Último conteo ({fmtDiaMes(c.contadoEn)}): {fmt(c.contadas, 0)} de {fmt(c.esperadas, 0)}{" "}
+      esperadas
+      {c.diferencia === 0 ? (
+        " — cuadró."
+      ) : (
+        <b className="font-semibold text-red-600">
+          {" "}
+          — {c.diferencia < 0 ? (n === 1 ? "falta" : "faltan") : n === 1 ? "sobra" : "sobran"}{" "}
+          {fmt(n, 0)}
+        </b>
+      )}
+      {c.diferencia < 0 && (c.sueltoL ?? 0) > 0 && (
+        <> · ese conteo anotó {fmt(c.sueltoL!, 1)} L sueltos (puede ser un envase abierto)</>
+      )}
+    </span>
+  );
+}
+
 // ── La barra del total: nivel contra mínimo y máximo, y de qué está hecho ──
 
 function BarraNivel({ stock, colores }: { stock: EstadoStockUrea; colores: string[] }) {
@@ -688,6 +730,7 @@ export function AlmacenUrea({
               maximo={MAX_EN_TARJETA}
             />
             <AvisoTamanosMezclados envase={grande} onCorregir={corregir(grande)} />
+            <ConteoDelEnvase envase={grande} />
             <div className="flex flex-wrap items-center justify-between gap-2">
               <MovidoEsteMes envase={grande} />
               <button
@@ -891,6 +934,7 @@ function DetalleEnvase({
       )}
       <div>
         <MovidoEsteMes envase={envase} />
+        <ConteoDelEnvase envase={envase} />
       </div>
 
       <div className="text-[11px] font-semibold uppercase tracking-[0.09em] text-slate-500">
@@ -1013,6 +1057,11 @@ export function ResumenUrea({ stock }: { stock: EstadoStockUrea }) {
                   {fmtDiaMes(ultimoConteo.contadoEn)}
                 </small>
               </span>
+              {(ultimoConteo.sueltoL ?? 0) > 0 && (
+                <span className="text-xs text-slate-500">
+                  Incluye {fmt(ultimoConteo.sueltoL!, 1)} L sueltos (fuera de envases enteros).
+                </span>
+              )}
               <span className="text-xs text-slate-500">
                 {ultimoConteo.diferenciaL === 0 ? (
                   "Cuadró con los papeles."

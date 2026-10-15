@@ -46,6 +46,7 @@ import {
   enviarCorreoUreaEquipoNoHabilitado,
   enviarCorreoUreaRatioExcedido,
   enviarCorreoUreaDescuadreConteo,
+  enviarCorreoUreaConteoAlterado,
   enviarCorreoUreaStockBajo,
   enviarCorreoUreaLitrosCorregidos,
   enviarCorreoUreaStockExcedido,
@@ -1919,6 +1920,21 @@ export class CombustibleController {
         await this.procesarAlertaTanquetaSobregirada(tenantId, Number(fila!.id), data);
       }
       res.status(201).json(fila);
+      // Solo el vale del almacén mueve el depósito: la compra en ruta no
+      // pasa por él y no puede cambiar un conteo. Corre con la respuesta ya
+      // enviada: re-evaluar conteos nunca demora el registro del vale.
+      if (fila!.producto === "urea" && fila!.origen === "almacen") {
+        await this.procesarConteosUreaAlterados(
+          tenantId,
+          new Date(fila!.despachado_en).toISOString(),
+          {
+            tipo: "vale",
+            id: Number(fila!.id),
+            fecha: new Date(fila!.despachado_en).toISOString(),
+            descripcion: `el vale ${fila!.serie_talonario}-${fila!.n_vale}`,
+          }
+        );
+      }
     } catch (err) {
       // Los errores de negocio TIPADOS van primero (ver tanquetas.service.ts
       // y resolverFactorPresentacionUrea): traen su propio status y no
@@ -2043,6 +2059,15 @@ export class CombustibleController {
         comprobanteNumero: resultado.despacho.comprobante_numero,
       });
       res.json(resultado.despacho);
+      const d = resultado.despacho;
+      if (d.producto === "urea" && d.origen === "almacen") {
+        await this.procesarConteosUreaAlterados(tenantId, new Date(d.despachado_en).toISOString(), {
+          tipo: "vale_anulado",
+          id: despachoId,
+          fecha: new Date(d.despachado_en).toISOString(),
+          descripcion: `la anulación del vale ${d.serie_talonario}-${d.n_vale}`,
+        });
+      }
     } catch {
       res.status(500).json({ error: "Error al anular el despacho" });
     }
@@ -5923,6 +5948,18 @@ export class CombustibleController {
         );
       }
       res.status(201).json(fila);
+      if (data.producto === "urea") {
+        await this.procesarConteosUreaAlterados(
+          tenantId,
+          new Date(fila!.recibido_en).toISOString(),
+          {
+            tipo: "entrada",
+            id: Number(fila!.id),
+            fecha: new Date(fila!.recibido_en).toISOString(),
+            descripcion: `la entrada #${fila!.id}`,
+          }
+        );
+      }
     } catch (err) {
       // 409, no 400: el combustible YA entró y hay un tanque en modo
       // 'flexible' -- no es un dato mal formado, es una decisión pendiente
@@ -6040,6 +6077,53 @@ export class CombustibleController {
       logger.warn(
         { err, tenantId, recepcionId },
         "No se pudieron procesar las alertas de stock de la entrada de urea"
+      );
+    }
+  }
+
+  /** Un movimiento del almacén de urea (vale, entrada o su anulación) con
+   *  fecha anterior a un conteo ya hecho cambia lo que los papeles explican a
+   *  esa fecha (0132). Re-evalúa esos conteos: la alerta de descuadre pasa a
+   *  decir el número de hoy (el original queda adentro) y queda un hallazgo
+   *  `urea_conteo_alterado` -- una entrada retroactiva no puede tapar un
+   *  faltante ya contado en silencio. Best-effort: corre después del commit
+   *  del movimiento y nunca lo tumba. */
+  private async procesarConteosUreaAlterados(
+    tenantId: string,
+    desde: string,
+    causa: { tipo: string; id: number; fecha: string; descripcion: string }
+  ) {
+    try {
+      const { creadas, alterados, admins } = await withTenant(tenantId, async (client) => {
+        // Esperar poco el candado de los conteos: si otro movimiento lo tiene
+        // trabado, mejor un log que una cola que nunca termina.
+        await client.query("SET LOCAL lock_timeout = '10s'");
+        const r = await service.reevaluarConteosUrea(client, tenantId, desde, causa);
+        return {
+          ...r,
+          admins:
+            r.alterados.length > 0
+              ? await service.findDestinatariosAlertasCombustible(client, tenantId, null)
+              : [],
+        };
+      });
+      for (const tipo of new Set(creadas.map((a) => a.tipo))) {
+        await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+          tipo,
+          producto: "urea",
+        });
+      }
+      // Un solo correo por movimiento, con todos los conteos que cambió.
+      if (admins.length > 0 && alterados.length > 0) {
+        await enviarCorreoUreaConteoAlterado(admins, {
+          conteos: alterados,
+          causa: causa.descripcion,
+        });
+      }
+    } catch (err) {
+      logger.warn(
+        { err, tenantId, causa },
+        "No se pudieron re-evaluar los conteos de urea afectados por un movimiento"
       );
     }
   }
@@ -6393,6 +6477,15 @@ export class CombustibleController {
       // más de lo que el sistema cree y el sobrante sale sin que falte nada.
       await this.procesarAlertaRecepcionAnulada(tenantId, resultado.recepcion, motivo, req);
       res.json({ recepcion: resultado.recepcion, tanque: resultado.tanque });
+      if (resultado.recepcion.producto === "urea") {
+        const recibidoEn = new Date(resultado.recepcion.recibido_en).toISOString();
+        await this.procesarConteosUreaAlterados(tenantId, recibidoEn, {
+          tipo: "entrada_anulada",
+          id: recepcionId,
+          fecha: recibidoEn,
+          descripcion: `la anulación de la entrada #${recepcionId}`,
+        });
+      }
     } catch {
       res.status(500).json({ error: "Error al anular la recepción" });
     }
@@ -6831,13 +6924,8 @@ export class CombustibleController {
           const conteoId = Number(fila!.id);
           const contadoL = Number(fila!.cantidad_litros);
           const contadoEn = new Date(fila!.contado_en).toISOString();
-          const descuadre = await service.evaluarUreaDescuadreConteo(
-            client,
-            tenantId,
-            conteoId,
-            contadoL,
-            contadoEn
-          );
+          // Envase por envase, solo lo contado (0132).
+          const descuadre = await service.evaluarUreaDescuadreConteo(client, tenantId, conteoId);
           // 0118: corre SIEMPRE, también cuando el conteo nuevo cuadra -- es
           // justamente el caso que importa. Antes este bloque cortaba con un
           // `return` si no había descuadre; un conteo que cuadra después de
