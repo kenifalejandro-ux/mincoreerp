@@ -1908,6 +1908,7 @@ export class CombustibleController {
       });
       await publicarEventoTenant(tenantId, "combustible.despacho_creado", {
         despachoId: fila!.id,
+        producto: data.producto,
       });
       await this.procesarAlertasDespachoCreado(
         tenantId,
@@ -2049,7 +2050,10 @@ export class CombustibleController {
         },
         contexto: contextoAuditoriaModulo(req),
       });
-      await publicarEventoTenant(tenantId, "combustible.despacho_anulado", { despachoId });
+      await publicarEventoTenant(tenantId, "combustible.despacho_anulado", {
+        despachoId,
+        producto: resultado.despacho.producto,
+      });
       await this.procesarAlertaAnulacion(tenantId, despachoId, motivo, {
         // 0109: una compra externa anulada no tiene vale. El correo y la
         // alerta la nombran por su comprobante.
@@ -3694,7 +3698,10 @@ export class CombustibleController {
         },
         contexto: contextoAuditoriaModulo(req),
       });
-      await publicarEventoTenant(tenantId, "combustible.comprobante_adjuntado", { despachoId });
+      await publicarEventoTenant(tenantId, "combustible.comprobante_adjuntado", {
+        despachoId,
+        producto,
+      });
       res.status(201).json(resultado.fila);
     } catch (err) {
       logger.warn({ err, tenantId: getTenantId(req) }, "No se pudo subir el comprobante");
@@ -5912,6 +5919,7 @@ export class CombustibleController {
       await publicarEventoTenant(tenantId, "combustible.recepcion_creada", {
         recepcionId: fila!.id,
         combustibleId: data.combustible_id,
+        producto: data.producto,
       });
       // La recepción retroactiva (5ª auditoría) compara contra las lecturas
       // de VARILLA de un tanque -- la urea no tiene tanque ni varilla, así
@@ -6470,6 +6478,7 @@ export class CombustibleController {
       });
       await publicarEventoTenant(tenantId, "combustible.recepcion_anulada", {
         recepcionId,
+        producto: resultado.recepcion.producto,
       });
       // ANULAR UNA RECEPCIÓN NO AVISABA A NADIE, al revés que anular un vale.
       // Y es la maniobra más rentable de las dos: si la entrega sí ocurrió,
@@ -6551,6 +6560,9 @@ export class CombustibleController {
         },
         contexto: contextoAuditoriaModulo(req),
       });
+      await publicarEventoTenant(tenantId, "combustible.urea_precios_cambiaron", {
+        precioId: fila.id,
+      });
       res.status(201).json(fila);
     } catch (err) {
       if (err instanceof AppError) {
@@ -6601,6 +6613,9 @@ export class CombustibleController {
         usuarioId: req.usuario!.id,
         detalle: { precioId: id, motivo },
         contexto: contextoAuditoriaModulo(req),
+      });
+      await publicarEventoTenant(tenantId, "combustible.urea_precios_cambiaron", {
+        precioId: id,
       });
       res.json(resultado.fila);
     } catch {

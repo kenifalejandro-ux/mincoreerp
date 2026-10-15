@@ -39,6 +39,7 @@ import { enfocarPaginaPrincipal } from "../comunes/ventanasFlotantesEstado";
 import HistoricoCliente from "../HistoricoCliente";
 import UreaPanel from "../UreaPanel";
 
+import { EVENTOS_UREA, avisarCambioDeUrea } from "./eventosUrea";
 import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from "./Precintos";
 import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
 import VentanaSurtidores from "./Surtidores";
@@ -2088,6 +2089,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       "combustible.alertas_actualizadas",
     ];
     tipos.forEach((tipo) => es.addEventListener(tipo, refrescar));
+    // UreaPanel vive acá dentro: se le reenvía lo que le toca por window en
+    // vez de abrir una conexión más (ver eventosUrea.ts).
+    EVENTOS_UREA.forEach((tipo) =>
+      es.addEventListener(tipo, (e) => avisarCambioDeUrea(tipo, (e as MessageEvent).data))
+    );
 
     const alVolver = () => {
       if (document.visibilityState === "visible") refrescar();
