@@ -1127,12 +1127,12 @@ export async function enviarCorreoUreaDescuadreConteo(
 export async function enviarCorreoUreaConteoAlterado(
   destinatarios: Destinatario[],
   params: {
-    contadoEn: string;
-    antesL: number;
-    despuesL: number;
+    /** Los conteos que cambiaron, del más antiguo al más nuevo. */
+    conteos: { contadoEn: string; antesL: number; despuesL: number }[];
     causa: string;
   }
 ) {
+  const [primero] = params.conteos;
   const signo = (n: number) => (n > 0 ? `+${n}` : `${n}`);
   const ese = (n: number) =>
     n === 0 ? "cuadraba" : n < 0 ? `faltaban ${Math.abs(n)} L` : `sobraban ${n} L`;
@@ -1140,11 +1140,16 @@ export async function enviarCorreoUreaConteoAlterado(
     n === 0 ? "cuadra" : n < 0 ? `faltan ${Math.abs(n)} L` : `sobran ${n} L`;
   await avisar("urea_conteo_alterado", {
     destinatarios,
-    asunto: `Urea: un conteo ya hecho cambió de resultado (${signo(params.antesL)} → ${signo(params.despuesL)} L)`,
-    titulo: "Un movimiento con fecha pasada cambió el resultado de un conteo",
+    asunto:
+      params.conteos.length === 1
+        ? `Urea: un conteo ya hecho cambió de resultado (${signo(primero.antesL)} → ${signo(primero.despuesL)} L)`
+        : `Urea: ${params.conteos.length} conteos ya hechos cambiaron de resultado`,
+    titulo: "Un movimiento con fecha pasada cambió el resultado de lo ya contado",
     lineas: [
-      `Conteo del ${params.contadoEn.slice(0, 10)}: ese día ${ese(params.antesL)}; ` +
-        `hoy ${hoy(params.despuesL)}.`,
+      ...params.conteos.map(
+        (c) =>
+          `Conteo del ${c.contadoEn.slice(0, 10)}: ese día ${ese(c.antesL)}; hoy ${hoy(c.despuesL)}.`
+      ),
       `Lo cambió ${params.causa}.`,
       "Un movimiento cargado con fecha anterior a un conteo cambia lo que los papeles explican " +
         "a esa fecha. Puede ser una carga atrasada legítima, o una forma de tapar un faltante ya " +

@@ -4524,14 +4524,15 @@ export class CombustibleRepository {
   }
 
   /** Los conteos vigentes que un movimiento con esta fecha puede cambiar: los
-   *  contados en esa fecha o después. Con techo: un movimiento de hace un año
-   *  no recalcula cien conteos en una sola petición. */
+   *  contados en esa fecha o después, del más antiguo al más nuevo -- el
+   *  primero es el que vio el faltante, y un techo nunca puede dejarlo
+   *  afuera. Techo de 200: corre después de responder, nadie lo espera. */
   async findConteosUreaVigentesDesde(client: PoolClient, tenantId: string, desde: string) {
     const r = await client.query<{ id: string }>(
       `SELECT id FROM combustible_conteos_urea
         WHERE tenant_id = $1 AND anulada_en IS NULL AND contado_en >= $2::timestamptz
-        ORDER BY contado_en DESC, id DESC
-        LIMIT 50`,
+        ORDER BY contado_en, id
+        LIMIT 200`,
       [tenantId, desde]
     );
     return r.rows.map((x) => Number(x.id));

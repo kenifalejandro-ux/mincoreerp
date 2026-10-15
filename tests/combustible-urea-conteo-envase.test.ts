@@ -295,4 +295,37 @@ describe("combustible: conteo de urea por envase", () => {
     expect(descuadre[1].detalle.aparecio_por).toMatchObject({ tipo: "entrada" });
     expect(alterado).toHaveLength(4);
   });
+  it("una entrada tardía que cambia dos conteos deja UN hallazgo con los dos", async () => {
+    const c2 = await agente.post("/api/erp/combustible/urea/conteos").send({
+      cliente_uuid: crypto.randomUUID(),
+      lineas: [{ presentacion: "caja", cantidad_bultos: 5 }],
+      contado_en: hace(4 * DIA),
+    });
+    expect(c2.status, JSON.stringify(c2.body)).toBe(201);
+
+    const r = await agente.post("/api/erp/combustible/recepciones").send({
+      cliente_uuid: crypto.randomUUID(),
+      producto: "urea",
+      grifo_id: grifoUrea,
+      tipo_documento: "factura",
+      numero_documento: `F-${Math.floor(Math.random() * 1e8)}`,
+      lineas: [{ presentacion: "bolsa", cantidad_bultos: 1, costo_unitario: 25 }],
+      recibido_en: hace(6 * DIA),
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+
+    // Anclado al primero (el más antiguo), con la lista entera adentro.
+    const { alterado } = await alertasCuando(5);
+    expect(alterado).toHaveLength(5);
+    const conteos = alterado[4].detalle.conteos as { conteoId: number }[];
+    expect(conteos.map((c) => c.conteoId)).toEqual([conteo, Number(c2.body.id)]);
+    const delSegundo = await withTenant(tenantId, (c) =>
+      c.query(
+        `SELECT count(*)::int AS n FROM combustible_alertas
+          WHERE tenant_id = $1 AND tipo = 'urea_conteo_alterado' AND urea_conteo_id = $2`,
+        [tenantId, Number(c2.body.id)]
+      )
+    );
+    expect(delSegundo.rows[0].n).toBe(0);
+  });
 });

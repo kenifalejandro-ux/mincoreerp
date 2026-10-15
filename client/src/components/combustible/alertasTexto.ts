@@ -254,15 +254,18 @@ export function describirDetalleAlerta(a: AlertaCombustible): string {
     );
   }
   if (a.tipo === "urea_conteo_alterado") {
-    const { contadoEn, antesL, despuesL, causa } = a.detalle as {
+    const { contadoEn, antesL, despuesL, causa, conteos } = a.detalle as {
       contadoEn?: string;
       antesL?: number;
       despuesL?: number;
       causa?: { descripcion?: string };
+      conteos?: unknown[];
     };
+    const otros = (conteos?.length ?? 1) - 1;
     const signo = (v: number | undefined) => (v === undefined ? "?" : v > 0 ? `+${v}` : `${v}`);
     return (
       `Conteo del ${contadoEn?.slice(0, 10) ?? "?"}: ${signo(antesL)} L → ${signo(despuesL)} L` +
+      (otros > 0 ? ` (y ${otros} conteo${otros === 1 ? "" : "s"} más)` : "") +
       (causa?.descripcion ? `, por ${causa.descripcion}` : "")
     );
   }

@@ -5077,6 +5077,7 @@ export class CombustibleService {
       contadoEn: string;
       antesL: number;
       despuesL: number;
+      porEnvase: unknown[];
     }[] = [];
     for (const conteoId of ids) {
       const actual = await this.descuadreDeConteoUrea(client, tenantId, conteoId);
@@ -5112,26 +5113,34 @@ export class CombustibleService {
           detalle: { ...actual, aparecio_por: causa },
         });
       }
-      if (opciones.hallazgo) {
-        nuevas.push({
-          tipo: "urea_conteo_alterado",
-          producto: "urea",
-          ureaConteoId: conteoId,
-          detalle: {
-            conteoId,
-            contadoEn: actual.contadoEn,
-            antesL: antes,
-            despuesL: actual.descuadreL,
-            porEnvase: actual.porEnvase,
-            causa,
-          },
-        });
-      }
       alterados.push({
         conteoId,
         contadoEn: actual.contadoEn,
         antesL: antes,
         despuesL: actual.descuadreL,
+        porEnvase: actual.porEnvase,
+      });
+    }
+    // UN hallazgo por movimiento, no uno por conteo: una entrada fechada
+    // atrás cambia el resultado de TODOS los conteos posteriores, y doce
+    // avisos (y doce correos) por un solo hecho tapan lo que importa. Se
+    // ancla al primer conteo afectado -- el que vio el faltante -- y lleva
+    // la lista entera.
+    if (opciones.hallazgo && alterados.length > 0) {
+      const primero = alterados[0];
+      nuevas.push({
+        tipo: "urea_conteo_alterado",
+        producto: "urea",
+        ureaConteoId: primero.conteoId,
+        detalle: {
+          conteoId: primero.conteoId,
+          contadoEn: primero.contadoEn,
+          antesL: primero.antesL,
+          despuesL: primero.despuesL,
+          porEnvase: primero.porEnvase,
+          conteos: alterados.map(({ porEnvase: _p, ...c }) => c),
+          causa,
+        },
       });
     }
     const creadas = nuevas.length

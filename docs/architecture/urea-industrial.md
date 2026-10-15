@@ -379,15 +379,15 @@ Decisiones de Kenif (2026-10-14): (a) lo suelto va en un campo aparte, en litros
 - **Lo vacío es cero.** El formulario siempre dijo "las que no tengas, dejalas vacías". El descuadre compara cada envase con stock esperado, lo haya anotado o no: un envase con stock que el conteo no menciona se contó en cero. Comparar solo lo anotado dejaría esconder un faltante entero (las 20 bolsas que no están) con solo no anotarlas.
 - **El suelto** (`suelto_litros`, en litros, dos decimales): la caja abierta o el balde a medias. Suma a lo contado. Una caja de menos que aparece entera en el suelto no es faltante: los litros cuadran, y la tarjeta del envase igual muestra "4 de 5".
 - **Un solo cálculo** (`descuadreDeConteoUrea`) para la alerta, el estado del almacén (cada envase con "Último conteo: N de M esperadas") y la diferencia del kardex. Los conteos de antes de 0130, sin detalle, se comparan por el total como antes.
-- **Cuando cambia el pasado de un conteo.** Un vale o una entrada del almacén con fecha anterior a un conteo ya hecho, o su anulación, cambia lo que ese conteo tenía que encontrar. Se re-evalúan los conteos afectados (los 50 más recientes desde la fecha del movimiento):
+- **Cuando cambia el pasado de un conteo.** Un vale o una entrada del almacén con fecha anterior a un conteo ya hecho, o su anulación, cambia lo que ese conteo tenía que encontrar. Se re-evalúan los conteos afectados, del más antiguo al más nuevo (hasta 200; el primero, el que vio el faltante, nunca queda afuera):
   - con alerta abierta, la alerta pasa a decir el número de hoy, y el de ese día queda en `detalle.original` (nunca se pisa);
   - si ahora cuadra, se cierra sola con el porqué (`cerrada_por_sistema`, "el conteo cuadra desde que se registró el vale X");
   - si no tenía alerta (o la cerraron a mano) y ahora no cuadra, nace una alerta nueva con `aparecio_por`;
-  - y siempre queda el hallazgo **`urea_conteo_alterado`** (al momento, correo). Es el freno: una entrada falsa fechada atrás también "explicaría" un faltante, así que cambiar el pasado de un conteo nunca es silencioso.
+  - y queda UN hallazgo **`urea_conteo_alterado`** por movimiento (al momento, un correo), anclado al primer conteo afectado y con la lista de todos los que cambiaron: una entrada fechada atrás cambia todos los conteos posteriores, y un aviso por conteo taparía lo que importa. Es el freno: una entrada falsa fechada atrás también "explicaría" un faltante, así que cambiar el pasado de un conteo nunca es silencioso.
 - **La última alerta del conteo siempre guarda el número vigente**, también la que se cierra sola. Si guardara el de antes, el próximo movimiento creería que el conteo cambió otra vez y repetiría el hallazgo (encontrado al revisar, cubierto por un test).
 - **La corrección de litros** (0130) re-evalúa todos los conteos con su propio hallazgo (`urea_litros_corregidos`), sin sumar `urea_conteo_alterado`.
 - **Concurrencia:** la re-evaluación toma un advisory lock por tenant: dos movimientos tardíos a la vez no crean dos alertas para el mismo conteo.
-- **Best-effort:** corre después del commit del movimiento, en su propia transacción. Si falla, el vale o la entrada ya están guardados y queda un log.
+- **Corre después de responder** el vale o la entrada, en su propia transacción, y espera el candado como máximo 10 s (`lock_timeout`). Si falla, el movimiento ya está guardado y queda un log. Antes corría antes de responder y colgó la anulación de una entrada en el e2e de firefox del CI (no reproducido en local).
 - La compra en ruta no pasa por el almacén y no toca conteos.
 - `tests/combustible-urea-conteo-envase.test.ts`.
 

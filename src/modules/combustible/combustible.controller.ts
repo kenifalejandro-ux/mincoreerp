@@ -6113,15 +6113,12 @@ export class CombustibleController {
           producto: "urea",
         });
       }
-      if (admins.length > 0) {
-        for (const a of alterados) {
-          await enviarCorreoUreaConteoAlterado(admins, {
-            contadoEn: a.contadoEn,
-            antesL: a.antesL,
-            despuesL: a.despuesL,
-            causa: causa.descripcion,
-          });
-        }
+      // Un solo correo por movimiento, con todos los conteos que cambió.
+      if (admins.length > 0 && alterados.length > 0) {
+        await enviarCorreoUreaConteoAlterado(admins, {
+          conteos: alterados,
+          causa: causa.descripcion,
+        });
       }
     } catch (err) {
       logger.warn(
