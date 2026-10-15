@@ -35,10 +35,11 @@ import {
   Tag,
   Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useAuth } from "../context/AuthContext";
 import { comprimirImagen } from "./combustible/comprimirImagen";
+import { EVENTO_UREA_EN_WINDOW, planDeRefresco } from "./combustible/eventosUrea";
 import ConsumoPorViaje from "./combustible/ConsumoPorViaje";
 import VentanaFlotante from "./comunes/VentanaFlotante";
 import { AlmacenUrea, ModalCorregirLitros, ResumenUrea, type EstadoStockUrea } from "./UreaAlmacen";
@@ -836,39 +837,66 @@ async function verComprobanteUrea(despachoId: number) {
 
 /** El kardex con su propio período, dentro del panel flotante. Sin fechas,
  *  los últimos 30 días -- y lo dice. */
-function PanelKardexUrea({ puedeExportar }: { puedeExportar: boolean }) {
+function PanelKardexUrea({ puedeExportar, clave }: { puedeExportar: boolean; clave: number }) {
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
+  // Lo que está en pantalla se pidió con ESTE período, no con lo que hay
+  // escrito en los campos: un refresco en vivo no debe aplicar fechas que la
+  // persona todavía no consultó. Cambia solo con "Consultar".
+  const [aplicado, setAplicado] = useState({ desde: "", hasta: "" });
   const [kardex, setKardex] = useState<KardexUrea | null>(null);
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const periodo = useCallback(() => {
-    const fin = hasta ? new Date(`${hasta}T23:59:59.999`) : new Date();
-    const ini = desde ? new Date(`${desde}T00:00:00`) : new Date(fin.getTime() - 30 * 86400000);
+  const periodo = (p: { desde: string; hasta: string }) => {
+    const fin = p.hasta ? new Date(`${p.hasta}T23:59:59.999`) : new Date();
+    const ini = p.desde ? new Date(`${p.desde}T00:00:00`) : new Date(fin.getTime() - 30 * 86400000);
     return new URLSearchParams({ desde: ini.toISOString(), hasta: fin.toISOString() }).toString();
-  }, [desde, hasta]);
+  };
 
-  const cargar = useCallback(async () => {
-    setCargando(true);
-    setError(null);
-    try {
-      const res = await apiFetch(`/api/erp/combustible/urea/kardex?${periodo()}`);
-      const body = await res.json().catch(() => null);
-      setKardex(res.ok ? body : null);
-      if (!res.ok) setError(body?.error ?? "No se pudo cargar el kardex.");
-    } finally {
-      setCargando(false);
-    }
-  }, [periodo]);
+  /** `silencioso` es el refresco en vivo: sin spinner, y si falla se deja lo
+   *  que ya había en pantalla en vez de vaciarlo. */
+  // Solo la última petición pinta: con el refresco en vivo, un "Consultar"
+  // y un evento pueden cruzarse, y la respuesta que llega tarde no debe pisar
+  // a la más nueva.
+  const ultimaPeticion = useRef(0);
+  const cargar = useCallback(
+    async (silencioso = false, p = aplicado) => {
+      const n = ++ultimaPeticion.current;
+      const vigente = () => n === ultimaPeticion.current;
+      if (!silencioso) {
+        setCargando(true);
+        setError(null);
+      }
+      try {
+        const res = await apiFetch(`/api/erp/combustible/urea/kardex?${periodo(p)}`);
+        if (silencioso && !res.ok) return;
+        const body = await res.json().catch(() => null);
+        if (!vigente()) return;
+        setKardex(res.ok ? body : null);
+        // Éxito limpia el aviso: el refresco en vivo no lo limpia al empezar.
+        setError(res.ok ? null : (body?.error ?? "No se pudo cargar el kardex."));
+      } catch {
+        if (!silencioso && vigente()) setError("No se pudo cargar el kardex.");
+      } finally {
+        // La vigente apaga el spinner, sea silenciosa o no: si un refresco en
+        // vivo dejó vieja a una carga con spinner, nadie más lo apagaría.
+        if (vigente()) setCargando(false);
+      }
+    },
+    [aplicado]
+  );
 
+  const primeraCarga = useRef(true);
   useEffect(() => {
-    // Carga inicial: últimos 30 días.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    cargar();
-    // Solo al abrir; las fechas se aplican con "Consultar".
+    // Carga inicial al abrir (últimos 30 días) y, después, un refresco
+    // silencioso cada vez que `clave` sube (un evento en vivo). Las fechas se
+    // aplican con "Consultar".
+    const silencioso = !primeraCarga.current;
+    primeraCarga.current = false;
+    cargar(silencioso);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [clave]);
 
   return (
     <div className="flex flex-col">
@@ -893,7 +921,11 @@ function PanelKardexUrea({ puedeExportar }: { puedeExportar: boolean }) {
         </label>
         <button
           type="button"
-          onClick={cargar}
+          onClick={() => {
+            const escrito = { desde, hasta };
+            setAplicado(escrito);
+            cargar(false, escrito);
+          }}
           disabled={cargando}
           className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50"
         >
@@ -902,7 +934,7 @@ function PanelKardexUrea({ puedeExportar }: { puedeExportar: boolean }) {
         {puedeExportar && (
           <button
             type="button"
-            onClick={() => descargarKardexXlsx(periodo())}
+            onClick={() => descargarKardexXlsx(periodo(aplicado))}
             disabled={(kardex?.filas.length ?? 0) === 0}
             className="ml-auto flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl text-sm disabled:opacity-40"
             title="Descargar el kardex en Excel (.xlsx)"
@@ -913,7 +945,7 @@ function PanelKardexUrea({ puedeExportar }: { puedeExportar: boolean }) {
         )}
       </div>
       {error && <div className="p-4 text-sm text-red-600">{error}</div>}
-      {!cargando && <TablaKardex kardex={kardex} sinFechas={!desde && !hasta} />}
+      {!cargando && <TablaKardex kardex={kardex} sinFechas={!aplicado.desde && !aplicado.hasta} />}
     </div>
   );
 }
@@ -932,7 +964,9 @@ function MovimientosRecientes({ clave, onVerKardex }: { clave: number; onVerKard
     apiFetch(`/api/erp/combustible/urea/kardex?${q}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((body: KardexUrea | null) => {
-        if (vigente) setFilas(body ? [...body.filas].reverse().slice(0, 10) : []);
+        // Si el pedido falla se deja lo que ya había: este panel se vuelve a
+        // pedir con cada evento en vivo y un 5xx pasajero no debe vaciarlo.
+        if (vigente && body) setFilas([...body.filas].reverse().slice(0, 10));
       })
       .catch(() => {});
     return () => {
@@ -1131,6 +1165,10 @@ export default function UreaPanel() {
   const [periodoViaje, setPeriodoViaje] = useState({ desde: "", hasta: "", n: 0 });
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
+  // El período con el que se pidió lo que se ve; ver PanelKardexUrea. Lo
+  // escrito en los campos (`desde`/`hasta`) solo pasa a ser este con
+  // "Consultar" o al cambiar de vista.
+  const [aplicado, setAplicado] = useState({ desde: "", hasta: "" });
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -1189,54 +1227,83 @@ export default function UreaPanel() {
   // propio trabajo (ver urea:hallazgos en permisosPestanas.service.ts).
   const puedeVerHallazgos = (esAdmin || usuario?.rol === "operador") && permiteUrea("hallazgos");
 
-  const cargarHallazgos = useCallback(async () => {
-    const res = await apiFetch("/api/erp/combustible/urea/hallazgos");
-    setHallazgos(res.ok ? ((await res.json()) as HallazgosUrea) : null);
+  // Las cuatro funciones de abajo (hallazgos, precios, estado, envases) tienen
+  // dos modos. Normal: lo de siempre, un error deja la pantalla vacía. En vivo
+  // (`silencioso`, un evento del stream): un 5xx pasajero o un corte de red
+  // NO toca lo que ya está en pantalla -- vaciar el estado desmontaría el
+  // almacén y, con él, el modal de corregir litros que alguien esté llenando.
+  const cargarHallazgos = useCallback(async (silencioso = false) => {
+    try {
+      const res = await apiFetch("/api/erp/combustible/urea/hallazgos");
+      if (silencioso && !res.ok) return;
+      setHallazgos(res.ok ? ((await res.json()) as HallazgosUrea) : null);
+    } catch (err) {
+      if (!silencioso) throw err;
+    }
   }, []);
 
-  const cargarPrecios = useCallback(async () => {
-    const res = await apiFetch("/api/erp/combustible/urea/precios");
-    const body = await res.json().catch(() => null);
-    setPrecios(Array.isArray(body) ? body : []);
+  const cargarPrecios = useCallback(async (silencioso = false) => {
+    try {
+      const res = await apiFetch("/api/erp/combustible/urea/precios");
+      if (silencioso && !res.ok) return;
+      const body = await res.json().catch(() => null);
+      setPrecios(Array.isArray(body) ? body : []);
+    } catch (err) {
+      if (!silencioso) throw err;
+    }
   }, []);
 
-  const cargarEstado = useCallback(async () => {
-    const res = await apiFetch("/api/erp/combustible/urea/estado");
-    const body = await res.json().catch(() => null);
-    setEstado(body ?? null);
+  const cargarEstado = useCallback(async (silencioso = false) => {
+    try {
+      const res = await apiFetch("/api/erp/combustible/urea/estado");
+      if (silencioso && !res.ok) return;
+      const body = await res.json().catch(() => null);
+      setEstado(body ?? null);
+    } catch (err) {
+      if (!silencioso) throw err;
+    }
   }, []);
 
   /** El catálogo COMPLETO, activas e inactivas: las tablas de historial
    *  necesitan el nombre de un envase que ya se dio de baja, y la pantalla
    *  de configuración tiene que poder reactivarlo. Los desplegables de
    *  carga filtran `activa` por su cuenta. */
-  const cargarPresentaciones = useCallback(async () => {
-    const res = await apiFetch("/api/erp/combustible/urea/presentaciones");
-    const body = await res.json().catch(() => null);
-    setPresentaciones(Array.isArray(body) ? body : []);
+  const cargarPresentaciones = useCallback(async (silencioso = false) => {
+    try {
+      const res = await apiFetch("/api/erp/combustible/urea/presentaciones");
+      if (silencioso && !res.ok) return;
+      const body = await res.json().catch(() => null);
+      setPresentaciones(Array.isArray(body) ? body : []);
+    } catch (err) {
+      if (!silencioso) throw err;
+    }
   }, []);
 
   /** Arma el query string con el período, mismo criterio que
    *  HistoricoCliente.tsx: sin fecha puesta, no manda el parámetro (el
    *  backend interpreta "todo el rango"). */
   const paramsDePeriodo = useCallback(
-    (extra: Record<string, string>) => {
+    (extra: Record<string, string>, p = aplicado) => {
       const params = new URLSearchParams(extra);
-      if (desde) params.set("desde", new Date(`${desde}T00:00:00`).toISOString());
-      if (hasta) params.set("hasta", new Date(`${hasta}T23:59:59.999`).toISOString());
+      if (p.desde) params.set("desde", new Date(`${p.desde}T00:00:00`).toISOString());
+      if (p.hasta) params.set("hasta", new Date(`${p.hasta}T23:59:59.999`).toISOString());
       return params;
     },
-    [desde, hasta]
+    [aplicado]
   );
 
+  const ultimaPeticionVista = useRef(0);
   const cargarVista = useCallback(
-    async (v: Vista) => {
+    async (v: Vista, silencioso = false, p = aplicado) => {
+      // `silencioso` es el refresco en vivo (un evento del stream): sin
+      // spinner -- que escondería la tabla -- y, si falla, se deja lo que ya
+      // estaba en pantalla en vez de vaciarlo.
       // Los catálogos no se cargan por acá: los traen cargarPresentaciones()
       // y cargarPrecios() al montar y después de cada guardado.
       if (v === "presentaciones" || v === "precios") return;
       // La vista por viaje trae sus datos sola con el período aplicado.
       if (v === "por_viaje") {
-        const q = paramsDePeriodo({});
+        const q = paramsDePeriodo({}, p);
         setPeriodoViaje((p) => ({
           desde: q.get("desde") ?? "",
           hasta: q.get("hasta") ?? "",
@@ -1244,47 +1311,69 @@ export default function UreaPanel() {
         }));
         return;
       }
-      setCargando(true);
-      setError(null);
+      // Solo la última petición pinta (mismo criterio que el kardex): un
+      // refresco en vivo, un "Consultar" o un cambio de vista pueden cruzarse.
+      const n = ++ultimaPeticionVista.current;
+      const vigente = () => n === ultimaPeticionVista.current;
+      if (!silencioso) {
+        setCargando(true);
+        setError(null);
+      }
       try {
         if (v === "vales") {
           // Solo el almacén: las compras en ruta tienen su propia vista, con
           // los renglones y el comprobante (0120).
-          const q = paramsDePeriodo({ producto: "urea", origen: "almacen", pageSize: "200" });
+          const q = paramsDePeriodo({ producto: "urea", origen: "almacen", pageSize: "200" }, p);
           const res = await apiFetch(`/api/erp/combustible/despachos?${q}`);
+          if (silencioso && !res.ok) return;
           const body = await res.json().catch(() => null);
+          if (!vigente()) return;
           setVales(Array.isArray(body?.data) ? body.data : []);
         } else if (v === "entradas") {
-          const q = paramsDePeriodo({ producto: "urea", pageSize: "200" });
+          const q = paramsDePeriodo({ producto: "urea", pageSize: "200" }, p);
           const res = await apiFetch(`/api/erp/combustible/recepciones?${q}`);
+          if (silencioso && !res.ok) return;
           const body = await res.json().catch(() => null);
+          if (!vigente()) return;
           setEntradas(Array.isArray(body?.data) ? body.data : []);
         } else if (v === "por_conductor") {
-          const q = paramsDePeriodo({ producto: "urea" });
+          const q = paramsDePeriodo({ producto: "urea" }, p);
           const res = await apiFetch(`/api/erp/combustible/consumo-por-conductor?${q}`);
+          if (silencioso && !res.ok) return;
           const body = await res.json().catch(() => null);
+          if (!vigente()) return;
           setPorConductor(Array.isArray(body?.data) ? body.data : []);
         } else if (v === "compras") {
-          const res = await apiFetch(`/api/erp/combustible/urea/compras?${paramsDePeriodo({})}`);
+          const res = await apiFetch(`/api/erp/combustible/urea/compras?${paramsDePeriodo({}, p)}`);
+          if (silencioso && !res.ok) return;
           const body = await res.json().catch(() => null);
+          if (!vigente()) return;
           setCompras(Array.isArray(body) ? body : []);
         } else if (v === "por_vehiculo") {
-          const q = paramsDePeriodo({ producto: "urea" });
+          const q = paramsDePeriodo({ producto: "urea" }, p);
           const res = await apiFetch(`/api/erp/combustible/consumo-por-vehiculo?${q}`);
+          if (silencioso && !res.ok) return;
           const body = await res.json().catch(() => null);
+          if (!vigente()) return;
           setPorVehiculo(Array.isArray(body?.data) ? body.data : []);
         } else {
           const res = await apiFetch("/api/erp/combustible/urea/conteos?pageSize=200");
+          if (silencioso && !res.ok) return;
           const body = await res.json().catch(() => null);
+          if (!vigente()) return;
           setConteos(Array.isArray(body?.data) ? body.data : []);
         }
+        // Llegó a pintar: un aviso de error anterior ya no describe lo que se
+        // ve. Importa en el refresco en vivo, que no limpia el error al empezar.
+        if (vigente()) setError(null);
       } catch {
-        setError("No se pudo cargar la información.");
+        if (!silencioso && vigente()) setError("No se pudo cargar la información.");
       } finally {
-        setCargando(false);
+        // La vigente apaga el spinner, sea silenciosa o no (ver el kardex).
+        if (vigente()) setCargando(false);
       }
     },
-    [paramsDePeriodo]
+    [paramsDePeriodo, aplicado]
   );
 
   useEffect(() => {
@@ -1314,8 +1403,11 @@ export default function UreaPanel() {
   ]);
 
   useEffect(() => {
+    // Cambiar de vista aplica lo que haya escrito en las fechas, como antes.
+    const escrito = { desde, hasta };
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (puedeVerUrea) cargarVista(vista);
+    setAplicado(escrito);
+    if (puedeVerUrea) cargarVista(vista, false, escrito);
     // Solo al cambiar de VISTA, no en cada tecla de las fechas -- esas se
     // aplican con el botón "Consultar" (mismo criterio que
     // HistoricoCliente.tsx).
@@ -1329,6 +1421,44 @@ export default function UreaPanel() {
     cargarVista(vista);
     cargarEstado();
   }, [vista, cargarVista, cargarEstado, cargarHallazgos, puedeVerUrea, puedeVerHallazgos]);
+
+  // ── En vivo: CombustiblePanel reenvía por window lo que el stream avisa de
+  // urea (ver eventosUrea.ts). Se juntan los avisos de 300 ms en un solo
+  // refresco, sin spinner, y solo de listas: los modales abiertos no se
+  // tocan, para no pisar lo que alguien está escribiendo. ──
+  const aplicarCambioEnVivo = (tipos: Set<string>) => {
+    const plan = planDeRefresco(tipos);
+    if (plan.presentaciones) cargarPresentaciones(true);
+    if (plan.precios) cargarPrecios(true);
+    if (plan.hallazgos && puedeVerHallazgos) cargarHallazgos(true);
+    if (plan.estado && puedeVerUrea) cargarEstado(true);
+    if (plan.vista) {
+      setRecargas((n) => n + 1);
+      if (puedeVerUrea) cargarVista(vista, true);
+    }
+  };
+  const aplicarCambioEnVivoRef = useRef(aplicarCambioEnVivo);
+  useEffect(() => {
+    aplicarCambioEnVivoRef.current = aplicarCambioEnVivo;
+  });
+  useEffect(() => {
+    const pendientes = new Set<string>();
+    let temporizador: number | undefined;
+    const alAvisar = (e: Event) => {
+      pendientes.add((e as CustomEvent<{ tipo: string }>).detail.tipo);
+      if (temporizador !== undefined) window.clearTimeout(temporizador);
+      temporizador = window.setTimeout(() => {
+        const tipos = new Set(pendientes);
+        pendientes.clear();
+        aplicarCambioEnVivoRef.current(tipos);
+      }, 300);
+    };
+    window.addEventListener(EVENTO_UREA_EN_WINDOW, alAvisar);
+    return () => {
+      window.removeEventListener(EVENTO_UREA_EN_WINDOW, alAvisar);
+      if (temporizador !== undefined) window.clearTimeout(temporizador);
+    };
+  }, []);
 
   const botonAccion =
     "flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all active:scale-95 bg-[#192526] text-white hover:bg-[#0D1719] border border-[#2a2e37] hover:border-[#a3e635]";
@@ -1539,7 +1669,11 @@ export default function UreaPanel() {
                 </label>
                 <button
                   type="button"
-                  onClick={() => cargarVista(vista)}
+                  onClick={() => {
+                    const escrito = { desde, hasta };
+                    setAplicado(escrito);
+                    cargarVista(vista, false, escrito);
+                  }}
                   disabled={cargando}
                   className="px-4 py-2 bg-slate-900 text-white text-sm font-medium rounded-lg hover:bg-slate-800 disabled:opacity-50"
                 >
@@ -1639,7 +1773,7 @@ export default function UreaPanel() {
           altoInicial={560}
         >
           <CuerpoVentana>
-            <PanelKardexUrea puedeExportar={permiteUrea("exportar")} />
+            <PanelKardexUrea puedeExportar={permiteUrea("exportar")} clave={recargas} />
           </CuerpoVentana>
         </VentanaFlotante>
       )}
@@ -1657,7 +1791,7 @@ export default function UreaPanel() {
               precios={precios}
               grifos={grifos}
               presentaciones={presentaciones}
-              onCambio={cargarPrecios}
+              onCambio={() => cargarPrecios()}
             />
           </CuerpoVentana>
         </VentanaFlotante>
