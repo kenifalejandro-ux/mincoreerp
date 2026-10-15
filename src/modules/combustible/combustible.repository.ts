@@ -115,6 +115,10 @@ export const TIPOS_ALERTA = [
   // ── 0130: se corrigieron los litros de un envase con historial. Hallazgo,
   // se congela: inflar los litros de un envase tapa un faltante.
   "urea_litros_corregidos",
+  // ── 0132: un movimiento con fecha anterior, cargado DESPUÉS de un conteo,
+  // cambió su resultado. Hallazgo, se congela: es la forma de tapar un
+  // faltante con una entrada falsa fechada atrás.
+  "urea_conteo_alterado",
   // ── Migración 0093: consumo anterior a la primera varilla del tanque.
   "historial_sin_contrastar",
   // ── Migración 0094: el totalizador acumulativo del surtidor.
@@ -4300,17 +4304,30 @@ export class CombustibleRepository {
     client: PoolClient,
     tenantId: string,
     usuarioId: string | null,
-    data: { cantidadLitros: number; contadoEn: string; observaciones: string | null }
+    data: {
+      cantidadLitros: number;
+      contadoEn: string;
+      observaciones: string | null;
+      /** 0132: lo que no está en un envase entero. NULL = no se informó. */
+      sueltoLitros?: number | null;
+    }
   ) {
     const result = await client.query(
       `
       INSERT INTO combustible_conteos_urea
-        (tenant_id, cantidad_litros, contado_en, usuario_id, observaciones)
-      VALUES ($1, $2, $3, $4, $5)
+        (tenant_id, cantidad_litros, contado_en, usuario_id, observaciones, suelto_litros)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING id, tenant_id, cantidad_litros, contado_en, usuario_id, observaciones,
-        creado_en, anulada_en, anulada_por, motivo_anulacion
+        suelto_litros, creado_en, anulada_en, anulada_por, motivo_anulacion
       `,
-      [tenantId, data.cantidadLitros, data.contadoEn, usuarioId, data.observaciones]
+      [
+        tenantId,
+        data.cantidadLitros,
+        data.contadoEn,
+        usuarioId,
+        data.observaciones,
+        data.sueltoLitros ?? null,
+      ]
     );
     return result.rows[0];
   }
@@ -4348,6 +4365,16 @@ export class CombustibleRepository {
     const result = await client.query(
       `
       SELECT c.id, c.cantidad_litros, c.contado_en, c.usuario_id, c.observaciones,
+             c.suelto_litros,
+             -- 0130/0132: qué se contó, envase por envase.
+             (SELECT COALESCE(json_agg(json_build_object(
+                       'presentacion', l.presentacion, 'nombre', pr.nombre,
+                       'cantidad_bultos', l.cantidad_bultos, 'factor_litros', l.factor_litros,
+                       'litros', l.litros) ORDER BY l.presentacion), '[]'::json)
+                FROM combustible_conteo_urea_lineas l
+                LEFT JOIN combustible_urea_presentaciones pr
+                  ON pr.tenant_id = l.tenant_id AND pr.codigo = l.presentacion
+               WHERE l.conteo_id = c.id AND l.tenant_id = c.tenant_id) AS renglones,
              c.creado_en, c.anulada_en, c.anulada_por, c.motivo_anulacion,
              autor.nombre AS registrado_por_nombre,
              anulador.nombre AS anulada_por_nombre,
@@ -4450,21 +4477,158 @@ export class CombustibleRepository {
     return r.rows;
   }
 
+  /** Un conteo con lo que se contó (0132): sus renglones y el suelto. Vale
+   *  también para uno anulado (la comparación de conteos recargados lo
+   *  necesita). `null` si no existe en esta empresa. */
+  async findConteoUreaConRenglones(client: PoolClient, tenantId: string, id: number) {
+    const c = await client.query<{
+      id: string;
+      cantidad_litros: string;
+      suelto_litros: string | null;
+      contado_en: Date;
+      anulada_en: Date | null;
+    }>(
+      `SELECT id, cantidad_litros, suelto_litros, contado_en, anulada_en
+         FROM combustible_conteos_urea WHERE id = $1 AND tenant_id = $2`,
+      [id, tenantId]
+    );
+    const fila = c.rows[0];
+    if (!fila) return null;
+    const l = await client.query<{
+      presentacion: string;
+      nombre: string | null;
+      cantidad_bultos: number;
+      litros: string;
+    }>(
+      `SELECT l.presentacion, pr.nombre, l.cantidad_bultos, l.litros
+         FROM combustible_conteo_urea_lineas l
+         LEFT JOIN combustible_urea_presentaciones pr
+           ON pr.tenant_id = l.tenant_id AND pr.codigo = l.presentacion
+        WHERE l.conteo_id = $1 AND l.tenant_id = $2
+        ORDER BY l.presentacion`,
+      [id, tenantId]
+    );
+    return {
+      id: Number(fila.id),
+      cantidadLitros: Number(fila.cantidad_litros),
+      sueltoLitros: fila.suelto_litros === null ? null : Number(fila.suelto_litros),
+      contadoEn: fila.contado_en,
+      anulado: fila.anulada_en !== null,
+      renglones: l.rows.map((r) => ({
+        presentacion: r.presentacion,
+        nombre: r.nombre ?? r.presentacion,
+        bultos: Number(r.cantidad_bultos),
+        litros: Number(r.litros),
+      })),
+    };
+  }
+
+  /** Los conteos vigentes que un movimiento con esta fecha puede cambiar: los
+   *  contados en esa fecha o después. Con techo: un movimiento de hace un año
+   *  no recalcula cien conteos en una sola petición. */
+  async findConteosUreaVigentesDesde(client: PoolClient, tenantId: string, desde: string) {
+    const r = await client.query<{ id: string }>(
+      `SELECT id FROM combustible_conteos_urea
+        WHERE tenant_id = $1 AND anulada_en IS NULL AND contado_en >= $2::timestamptz
+        ORDER BY contado_en DESC, id DESC
+        LIMIT 50`,
+      [tenantId, desde]
+    );
+    return r.rows.map((x) => Number(x.id));
+  }
+
+  /** La última alerta de descuadre de un conteo, abierta o no: dice cuál era
+   *  el último descuadre conocido. Una cerrada a mano sigue contando como
+   *  "antes" -- si el pasado vuelve a cambiar, es otra historia. */
+  async findAlertaDescuadreConteo(client: PoolClient, tenantId: string, conteoId: number) {
+    const r = await client.query<{
+      id: string;
+      detalle: Record<string, unknown>;
+      resuelta_en: Date | null;
+    }>(
+      `SELECT id, detalle, resuelta_en FROM combustible_alertas
+        WHERE tenant_id = $1 AND tipo = 'urea_descuadre_conteo' AND urea_conteo_id = $2
+        ORDER BY id DESC LIMIT 1`,
+      [tenantId, conteoId]
+    );
+    const fila = r.rows[0];
+    return fila
+      ? { id: Number(fila.id), detalle: fila.detalle, abierta: fila.resuelta_en === null }
+      : null;
+  }
+
+  /** El descuadre de un conteo cambió porque cambió el pasado: la alerta pasa
+   *  a decir el número de hoy, y el que vio la persona ese día queda adentro
+   *  como `original` (nunca se pisa). */
+  async actualizarDescuadreDeAlerta(
+    client: PoolClient,
+    tenantId: string,
+    alertaId: number,
+    detalle: Record<string, unknown>
+  ) {
+    await client.query(
+      `UPDATE combustible_alertas
+          SET detalle = $3::jsonb || jsonb_build_object(
+                'original', COALESCE(detalle->'original', detalle))
+        WHERE id = $1 AND tenant_id = $2`,
+      [alertaId, tenantId, JSON.stringify(detalle)]
+    );
+  }
+
+  /** La cierra el sistema porque el conteo ya cuadra. `resuelta_por` queda
+   *  NULL (es el sistema, como el hueco que se cierra al llegar el vale) y
+   *  el porqué queda en la fila, igual que un cierre manual. */
+  async cerrarAlertaDescuadrePorSistema(
+    client: PoolClient,
+    tenantId: string,
+    alertaId: number,
+    detalle: Record<string, unknown>,
+    motivo: string
+  ) {
+    // El detalle pasa a decir el número de HOY (descuadre 0): la última
+    // alerta del conteo es la que dice "cuál era el último descuadre
+    // conocido", y si quedara el viejo, el próximo movimiento creería que el
+    // conteo cambió otra vez.
+    await client.query(
+      `UPDATE combustible_alertas
+          SET resuelta_en = now(),
+              detalle = $3::jsonb || jsonb_build_object(
+                'motivo_revision', $4::text,
+                'cerrada_por_sistema', true,
+                'original', COALESCE(detalle->'original', detalle))
+        WHERE id = $1 AND tenant_id = $2 AND resuelta_en IS NULL`,
+      [alertaId, tenantId, JSON.stringify(detalle), motivo]
+    );
+  }
+
+  /** Serializa las re-evaluaciones de conteos de un tenant: dos movimientos
+   *  retroactivos a la vez no pueden crear dos alertas para el mismo
+   *  conteo. Se libera sola al terminar la transacción. */
+  async bloquearReevaluacionConteosUrea(client: PoolClient, tenantId: string) {
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext('urea_reevaluar_conteos:' || $1))`, [
+      tenantId,
+    ]);
+  }
+
   /** El último conteo VIGENTE -- es contra el que se compara el stock
    *  teórico. `null` si nunca se contó nada todavía (ver
    *  evaluarUreaDescuadreConteo: sin conteo previo no hay nada que
    *  comparar, y el control de "días sin conteo" -- no el de descuadre --
    *  es el que avisa de esa ausencia). */
   async findUltimoConteoUreaVigente(client: PoolClient, tenantId: string) {
-    const result = await client.query<{ cantidad_litros: string; contado_en: Date }>(
-      `SELECT cantidad_litros, contado_en FROM combustible_conteos_urea
+    const result = await client.query<{ id: string; cantidad_litros: string; contado_en: Date }>(
+      `SELECT id, cantidad_litros, contado_en FROM combustible_conteos_urea
        WHERE tenant_id = $1 AND anulada_en IS NULL
        ORDER BY contado_en DESC, id DESC LIMIT 1`,
       [tenantId]
     );
     const fila = result.rows[0];
     return fila
-      ? { cantidadLitros: Number(fila.cantidad_litros), contadoEn: fila.contado_en }
+      ? {
+          id: Number(fila.id),
+          cantidadLitros: Number(fila.cantidad_litros),
+          contadoEn: fila.contado_en,
+        }
       : null;
   }
 

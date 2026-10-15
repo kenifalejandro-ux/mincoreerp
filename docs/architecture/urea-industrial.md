@@ -372,6 +372,25 @@ Pedido de Kenif (2026-10-07): "un tráiler consume 1 caja + 2 bolsas". Y una fac
 - **Despliegue:** la migración no es aditiva. El código viejo no puede registrar vales ni entradas de urea contra el esquema nuevo: el tramo entre la migración y el arranque del código nuevo tiene que ser corto (hacerlo fuera del horario de carga).
 - `tests/combustible-urea-renglones.test.ts`; `e2e/urea-vale-renglones.spec.ts`.
 
+### Entrega 11 — conteo por envase (migración 0132)
+
+Decisiones de Kenif (2026-10-14): (a) lo suelto va en un campo aparte, en litros; (b) el descuadre se recalcula si cambia el pasado, y el valor original queda guardado.
+
+- **Lo vacío es cero.** El formulario siempre dijo "las que no tengas, dejalas vacías". El descuadre compara cada envase con stock esperado, lo haya anotado o no: un envase con stock que el conteo no menciona se contó en cero. Comparar solo lo anotado dejaría esconder un faltante entero (las 20 bolsas que no están) con solo no anotarlas.
+- **El suelto** (`suelto_litros`, en litros, dos decimales): la caja abierta o el balde a medias. Suma a lo contado. Una caja de menos que aparece entera en el suelto no es faltante: los litros cuadran, y la tarjeta del envase igual muestra "4 de 5".
+- **Un solo cálculo** (`descuadreDeConteoUrea`) para la alerta, el estado del almacén (cada envase con "Último conteo: N de M esperadas") y la diferencia del kardex. Los conteos de antes de 0130, sin detalle, se comparan por el total como antes.
+- **Cuando cambia el pasado de un conteo.** Un vale o una entrada del almacén con fecha anterior a un conteo ya hecho, o su anulación, cambia lo que ese conteo tenía que encontrar. Se re-evalúan los conteos afectados (los 50 más recientes desde la fecha del movimiento):
+  - con alerta abierta, la alerta pasa a decir el número de hoy, y el de ese día queda en `detalle.original` (nunca se pisa);
+  - si ahora cuadra, se cierra sola con el porqué (`cerrada_por_sistema`, "el conteo cuadra desde que se registró el vale X");
+  - si no tenía alerta (o la cerraron a mano) y ahora no cuadra, nace una alerta nueva con `aparecio_por`;
+  - y siempre queda el hallazgo **`urea_conteo_alterado`** (al momento, correo). Es el freno: una entrada falsa fechada atrás también "explicaría" un faltante, así que cambiar el pasado de un conteo nunca es silencioso.
+- **La última alerta del conteo siempre guarda el número vigente**, también la que se cierra sola. Si guardara el de antes, el próximo movimiento creería que el conteo cambió otra vez y repetiría el hallazgo (encontrado al revisar, cubierto por un test).
+- **La corrección de litros** (0130) re-evalúa todos los conteos con su propio hallazgo (`urea_litros_corregidos`), sin sumar `urea_conteo_alterado`.
+- **Concurrencia:** la re-evaluación toma un advisory lock por tenant: dos movimientos tardíos a la vez no crean dos alertas para el mismo conteo.
+- **Best-effort:** corre después del commit del movimiento, en su propia transacción. Si falla, el vale o la entrada ya están guardados y queda un log.
+- La compra en ruta no pasa por el almacén y no toca conteos.
+- `tests/combustible-urea-conteo-envase.test.ts`.
+
 ## Preguntas abiertas
 
 - ~~¿Adjuntar la factura o guía en las entradas al almacén?~~ **Resuelto (2026-10-05): no.** El cliente quiere un módulo de **órdenes de compra** propio, para repuestos, servicios, combustible y urea. El cruce OC ↔ guía ↔ factura, con sus archivos, va a vivir ahí, en un solo lugar para todos los productos. Adjuntarlo además en las recepciones dejaría el mismo papel en dos lugares. Lo que queda como está: las entradas siguen guardando tipo y número de documento, y cuando exista el módulo se les suma un vínculo a su OC. La compra en ruta conserva su boleta y su foto: es una compra de urgencia sin OC, y ahí la boleta es el único respaldo.

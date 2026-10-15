@@ -1873,6 +1873,20 @@ export const crearConteoUreaSchema = z
       })
       .optional(),
     observaciones: z.string().trim().max(500).optional(),
+    // 0132: la urea que no está en un envase entero -- una caja abierta, una
+    // bolsa rota. Suma a lo contado en litros. Sin el campo, el que cuenta
+    // tenía que elegir entre no contarla (faltante falso) o contarla entera
+    // (sobrante falso).
+    // Dos decimales, como la columna: con más, la base redondearía en
+    // silencio y el contado no sería lo que se escribió.
+    suelto_litros: z
+      .number()
+      .nonnegative()
+      .max(100000)
+      .refine((v) => Math.abs(Math.round(v * 100) - v * 100) < 1e-6, {
+        message: "El suelto va en litros con dos decimales como máximo",
+      })
+      .optional(),
   })
   .superRefine((data, ctx) => {
     if (data.lineas !== undefined) {

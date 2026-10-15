@@ -60,7 +60,8 @@ export interface AlertaCombustible {
     | "urea_stock_excedido"
     | "urea_conteo_recargado"
     | "urea_precio_fuera_de_catalogo"
-    | "urea_litros_corregidos";
+    | "urea_litros_corregidos"
+    | "urea_conteo_alterado";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -119,6 +120,7 @@ export const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   urea_conteo_recargado: "Conteo de urea anulado y vuelto a cargar",
   urea_precio_fuera_de_catalogo: "Compra de urea con precio fuera del catálogo",
   urea_litros_corregidos: "Litros de un envase de urea corregidos",
+  urea_conteo_alterado: "Un conteo de urea cambió de resultado",
 };
 
 /** La columna "Vale" de las tablas de alertas y anomalías. Desde la
@@ -227,7 +229,16 @@ export function describirDetalleAlerta(a: AlertaCombustible): string {
       esperadoL?: number;
       descuadreL?: number;
     };
-    return `Contados ${contadoL ?? "?"} L, los papeles explican ${esperadoL ?? "?"} L (${(descuadreL ?? 0) > 0 ? "+" : ""}${descuadreL ?? "?"} L)`;
+    // 0132: si un movimiento con fecha pasada la recalculó, el número de ese
+    // día queda en `original` y se dice también.
+    const original = (a.detalle as { original?: { descuadreL?: number } }).original?.descuadreL;
+    const conSigno = (v: number | undefined) => `${(v ?? 0) > 0 ? "+" : ""}${v ?? "?"}`;
+    return (
+      `Contados ${contadoL ?? "?"} L, los papeles explican ${esperadoL ?? "?"} L (${conSigno(descuadreL)} L` +
+      (original !== undefined && original !== descuadreL
+        ? `; ese día era ${conSigno(original)} L)`
+        : ")")
+    );
   }
   if (a.tipo === "urea_conteo_recargado") {
     const { descuadreAnuladoL, descuadreNuevoL, motivoAnulacion, anulacionesEnLaVentana } =
@@ -240,6 +251,19 @@ export function describirDetalleAlerta(a: AlertaCombustible): string {
     return (
       `Diferencia ${descuadreAnuladoL ?? "?"} L -> ${descuadreNuevoL ?? "?"} L tras anular ` +
       `("${motivoAnulacion ?? "sin motivo"}"), ${anulacionesEnLaVentana ?? "?"} anulación(es) en la ventana`
+    );
+  }
+  if (a.tipo === "urea_conteo_alterado") {
+    const { contadoEn, antesL, despuesL, causa } = a.detalle as {
+      contadoEn?: string;
+      antesL?: number;
+      despuesL?: number;
+      causa?: { descripcion?: string };
+    };
+    const signo = (v: number | undefined) => (v === undefined ? "?" : v > 0 ? `+${v}` : `${v}`);
+    return (
+      `Conteo del ${contadoEn?.slice(0, 10) ?? "?"}: ${signo(antesL)} L → ${signo(despuesL)} L` +
+      (causa?.descripcion ? `, por ${causa.descripcion}` : "")
     );
   }
   if (a.tipo === "urea_litros_corregidos") {

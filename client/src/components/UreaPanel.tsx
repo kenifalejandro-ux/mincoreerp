@@ -310,6 +310,10 @@ interface ConteoFila {
   observaciones: string | null;
   anulada_en: string | null;
   motivo_anulacion: string | null;
+  /** 0130: qué se contó por envase. Vacío en los conteos de antes. */
+  renglones?: RenglonApi[];
+  /** 0132: lo que no estaba en un envase entero, ya sumado en cantidad_litros. */
+  suelto_litros?: string | null;
 }
 
 interface ConductorFila {
@@ -2009,6 +2013,7 @@ function TablaConteos({
         <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
           <tr>
             <th className="text-left px-4 py-2">Fecha</th>
+            <th className="text-left px-4 py-2">Qué se contó</th>
             <th className="text-right px-4 py-2">Litros contados</th>
             <th className="text-left px-4 py-2">Registrado por</th>
             <th className="text-left px-4 py-2">Observaciones</th>
@@ -2019,6 +2024,16 @@ function TablaConteos({
           {filas.map((f) => (
             <tr key={f.id} className={f.anulada_en ? "opacity-50" : ""}>
               <td className="px-4 py-2">{formatearFecha(f.contado_en)}</td>
+              <td className="px-4 py-2">
+                {[
+                  etiquetaRenglones(f.renglones),
+                  Number(f.suelto_litros ?? 0) > 0
+                    ? `${formatearNumero(String(f.suelto_litros))} L suelto`
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" + ") || "—"}
+              </td>
               <td className="px-4 py-2 text-right">{formatearNumero(f.cantidad_litros)} L</td>
               <td className="px-4 py-2">{f.registrado_por_nombre ?? "—"}</td>
               <td className="px-4 py-2">{f.observaciones ?? "—"}</td>
@@ -2073,6 +2088,7 @@ const NOMBRE_HALLAZGO: Record<string, string> = {
   urea_conteo_recargado: "Conteo anulado y vuelto a cargar",
   urea_precio_fuera_de_catalogo: "Precio fuera del catálogo",
   urea_litros_corregidos: "Litros de un envase corregidos",
+  urea_conteo_alterado: "Un conteo cambió de resultado",
   urea_stock_bajo: "Queda poca urea",
   urea_stock_excedido: "Depósito por encima del máximo",
   urea_equipo_no_habilitado: "Urea a una unidad que no usa",
@@ -2116,6 +2132,12 @@ function resumirHallazgo(h: HallazgoUrea): string | null {
       const stock = d.stockAlmacenL as { antes: number; despues: number } | undefined;
       return stock
         ? `${envase?.nombre ?? "Envase"} a ${n(d.litrosDespues)} L; stock ${stock.antes} → ${stock.despues} L`
+        : null;
+    }
+    case "urea_conteo_alterado": {
+      const causa = d.causa as { descripcion?: string } | undefined;
+      return typeof d.antesL === "number"
+        ? `${n(d.antesL)} L → ${n(d.despuesL)} L por ${causa?.descripcion ?? "un movimiento con fecha pasada"}`
         : null;
     }
     case "urea_ratio_excedido":
@@ -4029,10 +4051,29 @@ function ModalConteo({
   const lineas = activas
     .filter((p) => cantidades[p.codigo] !== undefined && cantidades[p.codigo] !== "")
     .map((p) => ({ presentacion: p.codigo, cantidad_bultos: Number(cantidades[p.codigo]) }));
+  // Lo que no está en un envase entero (una caja abierta, un balde a medias):
+  // se anota en litros y suma al contado. Sin este campo, la caja abierta se
+  // anotaba como entera o se perdía, y el conteo descuadraba por nada.
+  const [suelto, setSuelto] = useState("");
+  const sueltoL = suelto === "" ? 0 : Number(suelto);
+  const sueltoValido = suelto === "" || (Number.isFinite(sueltoL) && sueltoL >= 0);
+  const totalLitros =
+    lineas.reduce(
+      (t, l) =>
+        t +
+        l.cantidad_bultos * Number(activas.find((p) => p.codigo === l.presentacion)?.litros ?? 0),
+      0
+    ) + (sueltoValido ? sueltoL : 0);
   const [contadoEn, setContadoEn] = useState(ahoraParaInputLocal());
   const [observaciones, setObservaciones] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Solo suelto (todo lo que queda es una caja abierta): los envases enteros
+  // van en cero -- vacío ya significa cero, esto solo lo dice explícito.
+  const lineasAEnviar =
+    lineas.length > 0 || sueltoL <= 0 || activas.length === 0
+      ? lineas
+      : [{ presentacion: activas[0].codigo, cantidad_bultos: 0 }];
 
   const enviar = async () => {
     setEnviando(true);
@@ -4043,7 +4084,8 @@ function ModalConteo({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           cliente_uuid: clienteUuid,
-          lineas,
+          lineas: lineasAEnviar,
+          suelto_litros: sueltoL > 0 ? sueltoL : undefined,
           contado_en: new Date(contadoEn).toISOString(),
           observaciones: observaciones.trim() || undefined,
         }),
@@ -4084,7 +4126,21 @@ function ModalConteo({
               />
             </label>
           ))}
+          <label className="flex flex-col text-sm gap-1">
+            <span className="text-gray-600">Suelto, en litros (caja abierta, balde a medias)</span>
+            <input
+              type="number"
+              min={0}
+              step={0.1}
+              value={suelto}
+              onChange={(e) => setSuelto(e.target.value)}
+              className="rounded border border-gray-300 px-3 py-2"
+            />
+          </label>
         </div>
+        <p className="text-sm text-slate-600">
+          Total contado: <strong>{formatearNumero(String(totalLitros))} L</strong>
+        </p>
         <label className="flex flex-col text-sm gap-1">
           <span className="text-gray-600">Fecha y hora del conteo</span>
           <input
@@ -4112,7 +4168,7 @@ function ModalConteo({
           </button>
           <button
             type="button"
-            disabled={lineas.length === 0 || enviando}
+            disabled={lineasAEnviar.length === 0 || !sueltoValido || enviando}
             onClick={enviar}
             className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed"
           >

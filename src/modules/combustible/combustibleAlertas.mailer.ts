@@ -1120,6 +1120,40 @@ export async function enviarCorreoUreaDescuadreConteo(
   });
 }
 
+/** Un movimiento cargado con fecha ANTERIOR a un conteo ya hecho cambió su
+ *  resultado (0132). Es lo que se busca vigilar: una entrada retroactiva que
+ *  "tapa" un faltante ya contado, o un vale tardío que lo abre. El conteo no
+ *  se toca; cambia lo que los papeles explican a esa fecha. */
+export async function enviarCorreoUreaConteoAlterado(
+  destinatarios: Destinatario[],
+  params: {
+    contadoEn: string;
+    antesL: number;
+    despuesL: number;
+    causa: string;
+  }
+) {
+  const signo = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+  const ese = (n: number) =>
+    n === 0 ? "cuadraba" : n < 0 ? `faltaban ${Math.abs(n)} L` : `sobraban ${n} L`;
+  const hoy = (n: number) =>
+    n === 0 ? "cuadra" : n < 0 ? `faltan ${Math.abs(n)} L` : `sobran ${n} L`;
+  await avisar("urea_conteo_alterado", {
+    destinatarios,
+    asunto: `Urea: un conteo ya hecho cambió de resultado (${signo(params.antesL)} → ${signo(params.despuesL)} L)`,
+    titulo: "Un movimiento con fecha pasada cambió el resultado de un conteo",
+    lineas: [
+      `Conteo del ${params.contadoEn.slice(0, 10)}: ese día ${ese(params.antesL)}; ` +
+        `hoy ${hoy(params.despuesL)}.`,
+      `Lo cambió ${params.causa}.`,
+      "Un movimiento cargado con fecha anterior a un conteo cambia lo que los papeles explican " +
+        "a esa fecha. Puede ser una carga atrasada legítima, o una forma de tapar un faltante ya " +
+        "contado: conviene confirmar con el comprobante.",
+      "La alerta de descuadre del conteo quedó al día; lo que decía antes queda guardado en ella.",
+    ],
+  });
+}
+
 /** Queda poca urea (0117). Es un ESTADO: se cierra solo cuando entra una
  *  compra que devuelve el stock sobre el mínimo, así que este correo sale UNA
  *  vez por episodio, no en cada vale. */
