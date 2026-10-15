@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 
 import { apiFetch } from "../../services/apiClient";
+import { mensajeDeError } from "../../utils/mensajeDeError";
 
 export interface PuntoPrecinto {
   id: number;
@@ -26,7 +27,7 @@ export interface PrecintoVisto {
 
 export async function leerError(res: Response, porDefecto: string) {
   const body = await res.json().catch(() => ({}));
-  return (body.error || body.errors?.[0]?.message || porDefecto) as string;
+  return mensajeDeError(body, porDefecto);
 }
 
 /** Los puntos de un tanque. `null` = no aplica (tanque sin precintos o sin
