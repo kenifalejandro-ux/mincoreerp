@@ -13,6 +13,7 @@ import { ArrowLeft, CheckCircle2, Search, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { apiFetch } from "../../services/apiClient";
+import { mensajeDeError } from "../../utils/mensajeDeError";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 import { useSedes } from "../comunes/useSedes";
 
@@ -154,7 +155,7 @@ export default function BandejaAlertas() {
       if (!vigente()) return;
       if (!resLista.ok || !resResumen.ok) {
         const cuerpo = await (resLista.ok ? resResumen : resLista).json().catch(() => ({}));
-        if (vigente()) setError(cuerpo.error || "No se pudo cargar la bandeja.");
+        if (vigente()) setError(mensajeDeError(cuerpo, "No se pudo cargar la bandeja."));
         return;
       }
       const cuerpoLista = await resLista.json();
@@ -262,7 +263,7 @@ export default function BandejaAlertas() {
       });
       const cuerpo = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setErrorResolver(cuerpo.error || "No se pudo resolver la alerta.");
+        setErrorResolver(mensajeDeError(cuerpo, "No se pudo resolver la alerta."));
         return;
       }
       setMotivo("");
