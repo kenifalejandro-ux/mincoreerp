@@ -1,0 +1,8 @@
+# Puerta antes de subir: tests y e2e del módulo tocado, en chromium y firefox,
+# contra una base desechable (scripts/verificar.ts). Omitir es decisión
+# consciente: SKIP_VERIFICAR=1 git push   (o SKIP_E2E=1 si no hay Docker).
+npm run verificar || {
+  echo ""
+  echo "Push bloqueado: arreglá lo marcado con 'ERROR EN' y volvé a intentar."
+  exit 1
+}

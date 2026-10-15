@@ -18,6 +18,7 @@
     "tenant:create": "tsx scripts/onboardTenant.ts",
     "storage:verificar": "tsx scripts/verificarR2.ts",
     "e2e:local": "tsx scripts/e2eLocal.ts",
+    "verificar": "tsx scripts/verificar.ts",
     "backup:restore-drill": "tsx scripts/restoreDrill.ts",
     "backup:restore-drill:escritura": "tsx scripts/restoreDrillEscritura.ts",
     "preview": "npm run preview --prefix client",
