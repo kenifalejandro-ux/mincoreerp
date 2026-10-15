@@ -70,6 +70,17 @@ describe("combustible: conteo de urea por envase", () => {
       };
     });
 
+  /** La re-evaluación corre DESPUÉS de responder el movimiento: se espera a
+   *  que aparezca el hallazgo número `n` (máximo 10 s). */
+  const alertasCuando = async (n: number) => {
+    for (let i = 0; i < 100; i++) {
+      const a = await alertasDelConteo();
+      if (a.alterado.length >= n) return a;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return alertasDelConteo();
+  };
+
   beforeAll(async () => {
     const c = await crearTenantDePrueba(password);
     tenantId = c.tenant.id;
@@ -193,7 +204,7 @@ describe("combustible: conteo de urea por envase", () => {
     expect(r.status, JSON.stringify(r.body)).toBe(201);
     valeTardio = Number(r.body.id);
 
-    const { descuadre, alterado } = await alertasDelConteo();
+    const { descuadre, alterado } = await alertasCuando(1);
     expect(descuadre).toHaveLength(1);
     expect(descuadre[0].resuelta_en).toBeNull();
     // Hoy: esperaba 112 L, contó 80. Ese día decía -40: queda guardado.
@@ -211,7 +222,7 @@ describe("combustible: conteo de urea por envase", () => {
       .send({ motivo: "se cargó dos veces" });
     expect(r.status).toBe(200);
 
-    const { descuadre, alterado } = await alertasDelConteo();
+    const { descuadre, alterado } = await alertasCuando(2);
     expect(descuadre[0].detalle).toMatchObject({ descuadreL: -40 });
     expect((descuadre[0].detalle.original as { descuadreL: number }).descuadreL).toBe(-40);
     expect(alterado).toHaveLength(2);
@@ -230,7 +241,7 @@ describe("combustible: conteo de urea por envase", () => {
     const r = await vale([{ presentacion: "bolsa", cantidad_bultos: 10 }], hace(7 * DIA));
     expect(r.status, JSON.stringify(r.body)).toBe(201);
 
-    const { descuadre, alterado } = await alertasDelConteo();
+    const { descuadre, alterado } = await alertasCuando(3);
     expect(descuadre).toHaveLength(1);
     expect(descuadre[0].resuelta_en).not.toBeNull();
     expect(descuadre[0].detalle).toMatchObject({ descuadreL: 0, cerrada_por_sistema: true });
@@ -250,7 +261,7 @@ describe("combustible: conteo de urea por envase", () => {
     );
     expect(r.alterados).toHaveLength(0);
     expect(r.creadas).toHaveLength(0);
-    expect((await alertasDelConteo()).alterado).toHaveLength(3);
+    expect((await alertasCuando(3)).alterado).toHaveLength(3);
   });
 
   // ── 6. Lo que no toca el pasado del conteo ───────────────────────────
@@ -258,7 +269,8 @@ describe("combustible: conteo de urea por envase", () => {
   it("un vale de hoy no toca un conteo de hace 5 días", async () => {
     const r = await vale([{ presentacion: "caja", cantidad_bultos: 1 }], new Date().toISOString());
     expect(r.status, JSON.stringify(r.body)).toBe(201);
-    const { descuadre, alterado } = await alertasDelConteo();
+    await new Promise((res) => setTimeout(res, 1000));
+    const { descuadre, alterado } = await alertasCuando(3);
     expect(descuadre).toHaveLength(1);
     expect(alterado).toHaveLength(3);
   });
@@ -275,7 +287,7 @@ describe("combustible: conteo de urea por envase", () => {
     });
     expect(r.status, JSON.stringify(r.body)).toBe(201);
 
-    const { descuadre, alterado } = await alertasDelConteo();
+    const { descuadre, alterado } = await alertasCuando(4);
     expect(descuadre).toHaveLength(2);
     expect(descuadre[1].resuelta_en).toBeNull();
     // Ahora los papeles dicen que tenía que haber 3 bolsas más: faltan 12 L.

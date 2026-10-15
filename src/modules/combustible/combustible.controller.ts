@@ -1919,8 +1919,10 @@ export class CombustibleController {
       if (data.origen === "tanqueta") {
         await this.procesarAlertaTanquetaSobregirada(tenantId, Number(fila!.id), data);
       }
+      res.status(201).json(fila);
       // Solo el vale del almacén mueve el depósito: la compra en ruta no
-      // pasa por él y no puede cambiar un conteo.
+      // pasa por él y no puede cambiar un conteo. Corre con la respuesta ya
+      // enviada: re-evaluar conteos nunca demora el registro del vale.
       if (fila!.producto === "urea" && fila!.origen === "almacen") {
         await this.procesarConteosUreaAlterados(
           tenantId,
@@ -1933,7 +1935,6 @@ export class CombustibleController {
           }
         );
       }
-      res.status(201).json(fila);
     } catch (err) {
       // Los errores de negocio TIPADOS van primero (ver tanquetas.service.ts
       // y resolverFactorPresentacionUrea): traen su propio status y no
@@ -2057,6 +2058,7 @@ export class CombustibleController {
         comprobanteTipo: resultado.despacho.comprobante_tipo,
         comprobanteNumero: resultado.despacho.comprobante_numero,
       });
+      res.json(resultado.despacho);
       const d = resultado.despacho;
       if (d.producto === "urea" && d.origen === "almacen") {
         await this.procesarConteosUreaAlterados(tenantId, new Date(d.despachado_en).toISOString(), {
@@ -2066,7 +2068,6 @@ export class CombustibleController {
           descripcion: `la anulación del vale ${d.serie_talonario}-${d.n_vale}`,
         });
       }
-      res.json(resultado.despacho);
     } catch {
       res.status(500).json({ error: "Error al anular el despacho" });
     }
@@ -5945,6 +5946,9 @@ export class CombustibleController {
           new Date(fila!.recibido_en).toISOString(),
           Number(fila!.cantidad)
         );
+      }
+      res.status(201).json(fila);
+      if (data.producto === "urea") {
         await this.procesarConteosUreaAlterados(
           tenantId,
           new Date(fila!.recibido_en).toISOString(),
@@ -5956,7 +5960,6 @@ export class CombustibleController {
           }
         );
       }
-      res.status(201).json(fila);
     } catch (err) {
       // 409, no 400: el combustible YA entró y hay un tanque en modo
       // 'flexible' -- no es un dato mal formado, es una decisión pendiente
@@ -6092,6 +6095,9 @@ export class CombustibleController {
   ) {
     try {
       const { creadas, alterados, admins } = await withTenant(tenantId, async (client) => {
+        // Esperar poco el candado de los conteos: si otro movimiento lo tiene
+        // trabado, mejor un log que una cola que nunca termina.
+        await client.query("SET LOCAL lock_timeout = '10s'");
         const r = await service.reevaluarConteosUrea(client, tenantId, desde, causa);
         return {
           ...r,
@@ -6473,6 +6479,7 @@ export class CombustibleController {
       // anularla deja ese combustible fuera de los papeles -- el tanque tiene
       // más de lo que el sistema cree y el sobrante sale sin que falte nada.
       await this.procesarAlertaRecepcionAnulada(tenantId, resultado.recepcion, motivo, req);
+      res.json({ recepcion: resultado.recepcion, tanque: resultado.tanque });
       if (resultado.recepcion.producto === "urea") {
         const recibidoEn = new Date(resultado.recepcion.recibido_en).toISOString();
         await this.procesarConteosUreaAlterados(tenantId, recibidoEn, {
@@ -6482,7 +6489,6 @@ export class CombustibleController {
           descripcion: `la anulación de la entrada #${recepcionId}`,
         });
       }
-      res.json({ recepcion: resultado.recepcion, tanque: resultado.tanque });
     } catch {
       res.status(500).json({ error: "Error al anular la recepción" });
     }
