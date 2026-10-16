@@ -16,6 +16,7 @@ import { useEffect, useId, useState } from "react";
 
 import VentanaFlotante from "./comunes/VentanaFlotante";
 import { apiFetch } from "../services/apiClient";
+import "../styles/vidrio-urea.css";
 
 /** Un envase del almacén, contado (ver findStockUreaPorEnvase). */
 export interface EnvaseStock {
@@ -133,7 +134,7 @@ function plural(nombre: string, n = 2): string {
 function tipoDeEnvase(e: Pick<EnvaseStock, "codigo" | "nombre">): TipoEnvase {
   const t = `${e.codigo ?? ""} ${e.nombre}`.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
   if (/bols|doypack|sach|saco/.test(t)) return "bolsa";
-  if (/bald|cubet/.test(t)) return "balde";
+  if (/[bv]ald|cubet/.test(t)) return "balde";
   if (/bidon|galon|garraf|cilindr|tambor|ibc/.test(t)) return "bidon";
   return "caja";
 }
@@ -156,8 +157,8 @@ function IconoEnvase({ tipo }: { tipo: TipoEnvase }) {
     <svg viewBox="0 0 48 48" className="block h-auto w-full" aria-hidden="true">
       <defs>
         <linearGradient id={`liq-${id}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#7dd3fc" />
-          <stop offset="1" stopColor="#0284c7" />
+          <stop offset="0" stopColor="#ffffff" />
+          <stop offset="1" stopColor="#cfe6f2" />
         </linearGradient>
       </defs>
       {tipo === "caja" && (
@@ -166,7 +167,7 @@ function IconoEnvase({ tipo }: { tipo: TipoEnvase }) {
           <rect x="7" y="15" width="34" height="27" rx="2.5" fill="#b98a55" stroke="#8a6238" />
           <rect x="11" y="19" width="26" height="19" rx="3" fill="#0b2f43" />
           <rect x="11" y="20" width="26" height="18" rx="3" fill={liq} />
-          <rect x="11" y="20" width="26" height="1.4" fill="#bae6fd" />
+          <rect x="11" y="20" width="26" height="1.4" fill="#ffffff" />
           <rect x="7" y="38.5" width="34" height="3.5" fill="#3fae49" />
         </>
       )}
@@ -181,7 +182,7 @@ function IconoEnvase({ tipo }: { tipo: TipoEnvase }) {
           <rect x="12" y="10" width="24" height="3" fill="#1f5a2a" />
           <rect x="14" y="17" width="20" height="21" rx="4" fill="#0b2f43" />
           <rect x="14" y="18" width="20" height="20" rx="4" fill={liq} />
-          <rect x="14" y="18" width="20" height="1.4" fill="#bae6fd" />
+          <rect x="14" y="18" width="20" height="1.4" fill="#ffffff" />
           <rect x="11" y="14" width="2" height="26" fill="#ffffff" opacity="0.14" />
         </>
       )}
@@ -192,7 +193,7 @@ function IconoEnvase({ tipo }: { tipo: TipoEnvase }) {
           <rect x="7" y="11" width="34" height="6" rx="3" fill="#374151" />
           <rect x="14" y="22" width="20" height="16" rx="3" fill="#0b2f43" />
           <rect x="14" y="23" width="20" height="15" rx="3" fill={liq} />
-          <rect x="14" y="23" width="20" height="1.4" fill="#bae6fd" />
+          <rect x="14" y="23" width="20" height="1.4" fill="#ffffff" />
           <rect x="12.6" y="39.5" width="22.8" height="3" fill="#3fae49" />
         </>
       )}
@@ -212,8 +213,8 @@ function IconoEnvase({ tipo }: { tipo: TipoEnvase }) {
             fillOpacity="0.92"
             stroke="#9fb6c1"
           />
-          <rect x="11.5" y="19" width="25" height="22" rx="3" fill={liq} />
-          <rect x="11.5" y="19" width="25" height="1.4" fill="#bae6fd" />
+          <rect x="11.5" y="19" width="25" height="22" rx="3" fill={liq} stroke="#9fb6c1" />
+          <rect x="11.5" y="19" width="25" height="1.4" fill="#ffffff" />
           <rect x="15" y="26" width="18" height="8" rx="1.5" fill="#3fae49" />
         </>
       )}
@@ -258,7 +259,7 @@ function Estanteria({
 
   return (
     <div
-      className="rounded-xl border border-[#2a2e37] bg-[#0f1c1f] px-3.5 pb-3.5 pt-1"
+      className="vidrio-urea rounded-xl px-3.5 pb-3.5 pt-1"
       role="img"
       aria-label={`${fmt(envase.unidades, 0)} ${plural(envase.nombre, envase.unidades)} en la estantería`}
     >
