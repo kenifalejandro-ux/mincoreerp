@@ -1809,6 +1809,14 @@ export const actualizarPresentacionUreaSchema = z.object({
 
 export type ActualizarPresentacionUreaInput = z.infer<typeof actualizarPresentacionUreaSchema>;
 
+/** Eliminar un envase que nunca se usó. El motivo es obligatorio: la fila
+ *  desaparece, y la bitácora es lo único que queda de por qué. */
+export const eliminarPresentacionUreaSchema = z.object({
+  motivo: z.string().trim().min(1, "El motivo para eliminar el envase es obligatorio").max(500),
+});
+
+export type EliminarPresentacionUreaInput = z.infer<typeof eliminarPresentacionUreaSchema>;
+
 /** Corregir los litros de un envase con historial (0130): el mismo cuerpo
  *  para la vista previa y para aplicar. El motivo lo exige el service solo al
  *  aplicar: la vista previa se pide antes de escribirlo. */

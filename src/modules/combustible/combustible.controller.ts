@@ -80,6 +80,7 @@ import type {
   AnularConteoUreaInput,
   CrearPresentacionUreaInput,
   ActualizarPresentacionUreaInput,
+  EliminarPresentacionUreaInput,
   CorregirLitrosUreaInput,
   CrearPrecioUreaInput,
   CrearPuntoPrecintoInput,
@@ -867,6 +868,15 @@ function filtrosAlertasDe(q: Request["query"]): FiltrosAlertas | { error: string
   const buscar = texto(q.q);
   if (buscar !== undefined) filtros.texto = buscar.slice(0, 100);
   return filtros;
+}
+
+/** El id de un envase de urea viene en la URL: `Number("abc")` es NaN y
+ *  `Number("99999999999")` desborda el INTEGER de Postgres, y las dos
+ *  terminaban en un 500 que ensuciaba Sentry. null = no es un id posible. */
+function idPresentacionUrea(valor: string | undefined): number | null {
+  if (!valor || !/^\d+$/.test(valor)) return null;
+  const id = Number(valor);
+  return id > 0 && id <= 2147483647 ? id : null;
 }
 
 export class CombustibleController {
@@ -6851,7 +6861,11 @@ export class CombustibleController {
   async actualizarPresentacionUrea(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
-      const id = Number(req.params.id);
+      const id = idPresentacionUrea(req.params.id);
+      if (id === null) {
+        res.status(400).json({ error: "El id del envase no es válido" });
+        return;
+      }
       const data = req.validatedBody as ActualizarPresentacionUreaInput;
 
       const resultado = await withTenant(tenantId, (client) =>
@@ -6898,6 +6912,53 @@ export class CombustibleController {
         return;
       }
       res.status(500).json({ error: "Error al actualizar la presentación de urea" });
+    }
+  }
+
+  /** DELETE /urea/presentaciones/:id -- elimina un envase que nunca se usó.
+   *  Con uso, principal o sin motivo se rechaza (409/400) y se da de baja con
+   *  el PUT. La fila desaparece, así que la bitácora guarda su foto. */
+  async eliminarPresentacionUrea(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const id = idPresentacionUrea(req.params.id);
+      if (id === null) {
+        res.status(400).json({ error: "El id del envase no es válido" });
+        return;
+      }
+      const data = req.validatedBody as EliminarPresentacionUreaInput;
+
+      const eliminado = await withTenant(tenantId, (client) =>
+        service.eliminarPresentacionUrea(client, tenantId, id)
+      );
+      if (!eliminado) {
+        res.status(404).json({ error: "Presentación no encontrada" });
+        return;
+      }
+
+      await registrarAuditoria({
+        accion: "combustible.urea_presentacion_eliminar",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          presentacionId: eliminado.id,
+          codigo: eliminado.codigo,
+          nombre: eliminado.nombre,
+          litros: eliminado.litros,
+          motivo: data.motivo,
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      await publicarEventoTenant(tenantId, "combustible.urea_presentaciones_cambiaron", {
+        presentacionId: eliminado.id,
+      });
+      res.json({ ok: true });
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
+      }
+      res.status(500).json({ error: "Error al eliminar el envase de urea" });
     }
   }
 

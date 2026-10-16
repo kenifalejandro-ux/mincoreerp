@@ -95,8 +95,7 @@ test("el almacén muestra los envases contados, sin equivalencias, y fija los li
 
   // Con la entrada anulada el envase sigue teniendo un movimiento: sus litros
   // son fijos y la configuración lo dice en vez de ofrecer el cambio.
-  await page.getByRole("button", { name: "Configuración" }).click();
-  await page.getByRole("tab", { name: "Envases" }).click();
+  await page.getByRole("button", { name: "Envases", exact: true }).click();
   await page
     .getByRole("row", { name: new RegExp(codigo) })
     .getByRole("button", { name: "Editar" })

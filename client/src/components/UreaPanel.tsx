@@ -27,6 +27,7 @@ import {
   ClipboardList,
   Download,
   Droplets,
+  Package,
   PackagePlus,
   Paperclip,
   Plus,
@@ -61,6 +62,10 @@ interface PresentacionFila {
   activa: boolean;
   /** Filas que ya congelaron sus litros: con > 0 los litros no se cambian. */
   movimientos?: number;
+  /** Registros de CUALQUIER tabla que apuntan al envase (precios y
+   *  correcciones incluidos). Con 0 se puede eliminar; con > 0 solo darlo de
+   *  baja. No es `movimientos`: ese decide si los litros se pueden cambiar. */
+  usos?: number;
 }
 
 /** "Caja (20 L)". El nombre NO lleva los litros escritos adentro (ver el
@@ -1158,9 +1163,9 @@ export default function UreaPanel() {
   const puedeCorregirLitros =
     usuario?.permisosPestanas?.["combustible:urea:corregir_litros"] === true &&
     (esAdmin || usuario?.rol === "operador" || usuario?.rol === "encargado_urea");
-  const [panelAbierto, setPanelAbierto] = useState<null | "kardex" | "precios" | "configuracion">(
-    null
-  );
+  const [panelAbierto, setPanelAbierto] = useState<
+    null | "kardex" | "precios" | "envases" | "configuracion"
+  >(null);
   const [vista, setVista] = useState<Vista>("vales");
   const [periodoViaje, setPeriodoViaje] = useState({ desde: "", hasta: "", n: 0 });
   const [desde, setDesde] = useState("");
@@ -1564,6 +1569,16 @@ export default function UreaPanel() {
                 {puedeConfigurar && (
                   <button
                     type="button"
+                    onClick={() => setPanelAbierto("envases")}
+                    className={botonHerramienta}
+                  >
+                    <Package className="w-4 h-4 shrink-0" />
+                    Envases
+                  </button>
+                )}
+                {puedeConfigurar && (
+                  <button
+                    type="button"
                     onClick={() => setPanelAbierto("configuracion")}
                     className={botonHerramienta}
                   >
@@ -1796,27 +1811,44 @@ export default function UreaPanel() {
           </CuerpoVentana>
         </VentanaFlotante>
       )}
+      {panelAbierto === "envases" && puedeConfigurar && (
+        <VentanaFlotante
+          id="urea-envases"
+          titulo="Envases de urea"
+          subtitulo="Qué envases usa la empresa y cuántos litros trae cada uno"
+          onCerrar={() => setPanelAbierto(null)}
+          anchoInicial={980}
+          altoInicial={600}
+        >
+          <CuerpoVentana>
+            <ConfiguracionPresentaciones
+              filas={presentaciones}
+              puedeCorregirLitros={puedeCorregirLitros}
+              onCambio={() => {
+                cargarPresentaciones();
+                cargarEstado();
+              }}
+            />
+          </CuerpoVentana>
+        </VentanaFlotante>
+      )}
       {panelAbierto === "configuracion" && puedeConfigurar && (
         <VentanaFlotante
           id="urea-configuracion"
           titulo="Configuración de urea"
-          subtitulo="Umbrales de alerta y envases"
+          subtitulo="Umbrales de alerta"
           onCerrar={() => setPanelAbierto(null)}
           anchoInicial={980}
           altoInicial={640}
         >
-          <ConfiguracionUrea
-            onUmbralesGuardados={() => {
-              cargarEstado();
-              setPanelAbierto(null);
-            }}
-            presentaciones={presentaciones}
-            puedeCorregirLitros={puedeCorregirLitros}
-            onEnvasesCambiaron={() => {
-              cargarPresentaciones();
-              cargarEstado();
-            }}
-          />
+          <CuerpoVentana>
+            <UmbralesUrea
+              onGuardado={() => {
+                cargarEstado();
+                setPanelAbierto(null);
+              }}
+            />
+          </CuerpoVentana>
         </VentanaFlotante>
       )}
 
@@ -3039,66 +3071,6 @@ function CatalogoPreciosUrea({
 // obligatorio: es la única forma de distinguir después "corregimos el envase
 // que vino distinto" de "alguien movió el número justo antes del conteo".
 
-/** Configuración de urea en DOS pestañas que no se mezclan: los umbrales
- *  (política de vigilancia: aflojarlos pide motivo) y el catálogo de envases
- *  (dato maestro). Juntos en un solo formulario, el motivo de los umbrales
- *  aparecía al dar de alta un envase y la ventana no cerraba. */
-function ConfiguracionUrea({
-  onUmbralesGuardados,
-  presentaciones,
-  puedeCorregirLitros,
-  onEnvasesCambiaron,
-}: {
-  onUmbralesGuardados: () => void;
-  presentaciones: PresentacionFila[];
-  puedeCorregirLitros: boolean;
-  onEnvasesCambiaron: () => void;
-}) {
-  const [pestana, setPestana] = useState<"umbrales" | "envases">("umbrales");
-  return (
-    <>
-      <div
-        className="flex shrink-0 gap-1 border-b border-slate-200 px-4 pt-3"
-        role="tablist"
-        aria-label="Configuración de urea"
-      >
-        {(
-          [
-            ["umbrales", "Umbrales"],
-            ["envases", "Envases"],
-          ] as const
-        ).map(([clave, etiqueta]) => (
-          <button
-            key={clave}
-            type="button"
-            role="tab"
-            aria-selected={pestana === clave}
-            onClick={() => setPestana(clave)}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
-              pestana === clave
-                ? "border-[#a3e635] text-slate-800"
-                : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            {etiqueta}
-          </button>
-        ))}
-      </div>
-      <CuerpoVentana>
-        {pestana === "umbrales" ? (
-          <UmbralesUrea onGuardado={onUmbralesGuardados} />
-        ) : (
-          <ConfiguracionPresentaciones
-            filas={presentaciones}
-            puedeCorregirLitros={puedeCorregirLitros}
-            onCambio={onEnvasesCambiaron}
-          />
-        )}
-      </CuerpoVentana>
-    </>
-  );
-}
-
 function ConfiguracionPresentaciones({
   filas,
   puedeCorregirLitros,
@@ -3110,7 +3082,39 @@ function ConfiguracionPresentaciones({
 }) {
   const [editando, setEditando] = useState<PresentacionFila | null>(null);
   const [corrigiendo, setCorrigiendo] = useState<PresentacionFila | null>(null);
+  const [retirando, setRetirando] = useState<{
+    fila: PresentacionFila;
+    modo: "baja" | "eliminar";
+  } | null>(null);
   const [creando, setCreando] = useState(false);
+  const [reactivando, setReactivando] = useState<number | null>(null);
+  const [errorAccion, setErrorAccion] = useState<string | null>(null);
+
+  /** Reactivar no pide motivo: no afloja nada, solo vuelve a ofrecer el envase. */
+  const reactivar = async (p: PresentacionFila) => {
+    setReactivando(p.id);
+    setErrorAccion(null);
+    try {
+      const res = await apiFetch(`/api/erp/combustible/urea/presentaciones/${p.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nombre: p.nombre,
+          litros: Number(p.litros),
+          es_referencia: p.es_referencia,
+          activa: true,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setErrorAccion(body?.error ?? "No se pudo reactivar el envase.");
+        return;
+      }
+      onCambio();
+    } finally {
+      setReactivando(null);
+    }
+  };
 
   return (
     <div className="flex flex-col">
@@ -3125,7 +3129,16 @@ function ConfiguracionPresentaciones({
           movimiento guardó los suyos, y cambiarlos dejaría el envase con tamaños mezclados. Si el
           proveedor cambió el tamaño, da de alta otro envase (por ejemplo &quot;Caja 20 L&quot;).
         </p>
+        <p className="mt-2">
+          Un envase que <strong>nunca se usó</strong> se puede eliminar. Uno que ya tiene historial
+          se <strong>da de baja</strong>: deja de ofrecerse para cargar y conserva todo lo que ya se
+          registró. El envase principal no se elimina ni se da de baja: primero elige otro.
+        </p>
       </div>
+
+      {errorAccion && (
+        <div className="mx-4 mt-4 rounded bg-red-50 p-2 text-sm text-red-600">{errorAccion}</div>
+      )}
 
       <div className="flex justify-end p-4 pb-0">
         <button
@@ -3182,7 +3195,7 @@ function ConfiguracionPresentaciones({
                     {p.activa ? (
                       <span className="text-emerald-700">Activo</span>
                     ) : (
-                      <span className="text-slate-500">Desactivado</span>
+                      <span className="text-slate-500">De baja</span>
                     )}
                   </td>
                   <td className="px-4 py-2">
@@ -3200,6 +3213,34 @@ function ConfiguracionPresentaciones({
                         className="ml-3 text-xs font-semibold text-slate-600 hover:text-slate-900 underline"
                       >
                         Corregir litros
+                      </button>
+                    )}
+                    {!p.activa && (
+                      <button
+                        type="button"
+                        disabled={reactivando === p.id}
+                        onClick={() => reactivar(p)}
+                        className="ml-3 text-xs font-semibold text-slate-600 hover:text-slate-900 underline disabled:opacity-50"
+                      >
+                        {reactivando === p.id ? "Reactivando…" : "Reactivar"}
+                      </button>
+                    )}
+                    {p.activa && !p.es_referencia && (p.usos ?? 0) > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setRetirando({ fila: p, modo: "baja" })}
+                        className="ml-3 text-xs font-semibold text-slate-600 hover:text-slate-900 underline"
+                      >
+                        Dar de baja
+                      </button>
+                    )}
+                    {!p.es_referencia && p.usos === 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setRetirando({ fila: p, modo: "eliminar" })}
+                        className="ml-3 text-xs font-semibold text-slate-600 hover:text-slate-900 underline"
+                      >
+                        Eliminar
                       </button>
                     )}
                   </td>
@@ -3228,6 +3269,17 @@ function ConfiguracionPresentaciones({
           onCerrar={() => setCorrigiendo(null)}
           onCorregido={() => {
             setCorrigiendo(null);
+            onCambio();
+          }}
+        />
+      )}
+      {retirando && (
+        <ModalRetirarEnvase
+          fila={retirando.fila}
+          modo={retirando.modo}
+          onCerrar={() => setRetirando(null)}
+          onListo={() => {
+            setRetirando(null);
             onCambio();
           }}
         />
@@ -4473,6 +4525,122 @@ function ModalCrearPresentacion({
  *  envase saca movimientos nuevos de circulación -- las dos cosas merecen
  *  quedar explicadas en la bitácora. Cuando el cambio es de litros, el aviso
  *  de arriba dice exactamente qué se mueve y qué no. */
+/** Dar de baja un envase con historial, o eliminar uno que nunca se usó. Los
+ *  dos piden motivo (queda en la bitácora con el nombre de quien lo hizo): la
+ *  baja saca el envase de los formularios de carga y eliminar borra la fila,
+ *  así que ninguna de las dos pasa sin que alguien diga por qué. */
+function ModalRetirarEnvase({
+  fila,
+  modo,
+  onCerrar,
+  onListo,
+}: {
+  fila: PresentacionFila;
+  modo: "baja" | "eliminar";
+  onCerrar: () => void;
+  onListo: () => void;
+}) {
+  const [motivo, setMotivo] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const esBaja = modo === "baja";
+
+  const enviar = async () => {
+    setEnviando(true);
+    setError(null);
+    try {
+      const url = `/api/erp/combustible/urea/presentaciones/${fila.id}`;
+      const res = esBaja
+        ? await apiFetch(url, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              nombre: fila.nombre,
+              litros: Number(fila.litros),
+              es_referencia: fila.es_referencia,
+              activa: false,
+              motivo: motivo.trim(),
+            }),
+          })
+        : await apiFetch(url, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ motivo: motivo.trim() }),
+          });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(
+          body?.error ??
+            (esBaja ? "No se pudo dar de baja el envase." : "No se pudo eliminar el envase.")
+        );
+        return;
+      }
+      onListo();
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <Backdrop onCerrar={onCerrar}>
+      <div className="p-6 flex flex-col gap-4">
+        <h3 className="text-lg font-bold text-slate-800">
+          {esBaja ? "Dar de baja" : "Eliminar"} {fila.nombre}{" "}
+          <span className="font-mono text-xs font-normal text-slate-400">({fila.codigo})</span>
+        </h3>
+        {error && <div className="text-sm text-red-600 bg-red-50 rounded p-2">{error}</div>}
+        <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          {esBaja ? (
+            <>
+              Deja de ofrecerse en los formularios de carga. No borra nada: el historial que lo usó
+              se sigue leyendo igual y se puede reactivar después. Solo se puede si no le quedan
+              unidades en el almacén.
+            </>
+          ) : (
+            <>
+              Se elimina del catálogo. Es posible porque este envase nunca se usó: no hay ningún
+              vale, entrada, conteo ni precio que lo mencione.
+            </>
+          )}
+        </div>
+        <label className="flex flex-col text-sm gap-1">
+          <span className="text-gray-600">Motivo</span>
+          <input
+            value={motivo}
+            onChange={(e) => setMotivo(e.target.value)}
+            placeholder={esBaja ? "Ya no se compra este envase" : "Se dio de alta por error"}
+            className="rounded border border-gray-300 px-3 py-2"
+          />
+          <span className="text-xs text-slate-500">Queda en la bitácora con tu nombre.</span>
+        </label>
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onCerrar}
+            className="px-4 py-2 text-slate-600 hover:bg-slate-50 rounded-xl text-sm"
+          >
+            Cancelar
+          </button>
+          <button
+            type="button"
+            disabled={!motivo.trim() || enviando}
+            onClick={enviar}
+            className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {enviando
+              ? esBaja
+                ? "Dando de baja…"
+                : "Eliminando…"
+              : esBaja
+                ? "Dar de baja"
+                : "Eliminar envase"}
+          </button>
+        </div>
+      </div>
+    </Backdrop>
+  );
+}
+
 function ModalEditarPresentacion({
   fila,
   onCerrar,
@@ -4485,7 +4653,6 @@ function ModalEditarPresentacion({
   const [nombre, setNombre] = useState(fila.nombre);
   const [litros, setLitros] = useState(fila.litros);
   const [esReferencia, setEsReferencia] = useState(fila.es_referencia);
-  const [activa, setActiva] = useState(fila.activa);
   const [motivo, setMotivo] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -4496,9 +4663,9 @@ function ModalEditarPresentacion({
   const litrosAntes = Number(fila.litros);
   const litrosAhora = Number(litros);
   const cambiaElFactor = Number.isFinite(litrosAhora) && litrosAhora !== litrosAntes;
-  const seDesactiva = fila.activa && !activa;
-  // El motivo solo se pide para lo que lo necesita: cambiar litros o desactivar.
-  const pideMotivo = cambiaElFactor || seDesactiva;
+  // El motivo solo se pide para lo que lo necesita: cambiar litros. La baja y
+  // reactivar son acciones aparte, en la fila del envase.
+  const pideMotivo = cambiaElFactor;
 
   const enviar = async () => {
     setEnviando(true);
@@ -4511,7 +4678,7 @@ function ModalEditarPresentacion({
           nombre: nombre.trim(),
           litros: litrosAhora,
           es_referencia: esReferencia,
-          activa,
+          activa: fila.activa,
           ...(pideMotivo ? { motivo: motivo.trim() } : {}),
         }),
       });
@@ -4583,30 +4750,13 @@ function ModalEditarPresentacion({
             Envase principal: se abre primero en la estantería y viene elegido en los formularios
           </span>
         </label>
-        <label className="flex items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={activa}
-            onChange={(e) => setActiva(e.target.checked)}
-            className="mt-1"
-          />
-          <span className="text-gray-600">
-            Activo
-            <span className="block text-xs text-slate-500">
-              Desactivarlo lo saca de los formularios de carga. No borra nada: el historial que lo
-              usó se sigue leyendo igual. Solo se puede si no le quedan unidades en el almacén.
-            </span>
-          </span>
-        </label>
         {pideMotivo && (
           <label className="flex flex-col text-sm gap-1">
             <span className="text-gray-600">Motivo</span>
             <input
               value={motivo}
               onChange={(e) => setMotivo(e.target.value)}
-              placeholder={
-                cambiaElFactor ? "Se dio de alta con los litros mal" : "Ya no se compra este envase"
-              }
+              placeholder="Se dio de alta con los litros mal"
               className="rounded border border-gray-300 px-3 py-2"
             />
             <span className="text-xs text-slate-500">Queda en la bitácora con tu nombre.</span>

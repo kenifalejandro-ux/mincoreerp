@@ -35,6 +35,7 @@ import {
 import type { DriverDocumento } from "../../server/services/documentStorage";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
+import { esViolacionForeignKey } from "../../server/shared/utils/pgError";
 import { CombustibleRepository } from "./combustible.repository";
 import type { AlertaNueva, FiltrosAlertas, PeriodoHistorial } from "./combustible.repository";
 import { EquiposRepository } from "../equipos/equipos.repository";
@@ -1392,6 +1393,27 @@ export class CombustibleService {
     const cambiaLitros = litrosAntes !== data.litros;
     const seDesactiva = antes.activa && !data.activa;
 
+    // La INVARIANTE: la empresa siempre tiene un envase principal activo. Se
+    // defiende aquí, por cualquier camino, y no solo en "baja" y "eliminar":
+    // quitarle la marca al principal y luego eliminarlo, o marcar principal a
+    // un envase de baja, esquivaba la regla (auditoría 2026-10-15). Elegir
+    // OTRO principal es la única forma de cambiarlo, y el repositorio
+    // desmarca al anterior en la misma transacción.
+    if (antes.es_referencia && !data.es_referencia) {
+      throw new AppError(
+        409,
+        `"${antes.nombre}" es el envase principal: para cambiarlo, marca otro envase como principal (este deja de serlo solo).`
+      );
+    }
+    // Solo cuando el pedido lo CONVIERTE en principal: un principal que ya
+    // estaba de baja de antes de esta regla se sigue pudiendo editar.
+    if (!antes.es_referencia && data.es_referencia && !data.activa) {
+      throw new AppError(
+        409,
+        `"${antes.nombre}" está de baja y no puede ser el envase principal: reactívalo o elige otro envase.`
+      );
+    }
+
     let movimientos = 0;
     if (cambiaLitros) {
       movimientos = await this.repository.contarMovimientosDePresentacionUrea(
@@ -1408,6 +1430,13 @@ export class CombustibleService {
             `al darlo de alta, se corrige con "Corregir litros", que recalcula su historial con motivo.`
         );
       }
+    }
+
+    if (seDesactiva && antes.es_referencia) {
+      throw new AppError(
+        409,
+        `"${antes.nombre}" es el envase principal: elige otro envase como principal antes de darlo de baja.`
+      );
     }
 
     if (seDesactiva) {
@@ -1450,6 +1479,60 @@ export class CombustibleService {
       fila,
       cambioDeFactor: cambiaLitros ? { de: litrosAntes, a: data.litros, movimientos } : null,
       seDesactivo: seDesactiva,
+    };
+  }
+
+  /** Eliminar un envase que NUNCA se usó (alta equivocada, o uno que se
+   *  creó y nunca se compró). Con un solo uso -- aunque esté anulado, que el
+   *  kardex lo sigue mostrando -- no se elimina: se da de baja.
+   *
+   *  La fila se traba FOR UPDATE y los movimientos toman FOR SHARE sobre ella
+   *  (findPresentacionUreaPorCodigo): o el vale entra antes y este conteo lo
+   *  ve (409), o entra después y encuentra que el envase ya no existe (400).
+   *  Las siete claves foráneas son la red de seguridad: si alguna rechaza el
+   *  DELETE (23503), sale 409 y nunca 500.
+   *
+   *  `null` si no existe en este tenant (404). Devuelve la foto del envase
+   *  para la bitácora: la fila desaparece. */
+  async eliminarPresentacionUrea(client: PoolClient, tenantId: string, id: number) {
+    const envase = await this.repository.findPresentacionUreaPorId(client, tenantId, id, {
+      paraEditar: true,
+    });
+    if (!envase) return null;
+
+    if (envase.es_referencia) {
+      throw new AppError(
+        409,
+        `"${envase.nombre}" es el envase principal: elige otro envase como principal antes de eliminarlo.`
+      );
+    }
+
+    const usos = await this.repository.contarUsosDeEnvaseUrea(client, tenantId, id);
+    if (usos > 0) {
+      throw new AppError(
+        409,
+        `"${envase.nombre}" ya se usó (${usos} ${usos === 1 ? "registro" : "registros"}) y no se puede eliminar sin borrar su historial. ` +
+          `Dalo de baja: deja de ofrecerse para cargar y conserva todo lo que ya se registró.`
+      );
+    }
+
+    try {
+      await this.repository.eliminarPresentacionUrea(client, tenantId, id);
+    } catch (err) {
+      if (esViolacionForeignKey(err)) {
+        throw new AppError(
+          409,
+          `"${envase.nombre}" tiene registros que lo usan y no se puede eliminar. Dalo de baja.`
+        );
+      }
+      throw err;
+    }
+
+    return {
+      id: envase.id,
+      codigo: envase.codigo as string,
+      nombre: envase.nombre as string,
+      litros: Number(envase.litros),
     };
   }
 

@@ -33,6 +33,7 @@ import {
   anularConteoUreaSchema,
   crearPresentacionUreaSchema,
   actualizarPresentacionUreaSchema,
+  eliminarPresentacionUreaSchema,
   corregirLitrosUreaSchema,
   crearPrecioUreaSchema,
   crearPuntoPrecintoSchema,
@@ -667,6 +668,15 @@ router.put(
   requireRole("admin"),
   validate(actualizarPresentacionUreaSchema),
   asyncHandler(controller.actualizarPresentacionUrea.bind(controller))
+);
+// Eliminar un envase que nunca se usó. Mismo permiso que el PUT: mover el
+// botón de pantalla no cambia quién puede. Con uso se da de baja (PUT).
+router.delete(
+  "/urea/presentaciones/:id",
+  requirePestana("combustible", "urea:configuracion"),
+  requireRole("admin"),
+  validate(eliminarPresentacionUreaSchema),
+  asyncHandler(controller.eliminarPresentacionUrea.bind(controller))
 );
 // Corregir los litros de un envase con historial (0130). Lo decide el check
 // `urea:corregir_litros`, que nace apagado para todos y se habilita persona
