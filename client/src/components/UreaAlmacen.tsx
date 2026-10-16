@@ -109,6 +109,8 @@ const COLORES = ["#4f8fdc", "#2dd4bf", "#a78bfa", "#f472b6", "#facc15", "#fb923c
  *  arriba y el resto se ve en la ventana ampliada. */
 const MAX_EN_TARJETA = 96;
 const MAX_EN_VENTANA = 600;
+/** Unas 4 filas de repisas: pasado esto la tarjeta no crece, se desplaza. */
+const ALTURA_MAX_TARJETA = 340;
 
 function nivelDe(s: EstadoStockUrea): Nivel {
   if (s.stockL < 0) return "neg";
@@ -228,10 +230,13 @@ function Estanteria({
   envase,
   porFila,
   maximo,
+  alturaMax,
 }: {
   envase: EnvaseStock;
   porFila: number;
   maximo: number;
+  /** Alto en px a partir del cual las repisas se desplazan. Sin él, crece. */
+  alturaMax?: number;
 }) {
   const tipo = tipoDeEnvase(envase);
   const dibujadas = Math.min(Math.max(envase.unidades, 0), maximo);
@@ -263,17 +268,22 @@ function Estanteria({
       role="img"
       aria-label={`${fmt(envase.unidades, 0)} ${plural(envase.nombre, envase.unidades)} en la estantería`}
     >
-      {filas.map((n, i) => (
-        <div
-          key={i}
-          className="grid gap-2 border-b-[7px] border-[#4d5f66] pb-1.5 pt-3.5 shadow-[0_9px_9px_-7px_rgba(0,0,0,0.6)]"
-          style={{ gridTemplateColumns: `repeat(${porFila}, minmax(0, 1fr))` }}
-        >
-          {Array.from({ length: n }, (_, j) => (
-            <IconoEnvase key={j} tipo={tipo} />
-          ))}
-        </div>
-      ))}
+      <div
+        className="scroll-urea"
+        style={alturaMax ? { maxHeight: alturaMax, overflowY: "auto" } : undefined}
+      >
+        {filas.map((n, i) => (
+          <div
+            key={i}
+            className="grid gap-2 border-b-[7px] border-[#4d5f66] pb-1.5 pt-3.5 shadow-[0_9px_9px_-7px_rgba(0,0,0,0.6)]"
+            style={{ gridTemplateColumns: `repeat(${porFila}, minmax(0, 1fr))` }}
+          >
+            {Array.from({ length: n }, (_, j) => (
+              <IconoEnvase key={j} tipo={tipo} />
+            ))}
+          </div>
+        ))}
+      </div>
       {envase.unidades > dibujadas && (
         <div className="pt-3 text-center text-xs text-slate-400">
           + {fmt(envase.unidades - dibujadas, 0)} {plural(envase.nombre)} más
@@ -729,6 +739,7 @@ export function AlmacenUrea({
               envase={grande}
               porFila={POR_FILA[tipoDeEnvase(grande)].tarjeta}
               maximo={MAX_EN_TARJETA}
+              alturaMax={ALTURA_MAX_TARJETA}
             />
             <AvisoTamanosMezclados envase={grande} onCorregir={corregir(grande)} />
             <ConteoDelEnvase envase={grande} />
