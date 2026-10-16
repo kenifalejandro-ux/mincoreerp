@@ -2927,7 +2927,7 @@ function CatalogoPreciosUrea({
   );
 
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
       <div className="border-b border-slate-100 bg-slate-50/60 p-4 text-sm text-slate-600">
         <p>
           El precio por envase de cada proveedor. Al registrar una <strong>compra en ruta</strong> o
@@ -2942,16 +2942,16 @@ function CatalogoPreciosUrea({
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 border-b border-slate-100 p-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 border-b  border-slate-100 p-4 sm:grid-cols-3">
         {error && (
           <div className="sm:col-span-3 text-sm text-red-600 bg-red-50 rounded p-2">{error}</div>
         )}
-        <label className="flex flex-col text-sm gap-1">
-          <span className="text-gray-600">Proveedor</span>
+        <label className="flex flex-col text-sm gap-1 ">
+          <span className="text-gray-600 ">Proveedor</span>
           <select
             value={grifoId}
             onChange={(e) => setGrifoId(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2"
+            className="rounded border border-gray-200 px-3 bg-[#192526] py-2"
           >
             <option value="">Elegir proveedor…</option>
             {grifos.map((g) => (
@@ -2967,7 +2967,7 @@ function CatalogoPreciosUrea({
           <select
             value={presentacion}
             onChange={(e) => setPresentacion(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2"
+            className="rounded border border-gray-200 px-3 bg-[#192526] py-2"
           >
             {activas.map((p) => (
               <option key={p.codigo} value={p.codigo}>
@@ -2982,7 +2982,7 @@ function CatalogoPreciosUrea({
             value={marca}
             onChange={(e) => setMarca(e.target.value)}
             placeholder="Green 32"
-            className="rounded border border-gray-300 px-3 py-2"
+            className="rounded border border-gray-200 px-3 bg-[#192526] py-2"
           />
         </label>
         <label className="flex flex-col text-sm gap-1">
@@ -2993,7 +2993,7 @@ function CatalogoPreciosUrea({
             min={0}
             value={precio}
             onChange={(e) => setPrecio(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2"
+            className="rounded border border-gray-200 px-3 bg-[#192526] py-2"
           />
         </label>
         <label className="flex flex-col text-sm gap-1">
@@ -3002,7 +3002,7 @@ function CatalogoPreciosUrea({
             type="datetime-local"
             value={vigenteDesde}
             onChange={(e) => setVigenteDesde(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2"
+            className="rounded border border-gray-200 px-3 bg-[#192526] py-2"
           />
         </label>
         <div className="flex items-end">
@@ -3047,7 +3047,7 @@ function CatalogoPreciosUrea({
           <button
             type="button"
             onClick={() => setVerHistoria((v) => !v)}
-            className="mt-2 text-xs text-slate-500 underline hover:text-slate-800"
+            className="mt-2 text-xs text-slate-500 underline hover:text-[#BADC1E]"
           >
             {verHistoria
               ? "Ocultar precios anteriores y anulados"
