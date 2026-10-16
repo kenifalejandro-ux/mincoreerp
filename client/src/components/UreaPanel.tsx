@@ -33,7 +33,6 @@ import {
   Plus,
   Receipt,
   Settings,
-  Tag,
   Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -1148,9 +1147,6 @@ export default function UreaPanel() {
   // (requireRole("admin") en las rutas de 0116): cambiar los litros de un
   // envase mueve el stock teórico de todo lo que se cargue después.
   const puedeConfigurar = esAdmin && permiteUrea("configuracion");
-  // Mismo reparto que el catálogo de combustible: admin y operador. El
-  // encargado de urea no -- es el precio contra el que se compara su boleta.
-  const puedeGestionarPrecios = (esAdmin || usuario?.rol === "operador") && permiteUrea("precios");
   // El selector "Vista" es SOLO historial y rankings, con su filtro de fechas
   // (pedido de Kenif, 2026-10-05: "vista solo es para histórico"). El kardex,
   // los precios y la configuración son herramientas: botones arriba, en panel
@@ -1163,9 +1159,9 @@ export default function UreaPanel() {
   const puedeCorregirLitros =
     usuario?.permisosPestanas?.["combustible:urea:corregir_litros"] === true &&
     (esAdmin || usuario?.rol === "operador" || usuario?.rol === "encargado_urea");
-  const [panelAbierto, setPanelAbierto] = useState<
-    null | "kardex" | "precios" | "envases" | "configuracion"
-  >(null);
+  const [panelAbierto, setPanelAbierto] = useState<null | "kardex" | "envases" | "configuracion">(
+    null
+  );
   const [vista, setVista] = useState<Vista>("vales");
   const [periodoViaje, setPeriodoViaje] = useState({ desde: "", hasta: "", n: 0 });
   const [desde, setDesde] = useState("");
@@ -1474,7 +1470,7 @@ export default function UreaPanel() {
     permiteUrea("registrar_compra") ||
     permiteUrea("registrar_entrada") ||
     permiteUrea("registrar_conteo_fisico");
-  const hayHerramientas = puedeVerKardex || puedeGestionarPrecios || puedeConfigurar;
+  const hayHerramientas = puedeVerKardex || puedeConfigurar;
   const etiquetaGrupo = "text-[11px] font-semibold uppercase tracking-[0.09em] text-slate-500";
 
   return (
@@ -1554,16 +1550,6 @@ export default function UreaPanel() {
                   >
                     <BookOpen className="w-4 h-4 shrink-0" />
                     Kardex
-                  </button>
-                )}
-                {puedeGestionarPrecios && (
-                  <button
-                    type="button"
-                    onClick={() => setPanelAbierto("precios")}
-                    className={botonHerramienta}
-                  >
-                    <Tag className="w-4 h-4 shrink-0" />
-                    Precios
                   </button>
                 )}
                 {puedeConfigurar && (
@@ -1789,25 +1775,6 @@ export default function UreaPanel() {
         >
           <CuerpoVentana>
             <PanelKardexUrea puedeExportar={permiteUrea("exportar")} clave={recargas} />
-          </CuerpoVentana>
-        </VentanaFlotante>
-      )}
-      {panelAbierto === "precios" && puedeGestionarPrecios && (
-        <VentanaFlotante
-          id="urea-precios"
-          titulo="Precios de urea"
-          subtitulo="Por proveedor y presentación. Se llenan solos en la compra en ruta y en la entrada."
-          onCerrar={() => setPanelAbierto(null)}
-          anchoInicial={980}
-          altoInicial={600}
-        >
-          <CuerpoVentana>
-            <CatalogoPreciosUrea
-              precios={precios}
-              grifos={grifos}
-              presentaciones={presentaciones}
-              onCambio={() => cargarPrecios()}
-            />
           </CuerpoVentana>
         </VentanaFlotante>
       )}
@@ -2802,6 +2769,59 @@ function SugerenciaUrea({
 // se compara contra el precio de septiembre. Un precio mal cargado se ANULA
 // con motivo. Mismo modelo que el catálogo de combustible (0063).
 
+/** El catálogo de precios de urea como página (pestaña "Precios urea" del
+ *  submenú Precios). Carga lo mismo que antes recibía de UreaPanel. */
+export function PreciosUreaPagina() {
+  const [precios, setPrecios] = useState<PrecioUrea[]>([]);
+  const [grifos, setGrifos] = useState<Grifo[]>([]);
+  const [presentaciones, setPresentaciones] = useState<PresentacionFila[]>([]);
+  const [listo, setListo] = useState(false);
+
+  const cargarPrecios = useCallback(async () => {
+    const res = await apiFetch("/api/erp/combustible/urea/precios");
+    const body = await res.json().catch(() => null);
+    setPrecios(Array.isArray(body) ? body : []);
+  }, []);
+
+  useEffect(() => {
+    let vivo = true;
+    (async () => {
+      const [rGrifos, rPres] = await Promise.all([
+        apiFetch("/api/erp/combustible/urea/proveedores"),
+        apiFetch("/api/erp/combustible/urea/presentaciones"),
+        cargarPrecios(),
+      ]);
+      const dGrifos = await rGrifos.json().catch(() => null);
+      const dPres = await rPres.json().catch(() => null);
+      if (!vivo) return;
+      setGrifos(
+        Array.isArray(dGrifos)
+          ? dGrifos.map((g: { id: number; nombre: string }) => ({
+              ...g,
+              activo: true,
+              abastece_urea: true,
+            }))
+          : []
+      );
+      setPresentaciones(Array.isArray(dPres) ? dPres : []);
+      setListo(true);
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, [cargarPrecios]);
+
+  if (!listo) return <div className="p-6 text-sm text-slate-500">Cargando...</div>;
+  return (
+    <CatalogoPreciosUrea
+      precios={precios}
+      grifos={grifos}
+      presentaciones={presentaciones}
+      onCambio={() => cargarPrecios()}
+    />
+  );
+}
+
 function CatalogoPreciosUrea({
   precios,
   grifos,
@@ -2907,7 +2927,7 @@ function CatalogoPreciosUrea({
   );
 
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
       <div className="border-b border-slate-100 bg-slate-50/60 p-4 text-sm text-slate-600">
         <p>
           El precio por envase de cada proveedor. Al registrar una <strong>compra en ruta</strong> o
@@ -2922,16 +2942,16 @@ function CatalogoPreciosUrea({
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 border-b border-slate-100 p-4 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 border-b  border-slate-100 p-4 sm:grid-cols-3">
         {error && (
           <div className="sm:col-span-3 text-sm text-red-600 bg-red-50 rounded p-2">{error}</div>
         )}
-        <label className="flex flex-col text-sm gap-1">
-          <span className="text-gray-600">Proveedor</span>
+        <label className="flex flex-col text-sm gap-1 ">
+          <span className="text-gray-600 ">Proveedor</span>
           <select
             value={grifoId}
             onChange={(e) => setGrifoId(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2"
+            className="rounded border border-gray-200 px-3 bg-[#192526] py-2"
           >
             <option value="">Elegir proveedor…</option>
             {grifos.map((g) => (
@@ -2947,7 +2967,7 @@ function CatalogoPreciosUrea({
           <select
             value={presentacion}
             onChange={(e) => setPresentacion(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2"
+            className="rounded border border-gray-200 px-3 bg-[#192526] py-2"
           >
             {activas.map((p) => (
               <option key={p.codigo} value={p.codigo}>
@@ -2962,7 +2982,7 @@ function CatalogoPreciosUrea({
             value={marca}
             onChange={(e) => setMarca(e.target.value)}
             placeholder="Green 32"
-            className="rounded border border-gray-300 px-3 py-2"
+            className="rounded border border-gray-200 px-3 bg-[#192526] py-2"
           />
         </label>
         <label className="flex flex-col text-sm gap-1">
@@ -2973,7 +2993,7 @@ function CatalogoPreciosUrea({
             min={0}
             value={precio}
             onChange={(e) => setPrecio(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2"
+            className="rounded border border-gray-200 px-3 bg-[#192526] py-2"
           />
         </label>
         <label className="flex flex-col text-sm gap-1">
@@ -2982,7 +3002,7 @@ function CatalogoPreciosUrea({
             type="datetime-local"
             value={vigenteDesde}
             onChange={(e) => setVigenteDesde(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2"
+            className="rounded border border-gray-200 px-3 bg-[#192526] py-2"
           />
         </label>
         <div className="flex items-end">
@@ -3027,7 +3047,7 @@ function CatalogoPreciosUrea({
           <button
             type="button"
             onClick={() => setVerHistoria((v) => !v)}
-            className="mt-2 text-xs text-slate-500 underline hover:text-slate-800"
+            className="mt-2 text-xs text-slate-500 underline hover:text-[#BADC1E]"
           >
             {verHistoria
               ? "Ocultar precios anteriores y anulados"

@@ -56,6 +56,8 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
     if (override !== undefined) return override;
     // "Mi viaje" (0124) es del conductor: el resto gestiona desde Viajes.
     if (tab === "combustible:mi_viaje") return usuario?.rol === "conductor_ruta";
+    if (tab === "combustible:precios")
+      return usuario?.rol === "admin" || usuario?.rol === "operador";
     // Operador y Lectura parten con acceso amplio a Combustible (matriz
     // robusta de perfiles): sin override, caen al fallback de abajo (ve
     // cualquier sub-pestaña mientras tenga el módulo asignado).
@@ -161,11 +163,13 @@ function App() {
                     ? "mi_viaje"
                     : tabActiva === "combustible:urea"
                       ? "urea"
-                      : tabActiva === "combustible:auditoria"
-                        ? "auditoria"
-                        : tabActiva === "combustible:bitacora"
-                          ? "bitacora"
-                          : "tanques",
+                      : tabActiva === "combustible:precios"
+                        ? "precios"
+                        : tabActiva === "combustible:auditoria"
+                          ? "auditoria"
+                          : tabActiva === "combustible:bitacora"
+                            ? "bitacora"
+                            : "tanques",
         }
       : {};
 

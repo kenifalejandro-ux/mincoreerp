@@ -12,6 +12,7 @@ import {
   ScrollText,
   SearchCheck,
   ShieldCheck,
+  Tag,
   type LucideIcon,
 } from "lucide-react";
 import { Fragment, useState } from "react";
@@ -30,6 +31,7 @@ const SUBMENU_COMBUSTIBLE: { tab: string; label: string; Icono: LucideIcon }[] =
   { tab: "combustible:viajes", label: "Viajes", Icono: Route },
   { tab: "combustible:historico", label: "Histórico", Icono: History },
   { tab: "combustible:urea", label: "Urea", Icono: Droplets },
+  { tab: "combustible:precios", label: "Precios", Icono: Tag },
   { tab: "combustible:auditoria", label: "Auditoría", Icono: SearchCheck },
   { tab: "combustible:bitacora", label: "Bitácora", Icono: ScrollText },
 ];
@@ -50,6 +52,10 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
     const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
     if (override !== undefined) return override;
     if (tab === "combustible:mi_viaje") return usuario?.rol === "conductor_ruta";
+    // Precios: hoy solo lo gestionan admin y operador (los botones que
+    // se mudaron acá ya eran suyos).
+    if (tab === "combustible:precios")
+      return usuario?.rol === "admin" || usuario?.rol === "operador";
     // 0119: el conductor también ve Urea, solo para registrar la compra en
     // ruta (el panel le muestra únicamente ese botón).
     if (usuario?.rol === "conductor_ruta")
