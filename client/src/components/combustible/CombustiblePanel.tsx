@@ -37,7 +37,7 @@ import { useSedes } from "../comunes/useSedes";
 import VentanaFlotante from "../comunes/VentanaFlotante";
 import { enfocarPaginaPrincipal } from "../comunes/ventanasFlotantesEstado";
 import HistoricoCliente from "../HistoricoCliente";
-import UreaPanel from "../UreaPanel";
+import UreaPanel, { PreciosUreaPagina } from "../UreaPanel";
 
 import { EVENTOS_UREA, avisarCambioDeUrea } from "./eventosUrea";
 import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from "./Precintos";
@@ -1545,6 +1545,7 @@ export interface CombustiblePanelProps {
     | "mi_viaje"
     | "historico"
     | "urea"
+    | "precios"
     | "auditoria"
     | "bitacora";
 }
@@ -1727,7 +1728,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   // --- Precios de combustible (migrations/0063) ---
   const [precios, setPrecios] = useState<Precio[]>([]);
-  const [modalPreciosAbierto, setModalPreciosAbierto] = useState(false);
+  const [subPrecios, setSubPrecios] = useState<"combustible" | "urea">("combustible");
   const [precioForm, setPrecioForm] = useState({
     tipo_combustible: "diesel_b5" as Tanque["tipo_combustible"],
     aplicaA: "tanque" as "tanque" | "grifo",
@@ -1763,6 +1764,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     | "mi_viaje"
     | "historico"
     | "urea"
+    | "precios"
     | "auditoria"
     | "bitacora"
   >(pestanaInicial ?? "tanques");
@@ -3442,7 +3444,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   // --- Precios de combustible (migrations/0063) ---
 
-  const abrirModalPrecios = () => {
+  // Al entrar a la pestaña Precios se prepara el formulario y se trae el
+  // historial (antes lo hacía el botón "Precios" de Tanques).
+  useEffect(() => {
+    if (pestanaCombustible !== "precios") return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPrecioForm({
       tipo_combustible: "diesel_b5",
       aplicaA: "tanque",
@@ -3451,9 +3457,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       precio_unitario: "",
     });
     setVigenteDesde(ahoraParaInputLocal());
-    setModalPreciosAbierto(true);
     cargarPrecios();
-  };
+  }, [pestanaCombustible, cargarPrecios]);
 
   const handleCrearPrecio = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3992,6 +3997,19 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     return <div className="p-10">Cargando combustible...</div>;
   }
 
+  const puedePreciosCombustible = permiteTanque("precios");
+  // Mismo reparto que tenía el botón "Precios" dentro de Urea: admin y
+  // operador, salvo override por usuario.
+  const puedePreciosUrea =
+    usuario?.permisosPestanas?.["combustible:urea:precios"] ??
+    (esAdmin || usuario?.rol === "operador");
+  const subPreciosActiva: "combustible" | "urea" | null =
+    puedePreciosCombustible && (subPrecios === "combustible" || !puedePreciosUrea)
+      ? "combustible"
+      : puedePreciosUrea
+        ? "urea"
+        : null;
+
   return (
     <div className="p-2 sm:p-4 lg:p-8 animate-in fade-in duration-500">
       {/* Urea tiene su propio encabezado con su barra de herramientas
@@ -3999,7 +4017,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           confundían de qué pantalla se trataba. */}
       <div
         className={`flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-10 ${
-          pestanaCombustible === "urea" || pestanaCombustible === "mi_viaje" ? "hidden!" : ""
+          pestanaCombustible === "urea" ||
+          pestanaCombustible === "mi_viaje" ||
+          pestanaCombustible === "precios"
+            ? "hidden!"
+            : ""
         }`}
       >
         <div className="shrink-0">
@@ -4081,11 +4103,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 <Fuel className="w-4 h-4 shrink-0" /> Surtidores
               </button>
             )}
-            {permiteTanque("precios") && (
-              <button onClick={abrirModalPrecios} className={`${BTN_BASE} ${BTN_ESTILO.muted}`}>
-                <Tag className="w-4 h-4 shrink-0" /> Precios
-              </button>
-            )}
             {permiteTanque("registrar_recepcion") && (
               <button
                 onClick={abrirModalRecepcion}
@@ -4112,6 +4129,40 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       </div>
       {pestanaCombustible === "historico" && <HistoricoCliente />}
       {pestanaCombustible === "urea" && <UreaPanel />}
+      {pestanaCombustible === "precios" && (
+        <div className="mb-6">
+          <h1 className="text-lg sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight">
+            Precios
+          </h1>
+          <div className="flex gap-2 mt-4" role="tablist">
+            {permiteTanque("precios") && (
+              <button
+                role="tab"
+                aria-selected={subPreciosActiva === "combustible"}
+                onClick={() => setSubPrecios("combustible")}
+                className={`${BTN_BASE} ${subPreciosActiva === "combustible" ? BTN_ESTILO.primary : BTN_ESTILO.muted}`}
+              >
+                Precios combustible
+              </button>
+            )}
+            {puedePreciosUrea && (
+              <button
+                role="tab"
+                aria-selected={subPreciosActiva === "urea"}
+                onClick={() => setSubPrecios("urea")}
+                className={`${BTN_BASE} ${subPreciosActiva === "urea" ? BTN_ESTILO.primary : BTN_ESTILO.muted}`}
+              >
+                Precios urea
+              </button>
+            )}
+          </div>
+          {subPreciosActiva === "urea" && (
+            <div className="mt-4">
+              <PreciosUreaPagina />
+            </div>
+          )}
+        </div>
+      )}
       {pestanaCombustible === "tanquetas" && <TanquetasPanel />}
       {pestanaCombustible === "viajes" && <ViajesPanel />}
       {pestanaCombustible === "mi_viaje" && <MiViaje />}
@@ -6907,19 +6958,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           </div>
         </div>
       )}
-      {/* Modal: Precios de combustible (migrations/0063) */}
-      {modalPreciosAbierto && (
-        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b flex justify-between items-center">
+      {/* Precios de combustible (migrations/0063): pestaña "Precios" */}
+      {pestanaCombustible === "precios" && subPreciosActiva === "combustible" && (
+        <div className="px-0 pb-4">
+          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl">
+            <div className="p-6 border-b">
               <h3 className="text-xl font-bold">Precio de combustible</h3>
-              <button
-                onClick={() => setModalPreciosAbierto(false)}
-                aria-label="Cerrar"
-                className="text-slate-400 hover:text-slate-900"
-              >
-                <X className="w-5 h-5" />
-              </button>
             </div>
             <form onSubmit={handleCrearPrecio} className="p-6 space-y-4 border-b">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
