@@ -118,6 +118,7 @@ describe("combustible: compra de urea en ruta (migración 0119)", () => {
         abastece_ruta: true,
         abastece_tanque: false,
         abastece_urea: true,
+        abastece_urea_ruta: true,
       })
     ).body.id;
     grifoSoloDiesel = (
@@ -126,6 +127,7 @@ describe("combustible: compra de urea en ruta (migración 0119)", () => {
         abastece_ruta: true,
         abastece_tanque: false,
         abastece_urea: false,
+        abastece_urea_ruta: false,
       })
     ).body.id;
 

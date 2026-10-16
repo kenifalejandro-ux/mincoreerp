@@ -5685,6 +5685,8 @@ export class CombustibleController {
           nombre: data.nombre,
           abasteceRuta: data.abastece_ruta,
           abasteceTanque: data.abastece_tanque,
+          abasteceUrea: data.abastece_urea,
+          abasteceUreaRuta: data.abastece_urea_ruta,
         },
         contexto: contextoAuditoriaModulo(req),
       });
@@ -5716,8 +5718,12 @@ export class CombustibleController {
         usuarioId: req.usuario!.id,
         detalle: {
           grifoId: id,
+          nombre: data.nombre,
+          activo: data.activo,
           abasteceRuta: data.abastece_ruta,
           abasteceTanque: data.abastece_tanque,
+          abasteceUrea: data.abastece_urea,
+          abasteceUreaRuta: data.abastece_urea_ruta,
         },
         contexto: contextoAuditoriaModulo(req),
       });
@@ -6522,8 +6528,11 @@ export class CombustibleController {
   async listarProveedoresUrea(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
+      // 0133: ?uso=interno (planta) | externo (ruta); sin uso, cualquiera.
+      const uso =
+        req.query.uso === "interno" || req.query.uso === "externo" ? req.query.uso : undefined;
       const filas = await withTenant(tenantId, (client) =>
-        service.listarProveedoresUrea(client, tenantId)
+        service.listarProveedoresUrea(client, tenantId, uso)
       );
       res.json(filas);
     } catch {

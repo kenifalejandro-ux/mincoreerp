@@ -2115,7 +2115,14 @@ export class CombustibleService {
     // llamado desde el controller después de confirmar la transacción,
     // mismo patrón que evaluarSobredespacho).
     if (data.producto === "urea") {
-      await this.validarRolGrifo(client, tenantId, data.grifo_id!, "urea");
+      // 0133: el vale de almacén (baja el stock de la planta) viene de un
+      // proveedor INTERNO; la compra en ruta, de uno EXTERNO.
+      await this.validarRolGrifo(
+        client,
+        tenantId,
+        data.grifo_id!,
+        data.origen === "compra_externa" ? "urea_externa" : "urea_interna"
+      );
       const equipoId = data.equipo_id!;
       const equipo = await EquiposRepository.findTipoMedidor(client, tenantId, equipoId);
       if (!equipo) {
@@ -5964,10 +5971,23 @@ export class CombustibleService {
   }
 
   /** Proveedores activos con el rol de urea (0119) -- solo id y nombre. */
-  async listarProveedoresUrea(client: PoolClient, tenantId: string) {
-    const r = await client.query<{ id: number; nombre: string }>(
-      `SELECT id, nombre FROM combustible_grifos
-        WHERE tenant_id = $1 AND activo AND abastece_urea
+  async listarProveedoresUrea(client: PoolClient, tenantId: string, uso?: "interno" | "externo") {
+    // 0133: "interno" = urea para la planta, "externo" = compra en ruta; sin
+    // uso, cualquiera de las dos.
+    const filtroUso =
+      uso === "interno"
+        ? "abastece_urea"
+        : uso === "externo"
+          ? "abastece_urea_ruta"
+          : "(abastece_urea OR abastece_urea_ruta)";
+    const r = await client.query<{
+      id: number;
+      nombre: string;
+      abastece_urea: boolean;
+      abastece_urea_ruta: boolean;
+    }>(
+      `SELECT id, nombre, abastece_urea, abastece_urea_ruta FROM combustible_grifos
+        WHERE tenant_id = $1 AND activo AND ${filtroUso}
         ORDER BY nombre`,
       [tenantId]
     );
@@ -6969,6 +6989,7 @@ export class CombustibleService {
       abasteceRuta: data.abastece_ruta,
       abasteceTanque: data.abastece_tanque,
       abasteceUrea: data.abastece_urea,
+      abasteceUreaRuta: data.abastece_urea_ruta,
     });
   }
 
@@ -6984,6 +7005,7 @@ export class CombustibleService {
       abasteceRuta: data.abastece_ruta,
       abasteceTanque: data.abastece_tanque,
       abasteceUrea: data.abastece_urea,
+      abasteceUreaRuta: data.abastece_urea_ruta,
     });
   }
 
@@ -7003,7 +7025,7 @@ export class CombustibleService {
     client: PoolClient,
     tenantId: string,
     grifoId: number,
-    rol: "ruta" | "tanque" | "urea"
+    rol: "ruta" | "tanque" | "urea" | "urea_interna" | "urea_externa"
   ) {
     const grifo = await this.repository.findGrifoPorId(client, tenantId, grifoId);
     if (!grifo) {
@@ -7023,9 +7045,22 @@ export class CombustibleService {
     // cliente como "aparte" de los grifos de combustible (pregunta 9). Un
     // grifo de ruta o de tanque que NO vende urea no puede colarse acá solo
     // porque también está en el mismo catálogo.
-    if (rol === "urea" && !grifo.abastece_urea) {
+    // 0133: la urea se divide como el combustible. "urea_interna" = la que se
+    // recibe en la planta (abastece_urea); "urea_externa" = la que se compra
+    // en ruta (abastece_urea_ruta); "urea" = cualquiera de las dos (precios).
+    if (rol === "urea" && !grifo.abastece_urea && !grifo.abastece_urea_ruta) {
       throw new Error(
         `el proveedor "${grifo.nombre}" no está marcado como proveedor de urea -- marcalo en Proveedores o elegí otro`
+      );
+    }
+    if (rol === "urea_interna" && !grifo.abastece_urea) {
+      throw new Error(
+        `el proveedor "${grifo.nombre}" no está marcado como proveedor de urea interno (planta) -- marcalo en Proveedores o elegí otro`
+      );
+    }
+    if (rol === "urea_externa" && !grifo.abastece_urea_ruta) {
+      throw new Error(
+        `el proveedor "${grifo.nombre}" no está marcado como proveedor de urea externo (ruta) -- marcalo en Proveedores o elegí otro`
       );
     }
   }
@@ -7131,7 +7166,7 @@ export class CombustibleService {
           // el proveedor "aparte" que confirmó el cliente. No hay tanque que
           // validar ni documento condicional a `requiere_documento` (esa
           // columna es del tanque de combustible, la urea no tiene uno).
-          await this.validarRolGrifo(client, tenantId, data.grifo_id, "urea");
+          await this.validarRolGrifo(client, tenantId, data.grifo_id, "urea_interna");
         } else {
           excedenteAceptado = await this.validarDatosDeRecepcion(
             client,

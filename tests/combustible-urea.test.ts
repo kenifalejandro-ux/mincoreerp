@@ -58,6 +58,7 @@ describe("combustible: urea automotriz (migración 0092)", () => {
       abastece_ruta: false,
       abastece_tanque: false,
       abastece_urea: true,
+      abastece_urea_ruta: true,
     });
     grifoUrea = grifo1.body.id;
 
@@ -66,6 +67,7 @@ describe("combustible: urea automotriz (migración 0092)", () => {
       abastece_ruta: true,
       abastece_tanque: false,
       abastece_urea: false,
+      abastece_urea_ruta: false,
     });
     grifoDeRuta = grifo2.body.id;
     grifoRuta2 = grifoDeRuta;
@@ -377,6 +379,7 @@ describe("combustible: urea automotriz (migración 0092)", () => {
         abastece_ruta: false,
         abastece_tanque: false,
         abastece_urea: true,
+        abastece_urea_ruta: true,
       });
 
       // Entra 1 caja (16 L) por recepción. Stock teórico = 16 L.

@@ -110,6 +110,7 @@ describe("combustible: catálogo de presentaciones de urea (migración 0116)", (
       abastece_ruta: false,
       abastece_tanque: false,
       abastece_urea: true,
+      abastece_urea_ruta: true,
     });
     grifoUrea = grifo.body.id;
   });

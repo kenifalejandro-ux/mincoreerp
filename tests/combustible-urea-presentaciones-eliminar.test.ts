@@ -112,6 +112,7 @@ describe("combustible: eliminar un envase de urea sin uso", () => {
       abastece_ruta: false,
       abastece_tanque: false,
       abastece_urea: true,
+      abastece_urea_ruta: true,
     });
     grifoUrea = grifo.body.id;
   });
@@ -391,6 +392,7 @@ describe("combustible: eliminar un envase de urea sin uso", () => {
         abastece_ruta: true,
         abastece_tanque: false,
         abastece_urea: true,
+        abastece_urea_ruta: true,
       });
       const res = await agente.post("/api/erp/combustible/urea/precios").send({
         grifo_id: grifoRuta.body.id,

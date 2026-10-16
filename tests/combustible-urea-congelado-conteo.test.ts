@@ -30,6 +30,7 @@ describe("combustible: el descuadre de un conteo de urea se congela con su ancla
       abastece_ruta: false,
       abastece_tanque: false,
       abastece_urea: true,
+      abastece_urea_ruta: true,
     });
     const entrada = await agente.post("/api/erp/combustible/recepciones").send({
       cliente_uuid: crypto.randomUUID(),

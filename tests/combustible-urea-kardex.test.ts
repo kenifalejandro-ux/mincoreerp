@@ -74,6 +74,7 @@ describe("combustible: kardex de urea", () => {
         abastece_ruta: false,
         abastece_tanque: false,
         abastece_urea: true,
+        abastece_urea_ruta: true,
       })
     ).body.id;
   });

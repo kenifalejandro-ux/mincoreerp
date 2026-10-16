@@ -102,6 +102,7 @@ describe("combustible: hallazgos de urea (entrega 4)", () => {
         abastece_ruta: false,
         abastece_tanque: false,
         abastece_urea: true,
+        abastece_urea_ruta: true,
       })
     ).body.id;
 

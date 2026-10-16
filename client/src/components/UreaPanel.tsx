@@ -118,9 +118,9 @@ function AvisoSinEnvases() {
 function AvisoSinProveedores() {
   return (
     <span className="text-xs text-amber-700">
-      No hay proveedores marcados para urea. Un admin los marca en Combustible → Proveedores, con la
-      casilla <strong>&quot;Urea&quot;</strong> (el mismo proveedor puede venderte diésel y urea a
-      la vez).
+      No hay proveedores marcados para esto. Un admin los marca en Combustible → Proveedores, en las
+      columnas <strong>&quot;Urea&quot;</strong> (interno para la planta, externo para compras en
+      ruta). El mismo proveedor puede venderte diésel y urea a la vez.
     </span>
   );
 }
@@ -270,7 +270,11 @@ interface Grifo {
   id: number;
   nombre: string;
   activo: boolean;
+  // 0133: interna = la que se recibe en la planta; externa = la que se compra
+  // en ruta. El vale de almacén y la entrada usan las internas; la compra en
+  // ruta, las externas; los precios, cualquiera de las dos.
   abastece_urea: boolean;
+  abastece_urea_ruta: boolean;
 }
 
 interface ValeFila {
@@ -1214,11 +1218,14 @@ export default function UreaPanel() {
     const data = await res.json().catch(() => null);
     setGrifos(
       Array.isArray(data)
-        ? data.map((g: { id: number; nombre: string }) => ({
-            ...g,
-            activo: true,
-            abastece_urea: true,
-          }))
+        ? data.map(
+            (g: {
+              id: number;
+              nombre: string;
+              abastece_urea: boolean;
+              abastece_urea_ruta: boolean;
+            }) => ({ ...g, activo: true })
+          )
         : []
     );
   }, []);
@@ -1822,7 +1829,7 @@ export default function UreaPanel() {
       {modalVale && (
         <ModalVale
           equipos={equipos}
-          grifos={grifos}
+          grifos={grifos.filter((g) => g.abastece_urea)}
           presentaciones={presentaciones}
           onCerrar={() => setModalVale(false)}
           onCreado={() => {
@@ -1834,7 +1841,7 @@ export default function UreaPanel() {
       )}
       {modalEntrada && (
         <ModalEntrada
-          grifos={grifos}
+          grifos={grifos.filter((g) => g.abastece_urea)}
           presentaciones={presentaciones}
           precios={precios}
           onCerrar={() => setModalEntrada(false)}
@@ -1848,7 +1855,7 @@ export default function UreaPanel() {
       {modalCompra && (
         <ModalCompraUrea
           equipos={equipos}
-          grifos={grifos}
+          grifos={grifos.filter((g) => g.abastece_urea_ruta)}
           presentaciones={presentaciones}
           precios={precios}
           onCerrar={() => setModalCompra(false)}
@@ -2796,11 +2803,14 @@ export function PreciosUreaPagina() {
       if (!vivo) return;
       setGrifos(
         Array.isArray(dGrifos)
-          ? dGrifos.map((g: { id: number; nombre: string }) => ({
-              ...g,
-              activo: true,
-              abastece_urea: true,
-            }))
+          ? dGrifos.map(
+              (g: {
+                id: number;
+                nombre: string;
+                abastece_urea: boolean;
+                abastece_urea_ruta: boolean;
+              }) => ({ ...g, activo: true })
+            )
           : []
       );
       setPresentaciones(Array.isArray(dPres) ? dPres : []);
