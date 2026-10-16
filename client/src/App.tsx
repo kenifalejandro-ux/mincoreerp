@@ -1,5 +1,5 @@
 // client/src/App.tsx
-import { Suspense, lazy, useState, type ComponentType } from "react";
+import { Suspense, lazy, useEffect, useState, type ComponentType } from "react";
 
 import { puedeVerBandeja } from "./components/bandeja/bandejaAcceso";
 import Layout from "./components/layout/Layout";
@@ -58,6 +58,10 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
     if (tab === "combustible:mi_viaje") return usuario?.rol === "conductor_ruta";
     if (tab === "combustible:precios")
       return usuario?.rol === "admin" || usuario?.rol === "operador";
+    if (tab === "combustible:proveedores") {
+      const antiguo = usuario?.permisosPestanas?.["combustible:tanques:proveedores"];
+      return antiguo ?? (usuario?.rol === "admin" || usuario?.rol === "operador");
+    }
     // Operador y Lectura parten con acceso amplio a Combustible (matriz
     // robusta de perfiles): sin override, caen al fallback de abajo (ve
     // cualquier sub-pestaña mientras tenga el módulo asignado).
@@ -107,6 +111,14 @@ function App() {
   // backend), así que en el primer render todavía es null y cualquier valor
   // inicial calculado ahí sería el equivocado. Derivar no tiene ese problema
   // ni pinta un frame en blanco antes de acomodarse.
+  // Un panel interno pide cambiar de pestaña (p. ej. el aviso de "Registrar
+  // recepción" que lleva a Proveedores).
+  useEffect(() => {
+    const alPedir = (e: Event) => setActiveTab((e as CustomEvent<string>).detail);
+    window.addEventListener("mincore:ir-a-pestana", alPedir);
+    return () => window.removeEventListener("mincore:ir-a-pestana", alPedir);
+  }, []);
+
   const tabActiva = pestaniaDisponible(activeTab, usuario) ? activeTab : primeraPestania(usuario);
 
   if (cargando) {
@@ -165,11 +177,13 @@ function App() {
                       ? "urea"
                       : tabActiva === "combustible:precios"
                         ? "precios"
-                        : tabActiva === "combustible:auditoria"
-                          ? "auditoria"
-                          : tabActiva === "combustible:bitacora"
-                            ? "bitacora"
-                            : "tanques",
+                        : tabActiva === "combustible:proveedores"
+                          ? "proveedores"
+                          : tabActiva === "combustible:auditoria"
+                            ? "auditoria"
+                            : tabActiva === "combustible:bitacora"
+                              ? "bitacora"
+                              : "tanques",
         }
       : {};
 

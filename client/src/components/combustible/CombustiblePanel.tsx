@@ -17,7 +17,6 @@ import {
   Tag,
   Trash2,
   Truck,
-  Wrench,
   X,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useMemo } from "react";
@@ -1546,6 +1545,7 @@ export interface CombustiblePanelProps {
     | "historico"
     | "urea"
     | "precios"
+    | "proveedores"
     | "auditoria"
     | "bitacora";
 }
@@ -1710,7 +1710,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   // --- Grifos externos (migrations/0063) ---
   const [grifos, setGrifos] = useState<Grifo[]>([]);
-  const [modalGrifosAbierto, setModalGrifosAbierto] = useState(false);
   const [nombreGrifoNuevo, setNombreGrifoNuevo] = useState("");
   // Los dos roles arrancan marcados (migrations/0065): el caso más común es un
   // proveedor que sirve para todo, y así el alta rápida sigue siendo un campo
@@ -1728,6 +1727,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   // --- Precios de combustible (migrations/0063) ---
   const [precios, setPrecios] = useState<Precio[]>([]);
+  const [subProveedores, setSubProveedores] = useState<"combustible" | "urea">("combustible");
   const [subPrecios, setSubPrecios] = useState<"combustible" | "urea">("combustible");
   const [precioForm, setPrecioForm] = useState({
     tipo_combustible: "diesel_b5" as Tanque["tipo_combustible"],
@@ -1765,6 +1765,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     | "historico"
     | "urea"
     | "precios"
+    | "proveedores"
     | "auditoria"
     | "bitacora"
   >(pestanaInicial ?? "tanques");
@@ -3304,13 +3305,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   // --- Grifos externos (migrations/0063) ---
 
-  const abrirModalGrifos = () => {
-    setNombreGrifoNuevo("");
-    setRolesGrifoNuevo({ abastece_ruta: true, abastece_tanque: true, abastece_urea: false });
-    setBorradorRolesGrifo({});
-    setModalGrifosAbierto(true);
-    cargarGrifos();
-  };
+  /** Roles con los que nace un proveedor según la pestaña donde se da de alta. */
+  const rolesIniciales =
+    subProveedores === "urea"
+      ? { abastece_ruta: false, abastece_tanque: false, abastece_urea: true }
+      : { abastece_ruta: true, abastece_tanque: true, abastece_urea: false };
+  const grifosVisibles = grifos.filter((g) =>
+    subProveedores === "urea" ? g.abastece_urea : g.abastece_ruta || g.abastece_tanque
+  );
 
   const handleCrearGrifo = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -3343,7 +3345,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         return;
       }
       setNombreGrifoNuevo("");
-      setRolesGrifoNuevo({ abastece_ruta: true, abastece_tanque: true, abastece_urea: false });
+      setRolesGrifoNuevo(rolesIniciales);
       await cargarGrifos();
     } finally {
       setGuardandoGrifo(false);
@@ -3391,6 +3393,20 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   const [guardandoRolesGrifo, setGuardandoRolesGrifo] = useState(false);
 
+  // Al entrar a la pestaña Proveedores: formulario limpio y lista al día.
+  useEffect(() => {
+    if (pestanaCombustible !== "proveedores") return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setNombreGrifoNuevo("");
+    setRolesGrifoNuevo(
+      subProveedores === "urea"
+        ? { abastece_ruta: false, abastece_tanque: false, abastece_urea: true }
+        : { abastece_ruta: true, abastece_tanque: true, abastece_urea: false }
+    );
+    setBorradorRolesGrifo({});
+    cargarGrifos();
+  }, [pestanaCombustible, subProveedores, cargarGrifos]);
+
   /** Guarda todos los cambios pendientes de una vez. Un PUT por proveedor (la
    *  fila completa); el que falla conserva su borrador y se nombra. */
   const handleGuardarRolesGrifos = async () => {
@@ -3429,17 +3445,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     if (fallidos.length > 0) {
       alert(`No se pudo actualizar: ${fallidos.join(", ")}. Los demás sí se guardaron.`);
     }
-  };
-
-  const cerrarModalGrifos = () => {
-    if (
-      grifosConCambios.length > 0 &&
-      !window.confirm("Tenés cambios sin guardar en Proveedores. ¿Cerrar y descartarlos?")
-    ) {
-      return;
-    }
-    setBorradorRolesGrifo({});
-    setModalGrifosAbierto(false);
   };
 
   // --- Precios de combustible (migrations/0063) ---
@@ -4019,7 +4024,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         className={`flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-10 ${
           pestanaCombustible === "urea" ||
           pestanaCombustible === "mi_viaje" ||
-          pestanaCombustible === "precios"
+          pestanaCombustible === "precios" ||
+          pestanaCombustible === "proveedores"
             ? "hidden!"
             : ""
         }`}
@@ -4088,11 +4094,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             {permiteTanque("alertas") && (
               <button onClick={abrirModalAlertas} className={`${BTN_BASE} ${BTN_ESTILO.lime}`}>
                 <Bell className="w-4 h-4 shrink-0" /> Configurar alertas
-              </button>
-            )}
-            {permiteTanque("proveedores") && (
-              <button onClick={abrirModalGrifos} className={`${BTN_BASE} ${BTN_ESTILO.muted}`}>
-                <Wrench className="w-4 h-4 shrink-0" /> Proveedores
               </button>
             )}
             {permiteTanque("surtidores") && (
@@ -6769,24 +6770,33 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           </div>
         </VentanaFlotante>
       )}
-      {/* Modal: Grifos externos (migrations/0063) */}
-      {modalGrifosAbierto && (
-        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
+      {/* Proveedores externos (migrations/0063): pestaña "Proveedores" */}
+      {pestanaCombustible === "proveedores" && (
+        <div className="px-0 pb-4">
+          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl">
             <div className="p-6 border-b flex justify-between items-center">
               <div>
                 <h3 className="text-xl font-bold">Proveedores</h3>
                 <p className="text-sm text-slate-500">
-                  Los que abastecen unidades en ruta y los que llenan los tanques propios
+                  {subProveedores === "urea"
+                    ? "Los que venden urea"
+                    : "Los que abastecen unidades en ruta y los que llenan los tanques propios"}
                 </p>
               </div>
-              <button
-                onClick={cerrarModalGrifos}
-                aria-label="Cerrar"
-                className="text-slate-400 hover:text-slate-900"
-              >
-                <X className="w-5 h-5" />
-              </button>
+            </div>
+            <div className="px-6 pt-4 flex gap-2" role="tablist">
+              {(["combustible", "urea"] as const).map((sub) => (
+                <button
+                  key={sub}
+                  type="button"
+                  role="tab"
+                  aria-selected={subProveedores === sub}
+                  onClick={() => setSubProveedores(sub)}
+                  className={`${BTN_BASE} ${subProveedores === sub ? BTN_ESTILO.primary : BTN_ESTILO.muted}`}
+                >
+                  {sub === "urea" ? "Proveedores urea" : "Proveedores combustible"}
+                </button>
+              ))}
             </div>
             <form onSubmit={handleCrearGrifo} className="p-6 space-y-3 border-b">
               <label
@@ -6816,36 +6826,48 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               {/* Los dos roles (migrations/0065) -- marcados por defecto porque
                   el caso más común es un proveedor que sirve para todo. */}
               <div className="space-y-2 pt-1">
-                <label className="flex items-center gap-2 text-sm text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={rolesGrifoNuevo.abastece_ruta}
-                    onChange={(e) =>
-                      setRolesGrifoNuevo({ ...rolesGrifoNuevo, abastece_ruta: e.target.checked })
-                    }
-                  />
-                  Abastece unidades en ruta
-                </label>
-                <label className="flex items-center gap-2 text-sm text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={rolesGrifoNuevo.abastece_tanque}
-                    onChange={(e) =>
-                      setRolesGrifoNuevo({ ...rolesGrifoNuevo, abastece_tanque: e.target.checked })
-                    }
-                  />
-                  Abastece el tanque (cisterna)
-                </label>
-                <label className="flex items-center gap-2 text-sm text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={rolesGrifoNuevo.abastece_urea}
-                    onChange={(e) =>
-                      setRolesGrifoNuevo({ ...rolesGrifoNuevo, abastece_urea: e.target.checked })
-                    }
-                  />
-                  Vende urea
-                </label>
+                {subProveedores === "combustible" && (
+                  <>
+                    <label className="flex items-center gap-2 text-sm text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={rolesGrifoNuevo.abastece_ruta}
+                        onChange={(e) =>
+                          setRolesGrifoNuevo({
+                            ...rolesGrifoNuevo,
+                            abastece_ruta: e.target.checked,
+                          })
+                        }
+                      />
+                      Abastece unidades en ruta
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-600">
+                      <input
+                        type="checkbox"
+                        checked={rolesGrifoNuevo.abastece_tanque}
+                        onChange={(e) =>
+                          setRolesGrifoNuevo({
+                            ...rolesGrifoNuevo,
+                            abastece_tanque: e.target.checked,
+                          })
+                        }
+                      />
+                      Abastece el tanque (cisterna)
+                    </label>
+                  </>
+                )}
+                {subProveedores === "urea" && (
+                  <label className="flex items-center gap-2 text-sm text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={rolesGrifoNuevo.abastece_urea}
+                      onChange={(e) =>
+                        setRolesGrifoNuevo({ ...rolesGrifoNuevo, abastece_urea: e.target.checked })
+                      }
+                    />
+                    Vende urea
+                  </label>
+                )}
                 <p className="text-xs text-slate-600">
                   Marcá todos los que correspondan: el mismo proveedor puede venderte en ruta, a
                   granel y urea.
@@ -6853,12 +6875,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               </div>
             </form>
             <div className="p-6 space-y-2">
-              {grifos.length === 0 ? (
+              {grifosVisibles.length === 0 ? (
                 <p className="text-sm text-slate-400 text-center">
                   Todavía no hay proveedores cargados.
                 </p>
               ) : (
-                grifos.map((g) => (
+                grifosVisibles.map((g) => (
                   <div key={g.id} className="p-3 rounded-xl border border-slate-100 space-y-2">
                     <div className="flex items-center justify-between">
                       <span className={g.activo ? "text-slate-800" : "text-slate-400 line-through"}>
@@ -6885,45 +6907,51 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       };
                       return (
                         <div className="flex flex-wrap items-center gap-4">
-                          <label className="flex items-center gap-1.5 text-xs text-slate-500">
-                            <input
-                              type="checkbox"
-                              checked={b.abastece_ruta}
-                              onChange={(e) =>
-                                setBorradorRolesGrifo({
-                                  ...borradorRolesGrifo,
-                                  [g.id]: { ...b, abastece_ruta: e.target.checked },
-                                })
-                              }
-                            />
-                            En ruta
-                          </label>
-                          <label className="flex items-center gap-1.5 text-xs text-slate-500">
-                            <input
-                              type="checkbox"
-                              checked={b.abastece_tanque}
-                              onChange={(e) =>
-                                setBorradorRolesGrifo({
-                                  ...borradorRolesGrifo,
-                                  [g.id]: { ...b, abastece_tanque: e.target.checked },
-                                })
-                              }
-                            />
-                            Tanque (cisterna)
-                          </label>
-                          <label className="flex items-center gap-1.5 text-xs text-slate-500">
-                            <input
-                              type="checkbox"
-                              checked={b.abastece_urea}
-                              onChange={(e) =>
-                                setBorradorRolesGrifo({
-                                  ...borradorRolesGrifo,
-                                  [g.id]: { ...b, abastece_urea: e.target.checked },
-                                })
-                              }
-                            />
-                            Urea
-                          </label>
+                          {subProveedores === "combustible" && (
+                            <>
+                              <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                                <input
+                                  type="checkbox"
+                                  checked={b.abastece_ruta}
+                                  onChange={(e) =>
+                                    setBorradorRolesGrifo({
+                                      ...borradorRolesGrifo,
+                                      [g.id]: { ...b, abastece_ruta: e.target.checked },
+                                    })
+                                  }
+                                />
+                                En ruta
+                              </label>
+                              <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                                <input
+                                  type="checkbox"
+                                  checked={b.abastece_tanque}
+                                  onChange={(e) =>
+                                    setBorradorRolesGrifo({
+                                      ...borradorRolesGrifo,
+                                      [g.id]: { ...b, abastece_tanque: e.target.checked },
+                                    })
+                                  }
+                                />
+                                Tanque (cisterna)
+                              </label>
+                            </>
+                          )}
+                          {subProveedores === "urea" && (
+                            <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                              <input
+                                type="checkbox"
+                                checked={b.abastece_urea}
+                                onChange={(e) =>
+                                  setBorradorRolesGrifo({
+                                    ...borradorRolesGrifo,
+                                    [g.id]: { ...b, abastece_urea: e.target.checked },
+                                  })
+                                }
+                              />
+                              Urea
+                            </label>
+                          )}
                         </div>
                       );
                     })()}
@@ -8779,7 +8807,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       type="button"
                       onClick={() => {
                         setModalRecepcionAbierto(false);
-                        abrirModalGrifos();
+                        window.dispatchEvent(
+                          new CustomEvent("mincore:ir-a-pestana", {
+                            detail: "combustible:proveedores",
+                          })
+                        );
                       }}
                       className="underline hover:text-slate-600"
                     >
