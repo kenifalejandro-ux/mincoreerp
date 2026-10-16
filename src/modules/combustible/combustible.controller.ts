@@ -870,6 +870,15 @@ function filtrosAlertasDe(q: Request["query"]): FiltrosAlertas | { error: string
   return filtros;
 }
 
+/** El id de un envase de urea viene en la URL: `Number("abc")` es NaN y
+ *  `Number("99999999999")` desborda el INTEGER de Postgres, y las dos
+ *  terminaban en un 500 que ensuciaba Sentry. null = no es un id posible. */
+function idPresentacionUrea(valor: string | undefined): number | null {
+  if (!valor || !/^\d+$/.test(valor)) return null;
+  const id = Number(valor);
+  return id > 0 && id <= 2147483647 ? id : null;
+}
+
 export class CombustibleController {
   async getAll(req: Request, res: Response) {
     try {
@@ -6852,7 +6861,11 @@ export class CombustibleController {
   async actualizarPresentacionUrea(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
-      const id = Number(req.params.id);
+      const id = idPresentacionUrea(req.params.id);
+      if (id === null) {
+        res.status(400).json({ error: "El id del envase no es válido" });
+        return;
+      }
       const data = req.validatedBody as ActualizarPresentacionUreaInput;
 
       const resultado = await withTenant(tenantId, (client) =>
@@ -6908,7 +6921,11 @@ export class CombustibleController {
   async eliminarPresentacionUrea(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
-      const id = Number(req.params.id);
+      const id = idPresentacionUrea(req.params.id);
+      if (id === null) {
+        res.status(400).json({ error: "El id del envase no es válido" });
+        return;
+      }
       const data = req.validatedBody as EliminarPresentacionUreaInput;
 
       const eliminado = await withTenant(tenantId, (client) =>

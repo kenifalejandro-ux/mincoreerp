@@ -235,6 +235,118 @@ describe("combustible: eliminar un envase de urea sin uso", () => {
     expect((await buscar("caja"))!.es_referencia).toBe(true);
   });
 
+  // ── Invariante: siempre hay UN principal activo, por cualquier camino ──
+  //
+  // La auditoría encontró que la regla "el principal no se elimina ni se da
+  // de baja" se esquivaba en dos pasos: quitarle la marca y luego eliminarlo,
+  // o marcar principal a un envase de baja. La regla se escribió como una
+  // lista de operaciones prohibidas; estos tests defienden la INVARIANTE.
+
+  describe("invariante: la empresa siempre tiene un envase principal activo", () => {
+    const principalesActivos = async () =>
+      (await listar()).filter((p) => p.es_referencia && p.activa).map((p) => p.codigo);
+
+    const putCompleto = (e: PresentacionApi, cambios: Record<string, unknown>) =>
+      agente.put(`${BASE}/${e.id}`).send({
+        nombre: e.nombre,
+        litros: Number(e.litros),
+        es_referencia: e.es_referencia,
+        activa: e.activa,
+        ...cambios,
+      });
+
+    it("ninguna combinación de PUT ni DELETE sobre el principal lo deja sin principal", async () => {
+      const caja = (await buscar("caja"))!;
+      expect(await principalesActivos()).toEqual(["caja"]);
+
+      const intentos: [string, Record<string, unknown>][] = [
+        ["quitar la marca, activo", { es_referencia: false, activa: true }],
+        ["quitar la marca y dar de baja", { es_referencia: false, activa: false, motivo: "x" }],
+        ["darlo de baja siendo principal", { es_referencia: true, activa: false, motivo: "x" }],
+      ];
+      for (const [nombre, cambios] of intentos) {
+        const res = await putCompleto(caja, cambios);
+        expect(res.status, `${nombre}: ${JSON.stringify(res.body)}`).toBe(409);
+        expect(res.body.error).toMatch(/principal/i);
+      }
+      expect((await eliminar(caja.id)).status).toBe(409);
+
+      expect(await principalesActivos(), "la empresa quedó sin principal").toEqual(["caja"]);
+    });
+
+    it("quitarle la marca al principal y luego eliminarlo ya no es posible en dos pasos", async () => {
+      const caja = (await buscar("caja"))!;
+      await putCompleto(caja, { es_referencia: false, activa: true });
+      const borrar = await eliminar(caja.id);
+      expect(borrar.status).toBe(409);
+      expect(await buscar("caja"), "el principal no puede desaparecer").toBeDefined();
+    });
+
+    it("no se marca como principal un envase de baja (409)", async () => {
+      const tarro = await envaseNuevo("inactivo1");
+      const baja = await putCompleto(tarro, { activa: false, motivo: "no se usa" });
+      expect(baja.status, JSON.stringify(baja.body)).toBe(200);
+
+      const marcar = await putCompleto((await buscar("inactivo1"))!, {
+        es_referencia: true,
+        activa: false,
+      });
+      expect(marcar.status, JSON.stringify(marcar.body)).toBe(409);
+      expect(await principalesActivos()).toEqual(["caja"]);
+    });
+
+    it("elegir OTRO principal sí cambia la marca (y deja exactamente uno)", async () => {
+      const otro = await envaseNuevo("relevo1");
+      expect((await putCompleto(otro, { es_referencia: true })).status).toBe(200);
+      expect(await principalesActivos()).toEqual(["relevo1"]);
+
+      const caja = (await buscar("caja"))!;
+      expect((await putCompleto(caja, { es_referencia: true })).status).toBe(200);
+      expect(await principalesActivos()).toEqual(["caja"]);
+    });
+
+    it("un principal que ya estaba de baja ANTES de la regla se puede seguir editando", async () => {
+      // Estado heredado: hasta ahora el principal se podía desactivar. Renombrarlo
+      // no debe volverse imposible por una regla que mira lo nuevo.
+      const legado = await envaseNuevo("legado1");
+      await withTenant(tenantId, async (c) => {
+        await c.query(
+          `UPDATE combustible_urea_presentaciones SET es_referencia = false
+            WHERE tenant_id = $1 AND es_referencia`,
+          [tenantId]
+        );
+        await c.query(
+          `UPDATE combustible_urea_presentaciones
+              SET es_referencia = true, activa = false
+            WHERE tenant_id = $1 AND codigo = 'legado1'`,
+          [tenantId]
+        );
+      });
+      try {
+        const editado = await putCompleto((await buscar("legado1"))!, {
+          nombre: "Legado renombrado",
+        });
+        expect(editado.status, JSON.stringify(editado.body)).toBe(200);
+        expect(legado.id).toBe((await buscar("legado1"))!.id);
+      } finally {
+        const caja = (await buscar("caja"))!;
+        await putCompleto(caja, { es_referencia: true, activa: true });
+      }
+      expect(await principalesActivos()).toEqual(["caja"]);
+    });
+  });
+
+  it("un id malformado en la URL es 400, no 500 (DELETE y PUT)", async () => {
+    for (const id of ["abc", "1.5", "0", "-1", "99999999999", "1e20"]) {
+      const del = await agente.delete(`${BASE}/${id}`).send({ motivo: "x" });
+      expect(del.status, `DELETE ${id}`).toBe(400);
+      const put = await agente
+        .put(`${BASE}/${id}`)
+        .send({ nombre: "X", litros: 1, es_referencia: false, activa: true });
+      expect(put.status, `PUT ${id}`).toBe(400);
+    }
+  });
+
   // ── 1. Con uso no se elimina, venga de la tabla que venga ─────────────
 
   describe("un envase con uso NO se elimina (409), usado en…", () => {

@@ -1393,6 +1393,27 @@ export class CombustibleService {
     const cambiaLitros = litrosAntes !== data.litros;
     const seDesactiva = antes.activa && !data.activa;
 
+    // La INVARIANTE: la empresa siempre tiene un envase principal activo. Se
+    // defiende aquí, por cualquier camino, y no solo en "baja" y "eliminar":
+    // quitarle la marca al principal y luego eliminarlo, o marcar principal a
+    // un envase de baja, esquivaba la regla (auditoría 2026-10-15). Elegir
+    // OTRO principal es la única forma de cambiarlo, y el repositorio
+    // desmarca al anterior en la misma transacción.
+    if (antes.es_referencia && !data.es_referencia) {
+      throw new AppError(
+        409,
+        `"${antes.nombre}" es el envase principal: para cambiarlo, marca otro envase como principal (este deja de serlo solo).`
+      );
+    }
+    // Solo cuando el pedido lo CONVIERTE en principal: un principal que ya
+    // estaba de baja de antes de esta regla se sigue pudiendo editar.
+    if (!antes.es_referencia && data.es_referencia && !data.activa) {
+      throw new AppError(
+        409,
+        `"${antes.nombre}" está de baja y no puede ser el envase principal: reactívalo o elige otro envase.`
+      );
+    }
+
     let movimientos = 0;
     if (cambiaLitros) {
       movimientos = await this.repository.contarMovimientosDePresentacionUrea(
