@@ -109,6 +109,7 @@ describe("combustible: el almacén de urea en físico", () => {
       abastece_ruta: false,
       abastece_tanque: false,
       abastece_urea: true,
+      abastece_urea_ruta: true,
     });
     grifoUrea = grifo.body.id;
     // Quien vende urea EN RUTA: la compra de urgencia sin pasar por el almacén.
@@ -117,6 +118,7 @@ describe("combustible: el almacén de urea en físico", () => {
       abastece_ruta: true,
       abastece_tanque: false,
       abastece_urea: true,
+      abastece_urea_ruta: true,
     });
     grifoRuta = ruta.body.id;
   });

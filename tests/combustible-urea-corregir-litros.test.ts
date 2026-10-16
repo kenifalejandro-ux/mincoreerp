@@ -103,6 +103,7 @@ describe("combustible: corregir los litros de un envase de urea", () => {
         abastece_ruta: false,
         abastece_tanque: false,
         abastece_urea: true,
+        abastece_urea_ruta: true,
       })
     ).body.id;
     grifoRuta = (
@@ -111,6 +112,7 @@ describe("combustible: corregir los litros de un envase de urea", () => {
         abastece_ruta: true,
         abastece_tanque: false,
         abastece_urea: true,
+        abastece_urea_ruta: true,
       })
     ).body.id;
 

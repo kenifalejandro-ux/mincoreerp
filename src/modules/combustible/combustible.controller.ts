@@ -6522,8 +6522,11 @@ export class CombustibleController {
   async listarProveedoresUrea(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
+      // 0133: ?uso=interno (planta) | externo (ruta); sin uso, cualquiera.
+      const uso =
+        req.query.uso === "interno" || req.query.uso === "externo" ? req.query.uso : undefined;
       const filas = await withTenant(tenantId, (client) =>
-        service.listarProveedoresUrea(client, tenantId)
+        service.listarProveedoresUrea(client, tenantId, uso)
       );
       res.json(filas);
     } catch {

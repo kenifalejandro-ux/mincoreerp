@@ -5836,7 +5836,7 @@ export class CombustibleRepository {
 
   async findGrifos(client: PoolClient, tenantId: string) {
     const result = await client.query(
-      `SELECT id, nombre, activo, abastece_ruta, abastece_tanque, abastece_urea, usuario_id, creado_en
+      `SELECT id, nombre, activo, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta, usuario_id, creado_en
        FROM combustible_grifos WHERE tenant_id = $1 ORDER BY nombre ASC`,
       [tenantId]
     );
@@ -5845,7 +5845,7 @@ export class CombustibleRepository {
 
   async findGrifoPorId(client: PoolClient, tenantId: string, id: number) {
     const result = await client.query(
-      `SELECT id, nombre, activo, abastece_ruta, abastece_tanque, abastece_urea, usuario_id, creado_en
+      `SELECT id, nombre, activo, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta, usuario_id, creado_en
        FROM combustible_grifos WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId]
     );
@@ -5861,20 +5861,22 @@ export class CombustibleRepository {
       abasteceRuta: boolean;
       abasteceTanque: boolean;
       abasteceUrea: boolean;
+      abasteceUreaRuta: boolean;
     }
   ) {
     try {
       const result = await client.query(
         `INSERT INTO combustible_grifos
-           (tenant_id, nombre, abastece_ruta, abastece_tanque, abastece_urea, usuario_id)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id, nombre, activo, abastece_ruta, abastece_tanque, abastece_urea, usuario_id, creado_en`,
+           (tenant_id, nombre, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta, usuario_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, nombre, activo, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta, usuario_id, creado_en`,
         [
           tenantId,
           data.nombre,
           data.abasteceRuta,
           data.abasteceTanque,
           data.abasteceUrea,
+          data.abasteceUreaRuta,
           usuarioId,
         ]
       );
@@ -5899,20 +5901,23 @@ export class CombustibleRepository {
       abasteceRuta: boolean;
       abasteceTanque: boolean;
       abasteceUrea: boolean;
+      abasteceUreaRuta: boolean;
     }
   ) {
     try {
       const result = await client.query(
         `UPDATE combustible_grifos
-         SET nombre = $1, activo = $2, abastece_ruta = $3, abastece_tanque = $4, abastece_urea = $5
-         WHERE id = $6 AND tenant_id = $7
-         RETURNING id, nombre, activo, abastece_ruta, abastece_tanque, abastece_urea, usuario_id, creado_en`,
+         SET nombre = $1, activo = $2, abastece_ruta = $3, abastece_tanque = $4, abastece_urea = $5,
+             abastece_urea_ruta = $6
+         WHERE id = $7 AND tenant_id = $8
+         RETURNING id, nombre, activo, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta, usuario_id, creado_en`,
         [
           data.nombre,
           data.activo,
           data.abasteceRuta,
           data.abasteceTanque,
           data.abasteceUrea,
+          data.abasteceUreaRuta,
           id,
           tenantId,
         ]

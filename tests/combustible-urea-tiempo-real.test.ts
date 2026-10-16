@@ -143,6 +143,7 @@ describe("combustible: urea en tiempo real (entrega 5)", () => {
         abastece_ruta: true,
         abastece_tanque: false,
         abastece_urea: true,
+        abastece_urea_ruta: true,
       })
     ).body.id;
     tanqueId = (

@@ -62,6 +62,7 @@ describe("combustible: reporte de consumo por equipo", () => {
       abastece_ruta: false,
       abastece_tanque: false,
       abastece_urea: true,
+      abastece_urea_ruta: true,
     });
     grifoUrea = grifo.body.id;
 

@@ -165,6 +165,7 @@ describe("combustible: stock de urea y sus umbrales (migración 0117)", () => {
       abastece_ruta: false,
       abastece_tanque: false,
       abastece_urea: true,
+      abastece_urea_ruta: true,
     });
     grifoUrea = grifo.body.id;
   });

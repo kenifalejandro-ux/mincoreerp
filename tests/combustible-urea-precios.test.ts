@@ -124,6 +124,7 @@ describe("combustible: precios de urea (migración 0121)", () => {
         abastece_ruta: true,
         abastece_tanque: false,
         abastece_urea: urea,
+        abastece_urea_ruta: urea,
       })
     ).body.id as number;
 
