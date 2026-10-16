@@ -5685,6 +5685,8 @@ export class CombustibleController {
           nombre: data.nombre,
           abasteceRuta: data.abastece_ruta,
           abasteceTanque: data.abastece_tanque,
+          abasteceUrea: data.abastece_urea,
+          abasteceUreaRuta: data.abastece_urea_ruta,
         },
         contexto: contextoAuditoriaModulo(req),
       });
@@ -5716,8 +5718,12 @@ export class CombustibleController {
         usuarioId: req.usuario!.id,
         detalle: {
           grifoId: id,
+          nombre: data.nombre,
+          activo: data.activo,
           abasteceRuta: data.abastece_ruta,
           abasteceTanque: data.abastece_tanque,
+          abasteceUrea: data.abastece_urea,
+          abasteceUreaRuta: data.abastece_urea_ruta,
         },
         contexto: contextoAuditoriaModulo(req),
       });
