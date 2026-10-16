@@ -13,6 +13,7 @@ import {
   SearchCheck,
   ShieldCheck,
   Tag,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import { Fragment, useState } from "react";
@@ -32,6 +33,7 @@ const SUBMENU_COMBUSTIBLE: { tab: string; label: string; Icono: LucideIcon }[] =
   { tab: "combustible:historico", label: "Histórico", Icono: History },
   { tab: "combustible:urea", label: "Urea", Icono: Droplets },
   { tab: "combustible:precios", label: "Precios", Icono: Tag },
+  { tab: "combustible:proveedores", label: "Proveedores", Icono: Wrench },
   { tab: "combustible:auditoria", label: "Auditoría", Icono: SearchCheck },
   { tab: "combustible:bitacora", label: "Bitácora", Icono: ScrollText },
 ];
@@ -56,6 +58,11 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
     // se mudaron acá ya eran suyos).
     if (tab === "combustible:precios")
       return usuario?.rol === "admin" || usuario?.rol === "operador";
+    // Era un botón de Tanques: se respeta su permiso anterior si existe.
+    if (tab === "combustible:proveedores") {
+      const antiguo = usuario?.permisosPestanas?.["combustible:tanques:proveedores"];
+      return antiguo ?? (usuario?.rol === "admin" || usuario?.rol === "operador");
+    }
     // 0119: el conductor también ve Urea, solo para registrar la compra en
     // ruta (el panel le muestra únicamente ese botón).
     if (usuario?.rol === "conductor_ruta")

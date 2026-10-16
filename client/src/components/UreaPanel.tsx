@@ -118,9 +118,9 @@ function AvisoSinEnvases() {
 function AvisoSinProveedores() {
   return (
     <span className="text-xs text-amber-700">
-      No hay proveedores marcados para urea. Un admin los marca en Combustible → Tanques →
-      Proveedores, con la casilla <strong>&quot;Urea&quot;</strong> (el mismo proveedor puede
-      venderte diésel y urea a la vez).
+      No hay proveedores marcados para urea. Un admin los marca en Combustible → Proveedores, con la
+      casilla <strong>&quot;Urea&quot;</strong> (el mismo proveedor puede venderte diésel y urea a
+      la vez).
     </span>
   );
 }
