@@ -94,3 +94,22 @@ body.tema-oscuro .vidrio-urea::after {
     background: #192526;
   }
 }
+
+/* Barra de desplazamiento de las repisas: fina y en lima, solo aquí. */
+.scroll-urea {
+  scrollbar-width: thin;
+  scrollbar-color: #badc1e transparent;
+}
+.scroll-urea::-webkit-scrollbar {
+  width: 8px;
+}
+.scroll-urea::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scroll-urea::-webkit-scrollbar-thumb {
+  background: #badc1e;
+  border-radius: 8px;
+}
+.scroll-urea::-webkit-scrollbar-thumb:hover {
+  background: #a5c41a;
+}
