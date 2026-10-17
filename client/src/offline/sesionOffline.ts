@@ -41,15 +41,31 @@ export function usuarioActivo(): string | null {
  *  la cola: puede tener trabajo real sin sincronizar, y borrarla haría
  *  desaparecer checklists que el operario ya dio por guardados. Las
  *  entradas quedan esperando a que su dueño vuelva a entrar. */
-export async function limpiarCacheDeDatos(): Promise<void> {
+export async function limpiarCacheDeDatos(esperaMaxMs = 1500): Promise<void> {
   if (typeof caches === "undefined") return;
-  try {
-    const nombres = await caches.keys();
-    await Promise.all(
-      nombres.filter((n) => n.startsWith(PREFIJO_CACHE_DATOS)).map((n) => caches.delete(n))
-    );
-  } catch {
-    // Sin caches API (navegador viejo, contexto no seguro): no hay nada
-    // cacheado que limpiar.
-  }
+  const limpieza = (async () => {
+    try {
+      const nombres = await caches.keys();
+      await Promise.all(
+        nombres.filter((n) => n.startsWith(PREFIJO_CACHE_DATOS)).map((n) => caches.delete(n))
+      );
+    } catch {
+      // Sin caches API (navegador viejo, contexto no seguro): no hay nada
+      // cacheado que limpiar.
+    }
+  })();
+  // CacheStorage puede tardar mucho o no responder (visto en Firefox con la
+  // máquina cargada): cerrar sesión no puede quedarse esperándolo, porque
+  // `logout` recién saca al usuario DESPUÉS de esto y la pantalla seguía
+  // mostrando la sesión ya cerrada en el servidor. Pasado el plazo se sigue; la
+  // limpieza termina por su cuenta, y el próximo login es una acción humana que
+  // llega mucho después.
+  let plazo: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    limpieza,
+    new Promise<void>((resolver) => {
+      plazo = setTimeout(resolver, esperaMaxMs);
+    }),
+  ]);
+  clearTimeout(plazo);
 }
