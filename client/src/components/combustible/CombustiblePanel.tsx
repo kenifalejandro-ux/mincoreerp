@@ -36,12 +36,13 @@ import { useSedes } from "../comunes/useSedes";
 import VentanaFlotante from "../comunes/VentanaFlotante";
 import { enfocarPaginaPrincipal } from "../comunes/ventanasFlotantesEstado";
 import HistoricoCliente from "../HistoricoCliente";
-import UreaPanel, { PreciosUreaPagina } from "../UreaPanel";
+import UreaPanel from "../UreaPanel";
 
 import { EVENTOS_UREA, avisarCambioDeUrea } from "./eventosUrea";
 import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from "./Precintos";
 import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
 import VentanaSurtidores from "./Surtidores";
+import PreciosPagina from "./PreciosPagina";
 import Proveedores from "./Proveedores";
 import TanquetasPanel from "./Tanquetas";
 import MiViaje from "./MiViaje";
@@ -326,23 +327,6 @@ interface Grifo {
   abastece_urea: boolean;
   // 0133: urea EXTERNA (compra en ruta); `abastece_urea` es la INTERNA (planta).
   abastece_urea_ruta: boolean;
-}
-
-/** Historial de precios (migrations/0063) -- se apila, nunca se pisa. Un
- *  precio mal cargado se anula (anulada_en no-null), no se borra. */
-interface Precio {
-  id: number;
-  tipo_combustible: Tanque["tipo_combustible"];
-  combustible_id: number | null;
-  grifo_id: number | null;
-  precio_unitario: string;
-  vigente_desde: string;
-  tanque_nombre: string | null;
-  grifo_nombre: string | null;
-  registrado_por_nombre: string | null;
-  anulada_en: string | null;
-  motivo_anulacion: string | null;
-  anulado_por_nombre: string | null;
 }
 
 /** Una fila del historial de despachos (GET /despachos). Trae los ids
@@ -1713,21 +1697,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   // --- Grifos externos (migrations/0063) ---
   const [grifos, setGrifos] = useState<Grifo[]>([]);
-  // --- Precios de combustible (migrations/0063) ---
-  const [precios, setPrecios] = useState<Precio[]>([]);
-  const [subPrecios, setSubPrecios] = useState<"combustible" | "urea">("combustible");
-  const [precioForm, setPrecioForm] = useState({
-    tipo_combustible: "diesel_b5" as Tanque["tipo_combustible"],
-    aplicaA: "tanque" as "tanque" | "grifo",
-    combustible_id: "",
-    grifo_id: "",
-    precio_unitario: "",
-  });
-  const [vigenteDesde, setVigenteDesde] = useState(ahoraParaInputLocal());
-  const [guardandoPrecio, setGuardandoPrecio] = useState(false);
-  const [precioAAnular, setPrecioAAnular] = useState<Precio | null>(null);
-  const [motivoAnulacionPrecio, setMotivoAnulacionPrecio] = useState("");
-  const [anulandoPrecio, setAnulandoPrecio] = useState(false);
 
   // --- Historial de despachos (solo lectura, GET /despachos) ---
   const [modalHistorialDespachosAbierto, setModalHistorialDespachosAbierto] = useState(false);
@@ -1985,12 +1954,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     () => grifos.filter((g) => g.activo && g.abastece_tanque),
     [grifos]
   );
-
-  const cargarPrecios = useCallback(async () => {
-    const res = await apiFetch("/api/erp/combustible/precios");
-    const data = await res.json().catch(() => null);
-    setPrecios(Array.isArray(data) ? data : []);
-  }, []);
 
   useEffect(() => {
     // Patrón estándar de carga al montar -- ver IpercView.tsx.
@@ -3292,75 +3255,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   // --- Grifos externos (migrations/0063) ---
 
-  // --- Precios de combustible (migrations/0063) ---
-
-  // Al entrar a la pestaña Precios se prepara el formulario y se trae el
-  // historial (antes lo hacía el botón "Precios" de Tanques).
-  useEffect(() => {
-    if (pestanaCombustible !== "precios") return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPrecioForm({
-      tipo_combustible: "diesel_b5",
-      aplicaA: "tanque",
-      combustible_id: "",
-      grifo_id: "",
-      precio_unitario: "",
-    });
-    setVigenteDesde(ahoraParaInputLocal());
-    cargarPrecios();
-  }, [pestanaCombustible, cargarPrecios]);
-
-  const handleCrearPrecio = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (guardandoPrecio) return;
-    setGuardandoPrecio(true);
-    try {
-      const res = await apiFetch("/api/erp/combustible/precios", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tipo_combustible: precioForm.tipo_combustible,
-          combustible_id:
-            precioForm.aplicaA === "tanque" ? Number(precioForm.combustible_id) : undefined,
-          grifo_id: precioForm.aplicaA === "grifo" ? Number(precioForm.grifo_id) : undefined,
-          precio_unitario: Number(precioForm.precio_unitario),
-          vigente_desde: new Date(vigenteDesde).toISOString(),
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        alert(mensajeDeError(body, "No se pudo cargar el precio."));
-        return;
-      }
-      setPrecioForm({ ...precioForm, precio_unitario: "" });
-      await cargarPrecios();
-    } finally {
-      setGuardandoPrecio(false);
-    }
-  };
-
-  const handleAnularPrecio = async () => {
-    if (anulandoPrecio || !precioAAnular || !motivoAnulacionPrecio.trim()) return;
-    setAnulandoPrecio(true);
-    try {
-      const res = await apiFetch(`/api/erp/combustible/precios/${precioAAnular.id}/anular`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ motivo: motivoAnulacionPrecio }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        alert(mensajeDeError(body, "No se pudo anular el precio."));
-        return;
-      }
-      setPrecioAAnular(null);
-      setMotivoAnulacionPrecio("");
-      await cargarPrecios();
-    } finally {
-      setAnulandoPrecio(false);
-    }
-  };
-
   // --- Historial de despachos (solo lectura) ---
 
   const cargarHistorialDespachos = useCallback(
@@ -3853,12 +3747,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const puedePreciosUrea =
     usuario?.permisosPestanas?.["combustible:urea:precios"] ??
     (esAdmin || usuario?.rol === "operador");
-  const subPreciosActiva: "combustible" | "urea" | null =
-    puedePreciosCombustible && (subPrecios === "combustible" || !puedePreciosUrea)
-      ? "combustible"
-      : puedePreciosUrea
-        ? "urea"
-        : null;
 
   return (
     <div className="p-2 sm:p-4 lg:p-8 animate-in fade-in duration-500">
@@ -3975,39 +3863,15 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       </div>
       {pestanaCombustible === "historico" && <HistoricoCliente />}
       {pestanaCombustible === "urea" && <UreaPanel />}
-      {pestanaCombustible === "precios" && (
-        <div className="mb-6">
-          <h1 className="text-lg sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight">
-            Precios
-          </h1>
-          <div className="flex gap-2 mt-4" role="tablist">
-            {permiteTanque("precios") && (
-              <button
-                role="tab"
-                aria-selected={subPreciosActiva === "combustible"}
-                onClick={() => setSubPrecios("combustible")}
-                className={`${BTN_BASE} ${subPreciosActiva === "combustible" ? BTN_ESTILO.primary : BTN_ESTILO.muted}`}
-              >
-                Precios combustible
-              </button>
-            )}
-            {puedePreciosUrea && (
-              <button
-                role="tab"
-                aria-selected={subPreciosActiva === "urea"}
-                onClick={() => setSubPrecios("urea")}
-                className={`${BTN_BASE} ${subPreciosActiva === "urea" ? BTN_ESTILO.primary : BTN_ESTILO.muted}`}
-              >
-                Precios urea
-              </button>
-            )}
-          </div>
-          {subPreciosActiva === "urea" && (
-            <div className="mt-4">
-              <PreciosUreaPagina />
-            </div>
-          )}
-        </div>
+      {pestanaCombustible === "precios" && (puedePreciosCombustible || puedePreciosUrea) && (
+        <PreciosPagina
+          tanques={tanques}
+          grifos={grifos}
+          onRecargarGrifos={cargarGrifos}
+          puedeCombustible={puedePreciosCombustible}
+          puedeUrea={!!puedePreciosUrea}
+          puedeEscribir={esAdmin || usuario?.rol === "operador"}
+        />
       )}
       {pestanaCombustible === "tanquetas" && <TanquetasPanel />}
       {pestanaCombustible === "viajes" && <ViajesPanel />}
@@ -6617,293 +6481,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       )}
       {pestanaCombustible === "proveedores" && (
         <Proveedores grifos={grifos} onRecargar={cargarGrifos} />
-      )}
-      {/* Precios de combustible (migrations/0063): pestaña "Precios" */}
-      {pestanaCombustible === "precios" && subPreciosActiva === "combustible" && (
-        <div className="px-0 pb-4">
-          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl">
-            <div className="p-6 border-b">
-              <h3 className="text-xl font-bold">Precio de combustible</h3>
-            </div>
-            <form onSubmit={handleCrearPrecio} className="p-6 space-y-4 border-b">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label
-                    htmlFor="precio-tipo-combustible"
-                    className="text-xs font-bold text-slate-700 uppercase"
-                  >
-                    Combustible
-                  </label>
-                  <select
-                    id="precio-tipo-combustible"
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-                    value={precioForm.tipo_combustible}
-                    onChange={(e) =>
-                      setPrecioForm({
-                        ...precioForm,
-                        tipo_combustible: e.target.value as Tanque["tipo_combustible"],
-                      })
-                    }
-                  >
-                    {Object.entries(ETIQUETA_TIPO_COMBUSTIBLE).map(([valor, etiqueta]) => (
-                      <option key={valor} value={valor}>
-                        {etiqueta}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {/* col-span-2: la etiqueta larga ("Precio de venta interna
-                    (tanque → flotas)") se corta a la mitad de la flecha en
-                    media columna, y truncada dice otra cosa. */}
-                <div className="space-y-1 sm:col-span-2">
-                  <label
-                    htmlFor="precio-aplica-a"
-                    className="text-xs font-bold text-slate-700 uppercase"
-                  >
-                    Tipo de precio
-                  </label>
-                  {/* Las dos opciones son precios DISTINTOS y hay que decirlo:
-                      el del tanque es lo que se le cobra a las flotas (venta
-                      interna), el del grifo es lo que cobra un tercero en la
-                      ruta (compra). Cuando decían solo "Tanque propio" /
-                      "Grifo externo" era fácil leer el primero como "lo que me
-                      cuesta el combustible del tanque", que es otra cosa: ese
-                      es el costo promedio, y lo calcula el motor de
-                      recepciones (Fase C), no se carga acá. */}
-                  <select
-                    id="precio-aplica-a"
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-                    value={precioForm.aplicaA}
-                    onChange={(e) =>
-                      setPrecioForm({
-                        ...precioForm,
-                        aplicaA: e.target.value as "tanque" | "grifo",
-                        combustible_id: "",
-                        grifo_id: "",
-                      })
-                    }
-                  >
-                    <option value="tanque">Precio de venta interna (tanque → flotas)</option>
-                    <option value="grifo">Precio de compra a un proveedor de ruta</option>
-                  </select>
-                </div>
-              </div>
-
-              <p className="text-xs text-slate-600 -mt-1">
-                Acá no va el costo de las cisternas que llenan el tanque: ese se carga en cada
-                recepción, desde su factura.
-              </p>
-
-              {precioForm.aplicaA === "tanque" ? (
-                <div className="space-y-1">
-                  <label
-                    htmlFor="precio-tanque"
-                    className="text-xs font-bold text-slate-700 uppercase"
-                  >
-                    Tanque
-                  </label>
-                  <select
-                    id="precio-tanque"
-                    required
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-                    value={precioForm.combustible_id}
-                    onChange={(e) =>
-                      setPrecioForm({ ...precioForm, combustible_id: e.target.value })
-                    }
-                  >
-                    <option value="" disabled>
-                      Elegir tanque
-                    </option>
-                    {tanques.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.tanque_nombre}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  <label
-                    htmlFor="precio-grifo"
-                    className="text-xs font-bold text-slate-700 uppercase"
-                  >
-                    Proveedor
-                  </label>
-                  <select
-                    id="precio-grifo"
-                    required
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-                    value={precioForm.grifo_id}
-                    onChange={(e) => setPrecioForm({ ...precioForm, grifo_id: e.target.value })}
-                  >
-                    <option value="" disabled>
-                      Elegir proveedor
-                    </option>
-                    {grifos.map((g) => (
-                      <option key={g.id} value={g.id}>
-                        {g.nombre}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label
-                    htmlFor="precio-valor"
-                    className="text-xs font-bold text-slate-700 uppercase"
-                  >
-                    Precio por galón
-                  </label>
-                  <input
-                    id="precio-valor"
-                    type="number"
-                    min={0}
-                    step="0.0001"
-                    required
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
-                    value={precioForm.precio_unitario}
-                    onChange={(e) =>
-                      setPrecioForm({ ...precioForm, precio_unitario: e.target.value })
-                    }
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label
-                    htmlFor="precio-vigente-desde"
-                    className="text-xs font-bold text-slate-700 uppercase"
-                  >
-                    Vigente desde
-                  </label>
-                  <input
-                    id="precio-vigente-desde"
-                    type="datetime-local"
-                    required
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
-                    value={vigenteDesde}
-                    onChange={(e) => setVigenteDesde(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={guardandoPrecio}
-                className="w-full bg-slate-900 text-white font-bold py-3 rounded-2xl hover:bg-slate-800 transition-all disabled:opacity-50"
-              >
-                {guardandoPrecio ? "Guardando..." : "Cargar precio"}
-              </button>
-            </form>
-
-            <div className="p-6 space-y-2">
-              <h4 className="text-xs font-bold text-slate-700 uppercase mb-2">Historial</h4>
-              {precios.length === 0 ? (
-                <p className="text-sm text-slate-400 text-center">
-                  Todavía no hay precios cargados.
-                </p>
-              ) : (
-                precios.map((p) => (
-                  <div
-                    key={p.id}
-                    className={`p-3 rounded-xl border text-sm ${
-                      p.anulada_en ? "border-red-100 bg-red-50 text-slate-400" : "border-slate-100"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span
-                        className={p.anulada_en ? "line-through" : "font-medium text-slate-800"}
-                      >
-                        {ETIQUETA_TIPO_COMBUSTIBLE[p.tipo_combustible]} —{" "}
-                        {p.tanque_nombre ?? p.grifo_nombre} — S/{" "}
-                        {Number(p.precio_unitario).toLocaleString("es-PE")}
-                        {/* Sin esto, dos filas del historial se ven idénticas
-                            y no hay forma de saber si el número es de venta o
-                            de compra -- misma ambigüedad que el selector. */}
-                        <span className="ml-2 text-[11px] font-normal text-slate-500">
-                          {p.combustible_id !== null ? "venta interna" : "compra en ruta"}
-                        </span>
-                      </span>
-                      {!p.anulada_en && (
-                        <button
-                          onClick={() => setPrecioAAnular(p)}
-                          className="text-xs font-bold text-red-600 hover:text-red-800"
-                        >
-                          Anular
-                        </button>
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-400 mt-1">
-                      Vigente desde {formatearFecha(p.vigente_desde)}
-                      {p.registrado_por_nombre ? ` · cargado por ${p.registrado_por_nombre}` : ""}
-                    </p>
-                    {p.anulada_en && (
-                      <p className="text-xs text-red-500 mt-1">
-                        Anulado{p.anulado_por_nombre ? ` por ${p.anulado_por_nombre}` : ""}: "
-                        {p.motivo_anulacion}"
-                      </p>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-      {/* Modal: anular precio (motivo obligatorio) -- se monta por encima
-          del historial, que queda abierto detrás. */}
-      {precioAAnular && (
-        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
-          <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl">
-            <div className="p-6 border-b flex justify-between items-center">
-              <h3 className="text-xl font-bold">Anular precio</h3>
-              <button
-                onClick={() => setPrecioAAnular(null)}
-                aria-label="Cerrar"
-                className="text-slate-400 hover:text-slate-900"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-6 space-y-4">
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900">
-                <p>
-                  Vas a anular el precio de{" "}
-                  <span className="font-bold">
-                    S/ {Number(precioAAnular.precio_unitario).toLocaleString("es-PE")}
-                  </span>
-                  . No se borra: queda en el historial marcado como anulado, y el precio "vigente"
-                  cae al anterior válido.
-                </p>
-              </div>
-              <div className="space-y-1">
-                <label
-                  htmlFor="motivo-anulacion-precio"
-                  className="text-xs font-bold text-slate-700 uppercase"
-                >
-                  Motivo (obligatorio)
-                </label>
-                <textarea
-                  id="motivo-anulacion-precio"
-                  required
-                  rows={3}
-                  maxLength={500}
-                  placeholder="Ej: se tipeó 999 en vez de 17.9"
-                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-                  value={motivoAnulacionPrecio}
-                  onChange={(e) => setMotivoAnulacionPrecio(e.target.value)}
-                />
-              </div>
-              <button
-                onClick={handleAnularPrecio}
-                disabled={anulandoPrecio || motivoAnulacionPrecio.trim() === ""}
-                className="w-full bg-amber-700 text-white font-bold py-4 rounded-2xl hover:bg-amber-800 transition-all disabled:opacity-50"
-              >
-                {anulandoPrecio ? "Anulando..." : "Anular precio"}
-              </button>
-            </div>
-          </div>
-        </div>
       )}
       {/* KARDEX DEL TANQUE: las tres historias en una sola línea de tiempo.
 

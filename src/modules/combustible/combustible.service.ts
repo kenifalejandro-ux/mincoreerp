@@ -10,6 +10,7 @@ import type {
   ActualizarTanqueCombustibleInput,
   CrearDespachoCombustibleInput,
   CrearPrecioCombustibleInput,
+  CrearPreciosCombustibleMasivoInput,
   CrearRecepcionCombustibleInput,
   CrearGrifoCombustibleInput,
   ActualizarGrifoCombustibleInput,
@@ -7084,6 +7085,47 @@ export class CombustibleService {
       precioUnitario: data.precio_unitario,
       vigenteDesde: data.vigente_desde ?? new Date().toISOString(),
     });
+  }
+
+  /** El mismo precio para varios tanques o varios proveedores de ruta. Se
+   *  llama dentro de UN withTenant (una transacción): si un destino no existe
+   *  o no es de ruta, el error corta antes de insertar el siguiente y el
+   *  rollback deja todo como estaba. Los destinos se validan por la sesión del
+   *  tenant (RLS), así que uno de otra empresa "no existe". */
+  async crearPreciosMasivo(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: CrearPreciosCombustibleMasivoInput
+  ) {
+    const vigenteDesde = data.vigente_desde ?? new Date().toISOString();
+    const creados = [];
+    for (const combustibleId of data.combustible_ids ?? []) {
+      const tanque = await this.repository.findById(client, tenantId, combustibleId);
+      if (!tanque) throw new Error(`combustible_id ${combustibleId} no existe en este tenant`);
+      creados.push(
+        await this.repository.crearPrecio(client, tenantId, usuarioId, {
+          tipoCombustible: data.tipo_combustible,
+          combustibleId,
+          grifoId: null,
+          precioUnitario: data.precio_unitario,
+          vigenteDesde,
+        })
+      );
+    }
+    for (const grifoId of data.grifo_ids ?? []) {
+      await this.validarRolGrifo(client, tenantId, grifoId, "ruta");
+      creados.push(
+        await this.repository.crearPrecio(client, tenantId, usuarioId, {
+          tipoCombustible: data.tipo_combustible,
+          combustibleId: null,
+          grifoId,
+          precioUnitario: data.precio_unitario,
+          vigenteDesde,
+        })
+      );
+    }
+    return creados;
   }
 
   /** Precio vigente a una fecha, para un tanque O un grifo (nunca los
