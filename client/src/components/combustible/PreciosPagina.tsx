@@ -167,6 +167,21 @@ interface FormPrecio {
   buscaDestino: string;
 }
 
+/** Lo que cubre la confirmación del salto: el precio, a quiénes se aplica y
+ *  desde cuándo. Si cambia cualquiera de esos datos, hay que volver a
+ *  confirmar. */
+const claveConfirmacion = (f: FormPrecio) =>
+  [
+    f.precio,
+    f.producto,
+    f.tipo,
+    f.comb,
+    [...f.destinos].sort((a, b) => a - b).join(","),
+    f.grifoUrea,
+    f.presentacion,
+    f.desde,
+  ].join("|");
+
 interface Props {
   tanques: TanquePrecio[];
   grifos: ProveedorPrecio[];
@@ -185,13 +200,18 @@ export default function PreciosPagina({
   puedeUrea,
   puedeEscribir,
 }: Props) {
-  const escribeComb = puedeCombustible && puedeEscribir;
-  const escribeUrea = puedeUrea && puedeEscribir;
-
   const [datos, setDatos] = useState<Datos>(DATOS_VACIOS);
   const [cargado, setCargado] = useState(false);
   const [fallos, setFallos] = useState<string[]>([]);
   const [ahora, setAhora] = useState(0);
+  // Sin la lista de precios no hay vigente contra el cual comparar: el aviso
+  // del salto y la confirmación del 50 % se apagarían en silencio y un precio
+  // absurdo pasaría limpio. Mientras esa lista no cargue, ese producto no se
+  // escribe.
+  const fallaComb = fallos.includes("los precios de combustible");
+  const fallaUrea = fallos.includes("los precios de urea");
+  const escribeComb = puedeCombustible && puedeEscribir && !fallaComb;
+  const escribeUrea = puedeUrea && puedeEscribir && !fallaUrea;
   // Una respuesta lenta de una carga vieja no debe pisar a la más nueva.
   const pedido = useRef(0);
 
@@ -251,9 +271,11 @@ export default function PreciosPagina({
           proveedoresUrea: datos.proveedoresUrea,
           presentaciones: datos.presentaciones,
         },
-        { combustible: puedeCombustible, urea: puedeUrea }
+        // Si la lista de precios de un producto no cargó, no se muestra: sus
+        // filas saldrían todas "sin precio" y sería mentira.
+        { combustible: puedeCombustible && !fallaComb, urea: puedeUrea && !fallaUrea }
       ),
-    [datos, tanques, grifos, puedeCombustible, puedeUrea]
+    [datos, tanques, grifos, puedeCombustible, puedeUrea, fallaComb, fallaUrea]
   );
   const porClave = useMemo(() => new Map(filas.map((f) => [f.clave, f])), [filas]);
 
@@ -321,6 +343,8 @@ export default function PreciosPagina({
     const tipoNuevo: TipoPrecio = fila?.producto === "combustible" ? fila.tipo : "interna";
     const base = { tipo: tipoNuevo, comb };
     const activas = datos.presentaciones.filter((p) => p.activa);
+    // La pantalla puede llevar horas abierta: "ahora" se renueva al abrir.
+    setAhora(Date.now());
     setErrorForm(null);
     setForm({
       producto: prod,
@@ -377,7 +401,7 @@ export default function PreciosPagina({
     nuevoPrecio > 0 ? vigentesObjetivo.map((base) => variacionPct(nuevoPrecio, base)) : [];
   const salto = variaciones.length ? Math.max(...variaciones.map(Math.abs)) : 0;
   const pideConfirmar = salto > UMBRAL_CONFIRMACION_PCT;
-  const confirmado = !!form && form.confirmadoPara === form.precio;
+  const confirmado = !!form && form.confirmadoPara === claveConfirmacion(form);
   const sinDestino = objetivos.length === 0;
   const programadoFuturo = !!form?.desde && new Date(form.desde).getTime() > ahora;
   const botonBloqueado =
@@ -533,7 +557,11 @@ export default function PreciosPagina({
           role="alert"
           className="flex flex-wrap items-center gap-3 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300"
         >
-          <span>No se pudo cargar {fallos.join(", ")}.</span>
+          <span>
+            No se pudo cargar {fallos.join(", ")}.
+            {(fallaComb || fallaUrea) &&
+              " Hasta que cargue, no se pueden cargar ni cambiar precios de ese producto."}
+          </span>
           <button
             type="button"
             onClick={() => void cargar()}
@@ -1172,7 +1200,9 @@ export default function PreciosPagina({
                       type="checkbox"
                       checked={confirmado}
                       onChange={(e) =>
-                        cambiarForm({ confirmadoPara: e.target.checked ? form.precio : "" })
+                        cambiarForm({
+                          confirmadoPara: e.target.checked ? claveConfirmacion(form) : "",
+                        })
                       }
                       className="h-4 w-4 accent-[#BADC1E]"
                     />

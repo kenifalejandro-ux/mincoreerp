@@ -1478,7 +1478,10 @@ export const crearPreciosCombustibleMasivoSchema = z
       .min(1)
       .max(TOPE_DESTINOS_PRECIO_MASIVO)
       .optional(),
-    precio_unitario: z.number().positive(),
+    // Rango explícito: la columna es NUMERIC(10,4) y un valor fuera de ella o
+    // redondeado a 0 reventaba con 500. El tope es el mismo que el precio de
+    // urea por bulto. Un precio de 0.001 ya no cabe, y no es un precio real.
+    precio_unitario: z.number().min(0.01).max(100_000),
     vigente_desde: z.string().datetime().optional(),
   })
   .superRefine((data, ctx) => {

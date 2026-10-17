@@ -217,6 +217,9 @@ describe("combustible: precios masivos", () => {
       ["más de 50 destinos", { combustible_ids: Array.from({ length: 51 }, (_, i) => i + 1) }],
       ["precio cero", { combustible_ids: [1], precio_unitario: 0 }],
       ["precio negativo", { combustible_ids: [1], precio_unitario: -3 }],
+      ["precio que se redondea a cero", { combustible_ids: [1], precio_unitario: 0.001 }],
+      ["precio sobre el tope", { combustible_ids: [1], precio_unitario: 100_001 }],
+      ["precio fuera de la columna (1e21)", { combustible_ids: [1], precio_unitario: 1e21 }],
       ["tipo de combustible inventado", { combustible_ids: [1], tipo_combustible: "kerosene" }],
     ];
     for (const [nombre, extra] of casos) {
