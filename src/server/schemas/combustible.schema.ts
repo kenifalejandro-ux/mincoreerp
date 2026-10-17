@@ -1458,6 +1458,55 @@ export const crearPrecioCombustibleSchema = z
 
 export type CrearPrecioCombustibleInput = z.infer<typeof crearPrecioCombustibleSchema>;
 
+/** Un mismo precio para varios tanques O varios proveedores de ruta, en una
+ *  sola operación: o se cargan todos o no se carga ninguno. Cuando el
+ *  combustible sube, entrar tanque por tanque deja a medias el cambio si se
+ *  olvida uno. Nunca mezcla tanques con proveedores: es "venta interna" o
+ *  "compra a un proveedor de ruta", no las dos a la vez. */
+const TOPE_DESTINOS_PRECIO_MASIVO = 50;
+
+export const crearPreciosCombustibleMasivoSchema = z
+  .object({
+    tipo_combustible: z.enum(TIPOS_COMBUSTIBLE),
+    combustible_ids: z
+      .array(z.number().int().positive())
+      .min(1)
+      .max(TOPE_DESTINOS_PRECIO_MASIVO)
+      .optional(),
+    grifo_ids: z
+      .array(z.number().int().positive())
+      .min(1)
+      .max(TOPE_DESTINOS_PRECIO_MASIVO)
+      .optional(),
+    // Rango explícito: la columna es NUMERIC(10,4) y un valor fuera de ella o
+    // redondeado a 0 reventaba con 500. El tope es el mismo que el precio de
+    // urea por bulto. Un precio de 0.001 ya no cabe, y no es un precio real.
+    precio_unitario: z.number().min(0.01).max(100_000),
+    vigente_desde: z.string().datetime().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if ((data.combustible_ids !== undefined) === (data.grifo_ids !== undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["combustible_ids"],
+        message: "El precio va a tanques o a proveedores de ruta, nunca los dos ni ninguno",
+      });
+      return;
+    }
+    const ids = data.combustible_ids ?? data.grifo_ids ?? [];
+    if (new Set(ids).size !== ids.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [data.combustible_ids ? "combustible_ids" : "grifo_ids"],
+        message: "Hay destinos repetidos en la lista",
+      });
+    }
+  });
+
+export type CrearPreciosCombustibleMasivoInput = z.infer<
+  typeof crearPreciosCombustibleMasivoSchema
+>;
+
 /** Anular un precio mal cargado -- mismo criterio que
  *  anularLecturaCombustibleSchema: `motivo` obligatorio, la fila NUNCA se
  *  borra ni se edita. */

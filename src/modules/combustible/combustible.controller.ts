@@ -63,6 +63,7 @@ import type {
   CrearGrifoCombustibleInput,
   ActualizarGrifoCombustibleInput,
   CrearPrecioCombustibleInput,
+  CrearPreciosCombustibleMasivoInput,
   AnularPrecioCombustibleInput,
   CrearRecepcionCombustibleInput,
   AnularRecepcionCombustibleInput,
@@ -5780,6 +5781,45 @@ export class CombustibleController {
         return;
       }
       res.status(500).json({ error: "Error al crear el precio" });
+    }
+  }
+
+  /** POST /precios/masivo -- el mismo precio a varios tanques o proveedores
+   *  de ruta, todo o nada. Una entrada de bitácora por precio creado, con la
+   *  misma acción que el alta individual, para que la bitácora no distinga
+   *  cómo se cargó. */
+  async crearPreciosMasivo(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const data = req.validatedBody as CrearPreciosCombustibleMasivoInput;
+      const precios = await withTenant(tenantId, (client) =>
+        service.crearPreciosMasivo(client, tenantId, req.usuario!.id, data)
+      );
+      for (const precio of precios) {
+        await registrarAuditoria({
+          accion: "combustible.precio_crear",
+          tenantId,
+          usuarioId: req.usuario!.id,
+          detalle: {
+            precioId: precio.id,
+            tipoCombustible: data.tipo_combustible,
+            precioUnitario: data.precio_unitario,
+            masivo: true,
+          },
+          contexto: contextoAuditoriaModulo(req),
+        });
+      }
+      res.status(201).json(precios);
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        (err.message.includes("no existe en este tenant") ||
+          err.message.includes("no está marcado como proveedor"))
+      ) {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      res.status(500).json({ error: "Error al crear los precios" });
     }
   }
 
