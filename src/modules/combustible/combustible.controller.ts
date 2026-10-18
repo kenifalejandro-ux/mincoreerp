@@ -5670,6 +5670,18 @@ export class CombustibleController {
     }
   }
 
+  async listarGrifosParaFormulario(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const grifos = await withTenant(tenantId, (client) =>
+        service.listarGrifosDeRutaParaFormulario(client, tenantId)
+      );
+      res.json(grifos);
+    } catch {
+      res.status(500).json({ error: "Error al listar proveedores" });
+    }
+  }
+
   async crearGrifo(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
@@ -5828,6 +5840,15 @@ export class CombustibleController {
    *  `precio: null` si no hay ninguno cargado todavía -- no es un error,
    *  el operador simplemente tipea el costo a mano esta vez. */
   async getPrecioVigente(req: Request, res: Response) {
+    return this.responderPrecioVigente(req, res, false);
+  }
+
+  /** Mismo cálculo, respuesta mínima y sin el tanque para el conductor. */
+  async getPrecioVigenteParaFormulario(req: Request, res: Response) {
+    return this.responderPrecioVigente(req, res, true);
+  }
+
+  private async responderPrecioVigente(req: Request, res: Response, soloParaFormulario: boolean) {
     try {
       const tenantId = getTenantId(req);
       const tipoCombustible = req.query.tipo_combustible;
@@ -5853,17 +5874,35 @@ export class CombustibleController {
           .json({ error: "Mandá exactamente uno de combustible_id o grifo_id, nunca los dos" });
         return;
       }
+      // El conductor solo compra en proveedores: el costo promedio de un
+      // tanque propio no es suyo.
+      if (soloParaFormulario && combustibleId !== null && req.usuario?.rol === "conductor_ruta") {
+        res.status(403).json({ error: "Sin permiso para consultar el costo de un tanque" });
+        return;
+      }
 
       const precio = await withTenant(tenantId, (client) =>
-        service.obtenerPrecioVigente(
-          client,
-          tenantId,
-          tipoCombustible,
-          { combustibleId, grifoId },
-          fecha
-        )
+        soloParaFormulario
+          ? service.obtenerPrecioVigenteParaFormulario(
+              client,
+              tenantId,
+              tipoCombustible,
+              { combustibleId, grifoId },
+              fecha
+            )
+          : service.obtenerPrecioVigente(
+              client,
+              tenantId,
+              tipoCombustible,
+              { combustibleId, grifoId },
+              fecha
+            )
       );
-      res.json({ precio });
+      // Para el formulario: solo el número, sin la ficha del precio (quién lo
+      // cargó, cuándo, el historial).
+      res.json({
+        precio: soloParaFormulario && precio ? { precio_unitario: precio.precio_unitario } : precio,
+      });
     } catch {
       res.status(500).json({ error: "Error al buscar el precio vigente" });
     }

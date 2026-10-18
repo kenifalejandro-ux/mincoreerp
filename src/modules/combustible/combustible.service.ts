@@ -6979,6 +6979,12 @@ export class CombustibleService {
     return this.repository.findGrifos(client, tenantId);
   }
 
+  /** Para el desplegable del formulario de despacho (quien registra despachos
+   *  no tiene la pestaña Proveedores): solo id y nombre de los de ruta activos. */
+  listarGrifosDeRutaParaFormulario(client: PoolClient, tenantId: string) {
+    return this.repository.findGrifosDeRutaParaFormulario(client, tenantId);
+  }
+
   crearGrifo(
     client: PoolClient,
     tenantId: string,
@@ -7141,6 +7147,24 @@ export class CombustibleService {
     fecha: string
   ) {
     return this.repository.findPrecioVigente(client, tenantId, tipoCombustible, destino, fecha);
+  }
+
+  /** Para el formulario de despacho: un proveedor solo cuenta si es de ruta y
+   *  está activo (los mismos que lista /grifos/para-formulario); de cualquier
+   *  otro devuelve null, como si no tuviera precio. El tanque propio pasa
+   *  directo (el controller ya decidió quién puede pedirlo). */
+  async obtenerPrecioVigenteParaFormulario(
+    client: PoolClient,
+    tenantId: string,
+    tipoCombustible: string,
+    destino: { combustibleId: number | null; grifoId: number | null },
+    fecha: string
+  ) {
+    if (destino.grifoId !== null) {
+      const grifo = await this.repository.findGrifoPorId(client, tenantId, destino.grifoId);
+      if (!grifo || !grifo.activo || !grifo.abastece_ruta) return null;
+    }
+    return this.obtenerPrecioVigente(client, tenantId, tipoCombustible, destino, fecha);
   }
 
   getPrecioPorId(client: PoolClient, tenantId: string, id: number) {
