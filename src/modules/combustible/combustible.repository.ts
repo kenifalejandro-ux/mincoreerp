@@ -5843,6 +5843,17 @@ export class CombustibleRepository {
     return result.rows;
   }
 
+  /** Proveedores de ruta activos para el formulario de despacho: solo id y
+   *  nombre, nada del resto de la ficha. */
+  async findGrifosDeRutaParaFormulario(client: PoolClient, tenantId: string) {
+    const result = await client.query<{ id: number; nombre: string }>(
+      `SELECT id, nombre FROM combustible_grifos
+       WHERE tenant_id = $1 AND activo AND abastece_ruta ORDER BY nombre ASC`,
+      [tenantId]
+    );
+    return result.rows;
+  }
+
   async findGrifoPorId(client: PoolClient, tenantId: string, id: number) {
     const result = await client.query(
       `SELECT id, nombre, activo, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta, usuario_id, creado_en

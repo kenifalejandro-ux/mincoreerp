@@ -1697,6 +1697,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   // --- Grifos externos (migrations/0063) ---
   const [grifos, setGrifos] = useState<Grifo[]>([]);
+  // Los proveedores de ruta del formulario de despacho vienen de un endpoint
+  // propio (solo id y nombre): quien registra despachos, como el conductor,
+  // no tiene la pestaña Proveedores y /grifos le da 403.
+  const [proveedoresRuta, setProveedoresRuta] = useState<{ id: number; nombre: string }[]>([]);
+  const [proveedoresRutaEstado, setProveedoresRutaEstado] = useState<
+    "ok" | "sin_permiso" | "error"
+  >("ok");
 
   // --- Historial de despachos (solo lectura, GET /despachos) ---
   const [modalHistorialDespachosAbierto, setModalHistorialDespachosAbierto] = useState(false);
@@ -1940,16 +1947,24 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   }, []);
 
   const cargarGrifos = useCallback(async () => {
-    const res = await apiFetch("/api/erp/combustible/grifos");
-    const data = await res.json().catch(() => null);
+    const [res, resRuta] = await Promise.all([
+      apiFetch("/api/erp/combustible/grifos").catch(() => null),
+      apiFetch("/api/erp/combustible/grifos/para-formulario").catch(() => null),
+    ]);
+    const data = await res?.json().catch(() => null);
     setGrifos(Array.isArray(data) ? data : []);
+
+    const dataRuta = resRuta?.ok ? await resRuta.json().catch(() => null) : null;
+    setProveedoresRuta(Array.isArray(dataRuta) ? dataRuta : []);
+    setProveedoresRutaEstado(
+      Array.isArray(dataRuta) ? "ok" : resRuta?.status === 403 ? "sin_permiso" : "error"
+    );
   }, []);
 
   // Los dos desplegables filtran por rol además de por `activo`
   // (migrations/0065). El filtro es comodidad: la regla la impone el servidor
   // (validarRolGrifo), así que un estado viejo en memoria no puede colar un
   // grifo del rol equivocado.
-  const grifosDeRuta = useMemo(() => grifos.filter((g) => g.activo && g.abastece_ruta), [grifos]);
   const grifosDeTanque = useMemo(
     () => grifos.filter((g) => g.activo && g.abastece_tanque),
     [grifos]
@@ -2837,7 +2852,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     });
 
     let cancelado = false;
-    apiFetch(`/api/erp/combustible/precios/vigente?${params.toString()}`)
+    apiFetch(`/api/erp/combustible/precios/vigente-formulario?${params.toString()}`)
       .then((res) => res.json())
       .then((body) => {
         if (cancelado || !body?.precio) return;
@@ -5875,13 +5890,24 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       {/* Solo los de ruta (migrations/0065): un proveedor que
                           solo llena el tanque propio no es donde una unidad
                           carga camino a Bambamarca. */}
-                      {grifosDeRuta.map((g) => (
+                      {proveedoresRuta.map((g) => (
                         <option key={g.id} value={g.id}>
                           {g.nombre}
                         </option>
                       ))}
                     </select>
-                    {grifosDeRuta.length === 0 && (
+                    {proveedoresRutaEstado === "sin_permiso" && (
+                      <p className="text-xs text-red-600">
+                        No tenés permiso para ver los proveedores. Avisale a un administrador.
+                      </p>
+                    )}
+                    {proveedoresRutaEstado === "error" && (
+                      <p className="text-xs text-red-600">
+                        No se pudieron cargar los proveedores. Revisá tu conexión y volvé a abrir el
+                        formulario.
+                      </p>
+                    )}
+                    {proveedoresRutaEstado === "ok" && proveedoresRuta.length === 0 && (
                       <p className="text-xs text-red-600">
                         No hay proveedores de ruta cargados -- agregalos desde "Proveedores" en la
                         barra superior, marcando "Abastece unidades en ruta".

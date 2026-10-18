@@ -533,6 +533,14 @@ router.get(
   requirePestana("combustible", "tanques:proveedores"),
   asyncHandler(controller.listarGrifos.bind(controller))
 );
+// Lectura para el formulario de despacho: quien registra despachos (conductor,
+// grifero) no tiene "tanques:proveedores" ni "tanques:precios". Solo lo
+// indispensable; el catálogo completo sigue cerrado. Antes de /grifos/:id.
+router.get(
+  "/grifos/para-formulario",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  asyncHandler(controller.listarGrifosParaFormulario.bind(controller))
+);
 router.post(
   "/grifos",
   requirePestana("combustible", "tanques:proveedores"),
@@ -550,6 +558,11 @@ router.put(
 
 // GET /precios/vigente ANTES de GET /precios y de GET /:id -- Express
 // matchea por orden de registro, no por especificidad.
+router.get(
+  "/precios/vigente-formulario",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  asyncHandler(controller.getPrecioVigenteParaFormulario.bind(controller))
+);
 router.get(
   "/precios/vigente",
   requirePestana("combustible", "tanques:precios"),
