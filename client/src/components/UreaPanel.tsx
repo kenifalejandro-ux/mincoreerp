@@ -1654,8 +1654,9 @@ export default function UreaPanel() {
           <div className="px-5 pt-4">
             <h2 className="text-base font-bold text-slate-800">Historial de urea</h2>
             <p className="text-xs text-slate-500">
-              Aquí están los historiales: vales, compras en ruta, entradas y conteos. En las compras
-              en ruta se sube la foto del comprobante dentro de las 24 horas.
+              {soloHistorialCompras
+                ? "Aquí están tus compras en ruta. Sube la foto del comprobante dentro de las 24 horas."
+                : "Aquí están los historiales: vales, compras en ruta, entradas y conteos. En las compras en ruta se sube la foto del comprobante dentro de las 24 horas."}
             </p>
           </div>
           <div
@@ -1771,7 +1772,10 @@ export default function UreaPanel() {
             <TablaComprasUrea
               filas={compras}
               puedeAnular={esAdmin || usuario?.rol === "operador"}
-              puedeReemplazar={permiteUrea("registrar_compra") || permiteUrea("historial_compras")}
+              puedeReemplazar={
+                usuario?.rol !== "lectura" &&
+                (permiteUrea("registrar_compra") || permiteUrea("historial_compras"))
+              }
               onCambio={recargarTodo}
             />
           )}
