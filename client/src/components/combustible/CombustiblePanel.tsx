@@ -19,7 +19,7 @@ import {
   Truck,
   X,
 } from "lucide-react";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 
 import { useAuth } from "../../context/AuthContext";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
@@ -1541,6 +1541,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const { usuario } = useAuth();
   const esAdmin = usuario?.rol === "admin";
   const esGrifero = usuario?.rol === "grifero";
+  // Anular un vale o una compra es del administrador y del operador (el
+  // servidor lo exige con requireRole): al resto el botón ni se le dibuja.
+  const puedeAnularVales = usuario?.rol === "admin" || usuario?.rol === "operador";
   const esConductor = usuario?.rol === "conductor_ruta";
   // El espejo en el front de `defaultsDeRol` (permisosPestanas.service.ts),
   // traducido de la matriz robusta de perfiles (profile_user.xlsx). El
@@ -1552,11 +1555,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     if (override !== undefined) return override;
     if (esAdmin) return true;
     if (esGrifero) return id === "registrar_recepcion" || id === "registrar_despacho";
-    if (esConductor) return id === "registrar_despacho";
+    // Sus compras (solo las suyas, el servidor las filtra) para subir el
+    // comprobante después. El historial de despachos es del grifero.
+    if (esConductor) return id === "registrar_despacho" || id === "historial_compras";
     if (usuario?.rol === "encargado_urea") return false;
     // Lectura: solo lo informativo. Ni "Registrar X", ni Alertas/Proveedores/
     // Surtidores/Precios/Nuevo tanque.
-    if (esLectura) return id === "importar_excel" || id === "historial_despacho";
+    if (esLectura)
+      return id === "importar_excel" || id === "historial_despacho" || id === "historial_compras";
     return true;
   };
   const permiteAccionTanque = (id: string) => {
@@ -2025,6 +2031,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     const tareas: Promise<void>[] = [cargarTanques(), cargarExcedentesPendientes()];
     if (modalKardexAbierto && kardexTanqueId !== null) {
       tareas.push(cargarKardex(kardexTanqueId));
+    }
+    // El historial abierto (adjuntar o reemplazar un comprobante cambia sus
+    // filas): sin esto la lista quedaba vieja hasta cerrar y reabrir.
+    if (modalHistorialDespachosAbierto) {
+      const { desde, hasta, origen } = ultimoHistorial.current;
+      tareas.push(cargarHistorialDespachos(desde, hasta, origen));
     }
     await Promise.allSettled(tareas);
   };
@@ -3272,8 +3284,22 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   // --- Historial de despachos (solo lectura) ---
 
+  // Lo último que se pidió al servidor (período y origen) y cuál petición es la
+  // vigente. El refresco tras adjuntar o reemplazar un comprobante lo llama una
+  // función de un render ANTERIOR (la que quedó esperando la subida): con
+  // estos refs vuelve a pedir lo que la persona tiene en pantalla, y una
+  // respuesta tardía de otra petición no pisa la lista.
+  const peticionHistorial = useRef(0);
+  const ultimoHistorial = useRef<{ desde: string; hasta: string; origen: OrigenDespacho }>({
+    desde: "",
+    hasta: "",
+    origen: "tanque_propio",
+  });
+
   const cargarHistorialDespachos = useCallback(
     async (desde: string, hasta: string, origen: OrigenDespacho) => {
+      const miPeticion = ++peticionHistorial.current;
+      ultimoHistorial.current = { desde, hasta, origen };
       setCargandoHistorialDespachos(true);
       setErrorHistorialDespachos(null);
       try {
@@ -3281,6 +3307,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         params.set("origen", origen);
         const res = await apiFetch(`/api/erp/combustible/despachos?${params}`);
         const body = await res.json().catch(() => null);
+        if (miPeticion !== peticionHistorial.current) return;
         if (!res.ok) {
           setHistorialDespachos([]);
           setDespachosTotal(0);
@@ -3290,7 +3317,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         setHistorialDespachos(Array.isArray(body?.data) ? body.data : []);
         setDespachosTotal(Number(body?.pagination?.total ?? 0));
       } finally {
-        setCargandoHistorialDespachos(false);
+        if (miPeticion === peticionHistorial.current) setCargandoHistorialDespachos(false);
       }
     },
     []
@@ -3299,6 +3326,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const abrirModalHistorialDespachos = async (origen: OrigenDespacho = "tanque_propio") => {
     setOrigenHistorial(origen);
     setHistorialDespachos([]);
+    setMensajeExito(null);
     setModalHistorialDespachosAbierto(true);
     await cargarHistorialDespachos(despachosDesde, despachosHasta, origen);
   };
@@ -3322,7 +3350,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       }
       setDespachoAAnular(null);
       setMotivoAnulacionDespacho("");
-      await cargarHistorialDespachos(despachosDesde, despachosHasta, origenHistorial);
+      // También recarga el historial abierto.
       await actualizarVistasCombustible();
     } finally {
       setAnulandoDespacho(false);
@@ -3816,9 +3844,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 <FileText className="w-4 h-4 shrink-0" /> Historial de despachos
               </button>
             )}
-            {/* Mismo permiso que el historial de despachos: son dos vistas de
-                lo mismo para quien consulta. */}
-            {permiteTanque("historial_despacho") && (
+            {/* Vista propia (autónoma del historial de despachos): el conductor
+                la usa para subir el comprobante que no subió al comprar. */}
+            {permiteTanque("historial_compras") && (
               <button
                 onClick={() => abrirModalHistorialDespachos("compra_externa")}
                 className={`${BTN_BASE} ${BTN_ESTILO.lime}`}
@@ -6328,6 +6356,16 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             total={despachosTotal}
             queSeCuenta={esHistorialCompras ? "compras" : "vales"}
           />
+          {/* El aviso de "Comprobante adjuntado/reemplazado" vive en la página
+              y el modal la tapa (y al conductor ni se le dibuja): se repite acá. */}
+          {mensajeExito && (
+            <p
+              role="status"
+              className="mx-1 mb-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900"
+            >
+              {mensajeExito}
+            </p>
+          )}
 
           <div className="flex-1 min-h-0 overflow-auto p-6">
             {cargandoHistorialDespachos ? (
@@ -6483,16 +6521,18 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                                   Reemplazar
                                 </button>
                               )}
-                              <button
-                                onClick={() => {
-                                  enfocarPaginaPrincipal();
-                                  setDespachoAAnular(d);
-                                  setMotivoAnulacionDespacho("");
-                                }}
-                                className="text-xs text-red-500 hover:text-red-700 hover:underline"
-                              >
-                                Anular
-                              </button>
+                              {puedeAnularVales && (
+                                <button
+                                  onClick={() => {
+                                    enfocarPaginaPrincipal();
+                                    setDespachoAAnular(d);
+                                    setMotivoAnulacionDespacho("");
+                                  }}
+                                  className="text-xs text-red-500 hover:text-red-700 hover:underline"
+                                >
+                                  Anular
+                                </button>
+                              )}
                             </div>
                           )}
                         </td>

@@ -87,7 +87,14 @@ const requireHistorialOProducto =
  *  solo la vista de grifo externo habilitada no puede pedir los vales del
  *  tanque propio cambiando la URL: el permiso va atado al filtro real. */
 const requireHistorialDeDespachos = (req: Request, res: Response, next: NextFunction) => {
-  if (req.query.producto === "urea") {
+  // El controller solo reconoce "urea" y "combustible" (igualdad estricta): un
+  // valor repetido, en otra grafía o con espacios caería a "sin filtro" ahí y
+  // a combustible acá, y esquivaría el permiso de urea. Se rechaza.
+  const producto = req.query.producto;
+  if (producto !== undefined && producto !== "urea" && producto !== "combustible") {
+    return res.status(400).json({ error: "producto inválido" });
+  }
+  if (producto === "urea") {
     return requirePestana("combustible", "urea:vista")(req, res, next);
   }
   const porOrigen =
@@ -98,9 +105,17 @@ const requireHistorialDeDespachos = (req: Request, res: Response, next: NextFunc
         : null;
   // Sin filtro de origen el listado trae de los dos tipos: solo lo ve
   // quien tiene el historial completo del panel de Tanques.
-  if (!porOrigen)
-    return requirePestana("combustible", "tanques:historial_despacho")(req, res, next);
-  return requirePestanaAlguna(porOrigen, "tanques:historial_despacho")(req, res, next);
+  // Despachos y compras son vistas autónomas (historial_despacho /
+  // historial_compras): sin filtro hacen falta las dos.
+  if (!porOrigen) {
+    return requirePestana("combustible", "tanques:historial_despacho")(req, res, (err?: unknown) =>
+      err ? next(err) : requirePestana("combustible", "tanques:historial_compras")(req, res, next)
+    );
+  }
+  return requirePestanaAlguna(
+    porOrigen,
+    porOrigen === "historico:despachos" ? "tanques:historial_despacho" : "tanques:historial_compras"
+  )(req, res, next);
 };
 
 /** Deja pasar si el usuario tiene CUALQUIERA de las pestañas. Sirve donde un
@@ -164,6 +179,9 @@ router.get(
 router.get(
   "/despachos/huecos",
   requirePestana("combustible", "tanques:historial_despacho"),
+  // La numeración de los talonarios es de la operación, no de la ruta: el
+  // conductor solo ve sus compras, aunque se le haya marcado esta pestaña.
+  requireRole("admin", "operador", "lectura", "grifero", "encargado_urea"),
   asyncHandler(controller.getHuecosTalonario.bind(controller))
 );
 
@@ -289,7 +307,7 @@ router.post(
 // cosas haría que viera el monto sin poder verificarlo.
 router.get(
   "/despachos/:despachoId/comprobante",
-  requirePestana("combustible", "tanques:historial_despacho"),
+  requirePestanaAlguna("tanques:historial_despacho", "tanques:historial_compras"),
   asyncHandler((req, res) => controller.descargarComprobante(req, res, "combustible"))
 );
 

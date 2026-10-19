@@ -880,6 +880,11 @@ function idPresentacionUrea(valor: string | undefined): number | null {
   return id > 0 && id <= 2147483647 ? id : null;
 }
 
+/** El conductor solo ve y toca lo que él registró: devuelve su id, o
+ *  undefined para el resto de los perfiles. */
+const soloSuyas = (req: Request): string | undefined =>
+  req.usuario?.rol === "conductor_ruta" ? req.usuario.id : undefined;
+
 export class CombustibleController {
   async getAll(req: Request, res: Response) {
     try {
@@ -3654,7 +3659,8 @@ export class CombustibleController {
         },
         req.usuario!.id,
         motivo,
-        producto
+        producto,
+        soloSuyas(req)
       );
 
       if (resultado.estado === "no_encontrado") {
@@ -3733,7 +3739,12 @@ export class CombustibleController {
       const tenantId = getTenantId(req);
       const despachoId = Number(req.params.despachoId);
 
-      const resultado = await service.obtenerDescargaComprobante(tenantId, despachoId, producto);
+      const resultado = await service.obtenerDescargaComprobante(
+        tenantId,
+        despachoId,
+        producto,
+        soloSuyas(req)
+      );
       if (!resultado) {
         res.status(404).json({ error: "Esta compra no tiene comprobante adjunto" });
         return;
@@ -3791,7 +3802,15 @@ export class CombustibleController {
         service.listarDespachos(
           client,
           tenantId,
-          { equipoId, serieTalonario, origen, producto, desde, hasta },
+          {
+            equipoId,
+            serieTalonario,
+            origen,
+            producto,
+            desde,
+            hasta,
+            soloUsuarioId: soloSuyas(req),
+          },
           paginacion,
           ambitoDe(req)
         )
@@ -6731,7 +6750,12 @@ export class CombustibleController {
       const tenantId = getTenantId(req);
       const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
       const filas = await withTenant(tenantId, (client) =>
-        service.listarComprasUrea(client, tenantId, { desde, hasta })
+        service.listarComprasUrea(client, tenantId, {
+          desde,
+          hasta,
+          // El conductor solo ve las compras que él registró.
+          soloUsuarioId: soloSuyas(req),
+        })
       );
       res.json(filas);
     } catch {
