@@ -6356,9 +6356,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             total={despachosTotal}
             queSeCuenta={esHistorialCompras ? "compras" : "vales"}
           />
-          {/* El aviso de "Comprobante adjuntado/reemplazado" vive en la página
-              y el modal la tapa (y al conductor ni se le dibuja): se repite acá. */}
-          {mensajeExito && (
+          {/* El aviso de "Comprobante adjuntado/reemplazado" vive en la página y
+              al conductor ni se le dibuja: solo a él se le muestra acá. Al resto
+              no se repite (dos avisos iguales rompen el e2e de reemplazo). */}
+          {esConductor && mensajeExito && (
             <p
               role="status"
               className="mx-1 mb-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-900"
