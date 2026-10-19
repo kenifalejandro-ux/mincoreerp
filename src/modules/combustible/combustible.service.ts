@@ -9,7 +9,6 @@ import type {
   CrearTanqueCombustibleInput,
   ActualizarTanqueCombustibleInput,
   CrearDespachoCombustibleInput,
-  CrearPrecioCombustibleInput,
   CrearPreciosCombustibleMasivoInput,
   CrearRecepcionCombustibleInput,
   CrearGrifoCombustibleInput,
@@ -7087,21 +7086,6 @@ export class CombustibleService {
     return this.repository.findPrecios(client, tenantId);
   }
 
-  crearPrecio(
-    client: PoolClient,
-    tenantId: string,
-    usuarioId: string,
-    data: CrearPrecioCombustibleInput
-  ) {
-    return this.repository.crearPrecio(client, tenantId, usuarioId, {
-      tipoCombustible: data.tipo_combustible,
-      combustibleId: data.combustible_id ?? null,
-      grifoId: data.grifo_id ?? null,
-      precioUnitario: data.precio_unitario,
-      vigenteDesde: data.vigente_desde ?? new Date().toISOString(),
-    });
-  }
-
   /** El mismo precio para varios tanques o varios proveedores de ruta. Se
    *  llama dentro de UN withTenant (una transacción): si un destino no existe
    *  o no es de ruta, el error corta antes de insertar el siguiente y el
@@ -7130,6 +7114,15 @@ export class CombustibleService {
     }
     for (const grifoId of data.grifo_ids ?? []) {
       await this.validarRolGrifo(client, tenantId, grifoId, "ruta");
+      // Un precio a un proveedor inactivo no lo ofrece ningún formulario: solo
+      // dejaría una fila huérfana. validarRolGrifo no mira "activo" a propósito
+      // (despachos y urea lo comparten), así que se exige acá.
+      const proveedor = await this.repository.findGrifoPorId(client, tenantId, grifoId);
+      if (!proveedor?.activo) {
+        throw new Error(
+          `el proveedor "${proveedor?.nombre}" no está marcado como proveedor de ruta activo -- reactivalo en Proveedores o elegí otro`
+        );
+      }
       creados.push(
         await this.repository.crearPrecio(client, tenantId, usuarioId, {
           tipoCombustible: data.tipo_combustible,

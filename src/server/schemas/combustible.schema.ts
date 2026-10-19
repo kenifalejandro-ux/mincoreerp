@@ -1434,30 +1434,6 @@ export type ActualizarGrifoCombustibleInput = z.infer<typeof actualizarGrifoComb
 // Historial apilado -- nunca se pisa. Exactamente uno de combustible_id/
 // grifo_id, mismo patrón que el destino polimórfico de un despacho.
 
-export const crearPrecioCombustibleSchema = z
-  .object({
-    tipo_combustible: z.enum(TIPOS_COMBUSTIBLE),
-    combustible_id: z.number().int().positive().optional(),
-    grifo_id: z.number().int().positive().optional(),
-    precio_unitario: z.number().positive(),
-    // Opcional: sin dato, el service usa now() -- mismo criterio que
-    // despachado_en/leido_en en el resto del módulo.
-    vigente_desde: z.string().datetime().optional(),
-  })
-  .superRefine((data, ctx) => {
-    const tieneCombustible = data.combustible_id !== undefined;
-    const tieneGrifo = data.grifo_id !== undefined;
-    if (tieneCombustible === tieneGrifo) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["combustible_id"],
-        message: "Un precio va exactamente a un tanque o a un grifo, nunca los dos ni ninguno",
-      });
-    }
-  });
-
-export type CrearPrecioCombustibleInput = z.infer<typeof crearPrecioCombustibleSchema>;
-
 /** Un mismo precio para varios tanques O varios proveedores de ruta, en una
  *  sola operación: o se cargan todos o no se carga ninguno. Cuando el
  *  combustible sube, entrar tanque por tanque deja a medias el cambio si se
@@ -1518,7 +1494,7 @@ export type AnularPrecioCombustibleInput = z.infer<typeof anularPrecioCombustibl
 
 // ── Precios de urea (migración 0121) ─────────────────────────────────────
 // Por proveedor y presentación: cada grifo cobra distinto. Se apila con su
-// vigencia, igual que crearPrecioCombustibleSchema. El precio es POR BULTO,
+// vigencia, igual que los precios de combustible. El precio es POR BULTO,
 // el número que trae la boleta ("S/ 50 la caja").
 export const crearPrecioUreaSchema = z.object({
   grifo_id: z.number().int().positive(),

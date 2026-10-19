@@ -4,7 +4,13 @@
  *  (ver combustible-precios-permisos.test.ts). */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import {
+  app,
+  crearTenantDePrueba,
+  borrarTenantDePrueba,
+  idUnico,
+  cargarPrecioCombustible,
+} from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
 describe("lectura del formulario de despacho", () => {
@@ -84,7 +90,7 @@ describe("lectura del formulario de despacho", () => {
       { tipo_combustible: "diesel_b5", grifo_id: grifoRuta, precio_unitario: 17.5 },
       { tipo_combustible: "diesel_b5", combustible_id: tanque, precio_unitario: 12.25 },
     ]) {
-      const p = await admin.post(`${base}/precios`).send(body);
+      const p = await cargarPrecioCombustible(admin, body);
       expect(p.status, JSON.stringify(p.body)).toBe(201);
     }
   });
@@ -128,9 +134,11 @@ describe("lectura del formulario de despacho", () => {
   });
 
   it("no ve el precio de un proveedor de otro tenant", async () => {
-    await adminOtro
-      .post(`${base}/precios`)
-      .send({ tipo_combustible: "diesel_b5", grifo_id: grifoOtroTenant, precio_unitario: 99 });
+    await cargarPrecioCombustible(adminOtro, {
+      tipo_combustible: "diesel_b5",
+      grifo_id: grifoOtroTenant,
+      precio_unitario: 99,
+    });
     const r = await vigente(await persona("conductor_ruta"), `grifo_id=${grifoOtroTenant}`);
     expect(r.status).toBe(200);
     expect(r.body).toEqual({ precio: null });
@@ -145,10 +153,17 @@ describe("lectura del formulario de despacho", () => {
   });
 
   it("el formulario no da el precio de un proveedor inactivo ni de uno que no es de ruta", async () => {
+    // Por SQL: la API ya no deja cargar precio a un proveedor que no es de
+    // ruta, pero un precio viejo de un proveedor que dejó de serlo sí puede
+    // existir, y el formulario no debe ofrecerlo.
     for (const id of [grifoInactivo, grifoSoloTanque]) {
-      await admin
-        .post(`${base}/precios`)
-        .send({ tipo_combustible: "diesel_b5", grifo_id: id, precio_unitario: 55 });
+      await withTenant(tenantId, (client) =>
+        client.query(
+          `INSERT INTO combustible_precios (tenant_id, tipo_combustible, grifo_id, precio_unitario, vigente_desde)
+           VALUES ($1, 'diesel_b5', $2, 55, now())`,
+          [tenantId, id]
+        )
+      );
     }
     const conductor = await persona("conductor_ruta");
     for (const id of [grifoInactivo, grifoSoloTanque]) {
@@ -159,7 +174,7 @@ describe("lectura del formulario de despacho", () => {
   });
 
   it("un precio anulado no se ofrece: el formulario devuelve el anterior", async () => {
-    const nuevo = await admin.post(`${base}/precios`).send({
+    const nuevo = await cargarPrecioCombustible(admin, {
       tipo_combustible: "diesel_b5",
       grifo_id: grifoRuta,
       precio_unitario: 20,

@@ -14,7 +14,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import {
+  app,
+  crearTenantDePrueba,
+  borrarTenantDePrueba,
+  idUnico,
+  cargarPrecioCombustible,
+} from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
 /** `serie_talonario` tiene 20 caracteres máximo (real: "A", "SERIE-2026-03") --
@@ -375,13 +381,13 @@ describe("combustible: despachos (Fase B)", () => {
       const hace5dias = new Date(base - 5 * 24 * 60 * 60 * 1000).toISOString();
       const ayer = new Date(base - 1 * 24 * 60 * 60 * 1000).toISOString();
 
-      await agente.post("/api/erp/combustible/precios").send({
+      await cargarPrecioCombustible(agente, {
         tipo_combustible: "diesel_b5",
         combustible_id: combustibleIdPropio,
         precio_unitario: 15.0,
         vigente_desde: hace10dias,
       });
-      await agente.post("/api/erp/combustible/precios").send({
+      await cargarPrecioCombustible(agente, {
         tipo_combustible: "diesel_b5",
         combustible_id: combustibleIdPropio,
         precio_unitario: 16.8,
@@ -413,13 +419,13 @@ describe("combustible: despachos (Fase B)", () => {
     });
 
     it("400 (Zod): un precio va exactamente a un tanque o a un grifo, nunca los dos ni ninguno", async () => {
-      const ninguno = await agente.post("/api/erp/combustible/precios").send({
+      const ninguno = await cargarPrecioCombustible(agente, {
         tipo_combustible: "diesel_b5",
         precio_unitario: 16.8,
       });
       expect(ninguno.status).toBe(400);
 
-      const losDos = await agente.post("/api/erp/combustible/precios").send({
+      const losDos = await cargarPrecioCombustible(agente, {
         tipo_combustible: "diesel_b5",
         combustible_id: tanqueId,
         grifo_id: grifoId,
@@ -433,16 +439,16 @@ describe("combustible: despachos (Fase B)", () => {
         .post("/api/erp/combustible/grifos")
         .send({ nombre: idUnico("ANULACION") });
 
-      const viejo = await agente.post("/api/erp/combustible/precios").send({
+      const viejo = await cargarPrecioCombustible(agente, {
         tipo_combustible: "diesel_b5",
         grifo_id: otroGrifo.body.id,
         precio_unitario: 17.0,
         vigente_desde: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
       });
-      const nuevoMalCargado = await agente.post("/api/erp/combustible/precios").send({
+      const nuevoMalCargado = await cargarPrecioCombustible(agente, {
         tipo_combustible: "diesel_b5",
         grifo_id: otroGrifo.body.id,
-        precio_unitario: 999, // typo real: sobraba un dígito
+        precio_unitario: 999, // typo real: sobraba un dígito (cabe en el rango, por eso se puede anular)
       });
       expect(nuevoMalCargado.status).toBe(201);
 
@@ -462,7 +468,7 @@ describe("combustible: despachos (Fase B)", () => {
     });
 
     it("409: un precio ya anulado no se puede volver a anular", async () => {
-      const precio = await agente.post("/api/erp/combustible/precios").send({
+      const precio = await cargarPrecioCombustible(agente, {
         tipo_combustible: "diesel_b5",
         combustible_id: tanqueId,
         precio_unitario: 16.5,
