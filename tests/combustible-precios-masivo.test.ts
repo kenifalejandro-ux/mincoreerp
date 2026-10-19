@@ -118,6 +118,15 @@ describe("combustible: precios masivos", () => {
     return r.body.precio as { precio_unitario: string } | null;
   }
 
+  it("el alta individual POST /precios ya no existe (404): la única vía es /masivo", async () => {
+    const res = await admin.post("/api/erp/combustible/precios").send({
+      tipo_combustible: "diesel_b5",
+      combustible_id: tanqueA,
+      precio_unitario: 20,
+    });
+    expect(res.status).toBe(404);
+  });
+
   it("un precio a dos tanques: 201, una fila por tanque y cada uno lo resuelve como vigente", async () => {
     const res = await admin.post(RUTA).send({
       tipo_combustible: "diesel_b5",

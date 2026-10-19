@@ -15,7 +15,6 @@ import {
   crearDespachoCombustibleSchema,
   crearGrifoCombustibleSchema,
   actualizarGrifoCombustibleSchema,
-  crearPrecioCombustibleSchema,
   crearPreciosCombustibleMasivoSchema,
   anularPrecioCombustibleSchema,
   crearRecepcionCombustibleSchema,
@@ -590,13 +589,6 @@ router.get(
   "/precios",
   requirePestana("combustible", "tanques:precios"),
   asyncHandler(controller.listarPrecios.bind(controller))
-);
-router.post(
-  "/precios",
-  requirePestana("combustible", "tanques:precios"),
-  requireRole("admin", "operador"),
-  validate(crearPrecioCombustibleSchema),
-  asyncHandler(controller.crearPrecio.bind(controller))
 );
 // El mismo precio a varios tanques o proveedores, todo o nada (el literal
 // "masivo" no choca con /precios/:precioId/anular: ese es PATCH).

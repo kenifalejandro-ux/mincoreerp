@@ -12,6 +12,29 @@ import { getRedis } from "../src/server/config/redis";
 
 export const app = createApp();
 
+/** Carga UN precio de combustible por la única vía que existe (/precios/masivo
+ *  con un solo destino). Devuelve el mismo formato que el alta individual que
+ *  se cerró: status y, si fue 201, el precio creado en body. */
+export async function cargarPrecioCombustible(
+  agente: request.Agent,
+  datos: {
+    tipo_combustible: string;
+    combustible_id?: number;
+    grifo_id?: number;
+    precio_unitario: number;
+    vigente_desde?: string;
+  },
+  base = "/api/erp/combustible"
+) {
+  const { combustible_id, grifo_id, ...resto } = datos;
+  const res = await agente.post(`${base}/precios/masivo`).send({
+    ...resto,
+    ...(combustible_id !== undefined && { combustible_ids: [combustible_id] }),
+    ...(grifo_id !== undefined && { grifo_ids: [grifo_id] }),
+  });
+  return { status: res.status, body: res.status === 201 ? res.body[0] : res.body };
+}
+
 export function idUnico(prefijo: string) {
   return `${prefijo}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 }

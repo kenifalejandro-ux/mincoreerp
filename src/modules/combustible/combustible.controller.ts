@@ -62,7 +62,6 @@ import type {
   CrearDespachoCombustibleInput,
   CrearGrifoCombustibleInput,
   ActualizarGrifoCombustibleInput,
-  CrearPrecioCombustibleInput,
   CrearPreciosCombustibleMasivoInput,
   AnularPrecioCombustibleInput,
   CrearRecepcionCombustibleInput,
@@ -5781,38 +5780,6 @@ export class CombustibleController {
       res.json(precios);
     } catch {
       res.status(500).json({ error: "Error al listar precios" });
-    }
-  }
-
-  async crearPrecio(req: Request, res: Response) {
-    try {
-      const tenantId = getTenantId(req);
-      const data = req.validatedBody as CrearPrecioCombustibleInput;
-      const precio = await withTenant(tenantId, (client) =>
-        service.crearPrecio(client, tenantId, req.usuario!.id, data)
-      );
-      await registrarAuditoria({
-        accion: "combustible.precio_crear",
-        tenantId,
-        usuarioId: req.usuario!.id,
-        detalle: {
-          precioId: precio.id,
-          tipoCombustible: data.tipo_combustible,
-          precioUnitario: data.precio_unitario,
-        },
-        contexto: contextoAuditoriaModulo(req),
-      });
-      res.status(201).json(precio);
-    } catch (err) {
-      if (
-        err instanceof Error &&
-        (err.message.includes("no existe en este tenant") ||
-          err.message.includes("ya existe un proveedor"))
-      ) {
-        res.status(400).json({ error: err.message });
-        return;
-      }
-      res.status(500).json({ error: "Error al crear el precio" });
     }
   }
 
