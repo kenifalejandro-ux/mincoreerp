@@ -557,6 +557,52 @@ describe("combustible: compra de urea en ruta (migración 0119)", () => {
     expect(conMotivo.status).toBe(201);
   });
 
+  it("el conductor registra sin foto, ve solo sus compras y adjunta la foto después", async () => {
+    const conductor = await nuevoUsuario("conductor_ruta");
+    const otro = await nuevoUsuario("conductor_ruta");
+
+    // Sin foto: el servidor nunca la exigió; el plazo de 24 h lo vigila el worker.
+    const mia = await compra({}, conductor);
+    expect(mia.status).toBe(201);
+    const deAdmin = await compra();
+    expect(deAdmin.status).toBe(201);
+
+    // El historial (permiso urea:historial_compras, por defecto del conductor):
+    // solo lo suyo, y la compra sin foto se ve como tal.
+    const lista = await conductor.get("/api/erp/combustible/urea/compras");
+    expect(lista.status).toBe(200);
+    const ids = lista.body.map((c: { id: number }) => c.id);
+    expect(ids).toContain(mia.body.id);
+    expect(ids).not.toContain(deAdmin.body.id);
+    const fila = lista.body.find((c: { id: number }) => c.id === mia.body.id);
+    expect(fila.comprobante_subido_en).toBeNull();
+
+    // Otro conductor no ve la compra ni puede tocarle la foto.
+    const listaOtro = await otro.get("/api/erp/combustible/urea/compras");
+    expect(listaOtro.status).toBe(200);
+    expect(listaOtro.body.map((c: { id: number }) => c.id)).not.toContain(mia.body.id);
+    const ajena = await otro
+      .post(`/api/erp/combustible/urea/compras/${mia.body.id}/comprobante`)
+      .attach("archivo", FOTO, { filename: "x.jpg", contentType: "image/jpeg" });
+    expect(ajena.status).toBeGreaterThanOrEqual(400);
+
+    // Adjunta la suya y la puede abrir.
+    const sube = await conductor
+      .post(`/api/erp/combustible/urea/compras/${mia.body.id}/comprobante`)
+      .attach("archivo", FOTO, { filename: "boleta.jpg", contentType: "image/jpeg" });
+    expect(sube.status).toBe(201);
+    expect(
+      (await conductor.get(`/api/erp/combustible/urea/compras/${mia.body.id}/comprobante`)).status
+    ).toBe(200);
+    // Y no se entera del stock ni de los conteos del almacén.
+    expect((await conductor.get("/api/erp/combustible/urea/estado")).status).toBe(403);
+  });
+
+  it("el historial de compras en ruta no lo abre quien no tiene el permiso", async () => {
+    const grifero = await nuevoUsuario("grifero");
+    expect((await grifero.get("/api/erp/combustible/urea/compras")).status).toBe(403);
+  });
+
   // ── 7. La cola offline vieja ──────────────────────────────────────────  // ── 7. La cola offline vieja ──────────────────────────────────────────
 
   it("un vale viejo ('compra_externa' + vale) entra y queda como reparto del almacén", async () => {

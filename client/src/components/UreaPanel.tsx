@@ -1142,11 +1142,18 @@ export default function UreaPanel() {
     // Lectura (matriz robusta, actualizada 2026-10-01): nada de "Registrar
     // X" -- solo Vista y Exportar siguen siendo "Solo consulta".
     if (usuario?.rol === "lectura") return id === "vista" || id === "exportar" || id === "kardex";
-    // El conductor (0119): solo la compra en ruta, igual que en combustible.
-    if (usuario?.rol === "conductor_ruta") return id === "registrar_compra";
+    // El conductor (0119): la compra en ruta y su historial (para subir la
+    // foto después), igual que en combustible.
+    if (usuario?.rol === "conductor_ruta") {
+      return id === "registrar_compra" || id === "historial_compras";
+    }
     return false;
   };
   const puedeVerUrea = permiteUrea("vista");
+  // Quien tiene solo el historial de compras en ruta (el conductor) ve esa
+  // pestaña y nada más del panel: ni stock, ni conteos, ni los otros listados.
+  const soloHistorialCompras = !puedeVerUrea && permiteUrea("historial_compras");
+  const puedeVerHistorial = puedeVerUrea || soloHistorialCompras;
   // Configurar el catálogo es admin, igual que la config de combustible
   // (requireRole("admin") en las rutas de 0116): cambiar los litros de un
   // envase mueve el stock teórico de todo lo que se cargue después.
@@ -1155,7 +1162,11 @@ export default function UreaPanel() {
   // (pedido de Kenif, 2026-10-05: "vista solo es para histórico"). El kardex,
   // los precios y la configuración son herramientas: botones arriba, en panel
   // flotante, igual que "Precios" o "Historial de compras" en Tanques.
-  const vistasVisibles = puedeVerUrea ? VISTAS : [];
+  const vistasVisibles = puedeVerUrea
+    ? VISTAS
+    : soloHistorialCompras
+      ? VISTAS.filter((v) => v.valor === "compras")
+      : [];
   const puedeVerKardex = permiteUrea("kardex");
   // Corregir los litros de un envase con historial (0130): SOLO con el check
   // explícito. Nace apagado para todos, admin incluido -- ni el rol ni el
@@ -1166,7 +1177,7 @@ export default function UreaPanel() {
   const [panelAbierto, setPanelAbierto] = useState<null | "kardex" | "envases" | "configuracion">(
     null
   );
-  const [vista, setVista] = useState<Vista>("vales");
+  const [vista, setVista] = useState<Vista>(soloHistorialCompras ? "compras" : "vales");
   const [periodoViaje, setPeriodoViaje] = useState({ desde: "", hasta: "", n: 0 });
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
@@ -1415,20 +1426,28 @@ export default function UreaPanel() {
     const escrito = { desde, hasta };
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setAplicado(escrito);
-    if (puedeVerUrea) cargarVista(vista, false, escrito);
+    if (puedeVerHistorial) cargarVista(vista, false, escrito);
     // Solo al cambiar de VISTA, no en cada tecla de las fechas -- esas se
     // aplican con el botón "Consultar" (mismo criterio que
     // HistoricoCliente.tsx).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vista, puedeVerUrea]);
+  }, [vista, puedeVerHistorial]);
 
   const recargarTodo = useCallback(() => {
     setRecargas((n) => n + 1);
     if (puedeVerHallazgos) cargarHallazgos();
-    if (!puedeVerUrea) return;
+    if (!puedeVerHistorial) return;
     cargarVista(vista);
-    cargarEstado();
-  }, [vista, cargarVista, cargarEstado, cargarHallazgos, puedeVerUrea, puedeVerHallazgos]);
+    if (puedeVerUrea) cargarEstado();
+  }, [
+    vista,
+    cargarVista,
+    cargarEstado,
+    cargarHallazgos,
+    puedeVerUrea,
+    puedeVerHistorial,
+    puedeVerHallazgos,
+  ]);
 
   // ── En vivo: CombustiblePanel reenvía por window lo que el stream avisa de
   // urea (ver eventosUrea.ts). Se juntan los avisos de 300 ms en un solo
@@ -1442,7 +1461,7 @@ export default function UreaPanel() {
     if (plan.estado && puedeVerUrea) cargarEstado(true);
     if (plan.vista) {
       setRecargas((n) => n + 1);
-      if (puedeVerUrea) cargarVista(vista, true);
+      if (puedeVerHistorial) cargarVista(vista, true);
     }
   };
   const aplicarCambioEnVivoRef = useRef(aplicarCambioEnVivo);
@@ -1630,8 +1649,15 @@ export default function UreaPanel() {
         </div>
       )}
 
-      {puedeVerUrea && (
+      {puedeVerHistorial && (
         <div className="bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm">
+          <div className="px-5 pt-4">
+            <h2 className="text-base font-bold text-slate-800">Historial de urea</h2>
+            <p className="text-xs text-slate-500">
+              Aquí están los historiales: vales, compras en ruta, entradas y conteos. En las compras
+              en ruta se sube la foto del comprobante dentro de las 24 horas.
+            </p>
+          </div>
           <div
             className="flex gap-1 overflow-x-auto border-b border-slate-200 px-3.5 pt-2.5"
             role="tablist"
@@ -1745,7 +1771,7 @@ export default function UreaPanel() {
             <TablaComprasUrea
               filas={compras}
               puedeAnular={esAdmin || usuario?.rol === "operador"}
-              puedeReemplazar={permiteUrea("registrar_compra")}
+              puedeReemplazar={permiteUrea("registrar_compra") || permiteUrea("historial_compras")}
               onCambio={recargarTodo}
             />
           )}
@@ -3281,12 +3307,13 @@ function ModalVale({
  *  con su presentación, su cantidad y su precio por bulto tal como figura en
  *  el papel; debajo, la suma en litros y en soles.
  *
- *  La foto del comprobante es OBLIGATORIA en el formulario (Kenif: "sí, que
- *  suban la boleta/factura"). Va en una segunda petición, por el uuid de la
- *  compra, igual que en combustible (0109): si no hay señal, la compra y su
- *  foto quedan juntas en la cola del dispositivo y salen en orden cuando
- *  vuelve. Por eso el servidor no la puede exigir en la misma petición --
- *  la obligación vive acá. */
+ *  La foto del comprobante es OPCIONAL al registrar (Kenif, 2026-10-19: "igual
+ *  que combustible"): el conductor tiene 24 horas para subirla desde el
+ *  historial de compras en ruta; vencido el plazo, el worker de conciliación
+ *  levanta la alerta comprobante_sin_foto. Cuando viene, va en una segunda
+ *  petición, por el uuid de la compra, igual que en combustible (0109): si no
+ *  hay señal, la compra y su foto quedan juntas en la cola del dispositivo y
+ *  salen en orden cuando vuelve. */
 interface RenglonCompra {
   clave: string;
   presentacion: Presentacion;
@@ -3556,7 +3583,6 @@ function ModalCompraUrea({
   };
 
   const enviar = async () => {
-    if (!foto) return;
     setEnviando(true);
     setError(null);
     try {
@@ -3589,32 +3615,36 @@ function ModalCompraUrea({
         return;
       }
 
-      // La foto va DESPUÉS y apunta a la compra por su uuid: sin señal, la
-      // compra todavía no tiene id. La cola drena en orden.
-      const formData = new FormData();
-      formData.append("archivo", foto);
-      // El uuid de ESTA entrada de la cola, distinto al de la compra.
-      formData.append("cliente_uuid", crypto.randomUUID());
-      let resultadoFoto: "subida" | "encolada" | "fallo";
-      try {
-        const rf = await apiFetch(
-          `/api/erp/combustible/urea/compras/por-uuid/${clienteUuid}/comprobante`,
-          { method: "POST", body: formData }
-        );
-        resultadoFoto = rf.status === 202 ? "encolada" : rf.ok ? "subida" : "fallo";
-      } catch {
-        resultadoFoto = "fallo";
+      // La foto, si la hay, va DESPUÉS y apunta a la compra por su uuid: sin
+      // señal, la compra todavía no tiene id. La cola drena en orden.
+      let resultadoFoto: "subida" | "encolada" | "fallo" | "sin_foto" = "sin_foto";
+      if (foto) {
+        const formData = new FormData();
+        formData.append("archivo", foto);
+        // El uuid de ESTA entrada de la cola, distinto al de la compra.
+        formData.append("cliente_uuid", crypto.randomUUID());
+        try {
+          const rf = await apiFetch(
+            `/api/erp/combustible/urea/compras/por-uuid/${clienteUuid}/comprobante`,
+            { method: "POST", body: formData }
+          );
+          resultadoFoto = rf.status === 202 ? "encolada" : rf.ok ? "subida" : "fallo";
+        } catch {
+          resultadoFoto = "fallo";
+        }
       }
 
       const papel = `la ${comprobanteTipo} ${comprobanteNumero.trim()}`;
       const mensaje =
         res.status === 202
-          ? `Sin conexión: ${papel} quedó guardada en este equipo y se enviará sola, con su foto, cuando vuelva la señal.`
-          : resultadoFoto === "fallo"
-            ? `Compra registrada (${papel}), pero la foto NO se pudo subir: adjuntala desde "Compras en ruta".`
-            : resultadoFoto === "encolada"
-              ? `Compra registrada (${papel}). La foto se enviará cuando vuelva la señal.`
-              : `Compra registrada (${papel}), con su comprobante.`;
+          ? `Sin conexión: ${papel} quedó guardada en este equipo y se enviará sola${foto ? ", con su foto," : ""} cuando vuelva la señal.`
+          : resultadoFoto === "sin_foto"
+            ? `Compra registrada (${papel}). Tienes 24 horas para adjuntar la foto desde "Compras en ruta".`
+            : resultadoFoto === "fallo"
+              ? `Compra registrada (${papel}), pero la foto NO se pudo subir: adjuntala desde "Compras en ruta".`
+              : resultadoFoto === "encolada"
+                ? `Compra registrada (${papel}). La foto se enviará cuando vuelva la señal.`
+                : `Compra registrada (${papel}), con su comprobante.`;
       onCreado(mensaje);
     } finally {
       setEnviando(false);
@@ -3708,7 +3738,9 @@ function ModalCompraUrea({
         />
 
         <div className="flex flex-col text-sm gap-1">
-          <span className="text-gray-600">Foto o PDF del comprobante (obligatoria)</span>
+          <span className="text-gray-600">
+            Foto o PDF del comprobante (opcional ahora; tienes 24 horas para subirla)
+          </span>
           <BotonArchivo archivo={foto} onElegir={elegirFoto} texto="Tomar o elegir foto" />
           {errorFoto && <span className="text-xs text-red-600">{errorFoto}</span>}
         </div>
@@ -3746,14 +3778,8 @@ function ModalCompraUrea({
           <button
             type="button"
             disabled={
-              !equipoId ||
-              !grifoId ||
-              !renglonesListos ||
-              !comprobanteNumero.trim() ||
-              !foto ||
-              enviando
+              !equipoId || !grifoId || !renglonesListos || !comprobanteNumero.trim() || enviando
             }
-            title={!foto ? "Falta la foto del comprobante" : undefined}
             onClick={enviar}
             className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed"
           >

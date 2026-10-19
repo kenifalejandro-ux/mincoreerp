@@ -780,10 +780,11 @@ router.patch(
 );
 
 // El historial de compras de urea en ruta (0120): quien ve los listados de
-// urea, que es quien coteja la compra contra la factura.
+// urea, que es quien coteja la compra contra la factura, o quien tiene el
+// historial propio (el conductor, que solo ve las suyas: ver soloSuyas).
 router.get(
   "/urea/compras",
-  requirePestana("combustible", "urea:vista"),
+  requirePestanaAlguna("urea:vista", "urea:historial_compras"),
   validateQuery(periodoHistorialCombustibleSchema),
   asyncHandler(controller.listarComprasUrea.bind(controller))
 );
@@ -794,7 +795,7 @@ router.get(
 // urea -- cada ruta toca solo las compras de su producto.
 router.post(
   "/urea/compras/:despachoId/comprobante",
-  requirePestana("combustible", "urea:registrar_compra"),
+  requirePestanaAlguna("urea:registrar_compra", "urea:historial_compras"),
   requireRole("admin", "operador", "conductor_ruta", "encargado_urea"),
   subirArchivoComprobante,
   validate(subirComprobanteCompraSchema),
@@ -814,17 +815,17 @@ router.post(
     }
     next();
   },
-  requirePestana("combustible", "urea:registrar_compra"),
+  requirePestanaAlguna("urea:registrar_compra", "urea:historial_compras"),
   requireRole("admin", "operador", "conductor_ruta", "encargado_urea"),
   subirArchivoComprobante,
   validate(subirComprobanteCompraSchema),
   asyncHandler((req, res) => controller.subirComprobante(req, res, "urea"))
 );
 // Ver la boleta: quien ve el listado de urea, que es quien la cruza contra la
-// factura del proveedor.
+// factura del proveedor, o el conductor con su historial (solo las suyas).
 router.get(
   "/urea/compras/:despachoId/comprobante",
-  requirePestana("combustible", "urea:vista"),
+  requirePestanaAlguna("urea:vista", "urea:historial_compras"),
   asyncHandler((req, res) => controller.descargarComprobante(req, res, "urea"))
 );
 
