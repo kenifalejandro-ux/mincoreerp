@@ -95,6 +95,7 @@ import type {
   CrearTanquetaInput,
   ActualizarTanquetaInput,
 } from "../../server/schemas/combustible.schema";
+import { TIPOS_COMBUSTIBLE } from "../../server/schemas/combustible.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import { armarCsv } from "../../server/shared/utils/csv.util";
 import {
@@ -5881,12 +5882,33 @@ export class CombustibleController {
           .json({ error: "Los query params tipo_combustible y fecha son obligatorios" });
         return;
       }
-      const combustibleId =
-        typeof combustibleIdRaw === "string" && combustibleIdRaw !== ""
-          ? Number(combustibleIdRaw)
-          : null;
-      const grifoId =
-        typeof grifoIdRaw === "string" && grifoIdRaw !== "" ? Number(grifoIdRaw) : null;
+      // Entrada mal formada = 400, no un 500 del cast de Postgres: tipo fuera
+      // del catálogo, fecha que no es una fecha, o un id que no es un entero
+      // que quepa en un INTEGER. (0 o negativos pasan: son un id que no existe
+      // y la respuesta de siempre es `precio: null`.)
+      const instante = new Date(fecha);
+      const anio = instante.getUTCFullYear();
+      if (
+        !(TIPOS_COMBUSTIBLE as readonly string[]).includes(tipoCombustible) ||
+        Number.isNaN(instante.getTime()) ||
+        anio < 1900 ||
+        anio > 2200
+      ) {
+        res.status(400).json({ error: "tipo_combustible o fecha inválidos" });
+        return;
+      }
+      const fechaIso = instante.toISOString();
+      const idDeQuery = (raw: unknown): number | null | "invalido" => {
+        if (typeof raw !== "string" || raw === "") return null;
+        const n = Number(raw);
+        return Number.isInteger(n) && Math.abs(n) <= 2147483647 ? n : "invalido";
+      };
+      const combustibleId = idDeQuery(combustibleIdRaw);
+      const grifoId = idDeQuery(grifoIdRaw);
+      if (combustibleId === "invalido" || grifoId === "invalido") {
+        res.status(400).json({ error: "combustible_id y grifo_id deben ser números enteros" });
+        return;
+      }
       if ((combustibleId === null) === (grifoId === null)) {
         res
           .status(400)
@@ -5907,14 +5929,14 @@ export class CombustibleController {
               tenantId,
               tipoCombustible,
               { combustibleId, grifoId },
-              fecha
+              fechaIso
             )
           : service.obtenerPrecioVigente(
               client,
               tenantId,
               tipoCombustible,
               { combustibleId, grifoId },
-              fecha
+              fechaIso
             )
       );
       // Para el formulario: solo el número, sin la ficha del precio (quién lo
