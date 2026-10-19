@@ -108,6 +108,10 @@ const pestañasUrea: DefinicionPestana[] = [
   // La compra de urea en ruta, con boleta o factura (0119). Aparte del vale:
   // el conductor compra en ruta pero no reparte del almacén.
   ["registrar_compra", "Registrar compra en ruta"],
+  // El historial de esas compras, donde se sube la foto después (plazo de 24 h,
+  // igual que "tanques:historial_compras" en combustible). Aparte de registrar:
+  // registrar crea la compra, esto la consulta y le adjunta el comprobante.
+  ["historial_compras", "Historial de compras en ruta"],
   ["registrar_conteo_fisico", "Registrar conteo físico"],
   ["vista", "Vista"],
   ["exportar", "Exportar"],
@@ -339,6 +343,7 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
     "tanques:historial_compras",
     "urea",
     "urea:registrar_compra",
+    "urea:historial_compras",
     "mi_viaje",
   ];
   switch (rol) {
