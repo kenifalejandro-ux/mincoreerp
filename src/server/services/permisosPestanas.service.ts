@@ -17,6 +17,9 @@ export interface DefinicionPestana {
 const pestañasTanques: DefinicionPestana[] = [
   ["importar_excel", "Importar Excel"],
   ["historial_despacho", "Historial de despacho"],
+  // Las compras en ruta tienen su propia vista, autónoma de la de despachos:
+  // el conductor sube desde ahí el comprobante que no pudo subir al comprar.
+  ["historial_compras", "Historial de compras"],
   // La CONSULTA de recepciones vive en el Histórico; acá queda lo que no
   // existe en ningún otro lado: validar la recepción contra la guía (el
   // control cruzado -- uno registra, otro valida) y anularla.
@@ -273,6 +276,7 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
     "tanques",
     "tanques:importar_excel",
     "tanques:historial_despacho",
+    "tanques:historial_compras",
     "tanques:acciones:kardex",
     "tanques:acciones:historial_varilla",
     "tanques:acciones:ver_tanque",
@@ -330,6 +334,9 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
   const conductor = [
     "tanques",
     "tanques:registrar_despacho",
+    // Sus compras, para subir el comprobante después (solo las suyas, y sin
+    // anular). El historial de DESPACHOS es del grifero.
+    "tanques:historial_compras",
     "urea",
     "urea:registrar_compra",
     "mi_viaje",

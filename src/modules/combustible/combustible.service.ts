@@ -2346,6 +2346,7 @@ export class CombustibleService {
       serieTalonario?: string;
       origen?: string;
       producto?: string;
+      soloUsuarioId?: string;
     } & PeriodoHistorial,
     paginacion: Paginacion,
     ambito?: AmbitoVales
@@ -2476,7 +2477,10 @@ export class CombustibleService {
     // "tanques:registrar_despacho"; sin este chequeo, el permiso de una
     // abriría la foto de la otra. Distinto producto = 404, igual que
     // inexistente: no se confirma que la compra exista.
-    producto: "combustible" | "urea" = "combustible"
+    producto: "combustible" | "urea" = "combustible",
+    // El conductor solo toca el comprobante de SUS compras (usuario_id). De
+    // otra persona, o sin dueño, es un 404: no se confirma que exista.
+    soloUsuarioId?: string
   ): Promise<
     | { estado: "no_encontrado" }
     | { estado: "no_aplica"; razon: string }
@@ -2491,6 +2495,9 @@ export class CombustibleService {
       this.repository.findComprobanteDeDespacho(client, tenantId, despachoId)
     );
     if (!previo || previo.producto !== producto) return { estado: "no_encontrado" };
+    if (soloUsuarioId !== undefined && previo.usuario_id !== soloUsuarioId) {
+      return { estado: "no_encontrado" };
+    }
 
     // El CHECK de 0109 ya lo impone, pero un 400 con explicación es mejor
     // que el 500 de una violación de constraint -- y la cola offline
@@ -2615,13 +2622,15 @@ export class CombustibleService {
   async obtenerDescargaComprobante(
     tenantId: string,
     despachoId: number,
-    producto: "combustible" | "urea" = "combustible"
+    producto: "combustible" | "urea" = "combustible",
+    soloUsuarioId?: string
   ) {
     const fila = await withTenant(tenantId, (client) =>
       this.repository.findComprobanteDeDespacho(client, tenantId, despachoId)
     );
     // Mismo criterio que en subirComprobante: cada ruta, su producto (0119).
     if (!fila || !fila.comprobante_key || fila.producto !== producto) return null;
+    if (soloUsuarioId !== undefined && fila.usuario_id !== soloUsuarioId) return null;
 
     const descarga = await obtenerDescarga(
       fila.comprobante_driver as DriverDocumento,
@@ -5966,7 +5975,7 @@ export class CombustibleService {
   listarComprasUrea(
     client: PoolClient,
     tenantId: string,
-    filtros: { desde?: string; hasta?: string }
+    filtros: { desde?: string; hasta?: string; soloUsuarioId?: string }
   ) {
     return this.repository.findComprasUrea(client, tenantId, filtros, 100);
   }

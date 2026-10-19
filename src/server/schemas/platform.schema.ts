@@ -57,7 +57,9 @@ export const actualizarPestanasUsuarioSchema = z.object({
         permitido: z.boolean(),
       })
     )
-    .max(50),
+    // Holgado sobre el catálogo de pestañas (51 con "Historial de compras"):
+    // el panel manda la lista completa y un tope justo rompe el guardado.
+    .max(200),
 });
 
 export type ActualizarModulosInput = z.infer<typeof actualizarModulosSchema>;

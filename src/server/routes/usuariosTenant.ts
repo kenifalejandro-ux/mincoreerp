@@ -129,7 +129,11 @@ const guardarPermisosSchema = z.object({
         permitido: z.boolean(),
       })
     )
-    .max(50)
+    // La pantalla manda TODAS las pestañas configurables, no un parche: el
+    // tope tiene que quedar holgado sobre el catálogo (el 51º rompía el
+    // guardado entero). tests/combustible-historial-compras-conductor.test.ts
+    // lo vigila.
+    .max(200)
     .optional(),
   // De qué módulos recibe los correos de alerta (0107). Ausente = no se toca.
   alertasCorreo: z

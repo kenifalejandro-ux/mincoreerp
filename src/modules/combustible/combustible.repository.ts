@@ -1449,10 +1449,11 @@ export class CombustibleRepository {
     comprobante_sha256: string | null;
     anulada_en: string | null;
     producto: string;
+    usuario_id: string | null;
   } | null> {
     const result = await client.query(
       `SELECT comprobante_numero, comprobante_driver, comprobante_key, comprobante_mime,
-              comprobante_nombre, comprobante_sha256, anulada_en, producto
+              comprobante_nombre, comprobante_sha256, anulada_en, producto, usuario_id
          FROM combustible_despachos WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId]
     );
@@ -1476,12 +1477,19 @@ export class CombustibleRepository {
       serieTalonario?: string;
       origen?: string;
       producto?: string;
+      /** El conductor solo ve lo que él registró (usuario_id). */
+      soloUsuarioId?: string;
     } & PeriodoHistorial,
     { pageSize, offset }: Paginacion,
     ambito?: AmbitoVales
   ) {
     const condiciones: string[] = ["tenant_id = $1"];
     const valores: unknown[] = [tenantId];
+
+    if (filtros.soloUsuarioId !== undefined) {
+      valores.push(filtros.soloUsuarioId);
+      condiciones.push(`usuario_id = $${valores.length}`);
+    }
 
     if (filtros.equipoId !== undefined) {
       valores.push(filtros.equipoId);
@@ -3319,11 +3327,15 @@ export class CombustibleRepository {
   async findComprasUrea(
     client: PoolClient,
     tenantId: string,
-    filtros: { desde?: string; hasta?: string },
+    filtros: { desde?: string; hasta?: string; soloUsuarioId?: string },
     limite: number
   ) {
     const condiciones = ["d.tenant_id = $1", "d.producto = 'urea'", "d.origen = 'compra_externa'"];
     const valores: unknown[] = [tenantId];
+    if (filtros.soloUsuarioId !== undefined) {
+      valores.push(filtros.soloUsuarioId);
+      condiciones.push(`d.usuario_id = $${valores.length}`);
+    }
     if (filtros.desde) {
       valores.push(filtros.desde);
       condiciones.push(`d.despachado_en >= $${valores.length}::timestamptz`);
