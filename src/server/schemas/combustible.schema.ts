@@ -5,7 +5,7 @@ import { grifoNoEditable } from "./sedes.schema";
 // ── Tanques / puntos de abastecimiento (Fase A, ver
 // docs/architecture/control-de-combustible.md) ─────────────────────────────
 
-const TIPOS_COMBUSTIBLE = ["diesel_b5", "gasolina_90", "glp"] as const;
+export const TIPOS_COMBUSTIBLE = ["diesel_b5", "gasolina_90", "glp"] as const;
 const UNIDADES_COMBUSTIBLE = ["gal", "L"] as const;
 const TIPOS_PUNTO_COMBUSTIBLE = ["fijo", "cisterna", "surtidor"] as const;
 

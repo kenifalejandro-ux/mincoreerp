@@ -200,6 +200,37 @@ describe("lectura del formulario de despacho", () => {
     }
   });
 
+  it("entrada mal formada da 400, no 500, en el endpoint del formulario y en el completo", async () => {
+    const fecha = encodeURIComponent(new Date().toISOString());
+    const malos = [
+      `tipo_combustible=diesel_b5&grifo_id=${grifoRuta}&fecha=abc`,
+      `tipo_combustible=diesel_b5&grifo_id=${grifoRuta}&fecha=0000-01-01`,
+      `tipo_combustible=diesel_b5&grifo_id=${grifoRuta}&fecha=9999-12-31`,
+      `tipo_combustible=veneno&grifo_id=${grifoRuta}&fecha=${fecha}`,
+      `tipo_combustible=diesel_b5&grifo_id=NaN&fecha=${fecha}`,
+      `tipo_combustible=diesel_b5&grifo_id=abc&fecha=${fecha}`,
+      `tipo_combustible=diesel_b5&grifo_id=1.5&fecha=${fecha}`,
+      `tipo_combustible=diesel_b5&grifo_id=Infinity&fecha=${fecha}`,
+      `tipo_combustible=diesel_b5&grifo_id=99999999999999999999&fecha=${fecha}`,
+      `tipo_combustible=diesel_b5&combustible_id=2147483648&fecha=${fecha}`,
+    ];
+    const conductor = await persona("conductor_ruta");
+    for (const q of malos) {
+      expect((await conductor.get(`${base}/precios/vigente-formulario?${q}`)).status, q).toBe(400);
+      expect((await admin.get(`${base}/precios/vigente?${q}`)).status, q).toBe(400);
+    }
+    // Gemelo legítimo: un id que no existe sigue siendo "sin precio", no un error.
+    for (const id of ["0", "-1", "1000"]) {
+      const r = await admin.get(
+        `${base}/precios/vigente?tipo_combustible=diesel_b5&grifo_id=${id}&fecha=${fecha}`
+      );
+      expect(r.status, id).toBe(200);
+      expect(r.body).toEqual({ precio: null });
+    }
+    // Y el caso válido sigue dando su precio.
+    expect((await vigente(conductor, `grifo_id=${grifoRuta}`)).status).toBe(200);
+  });
+
   it("parámetros inválidos: sin destino o con los dos, 400", async () => {
     const conductor = await persona("conductor_ruta");
     expect((await vigente(conductor, "")).status).toBe(400);
