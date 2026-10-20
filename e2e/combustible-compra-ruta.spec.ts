@@ -228,6 +228,20 @@ test("sin señal la compra queda en el equipo y se sincroniza sola, una sola vez
   const numero = `B001-${unico()}`;
   const admin = adminA();
 
+  // Diagnóstico: qué respondió el servidor a la foto (o si la petición falló).
+  const rastroFoto: string[] = [];
+  page.on("response", (r) => {
+    if (r.url().includes("/comprobante")) {
+      void r
+        .text()
+        .then((t) => rastroFoto.push(`${r.request().method()} ${r.status()} ${t.slice(0, 200)}`))
+        .catch(() => rastroFoto.push(`${r.status()} (sin cuerpo)`));
+    }
+  });
+  page.on("requestfailed", (r) => {
+    if (r.url().includes("/comprobante")) rastroFoto.push(`falló: ${r.failure()?.errorText}`);
+  });
+
   await loginPorUI(page, admin.email, admin.password);
   const { grifoNombre } = await sembrar(page, marca);
   // Unidad, proveedor y catálogos se eligen TODAVÍA CON RED: es el caso real,
@@ -264,7 +278,10 @@ test("sin señal la compra queda en el equipo y se sincroniza sola, una sola vez
         (await despachosDeLaBoleta(page, numero)).filter((d) => d.comprobante_nombre).length,
       { timeout: 60_000, message: "la foto encolada no quedó en los dos despachos" }
     )
-    .toBe(2);
+    .toBe(2)
+    .catch((err: Error) => {
+      throw new Error(`${err.message}\nRastro de la foto: ${JSON.stringify(rastroFoto)}`);
+    });
   expect(await despachosDeLaBoleta(page, numero)).toHaveLength(2);
 });
 
