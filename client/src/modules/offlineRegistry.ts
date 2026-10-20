@@ -66,6 +66,11 @@ export const ESCRITURAS_OFFLINE: Record<string, EscrituraOffline[]> = {
     // La foto de la boleta de una compra de UREA en ruta (0119): misma idea,
     // ruta propia porque el permiso es otro (urea:registrar_compra).
     { metodo: "POST", ruta: "/urea/compras/por-uuid/:clienteUuid/comprobante" },
+    // La compra en ruta unificada (0135): una boleta con combustible, urea o
+    // los dos, creada en UNA llamada, y su foto única apuntada por el uuid de la
+    // compra. La cola drena en orden: el registro llega antes que su foto.
+    { metodo: "POST", ruta: "/compras-ruta" },
+    { metodo: "POST", ruta: "/compras-ruta/por-uuid/:clienteUuid/comprobante" },
     // "Mi viaje" (0124): salida y llegada del conductor, sin señal en ruta.
     { metodo: "POST", ruta: "/viajes/:viajeId/iniciar-mio" },
     { metodo: "POST", ruta: "/viajes/:viajeId/cerrar-mio" },

@@ -45,6 +45,7 @@ import VentanaSurtidores from "./Surtidores";
 import PreciosPagina from "./PreciosPagina";
 import Proveedores from "./Proveedores";
 import TanquetasPanel from "./Tanquetas";
+import CompraEnRuta from "./CompraEnRuta";
 import MiViaje from "./MiViaje";
 import ViajesPanel from "./ViajesPanel";
 import { comprimirImagen } from "./comprimirImagen";
@@ -1529,6 +1530,7 @@ export interface CombustiblePanelProps {
     | "tanquetas"
     | "viajes"
     | "mi_viaje"
+    | "compra_ruta"
     | "historico"
     | "urea"
     | "precios"
@@ -1731,6 +1733,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     | "tanquetas"
     | "viajes"
     | "mi_viaje"
+    | "compra_ruta"
     | "historico"
     | "urea"
     | "precios"
@@ -3800,6 +3803,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         className={`flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-10 ${
           pestanaCombustible === "urea" ||
           pestanaCombustible === "mi_viaje" ||
+          pestanaCombustible === "compra_ruta" ||
           pestanaCombustible === "precios" ||
           pestanaCombustible === "proveedores"
             ? "hidden!"
@@ -3919,6 +3923,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {pestanaCombustible === "tanquetas" && <TanquetasPanel />}
       {pestanaCombustible === "viajes" && <ViajesPanel />}
       {pestanaCombustible === "mi_viaje" && <MiViaje />}
+      {pestanaCombustible === "compra_ruta" && <CompraEnRuta />}
       {!esConductor && pestanaCombustible === "tanques" && importacion.error && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-red-900 font-light flex-1">{importacion.error}</p>

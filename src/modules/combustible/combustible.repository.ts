@@ -23,6 +23,27 @@ import { TIPOS_CRITICOS } from "./canalesAlertas";
  *  opcionales y se pueden usar sueltas: "de marzo en adelante" y "hasta
  *  marzo" son consultas tan válidas como el rango cerrado. Sin ninguna de
  *  las dos, el listado se comporta como antes de que existiera el filtro. */
+/** Una fila de combustible_compras_ruta (0135). Los importes son numeric, así
+ *  que el driver los entrega como texto. */
+export interface CompraRutaFila {
+  id: string;
+  tenant_id: string;
+  cliente_uuid: string;
+  grifo_id: number;
+  comprobante_tipo: string;
+  comprobante_numero: string;
+  unidad_equipo_id: number;
+  despachado_en: Date;
+  total_boleta: string;
+  total_sistema: string;
+  diferencia: string;
+  motivo_descuadre: string | null;
+  despacho_combustible_id: string | null;
+  despacho_urea_id: string | null;
+  usuario_id: string | null;
+  creado_en: Date;
+}
+
 export interface PeriodoHistorial {
   desde?: string;
   hasta?: string;
@@ -1434,6 +1455,70 @@ export class CombustibleRepository {
       [tenantId, clienteUuid, ...f.valores]
     );
     return result.rows[0]?.id ?? null;
+  }
+
+  // ── Compra en ruta unificada (0135) ─────────────────────────────────────
+
+  /** La cabecera de una boleta con combustible, urea o los dos. Los importes
+   *  llegan como texto con dos decimales para que `diferencia = total_boleta -
+   *  total_sistema` (CHECK de la tabla) se compare en numeric y no en punto
+   *  flotante. */
+  async crearCompraRuta(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string | null,
+    p: {
+      clienteUuid: string;
+      grifoId: number;
+      comprobanteTipo: string;
+      comprobanteNumero: string;
+      equipoId: number;
+      despachadoEn: string;
+      totalBoleta: string;
+      totalSistema: string;
+      diferencia: string;
+      motivoDescuadre: string | null;
+      despachoCombustibleId: number | null;
+      despachoUreaId: number | null;
+    }
+  ): Promise<CompraRutaFila> {
+    const result = await client.query<CompraRutaFila>(
+      `INSERT INTO combustible_compras_ruta
+         (tenant_id, cliente_uuid, grifo_id, comprobante_tipo, comprobante_numero,
+          unidad_equipo_id, despachado_en, total_boleta, total_sistema, diferencia,
+          motivo_descuadre, despacho_combustible_id, despacho_urea_id, usuario_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       RETURNING *`,
+      [
+        tenantId,
+        p.clienteUuid,
+        p.grifoId,
+        p.comprobanteTipo,
+        p.comprobanteNumero,
+        p.equipoId,
+        p.despachadoEn,
+        p.totalBoleta,
+        p.totalSistema,
+        p.diferencia,
+        p.motivoDescuadre,
+        p.despachoCombustibleId,
+        p.despachoUreaId,
+        usuarioId,
+      ]
+    );
+    return result.rows[0];
+  }
+
+  async findCompraRutaPorId(
+    client: PoolClient,
+    tenantId: string,
+    id: number
+  ): Promise<CompraRutaFila | null> {
+    const result = await client.query<CompraRutaFila>(
+      `SELECT * FROM combustible_compras_ruta WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, id]
+    );
+    return result.rows[0] ?? null;
   }
 
   async findComprobanteDeDespacho(

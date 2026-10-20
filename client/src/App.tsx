@@ -2,6 +2,7 @@
 import { Suspense, lazy, useEffect, useState, type ComponentType } from "react";
 
 import { puedeVerBandeja } from "./components/bandeja/bandejaAcceso";
+import { puedeCompraEnRuta } from "./components/combustible/compraEnRutaAcceso";
 import { puedeVerPrecios } from "./components/combustible/preciosAcceso";
 import Layout from "./components/layout/Layout";
 import { useAuth } from "./context/AuthContext";
@@ -52,6 +53,8 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
   // La Bandeja no es un módulo: junta las alertas de los que sí lo son.
   if (moduloId === "bandeja") return puedeVerBandeja(usuario);
   if (moduloId === "combustible") {
+    // Compra en ruta junta dos permisos (combustible y urea): mismos que el menú.
+    if (tab === "combustible:compra_ruta") return puedeCompraEnRuta(usuario);
     // Precios une combustible y urea: mismos dos permisos que el menú.
     if (tab === "combustible:precios") return puedeVerPrecios(usuario);
     const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
@@ -174,17 +177,19 @@ function App() {
                   ? "viajes"
                   : tabActiva === "combustible:mi_viaje"
                     ? "mi_viaje"
-                    : tabActiva === "combustible:urea"
-                      ? "urea"
-                      : tabActiva === "combustible:precios"
-                        ? "precios"
-                        : tabActiva === "combustible:proveedores"
-                          ? "proveedores"
-                          : tabActiva === "combustible:auditoria"
-                            ? "auditoria"
-                            : tabActiva === "combustible:bitacora"
-                              ? "bitacora"
-                              : "tanques",
+                    : tabActiva === "combustible:compra_ruta"
+                      ? "compra_ruta"
+                      : tabActiva === "combustible:urea"
+                        ? "urea"
+                        : tabActiva === "combustible:precios"
+                          ? "precios"
+                          : tabActiva === "combustible:proveedores"
+                            ? "proveedores"
+                            : tabActiva === "combustible:auditoria"
+                              ? "auditoria"
+                              : tabActiva === "combustible:bitacora"
+                                ? "bitacora"
+                                : "tanques",
         }
       : {};
 

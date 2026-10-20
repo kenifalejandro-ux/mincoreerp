@@ -527,6 +527,14 @@ export const MODULOS: ModuloDefinicion[] = [
         tabla: "combustible_despachos",
         porDefecto: 100_000,
       },
+      // 0135 -- la compra en ruta crea despachos: cuenta contra el mismo techo.
+      {
+        ruta: "/compras-ruta",
+        metodo: "POST",
+        recurso: "combustible_despachos",
+        tabla: "combustible_despachos",
+        porDefecto: 100_000,
+      },
       // Fase C -- recurso propio por el mismo motivo, pero con un techo
       // mucho más bajo a propósito: una recepción es la llegada de una
       // cisterna (semanal o mensual), no un movimiento de cancha. Miles de
@@ -562,6 +570,10 @@ export const MODULOS: ModuloDefinicion[] = [
         { metodo: "POST", ruta: "/despachos/por-uuid/:clienteUuid/comprobante" },
         // La foto de la boleta de una compra de UREA en ruta (0119).
         { metodo: "POST", ruta: "/urea/compras/por-uuid/:clienteUuid/comprobante" },
+        // La compra en ruta unificada (0135): una boleta con combustible,
+        // urea o los dos, y su foto única apuntada por el uuid de la compra.
+        { metodo: "POST", ruta: "/compras-ruta" },
+        { metodo: "POST", ruta: "/compras-ruta/por-uuid/:clienteUuid/comprobante" },
         // "Mi viaje" (0124): el conductor marca salida y llegada en ruta, donde
         // puede no haber señal. El reintento no duplica: el service reconoce el
         // cliente_uuid de la marca. Espejo de offlineRegistry.ts del cliente.

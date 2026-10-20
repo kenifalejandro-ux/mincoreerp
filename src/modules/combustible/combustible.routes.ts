@@ -13,6 +13,7 @@ import {
   cargaMasivaTanquesCombustibleSchema,
   anularLecturaCombustibleSchema,
   crearDespachoCombustibleSchema,
+  crearCompraRutaSchema,
   crearGrifoCombustibleSchema,
   actualizarGrifoCombustibleSchema,
   crearPreciosCombustibleMasivoSchema,
@@ -240,6 +241,46 @@ router.post(
   requireRole("admin", "operador", "grifero", "conductor_ruta", "encargado_urea"),
   validate(crearDespachoCombustibleSchema),
   asyncHandler(controller.crearDespacho.bind(controller))
+);
+
+// 🧾 Compra en ruta unificada (0135): UNA boleta o factura con combustible,
+// urea o los dos. Cada producto es un despacho con sus reglas de siempre, y se
+// guardan los dos o ninguno.
+//
+// El middleware pide al menos UNO de los dos permisos de registrar; el
+// controlador exige el de cada sección que venga en el body, así que un
+// conductor con uno solo no puede colar el otro producto. Sin `grifero` ni
+// `encargado_urea`: su mundo es el tanque propio y el almacén, no la compra en
+// ruta.
+router.post(
+  "/compras-ruta",
+  requirePestanaAlguna("tanques:registrar_despacho", "urea:registrar_compra"),
+  requireRole("admin", "operador", "conductor_ruta"),
+  validate(crearCompraRutaSchema),
+  asyncHandler(controller.crearCompraRuta.bind(controller))
+);
+
+// La foto única de la boleta, apuntada por el uuid de la compra: es la que
+// usa la cola offline (la compra aún no tiene id). El uuid se valida acá para
+// que uno mal formado sea un 404 y no un 500 que la cola reintentaría siempre.
+router.post(
+  "/compras-ruta/por-uuid/:clienteUuid/comprobante",
+  (req: Request, res: Response, next: NextFunction) => {
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        req.params.clienteUuid
+      )
+    ) {
+      res.status(404).json({ error: "Compra no encontrada" });
+      return;
+    }
+    next();
+  },
+  requirePestanaAlguna("tanques:registrar_despacho", "urea:registrar_compra"),
+  requireRole("admin", "operador", "conductor_ruta"),
+  subirArchivoComprobante,
+  validate(subirComprobanteCompraSchema),
+  asyncHandler(controller.subirComprobanteCompraRuta.bind(controller))
 );
 
 // 🚫 anular un vale roto o mal tipeado -- admin Y operador, los mismos que
