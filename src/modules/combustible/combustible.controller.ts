@@ -2074,138 +2074,70 @@ export class CombustibleController {
       }
 
       const compra = fila!.compra;
-      await registrarAuditoria({
-        accion: "combustible.compra_ruta_crear",
-        tenantId,
-        usuarioId: usuario.id,
-        detalle: {
-          compraId: compra.id,
-          comprobanteTipo: compra.comprobante_tipo,
-          comprobanteNumero: compra.comprobante_numero,
-          totalBoleta: compra.total_boleta,
-          totalSistema: compra.total_sistema,
-          diferencia: compra.diferencia,
-          motivoDescuadre: compra.motivo_descuadre,
-          despachoCombustibleId: compra.despacho_combustible_id,
-          despachoUreaId: compra.despacho_urea_id,
-        },
-        contexto: contextoAuditoriaModulo(req),
-      });
-
-      // Cada despacho deja su rastro como si se hubiera registrado suelto: la
-      // bitácora, el tiempo real y las alertas no distinguen de dónde vino.
-      const despachos = [
-        { entrada: entradas.combustible, fila: fila!.despacho_combustible },
-        { entrada: entradas.urea, fila: fila!.despacho_urea },
-      ];
-      for (const { entrada, fila: despacho } of despachos) {
-        if (!entrada || !despacho) continue;
+      // La compra YA está guardada: un fallo de bitácora, evento o alertas no la
+      // convierte en 500 (la cola reintentaría y recibiría 200 sin rehacerlos).
+      try {
         await registrarAuditoria({
-          accion: "combustible.despacho_crear",
+          accion: "combustible.compra_ruta_crear",
           tenantId,
           usuarioId: usuario.id,
           detalle: {
-            despachoId: despacho.id,
-            origen: entrada.origen,
-            serieTalonario: null,
-            nVale: null,
-            comprobanteTipo: entrada.comprobante_tipo ?? null,
-            comprobanteNumero: entrada.comprobante_numero ?? null,
-            compraRutaId: compra.id,
+            compraId: compra.id,
+            comprobanteTipo: compra.comprobante_tipo,
+            comprobanteNumero: compra.comprobante_numero,
+            totalBoleta: compra.total_boleta,
+            totalSistema: compra.total_sistema,
+            diferencia: compra.diferencia,
+            despachoCombustibleId: compra.despacho_combustible_id,
+            despachoUreaId: compra.despacho_urea_id,
           },
           contexto: contextoAuditoriaModulo(req),
         });
-        await publicarEventoTenant(tenantId, "combustible.despacho_creado", {
-          despachoId: despacho.id,
-          producto: entrada.producto,
-        });
-        await this.procesarAlertasDespachoCreado(
-          tenantId,
-          despacho.id,
-          entrada,
-          null,
-          Number(despacho.cantidad)
+
+        // Cada despacho deja su rastro como si se hubiera registrado suelto: la
+        // bitácora, el tiempo real y las alertas no distinguen de dónde vino.
+        const despachos = [
+          { entrada: entradas.combustible, fila: fila!.despacho_combustible },
+          { entrada: entradas.urea, fila: fila!.despacho_urea },
+        ];
+        for (const { entrada, fila: despacho } of despachos) {
+          if (!entrada || !despacho) continue;
+          await registrarAuditoria({
+            accion: "combustible.despacho_crear",
+            tenantId,
+            usuarioId: usuario.id,
+            detalle: {
+              despachoId: despacho.id,
+              origen: entrada.origen,
+              serieTalonario: null,
+              nVale: null,
+              comprobanteTipo: entrada.comprobante_tipo ?? null,
+              comprobanteNumero: entrada.comprobante_numero ?? null,
+              compraRutaId: compra.id,
+            },
+            contexto: contextoAuditoriaModulo(req),
+          });
+          await publicarEventoTenant(tenantId, "combustible.despacho_creado", {
+            despachoId: despacho.id,
+            producto: entrada.producto,
+          });
+          await this.procesarAlertasDespachoCreado(
+            tenantId,
+            despacho.id,
+            entrada,
+            null,
+            Number(despacho.cantidad)
+          );
+        }
+      } catch (err) {
+        logger.warn(
+          { err, tenantId, compraId: compra.id },
+          "Compra en ruta guardada; falló el rastro posterior"
         );
-      }
-      // Una boleta que no cuadra queda a la vista de quien revisa. Después de
-      // los despachos y sin poder tirar abajo el 201: la compra ya se guardó.
-      if (compra.motivo_descuadre !== null) {
-        await this.procesarAlertaCompraRutaDescuadre(tenantId, {
-          comprobanteTipo: compra.comprobante_tipo,
-          comprobanteNumero: compra.comprobante_numero,
-          totalBoleta: Number(compra.total_boleta),
-          totalSistema: Number(compra.total_sistema),
-          diferencia: Number(compra.diferencia),
-          motivo: compra.motivo_descuadre,
-          compraRutaId: Number(compra.id),
-          despachoCombustibleId: compra.despacho_combustible_id
-            ? Number(compra.despacho_combustible_id)
-            : null,
-          despachoUreaId: compra.despacho_urea_id ? Number(compra.despacho_urea_id) : null,
-        });
       }
       res.status(201).json(fila);
     } catch (err) {
       this.responderErrorDeDespacho(err, res);
-    }
-  }
-
-  /** La boleta de una compra en ruta no cuadra con lo registrado (0136). Es un
-   *  hallazgo: el conductor ya explicó el motivo y la compra se guardó, pero
-   *  quien revisa tiene que poder verlo. Sale por el resumen diario (canal
-   *  "resumen"), no por correo al momento.
-   *
-   *  Mismo contrato "nunca lanza" que los demás procesar*: corre después de que
-   *  la transacción confirmó, así que un fallo acá no convierte un 201 real en
-   *  un 500. */
-  private async procesarAlertaCompraRutaDescuadre(
-    tenantId: string,
-    d: {
-      comprobanteTipo: string;
-      comprobanteNumero: string;
-      totalBoleta: number;
-      totalSistema: number;
-      diferencia: number;
-      motivo: string;
-      compraRutaId: number;
-      despachoCombustibleId: number | null;
-      despachoUreaId: number | null;
-    }
-  ) {
-    try {
-      // El ancla es un despacho de la boleta: el de combustible si lo hay.
-      const despachoId = d.despachoCombustibleId ?? d.despachoUreaId;
-      const producto = d.despachoCombustibleId !== null ? "combustible" : "urea";
-      await withTenant(tenantId, (client) =>
-        service.crearAlertas(client, tenantId, [
-          {
-            tipo: "compra_ruta_descuadre",
-            despachoId,
-            producto,
-            detalle: {
-              // La columna "Vale" de la Bandeja lee este texto (referenciaAlerta).
-              comprobante: `${d.comprobanteTipo === "factura" ? "Factura" : "Boleta"} ${d.comprobanteNumero}`,
-              comprobanteTipo: d.comprobanteTipo,
-              comprobanteNumero: d.comprobanteNumero,
-              totalBoleta: d.totalBoleta,
-              totalSistema: d.totalSistema,
-              diferencia: d.diferencia,
-              motivo: d.motivo,
-              compraRutaId: d.compraRutaId,
-            },
-          },
-        ])
-      );
-      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
-        tipo: "compra_ruta_descuadre",
-        producto,
-        despachoId,
-      });
-    } catch (err) {
-      logger.warn(
-        { err, tenantId, compraRutaId: d.compraRutaId },
-        "No se pudo procesar la alerta de boleta que no cuadra"
-      );
     }
   }
 
@@ -2258,12 +2190,17 @@ export class CombustibleController {
       const archivo = req.file!;
       const { motivo } = req.validatedBody as SubirComprobanteCompraInput;
       const usuario = req.usuario!;
-      const compraUuid = req.params.clienteUuid;
+      const compraUuid = (req.params.clienteUuid ?? "").toLowerCase();
+      const despachoIdParam = Number(req.params.despachoId);
+      if (via === "despacho" && !Number.isInteger(despachoIdParam)) {
+        res.status(404).json({ error: "Compra no encontrada" });
+        return;
+      }
       // Desde el historial se apunta con el id de un despacho: los de la misma
       // boleta se resuelven acá, antes del bucle.
       const hermanos =
         via === "despacho"
-          ? await service.resolverDespachosDeLaBoleta(tenantId, Number(req.params.despachoId))
+          ? await service.resolverDespachosDeLaBoleta(tenantId, despachoIdParam)
           : [];
 
       const productos = [
@@ -2309,6 +2246,29 @@ export class CombustibleController {
         return;
       }
 
+      const nuevos = resultados.flatMap(({ producto, despachoId, resultado }) =>
+        resultado.estado === "guardado" ? [{ producto, despachoId, resultado }] : []
+      );
+      for (const { producto, despachoId, resultado } of nuevos) {
+        await registrarAuditoria({
+          accion: resultado.reemplazo
+            ? "combustible.comprobante_reemplazar"
+            : "combustible.comprobante_adjuntar",
+          tenantId,
+          usuarioId: usuario.id,
+          detalle: {
+            despachoId,
+            nombreArchivo: archivo.originalname,
+            bytes: archivo.size,
+            ...(resultado.reemplazo ? { motivo } : {}),
+          },
+          contexto: contextoAuditoriaModulo(req),
+        });
+        await publicarEventoTenant(tenantId, "combustible.comprobante_adjuntado", {
+          despachoId,
+          producto,
+        });
+      }
       // Mismos códigos que la foto de un despacho suelto: esta subida viene de
       // la cola offline, que descarta todo 4xx y reintenta todo 5xx.
       for (const { resultado } of resultados) {
@@ -2338,29 +2298,6 @@ export class CombustibleController {
         }
       }
 
-      const nuevos = resultados.flatMap(({ producto, despachoId, resultado }) =>
-        resultado.estado === "guardado" ? [{ producto, despachoId, resultado }] : []
-      );
-      for (const { producto, despachoId, resultado } of nuevos) {
-        await registrarAuditoria({
-          accion: resultado.reemplazo
-            ? "combustible.comprobante_reemplazar"
-            : "combustible.comprobante_adjuntar",
-          tenantId,
-          usuarioId: usuario.id,
-          detalle: {
-            despachoId,
-            nombreArchivo: archivo.originalname,
-            bytes: archivo.size,
-            ...(resultado.reemplazo ? { motivo } : {}),
-          },
-          contexto: contextoAuditoriaModulo(req),
-        });
-        await publicarEventoTenant(tenantId, "combustible.comprobante_adjuntado", {
-          despachoId,
-          producto,
-        });
-      }
       const filas = Object.fromEntries(
         resultados.map(({ producto, resultado }) => [
           producto,

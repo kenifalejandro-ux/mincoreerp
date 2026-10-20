@@ -45,14 +45,13 @@ describe("catálogo de canales", () => {
     expect(Object.keys(CATALOGO_ALERTAS).sort()).toEqual([...TIPOS_ALERTA].sort());
   });
 
-  it("el reparto decidido con Kenif: 26 al momento, 17 al resumen, 2 solo en el ERP", () => {
+  it("el reparto decidido con Kenif: 26 al momento, 16 al resumen, 2 solo en el ERP", () => {
     const cuenta = (canal: string) =>
       Object.values(CATALOGO_ALERTAS).filter((c) => c.canal === canal).length;
     // 25: se sumó urea_litros_corregidos (0130); 26: urea_conteo_alterado
-    // (0132). Los dos al momento. 17 al resumen: se sumó compra_ruta_descuadre
-    // (0136), la boleta de una compra en ruta que no cuadra.
+    // (0132). Los dos al momento.
     expect(cuenta("al_momento")).toBe(26);
-    expect(cuenta("resumen")).toBe(17);
+    expect(cuenta("resumen")).toBe(16);
     expect(cuenta("solo_erp")).toBe(2);
   });
 

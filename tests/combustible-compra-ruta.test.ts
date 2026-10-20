@@ -270,15 +270,6 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
     expect(r.body.compra.motivo_descuadre).toBeNull();
   });
 
-  it("no cuadra con motivo: se guarda la diferencia y el motivo", async () => {
-    const r = await crear(
-      cuerpo({ total_boleta: 810, motivo_descuadre: "El grifo cobró un servicio de lavado" })
-    );
-    expect(r.status).toBe(201);
-    expect(Number(r.body.compra.diferencia)).toBe(10);
-    expect(r.body.compra.motivo_descuadre).toBe("El grifo cobró un servicio de lavado");
-  });
-
   it("una diferencia de redondeo (hasta S/ 0.10) no pide motivo", async () => {
     const r = await crear(cuerpo({ total_boleta: 800.05 }));
     expect(r.status).toBe(201);
@@ -291,96 +282,12 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
     expect((await crear(cuerpo({ total_boleta: 800.11 }))).status).toBe(201);
   });
 
-  it("el motivo sobra si cuadra: no se guarda", async () => {
-    const r = await crear(cuerpo({ motivo_descuadre: "no hacía falta" }));
-    expect(r.status).toBe(201);
-    expect(r.body.compra.motivo_descuadre).toBeNull();
-  });
-
   it("sin total de la boleta: se guarda la suma del sistema", async () => {
     const body = cuerpo();
     delete (body as Record<string, unknown>).total_boleta;
     const r = await crear(body);
     expect(r.status).toBe(201);
     expect(Number(r.body.compra.diferencia)).toBe(0);
-  });
-
-  // ── 4b. La alerta en la Bandeja ───────────────────────────────────────
-
-  const alertasDescuadre = async (numeroBoleta: string) =>
-    (
-      await withTenant(tenantId, (cl) =>
-        cl.query(
-          `SELECT tipo, despacho_id, producto, detalle FROM combustible_alertas
-            WHERE tenant_id = $1 AND tipo = 'compra_ruta_descuadre'
-              AND detalle->>'comprobanteNumero' = $2`,
-          [tenantId, numeroBoleta]
-        )
-      )
-    ).rows;
-
-  it("una boleta que no cuadra deja una alerta con el papel, lo registrado y el motivo", async () => {
-    const body = cuerpo({ total_boleta: 810, motivo_descuadre: "El grifo cobró un lavado" });
-    const r = await crear(body);
-    expect(r.status).toBe(201);
-    const alertas = await alertasDescuadre(body.comprobante_numero);
-    expect(alertas).toHaveLength(1);
-    // Anclada al despacho de combustible de la boleta.
-    expect(Number(alertas[0].despacho_id)).toBe(Number(r.body.despacho_combustible.id));
-    expect(alertas[0].detalle).toMatchObject({
-      totalBoleta: 810,
-      totalSistema: 800,
-      diferencia: 10,
-      motivo: "El grifo cobró un lavado",
-    });
-    expect(alertas[0].detalle.comprobante).toContain(body.comprobante_numero);
-  });
-
-  it("la alerta se ancla al despacho de urea cuando la boleta es solo de urea", async () => {
-    const body = cuerpo({
-      combustible: undefined,
-      total_boleta: 150,
-      motivo_descuadre: "Faltó una caja en la boleta",
-    });
-    const r = await crear(body);
-    expect(r.status).toBe(201);
-    const [a] = await alertasDescuadre(body.comprobante_numero);
-    expect(a.producto).toBe("urea");
-    expect(Number(a.despacho_id)).toBe(Number(r.body.despacho_urea.id));
-  });
-
-  it("una boleta que cuadra, o con diferencia de redondeo, no deja alerta", async () => {
-    const cuadra = cuerpo();
-    expect((await crear(cuadra)).status).toBe(201);
-    const redondeo = cuerpo({ total_boleta: 800.05 });
-    expect((await crear(redondeo)).status).toBe(201);
-    expect(await alertasDescuadre(cuadra.comprobante_numero)).toHaveLength(0);
-    expect(await alertasDescuadre(redondeo.comprobante_numero)).toHaveLength(0);
-  });
-
-  it("el reintento de una boleta que no cuadra no duplica la alerta", async () => {
-    const body = cuerpo({ total_boleta: 820, motivo_descuadre: "Servicio extra" });
-    expect((await crear(body)).status).toBe(201);
-    expect((await crear(body)).status).toBe(200);
-    expect(await alertasDescuadre(body.comprobante_numero)).toHaveLength(1);
-  });
-
-  it("la alerta aparece en el listado de alertas del admin", async () => {
-    const body = cuerpo({ total_boleta: 830, motivo_descuadre: "Propina al playero" });
-    expect((await crear(body)).status).toBe(201);
-    const r = await agente.get("/api/erp/combustible/alertas");
-    expect(r.status, JSON.stringify(r.body).slice(0, 200)).toBe(200);
-    const filas = (Array.isArray(r.body) ? r.body : (r.body.data ?? [])) as {
-      tipo: string;
-      detalle: { comprobanteNumero?: string };
-    }[];
-    expect(
-      filas.some(
-        (f) =>
-          f.tipo === "compra_ruta_descuadre" &&
-          f.detalle.comprobanteNumero === body.comprobante_numero
-      )
-    ).toBe(true);
   });
 
   // ── 5. Permisos ───────────────────────────────────────────────────────

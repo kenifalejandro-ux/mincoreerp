@@ -54,8 +54,9 @@ export interface BorradorCompraRuta {
   horasEditadas: boolean;
   renglones: RenglonBorrador[];
   totalBoleta: string;
-  motivo: string;
   observaciones: string;
+  /** Lo último que se mandó con este uuid; null si no se ha enviado. */
+  huellaEnvio?: string | null;
 }
 
 interface Guardado {
@@ -92,7 +93,6 @@ export function borradorTieneContenido(b: BorradorCompraRuta): boolean {
     b.odometro !== "" ||
     b.horas !== "" ||
     b.totalBoleta !== "" ||
-    b.motivo.trim() !== "" ||
     b.observaciones.trim() !== "" ||
     b.renglones.some((r) => r.cantidad !== "")
   );

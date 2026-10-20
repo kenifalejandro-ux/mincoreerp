@@ -271,6 +271,20 @@ export const MODULOS: ModuloDefinicion[] = [
           tanqueta_origen_id: "combustible_tanquetas",
         },
       },
+      // 0135: la cabecera de la compra en ruta (una boleta, hasta dos despachos).
+      // Referencia a los despachos sin ON DELETE: va DESPUÉS de ellos y necesita
+      // su entrada en `raices`.
+      {
+        nombre: "combustible_compras_ruta",
+        pk: "serial",
+        fks: {
+          grifo_id: "combustible_grifos",
+          unidad_equipo_id: "equipos",
+          despacho_combustible_id: "combustible_despachos",
+          despacho_urea_id: "combustible_despachos",
+          usuario_id: "usuarios",
+        },
+      },
       // Viajes (0123): lugares primero (los viajes los referencian). Los viajes
       // referencian equipos sin ON DELETE y no cascadean desde ninguna tabla
       // del módulo, así que ambas necesitan su entrada en `raices`.
@@ -474,6 +488,8 @@ export const MODULOS: ModuloDefinicion[] = [
       // ellos (RAICES_WIPE invierte este orden).
       "combustible_urea_precios",
       "combustible_despachos",
+      // 0135: referencia a los despachos, se borra antes que ellos.
+      "combustible_compras_ruta",
       "combustible_precios",
       "combustible_recepciones",
       // Fase D: las tres cascadean desde `tenants`, no desde ninguna tabla

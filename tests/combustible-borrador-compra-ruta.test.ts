@@ -42,7 +42,6 @@ const vacio = (): BorradorCompraRuta => ({
   horasEditadas: false,
   renglones: [{ clave: "r1", presentacion: "caja", cantidad: "", precio: "", precioAuto: true }],
   totalBoleta: "",
-  motivo: "",
   observaciones: "",
 });
 

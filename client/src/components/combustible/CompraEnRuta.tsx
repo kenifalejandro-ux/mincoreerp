@@ -44,8 +44,8 @@ import { seccionesCompraEnRuta } from "./compraEnRutaAcceso";
 import { prepararFotoComprobante } from "./fotoComprobante";
 import HistorialComprasRuta from "./HistorialComprasRuta";
 
-/** Lo mismo que el servidor tolera sin pedir motivo (TOLERANCIA_CUADRE_COMPRA_RUTA
- *  en combustible.schema.ts): el redondeo por línea. */
+/** Hasta cuánto se da por "cuadra" en el aviso de pantalla (no bloquea nada)
+ *  : el redondeo por línea. */
 const TOLERANCIA_CENTAVOS = 10;
 
 type TipoCombustible = "diesel_b5" | "gasolina_90" | "glp";
@@ -221,7 +221,6 @@ function FormularioCompra({
   }, [presentaciones]);
 
   const [totalBoleta, setTotalBoleta] = useState("");
-  const [motivo, setMotivo] = useState("");
   const [observaciones, setObservaciones] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -237,6 +236,8 @@ function FormularioCompra({
   // plano: en el celular, cambiar de app puede matar la pestaña antes de que
   // venza la pausa del autoguardado.
   const datosDelBorrador = useRef<BorradorCompraRuta | null>(null);
+  // Huella de lo último que se mandó con este uuid (ver `enviar`).
+  const huellaEnvio = useRef<string | null>(null);
   useEffect(() => {
     if (!usuarioId) return;
     const guardarYa = () => {
@@ -265,6 +266,7 @@ function FormularioCompra({
     if (guardado) {
       const d = guardado.datos;
       setClienteUuid(d.clienteUuid as ReturnType<typeof crypto.randomUUID>);
+      huellaEnvio.current = d.huellaEnvio ?? null;
       setEquipoId(d.equipoId);
       setGrifoId(d.grifoId);
       setComprobanteTipo(d.comprobanteTipo);
@@ -284,7 +286,6 @@ function FormularioCompra({
       setHorasEditadas(d.horasEditadas);
       if (d.renglones.length > 0) setRenglones(d.renglones);
       setTotalBoleta(d.totalBoleta);
-      setMotivo(d.motivo);
       setObservaciones(d.observaciones);
       setBorradorRecuperadoEn(guardado.guardadoEn);
     }
@@ -316,8 +317,8 @@ function FormularioCompra({
       horasEditadas,
       renglones,
       totalBoleta,
-      motivo,
       observaciones,
+      huellaEnvio: huellaEnvio.current,
     };
     datosDelBorrador.current = datos;
     // Con una pausa: escribir en el almacenamiento en cada tecla es trabajo
@@ -346,7 +347,6 @@ function FormularioCompra({
     horasEditadas,
     renglones,
     totalBoleta,
-    motivo,
     observaciones,
   ]);
 
@@ -441,7 +441,6 @@ function FormularioCompra({
   const totalBoletaC = hayTotalBoleta ? centavos(Number(totalBoleta)) : 0;
   const diferenciaC = totalBoletaC - totalSistemaC;
   const cuadra = Math.abs(diferenciaC) <= TOLERANCIA_CENTAVOS;
-  const pideMotivo = false;
 
   const urea = estadoRenglones(renglones, true);
   // Qué falta para poder registrar, en palabras: un botón apagado sin decir por
@@ -465,7 +464,6 @@ function FormularioCompra({
     else if (!urea.listos) faltantes.push("cantidad y precio de la urea");
   }
   if (comprobanteNumero.trim() === "") faltantes.push("el N° del comprobante");
-  if (pideMotivo && motivo.trim() === "") faltantes.push("el motivo de la diferencia");
   const puedeEnviar = !enviando && faltantes.length === 0;
 
   // ── Foto ────────────────────────────────────────────────────────────────
@@ -490,6 +488,7 @@ function FormularioCompra({
   const limpiar = () => {
     if (usuarioId) borrarBorrador(usuarioId);
     datosDelBorrador.current = null;
+    huellaEnvio.current = null;
     setBorradorRecuperadoEn(null);
     setClienteUuid(crypto.randomUUID());
     setEquipoId("");
@@ -513,7 +512,6 @@ function FormularioCompra({
     setMedidorCargado(null);
     setRenglones([nuevoRenglon(presentacionPorDefecto(presentaciones))]);
     setTotalBoleta("");
-    setMotivo("");
     setObservaciones("");
     setError(null);
   };
@@ -527,15 +525,13 @@ function FormularioCompra({
     setEnviando(true);
     setError(null);
     try {
-      const body = {
-        cliente_uuid: clienteUuid,
+      const cuerpoSinUuid = {
         grifo_id: Number(grifoVigente),
         comprobante_tipo: comprobanteTipo,
         comprobante_numero: comprobanteNumero.trim(),
         equipo_id: Number(equipoId),
         despachado_en: fechaIso(),
         total_boleta: hayTotalBoleta ? Number(totalBoleta) : totalSistemaC / 100,
-        motivo_descuadre: pideMotivo ? motivo.trim() : undefined,
         observaciones: observaciones.trim() || undefined,
         combustible: incluyeCombustible
           ? {
@@ -559,6 +555,25 @@ function FormularioCompra({
             }
           : undefined,
       };
+      // Si la pantalla murió DESPUÉS de enviar y antes de limpiar, el borrador
+      // revive con el mismo uuid. Si el conductor cambió algo y manda otra
+      // compra, el servidor la tomaría por reintento y perdería lo nuevo en
+      // silencio: con datos distintos a los últimos enviados, uuid nuevo.
+      const huella = JSON.stringify(cuerpoSinUuid);
+      let uuidEnvio = clienteUuid;
+      if (huellaEnvio.current !== null && huellaEnvio.current !== huella) {
+        uuidEnvio = crypto.randomUUID();
+        setClienteUuid(uuidEnvio);
+      }
+      huellaEnvio.current = huella;
+      if (usuarioId && datosDelBorrador.current) {
+        guardarBorrador(usuarioId, {
+          ...datosDelBorrador.current,
+          clienteUuid: uuidEnvio,
+          huellaEnvio: huella,
+        });
+      }
+      const body = { cliente_uuid: uuidEnvio, ...cuerpoSinUuid };
       const res = await apiFetch("/api/erp/combustible/compras-ruta", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -581,7 +596,7 @@ function FormularioCompra({
         formData.append("cliente_uuid", crypto.randomUUID());
         try {
           const rf = await apiFetch(
-            `/api/erp/combustible/compras-ruta/por-uuid/${clienteUuid}/comprobante`,
+            `/api/erp/combustible/compras-ruta/por-uuid/${uuidEnvio}/comprobante`,
             { method: "POST", body: formData }
           );
           resultadoFoto = rf.status === 202 ? "encolada" : rf.ok ? "subida" : "fallo";

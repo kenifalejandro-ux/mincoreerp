@@ -22,10 +22,7 @@ import type {
   CrearPuntoPrecintoInput,
   CambiarPrecintoInput,
 } from "../../server/schemas/combustible.schema";
-import {
-  crearDespachoCombustibleSchema,
-  TOLERANCIA_CUADRE_COMPRA_RUTA,
-} from "../../server/schemas/combustible.schema";
+import { crearDespachoCombustibleSchema } from "../../server/schemas/combustible.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import type { UsuarioPayload } from "../../server/services/auth.service";
 import { createHash } from "crypto";
@@ -126,7 +123,7 @@ type IntervaloCalibracion = Awaited<
  *  la misma compra y el mismo producto, siempre. Es la forma de un UUID v5
  *  (SHA-1 de la compra y el producto), sin sumar la dependencia `uuid`. */
 export function uuidDerivado(base: string, producto: "combustible" | "urea"): string {
-  const hash = createHash("sha1").update(`${base}:${producto}`).digest();
+  const hash = createHash("sha1").update(`${base.toLowerCase()}:${producto}`).digest();
   hash[6] = (hash[6] & 0x0f) | 0x50;
   hash[8] = (hash[8] & 0x3f) | 0x80;
   const x = hash.subarray(0, 16).toString("hex");
@@ -1339,7 +1336,7 @@ export class CombustibleService {
       insertar: async () => {
         const despachadoEn = data.despachado_en ?? new Date().toISOString();
 
-        // El cuadre, en centavos enteros: nada de comparar flotantes.
+        // La diferencia con el papel se guarda, en centavos enteros.
         const centavos = (n: number) => Math.round(n * 100);
         const totalCombustibleC = data.combustible
           ? centavos(data.combustible.cantidad * data.combustible.costo_unitario)
@@ -1351,7 +1348,6 @@ export class CombustibleService {
         const totalBoletaC =
           data.total_boleta === undefined ? totalSistemaC : centavos(data.total_boleta);
         const diferenciaC = totalBoletaC - totalSistemaC;
-        const cuadra = Math.abs(diferenciaC) <= centavos(TOLERANCIA_CUADRE_COMPRA_RUTA);
         const soles = (c: number) => (c / 100).toFixed(2);
         const comunes = {
           origen: "compra_externa" as const,
@@ -1411,8 +1407,8 @@ export class CombustibleService {
           totalBoleta: soles(totalBoletaC),
           totalSistema: soles(totalSistemaC),
           diferencia: soles(diferenciaC),
-          // Solo cuando de verdad no cuadra: la alerta y el índice miran este campo.
-          motivoDescuadre: cuadra ? null : (data.motivo_descuadre ?? null),
+          // Ya no se pide motivo: el grifo maneja su precio (0137).
+          motivoDescuadre: null,
           despachoCombustibleId: despachoCombustible ? Number(despachoCombustible.id) : null,
           despachoUreaId: despachoUrea ? Number(despachoUrea.id) : null,
         });
@@ -1547,6 +1543,14 @@ export class CombustibleService {
         };
       }
       b.total_sistema = Math.round((b.total_sistema + total) * 100) / 100;
+    }
+    // Quien ve un solo producto no puede comparar el papel (que es de toda la
+    // boleta) con su parte: el total y la diferencia no le dirían nada cierto.
+    if (filtros.productos.length < 2) {
+      for (const b of grupos.values()) {
+        b.total_boleta = null;
+        b.diferencia = null;
+      }
     }
     return [...grupos.values()];
   }

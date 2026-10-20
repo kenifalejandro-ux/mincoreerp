@@ -1138,11 +1138,6 @@ export type CrearDespachoCombustibleInput = z.infer<typeof crearDespachoCombusti
 // las reglas de forma (renglones de urea, horómetro, comprobante) son las de
 // siempre y no se copian acá.
 
-/** Hasta cuánto se tolera entre el total del papel y la suma del sistema sin
- *  pedir motivo: el redondeo por línea. La misma cifra está en el CHECK de
- *  0135. */
-export const TOLERANCIA_CUADRE_COMPRA_RUTA = 0.1;
-
 export const crearCompraRutaSchema = z
   .object({
     // Lo genera el dispositivo UNA vez por compra. De él se derivan los uuids
@@ -1165,18 +1160,17 @@ export const crearCompraRutaSchema = z
         message: "La fecha de la compra no puede estar en el futuro",
       })
       .optional(),
-    // Lo que dice el papel. Obligatorio: sin él no hay cuadre que auditar.
+    // Lo que dice el papel. Opcional: el grifo maneja su precio; sin él se
+    // guarda la suma del sistema.
     total_boleta: z.number().nonnegative().max(1_000_000).optional(),
-    // Obligatorio solo si el total no cuadra (el servicio lo exige).
-    motivo_descuadre: z.string().trim().min(1).max(500).optional(),
     observaciones: z.string().trim().max(500).optional(),
 
     combustible: z
       .object({
         tipo_combustible: z.enum(TIPOS_COMBUSTIBLE),
         // Galones, igual que el despacho.
-        cantidad: z.number().positive(),
-        costo_unitario: z.number().positive(),
+        cantidad: z.number().positive().max(100_000),
+        costo_unitario: z.number().positive().max(10_000),
         // Exactamente uno de los dos según el medidor de la unidad; el
         // servicio lo valida con el resto (validarFormaDespacho).
         lectura_horometro: z.number().nonnegative().optional(),
@@ -1191,8 +1185,8 @@ export const crearCompraRutaSchema = z
           .array(
             z.object({
               presentacion: codigoPresentacionUrea,
-              cantidad_bultos: z.number().int().positive(),
-              costo_unitario: z.number().positive(),
+              cantidad_bultos: z.number().int().positive().max(100_000),
+              costo_unitario: z.number().positive().max(10_000),
             })
           )
           .min(1, "la urea necesita al menos un renglón")

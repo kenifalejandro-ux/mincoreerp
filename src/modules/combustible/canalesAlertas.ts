@@ -95,7 +95,6 @@ export const CATALOGO_ALERTAS: Record<
   urea_precio_fuera_de_catalogo: { canal: "resumen", nombre: "Urea: precio fuera de catálogo" },
   sobrestock_recepcion: { canal: "resumen", nombre: "Excedente de recepción aceptado" },
   tanqueta_sobregirada: { canal: "resumen", nombre: "Tanqueta con saldo negativo" },
-  compra_ruta_descuadre: { canal: "resumen", nombre: "Boleta de compra en ruta que no cuadra" },
 
   // ── Solo en el ERP ─────────────────────────────────────────────────────
   // Los equipos se prestan entre plantas (0100): avisarlo por correo sería ruido.

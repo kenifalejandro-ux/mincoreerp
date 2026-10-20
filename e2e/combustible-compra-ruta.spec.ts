@@ -6,7 +6,7 @@
  * Qué prueba y por qué en un navegador real: los tests de servidor ya cubren la
  * API (atomicidad, reintento, permisos, cuadre). Lo que solo se ve acá es la
  * cadena completa de la pantalla -- que el cuadre se calcule en vivo, que el
- * botón no deje enviar un descuadre sin motivo, que sin señal la compra quede en
+ * botón deje enviar aunque el total difiera del sistema, que sin señal la compra quede en
  * el equipo y se sincronice sola UNA vez (con su foto), y que el formulario sea
  * usable en el celular, que es donde lo llena el conductor.
  */
@@ -199,7 +199,7 @@ test.describe("en pantalla de celular", () => {
   });
 });
 
-test("un total que no cuadra pide el motivo y no deja registrar sin él", async ({ page }) => {
+test("un total distinto al del sistema se registra igual, sin pedir motivo", async ({ page }) => {
   const marca = `DSC-${unico()}`;
   const numero = `B001-${unico()}`;
   const admin = adminA();
@@ -209,17 +209,8 @@ test("un total que no cuadra pide el motivo y no deja registrar sin él", async 
   await abrirCompraEnRuta(page);
   await llenar(page, { marca, grifoNombre, numero, total: "810" });
 
-  await expect(page.getByText(/No cuadra: diferencia de S\/\s*10[.,]00/)).toBeVisible();
-  await expect(page.locator("#compra-motivo")).toBeVisible();
-  await expect(botonRegistrar(page)).toBeDisabled();
-
-  // Una diferencia de centavos es redondeo y no pide nada.
-  await page.locator("#compra-total-boleta").fill("800.05");
-  await expect(page.getByText("Cuadra: la boleta coincide con lo registrado.")).toBeVisible();
+  // El grifo maneja su precio: no hay motivo ni bloqueo.
   await expect(page.locator("#compra-motivo")).toHaveCount(0);
-
-  await page.locator("#compra-total-boleta").fill("810");
-  await page.locator("#compra-motivo").fill("El grifo cobró un servicio de lavado");
   await expect(botonRegistrar(page)).toBeEnabled();
   await botonRegistrar(page).click();
 
@@ -227,15 +218,6 @@ test("un total que no cuadra pide el motivo y no deja registrar sin él", async 
     page.getByText(new RegExp(`Compra registrada \\(la boleta ${numero}\\)`))
   ).toBeVisible({ timeout: 30_000 });
   await expect.poll(async () => (await despachosDeLaBoleta(page, numero)).length).toBe(2);
-
-  // Y la boleta que no cuadra queda a la vista de quien revisa: en la Bandeja,
-  // con el papel, lo registrado y el motivo que escribió el conductor.
-  await page.getByRole("button", { name: /^Bandeja/ }).click();
-  await page.getByText(numero).first().click();
-  await expect(
-    page.getByText(/El papel dice S\/ 810\.00 y lo registrado suma S\/ 800\.00/)
-  ).toBeVisible();
-  await expect(page.getByText(/Motivo: El grifo cobró un servicio de lavado/)).toBeVisible();
 });
 
 test("sin señal la compra queda en el equipo y se sincroniza sola, una sola vez, con su foto", async ({
