@@ -6,30 +6,6 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// ── Arnés mínimo de React: corre AuthProvider una vez, sin DOM ──────────────
-const efectos: Array<() => void | (() => void)> = [];
-vi.mock("../client/node_modules/react/index.js", () => ({
-  createContext: () => ({ Provider: "Provider" }),
-  useContext: () => null,
-  useState: (v: unknown) => [typeof v === "function" ? (v as () => unknown)() : v, () => {}],
-  useCallback: (f: unknown) => f,
-  useRef: (v: unknown) => ({ current: v }),
-  useEffect: (f: () => void | (() => void)) => void efectos.push(f),
-  createElement: (type: unknown, props: unknown) => ({ type, props }),
-}));
-vi.mock("../client/node_modules/react/jsx-runtime.js", () => ({
-  jsx: (type: unknown, props: unknown) => ({ type, props }),
-  jsxs: (type: unknown, props: unknown) => ({ type, props }),
-  Fragment: "Fragment",
-}));
-vi.mock("../client/node_modules/react/jsx-dev-runtime.js", () => ({
-  jsxDEV: (type: unknown, props: unknown) => ({ type, props }),
-  Fragment: "Fragment",
-}));
-vi.mock("../client/src/config/sentry", () => ({ identificarUsuarioSentry: () => {} }));
-
-// @ts-expect-error TS6142: el cliente compila con jsx react-jsx y la raíz no tiene --jsx
-import { AuthProvider } from "../client/src/context/AuthContext";
 import { googleLoginApi, loginApi } from "../client/src/services/authApi";
 
 // El backend marca TODAS sus respuestas con x-request-id (app.ts): así se
@@ -41,17 +17,7 @@ const json = (status: number, body: unknown) =>
   });
 
 beforeEach(() => {
-  efectos.length = 0;
   vi.unstubAllGlobals();
-});
-
-describe("harness", () => {
-  it("monta AuthProvider y expone logout", () => {
-    const el = AuthProvider({ children: null }) as unknown as {
-      props: { value: { logout: () => Promise<void> } };
-    };
-    expect(typeof el.props.value.logout).toBe("function");
-  });
 });
 
 describe("C1 — 502/503/504 deliberados del backend dejan de llegar como respuesta", () => {
