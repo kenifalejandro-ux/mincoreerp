@@ -5920,6 +5920,12 @@ export class CombustibleController {
     try {
       const tenantId = getTenantId(req);
       const precioId = Number(req.params.precioId);
+      // Un id que no es un entero que quepa en un INTEGER es un 400, no el 500
+      // del cast de Postgres (mismo criterio que /precios/vigente).
+      if (!Number.isInteger(precioId) || precioId < 1 || precioId > 2147483647) {
+        res.status(400).json({ error: "precioId debe ser un número entero válido" });
+        return;
+      }
       const { motivo } = req.validatedBody as AnularPrecioCombustibleInput;
 
       const resultado = await withTenant(tenantId, async (client) => {
