@@ -262,12 +262,12 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
 
   // ── 4. El cuadre ──────────────────────────────────────────────────────
 
-  it("no cuadra y sin motivo: 400, y no se guarda nada", async () => {
+  it("no cuadra y sin motivo: se registra igual (el grifo maneja su precio)", async () => {
     const body = cuerpo({ total_boleta: 810 });
     const r = await crear(body);
-    expect(r.status).toBe(400);
-    expect(r.body.error).toContain("no coincide");
-    expect(await contarDespachos(body.comprobante_numero)).toBe(0);
+    expect(r.status).toBe(201);
+    expect(Number(r.body.compra.diferencia)).toBe(10);
+    expect(r.body.compra.motivo_descuadre).toBeNull();
   });
 
   it("no cuadra con motivo: se guarda la diferencia y el motivo", async () => {
@@ -286,10 +286,9 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
     expect(r.body.compra.motivo_descuadre).toBeNull();
   });
 
-  it("justo en el límite (S/ 0.10) no pide motivo; un centavo más sí", async () => {
+  it("una diferencia de S/ 0.11 también se registra sin motivo", async () => {
     expect((await crear(cuerpo({ total_boleta: 800.1 }))).status).toBe(201);
-    const r = await crear(cuerpo({ total_boleta: 800.11 }));
-    expect(r.status).toBe(400);
+    expect((await crear(cuerpo({ total_boleta: 800.11 }))).status).toBe(201);
   });
 
   it("el motivo sobra si cuadra: no se guarda", async () => {
@@ -298,10 +297,12 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
     expect(r.body.compra.motivo_descuadre).toBeNull();
   });
 
-  it("falta el total de la boleta: 400", async () => {
+  it("sin total de la boleta: se guarda la suma del sistema", async () => {
     const body = cuerpo();
     delete (body as Record<string, unknown>).total_boleta;
-    expect((await crear(body)).status).toBe(400);
+    const r = await crear(body);
+    expect(r.status).toBe(201);
+    expect(Number(r.body.compra.diferencia)).toBe(0);
   });
 
   // ── 4b. La alerta en la Bandeja ───────────────────────────────────────

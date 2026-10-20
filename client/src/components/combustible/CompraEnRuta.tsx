@@ -10,6 +10,7 @@
 //
 // Cada sección pide SU permiso (compraEnRutaAcceso.ts); un conductor que solo
 // registra una de las dos no ve la otra.
+import { ClipboardCheck, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "../../context/AuthContext";
@@ -114,7 +115,13 @@ function Seccion({
   );
 }
 
-export default function CompraEnRuta() {
+function FormularioCompra({
+  onRegistrada,
+}: {
+  /** La compra quedó registrada (o en la cola sin señal): la ventana se cierra y
+   *  la página muestra este mensaje. */
+  onRegistrada: (mensaje: string) => void;
+}) {
   const { usuario } = useAuth();
   const secciones = useMemo(() => seccionesCompraEnRuta(usuario), [usuario]);
   const soloUna = secciones.combustible !== secciones.urea;
@@ -218,13 +225,6 @@ export default function CompraEnRuta() {
   const [observaciones, setObservaciones] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [exito, setExito] = useState<string | null>(null);
-  // El aviso de éxito está arriba y el botón abajo: en celular el conductor
-  // no lo vería. Al aparecer, la pantalla sube hasta él.
-  const avisoRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (exito) avisoRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [exito]);
 
   // ── El borrador (borradorCompraRuta.ts) ─────────────────────────────────
   // Lo escrito se guarda en el dispositivo y se recupera al volver: si se cierra
@@ -249,6 +249,9 @@ export default function CompraEnRuta() {
     return () => {
       document.removeEventListener("visibilitychange", guardarYa);
       window.removeEventListener("pagehide", guardarYa);
+      // Cerrar la ventana desmonta el formulario: lo último escrito se guarda ya,
+      // sin esperar la pausa del autoguardado.
+      if (datosDelBorrador.current) guardarBorrador(usuarioId, datosDelBorrador.current);
     };
   }, [usuarioId]);
 
@@ -438,7 +441,7 @@ export default function CompraEnRuta() {
   const totalBoletaC = hayTotalBoleta ? centavos(Number(totalBoleta)) : 0;
   const diferenciaC = totalBoletaC - totalSistemaC;
   const cuadra = Math.abs(diferenciaC) <= TOLERANCIA_CENTAVOS;
-  const pideMotivo = hayTotalBoleta && !cuadra;
+  const pideMotivo = false;
 
   const urea = estadoRenglones(renglones, true);
   // Qué falta para poder registrar, en palabras: un botón apagado sin decir por
@@ -462,7 +465,6 @@ export default function CompraEnRuta() {
     else if (!urea.listos) faltantes.push("cantidad y precio de la urea");
   }
   if (comprobanteNumero.trim() === "") faltantes.push("el N° del comprobante");
-  if (!hayTotalBoleta) faltantes.push("el total de la boleta");
   if (pideMotivo && motivo.trim() === "") faltantes.push("el motivo de la diferencia");
   const puedeEnviar = !enviando && faltantes.length === 0;
 
@@ -524,7 +526,6 @@ export default function CompraEnRuta() {
     if (!puedeEnviar) return;
     setEnviando(true);
     setError(null);
-    setExito(null);
     try {
       const body = {
         cliente_uuid: clienteUuid,
@@ -533,7 +534,7 @@ export default function CompraEnRuta() {
         comprobante_numero: comprobanteNumero.trim(),
         equipo_id: Number(equipoId),
         despachado_en: fechaIso(),
-        total_boleta: Number(totalBoleta),
+        total_boleta: hayTotalBoleta ? Number(totalBoleta) : totalSistemaC / 100,
         motivo_descuadre: pideMotivo ? motivo.trim() : undefined,
         observaciones: observaciones.trim() || undefined,
         combustible: incluyeCombustible
@@ -590,7 +591,7 @@ export default function CompraEnRuta() {
       }
 
       const papel = `la ${comprobanteTipo} ${comprobanteNumero.trim()}`;
-      setExito(
+      const mensaje =
         res.status === 202
           ? `Sin conexión: ${papel} quedó guardada en este equipo y se enviará sola${foto ? ", con su foto," : ""} cuando vuelva la señal.`
           : resultadoFoto === "sin_foto"
@@ -599,15 +600,423 @@ export default function CompraEnRuta() {
               ? `Compra registrada (${papel}), pero la foto NO se pudo subir: adjúntala desde el historial.`
               : resultadoFoto === "encolada"
                 ? `Compra registrada (${papel}). La foto se enviará cuando vuelva la señal.`
-                : `Compra registrada (${papel}), con su comprobante.`
-      );
+                : `Compra registrada (${papel}), con su comprobante.`;
+      // Primero limpiar (borra el borrador) y recién después avisar: avisar cierra
+      // la ventana y desmonta este formulario.
       limpiar();
-      // El historial unificado, si está abierto, muestra la boleta nueva.
+      // El historial unificado muestra la boleta nueva.
       window.dispatchEvent(new Event("combustible:actualizado"));
+      onRegistrada(mensaje);
     } finally {
       setEnviando(false);
     }
   };
+
+  return (
+    <div className="px-5 pb-1 pt-4">
+      {borradorRecuperadoEn !== null && (
+        <div
+          role="status"
+          className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+        >
+          <span>
+            Recuperamos lo que estabas escribiendo (guardado a las{" "}
+            {new Date(borradorRecuperadoEn).toLocaleTimeString("es-PE", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+            ). La foto no se guarda: vuelve a elegirla.
+          </span>
+          <button
+            type="button"
+            onClick={limpiar}
+            className="rounded-lg border border-amber-300 px-3 py-1 text-xs font-semibold hover:bg-amber-100"
+          >
+            Empezar de cero
+          </button>
+        </div>
+      )}
+      {errorCarga && (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {errorCarga}
+        </div>
+      )}
+
+      <form onSubmit={enviar} noValidate>
+        <Seccion titulo="Unidad y proveedor" textoInterruptor="">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1">
+              <span className={CLASE_ETIQUETA}>Unidad</span>
+              <select
+                id="compra-unidad"
+                className={CLASE_CAMPO}
+                value={equipoId}
+                onChange={(e) => {
+                  // Otra unidad, otro contexto: lo escrito para la anterior no aplica.
+                  setEquipoId(e.target.value);
+                  setHorasEditadas(false);
+                  setHorometro("");
+                  setOdometro("");
+                }}
+              >
+                <option value="">Elegir unidad</option>
+                {equipos.map((eq) => (
+                  <option key={eq.id} value={eq.id}>
+                    {eq.placa_codigo} — {eq.tipo}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className={CLASE_ETIQUETA}>Proveedor</span>
+              <select
+                id="compra-proveedor"
+                className={CLASE_CAMPO}
+                value={grifoVigente}
+                onChange={(e) => {
+                  setGrifoId(e.target.value);
+                  setCostoEditado(false);
+                  // El precio de catálogo de la urea es por proveedor.
+                  setRenglones((rs) =>
+                    rs.map((r) => {
+                      if (!r.precioAuto) return r;
+                      const v = precioVigenteUrea(
+                        preciosUrea,
+                        e.target.value,
+                        r.presentacion,
+                        fechaEditada ? fecha : ""
+                      );
+                      return { ...r, precio: v ? String(Number(v.precio_por_bulto)) : "" };
+                    })
+                  );
+                }}
+              >
+                <option value="">Elegir proveedor</option>
+                {proveedores.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.nombre}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {equipo && incluyeUrea && <ConductorDeLaUnidad equipo={equipo} />}
+          {equipoId !== "" && incluyeCombustible && !equipo?.tipo_medidor && (
+            <p className="text-xs text-red-600">
+              Esta unidad no tiene tipo de medidor (horómetro/odómetro). Configúralo en Equipos
+              antes de continuar.
+            </p>
+          )}
+          {proveedores.length === 0 && (
+            <p className="text-xs text-amber-700">
+              {incluyeCombustible && incluyeUrea
+                ? "Ningún proveedor vende combustible y urea en ruta a la vez. Registra cada producto por separado o pídele a un administrador que marque el proveedor."
+                : "No hay proveedores marcados para esto. Pídele a un administrador que los marque en Combustible → Proveedores."}
+            </p>
+          )}
+        </Seccion>
+
+        {secciones.combustible && (
+          <Seccion
+            titulo="Combustible"
+            activa={soloUna ? undefined : incluyeCombustible}
+            onCambiar={soloUna ? undefined : setIncluyeCombustible}
+            textoInterruptor="Incluye combustible"
+          >
+            <div className="grid grid-cols-6 gap-3">
+              <label className="col-span-3 flex flex-col gap-1">
+                <span className={CLASE_ETIQUETA}>Combustible</span>
+                <select
+                  id="compra-tipo-combustible"
+                  className={CLASE_CAMPO}
+                  value={tipoCombustible}
+                  onChange={(e) => {
+                    setTipoCombustible(e.target.value as TipoCombustible);
+                    setCostoEditado(false);
+                  }}
+                >
+                  {(Object.keys(ETIQUETA_COMBUSTIBLE) as TipoCombustible[]).map((t) => (
+                    <option key={t} value={t}>
+                      {ETIQUETA_COMBUSTIBLE[t]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="col-span-3 flex flex-col gap-1">
+                <span className={CLASE_ETIQUETA}>Galones</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  id="compra-galones"
+                  className={CLASE_CAMPO}
+                  value={galones}
+                  onChange={(e) => setGalones(e.target.value)}
+                />
+              </label>
+              <label className="col-span-2 flex flex-col gap-1">
+                <span className={CLASE_ETIQUETA}>{midePorOdometro ? "Odómetro" : "Horómetro"}</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  disabled={!equipo?.tipo_medidor}
+                  id="compra-medidor"
+                  className={CLASE_CAMPO}
+                  value={midePorOdometro ? odometro : horometro}
+                  onChange={(e) =>
+                    midePorOdometro ? setOdometro(e.target.value) : setHorometro(e.target.value)
+                  }
+                />
+              </label>
+              <label className="col-span-2 flex flex-col gap-1">
+                <span className={CLASE_ETIQUETA}>C.U. (S/ gal)</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.0001"
+                  id="compra-costo-unitario"
+                  className={CLASE_CAMPO}
+                  value={costoUnitario}
+                  onChange={(e) => {
+                    setCostoUnitario(e.target.value);
+                    setCostoEditado(true);
+                  }}
+                />
+              </label>
+              <label className="col-span-2 flex flex-col gap-1">
+                <span className={CLASE_ETIQUETA}>C. total</span>
+                <input
+                  readOnly
+                  className={CLASE_CAMPO}
+                  value={totalCombustibleC > 0 ? soles(totalCombustibleC) : "—"}
+                />
+              </label>
+              <label className="col-span-6 flex flex-col gap-1">
+                <span className={CLASE_ETIQUETA}>Horas abastecidas (desde la carga anterior)</span>
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  id="compra-horas"
+                  className={CLASE_CAMPO}
+                  value={horasMostradas}
+                  onChange={(e) => {
+                    // Vaciarlo devuelve el campo al cálculo automático.
+                    setHorasEditadas(e.target.value !== "");
+                    setHoras(e.target.value);
+                  }}
+                />
+                {midePorHorometro && ultimo !== undefined && (
+                  <span
+                    className={`text-xs ${horometroRetrocede ? "text-amber-600" : "text-slate-400"}`}
+                  >
+                    {horometroAnterior === null
+                      ? "No hay una carga anterior con horómetro de esta unidad: escribe las horas a mano."
+                      : horometroRetrocede
+                        ? `La lectura es menor que la de la carga anterior (${horometroAnterior.toLocaleString("es-PE")} h). Revísala; si es correcta, escribe las horas a mano.`
+                        : `Carga anterior: ${horometroAnterior.toLocaleString("es-PE")} h. Las horas se calculan solas; puedes corregirlas.`}
+                  </span>
+                )}
+              </label>
+            </div>
+            <p className="text-xs text-slate-400">
+              El costo se autocompleta con el precio vigente a la fecha. Puedes corregirlo si ese
+              día pagaste distinto.
+            </p>
+          </Seccion>
+        )}
+
+        {secciones.urea && (
+          <Seccion
+            titulo="Urea"
+            activa={soloUna ? undefined : incluyeUrea}
+            onCambiar={soloUna ? undefined : setIncluyeUrea}
+            textoInterruptor="Incluye urea"
+          >
+            {activas.length === 0 && <AvisoSinEnvases />}
+            <RenglonesUrea
+              renglones={renglones}
+              setRenglones={setRenglones}
+              activas={activas}
+              conPrecio
+              vigentePara={(codigo) =>
+                precioVigenteUrea(preciosUrea, grifoVigente, codigo, fechaEditada ? fecha : "")
+              }
+              titulo="Qué se compró"
+            />
+            <p className="text-xs text-slate-400">
+              La urea comprada en ruta no baja el stock del almacén: nunca pasó por el depósito.
+            </p>
+          </Seccion>
+        )}
+
+        <Seccion titulo="Datos de la boleta" textoInterruptor="">
+          <div className="grid grid-cols-[8rem_minmax(0,1fr)] gap-3">
+            <label className="flex flex-col gap-1">
+              <span className={CLASE_ETIQUETA}>Comprobante</span>
+              <select
+                id="compra-comprobante-tipo"
+                className={CLASE_CAMPO}
+                value={comprobanteTipo}
+                onChange={(e) => setComprobanteTipo(e.target.value as "boleta" | "factura")}
+              >
+                <option value="boleta">Boleta</option>
+                <option value="factura">Factura</option>
+              </select>
+            </label>
+            <label className="flex min-w-0 flex-col gap-1">
+              <span className={CLASE_ETIQUETA}>N° del comprobante</span>
+              <input
+                id="compra-comprobante-numero"
+                className={CLASE_CAMPO}
+                value={comprobanteNumero}
+                onChange={(e) => setComprobanteNumero(e.target.value)}
+                placeholder="Ej. B001-00012345"
+              />
+            </label>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="flex flex-col gap-1">
+              <span className={CLASE_ETIQUETA}>Fecha y hora</span>
+              <input
+                type="datetime-local"
+                id="compra-fecha"
+                className={CLASE_CAMPO}
+                value={fecha}
+                onChange={(e) => {
+                  setFecha(e.target.value);
+                  setFechaEditada(true);
+                }}
+              />
+            </label>
+            <div className="flex flex-col gap-1">
+              <span className={CLASE_ETIQUETA}>
+                Foto o PDF de la boleta (opcional ahora; 24 h para subirla)
+              </span>
+              <BotonArchivo
+                archivo={foto}
+                onElegir={elegirFoto}
+                texto="Subir foto de la boleta"
+                destacado
+              />
+              {errorFoto && <span className="text-xs text-red-600">{errorFoto}</span>}
+            </div>
+          </div>
+        </Seccion>
+
+        <Seccion titulo="Cuadre con el papel" textoInterruptor="">
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              ["Combustible", totalCombustibleC],
+              ["Urea", totalUreaC],
+              ["Suma del sistema", totalSistemaC],
+            ].map(([nombre, valor]) => (
+              <div key={nombre as string} className="rounded-xl border border-slate-200 p-2">
+                <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                  {nombre}
+                </span>
+                <span className="text-sm font-bold tabular-nums text-slate-800">
+                  {soles(valor as number)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <label className="flex flex-col gap-1">
+            <span className={CLASE_ETIQUETA}>Total de la boleta (opcional)</span>
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              id="compra-total-boleta"
+              className={CLASE_CAMPO}
+              value={totalBoleta}
+              onChange={(e) => setTotalBoleta(e.target.value)}
+              placeholder="Ej. 745.00"
+            />
+          </label>
+          {!hayTotalBoleta ? (
+            <p className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-500">
+              Si quieres, escribe el total del papel; si no, se guarda la suma del sistema.
+            </p>
+          ) : cuadra ? (
+            <p
+              role="status"
+              className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800"
+            >
+              Cuadra: la boleta coincide con lo registrado.
+            </p>
+          ) : (
+            <p className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-500">
+              El grifo maneja su propio precio: se guarda el total de la boleta y la diferencia (
+              {soles(Math.abs(diferenciaC))}) queda registrada.
+            </p>
+          )}
+          <label className="flex flex-col gap-1">
+            <span className={CLASE_ETIQUETA}>Observaciones (opcional)</span>
+            <input
+              className={CLASE_CAMPO}
+              value={observaciones}
+              onChange={(e) => setObservaciones(e.target.value)}
+            />
+          </label>
+        </Seccion>
+
+        {error && (
+          <div role="alert" className="mb-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+        {faltantes.length > 0 && !enviando && (
+          <div
+            role="status"
+            className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+          >
+            <strong>Para registrar falta:</strong> {faltantes.join(", ")}.
+            <span className="mt-1 block text-xs">
+              La foto de la boleta es opcional: puedes subirla después desde el historial.
+            </span>
+          </div>
+        )}
+        <div className="flex justify-end gap-2 border-t border-slate-200 py-4">
+          <button
+            type="button"
+            onClick={limpiar}
+            disabled={enviando}
+            className="rounded-xl px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+          >
+            Limpiar
+          </button>
+          <button
+            type="submit"
+            disabled={!puedeEnviar}
+            className="rounded-xl border border-[#BADC1E] bg-[#BADC1E] px-5 py-2 text-sm font-semibold text-[#0A1014] hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {enviando ? "Guardando…" : "Registrar compra"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/** La pantalla "Compra en ruta": el historial de las boletas en primer plano y un
+ *  botón para registrar una nueva, que abre el formulario en una ventana. Es lo
+ *  mismo que ve el conductor en Tanques, con el botón de registrar. */
+export default function CompraEnRuta() {
+  const { usuario } = useAuth();
+  const secciones = useMemo(() => seccionesCompraEnRuta(usuario), [usuario]);
+  const [abierto, setAbierto] = useState(false);
+  const [aviso, setAviso] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!abierto) return;
+    const alTeclear = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAbierto(false);
+    };
+    window.addEventListener("keydown", alTeclear);
+    return () => window.removeEventListener("keydown", alTeclear);
+  }, [abierto]);
 
   if (!secciones.combustible && !secciones.urea) {
     return (
@@ -618,437 +1027,72 @@ export default function CompraEnRuta() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl p-4 sm:p-6">
-      <div className="mx-auto w-full max-w-xl">
-        <header className="mb-4">
-          <h2 className="text-xl font-bold text-slate-800">Compra en ruta</h2>
-          <p className="text-sm text-slate-500">
-            {soloUna
-              ? "Registra la boleta o factura de lo que compraste en el viaje."
-              : "Una sola boleta o factura, aunque hayas comprado combustible y urea juntos."}
+    <div>
+      <div className="mb-6 flex flex-col gap-4 lg:mb-10 lg:flex-row lg:items-center lg:justify-between lg:gap-6">
+        <div className="shrink-0">
+          <h1 className="text-lg font-extrabold tracking-tight text-white sm:text-xl lg:text-2xl">
+            Compra en ruta
+          </h1>
+          <p className="text-xs text-[#94a3b8] sm:text-sm">
+            {secciones.combustible && secciones.urea
+              ? "Una sola boleta o factura, aunque hayas comprado combustible y urea juntos."
+              : "Tus boletas o facturas de lo que compraste en el viaje."}
           </p>
-        </header>
-
-        {borradorRecuperadoEn !== null && (
-          <div
-            role="status"
-            className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
-          >
-            <span>
-              Recuperamos lo que estabas escribiendo (guardado a las{" "}
-              {new Date(borradorRecuperadoEn).toLocaleTimeString("es-PE", {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-              ). La foto no se guarda: vuelve a elegirla.
-            </span>
-            <button
-              type="button"
-              onClick={limpiar}
-              className="rounded-lg border border-amber-300 px-3 py-1 text-xs font-semibold hover:bg-amber-100"
-            >
-              Empezar de cero
-            </button>
-          </div>
-        )}
-        {exito && (
-          <div
-            ref={avisoRef}
-            role="status"
-            className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"
-          >
-            {exito}
-          </div>
-        )}
-        {errorCarga && (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-            {errorCarga}
-          </div>
-        )}
-
-        <form
-          onSubmit={enviar}
-          noValidate
-          className="rounded-2xl border border-slate-200 bg-white px-5"
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setAviso(null);
+            setAbierto(true);
+          }}
+          className="flex items-center gap-2 whitespace-nowrap rounded-lg border border-[#a3e635] bg-[#192526] px-3 py-2 text-sm font-semibold text-white transition-all hover:bg-[#0D1719] active:scale-95"
         >
-          <Seccion titulo="Unidad y proveedor" textoInterruptor="">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="flex flex-col gap-1">
-                <span className={CLASE_ETIQUETA}>Unidad</span>
-                <select
-                  id="compra-unidad"
-                  className={CLASE_CAMPO}
-                  value={equipoId}
-                  onChange={(e) => {
-                    // Otra unidad, otro contexto: lo escrito para la anterior no aplica.
-                    setEquipoId(e.target.value);
-                    setHorasEditadas(false);
-                    setHorometro("");
-                    setOdometro("");
-                  }}
-                >
-                  <option value="">Elegir unidad</option>
-                  {equipos.map((eq) => (
-                    <option key={eq.id} value={eq.id}>
-                      {eq.placa_codigo} — {eq.tipo}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className={CLASE_ETIQUETA}>Proveedor</span>
-                <select
-                  id="compra-proveedor"
-                  className={CLASE_CAMPO}
-                  value={grifoVigente}
-                  onChange={(e) => {
-                    setGrifoId(e.target.value);
-                    setCostoEditado(false);
-                    // El precio de catálogo de la urea es por proveedor.
-                    setRenglones((rs) =>
-                      rs.map((r) => {
-                        if (!r.precioAuto) return r;
-                        const v = precioVigenteUrea(
-                          preciosUrea,
-                          e.target.value,
-                          r.presentacion,
-                          fechaEditada ? fecha : ""
-                        );
-                        return { ...r, precio: v ? String(Number(v.precio_por_bulto)) : "" };
-                      })
-                    );
-                  }}
-                >
-                  <option value="">Elegir proveedor</option>
-                  {proveedores.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.nombre}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            {equipo && incluyeUrea && <ConductorDeLaUnidad equipo={equipo} />}
-            {equipoId !== "" && incluyeCombustible && !equipo?.tipo_medidor && (
-              <p className="text-xs text-red-600">
-                Esta unidad no tiene tipo de medidor (horómetro/odómetro). Configúralo en Equipos
-                antes de continuar.
-              </p>
-            )}
-            {proveedores.length === 0 && (
-              <p className="text-xs text-amber-700">
-                {incluyeCombustible && incluyeUrea
-                  ? "Ningún proveedor vende combustible y urea en ruta a la vez. Registra cada producto por separado o pídele a un administrador que marque el proveedor."
-                  : "No hay proveedores marcados para esto. Pídele a un administrador que los marque en Combustible → Proveedores."}
-              </p>
-            )}
-          </Seccion>
-
-          {secciones.combustible && (
-            <Seccion
-              titulo="Combustible"
-              activa={soloUna ? undefined : incluyeCombustible}
-              onCambiar={soloUna ? undefined : setIncluyeCombustible}
-              textoInterruptor="Incluye combustible"
-            >
-              <div className="grid grid-cols-6 gap-3">
-                <label className="col-span-3 flex flex-col gap-1">
-                  <span className={CLASE_ETIQUETA}>Combustible</span>
-                  <select
-                    id="compra-tipo-combustible"
-                    className={CLASE_CAMPO}
-                    value={tipoCombustible}
-                    onChange={(e) => {
-                      setTipoCombustible(e.target.value as TipoCombustible);
-                      setCostoEditado(false);
-                    }}
-                  >
-                    {(Object.keys(ETIQUETA_COMBUSTIBLE) as TipoCombustible[]).map((t) => (
-                      <option key={t} value={t}>
-                        {ETIQUETA_COMBUSTIBLE[t]}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="col-span-3 flex flex-col gap-1">
-                  <span className={CLASE_ETIQUETA}>Galones</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    id="compra-galones"
-                    className={CLASE_CAMPO}
-                    value={galones}
-                    onChange={(e) => setGalones(e.target.value)}
-                  />
-                </label>
-                <label className="col-span-2 flex flex-col gap-1">
-                  <span className={CLASE_ETIQUETA}>
-                    {midePorOdometro ? "Odómetro" : "Horómetro"}
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    disabled={!equipo?.tipo_medidor}
-                    id="compra-medidor"
-                    className={CLASE_CAMPO}
-                    value={midePorOdometro ? odometro : horometro}
-                    onChange={(e) =>
-                      midePorOdometro ? setOdometro(e.target.value) : setHorometro(e.target.value)
-                    }
-                  />
-                </label>
-                <label className="col-span-2 flex flex-col gap-1">
-                  <span className={CLASE_ETIQUETA}>C.U. (S/ gal)</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.0001"
-                    id="compra-costo-unitario"
-                    className={CLASE_CAMPO}
-                    value={costoUnitario}
-                    onChange={(e) => {
-                      setCostoUnitario(e.target.value);
-                      setCostoEditado(true);
-                    }}
-                  />
-                </label>
-                <label className="col-span-2 flex flex-col gap-1">
-                  <span className={CLASE_ETIQUETA}>C. total</span>
-                  <input
-                    readOnly
-                    className={CLASE_CAMPO}
-                    value={totalCombustibleC > 0 ? soles(totalCombustibleC) : "—"}
-                  />
-                </label>
-                <label className="col-span-6 flex flex-col gap-1">
-                  <span className={CLASE_ETIQUETA}>
-                    Horas abastecidas (desde la carga anterior)
-                  </span>
-                  <input
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    id="compra-horas"
-                    className={CLASE_CAMPO}
-                    value={horasMostradas}
-                    onChange={(e) => {
-                      // Vaciarlo devuelve el campo al cálculo automático.
-                      setHorasEditadas(e.target.value !== "");
-                      setHoras(e.target.value);
-                    }}
-                  />
-                  {midePorHorometro && ultimo !== undefined && (
-                    <span
-                      className={`text-xs ${horometroRetrocede ? "text-amber-600" : "text-slate-400"}`}
-                    >
-                      {horometroAnterior === null
-                        ? "No hay una carga anterior con horómetro de esta unidad: escribe las horas a mano."
-                        : horometroRetrocede
-                          ? `La lectura es menor que la de la carga anterior (${horometroAnterior.toLocaleString("es-PE")} h). Revísala; si es correcta, escribe las horas a mano.`
-                          : `Carga anterior: ${horometroAnterior.toLocaleString("es-PE")} h. Las horas se calculan solas; puedes corregirlas.`}
-                    </span>
-                  )}
-                </label>
-              </div>
-              <p className="text-xs text-slate-400">
-                El costo se autocompleta con el precio vigente a la fecha. Puedes corregirlo si ese
-                día pagaste distinto.
-              </p>
-            </Seccion>
-          )}
-
-          {secciones.urea && (
-            <Seccion
-              titulo="Urea"
-              activa={soloUna ? undefined : incluyeUrea}
-              onCambiar={soloUna ? undefined : setIncluyeUrea}
-              textoInterruptor="Incluye urea"
-            >
-              {activas.length === 0 && <AvisoSinEnvases />}
-              <RenglonesUrea
-                renglones={renglones}
-                setRenglones={setRenglones}
-                activas={activas}
-                conPrecio
-                vigentePara={(codigo) =>
-                  precioVigenteUrea(preciosUrea, grifoVigente, codigo, fechaEditada ? fecha : "")
-                }
-                titulo="Qué se compró"
-              />
-              <p className="text-xs text-slate-400">
-                La urea comprada en ruta no baja el stock del almacén: nunca pasó por el depósito.
-              </p>
-            </Seccion>
-          )}
-
-          <Seccion titulo="Datos de la boleta" textoInterruptor="">
-            <div className="grid grid-cols-[8rem_minmax(0,1fr)] gap-3">
-              <label className="flex flex-col gap-1">
-                <span className={CLASE_ETIQUETA}>Comprobante</span>
-                <select
-                  id="compra-comprobante-tipo"
-                  className={CLASE_CAMPO}
-                  value={comprobanteTipo}
-                  onChange={(e) => setComprobanteTipo(e.target.value as "boleta" | "factura")}
-                >
-                  <option value="boleta">Boleta</option>
-                  <option value="factura">Factura</option>
-                </select>
-              </label>
-              <label className="flex min-w-0 flex-col gap-1">
-                <span className={CLASE_ETIQUETA}>N° del comprobante</span>
-                <input
-                  id="compra-comprobante-numero"
-                  className={CLASE_CAMPO}
-                  value={comprobanteNumero}
-                  onChange={(e) => setComprobanteNumero(e.target.value)}
-                  placeholder="Ej. B001-00012345"
-                />
-              </label>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <label className="flex flex-col gap-1">
-                <span className={CLASE_ETIQUETA}>Fecha y hora</span>
-                <input
-                  type="datetime-local"
-                  id="compra-fecha"
-                  className={CLASE_CAMPO}
-                  value={fecha}
-                  onChange={(e) => {
-                    setFecha(e.target.value);
-                    setFechaEditada(true);
-                  }}
-                />
-              </label>
-              <div className="flex flex-col gap-1">
-                <span className={CLASE_ETIQUETA}>
-                  Foto o PDF de la boleta (opcional ahora; 24 h para subirla)
-                </span>
-                <BotonArchivo
-                  archivo={foto}
-                  onElegir={elegirFoto}
-                  texto="Subir foto de la boleta"
-                  destacado
-                />
-                {errorFoto && <span className="text-xs text-red-600">{errorFoto}</span>}
-              </div>
-            </div>
-          </Seccion>
-
-          <Seccion titulo="Cuadre con el papel" textoInterruptor="">
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                ["Combustible", totalCombustibleC],
-                ["Urea", totalUreaC],
-                ["Suma del sistema", totalSistemaC],
-              ].map(([nombre, valor]) => (
-                <div key={nombre as string} className="rounded-xl border border-slate-200 p-2">
-                  <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                    {nombre}
-                  </span>
-                  <span className="text-sm font-bold tabular-nums text-slate-800">
-                    {soles(valor as number)}
-                  </span>
-                </div>
-              ))}
-            </div>
-            <label className="flex flex-col gap-1">
-              <span className={CLASE_ETIQUETA}>Total de la boleta (lo que dice el papel)</span>
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                id="compra-total-boleta"
-                className={CLASE_CAMPO}
-                value={totalBoleta}
-                onChange={(e) => setTotalBoleta(e.target.value)}
-                placeholder="Ej. 745.00"
-              />
-            </label>
-            {!hayTotalBoleta ? (
-              <p className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-500">
-                Escribe el total de la boleta para comparar.
-              </p>
-            ) : cuadra ? (
-              <p
-                role="status"
-                className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800"
-              >
-                Cuadra: la boleta coincide con lo registrado.
-              </p>
-            ) : (
-              <>
-                <p
-                  role="alert"
-                  className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700"
-                >
-                  No cuadra: diferencia de {soles(Math.abs(diferenciaC))}{" "}
-                  {diferenciaC > 0
-                    ? "a favor de la boleta (falta registrar algo o hay un precio mal)."
-                    : "en el sistema (se registró de más)."}
-                </p>
-                <label className="flex flex-col gap-1">
-                  <span className={CLASE_ETIQUETA}>Motivo de la diferencia (obligatorio)</span>
-                  <input
-                    id="compra-motivo"
-                    className={CLASE_CAMPO}
-                    value={motivo}
-                    onChange={(e) => setMotivo(e.target.value)}
-                    placeholder="Ej. el grifo cobró un servicio de lavado"
-                  />
-                </label>
-              </>
-            )}
-            <label className="flex flex-col gap-1">
-              <span className={CLASE_ETIQUETA}>Observaciones (opcional)</span>
-              <input
-                className={CLASE_CAMPO}
-                value={observaciones}
-                onChange={(e) => setObservaciones(e.target.value)}
-              />
-            </label>
-          </Seccion>
-
-          {error && (
-            <div role="alert" className="mb-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">
-              {error}
-            </div>
-          )}
-          {faltantes.length > 0 && !enviando && (
-            <p className="border-t border-slate-200 pt-3 text-xs text-slate-500">
-              Para registrar falta: {faltantes.join(", ")}. La foto es opcional: puedes subirla
-              después.
-            </p>
-          )}
-          <div className="flex justify-end gap-2 border-t border-slate-200 py-4">
-            <button
-              type="button"
-              onClick={limpiar}
-              disabled={enviando}
-              className="rounded-xl px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-            >
-              Limpiar
-            </button>
-            <button
-              type="submit"
-              disabled={!puedeEnviar}
-              className="rounded-xl border border-[#BADC1E] bg-[#BADC1E] px-5 py-2 text-sm font-semibold text-[#0A1014] hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {enviando ? "Guardando…" : "Registrar compra"}
-            </button>
-          </div>
-        </form>
+          <ClipboardCheck className="h-4 w-4 shrink-0" /> Registrar compra
+        </button>
       </div>
 
-      <section className="mt-10">
-        <h2 className="text-base font-bold text-white">Tus compras en ruta</h2>
-        <p className="mb-3 text-xs text-[#94a3b8]">
-          Aquí subes la foto de la boleta si no pudiste al comprar: tienes 24 horas.
-        </p>
-        <HistorialComprasRuta />
-      </section>
+      {aviso && (
+        <div
+          role="status"
+          className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800"
+        >
+          {aviso}
+        </div>
+      )}
+
+      <HistorialComprasRuta />
+
+      {abierto && (
+        // Cerrar NO borra lo escrito: el borrador se guarda al desmontar. Por eso
+        // tocar fuera de la ventana no la cierra (en el celular, un toque de más
+        // no debe tirar la ventana); se cierra con la X, Escape o al registrar.
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 sm:p-6">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Registrar compra en ruta"
+            className="w-full max-w-xl bg-white shadow-xl sm:rounded-2xl"
+          >
+            <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3 sm:rounded-t-2xl">
+              <h2 className="text-lg font-bold text-slate-800">Registrar compra en ruta</h2>
+              <button
+                type="button"
+                onClick={() => setAbierto(false)}
+                aria-label="Cerrar"
+                className="rounded-lg p-1 text-slate-500 hover:bg-slate-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <FormularioCompra
+              onRegistrada={(mensaje) => {
+                setAviso(mensaje);
+                setAbierto(false);
+              }}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

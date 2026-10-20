@@ -62,7 +62,10 @@ async function abrirCompraEnRuta(page: Page) {
   // submenús.
   if (await mostrar.isVisible()) await mostrar.click();
   await page.getByRole("button", { name: "Compra en ruta" }).click();
-  await expect(page.getByRole("heading", { name: "Compra en ruta", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Compra en ruta", level: 1 })).toBeVisible();
+  // El formulario vive en una ventana: la pantalla es el historial y este botón.
+  await page.getByRole("button", { name: "Registrar compra", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Registrar compra en ruta" })).toBeVisible();
 }
 
 async function elegirPorTexto(page: Page, selector: string, texto: string) {
@@ -115,7 +118,7 @@ async function llenar(
 }
 
 const botonRegistrar = (page: Page) =>
-  page.getByRole("button", { name: /Registrar compra|Guardando/ });
+  page.getByRole("dialog").getByRole("button", { name: /Registrar compra|Guardando/ });
 
 /** Los despachos de esa boleta según el servidor. El listado separa por
  *  producto (combustible por defecto), así que se piden los dos. */
@@ -179,7 +182,7 @@ async function flujoCompleto(page: Page) {
     .toBe(2);
 
   // El formulario queda limpio para la siguiente compra.
-  await expect(page.locator("#compra-comprobante-numero")).toHaveValue("");
+  await expect(page.locator("#compra-comprobante-numero")).toHaveCount(0);
 }
 
 test("compra en ruta: una boleta con combustible y urea crea los dos despachos con su foto", async ({

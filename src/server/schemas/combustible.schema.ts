@@ -1166,7 +1166,7 @@ export const crearCompraRutaSchema = z
       })
       .optional(),
     // Lo que dice el papel. Obligatorio: sin él no hay cuadre que auditar.
-    total_boleta: z.number().nonnegative().max(1_000_000),
+    total_boleta: z.number().nonnegative().max(1_000_000).optional(),
     // Obligatorio solo si el total no cuadra (el servicio lo exige).
     motivo_descuadre: z.string().trim().min(1).max(500).optional(),
     observaciones: z.string().trim().max(500).optional(),

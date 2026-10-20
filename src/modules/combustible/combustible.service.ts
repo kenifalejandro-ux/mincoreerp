@@ -1348,19 +1348,11 @@ export class CombustibleService {
           ? data.urea.lineas.reduce((a, l) => a + centavos(l.cantidad_bultos * l.costo_unitario), 0)
           : 0;
         const totalSistemaC = totalCombustibleC + totalUreaC;
-        const totalBoletaC = centavos(data.total_boleta);
+        const totalBoletaC =
+          data.total_boleta === undefined ? totalSistemaC : centavos(data.total_boleta);
         const diferenciaC = totalBoletaC - totalSistemaC;
         const cuadra = Math.abs(diferenciaC) <= centavos(TOLERANCIA_CUADRE_COMPRA_RUTA);
         const soles = (c: number) => (c / 100).toFixed(2);
-        if (!cuadra && !data.motivo_descuadre) {
-          throw new AppError(
-            400,
-            `el total de la boleta (S/ ${soles(totalBoletaC)}) no coincide con lo registrado ` +
-              `(S/ ${soles(totalSistemaC)}, diferencia de S/ ${soles(Math.abs(diferenciaC))}). ` +
-              `Revisá cantidades y precios; si el papel es el correcto, indicá el motivo de la diferencia`
-          );
-        }
-
         const comunes = {
           origen: "compra_externa" as const,
           tipo_destino: "equipo" as const,
