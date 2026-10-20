@@ -2,6 +2,7 @@
 import { Suspense, lazy, useEffect, useState, type ComponentType } from "react";
 
 import { puedeVerBandeja } from "./components/bandeja/bandejaAcceso";
+import { puedeVerPrecios } from "./components/combustible/preciosAcceso";
 import Layout from "./components/layout/Layout";
 import { useAuth } from "./context/AuthContext";
 import { MODULOS_CLIENTE } from "./modules/registry";
@@ -51,13 +52,13 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
   // La Bandeja no es un módulo: junta las alertas de los que sí lo son.
   if (moduloId === "bandeja") return puedeVerBandeja(usuario);
   if (moduloId === "combustible") {
+    // Precios une combustible y urea: mismos dos permisos que el menú.
+    if (tab === "combustible:precios") return puedeVerPrecios(usuario);
     const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
     const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
     if (override !== undefined) return override;
     // "Mi viaje" (0124) es del conductor: el resto gestiona desde Viajes.
     if (tab === "combustible:mi_viaje") return usuario?.rol === "conductor_ruta";
-    if (tab === "combustible:precios")
-      return usuario?.rol === "admin" || usuario?.rol === "operador";
     if (tab === "combustible:proveedores") {
       const antiguo = usuario?.permisosPestanas?.["combustible:tanques:proveedores"];
       return antiguo ?? (usuario?.rol === "admin" || usuario?.rol === "operador");

@@ -147,4 +147,66 @@ test.describe("Precios unificados", () => {
     );
     expect(deMarca.filter((x) => x.anulada_en !== null)).toHaveLength(1);
   });
+
+  test("Lectura con Precios habilitado ve la lista pero ningún botón de escritura", async ({
+    page,
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const marca = `E2E${unico()}`;
+    const admin = adminA();
+    await loginPorUI(page, admin.email, admin.password);
+    const { tanqueNombre } = await sembrar(page, marca);
+
+    // Un usuario de Lectura con el módulo Combustible y la pestaña Precios.
+    const email = `lectura-${marca.toLowerCase()}@mincoreerp.test`;
+    const temporal = `Temporal!${marca}2026`;
+    const alta = await page.request.post("/api/erp/usuarios", {
+      data: { nombre: `Lectura ${marca}`, email, password: temporal, rol: "lectura" },
+    });
+    expect(alta.status(), await alta.text()).toBe(201);
+    const usuarioId = (await alta.json()).id as string;
+    const actuales = await (
+      await page.request.get(`/api/erp/usuarios/${usuarioId}/permisos`)
+    ).json();
+    const habilitar = await page.request.put(`/api/erp/usuarios/${usuarioId}/permisos`, {
+      data: {
+        modulos: actuales.modulos.map(
+          (m: { modulo: string; asignado: boolean; nivel: string }) => ({
+            modulo: m.modulo,
+            asignado: m.modulo === "combustible" ? true : m.asignado,
+            nivel: m.nivel,
+          })
+        ),
+        pestanas: [{ modulo: "combustible", pestana: "tanques:precios", permitido: true }],
+        motivo: "spec e2e: Lectura con Precios habilitado",
+      },
+    });
+    expect(habilitar.status(), await habilitar.text()).toBe(200);
+
+    const contexto = await browser.newContext();
+    const lectura = await contexto.newPage();
+    try {
+      await lectura.goto("/");
+      await lectura.getByLabel("Correo").fill(email);
+      await lectura.getByLabel("Contraseña").fill(temporal);
+      await lectura.getByRole("button", { name: "Ingresar" }).click();
+      // Un usuario nuevo nace con clave temporal: la cambia antes de entrar.
+      await lectura.locator("#passwordActual").fill(temporal);
+      await lectura.locator("#passwordNueva").fill(`${temporal}Nueva`);
+      await lectura.locator("#confirmacion").fill(`${temporal}Nueva`);
+      await lectura.getByRole("button", { name: "Guardar y continuar" }).click();
+      await expect(lectura.getByRole("button", { name: "Dashboard" })).toBeVisible();
+
+      await abrirPrecios(lectura);
+      // Ve la lista (consulta)...
+      await expect(fila(lectura, tanqueNombre)).toBeVisible();
+      // ...pero ningún botón que escriba, ni en la cabecera ni en las filas.
+      for (const nombre of ["Nuevo precio", "Cargar precio", "Cambiar precio", "Anular"]) {
+        await expect(lectura.getByRole("button", { name: nombre })).toHaveCount(0);
+      }
+    } finally {
+      await contexto.close();
+    }
+  });
 });
