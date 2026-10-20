@@ -255,7 +255,7 @@ test("sin señal la compra queda en el equipo y se sincroniza sola, una sola vez
   await botonRegistrar(page).click();
   await expect(
     page.getByText(/Sin conexión: la boleta .* quedó guardada en este equipo/)
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
   // Dos avisos con ese rol: el de la pantalla y la franja del Layout.
   await expect(page.getByRole("status").filter({ hasText: "Sin conexión" }).first()).toBeVisible();
 

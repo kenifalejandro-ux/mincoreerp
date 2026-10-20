@@ -1497,7 +1497,7 @@ export default function UreaPanel() {
                     className={botonAccion}
                   >
                     <Receipt className="w-4 h-4 shrink-0" />
-                    Compra en ruta
+                    Compra de urea
                   </button>
                 )}
                 {permiteUrea("registrar_entrada") && (
@@ -3148,7 +3148,7 @@ function ModalVale({
         <h3 className="text-lg font-bold text-slate-800">Registrar vale de urea</h3>
         <p className="-mt-2 text-sm text-slate-500">
           Urea que sale del almacén de la empresa, con vale del talonario. Si la unidad la compró en
-          ruta, usá <strong>Compra en ruta</strong>: esa no baja el stock del almacén.
+          ruta, usá <strong>Compra de urea</strong>: esa no baja el stock del almacén.
         </p>
         {error && <div className="text-sm text-red-600 bg-red-50 rounded p-2">{error}</div>}
         {activas.length === 0 && <AvisoSinEnvases />}
