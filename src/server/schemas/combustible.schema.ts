@@ -1441,16 +1441,35 @@ export type ActualizarGrifoCombustibleInput = z.infer<typeof actualizarGrifoComb
  *  "compra a un proveedor de ruta", no las dos a la vez. */
 const TOPE_DESTINOS_PRECIO_MASIVO = 50;
 
+/** El id es un INTEGER en Postgres: uno más grande reventaba con 500 en vez de
+ *  un 400. Mismo tope que los ids de query de /precios/vigente. */
+const ID_MAXIMO_INTEGER = 2147483647;
+
+/** Desde cuándo rige un precio. Hacia atrás casi no hay tope (se carga el
+ *  histórico 2025→hoy); hacia adelante, un año: más allá es un error de
+ *  tipeo (2062 por 2026) que dejaría el precio "programado" para siempre. */
+const PISO_VIGENCIA_PRECIO = "2000-01-01T00:00:00.000Z";
+const TOPE_VIGENCIA_FUTURA_DIAS = 366;
+const vigenteDesdePrecio = z
+  .string()
+  .datetime()
+  .refine((v) => new Date(v).getTime() >= new Date(PISO_VIGENCIA_PRECIO).getTime(), {
+    message: "La fecha de vigencia no puede ser anterior al año 2000",
+  })
+  .refine((v) => new Date(v).getTime() <= Date.now() + TOPE_VIGENCIA_FUTURA_DIAS * 86_400_000, {
+    message: "La fecha de vigencia no puede estar a más de un año en el futuro",
+  });
+
 export const crearPreciosCombustibleMasivoSchema = z
   .object({
     tipo_combustible: z.enum(TIPOS_COMBUSTIBLE),
     combustible_ids: z
-      .array(z.number().int().positive())
+      .array(z.number().int().positive().max(ID_MAXIMO_INTEGER))
       .min(1)
       .max(TOPE_DESTINOS_PRECIO_MASIVO)
       .optional(),
     grifo_ids: z
-      .array(z.number().int().positive())
+      .array(z.number().int().positive().max(ID_MAXIMO_INTEGER))
       .min(1)
       .max(TOPE_DESTINOS_PRECIO_MASIVO)
       .optional(),
@@ -1458,7 +1477,7 @@ export const crearPreciosCombustibleMasivoSchema = z
     // redondeado a 0 reventaba con 500. El tope es el mismo que el precio de
     // urea por bulto. Un precio de 0.001 ya no cabe, y no es un precio real.
     precio_unitario: z.number().min(0.01).max(100_000),
-    vigente_desde: z.string().datetime().optional(),
+    vigente_desde: vigenteDesdePrecio.optional(),
   })
   .superRefine((data, ctx) => {
     if ((data.combustible_ids !== undefined) === (data.grifo_ids !== undefined)) {

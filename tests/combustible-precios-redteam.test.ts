@@ -1,8 +1,7 @@
 /** tests/combustible-precios-redteam.test.ts
  *
  * Red team de la API de Precios de combustible tras cerrar el alta individual
- * (POST /precios). Los casos de ids desbordados en /masivo y de ids mal
- * formados en /anular (500 que ya existían) van en el PR de validación de entradas.
+ * (POST /precios).
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
@@ -177,6 +176,9 @@ describe("red team: precios de combustible", () => {
         ["ids no enteros", { ...valido(), combustible_ids: [1.5] }],
         ["ids negativos", { ...valido(), combustible_ids: [-1] }],
         ["ids strings", { ...valido(), combustible_ids: ["1"] }],
+        ["ids desbordado", { ...valido(), combustible_ids: [Number.MAX_SAFE_INTEGER] }],
+        ["ids 1e30", { ...valido(), combustible_ids: [1e30] }],
+        ["ids justo sobre INTEGER", { ...valido(), grifo_ids: [2147483648] }],
         ["sin destino", { tipo_combustible: "diesel_b5", precio_unitario: 20 }],
         ["mezcla", { ...valido(), grifo_ids: [proveedorRuta] }],
         [
@@ -185,6 +187,10 @@ describe("red team: precios de combustible", () => {
         ],
         ["fecha inválida", { ...valido(), vigente_desde: "ayer" }],
         ["fecha sin zona", { ...valido(), vigente_desde: "2026-01-01" }],
+        ["fecha año 0001", { ...valido(), vigente_desde: "0001-01-01T00:00:00Z" }],
+        ["fecha año 1999", { ...valido(), vigente_desde: "1999-12-31T23:59:59Z" }],
+        ["fecha año 9999", { ...valido(), vigente_desde: "9999-12-31T23:59:59Z" }],
+        ["fecha a 2 años", { ...valido(), vigente_desde: "2100-01-01T00:00:00Z" }],
         ["body array", [valido()]],
         ["body vacío", {}],
       ];
@@ -267,15 +273,17 @@ describe("red team: precios de combustible", () => {
       expect(await contar(tenantId)).toBe(antes);
     });
 
-    it("vigente_desde extremos: ni 500 (se reporta qué aceptó)", async () => {
-      for (const f of [
-        "0001-01-01T00:00:00Z",
-        "1900-01-01T00:00:00Z",
-        "9999-12-31T23:59:59Z",
-        "2100-01-01T00:00:00Z",
-      ]) {
+    it("vigente_desde: el histórico y lo próximo siguen entrando (201)", async () => {
+      const dia = 86_400_000;
+      const fechas = [
+        "2000-01-01T00:00:00Z", // el piso
+        "2025-01-15T12:00:00Z", // histórico
+        new Date(Date.now() - 400 * dia).toISOString(),
+        new Date(Date.now() + 300 * dia).toISOString(), // programado a 10 meses
+      ];
+      for (const f of fechas) {
         const r = await admin.post(MASIVO).send({ ...valido(), vigente_desde: f });
-        expect(r.status, f).not.toBe(500);
+        expect(r.status, `${f} -> ${JSON.stringify(r.body)}`).toBe(201);
       }
     });
 
@@ -368,6 +376,27 @@ describe("red team: precios de combustible", () => {
         const r = await admin.patch(`${BASE}/precios/${precioId}/anular`).send(body);
         expect(r.status, JSON.stringify(body)).toBe(400);
       }
+    });
+
+    it("id basura -> 400 o 404, nunca 500", async () => {
+      const malos: string[] = [];
+      for (const id of [
+        "abc",
+        "-1",
+        "0",
+        "1.5",
+        "99999999999999999999",
+        "2147483648",
+        "9007199254740993",
+        "%00",
+        "1;DROP",
+      ]) {
+        const r = await admin
+          .patch(`${BASE}/precios/${encodeURIComponent(id)}/anular`)
+          .send({ motivo: "prueba" });
+        if (![400, 404].includes(r.status)) malos.push(`id=${id} -> ${r.status}`);
+      }
+      expect(malos, "ids que no dieron 400/404").toEqual([]);
     });
 
     it("precio de otro tenant -> 404 y no queda anulado", async () => {
