@@ -25,7 +25,8 @@ import {
   suscribirseACola,
   type EntradaCola,
 } from "./offlineQueue";
-import { enviarSinCola } from "../services/apiClient";
+import { haySesionConfirmada } from "./sesionOffline";
+import { enviarSinCola, esFalloDeInfraestructura } from "../services/apiClient";
 
 /** Tope de reintentos antes de dar la entrada por perdida. Alto a
  *  propósito: un checklist llenado en campo es trabajo real de una
@@ -135,6 +136,14 @@ async function enviarEntrada(entrada: EntradaCola): Promise<ResultadoEnvio> {
     return { resultado: "reintentar" };
   }
 
+  // Servidor caído (502/503/504 del proxy): no es un intento fallido de ESTA
+  // entrada. Contarlo agotaría MAX_INTENTOS en minutos y descartaría trabajo
+  // real mientras el servidor reinicia.
+  if (esFalloDeInfraestructura(respuesta)) {
+    reportarResultadoDeRed(false);
+    return { resultado: "reintentar" };
+  }
+
   reportarResultadoDeRed(true);
 
   // 2xx incluye el 200 que devuelve el servidor cuando esta entrada YA se
@@ -157,6 +166,9 @@ export async function drenar(): Promise<{ sincronizadas: number; fallidas: numbe
   // este flag solo evita que la MISMA pestaña drene dos veces en paralelo,
   // que sí sería trabajo duplicado gratis.
   if (drenandoAhora) return { sincronizadas: 0, fallidas: 0 };
+  // Sesión restaurada sin señal y todavía sin confirmar: no se drena (ver
+  // sesionOffline.ts).
+  if (!haySesionConfirmada()) return { sincronizadas: 0, fallidas: 0 };
   drenandoAhora = true;
 
   let sincronizadas = 0;

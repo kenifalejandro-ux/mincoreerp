@@ -103,7 +103,27 @@ export default defineConfig({
                 /^\/api\/erp\/combustible\/\d+\/precintos$/.test(url.pathname) ||
                 // Las sedes y grifos internos (0097): el alta de equipo, que
                 // funciona sin red, necesita la lista para su selector.
-                url.pathname === "/api/erp/sedes"),
+                url.pathname === "/api/erp/sedes" ||
+                // Lo que necesitan sin señal los formularios de combustible y
+                // urea del conductor, el grifero y el operador (ver
+                // offline/precargaCatalogos.ts, que los baja al entrar con
+                // red). La lista de tanques es la raíz del módulo. El precio
+                // vigente y el último medidor NO van: dependen de fecha, tanque
+                // y equipo, y servir uno viejo sería un dato equivocado. Tampoco
+                // viajes/mios: es de CADA persona y este caché es por empresa
+                // (Mi viaje guarda lo suyo por usuario).
+                url.pathname === "/api/erp/combustible" ||
+                url.pathname === "/api/erp/equipos/lugares" ||
+                [
+                  "/api/erp/combustible/equipos-destino",
+                  "/api/erp/combustible/grifos",
+                  "/api/erp/combustible/grifos/para-formulario",
+                  "/api/erp/combustible/tanquetas/formulario",
+                  "/api/erp/combustible/config/formulario-despacho",
+                  "/api/erp/combustible/urea/proveedores",
+                  "/api/erp/combustible/urea/presentaciones",
+                  "/api/erp/combustible/urea/precios",
+                ].includes(url.pathname)),
             handler: "NetworkFirst",
             options: {
               cacheName: "erp-catalogos-v1",
@@ -116,6 +136,18 @@ export default defineConfig({
               // Solo respuestas OK: cachear un 401/403 dejaría al operario
               // viendo "sin permiso" en modo offline hasta que expire.
               cacheableResponse: { statuses: [200] },
+              plugins: [
+                {
+                  // NetworkFirst solo cae al caché cuando el fetch FALLA; una
+                  // respuesta 502/503 (servidor caído, deploy) la devuelve tal
+                  // cual y el formulario queda vacío. Tirarla como fallo de red
+                  // hace que sirva lo guardado.
+                  fetchDidSucceed: async ({ response }) => {
+                    if (response.status >= 500) throw new Error("Servidor no disponible");
+                    return response;
+                  },
+                },
+              ],
             },
           },
         ],

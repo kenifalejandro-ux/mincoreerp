@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { seccionesCompraEnRuta } from "./compraEnRutaAcceso";
 import { prepararFotoComprobante } from "./fotoComprobante";
+import PendientesDeEnvio from "./PendientesDeEnvio";
 import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
 import { mensajeDeError } from "../../utils/mensajeDeError";
@@ -207,6 +208,8 @@ export default function HistorialComprasRuta() {
           {boletas.length} {boletas.length === 1 ? "boleta" : "boletas"}
         </span>
       </div>
+
+      <PendientesDeEnvio ambito="compras" />
 
       {aviso && (
         <p

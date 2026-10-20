@@ -41,6 +41,7 @@ import { useAuth } from "../context/AuthContext";
 import { comprimirImagen } from "./combustible/comprimirImagen";
 import { EVENTO_UREA_EN_WINDOW, planDeRefresco } from "./combustible/eventosUrea";
 import ConsumoPorViaje from "./combustible/ConsumoPorViaje";
+import PendientesDeEnvio from "./combustible/PendientesDeEnvio";
 import VentanaFlotante from "./comunes/VentanaFlotante";
 import { AlmacenUrea, ModalCorregirLitros, ResumenUrea, type EstadoStockUrea } from "./UreaAlmacen";
 import { apiFetch } from "../services/apiClient";
@@ -1727,6 +1728,7 @@ export default function UreaPanel() {
               puedeAnular={esAdmin}
             />
           )}
+          {vista === "compras" && <PendientesDeEnvio ambito="urea" />}
           {!cargando && vista === "compras" && (
             <TablaComprasUrea
               filas={compras}
