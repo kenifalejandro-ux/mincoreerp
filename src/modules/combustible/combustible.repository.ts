@@ -163,6 +163,9 @@ export const TIPOS_ALERTA = [
   "vale_excede_tanque",
   // ── Migración 0129: compra externa con comprobante sin foto pasadas 24 h.
   "comprobante_sin_foto",
+  // ── 0136: el total de una boleta de compra en ruta no cuadra con la suma de
+  // lo registrado (más de S/ 0.10). Hallazgo, se congela.
+  "compra_ruta_descuadre",
 ] as const;
 
 export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];

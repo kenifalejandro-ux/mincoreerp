@@ -61,7 +61,8 @@ export interface AlertaCombustible {
     | "urea_conteo_recargado"
     | "urea_precio_fuera_de_catalogo"
     | "urea_litros_corregidos"
-    | "urea_conteo_alterado";
+    | "urea_conteo_alterado"
+    | "compra_ruta_descuadre";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -121,6 +122,7 @@ export const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   urea_precio_fuera_de_catalogo: "Compra de urea con precio fuera del catálogo",
   urea_litros_corregidos: "Litros de un envase de urea corregidos",
   urea_conteo_alterado: "Un conteo de urea cambió de resultado",
+  compra_ruta_descuadre: "Boleta que no cuadra",
 };
 
 /** La columna "Vale" de las tablas de alertas y anomalías. Desde la
@@ -267,6 +269,20 @@ export function describirDetalleAlerta(a: AlertaCombustible): string {
       `Conteo del ${contadoEn?.slice(0, 10) ?? "?"}: ${signo(antesL)} L → ${signo(despuesL)} L` +
       (otros > 0 ? ` (y ${otros} conteo${otros === 1 ? "" : "s"} más)` : "") +
       (causa?.descripcion ? `, por ${causa.descripcion}` : "")
+    );
+  }
+  if (a.tipo === "compra_ruta_descuadre") {
+    const { totalBoleta, totalSistema, diferencia, motivo } = a.detalle as {
+      totalBoleta?: number;
+      totalSistema?: number;
+      diferencia?: number;
+      motivo?: string;
+    };
+    const soles = (n: number | undefined) => (n === undefined ? "?" : `S/ ${n.toFixed(2)}`);
+    return (
+      `El papel dice ${soles(totalBoleta)} y lo registrado suma ${soles(totalSistema)} ` +
+      `(diferencia ${soles(diferencia === undefined ? undefined : Math.abs(diferencia))})` +
+      (motivo ? `. Motivo: ${motivo}` : "")
     );
   }
   if (a.tipo === "urea_litros_corregidos") {

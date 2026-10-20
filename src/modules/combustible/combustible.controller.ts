@@ -2127,9 +2127,85 @@ export class CombustibleController {
           Number(despacho.cantidad)
         );
       }
+      // Una boleta que no cuadra queda a la vista de quien revisa. Después de
+      // los despachos y sin poder tirar abajo el 201: la compra ya se guardó.
+      if (compra.motivo_descuadre !== null) {
+        await this.procesarAlertaCompraRutaDescuadre(tenantId, {
+          comprobanteTipo: compra.comprobante_tipo,
+          comprobanteNumero: compra.comprobante_numero,
+          totalBoleta: Number(compra.total_boleta),
+          totalSistema: Number(compra.total_sistema),
+          diferencia: Number(compra.diferencia),
+          motivo: compra.motivo_descuadre,
+          compraRutaId: Number(compra.id),
+          despachoCombustibleId: compra.despacho_combustible_id
+            ? Number(compra.despacho_combustible_id)
+            : null,
+          despachoUreaId: compra.despacho_urea_id ? Number(compra.despacho_urea_id) : null,
+        });
+      }
       res.status(201).json(fila);
     } catch (err) {
       this.responderErrorDeDespacho(err, res);
+    }
+  }
+
+  /** La boleta de una compra en ruta no cuadra con lo registrado (0136). Es un
+   *  hallazgo: el conductor ya explicó el motivo y la compra se guardó, pero
+   *  quien revisa tiene que poder verlo. Sale por el resumen diario (canal
+   *  "resumen"), no por correo al momento.
+   *
+   *  Mismo contrato "nunca lanza" que los demás procesar*: corre después de que
+   *  la transacción confirmó, así que un fallo acá no convierte un 201 real en
+   *  un 500. */
+  private async procesarAlertaCompraRutaDescuadre(
+    tenantId: string,
+    d: {
+      comprobanteTipo: string;
+      comprobanteNumero: string;
+      totalBoleta: number;
+      totalSistema: number;
+      diferencia: number;
+      motivo: string;
+      compraRutaId: number;
+      despachoCombustibleId: number | null;
+      despachoUreaId: number | null;
+    }
+  ) {
+    try {
+      // El ancla es un despacho de la boleta: el de combustible si lo hay.
+      const despachoId = d.despachoCombustibleId ?? d.despachoUreaId;
+      const producto = d.despachoCombustibleId !== null ? "combustible" : "urea";
+      await withTenant(tenantId, (client) =>
+        service.crearAlertas(client, tenantId, [
+          {
+            tipo: "compra_ruta_descuadre",
+            despachoId,
+            producto,
+            detalle: {
+              // La columna "Vale" de la Bandeja lee este texto (referenciaAlerta).
+              comprobante: `${d.comprobanteTipo === "factura" ? "Factura" : "Boleta"} ${d.comprobanteNumero}`,
+              comprobanteTipo: d.comprobanteTipo,
+              comprobanteNumero: d.comprobanteNumero,
+              totalBoleta: d.totalBoleta,
+              totalSistema: d.totalSistema,
+              diferencia: d.diferencia,
+              motivo: d.motivo,
+              compraRutaId: d.compraRutaId,
+            },
+          },
+        ])
+      );
+      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+        tipo: "compra_ruta_descuadre",
+        producto,
+        despachoId,
+      });
+    } catch (err) {
+      logger.warn(
+        { err, tenantId, compraRutaId: d.compraRutaId },
+        "No se pudo procesar la alerta de boleta que no cuadra"
+      );
     }
   }
 

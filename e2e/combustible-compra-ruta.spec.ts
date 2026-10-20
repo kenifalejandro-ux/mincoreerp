@@ -224,6 +224,15 @@ test("un total que no cuadra pide el motivo y no deja registrar sin él", async 
     page.getByText(new RegExp(`Compra registrada \\(la boleta ${numero}\\)`))
   ).toBeVisible({ timeout: 30_000 });
   await expect.poll(async () => (await despachosDeLaBoleta(page, numero)).length).toBe(2);
+
+  // Y la boleta que no cuadra queda a la vista de quien revisa: en la Bandeja,
+  // con el papel, lo registrado y el motivo que escribió el conductor.
+  await page.getByRole("button", { name: /^Bandeja/ }).click();
+  await page.getByText(numero).first().click();
+  await expect(
+    page.getByText(/El papel dice S\/ 810\.00 y lo registrado suma S\/ 800\.00/)
+  ).toBeVisible();
+  await expect(page.getByText(/Motivo: El grifo cobró un servicio de lavado/)).toBeVisible();
 });
 
 test("sin señal la compra queda en el equipo y se sincroniza sola, una sola vez, con su foto", async ({

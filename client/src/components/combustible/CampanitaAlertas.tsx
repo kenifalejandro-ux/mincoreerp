@@ -55,6 +55,7 @@ const ETIQUETA_TIPO: Record<string, string> = {
   urea_precio_fuera_de_catalogo: "Compra de urea con precio fuera del catálogo",
   urea_litros_corregidos: "Litros de un envase de urea corregidos",
   urea_conteo_alterado: "Un conteo de urea cambió de resultado",
+  compra_ruta_descuadre: "Boleta que no cuadra",
 };
 
 /** No toda alerta es sobre un vale (migración 0073): las de nivel bajo van
