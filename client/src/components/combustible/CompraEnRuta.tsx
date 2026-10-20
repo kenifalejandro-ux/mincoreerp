@@ -33,6 +33,12 @@ import {
   type PresentacionFila,
   type RenglonCompra,
 } from "../UreaPanel";
+import {
+  borrarBorrador,
+  guardarBorrador,
+  leerBorrador,
+  type BorradorCompraRuta,
+} from "./borradorCompraRuta";
 import { seccionesCompraEnRuta } from "./compraEnRutaAcceso";
 import { prepararFotoComprobante } from "./fotoComprobante";
 import HistorialComprasRuta from "./HistorialComprasRuta";
@@ -220,6 +226,127 @@ export default function CompraEnRuta() {
     if (exito) avisoRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [exito]);
 
+  // ── El borrador (borradorCompraRuta.ts) ─────────────────────────────────
+  // Lo escrito se guarda en el dispositivo y se recupera al volver: si se cierra
+  // la pantalla o se va la señal a mitad de la boleta, no se pierde. La foto no
+  // entra (pesa); se avisa que hay que volver a elegirla.
+  const usuarioId = usuario?.id;
+  const [borradorListo, setBorradorListo] = useState(false);
+  const [borradorRecuperadoEn, setBorradorRecuperadoEn] = useState<number | null>(null);
+  // Lo último escrito, para guardarlo al instante si la pantalla pasa a segundo
+  // plano: en el celular, cambiar de app puede matar la pestaña antes de que
+  // venza la pausa del autoguardado.
+  const datosDelBorrador = useRef<BorradorCompraRuta | null>(null);
+  useEffect(() => {
+    if (!usuarioId) return;
+    const guardarYa = () => {
+      if (document.visibilityState === "hidden" && datosDelBorrador.current) {
+        guardarBorrador(usuarioId, datosDelBorrador.current);
+      }
+    };
+    document.addEventListener("visibilitychange", guardarYa);
+    window.addEventListener("pagehide", guardarYa);
+    return () => {
+      document.removeEventListener("visibilitychange", guardarYa);
+      window.removeEventListener("pagehide", guardarYa);
+    };
+  }, [usuarioId]);
+
+  useEffect(() => {
+    // Se lee UNA vez al montar. El autoguardado espera a `borradorListo`: sin
+    // eso, el primer render (formulario vacío) borraría el borrador antes de
+    // que se alcance a recuperar.
+    /* eslint-disable react-hooks/set-state-in-effect */
+    if (!usuarioId) return;
+    const guardado = leerBorrador(usuarioId);
+    if (guardado) {
+      const d = guardado.datos;
+      setClienteUuid(d.clienteUuid as ReturnType<typeof crypto.randomUUID>);
+      setEquipoId(d.equipoId);
+      setGrifoId(d.grifoId);
+      setComprobanteTipo(d.comprobanteTipo);
+      setComprobanteNumero(d.comprobanteNumero);
+      setFecha(d.fecha);
+      setFechaEditada(d.fechaEditada);
+      // Un permiso que cambió desde que se guardó manda sobre el borrador.
+      setIncluyeCombustible(d.incluyeCombustible && secciones.combustible);
+      setIncluyeUrea(d.incluyeUrea && secciones.urea);
+      setTipoCombustible(d.tipoCombustible as TipoCombustible);
+      setGalones(d.galones);
+      setCostoUnitario(d.costoUnitario);
+      setCostoEditado(d.costoEditado);
+      setHorometro(d.horometro);
+      setOdometro(d.odometro);
+      setHoras(d.horas);
+      setHorasEditadas(d.horasEditadas);
+      if (d.renglones.length > 0) setRenglones(d.renglones);
+      setTotalBoleta(d.totalBoleta);
+      setMotivo(d.motivo);
+      setObservaciones(d.observaciones);
+      setBorradorRecuperadoEn(guardado.guardadoEn);
+    }
+    setBorradorListo(true);
+    /* eslint-enable react-hooks/set-state-in-effect */
+    // Solo al montar con el usuario: las secciones no cambian en la sesión.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usuarioId]);
+
+  useEffect(() => {
+    if (!usuarioId || !borradorListo) return;
+    const datos: BorradorCompraRuta = {
+      clienteUuid,
+      equipoId,
+      grifoId,
+      comprobanteTipo,
+      comprobanteNumero,
+      fecha,
+      fechaEditada,
+      incluyeCombustible,
+      incluyeUrea,
+      tipoCombustible,
+      galones,
+      costoUnitario,
+      costoEditado,
+      horometro,
+      odometro,
+      horas,
+      horasEditadas,
+      renglones,
+      totalBoleta,
+      motivo,
+      observaciones,
+    };
+    datosDelBorrador.current = datos;
+    // Con una pausa: escribir en el almacenamiento en cada tecla es trabajo
+    // de más, y la última tecla es la que importa.
+    const t = window.setTimeout(() => guardarBorrador(usuarioId, datos), 400);
+    return () => window.clearTimeout(t);
+  }, [
+    usuarioId,
+    borradorListo,
+    clienteUuid,
+    equipoId,
+    grifoId,
+    comprobanteTipo,
+    comprobanteNumero,
+    fecha,
+    fechaEditada,
+    incluyeCombustible,
+    incluyeUrea,
+    tipoCombustible,
+    galones,
+    costoUnitario,
+    costoEditado,
+    horometro,
+    odometro,
+    horas,
+    horasEditadas,
+    renglones,
+    totalBoleta,
+    motivo,
+    observaciones,
+  ]);
+
   const equipo = equipos.find((e) => String(e.id) === equipoId);
   const midePorHorometro = equipo?.tipo_medidor === "horometro";
   const midePorOdometro = equipo?.tipo_medidor === "odometro";
@@ -359,6 +486,9 @@ export default function CompraEnRuta() {
 
   // ── Envío ───────────────────────────────────────────────────────────────
   const limpiar = () => {
+    if (usuarioId) borrarBorrador(usuarioId);
+    datosDelBorrador.current = null;
+    setBorradorRecuperadoEn(null);
     setClienteUuid(crypto.randomUUID());
     setEquipoId("");
     setGrifoId("");
@@ -499,6 +629,28 @@ export default function CompraEnRuta() {
           </p>
         </header>
 
+        {borradorRecuperadoEn !== null && (
+          <div
+            role="status"
+            className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+          >
+            <span>
+              Recuperamos lo que estabas escribiendo (guardado a las{" "}
+              {new Date(borradorRecuperadoEn).toLocaleTimeString("es-PE", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+              ). La foto no se guarda: vuelve a elegirla.
+            </span>
+            <button
+              type="button"
+              onClick={limpiar}
+              className="rounded-lg border border-amber-300 px-3 py-1 text-xs font-semibold hover:bg-amber-100"
+            >
+              Empezar de cero
+            </button>
+          </div>
+        )}
         {exito && (
           <div
             ref={avisoRef}

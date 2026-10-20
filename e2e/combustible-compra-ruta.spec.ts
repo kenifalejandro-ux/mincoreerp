@@ -433,3 +433,88 @@ test("el historial junta la boleta en una fila y la foto única se sube y se ree
     page.getByText(new RegExp(`Comprobante de la boleta ${numero} reemplazado`))
   ).toBeVisible({ timeout: 20_000 });
 });
+
+/** ¿Hay un borrador guardado en este navegador? */
+const hayBorrador = (page: Page) =>
+  page.evaluate(() =>
+    Object.keys(localStorage).some((k) => k.startsWith("mincore:compra-ruta-borrador:"))
+  );
+
+test("el borrador: lo escrito sobrevive a una recarga y se puede descartar", async ({ page }) => {
+  const marca = `BOR-${unico()}`;
+  const numero = `B001-${unico()}`;
+  const admin = adminA();
+
+  await loginPorUI(page, admin.email, admin.password);
+  const { grifoNombre } = await sembrar(page, marca);
+  await abrirCompraEnRuta(page);
+
+  // Un formulario recién abierto no deja borrador.
+  expect(await hayBorrador(page)).toBe(false);
+
+  await elegirPorTexto(page, "#compra-unidad", marca);
+  await elegirPorTexto(page, "#compra-proveedor", grifoNombre);
+  await page.locator("#compra-comprobante-numero").fill(numero);
+  await page.locator("#compra-galones").fill("33");
+  await page.locator("#compra-total-boleta").fill("500");
+  // Se espera a que el borrador ya traiga LO ÚLTIMO que se escribió (el guardado
+  // tiene una pausa de 400 ms), no solo a que exista uno.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          (n) =>
+            Object.entries(localStorage).some(
+              ([k, v]) => k.startsWith("mincore:compra-ruta-borrador:") && v.includes(n)
+            ),
+          numero
+        ),
+      { message: "el borrador no quedó con lo último escrito" }
+    )
+    .toBe(true);
+
+  // Se cierra la pantalla (o se va la señal): al volver, sigue ahí.
+  await page.reload();
+  await abrirCompraEnRuta(page);
+  await expect(page.getByText(/Recuperamos lo que estabas escribiendo/)).toBeVisible();
+  await expect(page.locator("#compra-comprobante-numero")).toHaveValue(numero);
+  await expect(page.locator("#compra-galones")).toHaveValue("33");
+  await expect(page.locator("#compra-total-boleta")).toHaveValue("500");
+  await expect(page.locator("#compra-unidad")).not.toHaveValue("");
+  await expect(page.locator("#compra-proveedor")).not.toHaveValue("");
+
+  // Empezar de cero lo borra de verdad: otra recarga ya no lo trae.
+  await page.getByRole("button", { name: "Empezar de cero" }).click();
+  await expect(page.locator("#compra-comprobante-numero")).toHaveValue("");
+  await expect(page.getByText(/Recuperamos lo que estabas escribiendo/)).toHaveCount(0);
+  await expect.poll(() => hayBorrador(page)).toBe(false);
+  await page.reload();
+  await abrirCompraEnRuta(page);
+  await expect(page.getByText(/Recuperamos lo que estabas escribiendo/)).toHaveCount(0);
+  await expect(page.locator("#compra-comprobante-numero")).toHaveValue("");
+});
+
+test("el borrador se borra al registrar la compra: no vuelve en la recarga", async ({ page }) => {
+  const marca = `BRG-${unico()}`;
+  const numero = `B001-${unico()}`;
+  const admin = adminA();
+
+  await loginPorUI(page, admin.email, admin.password);
+  const { grifoNombre } = await sembrar(page, marca);
+  await abrirCompraEnRuta(page);
+  await llenar(page, { marca, grifoNombre, numero, total: "800" });
+  await expect.poll(() => hayBorrador(page)).toBe(true);
+
+  await botonRegistrar(page).click();
+  await expect(
+    page.getByText(new RegExp(`Compra registrada \\(la boleta ${numero}\\)`))
+  ).toBeVisible({ timeout: 30_000 });
+  await expect
+    .poll(() => hayBorrador(page), { message: "el borrador quedó tras registrar" })
+    .toBe(false);
+
+  await page.reload();
+  await abrirCompraEnRuta(page);
+  await expect(page.getByText(/Recuperamos lo que estabas escribiendo/)).toHaveCount(0);
+  await expect(page.locator("#compra-comprobante-numero")).toHaveValue("");
+});
