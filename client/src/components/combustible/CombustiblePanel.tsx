@@ -45,6 +45,8 @@ import VentanaSurtidores from "./Surtidores";
 import PreciosPagina from "./PreciosPagina";
 import Proveedores from "./Proveedores";
 import TanquetasPanel from "./Tanquetas";
+import CompraEnRuta from "./CompraEnRuta";
+import HistorialComprasRuta from "./HistorialComprasRuta";
 import MiViaje from "./MiViaje";
 import ViajesPanel from "./ViajesPanel";
 import { comprimirImagen } from "./comprimirImagen";
@@ -334,12 +336,6 @@ interface Grifo {
  *  del lado del cliente contra `tanques`/`grifos`/`equipos`, que el panel
  *  ya tiene cargados; no hace falta pedirle al backend que haga los JOIN
  *  para esta tabla de solo lectura. */
-interface UltimoMedidor {
-  lectura_horometro: number | null;
-  lectura_odometro: number | null;
-  despachado_en: string;
-}
-
 interface DespachoHistorial {
   id: number;
   origen: OrigenDespacho;
@@ -1319,20 +1315,16 @@ const DESPACHO_FORM_INICIAL = {
   combustible_id: "",
   // De qué surtidor salió (0098): solo si el tanque tiene más de uno.
   surtidor_id: "",
-  grifo_id: "",
   tipo_combustible: "diesel_b5" as Tanque["tipo_combustible"],
   tipo_destino: "equipo" as TipoDestinoDespacho,
   equipo_id: "",
   serie_talonario: "",
   n_vale: "",
-  comprobante_tipo: "boleta" as "boleta" | "factura",
-  comprobante_numero: "",
   cantidad: "",
   lectura_contometro: "",
   totalizador_lectura: "",
   lectura_horometro: "",
   lectura_odometro: "",
-  horas_abastecidas: "",
   costo_unitario: "",
   observaciones: "",
 };
@@ -1529,6 +1521,7 @@ export interface CombustiblePanelProps {
     | "tanquetas"
     | "viajes"
     | "mi_viaje"
+    | "compra_ruta"
     | "historico"
     | "urea"
     | "precios"
@@ -1681,21 +1674,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [horaDespachoEditadaAMano, setHoraDespachoEditadaAMano] = useState(false);
   const [enviandoDespacho, setEnviandoDespacho] = useState(false);
   const [clienteUuidDespacho, setClienteUuidDespacho] = useState("");
-  // Foto o PDF del comprobante de la compra en ruta (0109). Opcional: el
-  // conductor puede no tener señal ni el papel a mano al registrar.
-  const [fotoComprobante, setFotoComprobante] = useState<File | null>(null);
-  const [errorFotoComprobante, setErrorFotoComprobante] = useState<string | null>(null);
-  // La lectura de la carga anterior de la unidad elegida, para calcular solas
-  // las horas abastecidas. undefined = no se pudo saber (sin señal, o todavía
-  // cargando): el campo queda manual, como antes. null = la unidad no tiene
-  // carga anterior.
-  const [medidorCargado, setMedidorCargado] = useState<{
-    clave: string;
-    ultimo: UltimoMedidor | null;
-  } | null>(null);
-  // Mismo patrón que costoEditadoAMano: lo calculado nunca pisa lo que el
-  // conductor escribió.
-  const [horasEditadasAMano, setHorasEditadasAMano] = useState(false);
   // El costo se autocompleta al elegir tanque/grifo -- pero si el operador
   // YA lo tocó a mano, no lo pisamos con un nuevo autocompletado (ej. si
   // cambia el tipo de combustible después de corregir el precio).
@@ -1703,13 +1681,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   // --- Grifos externos (migrations/0063) ---
   const [grifos, setGrifos] = useState<Grifo[]>([]);
-  // Los proveedores de ruta del formulario de despacho vienen de un endpoint
-  // propio (solo id y nombre): quien registra despachos, como el conductor,
-  // no tiene la pestaña Proveedores y /grifos le da 403.
-  const [proveedoresRuta, setProveedoresRuta] = useState<{ id: number; nombre: string }[]>([]);
-  const [proveedoresRutaEstado, setProveedoresRutaEstado] = useState<
-    "ok" | "sin_permiso" | "error"
-  >("ok");
 
   // --- Historial de despachos (solo lectura, GET /despachos) ---
   const [modalHistorialDespachosAbierto, setModalHistorialDespachosAbierto] = useState(false);
@@ -1731,6 +1702,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     | "tanquetas"
     | "viajes"
     | "mi_viaje"
+    | "compra_ruta"
     | "historico"
     | "urea"
     | "precios"
@@ -1953,18 +1925,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   }, []);
 
   const cargarGrifos = useCallback(async () => {
-    const [res, resRuta] = await Promise.all([
-      apiFetch("/api/erp/combustible/grifos").catch(() => null),
-      apiFetch("/api/erp/combustible/grifos/para-formulario").catch(() => null),
-    ]);
+    const res = await apiFetch("/api/erp/combustible/grifos").catch(() => null);
     const data = await res?.json().catch(() => null);
     setGrifos(Array.isArray(data) ? data : []);
-
-    const dataRuta = resRuta?.ok ? await resRuta.json().catch(() => null) : null;
-    setProveedoresRuta(Array.isArray(dataRuta) ? dataRuta : []);
-    setProveedoresRutaEstado(
-      Array.isArray(dataRuta) ? "ok" : resRuta?.status === 403 ? "sin_permiso" : "error"
-    );
   }, []);
 
   // Los dos desplegables filtran por rol además de por `activo`
@@ -2747,14 +2710,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const abrirModalDespacho = () => {
     setDespachoForm({
       ...DESPACHO_FORM_INICIAL,
-      origen: esConductor ? "compra_externa" : DESPACHO_FORM_INICIAL.origen,
+      origen: esConductor ? "tanqueta" : DESPACHO_FORM_INICIAL.origen,
     });
     setDespachadoEn(ahoraParaInputLocal());
     setHoraDespachoEditadaAMano(false);
     setCostoEditadoAMano(false);
     setMensajeExito(null);
     setClienteUuidDespacho(crypto.randomUUID());
-    setFotoComprobante(null);
     // Si el vale pide el medidor (0113). Sin respuesta, no se pide: el mismo
     // default que el servidor (si la empresa lo prendió, el servidor no
     // bloquea un vale sin él, solo lo alerta).
@@ -2766,9 +2728,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       .then((r) => (r.ok ? r.json() : null))
       .then((b) => setFormPideMedidor(b?.despacho_pide_medidor === true))
       .catch(() => setFormPideMedidor(false));
-    setErrorFotoComprobante(null);
-    setMedidorCargado(null);
-    setHorasEditadasAMano(false);
     setModalDespachoAbierto(true);
   };
 
@@ -2779,77 +2738,18 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       ? Number(despachoForm.cantidad) * Number(despachoForm.costo_unitario)
       : null;
 
-  // Horas abastecidas automáticas: la lectura de la carga anterior de la unidad
-  // y, con ella, "lectura actual - lectura anterior". Solo horómetro: un
-  // odómetro mide kilómetros, de ahí no salen horas. Si no hay señal, el fetch
-  // falla en silencio y el campo sigue siendo manual, como siempre.
-  //
-  // Con la hora del despacho tocada a mano (carga retroactiva), la "anterior"
-  // es la que quedó ANTES de esa hora, no la más reciente de todas.
-  const fechaRetroactiva = horaDespachoEditadaAMano ? new Date(despachadoEn) : null;
-  const antesDeMedidor =
-    fechaRetroactiva && !Number.isNaN(fechaRetroactiva.getTime())
-      ? fechaRetroactiva.toISOString()
-      : "";
-  const claveMedidor = `${despachoForm.equipo_id}|${antesDeMedidor}`;
-
-  useEffect(() => {
-    if (!modalDespachoAbierto || despachoForm.origen !== "compra_externa") return;
-    if (despachoForm.equipo_id === "") return;
-    let cancelado = false;
-    const consulta = antesDeMedidor ? `?antes_de=${encodeURIComponent(antesDeMedidor)}` : "";
-    apiFetch(`/api/erp/combustible/equipos/${despachoForm.equipo_id}/ultimo-medidor${consulta}`)
-      .then(async (res) => {
-        if (!res.ok) return;
-        const cuerpo = (await res.json()) as { ultimo: UltimoMedidor | null };
-        if (!cancelado) setMedidorCargado({ clave: claveMedidor, ultimo: cuerpo.ultimo });
-      })
-      .catch(() => {});
-    return () => {
-      cancelado = true;
-    };
-  }, [
-    modalDespachoAbierto,
-    despachoForm.origen,
-    despachoForm.equipo_id,
-    antesDeMedidor,
-    claveMedidor,
-  ]);
-
-  // undefined = no se sabe (cargando, sin señal, o la respuesta es de otra
-  // unidad): el campo queda manual. null = la unidad no tiene carga anterior.
-  const ultimoMedidor = medidorCargado?.clave === claveMedidor ? medidorCargado.ultimo : undefined;
-
-  const horometroAnterior = ultimoMedidor?.lectura_horometro ?? null;
-  const horometroActual =
-    despachoForm.lectura_horometro === "" ? null : Number(despachoForm.lectura_horometro);
-  const midePorHorometro = equipoSeleccionado?.tipo_medidor === "horometro";
-  const horometroValido = horometroActual !== null && Number.isFinite(horometroActual);
-  const horometroRetrocede =
-    midePorHorometro && horometroAnterior !== null && horometroValido
-      ? horometroActual < horometroAnterior
-      : false;
-  const horasSugeridas =
-    midePorHorometro && horometroAnterior !== null && horometroValido && !horometroRetrocede
-      ? Math.round((horometroActual - horometroAnterior) * 100) / 100
-      : null;
-  // Lo escrito a mano manda; si no, lo calculado. Es lo que se ve Y lo que se
-  // envía: un solo valor, sin efecto que lo copie al formulario.
-  const horasAbastecidas = horasEditadasAMano
-    ? despachoForm.horas_abastecidas
-    : horasSugeridas === null
-      ? ""
-      : String(horasSugeridas);
-
   // Autocompletado del C.U (migrations/0063): apenas hay tanque/grifo +
   // tipo de combustible elegidos, pide el precio vigente A LA FECHA DEL
   // DESPACHO (no "ahora") -- importante para un vale offline que se carga
   // en cancha y sincroniza horas después. Nunca pisa un valor que el
   // operador ya haya tocado a mano.
   useEffect(() => {
-    if (!modalDespachoAbierto || costoEditadoAMano) return;
-    const destinoId =
-      despachoForm.origen === "tanque_propio" ? despachoForm.combustible_id : despachoForm.grifo_id;
+    // Solo el vale del tanque propio: la compra en ruta tiene su propia pantalla
+    // (Compra en ruta) y la carga desde tanqueta toma su costo del servidor.
+    if (!modalDespachoAbierto || costoEditadoAMano || despachoForm.origen !== "tanque_propio") {
+      return;
+    }
+    const destinoId = despachoForm.combustible_id;
     if (!destinoId) return;
 
     const fecha = horaDespachoEditadaAMano
@@ -2858,9 +2758,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     const params = new URLSearchParams({
       tipo_combustible: despachoForm.tipo_combustible,
       fecha,
-      ...(despachoForm.origen === "tanque_propio"
-        ? { combustible_id: destinoId }
-        : { grifo_id: destinoId }),
+      combustible_id: destinoId,
     });
 
     let cancelado = false;
@@ -2886,36 +2784,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     costoEditadoAMano,
     despachoForm.origen,
     despachoForm.combustible_id,
-    despachoForm.grifo_id,
     despachoForm.tipo_combustible,
     despachadoEn,
     horaDespachoEditadaAMano,
   ]);
-
-  /** Adjunta la foto a una compra ya registrada, apuntándola por el uuid del
-   *  dispositivo (sirve online y offline). Devuelve qué pasó para que el
-   *  mensaje al conductor sea honesto: una foto que "se enviará sola" es
-   *  distinto de una que no se pudo subir. */
-  const subirFotoComprobante = async (
-    foto: File,
-    uuidDeLaCompra: string
-  ): Promise<"subida" | "encolada" | "fallo"> => {
-    const formData = new FormData();
-    formData.append("archivo", foto);
-    // El uuid de ESTA entrada de la cola, distinto al de la compra: la cola
-    // identifica cada entrada por el suyo y compartirlo pisaría el registro.
-    formData.append("cliente_uuid", crypto.randomUUID());
-    try {
-      const res = await apiFetch(
-        `/api/erp/combustible/despachos/por-uuid/${uuidDeLaCompra}/comprobante`,
-        { method: "POST", body: formData }
-      );
-      if (res.status === 202) return "encolada";
-      return res.ok ? "subida" : "fallo";
-    } catch {
-      return "fallo";
-    }
-  };
 
   /** Adjuntar la foto a una compra YA registrada, desde el historial. Va por
    *  id y solo online: a esa altura la compra existe en el servidor, y un
@@ -2957,21 +2829,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     const lista = await comprimirImagen(archivo);
     if (lista.size > 6 * 1024 * 1024) return { error: "El archivo supera el máximo de 6 MB." };
     return { lista };
-  };
-
-  const elegirFotoComprobante = async (archivo: File | undefined) => {
-    setErrorFotoComprobante(null);
-    if (!archivo) {
-      setFotoComprobante(null);
-      return;
-    }
-    const r = await prepararComprobante(archivo);
-    if ("error" in r) {
-      setErrorFotoComprobante(r.error);
-      setFotoComprobante(null);
-      return;
-    }
-    setFotoComprobante(r.lista);
   };
 
   const elegirFotoReemplazo = async (archivo: File | undefined) => {
@@ -3147,78 +3004,52 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               observaciones: despachoForm.observaciones || undefined,
               despachado_en: despachadoEnIso,
             }
-          : despachoForm.origen === "tanque_propio"
-            ? {
-                cliente_uuid: clienteUuidDespacho,
-                origen: "tanque_propio",
-                combustible_id: Number(despachoForm.combustible_id),
-                tipo_combustible: despachoForm.tipo_combustible,
-                tipo_destino: despachoForm.tipo_destino,
-                equipo_id:
-                  despachoForm.tipo_destino === "equipo"
-                    ? Number(despachoForm.equipo_id)
-                    : undefined,
-                serie_talonario: despachoForm.serie_talonario,
-                n_vale: Number(despachoForm.n_vale),
-                cantidad: Number(despachoForm.cantidad),
-                lectura_contometro: Number(despachoForm.lectura_contometro),
-                // A qué tanqueta va la previsión (0114).
-                tanqueta_destino_id:
-                  despachoForm.tipo_destino === "reserva_cubeta" &&
-                  despachoForm.tanqueta_destino_id !== ""
-                    ? Number(despachoForm.tanqueta_destino_id)
-                    : undefined,
-                surtidor_id:
-                  surtidoresDelVale.length > 1 && despachoForm.surtidor_id !== ""
-                    ? Number(despachoForm.surtidor_id)
-                    : undefined,
-                totalizador_lectura:
-                  surtidorDelVale?.usa_totalizador && despachoForm.totalizador_lectura !== ""
-                    ? Number(despachoForm.totalizador_lectura)
-                    : undefined,
-                // El medidor del equipo también en el vale del tanque propio
-                // (migración 0088): sin él no se puede calcular el consumo, que
-                // es el único control del combustible que sale CON vale y no
-                // llega a la máquina.
-                lectura_horometro:
-                  despachoForm.tipo_destino === "equipo" &&
-                  equipoSeleccionado?.tipo_medidor === "horometro" &&
-                  despachoForm.lectura_horometro !== ""
-                    ? Number(despachoForm.lectura_horometro)
-                    : undefined,
-                lectura_odometro:
-                  despachoForm.tipo_destino === "equipo" &&
-                  equipoSeleccionado?.tipo_medidor === "odometro" &&
-                  despachoForm.lectura_odometro !== ""
-                    ? Number(despachoForm.lectura_odometro)
-                    : undefined,
-                costo_unitario: Number(despachoForm.costo_unitario),
-                observaciones: despachoForm.observaciones || undefined,
-                despachado_en: despachadoEnIso,
-              }
-            : {
-                cliente_uuid: clienteUuidDespacho,
-                origen: "compra_externa",
-                grifo_id: Number(despachoForm.grifo_id),
-                tipo_combustible: despachoForm.tipo_combustible,
-                tipo_destino: "equipo",
-                equipo_id: Number(despachoForm.equipo_id),
-                comprobante_tipo: despachoForm.comprobante_tipo,
-                comprobante_numero: despachoForm.comprobante_numero.trim(),
-                cantidad: Number(despachoForm.cantidad),
-                lectura_horometro:
-                  equipoSeleccionado?.tipo_medidor === "horometro"
-                    ? Number(despachoForm.lectura_horometro)
-                    : undefined,
-                lectura_odometro:
-                  equipoSeleccionado?.tipo_medidor === "odometro"
-                    ? Number(despachoForm.lectura_odometro)
-                    : undefined,
-                horas_abastecidas: Number(horasAbastecidas),
-                costo_unitario: Number(despachoForm.costo_unitario),
-                observaciones: despachoForm.observaciones || undefined,
-                despachado_en: despachadoEnIso,
-              };
+          : {
+              cliente_uuid: clienteUuidDespacho,
+              origen: "tanque_propio",
+              combustible_id: Number(despachoForm.combustible_id),
+              tipo_combustible: despachoForm.tipo_combustible,
+              tipo_destino: despachoForm.tipo_destino,
+              equipo_id:
+                despachoForm.tipo_destino === "equipo" ? Number(despachoForm.equipo_id) : undefined,
+              serie_talonario: despachoForm.serie_talonario,
+              n_vale: Number(despachoForm.n_vale),
+              cantidad: Number(despachoForm.cantidad),
+              lectura_contometro: Number(despachoForm.lectura_contometro),
+              // A qué tanqueta va la previsión (0114).
+              tanqueta_destino_id:
+                despachoForm.tipo_destino === "reserva_cubeta" &&
+                despachoForm.tanqueta_destino_id !== ""
+                  ? Number(despachoForm.tanqueta_destino_id)
+                  : undefined,
+              surtidor_id:
+                surtidoresDelVale.length > 1 && despachoForm.surtidor_id !== ""
+                  ? Number(despachoForm.surtidor_id)
+                  : undefined,
+              totalizador_lectura:
+                surtidorDelVale?.usa_totalizador && despachoForm.totalizador_lectura !== ""
+                  ? Number(despachoForm.totalizador_lectura)
+                  : undefined,
+              // El medidor del equipo también en el vale del tanque propio
+              // (migración 0088): sin él no se puede calcular el consumo, que
+              // es el único control del combustible que sale CON vale y no
+              // llega a la máquina.
+              lectura_horometro:
+                despachoForm.tipo_destino === "equipo" &&
+                equipoSeleccionado?.tipo_medidor === "horometro" &&
+                despachoForm.lectura_horometro !== ""
+                  ? Number(despachoForm.lectura_horometro)
+                  : undefined,
+              lectura_odometro:
+                despachoForm.tipo_destino === "equipo" &&
+                equipoSeleccionado?.tipo_medidor === "odometro" &&
+                despachoForm.lectura_odometro !== ""
+                  ? Number(despachoForm.lectura_odometro)
+                  : undefined,
+              costo_unitario: Number(despachoForm.costo_unitario),
+              observaciones: despachoForm.observaciones || undefined,
+              despachado_en: despachadoEnIso,
+            };
 
     setEnviandoDespacho(true);
     try {
@@ -3239,41 +3070,24 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       // Qué papel identifica este despacho, para los mensajes: una compra en
       // ruta se nombra por su boleta/factura, un vale del tanque por su serie.
       const papel =
-        despachoForm.origen === "compra_externa"
-          ? `la ${despachoForm.comprobante_tipo} ${despachoForm.comprobante_numero.trim()}`
-          : despachoForm.origen === "tanqueta" && despachoForm.tanqueta_lugar === "ruta"
-            ? `la carga desde ${
-                tanquetasFormulario.find((t) => String(t.id) === despachoForm.tanqueta_origen_id)
-                  ?.codigo ?? "la tanqueta"
-              }`
-            : `el vale ${despachoForm.n_vale} de la serie ${despachoForm.serie_talonario}`;
-
-      // La foto va DESPUÉS del registro y apunta a la compra por su uuid:
-      // si no hay señal, la compra todavía no tiene id. La cola drena en
-      // orden, así que el registro llega antes que su foto.
-      const resultadoFoto = fotoComprobante
-        ? await subirFotoComprobante(fotoComprobante, clienteUuidDespacho)
-        : null;
-      const avisoFoto =
-        resultadoFoto === "fallo"
-          ? " La foto NO se pudo subir: adjuntala desde el historial de compras."
-          : resultadoFoto === null && despachoForm.origen === "compra_externa"
-            ? " Falta la foto del comprobante: subila apenas puedas, es lo que respalda esta compra."
-            : "";
+        despachoForm.origen === "tanqueta" && despachoForm.tanqueta_lugar === "ruta"
+          ? `la carga desde ${
+              tanquetasFormulario.find((t) => String(t.id) === despachoForm.tanqueta_origen_id)
+                ?.codigo ?? "la tanqueta"
+            }`
+          : `el vale ${despachoForm.n_vale} de la serie ${despachoForm.serie_talonario}`;
 
       // 202 = sin red, quedó en la cola del dispositivo -- mismo criterio
       // que registrar una lectura.
       if (res.status === 202) {
         setMensajeExito(
           `Sin conexión: ${papel} quedó guardado en este equipo y se enviará solo cuando vuelva ` +
-            `la señal.${resultadoFoto === "encolada" ? " La foto también." : avisoFoto}`
+            "la señal."
         );
         return;
       }
 
-      setMensajeExito(
-        `Despacho registrado: ${papel}.${resultadoFoto === "encolada" ? " La foto se enviará cuando vuelva la señal." : avisoFoto}`
-      );
+      setMensajeExito(`Despacho registrado: ${papel}.`);
       await actualizarVistasCombustible();
     } finally {
       setEnviandoDespacho(false);
@@ -3800,6 +3614,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         className={`flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-10 ${
           pestanaCombustible === "urea" ||
           pestanaCombustible === "mi_viaje" ||
+          pestanaCombustible === "compra_ruta" ||
           pestanaCombustible === "precios" ||
           pestanaCombustible === "proveedores"
             ? "hidden!"
@@ -3808,11 +3623,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       >
         <div className="shrink-0">
           <h1 className="text-lg sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight">
-            {esConductor ? "Registrar despacho" : "Control de Combustible"}
+            {esConductor ? "Mis compras en ruta" : "Control de Combustible"}
           </h1>
           <p className="text-xs sm:text-sm text-[#94a3b8]">
             {esConductor
-              ? "Despacho de combustible de origen externo"
+              ? "Tus boletas con combustible y urea. Para registrar una nueva, usa Compra en ruta."
               : "Tanques y puntos de abastecimiento"}
           </p>
         </div>
@@ -3846,7 +3661,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             )}
             {/* Vista propia (autónoma del historial de despachos): el conductor
                 la usa para subir el comprobante que no subió al comprar. */}
-            {permiteTanque("historial_compras") && (
+            {permiteTanque("historial_compras") && !esConductor && (
               <button
                 onClick={() => abrirModalHistorialDespachos("compra_externa")}
                 className={`${BTN_BASE} ${BTN_ESTILO.lime}`}
@@ -3893,7 +3708,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 onClick={abrirModalDespacho}
                 className={`${BTN_BASE} ${BTN_ESTILO.secundary}`}
               >
-                <ClipboardCheck className="w-4 h-4 shrink-0" /> Registrar despacho
+                <ClipboardCheck className="w-4 h-4 shrink-0" />{" "}
+                {esConductor ? "Carga desde tanqueta" : "Registrar despacho"}
               </button>
             )}
             {permiteTanque("nuevo_tanque") && (
@@ -3919,6 +3735,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {pestanaCombustible === "tanquetas" && <TanquetasPanel />}
       {pestanaCombustible === "viajes" && <ViajesPanel />}
       {pestanaCombustible === "mi_viaje" && <MiViaje />}
+      {pestanaCombustible === "compra_ruta" && <CompraEnRuta />}
+      {esConductor && pestanaCombustible === "tanques" && <HistorialComprasRuta />}
       {!esConductor && pestanaCombustible === "tanques" && importacion.error && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-red-900 font-light flex-1">{importacion.error}</p>
@@ -5231,7 +5049,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b flex justify-between items-center">
-              <h3 className="text-xl font-bold">Registrar despacho</h3>
+              <h3 className="text-xl font-bold">
+                {esConductor ? "Carga desde tanqueta" : "Registrar despacho"}
+              </h3>
               <button
                 onClick={() => setModalDespachoAbierto(false)}
                 aria-label="Cerrar"
@@ -5266,7 +5086,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         })
                       }
                     >
-                      <option value="compra_externa">Compra externa (ruta)</option>
                       <option value="tanqueta">Desde tanqueta</option>
                     </select>
                   ) : (
@@ -5284,7 +5103,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       }
                     >
                       <option value="tanque_propio">Tanque propio</option>
-                      <option value="compra_externa">Compra externa (ruta)</option>
                       <option value="tanqueta">Desde tanqueta</option>
                       <option value="excedente_recepcion">
                         Excedente directo a unidad
@@ -5610,8 +5428,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 })()}
 
               {despachoForm.origen === "excedente_recepcion" ||
-              despachoForm.origen === "tanqueta" ? null : despachoForm.origen ===
-                "tanque_propio" ? (
+              despachoForm.origen === "tanqueta" ? null : (
                 <>
                   <div className="space-y-1">
                     <label
@@ -5894,195 +5711,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       );
                     })()}
                 </>
-              ) : (
-                <>
-                  <div className="space-y-1">
-                    <label
-                      htmlFor="despacho-grifo"
-                      className="text-xs font-bold text-slate-700 uppercase"
-                    >
-                      Proveedor
-                    </label>
-                    <select
-                      id="despacho-grifo"
-                      required
-                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-                      value={despachoForm.grifo_id}
-                      onChange={(e) =>
-                        setDespachoForm({ ...despachoForm, grifo_id: e.target.value })
-                      }
-                    >
-                      <option value="" disabled>
-                        Elegir proveedor
-                      </option>
-                      {/* Solo los de ruta (migrations/0065): un proveedor que
-                          solo llena el tanque propio no es donde una unidad
-                          carga camino a Bambamarca. */}
-                      {proveedoresRuta.map((g) => (
-                        <option key={g.id} value={g.id}>
-                          {g.nombre}
-                        </option>
-                      ))}
-                    </select>
-                    {proveedoresRutaEstado === "sin_permiso" && (
-                      <p className="text-xs text-red-600">
-                        No tenés permiso para ver los proveedores. Avisale a un administrador.
-                      </p>
-                    )}
-                    {proveedoresRutaEstado === "error" && (
-                      <p className="text-xs text-red-600">
-                        No se pudieron cargar los proveedores. Revisá tu conexión y volvé a abrir el
-                        formulario.
-                      </p>
-                    )}
-                    {proveedoresRutaEstado === "ok" && proveedoresRuta.length === 0 && (
-                      <p className="text-xs text-red-600">
-                        No hay proveedores de ruta cargados -- agregalos desde "Proveedores" en la
-                        barra superior, marcando "Abastece unidades en ruta".
-                      </p>
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <label
-                      htmlFor="despacho-equipo-externo"
-                      className="text-xs font-bold text-slate-700 uppercase"
-                    >
-                      Unidad
-                    </label>
-                    <select
-                      id="despacho-equipo-externo"
-                      required
-                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-                      value={despachoForm.equipo_id}
-                      onChange={(e) => {
-                        // Otra unidad = otro contexto: lo escrito para la
-                        // anterior no aplica.
-                        setHorasEditadasAMano(false);
-                        setDespachoForm({ ...despachoForm, equipo_id: e.target.value });
-                      }}
-                    >
-                      <option value="" disabled>
-                        Elegir unidad
-                      </option>
-                      {equipos.map((eq) => (
-                        <option key={eq.id} value={eq.id}>
-                          {eq.placa_codigo} — {eq.tipo}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  {despachoForm.equipo_id !== "" && !equipoSeleccionado?.tipo_medidor && (
-                    <p className="text-xs text-red-600">
-                      Este equipo no tiene tipo de medidor configurado (horómetro/odómetro).
-                      Configuralo en Equipos antes de continuar.
-                    </p>
-                  )}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-1">
-                      <label
-                        htmlFor="despacho-cantidad-externa"
-                        className="text-xs font-bold text-slate-700 uppercase"
-                      >
-                        Cantidad comprada
-                      </label>
-                      <input
-                        id="despacho-cantidad-externa"
-                        type="number"
-                        min={0}
-                        step="0.01"
-                        required
-                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
-                        value={despachoForm.cantidad}
-                        onChange={(e) =>
-                          setDespachoForm({ ...despachoForm, cantidad: e.target.value })
-                        }
-                      />
-                    </div>
-                    {equipoSeleccionado?.tipo_medidor === "odometro" ? (
-                      <div className="space-y-1">
-                        <label
-                          htmlFor="despacho-odometro"
-                          className="text-xs font-bold text-slate-700 uppercase"
-                        >
-                          Lectura odómetro
-                        </label>
-                        <input
-                          id="despacho-odometro"
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          required
-                          className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
-                          value={despachoForm.lectura_odometro}
-                          onChange={(e) =>
-                            setDespachoForm({ ...despachoForm, lectura_odometro: e.target.value })
-                          }
-                        />
-                        {textoUltimaLectura && (
-                          <p className="text-xs text-slate-600">{textoUltimaLectura}</p>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="space-y-1">
-                        <label
-                          htmlFor="despacho-horometro"
-                          className="text-xs font-bold text-slate-700 uppercase"
-                        >
-                          Lectura horómetro
-                        </label>
-                        <input
-                          id="despacho-horometro"
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          required
-                          disabled={!equipoSeleccionado?.tipo_medidor}
-                          className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none disabled:bg-slate-50"
-                          value={despachoForm.lectura_horometro}
-                          onChange={(e) =>
-                            setDespachoForm({ ...despachoForm, lectura_horometro: e.target.value })
-                          }
-                        />
-                        {textoUltimaLectura && (
-                          <p className="text-xs text-slate-600">{textoUltimaLectura}</p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <label
-                      htmlFor="despacho-horas-abastecidas"
-                      className="text-xs font-bold text-slate-700 uppercase"
-                    >
-                      Horas abastecidas (desde la carga anterior)
-                    </label>
-                    <input
-                      id="despacho-horas-abastecidas"
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      required
-                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
-                      value={horasAbastecidas}
-                      onChange={(e) => {
-                        // Vaciarlo devuelve el campo al cálculo automático.
-                        setHorasEditadasAMano(e.target.value !== "");
-                        setDespachoForm({ ...despachoForm, horas_abastecidas: e.target.value });
-                      }}
-                    />
-                    {midePorHorometro && ultimoMedidor !== undefined && (
-                      <p
-                        className={`text-xs ${horometroRetrocede ? "text-amber-600" : "text-slate-400"}`}
-                      >
-                        {horometroAnterior === null
-                          ? "No hay una carga anterior con horómetro de esta unidad: escribí las horas a mano."
-                          : horometroRetrocede
-                            ? `La lectura es menor que la de la carga anterior (${horometroAnterior.toLocaleString("es-PE")} h, ${formatearFecha(ultimoMedidor!.despachado_en)}). Revisala; si es correcta, escribí las horas a mano.`
-                            : `Carga anterior: ${horometroAnterior.toLocaleString("es-PE")} h (${formatearFecha(ultimoMedidor!.despachado_en)}). Las horas se calculan solas (lectura − ${horometroAnterior.toLocaleString("es-PE")}); podés corregirlas.`}
-                      </p>
-                    )}
-                  </div>
-                </>
               )}
 
               {/* La carga desde tanqueta (0114) muestra su costo pero no lo edita:
@@ -6158,8 +5786,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               </div>
 
               {despachoForm.origen === "tanqueta" &&
-              despachoForm.tanqueta_lugar === "ruta" ? null : despachoForm.origen !==
-                "compra_externa" ? (
+              despachoForm.tanqueta_lugar === "ruta" ? null : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label
@@ -6196,97 +5823,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       value={despachoForm.n_vale}
                       onChange={(e) => setDespachoForm({ ...despachoForm, n_vale: e.target.value })}
                     />
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="space-y-1">
-                      <label
-                        htmlFor="despacho-comprobante-tipo"
-                        className="text-xs font-bold text-slate-700 uppercase"
-                      >
-                        Comprobante
-                      </label>
-                      <select
-                        id="despacho-comprobante-tipo"
-                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white"
-                        value={despachoForm.comprobante_tipo}
-                        onChange={(e) =>
-                          setDespachoForm({
-                            ...despachoForm,
-                            comprobante_tipo: e.target.value as "boleta" | "factura",
-                          })
-                        }
-                      >
-                        <option value="boleta">Boleta</option>
-                        <option value="factura">Factura</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1 sm:col-span-2">
-                      <label
-                        htmlFor="despacho-comprobante-numero"
-                        className="text-xs font-bold text-slate-700 uppercase"
-                      >
-                        N° del comprobante
-                      </label>
-                      <input
-                        id="despacho-comprobante-numero"
-                        type="text"
-                        required
-                        maxLength={40}
-                        placeholder="Ej. B001-00012345"
-                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
-                        value={despachoForm.comprobante_numero}
-                        onChange={(e) =>
-                          setDespachoForm({ ...despachoForm, comprobante_numero: e.target.value })
-                        }
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <label
-                      htmlFor="despacho-comprobante-foto"
-                      className="block text-xs font-bold text-slate-700 uppercase"
-                    >
-                      Foto del comprobante (recomendado)
-                    </label>
-                    <label
-                      htmlFor="despacho-comprobante-foto"
-                      className="inline-flex items-center gap-2 cursor-pointer rounded-lg bg-slate-900 text-white px-3 py-2 text-xs font-bold hover:bg-slate-800 transition-all focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-slate-900"
-                    >
-                      <Camera className="w-4 h-4" aria-hidden="true" />
-                      {fotoComprobante ? "Cambiar foto" : "Tomar o elegir foto"}
-                      {/* Sin `capture`: en el celular deja elegir entre la
-                          cámara, la galería o un PDF; con `capture` solo abría
-                          la cámara. Oculto y no `display:none` para que siga
-                          siendo accesible por teclado. */}
-                      <input
-                        id="despacho-comprobante-foto"
-                        type="file"
-                        accept="image/jpeg,image/png,application/pdf"
-                        className="sr-only"
-                        onChange={(e) => {
-                          void elegirFotoComprobante(e.target.files?.[0]);
-                          // Sin esto, elegir el MISMO archivo dos veces seguidas
-                          // no dispara onChange.
-                          e.target.value = "";
-                        }}
-                      />
-                    </label>
-                    {fotoComprobante && (
-                      <p className="text-xs text-green-700">
-                        {fotoComprobante.name} (
-                        {Math.max(1, Math.round(fotoComprobante.size / 1024))} kB) -- se enviará al
-                        registrar.
-                      </p>
-                    )}
-                    {errorFotoComprobante && (
-                      <p className="text-xs text-red-600">{errorFotoComprobante}</p>
-                    )}
-                    <p className="text-xs text-slate-400">
-                      Si ahora no podés, registrá igual y súbela después desde el historial.
-                    </p>
                   </div>
                 </div>
               )}

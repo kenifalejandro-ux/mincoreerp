@@ -44,6 +44,14 @@ import ConsumoPorViaje from "./combustible/ConsumoPorViaje";
 import VentanaFlotante from "./comunes/VentanaFlotante";
 import { AlmacenUrea, ModalCorregirLitros, ResumenUrea, type EstadoStockUrea } from "./UreaAlmacen";
 import { apiFetch } from "../services/apiClient";
+import {
+  ahoraParaInputLocal,
+  estadoRenglones,
+  nuevoRenglon,
+  precioVigenteUrea,
+  presentacionPorDefecto,
+  presentacionesActivas,
+} from "./ureaCompartido";
 
 /** Los envases ya NO son una constante del cliente (migración 0116): los
  *  litros que trae cada uno son un dato de la empresa y se editan desde
@@ -52,7 +60,7 @@ import { apiFetch } from "../services/apiClient";
  *  cliente dé de alta un bidón sin un deploy. */
 type Presentacion = string;
 
-interface PresentacionFila {
+export interface PresentacionFila {
   id: number;
   codigo: string;
   nombre: string;
@@ -74,34 +82,11 @@ function etiquetaPresentacion(p: PresentacionFila): string {
   return `${p.nombre} (${formatearNumero(p.litros)} L)`;
 }
 
-/** La etiqueta de un movimiento YA cargado: el nombre que el envase tiene
- *  hoy, con los litros que ESA FILA congeló (`factor_litros`, columna de
- *  0092). Usar los litros del catálogo acá haría que corregir la caja de 16
- *  a 20 reescribiera en pantalla todos los vales viejos -- exactamente lo
- *  que la columna congelada existe para impedir. Un envase dado de baja
- *  sigue mostrando su nombre; si ya no está en el catálogo, se muestra el
- *  código crudo antes que un hueco. */
-/** Las que se pueden usar para cargar algo NUEVO. Una desactivada sigue
- *  siendo legible en el historial, pero el servidor la rechaza en un
- *  movimiento nuevo (resolverFactorPresentacionUrea), así que ofrecerla
- *  sería ofrecer un error. */
-function presentacionesActivas(presentaciones: PresentacionFila[]): PresentacionFila[] {
-  return presentaciones.filter((p) => p.activa);
-}
-
-/** La que arranca seleccionada en los formularios: la de referencia de la
- *  empresa, y si no hay, la primera activa. Nunca un código fijo -- "bolsa"
- *  puede no existir en una empresa que dio de alta sus propios envases. */
-function presentacionPorDefecto(presentaciones: PresentacionFila[]): Presentacion {
-  const activas = presentacionesActivas(presentaciones);
-  return (activas.find((p) => p.es_referencia) ?? activas[0])?.codigo ?? "";
-}
-
 /** Un formulario de carga sin ningún envase activo no puede enviarse: el
  *  servidor rechazaría el movimiento igual (la FK compuesta no tendría
  *  contra qué validar). Decirlo acá, y por qué, es mejor que un desplegable
  *  vacío y un 400 después de llenar todo lo demás. */
-function AvisoSinEnvases() {
+export function AvisoSinEnvases() {
   return (
     <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
       No hay ningún envase de urea activo en esta empresa. Dalos de alta en{" "}
@@ -203,7 +188,7 @@ const VISTAS: { valor: Vista; etiqueta: string }[] = [
  *  envases" porque es el catálogo vigente, no un histórico. */
 const VISTAS_SIN_PERIODO: ReadonlySet<Vista> = new Set(["conteos", "presentaciones", "precios"]);
 
-interface Equipo {
+export interface Equipo {
   id: number;
   placa_codigo: string;
   tipo: string;
@@ -217,7 +202,7 @@ interface Equipo {
 /** "Conductor: Juan Pérez (de Equipos)" debajo de la unidad elegida. Si la
  *  unidad no tiene conductor cargado, se dice: el vale va a quedar sin
  *  conductor, y el ranking por conductor no lo va a contar. */
-function ConductorDeLaUnidad({ equipo }: { equipo: Equipo | undefined }) {
+export function ConductorDeLaUnidad({ equipo }: { equipo: Equipo | undefined }) {
   if (!equipo) return null;
   return equipo.conductor_nombre ? (
     <span className="text-xs text-slate-500">
@@ -233,18 +218,27 @@ function ConductorDeLaUnidad({ equipo }: { equipo: Equipo | undefined }) {
 /** El botón de elegir archivo. El <input type="file"> nativo se ve como texto
  *  plano en el tema oscuro ("Seleccionar archivo Ningún archivo
  *  seleccionado") y no parece un botón -- Kenif no lo vio. */
-function BotonArchivo({
+export function BotonArchivo({
   archivo,
   onElegir,
   texto,
+  destacado = false,
 }: {
   archivo: File | null;
   onElegir: (archivo: File | undefined) => void;
   texto: string;
+  /** Lima, como el resto de los botones de acción del ERP. */
+  destacado?: boolean;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      <label
+        className={`inline-flex cursor-pointer items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium ${
+          destacado
+            ? "border-[#BADC1E] bg-[#BADC1E] font-semibold text-[#0A1014] hover:brightness-105"
+            : "border-slate-300 text-slate-700 hover:bg-slate-50"
+        }`}
+      >
         <Paperclip className="h-4 w-4 shrink-0" />
         {archivo ? "Cambiar archivo" : texto}
         <input
@@ -405,13 +399,6 @@ interface EstadoUrea {
   stock: EstadoStockUrea;
 }
 
-function ahoraParaInputLocal(): string {
-  const d = new Date();
-  d.setSeconds(0, 0);
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
-}
-
 function formatearFecha(iso: string): string {
   return new Date(iso).toLocaleString("es-PE", {
     day: "2-digit",
@@ -474,7 +461,7 @@ async function descargarKardexXlsx(query: string) {
 
 /** Un precio del catálogo (0121): por proveedor y presentación, apilado con
  *  su vigencia. Los anulados vienen también, para mostrar la historia. */
-interface PrecioUrea {
+export interface PrecioUrea {
   id: number;
   grifo_id: number;
   proveedor: string | null;
@@ -487,34 +474,6 @@ interface PrecioUrea {
   cargado_por: string | null;
   anulada_en: string | null;
   motivo_anulacion: string | null;
-}
-
-/** El precio de catálogo que rige para este proveedor y esta presentación a
- *  esta fecha: el más reciente no anulado con vigencia <= fecha. El mismo
- *  criterio que usa el servidor para la alerta (findPrecioUreaVigente) -- si
- *  el formulario autocompletara con otra regla, sugeriría un precio y después
- *  alertaría contra otro. */
-function precioVigenteUrea(
-  precios: PrecioUrea[],
-  grifoId: string,
-  presentacion: string,
-  fechaLocal: string
-): PrecioUrea | null {
-  if (!grifoId || !presentacion) return null;
-  const fecha = fechaLocal ? new Date(fechaLocal).getTime() : Date.now();
-  return (
-    precios
-      .filter(
-        (p) =>
-          String(p.grifo_id) === grifoId &&
-          p.presentacion === presentacion &&
-          p.anulada_en === null &&
-          new Date(p.vigente_desde).getTime() <= fecha
-      )
-      .sort(
-        (a, b) => new Date(b.vigente_desde).getTime() - new Date(a.vigente_desde).getTime()
-      )[0] ?? null
-  );
 }
 
 /** "Catálogo: S/ 50,00 (Green 32)" y, si el precio tipeado difiere, cuánto.
@@ -1538,7 +1497,7 @@ export default function UreaPanel() {
                     className={botonAccion}
                   >
                     <Receipt className="w-4 h-4 shrink-0" />
-                    Compra en ruta
+                    Compra de urea
                   </button>
                 )}
                 {permiteUrea("registrar_entrada") && (
@@ -3189,7 +3148,7 @@ function ModalVale({
         <h3 className="text-lg font-bold text-slate-800">Registrar vale de urea</h3>
         <p className="-mt-2 text-sm text-slate-500">
           Urea que sale del almacén de la empresa, con vale del talonario. Si la unidad la compró en
-          ruta, usá <strong>Compra en ruta</strong>: esa no baja el stock del almacén.
+          ruta, usá <strong>Compra de urea</strong>: esa no baja el stock del almacén.
         </p>
         {error && <div className="text-sm text-red-600 bg-red-50 rounded p-2">{error}</div>}
         {activas.length === 0 && <AvisoSinEnvases />}
@@ -3318,7 +3277,7 @@ function ModalVale({
  *  petición, por el uuid de la compra, igual que en combustible (0109): si no
  *  hay señal, la compra y su foto quedan juntas en la cola del dispositivo y
  *  salen en orden cuando vuelve. */
-interface RenglonCompra {
+export interface RenglonCompra {
   clave: string;
   presentacion: Presentacion;
   cantidad: string;
@@ -3329,27 +3288,11 @@ interface RenglonCompra {
   precioAuto: boolean;
 }
 
-function nuevoRenglon(presentacion: string, precio = ""): RenglonCompra {
-  return { clave: crypto.randomUUID(), presentacion, cantidad: "", precio, precioAuto: true };
-}
-
-/** Si los renglones se pueden mandar: cada uno con su cantidad (y su precio,
- *  si el papel lo trae), y sin el mismo envase dos veces -- el servidor lo
- *  rechaza igual, pero la persona se entera antes. */
-function estadoRenglones(renglones: RenglonCompra[], conPrecio: boolean) {
-  const codigos = renglones.map((r) => r.presentacion);
-  const repetida = new Set(codigos).size !== codigos.length;
-  const completos = renglones.every(
-    (r) => r.presentacion && Number(r.cantidad) > 0 && (!conPrecio || Number(r.precio) > 0)
-  );
-  return { repetida, listos: completos && !repetida };
-}
-
 /** "1 caja + 2 bolsas" (0120 la compra, 0131 el vale y la entrada): un
  *  renglón por envase, con su cantidad, su precio por bulto si el papel lo
  *  trae, y debajo la suma en litros (y en soles). El mismo bloque en los tres
  *  formularios, para que se lean igual. */
-function RenglonesUrea({
+export function RenglonesUrea({
   renglones,
   setRenglones,
   activas,
@@ -3402,10 +3345,14 @@ function RenglonesUrea({
           <div
             key={r.clave}
             className={`grid items-end gap-2 rounded-xl border border-slate-200 p-2 ${
-              conPrecio ? "grid-cols-[1fr_5rem_6rem_auto]" : "grid-cols-[1fr_6rem_auto]"
+              conPrecio
+                ? "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_4.5rem_5.5rem_auto]"
+                : "grid-cols-[minmax(0,1fr)_6rem_auto]"
             }`}
           >
-            <label className="flex flex-col text-xs gap-1">
+            <label
+              className={`flex flex-col text-xs gap-1 ${conPrecio ? "col-span-3 sm:col-span-1" : ""}`}
+            >
               <span className="text-gray-500">Presentación</span>
               <select
                 value={r.presentacion}
@@ -3415,7 +3362,7 @@ function RenglonesUrea({
                     ...(conPrecio && r.precioAuto ? { precio: precioDe(e.target.value) } : {}),
                   })
                 }
-                className="rounded border border-gray-300 px-2 py-2 text-sm"
+                className="w-full min-w-0 rounded border border-gray-300 px-2 py-2 text-sm"
               >
                 {activas.map((p) => (
                   <option key={p.codigo} value={p.codigo}>
@@ -3431,7 +3378,7 @@ function RenglonesUrea({
                 min={1}
                 value={r.cantidad}
                 onChange={(e) => actualizar(r.clave, { cantidad: e.target.value })}
-                className="rounded border border-gray-300 px-2 py-2 text-sm"
+                className="w-full min-w-0 rounded border border-gray-300 px-2 py-2 text-sm"
               />
             </label>
             {conPrecio && (
@@ -3447,7 +3394,7 @@ function RenglonesUrea({
                   onChange={(e) =>
                     actualizar(r.clave, { precio: e.target.value, precioAuto: false })
                   }
-                  className="rounded border border-gray-300 px-2 py-2 text-sm"
+                  className="w-full min-w-0 rounded border border-gray-300 px-2 py-2 text-sm"
                 />
               </label>
             )}
@@ -3461,7 +3408,9 @@ function RenglonesUrea({
             >
               <Trash2 className="h-4 w-4" />
             </button>
-            <div className={`${conPrecio ? "col-span-4" : "col-span-3"} flex flex-wrap gap-x-3`}>
+            <div
+              className={`${conPrecio ? "col-span-3 sm:col-span-4" : "col-span-3"} flex flex-wrap gap-x-3`}
+            >
               {litrosDe(r) > 0 && (
                 <span className="text-xs text-slate-500">
                   = {formatearNumero(String(litrosDe(r)))} L

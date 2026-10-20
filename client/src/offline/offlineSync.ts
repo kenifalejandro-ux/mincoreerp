@@ -72,6 +72,23 @@ function esErrorPermanente(status: number): boolean {
   return status >= 400 && status < 500 && status !== 401 && status !== 408 && status !== 429;
 }
 
+const TIPOS_POR_EXTENSION: Record<string, string> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  pdf: "application/pdf",
+};
+
+/** Un archivo que vuelve de IndexedDB puede perder su tipo (pasa en algunos
+ *  motores de WebKit): el servidor valida el tipo del archivo y lo rechazaría
+ *  con un 4xx, que la cola descarta en silencio. Si viene sin tipo, se deduce
+ *  de la extensión del nombre. */
+function conTipo(archivo: Blob, nombre: string): Blob {
+  if (archivo.type) return archivo;
+  const tipo = TIPOS_POR_EXTENSION[nombre.split(".").pop()?.toLowerCase() ?? ""];
+  return tipo ? new Blob([archivo], { type: tipo }) : archivo;
+}
+
 /** Arma el `RequestInit` a reenviar. Un archivo adjunto (`formData`, ver
  *  Caso B en ADR-0002 §8) reconstruye el `FormData` real y NO fija
  *  `Content-Type` a mano -- fetch() arma el boundary del multipart solo, y
@@ -81,7 +98,11 @@ function initDeEntrada(entrada: EntradaCola): RequestInit {
     const formData = new FormData();
     for (const campo of entrada.formData) {
       if ("archivo" in campo) {
-        formData.append(campo.campo, campo.archivo, campo.nombreArchivo);
+        formData.append(
+          campo.campo,
+          conTipo(campo.archivo, campo.nombreArchivo),
+          campo.nombreArchivo
+        );
       } else {
         formData.append(campo.campo, campo.valor);
       }

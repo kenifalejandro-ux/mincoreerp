@@ -124,8 +124,16 @@ async function notificar(): Promise<void> {
 
 // ── Operaciones ────────────────────────────────────────────────────────
 
+/** Dos entradas encoladas en el mismo milisegundo (la compra en ruta y su foto,
+ *  una tras otra) empatarían en `creadoEn`, y el orden entre ellas pasaría a ser
+ *  el de la clave -- un uuid al azar --: la foto podría salir ANTES de su
+ *  compra, dar 404 y descartarse. Cada entrada nueva queda estrictamente
+ *  después de la anterior. */
+let ultimoCreadoEn = 0;
+
 export async function encolar(entrada: EntradaCola): Promise<void> {
-  await conStore("readwrite", (store) => store.put(entrada));
+  ultimoCreadoEn = Math.max(entrada.creadoEn, ultimoCreadoEn + 1);
+  await conStore("readwrite", (store) => store.put({ ...entrada, creadoEn: ultimoCreadoEn }));
   await notificar();
 }
 

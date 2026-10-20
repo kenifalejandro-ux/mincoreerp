@@ -1130,6 +1130,82 @@ export const crearDespachoCombustibleSchema = z
 
 export type CrearDespachoCombustibleInput = z.infer<typeof crearDespachoCombustibleSchema>;
 
+// ── Compra en ruta unificada (migrations/0135) ───────────────────────────
+//
+// Una boleta o factura con combustible, urea o los dos. Es la cabecera de la
+// boleta: cada producto sigue siendo su propio despacho. El servicio arma el
+// input de cada uno y lo pasa por `crearDespachoCombustibleSchema`, así que
+// las reglas de forma (renglones de urea, horómetro, comprobante) son las de
+// siempre y no se copian acá.
+
+export const crearCompraRutaSchema = z
+  .object({
+    // Lo genera el dispositivo UNA vez por compra. De él se derivan los uuids
+    // de los dos despachos (combustible_despachos tiene UNIQUE sobre el suyo).
+    cliente_uuid: z.string().uuid(),
+    grifo_id: z.number().int().positive(),
+    comprobante_tipo: z.enum(TIPOS_COMPROBANTE_COMPRA),
+    comprobante_numero: z
+      .string()
+      .trim()
+      .min(1, "El número del comprobante es obligatorio")
+      .max(40),
+    equipo_id: z.number().int().positive(),
+    // Mismo tope de futuro que el despacho (0077): el reloj del celular puede
+    // estar corrido una hora, no un mes.
+    despachado_en: z
+      .string()
+      .datetime()
+      .refine((valor) => new Date(valor).getTime() <= Date.now() + 60 * 60 * 1000, {
+        message: "La fecha de la compra no puede estar en el futuro",
+      })
+      .optional(),
+    // Lo que dice el papel. Opcional: el grifo maneja su precio; sin él se
+    // guarda la suma del sistema.
+    total_boleta: z.number().nonnegative().max(1_000_000).optional(),
+    observaciones: z.string().trim().max(500).optional(),
+
+    combustible: z
+      .object({
+        tipo_combustible: z.enum(TIPOS_COMBUSTIBLE),
+        // Galones, igual que el despacho.
+        cantidad: z.number().positive().max(100_000),
+        costo_unitario: z.number().positive().max(10_000),
+        // Exactamente uno de los dos según el medidor de la unidad; el
+        // servicio lo valida con el resto (validarFormaDespacho).
+        lectura_horometro: z.number().nonnegative().optional(),
+        lectura_odometro: z.number().nonnegative().optional(),
+        horas_abastecidas: z.number().nonnegative().optional(),
+      })
+      .optional(),
+
+    urea: z
+      .object({
+        lineas: z
+          .array(
+            z.object({
+              presentacion: codigoPresentacionUrea,
+              cantidad_bultos: z.number().int().positive().max(100_000),
+              costo_unitario: z.number().positive().max(10_000),
+            })
+          )
+          .min(1, "la urea necesita al menos un renglón")
+          .max(10, "una compra no puede tener más de 10 renglones de urea"),
+      })
+      .optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.combustible === undefined && data.urea === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["combustible"],
+        message: "la compra necesita combustible, urea o los dos",
+      });
+    }
+  });
+
+export type CrearCompraRutaInput = z.infer<typeof crearCompraRutaSchema>;
+
 /** Anular un vale (punto 3 del documento: se mojó con diésel, se tipeó mal).
  *  `motivo` obligatorio, mismo criterio que lecturas, precios y recepciones:
  *  es lo único que distingue "el papel quedó ilegible" de "estoy borrando un

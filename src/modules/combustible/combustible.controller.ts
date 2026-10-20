@@ -54,6 +54,7 @@ import {
   enviarCorreoUreaPrecioFueraDeCatalogo,
 } from "./combustibleAlertas.mailer";
 import type {
+  CrearCompraRutaInput,
   RegistrarLecturaCombustibleInput,
   CrearTanqueCombustibleInput,
   ActualizarTanqueCombustibleInput,
@@ -108,6 +109,7 @@ import { sanearNombreArchivo } from "../../server/services/documentStorage";
 import {
   CombustibleService,
   RecepcionExcedeCapacidadError,
+  uuidDerivado,
   type ExcedenteRepartido,
 } from "./combustible.service";
 import { ESTADOS_ALERTAS } from "./combustible.repository";
@@ -1953,68 +1955,360 @@ export class CombustibleController {
         );
       }
     } catch (err) {
-      // Los errores de negocio TIPADOS van primero (ver tanquetas.service.ts
-      // y resolverFactorPresentacionUrea): traen su propio status y no
-      // dependen de que alguien acierte un `includes` acá abajo. Esa lista de
-      // strings queda para los errores viejos que todavía no se migraron --
-      // lo nuevo sale como AppError.
-      if (err instanceof AppError) {
-        res.status(err.statusCode).json({ error: err.message });
+      this.responderErrorDeDespacho(err, res);
+    }
+  }
+
+  /** El mapeo de los errores de un despacho a su código HTTP. Lo comparten el
+   *  vale/compra suelto y la compra en ruta unificada: el mismo mensaje tiene que
+   *  dar el mismo código, porque `esErrorPermanente` de la cola offline descarta
+   *  los 4xx y reintenta los 5xx para siempre. */
+  private responderErrorDeDespacho(err: unknown, res: Response) {
+    // Los errores de negocio TIPADOS van primero (ver tanquetas.service.ts
+    // y resolverFactorPresentacionUrea): traen su propio status y no
+    // dependen de que alguien acierte un `includes` acá abajo. Esa lista de
+    // strings queda para los errores viejos que todavía no se migraron --
+    // lo nuevo sale como AppError.
+    if (err instanceof AppError) {
+      res.status(err.statusCode).json({ error: err.message });
+      return;
+    }
+    if (
+      err instanceof Error &&
+      // "registrado" = vale; "registrada" = boleta/factura (0109). Los dos
+      // géneros a propósito: el mensaje nombra el papel que el cargador
+      // tiene en la mano, y este `includes` es lo único que separa un 409
+      // de un 500 que la cola offline reintentaría para siempre.
+      (err.message.includes("ya está registrado") ||
+        err.message.includes("ya está registrada") ||
+        // 0112: la línea del excedente ya tiene su despacho vigente.
+        err.message.includes("ya tiene su despacho registrado"))
+    ) {
+      // 409: no es un dato mal formado, es el mismo papel cargado dos
+      // veces -- mismo criterio que el vale duplicado del punto 5. Y es un
+      // 4xx a propósito: `esErrorPermanente` de offlineSync descarta la
+      // entrada en vez de reintentarla, que es justo lo que corresponde
+      // cuando el despacho YA está en la base.
+      res.status(409).json({ error: err.message });
+      return;
+    }
+    if (
+      err instanceof Error &&
+      (err.message.includes("el contómetro marcó") ||
+        // Tanquetas (0114): llenarla desde el tanque o cargar desde ella.
+        err.message.includes("la tanqueta") ||
+        // Despacho de excedente de cisterna (0112).
+        (err.message.includes("el excedente") &&
+          !err.message.includes("ya tiene su despacho registrado")) ||
+        err.message.includes("no existe en este tenant") ||
+        err.message.includes("no tiene tipo de medidor configurado") ||
+        err.message.includes("se mide por") ||
+        err.message.includes("está desactivado y no puede despachar") ||
+        err.message.includes("y el vale dice") ||
+        // Grifo del rol equivocado (migrations/0065).
+        err.message.includes("no está marcado como") ||
+        // Salto de numeración imposible de tipeo (5ª auditoría).
+        err.message.includes("salta") ||
+        // Totalizador (0094): faltaba en un tanque que lo usa, o vino en uno
+        // que no. Sin esto era un 500, y la cola offline reintenta los 5xx
+        // para siempre.
+        err.message.includes("usa totalizador") ||
+        // Surtidor (0098): el indicado no alimentaba al tanque, el tanque
+        // tiene varios y no se dijo cuál, o no tenía ninguno conectado.
+        err.message.includes("el surtidor indicado") ||
+        err.message.includes("más de un surtidor") ||
+        err.message.includes("ningún surtidor conectado"))
+    ) {
+      // Todos estos son datos que se contradicen a sí mismos o a una
+      // fila que el propio request referenció mal -- 400, corregible ahí
+      // mismo con el papel en la mano (ver el punto 5 del documento).
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    res.status(500).json({ error: "Error al registrar el despacho" });
+  }
+
+  /** POST /compras-ruta -- una boleta o factura con combustible, urea o los
+   *  dos (0135). Cada producto queda como su propio despacho, con sus
+   *  validaciones, su auditoría y sus alertas de siempre; la cabecera guarda el
+   *  total del papel y el cuadre. Todo en UNA transacción: se guardan los dos o
+   *  ninguno.
+   *
+   *  Participa de la cola offline (ver registry.ts): el reintento con el mismo
+   *  cliente_uuid devuelve 200 y no duplica nada. */
+  async crearCompraRuta(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const data = req.validatedBody as CrearCompraRutaInput;
+      const usuario = req.usuario!;
+
+      // Cada sección pide SU permiso: el middleware de la ruta solo exige uno
+      // de los dos, y un conductor con uno solo no puede colar el otro
+      // producto por el body. Antes de tocar la base.
+      if (
+        data.combustible &&
+        !pestanaPermitida(usuario, "combustible", "tanques:registrar_despacho")
+      ) {
+        res.status(403).json({ error: "Tu perfil no registra compras de combustible" });
         return;
+      }
+      if (data.urea && !pestanaPermitida(usuario, "combustible", "urea:registrar_compra")) {
+        res.status(403).json({ error: "Tu perfil no registra compras de urea" });
+        return;
+      }
+      const noPermitido = service.motivoOrigenNoPermitido(usuario.rol, "compra_externa");
+      if (noPermitido) {
+        res.status(403).json({ error: noPermitido });
+        return;
+      }
+
+      const { fila, creado, entradas } = await withTenant(tenantId, (client) =>
+        service.crearCompraRuta(client, tenantId, usuario.id, data, alcanceDe(req))
+      );
+
+      // Reintento de un envío que ya se había guardado: 200 y no 201, para que
+      // la cola offline lo dé por sincronizado sin duplicar auditoría ni evento.
+      if (!creado) {
+        res.status(200).json(fila ?? { error: "Esta compra ya se había registrado" });
+        return;
+      }
+
+      const compra = fila!.compra;
+      // La compra YA está guardada: un fallo de bitácora, evento o alertas no la
+      // convierte en 500 (la cola reintentaría y recibiría 200 sin rehacerlos).
+      try {
+        await registrarAuditoria({
+          accion: "combustible.compra_ruta_crear",
+          tenantId,
+          usuarioId: usuario.id,
+          detalle: {
+            compraId: compra.id,
+            comprobanteTipo: compra.comprobante_tipo,
+            comprobanteNumero: compra.comprobante_numero,
+            totalBoleta: compra.total_boleta,
+            totalSistema: compra.total_sistema,
+            diferencia: compra.diferencia,
+            despachoCombustibleId: compra.despacho_combustible_id,
+            despachoUreaId: compra.despacho_urea_id,
+          },
+          contexto: contextoAuditoriaModulo(req),
+        });
+
+        // Cada despacho deja su rastro como si se hubiera registrado suelto: la
+        // bitácora, el tiempo real y las alertas no distinguen de dónde vino.
+        const despachos = [
+          { entrada: entradas.combustible, fila: fila!.despacho_combustible },
+          { entrada: entradas.urea, fila: fila!.despacho_urea },
+        ];
+        for (const { entrada, fila: despacho } of despachos) {
+          if (!entrada || !despacho) continue;
+          await registrarAuditoria({
+            accion: "combustible.despacho_crear",
+            tenantId,
+            usuarioId: usuario.id,
+            detalle: {
+              despachoId: despacho.id,
+              origen: entrada.origen,
+              serieTalonario: null,
+              nVale: null,
+              comprobanteTipo: entrada.comprobante_tipo ?? null,
+              comprobanteNumero: entrada.comprobante_numero ?? null,
+              compraRutaId: compra.id,
+            },
+            contexto: contextoAuditoriaModulo(req),
+          });
+          await publicarEventoTenant(tenantId, "combustible.despacho_creado", {
+            despachoId: despacho.id,
+            producto: entrada.producto,
+          });
+          await this.procesarAlertasDespachoCreado(
+            tenantId,
+            despacho.id,
+            entrada,
+            null,
+            Number(despacho.cantidad)
+          );
+        }
+      } catch (err) {
+        logger.warn(
+          { err, tenantId, compraId: compra.id },
+          "Compra en ruta guardada; falló el rastro posterior"
+        );
+      }
+      res.status(201).json(fila);
+    } catch (err) {
+      this.responderErrorDeDespacho(err, res);
+    }
+  }
+
+  /** GET /compras-ruta -- el historial UNIFICADO: una fila por boleta, con su
+   *  combustible y su urea juntos y el estado de la foto. El conductor solo ve
+   *  lo que él registró; cada producto sale solo si el perfil ve su historial. */
+  async listarComprasRuta(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
+      const usuario = req.usuario!;
+      const productos: ("combustible" | "urea")[] = [];
+      if (pestanaPermitida(usuario, "combustible", "tanques:historial_compras")) {
+        productos.push("combustible");
       }
       if (
-        err instanceof Error &&
-        // "registrado" = vale; "registrada" = boleta/factura (0109). Los dos
-        // géneros a propósito: el mensaje nombra el papel que el cargador
-        // tiene en la mano, y este `includes` es lo único que separa un 409
-        // de un 500 que la cola offline reintentaría para siempre.
-        (err.message.includes("ya está registrado") ||
-          err.message.includes("ya está registrada") ||
-          // 0112: la línea del excedente ya tiene su despacho vigente.
-          err.message.includes("ya tiene su despacho registrado"))
+        pestanaPermitida(usuario, "combustible", "urea:historial_compras") ||
+        pestanaPermitida(usuario, "combustible", "urea:vista")
       ) {
-        // 409: no es un dato mal formado, es el mismo papel cargado dos
-        // veces -- mismo criterio que el vale duplicado del punto 5. Y es un
-        // 4xx a propósito: `esErrorPermanente` de offlineSync descarta la
-        // entrada en vez de reintentarla, que es justo lo que corresponde
-        // cuando el despacho YA está en la base.
-        res.status(409).json({ error: err.message });
+        productos.push("urea");
+      }
+      const boletas = await withTenant(tenantId, (client) =>
+        service.listarBoletasRuta(client, tenantId, {
+          desde,
+          hasta,
+          soloUsuarioId: soloSuyas(req),
+          productos,
+        })
+      );
+      res.json(boletas);
+    } catch {
+      res.status(500).json({ error: "Error al listar las compras en ruta" });
+    }
+  }
+
+  /** POST /compras-ruta/por-uuid/:clienteUuid/comprobante -- la foto única de
+   *  la boleta. Se adjunta a cada despacho de la compra (el historial de cada
+   *  producto necesita "ver comprobante" sobre su propia fila), pero el
+   *  conductor la sube UNA vez. Apunta por el uuid de la compra porque, si se
+   *  sacó sin señal, la compra todavía no tiene id. */
+  async subirComprobanteCompraRuta(
+    req: Request,
+    res: Response,
+    /** "uuid": la foto encolada offline (la compra aún no tiene id). "despacho":
+     *  desde el historial, con el id de CUALQUIERA de los despachos de la boleta. */
+    via: "uuid" | "despacho" = "uuid"
+  ) {
+    try {
+      const tenantId = getTenantId(req);
+      const archivo = req.file!;
+      const { motivo } = req.validatedBody as SubirComprobanteCompraInput;
+      const usuario = req.usuario!;
+      const compraUuid = (req.params.clienteUuid ?? "").toLowerCase();
+      const despachoIdParam = Number(req.params.despachoId);
+      if (via === "despacho" && !Number.isInteger(despachoIdParam)) {
+        res.status(404).json({ error: "Compra no encontrada" });
         return;
       }
-      if (
-        err instanceof Error &&
-        (err.message.includes("el contómetro marcó") ||
-          // Tanquetas (0114): llenarla desde el tanque o cargar desde ella.
-          err.message.includes("la tanqueta") ||
-          // Despacho de excedente de cisterna (0112).
-          (err.message.includes("el excedente") &&
-            !err.message.includes("ya tiene su despacho registrado")) ||
-          err.message.includes("no existe en este tenant") ||
-          err.message.includes("no tiene tipo de medidor configurado") ||
-          err.message.includes("se mide por") ||
-          err.message.includes("está desactivado y no puede despachar") ||
-          err.message.includes("y el vale dice") ||
-          // Grifo del rol equivocado (migrations/0065).
-          err.message.includes("no está marcado como") ||
-          // Salto de numeración imposible de tipeo (5ª auditoría).
-          err.message.includes("salta") ||
-          // Totalizador (0094): faltaba en un tanque que lo usa, o vino en uno
-          // que no. Sin esto era un 500, y la cola offline reintenta los 5xx
-          // para siempre.
-          err.message.includes("usa totalizador") ||
-          // Surtidor (0098): el indicado no alimentaba al tanque, el tanque
-          // tiene varios y no se dijo cuál, o no tenía ninguno conectado.
-          err.message.includes("el surtidor indicado") ||
-          err.message.includes("más de un surtidor") ||
-          err.message.includes("ningún surtidor conectado"))
-      ) {
-        // Todos estos son datos que se contradicen a sí mismos o a una
-        // fila que el propio request referenció mal -- 400, corregible ahí
-        // mismo con el papel en la mano (ver el punto 5 del documento).
-        res.status(400).json({ error: err.message });
+      // Desde el historial se apunta con el id de un despacho: los de la misma
+      // boleta se resuelven acá, antes del bucle.
+      const hermanos =
+        via === "despacho"
+          ? await service.resolverDespachosDeLaBoleta(tenantId, despachoIdParam)
+          : [];
+
+      const productos = [
+        { producto: "combustible" as const, pestana: "tanques:registrar_despacho" },
+        { producto: "urea" as const, pestana: "urea:registrar_compra" },
+      ];
+      const resultados: {
+        producto: "combustible" | "urea";
+        despachoId: number;
+        resultado: Awaited<ReturnType<typeof service.subirComprobante>>;
+      }[] = [];
+      for (const { producto, pestana } of productos) {
+        if (!pestanaPermitida(usuario, "combustible", pestana)) continue;
+        const despachoId =
+          via === "despacho"
+            ? (hermanos.find((h) => h.producto === producto)?.id ?? null)
+            : await service.resolverDespachoPorClienteUuid(
+                tenantId,
+                uuidDerivado(compraUuid, producto),
+                ambitoDe(req)
+              );
+        if (despachoId === null) continue;
+        resultados.push({
+          producto,
+          despachoId,
+          resultado: await service.subirComprobante(
+            tenantId,
+            despachoId,
+            {
+              buffer: archivo.buffer,
+              mimeType: archivo.mimetype,
+              nombreOriginal: archivo.originalname,
+            },
+            usuario.id,
+            motivo,
+            producto,
+            soloSuyas(req)
+          ),
+        });
+      }
+      if (resultados.length === 0) {
+        res.status(404).json({ error: "Compra no encontrada" });
         return;
       }
-      res.status(500).json({ error: "Error al registrar el despacho" });
+
+      const nuevos = resultados.flatMap(({ producto, despachoId, resultado }) =>
+        resultado.estado === "guardado" ? [{ producto, despachoId, resultado }] : []
+      );
+      for (const { producto, despachoId, resultado } of nuevos) {
+        await registrarAuditoria({
+          accion: resultado.reemplazo
+            ? "combustible.comprobante_reemplazar"
+            : "combustible.comprobante_adjuntar",
+          tenantId,
+          usuarioId: usuario.id,
+          detalle: {
+            despachoId,
+            nombreArchivo: archivo.originalname,
+            bytes: archivo.size,
+            ...(resultado.reemplazo ? { motivo } : {}),
+          },
+          contexto: contextoAuditoriaModulo(req),
+        });
+        await publicarEventoTenant(tenantId, "combustible.comprobante_adjuntado", {
+          despachoId,
+          producto,
+        });
+      }
+      // Mismos códigos que la foto de un despacho suelto: esta subida viene de
+      // la cola offline, que descarta todo 4xx y reintenta todo 5xx.
+      for (const { resultado } of resultados) {
+        if (resultado.estado === "no_encontrado") {
+          res.status(404).json({ error: "Compra no encontrada" });
+          return;
+        }
+        if (resultado.estado === "no_aplica") {
+          res.status(400).json({ error: resultado.razon });
+          return;
+        }
+        if (resultado.estado === "falta_motivo") {
+          res.status(400).json({
+            error:
+              "esta compra ya tiene un comprobante adjunto y el que subís es otro archivo -- " +
+              "indicá el motivo del reemplazo (la foto anterior era ilegible, estaba cortada, etc.)",
+          });
+          return;
+        }
+        if (resultado.estado === "conflicto") {
+          res.status(409).json({
+            error:
+              "se subió otra foto de esta compra al mismo tiempo y quedó esa. Revisala y, " +
+              "si hay que reemplazarla, indicá el motivo",
+          });
+          return;
+        }
+      }
+
+      const filas = Object.fromEntries(
+        resultados.map(({ producto, resultado }) => [
+          producto,
+          "fila" in resultado ? resultado.fila : null,
+        ])
+      );
+      // Todo era reenvío de la cola: 200 y no 201, no se creó nada.
+      res.status(nuevos.length === 0 ? 200 : 201).json(filas);
+    } catch (err) {
+      logger.warn({ err, tenantId: getTenantId(req) }, "No se pudo subir el comprobante");
+      res.status(500).json({ error: "Error al subir el comprobante" });
     }
   }
 

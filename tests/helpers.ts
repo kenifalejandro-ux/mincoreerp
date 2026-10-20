@@ -190,6 +190,9 @@ export async function borrarTenantDePrueba(tenantId: string) {
     // los dos padres, igual que las otras dos.
     await client.query("DELETE FROM combustible_precios WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM combustible_viajes WHERE tenant_id = $1", [tenantId]);
+    // La cabecera de la compra en ruta (0135) referencia dos despachos: se
+    // borra antes que ellos.
+    await client.query("DELETE FROM combustible_compras_ruta WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM combustible_despachos WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM combustible_recepciones WHERE tenant_id = $1", [tenantId]);
     // El catálogo de precios de urea (0121) referencia proveedores sin ON

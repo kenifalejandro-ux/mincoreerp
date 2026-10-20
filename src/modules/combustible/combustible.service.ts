@@ -9,6 +9,7 @@ import type {
   CrearTanqueCombustibleInput,
   ActualizarTanqueCombustibleInput,
   CrearDespachoCombustibleInput,
+  CrearCompraRutaInput,
   CrearPreciosCombustibleMasivoInput,
   CrearRecepcionCombustibleInput,
   CrearGrifoCombustibleInput,
@@ -21,6 +22,7 @@ import type {
   CrearPuntoPrecintoInput,
   CambiarPrecintoInput,
 } from "../../server/schemas/combustible.schema";
+import { crearDespachoCombustibleSchema } from "../../server/schemas/combustible.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import type { UsuarioPayload } from "../../server/services/auth.service";
 import { createHash } from "crypto";
@@ -115,6 +117,37 @@ type IntervaloCalibracion = Awaited<
 >[number];
 
 /** Resumen del consumo anterior a la primera varilla, o null si no hay. */
+/** El uuid de un despacho dentro de una compra en ruta (0135). El dispositivo
+ *  genera UN uuid por compra; combustible_despachos tiene UNIQUE sobre el
+ *  suyo, así que cada producto recibe uno derivado y estable: el mismo para
+ *  la misma compra y el mismo producto, siempre. Toma los 16 primeros
+ *  bytes de un SHA-256 de la compra y el producto, con la forma de un UUID
+ *  (versión 5, variante RFC), sin sumar la dependencia `uuid`. No protege nada:
+ *  es solo un identificador determinista. */
+export function uuidDerivado(base: string, producto: "combustible" | "urea"): string {
+  const hash = createHash("sha256").update(`${base.toLowerCase()}:${producto}`).digest();
+  hash[6] = (hash[6] & 0x0f) | 0x50;
+  hash[8] = (hash[8] & 0x3f) | 0x80;
+  const x = hash.subarray(0, 16).toString("hex");
+  return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20, 32)}`;
+}
+
+/** Pasa el despacho de UNA sección de la compra por el schema de despachos,
+ *  para que valgan sus mismas reglas de forma. Un fallo es un 400 que dice en
+ *  qué sección está el problema. */
+function parsearEntradaDespacho(
+  seccion: "Combustible" | "Urea",
+  datos: Record<string, unknown>
+): CrearDespachoCombustibleInput {
+  const r = crearDespachoCombustibleSchema.safeParse(datos);
+  if (!r.success) {
+    const problema = r.error.issues[0];
+    const campo = problema.path.length > 0 ? `${problema.path.join(".")}: ` : "";
+    throw new AppError(400, `${seccion}: ${campo}${problema.message}`);
+  }
+  return r.data;
+}
+
 function resumirHistorico(
   filas: {
     historico: boolean;
@@ -157,6 +190,11 @@ export function costoPorLitroDelTotal(
   const total = renglones.reduce((a, r) => a + r.cantidadBultos * r.costoPorBulto, 0);
   return Number((total / litros).toFixed(4));
 }
+
+/** Lo que devuelve crearDespacho como fila (con sus renglones de urea). */
+type FilaDespachoCreada = NonNullable<
+  Awaited<ReturnType<CombustibleService["crearDespacho"]>>["fila"]
+>;
 
 export class CombustibleService {
   private repository = new CombustibleRepository();
@@ -1263,6 +1301,266 @@ export class CombustibleService {
           await this.repository.findDespachoPorId(client, tenantId, filaId)
         ),
     });
+  }
+
+  /** Una boleta o factura con combustible, urea o los dos (0135).
+   *
+   *  Cada producto sigue siendo su propio despacho, creado por `crearDespacho`
+   *  con todas sus validaciones: acá solo se arma la entrada de cada uno, se
+   *  pasa por el schema de despachos y se guarda la cabecera con el cuadre.
+   *
+   *  TODO en una sola transacción (la del `withTenant` del controlador): si la
+   *  urea falla, el combustible que se guardó un instante antes se deshace
+   *  con ella. Sin eso, un conductor sin señal dejaba la boleta a medias y se
+   *  enteraba días después, cuando sincronizaba.
+   *
+   *  Idempotente por el `cliente_uuid` de la COMPRA; los despachos reciben uuids
+   *  derivados (uno por producto), porque combustible_despachos tiene UNIQUE
+   *  sobre el suyo. */
+  async crearCompraRuta(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: CrearCompraRutaInput,
+    alcance?: AlcanceCombustible
+  ) {
+    // Lo que entró en cada despacho, para que el controlador dispare sus
+    // alertas. Queda vacío en un reintento: no se creó nada nuevo.
+    const entradas: {
+      combustible?: CrearDespachoCombustibleInput;
+      urea?: CrearDespachoCombustibleInput;
+    } = {};
+    const idempotente = await idempotentInsert({
+      client,
+      tenantId,
+      modulo: "combustible",
+      clienteUuid: data.cliente_uuid,
+      insertar: async () => {
+        const despachadoEn = data.despachado_en ?? new Date().toISOString();
+
+        // La diferencia con el papel se guarda, en centavos enteros.
+        const centavos = (n: number) => Math.round(n * 100);
+        const totalCombustibleC = data.combustible
+          ? centavos(data.combustible.cantidad * data.combustible.costo_unitario)
+          : 0;
+        const totalUreaC = data.urea
+          ? data.urea.lineas.reduce((a, l) => a + centavos(l.cantidad_bultos * l.costo_unitario), 0)
+          : 0;
+        const totalSistemaC = totalCombustibleC + totalUreaC;
+        const totalBoletaC =
+          data.total_boleta === undefined ? totalSistemaC : centavos(data.total_boleta);
+        const diferenciaC = totalBoletaC - totalSistemaC;
+        const soles = (c: number) => (c / 100).toFixed(2);
+        const comunes = {
+          origen: "compra_externa" as const,
+          tipo_destino: "equipo" as const,
+          grifo_id: data.grifo_id,
+          equipo_id: data.equipo_id,
+          comprobante_tipo: data.comprobante_tipo,
+          comprobante_numero: data.comprobante_numero,
+          despachado_en: despachadoEn,
+          observaciones: data.observaciones,
+        };
+
+        let despachoCombustible: FilaDespachoCreada | null = null;
+        if (data.combustible) {
+          const entrada = parsearEntradaDespacho("Combustible", {
+            ...comunes,
+            cliente_uuid: uuidDerivado(data.cliente_uuid, "combustible"),
+            producto: "combustible",
+            tipo_combustible: data.combustible.tipo_combustible,
+            cantidad: data.combustible.cantidad,
+            costo_unitario: data.combustible.costo_unitario,
+            lectura_horometro: data.combustible.lectura_horometro,
+            lectura_odometro: data.combustible.lectura_odometro,
+            horas_abastecidas: data.combustible.horas_abastecidas,
+          });
+          const r = await this.crearDespacho(client, tenantId, usuarioId, entrada, alcance);
+          if (!r.creado || !r.fila) {
+            throw new AppError(409, "el combustible de esta compra ya estaba registrado");
+          }
+          entradas.combustible = entrada;
+          despachoCombustible = r.fila;
+        }
+
+        let despachoUrea: FilaDespachoCreada | null = null;
+        if (data.urea) {
+          const entrada = parsearEntradaDespacho("Urea", {
+            ...comunes,
+            cliente_uuid: uuidDerivado(data.cliente_uuid, "urea"),
+            producto: "urea",
+            lineas: data.urea.lineas,
+          });
+          const r = await this.crearDespacho(client, tenantId, usuarioId, entrada, alcance);
+          if (!r.creado || !r.fila) {
+            throw new AppError(409, "la urea de esta compra ya estaba registrada");
+          }
+          entradas.urea = entrada;
+          despachoUrea = r.fila;
+        }
+
+        const compra = await this.repository.crearCompraRuta(client, tenantId, usuarioId, {
+          clienteUuid: data.cliente_uuid,
+          grifoId: data.grifo_id,
+          comprobanteTipo: data.comprobante_tipo,
+          comprobanteNumero: data.comprobante_numero,
+          equipoId: data.equipo_id,
+          despachadoEn,
+          totalBoleta: soles(totalBoletaC),
+          totalSistema: soles(totalSistemaC),
+          diferencia: soles(diferenciaC),
+          // Ya no se pide motivo: el grifo maneja su precio (0137).
+          motivoDescuadre: null,
+          despachoCombustibleId: despachoCombustible ? Number(despachoCombustible.id) : null,
+          despachoUreaId: despachoUrea ? Number(despachoUrea.id) : null,
+        });
+        return {
+          id: Number(compra.id),
+          fila: {
+            compra,
+            despacho_combustible: despachoCombustible,
+            despacho_urea: despachoUrea,
+          },
+        };
+      },
+      recuperar: async (filaId) => {
+        const compra = await this.repository.findCompraRutaPorId(client, tenantId, filaId);
+        if (!compra) return null;
+        const cargar = async (id: string | null) =>
+          id === null
+            ? null
+            : this.conRenglonesUrea(
+                client,
+                tenantId,
+                "despacho",
+                await this.repository.findDespachoPorId(client, tenantId, Number(id))
+              );
+        return {
+          compra,
+          despacho_combustible: await cargar(compra.despacho_combustible_id),
+          despacho_urea: await cargar(compra.despacho_urea_id),
+        };
+      },
+    });
+    return { ...idempotente, entradas };
+  }
+
+  /** El historial UNIFICADO de las compras en ruta: una fila por boleta, con
+   *  su combustible y su urea juntos y el estado de la foto única. Se arma
+   *  agrupando los despachos por (proveedor, tipo, número canónico): sirve
+   *  también para las compras anteriores a 0135, que no tienen cabecera. */
+  async listarBoletasRuta(
+    client: PoolClient,
+    tenantId: string,
+    filtros: {
+      desde?: string;
+      hasta?: string;
+      soloUsuarioId?: string;
+      productos: ("combustible" | "urea")[];
+    }
+  ) {
+    const filas = await this.repository.findDespachosDeComprasRuta(client, tenantId, filtros, 600);
+    interface Boleta {
+      clave: string;
+      despachado_en: string;
+      proveedor: string | null;
+      placa_codigo: string | null;
+      registrado_por: string | null;
+      comprobante_tipo: string;
+      comprobante_numero: string;
+      combustible: {
+        id: number;
+        tipo_combustible: string | null;
+        galones: number;
+        costo_unitario: number;
+        total: number;
+      } | null;
+      urea: {
+        id: number;
+        litros: number;
+        total: number;
+        lineas: { nombre: string | null; presentacion: string; cantidad_bultos: number }[];
+      } | null;
+      total_sistema: number;
+      total_boleta: number | null;
+      diferencia: number | null;
+      motivo_descuadre: string | null;
+      /** Cuántos de los despachos de la boleta ya tienen su foto. */
+      con_foto: number;
+      despachos: number;
+      /** Un despacho con foto, para "ver comprobante". */
+      foto_de: { id: number; producto: "combustible" | "urea" } | null;
+    }
+    const grupos = new Map<string, Boleta>();
+    for (const f of filas) {
+      const clave = `${f.grifo_id}|${f.comprobante_tipo}|${f.numero_canonico}`;
+      let b = grupos.get(clave);
+      if (!b) {
+        b = {
+          clave,
+          despachado_en: new Date(f.despachado_en).toISOString(),
+          proveedor: f.proveedor,
+          placa_codigo: f.placa_codigo,
+          registrado_por: f.registrado_por,
+          comprobante_tipo: f.comprobante_tipo,
+          comprobante_numero: f.comprobante_numero,
+          combustible: null,
+          urea: null,
+          total_sistema: 0,
+          total_boleta: f.total_boleta === null ? null : Number(f.total_boleta),
+          diferencia: f.diferencia === null ? null : Number(f.diferencia),
+          motivo_descuadre: f.motivo_descuadre,
+          con_foto: 0,
+          despachos: 0,
+          foto_de: null,
+        };
+        grupos.set(clave, b);
+      }
+      const total = Math.round(Number(f.cantidad) * Number(f.costo_unitario) * 100) / 100;
+      b.despachos += 1;
+      if (f.comprobante_nombre) {
+        b.con_foto += 1;
+        b.foto_de ??= { id: Number(f.id), producto: f.producto };
+      }
+      if (f.producto === "combustible") {
+        b.combustible = {
+          id: Number(f.id),
+          tipo_combustible: f.tipo_combustible,
+          galones: Number(f.cantidad),
+          costo_unitario: Number(f.costo_unitario),
+          total,
+        };
+      } else {
+        b.urea = {
+          id: Number(f.id),
+          litros: Number(f.cantidad),
+          total,
+          lineas: (
+            f.lineas as { nombre: string | null; presentacion: string; cantidad_bultos: number }[]
+          ).map((l) => ({
+            nombre: l.nombre,
+            presentacion: l.presentacion,
+            cantidad_bultos: Number(l.cantidad_bultos),
+          })),
+        };
+      }
+      b.total_sistema = Math.round((b.total_sistema + total) * 100) / 100;
+    }
+    // Quien ve un solo producto no puede comparar el papel (que es de toda la
+    // boleta) con su parte: el total y la diferencia no le dirían nada cierto.
+    if (filtros.productos.length < 2) {
+      for (const b of grupos.values()) {
+        b.total_boleta = null;
+        b.diferencia = null;
+      }
+    }
+    return [...grupos.values()];
+  }
+
+  resolverDespachosDeLaBoleta(tenantId: string, despachoId: number) {
+    return withTenant(tenantId, (client) =>
+      this.repository.findDespachosDeLaBoleta(client, tenantId, despachoId)
+    );
   }
 
   /** Cuánto puede saltar el número de vale respecto del último de su serie.

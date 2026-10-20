@@ -22,12 +22,14 @@ import { useAuth } from "../../context/AuthContext";
 import { MODULOS_CLIENTE } from "../../modules/registry";
 import { puedeVerBandeja } from "../bandeja/bandejaAcceso";
 import { useContadorBandeja } from "../bandeja/useContadorBandeja";
+import { puedeCompraEnRuta } from "../combustible/compraEnRutaAcceso";
 import { puedeVerPrecios } from "../combustible/preciosAcceso";
 
 // Submenú de Combustible. Los íconos son de trazo (lucide), los mismos que
 // usan las acciones de la tabla de tanques.
 const SUBMENU_COMBUSTIBLE: { tab: string; label: string; Icono: LucideIcon }[] = [
   { tab: "combustible:mi_viaje", label: "Mi viaje", Icono: Navigation },
+  { tab: "combustible:compra_ruta", label: "Compra en ruta", Icono: Receipt },
   { tab: "combustible", label: "Tanques", Icono: Fuel },
   { tab: "combustible:tanquetas", label: "Tanquetas", Icono: Cylinder },
   { tab: "combustible:viajes", label: "Viajes", Icono: Route },
@@ -51,6 +53,9 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
 
   const tabs = MODULOS_CLIENTE.filter((modulo) => usuario?.modulosPermitidos.includes(modulo.id));
   const submenusVisibles = SUBMENU_COMBUSTIBLE.filter(({ tab }) => {
+    // No tiene pestaña propia en la matriz de permisos: junta dos que sí (ver
+    // compraEnRutaAcceso.ts).
+    if (tab === "combustible:compra_ruta") return puedeCompraEnRuta(usuario);
     // Precios une combustible y urea: se decide con los dos permisos (no hay
     // un permiso "combustible:precios"), igual que la pantalla.
     if (tab === "combustible:precios") return puedeVerPrecios(usuario);
