@@ -22,6 +22,7 @@ import { useAuth } from "../../context/AuthContext";
 import { MODULOS_CLIENTE } from "../../modules/registry";
 import { puedeVerBandeja } from "../bandeja/bandejaAcceso";
 import { useContadorBandeja } from "../bandeja/useContadorBandeja";
+import { puedeVerPrecios } from "../combustible/preciosAcceso";
 
 // Submenú de Combustible. Los íconos son de trazo (lucide), los mismos que
 // usan las acciones de la tabla de tanques.
@@ -50,14 +51,13 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
 
   const tabs = MODULOS_CLIENTE.filter((modulo) => usuario?.modulosPermitidos.includes(modulo.id));
   const submenusVisibles = SUBMENU_COMBUSTIBLE.filter(({ tab }) => {
+    // Precios une combustible y urea: se decide con los dos permisos (no hay
+    // un permiso "combustible:precios"), igual que la pantalla.
+    if (tab === "combustible:precios") return puedeVerPrecios(usuario);
     const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
     const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
     if (override !== undefined) return override;
     if (tab === "combustible:mi_viaje") return usuario?.rol === "conductor_ruta";
-    // Precios: hoy solo lo gestionan admin y operador (los botones que
-    // se mudaron acá ya eran suyos).
-    if (tab === "combustible:precios")
-      return usuario?.rol === "admin" || usuario?.rol === "operador";
     // Era un botón de Tanques: se respeta su permiso anterior si existe.
     if (tab === "combustible:proveedores") {
       const antiguo = usuario?.permisosPestanas?.["combustible:tanques:proveedores"];
