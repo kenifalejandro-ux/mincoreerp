@@ -120,10 +120,12 @@ type IntervaloCalibracion = Awaited<
 /** El uuid de un despacho dentro de una compra en ruta (0135). El dispositivo
  *  genera UN uuid por compra; combustible_despachos tiene UNIQUE sobre el
  *  suyo, así que cada producto recibe uno derivado y estable: el mismo para
- *  la misma compra y el mismo producto, siempre. Es la forma de un UUID v5
- *  (SHA-1 de la compra y el producto), sin sumar la dependencia `uuid`. */
+ *  la misma compra y el mismo producto, siempre. Toma los 16 primeros
+ *  bytes de un SHA-256 de la compra y el producto, con la forma de un UUID
+ *  (versión 5, variante RFC), sin sumar la dependencia `uuid`. No protege nada:
+ *  es solo un identificador determinista. */
 export function uuidDerivado(base: string, producto: "combustible" | "urea"): string {
-  const hash = createHash("sha1").update(`${base.toLowerCase()}:${producto}`).digest();
+  const hash = createHash("sha256").update(`${base.toLowerCase()}:${producto}`).digest();
   hash[6] = (hash[6] & 0x0f) | 0x50;
   hash[8] = (hash[8] & 0x3f) | 0x80;
   const x = hash.subarray(0, 16).toString("hex");
