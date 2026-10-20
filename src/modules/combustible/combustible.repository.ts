@@ -1521,6 +1521,104 @@ export class CombustibleRepository {
     return result.rows[0] ?? null;
   }
 
+  /** Los despachos de las compras en ruta, listos para agruparse por boleta
+   *  (la misma boleta trae un despacho por producto, 0119). Solo los vigentes.
+   *  La cabecera de 0135 (total del papel y cuadre) viaja si la compra se
+   *  registró por el formulario unificado; las anteriores no la tienen. */
+  async findDespachosDeComprasRuta(
+    client: PoolClient,
+    tenantId: string,
+    filtros: {
+      desde?: string;
+      hasta?: string;
+      soloUsuarioId?: string;
+      productos: ("combustible" | "urea")[];
+    },
+    limite: number
+  ) {
+    const valores: unknown[] = [tenantId, filtros.productos];
+    const condiciones = [
+      "d.tenant_id = $1",
+      "d.origen = 'compra_externa'",
+      "d.comprobante_numero IS NOT NULL",
+      "d.anulada_en IS NULL",
+      "d.producto = ANY($2::text[])",
+    ];
+    if (filtros.soloUsuarioId !== undefined) {
+      valores.push(filtros.soloUsuarioId);
+      condiciones.push(`d.usuario_id = $${valores.length}`);
+    }
+    if (filtros.desde) {
+      valores.push(filtros.desde);
+      condiciones.push(`d.despachado_en >= $${valores.length}::timestamptz`);
+    }
+    if (filtros.hasta) {
+      valores.push(filtros.hasta);
+      condiciones.push(`d.despachado_en <= $${valores.length}::timestamptz`);
+    }
+    valores.push(limite);
+    const r = await client.query(
+      `SELECT d.id, d.producto, d.despachado_en, d.grifo_id, d.comprobante_tipo,
+              d.comprobante_numero,
+              combustible_comprobante_canonico(d.comprobante_numero) AS numero_canonico,
+              d.comprobante_nombre, d.comprobante_subido_en,
+              d.cantidad, d.costo_unitario, d.tipo_combustible,
+              g.nombre AS proveedor, e.placa_codigo, u.nombre AS registrado_por,
+              c.total_boleta, c.total_sistema, c.diferencia, c.motivo_descuadre,
+              COALESCE((
+                SELECT json_agg(json_build_object(
+                         'presentacion', l.presentacion,
+                         'nombre', p.nombre,
+                         'cantidad_bultos', l.cantidad_bultos,
+                         'litros', l.litros,
+                         'costo_por_bulto', l.costo_por_bulto
+                       ) ORDER BY l.id)
+                  FROM combustible_despacho_urea_lineas l
+                  LEFT JOIN combustible_urea_presentaciones p
+                         ON p.tenant_id = l.tenant_id AND p.codigo = l.presentacion
+                 WHERE l.despacho_id = d.id
+              ), '[]'::json) AS lineas
+         FROM combustible_despachos d
+         LEFT JOIN combustible_grifos g ON g.id = d.grifo_id AND g.tenant_id = d.tenant_id
+         LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
+         LEFT JOIN usuarios u ON u.id = d.usuario_id
+         LEFT JOIN combustible_compras_ruta c
+                ON c.tenant_id = d.tenant_id
+               AND (c.despacho_combustible_id = d.id OR c.despacho_urea_id = d.id)
+        WHERE ${condiciones.join(" AND ")}
+        ORDER BY d.despachado_en DESC, d.id DESC
+        LIMIT $${valores.length}`,
+      valores
+    );
+    return r.rows;
+  }
+
+  /** Los despachos de la MISMA boleta que uno dado: mismo proveedor, mismo
+   *  tipo y mismo número (canónico, como el índice único de 0109). Con el id de
+   *  cualquiera de los dos productos devuelve los dos. */
+  async findDespachosDeLaBoleta(
+    client: PoolClient,
+    tenantId: string,
+    despachoId: number
+  ): Promise<{ id: number; producto: "combustible" | "urea" }[]> {
+    const r = await client.query<{ id: string; producto: "combustible" | "urea" }>(
+      `SELECT h.id, h.producto
+         FROM combustible_despachos d
+         JOIN combustible_despachos h
+           ON h.tenant_id = d.tenant_id
+          AND h.grifo_id = d.grifo_id
+          AND h.comprobante_tipo = d.comprobante_tipo
+          AND combustible_comprobante_canonico(h.comprobante_numero)
+              = combustible_comprobante_canonico(d.comprobante_numero)
+          AND h.origen = 'compra_externa'
+          AND h.anulada_en IS NULL
+        WHERE d.tenant_id = $1 AND d.id = $2 AND d.origen = 'compra_externa'
+          AND d.comprobante_numero IS NOT NULL`,
+      [tenantId, despachoId]
+    );
+    return r.rows.map((f) => ({ id: Number(f.id), producto: f.producto }));
+  }
+
   async findComprobanteDeDespacho(
     client: PoolClient,
     tenantId: string,

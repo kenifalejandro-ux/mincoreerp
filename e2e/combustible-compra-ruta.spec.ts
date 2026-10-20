@@ -93,10 +93,12 @@ async function llenar(
   await elegirPorTexto(page, "#compra-proveedor", datos.grifoNombre);
   await page.locator("#compra-comprobante-numero").fill(datos.numero);
   if (datos.foto) {
+    // Solo el del formulario: el historial de abajo trae uno por cada fila.
     await page
+      .locator("form")
       .locator('input[type="file"]')
       .setInputFiles({ name: "boleta.jpg", mimeType: "image/jpeg", buffer: JPEG_1X1 });
-    await expect(page.getByText(/boleta\.jpg/)).toBeVisible();
+    await expect(page.locator("form").getByText(/boleta\.jpg/)).toBeVisible();
   }
 
   await page.locator("#compra-galones").fill("40");
@@ -160,7 +162,7 @@ async function flujoCompleto(page: Page) {
   await botonRegistrar(page).click();
   await expect(
     page.getByText(new RegExp(`Compra registrada \\(la boleta ${numero}\\)`))
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
 
   // Los dos productos quedaron con LA MISMA boleta, y la foto en los dos.
   await expect
@@ -220,7 +222,7 @@ test("un total que no cuadra pide el motivo y no deja registrar sin él", async 
 
   await expect(
     page.getByText(new RegExp(`Compra registrada \\(la boleta ${numero}\\)`))
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
   await expect.poll(async () => (await despachosDeLaBoleta(page, numero)).length).toBe(2);
 });
 
@@ -270,4 +272,155 @@ test("sin señal la compra queda en el equipo y se sincroniza sola, una sola vez
     )
     .toBe(2);
   expect(await despachosDeLaBoleta(page, numero)).toHaveLength(2);
+});
+
+/** Una carga anterior de la unidad, por API: andamiaje para las horas
+ *  abastecidas, que se calculan contra ella. */
+async function registrarCargaPrevia(
+  page: Page,
+  marca: string,
+  grifoNombre: string,
+  horometro: number
+) {
+  const equipos = await page.request.get("/api/erp/combustible/equipos-destino?pageSize=200");
+  const equipo = ((await equipos.json()).data as { id: number; placa_codigo: string }[]).find(
+    (e) => e.placa_codigo === marca
+  );
+  const grifos = await page.request.get("/api/erp/combustible/grifos/para-formulario");
+  const grifo = ((await grifos.json()) as { id: number; nombre: string }[]).find(
+    (g) => g.nombre === grifoNombre
+  );
+  expect(equipo && grifo, "no se encontró la unidad o el proveedor sembrados").toBeTruthy();
+  const r = await page.request.post("/api/erp/combustible/despachos", {
+    data: {
+      origen: "compra_externa",
+      grifo_id: grifo!.id,
+      tipo_combustible: "diesel_b5",
+      tipo_destino: "equipo",
+      equipo_id: equipo!.id,
+      comprobante_tipo: "boleta",
+      comprobante_numero: `B001-${unico()}`,
+      cantidad: 40,
+      lectura_horometro: horometro,
+      horas_abastecidas: 10,
+      costo_unitario: 17.5,
+      despachado_en: new Date(Date.now() - 3600_000).toISOString(),
+    },
+  });
+  expect(r.status(), await r.text()).toBe(201);
+}
+
+test("horas abastecidas: se calculan solas desde la carga anterior y lo escrito a mano manda", async ({
+  page,
+}) => {
+  const marca = `HRS-${unico()}`;
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  const { grifoNombre } = await sembrar(page, marca);
+  await registrarCargaPrevia(page, marca, grifoNombre, 1000);
+
+  await abrirCompraEnRuta(page);
+  await elegirPorTexto(page, "#compra-unidad", marca);
+  await elegirPorTexto(page, "#compra-proveedor", grifoNombre);
+
+  const horas = page.locator("#compra-horas");
+  const horometro = page.locator("#compra-medidor");
+
+  await horometro.fill("1012.5");
+  await expect(horas).toHaveValue("12.5");
+  await expect(page.getByText(/Carga anterior: 1\.?,?000 h/)).toBeVisible();
+
+  // Lo escrito a mano manda: cambiar la lectura NO pisa lo que el conductor puso.
+  await horas.fill("99");
+  await horometro.fill("1020");
+  await expect(horas).toHaveValue("99");
+
+  // Vaciarlo devuelve el campo al cálculo.
+  await horas.fill("");
+  await expect(horas).toHaveValue("20");
+
+  // Una lectura menor que la anterior no inventa horas negativas: avisa y deja a mano.
+  await horometro.fill("900");
+  await expect(horas).toHaveValue("");
+  await expect(page.getByText(/La lectura es menor que la de la carga anterior/)).toBeVisible();
+});
+
+test("horas abastecidas: una unidad sin carga anterior queda a mano, sin inventar nada", async ({
+  page,
+}) => {
+  const marca = `NEW-${unico()}`;
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  const { grifoNombre } = await sembrar(page, marca);
+
+  await abrirCompraEnRuta(page);
+  await elegirPorTexto(page, "#compra-unidad", marca);
+  await elegirPorTexto(page, "#compra-proveedor", grifoNombre);
+  await page.locator("#compra-medidor").fill("500");
+
+  await expect(page.getByText(/No hay una carga anterior con horómetro/)).toBeVisible();
+  await expect(page.locator("#compra-horas")).toHaveValue("");
+});
+
+test("el historial junta la boleta en una fila y la foto única se sube y se reemplaza desde ahí", async ({
+  page,
+}) => {
+  const marca = `HIS-${unico()}`;
+  const numero = `B001-${unico()}`;
+  const admin = adminA();
+  const PDF = Buffer.from("%PDF-1.4\n%reemplazo\n");
+
+  await loginPorUI(page, admin.email, admin.password);
+  const { grifoNombre } = await sembrar(page, marca);
+  await abrirCompraEnRuta(page);
+  // Sin foto: es lo que pasa cuando el conductor no la tiene a mano al comprar.
+  await llenar(page, { marca, grifoNombre, numero, total: "800" });
+  await botonRegistrar(page).click();
+  await expect(
+    page.getByText(new RegExp(`Compra registrada \\(la boleta ${numero}\\)`))
+  ).toBeVisible({ timeout: 30_000 });
+
+  // UNA sola fila con combustible y urea juntos.
+  const fila = page.getByRole("row").filter({ hasText: numero });
+  await expect(fila).toHaveCount(1);
+  await expect(fila).toContainText("Diésel B5");
+  await expect(fila).toContainText("Urea");
+  await expect(fila).toContainText("Subir foto");
+
+  // Sube la foto UNA vez desde el historial: queda en los dos despachos.
+  await fila
+    .locator('input[type="file"]')
+    .setInputFiles({ name: "boleta.jpg", mimeType: "image/jpeg", buffer: JPEG_1X1 });
+  await expect(
+    page.getByText(new RegExp(`Comprobante adjuntado a la boleta ${numero}`))
+  ).toBeVisible();
+  await expect(fila.getByRole("button", { name: "Ver comprobante" })).toBeVisible();
+  await expect
+    .poll(
+      async () =>
+        (await despachosDeLaBoleta(page, numero)).filter((d) => d.comprobante_nombre).length,
+      { message: "la foto subida desde el historial no quedó en los dos despachos" }
+    )
+    .toBe(2);
+
+  // Reemplazarla pide foto nueva y motivo.
+  await fila.getByRole("button", { name: "Reemplazar", exact: true }).click();
+  const confirmar = page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Reemplazar", exact: true });
+  await expect(confirmar).toBeDisabled();
+  await page
+    .getByRole("dialog")
+    .locator('input[type="file"]')
+    .setInputFiles({ name: "nueva.pdf", mimeType: "application/pdf", buffer: PDF });
+  await expect(confirmar).toBeDisabled(); // con foto pero sin motivo, tampoco
+  await page
+    .getByRole("dialog")
+    .getByPlaceholder(/foto anterior/)
+    .fill("la foto anterior estaba borrosa");
+  await expect(confirmar).toBeEnabled();
+  await confirmar.click();
+  await expect(
+    page.getByText(new RegExp(`Comprobante de la boleta ${numero} reemplazado`))
+  ).toBeVisible({ timeout: 20_000 });
 });

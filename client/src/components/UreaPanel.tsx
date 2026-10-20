@@ -222,14 +222,23 @@ export function BotonArchivo({
   archivo,
   onElegir,
   texto,
+  destacado = false,
 }: {
   archivo: File | null;
   onElegir: (archivo: File | undefined) => void;
   texto: string;
+  /** Lima, como el resto de los botones de acción del ERP. */
+  destacado?: boolean;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+      <label
+        className={`inline-flex cursor-pointer items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium ${
+          destacado
+            ? "border-[#BADC1E] bg-[#BADC1E] font-semibold text-[#0A1014] hover:brightness-105"
+            : "border-slate-300 text-slate-700 hover:bg-slate-50"
+        }`}
+      >
         <Paperclip className="h-4 w-4 shrink-0" />
         {archivo ? "Cambiar archivo" : texto}
         <input

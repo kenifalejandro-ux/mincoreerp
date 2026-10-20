@@ -416,6 +416,141 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
     expect((await sube("no-es-un-uuid")).status).toBe(404);
   });
 
+  // ── 6b. El historial unificado ────────────────────────────────────────
+
+  const boletas = (quien = agente) => quien.get("/api/erp/combustible/compras-ruta");
+  const buscarBoleta = async (numero: string, quien = agente) => {
+    const r = await boletas(quien);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    return (r.body as { comprobante_numero: string }[]).filter(
+      (b) => b.comprobante_numero === numero
+    );
+  };
+
+  it("el historial junta combustible y urea de una boleta en UNA fila", async () => {
+    const body = cuerpo();
+    expect((await crear(body)).status).toBe(201);
+    const filas = await buscarBoleta(body.comprobante_numero);
+    expect(filas).toHaveLength(1);
+    const b = filas[0] as unknown as {
+      combustible: { galones: number; total: number } | null;
+      urea: { litros: number; total: number; lineas: unknown[] } | null;
+      total_sistema: number;
+      total_boleta: number;
+      diferencia: number;
+      con_foto: number;
+      despachos: number;
+    };
+    expect(b.combustible?.galones).toBe(40);
+    expect(b.combustible?.total).toBe(700);
+    expect(b.urea?.total).toBe(100);
+    expect(b.urea?.lineas).toHaveLength(1);
+    expect(b.total_sistema).toBe(800);
+    expect(b.total_boleta).toBe(800);
+    expect(b.diferencia).toBe(0);
+    expect(b.despachos).toBe(2);
+    expect(b.con_foto).toBe(0);
+  });
+
+  it("agrupa también una boleta registrada por separado, sin cabecera (compras anteriores)", async () => {
+    const numeroBoleta = numero();
+    const comun = {
+      origen: "compra_externa",
+      grifo_id: grifoAmbos,
+      tipo_destino: "equipo",
+      equipo_id: equipoId,
+      comprobante_tipo: "boleta",
+      comprobante_numero: numeroBoleta,
+      despachado_en: new Date().toISOString(),
+    };
+    const a = await agente.post("/api/erp/combustible/despachos").send({
+      ...comun,
+      cliente_uuid: crypto.randomUUID(),
+      producto: "combustible",
+      tipo_combustible: "diesel_b5",
+      cantidad: 10,
+      costo_unitario: 17.5,
+      lectura_horometro: (horometro += 10),
+      horas_abastecidas: 5,
+    });
+    expect(a.status, JSON.stringify(a.body)).toBe(201);
+    const u = await agente.post("/api/erp/combustible/despachos").send({
+      ...comun,
+      cliente_uuid: crypto.randomUUID(),
+      producto: "urea",
+      lineas: [{ presentacion: "caja", cantidad_bultos: 1, costo_unitario: 50 }],
+    });
+    expect(u.status, JSON.stringify(u.body)).toBe(201);
+
+    const filas = await buscarBoleta(numeroBoleta);
+    expect(filas).toHaveLength(1);
+    const b = filas[0] as unknown as { total_boleta: number | null; despachos: number };
+    expect(b.despachos).toBe(2);
+    // Sin cabecera: no hay total del papel que mostrar.
+    expect(b.total_boleta).toBeNull();
+  });
+
+  it("la foto subida desde el historial con el id de UN despacho queda en los dos", async () => {
+    const body = cuerpo();
+    const c = await crear(body);
+    expect(c.status).toBe(201);
+
+    const sube = await agente
+      .post(`/api/erp/combustible/compras-ruta/${c.body.despacho_urea.id}/comprobante`)
+      .attach("archivo", FOTO, { filename: "boleta.jpg", contentType: "image/jpeg" });
+    expect(sube.status, JSON.stringify(sube.body)).toBe(201);
+
+    const [b] = (await buscarBoleta(body.comprobante_numero)) as unknown as {
+      con_foto: number;
+      despachos: number;
+      foto_de: { id: number } | null;
+    }[];
+    expect(b.con_foto).toBe(2);
+    expect(b.despachos).toBe(2);
+    expect(b.foto_de).not.toBeNull();
+
+    // Reenviar el mismo archivo es un reintento: 200, no un reemplazo.
+    const otra = await agente
+      .post(`/api/erp/combustible/compras-ruta/${c.body.despacho_combustible.id}/comprobante`)
+      .attach("archivo", FOTO, { filename: "boleta.jpg", contentType: "image/jpeg" });
+    expect(otra.status).toBe(200);
+  });
+
+  it("el conductor ve en el historial solo sus boletas, y solo él sube su foto", async () => {
+    const suyo = await nuevoUsuario("conductor_ruta");
+    const otro = await nuevoUsuario("conductor_ruta");
+    const mia = cuerpo();
+    const creada = await crear(mia, suyo);
+    expect(creada.status, JSON.stringify(creada.body)).toBe(201);
+    const ajena = cuerpo();
+    expect((await crear(ajena)).status).toBe(201); // del admin
+
+    expect(await buscarBoleta(mia.comprobante_numero, suyo)).toHaveLength(1);
+    expect(await buscarBoleta(ajena.comprobante_numero, suyo)).toHaveLength(0);
+    expect(await buscarBoleta(mia.comprobante_numero, otro)).toHaveLength(0);
+
+    const intruso = await otro
+      .post(`/api/erp/combustible/compras-ruta/${creada.body.despacho_urea.id}/comprobante`)
+      .attach("archivo", FOTO, { filename: "x.jpg", contentType: "image/jpeg" });
+    expect(intruso.status).toBe(404);
+    const propio = await suyo
+      .post(`/api/erp/combustible/compras-ruta/${creada.body.despacho_urea.id}/comprobante`)
+      .attach("archivo", FOTO, { filename: "b.jpg", contentType: "image/jpeg" });
+    expect(propio.status).toBe(201);
+  });
+
+  it("Lectura no puede subir fotos desde el historial, y un id que no existe es 404", async () => {
+    const lectura = await nuevoUsuario("lectura");
+    const r = await lectura
+      .post("/api/erp/combustible/compras-ruta/1/comprobante")
+      .attach("archivo", FOTO, { filename: "x.jpg", contentType: "image/jpeg" });
+    expect(r.status).toBe(403);
+    const inexistente = await agente
+      .post("/api/erp/combustible/compras-ruta/999999999/comprobante")
+      .attach("archivo", FOTO, { filename: "x.jpg", contentType: "image/jpeg" });
+    expect(inexistente.status).toBe(404);
+  });
+
   // ── 7. Cada despacho sigue siendo suyo ────────────────────────────────
 
   it("cada despacho queda auditado por separado y con su compra", async () => {

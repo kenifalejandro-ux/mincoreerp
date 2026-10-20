@@ -260,6 +260,27 @@ router.post(
   asyncHandler(controller.crearCompraRuta.bind(controller))
 );
 
+// El historial UNIFICADO de las compras en ruta: una fila por boleta, con su
+// combustible y su urea juntos. Cada producto sale solo si el perfil ve su
+// historial (el controlador filtra); el conductor ve solo lo suyo.
+router.get(
+  "/compras-ruta",
+  requirePestanaAlguna("tanques:historial_compras", "urea:historial_compras", "urea:vista"),
+  validateQuery(periodoHistorialCombustibleSchema),
+  asyncHandler(controller.listarComprasRuta.bind(controller))
+);
+
+// Subir (o reemplazar) la foto de una boleta ya registrada desde el historial:
+// con el id de CUALQUIERA de sus despachos, la foto queda en los dos.
+router.post(
+  "/compras-ruta/:despachoId/comprobante",
+  requirePestanaAlguna("tanques:registrar_despacho", "urea:registrar_compra"),
+  requireRole("admin", "operador", "conductor_ruta"),
+  subirArchivoComprobante,
+  validate(subirComprobanteCompraSchema),
+  asyncHandler((req, res) => controller.subirComprobanteCompraRuta(req, res, "despacho"))
+);
+
 // La foto única de la boleta, apuntada por el uuid de la compra: es la que
 // usa la cola offline (la compra aún no tiene id). El uuid se valida acá para
 // que uno mal formado sea un 404 y no un 500 que la cola reintentaría siempre.
@@ -280,7 +301,7 @@ router.post(
   requireRole("admin", "operador", "conductor_ruta"),
   subirArchivoComprobante,
   validate(subirComprobanteCompraSchema),
-  asyncHandler(controller.subirComprobanteCompraRuta.bind(controller))
+  asyncHandler((req, res) => controller.subirComprobanteCompraRuta(req, res, "uuid"))
 );
 
 // 🚫 anular un vale roto o mal tipeado -- admin Y operador, los mismos que

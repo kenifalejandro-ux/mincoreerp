@@ -2133,18 +2133,62 @@ export class CombustibleController {
     }
   }
 
+  /** GET /compras-ruta -- el historial UNIFICADO: una fila por boleta, con su
+   *  combustible y su urea juntos y el estado de la foto. El conductor solo ve
+   *  lo que él registró; cada producto sale solo si el perfil ve su historial. */
+  async listarComprasRuta(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
+      const usuario = req.usuario!;
+      const productos: ("combustible" | "urea")[] = [];
+      if (pestanaPermitida(usuario, "combustible", "tanques:historial_compras")) {
+        productos.push("combustible");
+      }
+      if (
+        pestanaPermitida(usuario, "combustible", "urea:historial_compras") ||
+        pestanaPermitida(usuario, "combustible", "urea:vista")
+      ) {
+        productos.push("urea");
+      }
+      const boletas = await withTenant(tenantId, (client) =>
+        service.listarBoletasRuta(client, tenantId, {
+          desde,
+          hasta,
+          soloUsuarioId: soloSuyas(req),
+          productos,
+        })
+      );
+      res.json(boletas);
+    } catch {
+      res.status(500).json({ error: "Error al listar las compras en ruta" });
+    }
+  }
+
   /** POST /compras-ruta/por-uuid/:clienteUuid/comprobante -- la foto única de
    *  la boleta. Se adjunta a cada despacho de la compra (el historial de cada
    *  producto necesita "ver comprobante" sobre su propia fila), pero el
    *  conductor la sube UNA vez. Apunta por el uuid de la compra porque, si se
    *  sacó sin señal, la compra todavía no tiene id. */
-  async subirComprobanteCompraRuta(req: Request, res: Response) {
+  async subirComprobanteCompraRuta(
+    req: Request,
+    res: Response,
+    /** "uuid": la foto encolada offline (la compra aún no tiene id). "despacho":
+     *  desde el historial, con el id de CUALQUIERA de los despachos de la boleta. */
+    via: "uuid" | "despacho" = "uuid"
+  ) {
     try {
       const tenantId = getTenantId(req);
       const archivo = req.file!;
       const { motivo } = req.validatedBody as SubirComprobanteCompraInput;
       const usuario = req.usuario!;
       const compraUuid = req.params.clienteUuid;
+      // Desde el historial se apunta con el id de un despacho: los de la misma
+      // boleta se resuelven acá, antes del bucle.
+      const hermanos =
+        via === "despacho"
+          ? await service.resolverDespachosDeLaBoleta(tenantId, Number(req.params.despachoId))
+          : [];
 
       const productos = [
         { producto: "combustible" as const, pestana: "tanques:registrar_despacho" },
@@ -2157,11 +2201,14 @@ export class CombustibleController {
       }[] = [];
       for (const { producto, pestana } of productos) {
         if (!pestanaPermitida(usuario, "combustible", pestana)) continue;
-        const despachoId = await service.resolverDespachoPorClienteUuid(
-          tenantId,
-          uuidDerivado(compraUuid, producto),
-          ambitoDe(req)
-        );
+        const despachoId =
+          via === "despacho"
+            ? (hermanos.find((h) => h.producto === producto)?.id ?? null)
+            : await service.resolverDespachoPorClienteUuid(
+                tenantId,
+                uuidDerivado(compraUuid, producto),
+                ambitoDe(req)
+              );
         if (despachoId === null) continue;
         resultados.push({
           producto,

@@ -46,6 +46,7 @@ import PreciosPagina from "./PreciosPagina";
 import Proveedores from "./Proveedores";
 import TanquetasPanel from "./Tanquetas";
 import CompraEnRuta from "./CompraEnRuta";
+import HistorialComprasRuta from "./HistorialComprasRuta";
 import MiViaje from "./MiViaje";
 import ViajesPanel from "./ViajesPanel";
 import { comprimirImagen } from "./comprimirImagen";
@@ -2750,7 +2751,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const abrirModalDespacho = () => {
     setDespachoForm({
       ...DESPACHO_FORM_INICIAL,
-      origen: esConductor ? "compra_externa" : DESPACHO_FORM_INICIAL.origen,
+      origen: esConductor ? "tanqueta" : DESPACHO_FORM_INICIAL.origen,
     });
     setDespachadoEn(ahoraParaInputLocal());
     setHoraDespachoEditadaAMano(false);
@@ -3812,11 +3813,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       >
         <div className="shrink-0">
           <h1 className="text-lg sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight">
-            {esConductor ? "Registrar despacho" : "Control de Combustible"}
+            {esConductor ? "Mis compras en ruta" : "Control de Combustible"}
           </h1>
           <p className="text-xs sm:text-sm text-[#94a3b8]">
             {esConductor
-              ? "Despacho de combustible de origen externo"
+              ? "Tus boletas con combustible y urea. Para registrar una nueva, usa Compra en ruta."
               : "Tanques y puntos de abastecimiento"}
           </p>
         </div>
@@ -3850,7 +3851,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             )}
             {/* Vista propia (autónoma del historial de despachos): el conductor
                 la usa para subir el comprobante que no subió al comprar. */}
-            {permiteTanque("historial_compras") && (
+            {permiteTanque("historial_compras") && !esConductor && (
               <button
                 onClick={() => abrirModalHistorialDespachos("compra_externa")}
                 className={`${BTN_BASE} ${BTN_ESTILO.lime}`}
@@ -3897,7 +3898,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 onClick={abrirModalDespacho}
                 className={`${BTN_BASE} ${BTN_ESTILO.secundary}`}
               >
-                <ClipboardCheck className="w-4 h-4 shrink-0" /> Registrar despacho
+                <ClipboardCheck className="w-4 h-4 shrink-0" />{" "}
+                {esConductor ? "Carga desde tanqueta" : "Registrar despacho"}
               </button>
             )}
             {permiteTanque("nuevo_tanque") && (
@@ -3924,6 +3926,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {pestanaCombustible === "viajes" && <ViajesPanel />}
       {pestanaCombustible === "mi_viaje" && <MiViaje />}
       {pestanaCombustible === "compra_ruta" && <CompraEnRuta />}
+      {esConductor && pestanaCombustible === "tanques" && <HistorialComprasRuta />}
       {!esConductor && pestanaCombustible === "tanques" && importacion.error && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-red-900 font-light flex-1">{importacion.error}</p>
@@ -5236,7 +5239,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b flex justify-between items-center">
-              <h3 className="text-xl font-bold">Registrar despacho</h3>
+              <h3 className="text-xl font-bold">
+                {esConductor ? "Carga desde tanqueta" : "Registrar despacho"}
+              </h3>
               <button
                 onClick={() => setModalDespachoAbierto(false)}
                 aria-label="Cerrar"
@@ -5271,7 +5276,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         })
                       }
                     >
-                      <option value="compra_externa">Compra externa (ruta)</option>
                       <option value="tanqueta">Desde tanqueta</option>
                     </select>
                   ) : (
@@ -5289,7 +5293,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       }
                     >
                       <option value="tanque_propio">Tanque propio</option>
-                      <option value="compra_externa">Compra externa (ruta)</option>
                       <option value="tanqueta">Desde tanqueta</option>
                       <option value="excedente_recepcion">
                         Excedente directo a unidad

@@ -1455,6 +1455,116 @@ export class CombustibleService {
     return { ...idempotente, entradas };
   }
 
+  /** El historial UNIFICADO de las compras en ruta: una fila por boleta, con
+   *  su combustible y su urea juntos y el estado de la foto única. Se arma
+   *  agrupando los despachos por (proveedor, tipo, número canónico): sirve
+   *  también para las compras anteriores a 0135, que no tienen cabecera. */
+  async listarBoletasRuta(
+    client: PoolClient,
+    tenantId: string,
+    filtros: {
+      desde?: string;
+      hasta?: string;
+      soloUsuarioId?: string;
+      productos: ("combustible" | "urea")[];
+    }
+  ) {
+    const filas = await this.repository.findDespachosDeComprasRuta(client, tenantId, filtros, 600);
+    interface Boleta {
+      clave: string;
+      despachado_en: string;
+      proveedor: string | null;
+      placa_codigo: string | null;
+      registrado_por: string | null;
+      comprobante_tipo: string;
+      comprobante_numero: string;
+      combustible: {
+        id: number;
+        tipo_combustible: string | null;
+        galones: number;
+        costo_unitario: number;
+        total: number;
+      } | null;
+      urea: {
+        id: number;
+        litros: number;
+        total: number;
+        lineas: { nombre: string | null; presentacion: string; cantidad_bultos: number }[];
+      } | null;
+      total_sistema: number;
+      total_boleta: number | null;
+      diferencia: number | null;
+      motivo_descuadre: string | null;
+      /** Cuántos de los despachos de la boleta ya tienen su foto. */
+      con_foto: number;
+      despachos: number;
+      /** Un despacho con foto, para "ver comprobante". */
+      foto_de: { id: number; producto: "combustible" | "urea" } | null;
+    }
+    const grupos = new Map<string, Boleta>();
+    for (const f of filas) {
+      const clave = `${f.grifo_id}|${f.comprobante_tipo}|${f.numero_canonico}`;
+      let b = grupos.get(clave);
+      if (!b) {
+        b = {
+          clave,
+          despachado_en: new Date(f.despachado_en).toISOString(),
+          proveedor: f.proveedor,
+          placa_codigo: f.placa_codigo,
+          registrado_por: f.registrado_por,
+          comprobante_tipo: f.comprobante_tipo,
+          comprobante_numero: f.comprobante_numero,
+          combustible: null,
+          urea: null,
+          total_sistema: 0,
+          total_boleta: f.total_boleta === null ? null : Number(f.total_boleta),
+          diferencia: f.diferencia === null ? null : Number(f.diferencia),
+          motivo_descuadre: f.motivo_descuadre,
+          con_foto: 0,
+          despachos: 0,
+          foto_de: null,
+        };
+        grupos.set(clave, b);
+      }
+      const total = Math.round(Number(f.cantidad) * Number(f.costo_unitario) * 100) / 100;
+      b.despachos += 1;
+      if (f.comprobante_nombre) {
+        b.con_foto += 1;
+        b.foto_de ??= { id: Number(f.id), producto: f.producto };
+      }
+      if (f.producto === "combustible") {
+        b.combustible = {
+          id: Number(f.id),
+          tipo_combustible: f.tipo_combustible,
+          galones: Number(f.cantidad),
+          costo_unitario: Number(f.costo_unitario),
+          total,
+        };
+      } else {
+        b.urea = {
+          id: Number(f.id),
+          litros: Number(f.cantidad),
+          total,
+          lineas: (
+            f.lineas as { nombre: string | null; presentacion: string; cantidad_bultos: number }[]
+          ).map((l) => ({
+            nombre: l.nombre,
+            presentacion: l.presentacion,
+            cantidad_bultos: Number(l.cantidad_bultos),
+          })),
+        };
+      }
+      b.total_sistema = Math.round((b.total_sistema + total) * 100) / 100;
+    }
+    return [...grupos.values()];
+  }
+
+  resolverDespachosDeLaBoleta(tenantId: string, despachoId: number) {
+    return withTenant(tenantId, (client) =>
+      this.repository.findDespachosDeLaBoleta(client, tenantId, despachoId)
+    );
+  }
+
   /** Cuánto puede saltar el número de vale respecto del último de su serie.
    *
    *  300 es holgado para la operación real --un talonario tiene 50 o 100
