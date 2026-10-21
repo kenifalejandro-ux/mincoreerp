@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { useAuth } from "../context/AuthContext";
+import { accesoSinConexion, guardarAcceso } from "../offline/perfilOffline";
 import {
   loginApi,
   googleLoginApi,
@@ -71,7 +72,7 @@ function esHostDeClienteNoReconocido(): boolean {
 }
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, loginSinConexion } = useAuth();
   const slugDeSubdominio = useState(resolverSlugDeSubdominio)[0];
   const esDominioDeCliente = useState(esHostDeClienteNoReconocido)[0];
   // La empresa dejó de ser un dato que alguien tipea (migración 0087):
@@ -105,6 +106,11 @@ export default function LoginPage() {
     empresas: EmpresaDeLaCuenta[];
     ultimoTenantId: string | null;
   } | null>(null);
+
+  // Para quien trabaja en varias empresas la clave se borra del formulario tras
+  // el primer paso; esto la guarda en memoria solo hasta que termine de entrar,
+  // para dejar su acceso sin señal. Nunca se persiste.
+  const claveEnCurso = useRef<{ identificador: string; clave: string } | null>(null);
 
   const [ssoDisponible, setSsoDisponible] = useState(false);
 
@@ -176,17 +182,48 @@ export default function LoginPage() {
       );
       if (resultado.tipo === "elegir-empresa") {
         setEleccion(resultado);
+        claveEnCurso.current = { identificador: email, clave: password };
         // La clave ya cumplió: el token de 2 minutos la reemplaza en el
-        // segundo paso, no tiene por qué seguir en memoria del navegador.
+        // segundo paso, no tiene por qué seguir en el formulario.
         setPassword("");
         return;
       }
-      login(resultado.usuario);
+      // El servidor la validó: se deja la huella para poder volver a entrar
+      // sin señal en este equipo. En segundo plano: calcularla cuesta cerca de
+      // un segundo (a propósito) y el login no tiene por qué esperarla.
+      void guardarAcceso(email, password, resultado.usuario);
+      await login(resultado.usuario);
     } catch (err: any) {
-      setError(err.message || "No se pudo iniciar sesión");
+      // Un TypeError es que no hubo servidor (sin señal o caído): se intenta
+      // con el acceso guardado en este equipo.
+      if (err instanceof TypeError) {
+        await entrarSinConexion();
+      } else {
+        setError(err.message || "No se pudo iniciar sesión");
+      }
     } finally {
       setEnviando(false);
     }
+  }
+
+  /** Sin servidor: la clave se comprueba contra la huella de este equipo. Sin
+   *  tope de intentos a propósito: nadie debe quedar bloqueado en ruta por
+   *  equivocarse. */
+  async function entrarSinConexion() {
+    const r = await accesoSinConexion(email, password);
+    if (r.estado === "ok") {
+      await loginSinConexion(r.usuario, r.guardadoEn);
+      return;
+    }
+    setError(
+      r.estado === "clave"
+        ? "Sin conexión: clave incorrecta."
+        : r.estado === "vencido"
+          ? "Sin conexión: tu acceso en este equipo venció. Entra una vez con señal."
+          : r.estado === "ambiguo"
+            ? "Sin conexión: tu usuario existe en varias empresas en este equipo. Entra una vez con señal."
+            : "Sin conexión: este equipo no tiene tu acceso guardado. Entra una vez con señal."
+    );
   }
 
   /** Paso 2: canjea el token por la sesión de la empresa elegida. */
@@ -195,7 +232,11 @@ export default function LoginPage() {
     setError(null);
     setEnviando(true);
     try {
-      login(await elegirEmpresaApi(eleccion.token, tenantId));
+      const usuario = await elegirEmpresaApi(eleccion.token, tenantId);
+      const guardada = claveEnCurso.current;
+      claveEnCurso.current = null;
+      if (guardada) void guardarAcceso(guardada.identificador, guardada.clave, usuario);
+      await login(usuario);
     } catch (err: any) {
       // El token dura 2 minutos: vencido, se vuelve a pedir la clave. El
       // mensaje del servidor ya lo explica.

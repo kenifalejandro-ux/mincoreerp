@@ -19,7 +19,11 @@ import { encolar, type CampoFormData } from "../offline/offlineQueue";
 import { moduloParaEncolar } from "../offline/rutasOffline";
 import { usuarioActivo } from "../offline/sesionOffline";
 
-let refrescoEnCurso: Promise<boolean> | null = null;
+/** `red`: el refresh no llegó al servidor (sin señal). No es lo mismo que que
+ *  el servidor lo rechace: sin señal la sesión puede seguir siendo válida. */
+type ResultadoRefresh = "ok" | "rechazado" | "red";
+
+let refrescoEnCurso: Promise<ResultadoRefresh> | null = null;
 let onSesionExpirada: (() => void) | null = null;
 
 // Nombre del lock coordinado por el navegador (ver refrescarAccessToken).
@@ -32,16 +36,18 @@ export function registrarSesionExpirada(callback: () => void) {
   onSesionExpirada = callback;
 }
 
-async function pedirRefreshAlServidor(): Promise<boolean> {
+async function pedirRefreshAlServidor(): Promise<ResultadoRefresh> {
   try {
     const res = await fetch("/api/auth/refresh", { method: "POST", credentials: "include" });
-    return res.ok;
+    // 5xx: el servidor no respondió bien (deploy, caída): no es un rechazo.
+    if (res.status >= 500) return "red";
+    return res.ok ? "ok" : "rechazado";
   } catch {
-    return false;
+    return "red";
   }
 }
 
-async function refrescarAccessToken(): Promise<boolean> {
+async function refrescarAccessToken(): Promise<ResultadoRefresh> {
   // El backend rota el refresh token en cada uso y trata un reuso como
   // robo, revocando la sesión entera (ver auth.service.ts,
   // refrescarTokenService) — así que dos pestañas del mismo navegador
@@ -85,8 +91,14 @@ export async function enviarSinCola(input: string, init?: RequestInit): Promise<
     return respuesta;
   }
 
-  const seRefresco = await refrescarAccessToken();
-  if (!seRefresco) {
+  const refresco = await refrescarAccessToken();
+  if (refresco === "red") {
+    // Sin señal el refresh no dice nada de la sesión: no se cierra. Se tira
+    // como cualquier fallo de red, para que apiFetch encole lo encolable y
+    // las pantallas lo traten como "sin conexión", no como "sesión vencida".
+    throw new TypeError("Sin conexión");
+  }
+  if (refresco === "rechazado") {
     onSesionExpirada?.();
     return respuesta;
   }
@@ -109,9 +121,25 @@ function respuestaEncolada(clienteUuid: string): Response {
   });
 }
 
+/** 502/503/504 que NO puso el backend sino el proxy (servidor caído, deploy):
+ *  el backend marca todas sus respuestas con `x-request-id`, así que sin él la
+ *  respuesta no vino de la app. Un 503 deliberado del backend (SSO apagado, etc.)
+ *  sí lo trae y conserva su mensaje. */
+export function esFalloDeInfraestructura(respuesta: Response): boolean {
+  const s = respuesta.status;
+  return (s === 502 || s === 503 || s === 504) && !respuesta.headers.get("x-request-id");
+}
+
 export async function apiFetch(input: string, init?: RequestInit): Promise<Response> {
   try {
     const respuesta = await enviarSinCola(input, init);
+    // 502/503/504 los pone el proxy cuando el servidor está caído o
+    // reiniciándose (un deploy): no es una respuesta del servidor sino su
+    // ausencia. Se trata como fallo de red para que lo encolable se guarde en
+    // el equipo y la franja avise "Sin conexión". Un 500 sí es del servidor.
+    if (esFalloDeInfraestructura(respuesta)) {
+      throw new TypeError(`Servidor no disponible (${respuesta.status})`);
+    }
     // Llegó respuesta del servidor (aunque sea un 500): hay red.
     reportarResultadoDeRed(true);
     return respuesta;
