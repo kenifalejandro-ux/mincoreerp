@@ -16,7 +16,11 @@ import { loginPorUI } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
 import { primerGrifoActivo } from "./fixtures/grifos";
 
-test("un vale con 1 caja + 2 bolsas baja cada envase en lo suyo", async ({ page }) => {
+// En cuarentena (@inestable, ver playwright.config.ts): la limpieza del final
+// (anular el vale y la entrada) se colgó en el CI igual que la de
+// urea-corregir-litros, sin que cambie el código. Causa sin confirmar. Se
+// quita el tag cuando se arregle.
+test("un vale con 1 caja + 2 bolsas baja cada envase en lo suyo @inestable", async ({ page }) => {
   test.setTimeout(90_000);
   const marca = randomBytes(3).toString("hex").toUpperCase();
   const admin = adminA();

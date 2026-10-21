@@ -185,13 +185,13 @@ async function flujoCompleto(page: Page) {
   await expect(page.locator("#compra-comprobante-numero")).toHaveCount(0);
 }
 
-test("compra en ruta: una boleta con combustible y urea crea los dos despachos con su foto", async ({
+test("compra en ruta: una boleta con combustible y urea crea los dos despachos con su foto @celular", async ({
   page,
 }) => {
   await flujoCompleto(page);
 });
 
-test.describe("en pantalla de celular", () => {
+test.describe("en pantalla de celular @celular", () => {
   test.use({ viewport: { width: 393, height: 852 }, hasTouch: true });
 
   test("compra en ruta: el mismo flujo en 393x852", async ({ page }) => {
@@ -199,7 +199,9 @@ test.describe("en pantalla de celular", () => {
   });
 });
 
-test("un total distinto al del sistema se registra igual, sin pedir motivo", async ({ page }) => {
+test("un total distinto al del sistema se registra igual, sin pedir motivo @celular", async ({
+  page,
+}) => {
   const marca = `DSC-${unico()}`;
   const numero = `B001-${unico()}`;
   const admin = adminA();
@@ -220,7 +222,7 @@ test("un total distinto al del sistema se registra igual, sin pedir motivo", asy
   await expect.poll(async () => (await despachosDeLaBoleta(page, numero)).length).toBe(2);
 });
 
-test("sin señal la compra queda en el equipo y se sincroniza sola, una sola vez, con su foto", async ({
+test("sin señal la compra queda en el equipo y se sincroniza sola, una sola vez, con su foto @celular", async ({
   page,
   context,
   browserName,
@@ -327,7 +329,7 @@ async function registrarCargaPrevia(
   expect(r.status(), await r.text()).toBe(201);
 }
 
-test("horas abastecidas: se calculan solas desde la carga anterior y lo escrito a mano manda", async ({
+test("horas abastecidas: se calculan solas desde la carga anterior y lo escrito a mano manda @celular", async ({
   page,
 }) => {
   const marca = `HRS-${unico()}`;
@@ -362,7 +364,7 @@ test("horas abastecidas: se calculan solas desde la carga anterior y lo escrito 
   await expect(page.getByText(/La lectura es menor que la de la carga anterior/)).toBeVisible();
 });
 
-test("horas abastecidas: una unidad sin carga anterior queda a mano, sin inventar nada", async ({
+test("horas abastecidas: una unidad sin carga anterior queda a mano, sin inventar nada @celular", async ({
   page,
 }) => {
   const marca = `NEW-${unico()}`;
@@ -379,7 +381,7 @@ test("horas abastecidas: una unidad sin carga anterior queda a mano, sin inventa
   await expect(page.locator("#compra-horas")).toHaveValue("");
 });
 
-test("el historial junta la boleta en una fila y la foto única se sube y se reemplaza desde ahí", async ({
+test("el historial junta la boleta en una fila y la foto única se sube y se reemplaza desde ahí @celular", async ({
   page,
 }) => {
   const marca = `HIS-${unico()}`;
@@ -448,7 +450,9 @@ const hayBorrador = (page: Page) =>
     Object.keys(localStorage).some((k) => k.startsWith("mincore:compra-ruta-borrador:"))
   );
 
-test("el borrador: lo escrito sobrevive a una recarga y se puede descartar", async ({ page }) => {
+test("el borrador: lo escrito sobrevive a una recarga y se puede descartar @celular", async ({
+  page,
+}) => {
   const marca = `BOR-${unico()}`;
   const numero = `B001-${unico()}`;
   const admin = adminA();
@@ -502,7 +506,9 @@ test("el borrador: lo escrito sobrevive a una recarga y se puede descartar", asy
   await expect(page.locator("#compra-comprobante-numero")).toHaveValue("");
 });
 
-test("el borrador se borra al registrar la compra: no vuelve en la recarga", async ({ page }) => {
+test("el borrador se borra al registrar la compra: no vuelve en la recarga @celular", async ({
+  page,
+}) => {
   const marca = `BRG-${unico()}`;
   const numero = `B001-${unico()}`;
   const admin = adminA();

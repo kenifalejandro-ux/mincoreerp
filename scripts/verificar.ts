@@ -14,7 +14,10 @@
  *   1. Migraciones: un número nuevo no puede chocar con uno que ya está en main.
  *   2. prettier, eslint y tsc de lo que cambió (raíz y client/ por separado).
  *   3. vitest del módulo tocado (o la suite entera si cambió algo compartido).
- *   4. e2e en chromium Y firefox de los specs del módulo tocado.
+ *   4. e2e SOLO de los specs que creaste o modificaste: 5 veces seguidas en
+ *      chromium, de a uno y sin reintentos, para probar que son estables.
+ *      Los demás e2e los corre el CI (ver ci.yml): todos los specs en
+ *      chromium en cada PR, y los 3 navegadores cada noche.
  *
  * Si 1 o 2 fallan, NO se levanta Docker: no tiene sentido gastar minutos en
  * tests de código que ni compila.
@@ -28,15 +31,17 @@
  *
  *   npm run verificar                 lo de arriba, contra origin/main
  *   npm run verificar -- --rapido     solo pasos 1 y 2
- *   npm run verificar -- --completo   suite entera y todos los specs
+ *   npm run verificar -- --completo   suite entera y todos los specs (chromium y firefox)
  *   npm run verificar -- --solo-e2e   salta vitest (para repetir solo el e2e)
  *
  * Lo corre solo el hook pre-push. Omitirlo es una decisión consciente y
  * visible: SKIP_VERIFICAR=1 git push   (o SKIP_E2E=1 si no hay Docker).
  *
- * Límite honesto: webkit no corre en esta máquina (sin red para su descarga),
- * y un fallo que depende de la carga del CI puede pasar acá. Esto atrapa lo
- * demás, que fue lo que falló.
+ * Límite honesto: acá no se corren firefox ni webkit, ni los e2e que no
+ * tocaste; eso lo cubre el CI. Lo que se atrapa acá es lo que se puede atrapar
+ * barato y sin depender de la máquina: código que no compila, tests rotos y
+ * specs nuevos que no son estables. Los tests en cuarentena (tag @inestable,
+ * ver playwright.config.ts) no se corren en ningún paso que bloquee.
  */
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
@@ -55,6 +60,8 @@ const args = new Set(process.argv.slice(2));
 const RAPIDO = args.has("--rapido");
 const COMPLETO = args.has("--completo");
 const SOLO_E2E = args.has("--solo-e2e");
+/** Cuántas veces seguidas tiene que pasar un spec nuevo o modificado. */
+const REPETICIONES = 5;
 
 const rojo = (s: string) => `\x1b[31m${s}\x1b[0m`;
 const verde = (s: string) => `\x1b[32m${s}\x1b[0m`;
@@ -245,7 +252,6 @@ async function main(): Promise<number> {
   }
   console.log(`Verificando ${cambiados.length} archivos cambiados contra ${ref}.`);
   sel.motivos.forEach((m) => console.log(`  • ${m}`));
-  sel.avisos.forEach((a) => console.log(amarillo(`  ⚠ ${a}`)));
 
   let fallo = false;
 
@@ -347,21 +353,34 @@ async function main(): Promise<number> {
     }
     if (hayE2e) {
       const puerto = String(await puertoLibre(3011));
+      const modo = COMPLETO
+        ? // Igual que el CI (1 reintento): firefox en esta máquina es más lento
+          // que en el runner y un reintento absorbe ese ruido.
+          ["--project=chromium", "--project=firefox", "--retries=1"]
+        : // Un spec nuevo o modificado tiene que pasar varias veces seguidas, no
+          // una: el que pasa una vez por suerte es el que después falla en el
+          // CI. Sin reintentos (un reintento escondería justo eso) y de a uno,
+          // para que la que falle no sea la laptop.
+          ["--project=chromium", `--repeat-each=${REPETICIONES}`, "--retries=0", "--workers=1"];
       const e2e = paso(
-        `e2e chromium + firefox (${specs.length} specs)`,
+        COMPLETO
+          ? `e2e chromium + firefox (${specs.length} specs)`
+          : `e2e chromium, ${REPETICIONES} veces seguidas (${specs.length} specs tocados)`,
         "npm",
         [
           "run",
           "e2e:local",
           "--",
-          "--project=chromium",
-          "--project=firefox",
-          // Igual que el CI (1 reintento) y con más margen de tiempo: firefox en
-          // una máquina de desarrollo es 2-3 veces más lento que en el runner, y
-          // un login de 31 s contra un límite de 30 s no es un error del código.
-          // Un cuelgue de verdad (>90 s) o una aserción rota siguen fallando.
-          "--retries=1",
+          ...modo,
+          // Con más margen de tiempo que el CI: una máquina de desarrollo es 2-3
+          // veces más lenta que el runner, y un login de 31 s contra un límite
+          // de 30 s no es un error del código. Un cuelgue de verdad (>90 s) o
+          // una aserción rota siguen fallando.
           "--timeout=90000",
+          // La cuarentena no bloquea en ningún lado (ver playwright.config.ts).
+          // Si el spec tocado está entero en cuarentena, no hay nada que correr.
+          "--grep-invert=@inestable",
+          "--pass-with-no-tests",
           ...specs.map((s) => `e2e/${s}`),
         ],
         { env: { ...envBase, PORT: puerto } }

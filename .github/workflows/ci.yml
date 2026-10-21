@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Corrida completa cada noche, y a pedido desde la pestaña Actions ("Run
+  # workflow", sobre cualquier rama): los e2e en los 3 navegadores. No
+  # despliega nada: cd.yml solo sigue a las corridas de CI cuyo evento es
+  # "push" a main.
+  schedule:
+    - cron: "0 6 * * *" # 01:00 en Lima (UTC-5)
+  workflow_dispatch:
 
 jobs:
   backend:
@@ -217,6 +224,14 @@ jobs:
   # completo (Express + build de React + Postgres + Redis), no un mock.
   e2e-tests:
     needs: [backend, frontend]
+    # En un PR o en main, igual que siempre: sin backend y frontend en verde no
+    # hay e2e. De noche (o a pedido) corre igual aunque alguno falle -- por
+    # ejemplo, un aviso nuevo de npm audit --, porque esa corrida existe para
+    # ver los 3 navegadores y saltarla por otra causa la deja ciega esa noche.
+    if: >-
+      ${{ !cancelled() &&
+      ((needs.backend.result == 'success' && needs.frontend.result == 'success') ||
+      github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
 
     services:
@@ -326,6 +341,9 @@ jobs:
       # El límite por TENANT (ERP_RATE_LIMIT_TENANT_DEFAULT, 3000) no hace
       # falta tocarlo: el job entero no se acerca a ese número.
       ERP_RATE_LIMIT_USUARIO_MAX: 5000
+      # "true" de noche o a pedido (los 3 navegadores); "false" en cada PR y
+      # en cada push a main (chromium, y webkit solo para @celular).
+      CORRIDA_COMPLETA: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 
     steps:
       - uses: actions/checkout@v7
@@ -384,13 +402,54 @@ jobs:
           VITE_DEFAULT_TENANT_SLUG: ${{ env.E2E_TENANT_SLUG }}
 
       - name: Instalar navegadores de Playwright
-        run: npx playwright install --with-deps chromium firefox webkit
+        run: |
+          if [ "$CORRIDA_COMPLETA" = "true" ]; then
+            npx playwright install --with-deps chromium firefox webkit
+          else
+            npx playwright install --with-deps chromium webkit
+          fi
 
-      - name: E2E (Playwright)
-        # playwright.config.ts arranca "npm start" solo (webServer) y espera
-        # a que /health responda antes de disparar los tests — ver ese
-        # archivo para el detalle.
-        run: npx playwright test
+      # Qué corre dónde (tags @celular y @inestable): ver playwright.config.ts.
+      # playwright.config.ts arranca "npm start" solo (webServer) y espera a
+      # que /health responda antes de disparar los tests — ver ese archivo
+      # para el detalle.
+      - name: E2E chromium (todos los specs)
+        if: env.CORRIDA_COMPLETA != 'true'
+        run: npx playwright test --project=chromium --grep-invert=@inestable
+
+      - name: E2E webkit (pantallas de celular)
+        if: env.CORRIDA_COMPLETA != 'true'
+        run: npx playwright test --project=webkit --grep=@celular --grep-invert=@inestable --pass-with-no-tests
+
+      - name: E2E completo (los 3 navegadores)
+        if: env.CORRIDA_COMPLETA == 'true'
+        run: npx playwright test --grep-invert=@inestable
+
+      # La cuarentena corre después de lo que sí bloquea, con su propio
+      # reporte para no pisar el de arriba, y si falla solo deja un aviso.
+      - name: E2E en cuarentena (no bloquea)
+        id: cuarentena
+        continue-on-error: true
+        run: |
+          if [ "$CORRIDA_COMPLETA" = "true" ]; then
+            npx playwright test --grep=@inestable --pass-with-no-tests
+          else
+            npx playwright test --project=chromium --grep=@inestable --pass-with-no-tests
+          fi
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report-cuarentena
+
+      - name: Avisar que falló la cuarentena
+        if: steps.cuarentena.outcome == 'failure'
+        run: echo "::warning title=E2E en cuarentena::Falló un test con tag @inestable. No bloquea el merge; el reporte quedó en el artefacto playwright-report-cuarentena."
+
+      - name: Subir reporte de la cuarentena si falló
+        if: steps.cuarentena.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-cuarentena
+          path: playwright-report-cuarentena/
+          retention-days: 7
 
       - name: Subir reporte de Playwright si falla
         if: failure()

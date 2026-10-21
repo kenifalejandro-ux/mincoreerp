@@ -23,7 +23,9 @@ import { test, expect } from "@playwright/test";
 import { loginPorUI } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
 
-test("el admin da de alta a alguien de cancha y esa persona entra con su DNI", async ({ page }) => {
+test("el admin da de alta a alguien de cancha y esa persona entra con su DNI @celular", async ({
+  page,
+}) => {
   const admin = adminA();
   // 8 dígitos como un DNI real, con prefijo 99 para no chocar nunca con uno
   // de verdad si este spec llegara a correr contra datos reales.
