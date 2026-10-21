@@ -90,7 +90,7 @@ describe("combustible: el conductor carga la tanqueta asignada a su unidad (0139
     expect(v.status, JSON.stringify(v.body)).toBe(201);
     const a = await admin
       .put(`/api/erp/combustible/tanquetas/${id}/asignar`)
-      .send({ equipo_id: equipoId });
+      .send({ equipo_id: equipoId, serie_talonario: "ASG", n_vale: nVale++ });
     expect(a.status, JSON.stringify(a.body)).toBe(200);
     return id;
   }

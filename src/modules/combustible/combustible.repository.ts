@@ -1321,8 +1321,9 @@ export class CombustibleRepository {
     serieTalonario: string,
     nVale: number
   ): Promise<boolean> {
-    // También cuenta el vale de una línea de excedente a tanqueta (0140): el
-    // mismo número no se usa dos veces, ni en un despacho ni en un reparto.
+    // También cuentan el vale de una línea de excedente a tanqueta (0140) y el de
+    // una asignación desde la pestaña Tanquetas (0141): el mismo número no se usa
+    // dos veces, ni en un despacho ni en un reparto ni en otra asignación.
     const result = await client.query(
       `SELECT 1 FROM combustible_despachos
        WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3 AND n_vale = $4
@@ -1331,7 +1332,11 @@ export class CombustibleRepository {
        SELECT 1 FROM combustible_recepcion_excedentes x
          JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
         WHERE x.tenant_id = $1 AND $2 = 'combustible' AND x.serie_talonario = $3
-          AND x.n_vale = $4 AND r.anulada_en IS NULL`,
+          AND x.n_vale = $4 AND r.anulada_en IS NULL
+       UNION ALL
+       SELECT 1 FROM combustible_tanqueta_asignaciones a
+        WHERE a.tenant_id = $1 AND $2 = 'combustible' AND a.serie_talonario = $3
+          AND a.n_vale = $4`,
       [tenantId, producto, serieTalonario, nVale]
     );
     return (result.rowCount ?? 0) > 0;

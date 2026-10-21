@@ -258,7 +258,9 @@ describe("combustible: los correos nuevos van a quien tiene ese grifo", () => {
 
     // El conductor carga una tanqueta asignada a SU unidad (0139).
     const asignarAlConductor = (id: number) =>
-      admin.put(`/api/erp/combustible/tanquetas/${id}/asignar`).send({ equipo_id: equipoC });
+      admin
+        .put(`/api/erp/combustible/tanquetas/${id}/asignar`)
+        .send({ equipo_id: equipoC, serie_talonario: "ASG", n_vale: nVale++ });
 
     const llenar = (cantidad: number) =>
       admin.post("/api/erp/combustible/despachos").send({

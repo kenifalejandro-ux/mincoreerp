@@ -5438,14 +5438,18 @@ export class CombustibleController {
   async asignarTanqueta(req: Request, res: Response) {
     const tenantId = getTenantId(req);
     const id = Number(req.params.tanquetaId);
-    const { equipo_id } = req.validatedBody as AsignarTanquetaInput;
+    const { equipo_id, serie_talonario, n_vale } = req.validatedBody as AsignarTanquetaInput;
     const antes = await this.tanquetaVisible(req, id);
     if (!antes) {
       res.status(404).json({ error: "La tanqueta no existe" });
       return;
     }
     const despues = await withTenant(tenantId, (client) =>
-      tanquetas.asignarTanqueta(client, tenantId, id, equipo_id)
+      tanquetas.asignarTanqueta(client, tenantId, id, equipo_id, {
+        serie: serie_talonario,
+        numero: n_vale,
+        usuarioId: req.usuario!.id,
+      })
     );
     await registrarAuditoria({
       accion: "combustible.tanqueta_asignar",
@@ -5456,6 +5460,8 @@ export class CombustibleController {
         codigo: antes.codigo,
         equipoAntes: antes.asignada_vigente ? antes.equipo_asignado_id : null,
         equipoId: equipo_id,
+        serieTalonario: serie_talonario,
+        nVale: n_vale,
       },
       contexto: contextoAuditoriaModulo(req),
     });

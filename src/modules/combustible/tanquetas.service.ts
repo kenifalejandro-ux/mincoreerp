@@ -17,6 +17,7 @@ import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { esViolacionUnicidad } from "../../server/shared/utils/pgError";
 import { motivoGrifoNoAsignable } from "../../server/services/sedes.service";
 import { ALCANCE_TODO, type AlcanceCombustible } from "./alcance";
+import { CombustibleRepository } from "./combustible.repository";
 
 export const CAPACIDAD_TANQUETA_DEFECTO = 280;
 
@@ -186,7 +187,10 @@ export async function asignarTanqueta(
   client: PoolClient,
   tenantId: string,
   id: number,
-  equipoId: number
+  equipoId: number,
+  /** Desde la pestaña Tanquetas (0141): el vale de esta salida, que queda en el
+   *  historial. Los otros caminos de asignación ya llevan su propio vale. */
+  vale?: { serie: string; numero: number; usuarioId: string }
 ) {
   await bloquearTanqueta(client, tenantId, id);
   const t = await getTanqueta(client, tenantId, id);
@@ -209,6 +213,30 @@ export async function asignarTanqueta(
       400,
       `La unidad ${eq.rows[0].placa_codigo} ya lleva ${MAX_TANQUETAS_POR_UNIDAD} tanquetas ` +
         `(${vigentes.map((v) => v.codigo).join(", ")}): libera una antes`
+    );
+  }
+  if (vale) {
+    // El mismo número no se usa dos veces: ni en un despacho, ni en un reparto,
+    // ni en otra asignación (existeVale mira las tres).
+    if (
+      await new CombustibleRepository().existeVale(
+        client,
+        tenantId,
+        "combustible",
+        vale.serie,
+        vale.numero
+      )
+    ) {
+      throw new AppError(
+        409,
+        `El vale ${vale.numero} de la serie ${vale.serie} ya está registrado: usa el siguiente número libre del talonario`
+      );
+    }
+    await client.query(
+      `INSERT INTO combustible_tanqueta_asignaciones
+         (tenant_id, tanqueta_id, equipo_id, serie_talonario, n_vale, usuario_id)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [tenantId, id, equipoId, vale.serie, vale.numero, vale.usuarioId]
     );
   }
   await client.query(
