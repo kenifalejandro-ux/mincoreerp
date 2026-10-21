@@ -1321,21 +1321,36 @@ export class CombustibleRepository {
     serieTalonario: string,
     nVale: number
   ): Promise<boolean> {
+    // El mismo vale en dos transacciones simultáneas (auditoría H-2/H-3): el
+    // vale vive en tres tablas y ninguna restricción las cubre juntas, así que
+    // se serializa por (empresa, producto, serie, número) hasta el commit. La
+    // segunda espera y, al leer, ya ve el vale de la primera. La serie cuenta
+    // sin mayúsculas: "cis" y "CIS" son el mismo talonario.
+    await client.query(
+      `SELECT pg_advisory_xact_lock(
+         hashtextextended($1::text || '|' || $2::text || '|' || upper($3::text) || '|' || $4::text, 0))`,
+      [tenantId, producto, serieTalonario, nVale]
+    );
     // También cuentan el vale de una línea de excedente a tanqueta (0140) y el de
     // una asignación desde la pestaña Tanquetas (0141): el mismo número no se usa
-    // dos veces, ni en un despacho ni en un reparto ni en otra asignación.
+    // dos veces, ni en un despacho ni en un reparto ni en otra asignación. La serie
+    // se compara tal cual, en mayúsculas y en minúsculas (H-8): así el índice de
+    // la serie se sigue usando.
     const result = await client.query(
       `SELECT 1 FROM combustible_despachos
-       WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3 AND n_vale = $4
+       WHERE tenant_id = $1 AND producto = $2
+         AND serie_talonario IN ($3::text, upper($3::text), lower($3::text)) AND n_vale = $4
          AND anulada_en IS NULL
        UNION ALL
        SELECT 1 FROM combustible_recepcion_excedentes x
          JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
-        WHERE x.tenant_id = $1 AND $2 = 'combustible' AND x.serie_talonario = $3
+        WHERE x.tenant_id = $1 AND $2 = 'combustible'
+          AND x.serie_talonario IN ($3::text, upper($3::text), lower($3::text))
           AND x.n_vale = $4 AND r.anulada_en IS NULL
        UNION ALL
        SELECT 1 FROM combustible_tanqueta_asignaciones a
-        WHERE a.tenant_id = $1 AND $2 = 'combustible' AND a.serie_talonario = $3
+        WHERE a.tenant_id = $1 AND $2 = 'combustible'
+          AND a.serie_talonario IN ($3::text, upper($3::text), lower($3::text))
           AND a.n_vale = $4`,
       [tenantId, producto, serieTalonario, nVale]
     );
