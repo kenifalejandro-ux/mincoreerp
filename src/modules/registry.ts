@@ -229,7 +229,23 @@ export const MODULOS: ModuloDefinicion[] = [
       {
         nombre: "combustible_tanquetas",
         pk: "serial",
-        fks: { grifo_interno_id: "grifos_internos", creado_por: "usuarios" },
+        // equipo_asignado_id (0139): la unidad a la que va. Sin declararla, un
+        // restore con ids nuevos la dejaría apuntando al id viejo.
+        fks: {
+          grifo_interno_id: "grifos_internos",
+          creado_por: "usuarios",
+          equipo_asignado_id: "equipos",
+        },
+      },
+      // Historial de asignaciones de tanqueta a unidad, con su vale (0141).
+      {
+        nombre: "combustible_tanqueta_asignaciones",
+        pk: "serial",
+        fks: {
+          tanqueta_id: "combustible_tanquetas",
+          equipo_id: "equipos",
+          usuario_id: "usuarios",
+        },
       },
       // Reparto del excedente de una recepción (0110): cubeta, unidades o
       // devolución. Cascadea desde la recepción.
@@ -240,6 +256,8 @@ export const MODULOS: ModuloDefinicion[] = [
           recepcion_id: "combustible_recepciones",
           equipo_id: "equipos",
           tanqueta_id: "combustible_tanquetas",
+          // La unidad a la que va la tanqueta de esta línea (0140).
+          tanqueta_equipo_id: "equipos",
           decidido_por: "usuarios",
         },
       },
