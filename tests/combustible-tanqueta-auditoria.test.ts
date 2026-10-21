@@ -501,18 +501,65 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
       expect(estados, JSON.stringify(rs.map((r) => r.body))).toEqual([201, 409]);
     });
 
-    it.fails(
-      "H-2: dos recepciones simultáneas con el MISMO vale en el reparto: solo una entra",
-      async () => {
-        const n = 9000 + nVale++;
-        const t1 = await tanquetaNueva();
-        const t2 = await tanquetaNueva();
-        const tanquesLlenos = [
-          await tanqueNuevo(admin, principal, { capacidad_total: 2000, nivel_actual: 2000 }),
-          await tanqueNuevo(admin, principal, { capacidad_total: 2000, nivel_actual: 2000 }),
-        ];
-        const cuerpo = (tq: number, tanqueta: number, unidad: number) => ({
-          combustible_id: tq,
+    it("H-2: dos recepciones simultáneas con el MISMO vale en el reparto: solo una entra", async () => {
+      const n = 9000 + nVale++;
+      const t1 = await tanquetaNueva();
+      const t2 = await tanquetaNueva();
+      const tanquesLlenos = [
+        await tanqueNuevo(admin, principal, { capacidad_total: 2000, nivel_actual: 2000 }),
+        await tanqueNuevo(admin, principal, { capacidad_total: 2000, nivel_actual: 2000 }),
+      ];
+      const cuerpo = (tq: number, tanqueta: number, unidad: number) => ({
+        combustible_id: tq,
+        grifo_id: grifoProveedor,
+        cantidad: 100,
+        costo_unitario: 17,
+        recibido_en: new Date().toISOString(),
+        reparto_excedente: [
+          {
+            destino: "cubeta",
+            cantidad: 100,
+            tanqueta_id: tanqueta,
+            tanqueta_equipo_id: unidad,
+            serie_talonario: "CISR",
+            n_vale: n,
+          },
+        ],
+      });
+      const rs = await Promise.all([
+        admin.post("/api/erp/combustible/recepciones").send(cuerpo(tanquesLlenos[0], t1, uA)),
+        admin.post("/api/erp/combustible/recepciones").send(cuerpo(tanquesLlenos[1], t2, uB)),
+      ]);
+      const lineasConElVale = await withTenant(
+        tenantId,
+        async (c) =>
+          (
+            await c.query(
+              `SELECT count(*)::int AS n FROM combustible_recepcion_excedentes x
+                 JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
+                WHERE x.tenant_id = $1 AND x.serie_talonario = 'CISR' AND x.n_vale = $2
+                  AND r.anulada_en IS NULL`,
+              [tenantId, n]
+            )
+          ).rows[0].n as number
+      );
+      expect(
+        { estados: rs.map((r) => r.status).sort(), lineasConElVale },
+        "el mismo vale CISR-n quedó registrado en más de una recepción"
+      ).toEqual({ estados: [201, 400], lineasConElVale: 1 });
+    });
+
+    it("H-3: una recepción con vale en el reparto y un despacho con el mismo vale, a la vez: solo uno entra", async () => {
+      const n = 9500 + nVale++;
+      const t = await tanquetaNueva();
+      const tLleno = await tanqueNuevo(admin, principal, {
+        capacidad_total: 2000,
+        nivel_actual: 2000,
+      });
+      const tDelVale = await tanquetaNueva(); // fuera del Promise.all: no anidar agentes
+      const rs = await Promise.all([
+        admin.post("/api/erp/combustible/recepciones").send({
+          combustible_id: tLleno,
           grifo_id: grifoProveedor,
           cantidad: 100,
           costo_unitario: 17,
@@ -521,71 +568,18 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
             {
               destino: "cubeta",
               cantidad: 100,
-              tanqueta_id: tanqueta,
-              tanqueta_equipo_id: unidad,
-              serie_talonario: "CISR",
+              tanqueta_id: t,
+              tanqueta_equipo_id: uA,
+              serie_talonario: "MIX",
               n_vale: n,
             },
           ],
-        });
-        const rs = await Promise.all([
-          admin.post("/api/erp/combustible/recepciones").send(cuerpo(tanquesLlenos[0], t1, uA)),
-          admin.post("/api/erp/combustible/recepciones").send(cuerpo(tanquesLlenos[1], t2, uB)),
-        ]);
-        const lineasConElVale = await withTenant(
-          tenantId,
-          async (c) =>
-            (
-              await c.query(
-                `SELECT count(*)::int AS n FROM combustible_recepcion_excedentes x
-                 JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
-                WHERE x.tenant_id = $1 AND x.serie_talonario = 'CISR' AND x.n_vale = $2
-                  AND r.anulada_en IS NULL`,
-                [tenantId, n]
-              )
-            ).rows[0].n as number
-        );
-        expect(
-          { estados: rs.map((r) => r.status).sort(), lineasConElVale },
-          "el mismo vale CISR-n quedó registrado en más de una recepción"
-        ).toEqual({ estados: [201, 400], lineasConElVale: 1 });
-      }
-    );
-
-    it.fails(
-      "H-3: una recepción con vale en el reparto y un despacho con el mismo vale, a la vez: solo uno entra",
-      async () => {
-        const n = 9500 + nVale++;
-        const t = await tanquetaNueva();
-        const tLleno = await tanqueNuevo(admin, principal, {
-          capacidad_total: 2000,
-          nivel_actual: 2000,
-        });
-        const tDelVale = await tanquetaNueva(); // fuera del Promise.all: no anidar agentes
-        const rs = await Promise.all([
-          admin.post("/api/erp/combustible/recepciones").send({
-            combustible_id: tLleno,
-            grifo_id: grifoProveedor,
-            cantidad: 100,
-            costo_unitario: 17,
-            recibido_en: new Date().toISOString(),
-            reparto_excedente: [
-              {
-                destino: "cubeta",
-                cantidad: 100,
-                tanqueta_id: t,
-                tanqueta_equipo_id: uA,
-                serie_talonario: "MIX",
-                n_vale: n,
-              },
-            ],
-          }),
-          llenar(admin, tanque, tDelVale, 10, { serie_talonario: "MIX", n_vale: n }),
-        ]);
-        const aceptadas = rs.filter((r) => r.status === 201).length;
-        expect(aceptadas, JSON.stringify(rs.map((r) => [r.status, r.body]))).toBe(1);
-      }
-    );
+        }),
+        llenar(admin, tanque, tDelVale, 10, { serie_talonario: "MIX", n_vale: n }),
+      ]);
+      const aceptadas = rs.filter((r) => r.status === 201).length;
+      expect(aceptadas, JSON.stringify(rs.map((r) => [r.status, r.body]))).toBe(1);
+    });
   });
 
   // ═══ D. Anulaciones y correcciones ═══════════════════════════════════════
@@ -940,21 +934,17 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
       expect(rr.status, JSON.stringify(rr.body)).toBe(400);
     });
 
-    it.fails(
-      "H-8: la misma serie con otra capitalización ('cis' vs 'CIS') no esquiva el vale duplicado",
-      async () => {
-        const t1 = await tanquetaNueva();
-        const t2 = await tanquetaNueva();
-        const n = nVale++;
-        const a = await llenar(admin, tanque, t1, 10, { serie_talonario: "MAYUS", n_vale: n });
-        expect(a.status).toBe(201);
-        const b = await llenar(admin, tanque, t2, 10, { serie_talonario: "mayus", n_vale: n });
-        expect(
-          b.status,
-          "'mayus' y 'MAYUS' son el mismo talonario de papel"
-        ).toBeGreaterThanOrEqual(400);
-      }
-    );
+    it("H-8: la misma serie con otra capitalización ('cis' vs 'CIS') no esquiva el vale duplicado", async () => {
+      const t1 = await tanquetaNueva();
+      const t2 = await tanquetaNueva();
+      const n = nVale++;
+      const a = await llenar(admin, tanque, t1, 10, { serie_talonario: "MAYUS", n_vale: n });
+      expect(a.status).toBe(201);
+      const b = await llenar(admin, tanque, t2, 10, { serie_talonario: "mayus", n_vale: n });
+      expect(b.status, "'mayus' y 'MAYUS' son el mismo talonario de papel").toBeGreaterThanOrEqual(
+        400
+      );
+    });
 
     it("F7: un reparto de 51 líneas es 400; uno de 50 líneas no revienta", async () => {
       const lleno = await tanqueNuevo(admin, principal, {
