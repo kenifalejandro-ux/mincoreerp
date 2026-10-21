@@ -1293,6 +1293,16 @@ export class CombustibleService {
             renglones
           );
         }
+        // Llenar la tanqueta y decir para qué unidad va es UN solo paso (0139):
+        // si la unidad ya lleva 3, el vale entero se rechaza.
+        if (data.tanqueta_destino_id !== undefined && data.tanqueta_equipo_id !== undefined) {
+          await tanquetas.asignarTanqueta(
+            client,
+            tenantId,
+            data.tanqueta_destino_id,
+            data.tanqueta_equipo_id
+          );
+        }
         return {
           id: Number(fila.id),
           fila: await this.conRenglonesUrea(client, tenantId, "despacho", fila),

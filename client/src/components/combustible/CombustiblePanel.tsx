@@ -40,6 +40,7 @@ import UreaPanel from "../UreaPanel";
 
 import { EVENTOS_UREA, avisarCambioDeUrea } from "./eventosUrea";
 import TanquetaDelConductor from "./TanquetaDelConductor";
+import UnidadDeLaTanqueta from "./UnidadDeLaTanqueta";
 import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from "./Precintos";
 import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
 import VentanaSurtidores from "./Surtidores";
@@ -1313,6 +1314,8 @@ const DESPACHO_FORM_INICIAL = {
   // 0114: a qué tanqueta va un vale a "reserva_cubeta", y de cuál sale una
   // carga en ruta.
   tanqueta_destino_id: "",
+  // 0139: la unidad a la que va la tanqueta que se llena.
+  tanqueta_equipo_id: "",
   tanqueta_origen_id: "",
   // 0115: dónde se cargó desde la tanqueta.
   tanqueta_lugar: "ruta" as "ruta" | "planta",
@@ -3037,6 +3040,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 despachoForm.tipo_destino === "reserva_cubeta" &&
                 despachoForm.tanqueta_destino_id !== ""
                   ? Number(despachoForm.tanqueta_destino_id)
+                  : undefined,
+              tanqueta_equipo_id:
+                despachoForm.tipo_destino === "reserva_cubeta" &&
+                despachoForm.tanqueta_destino_id !== "" &&
+                despachoForm.tanqueta_equipo_id !== ""
+                  ? Number(despachoForm.tanqueta_equipo_id)
                   : undefined,
               surtidor_id:
                 surtidoresDelVale.length > 1 && despachoForm.surtidor_id !== ""
@@ -5658,6 +5667,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           tipo_destino: e.target.value as TipoDestinoDespacho,
                           equipo_id: "",
                           tanqueta_destino_id: "",
+                          tanqueta_equipo_id: "",
                         })
                       }
                     >
@@ -5743,6 +5753,15 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         </div>
                       );
                     })()}
+                  {despachoForm.tanqueta_destino_id !== "" && (
+                    <UnidadDeLaTanqueta
+                      unidades={equipos}
+                      valor={despachoForm.tanqueta_equipo_id}
+                      onCambio={(id) =>
+                        setDespachoForm({ ...despachoForm, tanqueta_equipo_id: id })
+                      }
+                    />
+                  )}
                 </>
               )}
 
