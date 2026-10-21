@@ -71,6 +71,10 @@ test("el admin da de alta a alguien de cancha y esa persona entra con su DNI @ce
 
   // ── Limpieza: dejarlo inactivo para no consumir cupo ─────────────────
   await page.getByRole("button", { name: "No sos vos? Cerrar sesión" }).click();
+  // Esperar a que el cierre termine: si el goto("/") de loginPorUI llega antes,
+  // la sesión del grifero sigue viva y la pantalla de cambio de clave tapa el
+  // login (falló 1 de cada 5 corridas seguidas).
+  await expect(page.getByLabel("Correo o DNI")).toBeVisible();
   await loginPorUI(page, admin.email, admin.password);
   await page.getByRole("button", { name: "Administración" }).click();
   await page
