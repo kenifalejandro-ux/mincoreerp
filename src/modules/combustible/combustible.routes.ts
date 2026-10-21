@@ -47,6 +47,8 @@ import {
   calibracionSurtidorSchema,
   crearTanquetaSchema,
   actualizarTanquetaSchema,
+  asignarTanquetaSchema,
+  liberarTanquetaSchema,
   crearLugarSchema,
   crearViajeSchema,
   cerrarViajeSchema,
@@ -405,6 +407,21 @@ router.get(
   "/tanquetas/formulario",
   requirePestana("combustible", "tanques:registrar_despacho"),
   asyncHandler(controller.listarTanquetasParaFormulario.bind(controller))
+);
+// Asignar o liberar la unidad (0139): mismo permiso que editar la tanqueta.
+router.put(
+  "/tanquetas/:tanquetaId/asignar",
+  requirePestana("combustible", "tanquetas:editar"),
+  requireRole("admin", "operador"),
+  validate(asignarTanquetaSchema),
+  asyncHandler(controller.asignarTanqueta.bind(controller))
+);
+router.put(
+  "/tanquetas/:tanquetaId/liberar",
+  requirePestana("combustible", "tanquetas:editar"),
+  requireRole("admin", "operador"),
+  validate(liberarTanquetaSchema),
+  asyncHandler(controller.liberarTanqueta.bind(controller))
 );
 router.get(
   "/tanquetas/:tanquetaId/historial",
