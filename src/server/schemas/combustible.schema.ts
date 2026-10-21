@@ -369,6 +369,8 @@ export const crearDespachoCombustibleSchema = z
     // 0114: a qué tanqueta va un vale del tanque a "reserva_cubeta", y de qué
     // tanqueta sale una carga en ruta (origen 'tanqueta').
     tanqueta_destino_id: z.number().int().positive().optional(),
+    // 0139: la unidad a la que va esa tanqueta; el vale la asigna al llenarla.
+    tanqueta_equipo_id: z.number().int().positive().optional(),
     tanqueta_origen_id: z.number().int().positive().optional(),
     // 0115: dónde se cargó desde la tanqueta. 'ruta' (default): sin vale y con
     // medidor. 'planta': con vale, como el tanque.
@@ -753,6 +755,13 @@ export const crearDespachoCombustibleSchema = z
         code: z.ZodIssueCode.custom,
         path: ["tanqueta_destino_id"],
         message: "tanqueta_destino_id solo aplica a un vale del tanque a 'reserva_cubeta'",
+      });
+    }
+    if (data.tanqueta_equipo_id !== undefined && data.tanqueta_destino_id === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["tanqueta_equipo_id"],
+        message: "tanqueta_equipo_id solo aplica si el vale llena una tanqueta",
       });
     }
     if (data.origen !== "tanqueta" && data.tanqueta_lugar !== undefined) {

@@ -1933,6 +1933,19 @@ export class CombustibleController {
         },
         contexto: contextoAuditoriaModulo(req),
       });
+      if (data.tanqueta_destino_id !== undefined && data.tanqueta_equipo_id !== undefined) {
+        await registrarAuditoria({
+          accion: "combustible.tanqueta_asignar",
+          tenantId,
+          usuarioId: req.usuario!.id,
+          detalle: {
+            tanquetaId: data.tanqueta_destino_id,
+            equipoId: data.tanqueta_equipo_id,
+            despachoId: fila!.id,
+          },
+          contexto: contextoAuditoriaModulo(req),
+        });
+      }
       await publicarEventoTenant(tenantId, "combustible.despacho_creado", {
         despachoId: fila!.id,
         producto: data.producto,

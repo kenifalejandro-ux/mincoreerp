@@ -63,6 +63,8 @@ test("tanqueta: previsión desde el tanque y carga en ruta", async ({ page }) =>
   await page
     .locator("#despacho-tanqueta-destino")
     .selectOption({ label: `${codigoTanqueta} (libre 280 gal)` });
+  // La unidad que la lleva (0139): se asigna al llenarla.
+  await page.locator("#despacho-tanqueta-equipo").selectOption({ label: `${placa} — VOLQUETE` });
   await page.locator("#despacho-costo-unitario").fill("16");
   await page.locator("#despacho-serie").fill(`P${marca}`);
   await page.locator("#despacho-n-vale").fill("1");
@@ -121,4 +123,5 @@ test("tanqueta: previsión desde el tanque y carga en ruta", async ({ page }) =>
     .last();
   // 280 - 100 en ruta - 50 en planta = 130 → libre 150.
   await expect(tarjeta.getByText(/libre 150 gal/)).toBeVisible();
+  await expect(tarjeta.getByText(`Va con la unidad ${placa}`)).toBeVisible();
 });
