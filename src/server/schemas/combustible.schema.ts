@@ -2200,9 +2200,13 @@ export const actualizarTanquetaSchema = z.object({
 
 export type ActualizarTanquetaInput = z.infer<typeof actualizarTanquetaSchema>;
 
-// Asignar la tanqueta a la unidad que la lleva (0139). Liberar pide motivo.
+// Asignar la tanqueta a la unidad que la lleva (0139), con su vale (0141).
+// Liberar pide motivo.
 export const asignarTanquetaSchema = z.object({
   equipo_id: z.number().int().positive(),
+  // 0141: el vale de esta salida a la unidad, obligatorio al asignar o reasignar.
+  serie_talonario: z.string().trim().min(1, "La serie del talonario es obligatoria").max(20),
+  n_vale: z.number().int().positive(),
 });
 export type AsignarTanquetaInput = z.infer<typeof asignarTanquetaSchema>;
 

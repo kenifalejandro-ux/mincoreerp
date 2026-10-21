@@ -137,7 +137,9 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
         .put(`/api/erp/combustible/tanquetas/${t.id}/liberar`)
         .send({ motivo: "limpieza de la prueba" });
     }
-    return admin.put(`/api/erp/combustible/tanquetas/${id}/asignar`).send({ equipo_id: volquete });
+    return admin
+      .put(`/api/erp/combustible/tanquetas/${id}/asignar`)
+      .send({ equipo_id: volquete, serie_talonario: "ASG", n_vale: nVale++ });
   };
 
   const saldo = async (id: number) => {

@@ -1,6 +1,7 @@
 // Asignar la tanqueta a la unidad que la lleva, o liberarla (migración 0139).
 // Una unidad lleva hasta 3; el servidor lo hace cumplir y su mensaje se muestra
-// tal cual. Liberar pide motivo y queda en la bitácora.
+// tal cual. Al elegir la unidad se pide el vale de esa salida (0141): serie del
+// talonario y N° de vale. Liberar pide motivo y queda en la bitácora.
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -33,6 +34,8 @@ export default function AsignarTanqueta({
   const [equipoId, setEquipoId] = useState(
     tanqueta.asignada_vigente ? String(tanqueta.equipo_asignado_id) : ""
   );
+  const [serie, setSerie] = useState("");
+  const [vale, setVale] = useState("");
   const [motivo, setMotivo] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,6 +51,8 @@ export default function AsignarTanqueta({
       vigente = false;
     };
   }, []);
+
+  const valeCompleto = serie.trim() !== "" && Number(vale) > 0;
 
   const enviar = async (ruta: "asignar" | "liberar", cuerpo: object) => {
     if (enviando) return;
@@ -89,7 +94,13 @@ export default function AsignarTanqueta({
             className="space-y-3"
             onSubmit={(e) => {
               e.preventDefault();
-              if (equipoId !== "") void enviar("asignar", { equipo_id: Number(equipoId) });
+              if (equipoId !== "" && valeCompleto) {
+                void enviar("asignar", {
+                  equipo_id: Number(equipoId),
+                  serie_talonario: serie.trim(),
+                  n_vale: Number(vale),
+                });
+              }
             }}
           >
             <div className="space-y-1">
@@ -118,9 +129,47 @@ export default function AsignarTanqueta({
                 antigua.
               </p>
             </div>
+            {equipoId !== "" && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label
+                    htmlFor="asignar-serie"
+                    className="text-xs font-bold text-slate-700 uppercase"
+                  >
+                    Serie del talonario
+                  </label>
+                  <input
+                    id="asignar-serie"
+                    required
+                    maxLength={20}
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm"
+                    value={serie}
+                    onChange={(e) => setSerie(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label
+                    htmlFor="asignar-vale"
+                    className="text-xs font-bold text-slate-700 uppercase"
+                  >
+                    N° de vale
+                  </label>
+                  <input
+                    id="asignar-vale"
+                    type="number"
+                    required
+                    min={1}
+                    step={1}
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm"
+                    value={vale}
+                    onChange={(e) => setVale(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
             <button
               type="submit"
-              disabled={enviando || equipoId === ""}
+              disabled={enviando || equipoId === "" || !valeCompleto}
               className="w-full bg-[#BADC1E] text-[#0D1719] font-bold py-3 rounded-2xl hover:brightness-110 disabled:opacity-50"
             >
               {enviando ? "Guardando..." : tanqueta.asignada_vigente ? "Reasignar" : "Asignar"}

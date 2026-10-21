@@ -120,7 +120,9 @@ describe("combustible: tanqueta asignada a una unidad (0139)", () => {
   }
 
   const asignar = (id: number, equipo_id: number, ag: Agente = admin) =>
-    ag.put(`/api/erp/combustible/tanquetas/${id}/asignar`).send({ equipo_id });
+    ag
+      .put(`/api/erp/combustible/tanquetas/${id}/asignar`)
+      .send({ equipo_id, serie_talonario: "ASG", n_vale: nVale++ });
   const liberar = (id: number, motivo?: string) =>
     admin.put(`/api/erp/combustible/tanquetas/${id}/liberar`).send(motivo ? { motivo } : {});
   const ver = async (id: number) =>

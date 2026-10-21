@@ -69,6 +69,11 @@ test("tanqueta: se asigna a una unidad desde la pestaña y se libera con motivo"
 
   await page.getByRole("button", { name: `Asignar ${codigo} a una unidad` }).click();
   await page.locator("#asignar-unidad").selectOption({ label: placa });
+  // Al elegir la unidad se pide el vale de la salida (0141): sin él no se asigna.
+  await expect(page.locator("#asignar-serie")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Asignar", exact: true })).toBeDisabled();
+  await page.locator("#asignar-serie").fill(`S${marca}`);
+  await page.locator("#asignar-vale").fill("1");
   await page.getByRole("button", { name: "Asignar", exact: true }).click();
   await expect(page.getByText(`Va con la unidad ${placa}`)).toBeVisible();
 
