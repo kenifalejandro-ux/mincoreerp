@@ -35,7 +35,7 @@ ALTER TABLE combustible_recepcion_excedentes
     AND (tanqueta_equipo_id IS NULL OR tanqueta_id IS NOT NULL)
   );
 
-CREATE INDEX IF NOT EXISTS idx_recepcion_excedentes_equipo
+CREATE INDEX IF NOT EXISTS idx_recepcion_excedentes_tanqueta_equipo
   ON combustible_recepcion_excedentes (tenant_id, tanqueta_equipo_id)
   WHERE tanqueta_equipo_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_recepcion_excedentes_vale
