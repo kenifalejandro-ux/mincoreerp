@@ -120,6 +120,12 @@ test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente 
   await page.locator("#exc-destino-0").selectOption("cubeta");
   await elegirTanqueta(0, codigos[0]);
   await page.locator("#exc-cantidad-0").fill("280");
+  // La tanqueta A va con una unidad y su vale (0140): sin el vale no se registra.
+  await page.locator("#exc-tqt-unidad-0").selectOption({ label: placa });
+  await expect(page.locator("#exc-serie-0")).toBeVisible();
+  await expect(confirmar).toBeDisabled();
+  await page.locator("#exc-serie-0").fill(`E${marca}`);
+  await page.locator("#exc-vale-0").fill("1");
 
   await page.getByRole("button", { name: "+ Dividir en otro destino" }).click();
   await page.locator("#exc-destino-1").selectOption("cubeta");
@@ -199,4 +205,7 @@ test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente 
     const tarjeta = page.locator("div", { has: page.getByText(codigo, { exact: true }) }).last();
     await expect(tarjeta.getByText(/100% · libre 0 gal/)).toBeVisible();
   }
+  // La tanqueta A quedó asignada a la unidad (0140); la B, sin asignar.
+  const tarjetaA = page.locator("div", { has: page.getByText(codigos[0], { exact: true }) }).last();
+  await expect(tarjetaA.getByText(`Va con la unidad ${placa}`)).toBeVisible();
 });

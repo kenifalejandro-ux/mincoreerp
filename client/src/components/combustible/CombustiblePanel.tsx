@@ -41,6 +41,7 @@ import UreaPanel from "../UreaPanel";
 import { EVENTOS_UREA, avisarCambioDeUrea } from "./eventosUrea";
 import TanquetaDelConductor from "./TanquetaDelConductor";
 import UnidadDeLaTanqueta from "./UnidadDeLaTanqueta";
+import UnidadYValeDeLinea from "./UnidadYValeDeLinea";
 import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from "./Precintos";
 import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
 import VentanaSurtidores from "./Surtidores";
@@ -230,6 +231,10 @@ interface LineaReparto {
   cantidad: string;
   equipo_id: string;
   tanqueta_id: string;
+  /** 0140: para qué unidad va la tanqueta, con su vale (los tres o ninguno). */
+  tanqueta_equipo_id?: string;
+  serie_talonario?: string;
+  n_vale?: string;
 }
 interface TanquetaLibre {
   id: number;
@@ -3492,6 +3497,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             cantidad: Number(l.cantidad),
             equipo_id: l.destino === "equipo" ? Number(l.equipo_id) : undefined,
             tanqueta_id: l.destino === "cubeta" ? Number(l.tanqueta_id) : undefined,
+            ...(l.destino === "cubeta" && l.tanqueta_equipo_id
+              ? {
+                  tanqueta_equipo_id: Number(l.tanqueta_equipo_id),
+                  serie_talonario: l.serie_talonario?.trim(),
+                  n_vale: Number(l.n_vale),
+                }
+              : {}),
           })),
         }),
       });
@@ -7886,7 +7898,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             (l) =>
               Number(l.cantidad) > 0 &&
               (l.destino !== "equipo" || l.equipo_id !== "") &&
-              (l.destino !== "cubeta" || l.tanqueta_id !== "")
+              (l.destino !== "cubeta" || l.tanqueta_id !== "") &&
+              (!l.tanqueta_equipo_id ||
+                ((l.serie_talonario ?? "").trim() !== "" && Number(l.n_vale) > 0))
           );
           const completo = Math.abs(falta) < 0.01 && lineasCompletas && pasadas.length === 0;
           const actualizar = (i: number, cambio: Partial<LineaReparto>) =>
@@ -7930,6 +7944,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                               destino: e.target.value as DestinoExcedente,
                               equipo_id: "",
                               tanqueta_id: "",
+                              tanqueta_equipo_id: "",
+                              serie_talonario: "",
+                              n_vale: "",
                             })
                           }
                         >
@@ -8005,6 +8022,16 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           </>
                         )}
                       </div>
+                      {l.destino === "cubeta" && (
+                        <div className="col-span-12">
+                          <UnidadYValeDeLinea
+                            indice={i}
+                            unidades={equipos}
+                            valor={l}
+                            onCambio={(cambio) => actualizar(i, cambio)}
+                          />
+                        </div>
+                      )}
                       <div className="col-span-12 sm:col-span-1">
                         {lineasReparto.length > 1 && (
                           <button
@@ -8048,7 +8075,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         : pasadas.length > 0
                           ? `${pasadas.map((t) => `${t.codigo} solo admite ${t.libre.toLocaleString("es-PE")} ${u}`).join("; ")}.`
                           : !lineasCompletas
-                            ? "Completa cada línea: cantidad, y la tanqueta o la unidad."
+                            ? "Completa cada línea: cantidad, y la tanqueta o la unidad (y el vale si la tanqueta lleva unidad)."
                             : "El reparto cubre todo el excedente."}
                   </p>
                   {libres.length === 0 && (
