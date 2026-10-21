@@ -6,9 +6,10 @@
 // El cilindro es el mismo lenguaje visual que "Nivel de tanque", en chico,
 // uno por tanqueta. Los permisos los decide el servidor; el front solo evita
 // dibujar un botón que iba a dar 403.
-import { History, Pencil, Plus, X } from "lucide-react";
+import { History, Pencil, Plus, Truck, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import AsignarTanqueta from "./AsignarTanqueta";
 import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
 import { useSedes } from "../comunes/useSedes";
@@ -29,6 +30,10 @@ interface Tanqueta {
   entradas_excedente: string;
   entradas_prevision: string;
   salidas: string;
+  /** A qué unidad va (0139). La asignación vale mientras tenga saldo. */
+  equipo_asignado_id: number | null;
+  equipo_asignado: string | null;
+  asignada_vigente: boolean;
 }
 
 /** Un movimiento de la tanqueta (0111/0114): lo que entró (excedente de una
@@ -121,6 +126,8 @@ export default function TanquetasPanel() {
   const [guardando, setGuardando] = useState(false);
   const [historialDe, setHistorialDe] = useState<Tanqueta | null>(null);
   const [historial, setHistorial] = useState<MovimientoTanqueta[]>([]);
+
+  const [asignando, setAsignando] = useState<Tanqueta | null>(null);
 
   const permite = (accion: "nueva" | "editar") => {
     const override = usuario?.permisosPestanas?.[`combustible:tanquetas:${accion}`];
@@ -330,6 +337,11 @@ export default function TanquetasPanel() {
                     {formatear(Number(t.salidas))}
                   </p>
                 )}
+                {t.asignada_vigente && (
+                  <p className="text-[11px] text-[#BADC1E] mt-1 truncate">
+                    Va con la unidad {t.equipo_asignado}
+                  </p>
+                )}
                 <div className="mt-auto pt-3 flex gap-2">
                   <button
                     onClick={() => verHistorial(t)}
@@ -339,6 +351,16 @@ export default function TanquetasPanel() {
                   >
                     <History className="w-4 h-4" />
                   </button>
+                  {permite("editar") && t.activa && (
+                    <button
+                      onClick={() => setAsignando(t)}
+                      aria-label={`Asignar ${t.codigo} a una unidad`}
+                      title="Asignar a una unidad"
+                      className="p-2 rounded border border-[#334155] text-[#94a3b8] hover:text-white"
+                    >
+                      <Truck className="w-4 h-4" />
+                    </button>
+                  )}
                   {permite("editar") && (
                     <button
                       onClick={() => abrirEdicion(t)}
@@ -476,6 +498,17 @@ export default function TanquetasPanel() {
             </form>
           </div>
         </div>
+      )}
+
+      {asignando && (
+        <AsignarTanqueta
+          tanqueta={asignando}
+          onCerrar={() => setAsignando(null)}
+          onListo={() => {
+            setAsignando(null);
+            void cargar();
+          }}
+        />
       )}
 
       {historialDe && (
