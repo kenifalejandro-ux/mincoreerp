@@ -572,15 +572,16 @@ export const MODULOS: ModuloDefinicion[] = [
     // criterio que las plantillas de Checklists). GET /despachos y GET
     // /despachos/huecos tampoco: son lecturas, no escrituras.
     //
-    // POST /recepciones (Fase C) tampoco está acá: una cisterna descarga en
-    // planta, con red, y quien la registra es admin desde la oficina -- no
-    // es el caso de uso sin señal que justifica la cola (ADR-0002 §8). Sí
-    // usa `cliente_uuid` igual, pero por el doble clic, no por offline (ver
-    // el comentario del campo en combustible.schema.ts).
+    // POST /recepciones (Fase C) SÍ está acá: el grifero registra la llegada
+    // de la cisterna en planta, donde puede no haber señal. El servicio la
+    // envuelve en idempotentInsert por su cliente_uuid, así que el reintento no
+    // duplica. Un excedente que necesita decisión (409) no se puede resolver
+    // sin red: eso se ve al sincronizar.
     offline: {
       escrituras: [
         { metodo: "POST", ruta: "/lecturas" },
         { metodo: "POST", ruta: "/despachos" },
+        { metodo: "POST", ruta: "/recepciones" },
         // La foto del comprobante de una compra en ruta, apuntada por el uuid
         // del dispositivo (0109). Espejo de offlineRegistry.ts del cliente.
         { metodo: "POST", ruta: "/despachos/por-uuid/:clienteUuid/comprobante" },

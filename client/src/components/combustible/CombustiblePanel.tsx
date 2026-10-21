@@ -3492,6 +3492,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
       setExcedentePendiente(null);
       setModalRecepcionAbierto(false);
+      // 202: sin señal, quedó guardada en este equipo y se envía sola. No se
+      // recarga (el GET también falla sin red) ni se dice "registrada".
+      if (res.status === 202) {
+        setMensajeExito(
+          "Sin conexión: la recepción quedó guardada en este equipo y se enviará sola cuando vuelva la señal."
+        );
+        return;
+      }
       // Recargar: el costo promedio del tanque acaba de cambiar y se muestra
       // en la tabla.
       await actualizarVistasCombustible();

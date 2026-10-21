@@ -58,6 +58,9 @@ export const ESCRITURAS_OFFLINE: Record<string, EscrituraOffline[]> = {
   combustible: [
     { metodo: "POST", ruta: "/lecturas" },
     { metodo: "POST", ruta: "/despachos" },
+    // La llegada de una cisterna, que el grifero registra en planta (Fase C).
+    // El servicio es idempotente por cliente_uuid.
+    { metodo: "POST", ruta: "/recepciones" },
     // La foto del comprobante de una compra en ruta (0109). Apunta a la
     // compra por el uuid del dispositivo y no por su id: si se saca sin señal,
     // la compra todavía no existe en el servidor y no tiene id. La cola drena
