@@ -1773,6 +1773,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [pedirMedidorEnDespacho, setPedirMedidorEnDespacho] = useState(false);
   const [formPideMedidor, setFormPideMedidor] = useState(false);
   const [tanquetasFormulario, setTanquetasFormulario] = useState<TanquetaFormulario[]>([]);
+  // El servidor marca al conductor que no tiene ninguna unidad a su cargo (H-10).
+  const [conductorSinUnidad, setConductorSinUnidad] = useState(false);
   // La última lectura de medidor de la unidad elegida (0115): el que carga
   // solo escribe la nueva, viendo la anterior.
   const [ultimaLectura, setUltimaLectura] = useState<{
@@ -2733,7 +2735,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     // default que el servidor (si la empresa lo prendió, el servidor no
     // bloquea un vale sin él, solo lo alerta).
     apiFetch("/api/erp/combustible/tanquetas/formulario")
-      .then((r) => (r.ok ? r.json() : []))
+      .then((r) => {
+        setConductorSinUnidad(r.headers.get("X-Conductor-Sin-Unidad") === "1");
+        return r.ok ? r.json() : [];
+      })
       .then((b) => {
         const lista: TanquetaFormulario[] = Array.isArray(b) ? b : [];
         setTanquetasFormulario(lista);
@@ -5287,7 +5292,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   const pideMedidor = enRuta || formPideMedidor;
                   const medidor = equipoSeleccionado?.tipo_medidor ?? null;
                   if (esConductor && !elegida) {
-                    return <TanquetaDelConductor tanquetas={[]} cantidad="" />;
+                    return (
+                      <TanquetaDelConductor
+                        tanquetas={[]}
+                        cantidad=""
+                        sinUnidad={conductorSinUnidad}
+                      />
+                    );
                   }
                   return (
                     <>

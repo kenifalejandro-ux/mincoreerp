@@ -190,11 +190,7 @@ export async function asignarTanqueta(
   equipoId: number,
   /** Desde la pestaña Tanquetas (0141): el vale de esta salida, que queda en el
    *  historial. Los otros caminos de asignación ya llevan su propio vale. */
-  vale?: { serie: string; numero: number; usuarioId: string },
-  /** Quien asigna al llenar (el grifero) solo puede dar unidad a una tanqueta
-   *  libre o que ya va con ESA unidad: pasarla de una unidad a otra es una
-   *  corrección y exige el permiso de editar (auditoría H-1). */
-  soloLibre = false
+  vale?: { serie: string; numero: number; usuarioId: string }
 ) {
   await bloquearTanqueta(client, tenantId, id);
   const t = await getTanqueta(client, tenantId, id);
@@ -211,10 +207,13 @@ export async function asignarTanqueta(
   if (!eq.rows[0].activo) {
     throw new AppError(400, `La unidad ${eq.rows[0].placa_codigo} está dada de baja`);
   }
-  if (soloLibre && t.asignada_vigente && Number(t.equipo_asignado_id) !== equipoId) {
+  // Una tanqueta con combustible que ya va con una unidad está en la línea
+  // amarilla: no se pasa a otra. Se libera primero (con motivo) y se asigna de
+  // nuevo (auditoría H-1 y H-9). Volver a asignarla a ESA unidad sí se permite.
+  if (t.asignada_vigente && Number(t.equipo_asignado_id) !== equipoId) {
     throw new AppError(
-      403,
-      `La tanqueta ${t.codigo} ya va con otra unidad: reasignarla exige el permiso de editar tanquetas`
+      409,
+      `La tanqueta ${t.codigo} ya va con otra unidad: libérala primero (con motivo) y luego asígnala`
     );
   }
   const vigentes = await tanquetasVigentesDeUnidad(client, tenantId, equipoId);
@@ -489,6 +488,12 @@ async function unidadesDelConductor(client: PoolClient, tenantId: string, dni: s
     [tenantId, d]
   );
   return new Set(r.rows.map((u) => Number(u.id)));
+}
+
+/** ¿Este conductor tiene alguna unidad a su cargo en Equipos? Si no, el
+ *  formulario viene vacío por eso y se le dice (auditoría H-10). */
+export async function conductorSinUnidad(client: PoolClient, tenantId: string, dni: string) {
+  return (await unidadesDelConductor(client, tenantId, dni)).size === 0;
 }
 
 /** El conductor solo carga una tanqueta asignada a SU unidad, y si lleva

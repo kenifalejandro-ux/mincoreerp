@@ -14,11 +14,22 @@ const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigi
 export default function TanquetaDelConductor({
   tanquetas,
   cantidad,
+  sinUnidad = false,
 }: {
   tanquetas: TanquetaAsignadaVista[];
   cantidad: string;
+  /** El servidor dice que este conductor no tiene ninguna unidad a su cargo en Equipos. */
+  sinUnidad?: boolean;
 }) {
   const [activa, siguiente] = tanquetas;
+  if (!activa && sinUnidad) {
+    return (
+      <p className="text-sm text-amber-700">
+        Tu usuario no tiene ninguna unidad a su cargo en Equipos. Pídele al administrador que revise
+        tu DNI en la unidad que manejas.
+      </p>
+    );
+  }
   if (!activa) {
     return (
       <p className="text-sm text-amber-700">

@@ -90,7 +90,14 @@ export default function AsignarTanqueta({
           </button>
         </div>
         <div className="p-6 space-y-4">
+          {tanqueta.asignada_vigente && (
+            <p className="text-sm text-slate-700">
+              Esta tanqueta ya va con una unidad. Para cambiarla, libérala primero (con motivo) y
+              luego asígnala de nuevo.
+            </p>
+          )}
           <form
+            hidden={tanqueta.asignada_vigente}
             className="space-y-3"
             onSubmit={(e) => {
               e.preventDefault();
@@ -172,7 +179,7 @@ export default function AsignarTanqueta({
               disabled={enviando || equipoId === "" || !valeCompleto}
               className="w-full bg-[#BADC1E] text-[#0D1719] font-bold py-3 rounded-2xl hover:brightness-110 disabled:opacity-50"
             >
-              {enviando ? "Guardando..." : tanqueta.asignada_vigente ? "Reasignar" : "Asignar"}
+              {enviando ? "Guardando..." : "Asignar"}
             </button>
           </form>
 

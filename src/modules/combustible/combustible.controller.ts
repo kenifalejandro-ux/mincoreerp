@@ -1903,8 +1903,7 @@ export class CombustibleController {
           req.usuario!.id,
           data,
           alcanceDe(req),
-          req.usuario!.rol === "conductor_ruta" ? (req.usuario!.dni ?? "") : undefined,
-          !["admin", "operador"].includes(req.usuario!.rol)
+          req.usuario!.rol === "conductor_ruta" ? (req.usuario!.dni ?? "") : undefined
         )
       );
 
@@ -5332,6 +5331,14 @@ export class CombustibleController {
    *  despachos (el conductor no tiene el panel de Tanquetas). */
   async listarTanquetasParaFormulario(req: Request, res: Response) {
     const tenantId = getTenantId(req);
+    // El conductor sin ninguna unidad a su cargo en Equipos (su DNI no
+    // coincide) recibe la lista vacía y esta marca, para decírselo (H-10).
+    if (req.usuario!.rol === "conductor_ruta") {
+      const sinUnidad = await withTenant(tenantId, (client) =>
+        tanquetas.conductorSinUnidad(client, tenantId, req.usuario!.dni ?? "")
+      );
+      if (sinUnidad) res.setHeader("X-Conductor-Sin-Unidad", "1");
+    }
     res.json(
       await withTenant(tenantId, (client) =>
         tanquetas.tanquetasParaFormulario(
