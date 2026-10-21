@@ -432,7 +432,9 @@ export async function exigirTanquetaDelConductor(
     throw new AppError(400, "La tanqueta no está asignada a tu unidad: pide que te la asignen");
   }
   const [activa] = await tanquetasVigentesDeUnidad(client, tenantId, equipoId);
-  if (t.asignada_vigente && Number(activa.id) !== tanquetaId) {
+  // `activa` puede no existir: otra carga simultánea pudo vaciar la lista entre
+  // la lectura de arriba y esta (cola offline). Entonces no hay a quién ceder el turno.
+  if (t.asignada_vigente && activa && Number(activa.id) !== tanquetaId) {
     throw new AppError(
       400,
       `Carga primero la tanqueta ${activa.codigo}: le quedan ${Number(activa.saldo)} gal`
