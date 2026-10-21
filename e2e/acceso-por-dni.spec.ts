@@ -23,7 +23,9 @@ import { test, expect } from "@playwright/test";
 import { loginPorUI } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
 
-test("el admin da de alta a alguien de cancha y esa persona entra con su DNI", async ({ page }) => {
+test("el admin da de alta a alguien de cancha y esa persona entra con su DNI @celular", async ({
+  page,
+}) => {
   const admin = adminA();
   // 8 dígitos como un DNI real, con prefijo 99 para no chocar nunca con uno
   // de verdad si este spec llegara a correr contra datos reales.
@@ -69,6 +71,10 @@ test("el admin da de alta a alguien de cancha y esa persona entra con su DNI", a
 
   // ── Limpieza: dejarlo inactivo para no consumir cupo ─────────────────
   await page.getByRole("button", { name: "No sos vos? Cerrar sesión" }).click();
+  // Esperar a que el cierre termine: si el goto("/") de loginPorUI llega antes,
+  // la sesión del grifero sigue viva y la pantalla de cambio de clave tapa el
+  // login (falló 1 de cada 5 corridas seguidas).
+  await expect(page.getByLabel("Correo o DNI")).toBeVisible();
   await loginPorUI(page, admin.email, admin.password);
   await page.getByRole("button", { name: "Administración" }).click();
   await page

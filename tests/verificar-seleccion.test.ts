@@ -37,7 +37,7 @@ describe("verificar: qué se corre según lo que cambió", () => {
     expect(sel().nada).toBe(true);
   });
 
-  it("el caso del PR #270: tocar el servicio de combustible corre TODOS los e2e de urea y combustible", () => {
+  it("tocar el servicio y un spec corre los tests del módulo y SOLO el spec tocado", () => {
     const r = sel(
       "src/modules/combustible/combustible.service.ts",
       "e2e/urea-conteo-suelto.spec.ts"
@@ -47,13 +47,15 @@ describe("verificar: qué se corre según lo que cambió", () => {
       "tests/combustible-urea-conteo-envase.test.ts",
       "tests/combustible-urea.test.ts",
     ]);
-    // urea-corregir-litros NO se tocó, y fue el que falló en el CI.
-    expect(r.specs).toEqual([
-      "combustible-excedente.spec.ts",
-      "urea-conteo-suelto.spec.ts",
-      "urea-corregir-litros.spec.ts",
-      "urea-vale-renglones.spec.ts",
-    ]);
+    // Los otros specs del módulo (urea-corregir-litros, el que falló en el
+    // PR #270) los corre el CI en el PR, no la laptop.
+    expect(r.specs).toEqual(["urea-conteo-suelto.spec.ts"]);
+  });
+
+  it("tocar código sin tocar ningún spec no corre e2e en local, y lo dice", () => {
+    const r = sel("src/modules/combustible/combustible.service.ts");
+    expect(r.specs).toEqual([]);
+    expect(r.motivos.join(" ")).toMatch(/no tocaste ningún spec/);
   });
 
   it("un módulo con guion bajo busca sus tests con guion medio", () => {
@@ -62,38 +64,19 @@ describe("verificar: qué se corre según lo que cambió", () => {
     ]);
   });
 
-  it("un módulo sin e2e lo avisa en vez de callarse", () => {
-    const r = sel("src/modules/equipos/equipos.service.ts");
-    expect(r.tests).toEqual(["tests/equipos-rutas.test.ts"]);
-    expect(r.specs).toEqual([]);
-    expect(r.avisos[0]).toMatch(/equipos.*sin e2e|no tiene e2e/);
-  });
-
-  it("algo compartido (server, migraciones, config) corre la suite entera y el humo", () => {
+  it("algo compartido (server, migraciones, config) corre la suite entera de vitest", () => {
     for (const f of ["src/server/config/database.ts", "migrations/0133_x.sql", "package.json"]) {
       const r = sel(f);
       expect(r.tests, f).toBe("todos");
-      expect(r.specs, f).toEqual([
-        "acceso-por-dni.spec.ts",
-        "aislamiento-tenants.spec.ts",
-        "login.spec.ts",
-      ]);
+      expect(r.specs, f).toEqual([]);
     }
   });
 
-  it("el cliente de un módulo corre el e2e de ese módulo y no toca los tests de backend", () => {
+  it("el cliente de un módulo no corre tipos de backend ni e2e en local", () => {
     const r = sel("client/src/components/UreaPanel.tsx");
     expect(r.client).toBe(true);
     expect(r.backend).toBe(false);
-    expect(r.specs).toContain("urea-corregir-litros.spec.ts");
-  });
-
-  it("el cliente fuera de un módulo corre el humo", () => {
-    expect(sel("client/src/App.tsx").specs).toEqual([
-      "acceso-por-dni.spec.ts",
-      "aislamiento-tenants.spec.ts",
-      "login.spec.ts",
-    ]);
+    expect(r.specs).toEqual([]);
   });
 
   it("un test o spec tocado se corre aunque su módulo no se reconozca", () => {

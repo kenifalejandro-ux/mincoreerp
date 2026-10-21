@@ -9,6 +9,25 @@
  * `timeout` sin que eso pase — así nunca se dispara un test contra un
  * server a medio arrancar, sin necesidad de un loop de curl escrito a mano
  * en el workflow.
+ *
+ * ── Tags: qué corre dónde ───────────────────────────────────────────────
+ *
+ * En cada PR el CI corre todos los specs en chromium; firefox y webkit
+ * completos, cada noche (ver ci.yml). Dos tags cambian eso:
+ *
+ *   @celular    pantalla que se usa en el celular (conductor, gente de
+ *               cancha): en cada PR corre además en webkit, que es el motor
+ *               de Safari del iPhone. Un fallo ahí no puede esperar a la noche.
+ *
+ *   @inestable  cuarentena: el test falla a veces sin que cambie el código.
+ *               Sigue corriendo en cada PR, pero aparte y sin bloquear el
+ *               merge: solo avisa. Lleva un comentario con la causa conocida
+ *               y sale de cuarentena (se quita el tag) cuando se arregla.
+ *               Es para un fallo intermitente ya visto, no para tapar uno nuevo.
+ *
+ * El tag va al final del título: test("registra la compra @celular", ...).
+ * Playwright lo reconoce igual que { tag: "@celular" }, y no obliga a
+ * prettier a reindentar el test entero.
  */
 import { defineConfig, devices } from "@playwright/test";
 

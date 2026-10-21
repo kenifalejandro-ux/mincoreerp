@@ -30,7 +30,11 @@ async function entrarConClaveTemporal(page: Page, email: string, temporal: strin
   await expect(page.getByRole("button", { name: "Dashboard" })).toBeVisible();
 }
 
-test("el encargado con el check corrige los litros de un envase viendo el impacto antes", async ({
+// En cuarentena (@inestable, ver playwright.config.ts): la limpieza del final
+// (anular la recepción) a veces se cuelga hasta el timeout en el CI, también
+// en main, sin que cambie el código; los reintentos chocan después con lo que
+// quedó sin limpiar. Causa sin confirmar. Se quita el tag cuando se arregle.
+test("el encargado con el check corrige los litros de un envase viendo el impacto antes @inestable", async ({
   page,
   browser,
 }) => {
