@@ -1708,6 +1708,11 @@ export const crearRecepcionCombustibleSchema = z
             equipo_id: z.number().int().positive().optional(),
             // A cuál tanqueta va una línea de 'cubeta' (0111).
             tanqueta_id: z.number().int().positive().optional(),
+            // 0140: para qué unidad va esa tanqueta, con su vale. Van los tres
+            // o ninguno.
+            tanqueta_equipo_id: z.number().int().positive().optional(),
+            serie_talonario: z.string().trim().min(1).max(20).optional(),
+            n_vale: z.number().int().positive().optional(),
             observaciones: z.string().trim().max(300).optional(),
           })
           .superRefine((l, ctx) => {
@@ -1723,6 +1728,25 @@ export const crearRecepcionCombustibleSchema = z
                 code: z.ZodIssueCode.custom,
                 path: ["tanqueta_id"],
                 message: "tanqueta_id va si y solo si el destino es 'cubeta'",
+              });
+            }
+            const conUnidad = [
+              l.tanqueta_equipo_id !== undefined,
+              l.serie_talonario !== undefined,
+              l.n_vale !== undefined,
+            ];
+            if (conUnidad.some(Boolean) && !conUnidad.every(Boolean)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["tanqueta_equipo_id"],
+                message: "unidad, serie del talonario y n° de vale van juntos o ninguno",
+              });
+            }
+            if (conUnidad.some(Boolean) && l.destino !== "cubeta") {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["tanqueta_equipo_id"],
+                message: "la unidad y el vale solo aplican a una línea de 'cubeta'",
               });
             }
           })
