@@ -20,6 +20,9 @@ import { ALCANCE_TODO, type AlcanceCombustible } from "./alcance";
 
 export const CAPACIDAD_TANQUETA_DEFECTO = 280;
 
+/** Cuántas tanquetas puede llevar una unidad a la vez (0139). */
+export const MAX_TANQUETAS_POR_UNIDAD = 3;
+
 /** Lo que entró a la tanqueta: el excedente de recepciones vigentes (0111) y
  *  los vales del tanque a "reserva en cubeta" que la eligieron (0114). Anular
  *  una recepción o un vale devuelve el espacio. */
@@ -55,8 +58,14 @@ const SQL_SALIDAS = `
      WHERE d.tenant_id = t.tenant_id AND d.tanqueta_origen_id = t.id AND d.anulada_en IS NULL
   ), 0)`;
 
+/** La asignación a una unidad (0139) vale mientras la tanqueta tenga saldo:
+ *  al vaciarse deja de contar sola, sin columna de "libre" que pueda divergir. */
+const SQL_ASIGNADA_VIGENTE = `(t.equipo_asignado_id IS NOT NULL AND ${SQL_ENTRADAS} - ${SQL_SALIDAS} > 0)`;
+
 const COLUMNAS = `
   t.id, t.grifo_interno_id, t.codigo, t.capacidad, t.activa, t.motivo_baja, t.creado_en,
+  t.equipo_asignado_id, t.asignada_en,
+  ${SQL_ASIGNADA_VIGENTE} AS asignada_vigente,
   ${SQL_ENTRADAS} AS entradas,
   ${SQL_ENTRADAS_EXCEDENTE} AS entradas_excedente,
   ${SQL_ENTRADAS_PREVISION} AS entradas_prevision,
@@ -82,9 +91,10 @@ export async function listarTanquetas(
   }
   if (filtros.soloActivas) condiciones.push("t.activa");
   const r = await client.query(
-    `SELECT ${COLUMNAS}, g.nombre AS grifo_nombre
+    `SELECT ${COLUMNAS}, g.nombre AS grifo_nombre, e.placa_codigo AS equipo_asignado
        FROM combustible_tanquetas t
        JOIN grifos_internos g ON g.id = t.grifo_interno_id AND g.tenant_id = t.tenant_id
+       LEFT JOIN equipos e ON e.id = t.equipo_asignado_id AND e.tenant_id = t.tenant_id
       WHERE ${condiciones.join(" AND ")}
       ORDER BY t.activa DESC, lower(t.codigo)`,
     valores
@@ -151,6 +161,92 @@ export async function bloquearTanqueta(client: PoolClient, tenantId: string, id:
     `SELECT 1 FROM combustible_tanquetas WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
     [tenantId, id]
   );
+}
+
+/** Las tanquetas que lleva una unidad ahora (asignadas y con saldo), la más
+ *  antigua primero: esa es la ACTIVA, la que el conductor carga primero. */
+export async function tanquetasVigentesDeUnidad(
+  client: PoolClient,
+  tenantId: string,
+  equipoId: number
+) {
+  const r = await client.query(
+    `SELECT ${COLUMNAS} FROM combustible_tanquetas t
+      WHERE t.tenant_id = $1 AND t.equipo_asignado_id = $2 AND t.activa AND ${SQL_ASIGNADA_VIGENTE}
+      ORDER BY t.asignada_en, t.id`,
+    [tenantId, equipoId]
+  );
+  return r.rows;
+}
+
+/** Asigna la tanqueta a una unidad (o la reasigna: se cambia de unidad sin
+ *  pasar por "liberar"). Bloquea la tanqueta y la unidad, así dos asignaciones
+ *  simultáneas no pasan del tope. */
+export async function asignarTanqueta(
+  client: PoolClient,
+  tenantId: string,
+  id: number,
+  equipoId: number
+) {
+  await bloquearTanqueta(client, tenantId, id);
+  const t = await getTanqueta(client, tenantId, id);
+  if (!t) return null;
+  if (!t.activa) throw new AppError(400, `La tanqueta ${t.codigo} está dada de baja`);
+  if (Number(t.saldo) <= 0) {
+    throw new AppError(400, `La tanqueta ${t.codigo} está vacía: no hay nada que asignar`);
+  }
+  const eq = await client.query<{ activo: boolean; placa_codigo: string }>(
+    `SELECT activo, placa_codigo FROM equipos WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+    [tenantId, equipoId]
+  );
+  if (eq.rowCount === 0) throw new AppError(400, "La unidad no existe");
+  if (!eq.rows[0].activo) {
+    throw new AppError(400, `La unidad ${eq.rows[0].placa_codigo} está dada de baja`);
+  }
+  const vigentes = await tanquetasVigentesDeUnidad(client, tenantId, equipoId);
+  if (!vigentes.some((v) => Number(v.id) === id) && vigentes.length >= MAX_TANQUETAS_POR_UNIDAD) {
+    throw new AppError(
+      400,
+      `La unidad ${eq.rows[0].placa_codigo} ya lleva ${MAX_TANQUETAS_POR_UNIDAD} tanquetas ` +
+        `(${vigentes.map((v) => v.codigo).join(", ")}): libera una antes`
+    );
+  }
+  await client.query(
+    `UPDATE combustible_tanquetas SET equipo_asignado_id = $3, asignada_en = now()
+      WHERE tenant_id = $1 AND id = $2`,
+    [tenantId, id, equipoId]
+  );
+  return getTanqueta(client, tenantId, id);
+}
+
+/** Quita la asignación a mano (la tanqueta volvió con saldo y no sigue con la
+ *  unidad). Si ya estaba sin asignar es un error: no hay nada que liberar. */
+export async function liberarTanqueta(client: PoolClient, tenantId: string, id: number) {
+  await bloquearTanqueta(client, tenantId, id);
+  const t = await getTanqueta(client, tenantId, id);
+  if (!t) return null;
+  if (t.equipo_asignado_id === null) {
+    throw new AppError(400, `La tanqueta ${t.codigo} no está asignada a ninguna unidad`);
+  }
+  await client.query(
+    `UPDATE combustible_tanquetas SET equipo_asignado_id = NULL, asignada_en = NULL
+      WHERE tenant_id = $1 AND id = $2`,
+    [tenantId, id]
+  );
+  return getTanqueta(client, tenantId, id);
+}
+
+/** Antes de llenar una tanqueta vacía, olvida a qué unidad iba: con saldo 0 la
+ *  asignación ya no cuenta, pero si se llenara de nuevo reviviría sola. */
+export async function limpiarAsignacionSiVacia(client: PoolClient, tenantId: string, id: number) {
+  const t = await getTanqueta(client, tenantId, id);
+  if (t && t.equipo_asignado_id !== null && Number(t.saldo) <= 0) {
+    await client.query(
+      `UPDATE combustible_tanquetas SET equipo_asignado_id = NULL, asignada_en = NULL
+        WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, id]
+    );
+  }
 }
 
 /** El siguiente código libre "TQT-001". Mira solo los que ya siguen el
@@ -359,6 +455,7 @@ export async function validarLlenadoDeTanqueta(
       `la tanqueta ${t.codigo} solo tiene ${Number(t.libre)} gal libres (capacidad ${Number(t.capacidad)}): no entran ${cantidad}`
     );
   }
+  await limpiarAsignacionSiVacia(client, tenantId, tanquetaId);
 }
 
 /** Las tanquetas activas de un grifo con su espacio libre, para proponer el
@@ -415,5 +512,6 @@ export async function validarLineasATanquetas(
         `el reparto del excedente le pone ${suma} gal a la tanqueta ${t.codigo}, que solo tiene ${Number(t.libre)} gal libres (capacidad ${Number(t.capacidad)})`
       );
     }
+    await limpiarAsignacionSiVacia(client, tenantId, id);
   }
 }

@@ -212,6 +212,8 @@ export async function borrarTenantDePrueba(tenantId: string) {
     await client.query("DELETE FROM ordenes_trabajo WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM ipercs WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM iperc_lineas_base WHERE tenant_id = $1", [tenantId]);
+    // Una tanqueta asignada (0139) apunta a su unidad sin ON DELETE.
+    await client.query("DELETE FROM combustible_tanquetas WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM equipos WHERE tenant_id = $1", [tenantId]);
     // Las órdenes administrativas (0091) apuntan a usuarios por tres columnas
     // y solo una tiene ON DELETE SET NULL -- van antes.

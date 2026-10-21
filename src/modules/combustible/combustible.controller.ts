@@ -94,6 +94,8 @@ import type {
   BajaPuntoPrecintoInput,
   CrearTanquetaInput,
   ActualizarTanquetaInput,
+  AsignarTanquetaInput,
+  LiberarTanquetaInput,
 } from "../../server/schemas/combustible.schema";
 import { TIPOS_COMBUSTIBLE } from "../../server/schemas/combustible.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
@@ -5399,6 +5401,64 @@ export class CombustibleController {
         tanquetaId: id,
         antes: { codigo: antes.codigo, capacidad: antes.capacidad, activa: antes.activa },
         cambios: data,
+      },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
+    res.json(despues);
+  }
+
+  /** Asignar o reasignar la tanqueta a una unidad (0139). La bitácora guarda a
+   *  qué unidad iba antes: reasignar cambia quién recibe el combustible. */
+  async asignarTanqueta(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.tanquetaId);
+    const { equipo_id } = req.validatedBody as AsignarTanquetaInput;
+    const antes = await this.tanquetaVisible(req, id);
+    if (!antes) {
+      res.status(404).json({ error: "La tanqueta no existe" });
+      return;
+    }
+    const despues = await withTenant(tenantId, (client) =>
+      tanquetas.asignarTanqueta(client, tenantId, id, equipo_id)
+    );
+    await registrarAuditoria({
+      accion: "combustible.tanqueta_asignar",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: {
+        tanquetaId: id,
+        codigo: antes.codigo,
+        equipoAntes: antes.asignada_vigente ? antes.equipo_asignado_id : null,
+        equipoId: equipo_id,
+      },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
+    res.json(despues);
+  }
+
+  async liberarTanqueta(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.tanquetaId);
+    const { motivo } = req.validatedBody as LiberarTanquetaInput;
+    const antes = await this.tanquetaVisible(req, id);
+    if (!antes) {
+      res.status(404).json({ error: "La tanqueta no existe" });
+      return;
+    }
+    const despues = await withTenant(tenantId, (client) =>
+      tanquetas.liberarTanqueta(client, tenantId, id)
+    );
+    await registrarAuditoria({
+      accion: "combustible.tanqueta_liberar",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: {
+        tanquetaId: id,
+        codigo: antes.codigo,
+        equipoId: antes.equipo_asignado_id,
+        motivo,
       },
       contexto: contextoAuditoriaModulo(req),
     });

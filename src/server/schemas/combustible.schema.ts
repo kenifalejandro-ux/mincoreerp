@@ -2167,6 +2167,17 @@ export const actualizarTanquetaSchema = z.object({
 
 export type ActualizarTanquetaInput = z.infer<typeof actualizarTanquetaSchema>;
 
+// Asignar la tanqueta a la unidad que la lleva (0139). Liberar pide motivo.
+export const asignarTanquetaSchema = z.object({
+  equipo_id: z.number().int().positive(),
+});
+export type AsignarTanquetaInput = z.infer<typeof asignarTanquetaSchema>;
+
+export const liberarTanquetaSchema = z.object({
+  motivo: z.string().trim().min(3).max(500),
+});
+export type LiberarTanquetaInput = z.infer<typeof liberarTanquetaSchema>;
+
 // ── Viajes (0123) ──────────────────────────────────────────────────────────
 const fechaHora = z.string().datetime({ offset: true });
 const medidor = z.number().min(0).max(99999999).nullable().optional();
