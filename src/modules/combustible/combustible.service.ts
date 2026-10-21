@@ -80,6 +80,10 @@ export interface LineaRepartoExcedente {
   cantidad: number;
   equipo_id?: number;
   tanqueta_id?: number;
+  /** 0140: para qué unidad va la tanqueta, con su vale. */
+  tanqueta_equipo_id?: number;
+  serie_talonario?: string;
+  n_vale?: number;
   observaciones?: string;
 }
 
@@ -7650,6 +7654,18 @@ export class CombustibleService {
             usuarioId,
             excedenteAceptado.reparto
           );
+          // La tanqueta que se llenó con unidad y vale queda asignada (0139/0140).
+          // Después de insertar las líneas: el saldo ya cuenta este excedente.
+          const unidadDe = new Map(
+            excedenteAceptado.reparto.flatMap((l) =>
+              l.tanqueta_equipo_id === undefined
+                ? []
+                : [[l.tanqueta_id!, l.tanqueta_equipo_id] as const]
+            )
+          );
+          for (const [tanquetaId, equipoId] of unidadDe) {
+            await tanquetas.asignarTanqueta(client, tenantId, tanquetaId, equipoId);
+          }
         }
 
         if (!esUrea) {
@@ -7793,7 +7809,14 @@ export class CombustibleService {
         `el reparto del excedente suma ${sumaReparto} y el excedente es ${excedenteLitros}: tienen que coincidir`
       );
     }
-    const equipoIds = [...new Set(reparto.flatMap((l) => (l.equipo_id ? [l.equipo_id] : [])))];
+    const equipoIds = [
+      ...new Set(
+        reparto.flatMap((l) => [
+          ...(l.equipo_id ? [l.equipo_id] : []),
+          ...(l.tanqueta_equipo_id ? [l.tanqueta_equipo_id] : []),
+        ])
+      ),
+    ];
     if (equipoIds.length > 0) {
       const existentes = await this.repository.contarEquiposDelTenant(client, tenantId, equipoIds);
       if (existentes !== equipoIds.length) {
@@ -7811,7 +7834,52 @@ export class CombustibleService {
       Number(tanque.grifo_interno_id),
       reparto
     );
+    await this.validarUnidadYValeDelReparto(client, tenantId, reparto);
     return { detalle, reparto };
+  }
+
+  /** Las líneas a tanqueta que dicen para qué unidad van (0140): una tanqueta
+   *  no va con dos unidades, y el vale de cada línea no puede estar ya usado
+   *  (en un despacho, en otro reparto ni en esta misma solicitud). Los
+   *  mensajes empiezan por "el reparto del excedente": así salen como 400. */
+  private async validarUnidadYValeDelReparto(
+    client: PoolClient,
+    tenantId: string,
+    reparto: {
+      tanqueta_id?: number;
+      tanqueta_equipo_id?: number;
+      serie_talonario?: string;
+      n_vale?: number;
+    }[]
+  ) {
+    const unidadDe = new Map<number, number>();
+    const usados = new Set<string>();
+    for (const l of reparto) {
+      if (l.tanqueta_equipo_id === undefined) continue;
+      const previa = unidadDe.get(l.tanqueta_id!);
+      if (previa !== undefined && previa !== l.tanqueta_equipo_id) {
+        throw new Error(
+          "el reparto del excedente manda la misma tanqueta a dos unidades distintas"
+        );
+      }
+      unidadDe.set(l.tanqueta_id!, l.tanqueta_equipo_id);
+      const clave = `${l.serie_talonario}|${l.n_vale}`;
+      if (
+        usados.has(clave) ||
+        (await this.repository.existeVale(
+          client,
+          tenantId,
+          "combustible",
+          l.serie_talonario!,
+          l.n_vale!
+        ))
+      ) {
+        throw new Error(
+          `el reparto del excedente usa el vale ${l.n_vale} de la serie ${l.serie_talonario}, que ya está registrado: usa el siguiente número libre del talonario`
+        );
+      }
+      usados.add(clave);
+    }
   }
 
   listarRecepciones(

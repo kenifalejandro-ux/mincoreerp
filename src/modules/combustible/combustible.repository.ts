@@ -1321,10 +1321,17 @@ export class CombustibleRepository {
     serieTalonario: string,
     nVale: number
   ): Promise<boolean> {
+    // También cuenta el vale de una línea de excedente a tanqueta (0140): el
+    // mismo número no se usa dos veces, ni en un despacho ni en un reparto.
     const result = await client.query(
       `SELECT 1 FROM combustible_despachos
        WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3 AND n_vale = $4
-         AND anulada_en IS NULL`,
+         AND anulada_en IS NULL
+       UNION ALL
+       SELECT 1 FROM combustible_recepcion_excedentes x
+         JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
+        WHERE x.tenant_id = $1 AND $2 = 'combustible' AND x.serie_talonario = $3
+          AND x.n_vale = $4 AND r.anulada_en IS NULL`,
       [tenantId, producto, serieTalonario, nVale]
     );
     return (result.rowCount ?? 0) > 0;
@@ -7694,14 +7701,18 @@ export class CombustibleRepository {
       cantidad: number;
       equipo_id?: number;
       tanqueta_id?: number;
+      tanqueta_equipo_id?: number;
+      serie_talonario?: string;
+      n_vale?: number;
       observaciones?: string;
     }[]
   ) {
     for (const l of lineas) {
       await client.query(
         `INSERT INTO combustible_recepcion_excedentes
-           (tenant_id, recepcion_id, destino, cantidad, equipo_id, tanqueta_id, observaciones, decidido_por)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+           (tenant_id, recepcion_id, destino, cantidad, equipo_id, tanqueta_id, observaciones, decidido_por,
+            tanqueta_equipo_id, serie_talonario, n_vale)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [
           tenantId,
           recepcionId,
@@ -7711,6 +7722,9 @@ export class CombustibleRepository {
           l.tanqueta_id ?? null,
           l.observaciones ?? null,
           usuarioId,
+          l.tanqueta_equipo_id ?? null,
+          l.serie_talonario ?? null,
+          l.n_vale ?? null,
         ]
       );
     }
