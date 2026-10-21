@@ -1897,7 +1897,14 @@ export class CombustibleController {
       }
 
       const { fila, creado } = await withTenant(tenantId, (client) =>
-        service.crearDespacho(client, tenantId, req.usuario!.id, data, alcanceDe(req))
+        service.crearDespacho(
+          client,
+          tenantId,
+          req.usuario!.id,
+          data,
+          alcanceDe(req),
+          req.usuario!.rol === "conductor_ruta" ? (req.usuario!.dni ?? "") : undefined
+        )
       );
 
       // Reintento de un envío que ya se había guardado -- mismo criterio
@@ -5308,7 +5315,12 @@ export class CombustibleController {
     const tenantId = getTenantId(req);
     res.json(
       await withTenant(tenantId, (client) =>
-        tanquetas.tanquetasParaFormulario(client, tenantId, alcanceDe(req))
+        tanquetas.tanquetasParaFormulario(
+          client,
+          tenantId,
+          alcanceDe(req),
+          req.usuario!.rol === "conductor_ruta" ? (req.usuario!.dni ?? "") : undefined
+        )
       )
     );
   }

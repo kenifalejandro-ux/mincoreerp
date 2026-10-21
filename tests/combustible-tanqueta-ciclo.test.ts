@@ -23,12 +23,14 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
   let principal: number;
   let otroGrifo: number;
   let volquete: number;
+  let dniConductor: string;
   let seq = 0;
   let nVale = 1;
 
   async function conRol(rol: string): Promise<Agente> {
     const agente = request.agent(app);
     const dni = String(87500000 + Math.floor(Math.random() * 400000) + seq++);
+    if (rol === "conductor_ruta") dniConductor = dni;
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `Persona ${rol}`, dni, password, rol });
@@ -51,6 +53,7 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
         .post("/api/erp/administracion/grifos")
         .send({ sede_id: sedes[0].id, nombre: idUnico("Grifo") })
     ).body.id;
+    conductor = await conRol("conductor_ruta");
     volquete = (
       await admin.post("/api/erp/equipos").send({
         placa_codigo: idUnico("VQ"),
@@ -58,10 +61,9 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
         tipo_medidor: "horometro",
         grifo_interno_id: principal,
         conductor_nombre: "Juan Pérez",
-        conductor_dni: "40000001",
+        conductor_dni: dniConductor,
       })
     ).body.id;
-    conductor = await conRol("conductor_ruta");
     grifero = await conRol("grifero");
   });
 
@@ -124,6 +126,20 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
       ...extra,
     });
 
+  // El conductor carga la tanqueta ACTIVA de su unidad (0139): se liberan las
+  // que dejaron los tests anteriores para que esta sea la única.
+  const asignar = async (id: number) => {
+    const todas = (await admin.get("/api/erp/combustible/tanquetas")).body;
+    for (const t of todas.filter(
+      (x: { equipo_asignado_id: number | null }) => x.equipo_asignado_id === volquete
+    )) {
+      await admin
+        .put(`/api/erp/combustible/tanquetas/${t.id}/liberar`)
+        .send({ motivo: "limpieza de la prueba" });
+    }
+    return admin.put(`/api/erp/combustible/tanquetas/${id}/asignar`).send({ equipo_id: volquete });
+  };
+
   const saldo = async (id: number) => {
     const r = await admin.get("/api/erp/combustible/tanquetas");
     return Number(r.body.find((t: { id: string }) => Number(t.id) === id).saldo);
@@ -165,6 +181,7 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
     const tq = await tanque();
     const tqt = await tanqueta();
     await llenar(tq, tqt, 280);
+    await asignar(tqt);
     const nivel = await nivelTeorico(tq);
 
     const r = await cargarEnRuta(conductor, tqt, 100);
@@ -194,7 +211,7 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
     // La cadena llega hasta quien recibió: el conductor que quedó en el vale.
     const cargaRuta = historial.body.find((m: { tipo: string }) => m.tipo === "carga_ruta");
     expect(cargaRuta.conductor_nombre).toBe("Juan Pérez");
-    expect(cargaRuta.conductor_dni).toBe("40000001");
+    expect(cargaRuta.conductor_dni).toBe(dniConductor);
 
     const formulario = await conductor.get("/api/erp/combustible/tanquetas/formulario");
     expect(formulario.status).toBe(200);
@@ -227,6 +244,7 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
     const tq = await tanque();
     const tqt = await tanqueta();
     await llenar(tq, tqt, 100);
+    await asignar(tqt);
     const r = await cargarEnRuta(conductor, tqt, 150);
     expect(r.status).toBe(201);
     expect(await saldo(tqt)).toBe(-50);
@@ -277,6 +295,7 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
     const tqt = await tanqueta();
     const tq = await tanque();
     await llenar(tq, tqt, 100);
+    await asignar(tqt);
     const carga = await cargarEnRuta(conductor, tqt, 20, { lectura_horometro: 4321 });
     expect(carga.status).toBe(201);
     const r = await conductor
@@ -290,6 +309,7 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
     const tq = await tanque();
     const tqt = await tanqueta();
     const lleno = await llenar(tq, tqt, 200);
+    await asignar(tqt);
     const carga = await cargarEnRuta(conductor, tqt, 50);
     expect(await saldo(tqt)).toBe(150);
     await admin

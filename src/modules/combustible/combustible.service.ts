@@ -1011,6 +1011,9 @@ export class CombustibleService {
     // La carga desde una tanqueta (0114/0115): en ruta la registra el
     // conductor; en planta, el que despacha ahí (el grifero también).
     if (origen === "tanqueta") {
+      if (rol === "conductor_ruta" && tanquetaLugar === "planta") {
+        return "Tu usuario registra lo que se carga en ruta, no las cargas en la planta";
+      }
       return rol === "grifero" && tanquetaLugar !== "planta"
         ? "Tu usuario registra lo que se carga en la planta, no las cargas en ruta"
         : null;
@@ -1037,7 +1040,9 @@ export class CombustibleService {
     tenantId: string,
     usuarioId: string,
     data: CrearDespachoCombustibleInput,
-    alcance?: AlcanceCombustible
+    alcance?: AlcanceCombustible,
+    /** El DNI del conductor, solo cuando es él quien carga desde una tanqueta (0139). */
+    conductorDni?: string
   ) {
     return idempotentInsert({
       client,
@@ -1142,7 +1147,7 @@ export class CombustibleService {
         // entró a la tanqueta, no un dato del body.
         const desdeTanqueta =
           data.origen === "tanqueta"
-            ? await this.validarCargaDesdeTanqueta(client, tenantId, data, alcance)
+            ? await this.validarCargaDesdeTanqueta(client, tenantId, data, alcance, conductorDni)
             : null;
 
         const despachadoEn = data.despachado_en ?? new Date().toISOString();
@@ -2580,7 +2585,8 @@ export class CombustibleService {
     client: PoolClient,
     tenantId: string,
     data: CrearDespachoCombustibleInput,
-    alcance?: AlcanceCombustible
+    alcance?: AlcanceCombustible,
+    conductorDni?: string
   ) {
     const t = await tanquetas.getTanqueta(client, tenantId, data.tanqueta_origen_id!);
     if (!t || (alcance && !alcance.todo && !alcance.grifos.includes(Number(t.grifo_interno_id)))) {
@@ -2589,6 +2595,15 @@ export class CombustibleService {
     if (!t.activa) throw new Error(`la tanqueta ${t.codigo} está dada de baja`);
     const equipo = await EquiposRepository.findTipoMedidor(client, tenantId, data.equipo_id!);
     if (!equipo) throw new Error(`equipo_id ${data.equipo_id} no existe en este tenant`);
+    if (conductorDni !== undefined) {
+      await tanquetas.exigirTanquetaDelConductor(
+        client,
+        tenantId,
+        conductorDni,
+        Number(t.id),
+        data.equipo_id!
+      );
+    }
     // El medidor que llegue tiene que ser el de ESA unidad. En ruta es
     // obligatorio (el schema exige uno); en planta puede faltar (0113).
     if (equipo.tipo_medidor === "horometro" && data.lectura_odometro !== undefined) {

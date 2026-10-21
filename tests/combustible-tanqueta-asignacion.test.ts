@@ -24,12 +24,14 @@ describe("combustible: tanqueta asignada a una unidad (0139)", () => {
   let volquete: number;
   let cisterna: number;
   let equipoAjeno: number;
+  let dniConductor = "";
   let seq = 0;
   let nVale = 1;
 
   async function conRol(rol: string): Promise<Agente> {
     const agente = request.agent(app);
     const dni = String(88100000 + Math.floor(Math.random() * 400000) + seq++);
+    if (rol === "conductor_ruta") dniConductor = dni;
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `Persona ${rol}`, dni, password, rol });
@@ -38,7 +40,7 @@ describe("combustible: tanqueta asignada a una unidad (0139)", () => {
     return agente;
   }
 
-  const crearEquipo = async (ag: Agente, grifo: number) =>
+  const crearEquipo = async (ag: Agente, grifo: number, dni = "40000001") =>
     (
       await ag.post("/api/erp/equipos").send({
         placa_codigo: idUnico("VQ"),
@@ -46,7 +48,7 @@ describe("combustible: tanqueta asignada a una unidad (0139)", () => {
         tipo_medidor: "horometro",
         grifo_interno_id: grifo,
         conductor_nombre: "Juan Pérez",
-        conductor_dni: "40000001",
+        conductor_dni: dni,
       })
     ).body.id as number;
 
@@ -170,7 +172,7 @@ describe("combustible: tanqueta asignada a una unidad (0139)", () => {
   });
 
   it("al vaciarse deja de contar para el tope y un llenado nuevo la limpia", async () => {
-    const unidad = await crearEquipo(admin, principal);
+    const unidad = await crearEquipo(admin, principal, dniConductor);
     const tq = await tanquetaConSaldo(100);
     await asignar(tq, unidad);
     expect((await ver(tq)).asignada_vigente).toBe(true);
