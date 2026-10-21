@@ -1903,7 +1903,8 @@ export class CombustibleController {
           req.usuario!.id,
           data,
           alcanceDe(req),
-          req.usuario!.rol === "conductor_ruta" ? (req.usuario!.dni ?? "") : undefined
+          req.usuario!.rol === "conductor_ruta" ? (req.usuario!.dni ?? "") : undefined,
+          !["admin", "operador"].includes(req.usuario!.rol)
         )
       );
 
@@ -2404,7 +2405,12 @@ export class CombustibleController {
           descripcion: `la anulación del vale ${d.serie_talonario}-${d.n_vale}`,
         });
       }
-    } catch {
+    } catch (err) {
+      // Un vale de llenado con cargas encima no se anula (409, auditoría H-5).
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
+      }
       res.status(500).json({ error: "Error al anular el despacho" });
     }
   }
@@ -5438,6 +5444,10 @@ export class CombustibleController {
   async asignarTanqueta(req: Request, res: Response) {
     const tenantId = getTenantId(req);
     const id = Number(req.params.tanquetaId);
+    if (!Number.isSafeInteger(id) || id < 1) {
+      res.status(400).json({ error: "tanquetaId debe ser un número entero válido" });
+      return;
+    }
     const { equipo_id, serie_talonario, n_vale } = req.validatedBody as AsignarTanquetaInput;
     const antes = await this.tanquetaVisible(req, id);
     if (!antes) {
@@ -5472,6 +5482,10 @@ export class CombustibleController {
   async liberarTanqueta(req: Request, res: Response) {
     const tenantId = getTenantId(req);
     const id = Number(req.params.tanquetaId);
+    if (!Number.isSafeInteger(id) || id < 1) {
+      res.status(400).json({ error: "tanquetaId debe ser un número entero válido" });
+      return;
+    }
     const { motivo } = req.validatedBody as LiberarTanquetaInput;
     const antes = await this.tanquetaVisible(req, id);
     if (!antes) {

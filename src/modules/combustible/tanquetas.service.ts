@@ -190,7 +190,11 @@ export async function asignarTanqueta(
   equipoId: number,
   /** Desde la pestaña Tanquetas (0141): el vale de esta salida, que queda en el
    *  historial. Los otros caminos de asignación ya llevan su propio vale. */
-  vale?: { serie: string; numero: number; usuarioId: string }
+  vale?: { serie: string; numero: number; usuarioId: string },
+  /** Quien asigna al llenar (el grifero) solo puede dar unidad a una tanqueta
+   *  libre o que ya va con ESA unidad: pasarla de una unidad a otra es una
+   *  corrección y exige el permiso de editar (auditoría H-1). */
+  soloLibre = false
 ) {
   await bloquearTanqueta(client, tenantId, id);
   const t = await getTanqueta(client, tenantId, id);
@@ -206,6 +210,12 @@ export async function asignarTanqueta(
   if (eq.rowCount === 0) throw new AppError(400, "La unidad no existe");
   if (!eq.rows[0].activo) {
     throw new AppError(400, `La unidad ${eq.rows[0].placa_codigo} está dada de baja`);
+  }
+  if (soloLibre && t.asignada_vigente && Number(t.equipo_asignado_id) !== equipoId) {
+    throw new AppError(
+      403,
+      `La tanqueta ${t.codigo} ya va con otra unidad: reasignarla exige el permiso de editar tanquetas`
+    );
   }
   const vigentes = await tanquetasVigentesDeUnidad(client, tenantId, equipoId);
   if (!vigentes.some((v) => Number(v.id) === id) && vigentes.length >= MAX_TANQUETAS_POR_UNIDAD) {
@@ -274,6 +284,47 @@ export async function limpiarAsignacionSiVacia(client: PoolClient, tenantId: str
         WHERE tenant_id = $1 AND id = $2`,
       [tenantId, id]
     );
+  }
+}
+
+/** Antes de anular un despacho que mueve una tanqueta (auditoría H-4 y H-5):
+ *  - Un VALE DE LLENADO no se anula si ya se cargó combustible de esa tanqueta:
+ *    el saldo quedaría en negativo y el vale ya entregó lo que dice. Primero se
+ *    anulan esas cargas.
+ *  - Una CARGA que se anula devuelve saldo: si la tanqueta estaba vacía, su
+ *    asignación vieja ya no vale (igual que un llenado nuevo) y no revive
+ *    pasando el tope de 3 de la unidad. */
+export async function prepararAnulacionDeDespacho(
+  client: PoolClient,
+  tenantId: string,
+  despachoId: number
+) {
+  const r = await client.query<{
+    tanqueta_destino_id: string | null;
+    tanqueta_origen_id: string | null;
+    cantidad: string;
+  }>(
+    `SELECT tanqueta_destino_id, tanqueta_origen_id, cantidad FROM combustible_despachos
+      WHERE tenant_id = $1 AND id = $2 AND anulada_en IS NULL`,
+    [tenantId, despachoId]
+  );
+  const d = r.rows[0];
+  if (!d) return;
+  if (d.tanqueta_destino_id !== null) {
+    const id = Number(d.tanqueta_destino_id);
+    await bloquearTanqueta(client, tenantId, id);
+    const t = await getTanqueta(client, tenantId, id);
+    if (t && Number(t.saldo) - Number(d.cantidad) < -0.001) {
+      throw new AppError(
+        409,
+        `No se puede anular este vale: de la tanqueta ${t.codigo} ya se cargaron ${Number(t.salidas)} gal. Anula primero esas cargas`
+      );
+    }
+  }
+  if (d.tanqueta_origen_id !== null) {
+    const id = Number(d.tanqueta_origen_id);
+    await bloquearTanqueta(client, tenantId, id);
+    await limpiarAsignacionSiVacia(client, tenantId, id);
   }
 }
 
