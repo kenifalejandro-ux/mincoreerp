@@ -39,6 +39,7 @@ import HistoricoCliente from "../HistoricoCliente";
 import UreaPanel from "../UreaPanel";
 
 import { EVENTOS_UREA, avisarCambioDeUrea } from "./eventosUrea";
+import TanquetaDelConductor from "./TanquetaDelConductor";
 import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from "./Precintos";
 import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
 import VentanaSurtidores from "./Surtidores";
@@ -284,6 +285,9 @@ interface TanquetaFormulario {
   /** El costo de un galón de esta tanqueta: el que el servidor le pone a la
    *  carga. Se muestra, no se edita. */
   costo_promedio: number;
+  /** A qué unidad va (0139): el conductor solo recibe las de su unidad. */
+  equipo_asignado_id: number | null;
+  equipo_asignado: string | null;
 }
 
 /** Lo que la cisterna cargó directo a una unidad (0110) y todavía no tiene su
@@ -2722,7 +2726,19 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     // bloquea un vale sin él, solo lo alerta).
     apiFetch("/api/erp/combustible/tanquetas/formulario")
       .then((r) => (r.ok ? r.json() : []))
-      .then((b) => setTanquetasFormulario(Array.isArray(b) ? b : []))
+      .then((b) => {
+        const lista: TanquetaFormulario[] = Array.isArray(b) ? b : [];
+        setTanquetasFormulario(lista);
+        // El conductor no elige (0139): entra la tanqueta activa de su unidad.
+        if (esConductor && lista[0]) {
+          setDespachoForm((f) => ({
+            ...f,
+            tanqueta_origen_id: String(lista[0].id),
+            equipo_id: String(lista[0].equipo_asignado_id),
+            costo_unitario: String(lista[0].costo_promedio ?? ""),
+          }));
+        }
+      })
       .catch(() => setTanquetasFormulario([]));
     apiFetch("/api/erp/combustible/config/formulario-despacho")
       .then((r) => (r.ok ? r.json() : null))
@@ -5249,9 +5265,18 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   // planta sigue la config de la empresa (0113).
                   const pideMedidor = enRuta || formPideMedidor;
                   const medidor = equipoSeleccionado?.tipo_medidor ?? null;
+                  if (esConductor && !elegida) {
+                    return <TanquetaDelConductor tanquetas={[]} cantidad="" />;
+                  }
                   return (
                     <>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {esConductor && (
+                        <TanquetaDelConductor
+                          tanquetas={tanquetasFormulario}
+                          cantidad={despachoForm.cantidad}
+                        />
+                      )}
+                      <div hidden={esConductor} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-1">
                           <label
                             htmlFor="despacho-tanqueta-origen"
@@ -5315,12 +5340,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           </select>
                         </div>
                       </div>
-                      <p className="text-xs text-slate-600">
+                      <p hidden={esConductor} className="text-xs text-slate-600">
                         {enRuta
                           ? "Lo que se cargó a la unidad desde la tanqueta que va en ruta. No lleva vale: la tanqueta salió con el suyo."
                           : "La tanqueta se quedó en la planta y desde ahí se cargó a la unidad: lleva vale del talonario, como un despacho del tanque."}
                       </p>
-                      <div className="space-y-1">
+                      <div hidden={esConductor} className="space-y-1">
                         <label
                           htmlFor="despacho-equipo-tanqueta"
                           className="text-xs font-bold text-slate-700 uppercase"

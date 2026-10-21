@@ -253,7 +253,12 @@ describe("combustible: los correos nuevos van a quien tiene ese grifo", () => {
     let conductor: ReturnType<typeof request.agent>;
     let tanquetaId: number;
     let tanqueGal: number;
+    let equipoC: number;
     let nVale = 1;
+
+    // El conductor carga una tanqueta asignada a SU unidad (0139).
+    const asignarAlConductor = (id: number) =>
+      admin.put(`/api/erp/combustible/tanquetas/${id}/asignar`).send({ equipo_id: equipoC });
 
     const llenar = (cantidad: number) =>
       admin.post("/api/erp/combustible/despachos").send({
@@ -275,7 +280,7 @@ describe("combustible: los correos nuevos van a quien tiene ese grifo", () => {
         tanqueta_origen_id: tanquetaId,
         tipo_combustible: "diesel_b5",
         tipo_destino: "equipo",
-        equipo_id: equipoA,
+        equipo_id: equipoC,
         cantidad,
         lectura_horometro: 1000 + seq++ * 10,
       });
@@ -286,6 +291,16 @@ describe("combustible: los correos nuevos van a quien tiene ese grifo", () => {
         .post("/api/erp/usuarios")
         .send({ nombre: "Conductor", dni, password: PASSWORD, rol: "conductor_ruta" });
       expect(alta.status).toBe(201);
+      equipoC = (
+        await admin.post("/api/erp/equipos").send({
+          placa_codigo: idUnico("EC"),
+          tipo: "Volquete",
+          tipo_medidor: "horometro",
+          grifo_interno_id: grifoA,
+          conductor_nombre: "Conductor",
+          conductor_dni: dni,
+        })
+      ).body.id;
       conductor = request.agent(app);
       await conductor
         .post("/api/auth/login")
@@ -305,6 +320,7 @@ describe("combustible: los correos nuevos van a quien tiene ese grifo", () => {
 
     it("la carga que cruza a negativo avisa; las siguientes, mientras siga en rojo, no", async () => {
       expect((await llenar(100)).status).toBe(201);
+      expect((await asignarAlConductor(tanquetaId)).status).toBe(200);
       correos.length = 0;
 
       // Cruza: de +100 a -50.
@@ -329,6 +345,8 @@ describe("combustible: los correos nuevos van a quien tiene ese grifo", () => {
     it("cuando el saldo vuelve a positivo y se cruza otra vez, avisa de nuevo", async () => {
       // Sale del rojo (venía en -70): +300 -> 230.
       expect((await llenar(300)).status).toBe(201);
+      // Llenar una tanqueta que estaba en rojo olvida la unidad: se vuelve a asignar.
+      expect((await asignarAlConductor(tanquetaId)).status).toBe(200);
       correos.length = 0;
       expect((await cargar(400)).status).toBe(201);
       expect(correosCon("saldo negativo")).toHaveLength(1);
@@ -337,6 +355,7 @@ describe("combustible: los correos nuevos van a quien tiene ese grifo", () => {
     it("una carga que no deja la tanqueta en negativo no avisa", async () => {
       const ll = await llenar(250);
       expect(ll.status, JSON.stringify(ll.body)).toBe(201);
+      expect((await asignarAlConductor(tanquetaId)).status).toBe(200);
       correos.length = 0;
       expect((await cargar(10)).status).toBe(201);
       expect(correosCon("saldo negativo")).toHaveLength(0);
@@ -351,8 +370,13 @@ describe("combustible: los correos nuevos van a quien tiene ese grifo", () => {
         .post("/api/erp/combustible/tanquetas")
         .send({ grifo_interno_id: grifoA });
       expect(t.status).toBe(201);
+      // La tanqueta anterior sigue con saldo: se libera para que esta sea la activa.
+      await admin
+        .put(`/api/erp/combustible/tanquetas/${tanquetaId}/liberar`)
+        .send({ motivo: "prueba de cargas simultáneas" });
       tanquetaId = Number(t.body.id);
       expect((await llenar(100)).status).toBe(201);
+      expect((await asignarAlConductor(tanquetaId)).status).toBe(200);
       correos.length = 0;
 
       const r = await Promise.all([cargar(80), cargar(80), cargar(80)]);

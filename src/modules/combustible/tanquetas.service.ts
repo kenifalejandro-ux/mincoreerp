@@ -401,15 +401,63 @@ export async function costoPromedioTanqueta(
   return r.rows[0].costo === null ? 0 : Number(Number(r.rows[0].costo).toFixed(4));
 }
 
+/** Las unidades que maneja este DNI hoy (Equipos es la fuente única). */
+async function unidadesDelConductor(client: PoolClient, tenantId: string, dni: string) {
+  const d = dni.trim();
+  if (!d) return new Set<number>();
+  const r = await client.query<{ id: number }>(
+    `SELECT id FROM equipos WHERE tenant_id = $1 AND activo AND trim(conductor_dni) = $2`,
+    [tenantId, d]
+  );
+  return new Set(r.rows.map((u) => Number(u.id)));
+}
+
+/** El conductor solo carga una tanqueta asignada a SU unidad, y si lleva
+ *  varias con saldo, primero la ACTIVA (la más antigua). Se valida en el
+ *  servidor porque el formulario solo la muestra. Una tanqueta que ya se vació
+ *  sigue aceptándose mientras no la liberen o la vuelvan a llenar: los galones
+ *  en ruta son estimados y cargar de más no bloquea, deja la alerta de sobregiro. */
+export async function exigirTanquetaDelConductor(
+  client: PoolClient,
+  tenantId: string,
+  dni: string,
+  tanquetaId: number,
+  equipoId: number
+) {
+  if (!(await unidadesDelConductor(client, tenantId, dni)).has(equipoId)) {
+    throw new AppError(403, "Esa unidad no está a tu cargo");
+  }
+  const t = await getTanqueta(client, tenantId, tanquetaId);
+  if (!t || Number(t.equipo_asignado_id) !== equipoId) {
+    throw new AppError(400, "La tanqueta no está asignada a tu unidad: pide que te la asignen");
+  }
+  const [activa] = await tanquetasVigentesDeUnidad(client, tenantId, equipoId);
+  if (t.asignada_vigente && Number(activa.id) !== tanquetaId) {
+    throw new AppError(
+      400,
+      `Carga primero la tanqueta ${activa.codigo}: le quedan ${Number(activa.saldo)} gal`
+    );
+  }
+}
+
 /** Para los formularios del vale (0114): las tanquetas activas del alcance,
  *  con su saldo y espacio. Lo lee quien registra despachos, que no siempre
  *  tiene el panel de Tanquetas. */
 export async function tanquetasParaFormulario(
   client: PoolClient,
   tenantId: string,
-  alcance: AlcanceCombustible
+  alcance: AlcanceCombustible,
+  conductorDni?: string
 ) {
-  const todas = await listarTanquetas(client, tenantId, alcance, { soloActivas: true });
+  let todas = await listarTanquetas(client, tenantId, alcance, { soloActivas: true });
+  // El conductor (0139) solo ve las tanquetas que le asignaron a SU unidad: la
+  // más antigua primero, que es la que carga ahora.
+  if (conductorDni !== undefined) {
+    const unidades = await unidadesDelConductor(client, tenantId, conductorDni);
+    todas = todas
+      .filter((t) => t.asignada_vigente && unidades.has(Number(t.equipo_asignado_id)))
+      .sort((a, b) => new Date(a.asignada_en).getTime() - new Date(b.asignada_en).getTime());
+  }
   const resultado = [];
   for (const t of todas) {
     resultado.push({
@@ -422,6 +470,8 @@ export async function tanquetasParaFormulario(
       // El C.U de una carga desde esta tanqueta: el mismo que fija el
       // servidor al guardarla (0115). El formulario lo muestra, no lo edita.
       costo_promedio: await costoPromedioTanqueta(client, tenantId, Number(t.id)),
+      equipo_asignado_id: t.equipo_asignado_id === null ? null : Number(t.equipo_asignado_id),
+      equipo_asignado: (t.equipo_asignado as string | null) ?? null,
     });
   }
   return resultado;
