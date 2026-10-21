@@ -370,7 +370,7 @@ export const crearDespachoCombustibleSchema = z
     // tanqueta sale una carga en ruta (origen 'tanqueta').
     tanqueta_destino_id: z.number().int().positive().optional(),
     // 0139: la unidad a la que va esa tanqueta; el vale la asigna al llenarla.
-    tanqueta_equipo_id: z.number().int().positive().optional(),
+    tanqueta_equipo_id: z.number().int().positive().max(2147483647).optional(),
     tanqueta_origen_id: z.number().int().positive().optional(),
     // 0115: dónde se cargó desde la tanqueta. 'ruta' (default): sin vale y con
     // medidor. 'planta': con vale, como el tanque.
@@ -409,7 +409,7 @@ export const crearDespachoCombustibleSchema = z
       .min(1, "La serie del talonario es obligatoria")
       .max(20)
       .optional(),
-    n_vale: z.number().int().positive().optional(),
+    n_vale: z.number().int().positive().max(2147483647).optional(),
 
     // El comprobante del proveedor (0109) -- el reemplazo del talonario en
     // la compra externa de combustible. Lo que vuelve de la ruta es una
@@ -1710,9 +1710,9 @@ export const crearRecepcionCombustibleSchema = z
             tanqueta_id: z.number().int().positive().optional(),
             // 0140: para qué unidad va esa tanqueta, con su vale. Van los tres
             // o ninguno.
-            tanqueta_equipo_id: z.number().int().positive().optional(),
+            tanqueta_equipo_id: z.number().int().positive().max(2147483647).optional(),
             serie_talonario: z.string().trim().min(1).max(20).optional(),
-            n_vale: z.number().int().positive().optional(),
+            n_vale: z.number().int().positive().max(2147483647).optional(),
             observaciones: z.string().trim().max(300).optional(),
           })
           .superRefine((l, ctx) => {
@@ -2203,10 +2203,10 @@ export type ActualizarTanquetaInput = z.infer<typeof actualizarTanquetaSchema>;
 // Asignar la tanqueta a la unidad que la lleva (0139), con su vale (0141).
 // Liberar pide motivo.
 export const asignarTanquetaSchema = z.object({
-  equipo_id: z.number().int().positive(),
+  equipo_id: z.number().int().positive().max(2147483647),
   // 0141: el vale de esta salida a la unidad, obligatorio al asignar o reasignar.
   serie_talonario: z.string().trim().min(1, "La serie del talonario es obligatoria").max(20),
-  n_vale: z.number().int().positive(),
+  n_vale: z.number().int().positive().max(2147483647),
 });
 export type AsignarTanquetaInput = z.infer<typeof asignarTanquetaSchema>;
 

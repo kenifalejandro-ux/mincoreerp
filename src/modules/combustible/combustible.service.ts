@@ -1046,7 +1046,9 @@ export class CombustibleService {
     data: CrearDespachoCombustibleInput,
     alcance?: AlcanceCombustible,
     /** El DNI del conductor, solo cuando es él quien carga desde una tanqueta (0139). */
-    conductorDni?: string
+    conductorDni?: string,
+    /** Quien no puede editar tanquetas solo le da unidad a una tanqueta libre (H-1). */
+    soloTanquetaLibre = false
   ) {
     return idempotentInsert({
       client,
@@ -1304,7 +1306,9 @@ export class CombustibleService {
             client,
             tenantId,
             data.tanqueta_destino_id,
-            data.tanqueta_equipo_id
+            data.tanqueta_equipo_id,
+            undefined,
+            soloTanquetaLibre
           );
         }
         return {
@@ -2750,13 +2754,14 @@ export class CombustibleService {
    *  anulado -- el controller distingue los dos casos con
    *  getDespachoPorId para responder 404 o 409, igual que en lecturas,
    *  precios y recepciones. */
-  anularDespacho(
+  async anularDespacho(
     client: PoolClient,
     tenantId: string,
     despachoId: number,
     usuarioId: string,
     motivo: string
   ) {
+    await tanquetas.prepararAnulacionDeDespacho(client, tenantId, despachoId);
     return this.repository.anularDespacho(client, tenantId, despachoId, usuarioId, motivo);
   }
 
