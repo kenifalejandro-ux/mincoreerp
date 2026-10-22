@@ -15,6 +15,7 @@ interface UnidadOpcion {
 export interface TanquetaAsignable {
   id: string;
   codigo: string;
+  saldo: string;
   equipo_asignado_id: number | null;
   asignada_vigente: boolean;
 }
@@ -136,6 +137,12 @@ export default function AsignarTanqueta({
                 antigua.
               </p>
             </div>
+            {equipoId !== "" && (
+              <p className="text-sm text-slate-700">
+                El vale lleva <strong>{Number(tanqueta.saldo)} gal</strong>: lo que tiene la
+                tanqueta ahora.
+              </p>
+            )}
             {equipoId !== "" && (
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">

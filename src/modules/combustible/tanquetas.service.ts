@@ -243,9 +243,10 @@ export async function asignarTanqueta(
     }
     await client.query(
       `INSERT INTO combustible_tanqueta_asignaciones
-         (tenant_id, tanqueta_id, equipo_id, serie_talonario, n_vale, usuario_id)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [tenantId, id, equipoId, vale.serie, vale.numero, vale.usuarioId]
+         (tenant_id, tanqueta_id, equipo_id, serie_talonario, n_vale, usuario_id, cantidad)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      // La cantidad del vale es lo que la tanqueta lleva al salir (0142).
+      [tenantId, id, equipoId, vale.serie, vale.numero, vale.usuarioId, Number(t.saldo)]
     );
   }
   await client.query(
