@@ -20,6 +20,7 @@ export interface TanquetaARecibir {
   codigo: string;
   saldo: string;
   equipo_asignado: string | null;
+  equipo_asignado_id: number | null;
   grifo_interno_id: number;
 }
 

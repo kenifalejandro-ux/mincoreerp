@@ -5501,8 +5501,17 @@ export class CombustibleController {
       res.status(400).json({ error: "tanquetaId debe ser un número entero válido" });
       return;
     }
-    const { saldo_calculado, saldo_validado, motivo, destino, tanque_id, tanqueta_destino_id } =
-      req.validatedBody as RetornoTanquetaInput;
+    const {
+      saldo_calculado,
+      saldo_validado,
+      motivo,
+      destino,
+      tanque_id,
+      tanqueta_destino_id,
+      equipo_id,
+      serie_talonario,
+      n_vale,
+    } = req.validatedBody as RetornoTanquetaInput;
     const antes = await this.tanquetaVisible(req, id);
     if (!antes) {
       res.status(404).json({ error: "La tanqueta no existe" });
@@ -5517,6 +5526,10 @@ export class CombustibleController {
         destino,
         tanqueId: tanque_id,
         tanquetaDestinoId: tanqueta_destino_id,
+        unidad:
+          destino === "unidad"
+            ? { equipoId: equipo_id!, serie: serie_talonario!, numero: n_vale! }
+            : undefined,
       });
       const admins = r?.alerta
         ? await service.findDestinatariosAlertasCombustible(
@@ -5542,6 +5555,9 @@ export class CombustibleController {
         destino,
         tanqueId: tanque_id ?? null,
         tanquetaDestinoId: tanqueta_destino_id ?? null,
+        equipoDestinoId: equipo_id ?? null,
+        serieTalonario: serie_talonario ?? null,
+        nVale: n_vale ?? null,
       },
       contexto: contextoAuditoriaModulo(req),
     });
