@@ -23,6 +23,7 @@ import { armarXlsx, CONTENT_TYPE_XLSX } from "../../server/shared/utils/xlsx.uti
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { estadoDeUnidad } from "./equipos.estado";
 import { EquiposService, type CambiosHistorial } from "./equipos.service";
+import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
 
 /** Un AppError (p. ej. "falta el motivo") sale con su código y su mensaje; lo
  *  demás sigue siendo un 500 genérico. Devuelve true si ya respondió. */
@@ -56,7 +57,7 @@ function detectarAmpliacionDeTecho(
   if (!antes) return null;
 
   const aLitros = (valor: number, unidad?: string | null) =>
-    unidad === "gal" ? valor * 3.785411784 : valor;
+    unidad === "gal" ? valor * LITROS_POR_GALON : valor;
 
   const viejoNum = antes.capacidad_tanque == null ? null : Number(antes.capacidad_tanque);
   const nuevoNum = ahora.capacidad_tanque ?? null;
