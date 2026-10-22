@@ -555,6 +555,42 @@ export async function registrarRetornoTanqueta(
   return { tanqueta: await getTanqueta(client, tenantId, id), alerta };
 }
 
+/** Las tanquetas que recibieron excedente de esta recepción y que, sin él,
+ *  quedarían en negativo: el combustible ya salió (cargas, o un retorno al pozo
+ *  o a otra tanqueta). Anular la recepción dejaría esa salida sin respaldo y,
+ *  con un retorno al pozo, combustible en el tanque sin compra que lo explique.
+ *  Bloquea las tanquetas en orden de id y las mantiene así hasta el final de la
+ *  transacción: un retorno que llegue a la vez espera y ve el resultado. */
+export async function tanquetasSinSaldoParaAnular(
+  client: PoolClient,
+  tenantId: string,
+  recepcionId: number
+) {
+  const lineas = await client.query<{ tanqueta_id: string; cantidad: string }>(
+    `SELECT x.tanqueta_id, SUM(x.cantidad) AS cantidad
+       FROM combustible_recepcion_excedentes x
+       JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
+      WHERE x.tenant_id = $1 AND x.recepcion_id = $2 AND x.tanqueta_id IS NOT NULL
+        AND r.anulada_en IS NULL
+      GROUP BY x.tanqueta_id ORDER BY x.tanqueta_id`,
+    [tenantId, recepcionId]
+  );
+  const sinSaldo: { codigo: string; saldo: number; excedente: number }[] = [];
+  for (const l of lineas.rows) {
+    const id = Number(l.tanqueta_id);
+    await bloquearTanqueta(client, tenantId, id);
+    const t = await getTanqueta(client, tenantId, id);
+    if (t && Number(t.saldo) - Number(l.cantidad) < -0.005) {
+      sinSaldo.push({
+        codigo: t.codigo,
+        saldo: Number(t.saldo),
+        excedente: Number(l.cantidad),
+      });
+    }
+  }
+  return sinSaldo;
+}
+
 /** Antes de llenar una tanqueta vacía, olvida a qué unidad iba: con saldo 0 la
  *  asignación ya no cuenta, pero si se llenara de nuevo reviviría sola. */
 export async function limpiarAsignacionSiVacia(client: PoolClient, tenantId: string, id: number) {
