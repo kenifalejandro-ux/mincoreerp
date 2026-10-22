@@ -6394,6 +6394,16 @@ export class CombustibleRepository {
    *
    *  Devuelve null si el tanque no existe en este tenant -- el service lo
    *  traduce a un 400 legible en vez de dejar reventar la FK. */
+  /** Bloquea la fila del tanque hasta el final de la transacción: quien valida su
+   *  capacidad o rehace su costo promedio no puede cruzarse con otro que también
+   *  lo mueve (un retorno de tanqueta al pozo, una recepción, una anulación). */
+  async bloquearTanque(client: PoolClient, tenantId: string, combustibleId: number) {
+    await client.query(`SELECT id FROM combustible WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, [
+      combustibleId,
+      tenantId,
+    ]);
+  }
+
   async findTanqueParaRecepcion(client: PoolClient, tenantId: string, combustibleId: number) {
     const result = await client.query<{
       id: number;
@@ -8129,6 +8139,15 @@ export class CombustibleRepository {
     usuarioId: string,
     motivo: string
   ) {
+    // El costo promedio se rehace entero a partir de lo vigente: con el tanque
+    // bloqueado, un retorno al pozo que esté confirmando a la vez se ve en el
+    // replay en vez de pisarse con un valor viejo.
+    const previa = await client.query<{ combustible_id: number | null }>(
+      `SELECT combustible_id FROM combustible_recepciones WHERE id = $1 AND tenant_id = $2`,
+      [recepcionId, tenantId]
+    );
+    const tanqueId = previa.rows[0]?.combustible_id;
+    if (tanqueId) await this.bloquearTanque(client, tenantId, tanqueId);
     const anulada = await client.query(
       `
       UPDATE combustible_recepciones
