@@ -48,6 +48,7 @@ import {
   motivoFaltaGrifo,
   moverDeGrifo,
 } from "../../server/services/sedes.service";
+import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
 
 /** Lo que la pantalla necesita para mostrar (o registrar) la decisión sobre
  *  un excedente de recepción, sin volver a calcular nada (0102, rediseñado en
@@ -6519,7 +6520,7 @@ export class CombustibleService {
     // Litros como unidad canónica interna, solo para comparar -- lo que se
     // guarda y se muestra sigue siendo el número en su unidad original.
     const aLitros = (valor: number, unidad: string) =>
-      unidad === "gal" ? valor * 3.785411784 : valor;
+      unidad === "gal" ? valor * LITROS_POR_GALON : valor;
 
     const capacidad = Number(datos.capacidad_tanque);
     const capacidadL = aLitros(capacidad, datos.capacidad_tanque_unidad);
@@ -6739,7 +6740,7 @@ export class CombustibleService {
       if (datos?.capacidad_tanque && datos.capacidad_tanque_unidad) {
         const capacidad = Number(datos.capacidad_tanque);
         const capacidadL =
-          datos.capacidad_tanque_unidad === "gal" ? capacidad * 3.785411784 : capacidad;
+          datos.capacidad_tanque_unidad === "gal" ? capacidad * LITROS_POR_GALON : capacidad;
         topeL = capacidadL * topes.llenadosPorDiaMax;
         base = `${topes.llenadosPorDiaMax} llenado(s) de ${capacidad} ${datos.capacidad_tanque_unidad}`;
       }

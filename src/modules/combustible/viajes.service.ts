@@ -9,10 +9,9 @@ import type {
   ListarViajesQuery,
 } from "../../server/schemas/combustible.schema";
 import { agregarAmbitoVales, type AmbitoVales } from "./alcance";
+import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
 
 export type Producto = "combustible" | "urea";
-
-const LITROS_POR_GALON = 3.785411784;
 
 // La carga en ruta desde una tanqueta (0114) no tiene tanque: mide en galones.
 const LITROS_DE_D = `d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL

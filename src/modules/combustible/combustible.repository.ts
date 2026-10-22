@@ -7,6 +7,7 @@ import type {
 } from "../../server/schemas/combustible.schema";
 import type { Paginacion } from "../../server/shared/utils/pagination";
 import { esViolacionUnicidad, esViolacionForeignKey } from "../../server/shared/utils/pgError";
+import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
 import {
   agregarAmbitoVales,
   destinatariosDeAlertasEnGrifo,
@@ -282,7 +283,7 @@ export interface AlertaNueva {
  *  findAcumuladoDiario. `t` es el alias del tanque en la consulta. */
 const sumaLitros = (t: string) =>
   // La carga en ruta desde una tanqueta (0114) no tiene tanque: la tanqueta mide en galones.
-  `SUM(d.cantidad * CASE WHEN ${t}.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN 3.785411784 ELSE 1 END)`;
+  `SUM(d.cantidad * CASE WHEN ${t}.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN ${LITROS_POR_GALON} ELSE 1 END)`;
 
 const COLUMNAS_TANQUE = `
   c.id, c.codigo, c.tanque_nombre, c.tipo_combustible, c.unidad, c.tipo_punto,
@@ -1819,7 +1820,7 @@ export class CombustibleRepository {
         COUNT(*) AS cantidad_vales,
         SUM(d.cantidad) AS total_cantidad,
         ${sumaLitros("c")} AS total_litros,
-        ${sumaLitros("c")} / 3.785411784 AS total_galones,
+        ${sumaLitros("c")} / ${LITROS_POR_GALON} AS total_galones,
         SUM(d.cantidad * d.costo_unitario) AS total_costo,
         MIN(d.despachado_en) AS primer_despacho,
         MAX(d.despachado_en) AS ultimo_despacho
@@ -1872,7 +1873,7 @@ export class CombustibleRepository {
         COUNT(*) AS cantidad_vales,
         SUM(d.cantidad) AS total_cantidad,
         ${sumaLitros("c")} AS total_litros,
-        ${sumaLitros("c")} / 3.785411784 AS total_galones,
+        ${sumaLitros("c")} / ${LITROS_POR_GALON} AS total_galones,
         SUM(d.cantidad * d.costo_unitario) AS total_costo,
         MIN(d.despachado_en) AS primer_despacho,
         MAX(d.despachado_en) AS ultimo_despacho
@@ -1932,7 +1933,7 @@ export class CombustibleRepository {
         COUNT(*) AS cantidad_vales,
         SUM(d.cantidad) AS total_cantidad,
         ${sumaLitros("t")} AS total_litros,
-        ${sumaLitros("t")} / 3.785411784 AS total_galones,
+        ${sumaLitros("t")} / ${LITROS_POR_GALON} AS total_galones,
         SUM(d.cantidad * d.costo_unitario) AS total_costo,
         MIN(d.despachado_en) AS primer_despacho,
         MAX(d.despachado_en) AS ultimo_despacho
@@ -3802,7 +3803,7 @@ export class CombustibleRepository {
       `
       WITH vales AS (
         SELECT d.id, d.despachado_en,
-               d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN 3.785411784 ELSE 1 END AS litros
+               d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN ${LITROS_POR_GALON} ELSE 1 END AS litros
           FROM combustible_despachos d
           LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1
          WHERE d.tenant_id = $1
@@ -3867,7 +3868,7 @@ export class CombustibleRepository {
       SELECT
         COALESCE(SUM(d.cantidad) FILTER (WHERE d.producto = 'urea'), 0) AS litros_urea,
         COALESCE(
-          SUM(d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN 3.785411784 ELSE 1 END)
+          SUM(d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN ${LITROS_POR_GALON} ELSE 1 END)
             FILTER (WHERE d.producto = 'combustible'),
           0
         ) AS litros_diesel
@@ -5338,7 +5339,7 @@ export class CombustibleRepository {
     const r = await client.query<{ litros: string; vales: string }>(
       `
       SELECT COALESCE(SUM(
-               d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN 3.785411784 ELSE 1 END
+               d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN ${LITROS_POR_GALON} ELSE 1 END
              ), 0) AS litros,
              COUNT(*) AS vales
         FROM combustible_despachos d
@@ -7126,10 +7127,10 @@ export class CombustibleRepository {
              d.equipo_id,
              CASE WHEN e.capacidad_tanque IS NULL THEN NULL
                   ELSE e.capacidad_tanque *
-                       CASE WHEN e.capacidad_tanque_unidad = 'gal' THEN 3.785411784 ELSE 1 END
+                       CASE WHEN e.capacidad_tanque_unidad = 'gal' THEN ${LITROS_POR_GALON} ELSE 1 END
              END AS capacidad_l,
              date_trunc('day', d.despachado_en) AS dia,
-             SUM(d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN 3.785411784 ELSE 1 END) AS litros
+             SUM(d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN ${LITROS_POR_GALON} ELSE 1 END) AS litros
         FROM combustible_despachos d
         LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1
         LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1
@@ -7187,7 +7188,7 @@ export class CombustibleRepository {
                CASE WHEN d.producto <> 'urea'
                  THEN d.cantidad * CASE
                         WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL
-                          THEN 3.785411784
+                          THEN ${LITROS_POR_GALON}
                         ELSE 1
                       END
                END
@@ -7260,7 +7261,7 @@ export class CombustibleRepository {
   ): Promise<number> {
     const r = await client.query<{ litros: string }>(
       `SELECT COALESCE(SUM(
-                d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN 3.785411784 ELSE 1 END
+                d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN ${LITROS_POR_GALON} ELSE 1 END
               ), 0) AS litros
          FROM combustible_despachos d
          LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1
@@ -7320,7 +7321,7 @@ export class CombustibleRepository {
     }>(
       `SELECT * FROM (
          SELECT d.id, d.equipo_id,
-                d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN 3.785411784 ELSE 1 END AS litros,
+                d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN ${LITROS_POR_GALON} ELSE 1 END AS litros,
                 d.lectura_horometro, d.lectura_odometro, d.despachado_en
            FROM combustible_despachos d
            LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1
