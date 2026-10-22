@@ -265,6 +265,19 @@ export async function asignarTanqueta(
   return getTanqueta(client, tenantId, id);
 }
 
+/** Margen del retorno de una tanqueta (0144): una corrección hacia ABAJO alerta
+ *  si pasa de 5 gal o del 5 % del saldo calculado (lo que sea mayor); hacia
+ *  ARRIBA siempre alerta, porque declarar que volvió más de lo calculado crea
+ *  combustible que no salió de ningún tanque. */
+const MARGEN_RETORNO_GAL = 5;
+const MARGEN_RETORNO_PCT = 0.05;
+
+export function retornoPideAlerta(calculado: number, validado: number): boolean {
+  const diferencia = validado - calculado;
+  if (diferencia > 0.005) return true;
+  return -diferencia > Math.max(MARGEN_RETORNO_GAL, calculado * MARGEN_RETORNO_PCT);
+}
+
 /** El grifero recibe la tanqueta de vuelta (0143): confirma el saldo que
  *  calculó el sistema o escribe el que de verdad volvió (con motivo si es
  *  otro). El saldo queda en la tanqueta, sin unidad. `saldoCalculado` es el que
@@ -299,10 +312,11 @@ export async function registrarRetornoTanqueta(
   if (Math.abs(datos.saldoValidado - saldo) > 0.005 && motivo.length < 3) {
     throw new AppError(400, "Si el saldo que volvió no coincide con el calculado, explica por qué");
   }
-  await client.query(
+  const retorno = await client.query<{ id: string }>(
     `INSERT INTO combustible_tanqueta_retornos
        (tenant_id, tanqueta_id, equipo_id, saldo_calculado, saldo_validado, motivo, usuario_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id`,
     [
       tenantId,
       id,
@@ -318,7 +332,31 @@ export async function registrarRetornoTanqueta(
       WHERE tenant_id = $1 AND id = $2`,
     [tenantId, id]
   );
-  return getTanqueta(client, tenantId, id);
+  // La alerta se crea en la MISMA transacción: un retorno con diferencia
+  // grande no puede quedar registrado sin su aviso.
+  let alerta: Awaited<ReturnType<CombustibleRepository["crearAlertas"]>>[number] | null = null;
+  if (retornoPideAlerta(saldo, datos.saldoValidado)) {
+    const unidad = await client.query<{ placa_codigo: string }>(
+      `SELECT placa_codigo FROM equipos WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, t.equipo_asignado_id]
+    );
+    [alerta] = await new CombustibleRepository().crearAlertas(client, tenantId, [
+      {
+        tipo: "tanqueta_retorno_diferencia",
+        tanquetaRetornoId: Number(retorno.rows[0].id),
+        detalle: {
+          tanqueta: t.codigo,
+          unidad: unidad.rows[0]?.placa_codigo ?? null,
+          saldoCalculado: saldo,
+          saldoValidado: datos.saldoValidado,
+          diferencia: Number((datos.saldoValidado - saldo).toFixed(2)),
+          motivo,
+          usuarioId: datos.usuarioId,
+        },
+      },
+    ]);
+  }
+  return { tanqueta: await getTanqueta(client, tenantId, id), alerta };
 }
 
 /** Antes de llenar una tanqueta vacía, olvida a qué unidad iba: con saldo 0 la

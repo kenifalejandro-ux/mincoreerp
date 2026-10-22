@@ -53,6 +53,7 @@ export interface AlertaCombustible {
     | "equipo_de_otro_grifo"
     | "sobrestock_recepcion"
     | "tanqueta_sobregirada"
+    | "tanqueta_retorno_diferencia"
     | "urea_equipo_no_habilitado"
     | "urea_ratio_excedido"
     | "urea_descuadre_conteo"
@@ -111,6 +112,7 @@ export const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   equipo_de_otro_grifo: "Equipo cargado en otro grifo",
   sobrestock_recepcion: "Excedente de recepción repartido",
   tanqueta_sobregirada: "Tanqueta sobregirada",
+  tanqueta_retorno_diferencia: "Tanqueta devuelta con otro saldo",
   // Urea (0092, 0117, 0118).
   urea_equipo_no_habilitado: "Urea a una unidad que no usa urea",
   urea_ratio_excedido: "Urea/diésel fuera de rango",
@@ -330,6 +332,19 @@ export function describirDetalleAlerta(a: AlertaCombustible): string {
   if (a.tipo === "urea_equipo_no_habilitado") {
     const { placaCodigo } = a.detalle as { placaCodigo?: string };
     return `${placaCodigo ?? "La unidad"} está marcada como que no usa urea`;
+  }
+  if (a.tipo === "tanqueta_retorno_diferencia") {
+    const { tanqueta, unidad, saldoCalculado, saldoValidado, motivo } = a.detalle as {
+      tanqueta?: string;
+      unidad?: string | null;
+      saldoCalculado?: number;
+      saldoValidado?: number;
+      motivo?: string;
+    };
+    return (
+      `${tanqueta ?? "Una tanqueta"}${unidad ? ` (venía de ${unidad})` : ""} volvió con ` +
+      `${saldoValidado ?? "?"} gal y el sistema calculaba ${saldoCalculado ?? "?"} gal. Motivo: ${motivo ?? "—"}`
+    );
   }
   if (a.tipo === "tanqueta_sobregirada") {
     const { tanqueta, saldo, cantidad } = a.detalle as {
