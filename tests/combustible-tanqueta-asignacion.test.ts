@@ -165,11 +165,20 @@ describe("combustible: tanqueta asignada a una unidad (0139)", () => {
     expect((await asignar(a, unidad)).status).toBe(200);
   });
 
-  it("reasignar pasa la tanqueta a otra unidad sin liberarla antes", async () => {
+  it("una tanqueta con combustible que ya va con una unidad no pasa a otra: se libera primero", async () => {
     const tq = await tanquetaConSaldo();
     await asignar(tq, volquete);
     const r = await asignar(tq, cisterna);
-    expect(r.status).toBe(200);
+    expect(r.status).toBe(409);
+    expect((await ver(tq)).equipo_asignado_id).toBe(volquete);
+    expect(
+      (
+        await admin
+          .put(`/api/erp/combustible/tanquetas/${tq}/liberar`)
+          .send({ motivo: "cambia de unidad" })
+      ).status
+    ).toBe(200);
+    expect((await asignar(tq, cisterna)).status).toBe(200);
     expect((await ver(tq)).equipo_asignado_id).toBe(cisterna);
   });
 

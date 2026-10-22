@@ -1046,9 +1046,7 @@ export class CombustibleService {
     data: CrearDespachoCombustibleInput,
     alcance?: AlcanceCombustible,
     /** El DNI del conductor, solo cuando es él quien carga desde una tanqueta (0139). */
-    conductorDni?: string,
-    /** Quien no puede editar tanquetas solo le da unidad a una tanqueta libre (H-1). */
-    soloTanquetaLibre = false
+    conductorDni?: string
   ) {
     return idempotentInsert({
       client,
@@ -1306,9 +1304,7 @@ export class CombustibleService {
             client,
             tenantId,
             data.tanqueta_destino_id,
-            data.tanqueta_equipo_id,
-            undefined,
-            soloTanquetaLibre
+            data.tanqueta_equipo_id
           );
         }
         return {

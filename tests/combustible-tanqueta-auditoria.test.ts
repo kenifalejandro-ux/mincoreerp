@@ -356,8 +356,8 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
         expect(li.status, `${nombre} liberar: ${JSON.stringify(li.body)}`).toBe(403);
       }
       expect((await ver(t)).equipo_asignado_id).toBe(uA);
-      expect((await asignar(operador, t, uB)).status).toBe(200);
       expect((await liberar(operador, t)).status).toBe(200);
+      expect((await asignar(operador, t, uB)).status).toBe(200);
     });
 
     it("B2: Lectura no puede mandar tanqueta_equipo_id en un vale ni en una recepción", async () => {
@@ -746,13 +746,14 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
       expect(r.status, JSON.stringify(r.body)).toBe(403);
     });
 
-    it("H-10 (caracterización): con el DNI sin coincidir en Equipos, el formulario viene vacío en silencio (200 [])", async () => {
+    it("H-10: con el DNI sin coincidir en Equipos, el formulario viene vacío y el servidor lo marca (200 [] + cabecera)", async () => {
       // conductorSinUnidad no es el conductor de ninguna unidad; hay tanquetas asignadas en la empresa.
       const t = await tanquetaLlenaYAsignada(tanque, uA, 100);
       const r = await conductorSinUnidad.get("/api/erp/combustible/tanquetas/formulario");
       expect(r.status).toBe(200);
-      // Hoy: un arreglo vacío, sin mensaje. Si algún día trae un aviso, este test cambia de forma.
+      // La lista viene vacía y el servidor lo explica con una marca (H-10).
       expect(r.body).toEqual([]);
+      expect(r.headers["x-conductor-sin-unidad"]).toBe("1");
       const c = await cargarEnRuta(conductorSinUnidad, t, uA);
       expect(c.status).toBe(403);
     });
@@ -1018,37 +1019,32 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
 
   // ═══ G. Bitácora ════════════════════════════════════════════════════════
   describe("G. bitácora", () => {
-    it("G1: asignar, reasignar y liberar dejan quién, a qué unidad y (liberar) por qué", async () => {
+    it("G1: asignar, liberar y asignar de nuevo dejan quién, a qué unidad y (liberar) por qué", async () => {
       const t = await tanquetaLlenaYAsignada(tanque, uA, 50);
-      expect((await asignar(operador, t, uB)).status).toBe(200);
       expect((await liberar(admin, t, "motivo de la auditoría")).status).toBe(200);
+      // Un 400 no debe dejar fila.
+      expect((await liberar(admin, t, "otra vez")).status).toBe(400);
+      expect((await asignar(operador, t, uB)).status).toBe(200);
       const asignaciones = await bitacora("combustible.tanqueta_asignar", t);
       expect(asignaciones.length).toBeGreaterThanOrEqual(2);
-      const reasig = asignaciones[asignaciones.length - 1];
-      expect(reasig.usuario_id).toBeTruthy();
-      expect(Number(reasig.detalle.equipoId)).toBe(uB);
-      expect(Number(reasig.detalle.equipoAntes)).toBe(uA);
+      const ultima = asignaciones[asignaciones.length - 1];
+      expect(ultima.usuario_id).toBeTruthy();
+      expect(Number(ultima.detalle.equipoId)).toBe(uB);
       const libs = await bitacora("combustible.tanqueta_liberar", t);
       expect(libs).toHaveLength(1);
       expect(libs[0].detalle.motivo).toBe("motivo de la auditoría");
-      expect(Number(libs[0].detalle.equipoId)).toBe(uB);
-      // Un 400 no debe dejar fila.
-      expect((await liberar(admin, t, "otra vez")).status).toBe(400);
-      expect(await bitacora("combustible.tanqueta_liberar", t)).toHaveLength(1);
+      expect(Number(libs[0].detalle.equipoId)).toBe(uA);
     });
 
-    it.fails(
-      "H-9a: reasignar por el camino del vale deja a qué unidad iba antes (como el camino de la pestaña)",
-      async () => {
-        const t = await tanquetaLlenaYAsignada(tanque, uA, 100);
-        const r = await llenar(admin, tanque, t, 10, { tanqueta_equipo_id: uB });
-        expect(r.status, JSON.stringify(r.body)).toBe(201);
-        const filas = await bitacora("combustible.tanqueta_asignar", t);
-        const ultima = filas[filas.length - 1];
-        expect(Number(ultima.detalle.equipoId)).toBe(uB);
-        expect(Number(ultima.detalle.equipoAntes), JSON.stringify(ultima.detalle)).toBe(uA);
-      }
-    );
+    it("H-9a: pasar por el camino del vale una tanqueta con combustible a otra unidad es 409 y no deja el vale", async () => {
+      const t = await tanquetaLlenaYAsignada(tanque, uA, 100);
+      const antes = Number((await ver(t)).saldo);
+      const r = await llenar(admin, tanque, t, 10, { tanqueta_equipo_id: uB });
+      expect(r.status, JSON.stringify(r.body)).toBe(409);
+      const fila = await ver(t);
+      expect(fila.equipo_asignado_id).toBe(uA);
+      expect(Number(fila.saldo)).toBe(antes);
+    });
 
     it("G3: asignar por el reparto deja rastro: la recepción en la bitácora lleva la unidad del reparto", async () => {
       const t = await tanquetaNueva();
@@ -1088,42 +1084,32 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
       expect(await bitacora("combustible.tanqueta_asignar", t)).toHaveLength(0);
     });
 
-    it.fails(
-      "H-9b: un reparto que asigna (o reasigna) una tanqueta ya asignada a otra unidad deja la unidad anterior en la bitácora",
-      async () => {
-        const t = await tanquetaLlenaYAsignada(tanque, uA, 50);
-        const lleno = await tanqueNuevo(admin, principal, {
-          capacidad_total: 2000,
-          nivel_actual: 2000,
-        });
-        const r = await admin.post("/api/erp/combustible/recepciones").send({
-          combustible_id: lleno,
-          grifo_id: grifoProveedor,
-          cantidad: 100,
-          costo_unitario: 17,
-          recibido_en: new Date().toISOString(),
-          reparto_excedente: [
-            {
-              destino: "cubeta",
-              cantidad: 100,
-              tanqueta_id: t,
-              tanqueta_equipo_id: uB,
-              serie_talonario: "CISH",
-              n_vale: 11000 + nVale++,
-            },
-          ],
-        });
-        expect(r.status, JSON.stringify(r.body)).toBe(201);
-        const fila = await ver(t);
-        const cambio = fila.equipo_asignado_id === uB;
-        const rastros = (await bitacora("combustible.tanqueta_asignar", t)).filter(
-          (f) => Number(f.detalle.equipoId) === uB
-        );
-        expect(
-          !cambio || rastros.length > 0,
-          "la tanqueta cambió de unidad por el reparto y la bitácora no lo dice"
-        ).toBe(true);
-      }
-    );
+    it("H-9b: un reparto que manda una tanqueta con combustible a otra unidad es 409 y no deja la recepción a medias", async () => {
+      const t = await tanquetaLlenaYAsignada(tanque, uA, 50);
+      const lleno = await tanqueNuevo(admin, principal, {
+        capacidad_total: 2000,
+        nivel_actual: 2000,
+      });
+      const r = await admin.post("/api/erp/combustible/recepciones").send({
+        combustible_id: lleno,
+        grifo_id: grifoProveedor,
+        cantidad: 100,
+        costo_unitario: 17,
+        recibido_en: new Date().toISOString(),
+        reparto_excedente: [
+          {
+            destino: "cubeta",
+            cantidad: 100,
+            tanqueta_id: t,
+            tanqueta_equipo_id: uB,
+            serie_talonario: "CISH",
+            n_vale: 11000 + nVale++,
+          },
+        ],
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(409);
+      expect((await ver(t)).equipo_asignado_id).toBe(uA);
+      expect(Number((await ver(t)).saldo)).toBe(50);
+    });
   });
 });
