@@ -18,9 +18,9 @@
  * los corre el CI en cada PR (todos los specs en chromium, y en webkit los de
  * celular) y los 3 navegadores cada noche: ver ci.yml.
  *
- * Lo que sí se corre acá es el spec que creaste o modificaste, varias veces
- * seguidas (ver verificar.ts): un spec que pasa una vez por suerte es el que
- * después falla en el CI, y eso solo se ve repitiéndolo.
+ * Lo que sí se corre acá es el spec que creaste o modificaste, una vez (ver
+ * verificar.ts). Repetirlo 5 veces seguidas para cazar los inestables lo hace
+ * el CI en el PR (ver ci.yml), para no ocupar esta máquina.
  */
 
 export interface Seleccion {
