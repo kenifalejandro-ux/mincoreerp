@@ -41,6 +41,7 @@ import {
   enviarCorreoValeFueraDeOrden,
   enviarCorreoDespachoTardio,
   enviarCorreoTanquetaSobregirada,
+  enviarCorreoRetornoConDiferencia,
   enviarCorreoValeExcedeTanque,
   // Urea: los cuatro de 0092 que nunca se habían enganchado y los dos de 0117.
   enviarCorreoUreaEquipoNoHabilitado,
@@ -5503,14 +5504,23 @@ export class CombustibleController {
       res.status(404).json({ error: "La tanqueta no existe" });
       return;
     }
-    const despues = await withTenant(tenantId, (client) =>
-      tanquetas.registrarRetornoTanqueta(client, tenantId, id, {
+    const hecho = await withTenant(tenantId, async (client) => {
+      const r = await tanquetas.registrarRetornoTanqueta(client, tenantId, id, {
         saldoCalculado: saldo_calculado,
         saldoValidado: saldo_validado,
         motivo,
         usuarioId: req.usuario!.id,
-      })
-    );
+      });
+      const admins = r?.alerta
+        ? await service.findDestinatariosAlertasCombustible(
+            client,
+            tenantId,
+            grifoDeAlertas([r.alerta])
+          )
+        : [];
+      return { r, admins };
+    });
+    const despues = hecho.r?.tanqueta;
     await registrarAuditoria({
       accion: "combustible.tanqueta_retorno",
       tenantId,
@@ -5527,6 +5537,19 @@ export class CombustibleController {
       contexto: contextoAuditoriaModulo(req),
     });
     await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
+    if (hecho.r?.alerta) {
+      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+        tipo: "tanqueta_retorno_diferencia",
+      });
+      await enviarCorreoRetornoConDiferencia(hecho.admins, {
+        tanqueta: antes.codigo,
+        unidad: (hecho.r.alerta.detalle as { unidad?: string | null }).unidad ?? null,
+        saldoCalculado: saldo_calculado,
+        saldoValidado: saldo_validado,
+        motivo: motivo ?? "",
+        usuario: req.usuario!.nombre ?? req.usuario!.email,
+      });
+    }
     res.status(201).json(despues);
   }
 
