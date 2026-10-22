@@ -287,9 +287,10 @@ export async function recibirTanqueta(
     validado?: number;
     calculado?: number;
     motivo?: string;
-    /** "pozo" lleva `tanqueId` (0145). */
-    destino?: "reserva" | "pozo";
+    /** "pozo" lleva `tanqueId` (0145); "tanqueta" lleva `tanquetaDestinoId` (0146). */
+    destino?: "reserva" | "pozo" | "tanqueta";
     tanqueId?: number;
+    tanquetaDestinoId?: number;
   } = {}
 ) {
   const lista: { id: string; saldo: string }[] = (await admin.get("/api/erp/combustible/tanquetas"))
@@ -301,5 +302,6 @@ export async function recibirTanqueta(
     motivo: opciones.motivo,
     destino: opciones.destino ?? "reserva",
     tanque_id: opciones.tanqueId,
+    tanqueta_destino_id: opciones.tanquetaDestinoId,
   });
 }

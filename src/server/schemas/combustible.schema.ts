@@ -2211,25 +2211,30 @@ export type AsignarTanquetaInput = z.infer<typeof asignarTanquetaSchema>;
 
 // Retorno de la tanqueta al grifero (0143): el saldo que vio en pantalla, el que
 // de verdad volvió y, si no coinciden, por qué. `destino`: "reserva" (el saldo se
-// queda en la tanqueta) o "pozo" (vuelve a un tanque de su sede: pide `tanque_id`).
+// queda en la tanqueta), "pozo" (vuelve a un tanque de su sede: pide `tanque_id`)
+// o "tanqueta" (pasa a otra tanqueta de la sede: pide `tanqueta_destino_id`).
 export const retornoTanquetaSchema = z
   .object({
     saldo_calculado: z.number().positive().max(100000),
     saldo_validado: z.number().min(0).max(100000),
     motivo: z.string().trim().max(500).optional(),
-    destino: z.enum(["reserva", "pozo"]),
+    destino: z.enum(["reserva", "pozo", "tanqueta"]),
     tanque_id: z.number().int().positive().optional(),
+    tanqueta_destino_id: z.number().int().positive().optional(),
   })
   .superRefine((d, ctx) => {
-    if (d.destino === "pozo" && d.tanque_id === undefined) {
-      ctx.addIssue({ code: "custom", path: ["tanque_id"], message: "Elige el tanque del pozo" });
+    const falta = (path: string, message: string) =>
+      ctx.addIssue({ code: "custom", path: [path], message });
+    if (d.destino === "pozo" && d.tanque_id === undefined)
+      falta("tanque_id", "Elige el tanque del pozo");
+    if (d.destino !== "pozo" && d.tanque_id !== undefined) {
+      falta("tanque_id", "Solo un saldo que vuelve al pozo lleva tanque");
     }
-    if (d.destino === "reserva" && d.tanque_id !== undefined) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["tanque_id"],
-        message: "Un saldo que se queda en la tanqueta no lleva tanque",
-      });
+    if (d.destino === "tanqueta" && d.tanqueta_destino_id === undefined) {
+      falta("tanqueta_destino_id", "Elige la tanqueta que recibe el saldo");
+    }
+    if (d.destino !== "tanqueta" && d.tanqueta_destino_id !== undefined) {
+      falta("tanqueta_destino_id", "Solo un saldo que pasa a otra tanqueta lleva tanqueta");
     }
   });
 export type RetornoTanquetaInput = z.infer<typeof retornoTanquetaSchema>;
