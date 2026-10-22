@@ -4669,9 +4669,11 @@ export class CombustibleController {
             ? "Recepción"
             : f.tipo === "despacho"
               ? "Despacho"
-              : f.tipo === "precinto"
-                ? "Precinto"
-                : "Varilla",
+              : f.tipo === "retorno_tanqueta"
+                ? "Retorno de tanqueta"
+                : f.tipo === "precinto"
+                  ? "Precinto"
+                  : "Varilla",
           f.documento,
           f.detalle,
           f.entrada || "",
@@ -4778,9 +4780,11 @@ export class CombustibleController {
           ? "Recepción"
           : f.tipo === "despacho"
             ? "Despacho"
-            : f.tipo === "precinto"
-              ? "Precinto"
-              : "Varilla",
+            : f.tipo === "retorno_tanqueta"
+              ? "Retorno de tanqueta"
+              : f.tipo === "precinto"
+                ? "Precinto"
+                : "Varilla",
         f.documento,
         f.detalle,
         litros(f.entrada || null),

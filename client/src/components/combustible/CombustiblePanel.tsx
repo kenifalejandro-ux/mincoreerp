@@ -528,7 +528,7 @@ const pctConSigno = (v: number | null) => (v === null ? "—" : `${v > 0 ? "+" :
 
 interface FilaKardex {
   ocurrido_en: string;
-  tipo: "recepcion" | "despacho" | "lectura" | "precinto";
+  tipo: "recepcion" | "despacho" | "lectura" | "precinto" | "retorno_tanqueta";
   referencia_id: string;
   documento: string | null;
   detalle: string | null;
@@ -6340,9 +6340,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         ? "Recepción"
                         : f.tipo === "despacho"
                           ? "Despacho"
-                          : f.tipo === "precinto"
-                            ? "Precinto"
-                            : "Varilla";
+                          : f.tipo === "retorno_tanqueta"
+                            ? "Retorno de tanqueta"
+                            : f.tipo === "precinto"
+                              ? "Precinto"
+                              : "Varilla";
                     return (
                       <tr
                         key={`${f.tipo}-${f.referencia_id}`}
