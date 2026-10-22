@@ -69,7 +69,7 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
     // Operador y Lectura parten con acceso amplio a Combustible (matriz
     // robusta de perfiles): sin override, caen al fallback de abajo (ve
     // cualquier sub-pestaña mientras tenga el módulo asignado).
-    if (usuario?.rol === "grifero") return tab === "combustible";
+    if (usuario?.rol === "grifero") return tab === "combustible" || tab === "combustible:tanquetas";
     // 0119: el conductor también ve Urea, solo para registrar la compra en
     // ruta (el panel le muestra únicamente ese botón).
     if (usuario?.rol === "conductor_ruta")

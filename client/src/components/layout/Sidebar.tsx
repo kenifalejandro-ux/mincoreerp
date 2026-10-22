@@ -72,7 +72,8 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
     // ruta (el panel le muestra únicamente ese botón).
     if (usuario?.rol === "conductor_ruta")
       return tab === "combustible" || tab === "combustible:urea" || tab === "combustible:mi_viaje";
-    if (usuario?.rol === "grifero") return tab === "combustible";
+    // Tanquetas: es donde recibe la tanqueta de vuelta (0143).
+    if (usuario?.rol === "grifero") return tab === "combustible" || tab === "combustible:tanquetas";
     if (usuario?.rol === "encargado_urea") return tab === "combustible:urea";
     // Operador y Lectura parten con acceso amplio a Combustible (matriz
     // robusta de perfiles): sin override, ven todos los submenús.
