@@ -354,6 +354,27 @@ const JOIN_ULTIMA_LECTURA = `
   ) sv ON true
 `;
 
+/** Todo lo que ENTRA al tanque y mueve su nivel: las recepciones y el saldo
+ *  que una tanqueta devuelve al pozo (0145). Mismas columnas para los dos, así
+ *  cada cuenta del módulo cambia `FROM combustible_recepciones r` por esto y
+ *  lo ve completo.
+ *
+ *  `es_recepcion` separa lo que es una compra: solo ella abre un ciclo
+ *  (ultima_recepcion) o cuenta como ancla de calibración. El retorno SÍ suma
+ *  como entrada; lo que no hace es reiniciar nada, igual que una recepción
+ *  menor al 1 % de la capacidad. La fecha del retorno es cuando se registró
+ *  (`creado_en`): el grifero lo recibe y lo devuelve en el mismo acto. */
+const ENTRADAS_NIVEL = `(
+  SELECT r.tenant_id, r.combustible_id, r.id, r.recibido_en, r.cantidad,
+         r.costo_unitario, r.anulada_en, true AS es_recepcion
+    FROM combustible_recepciones r
+  UNION ALL
+  SELECT t.tenant_id, t.combustible_id, t.id, t.creado_en, t.cantidad_pozo,
+         t.costo_unitario_pozo, NULL::timestamptz, false
+    FROM combustible_tanqueta_retornos t
+   WHERE t.destino = 'pozo'
+)`;
+
 const JOIN_NIVEL_TEORICO = `
   LEFT JOIN LATERAL (
     WITH ultima AS (
@@ -366,7 +387,7 @@ const JOIN_NIVEL_TEORICO = `
     ), movimientos AS (
       SELECT
         COALESCE((SELECT SUM(r.cantidad)
-                    FROM combustible_recepciones r
+                    FROM ${ENTRADAS_NIVEL} r
                    WHERE r.tenant_id = c.tenant_id AND r.combustible_id = c.id
                      AND r.anulada_en IS NULL
                      AND r.recibido_en > COALESCE((SELECT leido_en FROM ultima), '-infinity'::timestamptz)
@@ -430,6 +451,7 @@ const LATERAL_DIFERENCIA_RECEPCION = `
         WHEN antes.nivel IS NULL OR despues.nivel IS NULL THEN NULL
         WHEN r.anulada_en IS NOT NULL THEN NULL
         ELSE (despues.nivel - antes.nivel) + COALESCE(salidas.total, 0) - grupo.cantidad
+             - COALESCE(pozo.total, 0)
       END AS diferencia_litros
     FROM (
       SELECT l.nivel, l.leido_en FROM combustible_lecturas l
@@ -451,6 +473,15 @@ const LATERAL_DIFERENCIA_RECEPCION = `
        WHERE d.combustible_id = r.combustible_id AND d.anulada_en IS NULL
          AND d.despachado_en > antes.leido_en AND d.despachado_en <= despues.leido_en
     ) salidas ON true
+    -- Lo que una tanqueta devolvió al pozo entre las dos lecturas (0145): subió
+    -- el nivel, pero no es parte de lo recibido. Sin restarlo se vería como un
+    -- sobrante de esta recepción.
+    LEFT JOIN LATERAL (
+      SELECT SUM(t.cantidad_pozo) AS total FROM combustible_tanqueta_retornos t
+       WHERE t.tenant_id = r.tenant_id AND t.combustible_id = r.combustible_id
+         AND t.destino = 'pozo'
+         AND t.creado_en > antes.leido_en AND t.creado_en <= despues.leido_en
+    ) pozo ON true
     LEFT JOIN LATERAL (
       SELECT COUNT(*) AS entregas,
              COALESCE(SUM(r2.cantidad), 0) AS cantidad,
@@ -2920,7 +2951,7 @@ export class CombustibleRepository {
                  AND d.despachado_en > a.leido_en AND d.despachado_en <= $4::timestamptz
              ), 0) AS despachos,
              COALESCE((
-               SELECT SUM(r.cantidad) FROM combustible_recepciones r
+               SELECT SUM(r.cantidad) FROM ${ENTRADAS_NIVEL} r
                WHERE r.tenant_id = $1 AND r.combustible_id = $2
                  AND r.anulada_en IS NULL
                  AND r.recibido_en > a.leido_en AND r.recibido_en <= $4::timestamptz
@@ -3010,7 +3041,7 @@ export class CombustibleRepository {
                  AND d.despachado_en > i.leido_en AND d.despachado_en <= $4::timestamptz
              ), 0) AS despachos,
              COALESCE((
-               SELECT SUM(r.cantidad) FROM combustible_recepciones r
+               SELECT SUM(r.cantidad) FROM ${ENTRADAS_NIVEL} r
                WHERE r.tenant_id = $1 AND r.combustible_id = $2
                  AND r.anulada_en IS NULL
                  AND r.recibido_en > i.leido_en AND r.recibido_en <= $4::timestamptz
@@ -3140,7 +3171,7 @@ export class CombustibleRepository {
                  AND d.anulada_en IS NULL AND d.despachado_en < p.en
               UNION ALL
               SELECT 'recepcion', r.cantidad, r.recibido_en
-                FROM combustible_recepciones r
+                FROM ${ENTRADAS_NIVEL} r
                WHERE r.tenant_id = $1 AND r.combustible_id = c.id
                  AND r.anulada_en IS NULL AND r.recibido_en < p.en
             ) m
@@ -5206,6 +5237,23 @@ export class CombustibleRepository {
 
         UNION ALL
 
+        -- El saldo de una tanqueta que volvió al pozo (0145): entra como la
+        -- recepción, sin proveedor ni documento.
+        SELECT t.creado_en, 2, 'retorno_tanqueta',
+               t.id::text,
+               NULL,
+               q.codigo,
+               t.cantidad_pozo, 0::numeric,
+               NULL::numeric,
+               t.usuario_id, NULL::timestamptz, NULL::text,
+               NULL::numeric, NULL::text
+          FROM combustible_tanqueta_retornos t
+          JOIN combustible_tanquetas q ON q.id = t.tanqueta_id AND q.tenant_id = $1
+         WHERE t.tenant_id = $1 AND t.combustible_id = $2 AND t.destino = 'pozo'
+           AND t.creado_en >= $3::timestamptz AND t.creado_en <= $4::timestamptz
+
+        UNION ALL
+
         SELECT d.despachado_en, 1, 'despacho',
                d.id::text,
                CONCAT(d.serie_talonario, '-', LPAD(d.n_vale::text, 5, '0')),
@@ -5275,7 +5323,7 @@ export class CombustibleRepository {
       ),
       marcados AS (
         SELECT m.*,
-               COALESCE(m.tipo IN ('despacho', 'recepcion')
+               COALESCE(m.tipo IN ('despacho', 'recepcion', 'retorno_tanqueta')
                         AND m.ocurrido_en < (SELECT p.en FROM primera p), false) AS historico
           FROM movimientos m
       )
@@ -5311,8 +5359,8 @@ export class CombustibleRepository {
          SELECT 1 FROM combustible_despachos
           WHERE tenant_id = $1 AND combustible_id = $2
          UNION ALL
-         SELECT 1 FROM combustible_recepciones
-          WHERE tenant_id = $1 AND combustible_id = $2
+         SELECT 1 FROM ${ENTRADAS_NIVEL} e
+          WHERE e.tenant_id = $1 AND e.combustible_id = $2
          UNION ALL
          SELECT 1 FROM combustible_lecturas
           WHERE tenant_id = $1 AND combustible_id = $2 AND origen <> 'inicial'
@@ -5524,7 +5572,9 @@ export class CombustibleRepository {
                     AND l.origen <> 'inicial'),
                 (SELECT MAX(r.recibido_en) FROM combustible_recepciones r
                   WHERE r.tenant_id = $1 AND r.combustible_id = $2 AND r.anulada_en IS NULL
-                    AND r.id <> $3)
+                    AND r.id <> $3),
+                (SELECT MAX(t.creado_en) FROM combustible_tanqueta_retornos t
+                  WHERE t.tenant_id = $1 AND t.combustible_id = $2 AND t.destino = 'pozo')
               ) AS ultimo`,
       [tenantId, combustibleId, excluirRecepcionId]
     );
@@ -6392,7 +6442,7 @@ export class CombustibleRepository {
         SELECT
           COALESCE((
             SELECT SUM(r.cantidad)
-            FROM combustible_recepciones r
+            FROM ${ENTRADAS_NIVEL} r
             WHERE r.tenant_id = $2 AND r.combustible_id = $1
               AND r.anulada_en IS NULL
               AND r.recibido_en > COALESCE((SELECT leido_en FROM ultima), '0001-01-01'::timestamptz)
@@ -6498,7 +6548,7 @@ export class CombustibleRepository {
     }>(
       `
       SELECT r.cantidad, r.costo_unitario, nivel.nivel AS nivel_antes
-      FROM combustible_recepciones r
+      FROM ${ENTRADAS_NIVEL} r
       LEFT JOIN LATERAL (
         SELECT l.nivel
         FROM combustible_lecturas l
@@ -6508,7 +6558,7 @@ export class CombustibleRepository {
         LIMIT 1
       ) nivel ON true
       WHERE r.tenant_id = $1 AND r.combustible_id = $2 AND r.anulada_en IS NULL
-      ORDER BY r.recibido_en ASC, r.id ASC
+      ORDER BY r.recibido_en ASC, r.es_recepcion DESC, r.id ASC
       `,
       [tenantId, combustibleId]
     );
@@ -6903,7 +6953,7 @@ export class CombustibleRepository {
         ) des ON true
         LEFT JOIN LATERAL (
           SELECT SUM(r.cantidad) AS total
-            FROM combustible_recepciones r
+            FROM ${ENTRADAS_NIVEL} r
            WHERE r.tenant_id = $1 AND r.combustible_id = le.combustible_id
              AND r.anulada_en IS NULL
              AND r.recibido_en > le.leido_en_anterior AND r.recibido_en <= le.leido_en
@@ -6970,7 +7020,7 @@ export class CombustibleRepository {
         ) des ON true
         LEFT JOIN LATERAL (
           SELECT SUM(r.cantidad) AS total
-          FROM combustible_recepciones r
+          FROM ${ENTRADAS_NIVEL} r
           WHERE r.tenant_id = $1 AND r.combustible_id = $2 AND r.anulada_en IS NULL
             AND r.recibido_en > le.leido_en_anterior AND r.recibido_en <= le.leido_en
         ) rec ON true
@@ -7077,8 +7127,8 @@ export class CombustibleRepository {
       ) des ON true
       LEFT JOIN LATERAL (
         SELECT SUM(r.cantidad) AS total,
-               SUM(r.cantidad) FILTER (WHERE r.cantidad >= c.capacidad_total * 0.01) AS ancla
-        FROM combustible_recepciones r
+               SUM(r.cantidad) FILTER (WHERE r.es_recepcion AND r.cantidad >= c.capacidad_total * 0.01) AS ancla
+        FROM ${ENTRADAS_NIVEL} r
         WHERE r.tenant_id = $1 AND r.combustible_id = $2 AND r.anulada_en IS NULL
           AND r.recibido_en > le.leido_en_anterior AND r.recibido_en <= le.leido_en
       ) rec ON true
@@ -7897,7 +7947,7 @@ export class CombustibleRepository {
              AND d.despachado_en > le.leido_en_anterior AND d.despachado_en <= le.leido_en
         ) des ON true
         LEFT JOIN LATERAL (
-          SELECT SUM(rr.cantidad) AS total FROM combustible_recepciones rr
+          SELECT SUM(rr.cantidad) AS total FROM ${ENTRADAS_NIVEL} rr
            WHERE rr.tenant_id = $1 AND rr.combustible_id = $2 AND rr.anulada_en IS NULL
              AND rr.recibido_en > le.leido_en_anterior AND rr.recibido_en <= le.leido_en
         ) rec ON true

@@ -255,6 +255,8 @@ export const MODULOS: ModuloDefinicion[] = [
           tanqueta_id: "combustible_tanquetas",
           equipo_id: "equipos",
           usuario_id: "usuarios",
+          // El tanque que recibe el saldo cuando el destino es el pozo (0145).
+          combustible_id: "combustible",
         },
       },
       // Reparto del excedente de una recepción (0110): cubeta, unidades o

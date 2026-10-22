@@ -195,6 +195,10 @@ export async function borrarTenantDePrueba(tenantId: string) {
     await client.query("DELETE FROM combustible_compras_ruta WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM combustible_despachos WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM combustible_recepciones WHERE tenant_id = $1", [tenantId]);
+    // El retorno al pozo (0145) referencia el tanque: antes que `combustible`.
+    await client.query("DELETE FROM combustible_tanqueta_retornos WHERE tenant_id = $1", [
+      tenantId,
+    ]);
     // El catálogo de precios de urea (0121) referencia proveedores sin ON
     // DELETE, igual que combustible_precios: va antes que ellos.
     await client.query("DELETE FROM combustible_urea_precios WHERE tenant_id = $1", [tenantId]);
@@ -215,9 +219,6 @@ export async function borrarTenantDePrueba(tenantId: string) {
     // Una tanqueta asignada (0139) apunta a su unidad sin ON DELETE; el historial
     // de asignaciones (0141) apunta a las dos.
     await client.query("DELETE FROM combustible_tanqueta_asignaciones WHERE tenant_id = $1", [
-      tenantId,
-    ]);
-    await client.query("DELETE FROM combustible_tanqueta_retornos WHERE tenant_id = $1", [
       tenantId,
     ]);
     await client.query("DELETE FROM combustible_tanquetas WHERE tenant_id = $1", [tenantId]);
