@@ -10,6 +10,15 @@ export default {
     const relative = filenames.map((f) => path.relative(clientDir, f)).join(" ");
     return [`sh -c "cd client && eslint --fix ${relative} && prettier --write ${relative}"`];
   },
-  "!(client)/**/*.{ts,js}": ["eslint --fix", "prettier --write"],
-  "*.{ts,js}": ["eslint --fix", "prettier --write"],
+  // Una sola regla para todo lo que NO es client/. Antes eran dos ("!(client)/**"
+  // y "*.{ts,js}") que se pisaban: los archivos de subcarpetas corrían eslint y
+  // prettier dos veces, y "*.{ts,js}" además atrapaba los de client/, que la
+  // raíz ignora a propósito.
+  "*.{ts,js}": (filenames) => {
+    const fuera = filenames
+      .filter((f) => !path.relative(process.cwd(), f).startsWith(`client${path.sep}`))
+      .map((f) => JSON.stringify(f))
+      .join(" ");
+    return fuera ? [`eslint --fix ${fuera}`, `prettier --write ${fuera}`] : [];
+  },
 };
