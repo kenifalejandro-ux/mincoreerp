@@ -1,6 +1,7 @@
 # Puerta antes de subir (scripts/verificar.ts): formato, lint, tipos y tests
 # del módulo tocado contra una base desechable, y el e2e SOLO de los specs que
-# creaste o modificaste, 5 veces en chromium. El resto de los e2e los corre el
+# creaste o modificaste, una vez en chromium (las 5 repeticiones para cazar los
+# inestables las hace el CI en el PR). El resto de los e2e también los corre el
 # CI. Omitir es decisión consciente: SKIP_VERIFICAR=1 git push
 # (o SKIP_E2E=1 si no hay Docker).
 npm run verificar || {
