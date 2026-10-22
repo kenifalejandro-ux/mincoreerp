@@ -10,6 +10,7 @@ import { History, Pencil, Plus, Truck, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import AsignarTanqueta from "./AsignarTanqueta";
+import RecibirTanqueta from "./RecibirTanqueta";
 import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
 import { useSedes } from "../comunes/useSedes";
@@ -39,7 +40,7 @@ interface Tanqueta {
 /** Un movimiento de la tanqueta (0111/0114): lo que entró (excedente de una
  *  recepción, previsión desde el tanque) y lo que salió (carga en ruta). */
 interface MovimientoTanqueta {
-  tipo: "excedente" | "prevision" | "carga_ruta" | "carga_planta";
+  tipo: "excedente" | "prevision" | "carga_ruta" | "carga_planta" | "retorno";
   id: string;
   cantidad: string;
   fecha: string;
@@ -54,6 +55,7 @@ interface MovimientoTanqueta {
   usuario: string | null;
   conductor_nombre: string | null;
   conductor_dni: string | null;
+  motivo: string | null;
 }
 
 /** A quién se le entregó: el conductor que quedó en el vale, si lo había. */
@@ -66,6 +68,14 @@ const describirMovimiento = (m: MovimientoTanqueta) => {
   }
   if (m.tipo === "prevision") {
     return `Previsión desde ${m.tanque_codigo} · vale ${m.serie_talonario}-${m.n_vale}`;
+  }
+  if (m.tipo === "retorno") {
+    const diferencia = Number(m.cantidad);
+    return `Volvió de ${m.equipo ?? "una unidad"}${
+      diferencia === 0
+        ? ""
+        : ` · se corrigió ${diferencia > 0 ? "+" : ""}${diferencia} gal: ${m.motivo}`
+    }`;
   }
   if (m.tipo === "carga_planta") {
     return `Carga en planta a ${m.equipo ?? "una unidad"} · vale ${m.serie_talonario}-${m.n_vale}${conductor(m)}`;
@@ -128,11 +138,16 @@ export default function TanquetasPanel() {
   const [historial, setHistorial] = useState<MovimientoTanqueta[]>([]);
 
   const [asignando, setAsignando] = useState<Tanqueta | null>(null);
+  const [recibiendo, setRecibiendo] = useState<Tanqueta | null>(null);
 
-  const permite = (accion: "nueva" | "editar") => {
+  const permite = (accion: "nueva" | "editar" | "retorno") => {
     const override = usuario?.permisosPestanas?.[`combustible:tanquetas:${accion}`];
     if (override !== undefined) return override;
-    return usuario?.rol === "admin" || usuario?.rol === "operador";
+    return (
+      usuario?.rol === "admin" ||
+      usuario?.rol === "operador" ||
+      (accion === "retorno" && usuario?.rol === "grifero")
+    );
   };
 
   const cargar = useCallback(async () => {
@@ -361,6 +376,15 @@ export default function TanquetasPanel() {
                       <Truck className="w-4 h-4" />
                     </button>
                   )}
+                  {permite("retorno") && t.asignada_vigente && (
+                    <button
+                      onClick={() => setRecibiendo(t)}
+                      aria-label={`Recibir ${t.codigo} de vuelta`}
+                      className="px-2 py-1 rounded border border-[#BADC1E] text-[#BADC1E] text-xs font-bold hover:bg-[#BADC1E] hover:text-[#0D1719]"
+                    >
+                      Recibir de vuelta
+                    </button>
+                  )}
                   {permite("editar") && (
                     <button
                       onClick={() => abrirEdicion(t)}
@@ -498,6 +522,17 @@ export default function TanquetasPanel() {
             </form>
           </div>
         </div>
+      )}
+
+      {recibiendo && (
+        <RecibirTanqueta
+          tanqueta={recibiendo}
+          onCerrar={() => setRecibiendo(null)}
+          onListo={() => {
+            setRecibiendo(null);
+            void cargar();
+          }}
+        />
       )}
 
       {asignando && (

@@ -59,9 +59,17 @@ const SQL_SALIDAS = `
      WHERE d.tenant_id = t.tenant_id AND d.tanqueta_origen_id = t.id AND d.anulada_en IS NULL
   ), 0)`;
 
+/** Lo que el grifero corrigió al recibir la tanqueta de vuelta (0143): la
+ *  diferencia con signo entre lo que validó y lo que calculaba el sistema. */
+const SQL_AJUSTES = `
+  COALESCE((
+    SELECT SUM(r.diferencia) FROM combustible_tanqueta_retornos r
+     WHERE r.tenant_id = t.tenant_id AND r.tanqueta_id = t.id
+  ), 0)`;
+
 /** La asignación a una unidad (0139) vale mientras la tanqueta tenga saldo:
  *  al vaciarse deja de contar sola, sin columna de "libre" que pueda divergir. */
-const SQL_ASIGNADA_VIGENTE = `(t.equipo_asignado_id IS NOT NULL AND ${SQL_ENTRADAS} - ${SQL_SALIDAS} > 0)`;
+const SQL_ASIGNADA_VIGENTE = `(t.equipo_asignado_id IS NOT NULL AND ${SQL_ENTRADAS} + ${SQL_AJUSTES} - ${SQL_SALIDAS} > 0)`;
 
 const COLUMNAS = `
   t.id, t.grifo_interno_id, t.codigo, t.capacidad, t.activa, t.motivo_baja, t.creado_en,
@@ -71,8 +79,8 @@ const COLUMNAS = `
   ${SQL_ENTRADAS_EXCEDENTE} AS entradas_excedente,
   ${SQL_ENTRADAS_PREVISION} AS entradas_prevision,
   ${SQL_SALIDAS} AS salidas,
-  ${SQL_ENTRADAS} - ${SQL_SALIDAS} AS saldo,
-  t.capacidad - (${SQL_ENTRADAS} - ${SQL_SALIDAS}) AS libre`;
+  ${SQL_ENTRADAS} + ${SQL_AJUSTES} - ${SQL_SALIDAS} AS saldo,
+  t.capacidad - (${SQL_ENTRADAS} + ${SQL_AJUSTES} - ${SQL_SALIDAS}) AS libre`;
 
 export async function listarTanquetas(
   client: PoolClient,
@@ -208,12 +216,12 @@ export async function asignarTanqueta(
     throw new AppError(400, `La unidad ${eq.rows[0].placa_codigo} está dada de baja`);
   }
   // Una tanqueta con combustible que ya va con una unidad está en la línea
-  // amarilla: no se pasa a otra. Se libera primero (con motivo) y se asigna de
+  // amarilla: no se pasa a otra. Se registra su retorno y se asigna de
   // nuevo (auditoría H-1 y H-9). Volver a asignarla a ESA unidad sí se permite.
   if (t.asignada_vigente && Number(t.equipo_asignado_id) !== equipoId) {
     throw new AppError(
       409,
-      `La tanqueta ${t.codigo} ya va con otra unidad: libérala primero (con motivo) y luego asígnala`
+      `La tanqueta ${t.codigo} ya va con otra unidad: registra su retorno y luego asígnala`
     );
   }
   const vigentes = await tanquetasVigentesDeUnidad(client, tenantId, equipoId);
@@ -257,15 +265,54 @@ export async function asignarTanqueta(
   return getTanqueta(client, tenantId, id);
 }
 
-/** Quita la asignación a mano (la tanqueta volvió con saldo y no sigue con la
- *  unidad). Si ya estaba sin asignar es un error: no hay nada que liberar. */
-export async function liberarTanqueta(client: PoolClient, tenantId: string, id: number) {
+/** El grifero recibe la tanqueta de vuelta (0143): confirma el saldo que
+ *  calculó el sistema o escribe el que de verdad volvió (con motivo si es
+ *  otro). El saldo queda en la tanqueta, sin unidad. `saldoCalculado` es el que
+ *  el grifero tenía en pantalla: si cambió mientras tanto, se pide abrir de
+ *  nuevo y no se registra una diferencia contra un número que no vio. */
+export async function registrarRetornoTanqueta(
+  client: PoolClient,
+  tenantId: string,
+  id: number,
+  datos: { saldoCalculado: number; saldoValidado: number; motivo?: string; usuarioId: string }
+) {
   await bloquearTanqueta(client, tenantId, id);
   const t = await getTanqueta(client, tenantId, id);
   if (!t) return null;
-  if (t.equipo_asignado_id === null) {
-    throw new AppError(400, `La tanqueta ${t.codigo} no está asignada a ninguna unidad`);
+  if (!t.asignada_vigente) {
+    throw new AppError(
+      400,
+      `La tanqueta ${t.codigo} no va con ninguna unidad: no hay retorno que registrar`
+    );
   }
+  const saldo = Number(t.saldo);
+  if (Math.abs(saldo - datos.saldoCalculado) > 0.005) {
+    throw new AppError(
+      409,
+      `El saldo de la tanqueta ${t.codigo} cambió (ahora ${saldo} gal): ábrela de nuevo`
+    );
+  }
+  if (datos.saldoValidado > Number(t.capacidad) + 0.001) {
+    throw new AppError(400, `La tanqueta ${t.codigo} no admite más de ${Number(t.capacidad)} gal`);
+  }
+  const motivo = datos.motivo?.trim() ?? "";
+  if (Math.abs(datos.saldoValidado - saldo) > 0.005 && motivo.length < 3) {
+    throw new AppError(400, "Si el saldo que volvió no coincide con el calculado, explica por qué");
+  }
+  await client.query(
+    `INSERT INTO combustible_tanqueta_retornos
+       (tenant_id, tanqueta_id, equipo_id, saldo_calculado, saldo_validado, motivo, usuario_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      tenantId,
+      id,
+      t.equipo_asignado_id,
+      saldo,
+      datos.saldoValidado,
+      motivo || null,
+      datos.usuarioId,
+    ]
+  );
   await client.query(
     `UPDATE combustible_tanquetas SET equipo_asignado_id = NULL, asignada_en = NULL
       WHERE tenant_id = $1 AND id = $2`,
@@ -425,7 +472,7 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
               NULL::text AS equipo, NULL::numeric AS lectura_horometro,
               NULL::numeric AS lectura_odometro, NULL::text AS serie_talonario,
               NULL::int AS n_vale, u.nombre AS usuario,
-              NULL::text AS conductor_nombre, NULL::text AS conductor_dni
+              NULL::text AS conductor_nombre, NULL::text AS conductor_dni, NULL::text AS motivo
          FROM combustible_recepcion_excedentes x
          JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
          JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
@@ -434,7 +481,7 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
        UNION ALL
        SELECT 'prevision', d.id::text, d.cantidad, d.despachado_en, d.anulada_en,
               c.codigo, NULL, NULL, NULL, NULL, d.serie_talonario, d.n_vale, u.nombre,
-              d.conductor_nombre, d.conductor_dni
+              d.conductor_nombre, d.conductor_dni, NULL
          FROM combustible_despachos d
          JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = d.tenant_id
          LEFT JOIN usuarios u ON u.id = d.usuario_id
@@ -443,11 +490,18 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
        SELECT 'carga_' || d.tanqueta_lugar, d.id::text, d.cantidad, d.despachado_en,
               d.anulada_en, NULL, NULL, e.placa_codigo, d.lectura_horometro,
               d.lectura_odometro, d.serie_talonario, d.n_vale, u.nombre,
-              d.conductor_nombre, d.conductor_dni
+              d.conductor_nombre, d.conductor_dni, NULL
          FROM combustible_despachos d
          LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
          LEFT JOIN usuarios u ON u.id = d.usuario_id
         WHERE d.tenant_id = $1 AND d.tanqueta_origen_id = $2
+       UNION ALL
+       SELECT 'retorno', r.id::text, r.diferencia, r.creado_en, NULL, NULL, NULL, e.placa_codigo,
+              NULL, NULL, NULL, NULL, u.nombre, NULL, NULL, r.motivo
+         FROM combustible_tanqueta_retornos r
+         LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id
+         LEFT JOIN usuarios u ON u.id = r.usuario_id
+        WHERE r.tenant_id = $1 AND r.tanqueta_id = $2
      ) m
      ORDER BY fecha DESC, id DESC`,
     [tenantId, id]

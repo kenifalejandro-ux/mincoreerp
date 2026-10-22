@@ -48,7 +48,7 @@ import {
   crearTanquetaSchema,
   actualizarTanquetaSchema,
   asignarTanquetaSchema,
-  liberarTanquetaSchema,
+  retornoTanquetaSchema,
   crearLugarSchema,
   crearViajeSchema,
   cerrarViajeSchema,
@@ -408,7 +408,7 @@ router.get(
   requirePestana("combustible", "tanques:registrar_despacho"),
   asyncHandler(controller.listarTanquetasParaFormulario.bind(controller))
 );
-// Asignar o liberar la unidad (0139): mismo permiso que editar la tanqueta.
+// Asignar la unidad (0139): mismo permiso que editar la tanqueta.
 router.put(
   "/tanquetas/:tanquetaId/asignar",
   requirePestana("combustible", "tanquetas:editar"),
@@ -416,12 +416,13 @@ router.put(
   validate(asignarTanquetaSchema),
   asyncHandler(controller.asignarTanqueta.bind(controller))
 );
-router.put(
-  "/tanquetas/:tanquetaId/liberar",
-  requirePestana("combustible", "tanquetas:editar"),
-  requireRole("admin", "operador"),
-  validate(liberarTanquetaSchema),
-  asyncHandler(controller.liberarTanqueta.bind(controller))
+// Retorno de la tanqueta al grifo (0143): lo registra el grifero al recibirla.
+router.post(
+  "/tanquetas/:tanquetaId/retorno",
+  requirePestana("combustible", "tanquetas:retorno"),
+  requireRole("admin", "operador", "grifero"),
+  validate(retornoTanquetaSchema),
+  asyncHandler(controller.retornoTanqueta.bind(controller))
 );
 router.get(
   "/tanquetas/:tanquetaId/historial",

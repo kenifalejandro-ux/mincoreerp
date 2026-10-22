@@ -81,6 +81,8 @@ const accionesTanque: DefinicionPestana[] = [
 const accionesTanquetas: DefinicionPestana[] = [
   ["nueva", "Nueva tanqueta"],
   ["editar", "Editar tanqueta"],
+  // Recibir la tanqueta de vuelta con su saldo (0143): lo hace el grifero.
+  ["retorno", "Registrar retorno de tanqueta"],
 ].map(([id, nombre]) => ({
   modulo: "combustible",
   pestana: `tanquetas:${id}`,
@@ -328,6 +330,8 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
     "tanques:acciones:anular_lectura_varilla",
     "tanques:acciones:historial_varilla",
     "tanques:acciones:ver_tanque",
+    "tanquetas",
+    "tanquetas:retorno",
   ];
   // Conductor: solo el despacho externo. Las vistas del Histórico nacen
   // apagadas para los tres perfiles de cancha -- "el Admin decide si les da

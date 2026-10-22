@@ -2201,7 +2201,6 @@ export const actualizarTanquetaSchema = z.object({
 export type ActualizarTanquetaInput = z.infer<typeof actualizarTanquetaSchema>;
 
 // Asignar la tanqueta a la unidad que la lleva (0139), con su vale (0141).
-// Liberar pide motivo.
 export const asignarTanquetaSchema = z.object({
   equipo_id: z.number().int().positive().max(2147483647),
   // 0141: el vale de esta salida a la unidad, obligatorio al asignar o reasignar.
@@ -2210,10 +2209,15 @@ export const asignarTanquetaSchema = z.object({
 });
 export type AsignarTanquetaInput = z.infer<typeof asignarTanquetaSchema>;
 
-export const liberarTanquetaSchema = z.object({
-  motivo: z.string().trim().min(3).max(500),
+// Retorno de la tanqueta al grifero (0143): el saldo que vio en pantalla, el que
+// de verdad volvió y, si no coinciden, por qué. `destino` solo admite "reserva".
+export const retornoTanquetaSchema = z.object({
+  saldo_calculado: z.number().positive().max(100000),
+  saldo_validado: z.number().min(0).max(100000),
+  motivo: z.string().trim().max(500).optional(),
+  destino: z.literal("reserva"),
 });
-export type LiberarTanquetaInput = z.infer<typeof liberarTanquetaSchema>;
+export type RetornoTanquetaInput = z.infer<typeof retornoTanquetaSchema>;
 
 // ── Viajes (0123) ──────────────────────────────────────────────────────────
 const fechaHora = z.string().datetime({ offset: true });

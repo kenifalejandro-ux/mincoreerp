@@ -16,7 +16,13 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import {
+  app,
+  crearTenantDePrueba,
+  borrarTenantDePrueba,
+  idUnico,
+  recibirTanqueta,
+} from "./helpers";
 import { closeDatabase, pool, withTenant } from "../src/server/config/database";
 
 type Agente = ReturnType<typeof request.agent>;
@@ -101,10 +107,9 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
       serie_talonario: "ASG",
       n_vale: nVale++,
     });
-  const liberar = (a: Agente, tanqueta: number, motivo: string = "prueba de auditoría") =>
-    a.put(`/api/erp/combustible/tanquetas/${tanqueta}/liberar`).send({ motivo });
-  const liberarCrudo = (a: Agente, tanqueta: number, cuerpo: unknown) =>
-    a.put(`/api/erp/combustible/tanquetas/${tanqueta}/liberar`).send(cuerpo as object);
+  const retornar = (a: Agente, tanqueta: number) => recibirTanqueta(admin, tanqueta, { como: a });
+  const retornarCrudo = (a: Agente, tanqueta: number | string, cuerpo: unknown) =>
+    a.post(`/api/erp/combustible/tanquetas/${tanqueta}/retorno`).send(cuerpo as object);
 
   /** La baja de una unidad no tiene endpoint en la API: se hace por SQL, como lo haría Soporte. */
   const darDeBajaEquipo = async (equipoId: number) => {
@@ -264,9 +269,9 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
       expect((await ver(t)).equipo_asignado_id).toBe(uA);
     });
 
-    it("A2: asignar o liberar la tanqueta de otra empresa es 404, y la ajena no se toca", async () => {
+    it("A2: asignar o recibir de vuelta la tanqueta de otra empresa es 404, y la ajena no se toca", async () => {
       expect((await asignar(admin, tanquetaAjena, uA)).status).toBe(404);
-      expect((await liberar(admin, tanquetaAjena)).status).toBe(404);
+      expect((await retornar(admin, tanquetaAjena)).status).toBe(404);
       const hist = await admin.get(`/api/erp/combustible/tanquetas/${tanquetaAjena}/historial`);
       expect(hist.status).toBe(404);
       const suya = (await ajeno.get("/api/erp/combustible/tanquetas")).body.find(
@@ -341,7 +346,7 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
 
   // ═══ B. Permisos por rol ════════════════════════════════════════════════
   describe("B. permisos por rol", () => {
-    it("B1: asignar y liberar solo los hacen admin y operador (no grifero, conductor, encargado ni Lectura)", async () => {
+    it("B1: asignar lo hacen admin y operador; el retorno también el grifero (no conductor, encargado ni Lectura)", async () => {
       const t = await tanquetaLlenaYAsignada(tanque, uA);
       const intrusos: [string, Agente][] = [
         ["grifero", grifero],
@@ -352,11 +357,12 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
       for (const [nombre, a] of intrusos) {
         const as = await asignar(a, t, uB);
         expect(as.status, `${nombre} asignar: ${JSON.stringify(as.body)}`).toBe(403);
-        const li = await liberar(a, t);
-        expect(li.status, `${nombre} liberar: ${JSON.stringify(li.body)}`).toBe(403);
+        if (nombre === "grifero") continue;
+        const li = await retornar(a, t);
+        expect(li.status, `${nombre} retorno: ${JSON.stringify(li.body)}`).toBe(403);
       }
       expect((await ver(t)).equipo_asignado_id).toBe(uA);
-      expect((await liberar(operador, t)).status).toBe(200);
+      expect((await retornar(operador, t)).status).toBe(201);
       expect((await asignar(operador, t, uB)).status).toBe(200);
     });
 
@@ -786,7 +792,7 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
       // El formulario precargado (sin señal) todavía muestra la tanqueta...
       expect((await delFormulario(c.agente)).map((x) => x.id)).toEqual([t]);
       // ...y mientras tanto la oficina la libera.
-      expect((await liberar(admin, t, "se la llevó otra unidad")).status).toBe(200);
+      expect((await retornar(admin, t)).status).toBe(201);
       // Al sincronizar, el POST de la cola llega con el mismo cuerpo y su cliente_uuid.
       const r = await cargarEnRuta(c.agente, t, c.unidad, 30, { cliente_uuid: randomUUID() });
       expect(r.status, JSON.stringify(r.body)).toBe(400);
@@ -807,25 +813,34 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
       expect(r.status).toBe(400);
     });
 
-    it("F2: liberar sin motivo, con espacios o con 2 letras es 400; sin estar asignada también", async () => {
+    it("F2: el retorno con cuerpo malo o una diferencia sin motivo es 400; sin estar asignada también", async () => {
       const t = await tanquetaLlenaYAsignada(tanque, uA, 50);
       const fallos: string[] = [];
+      const base = { saldo_calculado: 50, saldo_validado: 50, destino: "reserva" };
       for (const cuerpo of [
         {},
-        { motivo: "" },
-        { motivo: "   " },
-        { motivo: "ab" },
-        { motivo: "x".repeat(501) },
-        { motivo: 5 },
-        { motivo: null },
+        { ...base, saldo_calculado: undefined },
+        { ...base, saldo_validado: undefined },
+        { ...base, destino: undefined },
+        { ...base, destino: "pozo" },
+        { ...base, saldo_calculado: 0 },
+        { ...base, saldo_calculado: "50" },
+        { ...base, saldo_validado: -1 },
+        { ...base, saldo_validado: 281, motivo: "no cabe en la tanqueta" },
+        { ...base, saldo_validado: 40 },
+        { ...base, saldo_validado: 40, motivo: "   " },
+        { ...base, saldo_validado: 40, motivo: "ab" },
+        { ...base, saldo_validado: 40, motivo: "x".repeat(501) },
+        { ...base, motivo: 5 },
+        { ...base, motivo: null },
       ]) {
-        const r = await liberarCrudo(admin, t, cuerpo);
+        const r = await retornarCrudo(admin, t, cuerpo);
         if (r.status !== 400) fallos.push(`${JSON.stringify(cuerpo).slice(0, 40)} -> ${r.status}`);
       }
       expect(fallos).toEqual([]);
       expect((await ver(t)).equipo_asignado_id).toBe(uA);
-      expect((await liberar(admin, t, "motivo válido")).status).toBe(200);
-      expect((await liberar(admin, t, "otra vez")).status).toBe(400);
+      expect((await retornar(admin, t)).status).toBe(201);
+      expect((await retornar(admin, t)).status).toBe(400);
     });
 
     it("H-7a: asignar con equipo_id malo es 400 (nunca 500)", async () => {
@@ -858,10 +873,12 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
           .put(`/api/erp/combustible/tanquetas/${id}/asignar`)
           .send({ equipo_id: uA, serie_talonario: "ASG", n_vale: nVale++ });
         if (as.status >= 500) fallos.push(`asignar id=${id} -> ${as.status}`);
-        const li = await admin
-          .put(`/api/erp/combustible/tanquetas/${id}/liberar`)
-          .send({ motivo: "prueba de auditoría" });
-        if (li.status >= 500) fallos.push(`liberar id=${id} -> ${li.status}`);
+        const li = await retornarCrudo(admin, id, {
+          saldo_calculado: 50,
+          saldo_validado: 50,
+          destino: "reserva",
+        });
+        if (li.status >= 500) fallos.push(`retorno id=${id} -> ${li.status}`);
       }
       expect(fallos).toEqual([]);
     });
@@ -1019,20 +1036,24 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
 
   // ═══ G. Bitácora ════════════════════════════════════════════════════════
   describe("G. bitácora", () => {
-    it("G1: asignar, liberar y asignar de nuevo dejan quién, a qué unidad y (liberar) por qué", async () => {
+    it("G1: asignar, recibir de vuelta y asignar de nuevo dejan quién, a qué unidad y (retorno) cuánto y por qué", async () => {
       const t = await tanquetaLlenaYAsignada(tanque, uA, 50);
-      expect((await liberar(admin, t, "motivo de la auditoría")).status).toBe(200);
+      expect(
+        (await recibirTanqueta(admin, t, { validado: 48, motivo: "motivo de la auditoría" })).status
+      ).toBe(201);
       // Un 400 no debe dejar fila.
-      expect((await liberar(admin, t, "otra vez")).status).toBe(400);
+      expect((await retornar(admin, t)).status).toBe(400);
       expect((await asignar(operador, t, uB)).status).toBe(200);
       const asignaciones = await bitacora("combustible.tanqueta_asignar", t);
       expect(asignaciones.length).toBeGreaterThanOrEqual(2);
       const ultima = asignaciones[asignaciones.length - 1];
       expect(ultima.usuario_id).toBeTruthy();
       expect(Number(ultima.detalle.equipoId)).toBe(uB);
-      const libs = await bitacora("combustible.tanqueta_liberar", t);
+      const libs = await bitacora("combustible.tanqueta_retorno", t);
       expect(libs).toHaveLength(1);
       expect(libs[0].detalle.motivo).toBe("motivo de la auditoría");
+      expect(Number(libs[0].detalle.saldoCalculado)).toBe(50);
+      expect(Number(libs[0].detalle.saldoValidado)).toBe(48);
       expect(Number(libs[0].detalle.equipoId)).toBe(uA);
     });
 
@@ -1110,6 +1131,122 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
       expect(r.status, JSON.stringify(r.body)).toBe(409);
       expect((await ver(t)).equipo_asignado_id).toBe(uA);
       expect(Number((await ver(t)).saldo)).toBe(50);
+    });
+  });
+  // ═══ I. Retorno de la tanqueta (0143) ═══════════════════════════════════
+  describe("I. retorno de la tanqueta", () => {
+    const filasRetorno = async (t: number) =>
+      withTenant(tenantId, async (client) => {
+        const q = await client.query(
+          `SELECT saldo_calculado, saldo_validado, diferencia, motivo
+             FROM combustible_tanqueta_retornos WHERE tenant_id = $1 AND tanqueta_id = $2`,
+          [tenantId, t]
+        );
+        return q.rows;
+      });
+
+    it("I1: dos retornos simultáneos de la misma tanqueta: uno entra y el otro es 400/409, una sola fila", async () => {
+      const t = await tanquetaLlenaYAsignada(tanque, uA, 50);
+      const rs = await Promise.all([
+        recibirTanqueta(admin, t, { validado: 40, motivo: "primero" }),
+        recibirTanqueta(admin, t, { validado: 40, motivo: "segundo" }),
+        recibirTanqueta(admin, t, { como: grifero }),
+      ]);
+      for (const r of rs) expect(r.status, JSON.stringify(r.body)).toBeLessThan(500);
+      expect(rs.filter((r) => r.status === 201)).toHaveLength(1);
+      expect(await filasRetorno(t)).toHaveLength(1);
+    });
+
+    it("I2: un retorno y una carga del conductor a la vez nunca entran los dos", async () => {
+      const c = await conductorNuevo();
+      const t = await tanquetaLlenaYAsignada(tanque, c.unidad, 50);
+      const [ret, carga] = await Promise.all([
+        recibirTanqueta(admin, t),
+        cargarEnRuta(c.agente, t, c.unidad, 30),
+      ]);
+      expect(ret.status, JSON.stringify(ret.body)).toBeLessThan(500);
+      expect(carga.status, JSON.stringify(carga.body)).toBeLessThan(500);
+      expect(ret.status === 201 && carga.status === 201).toBe(false);
+      const despues = await ver(t);
+      if (ret.status === 201) {
+        expect(despues.equipo_asignado_id).toBeNull();
+        expect(Number(despues.saldo)).toBe(50);
+      } else {
+        // La carga entró primero: el retorno vio un saldo viejo y se rechazó.
+        expect(ret.status).toBe(409);
+        expect(despues.equipo_asignado_id).toBe(c.unidad);
+        expect(Number(despues.saldo)).toBe(20);
+      }
+    });
+
+    it("I3: con un saldo que ya cambió, el retorno viejo es 409 y no deja fila", async () => {
+      const c = await conductorNuevo();
+      const t = await tanquetaLlenaYAsignada(tanque, c.unidad, 50);
+      expect((await cargarEnRuta(c.agente, t, c.unidad, 10)).status).toBe(201);
+      const r = await recibirTanqueta(admin, t, { calculado: 50, validado: 50 });
+      expect(r.status, JSON.stringify(r.body)).toBe(409);
+      expect(await filasRetorno(t)).toHaveLength(0);
+      expect((await ver(t)).equipo_asignado_id).toBe(c.unidad);
+    });
+
+    it("I4: con decimales raros el saldo queda en lo que validó el grifero y nunca es 500", async () => {
+      const t = await tanquetaNueva();
+      expect((await llenar(admin, tanque, t, 33.337)).status).toBe(201);
+      expect((await asignar(admin, t, uA)).status).toBe(200);
+      const r = await recibirTanqueta(admin, t, { validado: 30.004, motivo: "se usó casi todo" });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      expect(Math.abs(Number(r.body.saldo) - 30)).toBeLessThan(0.011);
+    });
+
+    it("I5: el historial muestra el retorno con su motivo y quién lo registró", async () => {
+      const t = await tanquetaLlenaYAsignada(tanque, uA, 50);
+      expect(
+        (await recibirTanqueta(admin, t, { como: grifero, validado: 47, motivo: "derrame" })).status
+      ).toBe(201);
+      const h = await admin.get(`/api/erp/combustible/tanquetas/${t}/historial`);
+      expect(h.status, JSON.stringify(h.body)).toBe(200);
+      const fila = h.body.find((m: { tipo: string }) => m.tipo === "retorno");
+      expect(fila).toBeTruthy();
+      expect(Number(fila.cantidad)).toBe(-3);
+      expect(fila.motivo).toBe("derrame");
+      expect(fila.usuario).toBeTruthy();
+    });
+
+    it("I6: al asignarla de nuevo, el vale lleva el saldo que validó el grifero", async () => {
+      const t = await tanquetaLlenaYAsignada(tanque, uA, 50);
+      expect(
+        (await recibirTanqueta(admin, t, { validado: 48, motivo: "evaporación" })).status
+      ).toBe(201);
+      expect((await asignar(admin, t, uB)).status).toBe(200);
+      const cantidad = await withTenant(tenantId, async (client) => {
+        const q = await client.query(
+          `SELECT cantidad FROM combustible_tanqueta_asignaciones
+            WHERE tenant_id = $1 AND tanqueta_id = $2 ORDER BY id DESC LIMIT 1`,
+          [tenantId, t]
+        );
+        return Number(q.rows[0].cantidad);
+      });
+      expect(cantidad).toBe(48);
+    });
+
+    it("I7: devolver más de lo calculado también pide motivo y no pasa de la capacidad", async () => {
+      const t = await tanquetaLlenaYAsignada(tanque, uA, 50);
+      expect((await recibirTanqueta(admin, t, { validado: 60 })).status).toBe(400);
+      expect((await recibirTanqueta(admin, t, { validado: 281, motivo: "no cabe" })).status).toBe(
+        400
+      );
+      expect(await filasRetorno(t)).toHaveLength(0);
+    });
+
+    it("I8: la tanqueta de otra empresa no se recibe y la propia no queda tocada", async () => {
+      const r = await retornarCrudo(admin, tanquetaAjena, {
+        saldo_calculado: 1,
+        saldo_validado: 0,
+        motivo: "intento ajeno",
+        destino: "reserva",
+      });
+      expect(r.status).toBe(404);
+      expect(await filasRetorno(tanquetaAjena)).toHaveLength(0);
     });
   });
 });

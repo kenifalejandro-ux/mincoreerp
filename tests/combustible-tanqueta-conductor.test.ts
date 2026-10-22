@@ -6,7 +6,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import {
+  app,
+  crearTenantDePrueba,
+  borrarTenantDePrueba,
+  idUnico,
+  recibirTanqueta,
+} from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
 
 describe("combustible: el conductor carga la tanqueta asignada a su unidad (0139)", () => {
@@ -151,9 +157,7 @@ describe("combustible: el conductor carga la tanqueta asignada a su unidad (0139
   it("sin tanquetas asignadas el formulario viene vacío", async () => {
     const libres = await delFormulario();
     for (const t of libres) {
-      await admin
-        .put(`/api/erp/combustible/tanquetas/${t.id}/liberar`)
-        .send({ motivo: "prueba sin tanquetas" });
+      await recibirTanqueta(admin, t.id);
     }
     expect(await delFormulario()).toEqual([]);
   });

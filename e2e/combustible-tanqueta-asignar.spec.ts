@@ -1,7 +1,7 @@
 /** e2e/combustible-tanqueta-asignar.spec.ts
  *
  * La pestaña Tanquetas asigna una tanqueta con saldo a la unidad que la lleva
- * (0139) y la libera con motivo. El preparativo va por API: el tanque, la
+ * (0139) y la recibe de vuelta (0143), con motivo si el saldo que volvió no coincide. El preparativo va por API: el tanque, la
  * tanqueta y el vale que la llena.
  */
 import { randomBytes } from "node:crypto";
@@ -10,7 +10,7 @@ import { loginPorUI } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
 import { primerGrifoActivo } from "./fixtures/grifos";
 
-test("tanqueta: se asigna a una unidad desde la pestaña y se libera con motivo", async ({
+test("tanqueta: se asigna a una unidad desde la pestaña y se recibe de vuelta", async ({
   page,
 }) => {
   test.setTimeout(90_000);
@@ -77,10 +77,11 @@ test("tanqueta: se asigna a una unidad desde la pestaña y se libera con motivo"
   await page.getByRole("button", { name: "Asignar", exact: true }).click();
   await expect(page.getByText(`Va con la unidad ${placa}`)).toBeVisible();
 
-  // Liberar pide motivo: sin él, el botón no se habilita.
-  await page.getByRole("button", { name: `Asignar ${codigo} a una unidad` }).click();
-  await expect(page.getByRole("button", { name: "Liberar" })).toBeDisabled();
-  await page.locator("#liberar-motivo").fill("Volvió al grifo con saldo");
-  await page.getByRole("button", { name: "Liberar" }).click();
+  // Si lo que volvió no coincide con el saldo calculado, el motivo es obligatorio.
+  await page.getByRole("button", { name: `Recibir ${codigo} de vuelta` }).click();
+  await page.locator("#retorno-volvio").fill("190");
+  await expect(page.getByRole("button", { name: "Registrar retorno" })).toBeDisabled();
+  await page.locator("#retorno-motivo").fill("Se derramó al bajarla");
+  await page.getByRole("button", { name: "Registrar retorno" }).click();
   await expect(page.getByText(`Va con la unidad ${placa}`)).toHaveCount(0);
 });

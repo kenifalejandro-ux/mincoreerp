@@ -8,7 +8,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import {
+  app,
+  crearTenantDePrueba,
+  borrarTenantDePrueba,
+  idUnico,
+  recibirTanqueta,
+} from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
 
 type Agente = ReturnType<typeof request.agent>;
@@ -133,9 +139,7 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
     for (const t of todas.filter(
       (x: { equipo_asignado_id: number | null }) => x.equipo_asignado_id === volquete
     )) {
-      await admin
-        .put(`/api/erp/combustible/tanquetas/${t.id}/liberar`)
-        .send({ motivo: "limpieza de la prueba" });
+      await recibirTanqueta(admin, t.id);
     }
     return admin
       .put(`/api/erp/combustible/tanquetas/${id}/asignar`)

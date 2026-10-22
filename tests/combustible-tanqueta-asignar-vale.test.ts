@@ -6,7 +6,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import {
+  app,
+  crearTenantDePrueba,
+  borrarTenantDePrueba,
+  idUnico,
+  recibirTanqueta,
+} from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
 describe("combustible: asignar la tanqueta con su vale (0141)", () => {
@@ -93,15 +99,13 @@ describe("combustible: asignar la tanqueta con su vale (0141)", () => {
     expect((await ver(tq)).equipo_asignado_id).toBeNull();
   });
 
-  it("con vale asigna; para pasarla a otra unidad se libera primero y se asigna con otro vale", async () => {
+  it("con vale asigna; para pasarla a otra unidad se recibe de vuelta primero y se asigna con otro vale", async () => {
     const tq = await tanquetaConSaldo();
     const r = await asignar(tq, unidadA, { serie_talonario: "ASG", n_vale: 710 });
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect((await ver(tq)).equipo_asignado_id).toBe(unidadA);
     expect((await asignar(tq, unidadB, { serie_talonario: "ASG", n_vale: 711 })).status).toBe(409);
-    await admin
-      .put(`/api/erp/combustible/tanquetas/${tq}/liberar`)
-      .send({ motivo: "cambia de unidad" });
+    await recibirTanqueta(admin, tq);
     const otra = await asignar(tq, unidadB, { serie_talonario: "ASG", n_vale: 711 });
     expect(otra.status).toBe(200);
     expect((await ver(tq)).equipo_asignado_id).toBe(unidadB);
@@ -110,9 +114,7 @@ describe("combustible: asignar la tanqueta con su vale (0141)", () => {
   it("un vale usado en otra asignación no se repite, aunque la tanqueta ya haya pasado a otra unidad", async () => {
     const a = await tanquetaConSaldo();
     expect((await asignar(a, unidadA, { serie_talonario: "ASG", n_vale: 720 })).status).toBe(200);
-    await admin
-      .put(`/api/erp/combustible/tanquetas/${a}/liberar`)
-      .send({ motivo: "cambia de unidad" });
+    await recibirTanqueta(admin, a);
     expect((await asignar(a, unidadB, { serie_talonario: "ASG", n_vale: 721 })).status).toBe(200);
     const b = await tanquetaConSaldo();
     const repetido = await asignar(b, unidadA, { serie_talonario: "ASG", n_vale: 720 });
@@ -147,13 +149,11 @@ describe("combustible: asignar la tanqueta con su vale (0141)", () => {
     expect(r.status).toBe(409);
   });
 
-  it("liberar sigue sin pedir vale", async () => {
+  it("recibir la tanqueta de vuelta no pide vale", async () => {
     const tq = await tanquetaConSaldo();
     await asignar(tq, unidadA, { serie_talonario: "ASG", n_vale: 740 });
-    const r = await admin
-      .put(`/api/erp/combustible/tanquetas/${tq}/liberar`)
-      .send({ motivo: "volvió al grifo" });
-    expect(r.status).toBe(200);
+    const r = await recibirTanqueta(admin, tq);
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
   });
   it("la asignación guarda la cantidad que la tanqueta llevaba al salir (0142)", async () => {
     const tq = await tanquetaConSaldo();
