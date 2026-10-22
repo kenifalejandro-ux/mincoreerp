@@ -357,7 +357,7 @@ export default function TanquetasPanel() {
                     Va con la unidad {t.equipo_asignado}
                   </p>
                 )}
-                <div className="mt-auto pt-3 flex gap-2">
+                <div className="mt-auto pt-3 flex flex-wrap gap-2">
                   <button
                     onClick={() => verHistorial(t)}
                     aria-label={`Historial de ${t.codigo}`}
