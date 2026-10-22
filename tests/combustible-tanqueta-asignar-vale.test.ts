@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
-import { closeDatabase } from "../src/server/config/database";
+import { closeDatabase, withTenant } from "../src/server/config/database";
 
 describe("combustible: asignar la tanqueta con su vale (0141)", () => {
   let tenantId: string;
@@ -154,5 +154,19 @@ describe("combustible: asignar la tanqueta con su vale (0141)", () => {
       .put(`/api/erp/combustible/tanquetas/${tq}/liberar`)
       .send({ motivo: "volvió al grifo" });
     expect(r.status).toBe(200);
+  });
+  it("la asignación guarda la cantidad que la tanqueta llevaba al salir (0142)", async () => {
+    const tq = await tanquetaConSaldo();
+    const r = await asignar(tq, unidadA, { serie_talonario: "CNT", n_vale: 720 });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const cantidad = await withTenant(tenantId, async (client) => {
+      const q = await client.query(
+        `SELECT cantidad FROM combustible_tanqueta_asignaciones
+          WHERE tenant_id = $1 AND tanqueta_id = $2`,
+        [tenantId, tq]
+      );
+      return Number(q.rows[0].cantidad);
+    });
+    expect(cantidad).toBe(100);
   });
 });

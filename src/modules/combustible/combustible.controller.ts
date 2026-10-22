@@ -5479,6 +5479,7 @@ export class CombustibleController {
         equipoId: equipo_id,
         serieTalonario: serie_talonario,
         nVale: n_vale,
+        cantidad: Number(despues?.saldo),
       },
       contexto: contextoAuditoriaModulo(req),
     });
