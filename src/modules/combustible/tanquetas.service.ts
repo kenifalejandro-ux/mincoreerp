@@ -16,6 +16,7 @@ import type { PoolClient } from "pg";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { esViolacionUnicidad } from "../../server/shared/utils/pgError";
 import { motivoGrifoNoAsignable } from "../../server/services/sedes.service";
+import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
 import { ALCANCE_TODO, type AlcanceCombustible } from "./alcance";
 import { CombustibleRepository } from "./combustible.repository";
 
@@ -52,12 +53,18 @@ const SQL_ENTRADAS_PREVISION = `
      WHERE d.tenant_id = t.tenant_id AND d.tanqueta_destino_id = t.id AND d.anulada_en IS NULL
   ), 0)`;
 
-/** Lo que salió: las cargas desde la tanqueta, en ruta o en planta (0114/0115). */
+/** Lo que salió: las cargas desde la tanqueta, en ruta o en planta (0114/0115),
+ *  y el saldo que volvió al pozo al recibirla de vuelta (0145). Lo devuelto es
+ *  lo que el grifero validó, en galones: la columna `cantidad_pozo` está en la
+ *  unidad del tanque. */
 const SQL_SALIDAS = `
-  COALESCE((
+  (COALESCE((
     SELECT SUM(d.cantidad) FROM combustible_despachos d
      WHERE d.tenant_id = t.tenant_id AND d.tanqueta_origen_id = t.id AND d.anulada_en IS NULL
-  ), 0)`;
+  ), 0) + COALESCE((
+    SELECT SUM(r.saldo_validado) FROM combustible_tanqueta_retornos r
+     WHERE r.tenant_id = t.tenant_id AND r.tanqueta_id = t.id AND r.destino = 'pozo'
+  ), 0))`;
 
 /** Lo que el grifero corrigió al recibir la tanqueta de vuelta (0143): la
  *  diferencia con signo entre lo que validó y lo que calculaba el sistema. */
@@ -278,16 +285,99 @@ export function retornoPideAlerta(calculado: number, validado: number): boolean 
   return -diferencia > Math.max(MARGEN_RETORNO_GAL, calculado * MARGEN_RETORNO_PCT);
 }
 
+/** El tanque de la misma sede que recibe el saldo de una tanqueta (0145), con
+ *  lo que entra ya convertido a SU unidad y a SU costo por unidad. Trae la fila
+ *  del tanque bloqueada: dos retornos al mismo pozo no se ven cabiendo cada uno
+ *  por su lado. */
+async function prepararEntradaAlPozo(
+  client: PoolClient,
+  tenantId: string,
+  tanqueta: { id: string | number; codigo: string; grifo_interno_id: string | number },
+  saldoValidado: number,
+  tanqueId: number | undefined
+) {
+  if (tanqueId === undefined) throw new AppError(400, "Elige el tanque al que vuelve el saldo");
+  if (saldoValidado <= 0.005) {
+    throw new AppError(400, "La tanqueta volvió vacía: no hay saldo que devolver al pozo");
+  }
+  const r = await client.query<{
+    codigo: string;
+    unidad: string;
+    capacidad_total: string;
+    costo_promedio: string;
+    activo: boolean;
+    grifo_interno_id: string | null;
+  }>(
+    `SELECT codigo, unidad, capacidad_total, costo_promedio, activo, grifo_interno_id
+       FROM combustible WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+    [tenantId, tanqueId]
+  );
+  const tanque = r.rows[0];
+  if (!tanque) throw new AppError(400, "El tanque elegido no existe");
+  if (!tanque.activo) throw new AppError(400, `El tanque ${tanque.codigo} está dado de baja`);
+  if (Number(tanque.grifo_interno_id) !== Number(tanqueta.grifo_interno_id)) {
+    throw new AppError(
+      400,
+      `El tanque ${tanque.codigo} es de otra sede: el saldo solo vuelve a un tanque del grifo de la tanqueta`
+    );
+  }
+  const enGalones = tanque.unidad === "gal";
+  const cantidad = Number(
+    (enGalones ? saldoValidado : saldoValidado * LITROS_POR_GALON).toFixed(2)
+  );
+  const repo = new CombustibleRepository();
+  const nivel = await repo.findNivelTeoricoVigenteA(
+    client,
+    tenantId,
+    tanqueId,
+    new Date().toISOString()
+  );
+  if (nivel === null) {
+    throw new AppError(
+      400,
+      `El tanque ${tanque.codigo} no tiene lectura de varilla: registra una antes de devolverle combustible`
+    );
+  }
+  const capacidad = Number(tanque.capacidad_total);
+  if (nivel + cantidad > capacidad + 0.005) {
+    const libre = Math.max(0, Number((capacidad - nivel).toFixed(2)));
+    throw new AppError(
+      400,
+      `El tanque ${tanque.codigo} solo tiene espacio para ${libre} ${tanque.unidad} ` +
+        `(capacidad ${capacidad}, nivel teórico ${nivel}): no entran ${cantidad}`
+    );
+  }
+  // El costo con que sale la tanqueta es por galón. Una tanqueta sin ningún
+  // costo conocido (0) no puede hundir el promedio del tanque como si ese
+  // combustible fuera gratis: entra al promedio que ya tiene.
+  const costoGalon = await costoPromedioTanqueta(client, tenantId, Number(tanqueta.id));
+  const costoPorUnidad =
+    costoGalon > 0
+      ? enGalones
+        ? costoGalon
+        : costoGalon / LITROS_POR_GALON
+      : Number(tanque.costo_promedio);
+  return { tanqueId, cantidad, costo: Number(costoPorUnidad.toFixed(4)) };
+}
+
 /** El grifero recibe la tanqueta de vuelta (0143): confirma el saldo que
  *  calculó el sistema o escribe el que de verdad volvió (con motivo si es
- *  otro). El saldo queda en la tanqueta, sin unidad. `saldoCalculado` es el que
+ *  otro). El saldo queda en la tanqueta, sin unidad, o vuelve al pozo si el
+ *  destino es un tanque de su sede (0145). `saldoCalculado` es el que
  *  el grifero tenía en pantalla: si cambió mientras tanto, se pide abrir de
  *  nuevo y no se registra una diferencia contra un número que no vio. */
 export async function registrarRetornoTanqueta(
   client: PoolClient,
   tenantId: string,
   id: number,
-  datos: { saldoCalculado: number; saldoValidado: number; motivo?: string; usuarioId: string }
+  datos: {
+    saldoCalculado: number;
+    saldoValidado: number;
+    motivo?: string;
+    usuarioId: string;
+    destino?: "reserva" | "pozo";
+    tanqueId?: number;
+  }
 ) {
   await bloquearTanqueta(client, tenantId, id);
   const t = await getTanqueta(client, tenantId, id);
@@ -312,10 +402,16 @@ export async function registrarRetornoTanqueta(
   if (Math.abs(datos.saldoValidado - saldo) > 0.005 && motivo.length < 3) {
     throw new AppError(400, "Si el saldo que volvió no coincide con el calculado, explica por qué");
   }
+  const destino = datos.destino ?? "reserva";
+  const pozo =
+    destino === "pozo"
+      ? await prepararEntradaAlPozo(client, tenantId, t, datos.saldoValidado, datos.tanqueId)
+      : null;
   const retorno = await client.query<{ id: string }>(
     `INSERT INTO combustible_tanqueta_retornos
-       (tenant_id, tanqueta_id, equipo_id, saldo_calculado, saldo_validado, motivo, usuario_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+       (tenant_id, tanqueta_id, equipo_id, saldo_calculado, saldo_validado, motivo, usuario_id,
+        destino, combustible_id, cantidad_pozo, costo_unitario_pozo)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      RETURNING id`,
     [
       tenantId,
@@ -325,8 +421,16 @@ export async function registrarRetornoTanqueta(
       datos.saldoValidado,
       motivo || null,
       datos.usuarioId,
+      destino,
+      pozo?.tanqueId ?? null,
+      pozo?.cantidad ?? null,
+      pozo?.costo ?? null,
     ]
   );
+  // El costo promedio del tanque se rehace entero con lo que acaba de entrar.
+  if (pozo) {
+    await new CombustibleRepository().recalcularCostoPromedio(client, tenantId, pozo.tanqueId);
+  }
   await client.query(
     `UPDATE combustible_tanquetas SET equipo_asignado_id = NULL, asignada_en = NULL
       WHERE tenant_id = $1 AND id = $2`,
@@ -540,6 +644,14 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
          LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id
          LEFT JOIN usuarios u ON u.id = r.usuario_id
         WHERE r.tenant_id = $1 AND r.tanqueta_id = $2
+       UNION ALL
+       SELECT 'retorno_pozo', r.id::text, r.saldo_validado, r.creado_en, NULL, c.codigo, NULL,
+              e.placa_codigo, NULL, NULL, NULL, NULL, u.nombre, NULL, NULL, NULL
+         FROM combustible_tanqueta_retornos r
+         JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
+         LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id
+         LEFT JOIN usuarios u ON u.id = r.usuario_id
+        WHERE r.tenant_id = $1 AND r.tanqueta_id = $2 AND r.destino = 'pozo'
      ) m
      ORDER BY fecha DESC, id DESC`,
     [tenantId, id]

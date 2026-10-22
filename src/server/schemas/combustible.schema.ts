@@ -2210,13 +2210,28 @@ export const asignarTanquetaSchema = z.object({
 export type AsignarTanquetaInput = z.infer<typeof asignarTanquetaSchema>;
 
 // Retorno de la tanqueta al grifero (0143): el saldo que vio en pantalla, el que
-// de verdad volvió y, si no coinciden, por qué. `destino` solo admite "reserva".
-export const retornoTanquetaSchema = z.object({
-  saldo_calculado: z.number().positive().max(100000),
-  saldo_validado: z.number().min(0).max(100000),
-  motivo: z.string().trim().max(500).optional(),
-  destino: z.literal("reserva"),
-});
+// de verdad volvió y, si no coinciden, por qué. `destino`: "reserva" (el saldo se
+// queda en la tanqueta) o "pozo" (vuelve a un tanque de su sede: pide `tanque_id`).
+export const retornoTanquetaSchema = z
+  .object({
+    saldo_calculado: z.number().positive().max(100000),
+    saldo_validado: z.number().min(0).max(100000),
+    motivo: z.string().trim().max(500).optional(),
+    destino: z.enum(["reserva", "pozo"]),
+    tanque_id: z.number().int().positive().optional(),
+  })
+  .superRefine((d, ctx) => {
+    if (d.destino === "pozo" && d.tanque_id === undefined) {
+      ctx.addIssue({ code: "custom", path: ["tanque_id"], message: "Elige el tanque del pozo" });
+    }
+    if (d.destino === "reserva" && d.tanque_id !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["tanque_id"],
+        message: "Un saldo que se queda en la tanqueta no lleva tanque",
+      });
+    }
+  });
 export type RetornoTanquetaInput = z.infer<typeof retornoTanquetaSchema>;
 
 // ── Viajes (0123) ──────────────────────────────────────────────────────────
