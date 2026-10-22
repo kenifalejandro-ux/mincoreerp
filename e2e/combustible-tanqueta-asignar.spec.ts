@@ -1,8 +1,9 @@
 /** e2e/combustible-tanqueta-asignar.spec.ts
  *
  * La pestaña Tanquetas asigna una tanqueta con saldo a la unidad que la lleva
- * (0139) y la recibe de vuelta (0143), con motivo si el saldo que volvió no coincide. El preparativo va por API: el tanque, la
- * tanqueta y el vale que la llena.
+ * (0139) y la recibe de vuelta (0143), con motivo si el saldo que volvió no coincide, y
+ * mandando el saldo al tanque (0145). El preparativo va por API: el tanque, la tanqueta y el
+ * vale que la llena.
  */
 import { randomBytes } from "node:crypto";
 import { test, expect } from "@playwright/test";
@@ -82,6 +83,15 @@ test("tanqueta: se asigna a una unidad desde la pestaña y se recibe de vuelta",
   await page.locator("#retorno-volvio").fill("190");
   await expect(page.getByRole("button", { name: "Registrar retorno" })).toBeDisabled();
   await page.locator("#retorno-motivo").fill("Se derramó al bajarla");
-  await page.getByRole("button", { name: "Registrar retorno" }).click();
+  // Nada viene elegido: sin decir a dónde va el saldo no se puede registrar.
+  const registrar = page.getByRole("button", { name: "Registrar retorno" });
+  await expect(registrar).toBeDisabled();
+  // Vuelve al tanque (pozo): pide el tanque de la sede y recién entonces se puede registrar.
+  await page.getByLabel("Volver al tanque (pozo)").check();
+  await expect(registrar).toBeDisabled();
+  const opcionTanque = page.locator("#retorno-tanque option", { hasText: `HMC-${marca}` });
+  await page.locator("#retorno-tanque").selectOption((await opcionTanque.getAttribute("value"))!);
+  await expect(registrar).toBeEnabled();
+  await registrar.click();
   await expect(page.getByText(`Va con la unidad ${placa}`)).toHaveCount(0);
 });
