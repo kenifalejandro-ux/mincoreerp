@@ -28,3 +28,4 @@ test("un usuario válido inicia sesión y llega al dashboard", async ({ page }) 
   await loginPorUI(page, email, password);
   await expect(page.getByLabel("Correo")).not.toBeVisible();
 });
+// PRUEBA DESECHABLE del paso 'specs tocados x5' del CI. No mergear.
