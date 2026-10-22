@@ -2212,15 +2212,19 @@ export type AsignarTanquetaInput = z.infer<typeof asignarTanquetaSchema>;
 // Retorno de la tanqueta al grifero (0143): el saldo que vio en pantalla, el que
 // de verdad volvió y, si no coinciden, por qué. `destino`: "reserva" (el saldo se
 // queda en la tanqueta), "pozo" (vuelve a un tanque de su sede: pide `tanque_id`)
-// o "tanqueta" (pasa a otra tanqueta de la sede: pide `tanqueta_destino_id`).
+// "tanqueta" (pasa a otra tanqueta de la sede: pide `tanqueta_destino_id`) o "unidad"
+// (sigue con otra unidad: pide `equipo_id` y el vale de esa salida, como al asignar).
 export const retornoTanquetaSchema = z
   .object({
     saldo_calculado: z.number().positive().max(100000),
     saldo_validado: z.number().min(0).max(100000),
     motivo: z.string().trim().max(500).optional(),
-    destino: z.enum(["reserva", "pozo", "tanqueta"]),
+    destino: z.enum(["reserva", "pozo", "tanqueta", "unidad"]),
     tanque_id: z.number().int().positive().optional(),
     tanqueta_destino_id: z.number().int().positive().optional(),
+    equipo_id: z.number().int().positive().max(2147483647).optional(),
+    serie_talonario: z.string().trim().min(1).max(20).optional(),
+    n_vale: z.number().int().positive().max(2147483647).optional(),
   })
   .superRefine((d, ctx) => {
     const falta = (path: string, message: string) =>
@@ -2235,6 +2239,18 @@ export const retornoTanquetaSchema = z
     }
     if (d.destino !== "tanqueta" && d.tanqueta_destino_id !== undefined) {
       falta("tanqueta_destino_id", "Solo un saldo que pasa a otra tanqueta lleva tanqueta");
+    }
+    if (d.destino === "unidad") {
+      if (d.equipo_id === undefined) falta("equipo_id", "Elige la unidad que se la lleva");
+      if (d.serie_talonario === undefined)
+        falta("serie_talonario", "La serie del vale es obligatoria");
+      if (d.n_vale === undefined) falta("n_vale", "El número del vale es obligatorio");
+    } else if (
+      d.equipo_id !== undefined ||
+      d.serie_talonario !== undefined ||
+      d.n_vale !== undefined
+    ) {
+      falta("equipo_id", "Solo un saldo que pasa a otra unidad lleva unidad y vale");
     }
   });
 export type RetornoTanquetaInput = z.infer<typeof retornoTanquetaSchema>;

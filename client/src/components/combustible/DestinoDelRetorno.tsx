@@ -3,7 +3,9 @@
 // misma sede. Nada viene elegido de antemano: quien la recibe decide.
 import { useEffect, useState } from "react";
 
-import { type DestinoElegido, type OtraTanqueta } from "./destinoDelRetornoDatos";
+import { type DestinoElegido, type OtraTanqueta, SIN_DESTINO } from "./destinoDelRetornoDatos";
+import DestinoUnidad from "./DestinoUnidad";
+import { useUnidadesDeDestino } from "./useUnidadesDeDestino";
 import { apiFetch } from "../../services/apiClient";
 
 /** Litros que tiene un galón (la tanqueta mide en galones; un tanque puede medir en litros). */
@@ -29,7 +31,7 @@ export default function DestinoDelRetorno({
   valor,
   onCambio,
 }: {
-  tanqueta: { id: string; grifo_interno_id: number };
+  tanqueta: { id: string; grifo_interno_id: number; equipo_asignado_id: number | null };
   /** Lo que el grifero dice que volvió (gal): lo que habría que mover. */
   cantidad: number;
   otras: OtraTanqueta[];
@@ -58,6 +60,7 @@ export default function DestinoDelRetorno({
   }, []);
 
   const hayCantidad = cantidad > 0.005;
+  const unidades = useUnidadesDeDestino(tanqueta.equipo_asignado_id);
 
   // Los tanques de la sede, con el espacio que les queda y cuánto entraría en su unidad.
   const delPozo = (tanques ?? [])
@@ -94,10 +97,12 @@ export default function DestinoDelRetorno({
       ? "No hay otra tanqueta con espacio en esta sede"
       : null;
 
+  const motivoUnidad = !hayCantidad ? "No hay saldo que mover" : unidades.motivo;
+
   const elegido = delPozo.find((x) => String(x.t.id) === valor.id);
 
   const opcion = (
-    destino: "reserva" | "pozo" | "tanqueta",
+    destino: "reserva" | "pozo" | "tanqueta" | "unidad",
     texto: string,
     motivoNo: string | null
   ) => (
@@ -108,7 +113,7 @@ export default function DestinoDelRetorno({
           name="retorno-destino"
           disabled={motivoNo !== null}
           checked={valor.destino === destino}
-          onChange={() => onCambio({ destino, id: "" })}
+          onChange={() => onCambio({ ...SIN_DESTINO, destino })}
         />
         <span>{texto}</span>
       </label>
@@ -133,7 +138,7 @@ export default function DestinoDelRetorno({
             id="retorno-tanque"
             className="w-full border border-slate-200 rounded-xl p-3 text-sm"
             value={valor.id}
-            onChange={(e) => onCambio({ destino: "pozo", id: e.target.value })}
+            onChange={(e) => onCambio({ ...SIN_DESTINO, destino: "pozo", id: e.target.value })}
           >
             <option value="">Elegir tanque</option>
             {delPozo.map(({ t, libre, cabe }) => (
@@ -161,7 +166,7 @@ export default function DestinoDelRetorno({
             id="retorno-otra"
             className="w-full border border-slate-200 rounded-xl p-3 text-sm"
             value={valor.id}
-            onChange={(e) => onCambio({ destino: "tanqueta", id: e.target.value })}
+            onChange={(e) => onCambio({ ...SIN_DESTINO, destino: "tanqueta", id: e.target.value })}
           >
             <option value="">Elegir tanqueta</option>
             {otrasConEspacio.map(({ o, libre, cabe }) => (
@@ -171,6 +176,10 @@ export default function DestinoDelRetorno({
             ))}
           </select>
         </div>
+      )}
+      {opcion("unidad", "Pasa a otra unidad", motivoUnidad)}
+      {valor.destino === "unidad" && (
+        <DestinoUnidad unidades={unidades.otras} valor={valor} onCambio={onCambio} />
       )}
     </fieldset>
   );

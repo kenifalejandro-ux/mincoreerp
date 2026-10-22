@@ -431,9 +431,11 @@ export async function registrarRetornoTanqueta(
     saldoValidado: number;
     motivo?: string;
     usuarioId: string;
-    destino?: "reserva" | "pozo" | "tanqueta";
+    destino?: "reserva" | "pozo" | "tanqueta" | "unidad";
     tanqueId?: number;
     tanquetaDestinoId?: number;
+    /** Para destino "unidad": la unidad que se la lleva y el vale de esa salida. */
+    unidad?: { equipoId: number; serie: string; numero: number };
   }
 ) {
   // Con dos tanquetas se bloquea SIEMPRE en orden de id: si A le pasa a B y B a
@@ -466,6 +468,9 @@ export async function registrarRetornoTanqueta(
     throw new AppError(400, "Si el saldo que volvió no coincide con el calculado, explica por qué");
   }
   const destino = datos.destino ?? "reserva";
+  if (destino === "unidad" && Number(datos.unidad?.equipoId) === Number(t.equipo_asignado_id)) {
+    throw new AppError(400, "La tanqueta volvió de esa unidad: elige otra");
+  }
   const pozo =
     destino === "pozo"
       ? await prepararEntradaAlPozo(client, tenantId, t, datos.saldoValidado, datos.tanqueId)
@@ -495,7 +500,8 @@ export async function registrarRetornoTanqueta(
       datos.saldoValidado,
       motivo || null,
       datos.usuarioId,
-      destino,
+      // Pasar a otra unidad es dejar el saldo en la tanqueta y asignarla (abajo).
+      destino === "unidad" ? "reserva" : destino,
       pozo?.tanqueId ?? null,
       pozo?.cantidad ?? null,
       pozo?.costo ?? null,
@@ -512,6 +518,16 @@ export async function registrarRetornoTanqueta(
       WHERE tenant_id = $1 AND id = $2`,
     [tenantId, id]
   );
+  // Pasa a otra unidad: se asigna con el vale de esa salida, en la misma
+  // transacción. Si el vale se repite o la unidad ya lleva sus tres tanquetas,
+  // se deshace también el retorno y la tanqueta sigue como estaba.
+  if (destino === "unidad" && datos.unidad) {
+    await asignarTanqueta(client, tenantId, id, datos.unidad.equipoId, {
+      serie: datos.unidad.serie,
+      numero: datos.unidad.numero,
+      usuarioId: datos.usuarioId,
+    });
+  }
   // La alerta se crea en la MISMA transacción: un retorno con diferencia
   // grande no puede quedar registrado sin su aviso.
   let alerta: Awaited<ReturnType<CombustibleRepository["crearAlertas"]>>[number] | null = null;

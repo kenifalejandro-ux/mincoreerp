@@ -287,10 +287,12 @@ export async function recibirTanqueta(
     validado?: number;
     calculado?: number;
     motivo?: string;
-    /** "pozo" lleva `tanqueId` (0145); "tanqueta" lleva `tanquetaDestinoId` (0146). */
-    destino?: "reserva" | "pozo" | "tanqueta";
+    /** "pozo" lleva `tanqueId` (0145); "tanqueta" lleva `tanquetaDestinoId` (0146);
+     *  "unidad" lleva `unidad` con su vale. */
+    destino?: "reserva" | "pozo" | "tanqueta" | "unidad";
     tanqueId?: number;
     tanquetaDestinoId?: number;
+    unidad?: { equipo_id: number; serie_talonario: string; n_vale: number };
   } = {}
 ) {
   const lista: { id: string; saldo: string }[] = (await admin.get("/api/erp/combustible/tanquetas"))
@@ -303,5 +305,6 @@ export async function recibirTanqueta(
     destino: opciones.destino ?? "reserva",
     tanque_id: opciones.tanqueId,
     tanqueta_destino_id: opciones.tanquetaDestinoId,
+    ...opciones.unidad,
   });
 }

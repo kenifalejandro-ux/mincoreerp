@@ -95,3 +95,88 @@ test("tanqueta: se asigna a una unidad desde la pestaña y se recibe de vuelta",
   await registrar.click();
   await expect(page.getByText(`Va con la unidad ${placa}`)).toHaveCount(0);
 });
+
+test("tanqueta: al recibirla de vuelta, el saldo pasa a otra unidad con su vale", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const marca = randomBytes(3).toString("hex").toUpperCase();
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  const grifoInternoId = await primerGrifoActivo(page);
+
+  const tanque = await page.request.post("/api/erp/combustible", {
+    data: {
+      codigo: `HMD-${marca}`,
+      tanque_nombre: `Huamachuco ${marca}`,
+      tipo_combustible: "diesel_b5",
+      unidad: "gal",
+      tipo_punto: "fijo",
+      capacidad_total: 10000,
+      nivel_actual: 8000,
+      requiere_documento: false,
+      grifo_interno_id: grifoInternoId,
+    },
+  });
+  expect(tanque.status()).toBe(201);
+  const tqt = await page.request.post("/api/erp/combustible/tanquetas", {
+    data: { grifo_interno_id: grifoInternoId, codigo: `TU-${marca}` },
+  });
+  expect(tqt.status()).toBe(201);
+  const { id: tanquetaId, codigo } = await tqt.json();
+  const unidad = async (placa: string) => {
+    const r = await page.request.post("/api/erp/equipos", {
+      data: {
+        placa_codigo: placa,
+        tipo: "VOLQUETE",
+        tipo_medidor: "horometro",
+        grifo_interno_id: grifoInternoId,
+      },
+    });
+    expect(r.status()).toBe(201);
+    return (await r.json()).id as number;
+  };
+  const placaA = `UA-${marca}`;
+  const placaB = `UB-${marca}`;
+  const unidadA = await unidad(placaA);
+  await unidad(placaB);
+  const vale = await page.request.post("/api/erp/combustible/despachos", {
+    data: {
+      origen: "tanque_propio",
+      combustible_id: (await tanque.json()).id,
+      tipo_combustible: "diesel_b5",
+      tipo_destino: "reserva_cubeta",
+      tanqueta_destino_id: Number(tanquetaId),
+      serie_talonario: `B${marca}`,
+      n_vale: 1,
+      cantidad: 120,
+      lectura_contometro: 120,
+      costo_unitario: 16,
+    },
+  });
+  expect(vale.status()).toBe(201);
+  const asignada = await page.request.put(`/api/erp/combustible/tanquetas/${tanquetaId}/asignar`, {
+    data: { equipo_id: unidadA, serie_talonario: `C${marca}`, n_vale: 1 },
+  });
+  expect(asignada.status()).toBe(200);
+
+  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+  await page.getByRole("button", { name: "Tanquetas" }).click();
+  await expect(page.getByText(`Va con la unidad ${placaA}`)).toBeVisible();
+
+  await page.getByRole("button", { name: `Recibir ${codigo} de vuelta` }).click();
+  const registrar = page.getByRole("button", { name: "Registrar retorno" });
+  await page.getByLabel("Pasa a otra unidad").check();
+  // La unidad de la que volvió no se ofrece; solo las otras.
+  await expect(page.locator("#retorno-unidad option", { hasText: placaA })).toHaveCount(0);
+  const opcionB = page.locator("#retorno-unidad option", { hasText: placaB });
+  await page.locator("#retorno-unidad").selectOption((await opcionB.getAttribute("value"))!);
+  // Con la unidad elegida se pide el vale de esa salida: sin él no se registra.
+  await expect(registrar).toBeDisabled();
+  await page.locator("#retorno-serie").fill(`D${marca}`);
+  await page.locator("#retorno-vale").fill("1");
+  await expect(registrar).toBeEnabled();
+  await registrar.click();
+  await expect(page.getByText(`Va con la unidad ${placaB}`)).toBeVisible();
+  await expect(page.getByText(`Va con la unidad ${placaA}`)).toHaveCount(0);
+});
