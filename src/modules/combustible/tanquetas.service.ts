@@ -25,9 +25,10 @@ export const CAPACIDAD_TANQUETA_DEFECTO = 280;
 /** Cuántas tanquetas puede llevar una unidad a la vez (0139). */
 export const MAX_TANQUETAS_POR_UNIDAD = 3;
 
-/** Lo que entró a la tanqueta: el excedente de recepciones vigentes (0111) y
- *  los vales del tanque a "reserva en cubeta" que la eligieron (0114). Anular
- *  una recepción o un vale devuelve el espacio. */
+/** Lo que entró a la tanqueta: el excedente de recepciones vigentes (0111), los
+ *  vales del tanque a "reserva en cubeta" que la eligieron (0114) y el saldo
+ *  que otra tanqueta le pasó al recibirla de vuelta (0146). Anular una
+ *  recepción o un vale devuelve el espacio. */
 const SQL_ENTRADAS = `
   (COALESCE((
     SELECT SUM(x.cantidad)
@@ -37,6 +38,9 @@ const SQL_ENTRADAS = `
   ), 0) + COALESCE((
     SELECT SUM(d.cantidad) FROM combustible_despachos d
      WHERE d.tenant_id = t.tenant_id AND d.tanqueta_destino_id = t.id AND d.anulada_en IS NULL
+  ), 0) + COALESCE((
+    SELECT SUM(r.saldo_validado) FROM combustible_tanqueta_retornos r
+     WHERE r.tenant_id = t.tenant_id AND r.tanqueta_destino_id = t.id AND r.destino = 'tanqueta'
   ), 0))`;
 
 /** Lo que entró por cada camino, para que el panel muestre de dónde vino. */
@@ -53,17 +57,24 @@ const SQL_ENTRADAS_PREVISION = `
      WHERE d.tenant_id = t.tenant_id AND d.tanqueta_destino_id = t.id AND d.anulada_en IS NULL
   ), 0)`;
 
+const SQL_ENTRADAS_TRASLADO = `
+  COALESCE((
+    SELECT SUM(r.saldo_validado) FROM combustible_tanqueta_retornos r
+     WHERE r.tenant_id = t.tenant_id AND r.tanqueta_destino_id = t.id AND r.destino = 'tanqueta'
+  ), 0)`;
+
 /** Lo que salió: las cargas desde la tanqueta, en ruta o en planta (0114/0115),
- *  y el saldo que volvió al pozo al recibirla de vuelta (0145). Lo devuelto es
- *  lo que el grifero validó, en galones: la columna `cantidad_pozo` está en la
- *  unidad del tanque. */
+ *  y el saldo que se fue al pozo o a otra tanqueta al recibirla de vuelta
+ *  (0145/0146). Lo que se va es lo que el grifero validó, en galones: la
+ *  columna `cantidad_pozo` está en la unidad del tanque. */
 const SQL_SALIDAS = `
   (COALESCE((
     SELECT SUM(d.cantidad) FROM combustible_despachos d
      WHERE d.tenant_id = t.tenant_id AND d.tanqueta_origen_id = t.id AND d.anulada_en IS NULL
   ), 0) + COALESCE((
     SELECT SUM(r.saldo_validado) FROM combustible_tanqueta_retornos r
-     WHERE r.tenant_id = t.tenant_id AND r.tanqueta_id = t.id AND r.destino = 'pozo'
+     WHERE r.tenant_id = t.tenant_id AND r.tanqueta_id = t.id
+       AND r.destino IN ('pozo', 'tanqueta')
   ), 0))`;
 
 /** Lo que el grifero corrigió al recibir la tanqueta de vuelta (0143): la
@@ -85,6 +96,7 @@ const COLUMNAS = `
   ${SQL_ENTRADAS} AS entradas,
   ${SQL_ENTRADAS_EXCEDENTE} AS entradas_excedente,
   ${SQL_ENTRADAS_PREVISION} AS entradas_prevision,
+  ${SQL_ENTRADAS_TRASLADO} AS entradas_traslado,
   ${SQL_SALIDAS} AS salidas,
   ${SQL_ENTRADAS} + ${SQL_AJUSTES} - ${SQL_SALIDAS} AS saldo,
   t.capacidad - (${SQL_ENTRADAS} + ${SQL_AJUSTES} - ${SQL_SALIDAS}) AS libre`;
@@ -360,10 +372,54 @@ async function prepararEntradaAlPozo(
   return { tanqueId, cantidad, costo: Number(costoPorUnidad.toFixed(4)) };
 }
 
+/** La tanqueta de la misma sede que recibe el saldo de otra (0146). Las dos ya
+ *  están bloqueadas, en orden de id. Trae el costo por galón con que viaja el
+ *  saldo: el de la tanqueta que se vacía. */
+async function prepararTrasladoATanqueta(
+  client: PoolClient,
+  tenantId: string,
+  origen: { id: string | number; codigo: string; grifo_interno_id: string | number },
+  saldoValidado: number,
+  destinoId: number | undefined
+) {
+  if (destinoId === undefined) throw new AppError(400, "Elige la tanqueta que recibe el saldo");
+  if (destinoId === Number(origen.id)) {
+    throw new AppError(400, "El saldo no puede pasar a la misma tanqueta que lo devuelve");
+  }
+  if (saldoValidado <= 0.005) {
+    throw new AppError(400, "La tanqueta volvió vacía: no hay saldo que pasar a otra");
+  }
+  // Una tanqueta vacía que quedó con su unidad vieja la olvida antes de recibir.
+  await limpiarAsignacionSiVacia(client, tenantId, destinoId);
+  const d = await getTanqueta(client, tenantId, destinoId);
+  if (!d) throw new AppError(400, "La tanqueta elegida no existe");
+  if (!d.activa) throw new AppError(400, `La tanqueta ${d.codigo} está dada de baja`);
+  if (Number(d.grifo_interno_id) !== Number(origen.grifo_interno_id)) {
+    throw new AppError(
+      400,
+      `La tanqueta ${d.codigo} es de otra sede: el saldo solo pasa a una tanqueta del mismo grifo`
+    );
+  }
+  if (saldoValidado > Number(d.libre) + 0.001) {
+    throw new AppError(
+      400,
+      `La tanqueta ${d.codigo} solo tiene ${Number(d.libre)} gal libres ` +
+        `(capacidad ${Number(d.capacidad)}): no entran ${saldoValidado}`
+    );
+  }
+  // Una tanqueta sin ningún costo conocido no puede hundir el de la que recibe
+  // como si ese combustible fuera gratis: viaja con el costo del destino.
+  const costoOrigen = await costoPromedioTanqueta(client, tenantId, Number(origen.id));
+  const costo =
+    costoOrigen > 0 ? costoOrigen : await costoPromedioTanqueta(client, tenantId, destinoId);
+  return { destinoId, costo };
+}
+
 /** El grifero recibe la tanqueta de vuelta (0143): confirma el saldo que
  *  calculó el sistema o escribe el que de verdad volvió (con motivo si es
  *  otro). El saldo queda en la tanqueta, sin unidad, o vuelve al pozo si el
- *  destino es un tanque de su sede (0145). `saldoCalculado` es el que
+ *  destino es un tanque de su sede (0145), o pasa a otra tanqueta de la sede
+ *  (0146). `saldoCalculado` es el que
  *  el grifero tenía en pantalla: si cambió mientras tanto, se pide abrir de
  *  nuevo y no se registra una diferencia contra un número que no vio. */
 export async function registrarRetornoTanqueta(
@@ -375,11 +431,18 @@ export async function registrarRetornoTanqueta(
     saldoValidado: number;
     motivo?: string;
     usuarioId: string;
-    destino?: "reserva" | "pozo";
+    destino?: "reserva" | "pozo" | "tanqueta";
     tanqueId?: number;
+    tanquetaDestinoId?: number;
   }
 ) {
-  await bloquearTanqueta(client, tenantId, id);
+  // Con dos tanquetas se bloquea SIEMPRE en orden de id: si A le pasa a B y B a
+  // A al mismo tiempo, cada una tomando primero la suya se esperarían entre sí.
+  const aBloquear =
+    datos.destino === "tanqueta" && datos.tanquetaDestinoId !== undefined
+      ? [id, datos.tanquetaDestinoId].sort((a, b) => a - b)
+      : [id];
+  for (const x of aBloquear) await bloquearTanqueta(client, tenantId, x);
   const t = await getTanqueta(client, tenantId, id);
   if (!t) return null;
   if (!t.asignada_vigente) {
@@ -407,11 +470,22 @@ export async function registrarRetornoTanqueta(
     destino === "pozo"
       ? await prepararEntradaAlPozo(client, tenantId, t, datos.saldoValidado, datos.tanqueId)
       : null;
+  const traslado =
+    destino === "tanqueta"
+      ? await prepararTrasladoATanqueta(
+          client,
+          tenantId,
+          t,
+          datos.saldoValidado,
+          datos.tanquetaDestinoId
+        )
+      : null;
   const retorno = await client.query<{ id: string }>(
     `INSERT INTO combustible_tanqueta_retornos
        (tenant_id, tanqueta_id, equipo_id, saldo_calculado, saldo_validado, motivo, usuario_id,
-        destino, combustible_id, cantidad_pozo, costo_unitario_pozo)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        destino, combustible_id, cantidad_pozo, costo_unitario_pozo,
+        tanqueta_destino_id, costo_unitario_tanqueta)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
      RETURNING id`,
     [
       tenantId,
@@ -425,6 +499,8 @@ export async function registrarRetornoTanqueta(
       pozo?.tanqueId ?? null,
       pozo?.cantidad ?? null,
       pozo?.costo ?? null,
+      traslado?.destinoId ?? null,
+      traslado?.costo ?? null,
     ]
   );
   // El costo promedio del tanque se rehace entero con lo que acaba de entrar.
@@ -652,6 +728,21 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
          LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id
          LEFT JOIN usuarios u ON u.id = r.usuario_id
         WHERE r.tenant_id = $1 AND r.tanqueta_id = $2 AND r.destino = 'pozo'
+       UNION ALL
+       SELECT 'retorno_traslado', r.id::text, r.saldo_validado, r.creado_en, NULL, q.codigo, NULL,
+              e.placa_codigo, NULL, NULL, NULL, NULL, u.nombre, NULL, NULL, NULL
+         FROM combustible_tanqueta_retornos r
+         JOIN combustible_tanquetas q ON q.id = r.tanqueta_destino_id AND q.tenant_id = r.tenant_id
+         LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id
+         LEFT JOIN usuarios u ON u.id = r.usuario_id
+        WHERE r.tenant_id = $1 AND r.tanqueta_id = $2 AND r.destino = 'tanqueta'
+       UNION ALL
+       SELECT 'traslado_recibido', r.id::text, r.saldo_validado, r.creado_en, NULL, q.codigo, NULL,
+              NULL, NULL, NULL, NULL, NULL, u.nombre, NULL, NULL, NULL
+         FROM combustible_tanqueta_retornos r
+         JOIN combustible_tanquetas q ON q.id = r.tanqueta_id AND q.tenant_id = r.tenant_id
+         LEFT JOIN usuarios u ON u.id = r.usuario_id
+        WHERE r.tenant_id = $1 AND r.tanqueta_destino_id = $2 AND r.destino = 'tanqueta'
      ) m
      ORDER BY fecha DESC, id DESC`,
     [tenantId, id]
@@ -678,6 +769,10 @@ export async function costoPromedioTanqueta(
        SELECT d.cantidad, d.costo_unitario
          FROM combustible_despachos d
         WHERE d.tenant_id = $1 AND d.tanqueta_destino_id = $2 AND d.anulada_en IS NULL
+       UNION ALL
+       SELECT r.saldo_validado, r.costo_unitario_tanqueta
+         FROM combustible_tanqueta_retornos r
+        WHERE r.tenant_id = $1 AND r.tanqueta_destino_id = $2 AND r.destino = 'tanqueta'
      ) e`,
     [tenantId, id]
   );

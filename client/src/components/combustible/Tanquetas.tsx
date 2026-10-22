@@ -30,6 +30,7 @@ interface Tanqueta {
    *  muestra cómo se usó. */
   entradas_excedente: string;
   entradas_prevision: string;
+  entradas_traslado: string;
   salidas: string;
   /** A qué unidad va (0139). La asignación vale mientras tenga saldo. */
   equipo_asignado_id: number | null;
@@ -40,7 +41,15 @@ interface Tanqueta {
 /** Un movimiento de la tanqueta (0111/0114): lo que entró (excedente de una
  *  recepción, previsión desde el tanque) y lo que salió (carga en ruta). */
 interface MovimientoTanqueta {
-  tipo: "excedente" | "prevision" | "carga_ruta" | "carga_planta" | "retorno" | "retorno_pozo";
+  tipo:
+    | "excedente"
+    | "prevision"
+    | "carga_ruta"
+    | "carga_planta"
+    | "retorno"
+    | "retorno_pozo"
+    | "retorno_traslado"
+    | "traslado_recibido";
   id: string;
   cantidad: string;
   fecha: string;
@@ -80,6 +89,12 @@ const describirMovimiento = (m: MovimientoTanqueta) => {
   if (m.tipo === "retorno_pozo") {
     return `Volvió al pozo ${m.tanque_codigo} desde ${m.equipo ?? "una unidad"}`;
   }
+  if (m.tipo === "retorno_traslado") {
+    return `Pasó a la tanqueta ${m.tanque_codigo} desde ${m.equipo ?? "una unidad"}`;
+  }
+  if (m.tipo === "traslado_recibido") {
+    return `Llegó de la tanqueta ${m.tanque_codigo}`;
+  }
   if (m.tipo === "carga_planta") {
     return `Carga en planta a ${m.equipo ?? "una unidad"} · vale ${m.serie_talonario}-${m.n_vale}${conductor(m)}`;
   }
@@ -92,9 +107,10 @@ const describirMovimiento = (m: MovimientoTanqueta) => {
   return `Carga en ruta a ${m.equipo ?? "una unidad"}${medidor}${conductor(m)}`;
 };
 
-/** Lo que sale de la tanqueta: las cargas y el saldo que vuelve al pozo. */
+/** Lo que sale de la tanqueta: las cargas y el saldo que vuelve al pozo o pasa
+ *  a otra tanqueta. */
 const esSalida = (tipo: MovimientoTanqueta["tipo"]) =>
-  tipo.startsWith("carga_") || tipo === "retorno_pozo";
+  tipo.startsWith("carga_") || tipo === "retorno_pozo" || tipo === "retorno_traslado";
 
 const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
 
@@ -352,11 +368,15 @@ export default function TanquetasPanel() {
                 <p className="text-xs font-mono text-[#94a3b8]">
                   {pct.toFixed(0)}% · libre {formatear(Number(t.libre))} gal
                 </p>
-                {(Number(t.entradas_excedente) > 0 || Number(t.entradas_prevision) > 0) && (
+                {(Number(t.entradas_excedente) > 0 ||
+                  Number(t.entradas_prevision) > 0 ||
+                  Number(t.entradas_traslado) > 0) && (
                   <p className="text-[11px] text-[#64748b] mt-1">
                     Entró: {formatear(Number(t.entradas_excedente))} de excedente ·{" "}
-                    {formatear(Number(t.entradas_prevision))} de previsión · salió{" "}
-                    {formatear(Number(t.salidas))}
+                    {formatear(Number(t.entradas_prevision))} de previsión
+                    {Number(t.entradas_traslado) > 0 &&
+                      ` · ${formatear(Number(t.entradas_traslado))} de otra tanqueta`}{" "}
+                    · salió {formatear(Number(t.salidas))}
                   </p>
                 )}
                 {t.asignada_vigente && (
