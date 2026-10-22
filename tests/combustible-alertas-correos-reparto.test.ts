@@ -16,7 +16,13 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import request from "supertest";
 
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import {
+  app,
+  crearTenantDePrueba,
+  borrarTenantDePrueba,
+  idUnico,
+  recibirTanqueta,
+} from "./helpers";
 import { withTenant, closeDatabase } from "../src/server/config/database";
 import { correrConciliacion } from "../src/server/services/combustibleConciliacion.worker";
 import { enviarCorreoDiferenciaRecepcion } from "../src/modules/combustible/combustibleAlertas.mailer";
@@ -372,10 +378,8 @@ describe("combustible: los correos nuevos van a quien tiene ese grifo", () => {
         .post("/api/erp/combustible/tanquetas")
         .send({ grifo_interno_id: grifoA });
       expect(t.status).toBe(201);
-      // La tanqueta anterior sigue con saldo: se libera para que esta sea la activa.
-      await admin
-        .put(`/api/erp/combustible/tanquetas/${tanquetaId}/liberar`)
-        .send({ motivo: "prueba de cargas simultáneas" });
+      // La tanqueta anterior sigue con saldo: se recibe de vuelta para que esta sea la activa.
+      await recibirTanqueta(admin, tanquetaId);
       tanquetaId = Number(t.body.id);
       expect((await llenar(100)).status).toBe(201);
       expect((await asignarAlConductor(tanquetaId)).status).toBe(200);

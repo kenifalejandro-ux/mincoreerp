@@ -6,7 +6,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import {
+  app,
+  crearTenantDePrueba,
+  borrarTenantDePrueba,
+  idUnico,
+  recibirTanqueta,
+} from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
 
 type Agente = ReturnType<typeof request.agent>;
@@ -123,8 +129,6 @@ describe("combustible: tanqueta asignada a una unidad (0139)", () => {
     ag
       .put(`/api/erp/combustible/tanquetas/${id}/asignar`)
       .send({ equipo_id, serie_talonario: "ASG", n_vale: nVale++ });
-  const liberar = (id: number, motivo?: string) =>
-    admin.put(`/api/erp/combustible/tanquetas/${id}/liberar`).send(motivo ? { motivo } : {});
   const ver = async (id: number) =>
     (await admin.get("/api/erp/combustible/tanquetas")).body.find(
       (t: { id: string }) => Number(t.id) === id
@@ -171,13 +175,7 @@ describe("combustible: tanqueta asignada a una unidad (0139)", () => {
     const r = await asignar(tq, cisterna);
     expect(r.status).toBe(409);
     expect((await ver(tq)).equipo_asignado_id).toBe(volquete);
-    expect(
-      (
-        await admin
-          .put(`/api/erp/combustible/tanquetas/${tq}/liberar`)
-          .send({ motivo: "cambia de unidad" })
-      ).status
-    ).toBe(200);
+    expect((await recibirTanqueta(admin, tq)).status).toBe(201);
     expect((await asignar(tq, cisterna)).status).toBe(200);
     expect((await ver(tq)).equipo_asignado_id).toBe(cisterna);
   });
@@ -222,24 +220,46 @@ describe("combustible: tanqueta asignada a una unidad (0139)", () => {
     expect(llena.asignada_vigente).toBe(false);
   });
 
-  it("liberar pide motivo y solo sirve si estaba asignada", async () => {
+  it("el retorno solo sirve si estaba asignada y deja el saldo en la tanqueta", async () => {
     const tq = await tanquetaConSaldo();
+    expect((await recibirTanqueta(admin, tq)).status).toBe(400);
     await asignar(tq, volquete);
-    expect((await liberar(tq)).status).toBe(400);
-    const r = await liberar(tq, "Volvió al grifo con saldo");
-    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const r = await recibirTanqueta(admin, tq);
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
     expect(r.body.equipo_asignado_id).toBeNull();
-    expect((await liberar(tq, "Otra vez")).status).toBe(400);
+    expect(Number(r.body.saldo)).toBe(100);
+    expect((await recibirTanqueta(admin, tq)).status).toBe(400);
   });
 
-  it("el conductor y el grifero no asignan ni liberan", async () => {
+  it("si lo que volvió no coincide, pide motivo y el saldo queda en lo que validó el grifero", async () => {
+    const tq = await tanquetaConSaldo();
+    await asignar(tq, volquete);
+    expect((await recibirTanqueta(admin, tq, { validado: 93 })).status).toBe(400);
+    expect((await recibirTanqueta(admin, tq, { validado: 93, motivo: "no" })).status).toBe(400);
+    expect((await recibirTanqueta(admin, tq, { calculado: 90, validado: 93 })).status).toBe(409);
+    expect((await ver(tq)).equipo_asignado_id).toBe(volquete);
+    const r = await recibirTanqueta(admin, tq, { validado: 93, motivo: "se derramó al bajarla" });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(Number(r.body.saldo)).toBe(93);
+    expect(Number(r.body.libre)).toBe(280 - 93);
+  });
+
+  it("devolver 0 deja la tanqueta vacía y sin unidad", async () => {
+    const tq = await tanquetaConSaldo();
+    await asignar(tq, volquete);
+    const r = await recibirTanqueta(admin, tq, { validado: 0, motivo: "se usó todo" });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(Number(r.body.saldo)).toBe(0);
+    expect(r.body.equipo_asignado_id).toBeNull();
+  });
+
+  it("el grifero registra el retorno pero no asigna; el conductor no hace ninguna de las dos", async () => {
     const tq = await tanquetaConSaldo();
     expect((await asignar(tq, volquete, conductor)).status).toBe(403);
     expect((await asignar(tq, volquete, grifero)).status).toBe(403);
     await asignar(tq, volquete);
-    const r = await conductor
-      .put(`/api/erp/combustible/tanquetas/${tq}/liberar`)
-      .send({ motivo: "Prueba" });
-    expect(r.status).toBe(403);
+    expect((await recibirTanqueta(admin, tq, { como: conductor })).status).toBe(403);
+    const r = await recibirTanqueta(admin, tq, { como: grifero });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
   });
 });

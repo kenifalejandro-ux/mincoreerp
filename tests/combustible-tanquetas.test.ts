@@ -207,7 +207,7 @@ describe("combustible: tanquetas con código y reparto con tope (0111)", () => {
     expect(baja.body.activa).toBe(false);
   });
 
-  it("Lectura ve el panel pero no puede dar de alta; el grifero no ve el panel por defecto", async () => {
+  it("Lectura ve el panel pero no puede dar de alta; el grifero ve el panel (para recibir tanquetas de vuelta) pero tampoco da de alta", async () => {
     const lectura = await conRol("lectura");
     expect((await lectura.get("/api/erp/combustible/tanquetas")).status).toBe(200);
     expect(
@@ -215,6 +215,10 @@ describe("combustible: tanquetas con código y reparto con tope (0111)", () => {
         .status
     ).toBe(403);
     const grifero = await conRol("grifero");
-    expect((await grifero.get("/api/erp/combustible/tanquetas")).status).toBe(403);
+    expect((await grifero.get("/api/erp/combustible/tanquetas")).status).toBe(200);
+    expect(
+      (await grifero.post("/api/erp/combustible/tanquetas").send({ grifo_interno_id: principal }))
+        .status
+    ).toBe(403);
   });
 });

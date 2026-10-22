@@ -2602,6 +2602,9 @@ export class CombustibleService {
     alcance?: AlcanceCombustible,
     conductorDni?: string
   ) {
+    // Bloquea la tanqueta antes de leerla: así una carga y el retorno de esa
+    // misma tanqueta (0143) no se cruzan viendo cada uno el estado anterior.
+    await tanquetas.bloquearTanqueta(client, tenantId, data.tanqueta_origen_id!);
     const t = await tanquetas.getTanqueta(client, tenantId, data.tanqueta_origen_id!);
     if (!t || (alcance && !alcance.todo && !alcance.grifos.includes(Number(t.grifo_interno_id)))) {
       throw new Error("la tanqueta elegida no existe en este tenant");

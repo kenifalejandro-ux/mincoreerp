@@ -95,7 +95,7 @@ import type {
   CrearTanquetaInput,
   ActualizarTanquetaInput,
   AsignarTanquetaInput,
-  LiberarTanquetaInput,
+  RetornoTanquetaInput,
 } from "../../server/schemas/combustible.schema";
 import { TIPOS_COMBUSTIBLE } from "../../server/schemas/combustible.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
@@ -5487,36 +5487,47 @@ export class CombustibleController {
     res.json(despues);
   }
 
-  async liberarTanqueta(req: Request, res: Response) {
+  /** El grifero recibe la tanqueta de vuelta (0143). La bitácora guarda el saldo
+   *  calculado, el validado y el motivo: es lo que explica una diferencia. */
+  async retornoTanqueta(req: Request, res: Response) {
     const tenantId = getTenantId(req);
     const id = Number(req.params.tanquetaId);
     if (!Number.isSafeInteger(id) || id < 1) {
       res.status(400).json({ error: "tanquetaId debe ser un número entero válido" });
       return;
     }
-    const { motivo } = req.validatedBody as LiberarTanquetaInput;
+    const { saldo_calculado, saldo_validado, motivo, destino } =
+      req.validatedBody as RetornoTanquetaInput;
     const antes = await this.tanquetaVisible(req, id);
     if (!antes) {
       res.status(404).json({ error: "La tanqueta no existe" });
       return;
     }
     const despues = await withTenant(tenantId, (client) =>
-      tanquetas.liberarTanqueta(client, tenantId, id)
+      tanquetas.registrarRetornoTanqueta(client, tenantId, id, {
+        saldoCalculado: saldo_calculado,
+        saldoValidado: saldo_validado,
+        motivo,
+        usuarioId: req.usuario!.id,
+      })
     );
     await registrarAuditoria({
-      accion: "combustible.tanqueta_liberar",
+      accion: "combustible.tanqueta_retorno",
       tenantId,
       usuarioId: req.usuario!.id,
       detalle: {
         tanquetaId: id,
         codigo: antes.codigo,
         equipoId: antes.equipo_asignado_id,
-        motivo,
+        saldoCalculado: saldo_calculado,
+        saldoValidado: saldo_validado,
+        motivo: motivo ?? null,
+        destino,
       },
       contexto: contextoAuditoriaModulo(req),
     });
     await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
-    res.json(despues);
+    res.status(201).json(despues);
   }
 
   async historialTanqueta(req: Request, res: Response) {

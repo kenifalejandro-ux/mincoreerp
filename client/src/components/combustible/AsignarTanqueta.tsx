@@ -1,7 +1,7 @@
-// Asignar la tanqueta a la unidad que la lleva, o liberarla (migración 0139).
+// Asignar la tanqueta a la unidad que la lleva (migración 0139).
 // Una unidad lleva hasta 3; el servidor lo hace cumplir y su mensaje se muestra
 // tal cual. Al elegir la unidad se pide el vale de esa salida (0141): serie del
-// talonario y N° de vale. Liberar pide motivo y queda en la bitácora.
+// talonario y N° de vale. Para soltarla se registra su retorno (RecibirTanqueta).
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -37,7 +37,6 @@ export default function AsignarTanqueta({
   );
   const [serie, setSerie] = useState("");
   const [vale, setVale] = useState("");
-  const [motivo, setMotivo] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,12 +54,12 @@ export default function AsignarTanqueta({
 
   const valeCompleto = serie.trim() !== "" && Number(vale) > 0;
 
-  const enviar = async (ruta: "asignar" | "liberar", cuerpo: object) => {
+  const enviar = async (cuerpo: object) => {
     if (enviando) return;
     setEnviando(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/erp/combustible/tanquetas/${tanqueta.id}/${ruta}`, {
+      const res = await apiFetch(`/api/erp/combustible/tanquetas/${tanqueta.id}/asignar`, {
         method: "PUT",
         headers: HEADERS,
         body: JSON.stringify(cuerpo),
@@ -93,8 +92,8 @@ export default function AsignarTanqueta({
         <div className="p-6 space-y-4">
           {tanqueta.asignada_vigente && (
             <p className="text-sm text-slate-700">
-              Esta tanqueta ya va con una unidad. Para cambiarla, libérala primero (con motivo) y
-              luego asígnala de nuevo.
+              Esta tanqueta ya va con una unidad. Para cambiarla, recíbela de vuelta primero y luego
+              asígnala de nuevo.
             </p>
           )}
           <form
@@ -103,7 +102,7 @@ export default function AsignarTanqueta({
             onSubmit={(e) => {
               e.preventDefault();
               if (equipoId !== "" && valeCompleto) {
-                void enviar("asignar", {
+                void enviar({
                   equipo_id: Number(equipoId),
                   serie_talonario: serie.trim(),
                   n_vale: Number(vale),
@@ -190,39 +189,6 @@ export default function AsignarTanqueta({
             </button>
           </form>
 
-          {tanqueta.equipo_asignado_id !== null && (
-            <form
-              className="space-y-3 border-t pt-4"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (motivo.trim() !== "") void enviar("liberar", { motivo: motivo.trim() });
-              }}
-            >
-              <div className="space-y-1">
-                <label
-                  htmlFor="liberar-motivo"
-                  className="text-xs font-bold text-slate-700 uppercase"
-                >
-                  Motivo para liberarla
-                </label>
-                <input
-                  id="liberar-motivo"
-                  maxLength={500}
-                  className="w-full border border-slate-200 rounded-xl p-3 text-sm"
-                  placeholder="Ej.: volvió al grifo con saldo"
-                  value={motivo}
-                  onChange={(e) => setMotivo(e.target.value)}
-                />
-              </div>
-              <button
-                type="submit"
-                disabled={enviando || motivo.trim().length < 3}
-                className="w-full bg-[#BADC1E] text-[#0D1719] font-bold py-3 rounded-2xl hover:brightness-110 disabled:opacity-50"
-              >
-                Liberar
-              </button>
-            </form>
-          )}
           {error && <p className="text-sm text-red-600">{error}</p>}
         </div>
       </div>

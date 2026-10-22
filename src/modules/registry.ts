@@ -247,6 +247,16 @@ export const MODULOS: ModuloDefinicion[] = [
           usuario_id: "usuarios",
         },
       },
+      // Retornos de tanqueta con saldo, con la diferencia que validó el grifero (0143).
+      {
+        nombre: "combustible_tanqueta_retornos",
+        pk: "serial",
+        fks: {
+          tanqueta_id: "combustible_tanquetas",
+          equipo_id: "equipos",
+          usuario_id: "usuarios",
+        },
+      },
       // Reparto del excedente de una recepción (0110): cubeta, unidades o
       // devolución. Cascadea desde la recepción.
       {

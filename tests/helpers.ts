@@ -217,6 +217,9 @@ export async function borrarTenantDePrueba(tenantId: string) {
     await client.query("DELETE FROM combustible_tanqueta_asignaciones WHERE tenant_id = $1", [
       tenantId,
     ]);
+    await client.query("DELETE FROM combustible_tanqueta_retornos WHERE tenant_id = $1", [
+      tenantId,
+    ]);
     await client.query("DELETE FROM combustible_tanquetas WHERE tenant_id = $1", [tenantId]);
     await client.query("DELETE FROM equipos WHERE tenant_id = $1", [tenantId]);
     // Las órdenes administrativas (0091) apuntan a usuarios por tres columnas
@@ -271,4 +274,27 @@ export async function borrarTenantDePrueba(tenantId: string) {
   } finally {
     client.release();
   }
+}
+
+/** Recibe una tanqueta de vuelta (0143), confirmando por defecto el saldo que
+ *  calcula el sistema. `admin` lee el saldo; `como` es quien registra. */
+export async function recibirTanqueta(
+  admin: ReturnType<typeof request.agent>,
+  id: number | string,
+  opciones: {
+    como?: ReturnType<typeof request.agent>;
+    validado?: number;
+    calculado?: number;
+    motivo?: string;
+  } = {}
+) {
+  const lista: { id: string; saldo: string }[] = (await admin.get("/api/erp/combustible/tanquetas"))
+    .body;
+  const saldo = Number(lista.find((t) => String(t.id) === String(id))?.saldo ?? 1);
+  return (opciones.como ?? admin).post(`/api/erp/combustible/tanquetas/${id}/retorno`).send({
+    saldo_calculado: opciones.calculado ?? saldo,
+    saldo_validado: opciones.validado ?? saldo,
+    motivo: opciones.motivo,
+    destino: "reserva",
+  });
 }
