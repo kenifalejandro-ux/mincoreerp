@@ -18,6 +18,15 @@ const TESTS = [
   "tests/equipos-rutas.test.ts",
   "tests/ordenes-trabajo-a.test.ts",
   "tests/helpers.ts",
+  "tests/rls-coverage.test.ts",
+  "tests/tenant-isolation.test.ts",
+  "tests/db-index-coverage.test.ts",
+  "tests/backup-tablas-registradas.test.ts",
+];
+const HUMO = ["tests/rls-coverage.test.ts", "tests/tenant-isolation.test.ts"];
+const HUMO_MIGRACION = [
+  "tests/backup-tablas-registradas.test.ts",
+  "tests/db-index-coverage.test.ts",
 ];
 const SPECS = [
   "login.spec.ts",
@@ -64,12 +73,29 @@ describe("verificar: qué se corre según lo que cambió", () => {
     ]);
   });
 
-  it("algo compartido (server, migraciones, config) corre la suite entera de vitest", () => {
-    for (const f of ["src/server/config/database.ts", "migrations/0133_x.sql", "package.json"]) {
+  it("algo compartido (server, config, helpers) corre solo el humo, no la suite entera", () => {
+    for (const f of ["src/server/config/database.ts", "package.json", "tests/helpers.ts"]) {
       const r = sel(f);
-      expect(r.tests, f).toBe("todos");
+      expect(r.tests, f).toEqual(HUMO);
       expect(r.specs, f).toEqual([]);
+      expect(r.motivos.join(" "), f).toMatch(/2 tests de humo/);
     }
+  });
+
+  it("una migración suma al humo los tests de índices y de respaldo", () => {
+    const r = sel("migrations/0133_x.sql");
+    expect(r.backend).toBe(true);
+    expect(r.tests).toEqual([...HUMO, ...HUMO_MIGRACION].sort());
+  });
+
+  it("un cambio compartido junto a uno de módulo corre el módulo MÁS el humo", () => {
+    const r = sel("src/modules/equipos/x.ts", "migrations/0133_x.sql");
+    expect(r.tests).toEqual([...HUMO, ...HUMO_MIGRACION, "tests/equipos-rutas.test.ts"].sort());
+  });
+
+  it("si un test de humo no existe, no se inventa", () => {
+    const r = seleccionarVerificacion(["src/server/x.ts"], ["tests/rls-coverage.test.ts"], []);
+    expect(r.tests).toEqual(["tests/rls-coverage.test.ts"]);
   });
 
   it("el cliente de un módulo no corre tipos de backend ni e2e en local", () => {

@@ -13,7 +13,8 @@
  *
  *   1. Migraciones: un número nuevo no puede chocar con uno que ya está en main.
  *   2. prettier, eslint y tsc de lo que cambió (raíz y client/ por separado).
- *   3. vitest del módulo tocado (o la suite entera si cambió algo compartido).
+ *   3. vitest del módulo tocado (si cambió algo compartido, además un "humo" de
+ *      RLS y aislamiento; la suite entera la corre el CI, o --completo acá).
  *   4. e2e SOLO de los specs que creaste o modificaste: una vez en chromium,
  *      de a uno y sin reintentos. Que sean estables (5 veces seguidas) lo
  *      comprueba el CI en el PR (ver ci.yml), igual que los demás e2e: todos
@@ -60,6 +61,9 @@ const args = new Set(process.argv.slice(2));
 const RAPIDO = args.has("--rapido");
 const COMPLETO = args.has("--completo");
 const SOLO_E2E = args.has("--solo-e2e");
+
+/** eslint reutiliza lo ya revisado (guardado bajo node_modules, que git ignora). */
+const ESLINT_CACHE = ["--cache", "--cache-location", "node_modules/.cache/eslint/"];
 
 const rojo = (s: string) => `\x1b[31m${s}\x1b[0m`;
 const verde = (s: string) => `\x1b[32m${s}\x1b[0m`;
@@ -140,7 +144,8 @@ let dockerArriba = false;
 
 function bajarDocker() {
   if (!dockerArriba) return;
-  spawnSync("docker", ["rm", "-f", contenedor], { stdio: "ignore" });
+  // -v: borra también el volumen anónimo, para no dejar uno por corrida.
+  spawnSync("docker", ["rm", "-fv", contenedor], { stdio: "ignore" });
   dockerArriba = false;
 }
 for (const s of ["SIGINT", "SIGTERM"] as const) {
@@ -182,7 +187,18 @@ async function levantarBase(): Promise<NodeJS.ProcessEnv | null> {
       "POSTGRES_DB=mincoreerp",
       "-p",
       "127.0.0.1::5432",
+      // La base vive en memoria y sin fsync: es desechable (se borra al
+      // terminar) y los tests no necesitan que sobreviva a un corte de luz.
+      // Nunca copiar esto a una base de desarrollo.
+      "--tmpfs",
+      "/var/lib/postgresql/data",
       "postgres:16",
+      "-c",
+      "fsync=off",
+      "-c",
+      "synchronous_commit=off",
+      "-c",
+      "full_page_writes=off",
     ],
     { encoding: "utf8" }
   );
@@ -287,11 +303,13 @@ async function main(): Promise<number> {
   }
   const lr = deRaiz.filter((f) => linteable.test(f));
   if (lr.length)
-    fallo = !paso("eslint (raíz)", "npx", ["eslint", "--max-warnings=0", ...lr]) || fallo;
+    fallo =
+      !paso("eslint (raíz)", "npx", ["eslint", "--max-warnings=0", ...ESLINT_CACHE, ...lr]) ||
+      fallo;
   const lc = deClient.filter((f) => linteable.test(f));
   if (lc.length) {
     fallo =
-      !paso("eslint (client)", "npx", ["eslint", "--max-warnings=0", ...lc], {
+      !paso("eslint (client)", "npx", ["eslint", "--max-warnings=0", ...ESLINT_CACHE, ...lc], {
         cwd: path.join(raiz, "client"),
       }) || fallo;
   }
