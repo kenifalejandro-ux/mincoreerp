@@ -5501,7 +5501,7 @@ export class CombustibleController {
       res.status(400).json({ error: "tanquetaId debe ser un número entero válido" });
       return;
     }
-    const { saldo_calculado, saldo_validado, motivo, destino } =
+    const { saldo_calculado, saldo_validado, motivo, destino, tanque_id } =
       req.validatedBody as RetornoTanquetaInput;
     const antes = await this.tanquetaVisible(req, id);
     if (!antes) {
@@ -5514,6 +5514,8 @@ export class CombustibleController {
         saldoValidado: saldo_validado,
         motivo,
         usuarioId: req.usuario!.id,
+        destino,
+        tanqueId: tanque_id,
       });
       const admins = r?.alerta
         ? await service.findDestinatariosAlertasCombustible(
@@ -5537,6 +5539,7 @@ export class CombustibleController {
         saldoValidado: saldo_validado,
         motivo: motivo ?? null,
         destino,
+        tanqueId: tanque_id ?? null,
       },
       contexto: contextoAuditoriaModulo(req),
     });

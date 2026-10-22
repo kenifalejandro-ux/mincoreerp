@@ -40,7 +40,7 @@ interface Tanqueta {
 /** Un movimiento de la tanqueta (0111/0114): lo que entró (excedente de una
  *  recepción, previsión desde el tanque) y lo que salió (carga en ruta). */
 interface MovimientoTanqueta {
-  tipo: "excedente" | "prevision" | "carga_ruta" | "carga_planta" | "retorno";
+  tipo: "excedente" | "prevision" | "carga_ruta" | "carga_planta" | "retorno" | "retorno_pozo";
   id: string;
   cantidad: string;
   fecha: string;
@@ -77,6 +77,9 @@ const describirMovimiento = (m: MovimientoTanqueta) => {
         : ` · se corrigió ${diferencia > 0 ? "+" : ""}${diferencia} gal: ${m.motivo}`
     }`;
   }
+  if (m.tipo === "retorno_pozo") {
+    return `Volvió al pozo ${m.tanque_codigo} desde ${m.equipo ?? "una unidad"}`;
+  }
   if (m.tipo === "carga_planta") {
     return `Carga en planta a ${m.equipo ?? "una unidad"} · vale ${m.serie_talonario}-${m.n_vale}${conductor(m)}`;
   }
@@ -88,6 +91,10 @@ const describirMovimiento = (m: MovimientoTanqueta) => {
         : "";
   return `Carga en ruta a ${m.equipo ?? "una unidad"}${medidor}${conductor(m)}`;
 };
+
+/** Lo que sale de la tanqueta: las cargas y el saldo que vuelve al pozo. */
+const esSalida = (tipo: MovimientoTanqueta["tipo"]) =>
+  tipo.startsWith("carga_") || tipo === "retorno_pozo";
 
 const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
 
@@ -583,10 +590,10 @@ export default function TanquetasPanel() {
                     </td>
                     <td className="p-2">{h.usuario ?? "—"}</td>
                     <td className="p-2 text-right font-mono text-emerald-400">
-                      {h.tipo.startsWith("carga_") ? "" : formatear(Number(h.cantidad))}
+                      {esSalida(h.tipo) ? "" : formatear(Number(h.cantidad))}
                     </td>
                     <td className="p-2 text-right font-mono">
-                      {h.tipo.startsWith("carga_") ? formatear(Number(h.cantidad)) : ""}
+                      {esSalida(h.tipo) ? formatear(Number(h.cantidad)) : ""}
                     </td>
                   </tr>
                 ))}
