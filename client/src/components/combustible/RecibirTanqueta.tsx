@@ -1,9 +1,18 @@
 // Recibir la tanqueta de vuelta en el grifo (migración 0143). El grifero ve el
 // saldo que calculó el sistema y escribe cuánto volvió de verdad; si es otra
-// cifra, explica por qué. El saldo queda en la tanqueta, sin unidad.
+// cifra, explica por qué. Después elige a dónde va el saldo (DestinoDelRetorno):
+// se queda en la tanqueta, vuelve al tanque (0145) o pasa a otra tanqueta (0146).
 import { X } from "lucide-react";
 import { useState } from "react";
 
+import DestinoDelRetorno from "./DestinoDelRetorno";
+import {
+  SIN_DESTINO,
+  cuerpoDelDestino,
+  destinoCompleto,
+  type DestinoElegido,
+  type OtraTanqueta,
+} from "./destinoDelRetornoDatos";
 import { apiFetch } from "../../services/apiClient";
 
 export interface TanquetaARecibir {
@@ -11,25 +20,34 @@ export interface TanquetaARecibir {
   codigo: string;
   saldo: string;
   equipo_asignado: string | null;
+  grifo_interno_id: number;
 }
 
 export default function RecibirTanqueta({
   tanqueta,
+  otras,
   onCerrar,
   onListo,
 }: {
   tanqueta: TanquetaARecibir;
+  /** Las demás tanquetas, para ofrecer a cuál pasa el saldo. */
+  otras: OtraTanqueta[];
   onCerrar: () => void;
   onListo: () => void;
 }) {
   const calculado = Number(tanqueta.saldo);
   const [volvio, setVolvio] = useState(String(calculado));
   const [motivo, setMotivo] = useState("");
+  const [destino, setDestino] = useState<DestinoElegido>(SIN_DESTINO);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const distinto = volvio !== "" && Math.abs(Number(volvio) - calculado) > 0.005;
-  const valido = volvio !== "" && Number(volvio) >= 0 && (!distinto || motivo.trim().length >= 3);
+  const valido =
+    volvio !== "" &&
+    Number(volvio) >= 0 &&
+    (!distinto || motivo.trim().length >= 3) &&
+    destinoCompleto(destino);
 
   const enviar = async () => {
     if (enviando || !valido) return;
@@ -43,7 +61,7 @@ export default function RecibirTanqueta({
           saldo_calculado: calculado,
           saldo_validado: Number(volvio),
           motivo: distinto ? motivo.trim() : undefined,
-          destino: "reserva",
+          ...cuerpoDelDestino(destino),
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -117,9 +135,13 @@ export default function RecibirTanqueta({
               />
             </div>
           )}
-          <p className="text-sm text-slate-700">
-            El combustible se queda en la tanqueta, sin unidad, lista para asignarla a otra.
-          </p>
+          <DestinoDelRetorno
+            tanqueta={tanqueta}
+            cantidad={Number(volvio) || 0}
+            otras={otras}
+            valor={destino}
+            onCambio={setDestino}
+          />
           <button
             type="submit"
             disabled={enviando || !valido}

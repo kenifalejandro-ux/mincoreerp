@@ -554,6 +554,7 @@ export default function TanquetasPanel() {
       {recibiendo && (
         <RecibirTanqueta
           tanqueta={recibiendo}
+          otras={tanquetas}
           onCerrar={() => setRecibiendo(null)}
           onListo={() => {
             setRecibiendo(null);
