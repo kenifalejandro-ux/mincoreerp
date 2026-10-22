@@ -14,10 +14,10 @@
  *   1. Migraciones: un número nuevo no puede chocar con uno que ya está en main.
  *   2. prettier, eslint y tsc de lo que cambió (raíz y client/ por separado).
  *   3. vitest del módulo tocado (o la suite entera si cambió algo compartido).
- *   4. e2e SOLO de los specs que creaste o modificaste: 5 veces seguidas en
- *      chromium, de a uno y sin reintentos, para probar que son estables.
- *      Los demás e2e los corre el CI (ver ci.yml): todos los specs en
- *      chromium en cada PR, y los 3 navegadores cada noche.
+ *   4. e2e SOLO de los specs que creaste o modificaste: una vez en chromium,
+ *      de a uno y sin reintentos. Que sean estables (5 veces seguidas) lo
+ *      comprueba el CI en el PR (ver ci.yml), igual que los demás e2e: todos
+ *      los specs en chromium en cada PR, y los 3 navegadores cada noche.
  *
  * Si 1 o 2 fallan, NO se levanta Docker: no tiene sentido gastar minutos en
  * tests de código que ni compila.
@@ -60,8 +60,6 @@ const args = new Set(process.argv.slice(2));
 const RAPIDO = args.has("--rapido");
 const COMPLETO = args.has("--completo");
 const SOLO_E2E = args.has("--solo-e2e");
-/** Cuántas veces seguidas tiene que pasar un spec nuevo o modificado. */
-const REPETICIONES = 5;
 
 const rojo = (s: string) => `\x1b[31m${s}\x1b[0m`;
 const verde = (s: string) => `\x1b[32m${s}\x1b[0m`;
@@ -357,15 +355,14 @@ async function main(): Promise<number> {
         ? // Igual que el CI (1 reintento): firefox en esta máquina es más lento
           // que en el runner y un reintento absorbe ese ruido.
           ["--project=chromium", "--project=firefox", "--retries=1"]
-        : // Un spec nuevo o modificado tiene que pasar varias veces seguidas, no
-          // una: el que pasa una vez por suerte es el que después falla en el
-          // CI. Sin reintentos (un reintento escondería justo eso) y de a uno,
-          // para que la que falle no sea la laptop.
-          ["--project=chromium", `--repeat-each=${REPETICIONES}`, "--retries=0", "--workers=1"];
+        : // Una sola pasada: la repetición para cazar specs inestables (5 veces
+          // seguidas) la hace el CI en el PR, que no ocupa esta máquina. Sin
+          // reintentos (un reintento escondería un fallo real) y de a uno.
+          ["--project=chromium", "--retries=0", "--workers=1"];
       const e2e = paso(
         COMPLETO
           ? `e2e chromium + firefox (${specs.length} specs)`
-          : `e2e chromium, ${REPETICIONES} veces seguidas (${specs.length} specs tocados)`,
+          : `e2e chromium (${specs.length} specs tocados)`,
         "npm",
         [
           "run",

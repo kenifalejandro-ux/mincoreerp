@@ -127,6 +127,9 @@ jobs:
 
       - name: Instalar dependencias
         run: npm ci
+        env:
+          # Ver el comentario del mismo paso en e2e-tests.
+          REDISMS_DISABLE_POSTINSTALL: 1
 
       - name: Auditoría de dependencias (falla con high/critical)
         run: npm audit --audit-level=high
@@ -216,22 +219,17 @@ jobs:
         working-directory: client
         run: npm run build
 
-  # Corre después de que backend y frontend ya pasaron (needs), y antes de
-  # que CD pueda disparar el deploy: CD solo arranca si el workflow "CI"
-  # completo termina en success (workflow_run), y eso incluye este job. Es
-  # el "E2E" del flujo Lint => Test => Build => E2E => Deploy — la
-  # simulación real de un usuario en el navegador, contra el sistema
-  # completo (Express + build de React + Postgres + Redis), no un mock.
+  # El "E2E" del flujo Lint => Test => Build => E2E => Deploy — la simulación
+  # real de un usuario en el navegador, contra el sistema completo (Express +
+  # build de React + Postgres + Redis), no un mock.
+  #
+  # Corre EN PARALELO con backend y frontend, no después: tiene su propia base
+  # y su propio build, no usa nada que esos jobs produzcan, y esperarlos
+  # sumaba sus ~11 min al tiempo total del CI. El deploy no cambia: CD solo
+  # arranca si el workflow "CI" completo (workflow_run) termina en success, y
+  # eso incluye este job. Si backend o frontend fallan, este igual corre: se
+  # gastan minutos, pero el repo es público y no cuestan.
   e2e-tests:
-    needs: [backend, frontend]
-    # En un PR o en main, igual que siempre: sin backend y frontend en verde no
-    # hay e2e. De noche (o a pedido) corre igual aunque alguno falle -- por
-    # ejemplo, un aviso nuevo de npm audit --, porque esa corrida existe para
-    # ver los 3 navegadores y saltarla por otra causa la deja ciega esa noche.
-    if: >-
-      ${{ !cancelled() &&
-      ((needs.backend.result == 'success' && needs.frontend.result == 'success') ||
-      github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
 
     services:
@@ -347,6 +345,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          # Historial completo: el paso "E2E de los specs tocados" compara
+          # contra la rama base del PR.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v7
         with:
@@ -355,6 +357,12 @@ jobs:
 
       - name: Instalar dependencias
         run: npm ci
+        env:
+          # redis-memory-server compila Redis desde el código fuente en su
+          # postinstall (3 min 40 s sin una línea de salida). Acá no se usa:
+          # tests/global-setup.redis.ts prefiere el Redis real de REDIS_HOST,
+          # que este job y el de backend ya traen como servicio.
+          REDISMS_DISABLE_POSTINSTALL: 1
 
       - name: Crear el rol de la app (no superuser, como en producción)
         run: |
@@ -416,6 +424,28 @@ jobs:
       - name: E2E chromium (todos los specs)
         if: env.CORRIDA_COMPLETA != 'true'
         run: npx playwright test --project=chromium --grep-invert=@inestable
+
+      # Un spec que pasa una vez por suerte es el que después falla de a
+      # ratos: se repite 5 veces seguidas, sin reintentos y de a uno. Solo en
+      # PR (en main y de noche no hay contra qué comparar). Si no se puede
+      # calcular qué cambió, el paso FALLA: repetir todos los specs 5 veces
+      # no es una alternativa razonable, y saltarlo en silencio dejaría pasar
+      # justo lo que este paso existe para atrapar.
+      - name: E2E de los specs tocados (5 veces seguidas)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          base="origin/$BASE_REF"
+          mapfile -t specs < <(git diff --name-only --diff-filter=ACMR "$base"...HEAD -- 'e2e/*.spec.ts')
+          if [ "${#specs[@]}" -eq 0 ]; then
+            echo "Ningún spec creado o modificado en este PR."
+            exit 0
+          fi
+          printf 'Specs tocados:\n%s\n' "${specs[@]}"
+          npx playwright test --project=chromium --repeat-each=5 --retries=0 --workers=1 \
+            --grep-invert=@inestable --pass-with-no-tests "${specs[@]}"
 
       - name: E2E webkit (pantallas de celular)
         if: env.CORRIDA_COMPLETA != 'true'
