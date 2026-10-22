@@ -44,6 +44,10 @@ export const CATALOGO_ALERTAS: Record<
   consumo_excedido: { canal: "al_momento", nombre: "Consumo máximo excedido" },
   tope_diario_excedido: { canal: "al_momento", nombre: "Tope diario excedido" },
   vale_excede_tanque: { canal: "al_momento", nombre: "Vale mayor que el tanque" },
+  tanqueta_retorno_diferencia: {
+    canal: "al_momento",
+    nombre: "Tanqueta devuelta con otro saldo",
+  },
   // ── Al momento: manipulación física ────────────────────────────────────
   totalizador_salto: { canal: "al_momento", nombre: "Salto del totalizador" },
   totalizador_retroceso: { canal: "al_momento", nombre: "Retroceso del totalizador" },

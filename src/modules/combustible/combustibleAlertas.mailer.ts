@@ -1355,6 +1355,36 @@ export async function enviarCorreoTanquetaSobregirada(
   });
 }
 
+/** El grifero recibió una tanqueta de vuelta con un saldo distinto del calculado
+ *  y la diferencia pasa del margen, o fue hacia arriba (0144). */
+export async function enviarCorreoRetornoConDiferencia(
+  destinatarios: Destinatario[],
+  params: {
+    tanqueta: string;
+    unidad: string | null;
+    saldoCalculado: number;
+    saldoValidado: number;
+    motivo: string;
+    usuario: string;
+  }
+) {
+  const sobra = params.saldoValidado > params.saldoCalculado;
+  await avisar("tanqueta_retorno_diferencia", {
+    destinatarios,
+    asunto: `Combustible: la tanqueta ${params.tanqueta} volvió con otro saldo`,
+    titulo: `La tanqueta ${params.tanqueta} volvió con ${sobra ? "más" : "menos"} de lo que el sistema calculaba`,
+    lineas: [
+      `El sistema calculaba ${params.saldoCalculado} gal${params.unidad ? ` (venía de la unidad ${params.unidad})` : ""} ` +
+        `y ${params.usuario} registró ${params.saldoValidado} gal.`,
+      `Motivo escrito: ${params.motivo}`,
+      sobra
+        ? "Declarar que volvió más de lo calculado suma combustible que no salió de ningún tanque: " +
+          "conviene revisar la tanqueta en el ERP."
+        : "Puede ser un derrame, evaporación o una estimación mal hecha en ruta; revisar en el ERP.",
+    ],
+  });
+}
+
 const MAX_RECEPCIONES_EN_CORREO = 10;
 
 /** Un correo por grifo con las recepciones cuya diferencia contra la varilla

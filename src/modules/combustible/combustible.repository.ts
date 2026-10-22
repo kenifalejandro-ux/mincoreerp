@@ -163,6 +163,8 @@ export const TIPOS_ALERTA = [
   "vale_excede_tanque",
   // ── Migración 0129: compra externa con comprobante sin foto pasadas 24 h.
   "comprobante_sin_foto",
+  // ── Migración 0144: el grifero corrigió el saldo de una tanqueta que volvió.
+  "tanqueta_retorno_diferencia",
 ] as const;
 
 export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];
@@ -246,6 +248,8 @@ export interface AlertaNueva {
   /** La corrección de litros de un envase (0130): ancla de
    *  `urea_litros_corregidos`, que no es sobre ninguna fila suelta. */
   ureaCorreccionId?: number | null;
+  /** El retorno de tanqueta (0143) que disparó `tanqueta_retorno_diferencia`. */
+  tanquetaRetornoId?: number | null;
   /** Migración 0092. Default 'combustible' -- no rompe ningún llamador
    *  existente. Es lo que separa el namespace del talonario de urea del de
    *  combustible en las consultas de hueco (ver
@@ -2652,6 +2656,7 @@ export class CombustibleRepository {
       lectura_id: string | null;
       urea_conteo_id: string | null;
       urea_correccion_id: string | null;
+      tanqueta_retorno_id: string | null;
       detalle: Record<string, unknown>;
       creado_en: Date;
     }>(
@@ -2659,7 +2664,8 @@ export class CombustibleRepository {
       // escrita acá: escrita a mano fue justamente como se desincronizó del
       // CHECK de anomalías (ver migración 0086).
       `SELECT id, tipo, serie_talonario, n_vale, despacho_id, combustible_id,
-              recepcion_id, lectura_id, urea_conteo_id, urea_correccion_id, detalle, creado_en
+              recepcion_id, lectura_id, urea_conteo_id, urea_correccion_id,
+              tanqueta_retorno_id, detalle, creado_en
        FROM combustible_alertas
        WHERE tenant_id = $1
          AND tipo = ANY($3::text[])
@@ -3643,6 +3649,7 @@ export class CombustibleRepository {
       lectura_id: string | null;
       urea_conteo_id: string | null;
       urea_correccion_id: string | null;
+      tanqueta_retorno_id: string | null;
       detalle: Record<string, unknown>;
       creado_en: Date;
     },
@@ -3653,8 +3660,8 @@ export class CombustibleRepository {
       INSERT INTO combustible_anomalias
         (tenant_id, tipo, serie_talonario, n_vale, despacho_id, combustible_id,
          recepcion_id, alerta_id, detalle, detectada_en, ventana_horas, lectura_id,
-         urea_conteo_id, urea_correccion_id)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         urea_conteo_id, urea_correccion_id, tanqueta_retorno_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       ON CONFLICT (alerta_id) WHERE alerta_id IS NOT NULL DO NOTHING
       RETURNING id
       `,
@@ -3676,6 +3683,7 @@ export class CombustibleRepository {
         // worker lo salteaba en silencio cada hora: nunca se congelaba.
         alerta.urea_conteo_id,
         alerta.urea_correccion_id,
+        alerta.tanqueta_retorno_id,
       ]
     );
 
@@ -5607,6 +5615,7 @@ export class CombustibleRepository {
       lectura_id: f.lecturaId ?? null,
       urea_conteo_id: f.ureaConteoId ?? null,
       urea_correccion_id: f.ureaCorreccionId ?? null,
+      tanqueta_retorno_id: f.tanquetaRetornoId ?? null,
       producto: f.producto ?? "combustible",
       detalle: JSON.stringify(f.detalle),
     };
@@ -5628,6 +5637,7 @@ export class CombustibleRepository {
         c.lectura_id,
         c.urea_conteo_id,
         c.urea_correccion_id,
+        c.tanqueta_retorno_id,
         c.producto,
         c.detalle,
       ];
@@ -5639,10 +5649,11 @@ export class CombustibleRepository {
       `
       INSERT INTO combustible_alertas
         (tenant_id, tipo, serie_talonario, n_vale, despacho_id, combustible_id, recepcion_id,
-         lectura_id, urea_conteo_id, urea_correccion_id, producto, detalle)
+         lectura_id, urea_conteo_id, urea_correccion_id, tanqueta_retorno_id, producto, detalle)
       VALUES ${placeholders.join(",")}
       RETURNING id, tipo, serie_talonario, n_vale, despacho_id, combustible_id, recepcion_id,
-        lectura_id, urea_conteo_id, urea_correccion_id, producto, detalle, creado_en,
+        lectura_id, urea_conteo_id, urea_correccion_id, tanqueta_retorno_id, producto, detalle,
+        creado_en,
         grifo_interno_id
       `,
       valores
