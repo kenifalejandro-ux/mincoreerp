@@ -15,4 +15,5 @@ echo "$STAGED_FILES" | xargs -r npx secretlint --secretlintrc .secretlintrc.json
 
 npx lint-staged || exit 1
 
-npm run typecheck && npm run typecheck --prefix client
+# Los tipos (tsc) no se revisan acá: los revisa el pre-push (npm run verificar)
+# y el CI. Correrlos en cada commit sumaba ~1 min cada vez.

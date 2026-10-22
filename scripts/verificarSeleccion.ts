@@ -8,7 +8,10 @@
  * Casi todos los tests de integración importan `app` desde tests/helpers, y
  * `app` importa todos los módulos: para vitest, "relacionado" sería TODO. Se
  * elige por módulo (src/modules/<m>/ → tests/<m>*.test.ts) y, si cambia algo
- * compartido (src/server, migraciones, config), se corre la suite entera.
+ * compartido (src/server, migraciones, config), se suma un "humo": los pocos
+ * tests que atrapan lo más grave de un cambio transversal (RLS, aislamiento
+ * entre tenants y, con migraciones, índices y respaldo). La suite entera
+ * (15 min en una laptop) la corre el CI en el PR, o acá con --completo.
  *
  * ── Por qué en local solo los specs que tocaste ─────────────────────────
  *
@@ -28,8 +31,8 @@ export interface Seleccion {
   nada: boolean;
   backend: boolean;
   client: boolean;
-  /** Archivos de test de vitest, o "todos" si cambió algo compartido. */
-  tests: string[] | "todos";
+  /** Archivos de test de vitest. */
+  tests: string[];
   /** Specs de Playwright que la persona creó o modificó (nombres dentro de e2e/). */
   specs: string[];
   /** Por qué se eligió lo que se eligió, para mostrarlo. */
@@ -39,6 +42,13 @@ export interface Seleccion {
 const SOLO_DOCS = /^(docs\/|\.claude\/)|\.md$/;
 const COMPARTIDO =
   /^(src\/server\/|migrations\/|package(-lock)?\.json$|vitest\.config|tests\/(helpers|setup)|tsconfig|server\.ts$|migrate\.ts$|scripts\/e2eLocal\.ts$)/;
+/** Lo que corre cualquier cambio compartido. */
+const HUMO = ["tests/rls-coverage.test.ts", "tests/tenant-isolation.test.ts"];
+/** Lo que además corre una migración. */
+const HUMO_MIGRACION = [
+  "tests/db-index-coverage.test.ts",
+  "tests/backup-tablas-registradas.test.ts",
+];
 
 /** El módulo al que pertenece un archivo, o null si es compartido/ajeno. */
 export function moduloDeArchivo(archivo: string): string | null {
@@ -77,12 +87,18 @@ export function seleccionarVerificacion(
   const tests = new Set<string>();
   const specs = new Set<string>();
   const motivos: string[] = [];
-  let todosLosTests = false;
 
   const compartido = relevantes.filter((f) => COMPARTIDO.test(f));
   if (compartido.length > 0) {
-    todosLosTests = true;
-    motivos.push(`cambió algo compartido (${compartido[0]}): suite completa de vitest`);
+    const humo = [
+      ...HUMO,
+      ...(compartido.some((f) => f.startsWith("migrations/")) ? HUMO_MIGRACION : []),
+    ];
+    const deHumo = humo.filter((t) => testsExistentes.includes(t));
+    deHumo.forEach((t) => tests.add(t));
+    motivos.push(
+      `cambió algo compartido (${compartido[0]}): ${deHumo.length} tests de humo; la suite entera la corre el CI (o --completo)`
+    );
   }
 
   const modulos = new Set<string>();
@@ -113,7 +129,7 @@ export function seleccionarVerificacion(
     nada: false,
     backend: relevantes.some((f) => !f.startsWith("client/")),
     client: relevantes.some((f) => f.startsWith("client/")),
-    tests: todosLosTests ? "todos" : [...tests].sort(),
+    tests: [...tests].sort(),
     specs: [...specs].sort(),
     motivos,
   };
