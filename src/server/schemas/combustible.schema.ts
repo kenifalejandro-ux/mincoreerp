@@ -2407,3 +2407,19 @@ export const cerrarMiViajeSchema = z.object({
   cliente_uuid: z.string().uuid().optional(),
 });
 export type CerrarMiViajeInput = z.infer<typeof cerrarMiViajeSchema>;
+
+// ── Llegada y salida de cada parada ────────────────────────────────────────
+// `orden` es la parada a la que el que marca CREE que llega (o de la que cree
+// que sale): si el viaje ya avanzó, la marca se rechaza en vez de caer en otra.
+const ordenParada = z.number().int().min(1).max(19).optional();
+
+export const llegadaMiaSchema = z.object({
+  medidor,
+  orden: ordenParada,
+  marcado_en: fechaHora.optional(),
+  cliente_uuid: z.string().uuid().optional(),
+});
+export type LlegadaMiaInput = z.infer<typeof llegadaMiaSchema>;
+
+export const salidaMiaSchema = llegadaMiaSchema;
+export type SalidaMiaInput = LlegadaMiaInput;
