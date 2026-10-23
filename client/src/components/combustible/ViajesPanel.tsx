@@ -6,6 +6,13 @@ import { useCallback, useEffect, useState } from "react";
 import { CeldaDesvio } from "./ConsumoPorViaje";
 import { DetalleViajeVentana } from "./DetalleViaje";
 import { IconoUnidad } from "./IconoUnidad";
+import {
+  errorDelRecorrido,
+  paradasDelRecorrido,
+  RECORRIDO_VACIO,
+  type Recorrido,
+} from "./recorrido";
+import { RecorridoViaje } from "./RecorridoViaje";
 import { SelectorConductor, type OpcionConductor } from "./SelectorConductor";
 import { fechaHora, fmt, ruta, unidadLabel, type FilaViaje } from "./viajesFormato";
 import { useAuth } from "../../context/AuthContext";
@@ -116,10 +123,15 @@ export default function ViajesPanel() {
   const [hasta, setHasta] = useState("");
   const [modal, setModal] = useState<Modal | null>(null);
   const [form, setForm] = useState(FORM_VACIO);
+  // El recorrido de un viaje NUEVO (solo ida, ida y vuelta, varias paradas); editar sigue
+  // con origen y destino.
+  const [recorrido, setRecorrido] = useState<Recorrido>(RECORRIDO_VACIO);
   const [nuevoLugar, setNuevoLugar] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [verId, setVerId] = useState<string | null>(null);
   const [retro, setRetro] = useState(false);
+  // Un viaje con varias paradas no se registra ya terminado: se marca parada por parada.
+  const retroVale = retro && paradasDelRecorrido(recorrido).length <= 2;
   const [horaManual, setHoraManual] = useState(false);
   const [rutaDudosa, setRutaDudosa] = useState(false);
   const [previo, setPrevio] = useState<MedidorPrevio | null>(null);
@@ -212,6 +224,7 @@ export default function ViajesPanel() {
     setPrevio(null);
     setDesbloqueado(false);
     if (m.tipo === "nuevo") {
+      setRecorrido(RECORRIDO_VACIO);
       setForm({ ...FORM_VACIO, inicio_en: ahoraParaInputLocal() });
     } else if (m.tipo === "editar") {
       const v = m.v;
@@ -274,8 +287,11 @@ export default function ViajesPanel() {
       equipo_id: String(o.equipoId),
       conductor_nombre: e?.conductor_nombre ?? "",
       conductor_dni: e?.conductor_dni ?? "",
-      origen_id: rutas.length === 1 ? String(rutas[0].origen_id) : "",
-      destino_id: rutas.length === 1 ? String(rutas[0].destino_id) : "",
+    }));
+    setRecorrido((r) => ({
+      ...r,
+      paradas:
+        rutas.length === 1 ? [String(rutas[0].origen_id), String(rutas[0].destino_id)] : ["", ""],
     }));
   };
 
@@ -309,19 +325,18 @@ export default function ViajesPanel() {
         alert("Elige el conductor: de ahí salen la unidad y la ruta.");
         return;
       }
-      if (!form.origen_id || !form.destino_id) {
-        alert("Falta la ruta: elígela, o cárgala a la unidad en Equipos.");
+      const errorRecorrido = errorDelRecorrido(recorrido);
+      if (errorRecorrido) {
+        alert(`${errorRecorrido} Elígelo, o cárgalo a la unidad en Equipos.`);
         return;
       }
       ok = await enviar(base, "POST", {
         equipo_id: Number(form.equipo_id),
         conductor_nombre: form.conductor_nombre.trim() || null,
         conductor_dni: form.conductor_dni.trim() || null,
-        origen_id: Number(form.origen_id),
-        destino_id: Number(form.destino_id),
-        cuenta_como: Number(form.cuenta_como),
+        paradas: paradasDelRecorrido(recorrido).map(Number),
         observaciones: form.observaciones.trim() || null,
-        ...(retro
+        ...(retroVale
           ? {
               inicio_en: isoONull(form.inicio_en),
               fin_en: isoONull(form.fin_en),
@@ -397,6 +412,10 @@ export default function ViajesPanel() {
     }))
     .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
   const rutasDeLaUnidad = rutasUsables(equipoDelForm);
+  const indiceRutaElegida = rutasDeLaUnidad.findIndex(
+    (r) =>
+      String(r.origen_id) === recorrido.paradas[0] && String(r.destino_id) === recorrido.paradas[1]
+  );
   // Tenía rutas en Equipos, pero ninguna usable: hay que decir por qué.
   const rutasDeBaja = (equipoDelForm?.rutas ?? []).length > 0 && rutasDeLaUnidad.length === 0;
   const tipoMedidor =
@@ -822,27 +841,16 @@ export default function ViajesPanel() {
                               id="viaje-ruta"
                               required
                               className={INPUT}
-                              value={
-                                rutasDeLaUnidad.findIndex(
-                                  (r) =>
-                                    String(r.origen_id) === form.origen_id &&
-                                    String(r.destino_id) === form.destino_id
-                                ) >= 0
-                                  ? String(
-                                      rutasDeLaUnidad.findIndex(
-                                        (r) =>
-                                          String(r.origen_id) === form.origen_id &&
-                                          String(r.destino_id) === form.destino_id
-                                      )
-                                    )
-                                  : ""
-                              }
+                              value={indiceRutaElegida >= 0 ? String(indiceRutaElegida) : ""}
                               onChange={(e) => {
                                 const r = rutasDeLaUnidad[Number(e.target.value)];
-                                setForm({
-                                  ...form,
-                                  origen_id: r ? String(r.origen_id) : "",
-                                  destino_id: r ? String(r.destino_id) : "",
+                                setRecorrido({
+                                  ...recorrido,
+                                  paradas: [
+                                    r ? String(r.origen_id) : "",
+                                    r ? String(r.destino_id) : "",
+                                    ...recorrido.paradas.slice(2),
+                                  ],
                                 });
                               }}
                             >
@@ -856,18 +864,17 @@ export default function ViajesPanel() {
                           </div>
                         )}
                         {equipoDelForm && rutasDeLaUnidad.length === 0 && (
-                          <>
-                            <p className="text-sm text-amber-700 bg-amber-50 rounded-xl p-3">
-                              {rutasDeBaja
-                                ? "La ruta que tiene esta unidad en Equipos usa un lugar desactivado: elige otra aquí y corrígela en Equipos."
-                                : "Esta unidad no tiene ruta en Equipos: elígela aquí y, cuando puedas, cárgala en Equipos."}
-                            </p>
-                            <div className="grid grid-cols-2 gap-3">
-                              {selectLugar("origen_id", "Origen")}
-                              {selectLugar("destino_id", "Destino")}
-                            </div>
-                          </>
+                          <p className="text-sm text-amber-700 bg-amber-50 rounded-xl p-3">
+                            {rutasDeBaja
+                              ? "La ruta que tiene esta unidad en Equipos usa un lugar desactivado: elige otra aquí y corrígela en Equipos."
+                              : "Esta unidad no tiene ruta en Equipos: elígela aquí y, cuando puedas, cárgala en Equipos."}
+                          </p>
                         )}
+                        <RecorridoViaje
+                          lugares={lugaresActivos}
+                          valor={recorrido}
+                          onChange={setRecorrido}
+                        />
                       </>
                     ) : (
                       <>
@@ -924,7 +931,8 @@ export default function ViajesPanel() {
                       <label className="flex items-center gap-2 text-sm text-slate-700">
                         <input
                           type="checkbox"
-                          checked={retro}
+                          checked={retroVale}
+                          disabled={paradasDelRecorrido(recorrido).length > 2}
                           onChange={(e) => setRetro(e.target.checked)}
                         />
                         Registrar un viaje que ya se hizo (con sus horas y medidores)
@@ -972,7 +980,7 @@ export default function ViajesPanel() {
                           </button>
                         </div>
                       )}
-                    {(retro ||
+                    {(retroVale ||
                       desbloqueado ||
                       (modal.tipo === "editar" && modal.v.estado === "programado")) && (
                       <>
@@ -1004,15 +1012,16 @@ export default function ViajesPanel() {
                       </>
                     )}
                     <div className="grid grid-cols-2 gap-3">
-                      {campo("cuenta_como", "Cuenta como", {
-                        type: "number",
-                        min: 0.1,
-                        max: 10,
-                        step: "0.1",
-                        required: true,
-                        title:
-                          "1 = un viaje. Si la empresa cuenta ida y vuelta como uno, pon 0.5 en cada tramo.",
-                      })}
+                      {modal.tipo === "editar" &&
+                        campo("cuenta_como", "Cuenta como", {
+                          type: "number",
+                          min: 0.1,
+                          max: 10,
+                          step: "0.1",
+                          required: true,
+                          title:
+                            "1 = un viaje. Si la empresa cuenta ida y vuelta como uno, pon 0.5 en cada tramo.",
+                        })}
                       {campo("observaciones", "Observaciones (opcional)", { maxLength: 1000 })}
                     </div>
                     {modal.tipo === "editar" && modal.v.ruta_por_confirmar && (
@@ -1196,7 +1205,7 @@ export default function ViajesPanel() {
                         ? "Iniciar viaje"
                         : modal.tipo === "cerrar"
                           ? "Marcar llegada"
-                          : modal.tipo === "nuevo" && !retro
+                          : modal.tipo === "nuevo" && !retroVale
                             ? "Programar viaje"
                             : "Guardar"}
                 </button>
