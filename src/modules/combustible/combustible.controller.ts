@@ -7015,6 +7015,11 @@ export class CombustibleController {
         if ((await service.contarDespachosDeExcedente(client, tenantId, recepcionId)) > 0) {
           return { estado: "con_despachos" as const };
         }
+        // Su excedente ya salió de la tanqueta (cargas, o un retorno al pozo o a
+        // otra tanqueta): anularla dejaría la tanqueta en negativo y, con un
+        // retorno al pozo, combustible en el tanque sin compra que lo respalde.
+        const sinSaldo = await tanquetas.tanquetasSinSaldoParaAnular(client, tenantId, recepcionId);
+        if (sinSaldo.length > 0) return { estado: "excedente_salido" as const, sinSaldo };
         const anulada = await service.anularRecepcion(
           client,
           tenantId,
@@ -7034,6 +7039,17 @@ export class CombustibleController {
       }
       if (resultado.estado === "ya_anulada") {
         res.status(409).json({ error: "Esta recepción ya estaba anulada" });
+        return;
+      }
+      if (resultado.estado === "excedente_salido") {
+        const detalle = resultado.sinSaldo
+          .map((t) => `${t.codigo} (le quedan ${t.saldo} gal de los ${t.excedente} que recibió)`)
+          .join(", ");
+        res.status(409).json({
+          error:
+            `El excedente de esta recepción ya salió de la tanqueta ${detalle}: no se puede anular. ` +
+            "Si salió en cargas, anula primero esas cargas; si volvió al pozo o pasó a otra tanqueta, no se puede deshacer.",
+        });
         return;
       }
       if (resultado.estado === "con_despachos") {
