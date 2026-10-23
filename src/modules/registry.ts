@@ -345,6 +345,12 @@ export const MODULOS: ModuloDefinicion[] = [
         pk: "serial",
         fks: { viaje_id: "combustible_viajes", lugar_id: "combustible_lugares" },
       },
+      // Descansos de cada viaje (0151): cascadean desde el viaje.
+      {
+        nombre: "combustible_viaje_descansos",
+        pk: "serial",
+        fks: { viaje_id: "combustible_viajes", creado_por: "usuarios", cerrado_por: "usuarios" },
+      },
       // Rutas habituales de cada unidad (0126): referencian equipos Y lugares
       // (sin ON DELETE sobre lugares), así que van después de los dos y
       // necesitan su propia raíz para borrarse antes que los lugares.
@@ -639,6 +645,8 @@ export const MODULOS: ModuloDefinicion[] = [
         { metodo: "POST", ruta: "/viajes/:viajeId/cerrar-mio" },
         { metodo: "POST", ruta: "/viajes/:viajeId/llegada-mia" },
         { metodo: "POST", ruta: "/viajes/:viajeId/salida-mia" },
+        { metodo: "POST", ruta: "/viajes/:viajeId/descanso-mio" },
+        { metodo: "POST", ruta: "/viajes/:viajeId/descanso-mio/terminar" },
       ],
     },
   },

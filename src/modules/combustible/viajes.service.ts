@@ -435,6 +435,8 @@ export async function cerrarViaje(
   }
   if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
   if (v.estado !== "en_curso") throw new AppError(409, "El viaje ya está cerrado");
+  // El conductor no cierra con el descanso abierto; la oficina que cierra por él lo termina.
+  if (dniConductor !== undefined) await exigirSinDescansoAbierto(client, tenantId, id);
   const paradasDelViaje = await leerParadas(client, tenantId, id);
   if (paradasDelViaje.length > 2) {
     const pos = posicion(paradasDelViaje);
@@ -454,6 +456,12 @@ export async function cerrarViaje(
   }
   validarMedidores(v.medidor_inicio == null ? null : Number(v.medidor_inicio), data.medidor_fin);
   await validarSinTraslape(client, tenantId, v.equipo_id, v.inicio_en, fin, id);
+  await client.query(
+    `UPDATE combustible_viaje_descansos
+        SET fin_en = $3, fin_por = 'oficina', fin_origen_hora = $4, cerrado_por = $5
+      WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL AND inicio_en < $3::timestamptz`,
+    [tenantId, id, fin, origen, usuarioId]
+  );
   await client.query(
     `UPDATE combustible_viajes
         SET fin_en = $2, medidor_fin = $3, estado = 'cerrado', cerrado_por = $4,
@@ -608,6 +616,7 @@ export async function llegarAParada(
   }
   if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
   if (v.estado !== "en_curso") throw new AppError(409, "El viaje ya está cerrado");
+  await exigirSinDescansoAbierto(client, tenantId, id);
   const pos = posicion(paradas);
   if (pos.tipo !== "en_marcha") {
     throw new AppError(409, "El viaje no va en camino a una parada: marca primero la salida");
@@ -689,6 +698,7 @@ export async function salirDeParada(
   }
   if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
   if (v.estado !== "en_curso") throw new AppError(409, "El viaje ya está cerrado");
+  await exigirSinDescansoAbierto(client, tenantId, id);
   const pos = posicion(paradas);
   if (pos.tipo !== "en_parada") {
     throw new AppError(409, "El viaje no está en una parada: marca primero la llegada");
@@ -718,6 +728,168 @@ export async function salirDeParada(
     orden: pos.en,
     cierra: false,
   };
+}
+
+// ── Descansos ──────────────────────────────────────────────────────────────
+
+export interface MarcaDescanso {
+  motivo?: string | null;
+  /** Hora a mano (la oficina marca por quien se olvidó; con motivo). */
+  hora?: string;
+  marcado_en?: string;
+  cliente_uuid?: string;
+}
+
+export interface ResultadoDescanso {
+  antes: Record<string, unknown>;
+  despues: Record<string, unknown> | null;
+  repetido: boolean;
+}
+
+/** Un viaje con un descanso abierto no avanza: primero se termina el descanso. */
+async function exigirSinDescansoAbierto(client: PoolClient, tenantId: string, viajeId: number) {
+  const r = await client.query(
+    `SELECT 1 FROM combustible_viaje_descansos
+      WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL LIMIT 1`,
+    [tenantId, viajeId]
+  );
+  if (r.rows[0]) throw new AppError(409, "Termina el descanso para continuar el viaje");
+}
+
+/** Dónde está el viaje, para anotarlo en el descanso: "En ruta hacia B" o "En B". */
+function dondeEstaElViaje(paradas: { lugar: string }[] | null): string {
+  const filas = (paradas ?? []) as unknown as (FilaParada & { lugar: string })[];
+  const pos = posicion(filas);
+  if (pos.tipo === "en_marcha") return `En ruta hacia ${filas[pos.hacia].lugar}`;
+  if (pos.tipo === "en_parada") return `En ${filas[pos.en].lugar}`;
+  return "En el viaje";
+}
+
+/** Empieza un descanso del conductor del viaje: el propio (`dniConductor`, desde su celular) o el
+ *  de la oficina por él (con motivo). Una persona descansa una vez a la vez; el reintento de la cola
+ *  devuelve el viaje como quedó. */
+export async function iniciarDescanso(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  id: number,
+  data: MarcaDescanso,
+  dniConductor?: string
+): Promise<ResultadoDescanso> {
+  const v = await viajeParaCambiar(client, tenantId, id);
+  exigirConductor(v, dniConductor);
+  const uuid = data.cliente_uuid ?? null;
+  if (uuid) {
+    const rep = await client.query(
+      `SELECT 1 FROM combustible_viaje_descansos
+        WHERE tenant_id = $1 AND viaje_id = $2 AND inicio_cliente_uuid = $3`,
+      [tenantId, id, uuid]
+    );
+    if (rep.rows[0]) {
+      return { antes: v, despues: await getViaje(client, tenantId, id), repetido: true };
+    }
+  }
+  if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
+  if (v.estado !== "en_curso") throw new AppError(409, "El viaje ya está cerrado");
+  const { hora, origen } = await horaDeLaMarca(client, data.hora, data.marcado_en);
+  await validarMarcaDeParada(
+    client,
+    hora,
+    v.inicio_en as Date,
+    "El descanso tiene que ser posterior a la salida del viaje"
+  );
+  const previo = await client.query(
+    `SELECT max(fin_en) AS fin FROM combustible_viaje_descansos
+      WHERE tenant_id = $1 AND viaje_id = $2`,
+    [tenantId, id]
+  );
+  if (previo.rows[0].fin && Date.parse(hora) < new Date(previo.rows[0].fin).getTime()) {
+    throw new AppError(400, "El descanso empieza antes de que terminara el anterior");
+  }
+  const viaje = await getViaje(client, tenantId, id);
+  try {
+    await client.query(
+      `INSERT INTO combustible_viaje_descansos (
+         tenant_id, viaje_id, conductor_dni, conductor_nombre, inicio_en, motivo, donde,
+         inicio_por, inicio_origen_hora, inicio_cliente_uuid, creado_por)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        tenantId,
+        id,
+        normalizarDni(v.conductor_dni),
+        v.conductor_nombre,
+        hora,
+        data.motivo?.trim() || null,
+        dondeEstaElViaje(viaje?.paradas),
+        dniConductor === undefined ? "oficina" : "conductor",
+        origen,
+        uuid,
+        usuarioId,
+      ]
+    );
+  } catch (err) {
+    if (!esViolacionUnicidad(err)) throw err;
+    const abierto = (err as { constraint?: string }).constraint === "uq_viaje_descanso_abierto";
+    throw new AppError(409, abierto ? "Ya hay un descanso abierto" : "Esa marca ya se usó");
+  }
+  return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
+}
+
+/** Termina el descanso abierto del viaje. */
+export async function terminarDescanso(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  id: number,
+  data: MarcaDescanso,
+  dniConductor?: string
+): Promise<ResultadoDescanso> {
+  const v = await viajeParaCambiar(client, tenantId, id);
+  exigirConductor(v, dniConductor);
+  const uuid = data.cliente_uuid ?? null;
+  if (uuid) {
+    const rep = await client.query(
+      `SELECT 1 FROM combustible_viaje_descansos
+        WHERE tenant_id = $1 AND viaje_id = $2 AND fin_cliente_uuid = $3`,
+      [tenantId, id, uuid]
+    );
+    if (rep.rows[0]) {
+      return { antes: v, despues: await getViaje(client, tenantId, id), repetido: true };
+    }
+  }
+  const abierto = await client.query(
+    `SELECT id, inicio_en FROM combustible_viaje_descansos
+      WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL`,
+    [tenantId, id]
+  );
+  if (!abierto.rows[0]) throw new AppError(409, "No hay un descanso abierto");
+  const { hora, origen } = await horaDeLaMarca(client, data.hora, data.marcado_en);
+  await validarMarcaDeParada(
+    client,
+    hora,
+    abierto.rows[0].inicio_en as Date,
+    "El descanso tiene que terminar después de empezar"
+  );
+  try {
+    await client.query(
+      `UPDATE combustible_viaje_descansos
+          SET fin_en = $2, fin_por = $3, fin_origen_hora = $4, fin_cliente_uuid = $5,
+              cerrado_por = $6
+        WHERE id = $1`,
+      [
+        abierto.rows[0].id,
+        hora,
+        dniConductor === undefined ? "oficina" : "conductor",
+        origen,
+        uuid,
+        usuarioId,
+      ]
+    );
+  } catch (err) {
+    if (esViolacionUnicidad(err)) throw new AppError(409, "Esa marca ya se usó");
+    throw err;
+  }
+  return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
 }
 
 export async function editarViaje(
@@ -877,6 +1049,12 @@ const COLUMNAS_VIAJE = `
      FROM combustible_viaje_paradas p
      JOIN combustible_lugares pl ON pl.id = p.lugar_id AND pl.tenant_id = p.tenant_id
     WHERE p.tenant_id = v.tenant_id AND p.viaje_id = v.id) AS paradas,
+  (SELECT json_agg(json_build_object(
+            'id', d.id, 'conductor_nombre', d.conductor_nombre, 'inicio_en', d.inicio_en,
+            'fin_en', d.fin_en, 'motivo', d.motivo, 'donde', d.donde, 'detiene', d.detiene,
+            'inicio_por', d.inicio_por, 'fin_por', d.fin_por) ORDER BY d.inicio_en)
+     FROM combustible_viaje_descansos d
+    WHERE d.tenant_id = v.tenant_id AND d.viaje_id = v.id) AS descansos,
   ${recorridoClave("v")} AS recorrido_clave`;
 
 const JOINS_VIAJE = `
