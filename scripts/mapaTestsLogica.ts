@@ -48,6 +48,9 @@ export interface MapaTests {
   tests: Record<string, Record<string, string>>;
 }
 
+/** El test que solo arranca la app: es la línea base, no figura en `tests`. */
+export const TEST_BASE = "app-arranca";
+
 /** Fracción de tests a partir de la cual una función se considera transversal. */
 export const UMBRAL_TRANSVERSAL = 0.5;
 
@@ -143,4 +146,93 @@ export function mapaATexto(m: MapaTests): string {
     `"generado": ${JSON.stringify(m.generado)},\n` +
     `"transversales": {\n${lineas(m.transversales)}\n},\n"tests": {\n${lineas(m.tests)}\n}\n}\n`
   );
+}
+
+// ── Consulta: qué tests corresponden a un cambio ─────────────────────────
+
+/** Un trozo cambiado, con las líneas del archivo en el commit del mapa. */
+export interface Trozo {
+  desde: number;
+  hasta: number;
+  /** Solo líneas en blanco o comentarios: no cambia lo que hace el código. */
+  soloComentarios: boolean;
+}
+
+const esComentario = (linea: string) => /^(\s*|\s*(\/\/|\/\*|\*).*)$/.test(linea);
+
+/** Lee `git diff --unified=0 <commit-del-mapa>`: los trozos por archivo, del lado viejo. */
+export function analizarDiff(texto: string): Record<string, Trozo[]> {
+  const r: Record<string, Trozo[]> = {};
+  let archivo: string | null = null;
+  let actual: (Trozo & { lineas: number }) | null = null;
+  const cerrar = () => {
+    if (actual && archivo) {
+      const { desde, hasta, soloComentarios, lineas } = actual;
+      r[archivo].push({ desde, hasta, soloComentarios: lineas > 0 && soloComentarios });
+    }
+    actual = null;
+  };
+  for (const linea of texto.split("\n")) {
+    const cabecera = linea.match(/^diff --git a\/.+ b\/(.+)$/);
+    const trozo = linea.match(/^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@/);
+    if (cabecera) {
+      cerrar();
+      archivo = cabecera[1];
+      r[archivo] = [];
+    } else if (trozo && archivo) {
+      cerrar();
+      const desde = Number(trozo[1]);
+      const largo = trozo[2] === undefined ? 1 : Number(trozo[2]);
+      // Largo 0: solo se agregó algo después de la línea `desde`.
+      const hasta = largo === 0 ? desde + 1 : desde + largo - 1;
+      actual = { desde, hasta, soloComentarios: true, lineas: 0 };
+    } else if (actual && /^[+-]/.test(linea) && !/^(\+\+\+|---) /.test(linea)) {
+      actual.lineas++;
+      if (!esComentario(linea.slice(1))) actual.soloComentarios = false;
+    }
+  }
+  cerrar();
+  return r;
+}
+
+export type Alcance =
+  /** El archivo no figura en el mapa (es nuevo, o ningún test ejecuta algo suyo). */
+  | { tipo: "desconocido" }
+  /** Solo cambiaron comentarios o líneas en blanco. */
+  | { tipo: "sin-cambios" }
+  | {
+      tipo: "tests";
+      tests: string[];
+      /** Tocó una función que usa la mitad o más de los tests. */
+      transversal: boolean;
+      /** Algún cambio cae fuera de toda función medida (código que corre al arrancar). */
+      fuera: boolean;
+    };
+
+const seCruzan = (r: [number, number], t: Trozo) => r[0] <= t.hasta && r[1] >= t.desde;
+
+/** Qué tests ejecutan las funciones que cambiaron en `archivo`. */
+export function testsAfectados(mapa: MapaTests, archivo: string, trozos: Trozo[]): Alcance {
+  const transversales = textoARangos(mapa.transversales[archivo]);
+  const deTests = Object.entries(mapa.tests).filter(([, porArchivo]) => archivo in porArchivo);
+  if (transversales.length === 0 && deTests.length === 0) return { tipo: "desconocido" };
+
+  const conCodigo = trozos.filter((t) => !t.soloComentarios);
+  if (conCodigo.length === 0) return { tipo: "sin-cambios" };
+
+  const tests = new Set<string>();
+  let transversal = false;
+  let fuera = false;
+  for (const t of conCodigo) {
+    let cubierto = false;
+    if (transversales.some((r) => seCruzan(r, t))) cubierto = transversal = true;
+    for (const [nombre, porArchivo] of deTests) {
+      if (textoARangos(porArchivo[archivo]).some((r) => seCruzan(r, t))) {
+        tests.add(nombre);
+        cubierto = true;
+      }
+    }
+    if (!cubierto) fuera = true;
+  }
+  return { tipo: "tests", tests: [...tests].sort(), transversal, fuera };
 }

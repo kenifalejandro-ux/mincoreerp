@@ -32,13 +32,14 @@ import {
   funcionesEjecutadas,
   mapaATexto,
   restarBase,
+  TEST_BASE,
   type CoberturaFinal,
   type FuncionesPorArchivo,
 } from "./mapaTestsLogica";
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const destino = path.join(raiz, "scripts", "mapa-tests.json");
-const BASE = "app-arranca";
+const BASE = TEST_BASE;
 const paralelo = Number(process.argv.find((a) => a.startsWith("--paralelo="))?.split("=")[1] ?? 2);
 
 const contenedor = `mincore_mapa_${process.pid}`;
