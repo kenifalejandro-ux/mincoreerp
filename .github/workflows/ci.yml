@@ -231,6 +231,10 @@ jobs:
   # gastan minutos, pero el repo es público y no cuestan.
   e2e-tests:
     runs-on: ubuntu-latest
+    # Un PR normal tarda ~4 min aquí y la corrida de noche (3 navegadores)
+    # bastante menos de 20. Sin tope, un servidor de paquetes de Ubuntu colgado
+    # dejó este job 30 min "instalando navegadores" y habría seguido hasta las 6 h.
+    timeout-minutes: 20
 
     services:
       postgres:
@@ -410,12 +414,25 @@ jobs:
           VITE_DEFAULT_TENANT_SLUG: ${{ env.E2E_TENANT_SLUG }}
 
       - name: Instalar navegadores de Playwright
+        # Normalmente ~1 min. Baja paquetes de los servidores de Ubuntu y de
+        # Microsoft, que a veces se cuelgan sin fallar: cada intento tiene un
+        # tope de 6 min y se reintenta hasta 3 veces antes de dar el paso por
+        # fallido.
         run: |
           if [ "$CORRIDA_COMPLETA" = "true" ]; then
-            npx playwright install --with-deps chromium firefox webkit
+            navegadores="chromium firefox webkit"
           else
-            npx playwright install --with-deps chromium webkit
+            navegadores="chromium webkit"
           fi
+          for intento in 1 2 3; do
+            if timeout -k 10s 6m npx playwright install --with-deps $navegadores; then
+              exit 0
+            fi
+            echo "::warning::Instalar navegadores: el intento $intento falló o se pasó de 6 min."
+            sleep 5
+          done
+          echo "No se pudieron instalar los navegadores en 3 intentos."
+          exit 1
 
       # Qué corre dónde (tags @celular y @inestable): ver playwright.config.ts.
       # playwright.config.ts arranca "npm start" solo (webServer) y espera a
