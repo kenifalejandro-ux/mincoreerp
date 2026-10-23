@@ -231,6 +231,25 @@ jobs:
   # gastan minutos, pero el repo es público y no cuestan.
   e2e-tests:
     runs-on: ubuntu-latest
+    # Un PR normal tarda ~4 min aquí y la corrida de noche (3 navegadores)
+    # bastante menos de 20. Sin tope, un servidor de paquetes colgado dejó este
+    # job 30 min y habría seguido hasta las 6 h.
+    timeout-minutes: 20
+    # Corre dentro de la imagen oficial de Playwright, que ya trae los 3
+    # navegadores y sus librerías de sistema. Antes se instalaban en cada corrida
+    # con `playwright install --with-deps`, que baja ~100 paquetes del servidor
+    # de Ubuntu (azure.archive.ubuntu.com): se colgó 30 min en #322 y volvió a
+    # irse de tiempo en #332. La versión de la imagen TIENE que ser la de
+    # @playwright/test (lo comprueba el paso "Comprobar la imagen de Playwright").
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
+      # Recomendado por Playwright para Chromium en contenedores.
+      options: --ipc=host
+    # En un job con contenedor, GitHub usa `sh` (dash) para los `run` si no se le
+    # dice otra cosa, y el paso de los specs tocados necesita bash (pipefail, mapfile).
+    defaults:
+      run:
+        shell: bash
 
     services:
       postgres:
@@ -269,12 +288,13 @@ jobs:
       PLATFORM_ADMIN_TOKEN: ci-only-not-a-real-secret
       APP_ENCRYPTION_KEY: Y2ktb25seS1hcHAta2V5LTMyLWJ5dGVzLWV4YWN0ISE=
       BACKUP_ENCRYPTION_KEY: Y2ktb25seS1iYWNrdXAta2V5LTMyLWJ5dGVzLW9rISE=
-      PG_HOST: localhost
+      # Dentro del contenedor los servicios se alcanzan por su nombre, no por localhost.
+      PG_HOST: postgres
       PG_PORT: 5432
       PG_USER: mincoreerp_app
       PG_PASSWORD: ci_only_password
       PG_DATABASE: mincoreerp
-      REDIS_HOST: localhost
+      REDIS_HOST: redis
       REDIS_PORT: 6379
       # Tenant y usuario que este job siembra directo en la BD efímera (ver
       # paso "Sembrar tenant y usuario de prueba") para que login.spec.ts
@@ -364,13 +384,40 @@ jobs:
           # que este job y el de backend ya traen como servicio.
           REDISMS_DISABLE_POSTINSTALL: 1
 
-      - name: Crear el rol de la app (no superuser, como en producción)
+      - name: Comprobar la imagen de Playwright
+        # Si Dependabot sube @playwright/test y la imagen del job queda atrás,
+        # Playwright falla con "Executable doesn't exist", que no dice qué hacer.
+        # Se mira directamente si la imagen trae los navegadores que esta versión
+        # necesita (el contexto `job.container` no expone el nombre de la imagen).
         run: |
-          PGPASSWORD=ci_only_password psql -h localhost -p 5432 -U postgres -d mincoreerp <<'SQL'
-            CREATE ROLE mincoreerp_app WITH LOGIN PASSWORD 'ci_only_password';
-            ALTER DATABASE mincoreerp OWNER TO mincoreerp_app;
-            ALTER SCHEMA public OWNER TO mincoreerp_app;
-          SQL
+          node -e "
+            const fs = require('fs');
+            const dir = process.env.PLAYWRIGHT_BROWSERS_PATH;
+            const { browsers } = JSON.parse(fs.readFileSync('node_modules/playwright-core/browsers.json', 'utf8'));
+            const faltan = browsers
+              .filter((b) => ['chromium', 'firefox', 'webkit'].includes(b.name))
+              .filter((b) => !fs.existsSync(dir + '/' + b.name + '-' + b.revision))
+              .map((b) => b.name + '-' + b.revision);
+            if (faltan.length > 0) {
+              const v = require('@playwright/test/package.json').version;
+              console.log('::error::La imagen del job no trae los navegadores de @playwright/test v' + v + ' (faltan: ' + faltan.join(', ') + '). Cambia el tag de container.image en e2e-tests a v' + v + '-noble.');
+              process.exit(1);
+            }
+          "
+
+      - name: Crear el rol de la app (no superuser, como en producción)
+        # La imagen de Playwright no trae psql: se hace con el cliente `pg` del
+        # proyecto. Mismas tres sentencias que en el job "backend".
+        run: |
+          node --input-type=module -e "
+            import pg from 'pg';
+            const c = new pg.Client({ host: process.env.PG_HOST, user: 'postgres', password: 'ci_only_password', database: 'mincoreerp' });
+            await c.connect();
+            await c.query(\"CREATE ROLE mincoreerp_app WITH LOGIN PASSWORD 'ci_only_password'\");
+            await c.query('ALTER DATABASE mincoreerp OWNER TO mincoreerp_app');
+            await c.query('ALTER SCHEMA public OWNER TO mincoreerp_app');
+            await c.end();
+          "
 
       - name: Correr migraciones
         run: npm run migrate
@@ -408,14 +455,6 @@ jobs:
         run: npm run build
         env:
           VITE_DEFAULT_TENANT_SLUG: ${{ env.E2E_TENANT_SLUG }}
-
-      - name: Instalar navegadores de Playwright
-        run: |
-          if [ "$CORRIDA_COMPLETA" = "true" ]; then
-            npx playwright install --with-deps chromium firefox webkit
-          else
-            npx playwright install --with-deps chromium webkit
-          fi
 
       # Qué corre dónde (tags @celular y @inestable): ver playwright.config.ts.
       # playwright.config.ts arranca "npm start" solo (webServer) y espera a
