@@ -119,6 +119,7 @@ import { ESTADOS_ALERTAS } from "./combustible.repository";
 import type { EstadoAlertas, FiltrosAlertas } from "./combustible.repository";
 import * as surtidores from "./surtidores.service";
 import * as tanquetas from "./tanquetas.service";
+import * as viajes from "./viajes.service";
 import { alcanceDe, ambitoDe, grifoDeAlertas, grifosDelFiltro } from "./alcance";
 
 const service = new CombustibleService();
@@ -2116,6 +2117,28 @@ export class CombustibleController {
           },
           contexto: contextoAuditoriaModulo(req),
         });
+
+        // La compra se acepta siempre; si un conductor con viaje compró para otra
+        // unidad (p. ej. el encargado corrigió el viaje sin señal), queda marcado.
+        if (usuario.rol === "conductor_ruta") {
+          const viaje = await withTenant(tenantId, (client) =>
+            viajes.unidadDelViajeActivo(client, tenantId, usuario.dni ?? "")
+          );
+          if (viaje && Number(viaje.equipo_id) !== data.equipo_id) {
+            await registrarAuditoria({
+              accion: "combustible.compra_ruta_unidad_distinta_viaje",
+              tenantId,
+              usuarioId: usuario.id,
+              detalle: {
+                compraId: compra.id,
+                viajeId: viaje.viaje_id,
+                equipoDelViaje: viaje.equipo_id,
+                equipoEnviado: data.equipo_id,
+              },
+              contexto: contextoAuditoriaModulo(req),
+            });
+          }
+        }
 
         // Cada despacho deja su rastro como si se hubiera registrado suelto: la
         // bitácora, el tiempo real y las alertas no distinguen de dónde vino.

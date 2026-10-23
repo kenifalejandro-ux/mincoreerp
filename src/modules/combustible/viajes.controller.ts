@@ -141,6 +141,15 @@ export const viajesController = {
     res.json({ data, sinDni: !dni.trim() });
   },
 
+  /** GET /viajes/mi-unidad: la unidad del viaje del conductor, para precargar
+   *  la compra en ruta. Sin viaje (o sin DNI) devuelve data: null y todo sigue manual. */
+  async miUnidad(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const dni = req.usuario!.dni ?? "";
+    const data = await withTenant(tenantId, (c) => viajes.unidadDelViajeActivo(c, tenantId, dni));
+    res.json({ data });
+  },
+
   async conductores(req: Request, res: Response) {
     const tenantId = getTenantId(req);
     res.json({ data: await withTenant(tenantId, (c) => viajes.listarConductores(c, tenantId)) });
