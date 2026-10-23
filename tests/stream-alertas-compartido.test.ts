@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   EVENTOS_DE_ALERTAS,
+  suscribirseAEventos,
   suscribirseAlStreamDeAlertas,
 } from "../client/src/components/combustible/streamDeAlertas";
 
@@ -104,5 +105,43 @@ describe("stream de alertas: una sola conexión por pestaña", () => {
     expect(EventSourceFalso.abiertas).toHaveLength(1);
     bajaB();
     expect(EventSourceFalso.abiertas).toHaveLength(0);
+  });
+
+  it("la compra en ruta escucha viajes en la MISMA conexión, y cada uno solo oye lo suyo", () => {
+    const bandeja = vi.fn();
+    const compra = vi.fn();
+    const bajaBandeja = suscribirseAlStreamDeAlertas(bandeja);
+    const bajaCompra = suscribirseAEventos(["combustible.viaje_actualizado"], compra);
+    expect(EventSourceFalso.creadas).toBe(1);
+    const [es] = EventSourceFalso.abiertas;
+
+    es.emitir("combustible.viaje_actualizado");
+    expect(compra).toHaveBeenCalledTimes(1);
+    expect(bandeja).not.toHaveBeenCalled();
+
+    es.emitir(EVENTOS_DE_ALERTAS[0]);
+    expect(bandeja).toHaveBeenCalledTimes(1);
+    expect(compra).toHaveBeenCalledTimes(1);
+
+    // Dado de baja uno, el otro sigue; al irse el último, se cierra.
+    bajaCompra();
+    es.emitir("combustible.viaje_actualizado");
+    expect(compra).toHaveBeenCalledTimes(1);
+    expect(EventSourceFalso.abiertas).toHaveLength(1);
+    bajaBandeja();
+    expect(EventSourceFalso.abiertas).toHaveLength(0);
+  });
+
+  it("una suscripción que llega con la conexión ya abierta no la duplica ni repite el aviso", () => {
+    const a = vi.fn();
+    const b = vi.fn();
+    const bajaA = suscribirseAEventos(["combustible.viaje_actualizado"], a);
+    const bajaB = suscribirseAEventos(["combustible.viaje_actualizado"], b);
+    expect(EventSourceFalso.creadas).toBe(1);
+    EventSourceFalso.abiertas[0].emitir("combustible.viaje_actualizado");
+    expect(a).toHaveBeenCalledTimes(1);
+    expect(b).toHaveBeenCalledTimes(1);
+    bajaA();
+    bajaB();
   });
 });

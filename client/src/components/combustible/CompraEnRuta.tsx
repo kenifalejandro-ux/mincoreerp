@@ -43,6 +43,7 @@ import {
 import { seccionesCompraEnRuta } from "./compraEnRutaAcceso";
 import { prepararFotoComprobante } from "./fotoComprobante";
 import HistorialComprasRuta from "./HistorialComprasRuta";
+import { useUnidadDelViaje } from "./useUnidadDelViaje";
 
 /** Hasta cuánto se da por "cuadra" en el aviso de pantalla (no bloquea nada)
  *  : el redondeo por línea. */
@@ -180,7 +181,23 @@ function FormularioCompra({
   // El uuid de la COMPRA: lo genera el dispositivo una vez. Reintentar el envío
   // (doble clic, cola offline) manda el mismo y no duplica nada.
   const [clienteUuid, setClienteUuid] = useState(() => crypto.randomUUID());
-  const [equipoId, setEquipoId] = useState("");
+  const [equipoElegido, setEquipoId] = useState("");
+  // El conductor con viaje compra para la unidad del viaje: viene cargada y
+  // bloqueada, y le gana al borrador. Sin viaje, la elige a mano como siempre.
+  const {
+    unidad: unidadDelViaje,
+    aviso: avisoViaje,
+    cerrarAviso: cerrarAvisoViaje,
+  } = useUnidadDelViaje(usuario?.rol === "conductor_ruta", usuario?.id);
+  const equipoId = unidadDelViaje ? String(unidadDelViaje.equipo_id) : equipoElegido;
+  // Para qué unidad se escribieron las lecturas del medidor: si la unidad
+  // cambia (viaje corregido, borrador viejo), esas lecturas ya no aplican.
+  const lecturasDe = useRef("");
+  useEffect(() => {
+    // Si el viaje se cierra o se anula, la unidad queda elegida y se desbloquea.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (unidadDelViaje) setEquipoId(String(unidadDelViaje.equipo_id));
+  }, [unidadDelViaje]);
   const [grifoId, setGrifoId] = useState("");
   const [comprobanteTipo, setComprobanteTipo] = useState<"boleta" | "factura">("boleta");
   const [comprobanteNumero, setComprobanteNumero] = useState("");
@@ -268,6 +285,7 @@ function FormularioCompra({
       setClienteUuid(d.clienteUuid as ReturnType<typeof crypto.randomUUID>);
       huellaEnvio.current = d.huellaEnvio ?? null;
       setEquipoId(d.equipoId);
+      lecturasDe.current = d.equipoId;
       setGrifoId(d.grifoId);
       setComprobanteTipo(d.comprobanteTipo);
       setComprobanteNumero(d.comprobanteNumero);
@@ -294,6 +312,15 @@ function FormularioCompra({
     // Solo al montar con el usuario: las secciones no cambian en la sesión.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [usuarioId]);
+
+  useEffect(() => {
+    if (!borradorListo || lecturasDe.current === equipoId) return;
+    lecturasDe.current = equipoId;
+
+    setHorasEditadas(false);
+    setHorometro("");
+    setOdometro("");
+  }, [borradorListo, equipoId]);
 
   useEffect(() => {
     if (!usuarioId || !borradorListo) return;
@@ -651,6 +678,21 @@ function FormularioCompra({
           </button>
         </div>
       )}
+      {avisoViaje && (
+        <div
+          role="status"
+          className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+        >
+          <span>{avisoViaje}</span>
+          <button
+            type="button"
+            onClick={cerrarAvisoViaje}
+            className="rounded-lg border border-amber-300 px-3 py-1 text-xs font-semibold hover:bg-amber-100"
+          >
+            Entendido
+          </button>
+        </div>
+      )}
       {errorCarga && (
         <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
           {errorCarga}
@@ -662,25 +704,40 @@ function FormularioCompra({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="flex flex-col gap-1">
               <span className={CLASE_ETIQUETA}>Unidad</span>
-              <select
-                id="compra-unidad"
-                className={CLASE_CAMPO}
-                value={equipoId}
-                onChange={(e) => {
-                  // Otra unidad, otro contexto: lo escrito para la anterior no aplica.
-                  setEquipoId(e.target.value);
-                  setHorasEditadas(false);
-                  setHorometro("");
-                  setOdometro("");
-                }}
-              >
-                <option value="">Elegir unidad</option>
-                {equipos.map((eq) => (
-                  <option key={eq.id} value={eq.id}>
-                    {eq.placa_codigo} — {eq.tipo}
-                  </option>
-                ))}
-              </select>
+              {unidadDelViaje ? (
+                <>
+                  <input
+                    id="compra-unidad"
+                    className={CLASE_CAMPO}
+                    value={unidadDelViaje.placa_codigo}
+                    readOnly
+                    aria-readonly="true"
+                  />
+                  <span className="text-xs text-gray-500">
+                    Es la unidad de tu viaje. Si no es la correcta, avisa al encargado.
+                  </span>
+                </>
+              ) : (
+                <select
+                  id="compra-unidad"
+                  className={CLASE_CAMPO}
+                  value={equipoId}
+                  onChange={(e) => {
+                    // Otra unidad, otro contexto: lo escrito para la anterior no aplica.
+                    setEquipoId(e.target.value);
+                    setHorasEditadas(false);
+                    setHorometro("");
+                    setOdometro("");
+                  }}
+                >
+                  <option value="">Elegir unidad</option>
+                  {equipos.map((eq) => (
+                    <option key={eq.id} value={eq.id}>
+                      {eq.placa_codigo} — {eq.tipo}
+                    </option>
+                  ))}
+                </select>
+              )}
             </label>
             <label className="flex flex-col gap-1">
               <span className={CLASE_ETIQUETA}>Proveedor</span>
