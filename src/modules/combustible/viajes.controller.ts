@@ -279,7 +279,6 @@ export const viajesController = {
         fin_en: antes.fin_en,
         medidor_inicio: antes.medidor_inicio,
         medidor_fin: antes.medidor_fin,
-        cuenta_como: antes.cuenta_como,
         conductor_nombre: antes.conductor_nombre,
       },
       cambios,

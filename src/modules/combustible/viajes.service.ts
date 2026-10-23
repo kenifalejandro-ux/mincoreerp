@@ -9,6 +9,7 @@ import type {
   ListarViajesQuery,
 } from "../../server/schemas/combustible.schema";
 import { agregarAmbitoVales, type AmbitoVales } from "./alcance";
+import { repartirPorTramo } from "./viajesTramos";
 import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
 
 export type Producto = "combustible" | "urea";
@@ -209,9 +210,9 @@ export async function crearViaje(
   const r = await client.query(
     `INSERT INTO combustible_viajes (
        tenant_id, numero, equipo_id, conductor_nombre, conductor_dni, origen_id, destino_id,
-       inicio_en, fin_en, medidor_inicio, medidor_fin, cuenta_como, estado, observaciones,
+       inicio_en, fin_en, medidor_inicio, medidor_fin, estado, observaciones,
        creado_por, cerrado_por)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      RETURNING id`,
     [
       tenantId,
@@ -225,7 +226,6 @@ export async function crearViaje(
       data.fin_en ?? null,
       data.medidor_inicio ?? null,
       data.medidor_fin ?? null,
-      data.cuenta_como,
       estado,
       data.observaciones || null,
       usuarioId,
@@ -809,9 +809,9 @@ export async function editarViaje(
 
   await client.query(
     `UPDATE combustible_viajes
-        SET equipo_id = $12, conductor_nombre = $2, conductor_dni = $3, origen_id = $4,
+        SET equipo_id = $11, conductor_nombre = $2, conductor_dni = $3, origen_id = $4,
             destino_id = $5, inicio_en = $6, fin_en = $7, medidor_inicio = $8, medidor_fin = $9,
-            cuenta_como = $10, observaciones = $11, ruta_por_confirmar = $13,
+            observaciones = $10, ruta_por_confirmar = $12,
             estado = CASE WHEN estado = 'programado' THEN 'programado'
                           WHEN $7::timestamptz IS NULL THEN 'en_curso' ELSE 'cerrado' END
       WHERE id = $1`,
@@ -825,7 +825,6 @@ export async function editarViaje(
       fin,
       medIni,
       medFin,
-      def(data.cuenta_como, Number(v.cuenta_como)),
       def(data.observaciones, v.observaciones) || null,
       equipo,
       rutaPorConfirmar,
@@ -854,6 +853,13 @@ export async function anularViaje(
 
 // ── Consultas ──────────────────────────────────────────────────────────────
 
+/** El recorrido como clave (los ids de lugar en orden, "7-9-7"): dos viajes se comparan entre
+ *  sí solo si hacen el mismo recorrido. `v` es el alias de la fila del viaje. */
+const recorridoClave = (v: string) =>
+  `(SELECT string_agg(rp.lugar_id::text, '-' ORDER BY rp.orden)
+      FROM combustible_viaje_paradas rp
+     WHERE rp.tenant_id = ${v}.tenant_id AND rp.viaje_id = ${v}.id)`;
+
 const COLUMNAS_VIAJE = `
   v.id, v.numero, v.equipo_id, e.placa_codigo, e.codigo_interno, e.tipo AS equipo_tipo,
   e.tipo_medidor, v.conductor_nombre, v.conductor_dni,
@@ -862,7 +868,7 @@ const COLUMNAS_VIAJE = `
   v.medidor_fin - v.medidor_inicio AS recorrido,
   v.medidor_inicio - v.medidor_previo AS recorrido_sin_viaje,
   v.ruta_por_confirmar, v.nota_ruta, v.inicio_origen_hora, v.fin_origen_hora,
-  v.cuenta_como, v.estado, v.observaciones, v.motivo_anulacion,
+  v.estado, v.observaciones, v.motivo_anulacion,
   v.ventana_desde, v.ventana_hasta,
   (SELECT json_agg(json_build_object(
             'orden', p.orden, 'lugar_id', p.lugar_id, 'lugar', pl.nombre,
@@ -870,7 +876,8 @@ const COLUMNAS_VIAJE = `
             'salida_en', p.salida_en, 'salida_medidor', p.salida_medidor) ORDER BY p.orden)
      FROM combustible_viaje_paradas p
      JOIN combustible_lugares pl ON pl.id = p.lugar_id AND pl.tenant_id = p.tenant_id
-    WHERE p.tenant_id = v.tenant_id AND p.viaje_id = v.id) AS paradas`;
+    WHERE p.tenant_id = v.tenant_id AND p.viaje_id = v.id) AS paradas,
+  ${recorridoClave("v")} AS recorrido_clave`;
 
 const JOINS_VIAJE = `
   JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
@@ -936,17 +943,16 @@ export async function listarViajes(
        WHERE ${cond.join(" AND ")}
     )
     SELECT b.*,
-           b.cantidad / b.cuenta_como AS cantidad_por_viaje,
-           -- Promedio por viaje de la MISMA unidad en la MISMA ruta (solo
-           -- viajes cerrados: uno en curso todavía no terminó de cargar).
-           AVG(b.cantidad / b.cuenta_como) FILTER (WHERE b.estado = 'cerrado' AND NOT b.ruta_por_confirmar)
-             OVER (PARTITION BY b.origen_id, b.destino_id, b.equipo_id) AS promedio_ruta_unidad,
+           -- Promedio de la MISMA unidad en el MISMO recorrido (solo viajes
+           -- cerrados: uno en curso todavía no terminó de cargar).
+           AVG(b.cantidad) FILTER (WHERE b.estado = 'cerrado' AND NOT b.ruta_por_confirmar)
+             OVER (PARTITION BY b.recorrido_clave, b.equipo_id) AS promedio_ruta_unidad,
            COUNT(*) FILTER (WHERE b.estado = 'cerrado' AND NOT b.ruta_por_confirmar)
-             OVER (PARTITION BY b.origen_id, b.destino_id, b.equipo_id) AS viajes_ruta_unidad,
-           AVG(b.cantidad / b.cuenta_como) FILTER (WHERE b.estado = 'cerrado' AND NOT b.ruta_por_confirmar)
-             OVER (PARTITION BY b.origen_id, b.destino_id) AS promedio_ruta,
+             OVER (PARTITION BY b.recorrido_clave, b.equipo_id) AS viajes_ruta_unidad,
+           AVG(b.cantidad) FILTER (WHERE b.estado = 'cerrado' AND NOT b.ruta_por_confirmar)
+             OVER (PARTITION BY b.recorrido_clave) AS promedio_ruta,
            COUNT(*) FILTER (WHERE b.estado = 'cerrado' AND NOT b.ruta_por_confirmar)
-             OVER (PARTITION BY b.origen_id, b.destino_id) AS viajes_ruta
+             OVER (PARTITION BY b.recorrido_clave) AS viajes_ruta
       FROM base b
      ORDER BY b.inicio_en DESC NULLS FIRST
     `,
@@ -974,14 +980,8 @@ export async function cargasDelViaje(
 ) {
   const viaje = await getViaje(client, tenantId, id);
   if (!viaje) return null;
-  const ruta = await estadisticasRuta(
-    client,
-    tenantId,
-    Number(viaje.origen_id),
-    Number(viaje.destino_id),
-    Number(viaje.id)
-  );
-  if (!viaje.inicio_en) return { viaje, cargas: [], ruta };
+  const ruta = await estadisticasRuta(client, tenantId, viaje.recorrido_clave, Number(viaje.id));
+  if (!viaje.inicio_en) return { viaje, cargas: [], ruta, tramos: [] };
   const valores: unknown[] = [tenantId, viaje.equipo_id, viaje.ventana_desde, viaje.ventana_hasta];
   const cond = [
     "d.tenant_id = $1",
@@ -1007,7 +1007,7 @@ export async function cargasDelViaje(
       ORDER BY d.despachado_en`,
     valores
   );
-  return { viaje, cargas: r.rows, ruta };
+  return { viaje, cargas: r.rows, ruta, tramos: repartirPorTramo(viaje.paradas ?? [], r.rows) };
 }
 
 /** Cuánto suele durar y consumir esta ruta: los últimos 20 viajes cerrados y
@@ -1016,20 +1016,19 @@ export async function cargasDelViaje(
 export async function estadisticasRuta(
   client: PoolClient,
   tenantId: string,
-  origenId: number,
-  destinoId: number,
+  recorrido: string,
   excluirId: number
 ) {
   const margen = await margenPrevioHoras(client, tenantId);
   const r = await client.query(
     `WITH v AS (${VENTANAS_SQL}
-       WHERE v.tenant_id = $1 AND v.origen_id = $3 AND v.destino_id = $4 AND v.id <> $5
+       WHERE v.tenant_id = $1 AND ${recorridoClave("v")} = $3 AND v.id <> $4
          AND v.estado = 'cerrado' AND NOT v.ruta_por_confirmar
        ORDER BY v.fin_en DESC LIMIT 20)
      SELECT count(*)::int AS viajes,
             avg(extract(epoch FROM v.fin_en - v.inicio_en) / 60) AS duracion_min,
-            avg(COALESCE(cg.combustible_l, 0) / ${LITROS_POR_GALON} / v.cuenta_como) AS combustible_gal,
-            avg(COALESCE(cg.urea_l, 0) / v.cuenta_como) AS urea_l
+            avg(COALESCE(cg.combustible_l, 0) / ${LITROS_POR_GALON}) AS combustible_gal,
+            avg(COALESCE(cg.urea_l, 0)) AS urea_l
        FROM v
        LEFT JOIN LATERAL (
          SELECT SUM(${LITROS_DE_D}) FILTER (WHERE d.producto = 'combustible') AS combustible_l,
@@ -1040,7 +1039,7 @@ export async function estadisticasRuta(
           WHERE d.tenant_id = v.tenant_id AND d.equipo_id = v.equipo_id AND d.anulada_en IS NULL
             AND d.despachado_en > v.ventana_desde AND d.despachado_en <= v.ventana_hasta
        ) cg ON true`,
-    [tenantId, margen, origenId, destinoId, excluirId]
+    [tenantId, margen, recorrido, excluirId]
   );
   const f = r.rows[0];
   const num = (x: unknown) => (x === null || x === undefined ? null : Number(x));
@@ -1097,13 +1096,7 @@ export async function viajesDelConductor(client: PoolClient, tenantId: string, d
         : null;
     const ruta =
       fila.estado === "programado" || fila.estado === "en_curso"
-        ? await estadisticasRuta(
-            client,
-            tenantId,
-            Number(fila.origen_id),
-            Number(fila.destino_id),
-            Number(fila.id)
-          )
+        ? await estadisticasRuta(client, tenantId, fila.recorrido_clave, Number(fila.id))
         : null;
     filas.push({
       ...fila,

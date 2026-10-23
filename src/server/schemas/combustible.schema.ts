@@ -2285,7 +2285,6 @@ export const crearViajeSchema = z
     fin_en: fechaHora.nullable().optional(),
     medidor_inicio: medidor,
     medidor_fin: medidor,
-    cuenta_como: z.number().positive().max(10).default(1),
     observaciones: z.string().trim().max(1000).nullable().optional(),
   })
   .refine((v) => v.paradas || (v.origen_id !== undefined && v.destino_id !== undefined), {
@@ -2364,7 +2363,6 @@ export const editarViajeSchema = z.object({
   fin_en: fechaHora.nullable().optional(),
   medidor_inicio: medidor,
   medidor_fin: medidor,
-  cuenta_como: z.number().positive().max(10).optional(),
   observaciones: z.string().trim().max(1000).nullable().optional(),
   ruta_por_confirmar: z.boolean().optional(),
   motivo,
