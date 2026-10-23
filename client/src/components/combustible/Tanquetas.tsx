@@ -163,13 +163,13 @@ export default function TanquetasPanel() {
   const [asignando, setAsignando] = useState<Tanqueta | null>(null);
   const [recibiendo, setRecibiendo] = useState<Tanqueta | null>(null);
 
-  const permite = (accion: "nueva" | "editar" | "retorno") => {
+  const permite = (accion: "nueva" | "editar" | "asignar" | "retorno") => {
     const override = usuario?.permisosPestanas?.[`combustible:tanquetas:${accion}`];
     if (override !== undefined) return override;
     return (
       usuario?.rol === "admin" ||
       usuario?.rol === "operador" ||
-      (accion === "retorno" && usuario?.rol === "grifero")
+      ((accion === "retorno" || accion === "asignar") && usuario?.rol === "grifero")
     );
   };
 
@@ -393,7 +393,7 @@ export default function TanquetasPanel() {
                   >
                     <History className="w-4 h-4" />
                   </button>
-                  {permite("editar") && t.activa && (
+                  {permite("asignar") && t.activa && (
                     <button
                       onClick={() => setAsignando(t)}
                       aria-label={`Asignar ${t.codigo} a una unidad`}

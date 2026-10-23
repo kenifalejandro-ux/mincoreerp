@@ -253,11 +253,12 @@ describe("combustible: tanqueta asignada a una unidad (0139)", () => {
     expect(r.body.equipo_asignado_id).toBeNull();
   });
 
-  it("el grifero registra el retorno pero no asigna; el conductor no hace ninguna de las dos", async () => {
+  it("el grifero asigna y registra el retorno; el conductor no hace ninguna de las dos", async () => {
     const tq = await tanquetaConSaldo();
     expect((await asignar(tq, volquete, conductor)).status).toBe(403);
-    expect((await asignar(tq, volquete, grifero)).status).toBe(403);
-    await asignar(tq, volquete);
+    // El grifero asigna con su propio permiso (`tanquetas:asignar`).
+    const g = await asignar(tq, volquete, grifero);
+    expect(g.status, JSON.stringify(g.body)).toBe(200);
     expect((await recibirTanqueta(admin, tq, { como: conductor })).status).toBe(403);
     const r = await recibirTanqueta(admin, tq, { como: grifero });
     expect(r.status, JSON.stringify(r.body)).toBe(201);

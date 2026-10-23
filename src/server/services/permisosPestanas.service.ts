@@ -81,6 +81,9 @@ const accionesTanque: DefinicionPestana[] = [
 const accionesTanquetas: DefinicionPestana[] = [
   ["nueva", "Nueva tanqueta"],
   ["editar", "Editar tanqueta"],
+  // Entregar la tanqueta a una unidad con su vale: también lo hace el grifero,
+  // y por eso no cuelga de "editar" (que además permite dar de baja).
+  ["asignar", "Asignar tanqueta a una unidad"],
   // Recibir la tanqueta de vuelta con su saldo (0143): lo hace el grifero.
   ["retorno", "Registrar retorno de tanqueta"],
 ].map(([id, nombre]) => ({
@@ -331,6 +334,7 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
     "tanques:acciones:historial_varilla",
     "tanques:acciones:ver_tanque",
     "tanquetas",
+    "tanquetas:asignar",
     "tanquetas:retorno",
   ];
   // Conductor: solo el despacho externo. Las vistas del Histórico nacen
