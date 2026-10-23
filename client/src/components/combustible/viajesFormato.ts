@@ -26,6 +26,8 @@ export interface FilaViaje {
   inicio_origen_hora: "servidor" | "manual" | "dispositivo" | null;
   fin_origen_hora: "servidor" | "manual" | "dispositivo" | null;
   nota_ruta: string | null;
+  /** El recorrido completo, en orden (0148). */
+  paradas?: { orden: number; lugar_id: number; lugar: string }[] | null;
   cuenta_como: string;
   estado: "programado" | "en_curso" | "cerrado" | "anulado";
   observaciones: string | null;
@@ -44,7 +46,11 @@ export const fmt = (n: number, dec = 2) =>
   n.toLocaleString("es-PE", { maximumFractionDigits: dec });
 export const fechaHora = (iso: string | null) =>
   iso ? new Date(iso).toLocaleString("es-PE", { dateStyle: "short", timeStyle: "short" }) : "—";
-export const ruta = (v: Pick<FilaViaje, "origen" | "destino">) => `${v.origen} → ${v.destino}`;
+/** El recorrido: con paradas, todas en orden (A → B → A); si no, origen → destino. */
+export const ruta = (v: Pick<FilaViaje, "origen" | "destino" | "paradas">) =>
+  v.paradas && v.paradas.length > 2
+    ? v.paradas.map((p) => p.lugar).join(" → ")
+    : `${v.origen} → ${v.destino}`;
 export const unidadLabel = (v: Pick<FilaViaje, "placa_codigo" | "codigo_interno">) =>
   v.codigo_interno ? `${v.codigo_interno} · ${v.placa_codigo}` : v.placa_codigo;
 
