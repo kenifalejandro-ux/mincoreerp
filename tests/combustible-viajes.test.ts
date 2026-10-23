@@ -515,8 +515,12 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
 
   // ── "Mi viaje": el conductor marca su propio viaje (0124) ────────────────
   const hace = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
-  const marcar = (a: Agente, id: string, accion: "iniciar-mio" | "cerrar-mio", body: object) =>
-    a.post(`/api/erp/combustible/viajes/${id}/${accion}`).send(body);
+  const marcar = (
+    a: Agente,
+    id: string | number,
+    accion: "iniciar-mio" | "cerrar-mio" | "llegada-mia" | "salida-mia",
+    body: object
+  ) => a.post(`/api/erp/combustible/viajes/${id}/${accion}`).send(body);
 
   it("el conductor ve solo sus viajes (por su DNI) y no puede marcar los de otro", async () => {
     const yo = await conductor();
@@ -756,12 +760,11 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(tras[0].salida_en).toBeTruthy();
     expect(tras[2].llegada_en).toBeNull();
 
-    const fin = await admin.post(url(p.body.id, "/cerrar")).send({ medidor_fin: 300 });
-    expect(fin.status, JSON.stringify(fin.body)).toBe(200);
-    const cerrado = await paradasDe(p.body.id);
-    expect(Number(cerrado[2].llegada_medidor)).toBe(300);
-    expect(cerrado[2].llegada_en).toBeTruthy();
-    expect(cerrado[1].llegada_en).toBeNull(); // la intermedia la marca quien pasa por ahí
+    // Con varias paradas el viaje no cierra en la primera llegada (ver las pruebas de
+    // llegada y salida de cada parada).
+    expect((await admin.post(url(p.body.id, "/cerrar")).send({ medidor_fin: 300 })).status).toBe(
+      409
+    );
   });
 
   it("paradas inválidas: seguidas iguales, lugar inexistente, desbordado, inconsistente o ya terminado", async () => {
@@ -843,5 +846,139 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
           .send({ motivo: "una nota", observaciones: "carga de cal" })
       ).status
     ).toBe(200);
+  });
+  // ── Llegar y salir de cada parada ────────────────────────────────────────
+
+  /** Un conductor con su unidad y un viaje A → B → A ya iniciado en el km 100. */
+  async function circuitoEnCurso(paradas = [huamachuco, bambamarca, huamachuco]) {
+    const yo = await conductor();
+    const eq = await unidad();
+    const v = (
+      await admin
+        .post("/api/erp/combustible/viajes")
+        .send({ equipo_id: eq, paradas, conductor_dni: yo.dni })
+    ).body;
+    const ini = await marcar(yo.agente, v.id, "iniciar-mio", { medidor_inicio: 100 });
+    expect(ini.status, JSON.stringify(ini.body)).toBe(200);
+    return { yo, eq, id: Number(v.id) };
+  }
+
+  it("ida y vuelta: llega y sale de cada parada, y el viaje cierra solo en la última", async () => {
+    const { yo, id, eq } = await circuitoEnCurso();
+    const lleg = await marcar(yo.agente, id, "llegada-mia", { medidor: 150, orden: 1 });
+    expect(lleg.status, JSON.stringify(lleg.body)).toBe(200);
+    expect(lleg.body.estado).toBe("en_curso");
+    const enB = (await paradasDe(id))[1];
+    expect(Number(enB.llegada_medidor)).toBe(150);
+    expect(enB.salida_en).toBeNull();
+
+    // La lectura de la parada ya cuenta: un vale con un km menor entra, pero alerta por retroceso.
+    const valeEn = async (odometro: number) => {
+      const serie = serieUnica();
+      const r = await admin.post("/api/erp/combustible/despachos").send({
+        origen: "tanque_propio",
+        combustible_id: tanque,
+        tipo_combustible: "diesel_b5",
+        tipo_destino: "equipo",
+        equipo_id: eq,
+        serie_talonario: serie,
+        n_vale: 1,
+        cantidad: 10,
+        lectura_contometro: 10,
+        lectura_odometro: odometro,
+        costo_unitario: 16.8,
+        despachado_en: new Date().toISOString(),
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      const alertas = await admin.get("/api/erp/combustible/alertas").query({ pageSize: 200 });
+      return (alertas.body.data as { tipo: string; serie_talonario: string }[]).find(
+        (a) => a.tipo === "medidor_inconsistente" && a.serie_talonario === serie
+      );
+    };
+    expect(await valeEn(120)).toBeDefined();
+    expect(await valeEn(160)).toBeUndefined();
+
+    const sale = await marcar(yo.agente, id, "salida-mia", { medidor: 150, orden: 1 });
+    expect(sale.status, JSON.stringify(sale.body)).toBe(200);
+    expect((await paradasDe(id))[1].salida_en).toBeTruthy();
+
+    const fin = await marcar(yo.agente, id, "llegada-mia", { medidor: 250, orden: 2 });
+    expect(fin.status, JSON.stringify(fin.body)).toBe(200);
+    expect(fin.body.estado).toBe("cerrado");
+    const tras = await paradasDe(id);
+    expect(Number(tras[2].llegada_medidor)).toBe(250);
+    expect(tras[2].llegada_en).toBeTruthy();
+  });
+
+  it("una marca fuera de orden, sin medidor, menor o sobre un viaje cerrado se rechaza", async () => {
+    const { yo, id } = await circuitoEnCurso();
+    const m = (accion: Parameters<typeof marcar>[2], body: Record<string, unknown>) =>
+      marcar(yo.agente, id, accion, body);
+    expect((await m("salida-mia", { medidor: 120 })).status).toBe(409); // todavía no llegó a B
+    expect((await m("llegada-mia", { medidor: 150, orden: 2 })).status).toBe(409); // va hacia la 1
+    expect((await m("llegada-mia", { medidor: 90, orden: 1 })).status).toBe(400); // menor que 100
+    expect((await m("llegada-mia", { orden: 1 })).status).toBe(400); // sin medidor
+    expect((await m("cerrar-mio", { medidor_fin: 150 })).status).toBe(409); // faltan paradas
+    expect((await m("llegada-mia", { medidor: 150, orden: 1 })).status).toBe(200);
+    expect((await m("llegada-mia", { medidor: 160 })).status).toBe(409); // ya está en B
+    expect((await m("salida-mia", { medidor: 140 })).status).toBe(400); // menor que la llegada
+    expect((await m("salida-mia", { medidor: 150 })).status).toBe(200);
+    expect((await m("llegada-mia", { medidor: 250 })).status).toBe(200); // cierra
+    expect((await m("llegada-mia", { medidor: 260 })).status).toBe(409); // ya cerrado
+    expect((await m("salida-mia", { medidor: 260 })).status).toBe(409);
+  });
+
+  it("el reintento de la cola con el mismo uuid no duplica la marca", async () => {
+    const { yo, id } = await circuitoEnCurso();
+    const uuid = crypto.randomUUID();
+    const a = await marcar(yo.agente, id, "llegada-mia", { medidor: 150, cliente_uuid: uuid });
+    const b = await marcar(yo.agente, id, "llegada-mia", { medidor: 150, cliente_uuid: uuid });
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect((await paradasDe(id))[1].llegada_en).toBeTruthy();
+    const salida = crypto.randomUUID();
+    const c = await marcar(yo.agente, id, "salida-mia", { medidor: 150, cliente_uuid: salida });
+    const d = await marcar(yo.agente, id, "salida-mia", { medidor: 150, cliente_uuid: salida });
+    expect(c.status).toBe(200);
+    expect(d.status).toBe(200);
+    // El mismo uuid del otro viaje no se puede reutilizar.
+    const otro = await circuitoEnCurso();
+    const robado = await marcar(otro.yo.agente, otro.id, "llegada-mia", {
+      medidor: 150,
+      cliente_uuid: uuid,
+    });
+    expect(robado.status).toBe(409);
+  });
+
+  it("dos llegadas a la vez: una gana y la otra se rechaza", async () => {
+    const { yo, id } = await circuitoEnCurso();
+    const dos = await Promise.all([
+      marcar(yo.agente, id, "llegada-mia", { medidor: 150, cliente_uuid: crypto.randomUUID() }),
+      marcar(yo.agente, id, "llegada-mia", { medidor: 151, cliente_uuid: crypto.randomUUID() }),
+    ]);
+    expect(dos.map((r) => r.status).sort()).toEqual([200, 409]);
+  });
+
+  it("otro conductor no marca el viaje ajeno", async () => {
+    const { id } = await circuitoEnCurso();
+    const intruso = await conductor();
+    expect((await marcar(intruso.agente, id, "llegada-mia", { medidor: 150 })).status).toBe(404);
+    expect((await marcar(intruso.agente, id, "salida-mia", { medidor: 150 })).status).toBe(404);
+  });
+
+  it("la oficina marca por el conductor: con hora a mano pide motivo y no admite una hora futura", async () => {
+    const { id } = await circuitoEnCurso();
+    const marca = (body: Record<string, unknown>) =>
+      admin.post(url(id, "/llegada")).send({ medidor: 150, orden: 1, ...body });
+    await new Promise((r) => setTimeout(r, 100));
+    const aMano = new Date(Date.now() - 20).toISOString();
+    expect((await marca({ llegada_en: aMano })).status).toBe(400); // sin motivo
+    const futura = new Date(Date.now() + 3_600_000).toISOString();
+    expect((await marca({ llegada_en: futura, motivo: "sin señal" })).status).toBe(400);
+    const ok = await marca({ llegada_en: aMano, motivo: "el conductor no tenía señal" });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(Date.parse((await paradasDe(id))[1].llegada_en!)).toBe(Date.parse(aMano));
+    // Sin hora a mano la pone el servidor, y no pide motivo.
+    expect((await admin.post(url(id, "/salida")).send({ medidor: 150 })).status).toBe(200);
   });
 });

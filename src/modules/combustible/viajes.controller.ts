@@ -21,6 +21,51 @@ import * as viajes from "./viajes.service";
 
 const EVENTO = "combustible.viaje_actualizado";
 
+type CuerpoMarca = {
+  medidor?: number | null;
+  orden?: number;
+  marcado_en?: string;
+  cliente_uuid?: string;
+  llegada_en?: string;
+  salida_en?: string;
+  motivo?: string;
+};
+
+/** Llegada o salida de una parada: la del propio conductor (por su DNI, con
+ *  uuid y hora del celular) o la de la oficina por él (hora a mano y motivo). */
+function marcaDeParada(que: "llegada" | "salida", delConductor: boolean) {
+  return async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.viajeId);
+    const b = req.validatedBody as CuerpoMarca;
+    const marca = {
+      medidor: b.medidor,
+      orden: b.orden,
+      marcado_en: b.marcado_en,
+      cliente_uuid: b.cliente_uuid,
+      hora: que === "llegada" ? b.llegada_en : b.salida_en,
+    };
+    const dni = delConductor ? (req.usuario!.dni ?? "") : undefined;
+    const r = await withTenant(tenantId, (c) =>
+      que === "llegada"
+        ? viajes.llegarAParada(c, tenantId, req.usuario!.id, id, marca, dni)
+        : viajes.salirDeParada(c, tenantId, req.usuario!.id, id, marca, dni)
+    );
+    if (!r.repetido) {
+      await auditar(req, r.cierra ? "viaje_cerrar" : `viaje_${que}`, {
+        viajeId: id,
+        numero: r.antes.numero,
+        parada: r.orden,
+        por: delConductor ? "conductor" : "oficina",
+        medidor: b.medidor ?? null,
+        motivo: b.motivo,
+        manual: marca.hora !== undefined,
+      });
+    }
+    res.json(r.despues);
+  };
+}
+
 async function auditar(req: Request, accion: string, detalle: Record<string, unknown>) {
   const tenantId = getTenantId(req);
   await registrarAuditoria({
@@ -193,6 +238,11 @@ export const viajesController = {
     }
     res.json(r.despues);
   },
+
+  llegadaMia: marcaDeParada("llegada", true),
+  salidaMia: marcaDeParada("salida", true),
+  llegada: marcaDeParada("llegada", false),
+  salida: marcaDeParada("salida", false),
 
   async cerrar(req: Request, res: Response) {
     const tenantId = getTenantId(req);
