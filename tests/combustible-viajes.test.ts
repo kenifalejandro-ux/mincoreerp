@@ -864,13 +864,39 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
   }
 
   it("ida y vuelta: llega y sale de cada parada, y el viaje cierra solo en la última", async () => {
-    const { yo, id } = await circuitoEnCurso();
+    const { yo, id, eq } = await circuitoEnCurso();
     const lleg = await marcar(yo.agente, id, "llegada-mia", { medidor: 150, orden: 1 });
     expect(lleg.status, JSON.stringify(lleg.body)).toBe(200);
     expect(lleg.body.estado).toBe("en_curso");
     const enB = (await paradasDe(id))[1];
     expect(Number(enB.llegada_medidor)).toBe(150);
     expect(enB.salida_en).toBeNull();
+
+    // La lectura de la parada ya cuenta: un vale con un km menor entra, pero alerta por retroceso.
+    const valeEn = async (odometro: number) => {
+      const serie = serieUnica();
+      const r = await admin.post("/api/erp/combustible/despachos").send({
+        origen: "tanque_propio",
+        combustible_id: tanque,
+        tipo_combustible: "diesel_b5",
+        tipo_destino: "equipo",
+        equipo_id: eq,
+        serie_talonario: serie,
+        n_vale: 1,
+        cantidad: 10,
+        lectura_contometro: 10,
+        lectura_odometro: odometro,
+        costo_unitario: 16.8,
+        despachado_en: new Date().toISOString(),
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      const alertas = await admin.get("/api/erp/combustible/alertas").query({ pageSize: 200 });
+      return (alertas.body.data as { tipo: string; serie_talonario: string }[]).find(
+        (a) => a.tipo === "medidor_inconsistente" && a.serie_talonario === serie
+      );
+    };
+    expect(await valeEn(120)).toBeDefined();
+    expect(await valeEn(160)).toBeUndefined();
 
     const sale = await marcar(yo.agente, id, "salida-mia", { medidor: 150, orden: 1 });
     expect(sale.status, JSON.stringify(sale.body)).toBe(200);
@@ -938,5 +964,21 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const intruso = await conductor();
     expect((await marcar(intruso.agente, id, "llegada-mia", { medidor: 150 })).status).toBe(404);
     expect((await marcar(intruso.agente, id, "salida-mia", { medidor: 150 })).status).toBe(404);
+  });
+
+  it("la oficina marca por el conductor: con hora a mano pide motivo y no admite una hora futura", async () => {
+    const { id } = await circuitoEnCurso();
+    const marca = (body: Record<string, unknown>) =>
+      admin.post(url(id, "/llegada")).send({ medidor: 150, orden: 1, ...body });
+    await new Promise((r) => setTimeout(r, 100));
+    const aMano = new Date(Date.now() - 20).toISOString();
+    expect((await marca({ llegada_en: aMano })).status).toBe(400); // sin motivo
+    const futura = new Date(Date.now() + 3_600_000).toISOString();
+    expect((await marca({ llegada_en: futura, motivo: "sin señal" })).status).toBe(400);
+    const ok = await marca({ llegada_en: aMano, motivo: "el conductor no tenía señal" });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(Date.parse((await paradasDe(id))[1].llegada_en!)).toBe(Date.parse(aMano));
+    // Sin hora a mano la pone el servidor, y no pide motivo.
+    expect((await admin.post(url(id, "/salida")).send({ medidor: 150 })).status).toBe(200);
   });
 });

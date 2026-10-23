@@ -241,6 +241,8 @@ export const viajesController = {
 
   llegadaMia: marcaDeParada("llegada", true),
   salidaMia: marcaDeParada("salida", true),
+  llegada: marcaDeParada("llegada", false),
+  salida: marcaDeParada("salida", false),
 
   async cerrar(req: Request, res: Response) {
     const tenantId = getTenantId(req);

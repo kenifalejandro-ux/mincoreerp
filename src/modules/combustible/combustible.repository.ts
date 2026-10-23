@@ -2850,6 +2850,22 @@ export class CombustibleRepository {
           WHERE v.tenant_id = $1 AND v.equipo_id = $2 AND v.estado <> 'anulado'
             AND e.tipo_medidor = $5 AND v.medidor_fin IS NOT NULL
             AND v.fin_en IS NOT NULL AND v.fin_en < $4::timestamptz
+         UNION ALL
+         SELECT p.llegada_medidor, p.llegada_en, 'viaje', v.id
+           FROM combustible_viaje_paradas p
+           JOIN combustible_viajes v ON v.id = p.viaje_id AND v.tenant_id = p.tenant_id
+           JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+          WHERE v.tenant_id = $1 AND v.equipo_id = $2 AND v.estado <> 'anulado'
+            AND e.tipo_medidor = $5 AND p.llegada_medidor IS NOT NULL
+            AND p.llegada_en IS NOT NULL AND p.llegada_en < $4::timestamptz
+         UNION ALL
+         SELECT p.salida_medidor, p.salida_en, 'viaje', v.id
+           FROM combustible_viaje_paradas p
+           JOIN combustible_viajes v ON v.id = p.viaje_id AND v.tenant_id = p.tenant_id
+           JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+          WHERE v.tenant_id = $1 AND v.equipo_id = $2 AND v.estado <> 'anulado'
+            AND e.tipo_medidor = $5 AND p.salida_medidor IS NOT NULL
+            AND p.salida_en IS NOT NULL AND p.salida_en < $4::timestamptz
        ) t
        ORDER BY en DESC, id DESC
        LIMIT 1`,

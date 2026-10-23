@@ -2423,3 +2423,24 @@ export type LlegadaMiaInput = z.infer<typeof llegadaMiaSchema>;
 
 export const salidaMiaSchema = llegadaMiaSchema;
 export type SalidaMiaInput = LlegadaMiaInput;
+
+// La oficina marca por quien se olvidó: con hora a mano pide motivo.
+export const llegadaViajeSchema = z
+  .object({
+    medidor,
+    orden: ordenParada,
+    llegada_en: fechaHora.optional(),
+    motivo: motivo.optional(),
+  })
+  .refine((v) => conMotivoSiHoraManual(v, v.llegada_en), MENSAJE_MOTIVO_HORA);
+export type LlegadaViajeInput = z.infer<typeof llegadaViajeSchema>;
+
+export const salidaViajeSchema = z
+  .object({
+    medidor,
+    orden: ordenParada,
+    salida_en: fechaHora.optional(),
+    motivo: motivo.optional(),
+  })
+  .refine((v) => conMotivoSiHoraManual(v, v.salida_en), MENSAJE_MOTIVO_HORA);
+export type SalidaViajeInput = z.infer<typeof salidaViajeSchema>;
