@@ -1357,6 +1357,9 @@ export async function enviarCorreoTanquetaSobregirada(
 
 /** El grifero recibió una tanqueta de vuelta con un saldo distinto del calculado
  *  y la diferencia pasa del margen, o fue hacia arriba (0144). */
+const porcentaje = (parte: number, total: number) =>
+  total > 0 ? Number(((parte / total) * 100).toFixed(1)) : 0;
+
 export async function enviarCorreoRetornoConDiferencia(
   destinatarios: Destinatario[],
   params: {
@@ -1366,6 +1369,8 @@ export async function enviarCorreoRetornoConDiferencia(
     saldoValidado: number;
     motivo: string;
     usuario: string;
+    /** Si el aviso es por el faltante acumulado de la tanqueta (no solo por este retorno). */
+    acumulado?: { dias: number; retornos: number; faltante: number; calculado: number };
   }
 ) {
   const sobra = params.saldoValidado > params.saldoCalculado;
@@ -1377,6 +1382,13 @@ export async function enviarCorreoRetornoConDiferencia(
       `El sistema calculaba ${params.saldoCalculado} gal${params.unidad ? ` (venía de la unidad ${params.unidad})` : ""} ` +
         `y ${params.usuario} registró ${params.saldoValidado} gal.`,
       `Motivo escrito: ${params.motivo}`,
+      ...(params.acumulado
+        ? [
+            `Esta tanqueta acumula ${params.acumulado.faltante} gal de faltante en ${params.acumulado.retornos} retornos ` +
+              `de los últimos ${params.acumulado.dias} días (${porcentaje(params.acumulado.faltante, params.acumulado.calculado)} % ` +
+              "de lo que se calculaba que volvía): cada retorno por separado pudo parecer normal, pero se repite.",
+          ]
+        : []),
       sobra
         ? "Declarar que volvió más de lo calculado suma combustible que no salió de ningún tanque: " +
           "conviene revisar la tanqueta en el ERP."

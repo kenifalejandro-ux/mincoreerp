@@ -321,6 +321,81 @@ export function retornoPideAlerta(calculado: number, validado: number): boolean 
   return -diferencia > Math.max(MARGEN_RETORNO_GAL, calculado * MARGEN_RETORNO_PCT);
 }
 
+/** Faltante ACUMULADO de una tanqueta (auditoría de #316-#321, hallazgo 3). El
+ *  margen de arriba mira cada retorno por separado: quien devuelve siempre un 5 %
+ *  de menos no alerta nunca. Esto mira los retornos de la MISMA tanqueta en los
+ *  últimos `dias`: si hubo al menos `minRetornos` con faltante, el faltante suma
+ *  `galones` o más y pasa de `pct` de lo que se calculaba que volvía, avisa.
+ *  Solo cuentan los faltantes (un sobrante no compensa: ya alerta solo).
+ *  Son puntos de partida sin datos reales detrás; quedan juntos para volverse
+ *  configurables. */
+export const UMBRAL_FALTANTE_ACUMULADO = {
+  dias: 30,
+  pct: 0.02,
+  galones: 10,
+  minRetornos: 2,
+} as const;
+
+export interface FaltanteAcumulado {
+  retornosConFaltante: number;
+  faltante: number;
+  calculado: number;
+}
+
+/** `yaAvisado`: el faltante acumulado con que se avisó la última vez (o null). Se
+ *  vuelve a avisar solo si creció otros `galones`, para no mandar una alerta por
+ *  cada retorno que sigue. */
+export function acumuladoPideAlerta(a: FaltanteAcumulado, yaAvisado: number | null): boolean {
+  const u = UMBRAL_FALTANTE_ACUMULADO;
+  if (a.retornosConFaltante < u.minRetornos) return false;
+  if (a.faltante < u.galones || a.faltante <= a.calculado * u.pct) return false;
+  return yaAvisado === null || a.faltante - yaAvisado >= u.galones;
+}
+
+/** Lo que la tanqueta ha dejado de devolver en la ventana, contando el retorno que
+ *  se acaba de registrar. Todos los destinos cuentan: lo que importa es qué
+ *  volvió de la línea contra lo que el sistema esperaba. */
+async function faltanteAcumuladoDeLaTanqueta(
+  client: PoolClient,
+  tenantId: string,
+  tanquetaId: number
+): Promise<FaltanteAcumulado> {
+  const r = await client.query<{ n: number; faltante: number; calculado: number }>(
+    `SELECT count(*) FILTER (WHERE diferencia < -0.005)::int AS n,
+            COALESCE(SUM(-diferencia) FILTER (WHERE diferencia < -0.005), 0)::float AS faltante,
+            COALESCE(SUM(saldo_calculado), 0)::float AS calculado
+       FROM combustible_tanqueta_retornos
+      WHERE tenant_id = $1 AND tanqueta_id = $2
+        AND creado_en >= now() - make_interval(days => $3::int)`,
+    [tenantId, tanquetaId, UMBRAL_FALTANTE_ACUMULADO.dias]
+  );
+  return {
+    retornosConFaltante: r.rows[0].n,
+    faltante: r.rows[0].faltante,
+    calculado: r.rows[0].calculado,
+  };
+}
+
+/** El faltante acumulado con que se avisó por última vez esta tanqueta en la ventana. */
+async function faltanteYaAvisado(
+  client: PoolClient,
+  tenantId: string,
+  tanquetaId: number
+): Promise<number | null> {
+  const r = await client.query<{ faltante: number }>(
+    `SELECT (a.detalle->'acumulado'->>'faltante')::float AS faltante
+       FROM combustible_alertas a
+       JOIN combustible_tanqueta_retornos t
+         ON t.id = a.tanqueta_retorno_id AND t.tenant_id = a.tenant_id
+      WHERE a.tenant_id = $1 AND t.tanqueta_id = $2 AND a.tipo = 'tanqueta_retorno_diferencia'
+        AND a.detalle->'acumulado' IS NOT NULL
+        AND a.creado_en >= now() - make_interval(days => $3::int)
+      ORDER BY a.creado_en DESC, a.id DESC LIMIT 1`,
+    [tenantId, tanquetaId, UMBRAL_FALTANTE_ACUMULADO.dias]
+  );
+  return r.rows[0]?.faltante ?? null;
+}
+
 /** El tanque de la misma sede que recibe el saldo de una tanqueta (0145), con
  *  lo que entra ya convertido a SU unidad y a SU costo por unidad. Trae la fila
  *  del tanque bloqueada: dos retornos al mismo pozo no se ven cabiendo cada uno
@@ -560,7 +635,12 @@ export async function registrarRetornoTanqueta(
   // La alerta se crea en la MISMA transacción: un retorno con diferencia
   // grande no puede quedar registrado sin su aviso.
   let alerta: Awaited<ReturnType<CombustibleRepository["crearAlertas"]>>[number] | null = null;
-  if (retornoPideAlerta(saldo, datos.saldoValidado)) {
+  const acumulado = await faltanteAcumuladoDeLaTanqueta(client, tenantId, id);
+  const pideAcumulado = acumuladoPideAlerta(
+    acumulado,
+    await faltanteYaAvisado(client, tenantId, id)
+  );
+  if (retornoPideAlerta(saldo, datos.saldoValidado) || pideAcumulado) {
     const unidad = await client.query<{ placa_codigo: string }>(
       `SELECT placa_codigo FROM equipos WHERE tenant_id = $1 AND id = $2`,
       [tenantId, t.equipo_asignado_id]
@@ -577,6 +657,17 @@ export async function registrarRetornoTanqueta(
           diferencia: Number((datos.saldoValidado - saldo).toFixed(2)),
           motivo,
           usuarioId: datos.usuarioId,
+          // Solo si el aviso es por el faltante acumulado: con qué cifras se avisó.
+          ...(pideAcumulado
+            ? {
+                acumulado: {
+                  dias: UMBRAL_FALTANTE_ACUMULADO.dias,
+                  retornos: acumulado.retornosConFaltante,
+                  faltante: Number(acumulado.faltante.toFixed(2)),
+                  calculado: Number(acumulado.calculado.toFixed(2)),
+                },
+              }
+            : {}),
         },
       },
     ]);

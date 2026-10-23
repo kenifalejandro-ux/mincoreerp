@@ -334,16 +334,21 @@ export function describirDetalleAlerta(a: AlertaCombustible): string {
     return `${placaCodigo ?? "La unidad"} está marcada como que no usa urea`;
   }
   if (a.tipo === "tanqueta_retorno_diferencia") {
-    const { tanqueta, unidad, saldoCalculado, saldoValidado, motivo } = a.detalle as {
+    const { tanqueta, unidad, saldoCalculado, saldoValidado, motivo, acumulado } = a.detalle as {
       tanqueta?: string;
       unidad?: string | null;
       saldoCalculado?: number;
       saldoValidado?: number;
       motivo?: string;
+      acumulado?: { dias: number; retornos: number; faltante: number; calculado: number };
     };
+    const repetido = acumulado
+      ? ` Acumula ${acumulado.faltante} gal de faltante en ${acumulado.retornos} retornos de los últimos ${acumulado.dias} días.`
+      : "";
     return (
       `${tanqueta ?? "Una tanqueta"}${unidad ? ` (venía de ${unidad})` : ""} volvió con ` +
-      `${saldoValidado ?? "?"} gal y el sistema calculaba ${saldoCalculado ?? "?"} gal. Motivo: ${motivo ?? "—"}`
+      `${saldoValidado ?? "?"} gal y el sistema calculaba ${saldoCalculado ?? "?"} gal. Motivo: ${motivo ?? "—"}.` +
+      repetido
     );
   }
   if (a.tipo === "tanqueta_sobregirada") {

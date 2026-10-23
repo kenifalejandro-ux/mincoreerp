@@ -5577,6 +5577,11 @@ export class CombustibleController {
         saldoValidado: saldo_validado,
         motivo: motivo ?? "",
         usuario: req.usuario!.nombre ?? req.usuario!.email,
+        acumulado: (
+          hecho.r.alerta.detalle as {
+            acumulado?: { dias: number; retornos: number; faltante: number; calculado: number };
+          }
+        ).acumulado,
       });
     }
     res.status(201).json(despues);
