@@ -5,6 +5,7 @@ import { Droplets, Flag, Fuel, Gauge, MapPin, Play, Timer } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
+import { TramosViaje, type TramoDelViaje } from "./TramosViaje";
 import { duracion, fmt, ruta, unidadLabel, type FilaViaje, type Producto } from "./viajesFormato";
 import { apiFetch } from "../../services/apiClient";
 import VentanaFlotante from "../comunes/VentanaFlotante";
@@ -20,6 +21,7 @@ interface Detalle {
   viaje: FilaViaje;
   cargas: CargaViaje[];
   ruta: EstadisticasRuta;
+  tramos?: TramoDelViaje[];
 }
 
 const LITROS_POR_GALON = 3.785411784;
@@ -84,7 +86,6 @@ export function DetalleViajeVentana({
       .reduce((s, c) => s + Number(c.cantidad) * (c.unidad === "gal" ? LITROS_POR_GALON : 1), 0);
   const combustibleGal = litros("combustible") / LITROS_POR_GALON;
   const ureaL = litros("urea");
-  const cuenta = Number(v?.cuenta_como ?? 1) || 1;
 
   // Duración: la real si cerró, la transcurrida si va en ruta.
   const inicio = v?.inicio_en ? Date.parse(v.inicio_en) : null;
@@ -164,10 +165,7 @@ export function DetalleViajeVentana({
                     <span>prom. {fmt(datos.ruta.combustible_gal, 1)}</span>
                   )}
                   {v.estado === "cerrado" && (
-                    <Comparacion
-                      valor={combustibleGal / cuenta}
-                      promedio={datos.ruta.combustible_gal}
-                    />
+                    <Comparacion valor={combustibleGal} promedio={datos.ruta.combustible_gal} />
                   )}
                 </>
               }
@@ -202,6 +200,8 @@ export function DetalleViajeVentana({
               }
             />
           </div>
+
+          <TramosViaje tramos={datos.tramos ?? []} medidor={etiquetaMedidor} />
 
           {(v.ruta_por_confirmar || v.estado === "anulado") && (
             <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-200">

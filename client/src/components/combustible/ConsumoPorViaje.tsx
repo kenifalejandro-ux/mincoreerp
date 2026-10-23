@@ -100,9 +100,9 @@ export default function ConsumoPorViaje({
     for (const v of filas) {
       if (v.estado !== "cerrado" || v.ruta_por_confirmar) continue;
       const quien = agrupar === "unidad" ? unidadLabel(v) : (v.conductor_nombre ?? "Sin conductor");
-      const clave = `${v.origen_id}-${v.destino_id}-${quien}`;
+      const clave = `${v.recorrido_clave ?? `${v.origen_id}-${v.destino_id}`}-${quien}`;
       const f = m.get(clave) ?? { clave, ruta: ruta(v), quien, viajes: 0, total: 0, promedio: 0 };
-      f.viajes += Number(v.cuenta_como);
+      f.viajes += 1;
       f.total += Number(v.cantidad);
       m.set(clave, f);
     }
@@ -122,7 +122,6 @@ export default function ConsumoPorViaje({
             salida: fechaHora(v.inicio_en),
             llegada: fechaHora(v.fin_en),
             estado: v.estado,
-            cuenta_como: Number(v.cuenta_como),
             cargas: Number(v.cargas),
             [`cantidad_${u}`]: Number(Number(v.cantidad).toFixed(2)),
             rendimiento: rendimiento(v, producto),

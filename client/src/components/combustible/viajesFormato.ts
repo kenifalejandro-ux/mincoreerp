@@ -28,13 +28,13 @@ export interface FilaViaje {
   nota_ruta: string | null;
   /** El recorrido completo, en orden (0148). */
   paradas?: { orden: number; lugar_id: number; lugar: string }[] | null;
-  cuenta_como: string;
   estado: "programado" | "en_curso" | "cerrado" | "anulado";
   observaciones: string | null;
   motivo_anulacion: string | null;
   cargas: string;
   cantidad: string;
-  cantidad_por_viaje: string;
+  /** El recorrido como clave ("7-9-7"): solo se comparan viajes con el mismo. */
+  recorrido_clave?: string | null;
   promedio_ruta_unidad: string | null;
   viajes_ruta_unidad: string;
   promedio_ruta: string | null;
@@ -77,7 +77,7 @@ export function desvio(v: FilaViaje): { pct: number; contra: string } | null {
   const base = Number(propia ? v.promedio_ruta_unidad : v.promedio_ruta);
   if (!base) return null;
   return {
-    pct: ((Number(v.cantidad_por_viaje) - base) / base) * 100,
+    pct: ((Number(v.cantidad) - base) / base) * 100,
     contra: propia ? "su propio promedio en la ruta" : "el promedio de la ruta",
   };
 }

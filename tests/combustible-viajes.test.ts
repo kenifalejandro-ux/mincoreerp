@@ -239,17 +239,21 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const v = (await viaje(eq, { inicio_en: hora(80), fin_en: hora(85) })).body;
     const url = `/api/erp/combustible/viajes/${v.id}`;
 
-    expect((await admin.put(url).send({ cuenta_como: 0.5 })).status).toBe(400);
-    const ed = await admin.put(url).send({ cuenta_como: 0.5, motivo: "Ida y vuelta es uno" });
+    expect((await admin.put(url).send({ observaciones: "Lleva carga" })).status).toBe(400);
+    const ed = await admin
+      .put(url)
+      .send({ observaciones: "Lleva carga", motivo: "Aclaro la carga" });
     expect(ed.status).toBe(200);
-    expect(Number(ed.body.cuenta_como)).toBe(0.5);
+    expect(ed.body.observaciones).toBe("Lleva carga");
     // Un viaje cerrado no se reabre borrándole la llegada.
     expect((await admin.put(url).send({ fin_en: null, motivo: "reabrir" })).status).toBe(400);
 
     expect((await admin.post(`${url}/anular`).send({})).status).toBe(400);
     expect((await admin.post(`${url}/anular`).send({ motivo: "Duplicado" })).status).toBe(200);
     expect((await consumo(eq)).body.data).toHaveLength(0);
-    expect((await admin.put(url).send({ cuenta_como: 1, motivo: "x".repeat(5) })).status).toBe(409);
+    expect((await admin.put(url).send({ observaciones: "x", motivo: "x".repeat(5) })).status).toBe(
+      409
+    );
     // Anulado, deja libre el hueco: se puede volver a registrar.
     expect((await viaje(eq, { inicio_en: hora(80), fin_en: hora(85) })).status).toBe(201);
   });
@@ -980,5 +984,89 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(Date.parse((await paradasDe(id))[1].llegada_en!)).toBe(Date.parse(aMano));
     // Sin hora a mano la pone el servidor, y no pide motivo.
     expect((await admin.post(url(id, "/salida")).send({ medidor: 150 })).status).toBe(200);
+  });
+  // ── Consumo por tramo y comparación por recorrido ────────────────────────
+
+  const cargarAhora = async (equipo_id: number, cantidad: number) => {
+    const r = await admin.post("/api/erp/combustible/despachos").send({
+      origen: "tanque_propio",
+      combustible_id: tanque,
+      tipo_combustible: "diesel_b5",
+      tipo_destino: "equipo",
+      equipo_id,
+      serie_talonario: serieUnica(),
+      n_vale: 1,
+      cantidad,
+      lectura_contometro: cantidad,
+      costo_unitario: 16.8,
+      despachado_en: new Date().toISOString(),
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+  };
+
+  it("el detalle reparte lo cargado entre los tramos: la carga de una parada va al tramo que sigue", async () => {
+    const { yo, id, eq } = await circuitoEnCurso();
+    const m = (accion: Parameters<typeof marcar>[2], body: object) =>
+      marcar(yo.agente, id, accion, body);
+    await cargarAhora(eq, 10); // antes de llegar a B: tramo 1
+    expect((await m("llegada-mia", { medidor: 150 })).status).toBe(200);
+    await cargarAhora(eq, 20); // ya en B, antes de salir: tramo 2
+    expect((await m("salida-mia", { medidor: 150 })).status).toBe(200);
+    await cargarAhora(eq, 5); // en ruta hacia A: tramo 2
+    expect((await m("llegada-mia", { medidor: 250 })).status).toBe(200);
+
+    const det = await admin.get(url(id));
+    expect(det.status).toBe(200);
+    const tramos = det.body.tramos as {
+      de: string;
+      a: string;
+      recorrido: number;
+      combustible_gal: number;
+    }[];
+    expect(tramos).toHaveLength(2);
+    expect(tramos[0].recorrido).toBe(50);
+    expect(tramos[0].combustible_gal).toBeCloseTo(10, 1);
+    expect(tramos[1].recorrido).toBe(100);
+    expect(tramos[1].combustible_gal).toBeCloseTo(25, 1);
+    expect(tramos[0].a).toBe(tramos[1].de);
+  });
+
+  it("sin 'cuenta como': solo se comparan viajes con el MISMO recorrido", async () => {
+    const x = await lugar(idUnico("Origen"));
+    const y = await lugar(idUnico("Destino"));
+    const ida = async (h: number, gal: number) => {
+      const eq = await unidad();
+      const r = await admin.post("/api/erp/combustible/viajes").send({
+        equipo_id: eq,
+        origen_id: x,
+        destino_id: y,
+        inicio_en: hora(h),
+        fin_en: hora(h + 4),
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      expect((await cargar(eq, gal, h + 1)).status).toBe(201);
+      return eq;
+    };
+    await ida(10, 40);
+    await ida(30, 60);
+
+    // El circuito x → y → x de otra unidad cierra con mucho más combustible.
+    const { yo, id, eq } = await circuitoEnCurso([x, y, x]);
+    await cargarAhora(eq, 500);
+    expect((await marcar(yo.agente, id, "llegada-mia", { medidor: 150 })).status).toBe(200);
+    expect((await marcar(yo.agente, id, "salida-mia", { medidor: 150 })).status).toBe(200);
+    expect((await marcar(yo.agente, id, "llegada-mia", { medidor: 250 })).status).toBe(200);
+
+    const filas = (
+      await admin.get("/api/erp/combustible/viajes/consumo").query({ producto: "combustible" })
+    ).body.data as { recorrido_clave: string; promedio_ruta: string; viajes_ruta: string }[];
+    const delCircuito = filas.filter((f) => f.recorrido_clave === `${x}-${y}-${x}`);
+    const delTramoSolo = filas.filter((f) => f.recorrido_clave === `${x}-${y}`);
+    expect(delCircuito).toHaveLength(1);
+    expect(Number(delCircuito[0].viajes_ruta)).toBe(1);
+    expect(Number(delCircuito[0].promedio_ruta)).toBeCloseTo(500, 0);
+    expect(delTramoSolo).toHaveLength(2);
+    expect(Number(delTramoSolo[0].viajes_ruta)).toBe(2);
+    expect(Number(delTramoSolo[0].promedio_ruta)).toBeCloseTo(50, 0);
   });
 });

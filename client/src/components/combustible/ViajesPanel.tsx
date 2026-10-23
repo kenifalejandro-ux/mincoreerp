@@ -61,7 +61,6 @@ const FORM_VACIO = {
   fin_en: "",
   medidor_inicio: "",
   medidor_fin: "",
-  cuenta_como: "1",
   observaciones: "",
   nota_ruta: "",
   motivo: "",
@@ -239,7 +238,6 @@ export default function ViajesPanel() {
         fin_en: v.fin_en ? paraInputLocal(v.fin_en) : "",
         medidor_inicio: v.medidor_inicio ?? "",
         medidor_fin: v.medidor_fin ?? "",
-        cuenta_como: String(Number(v.cuenta_como)),
         observaciones: v.observaciones ?? "",
         nota_ruta: v.nota_ruta ?? "",
         motivo: "",
@@ -362,7 +360,6 @@ export default function ViajesPanel() {
         conductor_dni: form.conductor_dni.trim() || null,
         origen_id: Number(form.origen_id),
         destino_id: Number(form.destino_id),
-        cuenta_como: Number(form.cuenta_como),
         observaciones: form.observaciones.trim() || null,
         ...(programado
           ? {}
@@ -602,11 +599,6 @@ export default function ViajesPanel() {
                         className="ml-2 px-1.5 py-0.5 rounded text-[10px] uppercase whitespace-nowrap bg-amber-500/15 text-amber-300"
                       >
                         Ruta por confirmar
-                      </span>
-                    )}
-                    {Number(v.cuenta_como) !== 1 && (
-                      <span className="ml-1 text-xs text-[#94a3b8]">
-                        (cuenta {fmt(Number(v.cuenta_como))})
                       </span>
                     )}
                   </td>
@@ -1011,19 +1003,7 @@ export default function ViajesPanel() {
                         )}
                       </>
                     )}
-                    <div className="grid grid-cols-2 gap-3">
-                      {modal.tipo === "editar" &&
-                        campo("cuenta_como", "Cuenta como", {
-                          type: "number",
-                          min: 0.1,
-                          max: 10,
-                          step: "0.1",
-                          required: true,
-                          title:
-                            "1 = un viaje. Si la empresa cuenta ida y vuelta como uno, pon 0.5 en cada tramo.",
-                        })}
-                      {campo("observaciones", "Observaciones (opcional)", { maxLength: 1000 })}
-                    </div>
+                    {campo("observaciones", "Observaciones (opcional)", { maxLength: 1000 })}
                     {modal.tipo === "editar" && modal.v.ruta_por_confirmar && (
                       <label className="flex items-center gap-2 text-sm text-slate-700">
                         <input
