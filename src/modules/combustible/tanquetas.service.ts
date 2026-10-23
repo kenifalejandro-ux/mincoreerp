@@ -396,6 +396,55 @@ async function faltanteYaAvisado(
   return r.rows[0]?.faltante ?? null;
 }
 
+const NOMBRE_DE_COMBUSTIBLE: Record<string, string> = {
+  diesel_b5: "diésel B5",
+  gasolina_90: "gasolina 90",
+  glp: "GLP",
+};
+const nombreDeCombustible = (tipo: string) => NOMBRE_DE_COMBUSTIBLE[tipo] ?? tipo;
+
+/** Los tipos de combustible que han entrado a una tanqueta (auditoría de #316-#321,
+ *  hallazgo 5): lo que le llenó el tanque, el excedente de una recepción y, por
+ *  recursión, lo que le pasaron otras tanquetas. La tanqueta no guarda su tipo:
+ *  una que lleva un solo producto da un solo tipo; con dos, quedó mezclada. */
+export async function tiposDeCombustibleDeLaTanqueta(
+  client: PoolClient,
+  tenantId: string,
+  id: number,
+  visitadas: Set<number> = new Set()
+): Promise<Set<string>> {
+  if (visitadas.has(id)) return new Set();
+  visitadas.add(id);
+  const r = await client.query<{ tipo: string }>(
+    `SELECT d.tipo_combustible AS tipo FROM combustible_despachos d
+      WHERE d.tenant_id = $1 AND d.tanqueta_destino_id = $2 AND d.anulada_en IS NULL
+        AND d.tipo_combustible IS NOT NULL
+     UNION
+     SELECT c.tipo_combustible FROM combustible_recepcion_excedentes x
+       JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
+       JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
+      WHERE x.tenant_id = $1 AND x.tanqueta_id = $2 AND r.anulada_en IS NULL`,
+    [tenantId, id]
+  );
+  const tipos = new Set(r.rows.map((f) => f.tipo));
+  const traslados = await client.query<{ tanqueta_id: string }>(
+    `SELECT DISTINCT tanqueta_id FROM combustible_tanqueta_retornos
+      WHERE tenant_id = $1 AND tanqueta_destino_id = $2 AND destino = 'tanqueta'`,
+    [tenantId, id]
+  );
+  for (const t of traslados.rows) {
+    for (const tipo of await tiposDeCombustibleDeLaTanqueta(
+      client,
+      tenantId,
+      Number(t.tanqueta_id),
+      visitadas
+    )) {
+      tipos.add(tipo);
+    }
+  }
+  return tipos;
+}
+
 /** El tanque de la misma sede que recibe el saldo de una tanqueta (0145), con
  *  lo que entra ya convertido a SU unidad y a SU costo por unidad. Trae la fila
  *  del tanque bloqueada: dos retornos al mismo pozo no se ven cabiendo cada uno
@@ -414,12 +463,14 @@ async function prepararEntradaAlPozo(
   const r = await client.query<{
     codigo: string;
     unidad: string;
+    tipo_combustible: string;
     capacidad_total: string;
     costo_promedio: string;
     activo: boolean;
     grifo_interno_id: string | null;
   }>(
-    `SELECT codigo, unidad, capacidad_total, costo_promedio, activo, grifo_interno_id
+    `SELECT codigo, unidad, tipo_combustible, capacidad_total, costo_promedio, activo,
+            grifo_interno_id
        FROM combustible WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
     [tenantId, tanqueId]
   );
@@ -430,6 +481,16 @@ async function prepararEntradaAlPozo(
     throw new AppError(
       400,
       `El tanque ${tanque.codigo} es de otra sede: el saldo solo vuelve a un tanque del grifo de la tanqueta`
+    );
+  }
+  // No se mezclan productos: el saldo vuelve solo a un tanque del mismo tipo.
+  const tipos = await tiposDeCombustibleDeLaTanqueta(client, tenantId, Number(tanqueta.id));
+  const otros = [...tipos].filter((t) => t !== tanque.tipo_combustible);
+  if (otros.length > 0) {
+    throw new AppError(
+      400,
+      `La tanqueta ${tanqueta.codigo} tiene ${otros.map(nombreDeCombustible).join(" y ")} y el tanque ` +
+        `${tanque.codigo} es de ${nombreDeCombustible(tanque.tipo_combustible)}: no se pueden mezclar productos`
     );
   }
   const enGalones = tanque.unidad === "gal";
@@ -497,6 +558,17 @@ async function prepararTrasladoATanqueta(
     throw new AppError(
       400,
       `La tanqueta ${d.codigo} es de otra sede: el saldo solo pasa a una tanqueta del mismo grifo`
+    );
+  }
+  // No se mezclan productos: las dos tanquetas tienen que llevar el mismo tipo.
+  const tiposDelOrigen = await tiposDeCombustibleDeLaTanqueta(client, tenantId, Number(origen.id));
+  const tiposDelDestino = await tiposDeCombustibleDeLaTanqueta(client, tenantId, destinoId);
+  const juntos = new Set([...tiposDelOrigen, ...tiposDelDestino]);
+  if (juntos.size > 1) {
+    throw new AppError(
+      400,
+      `La tanqueta ${origen.codigo} y la ${d.codigo} llevan productos distintos ` +
+        `(${[...juntos].map(nombreDeCombustible).join(" y ")}): no se pueden mezclar`
     );
   }
   if (saldoValidado > Number(d.libre) + 0.001) {
