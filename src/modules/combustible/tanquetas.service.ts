@@ -191,6 +191,16 @@ export async function bloquearTanqueta(client: PoolClient, tenantId: string, id:
   );
 }
 
+/** Bloquea varias tanquetas SIEMPRE en orden de id (sin repetir): así dos
+ *  operaciones que toman las mismas tanquetas en distinto orden no se esperan
+ *  entre sí. Orden de bloqueo del módulo: primero las tanquetas, después el
+ *  tanque (lo mismo que hace el retorno). */
+export async function bloquearTanquetas(client: PoolClient, tenantId: string, ids: number[]) {
+  for (const id of [...new Set(ids)].sort((a, b) => a - b)) {
+    await bloquearTanqueta(client, tenantId, id);
+  }
+}
+
 /** Las tanquetas que lleva una unidad ahora (asignadas y con saldo), la más
  *  antigua primero: esa es la ACTIVA, la que el conductor carga primero. */
 export async function tanquetasVigentesDeUnidad(
