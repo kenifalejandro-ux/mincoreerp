@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   CloudOff,
   Droplets,
-  Flag,
   Fuel,
   Gauge,
   Lock,
@@ -16,8 +15,10 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { MiViajeParadas } from "./MiViajeParadas";
+import { marcasHechas, paradasDelViaje, type ParadaMia } from "./paradasViaje";
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
-import { fechaHora, fmt, ruta, unidadLabel, type FilaViaje } from "./viajesFormato";
+import { fmt, ruta, unidadLabel, type FilaViaje } from "./viajesFormato";
 import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
 
@@ -27,12 +28,14 @@ interface MiFila extends FilaViaje {
   previo: { tipo_medidor: "horometro" | "odometro" | null; valor: number | null } | null;
   /** Marcado en este celular y todavía en la cola (sin señal). */
   pendiente?: boolean;
+  /** El recorrido completo, con la hora y el medidor de cada llegada y salida (0148). */
+  paradas?: ParadaMia[] | null;
   /** Sus cargas del viaje y lo que suele tardar la ruta (para estimar la llegada). */
   cargas_detalle?: CargaViaje[];
   duracion_ruta_min?: number | null;
 }
 
-type Paso = "ver" | "revisar" | "iniciar" | "terminar";
+type Paso = "ver" | "revisar" | "iniciar";
 
 const BTN_LIMA =
   "w-full flex items-center justify-center gap-2 bg-[#BADC1E] text-[#0D1719] font-extrabold text-lg py-4 rounded-2xl hover:brightness-110 disabled:opacity-50";
@@ -151,7 +154,7 @@ export default function MiViaje() {
     guardarCache(usuarioId, nuevas);
   };
 
-  const marcar = async (accion: "iniciar-mio" | "cerrar-mio", v: MiFila) => {
+  const marcar = async (v: MiFila) => {
     if (guardando) return;
     const lectura = medidor.trim() === "" ? null : Number(medidor);
     if (tipo && lectura === null) {
@@ -159,29 +162,31 @@ export default function MiViaje() {
       return;
     }
     const marcadoEn = new Date().toISOString();
-    const body =
-      accion === "iniciar-mio"
-        ? {
-            medidor_inicio: lectura,
-            ...(rutaMal ? { ruta_por_confirmar: true, nota_ruta: nota.trim() || null } : {}),
-          }
-        : { medidor_fin: lectura };
+    const body = {
+      medidor_inicio: lectura,
+      ...(rutaMal ? { ruta_por_confirmar: true, nota_ruta: nota.trim() || null } : {}),
+    };
     setGuardando(true);
     setAviso(null);
     try {
-      const res = await apiFetch(`/api/erp/combustible/viajes/${v.id}/${accion}`, {
+      const res = await apiFetch(`/api/erp/combustible/viajes/${v.id}/iniciar-mio`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...body, marcado_en: marcadoEn, cliente_uuid: crypto.randomUUID() }),
       });
       const r = await res.json().catch(() => ({}));
       if (res.status === 202) {
-        aplicarLocal(
-          v.id,
-          accion === "iniciar-mio"
-            ? { estado: "en_curso", inicio_en: marcadoEn, medidor_inicio: String(lectura ?? "") }
-            : { estado: "cerrado", fin_en: marcadoEn, medidor_fin: String(lectura ?? "") }
-        );
+        aplicarLocal(v.id, {
+          estado: "en_curso",
+          inicio_en: marcadoEn,
+          medidor_inicio: String(lectura ?? ""),
+          // La salida de la primera parada es la salida del viaje.
+          paradas: paradasDelViaje(v).map((x) =>
+            x.orden === 0
+              ? { ...x, salida_en: marcadoEn, salida_medidor: String(lectura ?? "") }
+              : x
+          ),
+        });
         setAviso("Sin señal: quedó guardado en el celular y se enviará solo al volver la señal.");
         reiniciarPaso();
         return;
@@ -190,7 +195,7 @@ export default function MiViaje() {
         setAviso(r.error || r.message || r.errors?.[0]?.message || "No se pudo guardar.");
         return;
       }
-      setAviso(accion === "iniciar-mio" ? "Viaje iniciado. ¡Buen viaje!" : "Viaje terminado.");
+      setAviso("Viaje iniciado. ¡Buen viaje!");
       reiniciarPaso();
       await cargar();
     } finally {
@@ -240,18 +245,20 @@ export default function MiViaje() {
           v={actual}
           textoEstado={actual.estado === "en_curso" ? "En ruta · en vivo" : "Programado"}
           hijos={
-            <BarraRuta
-              origen={actual.origen}
-              destino={actual.destino}
-              tipoUnidad={actual.equipo_tipo}
-              inicio={actual.inicio_en}
-              fin={null}
-              progreso={progresoActual}
-              demora={demoraActual}
-              llegadaEstimada={llegadaActual}
-              esperadoMin={actual.duracion_ruta_min ?? null}
-              ahora={ahora}
-            />
+            paradasDelViaje(actual).length > 2 ? null : (
+              <BarraRuta
+                origen={actual.origen}
+                destino={actual.destino}
+                tipoUnidad={actual.equipo_tipo}
+                inicio={actual.inicio_en}
+                fin={null}
+                progreso={progresoActual}
+                demora={demoraActual}
+                llegadaEstimada={llegadaActual}
+                esperadoMin={actual.duracion_ruta_min ?? null}
+                ahora={ahora}
+              />
+            )
           }
         />
       )}
@@ -386,11 +393,7 @@ export default function MiViaje() {
                   )}
                 </>
               )}
-              <button
-                className={BTN_LIMA}
-                disabled={guardando}
-                onClick={() => void marcar("iniciar-mio", actual)}
-              >
+              <button className={BTN_LIMA} disabled={guardando} onClick={() => void marcar(actual)}>
                 <Play className="w-6 h-6" /> {guardando ? "Guardando..." : "Iniciar viaje"}
               </button>
               <button className={BTN_SECUNDARIO} onClick={reiniciarPaso}>
@@ -399,68 +402,19 @@ export default function MiViaje() {
             </div>
           )}
 
-          {/* ── En curso: terminar ── */}
-          {actual.estado === "en_curso" && paso !== "terminar" && (
-            <button className={BTN_LIMA} onClick={() => setPaso("terminar")}>
-              <Flag className="w-6 h-6" /> Fin de viaje
-            </button>
-          )}
-
-          {actual.estado === "en_curso" && paso === "terminar" && (
-            <div className="space-y-3">
-              <div className="rounded-xl bg-[#0D1719] p-3 text-sm text-[#94a3b8] space-y-1">
-                <p className="flex justify-between">
-                  <span className="flex items-center gap-1">
-                    <Lock className="w-3 h-3" /> Salida
-                  </span>
-                  <span className="text-white">{fechaHora(actual.inicio_en)}</span>
-                </p>
-                {actual.medidor_inicio && (
-                  <p className="flex justify-between">
-                    <span className="flex items-center gap-1">
-                      <Lock className="w-3 h-3" /> {etiquetaMedidor} de salida
-                    </span>
-                    <span className="font-mono text-white">
-                      {fmt(Number(actual.medidor_inicio), 1)} {unidadMedidor}
-                    </span>
-                  </p>
-                )}
-                <p className="flex justify-between">
-                  <span className="flex items-center gap-1">
-                    <Lock className="w-3 h-3" /> Hora de llegada
-                  </span>
-                  <span className="text-white">se registra al guardar</span>
-                </p>
-              </div>
-              {tipo && (
-                <>
-                  <label className="block text-sm text-[#cbd5e1]" htmlFor="mi-viaje-medidor-fin">
-                    {etiquetaMedidor} que marca el tablero
-                  </label>
-                  <input
-                    id="mi-viaje-medidor-fin"
-                    type="number"
-                    inputMode="decimal"
-                    min={actual.medidor_inicio ? Number(actual.medidor_inicio) : 0}
-                    step="0.1"
-                    autoFocus
-                    value={medidor}
-                    onChange={(e) => setMedidor(e.target.value)}
-                    className={INPUT}
-                  />
-                </>
-              )}
-              <button
-                className={BTN_LIMA}
-                disabled={guardando}
-                onClick={() => void marcar("cerrar-mio", actual)}
-              >
-                <Flag className="w-6 h-6" /> {guardando ? "Guardando..." : "Terminar viaje"}
-              </button>
-              <button className={BTN_SECUNDARIO} onClick={reiniciarPaso}>
-                Volver
-              </button>
-            </div>
+          {/* ── En curso: llegar y salir de cada parada ── */}
+          {actual.estado === "en_curso" && (
+            <MiViajeParadas
+              key={`${actual.id}-${marcasHechas(paradasDelViaje(actual))}`}
+              viajeId={actual.id}
+              paradas={paradasDelViaje(actual)}
+              conMedidor={Boolean(tipo)}
+              etiquetaMedidor={etiquetaMedidor}
+              unidadMedidor={unidadMedidor}
+              onLocal={(cambios) => aplicarLocal(actual.id, cambios)}
+              onAviso={setAviso}
+              onRecargar={cargar}
+            />
           )}
         </div>
       )}
