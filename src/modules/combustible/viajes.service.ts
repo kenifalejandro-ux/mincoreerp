@@ -86,7 +86,39 @@ async function validarLugares(client: PoolClient, tenantId: string, ids: number[
     `SELECT id FROM combustible_lugares WHERE tenant_id = $1 AND id = ANY($2::bigint[]) AND activo`,
     [tenantId, ids]
   );
-  if (r.rowCount !== new Set(ids).size) throw new AppError(400, "El origen o el destino no existe");
+  if (r.rowCount !== new Set(ids).size) {
+    throw new AppError(400, "Algún lugar del recorrido no existe");
+  }
+}
+
+/** Copia las marcas de los extremos del viaje a sus paradas: la salida de la
+ *  parada 0 y la llegada de la última son `inicio_en`/`medidor_inicio` y
+ *  `fin_en`/`medidor_fin`. Se llama después de cada cambio del viaje, así
+ *  ninguna vía (marcar, cerrar, corregir) deja las dos tablas contradiciéndose.
+ *  Las dos primeras paradas también siguen a `origen_id`/`destino_id`: es la
+ *  "ida" del viaje (ver la migración 0148). */
+async function sincronizarExtremos(client: PoolClient, tenantId: string, viajeId: number) {
+  await client.query(
+    `UPDATE combustible_viaje_paradas p
+        SET lugar_id = CASE p.orden WHEN 0 THEN v.origen_id WHEN 1 THEN v.destino_id
+                                    ELSE p.lugar_id END,
+            salida_en = CASE WHEN p.orden = 0 THEN v.inicio_en ELSE p.salida_en END,
+            salida_medidor = CASE WHEN p.orden = 0 THEN v.medidor_inicio ELSE p.salida_medidor END
+       FROM combustible_viajes v
+      WHERE v.tenant_id = p.tenant_id AND v.id = p.viaje_id
+        AND p.tenant_id = $1 AND p.viaje_id = $2 AND p.orden <= 1`,
+    [tenantId, viajeId]
+  );
+  await client.query(
+    `UPDATE combustible_viaje_paradas p
+        SET llegada_en = v.fin_en, llegada_medidor = v.medidor_fin
+       FROM combustible_viajes v
+      WHERE v.tenant_id = p.tenant_id AND v.id = p.viaje_id
+        AND p.tenant_id = $1 AND p.viaje_id = $2
+        AND p.orden = (SELECT max(orden) FROM combustible_viaje_paradas
+                        WHERE tenant_id = $1 AND viaje_id = $2)`,
+    [tenantId, viajeId]
+  );
 }
 
 async function validarSinTraslape(
@@ -130,7 +162,15 @@ export async function crearViaje(
     [tenantId, data.equipo_id]
   );
   if (!equipo.rows[0]) throw new AppError(404, "La unidad no existe");
-  await validarLugares(client, tenantId, [data.origen_id, data.destino_id]);
+  // Sin `paradas`, el viaje es origen → destino. Con ellas, la "ida" son las dos primeras.
+  const paradas = data.paradas ?? [data.origen_id!, data.destino_id!];
+  if (paradas.length > 2 && data.fin_en) {
+    throw new AppError(
+      400,
+      "Un viaje con varias paradas no se registra ya terminado: se marca parada por parada"
+    );
+  }
+  await validarLugares(client, tenantId, paradas);
 
   await bloquearUnidad(client, tenantId, data.equipo_id);
   if (data.inicio_en) {
@@ -179,8 +219,8 @@ export async function crearViaje(
       data.equipo_id,
       conductorNombre || null,
       conductorDni || null,
-      data.origen_id,
-      data.destino_id,
+      paradas[0],
+      paradas[1],
       data.inicio_en ?? null,
       data.fin_en ?? null,
       data.medidor_inicio ?? null,
@@ -192,6 +232,13 @@ export async function crearViaje(
       estado === "cerrado" ? usuarioId : null,
     ]
   );
+  await client.query(
+    `INSERT INTO combustible_viaje_paradas (tenant_id, viaje_id, orden, lugar_id)
+     SELECT $1, $2, (t.o - 1)::smallint, t.lugar
+       FROM unnest($3::bigint[]) WITH ORDINALITY AS t(lugar, o)`,
+    [tenantId, r.rows[0].id, paradas]
+  );
+  await sincronizarExtremos(client, tenantId, r.rows[0].id);
   return getViaje(client, tenantId, r.rows[0].id);
 }
 
@@ -368,6 +415,7 @@ export async function iniciarViaje(
       data.cliente_uuid ?? null,
     ]
   );
+  await sincronizarExtremos(client, tenantId, id);
   return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
 }
 
@@ -403,6 +451,7 @@ export async function cerrarViaje(
       WHERE id = $1`,
     [id, fin, data.medidor_fin ?? null, usuarioId, origen, data.cliente_uuid ?? null]
   );
+  await sincronizarExtremos(client, tenantId, id);
   return { antes: v, despues: await getViaje(client, tenantId, id), fin, repetido: false };
 }
 
@@ -463,6 +512,15 @@ export async function editarViaje(
   }
   if (origen === destino)
     throw new AppError(400, "El origen y el destino tienen que ser distintos");
+  if (origen !== Number(v.origen_id) || destino !== Number(v.destino_id)) {
+    const n = await client.query(
+      `SELECT count(*)::int AS n FROM combustible_viaje_paradas WHERE tenant_id = $1 AND viaje_id = $2`,
+      [tenantId, id]
+    );
+    if (n.rows[0].n > 2) {
+      throw new AppError(409, "Este viaje tiene varias paradas: su recorrido no se edita");
+    }
+  }
   if (data.origen_id !== undefined || data.destino_id !== undefined) {
     await validarLugares(client, tenantId, [origen, destino]);
   }
@@ -508,6 +566,7 @@ export async function editarViaje(
       rutaPorConfirmar,
     ]
   );
+  await sincronizarExtremos(client, tenantId, id);
   return { antes: v, despues: await getViaje(client, tenantId, id) };
 }
 
@@ -539,7 +598,14 @@ const COLUMNAS_VIAJE = `
   v.medidor_inicio - v.medidor_previo AS recorrido_sin_viaje,
   v.ruta_por_confirmar, v.nota_ruta, v.inicio_origen_hora, v.fin_origen_hora,
   v.cuenta_como, v.estado, v.observaciones, v.motivo_anulacion,
-  v.ventana_desde, v.ventana_hasta`;
+  v.ventana_desde, v.ventana_hasta,
+  (SELECT json_agg(json_build_object(
+            'orden', p.orden, 'lugar_id', p.lugar_id, 'lugar', pl.nombre,
+            'llegada_en', p.llegada_en, 'llegada_medidor', p.llegada_medidor,
+            'salida_en', p.salida_en, 'salida_medidor', p.salida_medidor) ORDER BY p.orden)
+     FROM combustible_viaje_paradas p
+     JOIN combustible_lugares pl ON pl.id = p.lugar_id AND pl.tenant_id = p.tenant_id
+    WHERE p.tenant_id = v.tenant_id AND p.viaje_id = v.id) AS paradas`;
 
 const JOINS_VIAJE = `
   JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id

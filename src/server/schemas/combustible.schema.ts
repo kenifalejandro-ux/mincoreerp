@@ -2270,8 +2270,15 @@ export const crearViajeSchema = z
     equipo_id: z.number().int().positive(),
     conductor_nombre: z.string().trim().max(150).nullable().optional(),
     conductor_dni: z.string().trim().max(15).nullable().optional(),
-    origen_id: z.number().int().positive(),
-    destino_id: z.number().int().positive(),
+    origen_id: z.number().int().positive().optional(),
+    destino_id: z.number().int().positive().optional(),
+    // El recorrido completo: A → B → A o A → B → C → A. Sin esto el viaje es
+    // origen → destino (dos paradas).
+    paradas: z
+      .array(z.number().int().positive().max(Number.MAX_SAFE_INTEGER))
+      .min(2)
+      .max(10)
+      .optional(),
     // Sin salida el viaje queda PROGRAMADO: la hora la pone el servidor cuando
     // alguien lo inicia. Con salida es un registro retroactivo (viaje ya hecho).
     inicio_en: fechaHora.optional(),
@@ -2281,10 +2288,28 @@ export const crearViajeSchema = z
     cuenta_como: z.number().positive().max(10).default(1),
     observaciones: z.string().trim().max(1000).nullable().optional(),
   })
-  .refine((v) => v.origen_id !== v.destino_id, {
+  .refine((v) => v.paradas || (v.origen_id !== undefined && v.destino_id !== undefined), {
+    message: "Falta el origen y el destino, o las paradas del recorrido",
+    path: ["paradas"],
+  })
+  .refine((v) => v.paradas || v.origen_id !== v.destino_id, {
     message: "El origen y el destino tienen que ser distintos",
     path: ["destino_id"],
   })
+  .refine((v) => !v.paradas || v.paradas.every((p, i) => i === 0 || p !== v.paradas![i - 1]), {
+    message: "Dos paradas seguidas tienen que ser distintas",
+    path: ["paradas"],
+  })
+  .refine(
+    (v) =>
+      !v.paradas ||
+      ((v.origen_id === undefined || v.origen_id === v.paradas[0]) &&
+        (v.destino_id === undefined || v.destino_id === v.paradas[1])),
+    {
+      message: "El origen y el destino tienen que ser la primera y la segunda parada",
+      path: ["paradas"],
+    }
+  )
   .refine((v) => v.inicio_en || (!v.fin_en && v.medidor_inicio == null && v.medidor_fin == null), {
     message: "Un viaje programado no lleva llegada ni medidores: se cargan al iniciarlo",
     path: ["inicio_en"],

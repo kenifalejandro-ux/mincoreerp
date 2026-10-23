@@ -712,4 +712,136 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(det.body.ruta.duracion_min).toBeCloseTo(240, 0);
     expect(det.body.ruta.combustible_gal).toBeCloseTo(40, 1);
   });
+  // ── Paradas (0148) ────────────────────────────────────────────────────────
+
+  const paradasDe = async (id: number) =>
+    (await admin.get(url(id))).body.viaje.paradas as {
+      orden: number;
+      lugar_id: number;
+      llegada_en: string | null;
+      llegada_medidor: string | null;
+      salida_en: string | null;
+      salida_medidor: string | null;
+    }[];
+
+  it("un viaje sin paradas se arma como origen → destino y las devuelve", async () => {
+    const eq = await unidad();
+    const v = (await programar(eq)).body;
+    expect(v.paradas.map((p: { lugar_id: number }) => p.lugar_id)).toEqual([
+      huamachuco,
+      bambamarca,
+    ]);
+    expect((await paradasDe(v.id)).map((p) => p.orden)).toEqual([0, 1]);
+  });
+
+  it("A → B → A: origen y destino son la ida, hay tres paradas y las marcas de los extremos se copian", async () => {
+    const eq = await unidad();
+    const p = await admin.post("/api/erp/combustible/viajes").send({
+      equipo_id: eq,
+      paradas: [huamachuco, bambamarca, huamachuco],
+    });
+    expect(p.status, JSON.stringify(p.body)).toBe(201);
+    expect(Number(p.body.origen_id)).toBe(huamachuco);
+    expect(Number(p.body.destino_id)).toBe(bambamarca);
+    expect(p.body.paradas.map((x: { lugar_id: number }) => x.lugar_id)).toEqual([
+      huamachuco,
+      bambamarca,
+      huamachuco,
+    ]);
+
+    const ini = await admin.post(url(p.body.id, "/iniciar")).send({ medidor_inicio: 100 });
+    expect(ini.status, JSON.stringify(ini.body)).toBe(200);
+    const tras = await paradasDe(p.body.id);
+    expect(Number(tras[0].salida_medidor)).toBe(100);
+    expect(tras[0].salida_en).toBeTruthy();
+    expect(tras[2].llegada_en).toBeNull();
+
+    const fin = await admin.post(url(p.body.id, "/cerrar")).send({ medidor_fin: 300 });
+    expect(fin.status, JSON.stringify(fin.body)).toBe(200);
+    const cerrado = await paradasDe(p.body.id);
+    expect(Number(cerrado[2].llegada_medidor)).toBe(300);
+    expect(cerrado[2].llegada_en).toBeTruthy();
+    expect(cerrado[1].llegada_en).toBeNull(); // la intermedia la marca quien pasa por ahí
+  });
+
+  it("paradas inválidas: seguidas iguales, lugar inexistente, desbordado, inconsistente o ya terminado", async () => {
+    const eq = await unidad();
+    const crear = (extra: Record<string, unknown>) =>
+      admin.post("/api/erp/combustible/viajes").send({ equipo_id: eq, ...extra });
+    expect((await crear({ paradas: [huamachuco, huamachuco, bambamarca] })).status).toBe(400);
+    expect((await crear({ paradas: [huamachuco, 987654321] })).status).toBe(400);
+    expect((await crear({ paradas: [huamachuco, 1e20] })).status).toBe(400); // no es un 500
+    expect((await crear({ paradas: [huamachuco] })).status).toBe(400);
+    expect((await crear({ paradas: [huamachuco, bambamarca], origen_id: bambamarca })).status).toBe(
+      400
+    );
+    expect((await crear({})).status).toBe(400); // ni paradas ni origen y destino
+    const terminado = await crear({
+      paradas: [huamachuco, bambamarca, huamachuco],
+      inicio_en: hora(130),
+      fin_en: hora(135),
+    });
+    expect(terminado.status).toBe(400);
+    expect(JSON.stringify(terminado.body)).toContain("parada por parada");
+  });
+
+  it("un lugar de otro tenant no entra como parada", async () => {
+    const otro = await crearTenantDePrueba(password);
+    tenants.push(otro.tenant.id);
+    const ajeno = request.agent(app);
+    await ajeno
+      .post("/api/auth/login")
+      .send({ tenantSlug: otro.tenant.slug, email: otro.usuario.email, password });
+    const lugarAjeno = Number(
+      (await ajeno.post("/api/erp/combustible/lugares").send({ nombre: idUnico("Lima") })).body.id
+    );
+    const eq = await unidad();
+    const r = await admin.post("/api/erp/combustible/viajes").send({
+      equipo_id: eq,
+      paradas: [huamachuco, bambamarca, lugarAjeno],
+    });
+    expect(r.status).toBe(400);
+  });
+
+  it("editar un viaje mantiene sus paradas al día; con varias paradas no se cambia el recorrido", async () => {
+    const eq = await unidad();
+    const dos = (await viaje(eq, { inicio_en: hora(140), fin_en: hora(143) })).body;
+    const ed = await admin.put(url(dos.id)).send({
+      motivo: "corrijo la llegada",
+      fin_en: hora(144),
+      medidor_inicio: 10,
+      medidor_fin: 90,
+    });
+    expect(ed.status, JSON.stringify(ed.body)).toBe(200);
+    const p2 = await paradasDe(dos.id);
+    expect(Date.parse(p2[1].llegada_en!)).toBe(Date.parse(hora(144)));
+    expect(Number(p2[1].llegada_medidor)).toBe(90);
+    expect(Number(p2[0].salida_medidor)).toBe(10);
+    // Cambiar el destino de un viaje de dos paradas mueve la parada final.
+    const lejos = await lugar(idUnico("Cajamarca"));
+    expect(
+      (await admin.put(url(dos.id)).send({ motivo: "era otro destino", destino_id: lejos })).status
+    ).toBe(200);
+    expect((await paradasDe(dos.id))[1].lugar_id).toBe(lejos);
+
+    const eq2 = await unidad();
+    const circuito = (
+      await admin.post("/api/erp/combustible/viajes").send({
+        equipo_id: eq2,
+        paradas: [huamachuco, bambamarca, lejos, huamachuco],
+      })
+    ).body;
+    const rechazo = await admin
+      .put(url(circuito.id))
+      .send({ motivo: "quiero otro recorrido", destino_id: lejos });
+    expect(rechazo.status).toBe(409);
+    // Lo que no toca el recorrido sí se corrige.
+    expect(
+      (
+        await admin
+          .put(url(circuito.id))
+          .send({ motivo: "una nota", observaciones: "carga de cal" })
+      ).status
+    ).toBe(200);
+  });
 });
