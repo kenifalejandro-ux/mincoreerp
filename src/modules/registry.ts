@@ -338,6 +338,13 @@ export const MODULOS: ModuloDefinicion[] = [
           anulado_por: "usuarios",
         },
       },
+      // Paradas de cada viaje (0148): cascadean desde el viaje (ya está en
+      // `raices`) y referencian lugares, que van antes.
+      {
+        nombre: "combustible_viaje_paradas",
+        pk: "serial",
+        fks: { viaje_id: "combustible_viajes", lugar_id: "combustible_lugares" },
+      },
       // Rutas habituales de cada unidad (0126): referencian equipos Y lugares
       // (sin ON DELETE sobre lugares), así que van después de los dos y
       // necesitan su propia raíz para borrarse antes que los lugares.
