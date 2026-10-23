@@ -232,9 +232,19 @@ jobs:
   e2e-tests:
     runs-on: ubuntu-latest
     # Un PR normal tarda ~4 min aquí y la corrida de noche (3 navegadores)
-    # bastante menos de 20. Sin tope, un servidor de paquetes de Ubuntu colgado
-    # dejó este job 30 min "instalando navegadores" y habría seguido hasta las 6 h.
+    # bastante menos de 20. Sin tope, un servidor de paquetes colgado dejó este
+    # job 30 min y habría seguido hasta las 6 h.
     timeout-minutes: 20
+    # Corre dentro de la imagen oficial de Playwright, que ya trae los 3
+    # navegadores y sus librerías de sistema. Antes se instalaban en cada corrida
+    # con `playwright install --with-deps`, que baja ~100 paquetes del servidor
+    # de Ubuntu (azure.archive.ubuntu.com): se colgó 30 min en #322 y volvió a
+    # irse de tiempo en #332. La versión de la imagen TIENE que ser la de
+    # @playwright/test (lo comprueba el paso "Comprobar la imagen de Playwright").
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
+      # Recomendado por Playwright para Chromium en contenedores.
+      options: --ipc=host
 
     services:
       postgres:
@@ -273,12 +283,13 @@ jobs:
       PLATFORM_ADMIN_TOKEN: ci-only-not-a-real-secret
       APP_ENCRYPTION_KEY: Y2ktb25seS1hcHAta2V5LTMyLWJ5dGVzLWV4YWN0ISE=
       BACKUP_ENCRYPTION_KEY: Y2ktb25seS1iYWNrdXAta2V5LTMyLWJ5dGVzLW9rISE=
-      PG_HOST: localhost
+      # Dentro del contenedor los servicios se alcanzan por su nombre, no por localhost.
+      PG_HOST: postgres
       PG_PORT: 5432
       PG_USER: mincoreerp_app
       PG_PASSWORD: ci_only_password
       PG_DATABASE: mincoreerp
-      REDIS_HOST: localhost
+      REDIS_HOST: redis
       REDIS_PORT: 6379
       # Tenant y usuario que este job siembra directo en la BD efímera (ver
       # paso "Sembrar tenant y usuario de prueba") para que login.spec.ts
@@ -368,13 +379,34 @@ jobs:
           # que este job y el de backend ya traen como servicio.
           REDISMS_DISABLE_POSTINSTALL: 1
 
-      - name: Crear el rol de la app (no superuser, como en producción)
+      - name: Comprobar la imagen de Playwright
+        # Si Dependabot sube @playwright/test y la imagen del job queda atrás,
+        # Playwright falla con "Executable doesn't exist", que no dice qué hacer.
+        env:
+          IMAGEN: ${{ job.container.image }}
         run: |
-          PGPASSWORD=ci_only_password psql -h localhost -p 5432 -U postgres -d mincoreerp <<'SQL'
-            CREATE ROLE mincoreerp_app WITH LOGIN PASSWORD 'ci_only_password';
-            ALTER DATABASE mincoreerp OWNER TO mincoreerp_app;
-            ALTER SCHEMA public OWNER TO mincoreerp_app;
-          SQL
+          version=$(node -p "require('@playwright/test/package.json').version")
+          case "$IMAGEN" in
+            *":v${version}-"*) ;;
+            *)
+              echo "::error::La imagen del job ($IMAGEN) no es la de @playwright/test v$version. Cambiá el tag de 'container.image' en e2e-tests a v$version-noble."
+              exit 1
+              ;;
+          esac
+
+      - name: Crear el rol de la app (no superuser, como en producción)
+        # La imagen de Playwright no trae psql: se hace con el cliente `pg` del
+        # proyecto. Mismas tres sentencias que en el job "backend".
+        run: |
+          node --input-type=module -e "
+            import pg from 'pg';
+            const c = new pg.Client({ host: process.env.PG_HOST, user: 'postgres', password: 'ci_only_password', database: 'mincoreerp' });
+            await c.connect();
+            await c.query(\"CREATE ROLE mincoreerp_app WITH LOGIN PASSWORD 'ci_only_password'\");
+            await c.query('ALTER DATABASE mincoreerp OWNER TO mincoreerp_app');
+            await c.query('ALTER SCHEMA public OWNER TO mincoreerp_app');
+            await c.end();
+          "
 
       - name: Correr migraciones
         run: npm run migrate
@@ -412,27 +444,6 @@ jobs:
         run: npm run build
         env:
           VITE_DEFAULT_TENANT_SLUG: ${{ env.E2E_TENANT_SLUG }}
-
-      - name: Instalar navegadores de Playwright
-        # Normalmente ~1 min. Baja paquetes de los servidores de Ubuntu y de
-        # Microsoft, que a veces se cuelgan sin fallar: cada intento tiene un
-        # tope de 6 min y se reintenta hasta 3 veces antes de dar el paso por
-        # fallido.
-        run: |
-          if [ "$CORRIDA_COMPLETA" = "true" ]; then
-            navegadores="chromium firefox webkit"
-          else
-            navegadores="chromium webkit"
-          fi
-          for intento in 1 2 3; do
-            if timeout -k 10s 6m npx playwright install --with-deps $navegadores; then
-              exit 0
-            fi
-            echo "::warning::Instalar navegadores: el intento $intento falló o se pasó de 6 min."
-            sleep 5
-          done
-          echo "No se pudieron instalar los navegadores en 3 intentos."
-          exit 1
 
       # Qué corre dónde (tags @celular y @inestable): ver playwright.config.ts.
       # playwright.config.ts arranca "npm start" solo (webServer) y espera a
