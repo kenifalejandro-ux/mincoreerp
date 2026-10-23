@@ -13,13 +13,15 @@ import {
   Play,
   Timer,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { MiViajeParadas } from "./MiViajeParadas";
 import { marcasHechas, paradasDelViaje, type ParadaMia } from "./paradasViaje";
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
 import { fmt, ruta, unidadLabel, type FilaViaje } from "./viajesFormato";
 import { useAuth } from "../../context/AuthContext";
+import { listarPendientes, suscribirseACola } from "../../offline/offlineQueue";
+import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 
 interface MiFila extends FilaViaje {
@@ -63,6 +65,21 @@ function guardarCache(usuarioId: string, filas: MiFila[]) {
   }
 }
 
+/** Los viajes con una marca (salida, llegada o parada) que todavía espera en la cola de este
+ *  celular: mientras tanto, lo guardado aquí va más adelantado que lo que dice el servidor. */
+async function viajesConMarcasEnCola(): Promise<Set<string>> {
+  const ids = new Set<string>();
+  try {
+    for (const e of await listarPendientes()) {
+      const m = /\/viajes\/(\d+)\/(iniciar-mio|cerrar-mio|llegada-mia|salida-mia)/.exec(e.url);
+      if (m) ids.add(m[1]);
+    }
+  } catch {
+    // Sin acceso a la cola: se toma lo del servidor.
+  }
+  return ids;
+}
+
 function duracionEntre(desde: string, hasta: string) {
   return duracion(desde, Date.parse(hasta));
 }
@@ -77,6 +94,7 @@ export default function MiViaje() {
   const { usuario } = useAuth();
   const usuarioId = usuario?.id ?? "anonimo";
   const [filas, setFilas] = useState<MiFila[]>([]);
+  const filasRef = useRef<MiFila[]>([]);
   const [sinDni, setSinDni] = useState(false);
   const [sinSenal, setSinSenal] = useState(false);
   const [cargando, setCargando] = useState(true);
@@ -88,12 +106,26 @@ export default function MiViaje() {
   const [aviso, setAviso] = useState<string | null>(null);
   const [ahora, setAhora] = useState(() => Date.now());
 
+  useEffect(() => {
+    filasRef.current = filas;
+  }, [filas]);
+
   const cargar = useCallback(async () => {
     try {
       const res = await apiFetch("/api/erp/combustible/viajes/mios");
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error ?? "error");
-      const data: MiFila[] = Array.isArray(body?.data) ? body.data : [];
+      const delServidor: MiFila[] = Array.isArray(body?.data) ? body.data : [];
+      // Una marca que sigue en la cola no la pisa un refresco con lo que el servidor aún no vio.
+      const enCola = await viajesConMarcasEnCola();
+      const data = delServidor.map((f) => {
+        const local = filasRef.current.find((l) => l.id === f.id);
+        const masAdelantado =
+          local?.pendiente &&
+          enCola.has(f.id) &&
+          marcasHechas(paradasDelViaje(local)) > marcasHechas(paradasDelViaje(f));
+        return masAdelantado ? local : f;
+      });
       setFilas(data);
       setSinDni(Boolean(body?.sinDni));
       setSinSenal(false);
@@ -109,15 +141,27 @@ export default function MiViaje() {
   }, [usuarioId]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void cargar();
     const es = new EventSource("/api/eventos/stream", { withCredentials: true });
     const refrescar = () => void cargar();
     es.addEventListener("combustible.viaje_actualizado", refrescar);
     es.addEventListener("combustible.despacho_creado", refrescar);
     window.addEventListener("online", refrescar);
+    // Cuando la cola envía una marca, se vuelve a mirar cómo quedó el viaje; si el servidor
+    // rechazó alguna, se dice (el aviso global de pendientes solo cuenta cuántas).
+    const dejarDeOirCola = suscribirseACola(refrescar);
+    const dejarDeOirEnvio = suscribirseASincronizacion(({ descartadas }) => {
+      if (descartadas.some((d) => d.moduloId === "combustible")) {
+        setAviso(
+          "Una marca de tu viaje no se pudo enviar porque el viaje ya había avanzado. Mira cómo quedó y avisa a la oficina."
+        );
+      }
+      refrescar();
+    });
     const reloj = window.setInterval(() => setAhora(Date.now()), 30_000);
     return () => {
+      dejarDeOirCola();
+      dejarDeOirEnvio();
       es.close();
       window.removeEventListener("online", refrescar);
       window.clearInterval(reloj);
