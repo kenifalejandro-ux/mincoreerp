@@ -477,6 +477,14 @@ router.get(
   requirePestana("combustible", "mi_viaje"),
   asyncHandler(viajesController.mios)
 );
+// La unidad del viaje del conductor, para precargar "Compra en ruta". Alcanza con
+// poder registrar una compra: no exige la pestaña "Mi viaje".
+router.get(
+  "/viajes/mi-unidad",
+  requirePestanaAlguna("tanques:registrar_despacho", "urea:registrar_compra"),
+  requireRole("admin", "operador", "conductor_ruta"),
+  asyncHandler(viajesController.miUnidad)
+);
 router.get(
   "/viajes/conductores",
   requirePestana("combustible", "viajes:nuevo"),

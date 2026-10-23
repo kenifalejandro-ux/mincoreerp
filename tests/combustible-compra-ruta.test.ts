@@ -558,4 +558,138 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
     const r = await crear(cuerpo({ despachado_en: new Date(Date.now() + 86400000).toISOString() }));
     expect(r.status).toBe(400);
   });
+
+  // ── 6. La unidad del viaje (mi-unidad y la marca de desajuste) ───────────
+
+  describe("unidad del viaje del conductor", () => {
+    const base = "/api/erp/combustible";
+    const ACCION = "combustible.compra_ruta_unidad_distinta_viaje";
+
+    /** Un conductor con DNI y una unidad cuyo viaje (programado o en curso) es suyo. */
+    const conductorConViaje = async (enCurso: boolean) => {
+      const dni = String(88100000 + Math.floor(Math.random() * 800000));
+      const alta = await agente
+        .post("/api/erp/usuarios")
+        .send({ nombre: "Conductor con viaje", dni, password, rol: "conductor_ruta" });
+      expect(alta.status, JSON.stringify(alta.body)).toBe(201);
+      const unidad = await agente.post("/api/erp/equipos").send({
+        placa_codigo: idUnico("VJ"),
+        tipo: "VOLQUETE",
+        tipo_medidor: "horometro",
+        conductor_nombre: "Conductor con viaje",
+        conductor_dni: dni,
+      });
+      expect(unidad.status, JSON.stringify(unidad.body)).toBe(201);
+      const origen = await agente.post(`${base}/lugares`).send({ nombre: idUnico("ORI") });
+      const destino = await agente.post(`${base}/lugares`).send({ nombre: idUnico("DES") });
+      const v = await agente.post(`${base}/viajes`).send({
+        equipo_id: Number(unidad.body.id),
+        origen_id: Number(origen.body.id),
+        destino_id: Number(destino.body.id),
+        ...(enCurso ? { inicio_en: new Date(Date.now() - 3600_000).toISOString() } : {}),
+      });
+      expect(v.status, JSON.stringify(v.body)).toBe(201);
+      const a = request.agent(app);
+      const entrar = await a
+        .post("/api/auth/login")
+        .send({ tenantSlug: slug, identificador: dni, password });
+      expect(entrar.status).toBe(200);
+      return { a, dni, equipo: Number(unidad.body.id), viaje: Number(v.body.id) };
+    };
+
+    const marcas = async (compraId: number) =>
+      (
+        await pool.query(
+          `SELECT detalle FROM platform_audit_log
+            WHERE tenant_id = $1 AND accion = $2 AND detalle->>'compraId' = $3::text`,
+          [tenantId, ACCION, String(compraId)]
+        )
+      ).rows;
+
+    it("mi-unidad devuelve la unidad del viaje programado, y null sin viaje", async () => {
+      const { a, equipo, viaje } = await conductorConViaje(false);
+      const r = await a.get(`${base}/viajes/mi-unidad`);
+      expect(r.status).toBe(200);
+      expect(r.body.data).toMatchObject({ equipo_id: equipo, viaje_id: viaje });
+      expect(Object.keys(r.body.data).sort()).toEqual(
+        ["equipo_id", "estado", "placa_codigo", "viaje_id"].sort()
+      );
+      const sinViaje = await nuevoUsuario("conductor_ruta");
+      expect((await sinViaje.get(`${base}/viajes/mi-unidad`)).body.data).toBeNull();
+    });
+
+    it("el viaje en curso gana al programado", async () => {
+      const { a, dni, equipo } = await conductorConViaje(true);
+      const origen = await agente.post(`${base}/lugares`).send({ nombre: idUnico("O2") });
+      const destino = await agente.post(`${base}/lugares`).send({ nombre: idUnico("D2") });
+      const otra = await agente.post("/api/erp/equipos").send({
+        placa_codigo: idUnico("VK"),
+        tipo: "VOLQUETE",
+        tipo_medidor: "horometro",
+        conductor_nombre: "Conductor con viaje",
+        conductor_dni: dni,
+      });
+      expect(otra.status, JSON.stringify(otra.body)).toBe(201);
+      const programado = await agente.post(`${base}/viajes`).send({
+        equipo_id: Number(otra.body.id),
+        origen_id: Number(origen.body.id),
+        destino_id: Number(destino.body.id),
+      });
+      expect(programado.status, JSON.stringify(programado.body)).toBe(201);
+      const r = await a.get(`${base}/viajes/mi-unidad`);
+      expect(r.body.data.equipo_id).toBe(equipo);
+      expect(r.body.data.estado).toBe("en_curso");
+    });
+
+    it("Lectura no usa mi-unidad: 403", async () => {
+      const lectura = await nuevoUsuario("lectura");
+      expect((await lectura.get(`${base}/viajes/mi-unidad`)).status).toBe(403);
+    });
+
+    it("la compra con la unidad del viaje se guarda sin marca", async () => {
+      const { a, equipo } = await conductorConViaje(true);
+      const r = await crear(cuerpo({ equipo_id: equipo }), a);
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      expect(await marcas(r.body.compra.id)).toHaveLength(0);
+    });
+
+    it("la compra con otra unidad SE GUARDA y queda marcada con las dos unidades", async () => {
+      const { a, equipo } = await conductorConViaje(false);
+      const body = cuerpo(); // equipoId general, distinto al del viaje
+      const r = await crear(body, a);
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      expect(await contarDespachos(body.comprobante_numero)).toBe(2);
+      const m = await marcas(r.body.compra.id);
+      expect(m).toHaveLength(1);
+      expect(m[0].detalle).toMatchObject({ equipoDelViaje: equipo, equipoEnviado: equipoId });
+    });
+
+    it("el reintento de la misma compra no duplica la marca", async () => {
+      const { a } = await conductorConViaje(false);
+      const body = cuerpo();
+      const primera = await crear(body, a);
+      expect(primera.status).toBe(201);
+      expect((await crear(body, a)).status).toBe(200);
+      expect(await marcas(primera.body.compra.id)).toHaveLength(1);
+    });
+
+    it("sin viaje, o si compra el admin, no hay marca", async () => {
+      const sinViaje = await nuevoUsuario("conductor_ruta");
+      const r1 = await crear(cuerpo(), sinViaje);
+      expect(r1.status).toBe(201);
+      expect(await marcas(r1.body.compra.id)).toHaveLength(0);
+      const r2 = await crear(cuerpo());
+      expect(r2.status).toBe(201);
+      expect(await marcas(r2.body.compra.id)).toHaveLength(0);
+    });
+
+    it("un viaje anulado no cuenta", async () => {
+      const { a, viaje } = await conductorConViaje(false);
+      const anular = await agente
+        .post(`${base}/viajes/${viaje}/anular`)
+        .send({ motivo: "Se programó por error" });
+      expect(anular.status, JSON.stringify(anular.body)).toBe(200);
+      expect((await a.get(`${base}/viajes/mi-unidad`)).body.data).toBeNull();
+    });
+  });
 });

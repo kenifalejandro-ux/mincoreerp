@@ -785,6 +785,34 @@ export async function viajesDelConductor(client: PoolClient, tenantId: string, d
   return filas;
 }
 
+/** La unidad del viaje que el conductor ve en "Mi viaje" (el que está en curso
+ *  y, si no hay, el programado), o null. Sirve para precargar la compra en ruta:
+ *  solo expone la unidad, nada de la ruta ni del resto del viaje. */
+export async function unidadDelViajeActivo(
+  client: PoolClient,
+  tenantId: string,
+  dni: string
+): Promise<{
+  viaje_id: number;
+  estado: string;
+  equipo_id: number;
+  placa_codigo: string;
+} | null> {
+  const d = normalizarDni(dni);
+  if (!d) return null;
+  const r = await client.query(
+    `SELECT v.id::int AS viaje_id, v.estado, v.equipo_id, e.placa_codigo
+       FROM combustible_viajes v
+       JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+      WHERE v.tenant_id = $1 AND trim(v.conductor_dni) = $2
+        AND v.estado IN ('programado', 'en_curso')
+      ORDER BY CASE v.estado WHEN 'en_curso' THEN 0 ELSE 1 END, v.creado_en
+      LIMIT 1`,
+    [tenantId, d]
+  );
+  return r.rows[0] ?? null;
+}
+
 /** Los perfiles de conductor con DNI, para elegirlos al programar: el viaje le
  *  aparece al conductor por su DNI, así que tipearlo a mano es el punto débil. */
 export async function listarConductores(client: PoolClient, tenantId: string) {
