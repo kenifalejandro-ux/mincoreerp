@@ -82,9 +82,44 @@ export function conMarcaLocal(
   });
 }
 
+/** Un descanso del conductor: desde que lo empieza hasta que lo termina. */
+export interface DescansoMio {
+  inicio_en: string;
+  fin_en: string | null;
+  motivo: string | null;
+  donde?: string;
+}
+
+/** El descanso que sigue abierto: mientras dure, el viaje no avanza. */
+export const descansoAbierto = (d: DescansoMio[] | null | undefined): DescansoMio | null =>
+  (d ?? []).find((x) => !x.fin_en) ?? null;
+
+/** Los minutos descansados hasta ahora (el abierto cuenta hasta este momento). */
+export const minutosDescansados = (d: DescansoMio[] | null | undefined, ahora: number): number =>
+  (d ?? []).reduce(
+    (n, x) => n + ((x.fin_en ? Date.parse(x.fin_en) : ahora) - Date.parse(x.inicio_en)) / 60_000,
+    0
+  );
+
+/** Los descansos con la marca ya puesta, para mostrarla aunque todavía no haya señal. */
+export function conDescansoLocal(
+  d: DescansoMio[] | null | undefined,
+  accion: "empezar" | "terminar",
+  marcadoEn: string,
+  motivo: string | null
+): DescansoMio[] {
+  const actuales = d ?? [];
+  if (accion === "empezar") return [...actuales, { inicio_en: marcadoEn, fin_en: null, motivo }];
+  return actuales.map((x) => (x.fin_en ? x : { ...x, fin_en: marcadoEn }));
+}
+
 /** Cuántas marcas tiene el viaje: sirve para saber qué versión va más adelantada. */
 export const marcasHechas = (p: ParadaMia[]): number =>
   p.reduce((n, x) => n + (x.llegada_en ? 1 : 0) + (x.salida_en ? 1 : 0), 0);
+
+/** Las marcas de las paradas y de los descansos juntas. */
+export const avanceDelViaje = (p: ParadaMia[], d: DescansoMio[] | null | undefined): number =>
+  marcasHechas(p) + (d ?? []).reduce((n, x) => n + 1 + (x.fin_en ? 1 : 0), 0);
 
 interface ViajeConRuta {
   paradas?: ParadaMia[] | null;
