@@ -7724,6 +7724,18 @@ export class CombustibleService {
     data: CrearRecepcionCombustibleInput,
     recibidoEn: string
   ): Promise<ExcedenteRepartido | null> {
+    // Orden de bloqueo: primero las tanquetas del reparto (por id), después el
+    // tanque. Es el mismo orden del retorno de tanqueta, así no se esperan entre
+    // sí; y con la fila del tanque bloqueada la capacidad se valida contra un
+    // nivel que nadie más puede mover hasta confirmar.
+    await tanquetas.bloquearTanquetas(
+      client,
+      tenantId,
+      (data.reparto_excedente ?? []).flatMap((l) =>
+        l.destino === "cubeta" && l.tanqueta_id !== undefined ? [l.tanqueta_id] : []
+      )
+    );
+    await this.repository.bloquearTanque(client, tenantId, data.combustible_id!);
     const tanque = await this.repository.findTanqueParaRecepcion(
       client,
       tenantId,
