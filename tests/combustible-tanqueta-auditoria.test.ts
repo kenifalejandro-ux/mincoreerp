@@ -346,10 +346,9 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
 
   // ═══ B. Permisos por rol ════════════════════════════════════════════════
   describe("B. permisos por rol", () => {
-    it("B1: asignar lo hacen admin y operador; el retorno también el grifero (no conductor, encargado ni Lectura)", async () => {
+    it("B1: asignar lo hacen admin, operador y grifero; el retorno también (no conductor, encargado ni Lectura)", async () => {
       const t = await tanquetaLlenaYAsignada(tanque, uA);
       const intrusos: [string, Agente][] = [
-        ["grifero", grifero],
         ["conductor", conductor],
         ["encargado_urea", encargado],
         ["lectura", lectura],
@@ -357,13 +356,16 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
       for (const [nombre, a] of intrusos) {
         const as = await asignar(a, t, uB);
         expect(as.status, `${nombre} asignar: ${JSON.stringify(as.body)}`).toBe(403);
-        if (nombre === "grifero") continue;
         const li = await retornar(a, t);
         expect(li.status, `${nombre} retorno: ${JSON.stringify(li.body)}`).toBe(403);
       }
       expect((await ver(t)).equipo_asignado_id).toBe(uA);
       expect((await retornar(operador, t)).status).toBe(201);
       expect((await asignar(operador, t, uB)).status).toBe(200);
+      // El grifero también asigna (permiso propio `tanquetas:asignar`): la recibe y la entrega.
+      expect((await retornar(grifero, t)).status).toBe(201);
+      const g = await asignar(grifero, t, uA);
+      expect(g.status, JSON.stringify(g.body)).toBe(200);
     });
 
     it("B2: Lectura no puede mandar tanqueta_equipo_id en un vale ni en una recepción", async () => {

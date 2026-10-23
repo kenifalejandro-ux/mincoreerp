@@ -227,7 +227,10 @@ export async function asignarTanqueta(
   equipoId: number,
   /** Desde la pestaña Tanquetas (0141): el vale de esta salida, que queda en el
    *  historial. Los otros caminos de asignación ya llevan su propio vale. */
-  vale?: { serie: string; numero: number; usuarioId: string }
+  vale?: { serie: string; numero: number; usuarioId: string },
+  /** Quien asigna: una unidad de otra sede queda fuera de su alcance (el grifero
+   *  no entrega tanquetas a unidades de otro grifo). Sin alcance, no se comprueba. */
+  alcance?: AlcanceCombustible
 ) {
   await bloquearTanqueta(client, tenantId, id);
   const t = await getTanqueta(client, tenantId, id);
@@ -236,13 +239,24 @@ export async function asignarTanqueta(
   if (Number(t.saldo) <= 0) {
     throw new AppError(400, `La tanqueta ${t.codigo} está vacía: no hay nada que asignar`);
   }
-  const eq = await client.query<{ activo: boolean; placa_codigo: string }>(
-    `SELECT activo, placa_codigo FROM equipos WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+  const eq = await client.query<{
+    activo: boolean;
+    placa_codigo: string;
+    grifo_interno_id: number | null;
+  }>(
+    `SELECT activo, placa_codigo, grifo_interno_id FROM equipos
+      WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
     [tenantId, equipoId]
   );
   if (eq.rowCount === 0) throw new AppError(400, "La unidad no existe");
   if (!eq.rows[0].activo) {
     throw new AppError(400, `La unidad ${eq.rows[0].placa_codigo} está dada de baja`);
+  }
+  if (alcance && !alcance.todo && !alcance.grifos.includes(Number(eq.rows[0].grifo_interno_id))) {
+    throw new AppError(
+      403,
+      `La unidad ${eq.rows[0].placa_codigo} no es de tu sede: no puedes asignarle tanquetas`
+    );
   }
   // Una tanqueta con combustible que ya va con una unidad está en la línea
   // amarilla: no se pasa a otra. Se registra su retorno y se asigna de
@@ -521,6 +535,8 @@ export async function registrarRetornoTanqueta(
     tanquetaDestinoId?: number;
     /** Para destino "unidad": la unidad que se la lleva y el vale de esa salida. */
     unidad?: { equipoId: number; serie: string; numero: number };
+    /** El alcance de quien registra: la unidad a la que pasa tiene que ser de su sede. */
+    alcance?: AlcanceCombustible;
   }
 ) {
   // Con dos tanquetas se bloquea SIEMPRE en orden de id: si A le pasa a B y B a
@@ -607,11 +623,14 @@ export async function registrarRetornoTanqueta(
   // transacción. Si el vale se repite o la unidad ya lleva sus tres tanquetas,
   // se deshace también el retorno y la tanqueta sigue como estaba.
   if (destino === "unidad" && datos.unidad) {
-    await asignarTanqueta(client, tenantId, id, datos.unidad.equipoId, {
-      serie: datos.unidad.serie,
-      numero: datos.unidad.numero,
-      usuarioId: datos.usuarioId,
-    });
+    await asignarTanqueta(
+      client,
+      tenantId,
+      id,
+      datos.unidad.equipoId,
+      { serie: datos.unidad.serie, numero: datos.unidad.numero, usuarioId: datos.usuarioId },
+      datos.alcance
+    );
   }
   // La alerta se crea en la MISMA transacción: un retorno con diferencia
   // grande no puede quedar registrado sin su aviso.
