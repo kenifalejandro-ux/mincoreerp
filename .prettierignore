@@ -6,3 +6,4 @@ dist
 build
 backups
 package-lock.json
+scripts/mapa-tests.json
