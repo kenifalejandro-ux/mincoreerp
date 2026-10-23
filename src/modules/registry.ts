@@ -637,6 +637,8 @@ export const MODULOS: ModuloDefinicion[] = [
         // cliente_uuid de la marca. Espejo de offlineRegistry.ts del cliente.
         { metodo: "POST", ruta: "/viajes/:viajeId/iniciar-mio" },
         { metodo: "POST", ruta: "/viajes/:viajeId/cerrar-mio" },
+        { metodo: "POST", ruta: "/viajes/:viajeId/llegada-mia" },
+        { metodo: "POST", ruta: "/viajes/:viajeId/salida-mia" },
       ],
     },
   },

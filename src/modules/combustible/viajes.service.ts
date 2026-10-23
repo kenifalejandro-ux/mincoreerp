@@ -435,6 +435,16 @@ export async function cerrarViaje(
   }
   if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
   if (v.estado !== "en_curso") throw new AppError(409, "El viaje ya está cerrado");
+  const paradasDelViaje = await leerParadas(client, tenantId, id);
+  if (paradasDelViaje.length > 2) {
+    const pos = posicion(paradasDelViaje);
+    if (pos.tipo !== "en_marcha" || pos.hacia !== paradasDelViaje.length - 1) {
+      throw new AppError(
+        409,
+        "Este viaje tiene varias paradas: la llegada final se marca desde la última parada"
+      );
+    }
+  }
   const { hora: fin, origen } = await horaDeLaMarca(client, data.fin_en, data.marcado_en);
   if (Date.parse(fin) <= new Date(v.inicio_en).getTime()) {
     throw new AppError(400, "La llegada tiene que ser posterior a la salida");
@@ -453,6 +463,261 @@ export async function cerrarViaje(
   );
   await sincronizarExtremos(client, tenantId, id);
   return { antes: v, despues: await getViaje(client, tenantId, id), fin, repetido: false };
+}
+
+// ── Llegar y salir de cada parada ──────────────────────────────────────────
+
+interface FilaParada {
+  orden: number;
+  llegada_en: Date | null;
+  llegada_medidor: string | null;
+  salida_en: Date | null;
+  salida_medidor: string | null;
+  llegada_cliente_uuid: string | null;
+  salida_cliente_uuid: string | null;
+}
+
+async function leerParadas(
+  client: PoolClient,
+  tenantId: string,
+  viajeId: number
+): Promise<FilaParada[]> {
+  const r = await client.query(
+    `SELECT orden, llegada_en, llegada_medidor, salida_en, salida_medidor,
+            llegada_cliente_uuid, salida_cliente_uuid
+       FROM combustible_viaje_paradas
+      WHERE tenant_id = $1 AND viaje_id = $2 ORDER BY orden`,
+    [tenantId, viajeId]
+  );
+  return r.rows;
+}
+
+type Posicion =
+  | { tipo: "sin_salir" }
+  | { tipo: "en_marcha"; hacia: number }
+  | { tipo: "en_parada"; en: number }
+  | { tipo: "terminado" };
+
+/** En qué punto del recorrido va el viaje, según las marcas de sus paradas. */
+function posicion(p: FilaParada[]): Posicion {
+  for (let i = 0; i < p.length - 1; i++) {
+    if (p[i].salida_en == null)
+      return i === 0 ? { tipo: "sin_salir" } : { tipo: "en_parada", en: i };
+    if (p[i + 1].llegada_en == null) return { tipo: "en_marcha", hacia: i + 1 };
+  }
+  return { tipo: "terminado" };
+}
+
+export interface MarcaParada {
+  medidor?: number | null;
+  /** Hora a mano (la oficina marca por quien se olvidó; con motivo). */
+  hora?: string;
+  marcado_en?: string;
+  cliente_uuid?: string;
+  /** La parada a la que el que marca cree que llega (o de la que sale). */
+  orden?: number;
+}
+
+export interface ResultadoMarca {
+  antes: Record<string, unknown>;
+  despues: Record<string, unknown> | null;
+  repetido: boolean;
+  /** La parada marcada; null si fue un reintento. */
+  orden: number | null;
+  /** La llegada a la última parada cierra el viaje. */
+  cierra: boolean;
+}
+
+async function validarMarcaDeParada(
+  client: PoolClient,
+  hora: string,
+  despuesDe: Date,
+  mensaje: string
+) {
+  if (Date.parse(hora) <= despuesDe.getTime()) throw new AppError(400, mensaje);
+  if (Date.parse(hora) > Date.parse(await ahora(client)) + TOLERANCIA_RELOJ_MS) {
+    throw new AppError(400, "La hora de la marca no puede ser futura");
+  }
+}
+
+function validarMedidorDeParada(
+  v: { medidor_inicio: string | null },
+  medidor: number | null | undefined,
+  previo: string | null,
+  que: "llegada" | "salida"
+) {
+  if (v.medidor_inicio != null && medidor == null)
+    throw new AppError(400, `Falta el medidor de ${que}`);
+  if (medidor != null && previo != null && medidor < Number(previo)) {
+    throw new AppError(
+      400,
+      `El medidor (${medidor}) es menor que el último del viaje (${Number(previo)})`
+    );
+  }
+}
+
+async function guardarMarcaDeParada(
+  client: PoolClient,
+  tenantId: string,
+  viajeId: number,
+  orden: number,
+  que: "llegada" | "salida",
+  valores: { hora: string; medidor: number | null; origen: OrigenHora; uuid: string | null }
+) {
+  try {
+    await client.query(
+      `UPDATE combustible_viaje_paradas
+          SET ${que}_en = $4, ${que}_medidor = $5, ${que}_origen_hora = $6,
+              ${que}_cliente_uuid = $7
+        WHERE tenant_id = $1 AND viaje_id = $2 AND orden = $3`,
+      [tenantId, viajeId, orden, valores.hora, valores.medidor, valores.origen, valores.uuid]
+    );
+  } catch (err) {
+    if (esViolacionUnicidad(err)) throw new AppError(409, "Esa marca ya se usó en otro viaje");
+    throw err;
+  }
+}
+
+/** El conductor (o la oficina por él) llega a la siguiente parada. Llegar a la
+ *  última cierra el viaje. Una marca que ya no corresponde (el viaje avanzó, o
+ *  está cerrado) se rechaza con 409; el reintento de la cola devuelve el viaje
+ *  como quedó. */
+export async function llegarAParada(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  id: number,
+  data: MarcaParada,
+  dniConductor?: string
+): Promise<ResultadoMarca> {
+  const v = await viajeParaCambiar(client, tenantId, id);
+  exigirConductor(v, dniConductor);
+  const paradas = await leerParadas(client, tenantId, id);
+  const uuid = data.cliente_uuid ?? null;
+  if (
+    uuid &&
+    (v.fin_cliente_uuid === uuid || paradas.some((p) => p.llegada_cliente_uuid === uuid))
+  ) {
+    return {
+      antes: v,
+      despues: await getViaje(client, tenantId, id),
+      repetido: true,
+      orden: null,
+      cierra: false,
+    };
+  }
+  if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
+  if (v.estado !== "en_curso") throw new AppError(409, "El viaje ya está cerrado");
+  const pos = posicion(paradas);
+  if (pos.tipo !== "en_marcha") {
+    throw new AppError(409, "El viaje no va en camino a una parada: marca primero la salida");
+  }
+  if (data.orden !== undefined && data.orden !== pos.hacia) {
+    throw new AppError(
+      409,
+      `Esa llegada ya no corresponde: el viaje va hacia la parada ${pos.hacia}`
+    );
+  }
+  if (pos.hacia === paradas.length - 1) {
+    const r = await cerrarViaje(
+      client,
+      tenantId,
+      usuarioId,
+      id,
+      {
+        medidor_fin: data.medidor,
+        fin_en: data.hora,
+        marcado_en: data.marcado_en,
+        cliente_uuid: uuid ?? undefined,
+      },
+      dniConductor
+    );
+    return {
+      antes: r.antes,
+      despues: r.despues,
+      repetido: r.repetido,
+      orden: pos.hacia,
+      cierra: true,
+    };
+  }
+  const anterior = paradas[pos.hacia - 1];
+  const { hora, origen } = await horaDeLaMarca(client, data.hora, data.marcado_en);
+  await validarMarcaDeParada(
+    client,
+    hora,
+    anterior.salida_en as Date,
+    "La llegada tiene que ser posterior a la salida de la parada anterior"
+  );
+  validarMedidorDeParada(v, data.medidor, anterior.salida_medidor, "llegada");
+  await guardarMarcaDeParada(client, tenantId, id, pos.hacia, "llegada", {
+    hora,
+    medidor: data.medidor ?? null,
+    origen,
+    uuid,
+  });
+  return {
+    antes: v,
+    despues: await getViaje(client, tenantId, id),
+    repetido: false,
+    orden: pos.hacia,
+    cierra: false,
+  };
+}
+
+/** Sale de una parada intermedia hacia la siguiente. La salida de la primera
+ *  parada es iniciar el viaje. */
+export async function salirDeParada(
+  client: PoolClient,
+  tenantId: string,
+  _usuarioId: string,
+  id: number,
+  data: MarcaParada,
+  dniConductor?: string
+): Promise<ResultadoMarca> {
+  const v = await viajeParaCambiar(client, tenantId, id);
+  exigirConductor(v, dniConductor);
+  const paradas = await leerParadas(client, tenantId, id);
+  const uuid = data.cliente_uuid ?? null;
+  if (uuid && paradas.some((p) => p.salida_cliente_uuid === uuid)) {
+    return {
+      antes: v,
+      despues: await getViaje(client, tenantId, id),
+      repetido: true,
+      orden: null,
+      cierra: false,
+    };
+  }
+  if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
+  if (v.estado !== "en_curso") throw new AppError(409, "El viaje ya está cerrado");
+  const pos = posicion(paradas);
+  if (pos.tipo !== "en_parada") {
+    throw new AppError(409, "El viaje no está en una parada: marca primero la llegada");
+  }
+  if (data.orden !== undefined && data.orden !== pos.en) {
+    throw new AppError(409, `Esa salida ya no corresponde: el viaje está en la parada ${pos.en}`);
+  }
+  const parada = paradas[pos.en];
+  const { hora, origen } = await horaDeLaMarca(client, data.hora, data.marcado_en);
+  await validarMarcaDeParada(
+    client,
+    hora,
+    parada.llegada_en as Date,
+    "La salida tiene que ser posterior a la llegada a la parada"
+  );
+  validarMedidorDeParada(v, data.medidor, parada.llegada_medidor, "salida");
+  await guardarMarcaDeParada(client, tenantId, id, pos.en, "salida", {
+    hora,
+    medidor: data.medidor ?? null,
+    origen,
+    uuid,
+  });
+  return {
+    antes: v,
+    despues: await getViaje(client, tenantId, id),
+    repetido: false,
+    orden: pos.en,
+    cierra: false,
+  };
 }
 
 export async function editarViaje(

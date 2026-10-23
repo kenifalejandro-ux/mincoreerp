@@ -54,6 +54,8 @@ import {
   cerrarViajeSchema,
   iniciarMiViajeSchema,
   cerrarMiViajeSchema,
+  llegadaMiaSchema,
+  salidaMiaSchema,
   iniciarViajeSchema,
   editarViajeSchema,
   anularViajeSchema,
@@ -501,6 +503,18 @@ router.post(
   requirePestana("combustible", "mi_viaje"),
   validate(cerrarMiViajeSchema),
   asyncHandler(viajesController.cerrarMio)
+);
+router.post(
+  "/viajes/:viajeId(\\d+)/llegada-mia",
+  requirePestana("combustible", "mi_viaje"),
+  validate(llegadaMiaSchema),
+  asyncHandler(viajesController.llegadaMia)
+);
+router.post(
+  "/viajes/:viajeId(\\d+)/salida-mia",
+  requirePestana("combustible", "mi_viaje"),
+  validate(salidaMiaSchema),
+  asyncHandler(viajesController.salidaMia)
 );
 router.get(
   "/viajes/:viajeId(\\d+)",
