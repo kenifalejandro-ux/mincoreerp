@@ -100,11 +100,18 @@ describe("verificar: qué se corre según lo que cambió", () => {
     expect(r.tests).toEqual(["tests/rls-coverage.test.ts"]);
   });
 
-  it("el cliente de un módulo no corre tipos de backend ni e2e en local", () => {
+  it("el cliente de un módulo no corre tipos de backend, tests de backend ni e2e en local", () => {
     const r = sel("client/src/components/UreaPanel.tsx");
     expect(r.client).toBe(true);
     expect(r.backend).toBe(false);
+    expect(r.tests).toEqual([]);
     expect(r.specs).toEqual([]);
+    expect(r.motivos.join(" ")).toMatch(/cambió la pantalla.*sin tests de backend/);
+  });
+
+  it("pantalla y código del mismo módulo: solo el código elige tests de backend", () => {
+    const r = sel("client/src/components/UreaPanel.tsx", "src/modules/ordenes_trabajo/x.ts");
+    expect(r.tests).toEqual(["tests/ordenes-trabajo-a.test.ts"]);
   });
 
   it("un test o spec tocado se corre aunque su módulo no se reconozca", () => {
@@ -221,12 +228,8 @@ describe("verificar: con el mapa de tests", () => {
     expect(r.motivos.join(" ")).toMatch(/1 tests que no están en el mapa/);
   });
 
-  it("el cliente de un módulo se elige por módulo aunque haya mapa", () => {
-    const r = selM({}, "client/src/components/UreaPanel.tsx");
-    expect(r.tests).toEqual([
-      "tests/combustible-urea-conteo-envase.test.ts",
-      "tests/combustible-urea.test.ts",
-    ]);
+  it("el cliente de un módulo no corre tests de backend tampoco con mapa", () => {
+    expect(selM({}, "client/src/components/UreaPanel.tsx").tests).toEqual([]);
   });
 
   it("el test de arranque (la línea base del mapa) no cuenta como test nuevo", () => {

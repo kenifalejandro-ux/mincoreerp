@@ -130,7 +130,8 @@ export function seleccionarVerificacion(
   const delMapa = new Set<string>();
   const dudosos: string[] = [];
   for (const f of relevantes) {
-    const m = moduloDeArchivo(f);
+    // La pantalla (client/) no afecta a ningún test de backend: ninguno la importa.
+    const m = f.startsWith("client/") ? null : moduloDeArchivo(f);
     if (!conMapa || !conCambioMedido.includes(f)) {
       if (m) modulos.add(m);
       continue;
@@ -172,6 +173,13 @@ export function seleccionarVerificacion(
     const deModulo = testsExistentes.filter((t) => t.startsWith(prefijo));
     deModulo.forEach((t) => tests.add(t));
     motivos.push(`módulo ${m}: ${deModulo.length} archivos de test`);
+  }
+
+  const deClient = relevantes.find((f) => f.startsWith("client/"));
+  if (deClient) {
+    motivos.push(
+      `cambió la pantalla (${deClient}): sin tests de backend; formato, lint y tipos de client/ y los specs que toques`
+    );
   }
 
   // Lo que la persona tocó directamente siempre se corre.
