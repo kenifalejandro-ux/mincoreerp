@@ -382,17 +382,23 @@ jobs:
       - name: Comprobar la imagen de Playwright
         # Si Dependabot sube @playwright/test y la imagen del job queda atrás,
         # Playwright falla con "Executable doesn't exist", que no dice qué hacer.
-        env:
-          IMAGEN: ${{ job.container.image }}
+        # Se mira directamente si la imagen trae los navegadores que esta versión
+        # necesita (el contexto `job.container` no expone el nombre de la imagen).
         run: |
-          version=$(node -p "require('@playwright/test/package.json').version")
-          case "$IMAGEN" in
-            *":v${version}-"*) ;;
-            *)
-              echo "::error::La imagen del job ($IMAGEN) no es la de @playwright/test v$version. Cambiá el tag de 'container.image' en e2e-tests a v$version-noble."
-              exit 1
-              ;;
-          esac
+          node -e "
+            const fs = require('fs');
+            const dir = process.env.PLAYWRIGHT_BROWSERS_PATH;
+            const { browsers } = JSON.parse(fs.readFileSync('node_modules/playwright-core/browsers.json', 'utf8'));
+            const faltan = browsers
+              .filter((b) => ['chromium', 'firefox', 'webkit'].includes(b.name))
+              .filter((b) => !fs.existsSync(dir + '/' + b.name + '-' + b.revision))
+              .map((b) => b.name + '-' + b.revision);
+            if (faltan.length > 0) {
+              const v = require('@playwright/test/package.json').version;
+              console.log('::error::La imagen del job no trae los navegadores de @playwright/test v' + v + ' (faltan: ' + faltan.join(', ') + '). Cambia el tag de container.image en e2e-tests a v' + v + '-noble.');
+              process.exit(1);
+            }
+          "
 
       - name: Crear el rol de la app (no superuser, como en producción)
         # La imagen de Playwright no trae psql: se hace con el cliente `pg` del
