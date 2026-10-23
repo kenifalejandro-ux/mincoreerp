@@ -522,7 +522,13 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
   const marcar = (
     a: Agente,
     id: string | number,
-    accion: "iniciar-mio" | "cerrar-mio" | "llegada-mia" | "salida-mia",
+    accion:
+      | "iniciar-mio"
+      | "cerrar-mio"
+      | "llegada-mia"
+      | "salida-mia"
+      | "descanso-mio"
+      | "descanso-mio/terminar",
     body: object
   ) => a.post(`/api/erp/combustible/viajes/${id}/${accion}`).send(body);
 
@@ -1068,5 +1074,106 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(delTramoSolo).toHaveLength(2);
     expect(Number(delTramoSolo[0].viajes_ruta)).toBe(2);
     expect(Number(delTramoSolo[0].promedio_ruta)).toBeCloseTo(50, 0);
+  });
+  // ── Descansos ────────────────────────────────────────────────────────────
+
+  type Descanso = {
+    fin_en: string | null;
+    motivo: string | null;
+    inicio_por: string;
+    fin_por: string | null;
+  };
+  const descansosDe = async (id: number) =>
+    ((await admin.get(url(id))).body.viaje.descansos ?? []) as Descanso[];
+
+  it("el conductor descansa: con el descanso abierto el viaje no avanza; lo termina y sigue", async () => {
+    const { yo, id } = await circuitoEnCurso();
+    const m = (accion: Parameters<typeof marcar>[2], body: object = {}) =>
+      marcar(yo.agente, id, accion, body);
+    const ini = await m("descanso-mio", { motivo: "Dormir" });
+    expect(ini.status, JSON.stringify(ini.body)).toBe(200);
+    const abierto = ini.body.descansos as Descanso[];
+    expect(abierto).toHaveLength(1);
+    expect(abierto[0]).toMatchObject({ motivo: "Dormir", fin_en: null, inicio_por: "conductor" });
+
+    expect((await m("llegada-mia", { medidor: 150 })).status).toBe(409); // sin terminar el descanso
+    expect((await m("descanso-mio", { motivo: "Comer" })).status).toBe(409); // uno a la vez
+    const fin = await m("descanso-mio/terminar");
+    expect(fin.status, JSON.stringify(fin.body)).toBe(200);
+    expect((fin.body.descansos as Descanso[])[0].fin_en).toBeTruthy();
+    expect((await m("descanso-mio/terminar")).status).toBe(409); // ya no hay uno abierto
+    expect((await m("llegada-mia", { medidor: 150 })).status).toBe(200);
+  });
+
+  it("el reintento de la cola no duplica el descanso; el uuid de otro viaje no vale", async () => {
+    const { yo, id } = await circuitoEnCurso();
+    const uuid = crypto.randomUUID();
+    const a = await marcar(yo.agente, id, "descanso-mio", { cliente_uuid: uuid });
+    const b = await marcar(yo.agente, id, "descanso-mio", { cliente_uuid: uuid });
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(await descansosDe(id)).toHaveLength(1);
+    const fin = crypto.randomUUID();
+    expect(
+      (await marcar(yo.agente, id, "descanso-mio/terminar", { cliente_uuid: fin })).status
+    ).toBe(200);
+    expect(
+      (await marcar(yo.agente, id, "descanso-mio/terminar", { cliente_uuid: fin })).status
+    ).toBe(200);
+    const otro = await circuitoEnCurso();
+    const robado = await marcar(otro.yo.agente, otro.id, "descanso-mio", { cliente_uuid: uuid });
+    expect(robado.status).toBe(409);
+  });
+
+  it("no descansa quien no es del viaje, ni antes de salir, ni con el viaje cerrado", async () => {
+    const { yo, id } = await circuitoEnCurso();
+    const intruso = await conductor();
+    expect((await marcar(intruso.agente, id, "descanso-mio", {})).status).toBe(404);
+
+    const otro = await conductor();
+    const eq = await unidad();
+    const programado = (
+      await admin.post("/api/erp/combustible/viajes").send({
+        equipo_id: eq,
+        paradas: [huamachuco, bambamarca, huamachuco],
+        conductor_dni: otro.dni,
+      })
+    ).body;
+    expect((await marcar(otro.agente, programado.id, "descanso-mio", {})).status).toBe(409);
+
+    const m = (accion: Parameters<typeof marcar>[2], body: object) =>
+      marcar(yo.agente, id, accion, body);
+    expect((await m("llegada-mia", { medidor: 150 })).status).toBe(200);
+    expect((await m("salida-mia", { medidor: 150 })).status).toBe(200);
+    expect((await m("llegada-mia", { medidor: 250 })).status).toBe(200); // cierra
+    expect((await m("descanso-mio", {})).status).toBe(409);
+  });
+
+  it("la oficina marca el descanso por el conductor: pide motivo y una hora que no sea anterior a la salida", async () => {
+    const { id } = await circuitoEnCurso();
+    const post = (accion: string, body: object) => admin.post(url(id, accion)).send(body);
+    expect((await post("/descanso", {})).status).toBe(400); // sin motivo
+    expect((await post("/descanso", { motivo: "ab" })).status).toBe(400); // motivo muy corto
+    expect((await post("/descanso", { motivo: "Avería", inicio_en: hora(0) })).status).toBe(400);
+    const ok = await post("/descanso", { motivo: "Avería" });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect((await descansosDe(id))[0]).toMatchObject({ motivo: "Avería", inicio_por: "oficina" });
+    // Con hora a mano para terminar, el motivo es obligatorio.
+    expect((await post("/descanso/terminar", { fin_en: new Date().toISOString() })).status).toBe(
+      400
+    );
+    expect((await post("/descanso/terminar", {})).status).toBe(200);
+    expect((await descansosDe(id))[0]).toMatchObject({ fin_por: "oficina" });
+  });
+
+  it("si la oficina cierra el viaje con un descanso abierto, el descanso se termina", async () => {
+    const eq = await unidad();
+    const p = (await programar(eq)).body;
+    expect((await admin.post(url(p.id, "/iniciar")).send({ medidor_inicio: 10 })).status).toBe(200);
+    expect((await admin.post(url(p.id, "/descanso")).send({ motivo: "Dormir" })).status).toBe(200);
+    const cierre = await admin.post(url(p.id, "/cerrar")).send({ medidor_fin: 90 });
+    expect(cierre.status, JSON.stringify(cierre.body)).toBe(200);
+    expect((await descansosDe(p.id))[0]).toMatchObject({ fin_por: "oficina" });
+    expect((await descansosDe(p.id))[0].fin_en).toBeTruthy();
   });
 });

@@ -54,6 +54,10 @@ import {
   cerrarViajeSchema,
   iniciarMiViajeSchema,
   cerrarMiViajeSchema,
+  descansoMioSchema,
+  descansoViajeSchema,
+  terminarDescansoMioSchema,
+  terminarDescansoViajeSchema,
   llegadaMiaSchema,
   llegadaViajeSchema,
   salidaMiaSchema,
@@ -518,6 +522,18 @@ router.post(
   validate(salidaMiaSchema),
   asyncHandler(viajesController.salidaMia)
 );
+router.post(
+  "/viajes/:viajeId(\\d+)/descanso-mio",
+  requirePestana("combustible", "mi_viaje"),
+  validate(descansoMioSchema),
+  asyncHandler(viajesController.descansoMio)
+);
+router.post(
+  "/viajes/:viajeId(\\d+)/descanso-mio/terminar",
+  requirePestana("combustible", "mi_viaje"),
+  validate(terminarDescansoMioSchema),
+  asyncHandler(viajesController.terminarDescansoMio)
+);
 router.get(
   "/viajes/:viajeId(\\d+)",
   requirePestana("combustible", "viajes"),
@@ -562,6 +578,20 @@ router.post(
   requireRole("admin", "operador"),
   validate(salidaViajeSchema),
   asyncHandler(viajesController.salida)
+);
+router.post(
+  "/viajes/:viajeId(\\d+)/descanso",
+  requirePestana("combustible", "viajes:editar"),
+  requireRole("admin", "operador"),
+  validate(descansoViajeSchema),
+  asyncHandler(viajesController.descanso)
+);
+router.post(
+  "/viajes/:viajeId(\\d+)/descanso/terminar",
+  requirePestana("combustible", "viajes:editar"),
+  requireRole("admin", "operador"),
+  validate(terminarDescansoViajeSchema),
+  asyncHandler(viajesController.terminarDescanso)
 );
 router.put(
   "/viajes/:viajeId(\\d+)",
