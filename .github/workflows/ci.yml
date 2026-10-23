@@ -131,8 +131,10 @@ jobs:
           # Ver el comentario del mismo paso en e2e-tests.
           REDISMS_DISABLE_POSTINSTALL: 1
 
+      # `npm audit --audit-level=high`, pero tolera los avisos con excepción vigente
+      # (scripts/auditoriaDependencias.ts): cada una lleva su motivo y su fecha.
       - name: Auditoría de dependencias (falla con high/critical)
-        run: npm audit --audit-level=high
+        run: npm run auditoria
 
       - name: Crear el rol de la app (no superuser, como en producción)
         # La imagen oficial postgres:16 crea el rol de POSTGRES_USER como
