@@ -31,6 +31,46 @@ type CuerpoMarca = {
   motivo?: string;
 };
 
+type CuerpoDescanso = {
+  motivo?: string | null;
+  marcado_en?: string;
+  cliente_uuid?: string;
+  inicio_en?: string;
+  fin_en?: string;
+};
+
+/** Empezar o terminar un descanso: el del propio conductor (por su DNI, con uuid y hora del
+ *  celular) o el de la oficina por él (motivo obligatorio al empezar). */
+function marcaDeDescanso(que: "inicio" | "fin", delConductor: boolean) {
+  return async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.viajeId);
+    const b = req.validatedBody as CuerpoDescanso;
+    const marca = {
+      motivo: b.motivo,
+      marcado_en: b.marcado_en,
+      cliente_uuid: b.cliente_uuid,
+      hora: que === "inicio" ? b.inicio_en : b.fin_en,
+    };
+    const dni = delConductor ? (req.usuario!.dni ?? "") : undefined;
+    const r = await withTenant(tenantId, (c) =>
+      que === "inicio"
+        ? viajes.iniciarDescanso(c, tenantId, req.usuario!.id, id, marca, dni)
+        : viajes.terminarDescanso(c, tenantId, req.usuario!.id, id, marca, dni)
+    );
+    if (!r.repetido) {
+      await auditar(req, `viaje_descanso_${que === "inicio" ? "iniciar" : "terminar"}`, {
+        viajeId: id,
+        numero: r.antes.numero,
+        por: delConductor ? "conductor" : "oficina",
+        motivo: b.motivo ?? null,
+        manual: marca.hora !== undefined,
+      });
+    }
+    res.json(r.despues);
+  };
+}
+
 /** Llegada o salida de una parada: la del propio conductor (por su DNI, con
  *  uuid y hora del celular) o la de la oficina por él (hora a mano y motivo). */
 function marcaDeParada(que: "llegada" | "salida", delConductor: boolean) {
@@ -239,6 +279,10 @@ export const viajesController = {
     res.json(r.despues);
   },
 
+  descansoMio: marcaDeDescanso("inicio", true),
+  terminarDescansoMio: marcaDeDescanso("fin", true),
+  descanso: marcaDeDescanso("inicio", false),
+  terminarDescanso: marcaDeDescanso("fin", false),
   llegadaMia: marcaDeParada("llegada", true),
   salidaMia: marcaDeParada("salida", true),
   llegada: marcaDeParada("llegada", false),
