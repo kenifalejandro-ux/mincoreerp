@@ -5467,11 +5467,14 @@ export class CombustibleController {
       return;
     }
     const despues = await withTenant(tenantId, (client) =>
-      tanquetas.asignarTanqueta(client, tenantId, id, equipo_id, {
-        serie: serie_talonario,
-        numero: n_vale,
-        usuarioId: req.usuario!.id,
-      })
+      tanquetas.asignarTanqueta(
+        client,
+        tenantId,
+        id,
+        equipo_id,
+        { serie: serie_talonario, numero: n_vale, usuarioId: req.usuario!.id },
+        alcanceDe(req)
+      )
     );
     await registrarAuditoria({
       accion: "combustible.tanqueta_asignar",
@@ -5526,6 +5529,7 @@ export class CombustibleController {
         destino,
         tanqueId: tanque_id,
         tanquetaDestinoId: tanqueta_destino_id,
+        alcance: alcanceDe(req),
         unidad:
           destino === "unidad"
             ? { equipoId: equipo_id!, serie: serie_talonario!, numero: n_vale! }

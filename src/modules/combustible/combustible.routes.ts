@@ -411,8 +411,8 @@ router.get(
 // Asignar la unidad (0139): mismo permiso que editar la tanqueta.
 router.put(
   "/tanquetas/:tanquetaId/asignar",
-  requirePestana("combustible", "tanquetas:editar"),
-  requireRole("admin", "operador"),
+  requirePestana("combustible", "tanquetas:asignar"),
+  requireRole("admin", "operador", "grifero"),
   validate(asignarTanquetaSchema),
   asyncHandler(controller.asignarTanqueta.bind(controller))
 );
