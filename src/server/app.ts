@@ -22,7 +22,7 @@ import { createPlatformRouter } from "./routes/platform";
 import { createScimRouter } from "./routes/scim";
 import { createApiRouter } from "./routes";
 import { Sentry } from "./config/sentry";
-import { errorHandler } from "./shared/middlewares/error.middleware";
+import { AppError, errorHandler } from "./shared/middlewares/error.middleware";
 import { requestContextMiddleware } from "./shared/middlewares/requestContext.middleware";
 
 const requestLogger = pinoHttp({
@@ -158,6 +158,31 @@ const jsonPorRuta: RequestHandler = (req, res, next) =>
   esRutaDeCargaMasiva(req.path)
     ? jsonBulkMiddleware(req, res, next)
     : jsonMiddleware(req, res, next);
+
+// ── El tope de filas de /bulk va ANTES de zod ────────────────────────────
+//
+// zod procesa TODOS los elementos de un array aunque ya pase su `.max()` y suma un error por
+// cada uno que falla (aviso GHSA-mrhx-c7xc-m3w5, sin arreglo en zod 3). Con el límite de 2 MB de
+// /bulk, 700.000 objetos vacíos hacían que zod tardara ~33 s con el servidor bloqueado y reservara
+// ~860 MB. Cada esquema de /bulk ya limita sus filas (MAX_FILAS_CARGA_MASIVA, 5000 en los cuatro);
+// esto hace valer ese tope antes de validar.
+const MAX_FILAS_ANTES_DE_VALIDAR = 5000;
+const limitarFilasDeCargaMasiva: RequestHandler = (req, _res, next) => {
+  if (
+    esRutaDeCargaMasiva(req.path) &&
+    Array.isArray(req.body) &&
+    req.body.length > MAX_FILAS_ANTES_DE_VALIDAR
+  ) {
+    next(
+      new AppError(
+        400,
+        `No se pueden importar más de ${MAX_FILAS_ANTES_DE_VALIDAR} filas de una vez`
+      )
+    );
+    return;
+  }
+  next();
+};
 const urlencodedMiddleware = express.urlencoded({
   extended: false,
   limit: env.bodyLimit,
@@ -196,6 +221,7 @@ export function createApp() {
   app.use(corsMiddleware);
   app.use(cookieParser() as unknown as RequestHandler);
   app.use(jsonPorRuta);
+  app.use(limitarFilasDeCargaMasiva);
   app.use(urlencodedMiddleware);
   app.use(noStoreMiddleware);
 

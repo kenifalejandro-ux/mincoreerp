@@ -19,6 +19,7 @@
     "storage:verificar": "tsx scripts/verificarR2.ts",
     "e2e:local": "tsx scripts/e2eLocal.ts",
     "verificar": "tsx scripts/verificar.ts",
+    "auditoria": "tsx scripts/auditoriaDependencias.ts",
     "mapa-tests": "tsx scripts/mapaTests.ts",
     "backup:restore-drill": "tsx scripts/restoreDrill.ts",
     "backup:restore-drill:escritura": "tsx scripts/restoreDrillEscritura.ts",
