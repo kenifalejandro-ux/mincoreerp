@@ -13,8 +13,10 @@
  *
  *   1. Migraciones: un número nuevo no puede chocar con uno que ya está en main.
  *   2. prettier, eslint y tsc de lo que cambió (raíz y client/ por separado).
- *   3. vitest del módulo tocado (si cambió algo compartido, además un "humo" de
- *      RLS y aislamiento; la suite entera la corre el CI, o --completo acá).
+ *   3. vitest solo de los tests que ejecutan lo que cambiaste (mapa de tests,
+ *      ver mapaTestsLogica.ts); sin mapa vigente, el módulo tocado. Si cambió
+ *      algo compartido, además un "humo" de RLS y aislamiento; la suite entera
+ *      la corre el CI, o --completo acá.
  *   4. e2e SOLO de los specs que creaste o modificaste: una vez en chromium,
  *      de a uno y sin reintentos. Que sean estables (5 veces seguidas) lo
  *      comprueba el CI en el PR (ver ci.yml), igual que los demás e2e: todos
@@ -32,6 +34,7 @@
  *
  *   npm run verificar                 lo de arriba, contra origin/main
  *   npm run verificar -- --rapido     solo pasos 1 y 2
+ *   npm run verificar -- --modulo     todos los tests del módulo tocado, sin el mapa
  *   npm run verificar -- --completo   suite entera y todos los specs (chromium y firefox)
  *   npm run verificar -- --solo-e2e   salta vitest (para repetir solo el e2e)
  *
@@ -51,9 +54,11 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { levantarBase } from "./baseDesechable";
+import { analizarDiff, type MapaTests } from "./mapaTestsLogica";
 import {
   colisionesDeMigraciones,
   seleccionarVerificacion,
+  type ConMapa,
   type Seleccion,
 } from "./verificarSeleccion";
 
@@ -62,6 +67,9 @@ const args = new Set(process.argv.slice(2));
 const RAPIDO = args.has("--rapido");
 const COMPLETO = args.has("--completo");
 const SOLO_E2E = args.has("--solo-e2e");
+const MODULO = args.has("--modulo");
+/** Días que puede tener el mapa de tests antes de que se deje de usar. */
+const DIAS_MAX_MAPA = 14;
 
 /** eslint reutiliza lo ya revisado (guardado bajo node_modules, que git ignora). */
 const ESLINT_CACHE = ["--cache", "--cache-location", "node_modules/.cache/eslint/"];
@@ -132,6 +140,45 @@ function archivosCambiados(base: string): string[] {
   );
 }
 
+/** El mapa de tests si hay uno vigente; si no, avisa por qué y se elige por módulo. */
+function cargarMapa(cambiados: string[]): ConMapa | null {
+  const archivo = path.join(raiz, "scripts", "mapa-tests.json");
+  if (COMPLETO || MODULO || !fs.existsSync(archivo)) return null;
+  const sinMapa = (motivo: string) => {
+    console.log(amarillo(`⚠️  Mapa de tests no usado (${motivo}): se elige por módulo.`));
+    return null;
+  };
+  let mapa: MapaTests;
+  try {
+    mapa = JSON.parse(fs.readFileSync(archivo, "utf8")) as MapaTests;
+  } catch {
+    return sinMapa("scripts/mapa-tests.json no se puede leer");
+  }
+  const dias = (Date.now() - Date.parse(mapa.generado)) / 86_400_000;
+  if (mapa.version !== 1 || !(dias <= DIAS_MAX_MAPA)) {
+    return sinMapa(
+      `tiene ${Number.isFinite(dias) ? Math.round(dias) : "?"} días, el máximo es ${DIAS_MAX_MAPA}; regeneralo con npm run mapa-tests`
+    );
+  }
+  if (!git("cat-file", "-t", `${mapa.commit}^{commit}`)) {
+    return sinMapa(`su commit ${mapa.commit.slice(0, 7)} no está en tu copia; hacé git fetch`);
+  }
+  const deSrc = cambiados.filter((f) => /^src\/.+\.ts$/.test(f));
+  if (deSrc.length === 0) return { mapa, hunks: {} };
+  // Contra el commit del mapa, no contra main: los rangos de líneas son de ese commit.
+  const diff = spawnSync(
+    "git",
+    ["diff", "--unified=0", "--no-color", mapa.commit, "--", ...deSrc],
+    {
+      cwd: raiz,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    }
+  );
+  if (diff.status !== 0) return sinMapa("git diff contra su commit falló");
+  return { mapa, hunks: analizarDiff(diff.stdout) };
+}
+
 const listar = (dir: string, patron: RegExp, prefijo: string) =>
   fs
     .readdirSync(path.join(raiz, dir))
@@ -184,7 +231,8 @@ async function main(): Promise<number> {
   const sel: Seleccion = seleccionarVerificacion(
     cambiados,
     listar("tests", /\.test\.ts$/, "tests/"),
-    listar("e2e", /\.spec\.ts$/, "")
+    listar("e2e", /\.spec\.ts$/, ""),
+    cargarMapa(cambiados) ?? undefined
   );
   if (sel.nada) {
     console.log(verde("✔ Solo documentación (o sin cambios): nada que verificar."));

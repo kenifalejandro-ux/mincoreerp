@@ -5,10 +5,12 @@
  * los casos que ya ocurrieron.
  */
 import { describe, it, expect } from "vitest";
+import type { MapaTests, Trozo } from "../scripts/mapaTestsLogica";
 import {
   colisionesDeMigraciones,
   moduloDeArchivo,
   seleccionarVerificacion,
+  type ConMapa,
 } from "../scripts/verificarSeleccion";
 
 const TESTS = [
@@ -135,5 +137,105 @@ describe("verificar: migraciones con el mismo número", () => {
     expect(colisionesDeMigraciones(["migrations/0134_a.sql"], ["migrations/0133_b.sql"])).toEqual(
       []
     );
+  });
+});
+
+describe("verificar: con el mapa de tests", () => {
+  const SERVICIO = "src/modules/combustible/combustible.service.ts";
+  const SERVIDOR = "src/server/services/auth.service.ts";
+  // Todos los tests del fixture figuran en el mapa (si no, correrían como "nuevos").
+  const mapa: MapaTests = {
+    version: 1,
+    commit: "abc",
+    generado: "2026-10-23T00:00:00.000Z",
+    transversales: { [SERVICIO]: "100-110", [SERVIDOR]: "1-9" },
+    tests: {
+      "combustible-urea": { [SERVICIO]: "10-30" },
+      "combustible-urea-conteo-envase": { [SERVICIO]: "40-60" },
+      "checklists-x": {},
+      "equipos-rutas": { [SERVIDOR]: "20-30" },
+      "ordenes-trabajo-a": {},
+      "rls-coverage": {},
+      "tenant-isolation": {},
+      "db-index-coverage": {},
+      "backup-tablas-registradas": {},
+    },
+  };
+  const trozo = (desde: number, hasta = desde, soloComentarios = false): Trozo[] => [
+    { desde, hasta, soloComentarios },
+  ];
+  const conMapa = (hunks: Record<string, Trozo[]>): ConMapa => ({ mapa, hunks });
+  const selM = (hunks: Record<string, Trozo[]>, ...f: string[]) =>
+    seleccionarVerificacion(f, TESTS, SPECS, conMapa(hunks));
+
+  it("una función del servicio corre solo los tests que la ejecutan, no el módulo", () => {
+    const r = selM({ [SERVICIO]: trozo(15) }, SERVICIO);
+    expect(r.tests).toEqual(["tests/combustible-urea.test.ts"]);
+    expect(r.motivos.join(" ")).toMatch(/mapa de tests: 1 archivos de src\/ → 1 tests/);
+  });
+
+  it("otra función del mismo archivo corre otros tests", () => {
+    expect(selM({ [SERVICIO]: trozo(50) }, SERVICIO).tests).toEqual([
+      "tests/combustible-urea-conteo-envase.test.ts",
+    ]);
+  });
+
+  it("un cambio fuera de toda función medida vuelve a la regla por módulo", () => {
+    const r = selM({ [SERVICIO]: trozo(5) }, SERVICIO);
+    expect(r.tests).toEqual([
+      "tests/combustible-urea-conteo-envase.test.ts",
+      "tests/combustible-urea.test.ts",
+    ]);
+    expect(r.motivos.join(" ")).toMatch(/sin afinar con el mapa/);
+  });
+
+  it("un archivo que no figura en el mapa vuelve a la regla por módulo", () => {
+    const nuevo = "src/modules/combustible/tanquetas.nuevo.ts";
+    expect(selM({ [nuevo]: trozo(1) }, nuevo).tests).toHaveLength(2);
+  });
+
+  it("una función transversal de un módulo vuelve a la regla por módulo", () => {
+    expect(selM({ [SERVICIO]: trozo(105) }, SERVICIO).tests).toHaveLength(2);
+  });
+
+  it("solo comentarios o líneas en blanco no corren ningún test", () => {
+    const r = selM({ [SERVICIO]: trozo(15, 15, true) }, SERVICIO);
+    expect(r.tests).toEqual([]);
+    expect(r.nada).toBe(false);
+  });
+
+  it("una función transversal de src/server corre solo el humo, como sin mapa", () => {
+    expect(selM({ [SERVIDOR]: trozo(5) }, SERVIDOR).tests).toEqual(HUMO);
+  });
+
+  it("una función de src/server con tests suma esos tests al humo", () => {
+    expect(selM({ [SERVIDOR]: trozo(25) }, SERVIDOR).tests).toEqual(
+      [...HUMO, "tests/equipos-rutas.test.ts"].sort()
+    );
+  });
+
+  it("un test que no está en el mapa corre siempre", () => {
+    const tests = [...TESTS, "tests/combustible-tanqueta-nuevo.test.ts"];
+    const r = seleccionarVerificacion([SERVICIO], tests, SPECS, conMapa({ [SERVICIO]: trozo(15) }));
+    expect(r.tests).toContain("tests/combustible-tanqueta-nuevo.test.ts");
+    expect(r.motivos.join(" ")).toMatch(/1 tests que no están en el mapa/);
+  });
+
+  it("el cliente de un módulo se elige por módulo aunque haya mapa", () => {
+    const r = selM({}, "client/src/components/UreaPanel.tsx");
+    expect(r.tests).toEqual([
+      "tests/combustible-urea-conteo-envase.test.ts",
+      "tests/combustible-urea.test.ts",
+    ]);
+  });
+
+  it("el test de arranque (la línea base del mapa) no cuenta como test nuevo", () => {
+    const tests = [...TESTS, "tests/app-arranca.test.ts"];
+    const r = seleccionarVerificacion([SERVICIO], tests, SPECS, conMapa({ [SERVICIO]: trozo(15) }));
+    expect(r.tests).toEqual(["tests/combustible-urea.test.ts"]);
+  });
+
+  it("sin mapa no cambia nada: el módulo entero", () => {
+    expect(sel(SERVICIO).tests).toHaveLength(2);
   });
 });

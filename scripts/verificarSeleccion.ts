@@ -13,6 +13,14 @@
  * entre tenants y, con migraciones, índices y respaldo). La suite entera
  * (15 min en una laptop) la corre el CI en el PR, o acá con --completo.
  *
+ * ── Con el mapa de tests ────────────────────────────────────────────────
+ *
+ * Si hay un mapa vigente (scripts/mapa-tests.json, ver mapaTestsLogica.ts), un
+ * cambio en src/ corre solo los tests que ejecutan las funciones que tocaste, en
+ * vez de todo el módulo. Todo lo dudoso corre MÁS, nunca menos: un archivo que no
+ * está en el mapa, un cambio fuera de toda función medida, o una función que
+ * usa la mitad de los tests vuelven a la regla por módulo.
+ *
  * ── Por qué en local solo los specs que tocaste ─────────────────────────
  *
  * Antes se corrían acá todos los e2e del módulo, en chromium y firefox. En
@@ -25,6 +33,14 @@
  * verificar.ts). Repetirlo 5 veces seguidas para cazar los inestables lo hace
  * el CI en el PR (ver ci.yml), para no ocupar esta máquina.
  */
+
+import { TEST_BASE, testsAfectados, type MapaTests, type Trozo } from "./mapaTestsLogica";
+
+/** El mapa de tests y los trozos de cada archivo cambiado, contra el commit del mapa. */
+export interface ConMapa {
+  mapa: MapaTests;
+  hunks: Record<string, Trozo[]>;
+}
 
 export interface Seleccion {
   /** Nada que verificar (solo documentación, o sin cambios). */
@@ -71,7 +87,9 @@ export function seleccionarVerificacion(
   /** Todos los tests/*.test.ts que existen, con ruta ("tests/x.test.ts"). */
   testsExistentes: string[],
   /** Todos los e2e/*.spec.ts que existen, solo el nombre ("login.spec.ts"). */
-  specsExistentes: string[]
+  specsExistentes: string[],
+  /** Sin esto se elige solo por módulo. */
+  conMapa?: ConMapa
 ): Seleccion {
   const relevantes = cambiados.filter((f) => !SOLO_DOCS.test(f));
   const vacia: Seleccion = {
@@ -88,23 +106,66 @@ export function seleccionarVerificacion(
   const specs = new Set<string>();
   const motivos: string[] = [];
 
+  const agregarHumo = (conMigracion: boolean) => {
+    const humo = [...HUMO, ...(conMigracion ? HUMO_MIGRACION : [])].filter((t) =>
+      testsExistentes.includes(t)
+    );
+    humo.forEach((t) => tests.add(t));
+    return humo.length;
+  };
+
   const compartido = relevantes.filter((f) => COMPARTIDO.test(f));
   if (compartido.length > 0) {
-    const humo = [
-      ...HUMO,
-      ...(compartido.some((f) => f.startsWith("migrations/")) ? HUMO_MIGRACION : []),
-    ];
-    const deHumo = humo.filter((t) => testsExistentes.includes(t));
-    deHumo.forEach((t) => tests.add(t));
+    const deHumo = agregarHumo(compartido.some((f) => f.startsWith("migrations/")));
     motivos.push(
-      `cambió algo compartido (${compartido[0]}): ${deHumo.length} tests de humo; la suite entera la corre el CI (o --completo)`
+      `cambió algo compartido (${compartido[0]}): ${deHumo} tests de humo; la suite entera la corre el CI (o --completo)`
     );
   }
 
+  // Módulos cuyos tests corren completos: lo que no se puede afinar con el mapa.
   const modulos = new Set<string>();
+  const conCambioMedido = relevantes.filter(
+    (f) => conMapa && /^src\/.+\.ts$/.test(f) && !f.endsWith(".d.ts")
+  );
+  const delMapa = new Set<string>();
+  const dudosos: string[] = [];
   for (const f of relevantes) {
     const m = moduloDeArchivo(f);
-    if (m) modulos.add(m);
+    if (!conMapa || !conCambioMedido.includes(f)) {
+      if (m) modulos.add(m);
+      continue;
+    }
+    const a = testsAfectados(conMapa.mapa, f, conMapa.hunks[f] ?? []);
+    if (a.tipo === "sin-cambios") continue;
+    if (a.tipo === "desconocido" || a.fuera || (a.transversal && m)) {
+      dudosos.push(f);
+      if (m) modulos.add(m);
+    }
+    if (a.tipo === "tests") {
+      a.tests.forEach((t) => delMapa.add(`tests/${t}.test.ts`));
+      if (a.transversal && !m && !COMPARTIDO.test(f)) agregarHumo(false);
+    }
+  }
+  if (conMapa && conCambioMedido.length > 0) {
+    const propios = [...delMapa].filter((t) => testsExistentes.includes(t));
+    propios.forEach((t) => tests.add(t));
+    motivos.push(
+      `mapa de tests: ${conCambioMedido.length} archivos de src/ → ${propios.length} tests que ejecutan lo que cambiaste`
+    );
+    if (dudosos.length > 0) {
+      motivos.push(
+        `sin afinar con el mapa (${dudosos[0]}${dudosos.length > 1 ? ` y ${dudosos.length - 1} más` : ""}): no figura en el mapa, cambió código que corre al arrancar, o lo usa la mitad de los tests`
+      );
+    }
+  }
+  if (conMapa) {
+    const nuevos = testsExistentes.filter((t) => {
+      const nombre = t.slice(6, -".test.ts".length);
+      return /\.test\.ts$/.test(t) && nombre !== TEST_BASE && !(nombre in conMapa.mapa.tests);
+    });
+    nuevos.forEach((t) => tests.add(t));
+    if (nuevos.length > 0)
+      motivos.push(`${nuevos.length} tests que no están en el mapa (posteriores a su generación)`);
   }
   for (const m of modulos) {
     const prefijo = `tests/${comoNombreDeTest(m)}`;
