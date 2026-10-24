@@ -16,9 +16,15 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { MiViajeParadas } from "./MiViajeParadas";
-import { marcasHechas, paradasDelViaje, type ParadaMia } from "./paradasViaje";
+import {
+  avanceDelViaje,
+  minutosDescansados,
+  paradasDelViaje,
+  type DescansoMio,
+  type ParadaMia,
+} from "./paradasViaje";
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
-import { fmt, ruta, unidadLabel, type FilaViaje } from "./viajesFormato";
+import { duracion as duracionMin, fmt, ruta, unidadLabel, type FilaViaje } from "./viajesFormato";
 import { useAuth } from "../../context/AuthContext";
 import { listarPendientes, suscribirseACola } from "../../offline/offlineQueue";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
@@ -32,6 +38,8 @@ interface MiFila extends FilaViaje {
   pendiente?: boolean;
   /** El recorrido completo, con la hora y el medidor de cada llegada y salida (0148). */
   paradas?: ParadaMia[] | null;
+  /** Sus descansos: el abierto frena el viaje hasta que lo termine. */
+  descansos?: DescansoMio[] | null;
   /** Sus cargas del viaje y lo que suele tardar la ruta (para estimar la llegada). */
   cargas_detalle?: CargaViaje[];
   duracion_ruta_min?: number | null;
@@ -71,7 +79,8 @@ async function viajesConMarcasEnCola(): Promise<Set<string>> {
   const ids = new Set<string>();
   try {
     for (const e of await listarPendientes()) {
-      const m = /\/viajes\/(\d+)\/(iniciar-mio|cerrar-mio|llegada-mia|salida-mia)/.exec(e.url);
+      const m =
+        /\/viajes\/(\d+)\/(iniciar-mio|cerrar-mio|llegada-mia|salida-mia|descanso-mio)/.exec(e.url);
       if (m) ids.add(m[1]);
     }
   } catch {
@@ -123,7 +132,8 @@ export default function MiViaje() {
         const masAdelantado =
           local?.pendiente &&
           enCola.has(f.id) &&
-          marcasHechas(paradasDelViaje(local)) > marcasHechas(paradasDelViaje(f));
+          avanceDelViaje(paradasDelViaje(local), local.descansos) >
+            avanceDelViaje(paradasDelViaje(f), f.descansos);
         return masAdelantado ? local : f;
       });
       setFilas(data);
@@ -176,7 +186,14 @@ export default function MiViaje() {
   const etiquetaMedidor = tipo === "horometro" ? "horómetro" : "odómetro";
   const unidadMedidor = tipo === "horometro" ? "h" : "km";
 
-  const minutosEnRuta = actual?.inicio_en ? (ahora - Date.parse(actual.inicio_en)) / 60_000 : 0;
+  // El tiempo en ruta no cuenta lo descansado.
+  const minutosEnRuta = actual?.inicio_en
+    ? Math.max(
+        0,
+        (ahora - Date.parse(actual.inicio_en)) / 60_000 -
+          minutosDescansados(actual.descansos, ahora)
+      )
+    : 0;
   const esperadoMin = actual?.duracion_ruta_min ?? null;
   const progresoActual = esperadoMin ? Math.min(100, (minutosEnRuta / esperadoMin) * 100) : 0;
   const demoraActual = esperadoMin && minutosEnRuta > esperadoMin ? minutosEnRuta - esperadoMin : 0;
@@ -312,7 +329,7 @@ export default function MiViaje() {
           <Tile
             icono={<Timer className="w-4 h-4" />}
             titulo="En ruta"
-            valor={duracion(actual.inicio_en, ahora)}
+            valor={duracionMin(minutosEnRuta)}
           />
           <Tile
             icono={<Fuel className="w-4 h-4" />}
@@ -449,9 +466,11 @@ export default function MiViaje() {
           {/* ── En curso: llegar y salir de cada parada ── */}
           {actual.estado === "en_curso" && (
             <MiViajeParadas
-              key={`${actual.id}-${marcasHechas(paradasDelViaje(actual))}`}
+              key={`${actual.id}-${avanceDelViaje(paradasDelViaje(actual), actual.descansos)}`}
               viajeId={actual.id}
               paradas={paradasDelViaje(actual)}
+              descansos={actual.descansos ?? []}
+              ahora={ahora}
               conMedidor={Boolean(tipo)}
               etiquetaMedidor={etiquetaMedidor}
               unidadMedidor={unidadMedidor}
