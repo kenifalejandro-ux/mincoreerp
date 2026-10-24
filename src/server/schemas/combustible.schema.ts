@@ -2442,3 +2442,32 @@ export const salidaViajeSchema = z
   })
   .refine((v) => conMotivoSiHoraManual(v, v.salida_en), MENSAJE_MOTIVO_HORA);
 export type SalidaViajeInput = z.infer<typeof salidaViajeSchema>;
+
+// ── Descansos ──────────────────────────────────────────────────────────────
+// El conductor marca el suyo (motivo opcional: Dormir, Comer, Avería o lo que escriba). La oficina
+// lo marca por él y entonces el motivo es obligatorio: queda quién lo hizo y por qué.
+const motivoDescanso = z.string().trim().max(80);
+
+export const descansoMioSchema = z.object({
+  motivo: motivoDescanso.nullable().optional(),
+  marcado_en: fechaHora.optional(),
+  cliente_uuid: z.string().uuid().optional(),
+});
+export type DescansoMioInput = z.infer<typeof descansoMioSchema>;
+
+export const terminarDescansoMioSchema = descansoMioSchema.pick({
+  marcado_en: true,
+  cliente_uuid: true,
+});
+export type TerminarDescansoMioInput = z.infer<typeof terminarDescansoMioSchema>;
+
+export const descansoViajeSchema = z.object({
+  motivo: motivoDescanso.min(3),
+  inicio_en: fechaHora.optional(),
+});
+export type DescansoViajeInput = z.infer<typeof descansoViajeSchema>;
+
+export const terminarDescansoViajeSchema = z
+  .object({ fin_en: fechaHora.optional(), motivo: motivo.optional() })
+  .refine((v) => conMotivoSiHoraManual(v, v.fin_en), MENSAJE_MOTIVO_HORA);
+export type TerminarDescansoViajeInput = z.infer<typeof terminarDescansoViajeSchema>;
