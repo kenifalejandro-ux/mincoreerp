@@ -4,6 +4,7 @@
 import { Droplets, Flag, Fuel, Gauge, MapPin, Play, Timer } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import { AccionesEncargado } from "./AccionesEncargado";
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
 import { TramosViaje, type TramoDelViaje } from "./TramosViaje";
 import { duracion, fmt, ruta, unidadLabel, type FilaViaje, type Producto } from "./viajesFormato";
@@ -42,9 +43,12 @@ function Comparacion({ valor, promedio }: { valor: number; promedio: number | nu
 export function DetalleViajeVentana({
   viajeId,
   onCerrar,
+  puedeEditar = false,
 }: {
   viajeId: string;
   onCerrar: () => void;
+  /** La oficina que puede editar viajes marca descansos y llegadas por el conductor. */
+  puedeEditar?: boolean;
 }) {
   const [datos, setDatos] = useState<Detalle | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -202,6 +206,13 @@ export function DetalleViajeVentana({
           </div>
 
           <TramosViaje tramos={datos.tramos ?? []} medidor={etiquetaMedidor} />
+
+          <AccionesEncargado
+            viaje={v}
+            etiquetaMedidor={etiquetaMedidor}
+            puedeEditar={puedeEditar}
+            onCambio={cargar}
+          />
 
           {(v.ruta_por_confirmar || v.estado === "anulado") && (
             <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-200">
