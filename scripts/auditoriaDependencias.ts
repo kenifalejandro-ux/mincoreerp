@@ -52,6 +52,12 @@ for (const id of vencidas) {
 }
 if (fallas.length > 0) {
   console.error(`Avisos altos o críticos sin excepción: ${fallas.join(", ")}`);
+  // En GitHub Actions queda como advertencia visible en el PR aunque el paso no frene.
+  if (process.env.GITHUB_ACTIONS) {
+    console.log(
+      `::warning title=Auditoría de dependencias::Avisos sin excepción: ${fallas.join(", ")}`
+    );
+  }
   process.exit(1);
 }
 console.log("Auditoría de dependencias: sin avisos altos ni críticos fuera de las excepciones.");

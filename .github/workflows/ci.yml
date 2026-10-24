@@ -131,9 +131,12 @@ jobs:
           # Ver el comentario del mismo paso en e2e-tests.
           REDISMS_DISABLE_POSTINSTALL: 1
 
-      # `npm audit --audit-level=high`, pero tolera los avisos con excepción vigente
-      # (scripts/auditoriaDependencias.ts): cada una lleva su motivo y su fecha.
-      - name: Auditoría de dependencias (falla con high/critical)
+      # AVISA, no frena: un aviso nuevo de una dependencia (que sale cualquier día) no tiene
+      # nada que ver con el cambio de un PR y lo dejaba rojo a todos. Queda como advertencia
+      # en el PR y lo vigila a diario auditoria-diaria.yml. Tolera los avisos con excepción
+      # vigente (scripts/auditoriaDependencias.ts): cada una lleva su motivo y su fecha.
+      - name: Auditoría de dependencias (avisa con high/critical, no frena)
+        continue-on-error: true
         run: npm run auditoria
 
       - name: Crear el rol de la app (no superuser, como en producción)
@@ -205,7 +208,9 @@ jobs:
         working-directory: client
         run: npm ci
 
-      - name: Auditoría de dependencias (falla con high/critical)
+      # AVISA, no frena (ver el mismo paso del job backend).
+      - name: Auditoría de dependencias (avisa con high/critical, no frena)
+        continue-on-error: true
         working-directory: client
         run: npm audit --audit-level=high
 
