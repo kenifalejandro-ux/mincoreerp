@@ -1,0 +1,39 @@
+name: Auditoría diaria de dependencias
+
+# Los pasos de auditoría del CI solo AVISAN (un aviso nuevo de una dependencia no tiene que dejar
+# rojo el PR de otra cosa). Este es el que no se calla: cada mañana mira main y FALLA si hay un
+# aviso alto o crítico sin arreglar ni excepción vigente, y GitHub avisa por correo.
+# Un aviso que cuesta arreglar se tolera en scripts/auditoriaDependencias.ts, con motivo y fecha.
+
+on:
+  schedule:
+    - cron: "0 12 * * *" # 07:00 en Lima (UTC-5)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  auditoria:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependencias del servidor
+        run: npm ci
+        env:
+          REDISMS_DISABLE_POSTINSTALL: 1
+
+      - name: Auditoría del servidor
+        run: npm run auditoria
+
+      # Aunque el servidor falle, también se mira el cliente: un solo correo con las dos cosas.
+      - name: Auditoría del cliente
+        if: always()
+        working-directory: client
+        run: npm ci && npm audit --audit-level=high
