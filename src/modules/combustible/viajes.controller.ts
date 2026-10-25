@@ -12,6 +12,7 @@ import type {
   CrearLugarInput,
   CrearViajeInput,
   EditarViajeInput,
+  HistorialMioQuery,
   IniciarMiViajeInput,
   IniciarViajeInput,
   ListarViajesQuery,
@@ -224,6 +225,17 @@ export const viajesController = {
     const dni = req.usuario!.dni ?? "";
     const data = await withTenant(tenantId, (c) => viajes.viajesDelConductor(c, tenantId, dni));
     res.json({ data, sinDni: !dni.trim() });
+  },
+
+  /** GET /viajes/mios/historial: sus viajes cerrados, por páginas. */
+  async historialMio(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const dni = req.usuario!.dni ?? "";
+    const { limite, antes } = req.validatedQuery as HistorialMioQuery;
+    const r = await withTenant(tenantId, (c) =>
+      viajes.historialDelConductor(c, tenantId, dni, limite, antes)
+    );
+    res.json({ ...r, sinDni: !dni.trim() });
   },
 
   /** GET /viajes/mi-unidad: la unidad del viaje del conductor, para precargar

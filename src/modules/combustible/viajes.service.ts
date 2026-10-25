@@ -1315,6 +1315,41 @@ export async function unidadDelViajeActivo(
   return r.rows[0] ?? null;
 }
 
+/** Los viajes cerrados del conductor, del más reciente al más viejo, con lo suyo: el recorrido, las
+ *  horas, lo descansado y lo que recorrió. Solo por su DNI: ve los suyos y nada de otros
+ *  conductores ni promedios. Se pide por páginas: `antes` es la llegada del último que ya tiene. */
+export async function historialDelConductor(
+  client: PoolClient,
+  tenantId: string,
+  dni: string,
+  limite: number,
+  antes?: string
+) {
+  const d = normalizarDni(dni);
+  if (!d) return { data: [], siguiente: null };
+  const r = await client.query(
+    `SELECT v.id, v.numero, v.inicio_en, v.fin_en, e.placa_codigo, e.tipo_medidor,
+            v.medidor_fin - v.medidor_inicio AS recorrido,
+            (SELECT json_agg(pl.nombre ORDER BY p.orden)
+               FROM combustible_viaje_paradas p
+               JOIN combustible_lugares pl ON pl.id = p.lugar_id AND pl.tenant_id = p.tenant_id
+              WHERE p.tenant_id = v.tenant_id AND p.viaje_id = v.id) AS paradas,
+            COALESCE((SELECT sum(extract(epoch FROM d.fin_en - d.inicio_en) / 60)
+                        FROM combustible_viaje_descansos d
+                       WHERE d.tenant_id = v.tenant_id AND d.viaje_id = v.id
+                         AND d.fin_en IS NOT NULL AND d.detiene), 0) AS descanso_min
+       FROM combustible_viajes v
+       JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+      WHERE v.tenant_id = $1 AND trim(v.conductor_dni) = $2 AND v.estado = 'cerrado'
+        AND ($3::timestamptz IS NULL OR v.fin_en < $3::timestamptz)
+      ORDER BY v.fin_en DESC
+      LIMIT $4`,
+    [tenantId, d, antes ?? null, limite]
+  );
+  const ultimo = r.rows[r.rows.length - 1];
+  return { data: r.rows, siguiente: r.rows.length === limite ? ultimo.fin_en : null };
+}
+
 /** Los perfiles de conductor con DNI, para elegirlos al programar: el viaje le
  *  aparece al conductor por su DNI, así que tipearlo a mano es el punto débil. */
 export async function listarConductores(client: PoolClient, tenantId: string) {
