@@ -1537,7 +1537,13 @@ export async function historialDelConductor(
   if (!d) return { data: [], siguiente: null };
   const r = await client.query(
     `SELECT v.id, v.numero, v.inicio_en, v.fin_en, e.placa_codigo, e.tipo_medidor,
-            v.medidor_fin - v.medidor_inicio AS recorrido,
+            (SELECT sum(t.medidor_fin - t.medidor_inicio) FROM combustible_viaje_turnos t
+              WHERE t.tenant_id = v.tenant_id AND t.viaje_id = v.id AND t.conductor_dni = $2
+                AND t.medidor_inicio IS NOT NULL AND t.medidor_fin IS NOT NULL) AS recorrido,
+            (SELECT sum(extract(epoch FROM t.fin_en - t.inicio_en) / 60)
+               FROM combustible_viaje_turnos t
+              WHERE t.tenant_id = v.tenant_id AND t.viaje_id = v.id AND t.conductor_dni = $2
+                AND t.fin_en IS NOT NULL) AS parte_min,
             (SELECT json_agg(pl.nombre ORDER BY p.orden)
                FROM combustible_viaje_paradas p
                JOIN combustible_lugares pl ON pl.id = p.lugar_id AND pl.tenant_id = p.tenant_id
@@ -1545,10 +1551,12 @@ export async function historialDelConductor(
             COALESCE((SELECT sum(extract(epoch FROM d.fin_en - d.inicio_en) / 60)
                         FROM combustible_viaje_descansos d
                        WHERE d.tenant_id = v.tenant_id AND d.viaje_id = v.id
-                         AND d.fin_en IS NOT NULL AND d.detiene), 0) AS descanso_min
+                         AND d.conductor_dni = $2 AND d.fin_en IS NOT NULL AND d.detiene), 0) AS descanso_min
        FROM combustible_viajes v
        JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
-      WHERE v.tenant_id = $1 AND trim(v.conductor_dni) = $2 AND v.estado = 'cerrado'
+      WHERE v.tenant_id = $1 AND v.estado = 'cerrado'
+        AND EXISTS (SELECT 1 FROM combustible_viaje_turnos t
+                     WHERE t.tenant_id = v.tenant_id AND t.viaje_id = v.id AND t.conductor_dni = $2)
         AND ($3::timestamptz IS NULL OR v.fin_en < $3::timestamptz)
       ORDER BY v.fin_en DESC
       LIMIT $4`,

@@ -1184,6 +1184,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     paradas: string[];
     recorrido: string | null;
     descanso_min: string | number;
+    parte_min?: string | number | null;
   };
   const historial = (agente: Agente, query: Record<string, string | number> = {}) =>
     agente.get("/api/erp/combustible/viajes/mios/historial").query(query);
@@ -1385,5 +1386,21 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect((await marcar(titular.agente, id, "llegada-mia", { medidor: 20 })).status).toBe(200);
     const fin = await marcar(relevo.agente, id, "descanso-mio/terminar", {});
     expect(fin.status, JSON.stringify(fin.body)).toBe(200);
+  });
+
+  it("el historial muestra solo su parte: el relevo que manejó lo ve, el titular que no manejó, no", async () => {
+    const { titular, relevo, id } = await conRelevo("relevo");
+    const m = (accion: Parameters<typeof marcar>[2], body: object) =>
+      marcar(relevo.agente, id, accion, body);
+    expect((await m("iniciar-mio", { medidor_inicio: 100 })).status).toBe(200);
+    expect((await m("llegada-mia", { medidor: 180 })).status).toBe(200); // cierra: 2 paradas
+
+    const delRelevo = ((await historial(relevo.agente)).body.data as FilaHistorial[]).find(
+      (f) => Number(f.id) === id
+    );
+    expect(Number(delRelevo?.recorrido)).toBe(80);
+    expect(Number(delRelevo?.parte_min ?? -1)).toBeGreaterThanOrEqual(0);
+    const delTitular = (await historial(titular.agente)).body.data as FilaHistorial[];
+    expect(delTitular.find((f) => Number(f.id) === id)).toBeUndefined();
   });
 });

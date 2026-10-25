@@ -15,6 +15,8 @@ interface FilaHistorial {
   recorrido: string | null;
   tipo_medidor: "horometro" | "odometro" | null;
   descanso_min: string | number;
+  /** Los minutos que manejó él (si compartió el volante, solo los suyos). */
+  parte_min?: string | number | null;
 }
 
 interface Pagina {
@@ -92,7 +94,10 @@ export function HistorialConductor({ usuarioId }: { usuarioId: string }) {
         </div>
       )}
       {filas.map((f) => {
-        const total = (Date.parse(f.fin_en) - Date.parse(f.inicio_en)) / 60_000;
+        const total =
+          f.parte_min != null
+            ? Number(f.parte_min)
+            : (Date.parse(f.fin_en) - Date.parse(f.inicio_en)) / 60_000;
         const descanso = Number(f.descanso_min);
         return (
           <article key={f.id} className="rounded-2xl bg-[#192526] border border-[#2a2e37] p-4">
