@@ -1195,7 +1195,13 @@ export default function ViajesPanel() {
         </div>
       )}
 
-      {verId && <DetalleViajeVentana viajeId={verId} onCerrar={() => setVerId(null)} />}
+      {verId && (
+        <DetalleViajeVentana
+          viajeId={verId}
+          onCerrar={() => setVerId(null)}
+          puedeEditar={permite("editar")}
+        />
+      )}
     </div>
   );
 }
