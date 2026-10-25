@@ -528,7 +528,10 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
       | "llegada-mia"
       | "salida-mia"
       | "descanso-mio"
-      | "descanso-mio/terminar",
+      | "descanso-mio/terminar"
+      | "mando/entregar"
+      | "mando/aceptar"
+      | "mando/retirar",
     body: object
   ) => a.post(`/api/erp/combustible/viajes/${id}/${accion}`).send(body);
 
@@ -1402,5 +1405,89 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(Number(delRelevo?.parte_min ?? -1)).toBeGreaterThanOrEqual(0);
     const delTitular = (await historial(titular.agente)).body.data as FilaHistorial[];
     expect(delTitular.find((f) => Number(f.id) === id)).toBeUndefined();
+  });
+
+  // ── Entrega del mando ────────────────────────────────────────────────────
+
+  const enCurso = async () => {
+    const c = await conRelevo(undefined, [huamachuco, bambamarca, huamachuco]);
+    const ini = await marcar(c.titular.agente, c.id, "iniciar-mio", { medidor_inicio: 100 });
+    expect(ini.status, JSON.stringify(ini.body)).toBe(200);
+    return c;
+  };
+  // El viaje como lo ve Mi viaje del conductor (la fila completa, con turnos y entrega).
+  const viajeDe = async (a: Agente, id: number) =>
+    (await a.get("/api/erp/combustible/viajes/mios")).body.data.find(
+      (x: { id: string }) => Number(x.id) === id
+    ) as {
+      volante_dni: string;
+      entrega_pendiente: { a_dni: string; medidor: string } | null;
+      turnos: { conductor_dni: string; medidor_inicio: string; medidor_fin: string | null }[];
+    };
+
+  it("entregar el mando: sigue al volante quien entregó hasta que el otro acepta", async () => {
+    const { titular, relevo, id } = await enCurso();
+    const e = await marcar(titular.agente, id, "mando/entregar", {
+      medidor: 150,
+      lugar: "Grifo X",
+    });
+    expect(e.status, JSON.stringify(e.body)).toBe(200);
+    expect(e.body.entrega_pendiente).toMatchObject({ a_dni: relevo.dni });
+    expect(e.body.volante_dni).toBe(titular.dni);
+    // El relevo todavía no maneja; el titular sí.
+    expect((await marcar(relevo.agente, id, "llegada-mia", { medidor: 160 })).status).toBe(409);
+
+    const a = await marcar(relevo.agente, id, "mando/aceptar", {});
+    expect(a.status, JSON.stringify(a.body)).toBe(200);
+    const v = await viajeDe(relevo.agente, id);
+    expect(v.volante_dni).toBe(relevo.dni);
+    expect(v.entrega_pendiente).toBeNull();
+    expect(v.turnos).toHaveLength(2);
+    expect(Number(v.turnos[0].medidor_fin)).toBe(150);
+    expect(Number(v.turnos[1].medidor_inicio)).toBe(150);
+    // Ahora el titular es quien espera.
+    expect((await marcar(titular.agente, id, "llegada-mia", { medidor: 160 })).status).toBe(409);
+    expect((await marcar(relevo.agente, id, "llegada-mia", { medidor: 160 })).status).toBe(200);
+  });
+
+  it("la entrega valida quién, cuándo y con qué medidor", async () => {
+    const { titular, relevo, id } = await enCurso();
+    const entregar = (a: Agente, body: object) => marcar(a, id, "mando/entregar", body);
+    expect((await entregar(relevo.agente, { medidor: 150 })).status).toBe(409); // no maneja
+    expect((await entregar(titular.agente, {})).status).toBe(400); // falta el medidor
+    expect((await entregar(titular.agente, { medidor: 50 })).status).toBe(400); // menor al del viaje
+    expect((await marcar(titular.agente, id, "mando/aceptar", {})).status).toBe(409); // sin entrega
+    expect((await entregar(titular.agente, { medidor: 150 })).status).toBe(200);
+    expect((await entregar(titular.agente, { medidor: 151 })).status).toBe(409); // ya hay una
+    expect((await marcar(titular.agente, id, "mando/aceptar", {})).status).toBe(409); // no es para él
+    expect((await marcar(relevo.agente, id, "mando/retirar", {})).status).toBe(409); // no la hizo él
+    const r = await marcar(titular.agente, id, "mando/retirar", {});
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.entrega_pendiente).toBeNull();
+    expect((await viajeDe(titular.agente, id)).volante_dni).toBe(titular.dni);
+  });
+
+  it("el mismo envío de la cola no entrega ni acepta dos veces; con descanso abierto no se recibe", async () => {
+    const { titular, relevo, id } = await enCurso();
+    const uuid = crypto.randomUUID();
+    expect(
+      (await marcar(titular.agente, id, "mando/entregar", { medidor: 150, cliente_uuid: uuid }))
+        .status
+    ).toBe(200);
+    expect(
+      (await marcar(titular.agente, id, "mando/entregar", { medidor: 150, cliente_uuid: uuid }))
+        .status
+    ).toBe(200);
+    expect((await marcar(relevo.agente, id, "descanso-mio", {})).status).toBe(200);
+    expect((await marcar(relevo.agente, id, "mando/aceptar", {})).status).toBe(409);
+    expect((await marcar(relevo.agente, id, "descanso-mio/terminar", {})).status).toBe(200);
+    const au = crypto.randomUUID();
+    expect((await marcar(relevo.agente, id, "mando/aceptar", { cliente_uuid: au })).status).toBe(
+      200
+    );
+    expect((await marcar(relevo.agente, id, "mando/aceptar", { cliente_uuid: au })).status).toBe(
+      200
+    );
+    expect((await viajeDe(relevo.agente, id)).turnos).toHaveLength(2);
   });
 });

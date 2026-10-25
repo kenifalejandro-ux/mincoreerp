@@ -620,6 +620,11 @@ export async function cerrarViaje(
     [tenantId, id, fin, origen, usuarioId]
   );
   await client.query(
+    `UPDATE combustible_viaje_entregas SET cancelada_en = $3
+      WHERE tenant_id = $1 AND viaje_id = $2 AND aceptada_en IS NULL AND cancelada_en IS NULL`,
+    [tenantId, id, fin]
+  );
+  await client.query(
     `UPDATE combustible_viaje_turnos SET fin_en = $3, medidor_fin = $4
       WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL AND inicio_en < $3::timestamptz`,
     [tenantId, id, fin, data.medidor_fin ?? null]
@@ -1060,6 +1065,213 @@ export async function terminarDescanso(
   return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
 }
 
+// ── Entrega del mando (0153) ───────────────────────────────────────────────
+
+export interface MarcaMando {
+  medidor?: number | null;
+  lugar?: string | null;
+  marcado_en?: string;
+  cliente_uuid?: string;
+}
+
+/** La última lectura conocida del viaje: el medidor de una entrega no puede ser menor. */
+async function ultimaLecturaDelViaje(client: PoolClient, tenantId: string, id: number) {
+  const r = await client.query(
+    `SELECT GREATEST(
+              v.medidor_inicio,
+              (SELECT max(GREATEST(p.llegada_medidor, p.salida_medidor))
+                 FROM combustible_viaje_paradas p WHERE p.tenant_id = v.tenant_id AND p.viaje_id = v.id),
+              (SELECT max(t.medidor_inicio) FROM combustible_viaje_turnos t
+                WHERE t.tenant_id = v.tenant_id AND t.viaje_id = v.id)) AS lectura
+       FROM combustible_viajes v WHERE v.tenant_id = $1 AND v.id = $2`,
+    [tenantId, id]
+  );
+  return r.rows[0]?.lectura == null ? null : Number(r.rows[0].lectura);
+}
+
+async function entregaPendiente(client: PoolClient, tenantId: string, id: number) {
+  const r = await client.query(
+    `SELECT * FROM combustible_viaje_entregas
+      WHERE tenant_id = $1 AND viaje_id = $2 AND aceptada_en IS NULL AND cancelada_en IS NULL`,
+    [tenantId, id]
+  );
+  return r.rows[0] as
+    | {
+        id: string;
+        de_dni: string;
+        a_dni: string;
+        a_nombre: string | null;
+        entrega_en: Date;
+        medidor: string | null;
+        lugar: string | null;
+      }
+    | undefined;
+}
+
+/** Quien maneja entrega el volante al otro conductor del viaje. Sigue al volante hasta que el otro
+ *  acepte; mientras tanto la entrega es un aviso pendiente. */
+export async function entregarMando(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  id: number,
+  data: MarcaMando,
+  dniConductor: string
+): Promise<ResultadoDescanso> {
+  const v = await viajeParaCambiar(client, tenantId, id);
+  await exigirAlVolante(client, tenantId, id, v, dniConductor);
+  const uuid = data.cliente_uuid ?? null;
+  if (uuid) {
+    const rep = await client.query(
+      `SELECT 1 FROM combustible_viaje_entregas
+        WHERE tenant_id = $1 AND viaje_id = $2 AND entrega_cliente_uuid = $3`,
+      [tenantId, id, uuid]
+    );
+    if (rep.rows[0]) {
+      return { antes: v, despues: await getViaje(client, tenantId, id), repetido: true };
+    }
+  }
+  if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
+  if (v.estado !== "en_curso") throw new AppError(409, "El viaje ya está cerrado");
+  if (!v.relevo_dni) throw new AppError(409, "Este viaje no tiene relevo");
+  await exigirSinDescansoAbierto(client, tenantId, id);
+  if (v.medidor_inicio != null && data.medidor == null) {
+    throw new AppError(400, "Falta el medidor de la entrega");
+  }
+  const lectura = await ultimaLecturaDelViaje(client, tenantId, id);
+  if (data.medidor != null && lectura != null && data.medidor < lectura) {
+    throw new AppError(
+      400,
+      `El medidor (${data.medidor}) es menor que el último del viaje (${lectura})`
+    );
+  }
+  const { hora, origen } = await horaDeLaMarca(client, undefined, data.marcado_en);
+  const turno = await client.query(
+    `SELECT inicio_en FROM combustible_viaje_turnos
+      WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL`,
+    [tenantId, id]
+  );
+  await validarMarcaDeParada(
+    client,
+    hora,
+    (turno.rows[0]?.inicio_en ?? v.inicio_en) as Date,
+    "La entrega tiene que ser posterior al inicio de tu turno"
+  );
+  const de = normalizarDni(dniConductor);
+  const titular = de === normalizarDni(v.conductor_dni);
+  try {
+    await client.query(
+      `INSERT INTO combustible_viaje_entregas (
+         tenant_id, viaje_id, de_dni, de_nombre, a_dni, a_nombre, entrega_en, entrega_origen_hora,
+         medidor, lugar, entrega_cliente_uuid)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        tenantId,
+        id,
+        de,
+        titular ? v.conductor_nombre : v.relevo_nombre,
+        titular ? normalizarDni(v.relevo_dni) : normalizarDni(v.conductor_dni),
+        titular ? v.relevo_nombre : v.conductor_nombre,
+        hora,
+        origen,
+        data.medidor ?? null,
+        data.lugar?.trim() || null,
+        uuid,
+      ]
+    );
+  } catch (err) {
+    if (!esViolacionUnicidad(err)) throw err;
+    const pendiente = (err as { constraint?: string }).constraint === "uq_viaje_entrega_pendiente";
+    throw new AppError(409, pendiente ? "Ya hay una entrega pendiente" : "Esa marca ya se usó");
+  }
+  return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
+}
+
+/** El otro conductor acepta: se cierra el turno de quien entregó y empieza el suyo, con el medidor
+ *  y el lugar de la entrega. La hora del cambio es la de la aceptación. */
+export async function aceptarMando(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  id: number,
+  data: MarcaMando,
+  dniConductor: string
+): Promise<ResultadoDescanso> {
+  const v = await viajeParaCambiar(client, tenantId, id);
+  exigirDelViaje(v, dniConductor);
+  const uuid = data.cliente_uuid ?? null;
+  if (uuid) {
+    const rep = await client.query(
+      `SELECT 1 FROM combustible_viaje_entregas
+        WHERE tenant_id = $1 AND viaje_id = $2 AND aceptada_cliente_uuid = $3`,
+      [tenantId, id, uuid]
+    );
+    if (rep.rows[0]) {
+      return { antes: v, despues: await getViaje(client, tenantId, id), repetido: true };
+    }
+  }
+  if (v.estado !== "en_curso") throw new AppError(409, "El viaje no está en curso");
+  const e = await entregaPendiente(client, tenantId, id);
+  if (!e) throw new AppError(409, "No hay una entrega pendiente");
+  const yo = normalizarDni(dniConductor);
+  if (e.a_dni !== yo) throw new AppError(409, "La entrega es para el otro conductor");
+  const descansando = await client.query(
+    `SELECT 1 FROM combustible_viaje_descansos
+      WHERE tenant_id = $1 AND viaje_id = $2 AND conductor_dni = $3 AND fin_en IS NULL LIMIT 1`,
+    [tenantId, id, yo]
+  );
+  if (descansando.rows[0]) {
+    throw new AppError(409, "Termina tu descanso antes de recibir el mando");
+  }
+  await exigirLibreParaManejar(client, tenantId, yo, id);
+  const { hora, origen } = await horaDeLaMarca(client, undefined, data.marcado_en);
+  await validarMarcaDeParada(
+    client,
+    hora,
+    e.entrega_en,
+    "Aceptar tiene que ser posterior a la entrega"
+  );
+  await client.query(
+    `UPDATE combustible_viaje_turnos SET fin_en = $3, medidor_fin = $4
+      WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL`,
+    [tenantId, id, hora, e.medidor]
+  );
+  await client.query(
+    `INSERT INTO combustible_viaje_turnos (
+       tenant_id, viaje_id, conductor_dni, conductor_nombre, inicio_en, medidor_inicio, lugar)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [tenantId, id, yo, e.a_nombre, hora, e.medidor, e.lugar]
+  );
+  await client.query(
+    `UPDATE combustible_viaje_entregas
+        SET aceptada_en = $2, aceptada_origen_hora = $3, aceptada_cliente_uuid = $4
+      WHERE id = $1`,
+    [e.id, hora, origen, uuid]
+  );
+  return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
+}
+
+/** Quien entregó retira la entrega pendiente: sigue al volante como estaba. */
+export async function retirarEntrega(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  id: number,
+  dniConductor: string
+): Promise<ResultadoDescanso> {
+  const v = await viajeParaCambiar(client, tenantId, id);
+  exigirDelViaje(v, dniConductor);
+  const e = await entregaPendiente(client, tenantId, id);
+  if (!e) throw new AppError(409, "No hay una entrega pendiente");
+  if (e.de_dni !== normalizarDni(dniConductor)) {
+    throw new AppError(409, "Solo quien entregó puede retirar la entrega");
+  }
+  await client.query(`UPDATE combustible_viaje_entregas SET cancelada_en = now() WHERE id = $1`, [
+    e.id,
+  ]);
+  return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
+}
+
 export async function editarViaje(
   client: PoolClient,
   tenantId: string,
@@ -1245,6 +1457,13 @@ const COLUMNAS_VIAJE = `
             'medidor_fin', t.medidor_fin, 'lugar', t.lugar) ORDER BY t.inicio_en)
      FROM combustible_viaje_turnos t
     WHERE t.tenant_id = v.tenant_id AND t.viaje_id = v.id) AS turnos,
+  (SELECT json_build_object(
+            'de_dni', e.de_dni, 'de_nombre', e.de_nombre, 'a_dni', e.a_dni,
+            'a_nombre', e.a_nombre, 'entrega_en', e.entrega_en, 'medidor', e.medidor,
+            'lugar', e.lugar, 'origen_hora', e.entrega_origen_hora)
+     FROM combustible_viaje_entregas e
+    WHERE e.tenant_id = v.tenant_id AND e.viaje_id = v.id
+      AND e.aceptada_en IS NULL AND e.cancelada_en IS NULL) AS entrega_pendiente,
   (SELECT json_agg(json_build_object(
             'orden', p.orden, 'lugar_id', p.lugar_id, 'lugar', pl.nombre,
             'llegada_en', p.llegada_en, 'llegada_medidor', p.llegada_medidor,
