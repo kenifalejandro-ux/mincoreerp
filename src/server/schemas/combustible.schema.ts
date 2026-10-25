@@ -2406,6 +2406,14 @@ export const cerrarMiViajeSchema = z.object({
 });
 export type CerrarMiViajeInput = z.infer<typeof cerrarMiViajeSchema>;
 
+// Historial del conductor: sus viajes cerrados, por páginas. `antes` es la llegada del último que ya
+// tiene (el 400 de una fecha rota en vez de un 500).
+export const historialMioQuerySchema = z.object({
+  limite: z.coerce.number().int().min(1).max(50).default(20),
+  antes: fechaHora.optional(),
+});
+export type HistorialMioQuery = z.infer<typeof historialMioQuerySchema>;
+
 // ── Llegada y salida de cada parada ────────────────────────────────────────
 // `orden` es la parada a la que el que marca CREE que llega (o de la que cree
 // que sale): si el viaje ya avanzó, la marca se rechaza en vez de caer en otra.

@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { HistorialConductor } from "./HistorialConductor";
 import { MiViajeParadas } from "./MiViajeParadas";
 import {
   avanceDelViaje,
@@ -107,6 +108,7 @@ export default function MiViaje() {
   const [sinDni, setSinDni] = useState(false);
   const [sinSenal, setSinSenal] = useState(false);
   const [cargando, setCargando] = useState(true);
+  const [pestana, setPestana] = useState<"viaje" | "historial">("viaje");
   const [paso, setPaso] = useState<Paso>("ver");
   const [medidor, setMedidor] = useState("");
   const [rutaMal, setRutaMal] = useState(false);
@@ -264,14 +266,46 @@ export default function MiViaje() {
     }
   };
 
+  const encabezado = (
+    <div>
+      <h2 className="text-2xl font-extrabold text-white">Mi viaje</h2>
+      <p className="text-sm text-[#94a3b8]">{usuario?.nombre}</p>
+    </div>
+  );
+  const pestanas = (
+    <div role="tablist" className="grid grid-cols-2 gap-1 rounded-xl bg-[#0D1719] p-1">
+      {(["viaje", "historial"] as const).map((p) => (
+        <button
+          key={p}
+          role="tab"
+          aria-selected={pestana === p}
+          onClick={() => setPestana(p)}
+          className={`rounded-lg py-2 text-sm font-semibold ${
+            pestana === p ? "bg-[#192526] text-white" : "text-[#94a3b8]"
+          }`}
+        >
+          {p === "viaje" ? "Mi viaje" : "Historial"}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (pestana === "historial") {
+    return (
+      <div className="max-w-xl mx-auto space-y-4">
+        {encabezado}
+        {pestanas}
+        <HistorialConductor usuarioId={usuarioId} />
+      </div>
+    );
+  }
+
   if (cargando) return <p className="text-[#94a3b8]">Cargando tu viaje...</p>;
 
   return (
     <div className="max-w-xl mx-auto space-y-4">
-      <div>
-        <h2 className="text-2xl font-extrabold text-white">Mi viaje</h2>
-        <p className="text-sm text-[#94a3b8]">{usuario?.nombre}</p>
-      </div>
+      {encabezado}
+      {pestanas}
 
       {sinSenal && (
         <div className="flex items-center gap-2 rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-200">

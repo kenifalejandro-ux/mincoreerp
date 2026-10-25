@@ -1176,4 +1176,88 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect((await descansosDe(p.id))[0]).toMatchObject({ fin_por: "oficina" });
     expect((await descansosDe(p.id))[0].fin_en).toBeTruthy();
   });
+  // ── Historial del conductor ──────────────────────────────────────────────
+
+  type FilaHistorial = {
+    id: string;
+    numero: number;
+    paradas: string[];
+    recorrido: string | null;
+    descanso_min: string | number;
+  };
+  const historial = (agente: Agente, query: Record<string, string | number> = {}) =>
+    agente.get("/api/erp/combustible/viajes/mios/historial").query(query);
+
+  it("el historial del conductor trae solo sus viajes cerrados, del más reciente al más viejo, por páginas", async () => {
+    const yo = await conductor();
+    const otro = await conductor();
+    const cerrado = async (dni: string, h: number, ini: number, fin: number) => {
+      const eq = await unidad(); // antes de armar la petición: dos en el mismo agente se pisan
+      const r = await admin.post("/api/erp/combustible/viajes").send({
+        equipo_id: eq,
+        origen_id: huamachuco,
+        destino_id: bambamarca,
+        conductor_dni: dni,
+        inicio_en: hora(h),
+        fin_en: hora(h + 4),
+        medidor_inicio: ini,
+        medidor_fin: fin,
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      return Number(r.body.id);
+    };
+    const v1 = await cerrado(yo.dni, 10, 100, 250);
+    const v2 = await cerrado(yo.dni, 20, 300, 340);
+    const v3 = await cerrado(yo.dni, 30, 400, 480);
+    await cerrado(otro.dni, 40, 10, 20);
+    // Programado y en curso no son historial.
+    const eqProgramado = await unidad();
+    await admin.post("/api/erp/combustible/viajes").send({
+      equipo_id: eqProgramado,
+      paradas: [huamachuco, bambamarca],
+      conductor_dni: yo.dni,
+    });
+
+    const todos = await historial(yo.agente);
+    expect(todos.status, JSON.stringify(todos.body)).toBe(200);
+    const filas = todos.body.data as FilaHistorial[];
+    expect(filas.map((f) => Number(f.id))).toEqual([v3, v2, v1]);
+    expect(Number(filas[0].recorrido)).toBe(80);
+    expect(filas[0].paradas).toHaveLength(2);
+    expect(todos.body.siguiente).toBeNull();
+
+    // Por páginas: la llegada del último que ya tiene es el cursor.
+    const p1 = await historial(yo.agente, { limite: 2 });
+    expect((p1.body.data as FilaHistorial[]).map((f) => Number(f.id))).toEqual([v3, v2]);
+    expect(p1.body.siguiente).toBeTruthy();
+    const p2 = await historial(yo.agente, { limite: 2, antes: p1.body.siguiente });
+    expect((p2.body.data as FilaHistorial[]).map((f) => Number(f.id))).toEqual([v1]);
+    expect(p2.body.siguiente).toBeNull();
+
+    // El otro conductor solo ve lo suyo.
+    expect(((await historial(otro.agente)).body.data as FilaHistorial[]).length).toBe(1);
+  });
+
+  it("el historial cuenta lo descansado, rechaza parámetros rotos y no es para otros perfiles", async () => {
+    const { yo, id } = await circuitoEnCurso();
+    const m = (accion: Parameters<typeof marcar>[2], body: object = {}) =>
+      marcar(yo.agente, id, accion, body);
+    expect((await m("descanso-mio", { motivo: "Dormir" })).status).toBe(200);
+    expect((await m("descanso-mio/terminar")).status).toBe(200);
+    expect((await m("llegada-mia", { medidor: 150 })).status).toBe(200);
+    expect((await m("salida-mia", { medidor: 150 })).status).toBe(200);
+    expect((await m("llegada-mia", { medidor: 250 })).status).toBe(200);
+
+    const fila = ((await historial(yo.agente)).body.data as FilaHistorial[])[0];
+    expect(Number(fila.id)).toBe(id);
+    expect(Number(fila.recorrido)).toBe(150);
+    expect(Number(fila.descanso_min)).toBeGreaterThan(0);
+    expect(fila.paradas).toHaveLength(3);
+
+    expect((await historial(yo.agente, { antes: "no-es-una-fecha" })).status).toBe(400);
+    expect((await historial(yo.agente, { limite: 0 })).status).toBe(400);
+    expect((await historial(yo.agente, { limite: 51 })).status).toBe(400);
+    expect((await historial(await conRol("grifero"))).status).toBe(403);
+    expect((await historial(await conRol("lectura"))).status).toBe(403);
+  });
 });

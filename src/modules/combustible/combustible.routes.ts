@@ -55,6 +55,7 @@ import {
   iniciarMiViajeSchema,
   cerrarMiViajeSchema,
   descansoMioSchema,
+  historialMioQuerySchema,
   descansoViajeSchema,
   terminarDescansoMioSchema,
   terminarDescansoViajeSchema,
@@ -484,6 +485,12 @@ router.get(
   "/viajes/mios",
   requirePestana("combustible", "mi_viaje"),
   asyncHandler(viajesController.mios)
+);
+router.get(
+  "/viajes/mios/historial",
+  requirePestana("combustible", "mi_viaje"),
+  validateQuery(historialMioQuerySchema),
+  asyncHandler(viajesController.historialMio)
 );
 // La unidad del viaje del conductor, para precargar "Compra en ruta". Alcanza con
 // poder registrar una compra: no exige la pestaña "Mi viaje".
