@@ -5,6 +5,7 @@
 import { Flag, MapPin, Moon, Play } from "lucide-react";
 import { useState } from "react";
 
+import { MandoViaje } from "./MandoViaje";
 import { ParadasViaje } from "./ParadasViaje";
 import {
   conDescansoLocal,
@@ -12,7 +13,9 @@ import {
   descansoAbierto,
   proximaMarca,
   type DescansoMio,
+  type EntregaPendiente,
   type ParadaMia,
+  type TurnoViaje,
 } from "./paradasViaje";
 import { duracion } from "./viajesFormato";
 import { apiFetch } from "../../services/apiClient";
@@ -31,6 +34,11 @@ export interface CambiosLocales {
   estado?: "cerrado";
   fin_en?: string;
   medidor_fin?: string | null;
+  /** El mando (0153): quién maneja, la entrega que espera y los turnos. */
+  volante_dni?: string | null;
+  entrega_pendiente?: EntregaPendiente | null;
+  entrega_retirada?: boolean;
+  turnos?: TurnoViaje[];
 }
 
 interface Props {
@@ -49,6 +57,13 @@ interface Props {
   /** Con relevo: quien no va al volante no marca llegadas ni salidas, solo descansa (0152). */
   alVolante?: boolean;
   manejaNombre?: string | null;
+  /** Con relevo (0153): para entregar y aceptar el mando. */
+  mando?: {
+    miDni: string;
+    otroNombre: string | null;
+    entrega: EntregaPendiente | null;
+    turnos: TurnoViaje[];
+  } | null;
 }
 
 export function MiViajeParadas({
@@ -64,6 +79,7 @@ export function MiViajeParadas({
   onRecargar,
   alVolante = true,
   manejaNombre = null,
+  mando = null,
 }: Props) {
   const siguiente = proximaMarca(paradas);
   const marca = alVolante ? siguiente : null;
@@ -172,7 +188,24 @@ export function MiViajeParadas({
     <div className="space-y-4">
       <ParadasViaje paradas={paradas} />
 
-      {!alVolante && (
+      {mando && !enDescanso && (
+        <MandoViaje
+          alVolante={alVolante}
+          otroNombre={mando.otroNombre}
+          miDni={mando.miDni}
+          entrega={mando.entrega}
+          turnos={mando.turnos}
+          conMedidor={conMedidor}
+          etiquetaMedidor={etiquetaMedidor}
+          unidadMedidor={unidadMedidor}
+          minimo={siguiente?.minimo ?? null}
+          guardando={guardando}
+          mandar={mandar}
+          onAviso={onAviso}
+        />
+      )}
+
+      {!alVolante && !mando?.entrega && (
         <p className="rounded-2xl border border-sky-400/40 bg-sky-500/10 p-4 font-semibold text-sky-200">
           Va manejando {manejaNombre ?? "tu compañero"}. Tú puedes descansar.
         </p>
