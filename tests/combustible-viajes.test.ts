@@ -60,7 +60,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
       tipo: "VOLQUETE",
       tipo_medidor: "odometro",
       conductor_nombre: "Juan Pérez",
-      conductor_dni: "40000001",
+      conductor_dni: String(40000000 + seq++), // uno por unidad: nadie maneja dos viajes a la vez
     });
     expect(r.status, JSON.stringify(r.body)).toBe(201);
     return Number(r.body.id);
@@ -1259,5 +1259,131 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect((await historial(yo.agente, { limite: 51 })).status).toBe(400);
     expect((await historial(await conRol("grifero"))).status).toBe(403);
     expect((await historial(await conRol("lectura"))).status).toBe(403);
+  });
+
+  // ── Relevo y turnos de conducción ────────────────────────────────────────
+
+  /** Un viaje programado con titular y relevo (los dos con cuenta de conductor). */
+  async function conRelevo(sale?: "titular" | "relevo", paradas = [huamachuco, bambamarca]) {
+    const titular = await conductor();
+    const relevo = await conductor();
+    const eq = await unidad();
+    const r = await admin.post("/api/erp/combustible/viajes").send({
+      equipo_id: eq,
+      paradas,
+      conductor_dni: titular.dni,
+      relevo_dni: relevo.dni,
+      ...(sale ? { sale } : {}),
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    return { titular, relevo, eq, id: Number(r.body.id), viaje: r.body };
+  }
+  const miosDe = async (agente: Agente) =>
+    (await agente.get("/api/erp/combustible/viajes/mios")).body.data as {
+      id: string;
+      mi_rol: string;
+      volante_dni: string;
+      estado: string;
+    }[];
+
+  it("se programa con relevo: tiene que ser otra persona, conductor activo con DNI de la empresa", async () => {
+    const { relevo, viaje } = await conRelevo("relevo");
+    expect(viaje).toMatchObject({ relevo_dni: relevo.dni, sale_primero: "relevo" });
+    const titular = await conductor();
+    const nuevo = (extra: Record<string, unknown>) =>
+      unidad().then((eq) =>
+        admin.post("/api/erp/combustible/viajes").send({
+          equipo_id: eq,
+          paradas: [huamachuco, bambamarca],
+          conductor_dni: titular.dni,
+          ...extra,
+        })
+      );
+    expect((await nuevo({ relevo_dni: titular.dni })).status).toBe(400); // él mismo
+    expect((await nuevo({ relevo_dni: "99999999" })).status).toBe(400); // no es usuario
+    const noConductor = await admin
+      .post("/api/erp/usuarios")
+      .send({ nombre: "Un operador", dni: "86999001", password, rol: "operador" });
+    expect(noConductor.status).toBe(201);
+    expect((await nuevo({ relevo_dni: "86999001" })).status).toBe(400); // otro rol
+    expect((await nuevo({ sale: "relevo" })).status).toBe(400); // sale el relevo, pero no hay
+    expect((await nuevo({ relevo_dni: relevo.dni })).status).toBe(201);
+  });
+
+  it("marca el que va al volante: el otro del viaje recibe 409 y un extraño, 404", async () => {
+    const { titular, relevo, id } = await conRelevo();
+    const intruso = await conductor();
+    const marca = (a: Agente, accion: Parameters<typeof marcar>[2], body: object) =>
+      marcar(a, id, accion, body);
+    expect((await marca(relevo.agente, "iniciar-mio", { medidor_inicio: 10 })).status).toBe(409);
+    expect((await marca(intruso.agente, "iniciar-mio", { medidor_inicio: 10 })).status).toBe(404);
+    expect((await marca(titular.agente, "iniciar-mio", { medidor_inicio: 10 })).status).toBe(200);
+    expect((await marca(relevo.agente, "llegada-mia", { medidor: 20 })).status).toBe(409);
+    expect((await marca(titular.agente, "llegada-mia", { medidor: 20 })).status).toBe(200);
+  });
+
+  it("Mi viaje le muestra el viaje al relevo (en consulta) y la unidad sigue a quien maneja", async () => {
+    const { titular, relevo, id, viaje } = await conRelevo();
+    const delRelevo = (await miosDe(relevo.agente)).find((x) => Number(x.id) === id);
+    expect(delRelevo).toMatchObject({ mi_rol: "relevo", volante_dni: titular.dni });
+    expect((await miosDe(titular.agente)).find((x) => Number(x.id) === id)?.mi_rol).toBe("titular");
+    const unidadDe = async (a: Agente) =>
+      (await a.get("/api/erp/combustible/viajes/mi-unidad")).body.data;
+    expect((await unidadDe(titular.agente))?.viaje_id).toBe(id);
+    expect(await unidadDe(relevo.agente)).toBeNull(); // todavía no maneja
+    // Si sale el relevo, la unidad es de él y no del titular.
+    const otro = await conRelevo("relevo");
+    expect((await unidadDe(otro.relevo.agente))?.viaje_id).toBe(otro.id);
+    expect(await unidadDe(otro.titular.agente)).toBeNull();
+    expect(viaje.sale_primero).toBe("titular");
+  });
+
+  it("al iniciar nace el primer turno, y nadie va al volante de dos viajes a la vez", async () => {
+    const { relevo, id } = await conRelevo("relevo");
+    expect((await marcar(relevo.agente, id, "iniciar-mio", { medidor_inicio: 10 })).status).toBe(
+      200
+    );
+    const turnos = (await admin.get(url(id))).body.viaje.turnos as {
+      conductor_dni: string;
+      fin_en: string | null;
+    }[];
+    expect(turnos).toHaveLength(1);
+    expect(turnos[0]).toMatchObject({ conductor_dni: relevo.dni, fin_en: null });
+
+    // El mismo conductor, con otro viaje: no puede salir mientras maneja el primero.
+    const eq2 = await unidad();
+    const otro = (
+      await admin.post("/api/erp/combustible/viajes").send({
+        equipo_id: eq2,
+        paradas: [huamachuco, bambamarca],
+        conductor_dni: relevo.dni,
+      })
+    ).body;
+    const choque = await marcar(relevo.agente, otro.id, "iniciar-mio", { medidor_inicio: 5 });
+    expect(choque.status, JSON.stringify(choque.body)).toBe(409);
+    // Al cerrar el primero, queda libre.
+    expect((await marcar(relevo.agente, id, "cerrar-mio", { medidor_fin: 50 })).status).toBe(200);
+    expect(
+      (await marcar(relevo.agente, otro.id, "iniciar-mio", { medidor_inicio: 5 })).status
+    ).toBe(200);
+  });
+
+  it("el descanso del que no maneja no frena el viaje; el del que maneja, sí", async () => {
+    // Con una parada intermedia: llegar a la última cerraría el viaje y con él todos los descansos.
+    const { titular, relevo, id } = await conRelevo(undefined, [
+      huamachuco,
+      bambamarca,
+      huamachuco,
+    ]);
+    expect((await marcar(titular.agente, id, "iniciar-mio", { medidor_inicio: 10 })).status).toBe(
+      200
+    );
+    const d = await marcar(relevo.agente, id, "descanso-mio", { motivo: "Dormir" });
+    expect(d.status, JSON.stringify(d.body)).toBe(200);
+    expect((d.body.descansos as { detiene: boolean }[])[0].detiene).toBe(false);
+    // Mientras el relevo duerme, el titular sigue su viaje.
+    expect((await marcar(titular.agente, id, "llegada-mia", { medidor: 20 })).status).toBe(200);
+    const fin = await marcar(relevo.agente, id, "descanso-mio/terminar", {});
+    expect(fin.status, JSON.stringify(fin.body)).toBe(200);
   });
 });
