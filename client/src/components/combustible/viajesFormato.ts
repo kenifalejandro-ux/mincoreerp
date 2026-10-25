@@ -13,6 +13,10 @@ export interface FilaViaje {
   tipo_medidor: "horometro" | "odometro" | null;
   conductor_nombre: string | null;
   conductor_dni: string | null;
+  /** El relevo del viaje y quién va al volante (0152). */
+  relevo_dni?: string | null;
+  relevo_nombre?: string | null;
+  volante_dni?: string | null;
   origen_id: string;
   origen: string;
   destino_id: string;

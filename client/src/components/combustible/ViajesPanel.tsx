@@ -14,6 +14,7 @@ import {
 } from "./recorrido";
 import { RecorridoViaje } from "./RecorridoViaje";
 import { SelectorConductor, type OpcionConductor } from "./SelectorConductor";
+import { SelectorRelevo } from "./SelectorRelevo";
 import { fechaHora, fmt, ruta, unidadLabel, type FilaViaje } from "./viajesFormato";
 import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
@@ -55,6 +56,8 @@ const FORM_VACIO = {
   equipo_id: "",
   conductor_nombre: "",
   conductor_dni: "",
+  relevo_dni: "",
+  sale: "titular" as "titular" | "relevo",
   origen_id: "",
   destino_id: "",
   inicio_en: "",
@@ -229,6 +232,7 @@ export default function ViajesPanel() {
       const v = m.v;
       setRutaDudosa(v.ruta_por_confirmar);
       setForm({
+        ...FORM_VACIO,
         equipo_id: String(v.equipo_id),
         conductor_nombre: v.conductor_nombre ?? "",
         conductor_dni: v.conductor_dni ?? "",
@@ -285,6 +289,8 @@ export default function ViajesPanel() {
       equipo_id: String(o.equipoId),
       conductor_nombre: e?.conductor_nombre ?? "",
       conductor_dni: e?.conductor_dni ?? "",
+      relevo_dni: "",
+      sale: "titular",
     }));
     setRecorrido((r) => ({
       ...r,
@@ -332,6 +338,7 @@ export default function ViajesPanel() {
         equipo_id: Number(form.equipo_id),
         conductor_nombre: form.conductor_nombre.trim() || null,
         conductor_dni: form.conductor_dni.trim() || null,
+        ...(form.relevo_dni ? { relevo_dni: form.relevo_dni, sale: form.sale } : {}),
         paradas: paradasDelRecorrido(recorrido).map(Number),
         observaciones: form.observaciones.trim() || null,
         ...(retroVale
@@ -603,7 +610,21 @@ export default function ViajesPanel() {
                     )}
                   </td>
                   <td className="p-3">{unidadLabel(v)}</td>
-                  <td className="p-3">{v.conductor_nombre ?? "—"}</td>
+                  <td className="p-3">
+                    {v.conductor_nombre ?? "—"}
+                    {v.relevo_nombre && (
+                      <span className="block text-xs text-[#94a3b8]">
+                        Relevo: {v.relevo_nombre}
+                        {v.estado === "en_curso" && (
+                          <>
+                            {" "}
+                            · maneja{" "}
+                            {v.volante_dni === v.relevo_dni ? v.relevo_nombre : v.conductor_nombre}
+                          </>
+                        )}
+                      </span>
+                    )}
+                  </td>
                   <td className="p-3 whitespace-nowrap">
                     {fechaHora(v.inicio_en)}
                     <MarcaHora origen={v.inicio_origen_hora} />
@@ -785,6 +806,16 @@ export default function ViajesPanel() {
                       </p>
                     )}
                   </div>
+                )}
+
+                {modal.tipo === "nuevo" && equipoDelForm && (
+                  <SelectorRelevo
+                    conductores={conductores}
+                    titularDni={form.conductor_dni}
+                    relevoDni={form.relevo_dni}
+                    sale={form.sale}
+                    onCambiar={(relevo_dni, sale) => setForm((f) => ({ ...f, relevo_dni, sale }))}
+                  />
                 )}
 
                 {modal.tipo === "editar" && (

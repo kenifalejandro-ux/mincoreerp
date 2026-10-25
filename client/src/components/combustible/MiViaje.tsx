@@ -44,6 +44,8 @@ interface MiFila extends FilaViaje {
   /** Sus cargas del viaje y lo que suele tardar la ruta (para estimar la llegada). */
   cargas_detalle?: CargaViaje[];
   duracion_ruta_min?: number | null;
+  /** Si soy el titular o el relevo del viaje (0152). */
+  mi_rol?: "titular" | "relevo";
 }
 
 type Paso = "ver" | "revisar" | "iniciar";
@@ -184,6 +186,15 @@ export default function MiViaje() {
   const programado = filas.find((f) => f.estado === "programado");
   const ultimo = filas.find((f) => f.estado === "cerrado");
   const actual = enCurso ?? programado;
+  // Con relevo, solo el que va al volante marca el viaje; el otro ve quién maneja y puede descansar.
+  const miDni = (actual?.mi_rol === "relevo" ? actual.relevo_dni : actual?.conductor_dni)?.trim();
+  const sinMando = Boolean(
+    actual?.relevo_dni && actual.volante_dni && miDni && actual.volante_dni.trim() !== miDni
+  );
+  const manejaNombre =
+    actual?.volante_dni?.trim() === actual?.relevo_dni?.trim()
+      ? actual?.relevo_nombre
+      : actual?.conductor_nombre;
   const tipo = actual?.tipo_medidor ?? actual?.previo?.tipo_medidor ?? null;
   const etiquetaMedidor = tipo === "horometro" ? "horómetro" : "odómetro";
   const unidadMedidor = tipo === "horometro" ? "h" : "km";
@@ -388,7 +399,12 @@ export default function MiViaje() {
           )}
 
           {/* ── Programado: revisar, confirmar e iniciar ── */}
-          {actual.estado === "programado" && paso === "ver" && (
+          {sinMando && actual.estado === "programado" && (
+            <p className="rounded-xl bg-[#0D1719] p-4 text-sm text-sky-200">
+              Sale manejando {manejaNombre}. Tú entras de relevo.
+            </p>
+          )}
+          {!sinMando && actual.estado === "programado" && paso === "ver" && (
             <button className={BTN_LIMA} onClick={() => setPaso("revisar")}>
               Revisar mi viaje
             </button>
@@ -511,6 +527,8 @@ export default function MiViaje() {
               onLocal={(cambios) => aplicarLocal(actual.id, cambios)}
               onAviso={setAviso}
               onRecargar={cargar}
+              alVolante={!sinMando}
+              manejaNombre={manejaNombre}
             />
           )}
         </div>
