@@ -46,6 +46,9 @@ interface Props {
   onLocal: (cambios: CambiosLocales) => void;
   onAviso: (texto: string | null) => void;
   onRecargar: () => Promise<void>;
+  /** Con relevo: quien no va al volante no marca llegadas ni salidas, solo descansa (0152). */
+  alVolante?: boolean;
+  manejaNombre?: string | null;
 }
 
 export function MiViajeParadas({
@@ -59,8 +62,11 @@ export function MiViajeParadas({
   onLocal,
   onAviso,
   onRecargar,
+  alVolante = true,
+  manejaNombre = null,
 }: Props) {
-  const marca = proximaMarca(paradas);
+  const siguiente = proximaMarca(paradas);
+  const marca = alVolante ? siguiente : null;
   const enDescanso = descansoAbierto(descansos);
   const [abierto, setAbierto] = useState(false);
   // Salir de una parada suele ser la misma lectura con la que se llegó.
@@ -166,6 +172,12 @@ export function MiViajeParadas({
     <div className="space-y-4">
       <ParadasViaje paradas={paradas} />
 
+      {!alVolante && (
+        <p className="rounded-2xl border border-sky-400/40 bg-sky-500/10 p-4 font-semibold text-sky-200">
+          Va manejando {manejaNombre ?? "tu compañero"}. Tú puedes descansar.
+        </p>
+      )}
+
       {enDescanso && (
         <div className="rounded-2xl border border-violet-400/40 bg-violet-500/10 p-4 space-y-3">
           <p className="flex items-center gap-2 font-bold text-violet-200">
@@ -229,13 +241,13 @@ export function MiViajeParadas({
         </div>
       )}
 
-      {!enDescanso && marca && !eligiendoMotivo && (
+      {!enDescanso && siguiente && !eligiendoMotivo && (
         <button className={BTN_SECUNDARIO} onClick={() => setEligiendoMotivo(true)}>
           <Moon className="w-5 h-5" aria-hidden /> Descansar
         </button>
       )}
 
-      {!enDescanso && marca && eligiendoMotivo && (
+      {!enDescanso && siguiente && eligiendoMotivo && (
         <div className="rounded-2xl bg-[#0D1719] border border-[#334155] p-4 space-y-3">
           <p className="text-sm text-[#cbd5e1]">¿Por qué descansas? (opcional)</p>
           <div className="flex flex-wrap gap-2">

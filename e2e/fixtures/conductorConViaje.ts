@@ -19,10 +19,15 @@ export interface ViajeDeConductor {
   password: string;
   marca: string;
   viajeId: string;
+  /** Con relevo (0152): sus credenciales; el titular sale manejando. */
+  relevo?: { dni: string; password: string; nombre: string };
 }
 
 /** Entra como admin y deja programado un viaje A → B → A para un conductor nuevo. */
-export async function prepararViajeDeConductor(page: Page): Promise<ViajeDeConductor> {
+export async function prepararViajeDeConductor(
+  page: Page,
+  opciones: { conRelevo?: boolean } = {}
+): Promise<ViajeDeConductor> {
   const marca = randomBytes(3).toString("hex").toUpperCase();
   const admin = adminA();
   await loginPorUI(page, admin.email, admin.password);
@@ -57,22 +62,47 @@ export async function prepararViajeDeConductor(page: Page): Promise<ViajeDeCondu
     },
   });
   expect(equipo.status()).toBe(201);
+  let relevo: ViajeDeConductor["relevo"];
+  if (opciones.conRelevo) {
+    relevo = {
+      dni: `97${randomBytes(3).readUIntBE(0, 3).toString().padStart(6, "0").slice(0, 6)}`,
+      password: `Relevo-${marca}-9x`,
+      nombre: `Relevo ${marca}`,
+    };
+    const altaRelevo = await page.request.post("/api/erp/usuarios", {
+      data: {
+        nombre: relevo.nombre,
+        dni: relevo.dni,
+        password: relevo.password,
+        rol: "conductor_ruta",
+      },
+    });
+    expect(altaRelevo.status()).toBe(201);
+  }
   const programado = await page.request.post("/api/erp/combustible/viajes", {
-    data: { equipo_id: (await equipo.json()).id, paradas: [idA, idB, idA] },
+    data: {
+      equipo_id: (await equipo.json()).id,
+      paradas: [idA, idB, idA],
+      ...(relevo ? { relevo_dni: relevo.dni, sale: "titular" } : {}),
+    },
   });
   expect(programado.status()).toBe(201);
-  return { a, b, dni, password, marca, viajeId: (await programado.json()).id as string };
+  return { a, b, dni, password, marca, viajeId: (await programado.json()).id as string, relevo };
 }
 
 /** Entra el conductor (poniendo su propia clave, que la temporal obliga) y abre Mi viaje. */
-export async function entrarAMiViaje(page: Page, v: ViajeDeConductor): Promise<void> {
+export async function entrarAMiViaje(
+  page: Page,
+  v: ViajeDeConductor,
+  como: { dni: string; password: string } = v
+): Promise<void> {
   const login = await page.request.post("/api/auth/login", {
-    data: { identificador: v.dni, password: v.password },
+    data: { identificador: como.dni, password: como.password },
   });
   expect(login.status()).toBe(200);
   await page.goto("/");
   const nueva = `Nueva-${v.marca}-7y`;
-  await page.getByLabel("Contraseña temporal").fill(v.password);
+  await page.getByLabel("Contraseña temporal").fill(como.password);
   await page.getByLabel("Nueva contraseña", { exact: true }).fill(nueva);
   await page.getByLabel("Confirmar nueva contraseña").fill(nueva);
   await page.getByRole("button", { name: "Guardar y continuar" }).click();
@@ -95,12 +125,14 @@ export async function darDeBajaAlConductor(page: Page, v: ViajeDeConductor): Pro
   await page.request.post("/api/auth/logout");
   await loginPorUI(page, admin.email, admin.password);
   const lista = await page.request.get("/api/erp/usuarios");
-  const usuario = ((await lista.json()).data as { id: string; dni: string }[]).find(
-    (u) => u.dni === v.dni
-  );
-  expect(usuario).toBeTruthy();
-  const baja = await page.request.patch(`/api/erp/usuarios/${usuario!.id}/estado`, {
-    data: { estado: "inactivo", motivo: "Usuario de prueba automatizada" },
-  });
-  expect(baja.ok()).toBeTruthy();
+  const usuarios = (await lista.json()).data as { id: string; dni: string }[];
+  for (const dni of [v.dni, v.relevo?.dni]) {
+    if (!dni) continue;
+    const usuario = usuarios.find((u) => u.dni === dni);
+    expect(usuario).toBeTruthy();
+    const baja = await page.request.patch(`/api/erp/usuarios/${usuario!.id}/estado`, {
+      data: { estado: "inactivo", motivo: "Usuario de prueba automatizada" },
+    });
+    expect(baja.ok()).toBeTruthy();
+  }
 }
