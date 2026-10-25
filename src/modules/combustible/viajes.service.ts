@@ -110,6 +110,25 @@ async function sincronizarExtremos(client: PoolClient, tenantId: string, viajeId
         AND p.tenant_id = $1 AND p.viaje_id = $2 AND p.orden <= 1`,
     [tenantId, viajeId]
   );
+  // El primer turno sigue a la salida del viaje y el último, a su llegada.
+  await client.query(
+    `UPDATE combustible_viaje_turnos t SET inicio_en = v.inicio_en, medidor_inicio = v.medidor_inicio
+       FROM combustible_viajes v
+      WHERE v.tenant_id = t.tenant_id AND v.id = t.viaje_id AND t.tenant_id = $1 AND t.viaje_id = $2
+        AND v.inicio_en IS NOT NULL
+        AND t.id = (SELECT id FROM combustible_viaje_turnos WHERE tenant_id = $1 AND viaje_id = $2
+                     ORDER BY inicio_en LIMIT 1)`,
+    [tenantId, viajeId]
+  );
+  await client.query(
+    `UPDATE combustible_viaje_turnos t SET fin_en = v.fin_en, medidor_fin = v.medidor_fin
+       FROM combustible_viajes v
+      WHERE v.tenant_id = t.tenant_id AND v.id = t.viaje_id AND t.tenant_id = $1 AND t.viaje_id = $2
+        AND v.estado = 'cerrado' AND v.fin_en IS NOT NULL
+        AND t.id = (SELECT id FROM combustible_viaje_turnos WHERE tenant_id = $1 AND viaje_id = $2
+                     ORDER BY inicio_en DESC LIMIT 1)`,
+    [tenantId, viajeId]
+  );
   await client.query(
     `UPDATE combustible_viaje_paradas p
         SET llegada_en = v.fin_en, llegada_medidor = v.medidor_fin
@@ -148,6 +167,61 @@ async function validarSinTraslape(
 function validarMedidores(inicio: number | null | undefined, fin: number | null | undefined) {
   if (inicio != null && fin != null && fin < inicio) {
     throw new AppError(400, "El medidor de llegada no puede ser menor que el de salida");
+  }
+}
+
+interface TurnoNuevo {
+  dni: string;
+  nombre: string | null;
+  inicio: string;
+  medidor: number | null;
+  lugarId: number | string;
+  fin?: string | null;
+  medidorFin?: number | null;
+}
+
+/** Abre un turno de conducción (con su fin si el viaje ya cerró). */
+async function abrirTurno(client: PoolClient, tenantId: string, viajeId: number, t: TurnoNuevo) {
+  await client.query(
+    `INSERT INTO combustible_viaje_turnos (
+       tenant_id, viaje_id, conductor_dni, conductor_nombre, inicio_en, medidor_inicio, fin_en,
+       medidor_fin, lugar)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,
+             (SELECT nombre FROM combustible_lugares WHERE tenant_id = $1 AND id = $9))`,
+    [
+      tenantId,
+      viajeId,
+      t.dni,
+      t.nombre,
+      t.inicio,
+      t.medidor,
+      t.fin ?? null,
+      t.medidorFin ?? null,
+      t.lugarId,
+    ]
+  );
+}
+
+/** Nadie va al volante de dos viajes en curso a la vez. El candado es por persona: dos viajes de
+ *  unidades distintas no comparten el de la unidad. */
+async function exigirLibreParaManejar(
+  client: PoolClient,
+  tenantId: string,
+  dni: string,
+  excluirViajeId: number
+) {
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+    `viaje-conductor:${tenantId}:${dni}`,
+  ]);
+  const r = await client.query(
+    `SELECT v.numero FROM combustible_viaje_turnos t
+       JOIN combustible_viajes v ON v.id = t.viaje_id AND v.tenant_id = t.tenant_id
+      WHERE t.tenant_id = $1 AND t.fin_en IS NULL AND t.conductor_dni = $2
+        AND v.estado = 'en_curso' AND v.id <> $3 LIMIT 1`,
+    [tenantId, dni, excluirViajeId]
+  );
+  if (r.rows[0]) {
+    throw new AppError(409, `Ya va al volante del viaje V-${r.rows[0].numero}: termínalo antes`);
   }
 }
 
@@ -207,12 +281,29 @@ export async function crearViaje(
   }
   const estado = !data.inicio_en ? "programado" : data.fin_en ? "cerrado" : "en_curso";
 
+  // El relevo se elige al programar: otra persona, conductor activo con DNI de esta empresa.
+  const dniRelevo = normalizarDni(data.relevo_dni);
+  const sale = data.sale ?? "titular";
+  let nombreRelevo: string | null = null;
+  if (dniRelevo) {
+    if (dniRelevo === normalizarDni(conductorDni)) {
+      throw new AppError(400, "El relevo tiene que ser otra persona que el titular");
+    }
+    const u = await client.query(
+      `SELECT nombre FROM usuarios
+        WHERE tenant_id = $1 AND rol = 'conductor_ruta' AND activo AND dni = $2`,
+      [tenantId, dniRelevo]
+    );
+    if (!u.rows[0]) throw new AppError(400, "El relevo tiene que ser un conductor activo con DNI");
+    nombreRelevo = u.rows[0].nombre;
+  }
+
   const r = await client.query(
     `INSERT INTO combustible_viajes (
        tenant_id, numero, equipo_id, conductor_nombre, conductor_dni, origen_id, destino_id,
        inicio_en, fin_en, medidor_inicio, medidor_fin, estado, observaciones,
-       creado_por, cerrado_por)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       creado_por, cerrado_por, relevo_dni, relevo_nombre, sale_primero)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
      RETURNING id`,
     [
       tenantId,
@@ -230,6 +321,9 @@ export async function crearViaje(
       data.observaciones || null,
       usuarioId,
       estado === "cerrado" ? usuarioId : null,
+      dniRelevo || null,
+      nombreRelevo,
+      sale,
     ]
   );
   await client.query(
@@ -238,6 +332,18 @@ export async function crearViaje(
        FROM unnest($3::bigint[]) WITH ORDINALITY AS t(lugar, o)`,
     [tenantId, r.rows[0].id, paradas]
   );
+  if (data.inicio_en) {
+    // Registro retroactivo: el viaje ya salió, con quien salió manejando.
+    await abrirTurno(client, tenantId, r.rows[0].id, {
+      dni: sale === "relevo" ? dniRelevo : normalizarDni(conductorDni),
+      nombre: sale === "relevo" ? nombreRelevo : (conductorNombre ?? null),
+      inicio: data.inicio_en,
+      medidor: data.medidor_inicio ?? null,
+      lugarId: paradas[0],
+      fin: data.fin_en ?? null,
+      medidorFin: data.medidor_fin ?? null,
+    });
+  }
   await sincronizarExtremos(client, tenantId, r.rows[0].id);
   return getViaje(client, tenantId, r.rows[0].id);
 }
@@ -300,10 +406,52 @@ async function horaDeLaMarca(
 
 const normalizarDni = (dni: unknown) => String(dni ?? "").trim();
 
-/** El conductor solo marca SUS viajes. 404 y no 403: no confirma que exista. */
-function exigirConductor(v: { conductor_dni: string | null }, dni: string | undefined) {
+interface ViajeConRelevo {
+  estado: string;
+  conductor_dni: string | null;
+  relevo_dni: string | null;
+  sale_primero: string;
+}
+
+/** El DNI de quien sale manejando al iniciar el viaje: el titular o su relevo. */
+const quienSale = (v: ViajeConRelevo) =>
+  normalizarDni(v.sale_primero === "relevo" ? v.relevo_dni : v.conductor_dni);
+
+/** Quién va al volante: el turno abierto; antes de salir, quien sale manejando; y en un viaje que
+ *  ya cerró, el último que lo manejó (o el titular si no tiene turnos). */
+async function dniAlVolante(client: PoolClient, tenantId: string, id: number, v: ViajeConRelevo) {
+  if (v.estado === "programado") return quienSale(v);
+  const t = await client.query(
+    `SELECT conductor_dni FROM combustible_viaje_turnos
+      WHERE tenant_id = $1 AND viaje_id = $2 ORDER BY inicio_en DESC LIMIT 1`,
+    [tenantId, id]
+  );
+  return t.rows[0] ? normalizarDni(t.rows[0].conductor_dni) : normalizarDni(v.conductor_dni);
+}
+
+/** Marca el que va al volante. El titular o el relevo que NO maneja recibe un 409 (el viaje es
+ *  suyo, pero el mando lo tiene el otro); cualquier otro, 404: no confirma que el viaje exista. */
+async function exigirAlVolante(
+  client: PoolClient,
+  tenantId: string,
+  id: number,
+  v: ViajeConRelevo,
+  dni: string | undefined
+) {
   if (dni === undefined) return;
-  if (!normalizarDni(dni) || normalizarDni(v.conductor_dni) !== normalizarDni(dni)) {
+  const d = normalizarDni(dni);
+  if (d && d === (await dniAlVolante(client, tenantId, id, v))) return;
+  if (d && (d === normalizarDni(v.conductor_dni) || d === normalizarDni(v.relevo_dni))) {
+    throw new AppError(409, "El viaje lo maneja el otro conductor en este momento");
+  }
+  throw new AppError(404, "El viaje no existe");
+}
+
+/** Descansar lo hace cualquiera de los dos del viaje, maneje o no. */
+function exigirDelViaje(v: ViajeConRelevo, dni: string | undefined) {
+  if (dni === undefined) return;
+  const d = normalizarDni(dni);
+  if (!d || (d !== normalizarDni(v.conductor_dni) && d !== normalizarDni(v.relevo_dni))) {
     throw new AppError(404, "El viaje no existe");
   }
 }
@@ -376,7 +524,7 @@ export async function iniciarViaje(
   dniConductor?: string
 ) {
   const v = await viajeParaCambiar(client, tenantId, id);
-  exigirConductor(v, dniConductor);
+  await exigirAlVolante(client, tenantId, id, v, dniConductor);
   // Reintento de la cola: la marca ya entró, se devuelve como quedó.
   if (data.cliente_uuid && v.inicio_cliente_uuid === data.cliente_uuid) {
     return { antes: v, despues: await getViaje(client, tenantId, id), repetido: true };
@@ -397,6 +545,8 @@ export async function iniciarViaje(
     );
   }
   await validarSinTraslape(client, tenantId, v.equipo_id, inicio, null, id);
+  const sale = quienSale(v);
+  await exigirLibreParaManejar(client, tenantId, sale, id);
   await client.query(
     `UPDATE combustible_viajes
         SET inicio_en = $2, medidor_previo = $3, medidor_inicio = $4, estado = 'en_curso',
@@ -415,6 +565,13 @@ export async function iniciarViaje(
       data.cliente_uuid ?? null,
     ]
   );
+  await abrirTurno(client, tenantId, id, {
+    dni: sale,
+    nombre: v.sale_primero === "relevo" ? v.relevo_nombre : v.conductor_nombre,
+    inicio,
+    medidor: data.medidor_inicio ?? null,
+    lugarId: v.origen_id,
+  });
   await sincronizarExtremos(client, tenantId, id);
   return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
 }
@@ -428,7 +585,7 @@ export async function cerrarViaje(
   dniConductor?: string
 ) {
   const v = await viajeParaCambiar(client, tenantId, id);
-  exigirConductor(v, dniConductor);
+  await exigirAlVolante(client, tenantId, id, v, dniConductor);
   if (data.cliente_uuid && v.fin_cliente_uuid === data.cliente_uuid) {
     const despues = await getViaje(client, tenantId, id);
     return { antes: v, despues, fin: despues.fin_en, repetido: true };
@@ -461,6 +618,11 @@ export async function cerrarViaje(
         SET fin_en = $3, fin_por = 'oficina', fin_origen_hora = $4, cerrado_por = $5
       WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL AND inicio_en < $3::timestamptz`,
     [tenantId, id, fin, origen, usuarioId]
+  );
+  await client.query(
+    `UPDATE combustible_viaje_turnos SET fin_en = $3, medidor_fin = $4
+      WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL AND inicio_en < $3::timestamptz`,
+    [tenantId, id, fin, data.medidor_fin ?? null]
   );
   await client.query(
     `UPDATE combustible_viajes
@@ -599,7 +761,7 @@ export async function llegarAParada(
   dniConductor?: string
 ): Promise<ResultadoMarca> {
   const v = await viajeParaCambiar(client, tenantId, id);
-  exigirConductor(v, dniConductor);
+  await exigirAlVolante(client, tenantId, id, v, dniConductor);
   const paradas = await leerParadas(client, tenantId, id);
   const uuid = data.cliente_uuid ?? null;
   if (
@@ -684,7 +846,7 @@ export async function salirDeParada(
   dniConductor?: string
 ): Promise<ResultadoMarca> {
   const v = await viajeParaCambiar(client, tenantId, id);
-  exigirConductor(v, dniConductor);
+  await exigirAlVolante(client, tenantId, id, v, dniConductor);
   const paradas = await leerParadas(client, tenantId, id);
   const uuid = data.cliente_uuid ?? null;
   if (uuid && paradas.some((p) => p.salida_cliente_uuid === uuid)) {
@@ -750,7 +912,7 @@ export interface ResultadoDescanso {
 async function exigirSinDescansoAbierto(client: PoolClient, tenantId: string, viajeId: number) {
   const r = await client.query(
     `SELECT 1 FROM combustible_viaje_descansos
-      WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL LIMIT 1`,
+      WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL AND detiene LIMIT 1`,
     [tenantId, viajeId]
   );
   if (r.rows[0]) throw new AppError(409, "Termina el descanso para continuar el viaje");
@@ -777,7 +939,7 @@ export async function iniciarDescanso(
   dniConductor?: string
 ): Promise<ResultadoDescanso> {
   const v = await viajeParaCambiar(client, tenantId, id);
-  exigirConductor(v, dniConductor);
+  exigirDelViaje(v, dniConductor);
   const uuid = data.cliente_uuid ?? null;
   if (uuid) {
     const rep = await client.query(
@@ -798,10 +960,14 @@ export async function iniciarDescanso(
     v.inicio_en as Date,
     "El descanso tiene que ser posterior a la salida del viaje"
   );
+  // Descansa quien lo marca (o, si la oficina lo marca, quien va al volante); solo frena la
+  // unidad si es quien maneja.
+  const alVolante = await dniAlVolante(client, tenantId, id, v);
+  const persona = dniConductor === undefined ? alVolante : normalizarDni(dniConductor);
   const previo = await client.query(
     `SELECT max(fin_en) AS fin FROM combustible_viaje_descansos
-      WHERE tenant_id = $1 AND viaje_id = $2`,
-    [tenantId, id]
+      WHERE tenant_id = $1 AND viaje_id = $2 AND conductor_dni = $3`,
+    [tenantId, id, persona]
   );
   if (previo.rows[0].fin && Date.parse(hora) < new Date(previo.rows[0].fin).getTime()) {
     throw new AppError(400, "El descanso empieza antes de que terminara el anterior");
@@ -811,13 +977,13 @@ export async function iniciarDescanso(
     await client.query(
       `INSERT INTO combustible_viaje_descansos (
          tenant_id, viaje_id, conductor_dni, conductor_nombre, inicio_en, motivo, donde,
-         inicio_por, inicio_origen_hora, inicio_cliente_uuid, creado_por)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+         inicio_por, inicio_origen_hora, inicio_cliente_uuid, creado_por, detiene)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
         tenantId,
         id,
-        normalizarDni(v.conductor_dni),
-        v.conductor_nombre,
+        persona,
+        persona === normalizarDni(v.relevo_dni) ? v.relevo_nombre : v.conductor_nombre,
         hora,
         data.motivo?.trim() || null,
         dondeEstaElViaje(viaje?.paradas),
@@ -825,6 +991,7 @@ export async function iniciarDescanso(
         origen,
         uuid,
         usuarioId,
+        persona === alVolante,
       ]
     );
   } catch (err) {
@@ -845,7 +1012,7 @@ export async function terminarDescanso(
   dniConductor?: string
 ): Promise<ResultadoDescanso> {
   const v = await viajeParaCambiar(client, tenantId, id);
-  exigirConductor(v, dniConductor);
+  exigirDelViaje(v, dniConductor);
   const uuid = data.cliente_uuid ?? null;
   if (uuid) {
     const rep = await client.query(
@@ -859,8 +1026,9 @@ export async function terminarDescanso(
   }
   const abierto = await client.query(
     `SELECT id, inicio_en FROM combustible_viaje_descansos
-      WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL`,
-    [tenantId, id]
+      WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL
+        AND ($3::text IS NULL OR conductor_dni = $3) AND ($3::text IS NOT NULL OR detiene)`,
+    [tenantId, id, dniConductor === undefined ? null : normalizarDni(dniConductor)]
   );
   if (!abierto.rows[0]) throw new AppError(409, "No hay un descanso abierto");
   const { hora, origen } = await horaDeLaMarca(client, data.hora, data.marcado_en);
@@ -978,6 +1146,12 @@ export async function editarViaje(
     destino !== Number(v.destino_id) ||
     equipo !== Number(v.equipo_id);
   const rutaPorConfirmar = def(data.ruta_por_confirmar, cambioRuta ? false : v.ruta_por_confirmar);
+  // Si cambia el titular, sus turnos pasan a él; y no puede ser a la vez el relevo.
+  const titularAntes = normalizarDni(v.conductor_dni);
+  const titularNuevo = normalizarDni(def(data.conductor_dni, v.conductor_dni));
+  if (titularNuevo && titularNuevo === normalizarDni(v.relevo_dni)) {
+    throw new AppError(400, "El titular no puede ser también el relevo");
+  }
 
   await client.query(
     `UPDATE combustible_viajes
@@ -1002,6 +1176,19 @@ export async function editarViaje(
       rutaPorConfirmar,
     ]
   );
+  if (titularNuevo !== titularAntes) {
+    await client.query(
+      `UPDATE combustible_viaje_turnos SET conductor_dni = $3, conductor_nombre = $4
+        WHERE tenant_id = $1 AND viaje_id = $2 AND conductor_dni = $5`,
+      [
+        tenantId,
+        id,
+        titularNuevo,
+        def(data.conductor_nombre, v.conductor_nombre) || null,
+        titularAntes,
+      ]
+    );
+  }
   await sincronizarExtremos(client, tenantId, id);
   return { antes: v, despues: await getViaje(client, tenantId, id) };
 }
@@ -1032,6 +1219,15 @@ const recorridoClave = (v: string) =>
       FROM combustible_viaje_paradas rp
      WHERE rp.tenant_id = ${v}.tenant_id AND rp.viaje_id = ${v}.id)`;
 
+/** El DNI de quien va al volante (a nivel SQL; `v` es la fila del viaje): antes de salir, quien sale
+ *  manejando; después, el último turno (o el titular si no tiene). */
+const volanteDni = (v: string) =>
+  `CASE WHEN ${v}.estado = 'programado'
+        THEN btrim(CASE WHEN ${v}.sale_primero = 'relevo' THEN ${v}.relevo_dni ELSE ${v}.conductor_dni END)
+        ELSE COALESCE((SELECT t.conductor_dni FROM combustible_viaje_turnos t
+                        WHERE t.tenant_id = ${v}.tenant_id AND t.viaje_id = ${v}.id
+                        ORDER BY t.inicio_en DESC LIMIT 1), btrim(${v}.conductor_dni)) END`;
+
 const COLUMNAS_VIAJE = `
   v.id, v.numero, v.equipo_id, e.placa_codigo, e.codigo_interno, e.tipo AS equipo_tipo,
   e.tipo_medidor, v.conductor_nombre, v.conductor_dni,
@@ -1041,7 +1237,14 @@ const COLUMNAS_VIAJE = `
   v.medidor_inicio - v.medidor_previo AS recorrido_sin_viaje,
   v.ruta_por_confirmar, v.nota_ruta, v.inicio_origen_hora, v.fin_origen_hora,
   v.estado, v.observaciones, v.motivo_anulacion,
+  v.relevo_dni, v.relevo_nombre, v.sale_primero, ${volanteDni("v")} AS volante_dni,
   v.ventana_desde, v.ventana_hasta,
+  (SELECT json_agg(json_build_object(
+            'conductor_dni', t.conductor_dni, 'conductor_nombre', t.conductor_nombre,
+            'inicio_en', t.inicio_en, 'fin_en', t.fin_en, 'medidor_inicio', t.medidor_inicio,
+            'medidor_fin', t.medidor_fin, 'lugar', t.lugar) ORDER BY t.inicio_en)
+     FROM combustible_viaje_turnos t
+    WHERE t.tenant_id = v.tenant_id AND t.viaje_id = v.id) AS turnos,
   (SELECT json_agg(json_build_object(
             'orden', p.orden, 'lugar_id', p.lugar_id, 'lugar', pl.nombre,
             'llegada_en', p.llegada_en, 'llegada_medidor', p.llegada_medidor,
@@ -1240,12 +1443,14 @@ export async function viajesDelConductor(client: PoolClient, tenantId: string, d
   const margen = await margenPrevioHoras(client, tenantId);
   const r = await client.query(
     `WITH v AS (${VENTANAS_SQL}
-       WHERE v.tenant_id = $1 AND trim(v.conductor_dni) = $3
+       WHERE v.tenant_id = $1 AND $3 IN (btrim(v.conductor_dni), btrim(v.relevo_dni))
          AND (v.estado IN ('programado', 'en_curso') OR v.id = (
            SELECT u.id FROM combustible_viajes u
-            WHERE u.tenant_id = $1 AND trim(u.conductor_dni) = $3 AND u.estado = 'cerrado'
+            WHERE u.tenant_id = $1 AND $3 IN (btrim(u.conductor_dni), btrim(u.relevo_dni))
+              AND u.estado = 'cerrado'
             ORDER BY u.fin_en DESC LIMIT 1)))
      SELECT ${COLUMNAS_VIAJE},
+            CASE WHEN btrim(v.conductor_dni) = $3 THEN 'titular' ELSE 'relevo' END AS mi_rol,
             COALESCE(cg.cargas, 0) AS cargas,
             COALESCE(cg.combustible_l, 0) / ${LITROS_POR_GALON} AS combustible_gal,
             COALESCE(cg.urea_l, 0) AS urea_l
@@ -1260,7 +1465,10 @@ export async function viajesDelConductor(client: PoolClient, tenantId: string, d
           WHERE d.tenant_id = v.tenant_id AND d.equipo_id = v.equipo_id AND d.anulada_en IS NULL
             AND d.despachado_en > v.ventana_desde AND d.despachado_en <= v.ventana_hasta
        ) cg ON true
-      ORDER BY CASE v.estado WHEN 'en_curso' THEN 0 WHEN 'programado' THEN 1 ELSE 2 END,
+      ORDER BY CASE WHEN v.estado = 'en_curso' AND ${volanteDni("v")} = $3 THEN 0
+                    WHEN v.estado = 'en_curso' THEN 1
+                    WHEN v.estado = 'programado' AND ${volanteDni("v")} = $3 THEN 2
+                    WHEN v.estado = 'programado' THEN 3 ELSE 4 END,
                v.creado_en`,
     [tenantId, margen, d]
   );
@@ -1306,7 +1514,7 @@ export async function unidadDelViajeActivo(
     `SELECT v.id::int AS viaje_id, v.estado, v.equipo_id, e.placa_codigo
        FROM combustible_viajes v
        JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
-      WHERE v.tenant_id = $1 AND trim(v.conductor_dni) = $2
+      WHERE v.tenant_id = $1 AND ${volanteDni("v")} = $2
         AND v.estado IN ('programado', 'en_curso')
       ORDER BY CASE v.estado WHEN 'en_curso' THEN 0 ELSE 1 END, v.creado_en
       LIMIT 1`,
@@ -1329,7 +1537,13 @@ export async function historialDelConductor(
   if (!d) return { data: [], siguiente: null };
   const r = await client.query(
     `SELECT v.id, v.numero, v.inicio_en, v.fin_en, e.placa_codigo, e.tipo_medidor,
-            v.medidor_fin - v.medidor_inicio AS recorrido,
+            (SELECT sum(t.medidor_fin - t.medidor_inicio) FROM combustible_viaje_turnos t
+              WHERE t.tenant_id = v.tenant_id AND t.viaje_id = v.id AND t.conductor_dni = $2
+                AND t.medidor_inicio IS NOT NULL AND t.medidor_fin IS NOT NULL) AS recorrido,
+            (SELECT sum(extract(epoch FROM t.fin_en - t.inicio_en) / 60)
+               FROM combustible_viaje_turnos t
+              WHERE t.tenant_id = v.tenant_id AND t.viaje_id = v.id AND t.conductor_dni = $2
+                AND t.fin_en IS NOT NULL) AS parte_min,
             (SELECT json_agg(pl.nombre ORDER BY p.orden)
                FROM combustible_viaje_paradas p
                JOIN combustible_lugares pl ON pl.id = p.lugar_id AND pl.tenant_id = p.tenant_id
@@ -1337,10 +1551,12 @@ export async function historialDelConductor(
             COALESCE((SELECT sum(extract(epoch FROM d.fin_en - d.inicio_en) / 60)
                         FROM combustible_viaje_descansos d
                        WHERE d.tenant_id = v.tenant_id AND d.viaje_id = v.id
-                         AND d.fin_en IS NOT NULL AND d.detiene), 0) AS descanso_min
+                         AND d.conductor_dni = $2 AND d.fin_en IS NOT NULL AND d.detiene), 0) AS descanso_min
        FROM combustible_viajes v
        JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
-      WHERE v.tenant_id = $1 AND trim(v.conductor_dni) = $2 AND v.estado = 'cerrado'
+      WHERE v.tenant_id = $1 AND v.estado = 'cerrado'
+        AND EXISTS (SELECT 1 FROM combustible_viaje_turnos t
+                     WHERE t.tenant_id = v.tenant_id AND t.viaje_id = v.id AND t.conductor_dni = $2)
         AND ($3::timestamptz IS NULL OR v.fin_en < $3::timestamptz)
       ORDER BY v.fin_en DESC
       LIMIT $4`,

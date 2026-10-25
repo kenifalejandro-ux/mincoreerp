@@ -345,6 +345,12 @@ export const MODULOS: ModuloDefinicion[] = [
         pk: "serial",
         fks: { viaje_id: "combustible_viajes", lugar_id: "combustible_lugares" },
       },
+      // Turnos de conducción de cada viaje (0152): cascadean desde el viaje.
+      {
+        nombre: "combustible_viaje_turnos",
+        pk: "serial",
+        fks: { viaje_id: "combustible_viajes" },
+      },
       // Descansos de cada viaje (0151): cascadean desde el viaje.
       {
         nombre: "combustible_viaje_descansos",

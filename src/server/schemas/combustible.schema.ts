@@ -2270,6 +2270,9 @@ export const crearViajeSchema = z
     equipo_id: z.number().int().positive(),
     conductor_nombre: z.string().trim().max(150).nullable().optional(),
     conductor_dni: z.string().trim().max(15).nullable().optional(),
+    // El relevo se elige al programar (no es fijo por unidad) y `sale` dice quién sale manejando.
+    relevo_dni: z.string().trim().min(1).max(15).nullable().optional(),
+    sale: z.enum(["titular", "relevo"]).optional(),
     origen_id: z.number().int().positive().optional(),
     destino_id: z.number().int().positive().optional(),
     // El recorrido completo: A → B → A o A → B → C → A. Sin esto el viaje es
@@ -2286,6 +2289,10 @@ export const crearViajeSchema = z
     medidor_inicio: medidor,
     medidor_fin: medidor,
     observaciones: z.string().trim().max(1000).nullable().optional(),
+  })
+  .refine((v) => v.sale !== "relevo" || Boolean(v.relevo_dni), {
+    message: "Para que salga el relevo hay que elegir al relevo",
+    path: ["sale"],
   })
   .refine((v) => v.paradas || (v.origen_id !== undefined && v.destino_id !== undefined), {
     message: "Falta el origen y el destino, o las paradas del recorrido",
