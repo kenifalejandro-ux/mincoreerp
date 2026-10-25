@@ -1,4 +1,6 @@
 // Formato compartido de la vista por viaje (0123): panel Viajes e Histórico.
+import type { DescansoMio, ParadaMia } from "./paradasViaje";
+
 export type Producto = "combustible" | "urea";
 
 export interface FilaViaje {
@@ -27,7 +29,9 @@ export interface FilaViaje {
   fin_origen_hora: "servidor" | "manual" | "dispositivo" | null;
   nota_ruta: string | null;
   /** El recorrido completo, en orden (0148). */
-  paradas?: { orden: number; lugar_id: number; lugar: string }[] | null;
+  paradas?: ParadaMia[] | null;
+  /** Sus descansos (0151). */
+  descansos?: DescansoMio[] | null;
   estado: "programado" | "en_curso" | "cerrado" | "anulado";
   observaciones: string | null;
   motivo_anulacion: string | null;

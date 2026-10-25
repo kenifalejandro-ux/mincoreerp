@@ -88,6 +88,10 @@ export interface DescansoMio {
   fin_en: string | null;
   motivo: string | null;
   donde?: string;
+  /** Quién lo marcó: el conductor desde su celular o la oficina por él. */
+  inicio_por?: string;
+  fin_por?: string | null;
+  conductor_nombre?: string | null;
 }
 
 /** El descanso que sigue abierto: mientras dure, el viaje no avanza. */
