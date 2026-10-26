@@ -60,4 +60,19 @@ test("el titular entrega el mando sin señal y el relevo lo acepta", async ({ pa
   expect(await pendiente()).toBe(false);
 
   await darDeBajaAlConductor(page, v);
+
+  // ── La oficina ve quién manejó cada tramo ──────────────────────────────
+  await page.goto("/");
+  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+  await page.getByRole("button", { name: "Viajes" }).click();
+  await page
+    .getByRole("row")
+    .filter({ hasText: `${v.a} → ${v.b} → ${v.a}` })
+    .first()
+    .click();
+  const manejo = page.getByText("Quién manejó").locator("..");
+  await expect(manejo).toBeVisible();
+  await expect(manejo).toContainText(`Conductor ${v.marca}`);
+  await expect(manejo).toContainText(v.relevo!.nombre);
+  await expect(manejo).toContainText("50"); // el titular manejó de 100 a 150
 });
