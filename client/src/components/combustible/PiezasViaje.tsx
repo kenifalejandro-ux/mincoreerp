@@ -43,9 +43,12 @@ export function BarraRuta({
   ahora,
   nota,
   retorno = false,
+  paradas,
 }: {
   /** Va de vuelta al punto de salida: el camión se ve de regreso. */
   retorno?: boolean;
+  /** Con más de dos paradas la barra las muestra todas, a la misma distancia. */
+  paradas?: string[];
   origen: string;
   destino: string;
   tipoUnidad: string | null;
@@ -61,13 +64,33 @@ export function BarraRuta({
 }) {
   return (
     <div className="mt-6">
-      <div className="flex justify-between text-sm font-semibold text-white">
-        <span>{origen}</span>
-        <span className="flex items-center gap-1">
-          <MapPin className="w-4 h-4 text-[#BADC1E]" /> {destino}
-        </span>
-      </div>
+      {paradas && paradas.length > 2 ? (
+        <div className="flex justify-between gap-2 text-sm font-semibold text-white">
+          {paradas.map((p, i) => (
+            <span key={i}>{p}</span>
+          ))}
+        </div>
+      ) : (
+        <div className="flex justify-between text-sm font-semibold text-white">
+          <span>{origen}</span>
+          <span className="flex items-center gap-1">
+            <MapPin className="w-4 h-4 text-[#BADC1E]" /> {destino}
+          </span>
+        </div>
+      )}
       <div className="relative h-2 mt-3 rounded-full bg-[#334155]">
+        {paradas &&
+          paradas.length > 2 &&
+          paradas
+            .slice(1, -1)
+            .map((p, i) => (
+              <span
+                key={i}
+                className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-[#0D1719] border border-[#64748b]"
+                style={{ left: `${((i + 1) / (paradas.length - 1)) * 100}%` }}
+                title={p}
+              />
+            ))}
         <div
           className={`absolute inset-y-0 left-0 rounded-full ${demora ? "bg-amber-400" : "bg-[#BADC1E]"}`}
           style={{ width: `${progreso}%` }}

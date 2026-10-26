@@ -1733,12 +1733,95 @@ export async function getViaje(client: PoolClient, tenantId: string, id: number)
   return r.rows[0] ?? null;
 }
 
+const VIAJES_DE_HISTORIAL = 10;
+const MINIMO_DE_VIAJES = 3;
+
+/** Cuánto suele tardar el tramo de un lugar a otro en marcha, sin descansos: la mediana de los
+ *  últimos 10 viajes cerrados que lo hicieron (con unidades del mismo tipo si se pide). La mediana
+ *  y no el promedio, para que una avería no mueva la estimación. */
+async function medianaDelTramo(
+  client: PoolClient,
+  tenantId: string,
+  de: number,
+  a: number,
+  tipo: string | null,
+  excluirId: number
+) {
+  const r = await client.query(
+    `WITH t AS (
+       SELECT v.id, v.fin_en, extract(epoch FROM q.llegada_en - p.salida_en) / 60 - COALESCE((
+                SELECT sum(extract(epoch FROM
+                         LEAST(COALESCE(d.fin_en, q.llegada_en), q.llegada_en)
+                         - GREATEST(d.inicio_en, p.salida_en))) / 60
+                  FROM combustible_viaje_descansos d
+                 WHERE d.tenant_id = v.tenant_id AND d.viaje_id = v.id AND d.detiene
+                   AND d.inicio_en < q.llegada_en
+                   AND COALESCE(d.fin_en, q.llegada_en) > p.salida_en), 0) AS marcha
+         FROM combustible_viajes v
+         JOIN combustible_viaje_paradas p ON p.tenant_id = v.tenant_id AND p.viaje_id = v.id
+         JOIN combustible_viaje_paradas q
+           ON q.tenant_id = v.tenant_id AND q.viaje_id = v.id AND q.orden = p.orden + 1
+         JOIN equipos e ON e.tenant_id = v.tenant_id AND e.id = v.equipo_id
+        WHERE v.tenant_id = $1 AND v.estado = 'cerrado' AND NOT v.ruta_por_confirmar AND v.id <> $5
+          AND p.lugar_id = $2 AND q.lugar_id = $3
+          AND p.salida_en IS NOT NULL AND q.llegada_en > p.salida_en
+          AND ($4::text IS NULL OR lower(btrim(e.tipo)) = lower(btrim($4)))),
+     -- Un viaje cuenta una vez, aunque pase dos veces por el mismo tramo (A → B → A → B).
+     h AS (
+       SELECT id, avg(marcha) AS marcha FROM t GROUP BY id, fin_en
+        ORDER BY fin_en DESC LIMIT ${VIAJES_DE_HISTORIAL})
+     SELECT count(*)::int AS viajes, percentile_cont(0.5) WITHIN GROUP (ORDER BY marcha) AS mediana
+       FROM h WHERE marcha > 0`,
+    [tenantId, de, a, tipo, excluirId]
+  );
+  return { viajes: Number(r.rows[0]?.viajes ?? 0), mediana: Number(r.rows[0]?.mediana ?? 0) };
+}
+
+export interface EsperadoDeTramo {
+  esperado_min: number | null;
+  esperado_viajes: number;
+  /** Con qué se estimó: unidades del mismo tipo, todas las unidades, o nada (poco historial). */
+  esperado_base: "tipo" | "todas" | null;
+}
+
+/** El tiempo en marcha que suele tomar cada tramo de un viaje, por tipo de unidad. Con menos de
+ *  3 viajes del mismo tipo se prueba con todas las unidades; con menos de 3 todavía, no se estima. */
+export async function esperadoPorTramo(
+  client: PoolClient,
+  tenantId: string,
+  paradas: { lugar_id: number }[],
+  tipo: string | null,
+  excluirId: number
+): Promise<EsperadoDeTramo[]> {
+  const salida: EsperadoDeTramo[] = [];
+  for (let i = 0; i < paradas.length - 1; i++) {
+    const de = Number(paradas[i].lugar_id);
+    const a = Number(paradas[i + 1].lugar_id);
+    let h = tipo
+      ? await medianaDelTramo(client, tenantId, de, a, tipo, excluirId)
+      : { viajes: 0, mediana: 0 };
+    let base: EsperadoDeTramo["esperado_base"] = h.viajes >= MINIMO_DE_VIAJES ? "tipo" : null;
+    if (!base) {
+      h = await medianaDelTramo(client, tenantId, de, a, null, excluirId);
+      base = h.viajes >= MINIMO_DE_VIAJES ? "todas" : null;
+    }
+    salida.push({
+      esperado_min: base ? Math.round(h.mediana) : null,
+      esperado_viajes: h.viajes,
+      esperado_base: base,
+    });
+  }
+  return salida;
+}
+
 /** Las cargas del viaje, de los dos productos, una por una. */
 export async function cargasDelViaje(
   client: PoolClient,
   tenantId: string,
   id: number,
-  ambito?: AmbitoVales
+  ambito?: AmbitoVales,
+  /** La estimación por tramo solo la usa el detalle de un viaje en curso. */
+  conEsperado = false
 ) {
   const viaje = await getViaje(client, tenantId, id);
   if (!viaje) return null;
@@ -1769,7 +1852,21 @@ export async function cargasDelViaje(
       ORDER BY d.despachado_en`,
     valores
   );
-  return { viaje, cargas: r.rows, ruta, tramos: repartirPorTramo(viaje.paradas ?? [], r.rows) };
+  const esperado =
+    conEsperado && viaje.estado === "en_curso"
+      ? await esperadoPorTramo(
+          client,
+          tenantId,
+          viaje.paradas ?? [],
+          viaje.equipo_tipo ?? null,
+          Number(viaje.id)
+        )
+      : [];
+  const tramos = repartirPorTramo(viaje.paradas ?? [], r.rows).map((t, i) => ({
+    ...t,
+    ...esperado[i],
+  }));
+  return { viaje, cargas: r.rows, ruta, tramos };
 }
 
 /** Cuánto suele durar y consumir esta ruta: los últimos 20 viajes cerrados y

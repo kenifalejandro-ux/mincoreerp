@@ -201,7 +201,7 @@ export const viajesController = {
     const tenantId = getTenantId(req);
     const id = Number(req.params.viajeId);
     const r = await withTenant(tenantId, (c) =>
-      viajes.cargasDelViaje(c, tenantId, id, ambitoDe(req))
+      viajes.cargasDelViaje(c, tenantId, id, ambitoDe(req), true)
     );
     if (!r) {
       res.status(404).json({ error: "El viaje no existe" });

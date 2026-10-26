@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { AccionesEncargado } from "./AccionesEncargado";
 import { CorregirMando } from "./CorregirMando";
-import { estadoDelTramo, paradasDelViaje } from "./paradasViaje";
+import { avanceEstimado, estadoDelTramo, paradasDelViaje } from "./paradasViaje";
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
 import { QuienManejo } from "./QuienManejo";
 import { TramosViaje, type TramoDelViaje } from "./TramosViaje";
@@ -102,18 +102,37 @@ export function DetalleViajeVentana({
   const fin = v?.fin_en ? Date.parse(v.fin_en) : null;
   const minutos = inicio ? ((fin ?? ahora) - inicio) / 60_000 : null;
   const esperado = datos?.ruta.duracion_min ?? null;
-  const progreso =
-    v?.estado === "cerrado"
+  // En ruta, el camión avanza por tramos con lo que suele tardar cada uno (por tipo de unidad).
+  const avance =
+    enCurso && v && datos?.tramos?.length ? avanceEstimado(datos.tramos, v.descansos, ahora) : null;
+  const progreso = avance
+    ? avance.progreso
+    : v?.estado === "cerrado"
       ? 100
       : minutos !== null && esperado
         ? Math.min(100, (minutos / esperado) * 100)
         : 0;
-  const llegadaEstimada = inicio && esperado ? inicio + esperado * 60_000 : null;
-  const demora =
-    enCurso && minutos !== null && esperado && minutos > esperado ? minutos - esperado : 0;
+  const esperadoTramo = avance ? (avance.actual?.esperado ?? null) : esperado;
+  const llegadaEstimada = avance
+    ? (avance.actual?.llegada ?? null)
+    : inicio && esperado
+      ? inicio + esperado * 60_000
+      : null;
+  const demora = avance
+    ? (avance.actual?.demora ?? 0)
+    : enCurso && minutos !== null && esperado && minutos > esperado
+      ? minutos - esperado
+      : 0;
 
-  const historial =
-    datos && datos.ruta.viajes > 0
+  // En una parada no hay tramo en marcha: la nota habla del que sigue.
+  const base = avance?.actual?.tramo ?? datos?.tramos?.find((t) => !t.llegada_en);
+  const historial = avance
+    ? base?.esperado_base
+      ? `posición estimada · según ${base.esperado_viajes} viajes ${
+          base.esperado_base === "tipo" ? "de este tipo de unidad" : "de todas las unidades"
+        }`
+      : "posición estimada · sin historial suficiente de este tramo"
+    : datos && datos.ruta.viajes > 0
       ? `según ${datos.ruta.viajes} viaje${datos.ruta.viajes === 1 ? "" : "s"} de esta ruta`
       : "sin historial de esta ruta todavía";
 
@@ -150,7 +169,8 @@ export function DetalleViajeVentana({
                 progreso={progreso}
                 demora={demora}
                 llegadaEstimada={llegadaEstimada}
-                esperadoMin={esperado}
+                esperadoMin={esperadoTramo}
+                paradas={paradasDelViaje(v).map((p) => p.lugar)}
                 ahora={ahora}
                 retorno={tramo?.retorno}
                 nota={historial}

@@ -729,6 +729,77 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(det.body.ruta.duracion_min).toBeCloseTo(240, 0);
     expect(det.body.ruta.combustible_gal).toBeCloseTo(40, 1);
   });
+
+  it("el detalle estima cada tramo con la mediana de los viajes del mismo tipo; con poco historial, con todos; sin historial, no estima", async () => {
+    const a = await lugar(idUnico("Chota"));
+    const b = await lugar(idUnico("Cutervo"));
+    const c = await lugar(idUnico("Jaen"));
+    const eqHistorial = await unidad();
+    // Tres viajes cerrados a→b de 3, 5 y 4 horas (mediana 240 min) y dos de b→c.
+    for (const [ini, dur] of [
+      [10, 3],
+      [20, 5],
+      [30, 4],
+    ]) {
+      const v = await viaje(eqHistorial, {
+        origen_id: a,
+        destino_id: b,
+        inicio_en: hora(ini),
+        fin_en: hora(ini + dur),
+      });
+      expect(v.status, JSON.stringify(v.body)).toBe(201);
+    }
+    for (const ini of [40, 50]) {
+      expect(
+        (
+          await viaje(eqHistorial, {
+            origen_id: b,
+            destino_id: c,
+            inicio_en: hora(ini),
+            fin_en: hora(ini + 2),
+          })
+        ).status
+      ).toBe(201);
+    }
+
+    // Un viaje en curso a → b → c con una unidad del mismo tipo.
+    const eq = await unidad();
+    const enRuta = await viaje(eq, {
+      origen_id: a,
+      destino_id: b,
+      paradas: [a, b, c],
+      inicio_en: hora(60),
+    });
+    expect(enRuta.status, JSON.stringify(enRuta.body)).toBe(201);
+    const det = await admin.get(`/api/erp/combustible/viajes/${enRuta.body.id}`);
+    const t = det.body.tramos as {
+      esperado_min: number | null;
+      esperado_viajes: number;
+      esperado_base: string | null;
+    }[];
+    expect(t[0]).toMatchObject({ esperado_min: 240, esperado_viajes: 3, esperado_base: "tipo" });
+    // b → c tiene solo 2 viajes: no se estima.
+    expect(t[1]).toMatchObject({ esperado_min: null, esperado_viajes: 2, esperado_base: null });
+
+    // Una unidad de otro tipo no tiene historial propio: se estima con todas las unidades.
+    const otra = await admin.post("/api/erp/equipos").send({
+      placa_codigo: idUnico("CM"),
+      tipo: "CAMIONETA",
+      tipo_medidor: "odometro",
+      conductor_nombre: "Luis Soto",
+      conductor_dni: String(40000000 + seq++),
+    });
+    expect(otra.status, JSON.stringify(otra.body)).toBe(201);
+    const enRuta2 = await viaje(Number(otra.body.id), {
+      origen_id: a,
+      destino_id: b,
+      inicio_en: hora(70),
+    });
+    expect(enRuta2.status, JSON.stringify(enRuta2.body)).toBe(201);
+    const det2 = await admin.get(`/api/erp/combustible/viajes/${enRuta2.body.id}`);
+    expect(det2.body.tramos[0]).toMatchObject({ esperado_min: 240, esperado_base: "todas" });
+  });
+
   // ── Paradas (0148) ────────────────────────────────────────────────────────
 
   const paradasDe = async (id: number) =>
