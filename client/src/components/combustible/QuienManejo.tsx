@@ -44,6 +44,11 @@ export function QuienManejo({
                   <td className="py-2 pr-3">
                     {t.conductor_nombre ?? `DNI ${t.conductor_dni}`}
                     {t.lugar && <span className="block text-xs text-[#94a3b8]">{t.lugar}</span>}
+                    {t.corregido && (
+                      <span className="block text-xs text-amber-300">
+                        Cambio corregido por la oficina: {t.corregido_motivo}
+                      </span>
+                    )}
                   </td>
                   <td className="py-2 pr-3 text-[#94a3b8]">{diaHora(t.inicio_en)}</td>
                   <td className="py-2 pr-3 text-[#94a3b8]">
