@@ -499,6 +499,11 @@ jobs:
 
       - name: E2E completo (los 3 navegadores)
         if: env.CORRIDA_COMPLETA == 'true'
+        # Firefox no arranca si $HOME no es del usuario actual (en el contenedor es
+        # /github/home, de pwuser): lo dice el propio error de Playwright. Falló
+        # desde el 24/10 en la corrida nocturna.
+        env:
+          HOME: /root
         run: npx playwright test --grep-invert=@inestable
 
       # La cuarentena corre después de lo que sí bloquea, con su propio
@@ -513,6 +518,7 @@ jobs:
             npx playwright test --project=chromium --grep=@inestable --pass-with-no-tests
           fi
         env:
+          HOME: /root
           PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report-cuarentena
 
       - name: Avisar que falló la cuarentena
