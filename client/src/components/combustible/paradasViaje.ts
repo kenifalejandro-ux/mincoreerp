@@ -117,6 +117,34 @@ export function conDescansoLocal(
   return actuales.map((x) => (x.fin_en ? x : { ...x, fin_en: marcadoEn }));
 }
 
+/** Un turno de conducción: quién estuvo al volante, de qué lectura a cuál (0152). */
+export interface TurnoViaje {
+  conductor_dni: string;
+  conductor_nombre: string | null;
+  inicio_en: string;
+  fin_en: string | null;
+  medidor_inicio: string | number | null;
+  medidor_fin: string | number | null;
+  lugar?: string | null;
+}
+
+/** La entrega del mando que espera que el otro conductor acepte (0153). */
+export interface EntregaPendiente {
+  de_dni: string;
+  de_nombre: string | null;
+  a_dni: string;
+  a_nombre: string | null;
+  entrega_en: string;
+  medidor: string | number | null;
+  lugar: string | null;
+}
+
+/** Cuánto ha avanzado el mando: cada turno cuenta 2 y la entrega pendiente 1. */
+export const avanceDelMando = (
+  turnos: TurnoViaje[] | null | undefined,
+  entrega: EntregaPendiente | null | undefined
+): number => (turnos?.length ?? 0) * 2 + (entrega ? 1 : 0);
+
 /** Cuántas marcas tiene el viaje: sirve para saber qué versión va más adelantada. */
 export const marcasHechas = (p: ParadaMia[]): number =>
   p.reduce((n, x) => n + (x.llegada_en ? 1 : 0) + (x.salida_en ? 1 : 0), 0);

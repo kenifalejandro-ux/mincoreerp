@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { HistorialConductor } from "./HistorialConductor";
 import { MiViajeParadas } from "./MiViajeParadas";
 import {
+  avanceDelMando,
   avanceDelViaje,
   minutosDescansados,
   paradasDelViaje,
@@ -46,6 +47,8 @@ interface MiFila extends FilaViaje {
   duracion_ruta_min?: number | null;
   /** Si soy el titular o el relevo del viaje (0152). */
   mi_rol?: "titular" | "relevo";
+  /** Retiré la entrega sin señal: hasta que llegue a la cola, vale más que la pendiente del servidor. */
+  entrega_retirada?: boolean;
 }
 
 type Paso = "ver" | "revisar" | "iniciar";
@@ -83,7 +86,9 @@ async function viajesConMarcasEnCola(): Promise<Set<string>> {
   try {
     for (const e of await listarPendientes()) {
       const m =
-        /\/viajes\/(\d+)\/(iniciar-mio|cerrar-mio|llegada-mia|salida-mia|descanso-mio)/.exec(e.url);
+        /\/viajes\/(\d+)\/(iniciar-mio|cerrar-mio|llegada-mia|salida-mia|descanso-mio|mando)/.exec(
+          e.url
+        );
       if (m) ids.add(m[1]);
     }
   } catch {
@@ -136,8 +141,11 @@ export default function MiViaje() {
         const masAdelantado =
           local?.pendiente &&
           enCola.has(f.id) &&
-          avanceDelViaje(paradasDelViaje(local), local.descansos) >
-            avanceDelViaje(paradasDelViaje(f), f.descansos);
+          (avanceDelViaje(paradasDelViaje(local), local.descansos) +
+            avanceDelMando(local.turnos, local.entrega_pendiente) >
+            avanceDelViaje(paradasDelViaje(f), f.descansos) +
+              avanceDelMando(f.turnos, f.entrega_pendiente) ||
+            Boolean(local.entrega_retirada && f.entrega_pendiente));
         return masAdelantado ? local : f;
       });
       setFilas(data);
@@ -516,7 +524,7 @@ export default function MiViaje() {
           {/* ── En curso: llegar y salir de cada parada ── */}
           {actual.estado === "en_curso" && (
             <MiViajeParadas
-              key={`${actual.id}-${avanceDelViaje(paradasDelViaje(actual), actual.descansos)}`}
+              key={`${actual.id}-${avanceDelViaje(paradasDelViaje(actual), actual.descansos)}-${avanceDelMando(actual.turnos, actual.entrega_pendiente)}`}
               viajeId={actual.id}
               paradas={paradasDelViaje(actual)}
               descansos={actual.descansos ?? []}
@@ -529,6 +537,19 @@ export default function MiViaje() {
               onRecargar={cargar}
               alVolante={!sinMando}
               manejaNombre={manejaNombre}
+              mando={
+                actual.relevo_dni && miDni
+                  ? {
+                      miDni,
+                      otroNombre:
+                        (actual.mi_rol === "relevo"
+                          ? actual.conductor_nombre
+                          : actual.relevo_nombre) ?? null,
+                      entrega: actual.entrega_pendiente ?? null,
+                      turnos: actual.turnos ?? [],
+                    }
+                  : null
+              }
             />
           )}
         </div>

@@ -1,5 +1,5 @@
 // Formato compartido de la vista por viaje (0123): panel Viajes e Histórico.
-import type { DescansoMio, ParadaMia } from "./paradasViaje";
+import type { DescansoMio, EntregaPendiente, ParadaMia, TurnoViaje } from "./paradasViaje";
 
 export type Producto = "combustible" | "urea";
 
@@ -17,6 +17,8 @@ export interface FilaViaje {
   relevo_dni?: string | null;
   relevo_nombre?: string | null;
   volante_dni?: string | null;
+  turnos?: TurnoViaje[] | null;
+  entrega_pendiente?: EntregaPendiente | null;
   origen_id: string;
   origen: string;
   destino_id: string;
