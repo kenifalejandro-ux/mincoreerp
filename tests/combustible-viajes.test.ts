@@ -1108,6 +1108,40 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect((await m("llegada-mia", { medidor: 150 })).status).toBe(200);
   });
 
+  it("editar un viaje con paradas marcadas no deja la salida ni el medidor por fuera de ellas", async () => {
+    const { yo, id } = await circuitoEnCurso();
+    expect((await marcar(yo.agente, id, "llegada-mia", { medidor: 150 })).status).toBe(200);
+    const manana = new Date(Date.now() + 3_600_000).toISOString();
+    const salidaTardia = await admin
+      .put(url(id))
+      .send({ motivo: "salida mal puesta", inicio_en: manana });
+    expect(salidaTardia.status).toBe(409);
+    expect(JSON.stringify(salidaTardia.body)).toContain("parada marcada");
+    const medidorAlto = await admin
+      .put(url(id))
+      .send({ motivo: "medidor mal puesto", medidor_inicio: 200 });
+    expect(medidorAlto.status).toBe(409);
+    expect(JSON.stringify(medidorAlto.body)).toContain("medidor");
+    // Lo que sigue dentro de lo marcado sí se corrige.
+    const bien = await admin.put(url(id)).send({ motivo: "era el 120", medidor_inicio: 120 });
+    expect(bien.status, JSON.stringify(bien.body)).toBe(200);
+    expect(Number((await paradasDe(id))[0].salida_medidor)).toBe(120);
+  });
+
+  it("editar un viaje con un descanso marcado no deja la salida después del descanso", async () => {
+    const { yo, id } = await circuitoEnCurso();
+    expect((await marcar(yo.agente, id, "descanso-mio", { motivo: "Dormir" })).status).toBe(200);
+    expect((await marcar(yo.agente, id, "descanso-mio/terminar", {})).status).toBe(200);
+    const manana = new Date(Date.now() + 3_600_000).toISOString();
+    const r = await admin.put(url(id)).send({ motivo: "salida mal puesta", inicio_en: manana });
+    expect(r.status).toBe(409);
+    expect(JSON.stringify(r.body)).toContain("descanso");
+    expect((await descansosDe(id)).length).toBe(1);
+    expect((await admin.put(url(id)).send({ motivo: "una nota", observaciones: "x" })).status).toBe(
+      200
+    );
+  });
+
   it("el reintento de la cola no duplica el descanso; el uuid de otro viaje no vale", async () => {
     const { yo, id } = await circuitoEnCurso();
     const uuid = crypto.randomUUID();
