@@ -93,6 +93,8 @@ export function DetalleViajeVentana({
   const combustibleGal = litros("combustible") / LITROS_POR_GALON;
   const ureaL = litros("urea");
 
+  const medidorActual = v?.medidor_actual ? Number(v.medidor_actual) : null;
+
   // Duración: la real si cerró, la transcurrida si va en ruta.
   const inicio = v?.inicio_en ? Date.parse(v.inicio_en) : null;
   const fin = v?.fin_en ? Date.parse(v.fin_en) : null;
@@ -185,19 +187,15 @@ export function DetalleViajeVentana({
             />
             <Tile
               icono={<Gauge className="w-4 h-4" />}
-              titulo={etiquetaMedidor}
-              valor={
-                v.recorrido
-                  ? `${fmt(Number(v.recorrido), 1)} ${medidor}`
-                  : v.medidor_inicio
-                    ? `${fmt(Number(v.medidor_inicio), 1)}`
-                    : "—"
-              }
+              titulo={`${etiquetaMedidor} ${v.estado === "cerrado" ? "final" : "actual"}`}
+              valor={medidorActual !== null ? `${fmt(medidorActual, 1)} ${medidor}` : "—"}
               pie={
                 v.medidor_inicio ? (
                   <span>
-                    {fmt(Number(v.medidor_inicio), 1)} →{" "}
-                    {v.medidor_fin ? fmt(Number(v.medidor_fin), 1) : "…"}
+                    inicial {fmt(Number(v.medidor_inicio), 1)}
+                    {medidorActual !== null
+                      ? ` · recorrido ${fmt(medidorActual - Number(v.medidor_inicio), 1)} ${medidor}`
+                      : ""}
                     {v.recorrido_sin_viaje && Number(v.recorrido_sin_viaje) > 0
                       ? ` · ${fmt(Number(v.recorrido_sin_viaje), 1)} ${medidor} fuera de viaje`
                       : ""}
