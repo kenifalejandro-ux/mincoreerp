@@ -5,6 +5,7 @@ import { Droplets, Flag, Fuel, Gauge, MapPin, Play, Timer } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { AccionesEncargado } from "./AccionesEncargado";
+import { CorregirMando } from "./CorregirMando";
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
 import { QuienManejo } from "./QuienManejo";
 import { TramosViaje, type TramoDelViaje } from "./TramosViaje";
@@ -213,6 +214,13 @@ export function DetalleViajeVentana({
             entrega={v.entrega_pendiente}
             medidor={etiquetaMedidor}
             ahora={ahora}
+          />
+
+          <CorregirMando
+            viaje={v}
+            etiquetaMedidor={etiquetaMedidor}
+            puedeEditar={puedeEditar}
+            onCambio={cargar}
           />
 
           <AccionesEncargado

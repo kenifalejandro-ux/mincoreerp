@@ -26,7 +26,7 @@ export interface ViajeDeConductor {
 /** Entra como admin y deja programado un viaje A → B → A para un conductor nuevo. */
 export async function prepararViajeDeConductor(
   page: Page,
-  opciones: { conRelevo?: boolean } = {}
+  opciones: { conRelevo?: boolean; retroactivo?: boolean } = {}
 ): Promise<ViajeDeConductor> {
   const marca = randomBytes(3).toString("hex").toUpperCase();
   const admin = adminA();
@@ -79,11 +79,22 @@ export async function prepararViajeDeConductor(
     });
     expect(altaRelevo.status()).toBe(201);
   }
+  // Retroactivo: un viaje A → B ya hecho (salió hace 10 h y llegó hace 2 h), con un solo turno.
+  const horasAtras = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
   const programado = await page.request.post("/api/erp/combustible/viajes", {
     data: {
       equipo_id: (await equipo.json()).id,
-      paradas: [idA, idB, idA],
+      paradas: opciones.retroactivo ? [idA, idB] : [idA, idB, idA],
       ...(relevo ? { relevo_dni: relevo.dni, sale: "titular" } : {}),
+      ...(opciones.retroactivo
+        ? {
+            conductor_dni: dni,
+            inicio_en: horasAtras(10),
+            fin_en: horasAtras(2),
+            medidor_inicio: 100,
+            medidor_fin: 400,
+          }
+        : {}),
     },
   });
   expect(programado.status()).toBe(201);

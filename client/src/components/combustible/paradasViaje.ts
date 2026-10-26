@@ -126,6 +126,9 @@ export interface TurnoViaje {
   medidor_inicio: string | number | null;
   medidor_fin: string | number | null;
   lugar?: string | null;
+  /** La oficina partió este turno a posteriori (0154), con motivo. */
+  corregido?: boolean;
+  corregido_motivo?: string | null;
 }
 
 /** La entrega del mando que espera que el otro conductor acepte (0153). */
