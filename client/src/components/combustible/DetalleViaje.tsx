@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { AccionesEncargado } from "./AccionesEncargado";
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
+import { QuienManejo } from "./QuienManejo";
 import { TramosViaje, type TramoDelViaje } from "./TramosViaje";
 import { duracion, fmt, ruta, unidadLabel, type FilaViaje, type Producto } from "./viajesFormato";
 import { apiFetch } from "../../services/apiClient";
@@ -206,6 +207,13 @@ export function DetalleViajeVentana({
           </div>
 
           <TramosViaje tramos={datos.tramos ?? []} medidor={etiquetaMedidor} />
+
+          <QuienManejo
+            turnos={v.turnos ?? []}
+            entrega={v.entrega_pendiente}
+            medidor={etiquetaMedidor}
+            ahora={ahora}
+          />
 
           <AccionesEncargado
             viaje={v}
