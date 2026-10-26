@@ -107,6 +107,37 @@ function marcaDeParada(que: "llegada" | "salida", delConductor: boolean) {
   };
 }
 
+/** Entregar, aceptar o retirar el mando: siempre lo hace el conductor, por su DNI. */
+function marcaDeMando(que: "entregar" | "aceptar" | "retirar") {
+  return async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.viajeId);
+    const b = (req.validatedBody ?? {}) as { medidor?: number | null; lugar?: string | null } & {
+      marcado_en?: string;
+      cliente_uuid?: string;
+    };
+    const dni = req.usuario!.dni ?? "";
+    const usuarioId = req.usuario!.id;
+    const r = await withTenant(tenantId, (c) =>
+      que === "entregar"
+        ? viajes.entregarMando(c, tenantId, usuarioId, id, b, dni)
+        : que === "aceptar"
+          ? viajes.aceptarMando(c, tenantId, usuarioId, id, b, dni)
+          : viajes.retirarEntrega(c, tenantId, usuarioId, id, dni)
+    );
+    if (!r.repetido) {
+      await auditar(req, `viaje_mando_${que}`, {
+        viajeId: id,
+        numero: r.antes.numero,
+        por: "conductor",
+        medidor: b.medidor ?? null,
+        lugar: b.lugar ?? null,
+      });
+    }
+    res.json(r.despues);
+  };
+}
+
 async function auditar(req: Request, accion: string, detalle: Record<string, unknown>) {
   const tenantId = getTenantId(req);
   await registrarAuditoria({
@@ -295,6 +326,9 @@ export const viajesController = {
   terminarDescansoMio: marcaDeDescanso("fin", true),
   descanso: marcaDeDescanso("inicio", false),
   terminarDescanso: marcaDeDescanso("fin", false),
+  entregarMando: marcaDeMando("entregar"),
+  aceptarMando: marcaDeMando("aceptar"),
+  retirarEntrega: marcaDeMando("retirar"),
   llegadaMia: marcaDeParada("llegada", true),
   salidaMia: marcaDeParada("salida", true),
   llegada: marcaDeParada("llegada", false),

@@ -2486,3 +2486,19 @@ export const terminarDescansoViajeSchema = z
   .object({ fin_en: fechaHora.optional(), motivo: motivo.optional() })
   .refine((v) => conMotivoSiHoraManual(v, v.fin_en), MENSAJE_MOTIVO_HORA);
 export type TerminarDescansoViajeInput = z.infer<typeof terminarDescansoViajeSchema>;
+
+// ── Entrega del mando (0153) ───────────────────────────────────────────────
+// Quien maneja entrega el volante con el medidor del tablero; el otro conductor acepta.
+export const entregaMandoSchema = z.object({
+  medidor,
+  lugar: z.string().trim().max(160).nullable().optional(),
+  marcado_en: fechaHora.optional(),
+  cliente_uuid: z.string().uuid().optional(),
+});
+export type EntregaMandoInput = z.infer<typeof entregaMandoSchema>;
+
+export const aceptarMandoSchema = entregaMandoSchema.pick({
+  marcado_en: true,
+  cliente_uuid: true,
+});
+export type AceptarMandoInput = z.infer<typeof aceptarMandoSchema>;

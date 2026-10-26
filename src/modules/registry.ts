@@ -357,6 +357,12 @@ export const MODULOS: ModuloDefinicion[] = [
         pk: "serial",
         fks: { viaje_id: "combustible_viajes", creado_por: "usuarios", cerrado_por: "usuarios" },
       },
+      // Entregas del mando entre titular y relevo (0153): cascadean desde el viaje.
+      {
+        nombre: "combustible_viaje_entregas",
+        pk: "serial",
+        fks: { viaje_id: "combustible_viajes" },
+      },
       // Rutas habituales de cada unidad (0126): referencian equipos Y lugares
       // (sin ON DELETE sobre lugares), así que van después de los dos y
       // necesitan su propia raíz para borrarse antes que los lugares.
@@ -653,6 +659,9 @@ export const MODULOS: ModuloDefinicion[] = [
         { metodo: "POST", ruta: "/viajes/:viajeId/salida-mia" },
         { metodo: "POST", ruta: "/viajes/:viajeId/descanso-mio" },
         { metodo: "POST", ruta: "/viajes/:viajeId/descanso-mio/terminar" },
+        { metodo: "POST", ruta: "/viajes/:viajeId/mando/entregar" },
+        { metodo: "POST", ruta: "/viajes/:viajeId/mando/aceptar" },
+        { metodo: "POST", ruta: "/viajes/:viajeId/mando/retirar" },
       ],
     },
   },

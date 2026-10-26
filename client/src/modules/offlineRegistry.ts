@@ -81,6 +81,9 @@ export const ESCRITURAS_OFFLINE: Record<string, EscrituraOffline[]> = {
     { metodo: "POST", ruta: "/viajes/:viajeId/salida-mia" },
     { metodo: "POST", ruta: "/viajes/:viajeId/descanso-mio" },
     { metodo: "POST", ruta: "/viajes/:viajeId/descanso-mio/terminar" },
+    { metodo: "POST", ruta: "/viajes/:viajeId/mando/entregar" },
+    { metodo: "POST", ruta: "/viajes/:viajeId/mando/aceptar" },
+    { metodo: "POST", ruta: "/viajes/:viajeId/mando/retirar" },
   ],
 
   // Crear el registro (pólizas, SOAT, etc. son `documentos` con otro
