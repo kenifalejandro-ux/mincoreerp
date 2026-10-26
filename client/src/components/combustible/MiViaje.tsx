@@ -62,6 +62,19 @@ const INPUT =
 
 const claveCache = (usuarioId: string) => `mi-viaje:${usuarioId}`;
 
+/** Con relevo, quien mira su viaje se ve a sí mismo en grande y al otro en una línea chica. */
+function nombreYRol(f: MiFila) {
+  // Una fila guardada antes del relevo no trae `mi_rol`: sin saber quién soy, no se adivina.
+  if (!f.mi_rol) return { nombre: f.conductor_nombre, lineaRol: null };
+  const soyRelevo = f.mi_rol === "relevo";
+  const mio = soyRelevo ? f.relevo_nombre : f.conductor_nombre;
+  const otro = soyRelevo ? f.conductor_nombre : f.relevo_nombre;
+  return {
+    nombre: mio ?? (soyRelevo ? "Relevo" : f.conductor_nombre),
+    lineaRol: f.relevo_dni && otro ? `${soyRelevo ? "Titular" : "Relevo"}: ${otro}` : null,
+  };
+}
+
 function leerCache(usuarioId: string): MiFila[] | null {
   try {
     const crudo = localStorage.getItem(claveCache(usuarioId));
@@ -203,6 +216,22 @@ export default function MiViaje() {
     actual?.volante_dni?.trim() === actual?.relevo_dni?.trim()
       ? actual?.relevo_nombre
       : actual?.conductor_nombre;
+  // En la tarjeta, con relevo, mi nombre va en grande y quién maneja al lado.
+  const rolTarjeta = actual ? nombreYRol(actual) : null;
+  const etiquetaMando =
+    actual?.relevo_dni && actual.mi_rol && manejaNombre
+      ? {
+          manejando: !sinMando,
+          texto:
+            actual.estado === "programado"
+              ? sinMando
+                ? `Sale manejando: ${manejaNombre}`
+                : "(sale manejando)"
+              : sinMando
+                ? `Manejando: ${manejaNombre}`
+                : "(manejando)",
+        }
+      : null;
   const tipo = actual?.tipo_medidor ?? actual?.previo?.tipo_medidor ?? null;
   const etiquetaMedidor = tipo === "horometro" ? "horómetro" : "odómetro";
   const unidadMedidor = tipo === "horometro" ? "h" : "km";
@@ -358,6 +387,9 @@ export default function MiViaje() {
         <TarjetaViaje
           v={actual}
           textoEstado={actual.estado === "en_curso" ? "En ruta · en vivo" : "Programado"}
+          nombre={rolTarjeta?.nombre}
+          etiqueta={etiquetaMando}
+          lineaRol={rolTarjeta?.lineaRol}
           hijos={
             paradasDelViaje(actual).length > 2 ? null : (
               <BarraRuta
@@ -574,6 +606,8 @@ export default function MiViaje() {
           <TarjetaViaje
             v={ultimo}
             textoEstado="Llegó"
+            nombre={nombreYRol(ultimo).nombre}
+            lineaRol={nombreYRol(ultimo).lineaRol}
             hijos={
               <BarraRuta
                 origen={ultimo.origen}

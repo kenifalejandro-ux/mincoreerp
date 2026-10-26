@@ -18,6 +18,11 @@ test("el relevo ve quién sale manejando y no inicia el viaje", async ({ page })
   await expect(page.getByText(/Sale manejando Conductor/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Revisar mi viaje" })).toHaveCount(0);
 
+  // La tarjeta es del relevo: su nombre en grande, quién maneja al lado y el titular en chico.
+  await expect(page.getByTestId("tarjeta-nombre")).toHaveText(v.relevo!.nombre);
+  await expect(page.getByText(`Sale manejando: Conductor ${v.marca}`)).toBeVisible();
+  await expect(page.getByText(`Titular: Conductor ${v.marca}`)).toBeVisible();
+
   const mios = await page.request.get("/api/erp/combustible/viajes/mios");
   const fila = ((await mios.json()).data as { id: string; mi_rol: string }[]).find(
     (x) => x.id === v.viajeId

@@ -192,6 +192,9 @@ export function TarjetaViaje({
   v,
   textoEstado,
   hijos,
+  nombre,
+  etiqueta,
+  lineaRol,
 }: {
   v: Pick<
     FilaViaje,
@@ -199,8 +202,15 @@ export function TarjetaViaje({
   >;
   textoEstado: string;
   hijos?: ReactNode;
+  /** Quien mira el viaje, si no es el titular: con relevo su nombre va en grande. */
+  nombre?: string | null;
+  /** Quién va al volante, junto al nombre. */
+  etiqueta?: { texto: string; manejando: boolean } | null;
+  /** El otro del viaje en una línea chica ("Titular: …" o "Relevo: …"). */
+  lineaRol?: string | null;
 }) {
   const enCurso = v.estado === "en_curso";
+  const nombreGrande = nombre ?? v.conductor_nombre;
   return (
     <div
       className={`rounded-3xl p-5 border ${
@@ -212,7 +222,7 @@ export function TarjetaViaje({
       <div className="flex items-start gap-4">
         <div className="relative shrink-0">
           <div className="w-16 h-16 rounded-full bg-[#BADC1E] text-[#0D1719] flex items-center justify-center text-xl font-extrabold tracking-tight">
-            {iniciales(v.conductor_nombre)}
+            {iniciales(nombreGrande)}
           </div>
           <div className="absolute -bottom-2 -right-3 rounded-lg bg-[#0D1719] border border-[#334155] p-1 text-[#BADC1E]">
             <IconoUnidad tipo={v.equipo_tipo} className="w-4 h-4" />
@@ -233,9 +243,24 @@ export function TarjetaViaje({
             {enCurso && <span className="w-2 h-2 rounded-full bg-[#0D1719] animate-pulse" />}
             {textoEstado}
           </span>
-          <p className="text-2xl font-extrabold text-white leading-tight break-words">
-            {v.conductor_nombre ?? "Sin conductor"}
+          <p
+            data-testid="tarjeta-nombre"
+            className="text-2xl font-extrabold text-white leading-tight break-words"
+          >
+            {nombreGrande ?? "Sin conductor"}
           </p>
+          {etiqueta && (
+            <span
+              className={`mt-1 inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                etiqueta.manejando
+                  ? "bg-[#BADC1E]/20 text-[#BADC1E]"
+                  : "bg-amber-500/15 text-amber-300"
+              }`}
+            >
+              {etiqueta.texto}
+            </span>
+          )}
+          {lineaRol && <p className="text-xs text-[#94a3b8]">{lineaRol}</p>}
           <p className="text-sm text-[#cbd5e1]">
             {unidadLabel(v)}
             {v.equipo_tipo ? ` · ${v.equipo_tipo.toLowerCase()}` : ""}
