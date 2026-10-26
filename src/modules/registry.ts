@@ -349,7 +349,7 @@ export const MODULOS: ModuloDefinicion[] = [
       {
         nombre: "combustible_viaje_turnos",
         pk: "serial",
-        fks: { viaje_id: "combustible_viajes" },
+        fks: { viaje_id: "combustible_viajes", corregido_por: "usuarios" },
       },
       // Descansos de cada viaje (0151): cascadean desde el viaje.
       {

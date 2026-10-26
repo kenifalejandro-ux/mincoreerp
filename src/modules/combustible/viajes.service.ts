@@ -4,6 +4,7 @@ import type { PoolClient } from "pg";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { esViolacionUnicidad } from "../../server/shared/utils/pgError";
 import type {
+  CorregirMandoInput,
   CrearViajeInput,
   EditarViajeInput,
   ListarViajesQuery,
@@ -1251,6 +1252,93 @@ export async function aceptarMando(
   return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
 }
 
+/** La oficina corrige un cambio de mando que nadie marcó: parte en dos el turno que contiene esa
+ *  hora. Sirve con el viaje en curso y con el ya cerrado; el turno nuevo guarda quién y por qué. */
+export async function corregirMando(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  id: number,
+  data: CorregirMandoInput
+): Promise<ResultadoDescanso> {
+  const v = await viajeParaCambiar(client, tenantId, id);
+  if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
+  if (!v.relevo_dni) throw new AppError(409, "Este viaje no tiene relevo");
+  const a = normalizarDni(data.a_dni);
+  const titular = a === normalizarDni(v.conductor_dni);
+  if (!titular && a !== normalizarDni(v.relevo_dni)) {
+    throw new AppError(400, "Solo el titular o el relevo del viaje pueden manejar");
+  }
+  if (await entregaPendiente(client, tenantId, id)) {
+    throw new AppError(409, "Hay una entrega pendiente: que el conductor la acepte o la retire");
+  }
+  const cambio = Date.parse(data.cambio_en);
+  if (cambio > Date.parse(await ahora(client))) {
+    throw new AppError(400, "El cambio de mando no puede ser en el futuro");
+  }
+  const turnos = (
+    await client.query(
+      `SELECT * FROM combustible_viaje_turnos
+        WHERE tenant_id = $1 AND viaje_id = $2 ORDER BY inicio_en`,
+      [tenantId, id]
+    )
+  ).rows;
+  const i = turnos.findIndex(
+    (t) => Date.parse(t.inicio_en) < cambio && (t.fin_en == null || cambio < Date.parse(t.fin_en))
+  );
+  if (i < 0) throw new AppError(409, "Esa hora no cae dentro de ningún turno del viaje");
+  const t = turnos[i];
+  if (normalizarDni(t.conductor_dni) === a) {
+    throw new AppError(409, "Esa persona ya iba al volante a esa hora");
+  }
+  if (turnos[i + 1] && normalizarDni(turnos[i + 1].conductor_dni) === a) {
+    throw new AppError(409, "Ese cambio ya está registrado más adelante en el viaje");
+  }
+  if (v.medidor_inicio != null && data.medidor == null) {
+    throw new AppError(400, "Falta el medidor del cambio");
+  }
+  if (data.medidor != null) {
+    const piso = t.medidor_inicio == null ? null : Number(t.medidor_inicio);
+    const techo = t.medidor_fin == null ? null : Number(t.medidor_fin);
+    if ((piso != null && data.medidor < piso) || (techo != null && data.medidor > techo)) {
+      throw new AppError(400, "El medidor del cambio queda fuera del turno que se parte");
+    }
+  }
+  const descansando = await client.query(
+    `SELECT 1 FROM combustible_viaje_descansos
+      WHERE tenant_id = $1 AND viaje_id = $2 AND conductor_dni = $3
+        AND inicio_en < $4 AND (fin_en IS NULL OR fin_en > $4) LIMIT 1`,
+    [tenantId, id, a, data.cambio_en]
+  );
+  if (descansando.rows[0]) throw new AppError(409, "Esa persona estaba en descanso a esa hora");
+  if (t.fin_en == null) await exigirLibreParaManejar(client, tenantId, a, id);
+
+  await client.query(
+    `UPDATE combustible_viaje_turnos SET fin_en = $2, medidor_fin = $3 WHERE id = $1`,
+    [t.id, data.cambio_en, data.medidor ?? null]
+  );
+  await client.query(
+    `INSERT INTO combustible_viaje_turnos (
+       tenant_id, viaje_id, conductor_dni, conductor_nombre, inicio_en, fin_en, medidor_inicio,
+       medidor_fin, lugar, corregido_por, corregido_en, corregido_motivo)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now(),$11)`,
+    [
+      tenantId,
+      id,
+      a,
+      titular ? v.conductor_nombre : v.relevo_nombre,
+      data.cambio_en,
+      t.fin_en,
+      data.medidor ?? null,
+      t.medidor_fin,
+      data.lugar?.trim() || null,
+      usuarioId,
+      data.motivo,
+    ]
+  );
+  return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
+}
+
 /** Quien entregó retira la entrega pendiente: sigue al volante como estaba. */
 export async function retirarEntrega(
   client: PoolClient,
@@ -1514,7 +1602,9 @@ const COLUMNAS_VIAJE = `
   (SELECT json_agg(json_build_object(
             'conductor_dni', t.conductor_dni, 'conductor_nombre', t.conductor_nombre,
             'inicio_en', t.inicio_en, 'fin_en', t.fin_en, 'medidor_inicio', t.medidor_inicio,
-            'medidor_fin', t.medidor_fin, 'lugar', t.lugar) ORDER BY t.inicio_en)
+            'medidor_fin', t.medidor_fin, 'lugar', t.lugar,
+            'corregido', t.corregido_en IS NOT NULL, 'corregido_motivo', t.corregido_motivo)
+            ORDER BY t.inicio_en)
      FROM combustible_viaje_turnos t
     WHERE t.tenant_id = v.tenant_id AND t.viaje_id = v.id) AS turnos,
   (SELECT json_build_object(

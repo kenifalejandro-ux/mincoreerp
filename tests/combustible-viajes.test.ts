@@ -1441,6 +1441,133 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(delTitular.find((f) => Number(f.id) === id)).toBeUndefined();
   });
 
+  // ── Corregir un cambio de mando a posteriori (oficina) ───────────────────
+
+  /** Un viaje con titular y relevo registrado a posteriori: un solo turno, del titular. */
+  const conUnSoloTurno = async (cerrado = true) => {
+    const titular = await conductor();
+    const relevo = await conductor();
+    const eq = await unidad();
+    const r = await admin.post("/api/erp/combustible/viajes").send({
+      equipo_id: eq,
+      paradas: [huamachuco, bambamarca],
+      conductor_dni: titular.dni,
+      relevo_dni: relevo.dni,
+      inicio_en: hora(0),
+      medidor_inicio: 100,
+      ...(cerrado ? { fin_en: hora(10), medidor_fin: 400 } : {}),
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    return { titular, relevo, id: Number(r.body.id) };
+  };
+  type TurnoCorregido = {
+    conductor_dni: string;
+    inicio_en: string;
+    fin_en: string | null;
+    medidor_inicio: string | null;
+    medidor_fin: string | null;
+    lugar: string | null;
+    corregido: boolean;
+    corregido_motivo: string | null;
+  };
+  const turnosDe = async (id: number) =>
+    (await admin.get(url(id))).body.viaje.turnos as TurnoCorregido[];
+  const corregir = (id: number, body: object) => admin.post(`${url(id)}/mando/corregir`).send(body);
+
+  it("la oficina corrige un cambio de mando olvidado: parte el turno y deja quién y por qué", async () => {
+    const { titular, relevo, id } = await conUnSoloTurno();
+    expect(await turnosDe(id)).toHaveLength(1);
+    const r = await corregir(id, {
+      a_dni: relevo.dni,
+      cambio_en: hora(4),
+      medidor: 250,
+      lugar: "Grifo Y",
+      motivo: "no lo marcaron",
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const [primero, segundo] = await turnosDe(id);
+    expect(primero).toMatchObject({ conductor_dni: titular.dni, corregido: false });
+    expect(Date.parse(primero.fin_en!)).toBe(Date.parse(hora(4)));
+    expect(Number(primero.medidor_inicio)).toBe(100);
+    expect(Number(primero.medidor_fin)).toBe(250);
+    expect(segundo).toMatchObject({
+      conductor_dni: relevo.dni,
+      lugar: "Grifo Y",
+      corregido: true,
+      corregido_motivo: "no lo marcaron",
+    });
+    // El tramo nuevo conserva el final del turno original (la llegada del viaje).
+    expect(Date.parse(segundo.fin_en!)).toBe(Date.parse(hora(10)));
+    expect(Number(segundo.medidor_inicio)).toBe(250);
+    expect(Number(segundo.medidor_fin)).toBe(400);
+  });
+
+  it("con el viaje en curso, la corrección pasa el turno abierto al otro conductor", async () => {
+    const { relevo, id } = await conUnSoloTurno(false);
+    const r = await corregir(id, {
+      a_dni: relevo.dni,
+      cambio_en: hora(4),
+      medidor: 250,
+      motivo: "no lo marcaron",
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const turnos = await turnosDe(id);
+    expect(turnos).toHaveLength(2);
+    expect(turnos[1]).toMatchObject({ conductor_dni: relevo.dni, fin_en: null, corregido: true });
+    expect(r.body.volante_dni).toBe(relevo.dni);
+  });
+
+  it("la corrección valida hora, persona, medidor, motivo y permisos", async () => {
+    const { titular, relevo, id } = await conUnSoloTurno();
+    const base = { a_dni: relevo.dni, cambio_en: hora(4), medidor: 250, motivo: "no lo marcaron" };
+    expect((await corregir(id, { ...base, cambio_en: hora(-5) })).status).toBe(409); // antes de salir
+    expect((await corregir(id, { ...base, cambio_en: hora(11) })).status).toBe(409); // después de llegar
+    expect(
+      (await corregir(id, { ...base, cambio_en: new Date(Date.now() + H).toISOString() })).status
+    ).toBe(400); // futuro
+    expect((await corregir(id, { ...base, a_dni: titular.dni })).status).toBe(409); // ya manejaba
+    expect((await corregir(id, { ...base, a_dni: "99999999" })).status).toBe(400); // ajeno al viaje
+    expect((await corregir(id, { ...base, motivo: "" })).status).toBe(400);
+    expect((await corregir(id, { ...base, medidor: undefined })).status).toBe(400); // falta
+    expect((await corregir(id, { ...base, medidor: 500 })).status).toBe(400); // fuera del turno
+    expect((await titular.agente.post(`${url(id)}/mando/corregir`).send(base)).status).toBe(403);
+    expect(await turnosDe(id)).toHaveLength(1); // nada de lo rechazado dejó huella
+
+    expect((await corregir(id, base)).status).toBe(200);
+    // Partir el primer tramo para dárselo al relevo choca con su turno siguiente.
+    expect((await corregir(id, { ...base, cambio_en: hora(2), medidor: 150 })).status).toBe(409);
+    // El relevo devuelve el volante al titular a mitad de su turno: tres tramos.
+    const vuelta = await corregir(id, {
+      a_dni: titular.dni,
+      cambio_en: hora(7),
+      medidor: 320,
+      motivo: "volvió el titular",
+    });
+    expect(vuelta.status, JSON.stringify(vuelta.body)).toBe(200);
+    expect(await turnosDe(id)).toHaveLength(3);
+  });
+
+  it("sin relevo, o con una entrega pendiente, no se corrige el mando", async () => {
+    const solo = (await viaje(await unidad(), { inicio_en: hora(0), fin_en: hora(10) })).body;
+    const sinRelevo = await corregir(solo.id, {
+      a_dni: "12345678",
+      cambio_en: hora(4),
+      motivo: "no lo marcaron",
+    });
+    expect(sinRelevo.status).toBe(409);
+
+    const { titular, relevo, id } = await enCurso();
+    expect((await marcar(titular.agente, id, "mando/entregar", { medidor: 150 })).status).toBe(200);
+    const pendiente = await corregir(id, {
+      a_dni: relevo.dni,
+      cambio_en: new Date(Date.now() - 1000).toISOString(),
+      medidor: 150,
+      motivo: "no lo marcaron",
+    });
+    expect(pendiente.status).toBe(409);
+    expect(JSON.stringify(pendiente.body)).toContain("entrega pendiente");
+  });
+
   // ── Entrega del mando ────────────────────────────────────────────────────
 
   const enCurso = async () => {
