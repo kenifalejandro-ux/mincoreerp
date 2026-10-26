@@ -19,16 +19,21 @@ test("el conductor hace un viaje de ida y vuelta: llega, sale y termina", async 
   await iniciarMiViaje(page, "100");
 
   // En ruta hacia la parada: un solo botón; llegar a B no cierra el viaje.
+  await expect(page.getByText(`En ruta a ${v.b}`, { exact: true })).toBeVisible();
   await page.getByRole("button", { name: `Llegué a ${v.b}`, exact: true }).click();
   await odometro.fill("150");
   await page.getByRole("button", { name: `Llegué a ${v.b}`, exact: true }).click();
   await expect(page.getByText("Llegada registrada.")).toBeVisible();
 
   // En la parada: sale hacia A; el odómetro viene con la lectura de la llegada.
+  await expect(page.getByText(`En ${v.b} · sigue a ${v.a}`, { exact: true })).toBeVisible();
   await page.getByRole("button", { name: `Salir hacia ${v.a}`, exact: true }).click();
   await expect(odometro).toHaveValue("150");
   await page.getByRole("button", { name: `Salir hacia ${v.a}`, exact: true }).click();
   await expect(page.getByText(/Salida registrada/)).toBeVisible();
+
+  // De vuelta al punto de salida se dice que retorna.
+  await expect(page.getByText(`Retornando a ${v.a}`, { exact: true })).toBeVisible();
 
   // Llegar a la última parada cierra el viaje.
   await page.getByRole("button", { name: `Llegué a ${v.a} · terminar viaje` }).click();

@@ -20,6 +20,7 @@ import { MiViajeParadas } from "./MiViajeParadas";
 import {
   avanceDelMando,
   avanceDelViaje,
+  estadoDelTramo,
   minutosDescansados,
   paradasDelViaje,
   type DescansoMio,
@@ -386,7 +387,11 @@ export default function MiViaje() {
       {actual && (
         <TarjetaViaje
           v={actual}
-          textoEstado={actual.estado === "en_curso" ? "En ruta · en vivo" : "Programado"}
+          textoEstado={
+            actual.estado === "en_curso"
+              ? (estadoDelTramo(paradasDelViaje(actual))?.texto ?? "En ruta · en vivo")
+              : "Programado"
+          }
           nombre={rolTarjeta?.nombre}
           etiqueta={etiquetaMando}
           lineaRol={rolTarjeta?.lineaRol}

@@ -42,7 +42,10 @@ export function BarraRuta({
   esperadoMin,
   ahora,
   nota,
+  retorno = false,
 }: {
+  /** Va de vuelta al punto de salida: el camión se ve de regreso. */
+  retorno?: boolean;
   origen: string;
   destino: string;
   tipoUnidad: string | null;
@@ -73,7 +76,7 @@ export function BarraRuta({
           className="absolute -top-3 -translate-x-1/2 rounded-lg bg-[#0D1719] border border-[#BADC1E] p-1 text-[#BADC1E]"
           style={{ left: `${Math.max(4, Math.min(96, progreso))}%` }}
         >
-          <IconoUnidad tipo={tipoUnidad} className="w-4 h-4" />
+          <IconoUnidad tipo={tipoUnidad} className={`w-4 h-4 ${retorno ? "-scale-x-100" : ""}`} />
         </div>
       </div>
       <div className="flex justify-between mt-3 text-xs text-[#94a3b8]">
