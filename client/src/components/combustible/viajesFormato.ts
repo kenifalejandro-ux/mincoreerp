@@ -28,6 +28,8 @@ export interface FilaViaje {
   medidor_previo: string | null;
   medidor_inicio: string | null;
   medidor_fin: string | null;
+  /** La última lectura del viaje (salida, parada, turno o entrega): no espera al cierre. */
+  medidor_actual: string | null;
   recorrido: string | null;
   recorrido_sin_viaje: string | null;
   ruta_por_confirmar: boolean;

@@ -1595,6 +1595,18 @@ const COLUMNAS_VIAJE = `
   v.inicio_en, v.fin_en, v.medidor_previo, v.medidor_inicio, v.medidor_fin,
   v.medidor_fin - v.medidor_inicio AS recorrido,
   v.medidor_inicio - v.medidor_previo AS recorrido_sin_viaje,
+  -- La última lectura del viaje: el medidor nunca baja, así que es la mayor entre la salida, la
+  -- llegada, cada parada, cada turno y las entregas del mando sin cancelar. Un viaje cerrado
+  -- vale su medidor de cierre, el mismo que usa el recorrido.
+  CASE WHEN v.estado = 'cerrado' AND v.medidor_fin IS NOT NULL THEN v.medidor_fin ELSE GREATEST(
+    v.medidor_inicio, v.medidor_fin,
+    (SELECT max(GREATEST(p.llegada_medidor, p.salida_medidor)) FROM combustible_viaje_paradas p
+      WHERE p.tenant_id = v.tenant_id AND p.viaje_id = v.id),
+    (SELECT max(GREATEST(t.medidor_inicio, t.medidor_fin)) FROM combustible_viaje_turnos t
+      WHERE t.tenant_id = v.tenant_id AND t.viaje_id = v.id),
+    (SELECT max(n.medidor) FROM combustible_viaje_entregas n
+      WHERE n.tenant_id = v.tenant_id AND n.viaje_id = v.id AND n.cancelada_en IS NULL)
+  ) END AS medidor_actual,
   v.ruta_por_confirmar, v.nota_ruta, v.inicio_origen_hora, v.fin_origen_hora,
   v.estado, v.observaciones, v.motivo_anulacion,
   v.relevo_dni, v.relevo_nombre, v.sale_primero, ${volanteDni("v")} AS volante_dni,

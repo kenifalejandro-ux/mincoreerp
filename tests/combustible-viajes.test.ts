@@ -1582,6 +1582,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
       (x: { id: string }) => Number(x.id) === id
     ) as {
       volante_dni: string;
+      medidor_actual: string | null;
       entrega_pendiente: { a_dni: string; medidor: string } | null;
       turnos: { conductor_dni: string; medidor_inicio: string; medidor_fin: string | null }[];
     };
@@ -1609,6 +1610,46 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     // Ahora el titular es quien espera.
     expect((await marcar(titular.agente, id, "llegada-mia", { medidor: 160 })).status).toBe(409);
     expect((await marcar(relevo.agente, id, "llegada-mia", { medidor: 160 })).status).toBe(200);
+  });
+
+  it("medidor_actual: la última lectura del viaje sin esperar al cierre (parada, entrega, cancelada)", async () => {
+    const { titular, relevo, id } = await enCurso();
+    const actual = async () => Number((await viajeDe(titular.agente, id)).medidor_actual);
+    const inicial = await actual();
+    expect(inicial).toBeGreaterThan(0);
+
+    const e = await marcar(titular.agente, id, "mando/entregar", { medidor: inicial + 80 });
+    expect(e.status, JSON.stringify(e.body)).toBe(200);
+    expect(await actual()).toBe(inicial + 80);
+
+    // Una entrega cancelada ya no cuenta como lectura.
+    expect((await marcar(titular.agente, id, "mando/retirar", {})).status).toBe(200);
+    expect(await actual()).toBe(inicial);
+
+    await marcar(titular.agente, id, "mando/entregar", { medidor: inicial + 100 });
+    expect((await marcar(relevo.agente, id, "mando/aceptar", {})).status).toBe(200);
+    expect(await actual()).toBe(inicial + 100);
+    expect(
+      (await marcar(relevo.agente, id, "llegada-mia", { medidor: inicial + 150 })).status
+    ).toBe(200);
+    expect(await actual()).toBe(inicial + 150);
+  });
+
+  it("medidor_actual: un viaje programado no tiene lectura y uno cerrado vale su medidor de cierre", async () => {
+    const prog = await conRelevo();
+    expect((await viajeDe(prog.titular.agente, prog.id)).medidor_actual).toBeNull();
+
+    const c = await enCurso();
+    expect(
+      (await marcar(c.titular.agente, c.id, "llegada-mia", { medidor: 150, orden: 1 })).status
+    ).toBe(200);
+    expect(Number((await viajeDe(c.titular.agente, c.id)).medidor_actual)).toBe(150);
+    expect(
+      (await marcar(c.titular.agente, c.id, "salida-mia", { medidor: 150, orden: 1 })).status
+    ).toBe(200);
+    const fin = await marcar(c.titular.agente, c.id, "llegada-mia", { medidor: 260, orden: 2 });
+    expect(fin.body.estado).toBe("cerrado");
+    expect(Number((await viajeDe(c.titular.agente, c.id)).medidor_actual)).toBe(260);
   });
 
   it("la entrega valida quién, cuándo y con qué medidor", async () => {
