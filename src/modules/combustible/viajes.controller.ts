@@ -9,6 +9,7 @@ import type {
   AnularViajeInput,
   CerrarMiViajeInput,
   CerrarViajeInput,
+  CorregirMandoInput,
   CrearLugarInput,
   CrearViajeInput,
   EditarViajeInput,
@@ -329,6 +330,26 @@ export const viajesController = {
   entregarMando: marcaDeMando("entregar"),
   aceptarMando: marcaDeMando("aceptar"),
   retirarEntrega: marcaDeMando("retirar"),
+
+  /** La oficina corrige un cambio de mando que nadie marcó (con motivo). */
+  async corregirMando(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.viajeId);
+    const data = req.validatedBody as CorregirMandoInput;
+    const r = await withTenant(tenantId, (c) =>
+      viajes.corregirMando(c, tenantId, req.usuario!.id, id, data)
+    );
+    await auditar(req, "viaje_mando_corregir", {
+      viajeId: id,
+      numero: r.antes.numero,
+      por: "oficina",
+      a_dni: data.a_dni,
+      cambio_en: data.cambio_en,
+      medidor: data.medidor ?? null,
+      motivo: data.motivo,
+    });
+    res.json(r.despues);
+  },
   llegadaMia: marcaDeParada("llegada", true),
   salidaMia: marcaDeParada("salida", true),
   llegada: marcaDeParada("llegada", false),

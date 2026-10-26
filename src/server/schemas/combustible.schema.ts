@@ -2497,6 +2497,16 @@ export const entregaMandoSchema = z.object({
 });
 export type EntregaMandoInput = z.infer<typeof entregaMandoSchema>;
 
+// La oficina corrige un cambio de mando que nadie marcó: parte el turno de esa hora.
+export const corregirMandoSchema = z.object({
+  a_dni: z.string().trim().min(1).max(15),
+  cambio_en: fechaHora,
+  medidor,
+  lugar: z.string().trim().max(160).nullable().optional(),
+  motivo,
+});
+export type CorregirMandoInput = z.infer<typeof corregirMandoSchema>;
+
 export const aceptarMandoSchema = entregaMandoSchema.pick({
   marcado_en: true,
   cliente_uuid: true,
