@@ -1272,6 +1272,65 @@ export async function retirarEntrega(
   return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
 }
 
+/** Lo ya marcado en el camino (paradas intermedias, descansos y cambios de mando) tiene que seguir
+ *  dentro de la salida y la llegada que se corrigen; los extremos los mueve sincronizarExtremos. */
+async function validarVentanaConMarcas(
+  client: PoolClient,
+  tenantId: string,
+  viajeId: number,
+  inicio: string,
+  fin: string | null,
+  medIni: number | null,
+  medFin: number | null
+) {
+  const desde = Date.parse(inicio);
+  const hasta = fin ? Date.parse(fin) : Infinity;
+  const horaFuera = (x: Date | null) => x != null && (x.getTime() < desde || x.getTime() > hasta);
+  const medidorFuera = (x: string | number | null) =>
+    x != null && ((medIni != null && Number(x) < medIni) || (medFin != null && Number(x) > medFin));
+  const donde = [tenantId, viajeId];
+
+  const paradas = await client.query(
+    `SELECT llegada_en, salida_en, llegada_medidor, salida_medidor
+       FROM combustible_viaje_paradas
+      WHERE tenant_id = $1 AND viaje_id = $2 AND orden > 0
+        AND orden < (SELECT max(orden) FROM combustible_viaje_paradas
+                      WHERE tenant_id = $1 AND viaje_id = $2)`,
+    donde
+  );
+  if (paradas.rows.some((p) => horaFuera(p.llegada_en) || horaFuera(p.salida_en))) {
+    throw new AppError(409, "Hay una parada marcada fuera de esa salida y llegada");
+  }
+  if (paradas.rows.some((p) => medidorFuera(p.llegada_medidor) || medidorFuera(p.salida_medidor))) {
+    throw new AppError(409, "El medidor de una parada marcada queda fuera de esos medidores");
+  }
+
+  const descansos = await client.query(
+    `SELECT inicio_en, fin_en FROM combustible_viaje_descansos
+      WHERE tenant_id = $1 AND viaje_id = $2`,
+    donde
+  );
+  if (descansos.rows.some((d) => horaFuera(d.inicio_en) || horaFuera(d.fin_en))) {
+    throw new AppError(409, "Hay un descanso marcado fuera de esa salida y llegada");
+  }
+
+  const turnos = (
+    await client.query(
+      `SELECT inicio_en, fin_en, medidor_inicio, medidor_fin FROM combustible_viaje_turnos
+        WHERE tenant_id = $1 AND viaje_id = $2 ORDER BY inicio_en`,
+      donde
+    )
+  ).rows;
+  const hayMandoFuera = turnos.some(
+    (t, i) =>
+      (i > 0 && (horaFuera(t.inicio_en) || medidorFuera(t.medidor_inicio))) ||
+      (i < turnos.length - 1 && (horaFuera(t.fin_en) || medidorFuera(t.medidor_fin)))
+  );
+  if (hayMandoFuera) {
+    throw new AppError(409, "Hay un cambio de mando marcado fuera de esa salida y llegada");
+  }
+}
+
 export async function editarViaje(
   client: PoolClient,
   tenantId: string,
@@ -1349,6 +1408,7 @@ export async function editarViaje(
     if (!e.rows[0]) throw new AppError(404, "La unidad no existe");
   }
   if (v.estado !== "programado") {
+    await validarVentanaConMarcas(client, tenantId, id, inicio!, fin, medIni, medFin);
     await validarSinTraslape(client, tenantId, equipo, inicio!, fin, id);
   }
   // Cambiar la ruta o la unidad es justamente confirmarla, salvo que se diga
