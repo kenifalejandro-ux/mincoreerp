@@ -27,6 +27,22 @@ export function posicion(p: ParadaMia[]): Posicion {
   return { tipo: "terminado" };
 }
 
+/** Dónde va el viaje, dicho como lo lee el encargado: "En ruta a B", "Retornando a A" (la última
+ *  parada vuelve al punto de salida) o "En B · sigue a A". Null si no ha salido o ya terminó. */
+export function estadoDelTramo(p: ParadaMia[]): { texto: string; retorno: boolean } | null {
+  const pos = posicion(p);
+  if (pos.tipo === "en_marcha") {
+    const destino = p[pos.hacia];
+    const retorno =
+      pos.hacia > 1 && pos.hacia === p.length - 1 && destino.lugar_id === p[0].lugar_id;
+    return { texto: `${retorno ? "Retornando" : "En ruta"} a ${destino.lugar}`, retorno };
+  }
+  if (pos.tipo === "en_parada") {
+    return { texto: `En ${p[pos.en].lugar} · sigue a ${p[pos.en + 1].lugar}`, retorno: false };
+  }
+  return null;
+}
+
 export interface ProximaMarca {
   accion: "llegada-mia" | "salida-mia";
   /** La parada a la que llega o de la que sale: el servidor rechaza la marca si ya no vale. */

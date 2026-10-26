@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { AccionesEncargado } from "./AccionesEncargado";
 import { CorregirMando } from "./CorregirMando";
+import { estadoDelTramo, paradasDelViaje } from "./paradasViaje";
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
 import { QuienManejo } from "./QuienManejo";
 import { TramosViaje, type TramoDelViaje } from "./TramosViaje";
@@ -93,6 +94,7 @@ export function DetalleViajeVentana({
   const combustibleGal = litros("combustible") / LITROS_POR_GALON;
   const ureaL = litros("urea");
 
+  const tramo = enCurso && v ? estadoDelTramo(paradasDelViaje(v)) : null;
   const medidorActual = v?.medidor_actual ? Number(v.medidor_actual) : null;
 
   // Duración: la real si cerró, la transcurrida si va en ruta.
@@ -131,7 +133,7 @@ export function DetalleViajeVentana({
             v={v}
             textoEstado={
               enCurso
-                ? "En ruta · en vivo"
+                ? (tramo?.texto ?? "En ruta · en vivo")
                 : v.estado === "programado"
                   ? "Programado"
                   : v.estado === "anulado"
@@ -150,6 +152,7 @@ export function DetalleViajeVentana({
                 llegadaEstimada={llegadaEstimada}
                 esperadoMin={esperado}
                 ahora={ahora}
+                retorno={tramo?.retorno}
                 nota={historial}
               />
             }
