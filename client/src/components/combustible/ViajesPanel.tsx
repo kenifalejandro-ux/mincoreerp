@@ -1,10 +1,11 @@
 // Combustible › Viajes (0123): registrar, cerrar, corregir y anular viajes.
 // El análisis (ranking, desvío) vive en el Histórico de cada producto.
-import { Ban, Eye, Flag, Lock, MapPin, Pencil, Play, Plus, X } from "lucide-react";
+import { Ban, Download, Eye, Flag, Lock, MapPin, Pencil, Play, Plus, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { CeldaDesvio } from "./ConsumoPorViaje";
 import { DetalleViajeVentana } from "./DetalleViaje";
+import { exportarViajesExcel } from "./exportarViajes";
 import { IconoUnidad } from "./IconoUnidad";
 import { textoDetenido } from "./motivosDescanso";
 import {
@@ -577,6 +578,19 @@ export default function ViajesPanel() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={() =>
+              void exportarViajesExcel(
+                visibles,
+                textoDeEstado,
+                `Viajes ${desde || "todo"}${hasta ? ` a ${hasta}` : ""}.xlsx`
+              )
+            }
+            disabled={visibles.length === 0}
+            className="flex items-center gap-2 border border-[#334155] text-[#cbd5e1] px-4 py-2 rounded-lg hover:text-white disabled:opacity-40"
+          >
+            <Download className="w-4 h-4" /> Exportar a Excel
+          </button>
           {permite("lugares") && (
             <button
               onClick={() => abrir({ tipo: "lugares" })}
