@@ -1814,6 +1814,124 @@ export async function listarViajes(
   return r.rows;
 }
 
+export interface ResumenConductor {
+  dni: string;
+  nombre: string;
+  /** Viajes cerrados del período en que manejó (titular o relevo). */
+  viajes: number;
+  /** Sus kilómetros: lo de sus turnos con lectura al empezar y al terminar. */
+  km: number;
+  minutos_al_volante: number;
+  /** Viajes que ÉL inició y tenían hora programada, y cuántos salieron a tiempo o antes. */
+  salidas_medidas: number;
+  salidas_puntuales: number;
+  /** Viajes que él inició y se pudieron comparar con su ruta, y el desvío medio de consumo. */
+  consumo_viajes: number;
+  consumo_desvio_pct: number | null;
+}
+
+/** El resumen de cada conductor en un período, de los viajes cerrados: sus kilómetros y horas al
+ *  volante (por turnos), su puntualidad de salida y cuánto consume frente a lo normal de su ruta.
+ *  Puntualidad y consumo cuentan los viajes que el conductor INICIÓ; los kilómetros, lo que manejó.
+ *  Con una unidad o un estado no se filtra: depende solo del período. */
+export async function resumenPorConductor(
+  client: PoolClient,
+  tenantId: string,
+  q: Pick<ListarViajesQuery, "desde" | "hasta">,
+  ambito?: AmbitoVales
+): Promise<ResumenConductor[]> {
+  const viajes = await listarViajes(
+    client,
+    tenantId,
+    { desde: q.desde, hasta: q.hasta, estado: "cerrado", producto: "combustible" },
+    ambito
+  );
+  if (viajes.length === 0) return [];
+  const turnos = await client.query(
+    `SELECT t.viaje_id, t.conductor_dni, t.conductor_nombre, t.inicio_en, t.fin_en,
+            t.medidor_inicio, t.medidor_fin
+       FROM combustible_viaje_turnos t
+      WHERE t.tenant_id = $1 AND t.viaje_id = ANY($2::bigint[])
+      ORDER BY t.viaje_id, t.inicio_en`,
+    [tenantId, viajes.map((v) => v.id)]
+  );
+  const porViaje = new Map<string, (typeof viajes)[number]>(viajes.map((v) => [String(v.id), v]));
+  const por = new Map<string, ResumenConductor & { _vistos: Set<string> }>();
+  const de = (dni: string, nombre: string | null) => {
+    let r = por.get(dni);
+    if (!r) {
+      r = {
+        dni,
+        nombre: nombre ?? dni,
+        viajes: 0,
+        km: 0,
+        minutos_al_volante: 0,
+        salidas_medidas: 0,
+        salidas_puntuales: 0,
+        consumo_viajes: 0,
+        consumo_desvio_pct: null,
+        _vistos: new Set(),
+      };
+      por.set(dni, r);
+    }
+    return r;
+  };
+  const desvios = new Map<string, number[]>();
+  const iniciados = new Set<string>();
+  for (const t of turnos.rows) {
+    const dni = normalizarDni(t.conductor_dni);
+    const viajeId = String(t.viaje_id);
+    // El primer turno de cada viaje es de quien lo inició, aunque no tenga DNI: no se le pasa al relevo.
+    const inicio = !iniciados.has(viajeId);
+    iniciados.add(viajeId);
+    if (!dni) continue;
+    const r = de(dni, t.conductor_nombre);
+    r._vistos.add(viajeId);
+    if (t.medidor_inicio !== null && t.medidor_fin !== null) {
+      const km = Number(t.medidor_fin) - Number(t.medidor_inicio);
+      if (km > 0) r.km += km;
+    }
+    if (t.fin_en) {
+      const min = (Date.parse(t.fin_en) - Date.parse(t.inicio_en)) / 60_000;
+      if (min > 0) r.minutos_al_volante += min;
+    }
+    if (!inicio) continue;
+    const v = porViaje.get(viajeId);
+    if (!v) continue;
+    if (v.desfase_salida_min !== null && v.desfase_salida_min !== undefined) {
+      r.salidas_medidas += 1;
+      if (Number(v.desfase_salida_min) <= Number(v.desfase_tolerancia_min))
+        r.salidas_puntuales += 1;
+    }
+    if (!v.ruta_por_confirmar) {
+      const propia = Number(v.viajes_ruta_unidad) >= MINIMO_DE_VIAJES;
+      if (propia || Number(v.viajes_ruta) >= MINIMO_DE_VIAJES) {
+        const base = Number(propia ? v.promedio_ruta_unidad : v.promedio_ruta);
+        if (base > 0) {
+          const lista = desvios.get(dni) ?? [];
+          lista.push(((Number(v.cantidad) - base) / base) * 100);
+          desvios.set(dni, lista);
+        }
+      }
+    }
+  }
+  return [...por.values()]
+    .map(({ _vistos, ...r }) => {
+      const d = desvios.get(r.dni) ?? [];
+      return {
+        ...r,
+        viajes: _vistos.size,
+        km: Math.round(r.km * 10) / 10,
+        minutos_al_volante: Math.round(r.minutos_al_volante),
+        consumo_viajes: d.length,
+        consumo_desvio_pct: d.length
+          ? Math.round((d.reduce((a, b) => a + b, 0) / d.length) * 10) / 10
+          : null,
+      };
+    })
+    .sort((a, b) => b.km - a.km || a.nombre.localeCompare(b.nombre));
+}
+
 export async function getViaje(client: PoolClient, tenantId: string, id: number) {
   const margen = await margenPrevioHoras(client, tenantId);
   const r = await client.query(

@@ -14,6 +14,7 @@ import {
   type Recorrido,
 } from "./recorrido";
 import { RecorridoViaje } from "./RecorridoViaje";
+import { ResumenConductores } from "./ResumenConductores";
 import { SelectorConductor, type OpcionConductor } from "./SelectorConductor";
 import { SelectorRelevo } from "./SelectorRelevo";
 import {
@@ -673,6 +674,8 @@ export default function ViajesPanel() {
         </label>
         {cargando && <span className="text-[#94a3b8] pb-2">Cargando...</span>}
       </div>
+
+      <ResumenConductores desde={desde} hasta={hasta} />
 
       {error && <p className="text-sm text-red-400">{error}</p>}
       {!error && !cargando && visibles.length === 0 && (

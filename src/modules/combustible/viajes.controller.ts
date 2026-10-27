@@ -178,6 +178,16 @@ export const viajesController = {
     res.json({ data: filas });
   },
 
+  /** El resumen de cada conductor en un período (km, horas al volante, puntualidad y consumo). */
+  async resumenConductores(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const q = req.validatedQuery as ListarViajesQuery;
+    const filas = await withTenant(tenantId, (c) =>
+      viajes.resumenPorConductor(c, tenantId, q, ambitoDe(req))
+    );
+    res.json({ data: filas });
+  },
+
   /** El Histórico de cada producto tiene su propio permiso: combustible pide
    *  la vista "Por viaje", urea la consulta de Urea. */
   async listarConsumo(req: Request, res: Response) {
