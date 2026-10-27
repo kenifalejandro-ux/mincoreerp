@@ -30,6 +30,9 @@ export interface FilaViaje {
   medidor_fin: string | null;
   /** La última lectura del viaje (salida, parada, turno o entrega): no espera al cierre. */
   medidor_actual: string | null;
+  /** Cuándo debería salir y cuántos minutos de diferencia se aceptan (0155). */
+  salida_programada_en: string | null;
+  desfase_tolerancia_min: number;
   recorrido: string | null;
   recorrido_sin_viaje: string | null;
   ruta_por_confirmar: boolean;
