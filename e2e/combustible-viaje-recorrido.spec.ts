@@ -44,6 +44,12 @@ test("programar un viaje de ida y vuelta y uno con varias paradas", async ({ pag
   await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
   await page.getByRole("button", { name: "Viajes" }).click();
 
+  // Dentro de 3 horas, como lo escribe un datetime-local (hora local, sin zona).
+  const en3h = new Date(Date.now() + 3 * 3_600_000);
+  const salidaLocal = new Date(en3h.getTime() - en3h.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 16);
+
   const programar = async (tipo: RegExp, elegir: () => Promise<void>) => {
     await page.getByRole("button", { name: "Nuevo viaje" }).click();
     await page.getByRole("button", { name: "Conductor", exact: true }).click();
@@ -58,8 +64,15 @@ test("programar un viaje de ida y vuelta y uno con varias paradas", async ({ pag
     await page.getByLabel("Sale de", { exact: true }).selectOption({ label: a });
     await page.getByLabel("Va a", { exact: true }).selectOption({ label: b });
     await expect(page.getByText(/Vuelve a/)).toContainText(a);
+    // La hora de salida programada y su tolerancia (0155) son opcionales.
+    await page.getByLabel("Hora de salida programada (opcional)").fill(salidaLocal);
+    await page.getByLabel("Tolerancia (min)").fill("15");
   });
   await expect(page.getByRole("cell", { name: `${a} → ${b} → ${a}` })).toBeVisible();
+  // En la fila de ESE viaje (un reintento deja otras filas "Prog." y el selector sería ambiguo).
+  await expect(
+    page.getByRole("row", { name: new RegExp(`${a} → ${b} → ${a}`) }).getByText(/^Prog\./)
+  ).toBeVisible();
 
   // Varias paradas: A → B → C → A, con la parada extra que trae el formulario.
   await programar(/Varias paradas/, async () => {
@@ -74,10 +87,21 @@ test("programar un viaje de ida y vuelta y uno con varias paradas", async ({ pag
   const lista = await page.request.get("/api/erp/combustible/viajes", {
     params: { equipo_id: String(equipoId), estado: "programado" },
   });
-  const viajes = (await lista.json()).data as { paradas: { lugar: string }[] }[];
+  const viajes = (await lista.json()).data as {
+    paradas: { lugar: string }[];
+    salida_programada_en: string | null;
+    desfase_tolerancia_min: number;
+  }[];
   const recorridos = viajes
     .map((v) => v.paradas.map((p) => p.lugar))
     .sort((x, y) => x.length - y.length);
+  // Solo el de ida y vuelta lleva hora programada; el otro queda con la tolerancia de siempre.
+  const idaVuelta = viajes.find((v) => v.paradas.length === 3);
+  const circuito = viajes.find((v) => v.paradas.length === 4);
+  expect(idaVuelta?.salida_programada_en).not.toBeNull();
+  expect(idaVuelta?.desfase_tolerancia_min).toBe(15);
+  expect(circuito?.salida_programada_en).toBeNull();
+  expect(circuito?.desfase_tolerancia_min).toBe(10);
   expect(recorridos).toEqual([
     [a, b, a],
     [a, b, c, a],

@@ -27,7 +27,14 @@ import {
   type ParadaMia,
 } from "./paradasViaje";
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
-import { duracion as duracionMin, fmt, ruta, unidadLabel, type FilaViaje } from "./viajesFormato";
+import {
+  duracion as duracionMin,
+  fechaHora,
+  fmt,
+  ruta,
+  unidadLabel,
+  type FilaViaje,
+} from "./viajesFormato";
 import { useAuth } from "../../context/AuthContext";
 import { listarPendientes, suscribirseACola } from "../../offline/offlineQueue";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
@@ -461,7 +468,11 @@ export default function MiViaje() {
                 {[
                   ["Ruta", ruta(actual)],
                   ["Unidad", unidadLabel(actual)],
-                  ["Conductor", actual.conductor_nombre ?? "—"],
+                  ["Conductor titular", actual.conductor_nombre ?? "—"],
+                  ...(actual.relevo_dni ? [["Conductor relevo", actual.relevo_nombre ?? "—"]] : []),
+                  ...(actual.salida_programada_en
+                    ? [["Hora de salida", `${fechaHora(actual.salida_programada_en)} (programada)`]]
+                    : []),
                 ].map(([k, valor]) => (
                   <div key={k} className="flex justify-between gap-3">
                     <dt className="text-[#94a3b8] flex items-center gap-1">
@@ -508,7 +519,11 @@ export default function MiViaje() {
                 <span className="flex items-center gap-1">
                   <Lock className="w-3 h-3" /> Hora de salida
                 </span>
-                <span className="text-white">se registra al iniciar</span>
+                <span className="text-white">
+                  {actual.salida_programada_en
+                    ? `programada ${fechaHora(actual.salida_programada_en)} · se registra al iniciar`
+                    : "se registra al iniciar"}
+                </span>
               </div>
               {tipo && (
                 <>

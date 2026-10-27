@@ -64,6 +64,9 @@ const FORM_VACIO = {
   fin_en: "",
   medidor_inicio: "",
   medidor_fin: "",
+  // Cuándo debería salir (opcional) y cuántos minutos de diferencia se aceptan (0155).
+  salida_programada_en: "",
+  desfase_tolerancia_min: "10",
   observaciones: "",
   nota_ruta: "",
   motivo: "",
@@ -242,6 +245,8 @@ export default function ViajesPanel() {
         fin_en: v.fin_en ? paraInputLocal(v.fin_en) : "",
         medidor_inicio: v.medidor_inicio ?? "",
         medidor_fin: v.medidor_fin ?? "",
+        salida_programada_en: v.salida_programada_en ? paraInputLocal(v.salida_programada_en) : "",
+        desfase_tolerancia_min: String(v.desfase_tolerancia_min ?? 10),
         observaciones: v.observaciones ?? "",
         nota_ruta: v.nota_ruta ?? "",
         motivo: "",
@@ -348,7 +353,10 @@ export default function ViajesPanel() {
               medidor_inicio: numeroONull(form.medidor_inicio),
               medidor_fin: numeroONull(form.medidor_fin),
             }
-          : {}),
+          : {
+              salida_programada_en: isoONull(form.salida_programada_en),
+              desfase_tolerancia_min: Number(form.desfase_tolerancia_min || 10),
+            }),
       });
     } else if (modal.tipo === "iniciar") {
       ok = await enviar(`${base}/${modal.v.id}/iniciar`, "POST", {
@@ -377,6 +385,17 @@ export default function ViajesPanel() {
               medidor_fin: numeroONull(form.medidor_fin),
             }),
         ...(v.ruta_por_confirmar ? { ruta_por_confirmar: rutaDudosa } : {}),
+        // La hora programada y su tolerancia solo viajan si las cambió: reenviarlas igual volvería
+        // a validar el rango de una hora vieja.
+        ...(v.estado !== "cerrado" &&
+        form.salida_programada_en !==
+          (v.salida_programada_en ? paraInputLocal(v.salida_programada_en) : "")
+          ? { salida_programada_en: isoONull(form.salida_programada_en) }
+          : {}),
+        ...(v.estado !== "cerrado" &&
+        Number(form.desfase_tolerancia_min || 10) !== v.desfase_tolerancia_min
+          ? { desfase_tolerancia_min: Number(form.desfase_tolerancia_min || 10) }
+          : {}),
         motivo: form.motivo.trim(),
       });
     } else if (modal.tipo === "cerrar") {
@@ -626,7 +645,13 @@ export default function ViajesPanel() {
                     )}
                   </td>
                   <td className="p-3 whitespace-nowrap">
-                    {fechaHora(v.inicio_en)}
+                    {v.inicio_en || !v.salida_programada_en ? (
+                      fechaHora(v.inicio_en)
+                    ) : (
+                      <span title="Hora de salida programada" className="text-[#94a3b8]">
+                        Prog. {fechaHora(v.salida_programada_en)}
+                      </span>
+                    )}
                     <MarcaHora origen={v.inicio_origen_hora} />
                   </td>
                   <td className="p-3 whitespace-nowrap">
@@ -1034,6 +1059,27 @@ export default function ViajesPanel() {
                         )}
                       </>
                     )}
+                    {!retroVale &&
+                      (modal.tipo === "nuevo" ||
+                        (modal.tipo === "editar" && modal.v.estado !== "cerrado")) && (
+                        <div className="space-y-1">
+                          <div className="grid grid-cols-2 gap-3">
+                            {campo("salida_programada_en", "Hora de salida programada (opcional)", {
+                              type: "datetime-local",
+                            })}
+                            {campo("desfase_tolerancia_min", "Tolerancia (min)", {
+                              type: "number",
+                              min: 0,
+                              max: 240,
+                              step: 1,
+                            })}
+                          </div>
+                          <p className="text-xs text-slate-500">
+                            Con la hora, el viaje dice si salió antes o tarde; pasada la tolerancia
+                            se marca.
+                          </p>
+                        </div>
+                      )}
                     {campo("observaciones", "Observaciones (opcional)", { maxLength: 1000 })}
                     {modal.tipo === "editar" && modal.v.ruta_por_confirmar && (
                       <label className="flex items-center gap-2 text-sm text-slate-700">

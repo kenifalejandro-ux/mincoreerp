@@ -31,3 +31,17 @@ test("el relevo ve quién sale manejando y no inicia el viaje", async ({ page })
 
   await darDeBajaAlConductor(page, v);
 });
+
+test("al confirmar el viaje, el titular ve a su relevo", async ({ page }) => {
+  test.setTimeout(120_000);
+  const v = await prepararViajeDeConductor(page, { conRelevo: true });
+  await entrarAMiViaje(page, v);
+
+  await page.getByRole("button", { name: "Revisar mi viaje" }).click();
+  const resumen = page.locator("dl");
+  await expect(resumen.getByText("Conductor titular")).toBeVisible();
+  await expect(resumen.getByText("Conductor relevo")).toBeVisible();
+  await expect(resumen.getByText(v.relevo!.nombre, { exact: true })).toBeVisible();
+
+  await darDeBajaAlConductor(page, v);
+});
