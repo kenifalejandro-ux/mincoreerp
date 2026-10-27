@@ -62,6 +62,7 @@ test("el panel del encargado sigue al conductor sin recargar: salida, llegada y 
 
     // ── Sale de vuelta: el panel dice que retorna ────────────────────────
     await page.getByRole("button", { name: `Salir hacia ${v.a}`, exact: true }).click();
+    await odometro.fill("200");
     await page.getByRole("button", { name: `Salir hacia ${v.a}`, exact: true }).click();
     await expect(page.getByText(/Salida registrada/)).toBeVisible();
     await expect(oficina.getByText(`Retornando a ${v.a}`, { exact: true })).toBeVisible({

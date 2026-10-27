@@ -26,6 +26,13 @@ test("el conductor hace un viaje de ida y vuelta: llega, sale y termina", async 
   // En ruta hacia la parada: un solo botón; llegar a B no cierra el viaje.
   await expect(page.getByText(`En ruta a ${v.b}`, { exact: true })).toBeVisible();
   await page.getByRole("button", { name: `Llegué a ${v.b}`, exact: true }).click();
+  // Un salto de más de 600 km pide confirmar (casi siempre es un error de tipeo): se corrige.
+  await odometro.fill("5000");
+  await page.getByRole("button", { name: `Llegué a ${v.b}`, exact: true }).click();
+  await expect(
+    page.getByRole("alert").filter({ hasText: /desde la última lectura/ })
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Corregir" }).click();
   await odometro.fill("150");
   await page.getByRole("button", { name: `Llegué a ${v.b}`, exact: true }).click();
   await expect(page.getByText("Llegada registrada.")).toBeVisible();
@@ -34,7 +41,9 @@ test("el conductor hace un viaje de ida y vuelta: llega, sale y termina", async 
   await expect(page.getByText(`En ${v.b} · sigue a ${v.a}`, { exact: true })).toBeVisible();
   await expect(ahora).toContainText(`Salir hacia ${v.a}`);
   await page.getByRole("button", { name: `Salir hacia ${v.a}`, exact: true }).click();
-  await expect(odometro).toHaveValue("150");
+  // La lectura de salida también se escribe: no viene rellenada con la de la llegada.
+  await expect(odometro).toHaveValue("");
+  await odometro.fill("150");
   await page.getByRole("button", { name: `Salir hacia ${v.a}`, exact: true }).click();
   await expect(page.getByText(/Salida registrada/)).toBeVisible();
 

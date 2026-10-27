@@ -134,6 +134,15 @@ export function parteDelConductor(
   return { km, minutos: ms / 60_000 };
 }
 
+/** Desde qué diferencia con la última lectura se pide confirmar: 600 km, o 48 h de horómetro. */
+export const LIMITE_SALTO = { km: 600, h: 48 };
+
+/** Una lectura mucho mayor que la última: casi siempre un error de tipeo. */
+export const esSaltoRaro = (lectura: number, minimo: number | null, unidad: string): boolean =>
+  minimo !== null &&
+  Number.isFinite(lectura) &&
+  lectura - minimo > (unidad === "h" ? LIMITE_SALTO.h : LIMITE_SALTO.km);
+
 export interface TramoConEstimacion {
   salida_en: string | null;
   llegada_en: string | null;
