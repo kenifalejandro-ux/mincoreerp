@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { ColaViajes, type ItemCola } from "./ColaViajes";
 import { HistorialConductor } from "./HistorialConductor";
 import { MiViajeParadas } from "./MiViajeParadas";
 import {
@@ -54,6 +55,8 @@ interface MiFila extends FilaViaje {
   /** Sus cargas del viaje y lo que suele tardar la ruta (para estimar la llegada). */
   cargas_detalle?: CargaViaje[];
   duracion_ruta_min?: number | null;
+  /** Su lugar en la cola de viajes por salir (1 = el que puede iniciar); null si no es de su cola (E8). */
+  cola_posicion?: number | null;
   /** Si soy el titular o el relevo del viaje (0152). */
   mi_rol?: "titular" | "relevo";
   /** Retiré la entrega sin señal: hasta que llegue a la cola, vale más que la pendiente del servidor. */
@@ -216,6 +219,14 @@ export default function MiViaje() {
   const programado = filas.find((f) => f.estado === "programado");
   const ultimo = filas.find((f) => f.estado === "cerrado");
   const actual = enCurso ?? programado;
+  // Sus viajes por salir, en el orden de la cola. Con uno solo no hay nada que mostrar, salvo que
+  // otro ya esté en curso y este espere.
+  const cola = filas
+    .filter(
+      (f): f is MiFila & ItemCola =>
+        f.estado === "programado" && typeof f.cola_posicion === "number"
+    )
+    .sort((a, b) => a.cola_posicion - b.cola_posicion);
   // Con relevo, solo el que va al volante marca el viaje; el otro ve quién maneja y puede descansar.
   const miDni = (actual?.mi_rol === "relevo" ? actual.relevo_dni : actual?.conductor_dni)?.trim();
   const sinMando = Boolean(
@@ -618,6 +629,8 @@ export default function MiViaje() {
           cargas={enCurso.cargas_detalle ?? []}
         />
       )}
+
+      {cola.length > (enCurso ? 0 : 1) && <ColaViajes cola={cola} hayEnCurso={Boolean(enCurso)} />}
 
       {ultimo && (
         <>
