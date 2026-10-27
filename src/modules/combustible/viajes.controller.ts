@@ -52,9 +52,29 @@ type CuerpoDescanso = {
  *  alerta falla, el descanso se guarda igual (sobre todo el que llega de un celular que estuvo sin
  *  señal) y el worker la crea en su siguiente pasada. */
 async function alertaDeDetencion(c: PoolClient, tenantId: string, viajeId: number) {
+  return enSavepoint(c, tenantId, viajeId, async () => {
+    const { cambio } = await combustible.evaluarDetencionDeUnViaje(c, tenantId, viajeId);
+    return cambio;
+  });
+}
+
+/** Al cerrar o anular un viaje se cierran sus alertas (demorado y detenido) al instante, con el
+ *  mismo cuidado: si falla, el cierre del viaje no se pierde y el worker las cierra después. */
+function cerrarAlertasDelViaje(c: PoolClient, tenantId: string, viajeId: number) {
+  return enSavepoint(c, tenantId, viajeId, () =>
+    combustible.cerrarAlertasDeUnViaje(c, tenantId, viajeId)
+  );
+}
+
+async function enSavepoint(
+  c: PoolClient,
+  tenantId: string,
+  viajeId: number,
+  paso: () => Promise<boolean>
+) {
   await c.query("SAVEPOINT alerta_detencion");
   try {
-    const { cambio } = await combustible.evaluarDetencionDeUnViaje(c, tenantId, viajeId);
+    const cambio = await paso();
     await c.query("RELEASE SAVEPOINT alerta_detencion");
     return cambio;
   } catch (error) {
@@ -63,6 +83,13 @@ async function alertaDeDetencion(c: PoolClient, tenantId: string, viajeId: numbe
     capturarError(error, { modulo: "combustible", viajeId, paso: "alerta_detencion" });
     return false;
   }
+}
+
+/** La campanita se entera al instante de una alerta de viaje que se abrió o se cerró. */
+async function avisarCampanita(tenantId: string) {
+  await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+    tipo: "viaje_detenido",
+  }).catch((err) => logger.warn({ err, tenantId }, "No se pudo publicar el evento"));
 }
 
 /** Empezar o terminar un descanso: el del propio conductor (por su DNI, con uuid y hora del
@@ -88,9 +115,7 @@ function marcaDeDescanso(que: "inicio" | "fin", delConductor: boolean) {
     });
     // La campanita se entera al instante de la alerta que se abrió o se cerró (ver `alertaDeDetencion`).
     if (alertaCambio) {
-      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
-        tipo: "viaje_detenido",
-      }).catch((err) => logger.warn({ err, tenantId }, "No se pudo publicar el evento"));
+      await avisarCampanita(tenantId);
     }
     if (!r.repetido) {
       await auditar(req, `viaje_descanso_${que === "inicio" ? "iniciar" : "terminar"}`, {
@@ -350,9 +375,18 @@ export const viajesController = {
     const tenantId = getTenantId(req);
     const id = Number(req.params.viajeId);
     const data = req.validatedBody as CerrarMiViajeInput;
-    const r = await withTenant(tenantId, (c) =>
-      viajes.cerrarViaje(c, tenantId, req.usuario!.id, id, data, req.usuario!.dni ?? "")
-    );
+    const { r, alertaCambio } = await withTenant(tenantId, async (c) => {
+      const r = await viajes.cerrarViaje(
+        c,
+        tenantId,
+        req.usuario!.id,
+        id,
+        data,
+        req.usuario!.dni ?? ""
+      );
+      return { r, alertaCambio: r.repetido ? false : await cerrarAlertasDelViaje(c, tenantId, id) };
+    });
+    if (alertaCambio) await avisarCampanita(tenantId);
     if (!r.repetido) {
       await auditar(req, "viaje_cerrar", {
         viajeId: id,
@@ -401,9 +435,11 @@ export const viajesController = {
     const tenantId = getTenantId(req);
     const id = Number(req.params.viajeId);
     const data = req.validatedBody as CerrarViajeInput;
-    const { antes, despues } = await withTenant(tenantId, (c) =>
-      viajes.cerrarViaje(c, tenantId, req.usuario!.id, id, data)
-    );
+    const { antes, despues, alertaCambio } = await withTenant(tenantId, async (c) => {
+      const r = await viajes.cerrarViaje(c, tenantId, req.usuario!.id, id, data);
+      return { ...r, alertaCambio: await cerrarAlertasDelViaje(c, tenantId, id) };
+    });
+    if (alertaCambio) await avisarCampanita(tenantId);
     await auditar(req, "viaje_cerrar", {
       viajeId: id,
       numero: antes.numero,
@@ -445,9 +481,11 @@ export const viajesController = {
     const tenantId = getTenantId(req);
     const id = Number(req.params.viajeId);
     const { motivo } = req.validatedBody as AnularViajeInput;
-    const antes = await withTenant(tenantId, (c) =>
-      viajes.anularViaje(c, tenantId, req.usuario!.id, id, motivo)
-    );
+    const { antes, alertaCambio } = await withTenant(tenantId, async (c) => {
+      const antes = await viajes.anularViaje(c, tenantId, req.usuario!.id, id, motivo);
+      return { antes, alertaCambio: await cerrarAlertasDelViaje(c, tenantId, id) };
+    });
+    if (alertaCambio) await avisarCampanita(tenantId);
     await auditar(req, "viaje_anular", { viajeId: id, numero: antes.numero, motivo });
     res.json({ ok: true });
   },

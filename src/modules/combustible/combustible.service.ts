@@ -4506,6 +4506,16 @@ export class CombustibleService {
     return { cambio: true };
   }
 
+  /** Un viaje que se cerró o se anuló ya no está demorado ni detenido: se cierran sus alertas al
+   *  instante, sin esperar al worker. Devuelve si había alguna abierta. */
+  async cerrarAlertasDeUnViaje(client: PoolClient, tenantId: string, viajeId: number) {
+    let cerradas = 0;
+    for (const tipo of ["viaje_demorado", "viaje_detenido"] as const) {
+      cerradas += await this.repository.resolverAlertaDeUnViaje(client, tenantId, tipo, viajeId);
+    }
+    return cerradas > 0;
+  }
+
   /** VIAJES EN RUTA (0156): un viaje demorado (pasó la hora estimada de llegada del tramo, sin
    *  contar lo detenido) y uno detenido (avería, accidente, huaico, bloqueo o tráfico abierto). Los
    *  dos son ESTADOS: primero se cierran las alertas de los viajes que ya llegaron, se cerraron o
