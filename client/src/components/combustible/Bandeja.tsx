@@ -9,9 +9,10 @@
 // Todo lo que muestra ya viene acotado por el alcance de quien mira (el
 // servidor filtra en GET /alertas y /alertas/resumen).
 
-import { ArrowLeft, CheckCircle2, Search, TriangleAlert } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Eye, Search, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
 import { mensajeDeError } from "../../utils/mensajeDeError";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
@@ -23,6 +24,7 @@ import {
   referenciaAlerta,
   type AlertaCombustible,
 } from "./alertasTexto";
+import { DetalleViajeVentana } from "./DetalleViaje";
 import { CLAVE_ALERTA_PENDIENTE, useAlertasCombustibleStream } from "./useAlertasCombustibleStream";
 
 type Estado = "sin_leer" | "pendientes" | "resueltas" | "congeladas" | "todas";
@@ -104,6 +106,11 @@ export default function BandejaAlertas() {
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [seleccionadaId, setSeleccionadaId] = useState<number | null>(alertaInicial);
+  // El viaje de una alerta de viaje (0156), abierto en su ventana. Quien no ve la pestaña Viajes no
+  // recibe el botón (el servidor le daría 403).
+  const { usuario } = useAuth();
+  const puedeVerViajes = usuario?.permisosPestanas?.["combustible:viajes"] !== false;
+  const [viajeAbierto, setViajeAbierto] = useState<string | null>(null);
   // La alerta a la que se llegó desde la campanita, pedida por su id: la lista
   // trae 50 por página y la clickeada puede ser más antigua que eso.
   const [alertaDirecta, setAlertaDirecta] = useState<AlertaBandeja | null>(null);
@@ -545,6 +552,14 @@ export default function BandejaAlertas() {
                   {describirDetalleAlerta(seleccionada)}
                 </p>
               </div>
+              {seleccionada.viaje_id != null && puedeVerViajes && (
+                <button
+                  onClick={() => setViajeAbierto(String(seleccionada.viaje_id))}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold border border-slate-300 text-slate-800 hover:bg-slate-50"
+                >
+                  <Eye className="w-4 h-4" aria-hidden="true" /> Ver el viaje
+                </button>
+              )}
               {seleccionada.congelada_en && (
                 <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">
                   Congelada el {fechaHora(seleccionada.congelada_en)}: pasó su plazo sin explicación
@@ -595,6 +610,10 @@ export default function BandejaAlertas() {
           )}
         </section>
       </div>
+      {/* Solo mientras sigue elegida la alerta de ese viaje: al pasar a otra, se cierra. */}
+      {viajeAbierto && String(seleccionada?.viaje_id) === viajeAbierto && (
+        <DetalleViajeVentana viajeId={viajeAbierto} onCerrar={() => setViajeAbierto(null)} />
+      )}
     </div>
   );
 }

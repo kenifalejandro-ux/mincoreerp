@@ -99,6 +99,30 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
     expect(orden.indexOf("combustible_viajes")).toBeLessThan(orden.indexOf("combustible_alertas"));
   });
 
+  it("la Bandeja devuelve el viaje de la alerta y la marca como crítica (urgente) sin correo", async () => {
+    const a = await lugar("Pimpingos");
+    const b = await lugar("Namballe");
+    await historial(a, b);
+    const v = await viaje(a, b, hace(6));
+    await descanso(v.id, v.dni, "Accidente", hace(1));
+    await correrConciliacion(tenantId);
+
+    const r = await admin.get("/api/erp/combustible/alertas?pageSize=100&estado=pendientes");
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const filas = r.body.data as {
+      tipo: string;
+      viaje_id: string | number | null;
+      critica: boolean;
+      revisable: boolean;
+    }[];
+    for (const tipo of ["viaje_demorado", "viaje_detenido"]) {
+      const f = filas.find((x) => x.tipo === tipo && Number(x.viaje_id) === v.id);
+      expect(f, tipo).toBeDefined();
+      expect(f!.critica).toBe(true); // rojo y primera en la campanita
+      expect(f!.revisable).toBe(false); // se cierra sola: nadie la da por revisada
+    }
+  });
+
   it("un viaje que pasó lo que suele tardar su tramo alerta una vez, y se cierra sola al anularlo", async () => {
     const a = await lugar("Chota");
     const b = await lugar("Cutervo");

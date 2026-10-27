@@ -5816,7 +5816,7 @@ export class CombustibleRepository {
     const result = await client.query(
       `
       SELECT a.id, a.tipo, a.serie_talonario, a.n_vale, a.despacho_id, a.combustible_id,
-        a.recepcion_id, a.lectura_id, a.producto, a.detalle, a.creado_en, a.leida_en,
+        a.recepcion_id, a.lectura_id, a.viaje_id, a.producto, a.detalle, a.creado_en, a.leida_en,
         a.resuelta_en, a.resuelta_por, a.congelada_en, a.grifo_interno_id,
         gi.nombre AS grifo_nombre, s.nombre AS sede_nombre,
         (a.tipo = ANY($${n - 2}::text[])) AS revisable,

@@ -5,6 +5,11 @@
 // mismo texto, para que la Bandeja y el panel de Tanques no puedan decir
 // cosas distintas de la misma alerta.
 
+import { duracion } from "./viajesFormato";
+
+/** Una duración, o "?" si el detalle no la trae (no inventar "0 min" por un dato faltante). */
+const tiempo = (min: number | undefined) => (typeof min === "number" ? duracion(min) : "?");
+
 export type DestinoExcedente = "cubeta" | "equipo" | "devolucion";
 
 export const DESTINOS_EXCEDENTE: Record<DestinoExcedente, string> = {
@@ -15,7 +20,8 @@ export const DESTINOS_EXCEDENTE: Record<DestinoExcedente, string> = {
 
 export interface AlertaCombustible {
   /** Lo decide el servidor con el catálogo de canales (canalesAlertas.ts):
-   *  crítica = sale por correo al momento. El cliente no tiene lista propia. */
+   *  crítica = sale por correo al momento o está marcada urgente (las de un
+   *  viaje en curso). El cliente no tiene lista propia. */
   critica: boolean;
   id: number;
   tipo:
@@ -62,7 +68,9 @@ export interface AlertaCombustible {
     | "urea_conteo_recargado"
     | "urea_precio_fuera_de_catalogo"
     | "urea_litros_corregidos"
-    | "urea_conteo_alterado";
+    | "urea_conteo_alterado"
+    | "viaje_demorado"
+    | "viaje_detenido";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -70,6 +78,8 @@ export interface AlertaCombustible {
   despacho_id: number | null;
   combustible_id: number | null;
   recepcion_id: number | null;
+  /** El viaje de `viaje_demorado` y `viaje_detenido` (0156). */
+  viaje_id?: number | string | null;
   detalle: Record<string, unknown>;
   creado_en: string;
   leida_en: string | null;
@@ -123,6 +133,9 @@ export const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   urea_precio_fuera_de_catalogo: "Compra de urea con precio fuera del catálogo",
   urea_litros_corregidos: "Litros de un envase de urea corregidos",
   urea_conteo_alterado: "Un conteo de urea cambió de resultado",
+  // Un viaje en curso (0156).
+  viaje_demorado: "Viaje demorado",
+  viaje_detenido: "Unidad detenida",
 };
 
 /** La columna "Vale" de las tablas de alertas y anomalías. Desde la
@@ -140,6 +153,8 @@ export function referenciaAlerta(a: {
   // Compra en ruta (0109): no tiene vale, el detalle trae su comprobante.
   if (typeof a.detalle.comprobante === "string") return a.detalle.comprobante;
   if (typeof a.detalle.tanqueNombre === "string") return a.detalle.tanqueNombre;
+  // Un viaje en curso (0156): el número del viaje.
+  if (typeof a.detalle.viajeNumero === "number") return `V-${a.detalle.viajeNumero}`;
   if (a.recepcion_id != null) return `Recepción #${a.recepcion_id}`;
   return "—";
 }
@@ -332,6 +347,51 @@ export function describirDetalleAlerta(a: AlertaCombustible): string {
   if (a.tipo === "urea_equipo_no_habilitado") {
     const { placaCodigo } = a.detalle as { placaCodigo?: string };
     return `${placaCodigo ?? "La unidad"} está marcada como que no usa urea`;
+  }
+  if (a.tipo === "viaje_demorado") {
+    const d = a.detalle as {
+      viajeNumero?: number;
+      unidad?: string | null;
+      conductor?: string | null;
+      de?: string;
+      a?: string;
+      marchaMin?: number;
+      esperadoMin?: number;
+      demoraMin?: number;
+      viajesDeHistorial?: number;
+      baseDelHistorial?: "tipo" | "todas";
+    };
+    return (
+      `El viaje V-${d.viajeNumero ?? "?"} de ${d.unidad ?? "una unidad"}` +
+      `${d.conductor ? ` (${d.conductor})` : ""} va de ${d.de ?? "?"} a ${d.a ?? "?"} y lleva ` +
+      `${tiempo(d.marchaMin)} en marcha: lo normal son ${tiempo(d.esperadoMin)}, ` +
+      `${tiempo(d.demoraMin)} de más. Se calcula con ${d.viajesDeHistorial ?? "?"} viajes ` +
+      `${d.baseDelHistorial === "tipo" ? "de este tipo de unidad" : "de todas las unidades"}, ` +
+      "sin contar el tiempo detenido."
+    );
+  }
+  if (a.tipo === "viaje_detenido") {
+    const d = a.detalle as {
+      viajeNumero?: number;
+      unidad?: string | null;
+      conductor?: string | null;
+      detencion?: string;
+      motivo?: string | null;
+      donde?: string | null;
+      desde?: string;
+      marcadoPor?: string | null;
+    };
+    const desde = d.desde
+      ? new Date(d.desde).toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" })
+      : "?";
+    return (
+      `El viaje V-${d.viajeNumero ?? "?"} de ${d.unidad ?? "una unidad"}` +
+      `${d.conductor ? ` (${d.conductor})` : ""} está detenido por ` +
+      `${(d.detencion ?? "una detención").toLowerCase()} desde las ${desde}` +
+      `${d.donde ? ` (${d.donde})` : ""}.` +
+      `${d.motivo && d.motivo !== d.detencion ? ` Motivo: ${d.motivo}.` : ""}` +
+      ` Marcado por ${d.marcadoPor ?? "el conductor"}. El tiempo detenido no cuenta como demora.`
+    );
   }
   if (a.tipo === "tanqueta_retorno_diferencia") {
     const { tanqueta, unidad, saldoCalculado, saldoValidado, motivo, acumulado } = a.detalle as {
