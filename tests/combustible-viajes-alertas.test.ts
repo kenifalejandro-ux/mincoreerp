@@ -6,11 +6,12 @@
  *   - viaje_detenido: hay una avería, accidente, huaico, bloqueo o tráfico abierto.
  * Se cierran solas cuando el viaje se anula, llega o la detención termina.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import request from "supertest";
 
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
+import { CombustibleService } from "../src/modules/combustible/combustible.service";
 import { MODULOS } from "../src/modules/registry";
 import { correrConciliacion } from "../src/server/services/combustibleConciliacion.worker";
 
@@ -86,6 +87,74 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
       );
       return r.rows;
     });
+
+  describe("al marcar el descanso (E15e): sin esperar al worker", () => {
+    const marcar = (id: number, motivo: string) =>
+      admin.post(`/api/erp/combustible/viajes/${id}/descanso`).send({ motivo });
+    const terminar = (id: number) =>
+      admin.post(`/api/erp/combustible/viajes/${id}/descanso/terminar`).send({});
+
+    it("una avería abre la alerta de unidad detenida al instante, y terminarla la cierra", async () => {
+      const a = await lugar("Tabaconas");
+      const b = await lugar("Chirinos");
+      const v = await viaje(a, b, hace(2));
+
+      const r = await marcar(v.id, "Avería");
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      // Sin correr el worker: la alerta ya está, con el detalle de la detención.
+      const abierta = await alertas(v.id, "viaje_detenido");
+      expect(abierta).toHaveLength(1);
+      expect(abierta[0].resuelta_en).toBeNull();
+      expect(abierta[0].detalle).toMatchObject({ detencion: "Avería", motivo: "Avería" });
+
+      const t = await terminar(v.id);
+      expect(t.status, JSON.stringify(t.body)).toBe(200);
+      const cerrada = await alertas(v.id, "viaje_detenido");
+      expect(cerrada).toHaveLength(1);
+      expect(cerrada[0].resuelta_en).not.toBeNull();
+
+      // Otra avería después abre una alerta nueva (la anterior ya está cerrada).
+      expect((await marcar(v.id, "Accidente")).status).toBe(200);
+      const todas = await alertas(v.id, "viaje_detenido");
+      expect(todas).toHaveLength(2);
+      expect(todas[1].resuelta_en).toBeNull();
+    });
+
+    it("dormir no abre alerta", async () => {
+      const a = await lugar("Huarango");
+      const b = await lugar("Namora");
+      const v = await viaje(a, b, hace(2));
+      expect((await marcar(v.id, "Dormir")).status).toBe(200);
+      expect(await alertas(v.id, "viaje_detenido")).toHaveLength(0);
+    });
+
+    it("si la alerta falla, el descanso se guarda igual y el worker la crea después", async () => {
+      const a = await lugar("Chontali");
+      const b = await lugar("Jaen Sur");
+      const v = await viaje(a, b, hace(2));
+      const espia = vi
+        .spyOn(CombustibleService.prototype, "evaluarDetencionDeUnViaje")
+        .mockRejectedValueOnce(new Error("falla de prueba"));
+      try {
+        const r = await marcar(v.id, "Huaico");
+        expect(r.status, JSON.stringify(r.body)).toBe(200); // el descanso se guardó
+      } finally {
+        espia.mockRestore();
+      }
+      expect(await alertas(v.id, "viaje_detenido")).toHaveLength(0);
+      const guardado = await withTenant(tenantId, (c) =>
+        c.query(
+          `SELECT 1 FROM combustible_viaje_descansos
+            WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL`,
+          [tenantId, v.id]
+        )
+      );
+      expect(guardado.rows).toHaveLength(1);
+      // La red de seguridad: el worker abre la alerta que faltó.
+      await correrConciliacion(tenantId);
+      expect(await alertas(v.id, "viaje_detenido")).toHaveLength(1);
+    });
+  });
 
   it("el registro de respaldo declara el viaje de la alerta: al clonar un tenant no queda apuntando al de origen", () => {
     const tablas = MODULOS.flatMap((m) => m.tablas ?? []) as {

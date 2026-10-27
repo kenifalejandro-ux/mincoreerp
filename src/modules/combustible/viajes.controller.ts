@@ -1,4 +1,7 @@
 import type { Request, Response } from "express";
+import type { PoolClient } from "pg";
+import { logger } from "../../server/config/logger";
+import { capturarError } from "../../server/config/sentry";
 import { withTenant } from "../../server/config/database";
 import { getTenantId } from "../../server/shared/utils/request";
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
@@ -19,7 +22,10 @@ import type {
   ListarViajesQuery,
 } from "../../server/schemas/combustible.schema";
 import { ambitoDe } from "./alcance";
+import { CombustibleService } from "./combustible.service";
 import * as viajes from "./viajes.service";
+
+const combustible = new CombustibleService();
 
 const EVENTO = "combustible.viaje_actualizado";
 
@@ -41,6 +47,24 @@ type CuerpoDescanso = {
   fin_en?: string;
 };
 
+/** La alerta de "unidad detenida" al instante (E15e): abre la de una avería, accidente, huaico,
+ *  bloqueo o tráfico recién marcado, o cierra la que ya no corresponde. Va en un SAVEPOINT: si la
+ *  alerta falla, el descanso se guarda igual (sobre todo el que llega de un celular que estuvo sin
+ *  señal) y el worker la crea en su siguiente pasada. */
+async function alertaDeDetencion(c: PoolClient, tenantId: string, viajeId: number) {
+  await c.query("SAVEPOINT alerta_detencion");
+  try {
+    const { cambio } = await combustible.evaluarDetencionDeUnViaje(c, tenantId, viajeId);
+    await c.query("RELEASE SAVEPOINT alerta_detencion");
+    return cambio;
+  } catch (error) {
+    await c.query("ROLLBACK TO SAVEPOINT alerta_detencion");
+    logger.error({ err: error, tenantId, viajeId }, "No se pudo evaluar la alerta de detención");
+    capturarError(error, { modulo: "combustible", viajeId, paso: "alerta_detencion" });
+    return false;
+  }
+}
+
 /** Empezar o terminar un descanso: el del propio conductor (por su DNI, con uuid y hora del
  *  celular) o el de la oficina por él (motivo obligatorio al empezar). */
 function marcaDeDescanso(que: "inicio" | "fin", delConductor: boolean) {
@@ -55,11 +79,19 @@ function marcaDeDescanso(que: "inicio" | "fin", delConductor: boolean) {
       hora: que === "inicio" ? b.inicio_en : b.fin_en,
     };
     const dni = delConductor ? (req.usuario!.dni ?? "") : undefined;
-    const r = await withTenant(tenantId, (c) =>
-      que === "inicio"
-        ? viajes.iniciarDescanso(c, tenantId, req.usuario!.id, id, marca, dni)
-        : viajes.terminarDescanso(c, tenantId, req.usuario!.id, id, marca, dni)
-    );
+    const { r, alertaCambio } = await withTenant(tenantId, async (c) => {
+      const r =
+        que === "inicio"
+          ? await viajes.iniciarDescanso(c, tenantId, req.usuario!.id, id, marca, dni)
+          : await viajes.terminarDescanso(c, tenantId, req.usuario!.id, id, marca, dni);
+      return { r, alertaCambio: r.repetido ? false : await alertaDeDetencion(c, tenantId, id) };
+    });
+    // La campanita se entera al instante de la alerta que se abrió o se cerró (ver `alertaDeDetencion`).
+    if (alertaCambio) {
+      await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+        tipo: "viaje_detenido",
+      }).catch((err) => logger.warn({ err, tenantId }, "No se pudo publicar el evento"));
+    }
     if (!r.repetido) {
       await auditar(req, `viaje_descanso_${que === "inicio" ? "iniciar" : "terminar"}`, {
         viajeId: id,

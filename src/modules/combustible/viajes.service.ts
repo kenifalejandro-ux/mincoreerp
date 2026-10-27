@@ -2169,7 +2169,9 @@ export interface ViajeDetenido {
  *  más antigua). Dormir y comer no cuentan: son descansos. */
 export async function viajesDetenidos(
   client: PoolClient,
-  tenantId: string
+  tenantId: string,
+  /** Solo ese viaje (el registro de un descanso); sin él, todos los de la empresa (el worker). */
+  soloViajeId?: number
 ): Promise<ViajeDetenido[]> {
   const r = await client.query(
     `SELECT v.id AS viaje_id, v.numero, v.equipo_id, e.placa_codigo, e.codigo_interno,
@@ -2178,8 +2180,9 @@ export async function viajesDetenidos(
        JOIN equipos e ON e.tenant_id = v.tenant_id AND e.id = v.equipo_id
        JOIN combustible_viaje_descansos d ON d.tenant_id = v.tenant_id AND d.viaje_id = v.id
       WHERE v.tenant_id = $1 AND v.estado = 'en_curso' AND d.fin_en IS NULL AND d.detiene
+        AND ($2::bigint IS NULL OR v.id = $2)
       ORDER BY v.id, d.inicio_en`,
-    [tenantId]
+    [tenantId, soloViajeId ?? null]
   );
   const por = new Map<number, ViajeDetenido>();
   for (const f of r.rows) {

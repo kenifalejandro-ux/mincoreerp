@@ -4460,6 +4460,52 @@ export class CombustibleService {
     return { alertas: compras };
   }
 
+  /** La fila de la alerta `viaje_detenido` de una detención abierta (0156). */
+  private static alertaDeDetencion(d: viajes.ViajeDetenido) {
+    return {
+      tipo: "viaje_detenido" as const,
+      viajeId: d.viaje_id,
+      detalle: {
+        viajeNumero: d.numero,
+        unidad: d.placa_codigo ?? d.codigo_interno ?? null,
+        conductor: d.conductor_nombre,
+        detencion: d.detencion,
+        motivo: d.motivo,
+        donde: d.donde,
+        desde: d.desde,
+        marcadoPor: d.marcado_por,
+      },
+    };
+  }
+
+  /** La alerta de "unidad detenida" de UN viaje, al instante: se llama cuando alguien marca el
+   *  comienzo o el fin de un descanso, para no esperar la pasada de cada hora del worker. Abre la
+   *  alerta si el viaje tiene una detención abierta (y no tenía alerta), la cierra si ya no hay
+   *  ninguna. El worker sigue de red de seguridad (viaje cerrado o anulado con la detención abierta). */
+  async evaluarDetencionDeUnViaje(client: PoolClient, tenantId: string, viajeId: number) {
+    const [detenido] = await viajes.viajesDetenidos(client, tenantId, viajeId);
+    if (!detenido) {
+      const cerradas = await this.repository.resolverAlertaDeUnViaje(
+        client,
+        tenantId,
+        "viaje_detenido",
+        viajeId
+      );
+      return { cambio: cerradas > 0 };
+    }
+    const abiertas = await this.repository.viajesConAlertaAbierta(
+      client,
+      tenantId,
+      "viaje_detenido",
+      [viajeId]
+    );
+    if (abiertas.has(viajeId)) return { cambio: false };
+    await this.repository.crearAlertas(client, tenantId, [
+      CombustibleService.alertaDeDetencion(detenido),
+    ]);
+    return { cambio: true };
+  }
+
   /** VIAJES EN RUTA (0156): un viaje demorado (pasó la hora estimada de llegada del tramo, sin
    *  contar lo detenido) y uno detenido (avería, accidente, huaico, bloqueo o tráfico abierto). Los
    *  dos son ESTADOS: primero se cierran las alertas de los viajes que ya llegaron, se cerraron o
@@ -4515,20 +4561,7 @@ export class CombustibleService {
           baseDelHistorial: d.esperado_base,
         },
       })),
-      ...nuevosDetenidos.map((d) => ({
-        tipo: "viaje_detenido" as const,
-        viajeId: d.viaje_id,
-        detalle: {
-          viajeNumero: d.numero,
-          unidad: unidad(d),
-          conductor: d.conductor_nombre,
-          detencion: d.detencion,
-          motivo: d.motivo,
-          donde: d.donde,
-          desde: d.desde,
-          marcadoPor: d.marcado_por,
-        },
-      })),
+      ...nuevosDetenidos.map((d) => CombustibleService.alertaDeDetencion(d)),
     ]);
     return { demorados: nuevosDemorados, detenidos: nuevosDetenidos };
   }
