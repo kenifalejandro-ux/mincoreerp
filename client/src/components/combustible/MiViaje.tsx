@@ -24,7 +24,7 @@ import {
   ahoraYSiguiente,
   avanceDelViaje,
   descansoAbierto,
-  estadoDelTramo,
+  estadoDelViaje,
   minutosDescansados,
   paradasDelViaje,
   parteDelConductor,
@@ -444,11 +444,13 @@ export default function MiViaje() {
           v={actual}
           textoEstado={
             actual.estado === "en_curso"
-              ? (estadoDelTramo(paradasDelViaje(actual))?.texto ?? "En ruta · en vivo")
+              ? (estadoDelViaje(paradasDelViaje(actual), actual.descansos)?.texto ??
+                "En ruta · en vivo")
               : "Programado"
           }
           nombre={rolTarjeta?.nombre}
           desfase={desfaseSalida(actual)}
+          detenido={estadoDelViaje(paradasDelViaje(actual), actual.descansos)?.detenido}
           etiqueta={etiquetaMando}
           lineaRol={rolTarjeta?.lineaRol}
           hijos={

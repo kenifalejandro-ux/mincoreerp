@@ -1,6 +1,7 @@
 // Las paradas de un viaje vistas desde el celular del conductor (0148): en qué punto va,
 // cuál es su próxima marca y cómo queda el viaje mientras esa marca espera señal. Lógica
 // sin pantalla; el servidor valida lo mismo (viajes.service.ts).
+import { textoDetenido } from "./motivosDescanso";
 
 export interface ParadaMia {
   orden: number;
@@ -142,6 +143,18 @@ export const esSaltoRaro = (lectura: number, minimo: number | null, unidad: stri
   minimo !== null &&
   Number.isFinite(lectura) &&
   lectura - minimo > (unidad === "h" ? LIMITE_SALTO.h : LIMITE_SALTO.km);
+
+/** Cómo va el viaje, en una frase: si hay un descanso abierto que detiene la unidad lo dice ("En
+ *  avería", "Detenido por accidente", "Descansando"); si no, dónde va (ver `estadoDelTramo`). */
+export function estadoDelViaje(
+  p: ParadaMia[],
+  descansos: DescansoMio[] | null | undefined
+): { texto: string; retorno: boolean; detenido: boolean } | null {
+  const abierto = (descansos ?? []).find((d) => !d.fin_en && d.detiene !== false);
+  if (abierto) return { texto: textoDetenido(abierto.motivo), retorno: false, detenido: true };
+  const tramo = estadoDelTramo(p);
+  return tramo ? { ...tramo, detenido: false } : null;
+}
 
 export interface TramoConEstimacion {
   salida_en: string | null;

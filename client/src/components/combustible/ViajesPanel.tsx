@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CeldaDesvio } from "./ConsumoPorViaje";
 import { DetalleViajeVentana } from "./DetalleViaje";
 import { IconoUnidad } from "./IconoUnidad";
+import { textoDetenido } from "./motivosDescanso";
 import {
   errorDelRecorrido,
   paradasDelRecorrido,
@@ -105,6 +106,13 @@ const LABEL = "text-xs font-bold text-slate-700 uppercase";
 
 const numeroONull = (s: string) => (s.trim() === "" ? null : Number(s));
 const isoONull = (s: string) => (s ? new Date(s).toISOString() : null);
+
+/** El estado del viaje en la lista: un viaje en curso con un descanso abierto dice qué le pasó. */
+function textoDeEstado(v: FilaViaje) {
+  if (v.estado !== "en_curso") return ESTADOS[v.estado].texto;
+  const abierto = (v.descansos ?? []).find((d) => !d.fin_en && d.detiene !== false);
+  return abierto ? textoDetenido(abierto.motivo) : ESTADOS[v.estado].texto;
+}
 
 /** El semáforo del viaje: un punto de color con los motivos al pasar el cursor o al leerlo. */
 function PuntoSemaforo({ v }: { v: FilaViaje }) {
@@ -764,7 +772,7 @@ export default function ViajesPanel() {
                       className={`inline-flex items-center gap-1.5 whitespace-nowrap px-2 py-0.5 rounded text-xs ${ESTADOS[v.estado].clase}`}
                     >
                       <IconoUnidad tipo={v.equipo_tipo} className="w-3.5 h-3.5" />
-                      {ESTADOS[v.estado].texto}
+                      {textoDeEstado(v)}
                     </span>
                     <PuntoSemaforo v={v} />
                   </td>
