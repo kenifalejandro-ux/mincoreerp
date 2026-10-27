@@ -4,7 +4,7 @@
  * lo que se ve en pantalla, con el semáforo y el desfase de salida escritos. Sin base.
  */
 import { describe, it, expect } from "vitest";
-import { filasDeViajes } from "../client/src/components/combustible/exportarViajes";
+import { filasDeViajes } from "../client/src/components/combustible/filasDeViajes";
 import type { FilaViaje } from "../client/src/components/combustible/viajesFormato";
 
 const viaje = (extra: Partial<FilaViaje>) =>
