@@ -11,6 +11,10 @@ export interface TramoDelViaje {
   recorrido: number | null;
   combustible_gal: number;
   urea_l: number;
+  /** Lo que suele tardar el tramo en marcha, por tipo de unidad; null si hay poco historial. */
+  esperado_min?: number | null;
+  esperado_viajes?: number;
+  esperado_base?: "tipo" | "todas" | null;
 }
 
 export function TramosViaje({ tramos, medidor }: { tramos: TramoDelViaje[]; medidor: string }) {

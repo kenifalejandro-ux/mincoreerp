@@ -43,6 +43,54 @@ export function estadoDelTramo(p: ParadaMia[]): { texto: string; retorno: boolea
   return null;
 }
 
+export interface TramoConEstimacion {
+  salida_en: string | null;
+  llegada_en: string | null;
+  /** Lo que suele tardar el tramo en marcha, sin descansos (mediana del historial). */
+  esperado_min?: number | null;
+  esperado_viajes?: number;
+  esperado_base?: "tipo" | "todas" | null;
+}
+
+/** Dónde va el camión en la barra, estimado. Cada tramo ocupa el mismo ancho; el que está en
+ *  marcha avanza con el tiempo en marcha (sin descansos) sobre lo que suele tardar, y sin la marca
+ *  de llegada no pasa del 95 %. Sin historial del tramo, el camión espera en su inicio. */
+export function avanceEstimado(
+  tramos: TramoConEstimacion[],
+  descansos: { inicio_en: string; fin_en: string | null; detiene?: boolean }[] | null | undefined,
+  ahora: number
+) {
+  let suma = 0;
+  let actual: {
+    tramo: TramoConEstimacion;
+    esperado: number | null;
+    llegada: number | null;
+    demora: number;
+  } | null = null;
+  for (const t of tramos) {
+    if (t.llegada_en) {
+      suma += 1;
+      continue;
+    }
+    if (!t.salida_en || actual) continue;
+    const salida = Date.parse(t.salida_en);
+    if (Number.isNaN(salida)) continue;
+    const parado = (descansos ?? [])
+      .filter((d) => d.detiene !== false && Date.parse(d.inicio_en) >= salida)
+      .reduce((s, d) => s + (d.fin_en ? Date.parse(d.fin_en) : ahora) - Date.parse(d.inicio_en), 0);
+    const marcha = Math.max(0, (ahora - salida - parado) / 60_000);
+    const esperado = t.esperado_min ?? null;
+    if (esperado) suma += Math.min(0.95, marcha / esperado);
+    actual = {
+      tramo: t,
+      esperado,
+      llegada: esperado ? salida + parado + esperado * 60_000 : null,
+      demora: esperado && marcha > esperado ? marcha - esperado : 0,
+    };
+  }
+  return { progreso: tramos.length ? (suma / tramos.length) * 100 : 0, actual };
+}
+
 export interface ProximaMarca {
   accion: "llegada-mia" | "salida-mia";
   /** La parada a la que llega o de la que sale: el servidor rechaza la marca si ya no vale. */
@@ -104,6 +152,8 @@ export interface DescansoMio {
   fin_en: string | null;
   motivo: string | null;
   donde?: string;
+  /** Si frena la unidad: el descanso del que no maneja no la detiene. */
+  detiene?: boolean;
   /** Quién lo marcó: el conductor desde su celular o la oficina por él. */
   inicio_por?: string;
   fin_por?: string | null;
