@@ -281,6 +281,13 @@ export async function crearViaje(
     );
   }
   const estado = !data.inicio_en ? "programado" : data.fin_en ? "cerrado" : "en_curso";
+  if ((data.salida_programada_en || data.desfase_tolerancia_min !== undefined) && data.inicio_en) {
+    throw new AppError(
+      400,
+      "La hora programada y su tolerancia solo van en un viaje por salir, no en uno ya hecho"
+    );
+  }
+  await validarSalidaProgramada(client, data.salida_programada_en);
 
   // El relevo se elige al programar: otra persona, conductor activo con DNI de esta empresa.
   const dniRelevo = normalizarDni(data.relevo_dni);
@@ -303,8 +310,9 @@ export async function crearViaje(
     `INSERT INTO combustible_viajes (
        tenant_id, numero, equipo_id, conductor_nombre, conductor_dni, origen_id, destino_id,
        inicio_en, fin_en, medidor_inicio, medidor_fin, estado, observaciones,
-       creado_por, cerrado_por, relevo_dni, relevo_nombre, sale_primero)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+       creado_por, cerrado_por, relevo_dni, relevo_nombre, sale_primero,
+       salida_programada_en, desfase_tolerancia_min)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
      RETURNING id`,
     [
       tenantId,
@@ -325,6 +333,9 @@ export async function crearViaje(
       dniRelevo || null,
       nombreRelevo,
       sale,
+      // En UTC: Postgres rechaza algunos desfases de zona que el formato ISO sí admite.
+      data.salida_programada_en ? new Date(data.salida_programada_en).toISOString() : null,
+      data.desfase_tolerancia_min ?? 10,
     ]
   );
   await client.query(
@@ -363,6 +374,21 @@ async function viajeParaCambiar(client: PoolClient, tenantId: string, id: number
   ]);
   if (fresco.rows[0].estado === "anulado") throw new AppError(409, "El viaje está anulado");
   return fresco.rows[0];
+}
+
+/** La hora programada de salida: entre hace una semana y dentro de un año. Fuera de eso casi
+ *  seguro es un error de tipeo (y una fecha extrema rompería la columna con un 500). */
+async function validarSalidaProgramada(client: PoolClient, hora: string | null | undefined) {
+  if (!hora) return;
+  const ahoraMs = Date.parse(await ahora(client));
+  const t = Date.parse(hora);
+  // `NaN` (un desfase de zona imposible, como +99:00) también es un error del usuario.
+  if (!Number.isFinite(t) || t < ahoraMs - 7 * 864e5 || t > ahoraMs + 365 * 864e5) {
+    throw new AppError(
+      400,
+      "La hora programada tiene que estar entre hace una semana y dentro de un año"
+    );
+  }
 }
 
 async function ahora(client: PoolClient): Promise<string> {
@@ -1450,6 +1476,24 @@ export async function editarViaje(
   );
   const medFin = def(data.medidor_fin, v.medidor_fin == null ? null : Number(v.medidor_fin));
 
+  // La hora programada y su tolerancia se corrigen mientras el viaje no termine (el encargado puede
+  // arreglarlas con el viaje en curso; queda el motivo y el valor anterior en la bitácora). Con el
+  // viaje cerrado, cambiarlas borraría el retraso. Solo se valida el rango si el valor cambia (no se reenvía lo guardado).
+  if (data.salida_programada_en !== undefined || data.desfase_tolerancia_min !== undefined) {
+    const cambia =
+      (data.salida_programada_en !== undefined &&
+        (data.salida_programada_en ? new Date(data.salida_programada_en).toISOString() : null) !==
+          iso(v.salida_programada_en)) ||
+      (data.desfase_tolerancia_min !== undefined &&
+        data.desfase_tolerancia_min !== v.desfase_tolerancia_min);
+    if (cambia && v.estado === "cerrado") {
+      throw new AppError(
+        400,
+        "La hora programada y su tolerancia no se cambian en un viaje ya terminado"
+      );
+    }
+    if (cambia) await validarSalidaProgramada(client, data.salida_programada_en);
+  }
   if (v.estado === "programado") {
     if (
       data.inicio_en !== undefined ||
@@ -1518,6 +1562,7 @@ export async function editarViaje(
         SET equipo_id = $11, conductor_nombre = $2, conductor_dni = $3, origen_id = $4,
             destino_id = $5, inicio_en = $6, fin_en = $7, medidor_inicio = $8, medidor_fin = $9,
             observaciones = $10, ruta_por_confirmar = $12,
+            salida_programada_en = $13, desfase_tolerancia_min = $14,
             estado = CASE WHEN estado = 'programado' THEN 'programado'
                           WHEN $7::timestamptz IS NULL THEN 'en_curso' ELSE 'cerrado' END
       WHERE id = $1`,
@@ -1534,6 +1579,12 @@ export async function editarViaje(
       def(data.observaciones, v.observaciones) || null,
       equipo,
       rutaPorConfirmar,
+      data.salida_programada_en === undefined
+        ? iso(v.salida_programada_en)
+        : data.salida_programada_en
+          ? new Date(data.salida_programada_en).toISOString()
+          : null,
+      def(data.desfase_tolerancia_min, v.desfase_tolerancia_min as number),
     ]
   );
   if (titularNuevo !== titularAntes) {
@@ -1593,6 +1644,7 @@ const COLUMNAS_VIAJE = `
   e.tipo_medidor, v.conductor_nombre, v.conductor_dni,
   v.origen_id, lo.nombre AS origen, v.destino_id, ld.nombre AS destino,
   v.inicio_en, v.fin_en, v.medidor_previo, v.medidor_inicio, v.medidor_fin,
+  v.salida_programada_en, v.desfase_tolerancia_min,
   v.medidor_fin - v.medidor_inicio AS recorrido,
   v.medidor_inicio - v.medidor_previo AS recorrido_sin_viaje,
   -- La última lectura del viaje: el medidor nunca baja, así que es la mayor entre la salida, la

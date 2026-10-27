@@ -391,6 +391,8 @@ export const viajesController = {
         medidor_inicio: antes.medidor_inicio,
         medidor_fin: antes.medidor_fin,
         conductor_nombre: antes.conductor_nombre,
+        salida_programada_en: antes.salida_programada_en,
+        desfase_tolerancia_min: antes.desfase_tolerancia_min,
       },
       cambios,
     });

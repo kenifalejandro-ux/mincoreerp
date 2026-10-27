@@ -2265,6 +2265,8 @@ export const crearLugarSchema = z.object({
 });
 export type CrearLugarInput = z.infer<typeof crearLugarSchema>;
 
+const toleranciaDesfase = z.number().int().min(0).max(240);
+
 export const crearViajeSchema = z
   .object({
     equipo_id: z.number().int().positive(),
@@ -2288,6 +2290,10 @@ export const crearViajeSchema = z
     fin_en: fechaHora.nullable().optional(),
     medidor_inicio: medidor,
     medidor_fin: medidor,
+    // Cuándo debería salir (opcional) y cuántos minutos de diferencia se aceptan: con ellas se
+    // dice "salió 10 min tarde". Solo en un viaje por salir.
+    salida_programada_en: fechaHora.nullable().optional(),
+    desfase_tolerancia_min: toleranciaDesfase.optional(),
     observaciones: z.string().trim().max(1000).nullable().optional(),
   })
   .refine((v) => v.sale !== "relevo" || Boolean(v.relevo_dni), {
@@ -2372,6 +2378,8 @@ export const editarViajeSchema = z.object({
   medidor_fin: medidor,
   observaciones: z.string().trim().max(1000).nullable().optional(),
   ruta_por_confirmar: z.boolean().optional(),
+  salida_programada_en: fechaHora.nullable().optional(),
+  desfase_tolerancia_min: toleranciaDesfase.optional(),
   motivo,
 });
 export type EditarViajeInput = z.infer<typeof editarViajeSchema>;

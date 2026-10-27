@@ -800,6 +800,109 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(det2.body.tramos[0]).toMatchObject({ esperado_min: 240, esperado_base: "todas" });
   });
 
+  it("la hora programada de salida y la tolerancia: se guardan, valen 10 por defecto y se corrigen con motivo", async () => {
+    const eq = await unidad();
+    const sinHora = await programar(eq);
+    expect(sinHora.status, JSON.stringify(sinHora.body)).toBe(201);
+    expect(sinHora.body.salida_programada_en).toBeNull();
+    expect(sinHora.body.desfase_tolerancia_min).toBe(10);
+    await admin.post(url(sinHora.body.id, "/anular")).send({ motivo: "Prueba" });
+
+    const programada = new Date(Date.now() + 2 * 3_600_000).toISOString();
+    const p = await programar(eq, { salida_programada_en: programada, desfase_tolerancia_min: 15 });
+    expect(p.status, JSON.stringify(p.body)).toBe(201);
+    expect(new Date(p.body.salida_programada_en).toISOString()).toBe(programada);
+    expect(p.body.desfase_tolerancia_min).toBe(15);
+
+    // Se corrige con motivo; null la borra.
+    const nueva = new Date(Date.now() + 3 * 3_600_000).toISOString();
+    expect((await admin.put(url(p.body.id)).send({ salida_programada_en: nueva })).status).toBe(
+      400
+    );
+    const ed = await admin
+      .put(url(p.body.id))
+      .send({ salida_programada_en: nueva, desfase_tolerancia_min: 5, motivo: "Cambió la hora" });
+    expect(ed.status, JSON.stringify(ed.body)).toBe(200);
+    expect(new Date(ed.body.salida_programada_en).toISOString()).toBe(nueva);
+    expect(ed.body.desfase_tolerancia_min).toBe(5);
+    const sin = await admin
+      .put(url(p.body.id))
+      .send({ salida_programada_en: null, motivo: "Sin hora fija" });
+    expect(sin.body.salida_programada_en).toBeNull();
+    expect(sin.body.desfase_tolerancia_min).toBe(5); // lo que no se manda no cambia
+  });
+
+  it("la hora programada y la tolerancia se validan: rango, retroactivo y números", async () => {
+    const eq = await unidad();
+    const dias = (n: number) => new Date(Date.now() + n * 864e5).toISOString();
+    for (const extra of [
+      { salida_programada_en: dias(-8) }, // más de una semana atrás
+      { salida_programada_en: dias(400) }, // más de un año adelante
+      { salida_programada_en: "9999-12-31T00:00:00Z" }, // fecha extrema: 400, no 500
+      { salida_programada_en: "2026-11-05T10:00:00+99:00" }, // desfase de zona imposible
+      { salida_programada_en: "no es una fecha" },
+      { desfase_tolerancia_min: -1 },
+      { desfase_tolerancia_min: 241 },
+      { desfase_tolerancia_min: 1.5 },
+      // un viaje ya hecho no tiene hora "programada"
+      { salida_programada_en: dias(0), inicio_en: hora(1), fin_en: hora(2) },
+      { desfase_tolerancia_min: 5, inicio_en: hora(1), fin_en: hora(2) },
+    ]) {
+      const r = await programar(eq, extra);
+      expect(r.status, JSON.stringify(extra)).toBe(400);
+    }
+    // Un desfase de zona que Postgres no admite (+23:59) se guarda ya convertido a UTC: ni 500 ni 400.
+    const dist = new Date(Date.now() + 2 * 864e5).toISOString().slice(0, 19);
+    const zona = await programar(await unidad(), { salida_programada_en: `${dist}+23:59` });
+    expect(zona.status, JSON.stringify(zona.body)).toBe(201);
+    expect(new Date(zona.body.salida_programada_en).toISOString()).toBe(
+      new Date(`${dist}+23:59`).toISOString()
+    );
+
+    const p = await programar(eq);
+    expect(
+      (
+        await admin
+          .put(url(p.body.id))
+          .send({ salida_programada_en: "9999-12-31T00:00:00Z", motivo: "Prueba" })
+      ).status
+    ).toBe(400);
+
+    // Con el viaje en curso el encargado sí puede corregirlas; cerrado no (borraría el retraso).
+    // Reenviar el mismo valor guardado sí pasa (un formulario que reenvía todo).
+    const enCurso = (await viaje(await unidad(), { inicio_en: hora(5) })).body;
+    expect(enCurso.estado).toBe("en_curso");
+    const corregida = await admin.put(url(enCurso.id)).send({
+      salida_programada_en: dias(0),
+      desfase_tolerancia_min: 20,
+      motivo: "Estaba mal la hora",
+    });
+    expect(corregida.status, JSON.stringify(corregida.body)).toBe(200);
+    expect(corregida.body.desfase_tolerancia_min).toBe(20);
+    const hecho = (await viaje(await unidad(), { inicio_en: hora(3), fin_en: hora(4) })).body;
+    const nueva = await admin
+      .put(url(hecho.id))
+      .send({ salida_programada_en: dias(0), motivo: "Quito el retraso" });
+    expect(nueva.status).toBe(400);
+    expect(nueva.body.message ?? nueva.body.error).toMatch(/ya terminado/);
+    expect(
+      (
+        await admin
+          .put(url(hecho.id))
+          .send({ desfase_tolerancia_min: 30, motivo: "Subo la tolerancia" })
+      ).status
+    ).toBe(400);
+    expect(
+      (
+        await admin.put(url(hecho.id)).send({
+          desfase_tolerancia_min: 10,
+          observaciones: "Sin cambio",
+          motivo: "Reenvío igual",
+        })
+      ).status
+    ).toBe(200);
+  });
+
   // ── Paradas (0148) ────────────────────────────────────────────────────────
 
   const paradasDe = async (id: number) =>
