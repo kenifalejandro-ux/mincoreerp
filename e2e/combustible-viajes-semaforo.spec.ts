@@ -70,6 +70,11 @@ test("la lista muestra el semáforo de cada viaje y se filtra por conductor y po
       .locator("select")
       .selectOption("rojo");
     await expect(fila).toHaveCount(1);
+
+    // Exportar a Excel baja lo que la lista muestra con los filtros puestos.
+    const descarga = oficina.waitForEvent("download");
+    await oficina.getByRole("button", { name: "Exportar a Excel" }).click();
+    expect((await descarga).suggestedFilename()).toMatch(/^Viajes .*\.xlsx$/);
   } finally {
     await contexto.close();
   }
