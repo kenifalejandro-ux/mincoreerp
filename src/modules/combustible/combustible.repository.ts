@@ -5730,6 +5730,8 @@ export class CombustibleRepository {
          lectura_id, urea_conteo_id, urea_correccion_id, tanqueta_retorno_id, viaje_id, producto,
          detalle)
       VALUES ${placeholders.join(",")}
+      ON CONFLICT (tenant_id, viaje_id, tipo) WHERE viaje_id IS NOT NULL AND resuelta_en IS NULL
+        DO NOTHING
       RETURNING id, tipo, serie_talonario, n_vale, despacho_id, combustible_id, recepcion_id,
         lectura_id, urea_conteo_id, urea_correccion_id, tanqueta_retorno_id, viaje_id, producto,
         detalle,

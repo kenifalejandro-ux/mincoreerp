@@ -6,6 +6,7 @@
  *   - viaje_detenido: hay una avería, accidente, huaico, bloqueo o tráfico abierto.
  * Se cierran solas cuando el viaje se anula, llega o la detención termina.
  */
+import type { PoolClient } from "pg";
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import request from "supertest";
 
@@ -156,6 +157,53 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
     });
   });
 
+  describe("al cerrar o anular el viaje (E15f): sin esperar al worker", () => {
+    it("anular un viaje averiado cierra la alerta de unidad detenida al instante", async () => {
+      const a = await lugar("Pomahuaca");
+      const b = await lugar("Pucara");
+      const v = await viaje(a, b, hace(2));
+      await admin.post(`/api/erp/combustible/viajes/${v.id}/descanso`).send({ motivo: "Avería" });
+      expect((await alertas(v.id, "viaje_detenido"))[0].resuelta_en).toBeNull();
+
+      const an = await admin
+        .post(`/api/erp/combustible/viajes/${v.id}/anular`)
+        .send({ motivo: "Prueba" });
+      expect(an.status, JSON.stringify(an.body)).toBe(200);
+      expect((await alertas(v.id, "viaje_detenido"))[0].resuelta_en).not.toBeNull();
+    });
+
+    it("cerrar un viaje averiado cierra la alerta al instante", async () => {
+      const a = await lugar("Sallique");
+      const b = await lugar("Pimpingos");
+      const v = await viaje(a, b, hace(2));
+      await admin.post(`/api/erp/combustible/viajes/${v.id}/descanso`).send({ motivo: "Bloqueo" });
+      expect((await alertas(v.id, "viaje_detenido"))[0].resuelta_en).toBeNull();
+
+      const ce = await admin.post(`/api/erp/combustible/viajes/${v.id}/cerrar`).send({});
+      expect(ce.status, JSON.stringify(ce.body)).toBe(200);
+      expect((await alertas(v.id, "viaje_detenido"))[0].resuelta_en).not.toBeNull();
+    });
+
+    it("la base no admite dos alertas abiertas del mismo viaje y tipo", async () => {
+      const a = await lugar("Tacabamba");
+      const b = await lugar("Querocoto");
+      const v = await viaje(a, b, hace(2));
+      const insertar = (c: PoolClient) =>
+        c.query(
+          `INSERT INTO combustible_alertas (tenant_id, tipo, viaje_id, detalle)
+           VALUES ($1, 'viaje_detenido', $2, '{}')`,
+          [tenantId, v.id]
+        );
+      await withTenant(tenantId, insertar);
+      await expect(withTenant(tenantId, insertar)).rejects.toMatchObject({ code: "23505" });
+      // Y el flujo normal, que usa ON CONFLICT DO NOTHING, no falla ni duplica.
+      await withTenant(tenantId, (c) =>
+        new CombustibleService().evaluarDetencionDeUnViaje(c, tenantId, v.id)
+      );
+      expect(await alertas(v.id, "viaje_detenido")).toHaveLength(1);
+    });
+  });
+
   it("el registro de respaldo declara el viaje de la alerta: al clonar un tenant no queda apuntando al de origen", () => {
     const tablas = MODULOS.flatMap((m) => m.tablas ?? []) as {
       nombre: string;
@@ -220,7 +268,7 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
       .post(`/api/erp/combustible/viajes/${v.id}/anular`)
       .send({ motivo: "Prueba" });
     expect(an.status, JSON.stringify(an.body)).toBe(200);
-    await correrConciliacion(tenantId);
+    // Al instante: sin correr el worker.
     const cerradas = await alertas(v.id, "viaje_demorado");
     expect(cerradas).toHaveLength(1);
     expect(cerradas[0].resuelta_en).not.toBeNull();
