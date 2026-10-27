@@ -1042,6 +1042,114 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(comoRelevo?.cola_posicion).toBeNull();
   });
 
+  // ── Resumen por conductor ─────────────────────────────────────────────────
+
+  const resumenDe = async (desde: string, hasta: string) =>
+    (await admin.get("/api/erp/combustible/viajes/resumen-conductores").query({ desde, hasta }))
+      .body.data as {
+      dni: string;
+      nombre: string;
+      viajes: number;
+      km: number;
+      minutos_al_volante: number;
+      salidas_medidas: number;
+      salidas_puntuales: number;
+      consumo_viajes: number;
+      consumo_desvio_pct: number | null;
+    }[];
+
+  it("el resumen por conductor suma sus viajes, kilómetros y horas al volante del período", async () => {
+    const eq = await unidad();
+    const dni = String(41500000 + seq++); // el conductor de sus dos viajes
+    // Dos viajes cerrados: 150 km en 4 h y 100 km en 4 h (turnos de la unidad).
+    for (const [ini, med0, med1] of [
+      [600, 100, 250],
+      [610, 250, 350],
+    ]) {
+      const v = await viaje(eq, {
+        conductor_dni: dni,
+        inicio_en: hora(ini),
+        fin_en: hora(ini + 4),
+        medidor_inicio: med0,
+        medidor_fin: med1,
+      });
+      expect(v.status, JSON.stringify(v.body)).toBe(201);
+    }
+    const r = (await resumenDe(hora(599), hora(620))).find((x) => x.dni === dni);
+    expect(r).toMatchObject({ viajes: 2, km: 250, minutos_al_volante: 480 });
+    // Sin hora programada no hay puntualidad que medir, ni historial para comparar el consumo.
+    expect(r).toMatchObject({ salidas_medidas: 0, consumo_viajes: 0, consumo_desvio_pct: null });
+    // Fuera del período no aparece.
+    expect((await resumenDe(hora(700), hora(720))).find((x) => x.dni === dni)).toBeUndefined();
+  });
+
+  it("el resumen compara el consumo de cada conductor con el promedio de su ruta", async () => {
+    const a = await lugar(idUnico("Pomabamba"));
+    const b = await lugar(idUnico("Piscobamba"));
+    // Tres viajes cerrados en la misma ruta, de tres conductores y tres unidades: 30, 30 y 60 gal
+    // (promedio 40): los dos primeros gastan 25 % menos y el tercero 50 % más.
+    const gastos: { dni: string; gal: number; ini: number }[] = [
+      { dni: String(41600000 + seq++), gal: 30, ini: 120 },
+      { dni: String(41600000 + seq++), gal: 30, ini: 140 },
+      { dni: String(41600000 + seq++), gal: 60, ini: 160 },
+    ];
+    for (const g of gastos) {
+      const eq = await unidad();
+      const v = await viaje(eq, {
+        conductor_dni: g.dni,
+        origen_id: a,
+        destino_id: b,
+        inicio_en: hora(g.ini),
+        fin_en: hora(g.ini + 4),
+        medidor_inicio: 100,
+        medidor_fin: 300,
+      });
+      expect(v.status, JSON.stringify(v.body)).toBe(201);
+      expect((await cargar(eq, g.gal, g.ini + 1)).status).toBe(201);
+    }
+    const filas = await resumenDe(hora(119), hora(170));
+    const de = (dni: string) => filas.find((x) => x.dni === dni);
+    expect(de(gastos[0].dni)).toMatchObject({ consumo_viajes: 1, consumo_desvio_pct: -25 });
+    expect(de(gastos[1].dni)).toMatchObject({ consumo_viajes: 1, consumo_desvio_pct: -25 });
+    expect(de(gastos[2].dni)).toMatchObject({ consumo_viajes: 1, consumo_desvio_pct: 50 });
+  });
+
+  it("el resumen cuenta la puntualidad de los viajes que el conductor inició (a tiempo o antes)", async () => {
+    const cerrado = async (programadaEn: string) => {
+      const yo = await conductor();
+      const eq = await unidad();
+      const v = await admin.post("/api/erp/combustible/viajes").send({
+        equipo_id: eq,
+        origen_id: huamachuco,
+        destino_id: bambamarca,
+        conductor_dni: yo.dni,
+        salida_programada_en: programadaEn,
+      });
+      expect(v.status, JSON.stringify(v.body)).toBe(201);
+      expect(
+        (await marcar(yo.agente, v.body.id, "iniciar-mio", { medidor_inicio: 100 })).status
+      ).toBe(200);
+      expect((await marcar(yo.agente, v.body.id, "cerrar-mio", { medidor_fin: 200 })).status).toBe(
+        200
+      );
+      return yo.dni;
+    };
+    const min = (n: number) => new Date(Date.now() + n * 60_000).toISOString();
+    const tarde = await cerrado(min(-30)); // salió 30 min tarde: pasa la tolerancia de 10
+    const puntual = await cerrado(min(-3)); // 3 min tarde: dentro de la tolerancia
+    const antes = await cerrado(min(40)); // salió 40 min antes: no es tarde
+    const filas = await resumenDe(min(-120), min(120));
+    const de = (dni: string) => filas.find((x) => x.dni === dni);
+    expect(de(tarde)).toMatchObject({
+      viajes: 1,
+      km: 100,
+      salidas_medidas: 1,
+      salidas_puntuales: 0,
+    });
+    expect(de(puntual)).toMatchObject({ salidas_medidas: 1, salidas_puntuales: 1 });
+    expect(de(antes)).toMatchObject({ salidas_medidas: 1, salidas_puntuales: 1 });
+  });
+
   // ── Paradas (0148) ────────────────────────────────────────────────────────
 
   const paradasDe = async (id: number) =>

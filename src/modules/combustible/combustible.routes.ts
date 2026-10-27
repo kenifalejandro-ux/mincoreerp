@@ -476,6 +476,13 @@ router.get(
   validateQuery(listarViajesQuerySchema),
   asyncHandler(viajesController.listar)
 );
+// El resumen de cada conductor en un período: lo ve quien ve la lista de viajes.
+router.get(
+  "/viajes/resumen-conductores",
+  requirePestana("combustible", "viajes"),
+  validateQuery(listarViajesQuerySchema),
+  asyncHandler(viajesController.resumenConductores)
+);
 // El permiso depende del producto: lo resuelve el controller.
 router.get(
   "/viajes/consumo",
