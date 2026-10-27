@@ -53,7 +53,8 @@ test("programar un viaje de ida y vuelta y uno con varias paradas", async ({ pag
   const programar = async (tipo: RegExp, elegir: () => Promise<void>) => {
     await page.getByRole("button", { name: "Nuevo viaje" }).click();
     await page.getByRole("button", { name: "Conductor", exact: true }).click();
-    await page.getByRole("option", { name: new RegExp(conductor) }).click();
+    // La opción del desplegable del formulario (la lista de viajes también tiene un filtro "Conductor").
+    await page.locator('li[role="option"]').filter({ hasText: conductor }).click();
     await page.getByRole("radio", { name: tipo }).click();
     await elegir();
     await page.getByRole("button", { name: "Programar viaje", exact: true }).click();

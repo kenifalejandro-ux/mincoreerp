@@ -16,7 +16,16 @@ import { RecorridoViaje } from "./RecorridoViaje";
 import { ResumenConductores } from "./ResumenConductores";
 import { SelectorConductor, type OpcionConductor } from "./SelectorConductor";
 import { SelectorRelevo } from "./SelectorRelevo";
-import { desfaseSalida, fechaHora, fmt, ruta, unidadLabel, type FilaViaje } from "./viajesFormato";
+import {
+  desfaseSalida,
+  fechaHora,
+  fmt,
+  ruta,
+  semaforoViaje,
+  unidadLabel,
+  type FilaViaje,
+  type NivelSemaforo,
+} from "./viajesFormato";
 import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
 import { ahoraParaInputLocal, paraInputLocal } from "../../utils/fechaLocal";
@@ -98,6 +107,27 @@ const LABEL = "text-xs font-bold text-slate-700 uppercase";
 const numeroONull = (s: string) => (s.trim() === "" ? null : Number(s));
 const isoONull = (s: string) => (s ? new Date(s).toISOString() : null);
 
+/** El semáforo del viaje: un punto de color con los motivos al pasar el cursor o al leerlo. */
+function PuntoSemaforo({ v }: { v: FilaViaje }) {
+  const s = semaforoViaje(v);
+  if (!s) return null;
+  const texto = s.motivos.length
+    ? s.motivos.join(" · ")
+    : v.estado === "en_curso"
+      ? "Sin desvíos hasta ahora"
+      : "Sin desvíos";
+  const color = { verde: "bg-emerald-400", ambar: "bg-amber-400", rojo: "bg-red-500" }[s.nivel];
+  const nombre = { verde: "Verde", ambar: "Ámbar", rojo: "Rojo" }[s.nivel];
+  return (
+    <span
+      role="img"
+      aria-label={`Semáforo ${nombre}: ${texto}`}
+      title={`${nombre}: ${texto}`}
+      className={`ml-2 inline-block h-2.5 w-2.5 rounded-full align-middle ${color}`}
+    />
+  );
+}
+
 /** La hora no la puso el servidor en el momento: se avisa de dónde salió. */
 function MarcaHora({ origen }: { origen: FilaViaje["inicio_origen_hora"] }) {
   if (origen !== "dispositivo" && origen !== "manual") return null;
@@ -125,6 +155,12 @@ export default function ViajesPanel() {
   const [cargando, setCargando] = useState(true);
   const [filtroEstado, setFiltroEstado] = useState("");
   const [filtroEquipo, setFiltroEquipo] = useState("");
+  // Estos dos filtran lo que ya se cargó: no piden nada nuevo al servidor.
+  const [filtroConductor, setFiltroConductor] = useState("");
+  // Los conductores que ya se vieron en alguna carga: si otro filtro deja sin viajes al elegido, sigue
+  // en el desplegable y se puede quitar (si no, mostraría "Todos" con el filtro aún activo).
+  const [conductoresVistos, setConductoresVistos] = useState<Record<string, string>>({});
+  const [filtroSemaforo, setFiltroSemaforo] = useState<"" | NivelSemaforo>("");
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
   const [modal, setModal] = useState<Modal | null>(null);
@@ -173,11 +209,31 @@ export default function ViajesPanel() {
         return;
       }
       setError(null);
-      setViajes(Array.isArray(body?.data) ? body.data : []);
+      const filas: FilaViaje[] = Array.isArray(body?.data) ? body.data : [];
+      setViajes(filas);
+      setConductoresVistos((antes) => {
+        const ahora = { ...antes };
+        for (const v of filas) {
+          if (v.conductor_dni) ahora[v.conductor_dni] = v.conductor_nombre ?? v.conductor_dni;
+          if (v.relevo_dni) ahora[v.relevo_dni] = v.relevo_nombre ?? v.relevo_dni;
+        }
+        return ahora;
+      });
     } finally {
       setCargando(false);
     }
   }, [filtroEstado, filtroEquipo, desde, hasta]);
+
+  const conductoresDeLaLista = Object.entries(conductoresVistos).sort((a, b) =>
+    a[1].localeCompare(b[1])
+  );
+  const visibles = viajes.filter(
+    (v) =>
+      (!filtroConductor ||
+        v.conductor_dni === filtroConductor ||
+        v.relevo_dni === filtroConductor) &&
+      (!filtroSemaforo || semaforoViaje(v)?.nivel === filtroSemaforo)
+  );
 
   const cargarLugares = useCallback(async () => {
     const res = await apiFetch("/api/erp/combustible/lugares");
@@ -567,6 +623,34 @@ export default function ViajesPanel() {
           </select>
         </label>
         <label className="flex flex-col gap-1 text-[#94a3b8]">
+          Conductor
+          <select
+            value={filtroConductor}
+            onChange={(e) => setFiltroConductor(e.target.value)}
+            className="bg-[#0D1719] border border-[#334155] rounded-lg px-3 py-2 text-white"
+          >
+            <option value="">Todos</option>
+            {conductoresDeLaLista.map(([dni, nombre]) => (
+              <option key={dni} value={dni}>
+                {nombre}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-[#94a3b8]">
+          Semáforo
+          <select
+            value={filtroSemaforo}
+            onChange={(e) => setFiltroSemaforo(e.target.value as "" | NivelSemaforo)}
+            className="bg-[#0D1719] border border-[#334155] rounded-lg px-3 py-2 text-white"
+          >
+            <option value="">Todos</option>
+            <option value="rojo">Rojo: revisar</option>
+            <option value="ambar">Ámbar: desvío menor</option>
+            <option value="verde">Verde: sin desvíos</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1 text-[#94a3b8]">
           Estado
           <select
             value={filtroEstado}
@@ -586,11 +670,11 @@ export default function ViajesPanel() {
       <ResumenConductores desde={desde} hasta={hasta} />
 
       {error && <p className="text-sm text-red-400">{error}</p>}
-      {!error && !cargando && viajes.length === 0 && (
+      {!error && !cargando && visibles.length === 0 && (
         <p className="text-sm text-[#94a3b8]">No hay viajes con estos filtros.</p>
       )}
 
-      {viajes.length > 0 && (
+      {visibles.length > 0 && (
         <div className="bg-[#192526] border border-[#2a2e37] rounded-lg overflow-x-auto">
           <table className="w-full text-sm text-[#e2e8f0]">
             <thead>
@@ -609,7 +693,7 @@ export default function ViajesPanel() {
               </tr>
             </thead>
             <tbody>
-              {viajes.map((v) => (
+              {visibles.map((v) => (
                 <tr
                   key={v.id}
                   // Un toque en la fila abre el tablero del viaje: en el celular
@@ -685,6 +769,7 @@ export default function ViajesPanel() {
                       <IconoUnidad tipo={v.equipo_tipo} className="w-3.5 h-3.5" />
                       {ESTADOS[v.estado].texto}
                     </span>
+                    <PuntoSemaforo v={v} />
                   </td>
                   <td className="p-3 text-right font-mono">{v.cargas}</td>
                   <td className="p-3 text-right font-mono">{fmt(Number(v.cantidad))}</td>

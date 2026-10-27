@@ -4,8 +4,9 @@
 import { Handshake } from "lucide-react";
 import { useState } from "react";
 
+import { AvisoSalto } from "./AvisoSalto";
 import type { CambiosLocales } from "./MiViajeParadas";
-import type { EntregaPendiente, TurnoViaje } from "./paradasViaje";
+import { esSaltoRaro, type EntregaPendiente, type TurnoViaje } from "./paradasViaje";
 
 const BTN_LIMA =
   "w-full flex items-center justify-center gap-2 bg-[#BADC1E] text-[#0D1719] font-extrabold text-lg py-4 rounded-2xl hover:brightness-110 disabled:opacity-50";
@@ -53,14 +54,15 @@ export function MandoViaje({
 }: Props) {
   const [abierto, setAbierto] = useState(false);
   const [medidor, setMedidor] = useState("");
+  const [salto, setSalto] = useState(false);
   const [lugar, setLugar] = useState("");
 
   const paraMi = entrega?.a_dni.trim() === miDni;
   const mia = entrega?.de_dni.trim() === miDni;
 
-  const entregar = () => {
+  const entregar = (confirmado = false) => {
     const lectura = medidor.trim() === "" ? null : Number(medidor);
-    if (conMedidor && lectura === null) {
+    if (conMedidor && (lectura === null || !Number.isFinite(lectura))) {
       onAviso(`Escribe el ${etiquetaMedidor} que marca el tablero.`);
       return;
     }
@@ -68,6 +70,11 @@ export function MandoViaje({
       onAviso(`Es menor que la última lectura del viaje: revisa el ${etiquetaMedidor}.`);
       return;
     }
+    if (!confirmado && lectura !== null && esSaltoRaro(lectura, minimo, unidadMedidor)) {
+      setSalto(true);
+      return;
+    }
+    setSalto(false);
     void mandar(
       "mando/entregar",
       { medidor: lectura, lugar: lugar.trim() || null },
@@ -175,7 +182,10 @@ export function MandoViaje({
             min={minimo ?? 0}
             step="0.1"
             value={medidor}
-            onChange={(e) => setMedidor(e.target.value)}
+            onChange={(e) => {
+              setMedidor(e.target.value);
+              setSalto(false);
+            }}
             className={INPUT}
           />
         </>
@@ -188,7 +198,20 @@ export function MandoViaje({
         onChange={(e) => setLugar(e.target.value)}
         className="w-full bg-[#0D1719] border border-[#334155] rounded-xl px-4 py-3 text-white"
       />
-      <button className={BTN_LIMA} disabled={guardando} onClick={entregar}>
+      {salto && minimo !== null && (
+        <AvisoSalto
+          lectura={Number(medidor)}
+          minimo={minimo}
+          unidad={unidadMedidor}
+          onConfirmar={() => entregar(true)}
+          onCorregir={() => setSalto(false)}
+        />
+      )}
+      <button
+        className={BTN_LIMA}
+        disabled={guardando || (salto && minimo !== null)}
+        onClick={() => entregar()}
+      >
         Entregar el mando
       </button>
       <button className={BTN_SECUNDARIO} onClick={() => setAbierto(false)}>
