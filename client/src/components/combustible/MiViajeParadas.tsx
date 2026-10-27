@@ -5,12 +5,14 @@
 import { Flag, MapPin, Moon, Play } from "lucide-react";
 import { useState } from "react";
 
+import { AvisoSalto } from "./AvisoSalto";
 import { MandoViaje } from "./MandoViaje";
 import { ParadasViaje } from "./ParadasViaje";
 import {
   conDescansoLocal,
   conMarcaLocal,
   descansoAbierto,
+  esSaltoRaro,
   proximaMarca,
   type DescansoMio,
   type EntregaPendiente,
@@ -85,10 +87,10 @@ export function MiViajeParadas({
   const marca = alVolante ? siguiente : null;
   const enDescanso = descansoAbierto(descansos);
   const [abierto, setAbierto] = useState(false);
-  // Salir de una parada suele ser la misma lectura con la que se llegó.
-  const [medidor, setMedidor] = useState(() =>
-    marca?.accion === "salida-mia" && marca.minimo !== null ? String(marca.minimo) : ""
-  );
+  // La lectura siempre se escribe: no viene rellenada, ni al llegar ni al salir de una parada.
+  const [medidor, setMedidor] = useState("");
+  // La lectura escrita da un salto raro y espera que el conductor la confirme.
+  const [salto, setSalto] = useState(false);
   const [eligiendoMotivo, setEligiendoMotivo] = useState(false);
   const [motivo, setMotivo] = useState("");
   const [otro, setOtro] = useState("");
@@ -134,10 +136,10 @@ export function MiViajeParadas({
     }
   };
 
-  const enviar = () => {
+  const enviar = (confirmado = false) => {
     if (!marca) return;
     const lectura = medidor.trim() === "" ? null : Number(medidor);
-    if (conMedidor && lectura === null) {
+    if (conMedidor && (lectura === null || !Number.isFinite(lectura))) {
       onAviso(`Escribe el ${etiquetaMedidor} que marca el tablero.`);
       return;
     }
@@ -145,6 +147,11 @@ export function MiViajeParadas({
       onAviso(`Es menor que la última lectura del viaje: revisa el ${etiquetaMedidor}.`);
       return;
     }
+    if (!confirmado && lectura !== null && esSaltoRaro(lectura, marca.minimo, unidadMedidor)) {
+      setSalto(true);
+      return;
+    }
+    setSalto(false);
     void mandar(
       marca.accion,
       { medidor: lectura, orden: marca.orden },
@@ -255,7 +262,10 @@ export function MiViajeParadas({
                 step="0.1"
                 autoFocus
                 value={medidor}
-                onChange={(e) => setMedidor(e.target.value)}
+                onChange={(e) => {
+                  setMedidor(e.target.value);
+                  setSalto(false);
+                }}
                 className={INPUT}
               />
               {marca.minimo !== null && (
@@ -265,7 +275,20 @@ export function MiViajeParadas({
               )}
             </>
           )}
-          <button className={BTN_LIMA} disabled={guardando} onClick={enviar}>
+          {salto && marca.minimo !== null && (
+            <AvisoSalto
+              lectura={Number(medidor)}
+              minimo={marca.minimo}
+              unidad={unidadMedidor}
+              onConfirmar={() => enviar(true)}
+              onCorregir={() => setSalto(false)}
+            />
+          )}
+          <button
+            className={BTN_LIMA}
+            disabled={guardando || (salto && marca.minimo !== null)}
+            onClick={() => enviar()}
+          >
             {guardando ? "Guardando..." : marca.texto}
           </button>
           <button className={BTN_SECUNDARIO} onClick={() => setAbierto(false)}>

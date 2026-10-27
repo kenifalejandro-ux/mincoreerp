@@ -36,6 +36,7 @@ test("llegar a la parada y salir sin señal queda guardado y se envía en orden 
   await expect(page.getByText("Pendiente de enviar")).toBeVisible();
 
   await page.getByRole("button", { name: `Salir hacia ${v.a}`, exact: true }).click();
+  await odometro.fill("150");
   await page.getByRole("button", { name: `Salir hacia ${v.a}`, exact: true }).click();
   await expect(
     page.getByRole("button", { name: `Llegué a ${v.a} · terminar viaje` })
