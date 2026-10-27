@@ -144,3 +144,29 @@ export function desfaseSalida(
   if (Math.abs(d) <= (v.desfase_tolerancia_min ?? 10)) return { texto, tono: "ok" };
   return { texto, tono: d > 0 ? "tarde" : "antes" };
 }
+
+export type NivelSemaforo = "verde" | "ambar" | "rojo";
+
+/** Cómo va un viaje de un vistazo: rojo si salió tarde pasada la tolerancia o gastó más de 20 % sobre
+ *  lo normal de su ruta; ámbar si salió antes de tiempo o gastó más de 10 %; verde si no. Con los
+ *  motivos escritos. Los viajes por salir y los anulados no tienen semáforo. */
+export function semaforoViaje(v: FilaViaje): { nivel: NivelSemaforo; motivos: string[] } | null {
+  if (v.estado === "programado" || v.estado === "anulado") return null;
+  const peso: Record<NivelSemaforo, number> = { verde: 0, ambar: 1, rojo: 2 };
+  let nivel: NivelSemaforo = "verde";
+  const motivos: string[] = [];
+  const sube = (n: NivelSemaforo) => {
+    if (peso[n] > peso[nivel]) nivel = n;
+  };
+  const d = desfaseSalida(v);
+  if (d && d.tono !== "ok") {
+    motivos.push(d.texto);
+    sube(d.tono === "tarde" ? "rojo" : "ambar");
+  }
+  const c = desvio(v);
+  if (c && c.pct > 10) {
+    motivos.push(`Consumo +${fmt(c.pct, 0)} % sobre ${c.contra}`);
+    sube(c.pct > 20 ? "rojo" : "ambar");
+  }
+  return { nivel, motivos };
+}
