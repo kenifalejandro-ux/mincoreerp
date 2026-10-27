@@ -21,6 +21,7 @@ import { TIPOS_ALERTA } from "../src/modules/combustible/combustible.repository"
 import {
   CATALOGO_ALERTAS,
   canalDeFila,
+  TIPOS_CRITICOS,
   vaAlMomento,
 } from "../src/modules/combustible/canalesAlertas";
 import {
@@ -45,14 +46,29 @@ describe("catálogo de canales", () => {
     expect(Object.keys(CATALOGO_ALERTAS).sort()).toEqual([...TIPOS_ALERTA].sort());
   });
 
-  it("el reparto decidido con Kenif: 27 al momento, 16 al resumen, 2 solo en el ERP", () => {
+  it("las alertas de un viaje en curso son críticas en la campanita sin salir por correo", () => {
+    for (const t of ["viaje_demorado", "viaje_detenido"] as const) {
+      expect(CATALOGO_ALERTAS[t].canal).toBe("solo_erp");
+      expect(TIPOS_CRITICOS).toContain(t);
+    }
+    // Y lo demás no cambia: lo crítico sigue siendo lo que sale al momento, más lo urgente.
+    const esperados = Object.keys(CATALOGO_ALERTAS).filter((t) => {
+      const e = CATALOGO_ALERTAS[t as keyof typeof CATALOGO_ALERTAS];
+      return e.canal === "al_momento" || e.urgente;
+    });
+    expect([...TIPOS_CRITICOS].sort()).toEqual(esperados.sort());
+  });
+
+  it("el reparto decidido con Kenif: 27 al momento, 16 al resumen, 4 solo en el ERP", () => {
     const cuenta = (canal: string) =>
       Object.values(CATALOGO_ALERTAS).filter((c) => c.canal === canal).length;
     // 25: se sumó urea_litros_corregidos (0130); 26: urea_conteo_alterado
     // (0132). Los dos al momento.
+    // 0156: las dos alertas de un viaje en curso van solo al ERP pero son URGENTES (ver más abajo):
+    // el correo tiene un tope, la campanita no.
     expect(cuenta("al_momento")).toBe(27);
     expect(cuenta("resumen")).toBe(16);
-    expect(cuenta("solo_erp")).toBe(2);
+    expect(cuenta("solo_erp")).toBe(4);
   });
 
   it("los avisos de configuración salen al momento; un tipo desconocido va al resumen", () => {

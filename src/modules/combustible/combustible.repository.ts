@@ -166,6 +166,10 @@ export const TIPOS_ALERTA = [
   "comprobante_sin_foto",
   // ── Migración 0144: el grifero corrigió el saldo de una tanqueta que volvió.
   "tanqueta_retorno_diferencia",
+  // ── Migración 0156: un viaje en curso pasó la hora estimada de llegada del tramo, o está
+  // detenido por una avería, un accidente, un huaico, un bloqueo o el tráfico.
+  "viaje_demorado",
+  "viaje_detenido",
 ] as const;
 
 export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];
@@ -187,6 +191,9 @@ export const TIPOS_ESTADO = [
   "urea_stock_bajo",
   // 0129: se resuelve sola al subir la foto del comprobante.
   "comprobante_sin_foto",
+  // 0156: se resuelven solos cuando el viaje llega, se cierra, se anula o la detención termina.
+  "viaje_demorado",
+  "viaje_detenido",
 ] as const satisfies readonly TipoAlertaCombustible[];
 
 /** Todo lo que no es estado es un HALLAZGO: si nadie lo explica dentro de la
@@ -251,6 +258,8 @@ export interface AlertaNueva {
   ureaCorreccionId?: number | null;
   /** El retorno de tanqueta (0143) que disparó `tanqueta_retorno_diferencia`. */
   tanquetaRetornoId?: number | null;
+  /** El viaje (0156) de `viaje_demorado` y `viaje_detenido`. */
+  viajeId?: number | null;
   /** Migración 0092. Default 'combustible' -- no rompe ningún llamador
    *  existente. Es lo que separa el namespace del talonario de urea del de
    *  combustible en las consultas de hueco (ver
@@ -5683,6 +5692,7 @@ export class CombustibleRepository {
       urea_conteo_id: f.ureaConteoId ?? null,
       urea_correccion_id: f.ureaCorreccionId ?? null,
       tanqueta_retorno_id: f.tanquetaRetornoId ?? null,
+      viaje_id: f.viajeId ?? null,
       producto: f.producto ?? "combustible",
       detalle: JSON.stringify(f.detalle),
     };
@@ -5705,6 +5715,7 @@ export class CombustibleRepository {
         c.urea_conteo_id,
         c.urea_correccion_id,
         c.tanqueta_retorno_id,
+        c.viaje_id,
         c.producto,
         c.detalle,
       ];
@@ -5716,10 +5727,12 @@ export class CombustibleRepository {
       `
       INSERT INTO combustible_alertas
         (tenant_id, tipo, serie_talonario, n_vale, despacho_id, combustible_id, recepcion_id,
-         lectura_id, urea_conteo_id, urea_correccion_id, tanqueta_retorno_id, producto, detalle)
+         lectura_id, urea_conteo_id, urea_correccion_id, tanqueta_retorno_id, viaje_id, producto,
+         detalle)
       VALUES ${placeholders.join(",")}
       RETURNING id, tipo, serie_talonario, n_vale, despacho_id, combustible_id, recepcion_id,
-        lectura_id, urea_conteo_id, urea_correccion_id, tanqueta_retorno_id, producto, detalle,
+        lectura_id, urea_conteo_id, urea_correccion_id, tanqueta_retorno_id, viaje_id, producto,
+        detalle,
         creado_en,
         grifo_interno_id
       `,
@@ -8037,6 +8050,40 @@ export class CombustibleRepository {
                AND (d.comprobante_key IS NOT NULL OR d.anulada_en IS NOT NULL)
           )`,
       [tenantId]
+    );
+    return r.rowCount ?? 0;
+  }
+
+  /** Los viajes que ya tienen abierta una alerta de ese tipo (0156), de entre los que se pasan. */
+  async viajesConAlertaAbierta(
+    client: PoolClient,
+    tenantId: string,
+    tipo: "viaje_demorado" | "viaje_detenido",
+    viajeIds: number[]
+  ): Promise<Set<number>> {
+    if (viajeIds.length === 0) return new Set();
+    const r = await client.query<{ viaje_id: string }>(
+      `SELECT DISTINCT viaje_id FROM combustible_alertas
+        WHERE tenant_id = $1 AND tipo = $2 AND resuelta_en IS NULL
+          AND viaje_id = ANY($3::bigint[])`,
+      [tenantId, tipo, viajeIds]
+    );
+    return new Set(r.rows.map((f) => Number(f.viaje_id)));
+  }
+
+  /** Cierra las alertas abiertas de ese tipo (0156) de los viajes que YA NO están en esa situación:
+   *  los que se pasan son los que siguen en ella. Lo resuelve el hecho, no una persona. */
+  async resolverAlertasDeViaje(
+    client: PoolClient,
+    tenantId: string,
+    tipo: "viaje_demorado" | "viaje_detenido",
+    viajeIdsVigentes: number[]
+  ): Promise<number> {
+    const r = await client.query(
+      `UPDATE combustible_alertas SET resuelta_en = now()
+        WHERE tenant_id = $1 AND tipo = $2 AND resuelta_en IS NULL AND viaje_id IS NOT NULL
+          AND NOT (viaje_id = ANY($3::bigint[]))`,
+      [tenantId, tipo, viajeIdsVigentes]
     );
     return r.rowCount ?? 0;
   }

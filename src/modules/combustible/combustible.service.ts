@@ -3,6 +3,7 @@
 import type { PoolClient } from "pg";
 
 import * as tanquetas from "./tanquetas.service";
+import * as viajes from "./viajes.service";
 import type { Paginacion } from "../../server/shared/utils/pagination";
 import type {
   RegistrarLecturaCombustibleInput,
@@ -4457,6 +4458,79 @@ export class CombustibleService {
       }))
     );
     return { alertas: compras };
+  }
+
+  /** VIAJES EN RUTA (0156): un viaje demorado (pasó la hora estimada de llegada del tramo, sin
+   *  contar lo detenido) y uno detenido (avería, accidente, huaico, bloqueo o tráfico abierto). Los
+   *  dos son ESTADOS: primero se cierran las alertas de los viajes que ya llegaron, se cerraron o
+   *  salieron de esa situación, y después se abren las de los que entraron. Una alerta abierta por
+   *  viaje y tipo; la demora cuenta solo el tiempo en marcha, así que una avería no la dispara: eso
+   *  es lo que avisa `viaje_detenido`. */
+  async evaluarViajesEnRuta(client: PoolClient, tenantId: string) {
+    const demorados = await viajes.viajesDemorados(client, tenantId);
+    const detenidos = await viajes.viajesDetenidos(client, tenantId);
+    await this.repository.resolverAlertasDeViaje(
+      client,
+      tenantId,
+      "viaje_demorado",
+      demorados.map((d) => d.viaje_id)
+    );
+    await this.repository.resolverAlertasDeViaje(
+      client,
+      tenantId,
+      "viaje_detenido",
+      detenidos.map((d) => d.viaje_id)
+    );
+    const yaDemorados = await this.repository.viajesConAlertaAbierta(
+      client,
+      tenantId,
+      "viaje_demorado",
+      demorados.map((d) => d.viaje_id)
+    );
+    const yaDetenidos = await this.repository.viajesConAlertaAbierta(
+      client,
+      tenantId,
+      "viaje_detenido",
+      detenidos.map((d) => d.viaje_id)
+    );
+    const nuevosDemorados = demorados.filter((d) => !yaDemorados.has(d.viaje_id));
+    const nuevosDetenidos = detenidos.filter((d) => !yaDetenidos.has(d.viaje_id));
+    const unidad = (v: { placa_codigo: string | null; codigo_interno: string | null }) =>
+      v.placa_codigo ?? v.codigo_interno ?? null;
+    await this.repository.crearAlertas(client, tenantId, [
+      ...nuevosDemorados.map((d) => ({
+        tipo: "viaje_demorado" as const,
+        viajeId: d.viaje_id,
+        detalle: {
+          viajeNumero: d.numero,
+          unidad: unidad(d),
+          conductor: d.conductor_nombre,
+          de: d.de,
+          a: d.a,
+          salidaEn: d.salida_en,
+          marchaMin: d.marcha_min,
+          esperadoMin: d.esperado_min,
+          demoraMin: d.demora_min,
+          viajesDeHistorial: d.esperado_viajes,
+          baseDelHistorial: d.esperado_base,
+        },
+      })),
+      ...nuevosDetenidos.map((d) => ({
+        tipo: "viaje_detenido" as const,
+        viajeId: d.viaje_id,
+        detalle: {
+          viajeNumero: d.numero,
+          unidad: unidad(d),
+          conductor: d.conductor_nombre,
+          detencion: d.detencion,
+          motivo: d.motivo,
+          donde: d.donde,
+          desde: d.desde,
+          marcadoPor: d.marcado_por,
+        },
+      })),
+    ]);
+    return { demorados: nuevosDemorados, detenidos: nuevosDetenidos };
   }
 
   /** Avisa, UNA vez por tanque, que hay consumo anterior a su primera varilla

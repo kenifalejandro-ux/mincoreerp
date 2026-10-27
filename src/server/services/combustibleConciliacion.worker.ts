@@ -226,6 +226,17 @@ async function conciliarTenant(
       >["alertas"],
     }
   );
+  // Viajes en curso demorados o detenidos (0156). Va en el worker y no event-driven porque la
+  // demora es lo que pasa cuando NO llega la marca de llegada. Corre cada hora: la alerta puede
+  // salir hasta una hora después de pasado el margen.
+  const viajesEnRuta = await paso(
+    "viajes_en_ruta",
+    () => service.evaluarViajesEnRuta(client, tenantId),
+    {
+      demorados: [] as Awaited<ReturnType<CombustibleService["evaluarViajesEnRuta"]>>["demorados"],
+      detenidos: [] as Awaited<ReturnType<CombustibleService["evaluarViajesEnRuta"]>>["detenidos"],
+    }
+  );
   const congelado = await paso(
     "congelar_vencidas",
     () => service.congelarAlertasVencidas(client, tenantId),
@@ -252,6 +263,7 @@ async function conciliarTenant(
     historial,
     diferencias,
     sinFoto,
+    viajesEnRuta,
   };
 }
 
@@ -280,6 +292,16 @@ async function avisarResultado(tenantId: string, r: ResultadoTenant): Promise<vo
     await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
       tipo: "comprobante_sin_foto",
     }).catch((err) => logger.warn({ err, tenantId }, "No se pudo publicar el evento"));
+  }
+  // Viajes en ruta (0156): sin correo propio todavía (el envío no está activo en producción);
+  // la campanita se entera por el evento.
+  for (const tipo of [
+    ...(r.viajesEnRuta.demorados.length > 0 ? ["viaje_demorado"] : []),
+    ...(r.viajesEnRuta.detenidos.length > 0 ? ["viaje_detenido"] : []),
+  ]) {
+    await publicarEventoTenant(tenantId, "combustible.alerta_creada", { tipo }).catch((err) =>
+      logger.warn({ err, tenantId }, "No se pudo publicar el evento")
+    );
   }
 }
 

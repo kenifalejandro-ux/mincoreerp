@@ -496,6 +496,8 @@ export const MODULOS: ModuloDefinicion[] = [
           urea_conteo_id: "combustible_conteos_urea",
           urea_correccion_id: "combustible_urea_correcciones",
           tanqueta_retorno_id: "combustible_tanqueta_retornos",
+          // 0156: el viaje de las alertas de demora y de detención.
+          viaje_id: "combustible_viajes",
           resuelta_por: "usuarios",
           grifo_interno_id: "grifos_internos",
         },

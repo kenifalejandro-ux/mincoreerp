@@ -37,7 +37,14 @@ export type AvisoPorCorreo = TipoAlertaCombustible | "aviso_configuracion";
 
 export const CATALOGO_ALERTAS: Record<
   TipoAlertaCombustible,
-  { canal: CanalAlerta; nombre: string }
+  {
+    canal: CanalAlerta;
+    nombre: string;
+    /** Urgente en la campanita y la Bandeja (rojo, latiendo, primero) SIN mandar correo: para lo que
+     *  pide verse ya pero no justifica un correo (el plan de correo tiene tope). Lo que sale al
+     *  momento por correo ya es crítico por ese camino. */
+    urgente?: true;
+  }
 > = {
   // ── Al momento: sale combustible por encima de los límites ─────────────
   sobredespacho: { canal: "al_momento", nombre: "Sobredespacho" },
@@ -94,6 +101,13 @@ export const CATALOGO_ALERTAS: Record<
   varilla_sin_control: { canal: "resumen", nombre: "Tanque sin varilla de control" },
   recepcion_sin_validar: { canal: "resumen", nombre: "Recepción sin validar" },
   comprobante_sin_foto: { canal: "resumen", nombre: "Comprobante sin foto" },
+  // ── Un viaje en curso: no llegó a la hora estimada, o está detenido ──────
+  // Las dos son URGENTES en la campanita y la Bandeja pero NO mandan correo: el correo tiene un tope
+  // (plan gratis de Brevo) y con muchas unidades se agotaría en días. La campanita se entera al
+  // instante por el evento del worker. Cuando el correo no sea un límite, la demora puede pasar a
+  // "al_momento" con su propio mensaje (combustibleAlertas.mailer.ts).
+  viaje_demorado: { canal: "solo_erp", nombre: "Viaje demorado", urgente: true },
+  viaje_detenido: { canal: "solo_erp", nombre: "Unidad detenida", urgente: true },
   // ── Resumen: compras y saldos ──────────────────────────────────────────
   urea_stock_excedido: { canal: "resumen", nombre: "Urea: compra sobre el máximo del depósito" },
   urea_precio_fuera_de_catalogo: { canal: "resumen", nombre: "Urea: precio fuera de catálogo" },
@@ -107,13 +121,13 @@ export const CATALOGO_ALERTAS: Record<
   historial_sin_contrastar: { canal: "solo_erp", nombre: "Consumo previo a la primera varilla" },
 };
 
-/** Lo que la campanita y la Bandeja pintan como CRÍTICO: exactamente lo que
- *  sale por correo al momento. Lo rojo de la pantalla y lo que interrumpe por
+/** Lo que la campanita y la Bandeja pintan como CRÍTICO: lo que sale por correo
+ *  al momento, más lo marcado `urgente` (que se ve ya pero no manda correo). Lo rojo de la pantalla y lo que interrumpe por
  *  correo tienen que coincidir; antes eran dos listas (esta y la del cliente,
  *  gravedadAlertas.ts) y se habían separado en 14 tipos. */
 export const TIPOS_CRITICOS: readonly TipoAlertaCombustible[] = (
   Object.keys(CATALOGO_ALERTAS) as TipoAlertaCombustible[]
-).filter((t) => CATALOGO_ALERTAS[t].canal === "al_momento");
+).filter((t) => CATALOGO_ALERTAS[t].canal === "al_momento" || CATALOGO_ALERTAS[t].urgente);
 
 export function canalDe(tipo: AvisoPorCorreo): CanalAlerta {
   return tipo === "aviso_configuracion" ? "al_momento" : CATALOGO_ALERTAS[tipo].canal;
