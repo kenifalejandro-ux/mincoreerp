@@ -8088,6 +8088,22 @@ export class CombustibleRepository {
     return r.rowCount ?? 0;
   }
 
+  /** Cierra la alerta abierta de ese tipo de UN viaje (0156): la detención terminó. Lo resuelve el
+   *  hecho, no una persona. */
+  async resolverAlertaDeUnViaje(
+    client: PoolClient,
+    tenantId: string,
+    tipo: "viaje_demorado" | "viaje_detenido",
+    viajeId: number
+  ): Promise<number> {
+    const r = await client.query(
+      `UPDATE combustible_alertas SET resuelta_en = now()
+        WHERE tenant_id = $1 AND tipo = $2 AND viaje_id = $3 AND resuelta_en IS NULL`,
+      [tenantId, tipo, viajeId]
+    );
+    return r.rowCount ?? 0;
+  }
+
   /** Una varilla tomada por alguien que NO es grifero cierra la alerta de
    *  "varilla sin control" del tanque. Lo resolvió el hecho, no una persona. */
   async resolverVarillaSinControlSiExiste(
