@@ -541,6 +541,36 @@ export async function medidorPrevio(
   };
 }
 
+/** El orden de la cola de un conductor: los viajes por salir donde él sale manejando, por hora
+ *  programada y, sin hora, por orden de programación. Sin hora van después de los que sí la tienen. */
+const ORDEN_COLA = (v: string) =>
+  `COALESCE(${v}.salida_programada_en, '9999-12-31'::timestamptz), ${v}.id`;
+
+/** El conductor solo inicia el primero de su cola: si hay otro viaje suyo antes, se rechaza (409).
+ *  Se llama con el candado del conductor tomado (`exigirLibreParaManejar`), así dos inicios a la
+ *  vez no se saltan el orden. La oficina puede iniciar el que quiera: no pasa por aquí. */
+async function exigirPrimeroDeLaCola(
+  client: PoolClient,
+  tenantId: string,
+  dni: string,
+  v: { id: number | string; salida_programada_en: string | Date | null }
+) {
+  const antes = await client.query(
+    `SELECT u.numero FROM combustible_viajes u
+      WHERE u.tenant_id = $1 AND u.estado = 'programado' AND u.id <> $2
+        AND ${volanteDni("u")} = $3
+        AND (${ORDEN_COLA("u")}) < (COALESCE($4::timestamptz, '9999-12-31'::timestamptz), $2::bigint)
+      ORDER BY ${ORDEN_COLA("u")} LIMIT 1`,
+    [tenantId, v.id, dni, v.salida_programada_en]
+  );
+  if (antes.rows[0]) {
+    throw new AppError(
+      409,
+      `Antes tienes que iniciar el viaje V-${antes.rows[0].numero}: está primero en tu cola`
+    );
+  }
+}
+
 export async function iniciarViaje(
   client: PoolClient,
   tenantId: string,
@@ -574,6 +604,11 @@ export async function iniciarViaje(
   await validarSinTraslape(client, tenantId, v.equipo_id, inicio, null, id);
   const sale = quienSale(v);
   await exigirLibreParaManejar(client, tenantId, sale, id);
+  // Una marca que estuvo en la cola sin señal (hora del celular) es un hecho ya ocurrido en la
+  // cancha, no una solicitud: si la oficina reordenó mientras tanto, no se pierde el inicio.
+  if (dniConductor !== undefined && origen !== "dispositivo") {
+    await exigirPrimeroDeLaCola(client, tenantId, sale, v);
+  }
   await client.query(
     `UPDATE combustible_viajes
         SET inicio_en = $2, medidor_previo = $3, medidor_inicio = $4, estado = 'en_curso',
@@ -2003,10 +2038,11 @@ export async function viajesDelConductor(client: PoolClient, tenantId: string, d
                     WHEN v.estado = 'en_curso' THEN 1
                     WHEN v.estado = 'programado' AND ${volanteDni("v")} = $3 THEN 2
                     WHEN v.estado = 'programado' THEN 3 ELSE 4 END,
-               v.creado_en`,
+               ${ORDEN_COLA("v")}`,
     [tenantId, margen, d]
   );
   const filas = [];
+  let posicionEnCola = 0;
   for (const fila of r.rows) {
     // Sus cargas y cuánto suele tardar la ruta (solo para estimar la llegada):
     // nada de promedios de consumo ni comparaciones con otros conductores.
@@ -2018,8 +2054,12 @@ export async function viajesDelConductor(client: PoolClient, tenantId: string, d
       fila.estado === "programado" || fila.estado === "en_curso"
         ? await estadisticasRuta(client, tenantId, fila.recorrido_clave, Number(fila.id))
         : null;
+    const enMiCola = fila.estado === "programado" && fila.volante_dni === d;
+    if (enMiCola) posicionEnCola += 1;
     filas.push({
       ...fila,
+      // 1 = el que puede iniciar; null si no es de su cola (por ejemplo, donde solo es relevo).
+      cola_posicion: enMiCola ? posicionEnCola : null,
       previo:
         fila.estado === "programado" ? await medidorPrevio(client, tenantId, fila.equipo_id) : null,
       cargas_detalle: detalle?.cargas ?? [],
@@ -2050,7 +2090,7 @@ export async function unidadDelViajeActivo(
        JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
       WHERE v.tenant_id = $1 AND ${volanteDni("v")} = $2
         AND v.estado IN ('programado', 'en_curso')
-      ORDER BY CASE v.estado WHEN 'en_curso' THEN 0 ELSE 1 END, v.creado_en
+      ORDER BY CASE v.estado WHEN 'en_curso' THEN 0 ELSE 1 END, ${ORDEN_COLA("v")}
       LIMIT 1`,
     [tenantId, d]
   );

@@ -1,4 +1,4 @@
-/** tests/combustible-viajes.test.ts
+/**tests/combustible-viajes.test.ts
  *
  * Viajes (migración 0123): A → B de una unidad. Las cargas se derivan por
  * unidad + ventana [inicio − margen, fin]; se ataca la API para ver que una
@@ -903,6 +903,9 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     ).toBe(200);
   });
 
+  {
+    /**HEAD */
+  }
   it("desfase_salida_min: minutos que salió después (+) o antes (-) de la hora programada; null sin hora", async () => {
     const salir = async (programadaEn: string | null) => {
       const yo = await conductor();
@@ -925,6 +928,118 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(await salir(min(-12))).toBe(12); // la hora era hace 12 min: salió 12 min tarde
     expect(await salir(min(30))).toBe(-30); // la hora es en 30 min: salió 30 min antes
     expect(await salir(null)).toBeNull();
+  });
+
+  // ── Cola del conductor ────────────────────────────────────────────────────
+
+  /** Programa un viaje para ese conductor, en una unidad propia (una unidad no tiene dos viajes
+   *  sin cerrar). */
+  const programarPara = async (dni: string, extra: Record<string, unknown> = {}) => {
+    const r = await programar(await unidad(), { conductor_dni: dni, ...extra });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    return { id: Number(r.body.id), numero: r.body.numero as number };
+  };
+  const enMin = (n: number) => new Date(Date.now() + n * 60_000).toISOString();
+
+  it("la cola del conductor va por hora programada (sin hora, al final) y solo inicia el primero", async () => {
+    const yo = await conductor();
+    const sinHora = await programarPara(yo.dni);
+    const tarde = await programarPara(yo.dni, { salida_programada_en: enMin(120) });
+    const primero = await programarPara(yo.dni, { salida_programada_en: enMin(60) });
+
+    const mios = (await yo.agente.get("/api/erp/combustible/viajes/mios")).body.data as {
+      id: string;
+      estado: string;
+      cola_posicion: number | null;
+    }[];
+    expect(mios.map((m) => [Number(m.id), m.cola_posicion])).toEqual([
+      [primero.id, 1],
+      [tarde.id, 2],
+      [sinHora.id, 3],
+    ]);
+
+    // Los de atrás se rechazan y dicen cuál va primero; el primero sale.
+    for (const x of [tarde, sinHora]) {
+      const r = await marcar(yo.agente, x.id, "iniciar-mio", { medidor_inicio: 100 });
+      expect(r.status, JSON.stringify(r.body)).toBe(409);
+      expect(r.body.message ?? r.body.error).toContain(`V-${primero.numero}`);
+    }
+    expect(
+      (await marcar(yo.agente, primero.id, "iniciar-mio", { medidor_inicio: 100 })).status
+    ).toBe(200);
+
+    // Ya en curso el primero, los demás suben en la cola.
+    const despues = (await yo.agente.get("/api/erp/combustible/viajes/mios")).body.data as {
+      id: string;
+      cola_posicion: number | null;
+    }[];
+    expect(
+      despues.filter((m) => m.cola_posicion !== null).map((m) => [Number(m.id), m.cola_posicion])
+    ).toEqual([
+      [tarde.id, 1],
+      [sinHora.id, 2],
+    ]);
+  });
+
+  it("dos inicios a la vez del mismo conductor: uno sale, el otro se rechaza y no se salta la cola", async () => {
+    const yo = await conductor();
+    const primero = await programarPara(yo.dni, { salida_programada_en: enMin(60) });
+    const segundo = await programarPara(yo.dni, { salida_programada_en: enMin(120) });
+    const [a, b] = await Promise.all([
+      marcar(yo.agente, segundo.id, "iniciar-mio", { medidor_inicio: 100 }),
+      marcar(yo.agente, primero.id, "iniciar-mio", { medidor_inicio: 100 }),
+    ]);
+    // El segundo nunca sale solo: o pierde por la cola o por ir ya al volante del primero.
+    expect(a.status, JSON.stringify(a.body)).toBe(409);
+    expect(b.status, JSON.stringify(b.body)).toBe(200);
+  });
+
+  it("anular el primero adelanta al segundo; una marca que esperó sin señal no se rechaza por la cola", async () => {
+    const yo = await conductor();
+    const primero = await programarPara(yo.dni, { salida_programada_en: enMin(60) });
+    const segundo = await programarPara(yo.dni, { salida_programada_en: enMin(120) });
+    const tercero = await programarPara(yo.dni, { salida_programada_en: enMin(180) });
+
+    // Sin señal el conductor inició el tercero hace 10 min: ya pasó, la cola no lo descarta.
+    const hace10 = new Date(Date.now() - 10 * 60_000).toISOString();
+    const tarde = await marcar(yo.agente, tercero.id, "iniciar-mio", {
+      medidor_inicio: 100,
+      marcado_en: hace10,
+    });
+    expect(tarde.status, JSON.stringify(tarde.body)).toBe(200);
+    expect(tarde.body.inicio_origen_hora).toBe("dispositivo");
+
+    // Con la oficina anulando el primero, el segundo queda primero de la cola.
+    expect(
+      (await admin.post(url(primero.id, "/anular")).send({ motivo: "Se canceló" })).status
+    ).toBe(200);
+    const mios = (await yo.agente.get("/api/erp/combustible/viajes/mios")).body.data as {
+      id: string;
+      cola_posicion: number | null;
+    }[];
+    expect(mios.find((m) => Number(m.id) === segundo.id)?.cola_posicion).toBe(1);
+  });
+
+  it("la oficina puede iniciar un viaje que no es el primero de la cola; el relevo no cuenta en la cola de quien no sale", async () => {
+    const yo = await conductor();
+    const primero = await programarPara(yo.dni, { salida_programada_en: enMin(60) });
+    const segundo = await programarPara(yo.dni, { salida_programada_en: enMin(120) });
+    const oficina = await admin.post(url(segundo.id, "/iniciar")).send({ medidor_inicio: 100 });
+    expect(oficina.status, JSON.stringify(oficina.body)).toBe(200);
+    expect(primero.id).not.toBe(segundo.id);
+
+    // Un viaje donde es relevo y sale el titular no está en su cola.
+    const otro = await conductor();
+    const eq = await unidad();
+    const conRelevo = await programar(eq, { conductor_dni: otro.dni, relevo_dni: yo.dni });
+    expect(conRelevo.status, JSON.stringify(conRelevo.body)).toBe(201);
+    const mios = (await yo.agente.get("/api/erp/combustible/viajes/mios")).body.data as {
+      id: string;
+      estado: string;
+      cola_posicion: number | null;
+    }[];
+    const comoRelevo = mios.find((m) => Number(m.id) === Number(conRelevo.body.id));
+    expect(comoRelevo?.cola_posicion).toBeNull();
   });
 
   // ── Paradas (0148) ────────────────────────────────────────────────────────
