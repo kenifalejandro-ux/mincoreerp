@@ -10,7 +10,15 @@ import { avanceEstimado, estadoDelTramo, paradasDelViaje } from "./paradasViaje"
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
 import { QuienManejo } from "./QuienManejo";
 import { TramosViaje, type TramoDelViaje } from "./TramosViaje";
-import { duracion, fmt, ruta, unidadLabel, type FilaViaje, type Producto } from "./viajesFormato";
+import {
+  desfaseSalida,
+  duracion,
+  fmt,
+  ruta,
+  unidadLabel,
+  type FilaViaje,
+  type Producto,
+} from "./viajesFormato";
 import { apiFetch } from "../../services/apiClient";
 import VentanaFlotante from "../comunes/VentanaFlotante";
 
@@ -150,6 +158,7 @@ export function DetalleViajeVentana({
         <div className="p-4 space-y-4">
           <TarjetaViaje
             v={v}
+            desfase={desfaseSalida(v)}
             textoEstado={
               enCurso
                 ? (tramo?.texto ?? "En ruta · en vivo")

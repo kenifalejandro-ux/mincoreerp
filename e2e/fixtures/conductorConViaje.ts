@@ -26,7 +26,7 @@ export interface ViajeDeConductor {
 /** Entra como admin y deja programado un viaje A → B → A para un conductor nuevo. */
 export async function prepararViajeDeConductor(
   page: Page,
-  opciones: { conRelevo?: boolean; retroactivo?: boolean } = {}
+  opciones: { conRelevo?: boolean; retroactivo?: boolean; programadoHaceMin?: number } = {}
 ): Promise<ViajeDeConductor> {
   const marca = randomBytes(3).toString("hex").toUpperCase();
   const admin = adminA();
@@ -86,6 +86,14 @@ export async function prepararViajeDeConductor(
       equipo_id: (await equipo.json()).id,
       paradas: opciones.retroactivo ? [idA, idB] : [idA, idB, idA],
       ...(relevo ? { relevo_dni: relevo.dni, sale: "titular" } : {}),
+      // La hora a la que debía salir: así, al iniciar, el viaje sale "tarde" por esos minutos.
+      ...(opciones.programadoHaceMin
+        ? {
+            salida_programada_en: new Date(
+              Date.now() - opciones.programadoHaceMin * 60_000
+            ).toISOString(),
+          }
+        : {}),
       ...(opciones.retroactivo
         ? {
             conductor_dni: dni,

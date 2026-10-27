@@ -13,10 +13,12 @@ import {
 
 test("el conductor hace un viaje de ida y vuelta: llega, sale y termina", async ({ page }) => {
   test.setTimeout(120_000);
-  const v = await prepararViajeDeConductor(page);
+  const v = await prepararViajeDeConductor(page, { programadoHaceMin: 20 });
   await entrarAMiViaje(page, v);
   const odometro = page.getByLabel(/que marca el tablero/);
   await iniciarMiViaje(page, "100");
+  // Debía salir hace 20 min y la tolerancia es de 10: sale en rojo, "tarde".
+  await expect(page.getByText(/^Salió \d+ min tarde$/)).toBeVisible();
 
   // En ruta hacia la parada: un solo botón; llegar a B no cierra el viaje.
   await expect(page.getByText(`En ruta a ${v.b}`, { exact: true })).toBeVisible();

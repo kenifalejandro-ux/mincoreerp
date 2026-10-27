@@ -903,6 +903,30 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     ).toBe(200);
   });
 
+  it("desfase_salida_min: minutos que salió después (+) o antes (-) de la hora programada; null sin hora", async () => {
+    const salir = async (programadaEn: string | null) => {
+      const yo = await conductor();
+      const eq = await unidad();
+      const v = await admin.post("/api/erp/combustible/viajes").send({
+        equipo_id: eq,
+        origen_id: huamachuco,
+        destino_id: bambamarca,
+        conductor_dni: yo.dni,
+        ...(programadaEn ? { salida_programada_en: programadaEn } : {}),
+      });
+      expect(v.status, JSON.stringify(v.body)).toBe(201);
+      // Antes de salir no hay desfase.
+      expect((await admin.get(url(v.body.id))).body.viaje.desfase_salida_min).toBeNull();
+      const ini = await marcar(yo.agente, v.body.id, "iniciar-mio", { medidor_inicio: 100 });
+      expect(ini.status, JSON.stringify(ini.body)).toBe(200);
+      return (await admin.get(url(v.body.id))).body.viaje.desfase_salida_min as number | null;
+    };
+    const min = (n: number) => new Date(Date.now() + n * 60_000).toISOString();
+    expect(await salir(min(-12))).toBe(12); // la hora era hace 12 min: salió 12 min tarde
+    expect(await salir(min(30))).toBe(-30); // la hora es en 30 min: salió 30 min antes
+    expect(await salir(null)).toBeNull();
+  });
+
   // ── Paradas (0148) ────────────────────────────────────────────────────────
 
   const paradasDe = async (id: number) =>
