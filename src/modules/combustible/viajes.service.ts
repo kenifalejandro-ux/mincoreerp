@@ -10,6 +10,7 @@ import type {
   ListarViajesQuery,
 } from "../../server/schemas/combustible.schema";
 import { agregarAmbitoVales, type AmbitoVales } from "./alcance";
+import { detencionDe } from "./motivosDetencion";
 import { repartirPorTramo } from "./viajesTramos";
 import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
 
@@ -1995,6 +1996,33 @@ export interface EsperadoDeTramo {
 
 /** El tiempo en marcha que suele tomar cada tramo de un viaje, por tipo de unidad. Con menos de
  *  3 viajes del mismo tipo se prueba con todas las unidades; con menos de 3 todavía, no se estima. */
+/** Lo que suele tardar UN tramo (de un lugar a otro) en marcha: con unidades del mismo tipo, si hay
+ *  3 viajes o más; si no, con todas las unidades; si tampoco, nada. */
+export async function esperadoDeUnTramo(
+  client: PoolClient,
+  tenantId: string,
+  de: number,
+  a: number,
+  tipo: string | null,
+  excluirId: number
+): Promise<EsperadoDeTramo> {
+  let h = tipo
+    ? await medianaDelTramo(client, tenantId, de, a, tipo, excluirId)
+    : { viajes: 0, mediana: 0 };
+  let base: EsperadoDeTramo["esperado_base"] = h.viajes >= MINIMO_DE_VIAJES ? "tipo" : null;
+  if (!base) {
+    h = await medianaDelTramo(client, tenantId, de, a, null, excluirId);
+    base = h.viajes >= MINIMO_DE_VIAJES ? "todas" : null;
+  }
+  return {
+    esperado_min: base ? Math.round(h.mediana) : null,
+    esperado_viajes: h.viajes,
+    esperado_base: base,
+  };
+}
+
+/** El tiempo en marcha que suele tomar cada tramo de un viaje, por tipo de unidad. Con menos de
+ *  3 viajes del mismo tipo se prueba con todas las unidades; con menos de 3 todavía, no se estima. */
 export async function esperadoPorTramo(
   client: PoolClient,
   tenantId: string,
@@ -2004,23 +2032,174 @@ export async function esperadoPorTramo(
 ): Promise<EsperadoDeTramo[]> {
   const salida: EsperadoDeTramo[] = [];
   for (let i = 0; i < paradas.length - 1; i++) {
-    const de = Number(paradas[i].lugar_id);
-    const a = Number(paradas[i + 1].lugar_id);
-    let h = tipo
-      ? await medianaDelTramo(client, tenantId, de, a, tipo, excluirId)
-      : { viajes: 0, mediana: 0 };
-    let base: EsperadoDeTramo["esperado_base"] = h.viajes >= MINIMO_DE_VIAJES ? "tipo" : null;
-    if (!base) {
-      h = await medianaDelTramo(client, tenantId, de, a, null, excluirId);
-      base = h.viajes >= MINIMO_DE_VIAJES ? "todas" : null;
-    }
-    salida.push({
-      esperado_min: base ? Math.round(h.mediana) : null,
-      esperado_viajes: h.viajes,
-      esperado_base: base,
-    });
+    salida.push(
+      await esperadoDeUnTramo(
+        client,
+        tenantId,
+        Number(paradas[i].lugar_id),
+        Number(paradas[i + 1].lugar_id),
+        tipo,
+        excluirId
+      )
+    );
   }
   return salida;
+}
+
+/** Cuánto se tolera de más sobre lo que suele tardar un tramo antes de avisar que el viaje está
+ *  demorado: el 15 % de lo esperado y, como mínimo, media hora. Con el historial se puede afinar. */
+export const MARGEN_DEMORA = { porcentaje: 0.15, minimoMin: 30 };
+
+export interface ViajeDemorado {
+  viaje_id: number;
+  numero: number;
+  equipo_id: number;
+  placa_codigo: string | null;
+  codigo_interno: string | null;
+  conductor_nombre: string | null;
+  de: string;
+  a: string;
+  salida_en: string;
+  /** Lo que lleva en marcha el tramo, sin contar lo detenido. */
+  marcha_min: number;
+  esperado_min: number;
+  /** Lo que se pasó de lo esperado. */
+  demora_min: number;
+  esperado_viajes: number;
+  esperado_base: "tipo" | "todas";
+}
+
+/** Los viajes en curso que ya pasaron la hora estimada de llegada del tramo en el que van (el primero
+ *  sin llegada, como `posicion()` del cliente): lo que
+ *  llevan en marcha (SIN contar el tiempo detenido por un descanso o una avería) supera lo que
+ *  suele tardar ese tramo más el margen. Sin 3 viajes de historial del tramo no se estima. */
+export async function viajesDemorados(
+  client: PoolClient,
+  tenantId: string
+): Promise<ViajeDemorado[]> {
+  const r = await client.query(
+    `SELECT DISTINCT ON (v.id)
+            v.id AS viaje_id, v.numero, v.equipo_id, e.tipo AS equipo_tipo, e.placa_codigo,
+            e.codigo_interno, v.conductor_nombre, p.lugar_id AS de_id, q.lugar_id AS a_id,
+            lp.nombre AS de, lq.nombre AS a, p.salida_en,
+            extract(epoch FROM now() - p.salida_en) / 60 - COALESCE((
+              SELECT sum(extract(epoch FROM
+                       LEAST(COALESCE(d.fin_en, now()), now()) - GREATEST(d.inicio_en, p.salida_en)))
+                     / 60
+                FROM combustible_viaje_descansos d
+               WHERE d.tenant_id = v.tenant_id AND d.viaje_id = v.id AND d.detiene
+                 AND d.inicio_en < now() AND COALESCE(d.fin_en, now()) > p.salida_en), 0) AS marcha_min
+       FROM combustible_viajes v
+       JOIN equipos e ON e.tenant_id = v.tenant_id AND e.id = v.equipo_id
+       JOIN combustible_viaje_paradas p ON p.tenant_id = v.tenant_id AND p.viaje_id = v.id
+       JOIN combustible_viaje_paradas q
+         ON q.tenant_id = v.tenant_id AND q.viaje_id = v.id AND q.orden = p.orden + 1
+       JOIN combustible_lugares lp ON lp.tenant_id = v.tenant_id AND lp.id = p.lugar_id
+       JOIN combustible_lugares lq ON lq.tenant_id = v.tenant_id AND lq.id = q.lugar_id
+      WHERE v.tenant_id = $1 AND v.estado = 'en_curso'
+        AND p.salida_en IS NOT NULL AND q.llegada_en IS NULL
+      ORDER BY v.id, p.orden`,
+    [tenantId]
+  );
+  const demorados: ViajeDemorado[] = [];
+  // Casi todos los viajes en curso comparten pocas rutas: la mediana de cada (tramo, tipo de unidad)
+  // se pide una vez por pasada. Excluir al propio viaje del historial no cambia nada porque solo
+  // cuentan viajes cerrados y este sigue en curso.
+  const medianas = new Map<string, Promise<EsperadoDeTramo>>();
+  for (const f of r.rows) {
+    const clave = `${f.de_id}:${f.a_id}:${f.equipo_tipo ?? ""}`;
+    if (!medianas.has(clave)) {
+      medianas.set(
+        clave,
+        esperadoDeUnTramo(
+          client,
+          tenantId,
+          Number(f.de_id),
+          Number(f.a_id),
+          f.equipo_tipo ?? null,
+          Number(f.viaje_id)
+        )
+      );
+    }
+    const esperado = await medianas.get(clave)!;
+    if (esperado.esperado_min === null || esperado.esperado_base === null) continue;
+    const margen = Math.max(
+      MARGEN_DEMORA.minimoMin,
+      esperado.esperado_min * MARGEN_DEMORA.porcentaje
+    );
+    const marcha = Number(f.marcha_min);
+    if (marcha <= esperado.esperado_min + margen) continue;
+    demorados.push({
+      viaje_id: Number(f.viaje_id),
+      numero: Number(f.numero),
+      equipo_id: Number(f.equipo_id),
+      placa_codigo: f.placa_codigo,
+      codigo_interno: f.codigo_interno,
+      conductor_nombre: f.conductor_nombre,
+      de: f.de,
+      a: f.a,
+      salida_en: new Date(f.salida_en).toISOString(),
+      marcha_min: Math.round(marcha),
+      esperado_min: esperado.esperado_min,
+      demora_min: Math.round(marcha - esperado.esperado_min),
+      esperado_viajes: esperado.esperado_viajes,
+      esperado_base: esperado.esperado_base,
+    });
+  }
+  return demorados;
+}
+
+export interface ViajeDetenido {
+  viaje_id: number;
+  numero: number;
+  equipo_id: number;
+  placa_codigo: string | null;
+  codigo_interno: string | null;
+  conductor_nombre: string | null;
+  /** "Avería", "Accidente", "Huaico", "Bloqueo" o "Tráfico". */
+  detencion: string;
+  motivo: string | null;
+  donde: string | null;
+  desde: string;
+  marcado_por: string | null;
+}
+
+/** Los viajes en curso con una detención abierta (avería, accidente, huaico, bloqueo o tráfico): un
+ *  descanso que detiene la unidad y todavía no terminó, con ese motivo. Una detención por viaje (la
+ *  más antigua). Dormir y comer no cuentan: son descansos. */
+export async function viajesDetenidos(
+  client: PoolClient,
+  tenantId: string
+): Promise<ViajeDetenido[]> {
+  const r = await client.query(
+    `SELECT v.id AS viaje_id, v.numero, v.equipo_id, e.placa_codigo, e.codigo_interno,
+            v.conductor_nombre, d.motivo, d.donde, d.inicio_en, d.conductor_nombre AS marcado_por
+       FROM combustible_viajes v
+       JOIN equipos e ON e.tenant_id = v.tenant_id AND e.id = v.equipo_id
+       JOIN combustible_viaje_descansos d ON d.tenant_id = v.tenant_id AND d.viaje_id = v.id
+      WHERE v.tenant_id = $1 AND v.estado = 'en_curso' AND d.fin_en IS NULL AND d.detiene
+      ORDER BY v.id, d.inicio_en`,
+    [tenantId]
+  );
+  const por = new Map<number, ViajeDetenido>();
+  for (const f of r.rows) {
+    const detencion = detencionDe(f.motivo);
+    if (!detencion || por.has(Number(f.viaje_id))) continue;
+    por.set(Number(f.viaje_id), {
+      viaje_id: Number(f.viaje_id),
+      numero: Number(f.numero),
+      equipo_id: Number(f.equipo_id),
+      placa_codigo: f.placa_codigo,
+      codigo_interno: f.codigo_interno,
+      conductor_nombre: f.conductor_nombre,
+      detencion,
+      motivo: f.motivo,
+      donde: f.donde,
+      desde: new Date(f.inicio_en).toISOString(),
+      marcado_por: f.marcado_por,
+    });
+  }
+  return [...por.values()];
 }
 
 /** Las cargas del viaje, de los dos productos, una por una. */
