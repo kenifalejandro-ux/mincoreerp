@@ -43,6 +43,106 @@ export function estadoDelTramo(p: ParadaMia[]): { texto: string; retorno: boolea
   return null;
 }
 
+export interface AhoraSiguiente {
+  ahora: string;
+  luego: string | null;
+}
+
+/** Lo que le toca al conductor ahora y lo que sigue, en una línea. Antes de salir sigue los pasos
+ *  de la pantalla (revisar, confirmar, iniciar); en ruta, las paradas y el mando. */
+export function ahoraYSiguiente(
+  p: ParadaMia[],
+  c: {
+    estado: "programado" | "en_curso";
+    paso: "ver" | "revisar" | "iniciar";
+    alVolante: boolean;
+    manejaNombre: string | null | undefined;
+    descansando: boolean;
+    recibeMando: boolean;
+    esperaMando: boolean;
+  }
+): AhoraSiguiente {
+  if (c.estado === "programado") {
+    if (!c.alVolante) {
+      return {
+        ahora: `Esperar: sale manejando ${c.manejaNombre ?? "el otro conductor"}`,
+        luego: "recibir el mando cuando te lo entregue",
+      };
+    }
+    if (c.paso === "ver") return { ahora: "Revisar el viaje", luego: "confirmarlo e iniciar" };
+    if (c.paso === "revisar") return { ahora: "Confirmar los datos", luego: "iniciar el viaje" };
+    return {
+      ahora: "Iniciar el viaje",
+      luego: p[1] ? `llegar a ${p[1].lugar}` : null,
+    };
+  }
+  // El descanso va primero: con uno abierto la pantalla no ofrece aceptar el mando.
+  if (c.descansando) {
+    return {
+      ahora: "Terminar tu descanso",
+      luego: c.recibeMando ? "recibir el mando" : "seguir el viaje",
+    };
+  }
+  if (c.recibeMando) return { ahora: "Recibir el mando", luego: null };
+  if (!c.alVolante) {
+    return {
+      ahora: `Va manejando ${c.manejaNombre ?? "el otro conductor"}`,
+      luego: c.esperaMando ? "esperar que reciban el mando" : "puedes descansar o esperar el mando",
+    };
+  }
+  const pos = posicion(p);
+  // Quien entregó sigue al volante hasta que el otro acepte: conserva su paso, con el aviso.
+  const pendiente = c.esperaMando ? "el mando sigue sin aceptar" : null;
+  const conAviso = (r: AhoraSiguiente): AhoraSiguiente =>
+    pendiente ? { ...r, luego: r.luego ? `${r.luego} (${pendiente})` : pendiente } : r;
+  const ultima = p.length - 1;
+  // Un viaje en curso sin la salida marcada en la primera parada se trata como rumbo a la segunda.
+  const hacia = pos.tipo === "en_marcha" ? pos.hacia : pos.tipo === "sin_salir" ? 1 : null;
+  if (hacia !== null) {
+    const fin = hacia === ultima;
+    return conAviso({
+      ahora: fin ? `Llegar a ${p[hacia].lugar} y terminar el viaje` : `Llegar a ${p[hacia].lugar}`,
+      luego: fin ? null : `salir hacia ${p[hacia + 1].lugar}`,
+    });
+  }
+  if (pos.tipo === "en_parada") {
+    return conAviso({
+      ahora: `Salir hacia ${p[pos.en + 1].lugar}`,
+      luego: pos.en + 1 === ultima ? "llegada final" : `llegar a ${p[pos.en + 1].lugar}`,
+    });
+  }
+  return { ahora: "Viaje terminado", luego: null };
+}
+
+/** Lo que manejó una persona en un viaje con relevo: sus kilómetros y el tiempo de sus turnos.
+ *  Null si no tuvo turnos. Un turno abierto cuenta hasta `ahora` y hasta la última lectura. */
+export function parteDelConductor(
+  turnos: TurnoViaje[] | null | undefined,
+  dni: string | null | undefined,
+  ahora: number
+): { km: number; minutos: number } | null {
+  const mios = (turnos ?? []).filter((t) => t.conductor_dni.trim() === (dni ?? "").trim());
+  if (!dni || mios.length === 0) return null;
+  let km = 0;
+  let ms = 0;
+  for (const t of mios) {
+    const ini = t.medidor_inicio === null ? null : Number(t.medidor_inicio);
+    const fin = t.medidor_fin === null ? null : Number(t.medidor_fin);
+    if (ini !== null && fin !== null && fin >= ini) km += fin - ini;
+    ms += Math.max(0, (t.fin_en ? Date.parse(t.fin_en) : ahora) - Date.parse(t.inicio_en));
+  }
+  return { km, minutos: ms / 60_000 };
+}
+
+/** Desde qué diferencia con la última lectura se pide confirmar: 600 km, o 48 h de horómetro. */
+export const LIMITE_SALTO = { km: 600, h: 48 };
+
+/** Una lectura mucho mayor que la última: casi siempre un error de tipeo. */
+export const esSaltoRaro = (lectura: number, minimo: number | null, unidad: string): boolean =>
+  minimo !== null &&
+  Number.isFinite(lectura) &&
+  lectura - minimo > (unidad === "h" ? LIMITE_SALTO.h : LIMITE_SALTO.km);
+
 export interface TramoConEstimacion {
   salida_en: string | null;
   llegada_en: string | null;
