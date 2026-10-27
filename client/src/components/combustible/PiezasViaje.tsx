@@ -308,6 +308,7 @@ export function TarjetaViaje({
   etiqueta,
   lineaRol,
   desfase,
+  detenido = false,
 }: {
   v: Pick<
     FilaViaje,
@@ -323,6 +324,8 @@ export function TarjetaViaje({
   lineaRol?: string | null;
   /** Si salió antes o después de la hora programada (ver `desfaseSalida`). */
   desfase?: { texto: string; tono: "ok" | "tarde" | "antes" } | null;
+  /** La unidad está detenida (avería, accidente, descanso): el chip no dice "en vivo". */
+  detenido?: boolean;
 }) {
   const enCurso = v.estado === "en_curso";
   const nombreGrande = nombre ?? v.conductor_nombre;
@@ -346,16 +349,20 @@ export function TarjetaViaje({
         <div className="min-w-0 flex-1">
           <span
             className={`mb-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase ${
-              enCurso
-                ? "bg-[#BADC1E] text-[#0D1719]"
-                : v.estado === "programado"
-                  ? "bg-sky-500/20 text-sky-300"
-                  : v.estado === "anulado"
-                    ? "bg-red-500/20 text-red-300"
-                    : "bg-emerald-500/20 text-emerald-300"
+              enCurso && detenido
+                ? "bg-amber-400 text-[#0D1719]"
+                : enCurso
+                  ? "bg-[#BADC1E] text-[#0D1719]"
+                  : v.estado === "programado"
+                    ? "bg-sky-500/20 text-sky-300"
+                    : v.estado === "anulado"
+                      ? "bg-red-500/20 text-red-300"
+                      : "bg-emerald-500/20 text-emerald-300"
             }`}
           >
-            {enCurso && <span className="w-2 h-2 rounded-full bg-[#0D1719] animate-pulse" />}
+            {enCurso && !detenido && (
+              <span className="w-2 h-2 rounded-full bg-[#0D1719] animate-pulse" />
+            )}
             {textoEstado}
           </span>
           <p
