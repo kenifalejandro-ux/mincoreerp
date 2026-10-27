@@ -221,6 +221,7 @@ export function TarjetaViaje({
   nombre,
   etiqueta,
   lineaRol,
+  desfase,
 }: {
   v: Pick<
     FilaViaje,
@@ -234,6 +235,8 @@ export function TarjetaViaje({
   etiqueta?: { texto: string; manejando: boolean } | null;
   /** El otro del viaje en una línea chica ("Titular: …" o "Relevo: …"). */
   lineaRol?: string | null;
+  /** Si salió antes o después de la hora programada (ver `desfaseSalida`). */
+  desfase?: { texto: string; tono: "ok" | "tarde" | "antes" } | null;
 }) {
   const enCurso = v.estado === "en_curso";
   const nombreGrande = nombre ?? v.conductor_nombre;
@@ -287,6 +290,21 @@ export function TarjetaViaje({
             </span>
           )}
           {lineaRol && <p className="text-xs text-[#94a3b8]">{lineaRol}</p>}
+          {desfase && (
+            <p>
+              <span
+                className={`mt-1 inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                  desfase.tono === "tarde"
+                    ? "bg-red-500/15 text-red-300"
+                    : desfase.tono === "antes"
+                      ? "bg-amber-500/15 text-amber-300"
+                      : "bg-emerald-500/15 text-emerald-300"
+                }`}
+              >
+                {desfase.texto}
+              </span>
+            </p>
+          )}
           <p className="text-sm text-[#cbd5e1]">
             {unidadLabel(v)}
             {v.equipo_tipo ? ` · ${v.equipo_tipo.toLowerCase()}` : ""}

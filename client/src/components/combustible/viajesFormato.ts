@@ -33,6 +33,8 @@ export interface FilaViaje {
   /** Cuándo debería salir y cuántos minutos de diferencia se aceptan (0155). */
   salida_programada_en: string | null;
   desfase_tolerancia_min: number;
+  /** Minutos que salió después (+) o antes (-) de la hora programada; null sin hora o sin salida. */
+  desfase_salida_min: number | null;
   recorrido: string | null;
   recorrido_sin_viaje: string | null;
   ruta_por_confirmar: boolean;
@@ -128,4 +130,17 @@ export function iniciales(nombre: string | null) {
   if (!nombre) return "?";
   const partes = nombre.trim().split(/\s+/);
   return (partes[0][0] + (partes[1]?.[0] ?? "")).toUpperCase();
+}
+
+/** "Salió 12 min tarde", "Salió 8 min antes" o "Salió a la hora", y qué tan grave es: dentro de la
+ *  tolerancia es normal; pasada, tarde es rojo y antes es ámbar. Null si no hay con qué comparar. */
+export function desfaseSalida(
+  v: Pick<FilaViaje, "desfase_salida_min" | "desfase_tolerancia_min">
+): { texto: string; tono: "ok" | "tarde" | "antes" } | null {
+  const d = v.desfase_salida_min;
+  if (d === null || d === undefined) return null;
+  if (d === 0) return { texto: "Salió a la hora", tono: "ok" };
+  const texto = d > 0 ? `Salió ${duracion(d)} tarde` : `Salió ${duracion(-d)} antes`;
+  if (Math.abs(d) <= (v.desfase_tolerancia_min ?? 10)) return { texto, tono: "ok" };
+  return { texto, tono: d > 0 ? "tarde" : "antes" };
 }

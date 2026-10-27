@@ -28,6 +28,7 @@ import {
 } from "./paradasViaje";
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
 import {
+  desfaseSalida,
   duracion as duracionMin,
   fechaHora,
   fmt,
@@ -400,6 +401,7 @@ export default function MiViaje() {
               : "Programado"
           }
           nombre={rolTarjeta?.nombre}
+          desfase={desfaseSalida(actual)}
           etiqueta={etiquetaMando}
           lineaRol={rolTarjeta?.lineaRol}
           hijos={
@@ -627,6 +629,7 @@ export default function MiViaje() {
             v={ultimo}
             textoEstado="Llegó"
             nombre={nombreYRol(ultimo).nombre}
+            desfase={desfaseSalida(ultimo)}
             lineaRol={nombreYRol(ultimo).lineaRol}
             hijos={
               <BarraRuta

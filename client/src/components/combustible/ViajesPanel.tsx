@@ -15,7 +15,7 @@ import {
 import { RecorridoViaje } from "./RecorridoViaje";
 import { SelectorConductor, type OpcionConductor } from "./SelectorConductor";
 import { SelectorRelevo } from "./SelectorRelevo";
-import { fechaHora, fmt, ruta, unidadLabel, type FilaViaje } from "./viajesFormato";
+import { desfaseSalida, fechaHora, fmt, ruta, unidadLabel, type FilaViaje } from "./viajesFormato";
 import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
 import { ahoraParaInputLocal, paraInputLocal } from "../../utils/fechaLocal";
@@ -653,6 +653,22 @@ export default function ViajesPanel() {
                       </span>
                     )}
                     <MarcaHora origen={v.inicio_origen_hora} />
+                    {(() => {
+                      const d = desfaseSalida(v);
+                      return d ? (
+                        <p
+                          className={`text-[11px] ${
+                            d.tono === "tarde"
+                              ? "text-red-300"
+                              : d.tono === "antes"
+                                ? "text-amber-300"
+                                : "text-[#94a3b8]"
+                          }`}
+                        >
+                          {d.texto}
+                        </p>
+                      ) : null;
+                    })()}
                   </td>
                   <td className="p-3 whitespace-nowrap">
                     {fechaHora(v.fin_en)}

@@ -1645,6 +1645,10 @@ const COLUMNAS_VIAJE = `
   v.origen_id, lo.nombre AS origen, v.destino_id, ld.nombre AS destino,
   v.inicio_en, v.fin_en, v.medidor_previo, v.medidor_inicio, v.medidor_fin,
   v.salida_programada_en, v.desfase_tolerancia_min,
+  -- Cuántos minutos salió después (+) o antes (-) de la hora programada; null sin una de las dos.
+  CASE WHEN v.inicio_en IS NOT NULL AND v.salida_programada_en IS NOT NULL
+       THEN round(extract(epoch FROM v.inicio_en - v.salida_programada_en) / 60)::int
+  END AS desfase_salida_min,
   v.medidor_fin - v.medidor_inicio AS recorrido,
   v.medidor_inicio - v.medidor_previo AS recorrido_sin_viaje,
   -- La última lectura del viaje: el medidor nunca baja, así que es la mayor entre la salida, la
