@@ -103,6 +103,9 @@ export function DetalleViajeVentana({
   const ureaL = litros("urea");
 
   const tramo = enCurso && v ? estadoDelTramo(paradasDelViaje(v)) : null;
+  // El viaje termina en la última parada (en A → B → A es A, no B).
+  const paradasV = v ? paradasDelViaje(v) : [];
+  const ultimaParada = paradasV[paradasV.length - 1]?.lugar ?? v?.destino ?? "";
   const medidorActual = v?.medidor_actual ? Number(v.medidor_actual) : null;
 
   // Duración: la real si cerró, la transcurrida si va en ruta.
@@ -270,10 +273,13 @@ export function DetalleViajeVentana({
 
           <LineaTiempo
             origen={v.origen}
-            destino={v.destino}
+            destino={ultimaParada}
             inicio={inicio}
             fin={fin}
             cargas={datos.cargas}
+            paradas={paradasDelViaje(v)}
+            descansos={v.descansos}
+            turnos={v.turnos}
           />
         </div>
       )}

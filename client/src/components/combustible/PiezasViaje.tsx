@@ -1,9 +1,10 @@
 // Piezas del tablero de un viaje que usan gerencia (DetalleViaje) y el
 // conductor (MiViaje): la ruta como barra de avance y la línea de tiempo.
-import { Droplets, Flag, Fuel, MapPin, Play } from "lucide-react";
+import { ArrowLeftRight, Droplets, Flag, Fuel, MapPin, Moon, Play } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { IconoUnidad } from "./IconoUnidad";
+import type { DescansoMio, ParadaMia, TurnoViaje } from "./paradasViaje";
 import {
   diaHora,
   duracion,
@@ -124,7 +125,15 @@ export function BarraRuta({
 type Evento =
   | { tipo: "salida"; t: number; c?: undefined }
   | { tipo: "llegada"; t: number; c?: undefined }
-  | { tipo: "carga"; t: number; c: CargaViaje };
+  | { tipo: "carga"; t: number; c: CargaViaje }
+  | {
+      tipo: "hito";
+      t: number;
+      clase: "parada" | "descanso" | "mando";
+      titulo: string;
+      detalle?: string;
+      c?: undefined;
+    };
 
 export function LineaTiempo({
   origen,
@@ -132,16 +141,76 @@ export function LineaTiempo({
   inicio,
   fin,
   cargas,
+  paradas,
+  descansos,
+  turnos,
 }: {
   origen: string;
   destino: string;
   inicio: number | null;
   fin: number | null;
   cargas: CargaViaje[];
+  /** Con más de dos paradas se cuentan también las llegadas y salidas de las intermedias. */
+  paradas?: ParadaMia[];
+  descansos?: DescansoMio[] | null;
+  /** Los turnos de conducción: del segundo en adelante es un cambio de mando. */
+  turnos?: TurnoViaje[] | null;
 }) {
+  const lectura = (m: string | number | null) =>
+    m === null || m === undefined ? undefined : `lectura ${fmt(Number(m), 1)}`;
+  const hitos: Evento[] = [];
+  if (paradas && paradas.length > 2) {
+    for (const p of paradas.slice(1, -1)) {
+      if (p.llegada_en) {
+        hitos.push({
+          tipo: "hito",
+          clase: "parada",
+          t: Date.parse(p.llegada_en),
+          titulo: `Llegada a ${p.lugar}`,
+          detalle: lectura(p.llegada_medidor),
+        });
+      }
+      if (p.salida_en) {
+        hitos.push({
+          tipo: "hito",
+          clase: "parada",
+          t: Date.parse(p.salida_en),
+          titulo: `Salida de ${p.lugar}`,
+          detalle: lectura(p.salida_medidor),
+        });
+      }
+    }
+  }
+  for (const d of descansos ?? []) {
+    hitos.push({
+      tipo: "hito",
+      clase: "descanso",
+      t: Date.parse(d.inicio_en),
+      titulo: `Descanso${d.motivo ? ` · ${d.motivo}` : ""}`,
+      detalle: d.donde,
+    });
+    if (d.fin_en) {
+      hitos.push({
+        tipo: "hito",
+        clase: "descanso",
+        t: Date.parse(d.fin_en),
+        titulo: "Terminó el descanso",
+      });
+    }
+  }
+  for (const t of (turnos ?? []).slice(1)) {
+    hitos.push({
+      tipo: "hito",
+      clase: "mando",
+      t: Date.parse(t.inicio_en),
+      titulo: `${t.conductor_nombre ?? "Otro conductor"} toma el mando`,
+      detalle: [t.lugar, lectura(t.medidor_inicio)].filter(Boolean).join(" · ") || undefined,
+    });
+  }
   const eventos: Evento[] = [
     ...(inicio ? [{ tipo: "salida" as const, t: inicio }] : []),
     ...cargas.map((c) => ({ tipo: "carga" as const, t: Date.parse(c.despachado_en), c })),
+    ...hitos,
     ...(fin ? [{ tipo: "llegada" as const, t: fin }] : []),
   ].sort((a, b) => a.t - b.t);
 
@@ -160,6 +229,14 @@ export function LineaTiempo({
                 <Play className="w-3.5 h-3.5" />
               ) : e.tipo === "llegada" ? (
                 <Flag className="w-3.5 h-3.5" />
+              ) : e.tipo === "hito" ? (
+                e.clase === "parada" ? (
+                  <MapPin className="w-3.5 h-3.5" />
+                ) : e.clase === "descanso" ? (
+                  <Moon className="w-3.5 h-3.5" />
+                ) : (
+                  <ArrowLeftRight className="w-3.5 h-3.5" />
+                )
               ) : e.c.producto === "urea" ? (
                 <Droplets className="w-3.5 h-3.5" />
               ) : (
@@ -168,7 +245,11 @@ export function LineaTiempo({
             const color =
               e.tipo === "carga" && e.c.producto === "urea"
                 ? "bg-sky-500 text-white"
-                : "bg-[#BADC1E] text-[#0D1719]";
+                : e.tipo === "hito" && e.clase === "descanso"
+                  ? "bg-violet-400 text-[#0D1719]"
+                  : e.tipo === "hito" && e.clase === "mando"
+                    ? "bg-amber-400 text-[#0D1719]"
+                    : "bg-[#BADC1E] text-[#0D1719]";
             return (
               <li key={i} className="ml-5">
                 <span
@@ -182,14 +263,19 @@ export function LineaTiempo({
                       ? `Salida de ${origen}`
                       : e.tipo === "llegada"
                         ? `Llegada a ${destino}`
-                        : `${fmt(Number(e.c.cantidad), 1)} ${e.c.unidad} de ${
-                            e.c.producto === "urea" ? "urea" : "combustible"
-                          }`}
+                        : e.tipo === "hito"
+                          ? e.titulo
+                          : `${fmt(Number(e.c.cantidad), 1)} ${e.c.unidad} de ${
+                              e.c.producto === "urea" ? "urea" : "combustible"
+                            }`}
                   </p>
                   <span className="text-xs text-[#94a3b8] font-mono">
                     {diaHora(new Date(e.t).toISOString())}
                   </span>
                 </div>
+                {e.tipo === "hito" && e.detalle && (
+                  <p className="text-xs text-[#94a3b8]">{e.detalle}</p>
+                )}
                 {e.tipo === "carga" && (
                   <p className="text-xs text-[#94a3b8]">
                     {e.c.grifo ??

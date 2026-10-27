@@ -47,6 +47,7 @@ test("el titular entrega el mando sin señal y el relevo lo acepta", async ({ pa
     await expect(pagina.getByText(/te entrega el mando/)).toBeVisible();
     await pagina.getByRole("button", { name: "Aceptar el mando" }).click();
     await expect(pagina.getByText("Tienes el mando. ¡Buen viaje!")).toBeVisible();
+    await expect(pagina.getByText(`Relevo ${v.marca} toma el mando`)).toBeVisible();
     // Ya maneja él: puede marcar la llegada.
     await expect(
       pagina.getByRole("button", { name: `Llegué a ${v.b}`, exact: true })
@@ -57,6 +58,7 @@ test("el titular entrega el mando sin señal y el relevo lo acepta", async ({ pa
 
   // El titular ya no va al volante: su pantalla se entera sola (tiempo real).
   await expect(page.getByText(/Tú puedes descansar/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("ahora-siguiente")).toContainText(`Va manejando Relevo ${v.marca}`);
   expect(await pendiente()).toBe(false);
 
   await darDeBajaAlConductor(page, v);

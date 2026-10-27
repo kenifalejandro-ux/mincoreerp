@@ -15,15 +15,19 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { LineaAhoraSiguiente } from "./AhoraSiguiente";
 import { ColaViajes, type ItemCola } from "./ColaViajes";
 import { HistorialConductor } from "./HistorialConductor";
 import { MiViajeParadas } from "./MiViajeParadas";
 import {
   avanceDelMando,
+  ahoraYSiguiente,
   avanceDelViaje,
+  descansoAbierto,
   estadoDelTramo,
   minutosDescansados,
   paradasDelViaje,
+  parteDelConductor,
   type DescansoMio,
   type ParadaMia,
 } from "./paradasViaje";
@@ -73,6 +77,12 @@ const INPUT =
   "w-full bg-[#0D1719] border border-[#334155] rounded-xl px-4 py-4 text-2xl font-mono text-white text-center";
 
 const claveCache = (usuarioId: string) => `mi-viaje:${usuarioId}`;
+
+/** La última parada del recorrido: ahí termina el viaje (en A → B → A es A, no B). */
+function ultimaParada(f: MiFila) {
+  const p = paradasDelViaje(f);
+  return p[p.length - 1]?.lugar ?? f.destino;
+}
 
 /** Con relevo, quien mira su viaje se ve a sí mismo en grande y al otro en una línea chica. */
 function nombreYRol(f: MiFila) {
@@ -252,6 +262,30 @@ export default function MiViaje() {
                 : "(manejando)",
         }
       : null;
+  // Lo que le toca ahora y lo que sigue, en una línea arriba de la tarjeta.
+  const ahoraSiguiente = actual
+    ? ahoraYSiguiente(paradasDelViaje(actual), {
+        estado: actual.estado === "en_curso" ? "en_curso" : "programado",
+        paso,
+        alVolante: !sinMando,
+        manejaNombre,
+        descansando: Boolean(descansoAbierto(actual.descansos)),
+        recibeMando: Boolean(
+          actual.entrega_pendiente && actual.entrega_pendiente.a_dni.trim() === miDni
+        ),
+        esperaMando: Boolean(
+          actual.entrega_pendiente && actual.entrega_pendiente.de_dni.trim() === miDni
+        ),
+      })
+    : null;
+  // En un viaje con relevo, lo que manejó cada uno: el último viaje muestra "Tu parte".
+  const parteMia = ultimo
+    ? parteDelConductor(
+        ultimo.turnos,
+        ultimo.mi_rol === "relevo" ? ultimo.relevo_dni : ultimo.conductor_dni,
+        ahora
+      )
+    : null;
   const tipo = actual?.tipo_medidor ?? actual?.previo?.tipo_medidor ?? null;
   const etiquetaMedidor = tipo === "horometro" ? "horómetro" : "odómetro";
   const unidadMedidor = tipo === "horometro" ? "h" : "km";
@@ -402,6 +436,8 @@ export default function MiViaje() {
           </p>
         </div>
       )}
+
+      {actual && ahoraSiguiente && <LineaAhoraSiguiente {...ahoraSiguiente} />}
 
       {actual && (
         <TarjetaViaje
@@ -623,10 +659,13 @@ export default function MiViaje() {
       {enCurso && enCurso.inicio_en && (
         <LineaTiempo
           origen={enCurso.origen}
-          destino={enCurso.destino}
+          destino={ultimaParada(enCurso)}
           inicio={Date.parse(enCurso.inicio_en)}
           fin={null}
           cargas={enCurso.cargas_detalle ?? []}
+          paradas={paradasDelViaje(enCurso)}
+          descansos={enCurso.descansos}
+          turnos={enCurso.turnos}
         />
       )}
 
@@ -678,6 +717,14 @@ export default function MiViaje() {
                   : "—"
               }
             />
+            {parteMia && ultimo.tipo_medidor && (ultimo.turnos?.length ?? 0) > 1 && (
+              <Tile
+                icono={<Navigation className="w-4 h-4" />}
+                titulo="Tu parte"
+                valor={`${fmt(parteMia.km, 1)} ${ultimo.tipo_medidor === "horometro" ? "h" : "km"}`}
+                pie={<span>{duracionMin(parteMia.minutos)} al volante</span>}
+              />
+            )}
             <Tile
               icono={<Fuel className="w-4 h-4" />}
               titulo="Combustible"
@@ -695,10 +742,13 @@ export default function MiViaje() {
       {ultimo && ultimo.inicio_en && (
         <LineaTiempo
           origen={ultimo.origen}
-          destino={ultimo.destino}
+          destino={ultimaParada(ultimo)}
           inicio={Date.parse(ultimo.inicio_en)}
           fin={ultimo.fin_en ? Date.parse(ultimo.fin_en) : null}
           cargas={ultimo.cargas_detalle ?? []}
+          paradas={paradasDelViaje(ultimo)}
+          descansos={ultimo.descansos}
+          turnos={ultimo.turnos}
         />
       )}
     </div>
