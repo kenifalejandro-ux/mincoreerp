@@ -4,6 +4,7 @@
 import { Moon } from "lucide-react";
 import { useState } from "react";
 
+import { maxDetalle, motivoGuardado, MOTIVOS_DESCANSO, pideDetalle } from "./motivosDescanso";
 import {
   descansoAbierto,
   proximaMarca,
@@ -14,7 +15,6 @@ import {
 import { hora as horaCorta, type FilaViaje } from "./viajesFormato";
 import { apiFetch } from "../../services/apiClient";
 
-const MOTIVOS = ["Dormir", "Comer", "Avería", "Otro"];
 const INPUT = "w-full bg-[#0D1719] border border-[#334155] rounded-xl px-3 py-2 text-sm text-white";
 const BTN =
   "bg-[#BADC1E] text-[#0D1719] font-bold px-4 py-2 rounded-xl hover:brightness-110 disabled:opacity-50";
@@ -103,7 +103,7 @@ export function AccionesEncargado({
     }
   };
 
-  const textoMotivo = motivo === "Otro" ? otro.trim() : motivo;
+  const textoMotivo = motivoGuardado(motivo, otro);
   const motivoDescansoValido = textoMotivo.length >= 3;
   const medidorNumero = medidor.trim() === "" ? null : Number(medidor);
   const marcaValida =
@@ -129,7 +129,7 @@ export function AccionesEncargado({
           ) : (
             <div className="space-y-2">
               <div className="flex flex-wrap gap-2">
-                {MOTIVOS.map((m) => (
+                {MOTIVOS_DESCANSO.map((m) => (
                   <button
                     key={m}
                     aria-pressed={motivo === m}
@@ -144,11 +144,11 @@ export function AccionesEncargado({
                   </button>
                 ))}
               </div>
-              {motivo === "Otro" && (
+              {pideDetalle(motivo) && (
                 <input
                   aria-label="Motivo del descanso"
                   placeholder="Escribe el motivo"
-                  maxLength={80}
+                  maxLength={maxDetalle(motivo)}
                   value={otro}
                   onChange={(e) => setOtro(e.target.value)}
                   className={INPUT}

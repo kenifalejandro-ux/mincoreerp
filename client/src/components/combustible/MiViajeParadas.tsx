@@ -7,6 +7,15 @@ import { useState } from "react";
 
 import { AvisoSalto } from "./AvisoSalto";
 import { MandoViaje } from "./MandoViaje";
+import {
+  detalleDe,
+  detencionDe,
+  maxDetalle,
+  motivoGuardado,
+  MOTIVOS_DESCANSO,
+  pideDetalle,
+  textoDetenido,
+} from "./motivosDescanso";
 import { ParadasViaje } from "./ParadasViaje";
 import {
   conDescansoLocal,
@@ -28,7 +37,6 @@ const BTN_SECUNDARIO =
   "w-full flex items-center justify-center gap-2 border border-[#334155] text-[#cbd5e1] font-semibold py-3 rounded-2xl hover:text-white";
 const INPUT =
   "w-full bg-[#0D1719] border border-[#334155] rounded-xl px-4 py-4 text-2xl font-mono text-white text-center";
-const MOTIVOS = ["Dormir", "Comer", "Avería", "Otro"];
 
 export interface CambiosLocales {
   paradas?: ParadaMia[];
@@ -173,7 +181,7 @@ export function MiViajeParadas({
     );
   };
 
-  const textoDelMotivo = motivo === "Otro" ? otro.trim() || "Otro" : motivo;
+  const textoDelMotivo = pideDetalle(motivo) ? motivoGuardado(motivo, otro) || motivo : motivo;
   const empezarDescanso = () =>
     void mandar(
       "descanso-mio",
@@ -221,8 +229,12 @@ export function MiViajeParadas({
       {enDescanso && (
         <div className="rounded-2xl border border-violet-400/40 bg-violet-500/10 p-4 space-y-3">
           <p className="flex items-center gap-2 font-bold text-violet-200">
-            <Moon className="w-5 h-5" aria-hidden /> Descansando
-            {enDescanso.motivo ? ` · ${enDescanso.motivo}` : ""}
+            <Moon className="w-5 h-5" aria-hidden />{" "}
+            {detencionDe(enDescanso.motivo) && enDescanso.detiene !== false
+              ? [textoDetenido(enDescanso.motivo), detalleDe(enDescanso.motivo)]
+                  .filter(Boolean)
+                  .join(" · ")
+              : `Descansando${enDescanso.motivo ? ` · ${enDescanso.motivo}` : ""}`}
           </p>
           <p className="font-mono text-2xl text-white">
             {duracion((ahora - Date.parse(enDescanso.inicio_en)) / 60_000)}
@@ -307,7 +319,7 @@ export function MiViajeParadas({
         <div className="rounded-2xl bg-[#0D1719] border border-[#334155] p-4 space-y-3">
           <p className="text-sm text-[#cbd5e1]">¿Por qué descansas? (opcional)</p>
           <div className="flex flex-wrap gap-2">
-            {MOTIVOS.map((m) => (
+            {MOTIVOS_DESCANSO.map((m) => (
               <button
                 key={m}
                 aria-pressed={motivo === m}
@@ -322,11 +334,11 @@ export function MiViajeParadas({
               </button>
             ))}
           </div>
-          {motivo === "Otro" && (
+          {pideDetalle(motivo) && (
             <input
               aria-label="Escribe el motivo"
               placeholder="Escribe el motivo"
-              maxLength={80}
+              maxLength={maxDetalle(motivo)}
               value={otro}
               onChange={(e) => setOtro(e.target.value)}
               className="w-full bg-[#0D1719] border border-[#334155] rounded-xl px-4 py-3 text-white"
