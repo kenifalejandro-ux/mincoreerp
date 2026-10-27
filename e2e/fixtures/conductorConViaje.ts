@@ -19,6 +19,8 @@ export interface ViajeDeConductor {
   password: string;
   marca: string;
   viajeId: string;
+  /** El número del viaje (V-n), para buscarlo en pantalla. */
+  numero: number;
   /** Con relevo (0152): sus credenciales; el titular sale manejando. */
   relevo?: { dni: string; password: string; nombre: string };
 }
@@ -26,7 +28,12 @@ export interface ViajeDeConductor {
 /** Entra como admin y deja programado un viaje A → B → A para un conductor nuevo. */
 export async function prepararViajeDeConductor(
   page: Page,
-  opciones: { conRelevo?: boolean; retroactivo?: boolean; programadoHaceMin?: number } = {}
+  opciones: {
+    conRelevo?: boolean;
+    retroactivo?: boolean;
+    programadoHaceMin?: number;
+    enCola?: number;
+  } = {}
 ): Promise<ViajeDeConductor> {
   const marca = randomBytes(3).toString("hex").toUpperCase();
   const admin = adminA();
@@ -87,6 +94,10 @@ export async function prepararViajeDeConductor(
       paradas: opciones.retroactivo ? [idA, idB] : [idA, idB, idA],
       ...(relevo ? { relevo_dni: relevo.dni, sale: "titular" } : {}),
       // La hora a la que debía salir: así, al iniciar, el viaje sale "tarde" por esos minutos.
+      // Con viajes en cola, este sale primero (en 30 min) y los demás después.
+      ...(opciones.enCola && !opciones.programadoHaceMin
+        ? { salida_programada_en: new Date(Date.now() + 30 * 60_000).toISOString() }
+        : {}),
       ...(opciones.programadoHaceMin
         ? {
             salida_programada_en: new Date(
@@ -106,7 +117,41 @@ export async function prepararViajeDeConductor(
     },
   });
   expect(programado.status()).toBe(201);
-  return { a, b, dni, password, marca, viajeId: (await programado.json()).id as string, relevo };
+  const principal = await programado.json();
+
+  // Más viajes del mismo conductor, cada uno en su unidad, con hora posterior: su cola.
+  for (let i = 1; i <= (opciones.enCola ?? 0); i++) {
+    const otra = await page.request.post("/api/erp/equipos", {
+      data: {
+        placa_codigo: `VQ-${marca}-${i}`,
+        tipo: "VOLQUETE",
+        tipo_medidor: "odometro",
+        conductor_nombre: nombre,
+        conductor_dni: dni,
+        grifo_interno_id: grifoId,
+      },
+    });
+    expect(otra.status()).toBe(201);
+    const extra = await page.request.post("/api/erp/combustible/viajes", {
+      data: {
+        equipo_id: (await otra.json()).id,
+        paradas: [idA, idB],
+        conductor_dni: dni,
+        salida_programada_en: new Date(Date.now() + (30 + 60 * i) * 60_000).toISOString(),
+      },
+    });
+    expect(extra.status()).toBe(201);
+  }
+  return {
+    a,
+    b,
+    dni,
+    password,
+    marca,
+    viajeId: principal.id as string,
+    numero: principal.numero as number,
+    relevo,
+  };
 }
 
 /** Entra el conductor (poniendo su propia clave, que la temporal obliga) y abre Mi viaje. */
