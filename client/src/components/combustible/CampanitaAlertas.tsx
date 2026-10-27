@@ -56,6 +56,9 @@ const ETIQUETA_TIPO: Record<string, string> = {
   urea_precio_fuera_de_catalogo: "Compra de urea con precio fuera del catálogo",
   urea_litros_corregidos: "Litros de un envase de urea corregidos",
   urea_conteo_alterado: "Un conteo de urea cambió de resultado",
+  // Un viaje en curso (0156).
+  viaje_demorado: "Viaje demorado",
+  viaje_detenido: "Unidad detenida",
 };
 
 /** No toda alerta es sobre un vale (migración 0073): las de nivel bajo van
@@ -74,6 +77,11 @@ function formatearAlerta(alerta: {
   }
   if (typeof alerta.detalle.tanqueNombre === "string") {
     return `${etiqueta}: ${alerta.detalle.tanqueNombre}`;
+  }
+  // Un viaje en curso (0156): su número y la unidad.
+  if (typeof alerta.detalle.viajeNumero === "number") {
+    const unidad = typeof alerta.detalle.unidad === "string" ? ` · ${alerta.detalle.unidad}` : "";
+    return `${etiqueta}: V-${alerta.detalle.viajeNumero}${unidad}`;
   }
   return etiqueta;
 }
