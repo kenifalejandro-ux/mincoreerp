@@ -12,6 +12,7 @@ import request from "supertest";
 
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
+import { CombustibleRepository } from "../src/modules/combustible/combustible.repository";
 import { CombustibleService } from "../src/modules/combustible/combustible.service";
 import { MODULOS } from "../src/modules/registry";
 import { correrConciliacion } from "../src/server/services/combustibleConciliacion.worker";
@@ -240,6 +241,21 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
       expect(ed.status, JSON.stringify(ed.body)).toBe(200);
       expect(ed.body.estado).toBe("cerrado");
       expect((await alertas(v.id, "viaje_demorado"))[0].resuelta_en).not.toBeNull();
+    });
+
+    it("el worker solo abre alertas de viajes que siguen en curso", async () => {
+      const a = await lugar("Cajamarca Norte");
+      const b = await lugar("Baños");
+      const enCurso = await viaje(a, b, hace(2));
+      const anulado = await viaje(a, b, hace(2));
+      const an = await admin
+        .post(`/api/erp/combustible/viajes/${anulado.id}/anular`)
+        .send({ motivo: "Prueba" });
+      expect(an.status, JSON.stringify(an.body)).toBe(200);
+      const vigentes = await withTenant(tenantId, (c) =>
+        new CombustibleRepository().viajesEnCurso(c, tenantId, [enCurso.id, anulado.id])
+      );
+      expect([...vigentes]).toEqual([enCurso.id]);
     });
 
     it("la base no admite dos alertas abiertas del mismo viaje y tipo", async () => {
