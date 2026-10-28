@@ -1481,6 +1481,50 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(fin.status, JSON.stringify(fin.body)).toBe(400);
   });
 
+  it("una avería marcada sin señal (hora de hace rato) también abre su alerta en el acto", async () => {
+    const detenidoDe = async (viajeId: number) =>
+      (
+        (await admin.get("/api/erp/combustible/alertas").query({ pageSize: 200 })).body.data as {
+          tipo: string;
+          viaje_id: number | null;
+        }[]
+      ).filter((a) => a.tipo === "viaje_detenido" && Number(a.viaje_id) === viajeId);
+
+    // El viaje salió hace 2 h (con su hora del celular), así que una avería de hace 30 min cae dentro.
+    const sinSenal = { yo: await conductor(), id: 0 };
+    const eq = await unidad();
+    const salio = (
+      await admin.post("/api/erp/combustible/viajes").send({
+        equipo_id: eq,
+        paradas: [huamachuco, bambamarca, huamachuco],
+        conductor_dni: sinSenal.yo.dni,
+      })
+    ).body;
+    sinSenal.id = Number(salio.id);
+    const ini = await marcar(sinSenal.yo.agente, sinSenal.id, "iniciar-mio", {
+      medidor_inicio: 100,
+      marcado_en: hace(120),
+      cliente_uuid: crypto.randomUUID(),
+    });
+    expect(ini.status, JSON.stringify(ini.body)).toBe(200);
+    const vieja = await marcar(sinSenal.yo.agente, sinSenal.id, "descanso-mio", {
+      motivo: "Avería",
+      marcado_en: hace(30),
+      cliente_uuid: crypto.randomUUID(),
+    });
+    expect(vieja.status, JSON.stringify(vieja.body)).toBe(200);
+    // La alerta es urgente: no espera a la pasada del worker aunque la marca venga de la cola.
+    expect(await detenidoDe(sinSenal.id)).toHaveLength(1);
+
+    const enVivo = await circuitoEnCurso();
+    const ahora = await marcar(enVivo.yo.agente, enVivo.id, "descanso-mio", {
+      motivo: "Avería",
+      cliente_uuid: crypto.randomUUID(),
+    });
+    expect(ahora.status, JSON.stringify(ahora.body)).toBe(200);
+    expect(await detenidoDe(enVivo.id)).toHaveLength(1);
+  });
+
   it("una marca fuera de orden, sin medidor, menor o sobre un viaje cerrado se rechaza", async () => {
     const { yo, id } = await circuitoEnCurso();
     const m = (accion: Parameters<typeof marcar>[2], body: Record<string, unknown>) =>
