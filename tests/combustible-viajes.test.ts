@@ -626,22 +626,37 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     ).body;
     // Hora adelantada o vieja de más: se rechaza.
     expect(
-      (await marcar(yo.agente, v.id, "iniciar-mio", { medidor_inicio: 1, marcado_en: hace(-60) }))
-        .status
+      (
+        await marcar(yo.agente, v.id, "iniciar-mio", {
+          medidor_inicio: 1,
+          marcado_en: hace(-60),
+          cliente_uuid: crypto.randomUUID(),
+        })
+      ).status
     ).toBe(400);
     expect(
       (
         await marcar(yo.agente, v.id, "iniciar-mio", {
           medidor_inicio: 1,
           marcado_en: hace(8 * 24 * 60),
+          cliente_uuid: crypto.randomUUID(),
         })
       ).status
     ).toBe(400);
+
+    // Sin identificador de la cola no hay hora del celular: se rechaza, no se ignora en silencio.
+    const sinUuid = await marcar(yo.agente, v.id, "iniciar-mio", {
+      medidor_inicio: 1,
+      marcado_en: hace(180),
+    });
+    expect(sinUuid.status).toBe(400);
+    expect(sinUuid.body.message).toMatch(/necesita su identificador/);
 
     const salida = hace(180);
     const ini = await marcar(yo.agente, v.id, "iniciar-mio", {
       medidor_inicio: 1,
       marcado_en: salida,
+      cliente_uuid: crypto.randomUUID(),
     });
     expect(ini.status, JSON.stringify(ini.body)).toBe(200);
     expect(ini.body.inicio_origen_hora).toBe("dispositivo");
@@ -663,6 +678,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const fin = await marcar(yo.agente, v.id, "cerrar-mio", {
       medidor_fin: 40,
       marcado_en: hace(2),
+      cliente_uuid: crypto.randomUUID(),
     });
     expect(fin.status).toBe(200);
     expect(fin.body.fin_origen_hora).toBe("servidor");
@@ -1008,6 +1024,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const tarde = await marcar(yo.agente, tercero.id, "iniciar-mio", {
       medidor_inicio: 100,
       marcado_en: hace10,
+      cliente_uuid: crypto.randomUUID(),
     });
     expect(tarde.status, JSON.stringify(tarde.body)).toBe(200);
     expect(tarde.body.inicio_origen_hora).toBe("dispositivo");

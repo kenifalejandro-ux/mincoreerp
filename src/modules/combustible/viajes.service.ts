@@ -413,7 +413,8 @@ export type OrigenHora = "servidor" | "manual" | "dispositivo";
 async function horaDeLaMarca(
   client: PoolClient,
   manual: string | undefined,
-  marcadoEn: string | undefined
+  marcadoEn: string | undefined,
+  uuid: string | undefined
 ): Promise<{ hora: string; origen: OrigenHora }> {
   const servidor = await ahora(client);
   if (manual) {
@@ -423,6 +424,9 @@ async function horaDeLaMarca(
     return { hora: manual, origen: "manual" };
   }
   if (marcadoEn) {
+    // La hora del celular solo vale para una marca de la cola (la que lleva su identificador): sin
+    // él nada distingue una marca encolada de una inventada para fabricar puntualidad.
+    if (!uuid) throw new AppError(400, "La marca del celular necesita su identificador");
     const atraso = Date.parse(servidor) - Date.parse(marcadoEn);
     if (atraso < -TOLERANCIA_RELOJ_MS) {
       throw new AppError(
@@ -596,7 +600,12 @@ export async function iniciarViaje(
   }
   await exigirAlVolante(client, tenantId, id, v, dniConductor);
   if (v.estado !== "programado") throw new AppError(409, "El viaje ya salió");
-  const { hora: inicio, origen } = await horaDeLaMarca(client, data.inicio_en, data.marcado_en);
+  const { hora: inicio, origen } = await horaDeLaMarca(
+    client,
+    data.inicio_en,
+    data.marcado_en,
+    data.cliente_uuid
+  );
   const previo = await medidorPrevio(client, tenantId, v.equipo_id, inicio);
   if (previo.tipo_medidor && data.medidor_inicio == null) {
     throw new AppError(
@@ -691,7 +700,12 @@ export async function cerrarViaje(
       );
     }
   }
-  const { hora: fin, origen } = await horaDeLaMarca(client, data.fin_en, data.marcado_en);
+  const { hora: fin, origen } = await horaDeLaMarca(
+    client,
+    data.fin_en,
+    data.marcado_en,
+    data.cliente_uuid
+  );
   if (Date.parse(fin) <= new Date(v.inicio_en).getTime()) {
     throw new AppError(400, "La llegada tiene que ser posterior a la salida");
   }
@@ -928,7 +942,12 @@ export async function llegarAParada(
     };
   }
   const anterior = paradas[pos.hacia - 1];
-  const { hora, origen } = await horaDeLaMarca(client, data.hora, data.marcado_en);
+  const { hora, origen } = await horaDeLaMarca(
+    client,
+    data.hora,
+    data.marcado_en,
+    data.cliente_uuid
+  );
   await validarMarcaDeParada(
     client,
     hora,
@@ -986,7 +1005,12 @@ export async function salirDeParada(
     throw new AppError(409, `Esa salida ya no corresponde: el viaje está en la parada ${pos.en}`);
   }
   const parada = paradas[pos.en];
-  const { hora, origen } = await horaDeLaMarca(client, data.hora, data.marcado_en);
+  const { hora, origen } = await horaDeLaMarca(
+    client,
+    data.hora,
+    data.marcado_en,
+    data.cliente_uuid
+  );
   await validarMarcaDeParada(
     client,
     hora,
@@ -1072,7 +1096,12 @@ export async function iniciarDescanso(
   }
   if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
   if (v.estado !== "en_curso") throw new AppError(409, "El viaje ya está cerrado");
-  const { hora, origen } = await horaDeLaMarca(client, data.hora, data.marcado_en);
+  const { hora, origen } = await horaDeLaMarca(
+    client,
+    data.hora,
+    data.marcado_en,
+    data.cliente_uuid
+  );
   await validarMarcaDeParada(
     client,
     hora,
@@ -1157,7 +1186,12 @@ export async function terminarDescanso(
     ]
   );
   if (!abierto.rows[0]) throw new AppError(409, "No hay un descanso abierto");
-  const { hora, origen } = await horaDeLaMarca(client, data.hora, data.marcado_en);
+  const { hora, origen } = await horaDeLaMarca(
+    client,
+    data.hora,
+    data.marcado_en,
+    data.cliente_uuid
+  );
   await validarMarcaDeParada(
     client,
     hora,
@@ -1267,7 +1301,12 @@ export async function entregarMando(
       `El medidor (${data.medidor}) es menor que el último del viaje (${lectura})`
     );
   }
-  const { hora, origen } = await horaDeLaMarca(client, undefined, data.marcado_en);
+  const { hora, origen } = await horaDeLaMarca(
+    client,
+    undefined,
+    data.marcado_en,
+    data.cliente_uuid
+  );
   const turno = await client.query(
     `SELECT inicio_en FROM combustible_viaje_turnos
       WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL`,
@@ -1346,7 +1385,12 @@ export async function aceptarMando(
     throw new AppError(409, "Termina tu descanso antes de recibir el mando");
   }
   await exigirLibreParaManejar(client, tenantId, yo, id);
-  const { hora, origen } = await horaDeLaMarca(client, undefined, data.marcado_en);
+  const { hora, origen } = await horaDeLaMarca(
+    client,
+    undefined,
+    data.marcado_en,
+    data.cliente_uuid
+  );
   await validarMarcaDeParada(
     client,
     hora,
