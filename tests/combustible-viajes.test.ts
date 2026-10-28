@@ -2492,4 +2492,132 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     );
     expect((await viajeDe(relevo.agente, id)).turnos).toHaveLength(2);
   });
+
+  it("ponerle llegada a un viaje en curso al editarlo cierra también su descanso abierto", async () => {
+    const c = await conRelevo(undefined, [huamachuco, bambamarca]);
+    const ini = await marcar(c.titular.agente, c.id, "iniciar-mio", {
+      medidor_inicio: 100,
+      marcado_en: hace(120),
+      cliente_uuid: crypto.randomUUID(),
+    });
+    expect(ini.status, JSON.stringify(ini.body)).toBe(200);
+    const d = await admin
+      .post(url(c.id, "/descanso"))
+      .send({ motivo: "Avería", inicio_en: hace(60) });
+    expect(d.status, JSON.stringify(d.body)).toBe(200);
+    const ed = await admin
+      .put(url(c.id))
+      .send({ fin_en: hace(10), medidor_fin: 200, motivo: "Cierro el viaje" });
+    expect(ed.status, JSON.stringify(ed.body)).toBe(200);
+    expect(ed.body.estado).toBe("cerrado");
+    const descansos = (await admin.get(url(c.id))).body.viaje.descansos as {
+      fin_en: string | null;
+    }[];
+    expect(descansos).toHaveLength(1);
+    expect(descansos[0].fin_en).not.toBeNull();
+  });
+
+  it("corregir un cambio de mando recalcula qué descansos detienen la unidad", async () => {
+    const c = await conRelevo(undefined, [huamachuco, bambamarca]);
+    const ini = await marcar(c.titular.agente, c.id, "iniciar-mio", {
+      medidor_inicio: 100,
+      marcado_en: hace(120),
+      cliente_uuid: crypto.randomUUID(),
+    });
+    expect(ini.status, JSON.stringify(ini.body)).toBe(200);
+    // El titular descansa de hace 60 a hace 50 min: manejaba él, así que la unidad estuvo detenida.
+    expect(
+      (await admin.post(url(c.id, "/descanso")).send({ motivo: "Almuerzo", inicio_en: hace(60) }))
+        .status
+    ).toBe(200);
+    const te = await admin
+      .post(url(c.id, "/descanso/terminar"))
+      .send({ fin_en: hace(50), motivo: "Prueba" });
+    expect(te.status, JSON.stringify(te.body)).toBe(200);
+    const detiene = async () =>
+      ((await admin.get(url(c.id))).body.viaje.descansos as { detiene: boolean }[]).map(
+        (x) => x.detiene
+      );
+    expect(await detiene()).toEqual([true]);
+
+    // Resulta que el relevo manejaba desde hace 90 min: el descanso del titular no frenó nada.
+    const cm = await admin.post(url(c.id, "/mando/corregir")).send({
+      a_dni: c.relevo.dni,
+      cambio_en: hace(90),
+      medidor: 120,
+      motivo: "No lo marcaron",
+    });
+    expect(cm.status, JSON.stringify(cm.body)).toBe(200);
+    expect(await detiene()).toEqual([false]);
+  });
+
+  it("corregir el mando cierra la alerta de un descanso abierto que ya no detenía la unidad", async () => {
+    const c = await conRelevo(undefined, [huamachuco, bambamarca]);
+    expect(
+      (
+        await marcar(c.titular.agente, c.id, "iniciar-mio", {
+          medidor_inicio: 100,
+          marcado_en: hace(120),
+          cliente_uuid: crypto.randomUUID(),
+        })
+      ).status
+    ).toBe(200);
+    expect(
+      (await admin.post(url(c.id, "/descanso")).send({ motivo: "Avería", inicio_en: hace(60) }))
+        .status
+    ).toBe(200);
+    const detenidoDe = async () =>
+      (
+        (await admin.get("/api/erp/combustible/alertas").query({ pageSize: 200 })).body.data as {
+          tipo: string;
+          viaje_id: number | null;
+          resuelta_en: string | null;
+        }[]
+      ).filter((a) => a.tipo === "viaje_detenido" && Number(a.viaje_id) === c.id && !a.resuelta_en);
+    expect(await detenidoDe()).toHaveLength(1);
+
+    const cm = await admin.post(url(c.id, "/mando/corregir")).send({
+      a_dni: c.relevo.dni,
+      cambio_en: hace(90),
+      medidor: 120,
+      motivo: "No lo marcaron",
+    });
+    expect(cm.status, JSON.stringify(cm.body)).toBe(200);
+    const descansos = (await admin.get(url(c.id))).body.viaje.descansos as { detiene: boolean }[];
+    expect(descansos.map((d) => d.detiene)).toEqual([false]);
+    expect(await detenidoDe()).toHaveLength(0);
+  });
+
+  it("cambiar el titular de un viaje con descansos se los pasa a la persona nueva", async () => {
+    const c = await conRelevo(undefined, [huamachuco, bambamarca]);
+    await marcar(c.titular.agente, c.id, "iniciar-mio", {
+      medidor_inicio: 100,
+      marcado_en: hace(120),
+      cliente_uuid: crypto.randomUUID(),
+    });
+    await admin.post(url(c.id, "/descanso")).send({ motivo: "Almuerzo", inicio_en: hace(60) });
+    await admin.post(url(c.id, "/descanso/terminar")).send({ fin_en: hace(50), motivo: "Prueba" });
+    const libre = await conductor();
+    const ed = await admin.put(url(c.id)).send({
+      motivo: "Cambio de titular",
+      conductor_dni: libre.dni,
+      conductor_nombre: "Titular Nuevo",
+    });
+    expect(ed.status, JSON.stringify(ed.body)).toBe(200);
+    const descansos = async () =>
+      (await admin.get(url(c.id))).body.viaje.descansos as {
+        conductor_nombre: string;
+        detiene: boolean;
+      }[];
+    expect((await descansos()).map((d) => d.conductor_nombre)).toEqual(["Titular Nuevo"]);
+    // Un cambio de mando posterior no lo confunde: el titular nuevo iba al volante a esa hora.
+    const cm = await admin.post(url(c.id, "/mando/corregir")).send({
+      a_dni: c.relevo.dni,
+      cambio_en: hace(30),
+      medidor: 150,
+      motivo: "No lo marcaron",
+    });
+    expect(cm.status, JSON.stringify(cm.body)).toBe(200);
+    expect((await descansos()).map((d) => d.detiene)).toEqual([true]);
+  });
 });

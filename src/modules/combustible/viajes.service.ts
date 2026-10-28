@@ -1626,6 +1626,19 @@ export async function corregirMando(
       data.motivo,
     ]
   );
+  // Quién iba al volante a la hora de cada descanso acaba de cambiar: un descanso solo detiene la
+  // unidad si es de quien manejaba entonces.
+  await client.query(
+    `UPDATE combustible_viaje_descansos d
+        SET detiene = COALESCE((
+          SELECT t.conductor_dni = d.conductor_dni
+            FROM combustible_viaje_turnos t
+           WHERE t.tenant_id = d.tenant_id AND t.viaje_id = d.viaje_id
+             AND t.inicio_en <= d.inicio_en AND (t.fin_en IS NULL OR d.inicio_en < t.fin_en)
+           ORDER BY t.inicio_en DESC LIMIT 1), d.detiene)
+      WHERE d.tenant_id = $1 AND d.viaje_id = $2`,
+    [tenantId, id]
+  );
   return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
 }
 
@@ -1713,7 +1726,8 @@ export async function editarViaje(
   client: PoolClient,
   tenantId: string,
   id: number,
-  data: EditarViajeInput
+  data: EditarViajeInput,
+  usuarioId: string
 ) {
   // Con cambio de unidad se toman los dos candados en orden ascendente: dos
   // correcciones cruzadas (A→B y B→A) no se esperan una a la otra.
@@ -1878,9 +1892,29 @@ export async function editarViaje(
         titularAntes,
       ]
     );
+    // Sus descansos pasan a él igual que sus turnos: si no, ningún turno coincidiría con ellos.
+    await client.query(
+      `UPDATE combustible_viaje_descansos SET conductor_dni = $3, conductor_nombre = $4
+        WHERE tenant_id = $1 AND viaje_id = $2 AND conductor_dni = $5`,
+      [
+        tenantId,
+        id,
+        titularNuevo,
+        def(data.conductor_nombre, v.conductor_nombre) || null,
+        titularAntes,
+      ]
+    );
   }
   // Ponerle llegada a un viaje en curso lo cierra: la entrega pendiente se cancela como al cerrar.
   if (v.estado === "en_curso" && fin) {
+    // Y sus descansos abiertos se cierran con él, como al cerrarlo: uno que se queda abierto en un
+    // viaje cerrado le impide a esa persona abrir el siguiente (solo se permite uno abierto).
+    await client.query(
+      `UPDATE combustible_viaje_descansos
+          SET fin_en = $3, fin_por = 'oficina', fin_origen_hora = 'manual', cerrado_por = $4
+        WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL AND inicio_en < $3::timestamptz`,
+      [tenantId, id, fin, usuarioId]
+    );
     await client.query(
       `UPDATE combustible_viaje_entregas SET cancelada_en = $3
         WHERE tenant_id = $1 AND viaje_id = $2 AND aceptada_en IS NULL AND cancelada_en IS NULL`,
