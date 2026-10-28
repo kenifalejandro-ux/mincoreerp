@@ -1081,6 +1081,9 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
   it("el resumen por conductor suma sus viajes, kilómetros y horas al volante del período", async () => {
     const eq = await unidad();
     const dni = String(41500000 + seq++); // el conductor de sus dos viajes
+    // Una ruta propia: sin historial de otros viajes con qué comparar el consumo.
+    const a = await lugar(idUnico("Sorochuco"));
+    const b = await lugar(idUnico("Huasmin"));
     // Dos viajes cerrados: 150 km en 4 h y 100 km en 4 h (turnos de la unidad).
     for (const [ini, med0, med1] of [
       [600, 100, 250],
@@ -1088,6 +1091,8 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     ]) {
       const v = await viaje(eq, {
         conductor_dni: dni,
+        origen_id: a,
+        destino_id: b,
         inicio_en: hora(ini),
         fin_en: hora(ini + 4),
         medidor_inicio: med0,
@@ -1132,6 +1137,40 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(de(gastos[0].dni)).toMatchObject({ consumo_viajes: 1, consumo_desvio_pct: -25 });
     expect(de(gastos[1].dni)).toMatchObject({ consumo_viajes: 1, consumo_desvio_pct: -25 });
     expect(de(gastos[2].dni)).toMatchObject({ consumo_viajes: 1, consumo_desvio_pct: 50 });
+    // El promedio de la ruta no depende del período que se mira: con solo el tercer viaje a la vista
+    // el desvío sigue siendo +50 % (antes se comparaba consigo mismo y no salía).
+    const solo = await resumenDe(hora(159), hora(170));
+    expect(solo.find((x) => x.dni === gastos[2].dni)).toMatchObject({
+      consumo_viajes: 1,
+      consumo_desvio_pct: 50,
+    });
+  });
+
+  it("las horas al volante del resumen no cuentan lo que la unidad estuvo detenida", async () => {
+    const eq = await unidad();
+    const dni = String(41700000 + seq++);
+    const v = await viaje(eq, {
+      conductor_dni: dni,
+      inicio_en: hora(150),
+      medidor_inicio: 100,
+    });
+    expect(v.status, JSON.stringify(v.body)).toBe(201);
+    const id = v.body.id;
+    // 4 h de viaje, 2 h de ellas detenido por una avería: 120 min al volante.
+    const av = await admin
+      .post(url(id, "/descanso"))
+      .send({ motivo: "Avería", inicio_en: hora(151) });
+    expect(av.status, JSON.stringify(av.body)).toBe(200);
+    const te = await admin
+      .post(url(id, "/descanso/terminar"))
+      .send({ fin_en: hora(153), motivo: "Prueba" });
+    expect(te.status, JSON.stringify(te.body)).toBe(200);
+    const ci = await admin
+      .post(url(id, "/cerrar"))
+      .send({ fin_en: hora(154), medidor_fin: 200, motivo: "Prueba" });
+    expect(ci.status, JSON.stringify(ci.body)).toBe(200);
+    const r = (await resumenDe(hora(149), hora(160))).find((x) => x.dni === dni);
+    expect(r).toMatchObject({ viajes: 1, km: 100, minutos_al_volante: 120 });
   });
 
   it("el resumen cuenta la puntualidad de los viajes que el conductor inició (a tiempo o antes)", async () => {
