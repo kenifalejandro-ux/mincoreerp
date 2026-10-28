@@ -1865,13 +1865,13 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
   // ── Corregir un cambio de mando a posteriori (oficina) ───────────────────
 
   /** Un viaje con titular y relevo registrado a posteriori: un solo turno, del titular. */
-  const conUnSoloTurno = async (cerrado = true) => {
+  const conUnSoloTurno = async (cerrado = true, paradas = [huamachuco, bambamarca]) => {
     const titular = await conductor();
     const relevo = await conductor();
     const eq = await unidad();
     const r = await admin.post("/api/erp/combustible/viajes").send({
       equipo_id: eq,
-      paradas: [huamachuco, bambamarca],
+      paradas,
       conductor_dni: titular.dni,
       relevo_dni: relevo.dni,
       inicio_en: hora(0),
@@ -1987,6 +1987,90 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     });
     expect(pendiente.status).toBe(409);
     expect(JSON.stringify(pendiente.body)).toContain("entrega pendiente");
+  });
+
+  // ── Auditoría de Viajes: reglas cruzadas e idempotencia ──────────────────
+
+  it("cambiar el titular de un viaje en curso no lo pone al volante de dos viajes", async () => {
+    const a = await enCurso();
+    const b = await enCurso();
+    const choque = await admin
+      .put(url(b.id))
+      .send({ motivo: "cambio de titular", conductor_dni: a.titular.dni });
+    expect(choque.status).toBe(409);
+    expect(JSON.stringify(choque.body)).toContain("al volante");
+    expect((await viajeDe(b.titular.agente, b.id)).volante_dni).toBe(b.titular.dni);
+
+    // A una persona libre sí: su turno pasa a ella.
+    const libre = await conductor();
+    const ok = await admin
+      .put(url(b.id))
+      .send({ motivo: "cambio de titular", conductor_dni: libre.dni });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect((await turnosDe(b.id))[0].conductor_dni).toBe(libre.dni);
+  });
+
+  it("con una entrega pendiente no se cambia el titular", async () => {
+    const { titular, id } = await enCurso();
+    expect((await marcar(titular.agente, id, "mando/entregar", { medidor: 150 })).status).toBe(200);
+    const libre = await conductor();
+    const r = await admin
+      .put(url(id))
+      .send({ motivo: "cambio de titular", conductor_dni: libre.dni });
+    expect(r.status).toBe(409);
+    expect(JSON.stringify(r.body)).toContain("entrega pendiente");
+    expect((await marcar(titular.agente, id, "mando/retirar", {})).status).toBe(200);
+    expect(
+      (await admin.put(url(id)).send({ motivo: "cambio de titular", conductor_dni: libre.dni }))
+        .status
+    ).toBe(200);
+  });
+
+  it("corregir el mando no deja un medidor que contradiga una parada ya marcada", async () => {
+    const { titular, relevo, id } = await conUnSoloTurno(false, [
+      huamachuco,
+      bambamarca,
+      huamachuco,
+    ]);
+    expect((await marcar(titular.agente, id, "llegada-mia", { medidor: 150 })).status).toBe(200);
+    const base = { a_dni: relevo.dni, cambio_en: hora(4), motivo: "no lo marcaron" };
+    // El cambio fue antes de llegar a B (km 150): no puede marcar más que eso.
+    const alto = await corregir(id, { ...base, medidor: 190 });
+    expect(alto.status).toBe(400);
+    expect(JSON.stringify(alto.body)).toContain("parada marcada");
+    expect(await turnosDe(id)).toHaveLength(1);
+    expect((await corregir(id, { ...base, medidor: 120 })).status).toBe(200);
+  });
+
+  it("el reintento de la cola se reconoce aunque el mando ya cambió de manos", async () => {
+    const { titular, relevo, id } = await enCurso();
+    const llegada = crypto.randomUUID();
+    const entrega = crypto.randomUUID();
+    expect(
+      (await marcar(titular.agente, id, "llegada-mia", { medidor: 150, cliente_uuid: llegada }))
+        .status
+    ).toBe(200);
+    expect(
+      (await marcar(titular.agente, id, "mando/entregar", { medidor: 150, cliente_uuid: entrega }))
+        .status
+    ).toBe(200);
+    expect((await marcar(relevo.agente, id, "mando/aceptar", {})).status).toBe(200);
+    // El titular ya no maneja, pero sus dos marcas ya entraron: el reintento no es un error.
+    expect(
+      (await marcar(titular.agente, id, "llegada-mia", { medidor: 150, cliente_uuid: llegada }))
+        .status
+    ).toBe(200);
+    expect(
+      (await marcar(titular.agente, id, "mando/entregar", { medidor: 150, cliente_uuid: entrega }))
+        .status
+    ).toBe(200);
+    // Un marca nueva suya sí sigue rechazada, y un ajeno no recibe nada con ese uuid.
+    expect((await marcar(titular.agente, id, "salida-mia", { medidor: 150 })).status).toBe(409);
+    const ajeno = await conductor();
+    expect(
+      (await marcar(ajeno.agente, id, "llegada-mia", { medidor: 150, cliente_uuid: llegada }))
+        .status
+    ).toBe(404);
   });
 
   // ── Entrega del mando ────────────────────────────────────────────────────

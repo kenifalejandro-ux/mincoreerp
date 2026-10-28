@@ -582,11 +582,13 @@ export async function iniciarViaje(
   dniConductor?: string
 ) {
   const v = await viajeParaCambiar(client, tenantId, id);
-  await exigirAlVolante(client, tenantId, id, v, dniConductor);
-  // Reintento de la cola: la marca ya entró, se devuelve como quedó.
+  // Reintento de la cola: la marca ya entró, se devuelve como quedó. Primero que sea del viaje (un
+  // ajeno no recibe nada) y después el reintento: el mando pudo cambiar de manos entre medio.
+  exigirDelViaje(v, dniConductor);
   if (data.cliente_uuid && v.inicio_cliente_uuid === data.cliente_uuid) {
     return { antes: v, despues: await getViaje(client, tenantId, id), repetido: true };
   }
+  await exigirAlVolante(client, tenantId, id, v, dniConductor);
   if (v.estado !== "programado") throw new AppError(409, "El viaje ya salió");
   const { hora: inicio, origen } = await horaDeLaMarca(client, data.inicio_en, data.marcado_en);
   const previo = await medidorPrevio(client, tenantId, v.equipo_id, inicio);
@@ -648,11 +650,12 @@ export async function cerrarViaje(
   dniConductor?: string
 ) {
   const v = await viajeParaCambiar(client, tenantId, id);
-  await exigirAlVolante(client, tenantId, id, v, dniConductor);
+  exigirDelViaje(v, dniConductor);
   if (data.cliente_uuid && v.fin_cliente_uuid === data.cliente_uuid) {
     const despues = await getViaje(client, tenantId, id);
     return { antes: v, despues, fin: despues.fin_en, repetido: true };
   }
+  await exigirAlVolante(client, tenantId, id, v, dniConductor);
   if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
   if (v.estado !== "en_curso") throw new AppError(409, "El viaje ya está cerrado");
   // El conductor no cierra con el descanso abierto; la oficina que cierra por él lo termina.
@@ -829,7 +832,7 @@ export async function llegarAParada(
   dniConductor?: string
 ): Promise<ResultadoMarca> {
   const v = await viajeParaCambiar(client, tenantId, id);
-  await exigirAlVolante(client, tenantId, id, v, dniConductor);
+  exigirDelViaje(v, dniConductor);
   const paradas = await leerParadas(client, tenantId, id);
   const uuid = data.cliente_uuid ?? null;
   if (
@@ -844,6 +847,7 @@ export async function llegarAParada(
       cierra: false,
     };
   }
+  await exigirAlVolante(client, tenantId, id, v, dniConductor);
   if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
   if (v.estado !== "en_curso") throw new AppError(409, "El viaje ya está cerrado");
   await exigirSinDescansoAbierto(client, tenantId, id);
@@ -914,7 +918,7 @@ export async function salirDeParada(
   dniConductor?: string
 ): Promise<ResultadoMarca> {
   const v = await viajeParaCambiar(client, tenantId, id);
-  await exigirAlVolante(client, tenantId, id, v, dniConductor);
+  exigirDelViaje(v, dniConductor);
   const paradas = await leerParadas(client, tenantId, id);
   const uuid = data.cliente_uuid ?? null;
   if (uuid && paradas.some((p) => p.salida_cliente_uuid === uuid)) {
@@ -926,6 +930,7 @@ export async function salirDeParada(
       cierra: false,
     };
   }
+  await exigirAlVolante(client, tenantId, id, v, dniConductor);
   if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
   if (v.estado !== "en_curso") throw new AppError(409, "El viaje ya está cerrado");
   await exigirSinDescansoAbierto(client, tenantId, id);
@@ -1182,7 +1187,7 @@ export async function entregarMando(
   dniConductor: string
 ): Promise<ResultadoDescanso> {
   const v = await viajeParaCambiar(client, tenantId, id);
-  await exigirAlVolante(client, tenantId, id, v, dniConductor);
+  exigirDelViaje(v, dniConductor);
   const uuid = data.cliente_uuid ?? null;
   if (uuid) {
     const rep = await client.query(
@@ -1194,6 +1199,7 @@ export async function entregarMando(
       return { antes: v, despues: await getViaje(client, tenantId, id), repetido: true };
     }
   }
+  await exigirAlVolante(client, tenantId, id, v, dniConductor);
   if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
   if (v.estado !== "en_curso") throw new AppError(409, "El viaje ya está cerrado");
   if (!v.relevo_dni) throw new AppError(409, "Este viaje no tiene relevo");
@@ -1364,6 +1370,23 @@ export async function corregirMando(
     const techo = t.medidor_fin == null ? null : Number(t.medidor_fin);
     if ((piso != null && data.medidor < piso) || (techo != null && data.medidor > techo)) {
       throw new AppError(400, "El medidor del cambio queda fuera del turno que se parte");
+    }
+    // Lo marcado en las paradas antes del cambio no puede pasar al medidor del cambio, ni lo de
+    // después quedar por debajo.
+    const paradas = await leerParadas(client, tenantId, id);
+    const marcas = paradas.flatMap((p) => [
+      { en: p.llegada_en, medidor: p.llegada_medidor },
+      { en: p.salida_en, medidor: p.salida_medidor },
+    ]);
+    const noCuadra = marcas.some(
+      (m) =>
+        m.en != null &&
+        m.medidor != null &&
+        ((new Date(m.en).getTime() < cambio && Number(m.medidor) > data.medidor!) ||
+          (new Date(m.en).getTime() > cambio && Number(m.medidor) < data.medidor!))
+    );
+    if (noCuadra) {
+      throw new AppError(400, "El medidor del cambio no cuadra con una parada marcada en el viaje");
     }
   }
   const descansando = await client.query(
@@ -1591,6 +1614,21 @@ export async function editarViaje(
   const titularNuevo = normalizarDni(def(data.conductor_dni, v.conductor_dni));
   if (titularNuevo && titularNuevo === normalizarDni(v.relevo_dni)) {
     throw new AppError(400, "El titular no puede ser también el relevo");
+  }
+  if (titularNuevo !== titularAntes) {
+    if (await entregaPendiente(client, tenantId, id)) {
+      throw new AppError(409, "Hay una entrega pendiente: que el conductor la acepte o la retire");
+    }
+    // Si el titular que se cambia va al volante, su turno pasa a la persona nueva: no puede ir ya
+    // al volante de otro viaje.
+    const alVolante = await client.query(
+      `SELECT 1 FROM combustible_viaje_turnos
+        WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL AND conductor_dni = $3`,
+      [tenantId, id, titularAntes]
+    );
+    if (alVolante.rows[0] && titularNuevo) {
+      await exigirLibreParaManejar(client, tenantId, titularNuevo, id);
+    }
   }
 
   await client.query(
