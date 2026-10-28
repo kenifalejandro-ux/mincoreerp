@@ -3,6 +3,7 @@ import type { PoolClient } from "pg";
 import { logger } from "../../server/config/logger";
 import { capturarError } from "../../server/config/sentry";
 import { withTenant } from "../../server/config/database";
+import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { getTenantId } from "../../server/shared/utils/request";
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
 import { registrarAuditoria } from "../../server/services/platformAudit.service";
@@ -15,6 +16,7 @@ import type {
   CorregirMandoInput,
   CorregirMarcaDeParadaInput,
   CrearLugarInput,
+  EditarLugarInput,
   CrearViajeInput,
   EditarViajeInput,
   HistorialMioQuery,
@@ -225,12 +227,31 @@ export const viajesController = {
 
   async crearLugar(req: Request, res: Response) {
     const tenantId = getTenantId(req);
-    const { nombre } = req.validatedBody as CrearLugarInput;
     const lugar = await withTenant(tenantId, (c) =>
-      viajes.crearLugar(c, tenantId, req.usuario!.id, nombre)
+      viajes.crearLugar(c, tenantId, req.usuario!.id, req.validatedBody as CrearLugarInput)
     );
     await auditar(req, "lugar_crear", { lugarId: lugar.id, nombre: lugar.nombre });
     res.status(201).json(lugar);
+  },
+
+  async editarLugar(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.lugarId);
+    // El id llega de la URL: uno desbordado no debe llegar a Postgres como bigint.
+    if (!Number.isSafeInteger(id)) throw new AppError(404, "El lugar no existe");
+    const { despues, campos } = await withTenant(tenantId, (c) =>
+      viajes.editarLugar(c, tenantId, id, req.validatedBody as EditarLugarInput)
+    );
+    if (campos.length) {
+      // Solo ids y los NOMBRES de los campos: la auditoría no copia el contenido del tenant.
+      const accion = campos.includes("activo")
+        ? despues.activo
+          ? "lugar_activar"
+          : "lugar_desactivar"
+        : "lugar_editar";
+      await auditar(req, accion, { lugarId: id, campos });
+    }
+    res.json(despues);
   },
 
   /** GET /viajes (panel de gestión) y GET /viajes/consumo (Histórico): la

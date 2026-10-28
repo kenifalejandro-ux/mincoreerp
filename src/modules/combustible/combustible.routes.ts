@@ -50,6 +50,7 @@ import {
   asignarTanquetaSchema,
   retornoTanquetaSchema,
   crearLugarSchema,
+  editarLugarSchema,
   crearViajeSchema,
   cerrarViajeSchema,
   iniciarMiViajeSchema,
@@ -470,6 +471,13 @@ router.post(
   requireRole("admin", "operador"),
   validate(crearLugarSchema),
   asyncHandler(viajesController.crearLugar)
+);
+router.patch(
+  "/lugares/:lugarId(\\d+)",
+  requirePestana("combustible", "viajes:lugares"),
+  requireRole("admin", "operador"),
+  validate(editarLugarSchema),
+  asyncHandler(viajesController.editarLugar)
 );
 router.get(
   "/viajes",
