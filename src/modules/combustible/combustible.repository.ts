@@ -7,7 +7,7 @@ import type {
 } from "../../server/schemas/combustible.schema";
 import type { Paginacion } from "../../server/shared/utils/pagination";
 import { esViolacionUnicidad, esViolacionForeignKey } from "../../server/shared/utils/pgError";
-import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
+import { LITROS_POR_GALON, litrosSql } from "../../server/shared/utils/unidades";
 import {
   agregarAmbitoVales,
   destinatariosDeAlertasEnGrifo,
@@ -288,11 +288,11 @@ export interface AlertaNueva {
 // mostrar un 0 que nadie midió.
 /** Los litros de un listado de vales, convertidos por la unidad de SU tanque
  *  (entrega 4): sumar galones y litros crudos da un número sin sentido. Una
- *  compra externa no tiene tanque ni unidad: se toma como litros, igual que
- *  findAcumuladoDiario. `t` es el alias del tanque en la consulta. */
+ *  compra externa de combustible no tiene tanque: se cuenta en galones, que es
+ *  lo que pide el formulario (ver esGalonSql). `t` es el alias del tanque en la consulta. */
 const sumaLitros = (t: string) =>
   // La carga en ruta desde una tanqueta (0114) no tiene tanque: la tanqueta mide en galones.
-  `SUM(d.cantidad * CASE WHEN ${t}.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN ${LITROS_POR_GALON} ELSE 1 END)`;
+  `SUM(${litrosSql(t)})`;
 
 const COLUMNAS_TANQUE = `
   c.id, c.codigo, c.tanque_nombre, c.tipo_combustible, c.unidad, c.tipo_punto,
@@ -3819,12 +3819,10 @@ export class CombustibleRepository {
    *
    *  Convierte cada fila a litros con la unidad de SU tanque: un tenant
    *  puede tener un tanque en galones y otro en litros, y sumarlos crudos
-   *  daría un número sin sentido. En `compra_externa` no hay tanque y por lo
-   *  tanto no hay unidad -- se asume litros, que es lo que usa la operación
-   *  real (ver la planilla de vale de Cushuro). Si algún día aparece un
-   *  tenant que compra en galones afuera, esto los cuenta de menos, que es
-   *  el lado seguro: hace falta una unidad en el despacho para arreglarlo
-   *  bien, no una adivinanza acá.
+   *  daría un número sin sentido. En `compra_externa` de combustible no hay
+   *  tanque: se cuenta en galones, que es lo que pide el formulario de compra
+   *  en ruta (ver esGalonSql). Si algún día se compra en litros, hace falta
+   *  guardar la unidad en el despacho, no adivinarla acá.
    *
    *  Excluye los vales anulados (0067) y, opcionalmente, un despacho por id
    *  -- lo usa evaluarTopeDiario para saber cuánto había ANTES de este vale
@@ -3859,7 +3857,7 @@ export class CombustibleRepository {
       `
       WITH vales AS (
         SELECT d.id, d.despachado_en,
-               d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN ${LITROS_POR_GALON} ELSE 1 END AS litros
+               ${litrosSql("c")} AS litros
           FROM combustible_despachos d
           LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1
          WHERE d.tenant_id = $1
@@ -3924,7 +3922,7 @@ export class CombustibleRepository {
       SELECT
         COALESCE(SUM(d.cantidad) FILTER (WHERE d.producto = 'urea'), 0) AS litros_urea,
         COALESCE(
-          SUM(d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN ${LITROS_POR_GALON} ELSE 1 END)
+          SUM(${litrosSql("c")})
             FILTER (WHERE d.producto = 'combustible'),
           0
         ) AS litros_diesel
@@ -5412,7 +5410,7 @@ export class CombustibleRepository {
     const r = await client.query<{ litros: string; vales: string }>(
       `
       SELECT COALESCE(SUM(
-               d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN ${LITROS_POR_GALON} ELSE 1 END
+               ${litrosSql("c")}
              ), 0) AS litros,
              COUNT(*) AS vales
         FROM combustible_despachos d
@@ -7196,7 +7194,8 @@ export class CombustibleRepository {
 
   // ── Sugerencia de los topes diarios desde el historial ───────────────
 
-  /** Lo despachado POR DÍA a cada actor en los últimos `dias`, en litros.
+  /** Lo despachado POR DÍA a cada actor en los últimos `dias`, en litros. Solo
+   *  combustible: la urea tiene su propio tope y no se suma al del diésel.
    *  Actor = el equipo, o el tipo de destino cuando no hay equipo (planta es
    *  una sola), igual que el tope en vivo (findAcumuladoDiario). Trae la
    *  capacidad del equipo pasada a litros para poder sugerir también los
@@ -7221,11 +7220,12 @@ export class CombustibleRepository {
                        CASE WHEN e.capacidad_tanque_unidad = 'gal' THEN ${LITROS_POR_GALON} ELSE 1 END
              END AS capacidad_l,
              date_trunc('day', d.despachado_en) AS dia,
-             SUM(d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN ${LITROS_POR_GALON} ELSE 1 END) AS litros
+             SUM(${litrosSql("c")}) AS litros
         FROM combustible_despachos d
         LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1
         LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1
        WHERE d.tenant_id = $1 AND d.anulada_en IS NULL
+         AND d.producto = 'combustible'
          AND d.despachado_en > now() - make_interval(days => $2)
        GROUP BY 1, 2, 3, 4
        ORDER BY 1, 4
@@ -7277,11 +7277,7 @@ export class CombustibleRepository {
                                THEN d.cantidad END), 0) AS urea_almacen_l,
              COALESCE(SUM(
                CASE WHEN d.producto <> 'urea'
-                 THEN d.cantidad * CASE
-                        WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL
-                          THEN ${LITROS_POR_GALON}
-                        ELSE 1
-                      END
+                 THEN ${litrosSql("c")}
                END
              ), 0) AS diesel_l
         FROM combustible_despachos d
@@ -7352,7 +7348,7 @@ export class CombustibleRepository {
   ): Promise<number> {
     const r = await client.query<{ litros: string }>(
       `SELECT COALESCE(SUM(
-                d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN ${LITROS_POR_GALON} ELSE 1 END
+                ${litrosSql("c")}
               ), 0) AS litros
          FROM combustible_despachos d
          LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1
@@ -7395,8 +7391,8 @@ export class CombustibleRepository {
    *  sugerencia). `desde` null = sin límite hacia atrás; `limite` corta por
    *  el lado VIEJO, así que lo que se pierde es la historia más antigua.
    *
-   *  compra_externa no tiene tanque y por lo tanto no tiene unidad: se toma
-   *  como litros, igual que en findAcumuladoDiario. */
+   *  compra_externa no tiene tanque: se cuenta en galones, igual que en
+   *  findAcumuladoDiario (ver esGalonSql). */
   async findValesParaConsumo(
     client: PoolClient,
     tenantId: string,
@@ -7412,7 +7408,7 @@ export class CombustibleRepository {
     }>(
       `SELECT * FROM (
          SELECT d.id, d.equipo_id,
-                d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN ${LITROS_POR_GALON} ELSE 1 END AS litros,
+                ${litrosSql("c")} AS litros,
                 d.lectura_horometro, d.lectura_odometro, d.despachado_en
            FROM combustible_despachos d
            LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1
