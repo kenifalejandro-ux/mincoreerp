@@ -6,7 +6,9 @@ import { esViolacionUnicidad } from "../../server/shared/utils/pgError";
 import type {
   CorregirMandoInput,
   CorregirMarcaDeParadaInput,
+  CrearLugarInput,
   CrearViajeInput,
+  EditarLugarInput,
   EditarViajeInput,
   ListarViajesQuery,
 } from "../../server/schemas/combustible.schema";
@@ -48,7 +50,7 @@ async function margenPrevioHoras(client: PoolClient, tenantId: string): Promise<
 
 export async function listarLugares(client: PoolClient, tenantId: string) {
   const r = await client.query(
-    `SELECT id, nombre, activo FROM combustible_lugares
+    `SELECT id, nombre, tipo, ubicacion, activo FROM combustible_lugares
       WHERE tenant_id = $1 ORDER BY lower(nombre)`,
     [tenantId]
   );
@@ -59,19 +61,58 @@ export async function crearLugar(
   client: PoolClient,
   tenantId: string,
   usuarioId: string,
-  nombre: string
+  data: CrearLugarInput
 ) {
   try {
     const r = await client.query(
-      `INSERT INTO combustible_lugares (tenant_id, nombre, creado_por)
-       VALUES ($1, $2, $3) RETURNING id, nombre, activo`,
-      [tenantId, nombre.trim(), usuarioId]
+      `INSERT INTO combustible_lugares (tenant_id, nombre, tipo, ubicacion, creado_por)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id, nombre, tipo, ubicacion, activo`,
+      [tenantId, data.nombre.trim(), data.tipo ?? null, data.ubicacion ?? null, usuarioId]
     );
     return r.rows[0];
   } catch (err) {
-    if (esViolacionUnicidad(err)) throw new AppError(409, `El lugar "${nombre}" ya existe`);
+    if (esViolacionUnicidad(err)) throw new AppError(409, `El lugar "${data.nombre}" ya existe`);
     throw err;
   }
+}
+
+/** Cambia solo lo que llega (`undefined` = no tocar; `ubicacion: null` la borra). El SELECT
+ *  FOR UPDATE serializa dos ediciones del mismo lugar y deja el "antes" exacto para la bitácora. */
+export async function editarLugar(
+  client: PoolClient,
+  tenantId: string,
+  id: number,
+  data: EditarLugarInput
+) {
+  const actual = await client.query(
+    `SELECT id, nombre, tipo, ubicacion, activo FROM combustible_lugares
+      WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+    [tenantId, id]
+  );
+  const antes = actual.rows[0];
+  if (!antes) throw new AppError(404, "El lugar no existe");
+  const despues = {
+    nombre: data.nombre?.trim() ?? antes.nombre,
+    tipo: data.tipo ?? antes.tipo,
+    ubicacion: data.ubicacion === undefined ? antes.ubicacion : data.ubicacion,
+    activo: data.activo ?? antes.activo,
+  };
+  const campos = (["nombre", "tipo", "ubicacion", "activo"] as const).filter(
+    (k) => despues[k] !== antes[k]
+  );
+  // Sin cambios no se escribe nada (y el controller no audita ni avisa a nadie).
+  if (!campos.length) return { antes, despues: { id, ...despues }, campos };
+  try {
+    await client.query(
+      `UPDATE combustible_lugares SET nombre = $3, tipo = $4, ubicacion = $5, activo = $6
+        WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, id, despues.nombre, despues.tipo, despues.ubicacion, despues.activo]
+    );
+  } catch (err) {
+    if (esViolacionUnicidad(err)) throw new AppError(409, `El lugar "${despues.nombre}" ya existe`);
+    throw err;
+  }
+  return { antes, despues: { id, ...despues }, campos };
 }
 
 // ── Viajes ─────────────────────────────────────────────────────────────────
@@ -1806,9 +1847,11 @@ export async function editarViaje(
       throw new AppError(409, "Este viaje tiene varias paradas: su recorrido no se edita");
     }
   }
-  if (data.origen_id !== undefined || data.destino_id !== undefined) {
-    await validarLugares(client, tenantId, [origen, destino]);
-  }
+  // Solo los lugares que cambian: uno ya desactivado no impide corregir otro dato del mismo viaje.
+  const lugaresNuevos = [origen, destino].filter(
+    (l) => l !== Number(v.origen_id) && l !== Number(v.destino_id)
+  );
+  if (lugaresNuevos.length) await validarLugares(client, tenantId, lugaresNuevos);
   if (equipo !== Number(v.equipo_id)) {
     const e = await client.query(`SELECT 1 FROM equipos WHERE tenant_id = $1 AND id = $2`, [
       tenantId,
