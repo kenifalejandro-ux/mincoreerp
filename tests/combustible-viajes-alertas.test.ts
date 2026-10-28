@@ -184,6 +184,64 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
       expect((await alertas(v.id, "viaje_detenido"))[0].resuelta_en).not.toBeNull();
     });
 
+    it("llegar al destino cierra la alerta de demora al instante", async () => {
+      const a = await lugar("Cochabamba");
+      const b = await lugar("Llama");
+      await historial(a, b);
+      const v = await viaje(a, b, hace(6));
+      await correrConciliacion(tenantId);
+      const abierta = await alertas(v.id, "viaje_demorado");
+      expect(abierta).toHaveLength(1);
+      expect(abierta[0].resuelta_en).toBeNull();
+
+      const ll = await admin.post(`/api/erp/combustible/viajes/${v.id}/llegada`).send({});
+      expect(ll.status, JSON.stringify(ll.body)).toBe(200);
+      expect(ll.body.estado).toBe("cerrado");
+      expect((await alertas(v.id, "viaje_demorado"))[0].resuelta_en).not.toBeNull();
+    });
+
+    it("llegar a una parada intermedia cierra la demora de ese tramo y el viaje sigue en curso", async () => {
+      const a = await lugar("Lajas");
+      const b = await lugar("Tacabamba Alto");
+      const c = await lugar("Chota Alto");
+      await historial(a, b);
+      const u = await unidad();
+      const r = await admin.post("/api/erp/combustible/viajes").send({
+        equipo_id: u.id,
+        paradas: [a, b, c],
+        inicio_en: hace(6),
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      const id = Number(r.body.id);
+      await correrConciliacion(tenantId);
+      const antes = await alertas(id, "viaje_demorado");
+      expect(antes).toHaveLength(1);
+      expect(antes[0].resuelta_en).toBeNull();
+
+      const ll = await admin.post(`/api/erp/combustible/viajes/${id}/llegada`).send({ orden: 1 });
+      expect(ll.status, JSON.stringify(ll.body)).toBe(200);
+      expect(ll.body.estado).toBe("en_curso");
+      const despues = await alertas(id, "viaje_demorado");
+      expect(despues).toHaveLength(1);
+      expect(despues[0].resuelta_en).not.toBeNull();
+    });
+
+    it("ponerle llegada a un viaje en curso al editarlo cierra sus alertas al instante", async () => {
+      const a = await lugar("Huambos");
+      const b = await lugar("Paccha");
+      await historial(a, b);
+      const v = await viaje(a, b, hace(6));
+      await correrConciliacion(tenantId);
+      expect((await alertas(v.id, "viaje_demorado"))[0].resuelta_en).toBeNull();
+
+      const ed = await admin
+        .put(`/api/erp/combustible/viajes/${v.id}`)
+        .send({ fin_en: hace(0.5), motivo: "Prueba" });
+      expect(ed.status, JSON.stringify(ed.body)).toBe(200);
+      expect(ed.body.estado).toBe("cerrado");
+      expect((await alertas(v.id, "viaje_demorado"))[0].resuelta_en).not.toBeNull();
+    });
+
     it("la base no admite dos alertas abiertas del mismo viaje y tipo", async () => {
       const a = await lugar("Tacabamba");
       const b = await lugar("Querocoto");
