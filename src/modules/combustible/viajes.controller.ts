@@ -148,11 +148,17 @@ function marcaDeParada(que: "llegada" | "salida", delConductor: boolean) {
       hora: que === "llegada" ? b.llegada_en : b.salida_en,
     };
     const dni = delConductor ? (req.usuario!.dni ?? "") : undefined;
-    const r = await withTenant(tenantId, (c) =>
-      que === "llegada"
-        ? viajes.llegarAParada(c, tenantId, req.usuario!.id, id, marca, dni)
-        : viajes.salirDeParada(c, tenantId, req.usuario!.id, id, marca, dni)
-    );
+    const { r, alertaCambio } = await withTenant(tenantId, async (c) => {
+      const r =
+        que === "llegada"
+          ? await viajes.llegarAParada(c, tenantId, req.usuario!.id, id, marca, dni)
+          : await viajes.salirDeParada(c, tenantId, req.usuario!.id, id, marca, dni);
+      // Llegar a una parada termina el tramo (y la llegada a la última, el viaje): la demora de
+      // ese tramo ya no existe, se cierra al instante; la del siguiente la abre el worker.
+      const cierra = que === "llegada" && !r.repetido;
+      return { r, alertaCambio: cierra ? await cerrarAlertasDelViaje(c, tenantId, id) : false };
+    });
+    if (alertaCambio) await avisarCampanita(tenantId);
     if (!r.repetido) {
       await auditar(req, r.cierra ? "viaje_cerrar" : `viaje_${que}`, {
         viajeId: id,
@@ -477,9 +483,13 @@ export const viajesController = {
     const tenantId = getTenantId(req);
     const id = Number(req.params.viajeId);
     const data = req.validatedBody as EditarViajeInput;
-    const { antes, despues } = await withTenant(tenantId, (c) =>
-      viajes.editarViaje(c, tenantId, id, data)
-    );
+    const { antes, despues, alertaCambio } = await withTenant(tenantId, async (c) => {
+      const r = await viajes.editarViaje(c, tenantId, id, data);
+      // Ponerle llegada a un viaje en curso lo cierra: sus alertas se cierran con él.
+      const cierra = r.antes.estado === "en_curso" && r.despues?.estado === "cerrado";
+      return { ...r, alertaCambio: cierra ? await cerrarAlertasDelViaje(c, tenantId, id) : false };
+    });
+    if (alertaCambio) await avisarCampanita(tenantId);
     const { motivo, ...cambios } = data;
     await auditar(req, "viaje_editar", {
       viajeId: id,
