@@ -185,6 +185,112 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     ]);
   });
 
+  it("la compra en ruta de combustible cuenta tal cual (20 gal = 20 gal), sin tratarla como litros; urea y tanque en litros no cambian", async () => {
+    const grifoRuta = (
+      await admin.post("/api/erp/combustible/grifos").send({
+        nombre: idUnico("GRIFO"),
+        abastece_ruta: true,
+        abastece_tanque: false,
+        abastece_urea: true,
+        abastece_urea_ruta: true,
+      })
+    ).body.id;
+    const tqL = await admin.post("/api/erp/combustible").send({
+      codigo: idUnico("TL"),
+      tanque_nombre: "Tanque en litros",
+      tipo_combustible: "diesel_b5",
+      unidad: "L",
+      tipo_punto: "fijo",
+      capacidad_total: 10000,
+      nivel_actual: 9000,
+      requiere_documento: false,
+    });
+    expect(tqL.status, JSON.stringify(tqL.body)).toBe(201);
+
+    // Lugares propios: el promedio de la ruta no se mezcla con los demás tests.
+    const origen = await lugar(idUnico("OrigenGal"));
+    const destino = await lugar(idUnico("DestinoGal"));
+    const yo = await conductor();
+    const eq = await unidad();
+    const v = await viaje(eq, {
+      origen_id: origen,
+      destino_id: destino,
+      conductor_dni: yo.dni,
+      fin_en: hora(8),
+      medidor_inicio: 1000,
+      medidor_fin: 1400,
+    });
+    expect(v.status, JSON.stringify(v.body)).toBe(201);
+
+    // Por la ruta real del conductor: 20 gal de diésel y 2 bolsas de urea (8 L) en la boleta.
+    const compra = await admin.post("/api/erp/combustible/compras-ruta").send({
+      cliente_uuid: crypto.randomUUID(),
+      grifo_id: grifoRuta,
+      comprobante_tipo: "boleta",
+      comprobante_numero: idUnico("B"),
+      equipo_id: eq,
+      despachado_en: hora(3),
+      combustible: {
+        tipo_combustible: "diesel_b5",
+        cantidad: 20,
+        costo_unitario: 17.5,
+        lectura_odometro: 1100,
+        horas_abastecidas: 5,
+      },
+      urea: { lineas: [{ presentacion: "bolsa", cantidad_bultos: 2, costo_unitario: 30 }] },
+    });
+    expect(compra.status, JSON.stringify(compra.body)).toBe(201);
+    const enLitros = await admin.post("/api/erp/combustible/despachos").send({
+      origen: "tanque_propio",
+      combustible_id: tqL.body.id,
+      tipo_combustible: "diesel_b5",
+      tipo_destino: "equipo",
+      equipo_id: eq,
+      serie_talonario: serieUnica(),
+      n_vale: 1,
+      cantidad: 3.785,
+      lectura_contometro: 3.785,
+      costo_unitario: 4.4,
+      despachado_en: hora(4),
+    });
+    expect(enLitros.status, JSON.stringify(enLitros.body)).toBe(201);
+
+    // 20 gal de la compra + 3.785 L (= 1 gal) del tanque en litros.
+    const fila = (await consumo(eq)).body.data[0];
+    expect(Number(fila.cantidad)).toBeCloseTo(21, 2);
+
+    const det = await admin.get(`/api/erp/combustible/viajes/${v.body.id}`);
+    const c = det.body.cargas.find(
+      (x: { producto: string; origen: string }) =>
+        x.producto === "combustible" && x.origen === "compra_externa"
+    );
+    expect(c.unidad).toBe("gal");
+    expect(Number(c.cantidad)).toBe(20);
+    const urea = det.body.cargas.find((x: { producto: string }) => x.producto === "urea");
+    expect(urea.unidad).toBe("L");
+    const suma = (campo: "combustible_gal" | "urea_l") =>
+      det.body.tramos.reduce((a: number, t: Record<string, number>) => a + Number(t[campo]), 0);
+    expect(suma("combustible_gal")).toBeCloseTo(21, 2);
+    expect(suma("urea_l")).toBeCloseTo(8, 2);
+
+    // "Mi viaje" del conductor: su último viaje cerrado trae lo mismo.
+    const mios = await yo.agente.get("/api/erp/combustible/viajes/mios");
+    expect(mios.status).toBe(200);
+    expect(Number(mios.body.data[0].combustible_gal)).toBeCloseTo(21, 2);
+    expect(Number(mios.body.data[0].urea_l)).toBeCloseTo(8, 2);
+
+    // El promedio de la ruta, visto desde otro viaje de la misma ruta.
+    const otra = await viaje(await unidad(), {
+      origen_id: origen,
+      destino_id: destino,
+      inicio_en: hora(20),
+    });
+    expect(otra.status, JSON.stringify(otra.body)).toBe(201);
+    const det2 = await admin.get(`/api/erp/combustible/viajes/${otra.body.id}`);
+    expect(Number(det2.body.ruta.combustible_gal)).toBeCloseTo(21, 2);
+    expect(Number(det2.body.ruta.urea_l)).toBeCloseTo(8, 2);
+  });
+
   it("el margen previo no invade el viaje anterior: una carga no cae en dos viajes", async () => {
     const eq = await unidad();
     expect((await viaje(eq, { inicio_en: hora(20), fin_en: hora(24) })).status).toBe(201);

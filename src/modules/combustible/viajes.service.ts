@@ -18,8 +18,10 @@ import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
 export type Producto = "combustible" | "urea";
 
 // La carga en ruta desde una tanqueta (0114) no tiene tanque: mide en galones.
-const LITROS_DE_D = `d.cantidad * CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL
-                                      THEN ${LITROS_POR_GALON} ELSE 1 END`;
+// La compra externa de combustible tampoco, y el formulario la pide en galones.
+const ES_GALON_D = `(c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL
+                     OR (d.producto = 'combustible' AND d.origen = 'compra_externa'))`;
+const LITROS_DE_D = `d.cantidad * CASE WHEN ${ES_GALON_D} THEN ${LITROS_POR_GALON} ELSE 1 END`;
 
 /** Desde cuándo cuenta una carga para el viaje: el margen previo (la tanqueada
  *  antes de salir), pero nunca antes de que termine el viaje anterior de la
@@ -2550,7 +2552,7 @@ export async function cargasDelViaje(
   agregarAmbitoVales(cond, valores, "d", ambito);
   const r = await client.query(
     `SELECT d.id, d.producto, d.origen, d.despachado_en, d.cantidad,
-            CASE WHEN c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL THEN 'gal'
+            CASE WHEN ${ES_GALON_D} THEN 'gal'
                  WHEN d.producto = 'urea' THEN 'L' ELSE COALESCE(c.unidad, 'L') END AS unidad,
             ${LITROS_DE_D} AS litros,
             d.serie_talonario, d.n_vale, d.conductor_nombre,
