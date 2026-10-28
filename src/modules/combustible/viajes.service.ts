@@ -13,15 +13,12 @@ import type {
 import { agregarAmbitoVales, type AmbitoVales } from "./alcance";
 import { detencionDe } from "./motivosDetencion";
 import { repartirPorTramo } from "./viajesTramos";
-import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
+import { LITROS_POR_GALON, esGalonSql, litrosSql } from "../../server/shared/utils/unidades";
 
 export type Producto = "combustible" | "urea";
 
-// La carga en ruta desde una tanqueta (0114) no tiene tanque: mide en galones.
-// La compra externa de combustible tampoco, y el formulario la pide en galones.
-const ES_GALON_D = `(c.unidad = 'gal' OR d.tanqueta_origen_id IS NOT NULL
-                     OR (d.producto = 'combustible' AND d.origen = 'compra_externa'))`;
-const LITROS_DE_D = `d.cantidad * CASE WHEN ${ES_GALON_D} THEN ${LITROS_POR_GALON} ELSE 1 END`;
+const ES_GALON_D = esGalonSql("c");
+const LITROS_DE_D = litrosSql("c");
 
 /** Desde cuándo cuenta una carga para el viaje: el margen previo (la tanqueada
  *  antes de salir), pero nunca antes de que termine el viaje anterior de la
