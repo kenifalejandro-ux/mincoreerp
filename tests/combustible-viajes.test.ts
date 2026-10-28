@@ -1347,6 +1347,123 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(tras[2].llegada_en).toBeTruthy();
   });
 
+  it("un medidor absurdo se rechaza en el servidor; uno tipeado mal pero posible lo corrige la oficina", async () => {
+    const { yo, id } = await circuitoEnCurso();
+    // 999999 es absurdo: el servidor lo ataja (antes lo aceptaba y el viaje quedaba sin salida).
+    expect((await marcar(yo.agente, id, "llegada-mia", { medidor: 999999, orden: 1 })).status).toBe(
+      400
+    );
+    // 1600 en vez de 160 es posible: entra. Pero la llegada final (200) ya no cabe.
+    expect((await marcar(yo.agente, id, "llegada-mia", { medidor: 1600, orden: 1 })).status).toBe(
+      200
+    );
+    expect((await marcar(yo.agente, id, "salida-mia", { medidor: 1600, orden: 1 })).status).toBe(
+      200
+    );
+    expect((await marcar(yo.agente, id, "llegada-mia", { medidor: 200, orden: 2 })).status).toBe(
+      400
+    );
+
+    const corregir = (orden: number, cuerpo: Record<string, unknown>, agente = admin) =>
+      agente.post(url(id, `/paradas/${orden}/corregir`)).send(cuerpo);
+    // Sin motivo, sin nada que corregir, o por quien no es de la oficina: no.
+    expect((await corregir(1, { que: "llegada", medidor: 160 })).status).toBe(400);
+    expect((await corregir(1, { que: "llegada", motivo: "Mal tipeado" })).status).toBe(400);
+    expect(
+      (await corregir(1, { que: "llegada", medidor: 160, motivo: "Mal tipeado" }, yo.agente)).status
+    ).toBe(403);
+    // La salida de la parada 1 sigue en 1600: la llegada no puede pasarla, ni bajar del km 100.
+    expect((await corregir(1, { que: "llegada", medidor: 1700, motivo: "Prueba" })).status).toBe(
+      400
+    );
+    expect((await corregir(1, { que: "llegada", medidor: 90, motivo: "Prueba" })).status).toBe(400);
+    // Las marcas de los extremos se corrigen editando el viaje, no por aquí.
+    expect((await corregir(0, { que: "salida", medidor: 100, motivo: "Prueba" })).status).toBe(400);
+    expect((await corregir(2, { que: "llegada", medidor: 200, motivo: "Prueba" })).status).toBe(
+      400
+    );
+
+    // Corregir las dos marcas mal tipeadas: primero la salida (el techo de la llegada).
+    const sal = await corregir(1, { que: "salida", medidor: 160, motivo: "Mal tipeado" });
+    expect(sal.status, JSON.stringify(sal.body)).toBe(400); // 160 < llegada 1600
+    expect(
+      (await corregir(1, { que: "llegada", medidor: 160, motivo: "Mal tipeado" })).status
+    ).toBe(200);
+    expect((await corregir(1, { que: "salida", medidor: 160, motivo: "Mal tipeado" })).status).toBe(
+      200
+    );
+    const b = (await paradasDe(id))[1];
+    expect(Number(b.llegada_medidor)).toBe(160);
+    expect(Number(b.salida_medidor)).toBe(160);
+    // Y ahora el viaje sigue: la llegada final en 200 cierra.
+    const fin = await marcar(yo.agente, id, "llegada-mia", { medidor: 200, orden: 2 });
+    expect(fin.status, JSON.stringify(fin.body)).toBe(200);
+    expect(fin.body.estado).toBe("cerrado");
+  });
+
+  it("la hora de una marca intermedia se corrige entre la anterior y la siguiente, nunca en el futuro", async () => {
+    const { yo, id } = await circuitoEnCurso();
+    expect((await marcar(yo.agente, id, "llegada-mia", { medidor: 150, orden: 1 })).status).toBe(
+      200
+    );
+    const corregir = (cuerpo: Record<string, unknown>) =>
+      admin
+        .post(url(id, "/paradas/1/corregir"))
+        .send({ que: "llegada", motivo: "Prueba", ...cuerpo });
+    // Antes de la salida del origen, o en el futuro: no.
+    expect((await corregir({ hora: hora(100_000) })).status).toBe(400);
+    expect((await corregir({ hora: new Date(Date.now() + 86_400_000).toISOString() })).status).toBe(
+      400
+    );
+    // Hora igual o posterior a la siguiente marca: no (aquí no hay siguiente; la salida de B la crea).
+    expect((await corregir({ hora: hora(-100_000) })).status).toBe(400);
+    // Una marca que no existe todavía (la salida de la parada 1) no se inventa por aquí.
+    expect(
+      (
+        await admin
+          .post(url(id, "/paradas/1/corregir"))
+          .send({ que: "salida", hora: new Date().toISOString(), motivo: "Prueba" })
+      ).status
+    ).toBe(409);
+    // Una hora válida (justo después de la salida del origen) entra y queda como la nueva.
+    const nueva = new Date(Date.parse((await paradasDe(id))[0].salida_en!) + 1).toISOString();
+    const ok = await corregir({ hora: nueva });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    expect(new Date((await paradasDe(id))[1].llegada_en!).toISOString()).toBe(nueva);
+    // Con la salida ya marcada, la llegada no puede alcanzar ni pasar a la salida.
+    expect((await marcar(yo.agente, id, "salida-mia", { medidor: 150, orden: 1 })).status).toBe(
+      200
+    );
+    const salida = (await paradasDe(id))[1].salida_en!;
+    const tope = await corregir({ hora: salida });
+    expect(tope.status, JSON.stringify(tope.body)).toBe(400);
+    expect(tope.body.message).toMatch(/anterior a la marca siguiente/);
+    // Solo el medidor (sin tocar la hora) también se puede corregir.
+    const sinHora = await corregir({ medidor: 145 });
+    expect(sinHora.status, JSON.stringify(sinHora.body)).toBe(200);
+    expect(Number((await paradasDe(id))[1].llegada_medidor)).toBe(145);
+  });
+
+  it("iniciar o cerrar con una hora manual futura se rechaza", async () => {
+    const yo = await conductor();
+    const eq = await unidad();
+    const v = (
+      await admin
+        .post("/api/erp/combustible/viajes")
+        .send({ equipo_id: eq, paradas: [huamachuco, bambamarca], conductor_dni: yo.dni })
+    ).body;
+    const futuro = new Date(Date.now() + 10 * 86_400_000).toISOString();
+    const ini = await admin
+      .post(url(v.id, "/iniciar"))
+      .send({ medidor_inicio: 100, inicio_en: futuro });
+    expect(ini.status, JSON.stringify(ini.body)).toBe(400);
+    expect((await admin.post(url(v.id, "/iniciar")).send({ medidor_inicio: 100 })).status).toBe(
+      200
+    );
+    const fin = await admin.post(url(v.id, "/cerrar")).send({ medidor_fin: 150, fin_en: futuro });
+    expect(fin.status, JSON.stringify(fin.body)).toBe(400);
+  });
+
   it("una marca fuera de orden, sin medidor, menor o sobre un viaje cerrado se rechaza", async () => {
     const { yo, id } = await circuitoEnCurso();
     const m = (accion: Parameters<typeof marcar>[2], body: Record<string, unknown>) =>
