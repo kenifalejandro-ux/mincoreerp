@@ -3790,7 +3790,7 @@ export class CombustibleRepository {
    *  consulta: la capacidad del equipo (migración 0069) y la unidad del
    *  tanque del que salió el combustible (0057), que es la que da sentido a
    *  `cantidad`. `combustibleId` es NULL en compra_externa -- ahí no hay
-   *  tanque y por lo tanto no hay unidad, ver evaluarSobredespacho(). */
+   *  tanque y la unidad la trae el despacho, ver evaluarSobredespacho(). */
   async findDatosSobredespacho(
     client: PoolClient,
     tenantId: string,
