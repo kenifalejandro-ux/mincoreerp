@@ -5,6 +5,7 @@ import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { esViolacionUnicidad } from "../../server/shared/utils/pgError";
 import type {
   CorregirMandoInput,
+  CorregirMarcaDeParadaInput,
   CrearViajeInput,
   EditarViajeInput,
   ListarViajesQuery,
@@ -414,8 +415,13 @@ async function horaDeLaMarca(
   manual: string | undefined,
   marcadoEn: string | undefined
 ): Promise<{ hora: string; origen: OrigenHora }> {
-  if (manual) return { hora: manual, origen: "manual" };
   const servidor = await ahora(client);
+  if (manual) {
+    if (Date.parse(manual) > Date.parse(servidor) + TOLERANCIA_RELOJ_MS) {
+      throw new AppError(400, "La hora no puede ser futura");
+    }
+    return { hora: manual, origen: "manual" };
+  }
   if (marcadoEn) {
     const atraso = Date.parse(servidor) - Date.parse(marcadoEn);
     if (atraso < -TOLERANCIA_RELOJ_MS) {
@@ -809,6 +815,10 @@ async function validarMarcaDeParada(
   }
 }
 
+/** Lo máximo que puede subir el medidor entre dos marcas seguidas. Muy por encima de lo que el
+ *  celular pide confirmar (600 km, 48 h): este tope solo ataja lo absurdo, como 999999. */
+const MAX_SALTO_MEDIDOR = 2000;
+
 function validarMedidorDeParada(
   v: { medidor_inicio: string | null },
   medidor: number | null | undefined,
@@ -821,6 +831,12 @@ function validarMedidorDeParada(
     throw new AppError(
       400,
       `El medidor (${medidor}) es menor que el último del viaje (${Number(previo)})`
+    );
+  }
+  if (medidor != null && previo != null && medidor - Number(previo) > MAX_SALTO_MEDIDOR) {
+    throw new AppError(
+      400,
+      `El medidor (${medidor}) sube más de ${MAX_SALTO_MEDIDOR} desde el último del viaje (${Number(previo)}): revisa que esté bien escrito`
     );
   }
 }
@@ -1355,6 +1371,114 @@ export async function aceptarMando(
     [e.id, hora, origen, uuid]
   );
   return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
+}
+
+/** La oficina corrige la hora o el medidor de una marca de una parada INTERMEDIA (la salida del
+ *  origen y la llegada final son las del propio viaje y se corrigen editándolo). La marca nueva
+ *  tiene que quedar entre la anterior y la siguiente que existan. Sirve con el viaje en curso y con
+ *  el cerrado; la marca queda como "manual" y el controlador audita quién y por qué. */
+export async function corregirMarcaDeParada(
+  client: PoolClient,
+  tenantId: string,
+  id: number,
+  orden: number,
+  data: CorregirMarcaDeParadaInput
+) {
+  const v = await viajeParaCambiar(client, tenantId, id);
+  if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
+  const paradas = await leerParadas(client, tenantId, id);
+  if (orden < 1 || orden > paradas.length - 2) {
+    throw new AppError(
+      400,
+      "Solo se corrigen las marcas de las paradas intermedias; la salida y la llegada final se corrigen editando el viaje"
+    );
+  }
+  // Todas las marcas del viaje en orden: lo que cae antes y después de la que se corrige.
+  const marcas = paradas.flatMap((p) => [
+    { orden: p.orden, que: "llegada", en: p.llegada_en, med: p.llegada_medidor },
+    { orden: p.orden, que: "salida", en: p.salida_en, med: p.salida_medidor },
+  ]);
+  const i = marcas.findIndex((m) => m.orden === orden && m.que === data.que);
+  if (marcas[i].en == null) throw new AppError(409, "Esa marca todavía no se registró");
+  const antes = marcas.slice(0, i).reverse();
+  const despues = marcas.slice(i + 1);
+  const previa = <T>(campo: "en" | "med", lista: typeof marcas, f: (x: string | Date) => T) => {
+    const m = lista.find((x) => x[campo] != null);
+    return m ? f(m[campo] as string | Date) : null;
+  };
+  if (data.hora !== undefined) {
+    const t = Date.parse(data.hora);
+    const desde = previa("en", antes, (x) => new Date(x).getTime());
+    const hasta = previa("en", despues, (x) => new Date(x).getTime());
+    if (desde !== null && t <= desde) {
+      throw new AppError(400, "La hora tiene que ser posterior a la marca anterior del viaje");
+    }
+    if (hasta !== null && t >= hasta) {
+      throw new AppError(400, "La hora tiene que ser anterior a la marca siguiente del viaje");
+    }
+    if (t > Date.parse(await ahora(client)) + TOLERANCIA_RELOJ_MS) {
+      throw new AppError(400, "La hora no puede ser futura");
+    }
+  }
+  if (data.medidor !== undefined) {
+    const piso = previa("med", antes, Number);
+    const techo = previa("med", despues, Number);
+    if (piso !== null && data.medidor < piso) {
+      throw new AppError(
+        400,
+        `El medidor (${data.medidor}) es menor que la marca anterior (${piso})`
+      );
+    }
+    if (techo !== null && data.medidor > techo) {
+      throw new AppError(
+        400,
+        `El medidor (${data.medidor}) es mayor que la marca siguiente (${techo})`
+      );
+    }
+  }
+  // Mover la marca por encima de un descanso o de un cambio de mando cambiaría dónde pasaron: eso
+  // se corrige desde ahí, no moviendo la parada.
+  const cruza = async (campo: "hora" | "medidor", de: number, a: number) => {
+    const [lo, hi] = de < a ? [de, a] : [a, de];
+    const r = await client.query(
+      campo === "hora"
+        ? `SELECT 1 FROM (
+             SELECT inicio_en AS t FROM combustible_viaje_descansos WHERE tenant_id = $1 AND viaje_id = $2
+             UNION ALL SELECT fin_en FROM combustible_viaje_descansos WHERE tenant_id = $1 AND viaje_id = $2
+             UNION ALL SELECT inicio_en FROM combustible_viaje_turnos WHERE tenant_id = $1 AND viaje_id = $2
+             UNION ALL SELECT fin_en FROM combustible_viaje_turnos WHERE tenant_id = $1 AND viaje_id = $2
+           ) x WHERE t > to_timestamp($3 / 1000.0) AND t < to_timestamp($4 / 1000.0) LIMIT 1`
+        : `SELECT 1 FROM combustible_viaje_turnos
+            WHERE tenant_id = $1 AND viaje_id = $2
+              AND ((medidor_inicio > $3 AND medidor_inicio < $4)
+                OR (medidor_fin > $3 AND medidor_fin < $4)) LIMIT 1`,
+      [tenantId, id, lo, hi]
+    );
+    if (r.rows[0]) {
+      throw new AppError(
+        409,
+        campo === "hora"
+          ? "Esa hora cruzaría un descanso o un cambio de mando del viaje: corrígelo desde ahí"
+          : "Ese medidor cruzaría el de un cambio de mando del viaje: corrígelo desde ahí"
+      );
+    }
+  };
+  if (data.hora !== undefined) {
+    await cruza("hora", new Date(marcas[i].en as Date).getTime(), Date.parse(data.hora));
+  }
+  if (data.medidor !== undefined && marcas[i].med != null) {
+    await cruza("medidor", Number(marcas[i].med), data.medidor);
+  }
+  const previo = { hora: marcas[i].en, medidor: marcas[i].med };
+  await client.query(
+    `UPDATE combustible_viaje_paradas
+        SET ${data.que}_en = COALESCE($4, ${data.que}_en),
+            ${data.que}_medidor = COALESCE($5, ${data.que}_medidor),
+            ${data.que}_origen_hora = CASE WHEN $4::timestamptz IS NULL THEN ${data.que}_origen_hora ELSE 'manual' END
+      WHERE tenant_id = $1 AND viaje_id = $2 AND orden = $3`,
+    [tenantId, id, orden, data.hora ?? null, data.medidor ?? null]
+  );
+  return { antes: v, previo, despues: await getViaje(client, tenantId, id) };
 }
 
 /** La oficina corrige un cambio de mando que nadie marcó: parte en dos el turno que contiene esa

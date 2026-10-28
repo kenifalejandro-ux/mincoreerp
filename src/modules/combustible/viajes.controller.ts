@@ -13,6 +13,7 @@ import type {
   CerrarMiViajeInput,
   CerrarViajeInput,
   CorregirMandoInput,
+  CorregirMarcaDeParadaInput,
   CrearLugarInput,
   CrearViajeInput,
   EditarViajeInput,
@@ -423,6 +424,27 @@ export const viajesController = {
       por: "oficina",
       a_dni: data.a_dni,
       cambio_en: data.cambio_en,
+      medidor: data.medidor ?? null,
+      motivo: data.motivo,
+    });
+    res.json(r.despues);
+  },
+  async corregirMarca(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.viajeId);
+    const orden = Number(req.params.orden);
+    const data = req.validatedBody as CorregirMarcaDeParadaInput;
+    const r = await withTenant(tenantId, (c) =>
+      viajes.corregirMarcaDeParada(c, tenantId, id, orden, data)
+    );
+    await auditar(req, "viaje_marca_corregir", {
+      viajeId: id,
+      numero: r.antes.numero,
+      por: "oficina",
+      parada: orden,
+      marca: data.que,
+      antes: r.previo,
+      hora: data.hora ?? null,
       medidor: data.medidor ?? null,
       motivo: data.motivo,
     });

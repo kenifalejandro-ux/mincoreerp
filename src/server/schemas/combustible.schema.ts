@@ -2525,6 +2525,20 @@ export const corregirMandoSchema = z.object({
 });
 export type CorregirMandoInput = z.infer<typeof corregirMandoSchema>;
 
+// La oficina corrige la hora o el medidor de una marca de una parada intermedia (un medidor mal
+// tipeado, una hora equivocada). El motivo es obligatorio: queda quién y por qué.
+export const corregirMarcaDeParadaSchema = z
+  .object({
+    que: z.enum(["llegada", "salida"]),
+    hora: fechaHora.optional(),
+    medidor: z.number().min(0).max(99999999).optional(),
+    motivo,
+  })
+  .refine((v) => v.hora !== undefined || v.medidor !== undefined, {
+    message: "Indica la hora, el medidor o los dos",
+  });
+export type CorregirMarcaDeParadaInput = z.infer<typeof corregirMarcaDeParadaSchema>;
+
 export const aceptarMandoSchema = entregaMandoSchema.pick({
   marcado_en: true,
   cliente_uuid: true,
