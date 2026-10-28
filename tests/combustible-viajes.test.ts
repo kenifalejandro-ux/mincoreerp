@@ -9,6 +9,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
+import { fijarCuotaTenant, RECURSO_USUARIOS } from "../src/server/services/platformCuotas.service";
 
 type Agente = ReturnType<typeof request.agent>;
 
@@ -97,6 +98,8 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const creado = await crearTenantDePrueba(password);
     tenants.push(creado.tenant.id);
     slug = creado.tenant.slug;
+    // Cada test crea sus conductores: el archivo pasa del tope de 100 usuarios del plan por defecto.
+    await fijarCuotaTenant(creado.tenant.id, RECURSO_USUARIOS, 1000, "test");
     await admin
       .post("/api/auth/login")
       .send({ tenantSlug: slug, email: creado.usuario.email, password });
