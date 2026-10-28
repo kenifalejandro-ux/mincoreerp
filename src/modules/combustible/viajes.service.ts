@@ -2030,6 +2030,16 @@ export async function listarViajes(
   agregarAmbitoVales(condCargas, valores, "d", ambito);
   const divisor = q.producto === "combustible" ? LITROS_POR_GALON : 1;
 
+  // El lugar de las cargas de un viaje, igual para la lista y para el promedio de referencia.
+  const cargasDelViaje = `
+        LEFT JOIN LATERAL (
+          SELECT count(*) AS cargas, SUM(${LITROS_DE_D}) AS litros
+            FROM combustible_despachos d
+            LEFT JOIN combustible c
+              ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = d.tenant_id
+           WHERE ${condCargas.join(" AND ")}
+        ) cg ON true`;
+
   const r = await client.query(
     `
     WITH v AS (${VENTANAS_SQL} WHERE v.tenant_id = $1),
@@ -2037,28 +2047,34 @@ export async function listarViajes(
       SELECT ${COLUMNAS_VIAJE},
              COALESCE(cg.cargas, 0) AS cargas,
              COALESCE(cg.litros, 0) / ${divisor} AS cantidad
-        FROM v ${JOINS_VIAJE}
-        LEFT JOIN LATERAL (
-          SELECT count(*) AS cargas, SUM(${LITROS_DE_D}) AS litros
-            FROM combustible_despachos d
-            LEFT JOIN combustible c
-              ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = d.tenant_id
-           WHERE ${condCargas.join(" AND ")}
-        ) cg ON true
+        FROM v ${JOINS_VIAJE}${cargasDelViaje}
        WHERE ${cond.join(" AND ")}
+    ),
+    -- El promedio de referencia sale de TODOS los viajes cerrados de la ruta, no de los que deja
+    -- ver el filtro de la pantalla: con otro período, estado o unidad el desvío no puede cambiar.
+    ref AS (
+      SELECT v.equipo_id, ${recorridoClave("v")} AS recorrido_clave,
+             COALESCE(cg.litros, 0) / ${divisor} AS cantidad
+        FROM v${cargasDelViaje}
+       WHERE v.tenant_id = $1 AND v.estado = 'cerrado' AND NOT v.ruta_por_confirmar
+    ),
+    por_unidad AS (
+      SELECT recorrido_clave, equipo_id, AVG(cantidad) AS promedio, COUNT(*) AS viajes
+        FROM ref GROUP BY recorrido_clave, equipo_id
+    ),
+    por_ruta AS (
+      SELECT recorrido_clave, AVG(cantidad) AS promedio, COUNT(*) AS viajes
+        FROM ref GROUP BY recorrido_clave
     )
     SELECT b.*,
-           -- Promedio de la MISMA unidad en el MISMO recorrido (solo viajes
-           -- cerrados: uno en curso todavía no terminó de cargar).
-           AVG(b.cantidad) FILTER (WHERE b.estado = 'cerrado' AND NOT b.ruta_por_confirmar)
-             OVER (PARTITION BY b.recorrido_clave, b.equipo_id) AS promedio_ruta_unidad,
-           COUNT(*) FILTER (WHERE b.estado = 'cerrado' AND NOT b.ruta_por_confirmar)
-             OVER (PARTITION BY b.recorrido_clave, b.equipo_id) AS viajes_ruta_unidad,
-           AVG(b.cantidad) FILTER (WHERE b.estado = 'cerrado' AND NOT b.ruta_por_confirmar)
-             OVER (PARTITION BY b.recorrido_clave) AS promedio_ruta,
-           COUNT(*) FILTER (WHERE b.estado = 'cerrado' AND NOT b.ruta_por_confirmar)
-             OVER (PARTITION BY b.recorrido_clave) AS viajes_ruta
+           pu.promedio AS promedio_ruta_unidad,
+           COALESCE(pu.viajes, 0) AS viajes_ruta_unidad,
+           pr.promedio AS promedio_ruta,
+           COALESCE(pr.viajes, 0) AS viajes_ruta
       FROM base b
+      LEFT JOIN por_unidad pu
+        ON pu.recorrido_clave = b.recorrido_clave AND pu.equipo_id = b.equipo_id
+      LEFT JOIN por_ruta pr ON pr.recorrido_clave = b.recorrido_clave
      ORDER BY b.inicio_en DESC NULLS FIRST
     `,
     valores
@@ -2107,6 +2123,19 @@ export async function resumenPorConductor(
       ORDER BY t.viaje_id, t.inicio_en`,
     [tenantId, viajes.map((v) => v.id)]
   );
+  // Lo que estuvo detenido (avería, accidente, huaico…) no es tiempo al volante: se resta del turno de
+  // quien lo marcó, igual que en el historial del conductor.
+  const detenciones = await client.query(
+    `SELECT d.viaje_id, d.conductor_dni, sum(extract(epoch FROM d.fin_en - d.inicio_en) / 60) AS min
+       FROM combustible_viaje_descansos d
+      WHERE d.tenant_id = $1 AND d.viaje_id = ANY($2::bigint[]) AND d.detiene AND d.fin_en IS NOT NULL
+      GROUP BY d.viaje_id, d.conductor_dni`,
+    [tenantId, viajes.map((v) => v.id)]
+  );
+  const detenidoMin = new Map<string, number>(
+    detenciones.rows.map((d) => [`${normalizarDni(d.conductor_dni)}|${d.viaje_id}`, Number(d.min)])
+  );
+  const alVolante = new Map<string, number>();
   const porViaje = new Map<string, (typeof viajes)[number]>(viajes.map((v) => [String(v.id), v]));
   const por = new Map<string, ResumenConductor & { _vistos: Set<string> }>();
   const de = (dni: string, nombre: string | null) => {
@@ -2145,7 +2174,8 @@ export async function resumenPorConductor(
     }
     if (t.fin_en) {
       const min = (Date.parse(t.fin_en) - Date.parse(t.inicio_en)) / 60_000;
-      if (min > 0) r.minutos_al_volante += min;
+      if (min > 0)
+        alVolante.set(`${dni}|${viajeId}`, (alVolante.get(`${dni}|${viajeId}`) ?? 0) + min);
     }
     if (!inicio) continue;
     const v = porViaje.get(viajeId);
@@ -2166,6 +2196,12 @@ export async function resumenPorConductor(
         }
       }
     }
+  }
+  // Por viaje y persona: lo manejado menos lo detenido, sin bajar de cero.
+  for (const [clave, min] of alVolante) {
+    const [dni] = clave.split("|");
+    const r = por.get(dni);
+    if (r) r.minutos_al_volante += Math.max(0, min - (detenidoMin.get(clave) ?? 0));
   }
   return [...por.values()]
     .map(({ _vistos, ...r }) => {
