@@ -6622,18 +6622,18 @@ export class CombustibleService {
    *  - **El equipo no tiene capacidad configurada.** El caso normal hoy:
    *    todos arrancan en NULL a propósito (0069). Sin el dato real no se
    *    inventa uno.
-   *  - **No se sabe en qué unidad está `cantidad`.** Pasa en
-   *    compra_externa: no hay tanque propio del cual heredar la unidad, y
-   *    su unidad vive en `cantidad_unidad` del despacho (0158), pero esta
-   *    evaluación todavía parte de la del tanque y no la usa: queda pendiente
-   *    leerla de ahí.
+   *  - **No se sabe en qué unidad está `cantidad`.** En compra_externa no hay
+   *    tanque propio del cual heredar la unidad: se usa la que guarda el
+   *    despacho (`cantidad_unidad`, 0158; sin ella, galones). Si el llamador
+   *    no la pasa y tampoco hay tanque, no se evalúa.
    *  - **No hay exceso.** Lo esperable en la enorme mayoría de los vales. */
   async evaluarSobredespacho(
     client: PoolClient,
     tenantId: string,
     equipoId: number,
     combustibleId: number | null,
-    cantidad: number
+    cantidad: number,
+    unidadCompra: "gal" | "L" | null = null
   ) {
     const datos = await this.repository.findDatosSobredespacho(
       client,
@@ -6642,7 +6642,8 @@ export class CombustibleService {
       combustibleId
     );
     if (!datos?.capacidad_tanque || !datos.capacidad_tanque_unidad) return null;
-    if (!datos.unidad_tanque) return null;
+    const unidadCantidad = datos.unidad_tanque ?? unidadCompra;
+    if (!unidadCantidad) return null;
 
     // Litros como unidad canónica interna, solo para comparar -- lo que se
     // guarda y se muestra sigue siendo el número en su unidad original.
@@ -6651,13 +6652,13 @@ export class CombustibleService {
 
     const capacidad = Number(datos.capacidad_tanque);
     const capacidadL = aLitros(capacidad, datos.capacidad_tanque_unidad);
-    const despachadoL = aLitros(cantidad, datos.unidad_tanque);
+    const despachadoL = aLitros(cantidad, unidadCantidad);
 
     if (despachadoL <= capacidadL) return null;
 
     return {
       cantidad,
-      unidadDespacho: datos.unidad_tanque,
+      unidadDespacho: unidadCantidad,
       capacidad,
       unidadCapacidad: datos.capacidad_tanque_unidad,
       excesoPct: Number((((despachadoL - capacidadL) / capacidadL) * 100).toFixed(1)),

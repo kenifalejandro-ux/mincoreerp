@@ -2562,7 +2562,11 @@ export class CombustibleController {
               // El despacho de un excedente (0112) no tiene tanque: la unidad
               // de `cantidad` es la del tanque de la recepción.
               data.combustible_id ?? tanqueExcedenteId,
-              data.cantidad!
+              data.cantidad!,
+              // La compra en ruta no tiene tanque: la unidad es la de su boleta (0158).
+              data.origen === "compra_externa" && data.producto === "combustible"
+                ? (data.cantidad_unidad ?? "gal")
+                : null
             )
           : null;
 

@@ -171,6 +171,85 @@ describe("combustible: sobredespacho (Fase D, migraciones 0069/0070)", () => {
     expect(alerta.detalle.unidadCapacidad).toBe("gal");
   });
 
+  // ── Compra en ruta (0158): sin tanque, la unidad la trae la boleta ─────
+
+  async function comprarEnRuta(
+    capacidad: { valor: number; unidad: "gal" | "L" },
+    cantidad: number,
+    unidad?: "gal" | "L"
+  ) {
+    const equipo = await agente.post("/api/erp/equipos").send({
+      placa_codigo: idUnico("TR"),
+      tipo: "TRAILER",
+      tipo_medidor: "odometro",
+      capacidad_tanque: capacidad.valor,
+      capacidad_tanque_unidad: capacidad.unidad,
+    });
+    expect(equipo.status, JSON.stringify(equipo.body)).toBe(201);
+    const grifo = await agente.post("/api/erp/combustible/grifos").send({
+      nombre: idUnico("GRIFO"),
+      abastece_ruta: true,
+      abastece_tanque: false,
+    });
+    const r = await agente.post("/api/erp/combustible/compras-ruta").send({
+      cliente_uuid: crypto.randomUUID(),
+      grifo_id: grifo.body.id,
+      comprobante_tipo: "boleta",
+      comprobante_numero: idUnico("B"),
+      equipo_id: equipo.body.id,
+      despachado_en: new Date(Date.now() - 3_600_000).toISOString(),
+      combustible: {
+        tipo_combustible: "diesel_b5",
+        cantidad,
+        ...(unidad ? { unidad } : {}),
+        costo_unitario: 4.5,
+        lectura_odometro: 1000,
+        horas_abastecidas: 5,
+      },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const despachoId = r.body.despacho_combustible.id;
+    const res = await agente.get("/api/erp/combustible/alertas").query({ pageSize: 200 });
+    return (res.body.data as { tipo: string; despacho_id: number | null; detalle: never }[]).filter(
+      (a) => a.tipo === "sobredespacho" && a.despacho_id === despachoId
+    );
+  }
+
+  it("una compra en ruta de 100 gal a un tanque de 60 gal sí es sobredespacho", async () => {
+    const alertas = await comprarEnRuta({ valor: 60, unidad: "gal" }, 100, "gal");
+    expect(alertas).toHaveLength(1);
+    expect(alertas[0].detalle).toMatchObject({
+      cantidad: 100,
+      unidadDespacho: "gal",
+      capacidad: 60,
+      unidadCapacidad: "gal",
+    });
+  });
+
+  it("una compra en ruta sin unidad (cola vieja) se evalúa como galones", async () => {
+    const alertas = await comprarEnRuta({ valor: 60, unidad: "gal" }, 100);
+    expect(alertas).toHaveLength(1);
+    expect(alertas[0].detalle).toMatchObject({ unidadDespacho: "gal" });
+  });
+
+  it("convierte: 100 LITROS comprados a un tanque de 60 GALONES no es sobredespacho", async () => {
+    // 100 L = 26,4 gal. Sin la unidad de la boleta se leería como 100 gal y daría una alerta falsa.
+    const alertas = await comprarEnRuta({ valor: 60, unidad: "gal" }, 100, "L");
+    expect(alertas).toHaveLength(0);
+  });
+
+  it("convierte: 300 LITROS comprados a un tanque de 60 GALONES sí es sobredespacho", async () => {
+    // 300 L = 79,2 gal contra 60 gal.
+    const alertas = await comprarEnRuta({ valor: 60, unidad: "gal" }, 300, "L");
+    expect(alertas).toHaveLength(1);
+    expect(alertas[0].detalle).toMatchObject({ unidadDespacho: "L", unidadCapacidad: "gal" });
+  });
+
+  it("una compra en ruta que cabe en el tanque no genera alerta", async () => {
+    const alertas = await comprarEnRuta({ valor: 60, unidad: "gal" }, 40, "gal");
+    expect(alertas).toHaveLength(0);
+  });
+
   it("la alerta de sobredespacho se revisa a mano (a diferencia del hueco)", async () => {
     const equipo = await crearEquipo({ valor: 40, unidad: "gal" });
     const serie = serieUnica();
