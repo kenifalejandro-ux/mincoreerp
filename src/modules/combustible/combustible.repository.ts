@@ -288,8 +288,8 @@ export interface AlertaNueva {
 // mostrar un 0 que nadie midió.
 /** Los litros de un listado de vales, convertidos por la unidad de SU tanque
  *  (entrega 4): sumar galones y litros crudos da un número sin sentido. Una
- *  compra externa de combustible no tiene tanque: se cuenta en galones, que es
- *  lo que pide el formulario (ver esGalonSql). `t` es el alias del tanque en la consulta. */
+ *  compra externa de combustible no tiene tanque: se cuenta en la unidad que dice
+ *  su boleta, galones por defecto (0158, ver esGalonSql). `t` es el alias del tanque en la consulta. */
 const sumaLitros = (t: string) =>
   // La carga en ruta desde una tanqueta (0114) no tiene tanque: la tanqueta mide en galones.
   `SUM(${litrosSql(t)})`;
@@ -1134,7 +1134,7 @@ export class CombustibleRepository {
     id, tenant_id, producto, origen, combustible_id, grifo_id, tipo_combustible,
     tipo_destino, equipo_id, serie_talonario, n_vale, cantidad,
     lectura_contometro, totalizador_lectura, surtidor_id, lectura_horometro, lectura_odometro,
-    horas_abastecidas,
+    horas_abastecidas, cantidad_unidad,
     presentacion, factor_litros, cantidad_bultos,
     -- 0130: de dónde salió el costo de la urea (declarado, promedio, boleta).
     costo_origen,
@@ -1195,6 +1195,8 @@ export class CombustibleRepository {
       lecturaHorometro: number | null;
       lecturaOdometro: number | null;
       horasAbastecidas: number | null;
+      /** 0158, solo compra externa de combustible: 'gal' o 'L'. NULL = galones. */
+      cantidadUnidad?: "gal" | "L" | null;
       presentacion: string | null;
       factorLitros: number | null;
       cantidadBultos: number | null;
@@ -1235,7 +1237,7 @@ export class CombustibleRepository {
           conductor_nombre, conductor_dni, totalizador_lectura, surtidor_id,
           comprobante_tipo, comprobante_numero, cliente_uuid,
           excedente_linea_id, tanque_excedente_id, tanqueta_destino_id, tanqueta_origen_id,
-          tanqueta_lugar, costo_origen
+          tanqueta_lugar, costo_origen, cantidad_unidad
         )
         -- El conductor se COPIA del equipo en este mismo INSERT (0083). Nadie
         -- lo tipea, y no se resuelve después con un JOIN a propósito: los
@@ -1254,7 +1256,7 @@ export class CombustibleRepository {
                CASE WHEN h.id IS NOT NULL THEN h.conductor_nombre ELSE e.conductor_nombre END,
                CASE WHEN h.id IS NOT NULL THEN h.conductor_dni ELSE e.conductor_dni END,
                $23::numeric, $24::int, $25, $26, $27::uuid,
-               $28::bigint, $29::int, $30::bigint, $31::bigint, $32, $33
+               $28::bigint, $29::int, $30::bigint, $31::bigint, $32, $33, $34
           FROM (SELECT 1) dummy
           LEFT JOIN equipos e ON e.id = $8::int AND e.tenant_id = $1
           LEFT JOIN LATERAL (
@@ -1302,6 +1304,7 @@ export class CombustibleRepository {
           data.tanquetaOrigenId ?? null,
           data.tanquetaLugar ?? null,
           data.costoOrigen ?? null,
+          data.cantidadUnidad ?? null,
         ]
       );
       const fila = result.rows[0];
@@ -1634,7 +1637,7 @@ export class CombustibleRepository {
               d.comprobante_numero,
               combustible_comprobante_canonico(d.comprobante_numero) AS numero_canonico,
               d.comprobante_nombre, d.comprobante_subido_en,
-              d.cantidad, d.costo_unitario, d.tipo_combustible,
+              d.cantidad, d.cantidad_unidad, d.costo_unitario, d.tipo_combustible,
               g.nombre AS proveedor, e.placa_codigo, u.nombre AS registrado_por,
               c.total_boleta, c.total_sistema, c.diferencia, c.motivo_descuadre,
               COALESCE((
@@ -3820,9 +3823,8 @@ export class CombustibleRepository {
    *  Convierte cada fila a litros con la unidad de SU tanque: un tenant
    *  puede tener un tanque en galones y otro en litros, y sumarlos crudos
    *  daría un número sin sentido. En `compra_externa` de combustible no hay
-   *  tanque: se cuenta en galones, que es lo que pide el formulario de compra
-   *  en ruta (ver esGalonSql). Si algún día se compra en litros, hace falta
-   *  guardar la unidad en el despacho, no adivinarla acá.
+   *  tanque: se cuenta en la unidad que guarda el despacho (cantidad_unidad,
+   *  0158), galones si no hay ninguna (ver esGalonSql).
    *
    *  Excluye los vales anulados (0067) y, opcionalmente, un despacho por id
    *  -- lo usa evaluarTopeDiario para saber cuánto había ANTES de este vale
@@ -7391,7 +7393,7 @@ export class CombustibleRepository {
    *  sugerencia). `desde` null = sin límite hacia atrás; `limite` corta por
    *  el lado VIEJO, así que lo que se pierde es la historia más antigua.
    *
-   *  compra_externa no tiene tanque: se cuenta en galones, igual que en
+   *  compra_externa no tiene tanque: se cuenta en su unidad (0158), igual que en
    *  findAcumuladoDiario (ver esGalonSql). */
   async findValesParaConsumo(
     client: PoolClient,

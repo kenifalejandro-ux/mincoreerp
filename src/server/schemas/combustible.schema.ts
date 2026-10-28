@@ -450,6 +450,10 @@ export const crearDespachoCombustibleSchema = z
     lectura_odometro: z.number().nonnegative().optional(),
     horas_abastecidas: z.number().nonnegative().optional(),
 
+    // Solo compra_externa de combustible (0158): la unidad que dice la boleta.
+    // Sin ella son galones, que es lo que pedía el formulario antes.
+    cantidad_unidad: z.enum(["gal", "L"]).optional(),
+
     // Solo producto='urea' -- cómo se dispensó y cuántas unidades. El
     // factor de conversión NO viaja acá (ver FACTOR_LITROS_UREA): lo
     // resuelve el servidor a partir de `presentacion`, nunca el cliente.
@@ -512,6 +516,17 @@ export const crearDespachoCombustibleSchema = z
     observaciones: z.string().trim().max(500).optional(),
   })
   .superRefine((data, ctx) => {
+    if (
+      data.cantidad_unidad !== undefined &&
+      !(data.producto === "combustible" && data.origen === "compra_externa")
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cantidad_unidad"],
+        message:
+          "cantidad_unidad solo aplica a la compra externa de combustible (en el tanque la unidad la da el tanque)",
+      });
+    }
     // ── UREA: rama separada, ver el comentario de arriba del schema ──────
     if (data.producto === "urea") {
       // Dos orígenes (0119). 'compra_externa' con vale y SIN comprobante es
@@ -1177,8 +1192,9 @@ export const crearCompraRutaSchema = z
     combustible: z
       .object({
         tipo_combustible: z.enum(TIPOS_COMBUSTIBLE),
-        // Galones, igual que el despacho.
+        // En la unidad de la boleta (`unidad`); sin ella, galones.
         cantidad: z.number().positive().max(100_000),
+        unidad: z.enum(["gal", "L"]).optional(),
         costo_unitario: z.number().positive().max(10_000),
         // Exactamente uno de los dos según el medidor de la unidad; el
         // servicio lo valida con el resto (validarFormaDespacho).

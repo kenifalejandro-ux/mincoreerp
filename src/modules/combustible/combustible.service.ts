@@ -1279,6 +1279,7 @@ export class CombustibleService {
           lecturaHorometro: data.lectura_horometro ?? null,
           lecturaOdometro: data.lectura_odometro ?? null,
           horasAbastecidas: data.horas_abastecidas ?? null,
+          cantidadUnidad: data.cantidad_unidad ?? null,
           // El detalle de la urea vive en combustible_despacho_urea_lineas y
           // estas tres quedan en NULL (CHECK de forma de 0131).
           presentacion: null,
@@ -1391,6 +1392,7 @@ export class CombustibleService {
             producto: "combustible",
             tipo_combustible: data.combustible.tipo_combustible,
             cantidad: data.combustible.cantidad,
+            cantidad_unidad: data.combustible.unidad ?? "gal",
             costo_unitario: data.combustible.costo_unitario,
             lectura_horometro: data.combustible.lectura_horometro,
             lectura_odometro: data.combustible.lectura_odometro,
@@ -1493,6 +1495,7 @@ export class CombustibleService {
         id: number;
         tipo_combustible: string | null;
         galones: number;
+        unidad: "gal" | "L";
         costo_unitario: number;
         total: number;
       } | null;
@@ -1548,6 +1551,7 @@ export class CombustibleService {
           id: Number(f.id),
           tipo_combustible: f.tipo_combustible,
           galones: Number(f.cantidad),
+          unidad: f.cantidad_unidad === "L" ? "L" : "gal",
           costo_unitario: Number(f.costo_unitario),
           total,
         };
@@ -6620,10 +6624,9 @@ export class CombustibleService {
    *    inventa uno.
    *  - **No se sabe en qué unidad está `cantidad`.** Pasa en
    *    compra_externa: no hay tanque propio del cual heredar la unidad, y
-   *    el despacho no la guarda por su cuenta. Comparar 48 (¿litros?
-   *    ¿galones?) contra 40 gal sin saberlo daría alertas falsas -- 48 L
-   *    son 12,7 gal, ni cerca de llenar ese tanque. Queda pendiente
-   *    resolverlo con un dato de unidad propio del despacho.
+   *    su unidad vive en `cantidad_unidad` del despacho (0158), pero esta
+   *    evaluación todavía parte de la del tanque y no la usa: queda pendiente
+   *    leerla de ahí.
    *  - **No hay exceso.** Lo esperable en la enorme mayoría de los vales. */
   async evaluarSobredespacho(
     client: PoolClient,
