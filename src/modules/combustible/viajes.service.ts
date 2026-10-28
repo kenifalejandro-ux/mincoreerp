@@ -641,6 +641,21 @@ export async function iniciarViaje(
   return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
 }
 
+/** Lo último que pasó en el viaje (un turno, un descanso o una parada): el cierre no puede ser antes. */
+async function ultimaMarcaDelViaje(client: PoolClient, tenantId: string, id: number) {
+  const r = await client.query(
+    `SELECT GREATEST(
+              (SELECT max(GREATEST(inicio_en, fin_en)) FROM combustible_viaje_turnos
+                WHERE tenant_id = $1 AND viaje_id = $2),
+              (SELECT max(GREATEST(inicio_en, fin_en)) FROM combustible_viaje_descansos
+                WHERE tenant_id = $1 AND viaje_id = $2),
+              (SELECT max(GREATEST(llegada_en, salida_en)) FROM combustible_viaje_paradas
+                WHERE tenant_id = $1 AND viaje_id = $2)) AS ultima`,
+    [tenantId, id]
+  );
+  return r.rows[0]?.ultima ? new Date(r.rows[0].ultima as string).getTime() : null;
+}
+
 export async function cerrarViaje(
   client: PoolClient,
   tenantId: string,
@@ -678,6 +693,19 @@ export async function cerrarViaje(
     throw new AppError(400, "Falta el medidor de llegada");
   }
   validarMedidores(v.medidor_inicio == null ? null : Number(v.medidor_inicio), data.medidor_fin);
+  // Con paradas, descansos o cambios de mando ya marcados, la llegada va después de todos ellos y
+  // con un medidor que no retrocede: si no, el CHECK de la base lo rechazaría con un 500.
+  const ultima = await ultimaMarcaDelViaje(client, tenantId, id);
+  if (ultima !== null && Date.parse(fin) <= ultima) {
+    throw new AppError(400, "La llegada tiene que ser posterior a lo último marcado en el viaje");
+  }
+  const lectura = await ultimaLecturaDelViaje(client, tenantId, id);
+  if (data.medidor_fin != null && lectura != null && data.medidor_fin < lectura) {
+    throw new AppError(
+      400,
+      `El medidor de llegada (${data.medidor_fin}) es menor que el último del viaje (${lectura})`
+    );
+  }
   await validarSinTraslape(client, tenantId, v.equipo_id, v.inicio_en, fin, id);
   await client.query(
     `UPDATE combustible_viaje_descansos
@@ -1672,6 +1700,14 @@ export async function editarViaje(
         def(data.conductor_nombre, v.conductor_nombre) || null,
         titularAntes,
       ]
+    );
+  }
+  // Ponerle llegada a un viaje en curso lo cierra: la entrega pendiente se cancela como al cerrar.
+  if (v.estado === "en_curso" && fin) {
+    await client.query(
+      `UPDATE combustible_viaje_entregas SET cancelada_en = $3
+        WHERE tenant_id = $1 AND viaje_id = $2 AND aceptada_en IS NULL AND cancelada_en IS NULL`,
+      [tenantId, id, fin]
     );
   }
   await sincronizarExtremos(client, tenantId, id);

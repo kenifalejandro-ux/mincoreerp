@@ -1563,6 +1563,49 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     );
   });
 
+  it("cerrar con una hora o un medidor anteriores a un cambio de mando ya marcado da 400, no 500", async () => {
+    const { relevo, id } = await conUnSoloTurno(false);
+    const cambio = await corregir(id, {
+      a_dni: relevo.dni,
+      cambio_en: hora(4),
+      medidor: 250,
+      motivo: "no lo marcaron",
+    });
+    expect(cambio.status, JSON.stringify(cambio.body)).toBe(200);
+    const cerrar = (body: object) =>
+      admin.post(`${url(id)}/cerrar`).send({ motivo: "cierre a mano", ...body });
+    const temprano = await cerrar({ fin_en: hora(3), medidor_fin: 400 });
+    expect(temprano.status).toBe(400);
+    expect(JSON.stringify(temprano.body)).toContain("último marcado");
+    const bajo = await cerrar({ fin_en: hora(10), medidor_fin: 200 });
+    expect(bajo.status).toBe(400);
+    expect(JSON.stringify(bajo.body)).toContain("último del viaje");
+    expect((await cerrar({ fin_en: hora(10), medidor_fin: 400 })).status).toBe(200);
+  });
+
+  it("la llegada final valida el medidor contra la salida de la parada anterior", async () => {
+    const { titular, id } = await conUnSoloTurno(false, [huamachuco, bambamarca, huamachuco]);
+    expect((await marcar(titular.agente, id, "llegada-mia", { medidor: 150 })).status).toBe(200);
+    expect((await marcar(titular.agente, id, "salida-mia", { medidor: 160 })).status).toBe(200);
+    const final = (medidor: number) => marcar(titular.agente, id, "llegada-mia", { medidor });
+    expect((await final(120)).status).toBe(400); // retrocede respecto a la salida en 160
+    expect((await admin.get(url(id))).body.viaje.estado).toBe("en_curso");
+    expect((await final(170)).status).toBe(200);
+  });
+
+  it("ponerle llegada a un viaje en curso al editarlo cancela la entrega pendiente", async () => {
+    const { titular, id } = await enCurso();
+    expect((await marcar(titular.agente, id, "mando/entregar", { medidor: 150 })).status).toBe(200);
+    const fin = new Date(Date.now() + 60_000).toISOString();
+    const r = await admin
+      .put(url(id))
+      .send({ motivo: "cierro el viaje", fin_en: fin, medidor_fin: 200 });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const viaje = (await admin.get(url(id))).body.viaje;
+    expect(viaje.estado).toBe("cerrado");
+    expect(viaje.entrega_pendiente).toBeNull();
+  });
+
   it("el reintento de la cola no duplica el descanso; el uuid de otro viaje no vale", async () => {
     const { yo, id } = await circuitoEnCurso();
     const uuid = crypto.randomUUID();
