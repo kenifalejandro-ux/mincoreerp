@@ -45,6 +45,7 @@ type CuerpoDescanso = {
   cliente_uuid?: string;
   inicio_en?: string;
   fin_en?: string;
+  descanso_id?: number;
 };
 
 /** La alerta de "unidad detenida" al instante (E15e): abre la de una avería, accidente, huaico,
@@ -104,6 +105,7 @@ function marcaDeDescanso(que: "inicio" | "fin", delConductor: boolean) {
       marcado_en: b.marcado_en,
       cliente_uuid: b.cliente_uuid,
       hora: que === "inicio" ? b.inicio_en : b.fin_en,
+      descanso_id: b.descanso_id,
     };
     const dni = delConductor ? (req.usuario!.dni ?? "") : undefined;
     const { r, alertaCambio } = await withTenant(tenantId, async (c) => {

@@ -70,6 +70,8 @@ export function AccionesEncargado({
 }) {
   const descansos = viaje.descansos ?? [];
   const abierto = descansoAbierto(descansos);
+  // El del relevo que no maneja no frena la unidad: la oficina lo termina señalándolo, con motivo.
+  const abiertos = descansos.filter((d) => !d.fin_en);
   const paradas = viaje.paradas ?? [];
   const marca = proximaMarca(paradas);
   const [motivo, setMotivo] = useState("");
@@ -78,6 +80,7 @@ export function AccionesEncargado({
   const [hora, setHora] = useState(horaAhora());
   const [medidor, setMedidor] = useState("");
   const [motivoMarca, setMotivoMarca] = useState("");
+  const [motivoFin, setMotivoFin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
 
@@ -119,13 +122,44 @@ export function AccionesEncargado({
       {puedeEditar && viaje.estado === "en_curso" && (
         <div className="space-y-3 border-t border-[#2a2e37] pt-3">
           {abierto ? (
-            <button
-              className={BTN_SEC}
-              disabled={guardando}
-              onClick={() => void mandar("descanso/terminar", {})}
-            >
-              Terminar descanso (encargado)
-            </button>
+            <div className="space-y-2">
+              {abiertos.map((d) =>
+                d.detiene === false && d.id !== undefined ? (
+                  <div key={d.id} className="space-y-2">
+                    <input
+                      aria-label={`Motivo para terminar el descanso de ${d.conductor_nombre ?? "la otra persona"}`}
+                      placeholder={`Por qué terminas el descanso de ${d.conductor_nombre ?? "la otra persona"}`}
+                      maxLength={200}
+                      value={motivoFin}
+                      onChange={(e) => setMotivoFin(e.target.value)}
+                      className={INPUT}
+                    />
+                    <button
+                      className={BTN_SEC}
+                      disabled={guardando || motivoFin.trim().length < 3}
+                      onClick={() =>
+                        void mandar(
+                          "descanso/terminar",
+                          { descanso_id: d.id, motivo: motivoFin.trim() },
+                          () => setMotivoFin("")
+                        )
+                      }
+                    >
+                      Terminar descanso de {d.conductor_nombre ?? "la otra persona"} (encargado)
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    key={d.id ?? "volante"}
+                    className={BTN_SEC}
+                    disabled={guardando}
+                    onClick={() => void mandar("descanso/terminar", {})}
+                  >
+                    Terminar descanso (encargado)
+                  </button>
+                )
+              )}
+            </div>
           ) : (
             <div className="space-y-2">
               <div className="flex flex-wrap gap-2">

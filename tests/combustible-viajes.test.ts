@@ -1892,6 +1892,38 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(fin.status, JSON.stringify(fin.body)).toBe(200);
   });
 
+  it("la oficina termina el descanso del relevo que no maneja, señalándolo y con motivo", async () => {
+    const { titular, relevo, id } = await conRelevo(undefined, [
+      huamachuco,
+      bambamarca,
+      huamachuco,
+    ]);
+    expect((await marcar(titular.agente, id, "iniciar-mio", { medidor_inicio: 10 })).status).toBe(
+      200
+    );
+    const d = await marcar(relevo.agente, id, "descanso-mio", { motivo: "Dormir" });
+    expect(d.status, JSON.stringify(d.body)).toBe(200);
+    const descansoId = (d.body.descansos as { id: number }[])[0].id;
+    const terminar = (body: object) => admin.post(url(id, "/descanso/terminar")).send(body);
+    // Sin señalarlo, la oficina solo termina el del que maneja: aquí no hay ninguno.
+    expect((await terminar({})).status).toBe(409);
+    // Señalado, el motivo es obligatorio: queda quién y por qué.
+    expect((await terminar({ descanso_id: descansoId })).status).toBe(400);
+    // Un descanso que no existe no termina nada.
+    expect((await terminar({ descanso_id: descansoId + 9999, motivo: "Sin señal" })).status).toBe(
+      409
+    );
+    const ok = await terminar({ descanso_id: descansoId, motivo: "Sin señal" });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(200);
+    const cerrado = (
+      ok.body.descansos as { id: number; fin_en: string | null; fin_por: string }[]
+    )[0];
+    expect(cerrado.fin_en).not.toBeNull();
+    expect(cerrado.fin_por).toBe("oficina");
+    // Libre otra vez: ya puede recibir el mando.
+    expect((await terminar({ descanso_id: descansoId, motivo: "Sin señal" })).status).toBe(409);
+  });
+
   it("el historial muestra solo su parte: el relevo que manejó lo ve, el titular que no manejó, no", async () => {
     const { titular, relevo, id } = await conRelevo("relevo");
     const m = (accion: Parameters<typeof marcar>[2], body: object) =>
