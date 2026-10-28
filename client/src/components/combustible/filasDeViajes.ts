@@ -21,7 +21,7 @@ export function filasDeViajes(viajes: FilaViaje[], estadoDe: (v: FilaViaje) => s
     return {
       Viaje: `V-${v.numero}`,
       Ruta: aTexto(ruta(v)),
-      Unidad: unidadLabel(v),
+      Unidad: aTexto(unidadLabel(v)),
       Conductor: aTexto(v.conductor_nombre ?? ""),
       Relevo: aTexto(v.relevo_nombre ?? ""),
       "Salida programada": fechaHora(v.salida_programada_en ?? null),

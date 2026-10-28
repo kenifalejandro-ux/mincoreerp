@@ -4549,8 +4549,15 @@ export class CombustibleService {
       "viaje_detenido",
       detenidos.map((d) => d.viaje_id)
     );
-    const nuevosDemorados = demorados.filter((d) => !yaDemorados.has(d.viaje_id));
-    const nuevosDetenidos = detenidos.filter((d) => !yaDetenidos.has(d.viaje_id));
+    // Lo leído arriba pudo quedar viejo: un viaje que se cerró o se anuló mientras tanto no abre
+    // alerta. Se bloquean solo los candidatos a alerta nueva, no los que ya tienen una abierta.
+    const candidatosDemorados = demorados.filter((d) => !yaDemorados.has(d.viaje_id));
+    const candidatosDetenidos = detenidos.filter((d) => !yaDetenidos.has(d.viaje_id));
+    const aunEnCurso = await this.repository.viajesEnCurso(client, tenantId, [
+      ...new Set([...candidatosDemorados, ...candidatosDetenidos].map((d) => d.viaje_id)),
+    ]);
+    const nuevosDemorados = candidatosDemorados.filter((d) => aunEnCurso.has(d.viaje_id));
+    const nuevosDetenidos = candidatosDetenidos.filter((d) => aunEnCurso.has(d.viaje_id));
     const unidad = (v: { placa_codigo: string | null; codigo_interno: string | null }) =>
       v.placa_codigo ?? v.codigo_interno ?? null;
     await this.repository.crearAlertas(client, tenantId, [

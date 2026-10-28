@@ -8106,6 +8106,20 @@ export class CombustibleRepository {
     return r.rowCount ?? 0;
   }
 
+  /** De esos viajes, los que SIGUEN en curso, leídos con candado: si otra transacción lo está
+   *  cerrando o anulando, espera a que termine y mira el estado nuevo. El worker lo usa justo antes
+   *  de abrir alertas, para no dejar una de un viaje que acaba de cerrarse. */
+  async viajesEnCurso(client: PoolClient, tenantId: string, ids: number[]): Promise<Set<number>> {
+    if (ids.length === 0) return new Set();
+    const r = await client.query(
+      `SELECT id FROM combustible_viajes
+        WHERE tenant_id = $1 AND id = ANY($2::bigint[]) AND estado = 'en_curso'
+        ORDER BY id FOR SHARE`,
+      [tenantId, ids]
+    );
+    return new Set(r.rows.map((x) => Number(x.id)));
+  }
+
   /** Una varilla tomada por alguien que NO es grifero cierra la alerta de
    *  "varilla sin control" del tanque. Lo resolvió el hecho, no una persona. */
   async resolverVarillaSinControlSiExiste(

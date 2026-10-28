@@ -59,6 +59,11 @@ describe("filas del Excel de viajes", () => {
     expect(f.Conductor).toBe('\'=HYPERLINK("x")');
   });
 
+  it("la unidad también se escribe como texto si empieza con = + - @", () => {
+    const [f] = filasDeViajes([viaje({ placa_codigo: "=1+1" })], () => "");
+    expect(f.Unidad).toBe("'=1+1");
+  });
+
   it("sin viajes no hay filas", () => {
     expect(filasDeViajes([], () => "")).toEqual([]);
   });
