@@ -377,6 +377,8 @@ interface DespachoHistorial {
   tanque_excedente_codigo?: string | null;
   tanqueta_codigo?: string | null;
   tanqueta_lugar?: "ruta" | "planta" | null;
+  /** 0158, solo compra externa de combustible; sin ella, galones. */
+  cantidad_unidad?: "gal" | "L" | null;
 }
 
 // Fase D, entrega 3 -- mismo shape que devuelve GET /:id/sugerencia-umbral.
@@ -6104,6 +6106,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         </td>
                         <td className="p-3 text-sm text-right text-slate-800 font-semibold whitespace-nowrap">
                           {Number(d.cantidad).toLocaleString("es-PE")}{" "}
+                          {d.origen === "compra_externa"
+                            ? `${d.cantidad_unidad === "L" ? "L" : "gal"} `
+                            : ""}
                           {ETIQUETA_TIPO_COMBUSTIBLE[d.tipo_combustible]}
                         </td>
                         <td className="p-3 text-sm text-right text-slate-600 whitespace-nowrap">

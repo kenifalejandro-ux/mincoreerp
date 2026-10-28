@@ -79,13 +79,13 @@ export function pendienteParaHistorial(
 
   if (ruta === RUTA_COMPRAS) {
     const combustible = b.combustible as
-      { tipo_combustible?: string; cantidad?: number } | undefined;
+      { tipo_combustible?: string; cantidad?: number; unidad?: string } | undefined;
     const urea = b.urea as { lineas?: LineaUrea[] } | undefined;
     if (ambito === "urea" && !urea) return null;
     const partes: string[] = [];
     if (combustible) {
       partes.push(
-        `${nombreCombustible(combustible.tipo_combustible)}: ${combustible.cantidad ?? "?"} gal`
+        `${nombreCombustible(combustible.tipo_combustible)}: ${combustible.cantidad ?? "?"} ${combustible.unidad === "L" ? "L" : "gal"}`
       );
     }
     if (urea) partes.push(textoUrea(urea.lineas));

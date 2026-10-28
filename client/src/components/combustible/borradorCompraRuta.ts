@@ -46,6 +46,8 @@ export interface BorradorCompraRuta {
   incluyeUrea: boolean;
   tipoCombustible: string;
   galones: string;
+  /** La unidad de la boleta; un borrador viejo sin ella es en galones. */
+  unidad?: "gal" | "L";
   costoUnitario: string;
   costoEditado: boolean;
   horometro: string;

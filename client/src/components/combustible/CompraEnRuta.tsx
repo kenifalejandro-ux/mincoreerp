@@ -213,6 +213,7 @@ function FormularioCompra({
 
   const [tipoCombustible, setTipoCombustible] = useState<TipoCombustible>("diesel_b5");
   const [galones, setGalones] = useState("");
+  const [unidad, setUnidad] = useState<"gal" | "L">("gal");
   const [costoUnitario, setCostoUnitario] = useState("");
   const [costoEditado, setCostoEditado] = useState(false);
   const [horometro, setHorometro] = useState("");
@@ -296,6 +297,7 @@ function FormularioCompra({
       setIncluyeUrea(d.incluyeUrea && secciones.urea);
       setTipoCombustible(d.tipoCombustible as TipoCombustible);
       setGalones(d.galones);
+      setUnidad(d.unidad === "L" ? "L" : "gal");
       setCostoUnitario(d.costoUnitario);
       setCostoEditado(d.costoEditado);
       setHorometro(d.horometro);
@@ -336,6 +338,7 @@ function FormularioCompra({
       incluyeUrea,
       tipoCombustible,
       galones,
+      unidad,
       costoUnitario,
       costoEditado,
       horometro,
@@ -366,6 +369,7 @@ function FormularioCompra({
     incluyeUrea,
     tipoCombustible,
     galones,
+    unidad,
     costoUnitario,
     costoEditado,
     horometro,
@@ -399,7 +403,7 @@ function FormularioCompra({
   // Autocompleta el C.U. con el precio vigente A LA FECHA de la compra (un vale
   // offline se carga horas antes de sincronizar). Nunca pisa lo tipeado.
   useEffect(() => {
-    if (!incluyeCombustible || costoEditado || !grifoVigente) return;
+    if (!incluyeCombustible || costoEditado || !grifoVigente || unidad !== "gal") return;
     const params = new URLSearchParams({
       tipo_combustible: tipoCombustible,
       fecha: fechaEditada ? new Date(fecha).toISOString() : new Date().toISOString(),
@@ -417,7 +421,15 @@ function FormularioCompra({
     return () => {
       cancelado = true;
     };
-  }, [incluyeCombustible, costoEditado, grifoVigente, tipoCombustible, fecha, fechaEditada]);
+  }, [
+    incluyeCombustible,
+    costoEditado,
+    grifoVigente,
+    tipoCombustible,
+    fecha,
+    fechaEditada,
+    unidad,
+  ]);
 
   // La carga anterior de la unidad: con ella las horas abastecidas salen solas.
   useEffect(() => {
@@ -477,7 +489,7 @@ function FormularioCompra({
   if (grifoVigente === "") faltantes.push("el proveedor");
   if (!incluyeCombustible && !incluyeUrea) faltantes.push("combustible o urea");
   if (incluyeCombustible) {
-    if (!(Number(galones) > 0)) faltantes.push("los galones");
+    if (!(Number(galones) > 0)) faltantes.push(unidad === "L" ? "los litros" : "los galones");
     if (!(Number(costoUnitario) > 0)) faltantes.push("el C.U. del combustible");
     if (equipo && !equipo.tipo_medidor) {
       faltantes.push("el tipo de medidor de la unidad (se configura en Equipos)");
@@ -530,6 +542,7 @@ function FormularioCompra({
     setIncluyeUrea(!secciones.combustible && secciones.urea);
     setTipoCombustible("diesel_b5");
     setGalones("");
+    setUnidad("gal");
     setCostoUnitario("");
     setCostoEditado(false);
     setHorometro("");
@@ -564,6 +577,7 @@ function FormularioCompra({
           ? {
               tipo_combustible: tipoCombustible,
               cantidad: Number(galones),
+              unidad,
               costo_unitario: Number(costoUnitario),
               lectura_horometro: midePorHorometro ? Number(horometro) : undefined,
               lectura_odometro: midePorOdometro ? Number(odometro) : undefined,
@@ -815,16 +829,36 @@ function FormularioCompra({
                 </select>
               </label>
               <label className="col-span-3 flex flex-col gap-1">
-                <span className={CLASE_ETIQUETA}>Galones</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  id="compra-galones"
-                  className={CLASE_CAMPO}
-                  value={galones}
-                  onChange={(e) => setGalones(e.target.value)}
-                />
+                <span className={CLASE_ETIQUETA}>{unidad === "L" ? "Litros" : "Galones"}</span>
+                <div className="flex gap-1">
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    id="compra-galones"
+                    className={`${CLASE_CAMPO} min-w-0 flex-1`}
+                    value={galones}
+                    onChange={(e) => setGalones(e.target.value)}
+                  />
+                  <select
+                    id="compra-unidad-medida"
+                    aria-label="Unidad de la cantidad"
+                    className={`${CLASE_CAMPO} w-auto`}
+                    value={unidad}
+                    onChange={(e) => {
+                      const nueva = e.target.value === "L" ? "L" : "gal";
+                      if (nueva === unidad) return;
+                      setUnidad(nueva);
+                      // El precio de catálogo es por galón: al cambiar de unidad se
+                      // vacía y se escribe el de la boleta, sin inventar uno.
+                      setCostoUnitario("");
+                      setCostoEditado(true);
+                    }}
+                  >
+                    <option value="gal">gal</option>
+                    <option value="L">L</option>
+                  </select>
+                </div>
               </label>
               <label className="col-span-2 flex flex-col gap-1">
                 <span className={CLASE_ETIQUETA}>{midePorOdometro ? "Odómetro" : "Horómetro"}</span>
@@ -842,7 +876,7 @@ function FormularioCompra({
                 />
               </label>
               <label className="col-span-2 flex flex-col gap-1">
-                <span className={CLASE_ETIQUETA}>C.U. (S/ gal)</span>
+                <span className={CLASE_ETIQUETA}>C.U. (S/ {unidad})</span>
                 <input
                   type="number"
                   min={0}
@@ -855,6 +889,9 @@ function FormularioCompra({
                     setCostoEditado(true);
                   }}
                 />
+                {unidad === "L" && (
+                  <span className="text-xs text-slate-400">Precio por litro, el de la boleta</span>
+                )}
               </label>
               <label className="col-span-2 flex flex-col gap-1">
                 <span className={CLASE_ETIQUETA}>C. total</span>

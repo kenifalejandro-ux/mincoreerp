@@ -16,6 +16,8 @@ import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
 import { mensajeDeError } from "../../utils/mensajeDeError";
 
+const LITROS_POR_GALON = 3.785411784;
+
 interface Boleta {
   clave: string;
   despachado_en: string;
@@ -28,6 +30,7 @@ interface Boleta {
     id: number;
     tipo_combustible: string | null;
     galones: number;
+    unidad: "gal" | "L";
     costo_unitario: number;
     total: number;
   } | null;
@@ -273,8 +276,17 @@ export default function HistorialComprasRuta() {
                         <span className="block">
                           {ETIQUETA_COMBUSTIBLE[b.combustible.tipo_combustible ?? ""] ??
                             "Combustible"}
-                          : {b.combustible.galones.toLocaleString("es-PE")} gal a{" "}
-                          {soles(b.combustible.costo_unitario)}
+                          : {b.combustible.galones.toLocaleString("es-PE")} {b.combustible.unidad}
+                          <span className="text-xs text-slate-400">
+                            {" "}
+                            (≈{" "}
+                            {(b.combustible.unidad === "L"
+                              ? b.combustible.galones / LITROS_POR_GALON
+                              : b.combustible.galones * LITROS_POR_GALON
+                            ).toLocaleString("es-PE", { maximumFractionDigits: 1 })}{" "}
+                            {b.combustible.unidad === "L" ? "gal" : "L"})
+                          </span>{" "}
+                          a {soles(b.combustible.costo_unitario)}
                         </span>
                       )}
                       {b.urea && (

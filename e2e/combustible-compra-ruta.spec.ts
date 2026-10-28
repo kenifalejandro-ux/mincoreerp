@@ -191,6 +191,48 @@ test("compra en ruta: una boleta con combustible y urea crea los dos despachos c
   await flujoCompleto(page);
 });
 
+test("compra en ruta: la unidad de la boleta (L) se guarda y el historial la muestra tal cual @celular", async ({
+  page,
+}) => {
+  const marca = `CRU-${unico()}`;
+  const numero = `B001-${unico()}`;
+  const admin = adminA();
+
+  await loginPorUI(page, admin.email, admin.password);
+  const { grifoNombre } = await sembrar(page, marca);
+  await abrirCompraEnRuta(page);
+
+  // 70 L × S/ 17.5 = 1225 + 2 cajas de urea × S/ 50 = 100.
+  await llenar(page, { marca, grifoNombre, numero, total: "1325", foto: false });
+  await page.locator("#compra-unidad-medida").selectOption("L");
+  await expect(page.getByText("Litros", { exact: true })).toBeVisible();
+  // Cambiar de unidad vacía el precio (el de catálogo es por galón): se escribe el de la boleta.
+  await expect(page.locator("#compra-costo-unitario")).toHaveValue("");
+  await page.locator("#compra-galones").fill("70");
+  await page.locator("#compra-costo-unitario").fill("17.5");
+  await expect(botonRegistrar(page)).toBeEnabled();
+
+  await botonRegistrar(page).click();
+  await expect(
+    page.getByText(new RegExp(`Compra registrada \\(la boleta ${numero}\\)`))
+  ).toBeVisible({ timeout: 30_000 });
+
+  await expect
+    .poll(
+      async () => {
+        const res = await page.request.get("/api/erp/combustible/compras-ruta");
+        const filas = (res.ok() ? await res.json() : []) as {
+          comprobante_numero: string;
+          combustible: { galones: number; unidad: string } | null;
+        }[];
+        const f = filas.find((b) => b.comprobante_numero === numero);
+        return f?.combustible ? `${f.combustible.galones} ${f.combustible.unidad}` : null;
+      },
+      { message: "la compra no quedó en 70 L" }
+    )
+    .toBe("70 L");
+});
+
 test.describe("en pantalla de celular @celular", () => {
   test.use({ viewport: { width: 393, height: 852 }, hasTouch: true });
 
