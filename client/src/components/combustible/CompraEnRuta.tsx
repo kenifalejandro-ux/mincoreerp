@@ -843,7 +843,7 @@ function FormularioCompra({
                   <select
                     id="compra-unidad-medida"
                     aria-label="Unidad de la cantidad"
-                    className={`${CLASE_CAMPO} w-auto`}
+                    className={CLASE_CAMPO.replace("w-full", "w-20 shrink-0")}
                     value={unidad}
                     onChange={(e) => {
                       const nueva = e.target.value === "L" ? "L" : "gal";
