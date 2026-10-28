@@ -261,6 +261,7 @@ export function conMarcaLocal(
 
 /** Un descanso del conductor: desde que lo empieza hasta que lo termina. */
 export interface DescansoMio {
+  id?: number;
   inicio_en: string;
   fin_en: string | null;
   motivo: string | null;

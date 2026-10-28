@@ -1001,6 +1001,8 @@ export interface MarcaDescanso {
   hora?: string;
   marcado_en?: string;
   cliente_uuid?: string;
+  /** La oficina señala cuál terminar (el del relevo que no maneja); sin él, el del que maneja. */
+  descanso_id?: number;
 }
 
 export interface ResultadoDescanso {
@@ -1128,8 +1130,15 @@ export async function terminarDescanso(
   const abierto = await client.query(
     `SELECT id, inicio_en FROM combustible_viaje_descansos
       WHERE tenant_id = $1 AND viaje_id = $2 AND fin_en IS NULL
-        AND ($3::text IS NULL OR conductor_dni = $3) AND ($3::text IS NOT NULL OR detiene)`,
-    [tenantId, id, dniConductor === undefined ? null : normalizarDni(dniConductor)]
+        AND ($3::text IS NULL OR conductor_dni = $3)
+        AND ($3::text IS NOT NULL OR $4::int IS NOT NULL OR detiene)
+        AND ($4::int IS NULL OR id = $4)`,
+    [
+      tenantId,
+      id,
+      dniConductor === undefined ? null : normalizarDni(dniConductor),
+      dniConductor === undefined ? (data.descanso_id ?? null) : null,
+    ]
   );
   if (!abierto.rows[0]) throw new AppError(409, "No hay un descanso abierto");
   const { hora, origen } = await horaDeLaMarca(client, data.hora, data.marcado_en);

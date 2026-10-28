@@ -2490,9 +2490,19 @@ export const descansoViajeSchema = z.object({
 });
 export type DescansoViajeInput = z.infer<typeof descansoViajeSchema>;
 
+// Sin `descanso_id` la oficina termina el del que maneja; con él, el descanso que señale (el del
+// relevo que no maneja, por ejemplo) y entonces el motivo es obligatorio.
 export const terminarDescansoViajeSchema = z
-  .object({ fin_en: fechaHora.optional(), motivo: motivo.optional() })
-  .refine((v) => conMotivoSiHoraManual(v, v.fin_en), MENSAJE_MOTIVO_HORA);
+  .object({
+    fin_en: fechaHora.optional(),
+    motivo: motivo.optional(),
+    descanso_id: z.number().int().positive().optional(),
+  })
+  .refine((v) => conMotivoSiHoraManual(v, v.fin_en), MENSAJE_MOTIVO_HORA)
+  .refine((v) => v.descanso_id === undefined || (v.motivo?.trim().length ?? 0) >= 3, {
+    message: "Cuenta por qué terminas el descanso de otra persona",
+    path: ["motivo"],
+  });
 export type TerminarDescansoViajeInput = z.infer<typeof terminarDescansoViajeSchema>;
 
 // ── Entrega del mando (0153) ───────────────────────────────────────────────
