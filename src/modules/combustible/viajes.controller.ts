@@ -421,9 +421,12 @@ export const viajesController = {
     const tenantId = getTenantId(req);
     const id = Number(req.params.viajeId);
     const data = req.validatedBody as CorregirMandoInput;
-    const r = await withTenant(tenantId, (c) =>
-      viajes.corregirMando(c, tenantId, req.usuario!.id, id, data)
-    );
+    const { r, alertaCambio } = await withTenant(tenantId, async (c) => {
+      const r = await viajes.corregirMando(c, tenantId, req.usuario!.id, id, data);
+      // Quién manejaba cambió: una detención puede haber dejado de frenar la unidad (o al revés).
+      return { r, alertaCambio: await alertaDeDetencion(c, tenantId, id) };
+    });
+    if (alertaCambio) await avisarCampanita(tenantId);
     await auditar(req, "viaje_mando_corregir", {
       viajeId: id,
       numero: r.antes.numero,
@@ -484,7 +487,7 @@ export const viajesController = {
     const id = Number(req.params.viajeId);
     const data = req.validatedBody as EditarViajeInput;
     const { antes, despues, alertaCambio } = await withTenant(tenantId, async (c) => {
-      const r = await viajes.editarViaje(c, tenantId, id, data);
+      const r = await viajes.editarViaje(c, tenantId, id, data, req.usuario!.id);
       // Ponerle llegada a un viaje en curso lo cierra: sus alertas se cierran con él.
       const cierra = r.antes.estado === "en_curso" && r.despues?.estado === "cerrado";
       return { ...r, alertaCambio: cierra ? await cerrarAlertasDelViaje(c, tenantId, id) : false };
