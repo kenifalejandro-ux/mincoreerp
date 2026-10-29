@@ -403,14 +403,22 @@ export async function crearViaje(
 }
 
 async function viajeParaCambiar(client: PoolClient, tenantId: string, id: number) {
-  const r = await client.query(
-    `SELECT * FROM combustible_viajes WHERE tenant_id = $1 AND id = $2`,
-    [tenantId, id]
-  );
-  const v = r.rows[0];
-  if (!v) throw new AppError(404, "El viaje no existe");
-  await bloquearUnidad(client, tenantId, v.equipo_id);
-  // Releer bajo el candado: otro request pudo cambiarlo mientras esperaba.
+  // El candado de la unidad se toma ANTES que la fila del viaje: si la oficina lo movió a otra
+  // unidad mientras se esperaba, se toma también el candado de la nueva y se vuelve a mirar hasta
+  // que la unidad ya no cambie (con el candado de la unidad actual nadie más puede moverlo). Tomar
+  // la fila primero y pedir el candado después se cruza con otra acción sobre el mismo viaje.
+  let bloqueada: number | null = null;
+  for (;;) {
+    const r = await client.query(
+      `SELECT equipo_id FROM combustible_viajes WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, id]
+    );
+    if (!r.rows[0]) throw new AppError(404, "El viaje no existe");
+    const equipo = Number(r.rows[0].equipo_id);
+    if (equipo === bloqueada) break;
+    await bloquearUnidad(client, tenantId, equipo);
+    bloqueada = equipo;
+  }
   const fresco = await client.query(`SELECT * FROM combustible_viajes WHERE id = $1 FOR UPDATE`, [
     id,
   ]);
