@@ -2474,6 +2474,52 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     ).toBe(200);
   });
 
+  it("varias ediciones a la vez de la unidad de dos viajes: ninguna sale con un error del servidor", async () => {
+    // `editarViaje` toma los candados de las unidades que lee antes de bloquear; si otra edición le
+    // cambia la unidad en medio, los candados no se toman en orden. Se prueba con ediciones cruzadas.
+    for (let i = 0; i < 16; i++) {
+      const [u1, u2, u3, u4] = [await unidad(), await unidad(), await unidad(), await unidad()];
+      const v1 = await programar(u2, {});
+      const v2 = await programar(u3, {});
+      expect(v1.status, JSON.stringify(v1.body)).toBe(201);
+      expect(v2.status, JSON.stringify(v2.body)).toBe(201);
+      const mover = (v: { body: { id: number } }, equipo_id: number) =>
+        admin.put(url(v.body.id)).send({ equipo_id, motivo: "se cambia la unidad" });
+      const r = await Promise.all([mover(v1, u4), mover(v1, u1), mover(v2, u1), mover(v2, u4)]);
+      // Todas son válidas (viajes programados, sin traslape): ninguna da error, y cada viaje queda
+      // en una de las dos unidades pedidas (la última edición que entró).
+      for (const x of r) expect(x.status, `vuelta ${i}: ${JSON.stringify(x.body)}`).toBe(200);
+      for (const v of [v1, v2]) {
+        const final = Number((await admin.get(url(v.body.id))).body.viaje.equipo_id);
+        expect([u1, u4], `vuelta ${i}: el viaje ${v.body.id} quedó en ${final}`).toContain(final);
+      }
+    }
+  }, 90_000);
+
+  it("reenviar el retiro de la entrega no falla, y retirar sin haber entregado nada sí se rechaza", async () => {
+    const { titular, id } = await enCurso();
+    // Sin haber entregado nunca, no hay nada que retirar.
+    const nada = await marcar(titular.agente, id, "mando/retirar", {});
+    expect(nada.status).toBe(409);
+    expect(JSON.stringify(nada.body)).toContain("No hay una entrega pendiente");
+
+    expect((await marcar(titular.agente, id, "mando/entregar", { medidor: 150 })).status).toBe(200);
+    const uuid = crypto.randomUUID();
+    expect((await marcar(titular.agente, id, "mando/retirar", { cliente_uuid: uuid })).status).toBe(
+      200
+    );
+    // La respuesta se perdió y la cola reenvía lo mismo: el viaje vuelve como quedó, sin rechazo.
+    const reenvio = await marcar(titular.agente, id, "mando/retirar", { cliente_uuid: uuid });
+    expect(reenvio.status, JSON.stringify(reenvio.body)).toBe(200);
+    const mios = (await titular.agente.get("/api/erp/combustible/viajes/mios")).body.data as {
+      id: string;
+      entrega_pendiente: unknown;
+    }[];
+    const fila = mios.find((m) => Number(m.id) === id);
+    expect(fila, "el viaje sigue en la lista del conductor").toBeTruthy();
+    expect(fila!.entrega_pendiente).toBeNull();
+  });
+
   it("corregir el mando no deja un medidor que contradiga una parada ya marcada", async () => {
     const { titular, relevo, id } = await conUnSoloTurno(false, [
       huamachuco,

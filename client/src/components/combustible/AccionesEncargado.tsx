@@ -18,7 +18,8 @@ import { apiFetch } from "../../services/apiClient";
 const INPUT = "w-full bg-[#0D1719] border border-[#334155] rounded-xl px-3 py-2 text-sm text-white";
 const BTN =
   "bg-[#BADC1E] text-[#0D1719] font-bold px-4 py-2 rounded-xl hover:brightness-110 disabled:opacity-50";
-const BTN_SEC = "border border-[#334155] text-[#cbd5e1] font-semibold px-4 py-2 rounded-xl";
+const BTN_SEC =
+  "border border-[#334155] text-[#cbd5e1] font-semibold px-4 py-2 rounded-xl disabled:opacity-50";
 
 /** "14:20:05" de hoy, como ISO. */
 function isoDeHoy(horaLocal: string): string {

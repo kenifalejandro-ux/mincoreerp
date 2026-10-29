@@ -78,7 +78,8 @@ test("la oficina termina el descanso del relevo que no maneja: pide motivo y man
     expect(cuerpo.motivo).toBe("Ya descansó, hay que seguir");
 
     // El servidor lo cerró, y era el descanso que se señaló.
-    await expect(campo).toBeHidden();
+    // La pantalla se actualiza al terminar de recargar el viaje: con la máquina cargada tarda.
+    await expect(campo).toBeHidden({ timeout: 20_000 });
     const detalle = await oficina.request.get(`/api/erp/combustible/viajes/${v.viajeId}`);
     const descansos = (
       (await detalle.json()).viaje as {

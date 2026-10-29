@@ -125,6 +125,15 @@ async function bloquearUnidad(client: PoolClient, tenantId: string, equipoId: nu
   ]);
 }
 
+/** El candado del viaje se toma SIEMPRE antes que los de las unidades. Con él, nadie más cambia la
+ *  unidad del viaje mientras se trabaja con él: la unidad que se lee es estable y los candados de
+ *  unidad se toman en orden ascendente (sin esto, dos ediciones cruzadas se esperan en círculo). */
+async function bloquearViaje(client: PoolClient, tenantId: string, id: number) {
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+    `viaje-fila:${tenantId}:${id}`,
+  ]);
+}
+
 async function validarLugares(client: PoolClient, tenantId: string, ids: number[]) {
   const r = await client.query(
     `SELECT id FROM combustible_lugares WHERE tenant_id = $1 AND id = ANY($2::bigint[]) AND activo`,
@@ -403,6 +412,7 @@ export async function crearViaje(
 }
 
 async function viajeParaCambiar(client: PoolClient, tenantId: string, id: number) {
+  await bloquearViaje(client, tenantId, id);
   // El candado de la unidad se toma ANTES que la fila del viaje: si la oficina lo movió a otra
   // unidad mientras se esperaba, se toma también el candado de la nueva y se vuelve a mirar hasta
   // que la unidad ya no cambie (con el candado de la unidad actual nadie más puede moverlo). Tomar
@@ -1701,7 +1711,19 @@ export async function retirarEntrega(
   const v = await viajeParaCambiar(client, tenantId, id);
   exigirDelViaje(v, dniConductor);
   const e = await entregaPendiente(client, tenantId, id);
-  if (!e) throw new AppError(409, "No hay una entrega pendiente");
+  if (!e) {
+    // Reintento de la cola: el retiro ya entró y la respuesta se perdió. Si esta persona ya había
+    // retirado una entrega de este viaje, se devuelve el viaje como quedó (no es un rechazo que la
+    // cola deba descartar con un aviso). Si nunca entregó nada, no hay nada que retirar.
+    const retirada = await client.query(
+      `SELECT 1 FROM combustible_viaje_entregas
+        WHERE tenant_id = $1 AND viaje_id = $2 AND de_dni = $3 AND cancelada_en IS NOT NULL
+        LIMIT 1`,
+      [tenantId, id, normalizarDni(dniConductor)]
+    );
+    if (!retirada.rows[0]) throw new AppError(409, "No hay una entrega pendiente");
+    return { antes: v, despues: await getViaje(client, tenantId, id), repetido: true };
+  }
   if (e.de_dni !== normalizarDni(dniConductor)) {
     throw new AppError(409, "Solo quien entregó puede retirar la entrega");
   }
@@ -1778,7 +1800,9 @@ export async function editarViaje(
   usuarioId: string
 ) {
   // Con cambio de unidad se toman los dos candados en orden ascendente: dos
-  // correcciones cruzadas (A→B y B→A) no se esperan una a la otra.
+  // correcciones cruzadas (A→B y B→A) no se esperan una a la otra. Antes, el del viaje: así la
+  // unidad que se lee no cambia mientras se toman.
+  await bloquearViaje(client, tenantId, id);
   const previo = await client.query(
     `SELECT equipo_id FROM combustible_viajes WHERE tenant_id = $1 AND id = $2`,
     [tenantId, id]
