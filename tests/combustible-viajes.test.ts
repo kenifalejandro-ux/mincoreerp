@@ -1119,6 +1119,53 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(b.status, JSON.stringify(b.body)).toBe(200);
   });
 
+  it("la oficina cambia la unidad de un viaje (a una de id mayor o menor) mientras dos conductores inician: nunca quedan dos viajes iniciados en la misma unidad", async () => {
+    // El candado de la unidad se toma sobre la unidad que el viaje tenía al leerlo. Si la oficina lo
+    // mueve a otra unidad mientras el conductor espera, el conductor trabaja sobre la nueva con el
+    // candado de la vieja: el choque se ve contra el viaje de quien espera en la nueva.
+    for (let i = 0; i < 16; i++) {
+      const c1 = await conductor();
+      const c2 = await conductor();
+      const primera = await unidad();
+      const segunda = await unidad();
+      // Vueltas pares: el viaje 1 pasa a la unidad de id mayor; impares: a la de id menor.
+      const [unidadA, unidadB] = i % 2 === 0 ? [primera, segunda] : [segunda, primera];
+      const v1 = await programar(unidadA, { conductor_dni: c1.dni });
+      const v2 = await programar(unidadB, { conductor_dni: c2.dni });
+      expect(v1.status, JSON.stringify(v1.body)).toBe(201);
+      expect(v2.status, JSON.stringify(v2.body)).toBe(201);
+
+      const [edicion, ini1, ini2] = await Promise.all([
+        admin.put(url(v1.body.id)).send({ equipo_id: unidadB, motivo: "se cambia la unidad" }),
+        marcar(c1.agente, v1.body.id, "iniciar-mio", { medidor_inicio: 100 }),
+        marcar(c2.agente, v2.body.id, "iniciar-mio", { medidor_inicio: 100 }),
+      ]);
+
+      // Ninguna respuesta es un 500: cada una gana o se rechaza con un motivo.
+      for (const r of [edicion, ini1, ini2]) {
+        expect(r.status, JSON.stringify(r.body)).toBeLessThan(500);
+      }
+      // Cambiar de unidad no es un rechazo que la cola offline descartaría como definitivo.
+      for (const r of [ini1, ini2]) {
+        expect(JSON.stringify(r.body)).not.toContain("cambió de unidad");
+      }
+      // Estado final: a lo sumo un viaje iniciado por unidad, y los dos viajes en unidades distintas
+      // si la edición no se aplicó.
+      const f1 = (await admin.get(url(v1.body.id))).body;
+      const f2 = (await admin.get(url(v2.body.id))).body;
+      const iniciados = [f1, f2].filter((v) => v.inicio_en);
+      const porUnidad = new Map<number, number>();
+      for (const v of iniciados) {
+        porUnidad.set(Number(v.equipo_id), (porUnidad.get(Number(v.equipo_id)) ?? 0) + 1);
+      }
+      expect(
+        [...porUnidad.values()].every((n) => n === 1),
+        `vuelta ${i}: edición ${edicion.status}, inicios ${ini1.status}/${ini2.status}, ` +
+          `viaje 1 en ${f1.equipo_id} (inicio ${f1.inicio_en}), viaje 2 en ${f2.equipo_id} (inicio ${f2.inicio_en})`
+      ).toBe(true);
+    }
+  }, 90_000);
+
   it("anular el primero adelanta al segundo; una marca que esperó sin señal no se rechaza por la cola", async () => {
     const yo = await conductor();
     const primero = await programarPara(yo.dni, { salida_programada_en: enMin(60) });
