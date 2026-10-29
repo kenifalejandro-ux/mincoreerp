@@ -1,9 +1,9 @@
 /** e2e/combustible-mi-viaje-retirar-sin-senal.spec.ts
  *
  * Quien entregó el mando (y sigue al volante) retira la entrega SIN señal: queda en la cola, se ve
- * retirada en su pantalla y se envía sola al volver la red. Un reenvío no cambia nada, pero porque
- * ya no hay entrega pendiente: el servidor decide por el estado, no por la marca (no usa el
- * `cliente_uuid` del retiro). El preparativo va por API (ver el fixture).
+ * retirada en su pantalla y se envía sola al volver la red. Un reenvío (la respuesta se perdió y la
+ * cola reintenta) no da error y no cambia nada: el servidor decide por el estado, no usa el
+ * `cliente_uuid` del retiro. El preparativo va por API (ver el fixture).
  */
 import { test, expect } from "@playwright/test";
 import {
@@ -13,7 +13,7 @@ import {
   prepararViajeDeConductor,
 } from "./fixtures/conductorConViaje";
 
-test("retirar la entrega sin señal queda guardado, se envía al volver la red y reenviarlo no encuentra nada que retirar", async ({
+test("retirar la entrega sin señal queda guardado, se envía al volver la red y reenviarlo no cambia nada ni da error", async ({
   page,
 }) => {
   test.setTimeout(180_000);
@@ -70,15 +70,14 @@ test("retirar la entrega sin señal queda guardado, se envía al volver la red y
     const aceptados = retiros.filter((r) => r.estado === 200);
     expect(aceptados).toHaveLength(1);
 
-    // ── Un reenvío: nada cambia, porque ya no hay entrega que retirar ──
+    // ── Un reenvío (la respuesta se perdió y la cola reintenta): el viaje vuelve como quedó ──
     const reenvio = await page.request.post(
       `/api/erp/combustible/viajes/${v.viajeId}/mando/retirar`,
       {
         data: aceptados[0].cuerpo as object,
       }
     );
-    expect(reenvio.status()).toBe(409);
-    expect(JSON.stringify(await reenvio.json())).toContain("No hay una entrega pendiente");
+    expect(reenvio.status()).toBe(200);
     expect(await pendiente()).toBe(false);
   } finally {
     await darDeBajaAlConductor(page, v);
