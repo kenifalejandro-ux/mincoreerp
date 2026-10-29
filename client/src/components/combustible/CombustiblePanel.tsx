@@ -357,6 +357,8 @@ interface DespachoHistorial {
   // del proveedor, no con un vale.
   serie_talonario: string | null;
   n_vale: number | null;
+  // 0161: un despacho a una tanqueta sin vale es un traspaso interno.
+  tanqueta_destino_id: string | number | null;
   comprobante_tipo: "boleta" | "factura" | null;
   comprobante_numero: string | null;
   comprobante_nombre: string | null;
@@ -530,7 +532,8 @@ const pctConSigno = (v: number | null) => (v === null ? "—" : `${v > 0 ? "+" :
 
 interface FilaKardex {
   ocurrido_en: string;
-  tipo: "recepcion" | "despacho" | "lectura" | "precinto" | "retorno_tanqueta";
+  tipo:
+    "recepcion" | "despacho" | "lectura" | "precinto" | "retorno_tanqueta" | "traspaso_tanqueta";
   referencia_id: string;
   documento: string | null;
   detalle: string | null;
@@ -1303,12 +1306,15 @@ const ETIQUETA_ORIGEN_DESPACHO: Record<OrigenDespacho, string> = {
 function etiquetaPapelDespacho(d: {
   serie_talonario: string | null;
   n_vale: number | null;
+  tanqueta_destino_id?: string | number | null;
   comprobante_tipo: string | null;
   comprobante_numero: string | null;
 }): string {
   if (d.comprobante_numero !== null) {
     return `${d.comprobante_tipo === "factura" ? "Factura" : "Boleta"} ${d.comprobante_numero}`;
   }
+  // Llenar una tanqueta sin unidad (0161): traspaso interno, sin vale.
+  if (d.serie_talonario === null && d.tanqueta_destino_id != null) return "Traspaso a tanqueta";
   // La carga en ruta desde tanqueta (0114) no tiene vale ni comprobante.
   if (d.serie_talonario === null) return "Sin vale";
   return `${d.serie_talonario}-${d.n_vale}`;
@@ -6345,11 +6351,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         ? "Recepción"
                         : f.tipo === "despacho"
                           ? "Despacho"
-                          : f.tipo === "retorno_tanqueta"
-                            ? "Retorno de tanqueta"
-                            : f.tipo === "precinto"
-                              ? "Precinto"
-                              : "Varilla";
+                          : f.tipo === "traspaso_tanqueta"
+                            ? "Traspaso a tanqueta"
+                            : f.tipo === "retorno_tanqueta"
+                              ? "Retorno de tanqueta"
+                              : f.tipo === "precinto"
+                                ? "Precinto"
+                                : "Varilla";
                     return (
                       <tr
                         key={`${f.tipo}-${f.referencia_id}`}
