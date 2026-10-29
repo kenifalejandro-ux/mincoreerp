@@ -7461,6 +7461,7 @@ export class CombustibleService {
   ) {
     return this.repository.crearGrifo(client, tenantId, usuarioId, {
       nombre: data.nombre,
+      ruc: data.ruc,
       abasteceRuta: data.abastece_ruta,
       abasteceTanque: data.abastece_tanque,
       abasteceUrea: data.abastece_urea,
