@@ -1,12 +1,13 @@
 // Combustible › Viajes (0123): registrar, cerrar, corregir y anular viajes.
 // El análisis (ranking, desvío) vive en el Histórico de cada producto.
 import { Ban, Download, Eye, Flag, Lock, MapPin, Pencil, Play, Plus, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CeldaDesvio } from "./ConsumoPorViaje";
 import { DetalleViajeVentana } from "./DetalleViaje";
 import { exportarViajesExcel } from "./exportarViajes";
 import { IconoUnidad } from "./IconoUnidad";
+import { LugaresPanel, type Lugar } from "./LugaresPanel";
 import { textoDetenido } from "./motivosDescanso";
 import {
   errorDelRecorrido,
@@ -32,12 +33,6 @@ import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
 import { ahoraParaInputLocal, paraInputLocal } from "../../utils/fechaLocal";
 
-interface Lugar {
-  id: string;
-  nombre: string;
-  activo: boolean;
-}
-
 interface Equipo {
   id: number;
   placa_codigo: string;
@@ -61,8 +56,7 @@ type Modal =
   | { tipo: "iniciar"; v: FilaViaje }
   | { tipo: "editar"; v: FilaViaje }
   | { tipo: "cerrar"; v: FilaViaje }
-  | { tipo: "anular"; v: FilaViaje }
-  | { tipo: "lugares" };
+  | { tipo: "anular"; v: FilaViaje };
 
 const FORM_VACIO = {
   equipo_id: "",
@@ -177,7 +171,11 @@ export default function ViajesPanel() {
   // El recorrido de un viaje NUEVO (solo ida, ida y vuelta, varias paradas); editar sigue
   // con origen y destino.
   const [recorrido, setRecorrido] = useState<Recorrido>(RECORRIDO_VACIO);
-  const [nuevoLugar, setNuevoLugar] = useState("");
+  const [lugaresAbierto, setLugaresAbierto] = useState(false);
+  const [lugaresListos, setLugaresListos] = useState(false);
+  const [lugaresError, setLugaresError] = useState(false);
+  // Una respuesta lenta de la lista de lugares no debe pisar a una más nueva.
+  const pedidoLugares = useRef(0);
   const [guardando, setGuardando] = useState(false);
   const [verId, setVerId] = useState<string | null>(null);
   const [retro, setRetro] = useState(false);
@@ -245,9 +243,18 @@ export default function ViajesPanel() {
   );
 
   const cargarLugares = useCallback(async () => {
-    const res = await apiFetch("/api/erp/combustible/lugares");
-    const body = await res.json().catch(() => null);
-    if (res.ok) setLugares(Array.isArray(body?.data) ? body.data : []);
+    const mio = ++pedidoLugares.current;
+    try {
+      const res = await apiFetch("/api/erp/combustible/lugares");
+      const body = await res.json().catch(() => null);
+      if (mio !== pedidoLugares.current) return;
+      if (!res.ok) throw new Error("lugares");
+      setLugares(Array.isArray(body?.data) ? body.data : []);
+      setLugaresListos(true);
+      setLugaresError(false);
+    } catch {
+      if (mio === pedidoLugares.current) setLugaresError(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -282,11 +289,16 @@ export default function ViajesPanel() {
   useEffect(() => {
     const es = new EventSource("/api/eventos/stream", { withCredentials: true });
     const refrescar = () => void cargar();
-    es.addEventListener("combustible.viaje_actualizado", refrescar);
+    // Crear, editar o desactivar un lugar publica este mismo evento: la ventana de Lugares se
+    // actualiza sola cuando otra sesión cambia algo.
+    es.addEventListener("combustible.viaje_actualizado", () => {
+      refrescar();
+      void cargarLugares();
+    });
     es.addEventListener("combustible.despacho_creado", refrescar);
     es.addEventListener("combustible.despacho_anulado", refrescar);
     return () => es.close();
-  }, [cargar]);
+  }, [cargar, cargarLugares]);
 
   const abrir = (m: Modal) => {
     setRetro(false);
@@ -478,15 +490,6 @@ export default function ViajesPanel() {
     }
   };
 
-  const agregarLugar = async () => {
-    const nombre = nuevoLugar.trim();
-    if (!nombre) return;
-    if (await enviar("/api/erp/combustible/lugares", "POST", { nombre })) {
-      setNuevoLugar("");
-      await cargarLugares();
-    }
-  };
-
   const lugaresActivos = lugares.filter((l) => l.activo);
   const equipoDelForm = equipos.find((x) => String(x.id) === form.equipo_id);
   const dnisConUsuario = new Set(conductores.map((c) => c.dni));
@@ -525,11 +528,15 @@ export default function ViajesPanel() {
         onChange={(e) => setForm({ ...form, [campo]: e.target.value })}
       >
         <option value="">Elegir...</option>
-        {lugaresActivos.map((l) => (
-          <option key={l.id} value={l.id}>
-            {l.nombre}
-          </option>
-        ))}
+        {/* El lugar que el viaje ya tiene se ofrece aunque lo hayan desactivado después: sin esto el
+            formulario de corregir no se podría enviar (el lugar no cambia, y el servidor lo acepta). */}
+        {lugares
+          .filter((l) => l.activo || String(l.id) === String(form[campo]))
+          .map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.activo ? l.nombre : `${l.nombre} (inactivo)`}
+            </option>
+          ))}
       </select>
     </div>
   );
@@ -564,7 +571,7 @@ export default function ViajesPanel() {
             ? `Cerrar viaje V-${modal.v.numero}`
             : modal?.tipo === "anular"
               ? `Anular viaje V-${modal.v.numero}`
-              : "Lugares";
+              : "";
 
   return (
     <div className="space-y-6">
@@ -593,7 +600,7 @@ export default function ViajesPanel() {
           </button>
           {permite("lugares") && (
             <button
-              onClick={() => abrir({ tipo: "lugares" })}
+              onClick={() => setLugaresAbierto(true)}
               className="flex items-center gap-2 border border-[#334155] text-[#cbd5e1] px-4 py-2 rounded-lg hover:text-white"
             >
               <MapPin className="w-4 h-4" /> Lugares
@@ -857,6 +864,17 @@ export default function ViajesPanel() {
         </div>
       )}
 
+      {lugaresAbierto && (
+        <LugaresPanel
+          lugares={lugares}
+          listos={lugaresListos}
+          errorCarga={lugaresError}
+          onRecargar={cargarLugares}
+          puedeGestionar={permite("lugares")}
+          onCerrar={() => setLugaresAbierto(false)}
+        />
+      )}
+
       {modal && (
         <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
@@ -871,41 +889,7 @@ export default function ViajesPanel() {
               </button>
             </div>
 
-            {modal.tipo === "lugares" ? (
-              <div className="p-6 space-y-4">
-                <p className="text-sm text-slate-600">
-                  Los orígenes y destinos de los viajes. Un catálogo único evita que la misma ruta
-                  se cuente dos veces por estar escrita distinto.
-                </p>
-                <div className="flex gap-2">
-                  <input
-                    aria-label="Nombre del lugar"
-                    placeholder="Ej. Huamachuco"
-                    maxLength={80}
-                    className={INPUT}
-                    value={nuevoLugar}
-                    onChange={(e) => setNuevoLugar(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") void agregarLugar();
-                    }}
-                  />
-                  <button
-                    onClick={agregarLugar}
-                    disabled={guardando || !nuevoLugar.trim()}
-                    className="bg-[#BADC1E] text-[#0D1719] font-bold px-4 rounded-xl hover:brightness-110 disabled:opacity-50"
-                  >
-                    Agregar
-                  </button>
-                </div>
-                <ul className="divide-y text-sm">
-                  {lugares.map((l) => (
-                    <li key={l.id} className="py-2">
-                      {l.nombre}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ) : (
+            {
               <form onSubmit={guardar} className="p-6 space-y-4">
                 {modal.tipo === "nuevo" && (
                   <div className="space-y-1">
@@ -1393,7 +1377,7 @@ export default function ViajesPanel() {
                             : "Guardar"}
                 </button>
               </form>
-            )}
+            }
           </div>
         </div>
       )}
