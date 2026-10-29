@@ -76,7 +76,10 @@ const describirMovimiento = (m: MovimientoTanqueta) => {
     return `Excedente de la recepción #${m.recepcion_id} (${m.tanque_codigo})`;
   }
   if (m.tipo === "prevision") {
-    return `Previsión desde ${m.tanque_codigo} · vale ${m.serie_talonario}-${m.n_vale}`;
+    // Llenar una tanqueta sin unidad no lleva vale (0161): es un traspaso.
+    return m.serie_talonario === null
+      ? `Traspaso desde ${m.tanque_codigo}`
+      : `Previsión desde ${m.tanque_codigo} · vale ${m.serie_talonario}-${m.n_vale}`;
   }
   if (m.tipo === "retorno") {
     const diferencia = Number(m.cantidad);

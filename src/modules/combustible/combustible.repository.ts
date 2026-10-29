@@ -5279,9 +5279,14 @@ export class CombustibleRepository {
 
         UNION ALL
 
-        SELECT d.despachado_en, 1, 'despacho',
+        -- Un despacho a una tanqueta sin vale (0161) es un traspaso interno:
+        -- sin documento, y con su propio tipo para nombrarlo así.
+        SELECT d.despachado_en, 1,
+               CASE WHEN d.tanqueta_destino_id IS NOT NULL AND d.serie_talonario IS NULL
+                    THEN 'traspaso_tanqueta' ELSE 'despacho' END,
                d.id::text,
-               CONCAT(d.serie_talonario, '-', LPAD(d.n_vale::text, 5, '0')),
+               CASE WHEN d.serie_talonario IS NULL THEN NULL
+                    ELSE CONCAT(d.serie_talonario, '-', LPAD(d.n_vale::text, 5, '0')) END,
                COALESCE(e.placa_codigo, d.tipo_destino),
                0::numeric, d.cantidad,
                NULL::numeric,
@@ -5348,7 +5353,7 @@ export class CombustibleRepository {
       ),
       marcados AS (
         SELECT m.*,
-               COALESCE(m.tipo IN ('despacho', 'recepcion', 'retorno_tanqueta')
+               COALESCE(m.tipo IN ('despacho', 'recepcion', 'retorno_tanqueta', 'traspaso_tanqueta')
                         AND m.ocurrido_en < (SELECT p.en FROM primera p), false) AS historico
           FROM movimientos m
       )

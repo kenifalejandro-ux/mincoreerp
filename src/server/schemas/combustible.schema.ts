@@ -919,7 +919,23 @@ export const crearDespachoCombustibleSchema = z
     if (data.origen === "tanque_propio") {
       // El talonario es EL control del tanque propio (punto 1): su hueco es
       // el único mecanismo real contra la fuga. Acá no es negociable.
-      exigirVale(data, ctx, "un vale de tanque propio");
+      //
+      // Única excepción (0161): llenar una tanqueta SIN unidad es un traspaso
+      // interno, sin vale; el vale es de la entrega a la unidad. Si viene
+      // completo se acepta (cola de un celular con la versión anterior).
+      const esTraspasoATanqueta =
+        data.tipo_destino === "reserva_cubeta" &&
+        data.tanqueta_destino_id !== undefined &&
+        data.tanqueta_equipo_id === undefined;
+      if (!esTraspasoATanqueta) {
+        exigirVale(data, ctx, "un vale de tanque propio");
+      } else if ((data.serie_talonario === undefined) !== (data.n_vale === undefined)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [data.serie_talonario === undefined ? "serie_talonario" : "n_vale"],
+          message: "serie_talonario y n_vale van juntos: los dos o ninguno",
+        });
+      }
       for (const [campo, valor] of [
         ["comprobante_tipo", data.comprobante_tipo],
         ["comprobante_numero", data.comprobante_numero],
