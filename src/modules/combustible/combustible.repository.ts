@@ -6151,7 +6151,7 @@ export class CombustibleRepository {
 
   async findGrifos(client: PoolClient, tenantId: string) {
     const result = await client.query(
-      `SELECT id, nombre, activo, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta, usuario_id, creado_en
+      `SELECT id, nombre, ruc, activo, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta, usuario_id, creado_en
        FROM combustible_grifos WHERE tenant_id = $1 ORDER BY nombre ASC`,
       [tenantId]
     );
@@ -6184,6 +6184,7 @@ export class CombustibleRepository {
     usuarioId: string,
     data: {
       nombre: string;
+      ruc: string | null;
       abasteceRuta: boolean;
       abasteceTanque: boolean;
       abasteceUrea: boolean;
@@ -6193,12 +6194,13 @@ export class CombustibleRepository {
     try {
       const result = await client.query(
         `INSERT INTO combustible_grifos
-           (tenant_id, nombre, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta, usuario_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id, nombre, activo, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta, usuario_id, creado_en`,
+           (tenant_id, nombre, ruc, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta, usuario_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id, nombre, ruc, activo, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta, usuario_id, creado_en`,
         [
           tenantId,
           data.nombre,
+          data.ruc,
           data.abasteceRuta,
           data.abasteceTanque,
           data.abasteceUrea,
@@ -6208,6 +6210,16 @@ export class CombustibleRepository {
       );
       return result.rows[0];
     } catch (err) {
+      // Dos índices únicos pueden saltar: el del nombre (0063) y el del RUC
+      // (0160). Se distinguen por el nombre del constraint, no por el código.
+      if (
+        esViolacionUnicidad(err) &&
+        ((err as { constraint?: string }).constraint ?? "").includes("ruc")
+      ) {
+        throw new Error(`ya existe un proveedor con el RUC ${data.ruc} en este tenant`, {
+          cause: err,
+        });
+      }
       if (esViolacionUnicidad(err)) {
         throw new Error(`ya existe un proveedor llamado "${data.nombre}" en este tenant`, {
           cause: err,

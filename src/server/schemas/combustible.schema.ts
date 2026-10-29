@@ -1516,6 +1516,13 @@ export const crearGrifoCombustibleSchema = z.object({
   abastece_urea: z.boolean().default(false),
   // 0133: urea EXTERNA (compra en ruta). `abastece_urea` es la INTERNA (planta).
   abastece_urea_ruta: z.boolean().default(false),
+  // 0160: RUC opcional, 11 dígitos. "" o ausente = sin RUC (null).
+  ruc: z
+    .string()
+    .trim()
+    .refine((v) => v === "" || /^\d{11}$/.test(v), "El RUC debe tener 11 dígitos")
+    .nullish()
+    .transform((v) => (v ? v : null)),
 });
 
 export type CrearGrifoCombustibleInput = z.infer<typeof crearGrifoCombustibleSchema>;

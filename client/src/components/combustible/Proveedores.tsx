@@ -16,6 +16,8 @@ import { mensajeDeError } from "../../utils/mensajeDeError";
 export interface ProveedorGrifo {
   id: number;
   nombre: string;
+  /** Opcional, 11 dígitos (migrations/0160). */
+  ruc?: string | null;
   activo: boolean;
   abastece_ruta: boolean;
   abastece_tanque: boolean;
@@ -174,6 +176,7 @@ export default function Proveedores({
 
   const [modalAbierto, setModalAbierto] = useState(false);
   const [nombreNuevo, setNombreNuevo] = useState("");
+  const [rucNuevo, setRucNuevo] = useState("");
   const [rolesNuevo, setRolesNuevo] = useState<Roles>(ROLES_VACIOS);
   const [creando, setCreando] = useState(false);
   const [errorCrear, setErrorCrear] = useState<string | null>(null);
@@ -261,6 +264,7 @@ export default function Proveedores({
 
   const abrirModal = () => {
     setNombreNuevo("");
+    setRucNuevo("");
     setErrorCrear(null);
     const urea = producto === "urea";
     setRolesNuevo({
@@ -272,9 +276,12 @@ export default function Proveedores({
     setModalAbierto(true);
   };
 
+  // El RUC es opcional: vacío vale, pero si se escribe tiene que tener 11 dígitos.
+  const rucIncompleto = rucNuevo.length > 0 && rucNuevo.length !== 11;
+
   const handleCrear = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (creando || !nombreNuevo.trim()) return;
+    if (creando || !nombreNuevo.trim() || rucIncompleto) return;
     if (sinRoles(rolesNuevo)) {
       setErrorCrear("Marca al menos un rol.");
       return;
@@ -284,7 +291,11 @@ export default function Proveedores({
       const res = await apiFetch("/api/erp/combustible/grifos", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nombre: nombreNuevo.trim(), ...rolesNuevo }),
+        body: JSON.stringify({
+          nombre: nombreNuevo.trim(),
+          ...(rucNuevo ? { ruc: rucNuevo } : {}),
+          ...rolesNuevo,
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -638,6 +649,32 @@ export default function Proveedores({
                   className="w-full rounded-lg border border-[#2a2e37] bg-[#0D1719] p-3 text-sm text-white outline-none focus:border-[#BADC1E]"
                 />
               </div>
+              <div>
+                <label
+                  htmlFor="proveedor-ruc-nuevo"
+                  className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-[#94a3b8]"
+                >
+                  RUC <span className="font-normal normal-case tracking-normal">(opcional)</span>
+                </label>
+                <input
+                  id="proveedor-ruc-nuevo"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  maxLength={11}
+                  placeholder="11 dígitos"
+                  value={rucNuevo}
+                  onChange={(e) => setRucNuevo(e.target.value.replace(/\D/g, "").slice(0, 11))}
+                  aria-invalid={rucIncompleto}
+                  aria-describedby={rucIncompleto ? "proveedor-ruc-aviso" : undefined}
+                  className="w-full rounded-lg border border-[#2a2e37] bg-[#0D1719] p-3 font-mono text-sm text-white outline-none focus:border-[#BADC1E]"
+                />
+                {rucIncompleto && (
+                  <p id="proveedor-ruc-aviso" className="mt-1 text-xs text-red-400">
+                    El RUC tiene 11 dígitos ({rucNuevo.length}/11).
+                  </p>
+                )}
+              </div>
               {(["combustible", "urea"] as const).map((prod) => (
                 <div key={prod} className="space-y-2">
                   <p className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-[#BADC1E]">
@@ -683,7 +720,7 @@ export default function Proveedores({
               </button>
               <button
                 type="submit"
-                disabled={creando || !nombreNuevo.trim()}
+                disabled={creando || !nombreNuevo.trim() || rucIncompleto}
                 className="rounded-lg bg-[#BADC1E] px-4 py-2 text-sm font-bold text-[#0D1719] hover:brightness-110 disabled:opacity-40"
               >
                 {creando ? "Agregando..." : "Agregar"}
