@@ -27,7 +27,7 @@ import { closeDatabase, withTenant } from "../src/server/config/database";
  *  `idUnico()` sola (con su timestamp completo) se pasa de largo, así que
  *  las series de este archivo usan un sufijo corto en vez de esa función. */
 function serieUnica(): string {
-  return `S${Math.floor(Math.random() * 1e8).toString(36)}`;
+  return `S${Math.floor(Math.random() * 1e8).toString(36)}`.toUpperCase();
 }
 
 async function crearTanque(tenantId: string, capacidadTotal = 5000): Promise<number> {

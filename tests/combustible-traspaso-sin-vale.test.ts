@@ -37,7 +37,7 @@ describe("combustible: llenar una tanqueta sin unidad no pide vale (0161)", () =
   let tanqueId: number;
   let unidad: number;
   let nVale = 1;
-  const serie = `TR${Date.now().toString(36).slice(-5)}`;
+  const serie = `TR${Date.now().toString(36).slice(-5)}`.toUpperCase();
 
   beforeAll(async () => {
     const creado = await crearTenantDePrueba(password);

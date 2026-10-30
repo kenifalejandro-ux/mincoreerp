@@ -29,7 +29,7 @@ describe("combustible: vale retro-fechado y vale recargado (migración 0081)", (
   const ag = request.agent(app);
   const hace = (dias: number) => new Date(Date.now() - dias * 864e5).toISOString();
   let seq = 0;
-  const serie = () => `V${Date.now().toString(36).slice(-4)}${(seq++).toString(36)}`;
+  const serie = () => `V${Date.now().toString(36).slice(-4)}${(seq++).toString(36)}`.toUpperCase();
 
   beforeAll(async () => {
     const c = await crearTenantDePrueba(password);

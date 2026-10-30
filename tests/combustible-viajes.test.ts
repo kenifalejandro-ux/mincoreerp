@@ -16,7 +16,7 @@ type Agente = ReturnType<typeof request.agent>;
 const H = 3_600_000;
 const T0 = Date.now() - 200 * H;
 const hora = (h: number) => new Date(T0 + h * H).toISOString();
-const serieUnica = () => `S${Math.floor(Math.random() * 1e8).toString(36)}`;
+const serieUnica = () => `S${Math.floor(Math.random() * 1e8).toString(36)}`.toUpperCase();
 
 describe("combustible: viajes y consumo por viaje (0123)", () => {
   const tenants: string[] = [];

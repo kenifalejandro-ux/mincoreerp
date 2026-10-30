@@ -327,6 +327,16 @@ const codigoPresentacionUrea = z
  *  odómetro/horas, con presentación/bultos en su lugar) y mezclarlas
  *  campo a campo es como terminó necesitando reescritura el CHECK de la
  *  migración -- ver el comentario de esa migración. */
+/** La serie del talonario: letras, números y guiones entre grupos (A-2, HMC, F001),
+ *  siempre en mayúsculas. "a3" y "A3" son el mismo talonario; si no, el control de
+ *  huecos las tomaría por series distintas. Lo demás se rechaza: una A cirílica, una
+ *  É descompuesta o un byte nulo abrirían una serie paralela invisible (o un 500). */
+export const SERIE_VALIDA = /^[A-Z0-9]+(-[A-Z0-9]+)*$/;
+export const MENSAJE_SERIE = "La serie solo puede llevar letras, números y guion (por ejemplo A-2)";
+const serieDelTalonario = (mensajeVacio = "La serie del talonario es obligatoria") =>
+  // toUpperCase va antes de max: pasar a mayúsculas puede alargar el texto (ß -> SS).
+  z.string().trim().toUpperCase().min(1, mensajeVacio).max(20).regex(SERIE_VALIDA, MENSAJE_SERIE);
+
 /** Serie + número son opcionales a nivel de objeto desde 0109 (la compra
  *  externa ya no los lleva), así que las tres formas que SÍ los exigen
  *  --tanque propio, urea, y la compra externa en formato anterior-- lo
@@ -403,12 +413,7 @@ export const crearDespachoCombustibleSchema = z
     // depender del origen y eso solo se puede expresar en el superRefine.
     // El tanque propio y la urea los siguen exigiendo; la compra externa
     // los prohíbe (ahí nunca hubo talonario de la empresa -- ver 0109).
-    serie_talonario: z
-      .string()
-      .trim()
-      .min(1, "La serie del talonario es obligatoria")
-      .max(20)
-      .optional(),
+    serie_talonario: serieDelTalonario().optional(),
     n_vale: z.number().int().positive().max(2147483647).optional(),
 
     // El comprobante del proveedor (0109) -- el reemplazo del talonario en
@@ -1758,7 +1763,7 @@ export const crearRecepcionCombustibleSchema = z
             // 0140: para qué unidad va esa tanqueta, con su vale. Van los tres
             // o ninguno.
             tanqueta_equipo_id: z.number().int().positive().max(2147483647).optional(),
-            serie_talonario: z.string().trim().min(1).max(20).optional(),
+            serie_talonario: serieDelTalonario().optional(),
             n_vale: z.number().int().positive().max(2147483647).optional(),
             observaciones: z.string().trim().max(300).optional(),
           })
@@ -2251,7 +2256,7 @@ export type ActualizarTanquetaInput = z.infer<typeof actualizarTanquetaSchema>;
 export const asignarTanquetaSchema = z.object({
   equipo_id: z.number().int().positive().max(2147483647),
   // 0141: el vale de esta salida a la unidad, obligatorio al asignar o reasignar.
-  serie_talonario: z.string().trim().min(1, "La serie del talonario es obligatoria").max(20),
+  serie_talonario: serieDelTalonario(),
   n_vale: z.number().int().positive().max(2147483647),
 });
 export type AsignarTanquetaInput = z.infer<typeof asignarTanquetaSchema>;
@@ -2270,7 +2275,7 @@ export const retornoTanquetaSchema = z
     tanque_id: z.number().int().positive().optional(),
     tanqueta_destino_id: z.number().int().positive().optional(),
     equipo_id: z.number().int().positive().max(2147483647).optional(),
-    serie_talonario: z.string().trim().min(1).max(20).optional(),
+    serie_talonario: serieDelTalonario().optional(),
     n_vale: z.number().int().positive().max(2147483647).optional(),
   })
   .superRefine((d, ctx) => {

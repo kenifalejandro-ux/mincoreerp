@@ -20,7 +20,8 @@ import { closeDatabase, withTenant } from "../src/server/config/database";
 import { CombustibleRepository } from "../src/modules/combustible/combustible.repository";
 
 let seq = 0;
-const serieUnica = () => `H${Date.now().toString(36).slice(-5)}${(seq++).toString(36)}`;
+const serieUnica = () =>
+  `H${Date.now().toString(36).slice(-5)}${(seq++).toString(36)}`.toUpperCase();
 
 type Agente = ReturnType<typeof request.agent>;
 interface Contexto {

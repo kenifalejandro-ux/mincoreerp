@@ -52,7 +52,8 @@ vi.mock("../src/modules/combustible/canalesAlertas", async (original) => ({
 
 const PASSWORD = "ClaveDePrueba123";
 let seq = 0;
-const serieUnica = () => `P${Date.now().toString(36).slice(-5)}${(seq++).toString(36)}`;
+const serieUnica = () =>
+  `P${Date.now().toString(36).slice(-5)}${(seq++).toString(36)}`.toUpperCase();
 const hace = (dias: number) => new Date(Date.now() - dias * 24 * 3600 * 1000).toISOString();
 
 afterAll(async () => {

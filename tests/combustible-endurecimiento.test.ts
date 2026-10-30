@@ -20,7 +20,8 @@ import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpe
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
 let seq = 0;
-const serieUnica = () => `S${Date.now().toString(36).slice(-6)}${(seq++).toString(36)}`;
+const serieUnica = () =>
+  `S${Date.now().toString(36).slice(-6)}${(seq++).toString(36)}`.toUpperCase();
 
 describe("combustible: endurecimiento de auditoría y cierre (migración 0077)", () => {
   let tenantId: string;
