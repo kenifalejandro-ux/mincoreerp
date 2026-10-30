@@ -524,6 +524,32 @@ const LATERAL_DIFERENCIA_RECEPCION = `
 // la de ruta no tiene vale y queda afuera.
 const SOLO_TALONARIO_REAL = `(producto <> 'combustible' OR origen IN ('tanque_propio', 'excedente_recepcion') OR (origen = 'tanqueta' AND tanqueta_lugar = 'planta'))`;
 
+/** Los números del talonario de combustible de UNA serie, venga de donde venga
+ *  el papel: un despacho, la línea de un reparto de excedente a tanqueta (0140) o
+ *  una asignación de tanqueta a unidad (0141). El control de huecos mira las tres
+ *  juntas: si solo mirara los despachos, el vale 101 de una asignación entre el
+ *  100 y el 102 de dos despachos saldría como hueco que no es.
+ *
+ *  Usa $1 = tenant, $2 = producto y $3 = serie, igual que las consultas que la
+ *  incluyen. `fuente` + `id` identifican la fila (los ids de las tres tablas no se
+ *  pueden comparar entre sí). Una línea de recepción anulada cuenta igual que un
+ *  despacho anulado: el papel existió. La urea no tiene líneas ni asignaciones. */
+const VALES_DEL_TALONARIO = `(
+  SELECT 'despacho' AS fuente, d.id, d.n_vale
+    FROM combustible_despachos d
+   WHERE d.tenant_id = $1 AND d.producto = $2 AND d.serie_talonario = $3
+     AND ${SOLO_TALONARIO_REAL}
+  UNION ALL
+  SELECT 'excedente', x.id, x.n_vale
+    FROM combustible_recepcion_excedentes x
+   WHERE x.tenant_id = $1 AND $2 = 'combustible' AND x.serie_talonario = $3
+     AND x.n_vale IS NOT NULL
+  UNION ALL
+  SELECT 'asignacion', a.id, a.n_vale
+    FROM combustible_tanqueta_asignaciones a
+   WHERE a.tenant_id = $1 AND $2 = 'combustible' AND a.serie_talonario = $3
+) AS vales`;
+
 export class CombustibleRepository {
   async findAll(client: PoolClient, tenantId: string, alcance?: AlcanceCombustible) {
     // Solo los tanques que el usuario ve (0100): su grifo o un surtidor suyo.
@@ -2237,9 +2263,7 @@ export class CombustibleRepository {
     serieTalonario: string
   ) {
     const limites = await client.query<{ minimo: number | null; maximo: number | null }>(
-      `SELECT MIN(n_vale) AS minimo, MAX(n_vale) AS maximo
-       FROM combustible_despachos WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3
-         AND ${SOLO_TALONARIO_REAL}`,
+      `SELECT MIN(n_vale) AS minimo, MAX(n_vale) AS maximo FROM ${VALES_DEL_TALONARIO}`,
       [tenantId, producto, serieTalonario]
     );
     const { minimo, maximo } = limites.rows[0];
@@ -2252,9 +2276,7 @@ export class CombustibleRepository {
       SELECT gs AS n_vale
       FROM generate_series($4::int, $5::int) AS gs
       WHERE NOT EXISTS (
-        SELECT 1 FROM combustible_despachos d
-        WHERE d.tenant_id = $1 AND d.producto = $2 AND d.serie_talonario = $3 AND d.n_vale = gs
-          AND ${SOLO_TALONARIO_REAL}
+        SELECT 1 FROM ${VALES_DEL_TALONARIO} WHERE vales.n_vale = gs
       )
       ORDER BY gs
       `,
@@ -2290,9 +2312,8 @@ export class CombustibleRepository {
   ): Promise<number[]> {
     const result = await client.query<{ max_anterior: number | null }>(
       `SELECT MAX(n_vale) AS max_anterior
-       FROM combustible_despachos
-       WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3 AND id <> $4
-         AND ${SOLO_TALONARIO_REAL}`,
+       FROM ${VALES_DEL_TALONARIO}
+       WHERE NOT (fuente = 'despacho' AND id = $4)`,
       [tenantId, producto, serieTalonario, despachoId]
     );
     const maxAnterior = result.rows[0]?.max_anterior;
@@ -2321,9 +2342,7 @@ export class CombustibleRepository {
     serieTalonario: string
   ): Promise<number | null> {
     const r = await client.query<{ maximo: number | null }>(
-      `SELECT MAX(n_vale) AS maximo FROM combustible_despachos
-        WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3
-          AND ${SOLO_TALONARIO_REAL}`,
+      `SELECT MAX(n_vale) AS maximo FROM ${VALES_DEL_TALONARIO}`,
       [tenantId, producto, serieTalonario]
     );
     return r.rows[0]?.maximo ?? null;
@@ -2348,9 +2367,8 @@ export class CombustibleRepository {
   ): Promise<number | null> {
     const result = await client.query<{ max_anterior: number | null }>(
       `SELECT MAX(n_vale) AS max_anterior
-       FROM combustible_despachos
-       WHERE tenant_id = $1 AND producto = $2 AND serie_talonario = $3 AND id <> $4
-         AND ${SOLO_TALONARIO_REAL}`,
+       FROM ${VALES_DEL_TALONARIO}
+       WHERE NOT (fuente = 'despacho' AND id = $4)`,
       [tenantId, producto, serieTalonario, despachoId]
     );
     const maxAnterior = result.rows[0]?.max_anterior;
