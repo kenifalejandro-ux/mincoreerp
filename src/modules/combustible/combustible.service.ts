@@ -1141,6 +1141,16 @@ export class CombustibleService {
           }
         }
 
+        // La unidad es de ESTA empresa. La FK de la tabla no lo impide (apunta a
+        // equipos(id) sin tenant): sin esto, un vale podía guardarse apuntando a la
+        // unidad de otra empresa.
+        if (
+          data.equipo_id !== undefined &&
+          !(await EquiposRepository.findTipoMedidor(client, tenantId, data.equipo_id))
+        ) {
+          throw new Error(`equipo_id ${data.equipo_id} no existe en este tenant`);
+        }
+
         await this.validarFormaDespacho(client, tenantId, data);
 
         // El excedente de cisterna (0112): la línea pendiente manda la unidad,
@@ -2472,6 +2482,11 @@ export class CombustibleService {
       // lo saca de la alerta de "sin medir" -- y siguió sacándole 5.000 L sin
       // una queja. "Desactivado" tiene que significar algo.
       const tanque = await this.repository.findById(client, tenantId, data.combustible_id!);
+      // Un tanque que no es de esta empresa (o no existe) se rechaza acá: antes
+      // pasaba de largo y el vale fallaba más adelante con un 500.
+      if (!tanque) {
+        throw new Error(`combustible_id ${data.combustible_id} no existe en este tenant`);
+      }
 
       // El totalizador (0094) ahora es del SURTIDOR (0098): lo valida
       // resolverSurtidorDelVale, que sabe de qué surtidor salió el vale.

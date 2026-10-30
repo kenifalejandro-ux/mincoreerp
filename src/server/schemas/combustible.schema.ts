@@ -375,24 +375,24 @@ export const crearDespachoCombustibleSchema = z
 
     origen: z.enum(ORIGENES_DESPACHO),
     // Solo excedente_recepcion (0112): la línea del reparto que regulariza.
-    excedente_linea_id: z.number().int().positive().optional(),
+    excedente_linea_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     // 0114: a qué tanqueta va un vale del tanque a "reserva_cubeta", y de qué
     // tanqueta sale una carga en ruta (origen 'tanqueta').
-    tanqueta_destino_id: z.number().int().positive().optional(),
+    tanqueta_destino_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     // 0139: la unidad a la que va esa tanqueta; el vale la asigna al llenarla.
     tanqueta_equipo_id: z.number().int().positive().max(2147483647).optional(),
-    tanqueta_origen_id: z.number().int().positive().optional(),
+    tanqueta_origen_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     // 0115: dónde se cargó desde la tanqueta. 'ruta' (default): sin vale y con
     // medidor. 'planta': con vale, como el tanque.
     tanqueta_lugar: z.enum(["ruta", "planta"]).optional(),
     // Solo tanque_propio.
-    combustible_id: z.number().int().positive().optional(),
+    combustible_id: z.number().int().positive().max(2147483647).optional(),
     // compra_externa (combustible) Y urea -- FK al catálogo -- ver
     // migrations/0063: texto libre (0062) no alcanzaba para engancharle un
     // precio de forma confiable. Para urea el proveedor es "aparte"
     // (confirmado por el cliente), marcado con `abastece_urea` en vez de
     // `abastece_ruta`/`abastece_tanque`.
-    grifo_id: z.number().int().positive().optional(),
+    grifo_id: z.number().int().positive().max(2147483647).optional(),
 
     // Mismo enum que combustible.tipo_combustible (Fase A) -- se reusa a
     // propósito, ver hallazgo 2 de la memoria de columnas reales. Solo
@@ -402,7 +402,7 @@ export const crearDespachoCombustibleSchema = z
 
     tipo_destino: z.enum(TIPOS_DESTINO_DESPACHO),
     // Solo cuando tipo_destino = 'equipo'.
-    equipo_id: z.number().int().positive().optional(),
+    equipo_id: z.number().int().positive().max(2147483647).optional(),
 
     // El talonario -- reinicia por serie/mes, ver hallazgo 6. Desde 0092
     // el espacio de nombres es (serie_talonario, producto): el cliente
@@ -447,7 +447,7 @@ export const crearDespachoCombustibleSchema = z
 
     // Solo tanque_propio (0098): de qué surtidor salió. Opcional: con un solo
     // surtidor en el tanque lo asigna la base.
-    surtidor_id: z.number().int().positive().optional(),
+    surtidor_id: z.number().int().positive().max(2147483647).optional(),
 
     // Solo compra_externa -- exactamente uno de los dos, según
     // equipos.tipo_medidor (hallazgo 9). horas_abastecidas siempre junto.
@@ -1196,7 +1196,7 @@ export const crearCompraRutaSchema = z
     // Lo genera el dispositivo UNA vez por compra. De él se derivan los uuids
     // de los dos despachos (combustible_despachos tiene UNIQUE sobre el suyo).
     cliente_uuid: z.string().uuid(),
-    grifo_id: z.number().int().positive(),
+    grifo_id: z.number().int().positive().max(2147483647),
     comprobante_tipo: z.enum(TIPOS_COMPROBANTE_COMPRA),
     comprobante_numero: z
       .string()

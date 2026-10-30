@@ -5322,13 +5322,23 @@ export class CombustibleRepository {
                d.id::text,
                CASE WHEN d.serie_talonario IS NULL THEN NULL
                     ELSE CONCAT(d.serie_talonario, '-', LPAD(d.n_vale::text, 5, '0')) END,
-               COALESCE(e.placa_codigo, d.tipo_destino),
+               -- A dónde fue: la tanqueta con su código, la unidad con su conductor, o el
+               -- consumo en planta; el texto interno solo queda para lo que no encaja.
+               CASE
+                 WHEN tq.codigo IS NOT NULL THEN 'A tanqueta ' || tq.codigo
+                 WHEN e.placa_codigo IS NOT NULL THEN
+                   e.placa_codigo || COALESCE(' · conductor ' || NULLIF(d.conductor_nombre, ''), '')
+                 WHEN d.tipo_destino = 'planta' THEN 'Consumo en planta'
+                 ELSE d.tipo_destino
+               END,
                0::numeric, d.cantidad,
                NULL::numeric,
                d.usuario_id, d.anulada_en, d.motivo_anulacion,
                d.totalizador_lectura, NULL::text
           FROM combustible_despachos d
           LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1
+          LEFT JOIN combustible_tanquetas tq
+            ON tq.id = d.tanqueta_destino_id AND tq.tenant_id = $1
          WHERE d.tenant_id = $1 AND d.combustible_id = $2
            AND d.despachado_en >= $3::timestamptz AND d.despachado_en <= $4::timestamptz
 
