@@ -36,10 +36,10 @@ import {
   obtenerDescarga,
 } from "../../server/services/documentStorage";
 import type { DriverDocumento } from "../../server/services/documentStorage";
-import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { esViolacionForeignKey } from "../../server/shared/utils/pgError";
 import { CombustibleRepository } from "./combustible.repository";
+import { huellaDeRegistro, idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { MAX_SALTO_TALONARIO, mensajeDeSalto } from "./valesDeTalonario";
 import type { AlertaNueva, FiltrosAlertas, PeriodoHistorial } from "./combustible.repository";
 import { EquiposRepository } from "../equipos/equipos.repository";
@@ -789,6 +789,10 @@ export class CombustibleService {
       tenantId,
       modulo: "combustible",
       clienteUuid: data.cliente_uuid,
+      huella: huellaDeRegistro("lectura", {
+        combustible_id: data.combustible_id,
+        nivel: data.nivel,
+      }),
       insertar: async () => {
         // La varilla es del grifo entero (0100). Fuera del alcance, igual que
         // un tanque que no existe.
@@ -1056,6 +1060,22 @@ export class CombustibleService {
       tenantId,
       modulo: "combustible",
       clienteUuid: data.cliente_uuid,
+      huella: huellaDeRegistro("despacho", {
+        producto: data.producto,
+        origen: data.origen,
+        combustible_id: data.combustible_id,
+        equipo_id: data.equipo_id,
+        grifo_id: data.grifo_id,
+        tanqueta_destino_id: data.tanqueta_destino_id,
+        tanqueta_origen_id: data.tanqueta_origen_id,
+        excedente_linea_id: data.excedente_linea_id,
+        serie_talonario: data.serie_talonario,
+        n_vale: data.n_vale,
+        cantidad: data.cantidad,
+        lineas: data.lineas,
+        comprobante_tipo: data.comprobante_tipo,
+        comprobante_numero: data.comprobante_numero,
+      }),
       insertar: async () => {
         // El alcance (0100) ANTES que cualquier otra validación: los mensajes
         // de las siguientes nombran el tanque, y un tanque fuera del alcance
@@ -1368,6 +1388,22 @@ export class CombustibleService {
       tenantId,
       modulo: "combustible",
       clienteUuid: data.cliente_uuid,
+      huella: huellaDeRegistro("compra_ruta", {
+        grifo_id: data.grifo_id,
+        comprobante_tipo: data.comprobante_tipo,
+        comprobante_numero: data.comprobante_numero,
+        equipo_id: data.equipo_id,
+        // Lo que dice la boleta: el mismo código con otras cantidades es otro registro.
+        total_boleta: data.total_boleta,
+        combustible: data.combustible
+          ? {
+              tipo_combustible: data.combustible.tipo_combustible,
+              cantidad: data.combustible.cantidad,
+              costo_unitario: data.combustible.costo_unitario,
+            }
+          : null,
+        urea: data.urea?.lineas ?? null,
+      }),
       insertar: async () => {
         const despachadoEn = data.despachado_en ?? new Date().toISOString();
 
@@ -5474,6 +5510,10 @@ export class CombustibleService {
       tenantId,
       modulo: "combustible",
       clienteUuid: data.cliente_uuid,
+      huella: huellaDeRegistro("conteo_urea", {
+        lineas: data.lineas,
+        suelto_litros: data.suelto_litros,
+      }),
       insertar: async () => {
         // Un renglón por presentación: lo contado es la SUMA de todos.
         let cantidadLitros = 0;
@@ -7693,6 +7733,15 @@ export class CombustibleService {
       tenantId,
       modulo: "combustible",
       clienteUuid: data.cliente_uuid,
+      huella: huellaDeRegistro("recepcion", {
+        producto: data.producto,
+        combustible_id: data.combustible_id,
+        grifo_id: data.grifo_id,
+        cantidad: data.cantidad,
+        lineas: data.lineas,
+        tipo_documento: data.tipo_documento,
+        numero_documento: data.numero_documento,
+      }),
       insertar: async () => {
         const recibidoEn = data.recibido_en ?? new Date().toISOString();
         const esUrea = data.producto === "urea";

@@ -1,0 +1,21 @@
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Migración: la clave de idempotencia recuerda QUÉ registró (huella)
+--
+-- `idempotency_keys` (0044) guarda "este cliente_uuid ya se usó" y la fila que
+-- creó, pero no qué se registró. Si el mismo código llegaba para OTRO registro
+-- (un código repetido por un error del cliente, o el de una lectura usado en un
+-- despacho), el servidor lo tomaba por un reintento: respondía "ya se había
+-- registrado" y el registro nuevo se perdía sin avisar.
+--
+-- La huella es un texto corto que identifica el registro (tipo + hash de sus
+-- campos de identidad). Al reintentar, si el código ya existe con OTRA huella, el
+-- servidor responde 409 en vez de dar por hecho que es el mismo.
+--
+-- Nullable a propósito: las claves anteriores no tienen huella y no se comparan
+-- (un reintento de lo ya guardado sigue funcionando igual), y los módulos que no
+-- pasan huella siguen igual. Solo combustible la usa por ahora.
+--
+-- Para deshacer: ALTER TABLE idempotency_keys DROP COLUMN huella;
+-- ═══════════════════════════════════════════════════════════════════════════
+
+ALTER TABLE idempotency_keys ADD COLUMN IF NOT EXISTS huella TEXT;
