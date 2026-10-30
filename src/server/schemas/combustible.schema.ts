@@ -174,6 +174,24 @@ export type CargaMasivaTanquesCombustibleInput = z.infer<
 
 // ── Lecturas (ya existía) ───────────────────────────────────────────────
 
+/** La fecha en que ocurrió un hecho (un vale, una lectura, una recepción, un conteo): ni
+ *  en el futuro ni de hace más de un año. Hacia el futuro, el margen de una hora cubre el
+ *  reloj corrido del celular. Hacia el pasado, una fecha absurda (1900-01-01) ensucia el
+ *  kardex, los períodos y todos los reportes; el vale sin señal tarda horas o días en
+ *  llegar, no años. */
+const MARGEN_FUTURO_MS = 60 * 60 * 1000;
+const MAXIMO_PASADO_MS = 366 * 24 * 60 * 60 * 1000;
+const fechaDeUnHecho = (mensajeFuturo: string) =>
+  z
+    .string()
+    .datetime()
+    .refine((valor) => new Date(valor).getTime() <= Date.now() + MARGEN_FUTURO_MS, {
+      message: mensajeFuturo,
+    })
+    .refine((valor) => new Date(valor).getTime() >= Date.now() - MAXIMO_PASADO_MS, {
+      message: "La fecha no puede ser de hace más de un año",
+    });
+
 export const registrarLecturaCombustibleSchema = z.object({
   // Lo genera el dispositivo con crypto.randomUUID() al apretar "Registrar
   // lectura", online u offline (ver client/src/offline/). Opcional a
@@ -196,13 +214,7 @@ export const registrarLecturaCombustibleSchema = z.object({
   // Mismo margen de 1 hora que el despacho: los dispositivos de cancha vienen
   // con el reloj corrido y rechazar una medición real por dos minutos de
   // desfase es peor que el margen.
-  leido_en: z
-    .string()
-    .datetime()
-    .refine((v) => new Date(v).getTime() <= Date.now() + 60 * 60 * 1000, {
-      message: "La fecha de la lectura no puede estar en el futuro",
-    })
-    .optional(),
+  leido_en: fechaDeUnHecho("La fecha de la lectura no puede estar en el futuro").optional(),
   metadata: z.record(z.string(), z.unknown()).optional(),
   // El contador ACUMULATIVO del surtidor leído al medir (0096). Lo exige el
   // servicio si el tanque usa totalizador -- Zod no ve la fila del tanque.
@@ -497,13 +509,7 @@ export const crearDespachoCombustibleSchema = z
     // El margen de 1 hora no es capricho: los dispositivos de cancha vienen
     // con el reloj corrido, y rechazar un vale legítimo por dos minutos de
     // desfase dejaría a alguien sin poder registrar lo que sí hizo.
-    despachado_en: z
-      .string()
-      .datetime()
-      .refine((valor) => new Date(valor).getTime() <= Date.now() + 60 * 60 * 1000, {
-        message: "La fecha del despacho no puede estar en el futuro",
-      })
-      .optional(),
+    despachado_en: fechaDeUnHecho("La fecha del despacho no puede estar en el futuro").optional(),
 
     // Costos (migrations/0063). Obligatorio para COMBUSTIBLE -- Kenif lo
     // confirmó contra su planilla real, donde C.U está lleno en cada fila,
@@ -1206,13 +1212,7 @@ export const crearCompraRutaSchema = z
     equipo_id: z.number().int().positive(),
     // Mismo tope de futuro que el despacho (0077): el reloj del celular puede
     // estar corrido una hora, no un mes.
-    despachado_en: z
-      .string()
-      .datetime()
-      .refine((valor) => new Date(valor).getTime() <= Date.now() + 60 * 60 * 1000, {
-        message: "La fecha de la compra no puede estar en el futuro",
-      })
-      .optional(),
+    despachado_en: fechaDeUnHecho("La fecha de la compra no puede estar en el futuro").optional(),
     // Lo que dice el papel. Opcional: el grifo maneja su precio; sin él se
     // guarda la suma del sistema.
     total_boleta: z.number().nonnegative().max(1_000_000).optional(),
@@ -1736,13 +1736,7 @@ export const crearRecepcionCombustibleSchema = z
     // futura sale de todos los tramos hasta que llegue esa fecha y, peor,
     // deja el ciclo sin punto de arranque. El margen de 1 hora es el mismo de
     // despachado_en/leido_en: cubre el reloj desfasado del dispositivo.
-    recibido_en: z
-      .string()
-      .datetime()
-      .refine((valor) => new Date(valor).getTime() <= Date.now() + 60 * 60 * 1000, {
-        message: "La fecha de la recepción no puede ser futura",
-      })
-      .optional(),
+    recibido_en: fechaDeUnHecho("La fecha de la recepción no puede ser futura").optional(),
 
     // Migración 0110. Solo tiene sentido en el reintento: la primera vez que
     // una recepción no cabe en un tanque en modo 'flexible', la API responde
@@ -2081,13 +2075,7 @@ export const crearConteoUreaSchema = z
     // Cuándo se hizo el conteo físico -- mismo criterio que leido_en/
     // despachado_en/recibido_en: opcional, el service usa now() sin dato, y
     // no puede ser futuro (el margen de 1h cubre el reloj del dispositivo).
-    contado_en: z
-      .string()
-      .datetime()
-      .refine((valor) => new Date(valor).getTime() <= Date.now() + 60 * 60 * 1000, {
-        message: "La fecha del conteo no puede estar en el futuro",
-      })
-      .optional(),
+    contado_en: fechaDeUnHecho("La fecha del conteo no puede estar en el futuro").optional(),
     observaciones: z.string().trim().max(500).optional(),
     // 0132: la urea que no está en un envase entero -- una caja abierta, una
     // bolsa rota. Suma a lo contado en litros. Sin el campo, el que cuenta
@@ -2163,13 +2151,7 @@ export type CrearPuntoPrecintoInput = z.infer<typeof crearPuntoPrecintoSchema>;
 export const cambiarPrecintoSchema = z.object({
   numero: z.string().trim().min(1).max(40),
   motivo: z.string().trim().min(1, "El motivo del cambio es obligatorio").max(500),
-  colocado_en: z
-    .string()
-    .datetime()
-    .refine((v) => new Date(v).getTime() <= Date.now() + 60 * 60 * 1000, {
-      message: "La fecha del cambio no puede ser futura",
-    })
-    .optional(),
+  colocado_en: fechaDeUnHecho("La fecha del cambio no puede ser futura").optional(),
 });
 
 export type CambiarPrecintoInput = z.infer<typeof cambiarPrecintoSchema>;
