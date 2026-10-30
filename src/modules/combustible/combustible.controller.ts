@@ -5746,6 +5746,19 @@ export class CombustibleController {
     );
   }
 
+  /** GET /tanquetas/:id/cuadre -- el cuadre de cada salida a una unidad (solo lectura). */
+  async cuadreTanqueta(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.tanquetaId);
+    if (!Number.isSafeInteger(id) || id < 1 || !(await this.tanquetaVisible(req, id))) {
+      res.status(404).json({ error: "La tanqueta no existe" });
+      return;
+    }
+    res.json(
+      await withTenant(tenantId, (client) => tanquetas.cuadreDeTanqueta(client, tenantId, id))
+    );
+  }
+
   // ── Surtidores (migración 0098) ──────────────────────────────────────
   //
   // Los errores de negocio salen como AppError desde surtidores.service y

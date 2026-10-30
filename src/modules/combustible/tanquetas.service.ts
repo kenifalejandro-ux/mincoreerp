@@ -19,6 +19,7 @@ import { motivoGrifoNoAsignable } from "../../server/services/sedes.service";
 import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
 import { ALCANCE_TODO, type AlcanceCombustible } from "./alcance";
 import { CombustibleRepository } from "./combustible.repository";
+import { armarCuadre } from "./cuadreTanqueta";
 import { mensajeDeSalto } from "./valesDeTalonario";
 
 export const CAPACIDAD_TANQUETA_DEFECTO = 280;
@@ -929,6 +930,76 @@ export async function actualizarTanqueta(
  *  excedentes de recepción, previsión desde el tanque y cargas en ruta. Las
  *  cargas y la previsión traen el conductor que quedó estampado en el vale
  *  (0083): es lo que permite seguir el combustible hasta quien lo recibió. */
+/** El cuadre de cada salida de la tanqueta (ver cuadreTanqueta.ts). Solo lectura. */
+export async function cuadreDeTanqueta(client: PoolClient, tenantId: string, id: number) {
+  const t = await getTanqueta(client, tenantId, id);
+  if (!t) return null;
+  const salidas = await client.query(
+    `SELECT 'asignacion' AS fuente, a.creado_en AS inicio, e.placa_codigo AS placa,
+            a.serie_talonario AS serie, a.n_vale, a.cantidad
+       FROM combustible_tanqueta_asignaciones a
+       LEFT JOIN equipos e ON e.id = a.equipo_id AND e.tenant_id = a.tenant_id
+      WHERE a.tenant_id = $1 AND a.tanqueta_id = $2
+     UNION ALL
+     -- Llenar la tanqueta eligiendo la unidad lleva vale; sin unidad no (0161). La unidad no queda
+     -- en el despacho: se toma del retorno que cierra la salida o de la tanqueta si sigue abierta.
+     SELECT 'llenado', d.despachado_en, NULL, d.serie_talonario, d.n_vale, d.cantidad
+       FROM combustible_despachos d
+      WHERE d.tenant_id = $1 AND d.tanqueta_destino_id = $2
+        AND d.serie_talonario IS NOT NULL AND d.anulada_en IS NULL
+     UNION ALL
+     SELECT 'excedente', r.recibido_en, e.placa_codigo, x.serie_talonario, x.n_vale, x.cantidad
+       FROM combustible_recepcion_excedentes x
+       JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
+       LEFT JOIN equipos e ON e.id = x.tanqueta_equipo_id AND e.tenant_id = x.tenant_id
+      WHERE x.tenant_id = $1 AND x.tanqueta_id = $2 AND x.tanqueta_equipo_id IS NOT NULL
+        AND r.anulada_en IS NULL`,
+    [tenantId, id]
+  );
+  const retornos = await client.query(
+    `SELECT r.creado_en, e.placa_codigo AS placa, r.saldo_calculado, r.saldo_validado,
+            r.diferencia, r.motivo, r.destino
+       FROM combustible_tanqueta_retornos r
+       LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id
+      WHERE r.tenant_id = $1 AND r.tanqueta_id = $2`,
+    [tenantId, id]
+  );
+  const cargas = await client.query(
+    `SELECT despachado_en, cantidad FROM combustible_despachos
+      WHERE tenant_id = $1 AND tanqueta_origen_id = $2 AND anulada_en IS NULL`,
+    [tenantId, id]
+  );
+  const unidad = t.asignada_vigente
+    ? ((
+        await client.query<{ placa_codigo: string }>(
+          `SELECT placa_codigo FROM equipos WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, t.equipo_asignado_id]
+        )
+      ).rows[0]?.placa_codigo ?? null)
+    : null;
+  return armarCuadre(
+    salidas.rows.map((f) => ({
+      fuente: f.fuente,
+      inicio: new Date(f.inicio),
+      placa: f.placa,
+      serie: f.serie,
+      nVale: Number(f.n_vale),
+      cantidad: f.cantidad === null ? null : Number(f.cantidad),
+    })),
+    retornos.rows.map((f) => ({
+      creadoEn: new Date(f.creado_en),
+      placa: f.placa,
+      calculado: Number(f.saldo_calculado),
+      validado: Number(f.saldo_validado),
+      diferencia: Number(f.diferencia),
+      motivo: f.motivo,
+      destino: f.destino,
+    })),
+    cargas.rows.map((f) => ({ en: new Date(f.despachado_en), cantidad: Number(f.cantidad) })),
+    { saldo: Number(t.saldo), unidad }
+  );
+}
+
 export async function historialTanqueta(client: PoolClient, tenantId: string, id: number) {
   const r = await client.query(
     `SELECT * FROM (
