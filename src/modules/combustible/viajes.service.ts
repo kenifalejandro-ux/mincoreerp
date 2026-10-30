@@ -16,6 +16,7 @@ import { agregarAmbitoVales, type AmbitoVales } from "./alcance";
 import { detencionDe } from "./motivosDetencion";
 import { repartirPorTramo } from "./viajesTramos";
 import { LITROS_POR_GALON, esGalonSql, litrosSql } from "../../server/shared/utils/unidades";
+import { MAXIMO_PASADO_MS } from "../../server/schemas/combustible.schema";
 
 export type Producto = "combustible" | "urea";
 
@@ -1818,6 +1819,16 @@ export async function editarViaje(
   const equipo = def(data.equipo_id, Number(v.equipo_id));
   const inicio = def(data.inicio_en, iso(v.inicio_en));
   const fin = def(data.fin_en, iso(v.fin_en));
+  // Una hora no puede irse a más de un año atrás. Solo se mira lo que CAMBIA: el formulario
+  // reenvía las fechas guardadas del viaje, y un viaje viejo se tiene que poder corregir sin tocarlas.
+  for (const [nuevo, actual] of [
+    [data.inicio_en, v.inicio_en],
+    [data.fin_en, v.fin_en],
+  ] as const) {
+    if (nuevo && iso(nuevo) !== iso(actual) && Date.parse(nuevo) < Date.now() - MAXIMO_PASADO_MS) {
+      throw new AppError(400, "La fecha no puede ser de hace más de un año");
+    }
+  }
   const origen = def(data.origen_id, Number(v.origen_id));
   const destino = def(data.destino_id, Number(v.destino_id));
   const medIni = def(

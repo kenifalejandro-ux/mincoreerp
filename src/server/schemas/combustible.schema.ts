@@ -180,7 +180,7 @@ export type CargaMasivaTanquesCombustibleInput = z.infer<
  *  kardex, los períodos y todos los reportes; el vale sin señal tarda horas o días en
  *  llegar, no años. */
 const MARGEN_FUTURO_MS = 60 * 60 * 1000;
-const MAXIMO_PASADO_MS = 366 * 24 * 60 * 60 * 1000;
+export const MAXIMO_PASADO_MS = 366 * 24 * 60 * 60 * 1000;
 const fechaDeUnHecho = (mensajeFuturo: string) =>
   z
     .string()
@@ -2291,6 +2291,13 @@ export type RetornoTanquetaInput = z.infer<typeof retornoTanquetaSchema>;
 
 // ── Viajes (0123) ──────────────────────────────────────────────────────────
 const fechaHora = z.string().datetime({ offset: true });
+/** Una hora que escribe la oficina o una carga retroactiva (no la marca del celular, que el
+ *  servicio acota a 7 días): no puede ser de hace más de un año. El futuro lo valida cada
+ *  servicio con su propio mensaje. */
+const fechaHoraNoMuyAntigua = fechaHora.refine(
+  (valor) => new Date(valor).getTime() >= Date.now() - MAXIMO_PASADO_MS,
+  { message: "La fecha no puede ser de hace más de un año" }
+);
 const medidor = z.number().min(0).max(99999999).nullable().optional();
 const motivo = z.string().trim().min(3).max(500);
 
@@ -2358,8 +2365,8 @@ export const crearViajeSchema = z
       .optional(),
     // Sin salida el viaje queda PROGRAMADO: la hora la pone el servidor cuando
     // alguien lo inicia. Con salida es un registro retroactivo (viaje ya hecho).
-    inicio_en: fechaHora.optional(),
-    fin_en: fechaHora.nullable().optional(),
+    inicio_en: fechaHoraNoMuyAntigua.optional(),
+    fin_en: fechaHoraNoMuyAntigua.nullable().optional(),
     medidor_inicio: medidor,
     medidor_fin: medidor,
     // Cuándo debería salir (opcional) y cuántos minutos de diferencia se aceptan: con ellas se
@@ -2418,7 +2425,7 @@ const MENSAJE_MOTIVO_HORA = {
 export const iniciarViajeSchema = z
   .object({
     medidor_inicio: medidor,
-    inicio_en: fechaHora.optional(),
+    inicio_en: fechaHoraNoMuyAntigua.optional(),
     motivo: motivo.optional(),
     // El conductor salió con la ruta o la unidad mal cargada y avisó a la oficina.
     ruta_por_confirmar: z.boolean().optional(),
@@ -2429,7 +2436,7 @@ export type IniciarViajeInput = z.infer<typeof iniciarViajeSchema>;
 
 export const cerrarViajeSchema = z
   .object({
-    fin_en: fechaHora.optional(),
+    fin_en: fechaHoraNoMuyAntigua.optional(),
     motivo: motivo.optional(),
     medidor_fin: medidor,
   })
@@ -2522,7 +2529,7 @@ export const llegadaViajeSchema = z
   .object({
     medidor,
     orden: ordenParada,
-    llegada_en: fechaHora.optional(),
+    llegada_en: fechaHoraNoMuyAntigua.optional(),
     motivo: motivo.optional(),
   })
   .refine((v) => conMotivoSiHoraManual(v, v.llegada_en), MENSAJE_MOTIVO_HORA);
@@ -2532,7 +2539,7 @@ export const salidaViajeSchema = z
   .object({
     medidor,
     orden: ordenParada,
-    salida_en: fechaHora.optional(),
+    salida_en: fechaHoraNoMuyAntigua.optional(),
     motivo: motivo.optional(),
   })
   .refine((v) => conMotivoSiHoraManual(v, v.salida_en), MENSAJE_MOTIVO_HORA);
@@ -2558,7 +2565,7 @@ export type TerminarDescansoMioInput = z.infer<typeof terminarDescansoMioSchema>
 
 export const descansoViajeSchema = z.object({
   motivo: motivoDescanso.min(3),
-  inicio_en: fechaHora.optional(),
+  inicio_en: fechaHoraNoMuyAntigua.optional(),
 });
 export type DescansoViajeInput = z.infer<typeof descansoViajeSchema>;
 
@@ -2566,7 +2573,7 @@ export type DescansoViajeInput = z.infer<typeof descansoViajeSchema>;
 // relevo que no maneja, por ejemplo) y entonces el motivo es obligatorio.
 export const terminarDescansoViajeSchema = z
   .object({
-    fin_en: fechaHora.optional(),
+    fin_en: fechaHoraNoMuyAntigua.optional(),
     motivo: motivo.optional(),
     descanso_id: z.number().int().positive().optional(),
   })
@@ -2590,7 +2597,7 @@ export type EntregaMandoInput = z.infer<typeof entregaMandoSchema>;
 // La oficina corrige un cambio de mando que nadie marcó: parte el turno de esa hora.
 export const corregirMandoSchema = z.object({
   a_dni: z.string().trim().min(1).max(15),
-  cambio_en: fechaHora,
+  cambio_en: fechaHoraNoMuyAntigua,
   medidor,
   lugar: z.string().trim().max(160).nullable().optional(),
   motivo,
@@ -2602,7 +2609,7 @@ export type CorregirMandoInput = z.infer<typeof corregirMandoSchema>;
 export const corregirMarcaDeParadaSchema = z
   .object({
     que: z.enum(["llegada", "salida"]),
-    hora: fechaHora.optional(),
+    hora: fechaHoraNoMuyAntigua.optional(),
     medidor: z.number().min(0).max(99999999).optional(),
     motivo,
   })
