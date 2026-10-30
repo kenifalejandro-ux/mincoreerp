@@ -1865,6 +1865,11 @@ export class CombustibleController {
         res.status(400).json({ error: err.message });
         return;
       }
+      // Un código de la cola reusado para otro registro (409 de idempotentInsert).
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
+      }
       res.status(500).json({ error: "Error al registrar lectura de combustible" });
     }
   }

@@ -32,7 +32,25 @@
  * estado que solo existe DENTRO de esta transacción — ninguna otra sesión
  * lo ve, y si el proceso muere en el medio se revierte todo junto.
  */
+import { createHash } from "node:crypto";
+
 import type { PoolClient } from "pg";
+
+import { AppError } from "../middlewares/error.middleware";
+
+/** Un texto corto que identifica QUÉ registra una petición: el tipo y un hash de los
+ *  campos que lo distinguen. Mismo registro => misma huella (el reintento de la
+ *  cola manda el mismo cuerpo); otro registro con el mismo cliente_uuid => huella
+ *  distinta. Pasar solo campos de identidad: ni los que el servidor completa ni la HORA
+ *  (un reintento a mano recalcula la hora del formulario y no por eso es otro registro). */
+export function huellaDeRegistro(tipo: string, campos: Record<string, unknown>): string {
+  const ordenado = JSON.stringify(
+    Object.keys(campos)
+      .sort()
+      .map((k) => [k, campos[k] ?? null])
+  );
+  return `${tipo}:${createHash("sha256").update(ordenado).digest("hex").slice(0, 16)}`;
+}
 
 export interface ResultadoIdempotente<T> {
   /** La fila creada, o la que ya existía si esto fue un reintento.
@@ -62,6 +80,11 @@ export interface OpcionesIdempotentes<T> {
   /** Crea la fila de negocio. Devuelve su id (para guardarlo en la clave)
    *  y la fila entera (para responderle al cliente). */
   insertar: () => Promise<{ id: number; fila: T }>;
+  /** Qué registra esta petición (ver huellaDeRegistro). Si el cliente_uuid ya existe con
+   *  otra huella, es un código reusado para otra cosa: 409 en vez de devolver el registro
+   *  ajeno como si fuera un reintento. Sin huella, o con la clave vieja sin huella, no se
+   *  compara. */
+  huella?: string;
   /** Recupera una fila ya creada, para responder igual que la primera vez
    *  ante un reintento. Devuelve null si esa fila ya no existe. */
   recuperar: (filaId: number) => Promise<T | null>;
@@ -72,6 +95,7 @@ export async function idempotentInsert<T>({
   tenantId,
   modulo,
   clienteUuid,
+  huella,
   insertar,
   recuperar,
 }: OpcionesIdempotentes<T>): Promise<ResultadoIdempotente<T>> {
@@ -83,18 +107,26 @@ export async function idempotentInsert<T>({
   // ON CONFLICT DO NOTHING sobre la PK (tenant_id, modulo, cliente_uuid).
   // rowCount 0 = la clave ya existía ⇒ esto es un reintento.
   const reserva = await client.query(
-    `INSERT INTO idempotency_keys (tenant_id, modulo, cliente_uuid)
-     VALUES ($1, $2, $3)
+    `INSERT INTO idempotency_keys (tenant_id, modulo, cliente_uuid, huella)
+     VALUES ($1, $2, $3, $4)
      ON CONFLICT (tenant_id, modulo, cliente_uuid) DO NOTHING`,
-    [tenantId, modulo, clienteUuid]
+    [tenantId, modulo, clienteUuid, huella ?? null]
   );
 
   if ((reserva.rowCount ?? 0) === 0) {
-    const existente = await client.query<{ fila_id: string | null }>(
-      `SELECT fila_id FROM idempotency_keys
+    const existente = await client.query<{ fila_id: string | null; huella: string | null }>(
+      `SELECT fila_id, huella FROM idempotency_keys
        WHERE tenant_id = $1 AND modulo = $2 AND cliente_uuid = $3`,
       [tenantId, modulo, clienteUuid]
     );
+    const guardada = existente.rows[0]?.huella;
+    if (huella && guardada && guardada !== huella) {
+      throw new AppError(
+        409,
+        "Este código ya se usó para otro registro distinto, así que este no se guardó. " +
+          "Si es un registro nuevo, vuelve a registrarlo."
+      );
+    }
     const filaId = existente.rows[0]?.fila_id;
     // fila_id NULL en una fila ya commiteada no debería poder existir (ver
     // el comentario del archivo), pero si aparece, NO crear nada es la
