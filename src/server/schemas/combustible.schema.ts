@@ -935,6 +935,14 @@ export const crearDespachoCombustibleSchema = z
           path: [data.serie_talonario === undefined ? "serie_talonario" : "n_vale"],
           message: "serie_talonario y n_vale van juntos: los dos o ninguno",
         });
+      } else if (data.serie_talonario === undefined && data.cliente_uuid === undefined) {
+        // Sin vale, el reenvío ya no lo frena un número repetido: lo frena el uuid.
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["cliente_uuid"],
+          message:
+            "un traspaso sin vale necesita cliente_uuid: evita que un reenvío se descuente dos veces",
+        });
       }
       for (const [campo, valor] of [
         ["comprobante_tipo", data.comprobante_tipo],
