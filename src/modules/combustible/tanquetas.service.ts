@@ -19,6 +19,7 @@ import { motivoGrifoNoAsignable } from "../../server/services/sedes.service";
 import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
 import { ALCANCE_TODO, type AlcanceCombustible } from "./alcance";
 import { CombustibleRepository } from "./combustible.repository";
+import { mensajeDeSalto } from "./valesDeTalonario";
 
 export const CAPACIDAD_TANQUETA_DEFECTO = 280;
 
@@ -292,6 +293,8 @@ export async function asignarTanqueta(
         `El vale ${vale.numero} de la serie ${vale.serie} ya está registrado: usa el siguiente número libre del talonario`
       );
     }
+    const salto = await mensajeDeSalto(client, tenantId, vale.serie, [vale.numero]);
+    if (salto) throw new AppError(400, salto);
     await client.query(
       `INSERT INTO combustible_tanqueta_asignaciones
          (tenant_id, tanqueta_id, equipo_id, serie_talonario, n_vale, usuario_id, cantidad)

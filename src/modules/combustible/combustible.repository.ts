@@ -2348,6 +2348,23 @@ export class CombustibleRepository {
     return r.rows[0]?.maximo ?? null;
   }
 
+  /** El mayor número de la serie sin contar estos: para revisar varios vales
+   *  guardados en la misma operación sin que se vean unos a otros. */
+  async findMaxNValeDeSerieSalvo(
+    client: PoolClient,
+    tenantId: string,
+    producto: string,
+    serieTalonario: string,
+    excluir: number[]
+  ): Promise<number | null> {
+    const r = await client.query<{ maximo: number | null }>(
+      `SELECT MAX(n_vale) AS maximo FROM ${VALES_DEL_TALONARIO}
+        WHERE n_vale <> ALL($4::int[])`,
+      [tenantId, producto, serieTalonario, excluir]
+    );
+    return r.rows[0]?.maximo ?? null;
+  }
+
   /** ¿Este vale entró por DEBAJO del máximo de su serie? (migración 0077)
    *
    *  Complemento de `detectarHuecosRevelados`, que solo mira hacia adelante.

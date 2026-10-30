@@ -119,6 +119,7 @@ import { ESTADOS_ALERTAS } from "./combustible.repository";
 import type { EstadoAlertas, FiltrosAlertas } from "./combustible.repository";
 import * as surtidores from "./surtidores.service";
 import * as tanquetas from "./tanquetas.service";
+import { revisarValesDeTalonario } from "./valesDeTalonario";
 import * as viajes from "./viajes.service";
 import { alcanceDe, ambitoDe, grifoDeAlertas, grifosDelFiltro } from "./alcance";
 
@@ -2435,6 +2436,91 @@ export class CombustibleController {
         return;
       }
       res.status(500).json({ error: "Error al anular el despacho" });
+    }
+  }
+
+  /** Lo mismo que hace un despacho con el talonario (hueco revelado, vale fuera de
+   *  orden, hueco llenado a destiempo), para los vales que NO son un despacho: el
+   *  de una asignación de tanqueta (0141) y el de las líneas de un reparto de
+   *  excedente (0140). Mismo tipo de alertas y mismos correos; sin despacho al que
+   *  anclarlas, van ancladas a la serie y el número. Best-effort: nunca lanza. */
+  private async procesarAlertasValesDeTanqueta(
+    tenantId: string,
+    vales: { serie: string; n: number }[]
+  ) {
+    try {
+      const porSerie = new Map<string, number[]>();
+      for (const v of vales) porSerie.set(v.serie, [...(porSerie.get(v.serie) ?? []), v.n]);
+      for (const [serie, numeros] of porSerie) {
+        const { revision, admins } = await withTenant(tenantId, async (client) => {
+          const revision = await revisarValesDeTalonario(client, tenantId, serie, numeros);
+          const nuevas = [
+            ...revision.huecos.map((h) => ({
+              tipo: "hueco_detectado" as const,
+              serieTalonario: serie,
+              nVale: h.n,
+              detalle: { revelado_por_vale: h.reveladoPor } as Record<string, unknown>,
+            })),
+            ...revision.fueraDeOrden.map((f) => ({
+              tipo: "vale_fuera_de_orden" as const,
+              serieTalonario: serie,
+              nVale: f.n,
+              detalle: { maxAnteriorDeLaSerie: f.maximo } as Record<string, unknown>,
+            })),
+            ...revision.tardios.map((n) => ({
+              tipo: "despacho_tardio" as const,
+              serieTalonario: serie,
+              nVale: n,
+              detalle: {
+                nota: "El vale llegó después de que el hueco se congelara como anomalía",
+              } as Record<string, unknown>,
+            })),
+          ];
+          if (nuevas.length === 0) return { revision, admins: [] };
+          const creadas = await service.crearAlertas(client, tenantId, nuevas);
+          return {
+            revision,
+            admins: await service.findDestinatariosAlertasCombustible(
+              client,
+              tenantId,
+              grifoDeAlertas(creadas)
+            ),
+          };
+        });
+
+        const reveladores = [...new Set(revision.huecos.map((h) => h.reveladoPor))];
+        for (const revelador of reveladores) {
+          const faltantes = revision.huecos.filter((h) => h.reveladoPor === revelador);
+          await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+            tipo: "hueco_detectado",
+            serieTalonario: serie,
+            valesFaltantes: faltantes.map((h) => h.n),
+          });
+          await enviarCorreoAlertaHueco(admins, {
+            serieTalonario: serie,
+            valesFaltantes: faltantes.map((h) => h.n),
+            nValeQueLoRevelo: revelador,
+          });
+        }
+        for (const f of revision.fueraDeOrden) {
+          const papel = { serieTalonario: serie, nVale: f.n };
+          await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+            tipo: "vale_fuera_de_orden",
+            ...papel,
+          });
+          await enviarCorreoValeFueraDeOrden(admins, { ...papel, maxAnteriorDeLaSerie: f.maximo });
+        }
+        for (const n of revision.tardios) {
+          const papel = { serieTalonario: serie, nVale: n };
+          await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+            tipo: "despacho_tardio",
+            ...papel,
+          });
+          await enviarCorreoDespachoTardio(admins, papel);
+        }
+      }
+    } catch (err) {
+      logger.error({ err, tenantId }, "No se pudo revisar el talonario de los vales de tanqueta");
     }
   }
 
@@ -5523,6 +5609,7 @@ export class CombustibleController {
       contexto: contextoAuditoriaModulo(req),
     });
     await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
+    await this.procesarAlertasValesDeTanqueta(tenantId, [{ serie: serie_talonario, n: n_vale }]);
     res.json(despues);
   }
 
@@ -5614,6 +5701,12 @@ export class CombustibleController {
           }
         ).acumulado,
       });
+    }
+    // El saldo que pasa a otra unidad lleva el vale de esa salida (#321).
+    if (destino === "unidad") {
+      await this.procesarAlertasValesDeTanqueta(tenantId, [
+        { serie: serie_talonario!, n: n_vale! },
+      ]);
     }
     res.status(201).json(despues);
   }
@@ -6558,6 +6651,15 @@ export class CombustibleController {
           data.combustible_id!,
           Number(fila!.id),
           excedenteAceptado
+        );
+        // Las líneas que mandan una tanqueta a una unidad llevan su vale (0140).
+        await this.procesarAlertasValesDeTanqueta(
+          tenantId,
+          (data.reparto_excedente ?? []).flatMap((l) =>
+            l.tanqueta_equipo_id !== undefined && l.serie_talonario && l.n_vale
+              ? [{ serie: l.serie_talonario, n: l.n_vale }]
+              : []
+          )
         );
       }
       // Una entrada de urea sube el stock: es el único momento en que puede

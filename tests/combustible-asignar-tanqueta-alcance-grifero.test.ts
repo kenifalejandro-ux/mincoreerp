@@ -180,7 +180,7 @@ describe("combustible: el grifero asigna tanquetas, solo a unidades de su sede",
     const r = await recibirTanqueta(admin, t.id, {
       como: grifero.agente,
       destino: "unidad",
-      unidad: { equipo_id: ajena, serie_talonario: "GRF", n_vale: 9500 + nAsig++ },
+      unidad: { equipo_id: ajena, serie_talonario: "GRF", n_vale: 9000 + nAsig++ },
     });
     expect(r.status, JSON.stringify(r.body)).toBe(403);
     expect(await nRetornos(t.id)).toBe(0);
@@ -193,7 +193,7 @@ describe("combustible: el grifero asigna tanquetas, solo a unidades de su sede",
     const r = await recibirTanqueta(admin, t.id, {
       como: grifero.agente,
       destino: "unidad",
-      unidad: { equipo_id: propia, serie_talonario: "GRF", n_vale: 9600 + nAsig++ },
+      unidad: { equipo_id: propia, serie_talonario: "GRF", n_vale: 9000 + nAsig++ },
     });
     expect(r.status, JSON.stringify(r.body)).toBe(201);
     expect((await estado(t.id)).unidad).toBe(propia);
