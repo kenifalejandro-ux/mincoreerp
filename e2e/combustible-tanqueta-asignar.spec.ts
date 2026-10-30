@@ -285,3 +285,143 @@ test("tanqueta: llenarla sin unidad no pide vale (con unidad sí) y funciona sin
     })
     .toBe(100);
 });
+
+test("tanqueta: el historial muestra el cuadre de cada salida (cerrada y abierta)", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const marca = randomBytes(3).toString("hex").toUpperCase();
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  const grifoInternoId = await primerGrifoActivo(page);
+
+  const tanque = await page.request.post("/api/erp/combustible", {
+    data: {
+      codigo: `HMF-${marca}`,
+      tanque_nombre: `Huamachuco ${marca}`,
+      tipo_combustible: "diesel_b5",
+      unidad: "gal",
+      tipo_punto: "fijo",
+      capacidad_total: 10000,
+      nivel_actual: 8000,
+      requiere_documento: false,
+      grifo_interno_id: grifoInternoId,
+    },
+  });
+  expect(tanque.status()).toBe(201);
+  const tanqueId = (await tanque.json()).id as number;
+  const unidad = async (prefijo: string) => {
+    const placa = `${prefijo}-${marca}`;
+    const r = await page.request.post("/api/erp/equipos", {
+      data: {
+        placa_codigo: placa,
+        tipo: "VOLQUETE",
+        tipo_medidor: "horometro",
+        grifo_interno_id: grifoInternoId,
+      },
+    });
+    expect(r.status()).toBe(201);
+    return { id: (await r.json()).id as number, placa };
+  };
+  const nuevaTanqueta = async (prefijo: string) => {
+    const r = await page.request.post("/api/erp/combustible/tanquetas", {
+      data: { grifo_interno_id: grifoInternoId, codigo: `${prefijo}-${marca}` },
+    });
+    expect(r.status()).toBe(201);
+    return { id: Number((await r.json()).id), codigo: `${prefijo}-${marca}` };
+  };
+  const llenar = async (tanquetaId: number) => {
+    const r = await page.request.post("/api/erp/combustible/despachos", {
+      data: {
+        origen: "tanque_propio",
+        combustible_id: tanqueId,
+        tipo_combustible: "diesel_b5",
+        tipo_destino: "reserva_cubeta",
+        tanqueta_destino_id: tanquetaId,
+        cantidad: 100,
+        lectura_contometro: 100,
+        costo_unitario: 16,
+        cliente_uuid: crypto.randomUUID(),
+      },
+    });
+    expect(r.status()).toBe(201);
+  };
+  const asignar = async (tanquetaId: number, equipoId: number, serie: string) => {
+    const r = await page.request.put(`/api/erp/combustible/tanquetas/${tanquetaId}/asignar`, {
+      data: { equipo_id: equipoId, serie_talonario: serie, n_vale: 1 },
+    });
+    expect(r.status()).toBe(200);
+  };
+  const cargar = async (
+    tanquetaId: number,
+    equipoId: number,
+    cantidad: number,
+    medidor: number
+  ) => {
+    const r = await page.request.post("/api/erp/combustible/despachos", {
+      data: {
+        origen: "tanqueta",
+        tanqueta_origen_id: tanquetaId,
+        tanqueta_lugar: "ruta",
+        tipo_destino: "equipo",
+        equipo_id: equipoId,
+        tipo_combustible: "diesel_b5",
+        cantidad,
+        lectura_horometro: medidor,
+      },
+    });
+    expect(r.status()).toBe(201);
+  };
+
+  // Una tanqueta cerrada: salió con 100, cargó 70, volvió con 28 de 30.
+  const cerrada = await nuevaTanqueta("CC");
+  const u1 = await unidad("UC");
+  await llenar(cerrada.id);
+  await asignar(cerrada.id, u1.id, `C${marca}`);
+  await cargar(cerrada.id, u1.id, 70, 1500);
+  const retorno = await page.request.post(`/api/erp/combustible/tanquetas/${cerrada.id}/retorno`, {
+    data: {
+      saldo_calculado: 30,
+      saldo_validado: 28,
+      motivo: "se derramó al bajarla",
+      destino: "reserva",
+    },
+  });
+  expect(retorno.status()).toBe(201);
+  // Una abierta: sigue con la unidad, cargó 40 de 100.
+  const abierta = await nuevaTanqueta("CA");
+  const u2 = await unidad("UA");
+  await llenar(abierta.id);
+  await asignar(abierta.id, u2.id, `A${marca}`);
+  await cargar(abierta.id, u2.id, 40, 1600);
+  // Y una sin salidas.
+  const vacia = await nuevaTanqueta("CV");
+
+  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+  await page.getByRole("button", { name: "Tanquetas" }).click();
+
+  await page.getByRole("button", { name: `Historial de ${cerrada.codigo}` }).click();
+  await expect(page.getByText("Cuadre de cada salida")).toBeVisible();
+  await expect(
+    page.getByText(
+      `Vale C${marca}-1 · unidad ${u1.placa} — salió con 100 gal · cargó 70 gal (1 carga) · debía volver con 30 gal · volvió con 28 gal · diferencia −2 gal (motivo: "se derramó al bajarla")`
+    )
+  ).toBeVisible();
+  // El vale de la asignación también está en el historial (PR anterior).
+  await expect(
+    page.getByText(new RegExp(`Asignada a ${u1.placa} · vale C${marca}-1`))
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Cerrar", exact: true }).last().click();
+
+  await page.getByRole("button", { name: `Historial de ${abierta.codigo}` }).click();
+  await expect(
+    page.getByText(
+      `Vale A${marca}-1 · unidad ${u2.placa} — salió con 100 gal · cargó 40 gal (1 carga) · va con la unidad · lleva 60 gal`
+    )
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Cerrar", exact: true }).last().click();
+
+  await page.getByRole("button", { name: `Historial de ${vacia.codigo}` }).click();
+  await expect(page.getByText("Sin movimientos todavía.")).toBeVisible();
+  await expect(page.getByText("Cuadre de cada salida")).toHaveCount(0);
+});

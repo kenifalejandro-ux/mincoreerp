@@ -10,6 +10,7 @@ import { History, Pencil, Plus, Truck, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import AsignarTanqueta from "./AsignarTanqueta";
+import CuadreTanqueta from "./CuadreTanqueta";
 import RecibirTanqueta from "./RecibirTanqueta";
 import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
@@ -593,6 +594,7 @@ export default function TanquetasPanel() {
           anchoInicial={640}
           altoInicial={460}
         >
+          <CuadreTanqueta key={historialDe.id} tanquetaId={historialDe.id} />
           {historial.length === 0 ? (
             <p className="p-4 text-sm text-[#94a3b8]">Sin movimientos todavía.</p>
           ) : (
