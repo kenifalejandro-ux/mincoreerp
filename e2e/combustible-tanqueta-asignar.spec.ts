@@ -180,3 +180,108 @@ test("tanqueta: al recibirla de vuelta, el saldo pasa a otra unidad con su vale"
   await expect(page.getByText(`Va con la unidad ${placaB}`)).toBeVisible();
   await expect(page.getByText(`Va con la unidad ${placaA}`)).toHaveCount(0);
 });
+
+test("tanqueta: llenarla sin unidad no pide vale (con unidad sí) y funciona sin señal", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const marca = randomBytes(3).toString("hex").toUpperCase();
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  const grifoInternoId = await primerGrifoActivo(page);
+
+  const tanque = await page.request.post("/api/erp/combustible", {
+    data: {
+      codigo: `HME-${marca}`,
+      tanque_nombre: `Huamachuco ${marca}`,
+      tipo_combustible: "diesel_b5",
+      unidad: "gal",
+      tipo_punto: "fijo",
+      capacidad_total: 10000,
+      nivel_actual: 8000,
+      requiere_documento: false,
+      grifo_interno_id: grifoInternoId,
+    },
+  });
+  expect(tanque.status()).toBe(201);
+  const tanqueId = (await tanque.json()).id as number;
+  const tanquetas: string[] = [];
+  for (const prefijo of ["TA", "TB", "TC"]) {
+    const r = await page.request.post("/api/erp/combustible/tanquetas", {
+      data: { grifo_interno_id: grifoInternoId, codigo: `${prefijo}-${marca}` },
+    });
+    expect(r.status()).toBe(201);
+    tanquetas.push((await r.json()).codigo as string);
+  }
+  const placa = `VE-${marca}`;
+  const equipo = await page.request.post("/api/erp/equipos", {
+    data: {
+      placa_codigo: placa,
+      tipo: "VOLQUETE",
+      tipo_medidor: "horometro",
+      grifo_interno_id: grifoInternoId,
+    },
+  });
+  expect(equipo.status()).toBe(201);
+
+  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+
+  const abrirYLlenar = async (codigoTanqueta: string) => {
+    await page.getByRole("button", { name: "Registrar despacho" }).first().click();
+    await page.locator("#despacho-tanque").selectOption(String(tanqueId));
+    await page.locator("#despacho-cantidad").fill("100");
+    await page.locator("#despacho-contometro").fill("100");
+    await page.locator("#despacho-tipo-destino").selectOption("reserva_cubeta");
+    const opcion = page.locator("#despacho-tanqueta-destino option", { hasText: codigoTanqueta });
+    await page
+      .locator("#despacho-tanqueta-destino")
+      .selectOption((await opcion.getAttribute("value"))!);
+    await page.locator("#despacho-costo-unitario").fill("16");
+  };
+  const saldoDe = async (codigoTanqueta: string) => {
+    const r = await page.request.get("/api/erp/combustible/tanquetas");
+    const fila = ((await r.json()) as { codigo: string; saldo: string }[]).find(
+      (t) => t.codigo === codigoTanqueta
+    );
+    return Number(fila?.saldo);
+  };
+
+  // ── Sin unidad: ni serie ni número de vale ─────────────────────────────
+  await abrirYLlenar(tanquetas[0]);
+  await expect(page.locator("#despacho-tanqueta-equipo")).toHaveValue("");
+  await expect(page.locator("#despacho-serie")).toHaveCount(0);
+  await expect(page.locator("#despacho-n-vale")).toHaveCount(0);
+  await page.locator("form").getByRole("button", { name: "Registrar despacho" }).click();
+  await expect(page.getByText(/Despacho registrado: el traspaso a la tanqueta/)).toBeVisible();
+  expect(await saldoDe(tanquetas[0])).toBe(100);
+
+  // ── Con unidad: el vale vuelve a pedirse y es obligatorio ──────────────
+  await abrirYLlenar(tanquetas[1]);
+  await page.locator("#despacho-tanqueta-equipo").selectOption({ label: `${placa} — VOLQUETE` });
+  await expect(page.locator("#despacho-serie")).toBeVisible();
+  await expect(page.locator("#despacho-n-vale")).toBeVisible();
+  // Si cambia de idea y la deja sin asignar, vuelven a esconderse.
+  await page.locator("#despacho-tanqueta-equipo").selectOption("");
+  await expect(page.locator("#despacho-serie")).toHaveCount(0);
+  await page.locator("#despacho-tanqueta-equipo").selectOption({ label: `${placa} — VOLQUETE` });
+  await page.locator("#despacho-serie").fill(`E${marca}`);
+  await page.locator("#despacho-n-vale").fill("1");
+  await page.locator("form").getByRole("button", { name: "Registrar despacho" }).click();
+  await expect(page.getByText(/Despacho registrado: el vale 1 de la serie/)).toBeVisible();
+  expect(await saldoDe(tanquetas[1])).toBe(100);
+
+  // ── Sin señal: queda en el celular y, al volver la red, se envía UNA vez ─
+  await abrirYLlenar(tanquetas[2]);
+  await page.context().setOffline(true);
+  await page.locator("form").getByRole("button", { name: "Registrar despacho" }).click();
+  await expect(
+    page.getByText(/Sin conexión: el traspaso a la tanqueta quedó guardado/)
+  ).toBeVisible();
+  await page.context().setOffline(false);
+  await expect
+    .poll(async () => saldoDe(tanquetas[2]), {
+      message: "la cola tiene que enviar el traspaso, una sola vez",
+      timeout: 60_000,
+    })
+    .toBe(100);
+});

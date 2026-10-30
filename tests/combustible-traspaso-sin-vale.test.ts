@@ -15,6 +15,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
+import { randomUUID } from "node:crypto";
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
@@ -90,6 +91,9 @@ describe("combustible: llenar una tanqueta sin unidad no pide vale (0161)", () =
       tipo_combustible: "diesel_b5",
       tipo_destino: "reserva_cubeta",
       tanqueta_destino_id: tanquetaId,
+      // Sin vale, lo único que frena un reenvío es el uuid (0161): el formulario
+      // siempre lo manda. Un test lo quita con `cliente_uuid: undefined`.
+      cliente_uuid: randomUUID(),
       cantidad: 100,
       costo_unitario: 16,
       despachado_en: hace(5),
@@ -146,6 +150,33 @@ describe("combustible: llenar una tanqueta sin unidad no pide vale (0161)", () =
     });
     expect(repetido.status, JSON.stringify(repetido.body)).toBe(409);
     expect(JSON.stringify(repetido.body)).toMatch(/ya está registrado/);
+  });
+
+  it("sin vale, el cliente_uuid es obligatorio: sin él, 400 y no se guarda nada", async () => {
+    const t = await nuevaTanqueta();
+    const r = await traspasar(t, { cliente_uuid: undefined });
+    expect(r.status).toBe(400);
+    expect(JSON.stringify(r.body)).toContain("cliente_uuid");
+    expect(Number((await ver(t)).saldo)).toBe(0);
+  });
+
+  it("un vale completo sin cliente_uuid se sigue aceptando (versión anterior)", async () => {
+    const t = await nuevaTanqueta();
+    const r = await traspasar(t, conVale({ cliente_uuid: undefined }));
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+  });
+
+  it("el mismo traspaso enviado tres veces a la vez (mismo cliente_uuid) es UNO solo", async () => {
+    const t = await nuevaTanqueta();
+    const cuerpo = { cliente_uuid: randomUUID() };
+    const rs = await Promise.all([
+      traspasar(t, cuerpo),
+      traspasar(t, cuerpo),
+      traspasar(t, cuerpo),
+    ]);
+    expect(rs.map((r) => r.status).sort()).toEqual([200, 200, 201]);
+    expect(new Set(rs.map((r) => r.body.id)).size).toBe(1);
+    expect(Number((await ver(t)).saldo)).toBe(100);
   });
 
   it("con unidad y con vale: como antes, llena y asigna", async () => {

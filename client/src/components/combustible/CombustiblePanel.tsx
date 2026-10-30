@@ -42,6 +42,7 @@ import { EVENTOS_UREA, avisarCambioDeUrea } from "./eventosUrea";
 import TanquetaDelConductor from "./TanquetaDelConductor";
 import UnidadDeLaTanqueta from "./UnidadDeLaTanqueta";
 import UnidadYValeDeLinea from "./UnidadYValeDeLinea";
+import { despachoSinVale } from "./valeDelDespachoDatos";
 import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from "./Precintos";
 import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
 import VentanaSurtidores from "./Surtidores";
@@ -2987,6 +2988,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     const pendienteElegido = excedentesPendientes.find(
       (x) => x.id === despachoForm.excedente_linea_id
     );
+    const sinVale = despachoSinVale(despachoForm);
     const body =
       despachoForm.origen === "tanqueta"
         ? {
@@ -3049,8 +3051,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               tipo_destino: despachoForm.tipo_destino,
               equipo_id:
                 despachoForm.tipo_destino === "equipo" ? Number(despachoForm.equipo_id) : undefined,
-              serie_talonario: despachoForm.serie_talonario,
-              n_vale: Number(despachoForm.n_vale),
+              // Un traspaso a una tanqueta sin unidad no lleva vale (0161).
+              serie_talonario: sinVale ? undefined : despachoForm.serie_talonario,
+              n_vale: sinVale ? undefined : Number(despachoForm.n_vale),
               cantidad: Number(despachoForm.cantidad),
               lectura_contometro: Number(despachoForm.lectura_contometro),
               // A qué tanqueta va la previsión (0114).
@@ -3118,7 +3121,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               tanquetasFormulario.find((t) => String(t.id) === despachoForm.tanqueta_origen_id)
                 ?.codigo ?? "la tanqueta"
             }`
-          : `el vale ${despachoForm.n_vale} de la serie ${despachoForm.serie_talonario}`;
+          : sinVale
+            ? "el traspaso a la tanqueta"
+            : `el vale ${despachoForm.n_vale} de la serie ${despachoForm.serie_talonario}`;
 
       // 202 = sin red, quedó en la cola del dispositivo -- mismo criterio
       // que registrar una lectura.
@@ -5868,8 +5873,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 />
               </div>
 
-              {despachoForm.origen === "tanqueta" &&
-              despachoForm.tanqueta_lugar === "ruta" ? null : (
+              {(despachoForm.origen === "tanqueta" && despachoForm.tanqueta_lugar === "ruta") ||
+              despachoSinVale(despachoForm) ? null : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label
