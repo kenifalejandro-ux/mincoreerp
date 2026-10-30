@@ -443,6 +443,11 @@ router.get(
   requirePestana("combustible", "tanquetas"),
   asyncHandler(controller.historialTanqueta.bind(controller))
 );
+router.get(
+  "/tanquetas/:tanquetaId/cuadre",
+  requirePestana("combustible", "tanquetas"),
+  asyncHandler(controller.cuadreTanqueta.bind(controller))
+);
 router.post(
   "/tanquetas",
   requirePestana("combustible", "tanquetas:nueva"),
