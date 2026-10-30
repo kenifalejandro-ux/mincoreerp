@@ -532,15 +532,15 @@ describe("combustible: recepciones y costo ponderado (Fase C)", () => {
   it("rechaza la recepción si el tanque no tiene lectura vigente a esa fecha y tampoco un saldo teórico válido", async () => {
     const tanqueId = await crearTanque({ nivel_actual: 500 });
 
-    // Fecha anterior al alta del tanque: la lectura `inicial` es posterior,
+    // Fecha anterior al alta del tanque (hace 6 meses, dentro del año permitido): la lectura `inicial` es posterior,
     // así que a ESA fecha el nivel es desconocido. Sin nivel no se puede ni
     // validar capacidad ni ponderar costo -- y asumir 0 valorizaría el
     // inventario sobre un número que nadie midió (migración 0059).
-    const res = await agente
-      .post("/api/erp/combustible/recepciones")
-      .send(
-        payloadRecepcion(tanqueId, { recibido_en: new Date("2020-01-01T10:00:00Z").toISOString() })
-      );
+    const res = await agente.post("/api/erp/combustible/recepciones").send(
+      payloadRecepcion(tanqueId, {
+        recibido_en: new Date(Date.now() - 180 * 24 * 3600 * 1000).toISOString(),
+      })
+    );
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("lectura vigente");

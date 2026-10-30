@@ -24,13 +24,26 @@ import request from "supertest";
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
-const MARZO = "2024-03-10T12:00:00.000Z";
-const JUNIO = "2024-06-15T12:00:00.000Z";
-const SETIEMBRE = "2024-09-20T12:00:00.000Z";
+// Tres fechas dentro del último año (el servidor rechaza las de hace más de un año),
+// siempre a 9, 6 y 3 meses de hoy: el nombre es solo una etiqueta del orden.
+const AHORA = new Date();
+const enMes = (mesesAtras: number, dia: number, hora = 12) =>
+  new Date(
+    Date.UTC(AHORA.getUTCFullYear(), AHORA.getUTCMonth() - mesesAtras, dia, hora)
+  ).toISOString();
+const inicioDeMes = (mesesAtras: number) =>
+  new Date(Date.UTC(AHORA.getUTCFullYear(), AHORA.getUTCMonth() - mesesAtras, 1)).toISOString();
+const finDeMes = (mesesAtras: number) =>
+  new Date(
+    Date.UTC(AHORA.getUTCFullYear(), AHORA.getUTCMonth() - mesesAtras + 1, 1) - 1
+  ).toISOString();
+const MARZO = enMes(9, 10);
+const JUNIO = enMes(6, 15);
+const SETIEMBRE = enMes(3, 20);
 
 /** Un rango que cubre el día entero, como lo arma la pantalla a partir de
  *  los dos <input type="date">. */
-const SOLO_JUNIO = { desde: "2024-06-01T00:00:00.000Z", hasta: "2024-06-30T23:59:59.999Z" };
+const SOLO_JUNIO = { desde: inicioDeMes(6), hasta: finDeMes(6) };
 
 function serieUnica(): string {
   return `S${Math.floor(Math.random() * 1e8).toString(36)}`;
@@ -145,21 +158,21 @@ describe("combustible: los historiales se pueden acotar por período", () => {
       const res = await pedir(`/api/erp/combustible/${tanqueId}/lecturas`, SOLO_JUNIO);
       expect(res.status).toBe(200);
       expect(res.body.data).toHaveLength(1);
-      expect(res.body.data[0].leido_en).toContain("2024-06-15");
+      expect(res.body.data[0].leido_en).toContain(JUNIO.slice(0, 10));
     });
 
     it("despachos", async () => {
       const res = await pedir("/api/erp/combustible/despachos", SOLO_JUNIO);
       expect(res.status).toBe(200);
       expect(res.body.data).toHaveLength(1);
-      expect(res.body.data[0].despachado_en).toContain("2024-06-15");
+      expect(res.body.data[0].despachado_en).toContain(JUNIO.slice(0, 10));
     });
 
     it("recepciones", async () => {
       const res = await pedir("/api/erp/combustible/recepciones", SOLO_JUNIO);
       expect(res.status).toBe(200);
       expect(res.body.data).toHaveLength(1);
-      expect(res.body.data[0].recibido_en).toContain("2024-06-15");
+      expect(res.body.data[0].recibido_en).toContain(JUNIO.slice(0, 10));
     });
   });
 
@@ -228,13 +241,13 @@ describe("combustible: los historiales se pueden acotar por período", () => {
       cantidad: 20,
       lectura_contometro: 20,
       costo_unitario: 16.8,
-      despachado_en: "2024-03-11T08:00:00.000Z",
+      despachado_en: enMes(9, 11, 8),
     });
     expect(enDiferido.status).toBe(201);
 
     const marzo = await pedir("/api/erp/combustible/despachos", {
-      desde: "2024-03-01T00:00:00.000Z",
-      hasta: "2024-03-31T23:59:59.999Z",
+      desde: inicioDeMes(9),
+      hasta: finDeMes(9),
     });
     expect(marzo.status).toBe(200);
     expect(marzo.body.data.map((d: { n_vale: number }) => Number(d.n_vale)).sort()).toEqual([1, 4]);
