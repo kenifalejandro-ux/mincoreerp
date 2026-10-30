@@ -990,6 +990,15 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
          JOIN combustible_tanquetas q ON q.id = r.tanqueta_id AND q.tenant_id = r.tenant_id
          LEFT JOIN usuarios u ON u.id = r.usuario_id
         WHERE r.tenant_id = $1 AND r.tanqueta_destino_id = $2 AND r.destino = 'tanqueta'
+       UNION ALL
+       -- El vale de la salida a una unidad (0141/0142). No mueve combustible: la cantidad es lo que
+       -- la tanqueta llevaba al salir, y es NULL en las asignaciones anteriores a la 0142.
+       SELECT 'asignacion', a.id::text, a.cantidad, a.creado_en, NULL, NULL, NULL, e.placa_codigo,
+              NULL, NULL, a.serie_talonario, a.n_vale, u.nombre, NULL, NULL, NULL
+         FROM combustible_tanqueta_asignaciones a
+         LEFT JOIN equipos e ON e.id = a.equipo_id AND e.tenant_id = a.tenant_id
+         LEFT JOIN usuarios u ON u.id = a.usuario_id
+        WHERE a.tenant_id = $1 AND a.tanqueta_id = $2
      ) m
      ORDER BY fecha DESC, id DESC`,
     [tenantId, id]

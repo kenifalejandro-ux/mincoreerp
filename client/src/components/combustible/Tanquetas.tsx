@@ -49,9 +49,11 @@ interface MovimientoTanqueta {
     | "retorno"
     | "retorno_pozo"
     | "retorno_traslado"
-    | "traslado_recibido";
+    | "traslado_recibido"
+    | "asignacion";
   id: string;
-  cantidad: string;
+  // Null solo en una asignación anterior a la 0142 (no guardó cuánto llevaba).
+  cantidad: string | null;
   fecha: string;
   anulada_en: string | null;
   tanque_codigo: string | null;
@@ -97,6 +99,11 @@ const describirMovimiento = (m: MovimientoTanqueta) => {
   }
   if (m.tipo === "traslado_recibido") {
     return `Llegó de la tanqueta ${m.tanque_codigo}`;
+  }
+  if (m.tipo === "asignacion") {
+    const lleva =
+      m.cantidad === null ? "sin cantidad registrada" : `${formatear(Number(m.cantidad))} gal`;
+    return `Asignada a ${m.equipo ?? "una unidad"} · vale ${m.serie_talonario}-${m.n_vale} · lleva ${lleva}`;
   }
   if (m.tipo === "carga_planta") {
     return `Carga en planta a ${m.equipo ?? "una unidad"} · vale ${m.serie_talonario}-${m.n_vale}${conductor(m)}`;
@@ -614,7 +621,9 @@ export default function TanquetasPanel() {
                     </td>
                     <td className="p-2">{h.usuario ?? "—"}</td>
                     <td className="p-2 text-right font-mono text-emerald-400">
-                      {esSalida(h.tipo) ? "" : formatear(Number(h.cantidad))}
+                      {esSalida(h.tipo) || h.tipo === "asignacion"
+                        ? ""
+                        : formatear(Number(h.cantidad))}
                     </td>
                     <td className="p-2 text-right font-mono">
                       {esSalida(h.tipo) ? formatear(Number(h.cantidad)) : ""}
