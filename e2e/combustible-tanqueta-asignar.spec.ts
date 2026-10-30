@@ -425,3 +425,132 @@ test("tanqueta: el historial muestra el cuadre de cada salida (cerrada y abierta
   await expect(page.getByText("Sin movimientos todavía.")).toBeVisible();
   await expect(page.getByText("Cuadre de cada salida")).toHaveCount(0);
 });
+
+test("tanqueta: el cuadre explica el remanente y dice 'se gastó todo' cuando no hay retorno posible", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const marca = randomBytes(3).toString("hex").toUpperCase();
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  const grifoInternoId = await primerGrifoActivo(page);
+
+  const tanque = await page.request.post("/api/erp/combustible", {
+    data: {
+      codigo: `HMG-${marca}`,
+      tanque_nombre: `Huamachuco ${marca}`,
+      tipo_combustible: "diesel_b5",
+      unidad: "gal",
+      tipo_punto: "fijo",
+      capacidad_total: 10000,
+      nivel_actual: 8000,
+      requiere_documento: false,
+      grifo_interno_id: grifoInternoId,
+    },
+  });
+  expect(tanque.status()).toBe(201);
+  const tanqueId = (await tanque.json()).id as number;
+  const unidad = async (prefijo: string) => {
+    const placa = `${prefijo}-${marca}`;
+    const r = await page.request.post("/api/erp/equipos", {
+      data: {
+        placa_codigo: placa,
+        tipo: "VOLQUETE",
+        tipo_medidor: "horometro",
+        grifo_interno_id: grifoInternoId,
+      },
+    });
+    expect(r.status()).toBe(201);
+    return { id: (await r.json()).id as number, placa };
+  };
+  const nuevaTanqueta = async (prefijo: string) => {
+    const r = await page.request.post("/api/erp/combustible/tanquetas", {
+      data: { grifo_interno_id: grifoInternoId, codigo: `${prefijo}-${marca}` },
+    });
+    expect(r.status()).toBe(201);
+    return { id: Number((await r.json()).id), codigo: `${prefijo}-${marca}` };
+  };
+  const llenar = async (tanquetaId: number, cantidad: number, extra: object = {}) => {
+    const r = await page.request.post("/api/erp/combustible/despachos", {
+      data: {
+        origen: "tanque_propio",
+        combustible_id: tanqueId,
+        tipo_combustible: "diesel_b5",
+        tipo_destino: "reserva_cubeta",
+        tanqueta_destino_id: tanquetaId,
+        cantidad,
+        lectura_contometro: cantidad,
+        costo_unitario: 16,
+        cliente_uuid: crypto.randomUUID(),
+        ...extra,
+      },
+    });
+    expect(r.status(), await r.text()).toBe(201);
+  };
+  const cargar = async (
+    tanquetaId: number,
+    equipoId: number,
+    cantidad: number,
+    medidor: number
+  ) => {
+    const r = await page.request.post("/api/erp/combustible/despachos", {
+      data: {
+        origen: "tanqueta",
+        tanqueta_origen_id: tanquetaId,
+        tanqueta_lugar: "ruta",
+        tipo_destino: "equipo",
+        equipo_id: equipoId,
+        tipo_combustible: "diesel_b5",
+        cantidad,
+        lectura_horometro: medidor,
+      },
+    });
+    expect(r.status(), await r.text()).toBe(201);
+  };
+
+  // Una tanqueta con 28 gal de antes: el llenado con unidad es de 90, sale con 118 y vuelve con 68.
+  const conRemanente = await nuevaTanqueta("RM");
+  const u1 = await unidad("UR");
+  await llenar(conRemanente.id, 28);
+  await llenar(conRemanente.id, 90, {
+    tanqueta_equipo_id: u1.id,
+    serie_talonario: `R${marca}`,
+    n_vale: 1,
+  });
+  await cargar(conRemanente.id, u1.id, 50, 1700);
+  const retorno = await page.request.post(
+    `/api/erp/combustible/tanquetas/${conRemanente.id}/retorno`,
+    { data: { saldo_calculado: 68, saldo_validado: 68, destino: "reserva" } }
+  );
+  expect(retorno.status(), await retorno.text()).toBe(201);
+
+  // Una tanqueta que se gasta del todo: no hay retorno que registrar.
+  const gastada = await nuevaTanqueta("GS");
+  const u2 = await unidad("UG");
+  await llenar(gastada.id, 100);
+  const asignada = await page.request.put(`/api/erp/combustible/tanquetas/${gastada.id}/asignar`, {
+    data: { equipo_id: u2.id, serie_talonario: `G${marca}`, n_vale: 1 },
+  });
+  expect(asignada.status()).toBe(200);
+  await cargar(gastada.id, u2.id, 60, 1800);
+  await cargar(gastada.id, u2.id, 40, 1810);
+
+  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+  await page.getByRole("button", { name: "Tanquetas" }).click();
+
+  await page.getByRole("button", { name: `Historial de ${conRemanente.codigo}` }).click();
+  await expect(
+    page.getByText(
+      `Vale R${marca}-1 · unidad ${u1.placa} — salió con 90 gal · cargó 50 gal (1 carga) · debía volver con 68 gal (había 28 gal más: ya los tenía la tanqueta o entraron durante la salida) · volvió con 68 gal · cuadra`
+    )
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Cerrar", exact: true }).last().click();
+
+  await page.getByRole("button", { name: `Historial de ${gastada.codigo}` }).click();
+  await expect(
+    page.getByText(
+      `Vale G${marca}-1 · unidad ${u2.placa} — salió con 100 gal · cargó 100 gal (2 cargas) · se gastó todo`
+    )
+  ).toBeVisible();
+  await expect(page.getByText(/no se registró su retorno/)).toHaveCount(0);
+});

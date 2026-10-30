@@ -24,6 +24,20 @@ const gal = (n: number) => `${n.toLocaleString("es-PE", { maximumFractionDigits:
 /** La diferencia con su signo: −2 gal falta, +2 gal sobra. */
 const conSigno = (n: number) => `${n < 0 ? "−" : "+"}${gal(Math.abs(n))}`;
 
+const TOLERANCIA = 0.005;
+
+/** Lo que el vale dice que debería quedar es salió con − cargó. Si el saldo real es otro, la
+ *  tanqueta ya traía combustible o entró algo durante la salida: se dice, para que la cuenta de
+ *  la línea se pueda seguir. */
+function explicarAjuste(s: SalidaCuadre, saldoReal: number | null): string | null {
+  if (s.salioCon === null || saldoReal === null) return null;
+  const falta = Number((saldoReal - (s.salioCon - s.cargo)).toFixed(2));
+  if (Math.abs(falta) < TOLERANCIA) return null;
+  return falta > 0
+    ? `había ${gal(falta)} más: ya los tenía la tanqueta o entraron durante la salida`
+    : `había ${gal(-falta)} menos de lo que dice el vale`;
+}
+
 /** La salida en una línea:
  *  Vale A-2-15 · unidad VQ-12 — salió con 100 gal · cargó 70 gal (2 cargas) · debía volver con
  *  30 gal · volvió con 28 gal · diferencia −2 gal (motivo: "se derramó al bajarla") */
@@ -35,11 +49,20 @@ export function describirSalida(s: SalidaCuadre): string {
   const partes = [salio, cargo];
   if (s.estado === "abierta") {
     partes.push("va con la unidad");
-    if (s.llevaAhora !== null) partes.push(`lleva ${gal(s.llevaAhora)}`);
+    if (s.llevaAhora !== null) {
+      const ajuste = explicarAjuste(s, s.llevaAhora);
+      partes.push(`lleva ${gal(s.llevaAhora)}${ajuste ? ` (${ajuste})` : ""}`);
+    }
   } else if (s.estado === "sin_retorno") {
-    partes.push("no se registró su retorno");
+    // Una tanqueta gastada del todo no tiene retorno que registrar: es un final normal.
+    const gastada = s.salioCon !== null && s.salioCon > 0 && s.cargo >= s.salioCon - TOLERANCIA;
+    partes.push(gastada ? "se gastó todo" : "no se registró su retorno");
   } else if (s.debiaVolver !== null && s.volvio !== null && s.diferencia !== null) {
-    partes.push(`debía volver con ${gal(s.debiaVolver)}`, `volvió con ${gal(s.volvio)}`);
+    const ajuste = explicarAjuste(s, s.debiaVolver);
+    partes.push(
+      `debía volver con ${gal(s.debiaVolver)}${ajuste ? ` (${ajuste})` : ""}`,
+      `volvió con ${gal(s.volvio)}`
+    );
     partes.push(
       s.diferencia === 0
         ? "cuadra"
