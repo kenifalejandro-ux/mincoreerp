@@ -40,6 +40,7 @@ import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { esViolacionForeignKey } from "../../server/shared/utils/pgError";
 import { CombustibleRepository } from "./combustible.repository";
+import { MAX_SALTO_TALONARIO, mensajeDeSalto } from "./valesDeTalonario";
 import type { AlertaNueva, FiltrosAlertas, PeriodoHistorial } from "./combustible.repository";
 import { EquiposRepository } from "../equipos/equipos.repository";
 import { tanqueEnAlcance, valeEnAlcance } from "./alcance";
@@ -1605,7 +1606,7 @@ export class CombustibleService {
    *  El mensaje dice qué hacer, porque quien lo lee está en cancha: si el
    *  número es correcto (talonario nuevo que arranca mucho más arriba), la
    *  serie es otra y se carga como serie nueva. */
-  static readonly MAX_SALTO_TALONARIO = 300;
+  static readonly MAX_SALTO_TALONARIO = MAX_SALTO_TALONARIO;
 
   private async validarSaltoDeTalonario(
     client: PoolClient,
@@ -8025,6 +8026,16 @@ export class CombustibleService {
         );
       }
       usados.add(clave);
+    }
+    // El salto de cada serie, con todas sus líneas juntas (ver valesDeTalonario.ts).
+    const porSerie = new Map<string, number[]>();
+    for (const l of reparto) {
+      if (l.tanqueta_equipo_id === undefined) continue;
+      porSerie.set(l.serie_talonario!, [...(porSerie.get(l.serie_talonario!) ?? []), l.n_vale!]);
+    }
+    for (const [serie, vales] of porSerie) {
+      const salto = await mensajeDeSalto(client, tenantId, serie, vales);
+      if (salto) throw new Error(`el reparto del excedente: ${salto}`);
     }
   }
 
