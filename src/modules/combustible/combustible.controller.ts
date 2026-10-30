@@ -98,7 +98,11 @@ import type {
   AsignarTanquetaInput,
   RetornoTanquetaInput,
 } from "../../server/schemas/combustible.schema";
-import { TIPOS_COMBUSTIBLE } from "../../server/schemas/combustible.schema";
+import {
+  MENSAJE_SERIE,
+  SERIE_VALIDA,
+  TIPOS_COMBUSTIBLE,
+} from "../../server/schemas/combustible.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 import { armarCsv } from "../../server/shared/utils/csv.util";
 import {
@@ -4213,8 +4217,16 @@ export class CombustibleController {
         typeof equipoIdRaw === "string" && equipoIdRaw.trim() !== ""
           ? Number(equipoIdRaw)
           : undefined;
+      // La serie se guarda en mayúsculas: se busca igual. Una serie con caracteres
+      // que nunca se guardan (byte nulo, otro alfabeto) no encuentra nada: 400.
       const serieTalonario =
-        typeof req.query.serie_talonario === "string" ? req.query.serie_talonario : undefined;
+        typeof req.query.serie_talonario === "string"
+          ? req.query.serie_talonario.trim().toUpperCase()
+          : undefined;
+      if (serieTalonario !== undefined && !SERIE_VALIDA.test(serieTalonario)) {
+        res.status(400).json({ error: MENSAJE_SERIE });
+        return;
+      }
       const origenRaw = req.query.origen;
       const origen =
         origenRaw === "tanque_propio" ||
@@ -4371,9 +4383,15 @@ export class CombustibleController {
   async getHuecosTalonario(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
-      const serieTalonario = req.query.serie_talonario;
-      if (typeof serieTalonario !== "string" || serieTalonario.trim() === "") {
+      const serieCruda = req.query.serie_talonario;
+      if (typeof serieCruda !== "string" || serieCruda.trim() === "") {
         res.status(400).json({ error: "El query param serie_talonario es obligatorio" });
+        return;
+      }
+      // La serie se guarda en mayúsculas: se busca igual.
+      const serieTalonario = serieCruda.trim().toUpperCase();
+      if (!SERIE_VALIDA.test(serieTalonario)) {
+        res.status(400).json({ error: MENSAJE_SERIE });
         return;
       }
       // Migración 0092: sin este filtro, un talonario de urea con el mismo

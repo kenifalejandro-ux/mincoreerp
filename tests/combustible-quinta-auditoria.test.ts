@@ -19,7 +19,7 @@ import { TIPOS_ALERTA, TIPOS_CONGELABLES } from "../src/modules/combustible/comb
  *  entra: fechar en hora futura más allá de eso se rechaza y el ataque
  *  "no alerta" por el motivo equivocado (trampa vivida en la 4ª ronda). */
 const en = (minutos: number) => new Date(Date.now() + minutos * 60_000).toISOString();
-const serieUnica = () => `S${Math.floor(Math.random() * 1e8).toString(36)}`;
+const serieUnica = () => `S${Math.floor(Math.random() * 1e8).toString(36)}`.toUpperCase();
 
 describe("combustible: los diez huecos de la 5ª auditoría", () => {
   let tenantId: string;

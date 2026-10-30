@@ -22,7 +22,8 @@ import {
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
 let seq = 0;
-const serieUnica = () => `G${Date.now().toString(36).slice(-5)}${(seq++).toString(36)}`;
+const serieUnica = () =>
+  `G${Date.now().toString(36).slice(-5)}${(seq++).toString(36)}`.toUpperCase();
 const password = "ClaveDePrueba123";
 
 type Agente = ReturnType<typeof request.agent>;

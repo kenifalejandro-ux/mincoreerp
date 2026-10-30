@@ -21,7 +21,7 @@ import { closeDatabase, withTenant } from "../src/server/config/database";
 import { correrConciliacion } from "../src/server/services/combustibleConciliacion.worker";
 
 function serieUnica(): string {
-  return `S${Math.floor(Math.random() * 1e8).toString(36)}`;
+  return `S${Math.floor(Math.random() * 1e8).toString(36)}`.toUpperCase();
 }
 
 const HORA = 3600 * 1000;

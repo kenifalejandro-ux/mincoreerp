@@ -52,7 +52,7 @@ describe("combustible: vale mayor que el tanque (0128)", () => {
   }
 
   async function vale(tanqueId: number, cantidad: number) {
-    const serie = `S${Math.floor(Math.random() * 1e8).toString(36)}`;
+    const serie = `S${Math.floor(Math.random() * 1e8).toString(36)}`.toUpperCase();
     const res = await agente.post("/api/erp/combustible/despachos").send({
       origen: "tanque_propio",
       combustible_id: tanqueId,

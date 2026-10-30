@@ -55,7 +55,7 @@ describe("combustible: medidor inconsistente se evalúa por fecha del vale", () 
 
   let n = 0;
   async function vale(equipoId: number, horometro: number, despachadoEn: string) {
-    const serie = `M${Date.now().toString(36).slice(-4)}${n++}`;
+    const serie = `M${Date.now().toString(36).slice(-4)}${n++}`.toUpperCase();
     const res = await agente.post("/api/erp/combustible/despachos").send({
       origen: "tanque_propio",
       combustible_id: tanqueId,

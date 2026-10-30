@@ -15,7 +15,7 @@ import { closeDatabase, withTenant } from "../src/server/config/database";
 import { correrConciliacion } from "../src/server/services/combustibleConciliacion.worker";
 
 function serieUnica(): string {
-  return `S${Math.floor(Math.random() * 1e8).toString(36)}`;
+  return `S${Math.floor(Math.random() * 1e8).toString(36)}`.toUpperCase();
 }
 
 describe("combustible: conciliación de período (Fase D, migraciones 0071/0072)", () => {
