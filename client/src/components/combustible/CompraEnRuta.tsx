@@ -43,6 +43,7 @@ import {
 import { seccionesCompraEnRuta } from "./compraEnRutaAcceso";
 import { prepararFotoComprobante } from "./fotoComprobante";
 import HistorialComprasRuta from "./HistorialComprasRuta";
+import { SelectorBuscable } from "./SelectorBuscable";
 import { useUnidadDelViaje } from "./useUnidadDelViaje";
 
 /** Hasta cuánto se da por "cuadra" en el aviso de pantalla (no bloquea nada)
@@ -58,6 +59,9 @@ const ETIQUETA_COMBUSTIBLE: Record<TipoCombustible, string> = {
 
 interface EquipoCompra extends EquipoUrea {
   tipo_medidor?: "horometro" | "odometro" | null;
+  // El conductor vigente en Equipos: con su DNI se precarga la unidad.
+  conductor_dni?: string | null;
+  activo?: boolean;
 }
 
 interface Proveedor {
@@ -324,6 +328,28 @@ function FormularioCompra({
     setOdometro("");
   }, [borradorListo, equipoId]);
 
+  // ── La unidad del conductor (Equipos) ───────────────────────────────────
+  // Sin viaje, la unidad que Equipos le asignó por DNI sale elegida; si no es
+  // la suya, la cambia. Con varias a su nombre no se elige ninguna, pero quedan
+  // arriba de la lista. Se precarga UNA vez y solo si el formulario sigue sin
+  // unidad: ni la elección de la persona ni un borrador recuperado se pisan.
+  const dniUsuario = usuario?.dni?.trim() ?? "";
+  const unidadesPropias = useMemo(
+    () =>
+      dniUsuario === ""
+        ? []
+        : equipos.filter((e) => e.activo !== false && e.conductor_dni?.trim() === dniUsuario),
+    [equipos, dniUsuario]
+  );
+  const precargaHecha = useRef(false);
+  useEffect(() => {
+    if (precargaHecha.current || !borradorListo || equipos.length === 0) return;
+    precargaHecha.current = true;
+    if (unidadDelViaje || equipoElegido !== "" || unidadesPropias.length !== 1) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setEquipoId(String(unidadesPropias[0].id));
+  }, [borradorListo, equipos, unidadDelViaje, equipoElegido, unidadesPropias]);
+
   useEffect(() => {
     if (!usuarioId || !borradorListo) return;
     const datos: BorradorCompraRuta = {
@@ -396,6 +422,19 @@ function FormularioCompra({
     return incluyeUrea ? provUrea : provCombustible;
   }, [incluyeCombustible, incluyeUrea, provCombustible, provUrea]);
   const grifoVigente = proveedores.some((p) => String(p.id) === grifoId) ? grifoId : "";
+
+  // Las listas del buscador: las unidades del propio conductor van primero.
+  const opcionesUnidad = useMemo(() => {
+    const propias = new Set(unidadesPropias.map((e) => e.id));
+    return [...unidadesPropias, ...equipos.filter((e) => !propias.has(e.id))].map((e) => ({
+      valor: String(e.id),
+      etiqueta: `${e.placa_codigo} — ${e.tipo}`,
+    }));
+  }, [equipos, unidadesPropias]);
+  const opcionesProveedor = useMemo(
+    () => proveedores.map((p) => ({ valor: String(p.id), etiqueta: p.nombre })),
+    [proveedores]
+  );
 
   // ── La hora y el precio de catálogo ─────────────────────────────────────
   const fechaIso = () => (fechaEditada ? new Date(fecha).toISOString() : new Date().toISOString());
@@ -716,8 +755,12 @@ function FormularioCompra({
       <form onSubmit={enviar} noValidate>
         <Seccion titulo="Unidad y proveedor" textoInterruptor="">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1">
-              <span className={CLASE_ETIQUETA}>Unidad</span>
+            {/* Un <div> con su etiqueta aparte: dentro de un <label>, un clic en la
+                lista del buscador reactivaría el botón y la cerraría. */}
+            <div className="flex flex-col gap-1">
+              <label htmlFor="compra-unidad" className={CLASE_ETIQUETA}>
+                Unidad
+              </label>
               {unidadDelViaje ? (
                 <>
                   <input
@@ -732,35 +775,34 @@ function FormularioCompra({
                   </span>
                 </>
               ) : (
-                <select
+                <SelectorBuscable
                   id="compra-unidad"
-                  className={CLASE_CAMPO}
-                  value={equipoId}
-                  onChange={(e) => {
+                  opciones={opcionesUnidad}
+                  valor={equipoId}
+                  placeholder="Elegir unidad"
+                  etiquetaBuscador="Buscar unidad"
+                  onElegir={(valor) => {
                     // Otra unidad, otro contexto: lo escrito para la anterior no aplica.
-                    setEquipoId(e.target.value);
+                    setEquipoId(valor);
                     setHorasEditadas(false);
                     setHorometro("");
                     setOdometro("");
                   }}
-                >
-                  <option value="">Elegir unidad</option>
-                  {equipos.map((eq) => (
-                    <option key={eq.id} value={eq.id}>
-                      {eq.placa_codigo} — {eq.tipo}
-                    </option>
-                  ))}
-                </select>
+                />
               )}
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className={CLASE_ETIQUETA}>Proveedor</span>
-              <select
+            </div>
+            <div className="flex flex-col gap-1">
+              <label htmlFor="compra-proveedor" className={CLASE_ETIQUETA}>
+                Proveedor
+              </label>
+              <SelectorBuscable
                 id="compra-proveedor"
-                className={CLASE_CAMPO}
-                value={grifoVigente}
-                onChange={(e) => {
-                  setGrifoId(e.target.value);
+                opciones={opcionesProveedor}
+                valor={grifoVigente}
+                placeholder="Elegir proveedor"
+                etiquetaBuscador="Buscar proveedor"
+                onElegir={(valor) => {
+                  setGrifoId(valor);
                   setCostoEditado(false);
                   // El precio de catálogo de la urea es por proveedor.
                   setRenglones((rs) =>
@@ -768,7 +810,7 @@ function FormularioCompra({
                       if (!r.precioAuto) return r;
                       const v = precioVigenteUrea(
                         preciosUrea,
-                        e.target.value,
+                        valor,
                         r.presentacion,
                         fechaEditada ? fecha : ""
                       );
@@ -776,15 +818,8 @@ function FormularioCompra({
                     })
                   );
                 }}
-              >
-                <option value="">Elegir proveedor</option>
-                {proveedores.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.nombre}
-                  </option>
-                ))}
-              </select>
-            </label>
+              />
+            </div>
           </div>
           {equipo && incluyeUrea && <ConductorDeLaUnidad equipo={equipo} />}
           {equipoId !== "" && incluyeCombustible && !equipo?.tipo_medidor && (

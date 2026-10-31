@@ -13,6 +13,11 @@
 import { randomBytes } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
 import { loginPorUI } from "./fixtures/auth";
+import {
+  darDeBajaAlConductor,
+  entrarAMiViaje,
+  type ViajeDeConductor,
+} from "./fixtures/conductorConViaje";
 import { adminA } from "./fixtures/entorno";
 
 // JPEG de 1x1 píxel: válido para el navegador y para el filtro de tipos.
@@ -62,26 +67,30 @@ async function abrirCompraEnRuta(page: Page) {
   // submenús.
   if (await mostrar.isVisible()) await mostrar.click();
   await page.getByRole("button", { name: "Compra en ruta" }).click();
+  await abrirFormulario(page);
+}
+
+/** Desde la pantalla "Compra en ruta" ya abierta: el formulario vive en una
+ *  ventana, la pantalla es el historial y el botón que la abre. */
+async function abrirFormulario(page: Page) {
   await expect(page.getByRole("heading", { name: "Compra en ruta", level: 1 })).toBeVisible();
-  // El formulario vive en una ventana: la pantalla es el historial y este botón.
   await page.getByRole("button", { name: "Registrar compra", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Registrar compra en ruta" })).toBeVisible();
 }
 
+/** Unidad y Proveedor son un botón que abre una lista con buscador
+ *  (SelectorBuscable): se abre, se escribe el texto y se elige la opción. */
+const opcionesDe = (page: Page, selector: string) =>
+  page.locator(`${selector}-lista [role="option"]`);
+
 async function elegirPorTexto(page: Page, selector: string, texto: string) {
+  await page.locator(selector).click();
+  await page.locator(`input[aria-controls="${selector.slice(1)}-lista"]`).fill(texto);
   // Las unidades y proveedores llegan del servidor después de abrir la
-  // pantalla: se espera a que la opción exista antes de buscarla.
-  await expect(page.locator(`${selector} option`, { hasText: texto })).toHaveCount(1);
-  const valor = await page
-    .locator(`${selector} option`)
-    .evaluateAll(
-      (opciones, buscado) =>
-        (opciones as HTMLOptionElement[]).find((o) => o.textContent?.includes(buscado as string))
-          ?.value ?? null,
-      texto
-    );
-  expect(valor, `no hay una opción con "${texto}" en ${selector}`).not.toBeNull();
-  await page.locator(selector).selectOption(valor as string);
+  // pantalla: la lista se vuelve a filtrar sola cuando llegan, así que se
+  // espera a que la opción exista antes de elegirla.
+  await expect(opcionesDe(page, selector).filter({ hasText: texto })).toHaveCount(1);
+  await opcionesDe(page, selector).filter({ hasText: texto }).click();
 }
 
 /** Llena la boleta completa: 40 gal × S/ 17.50 = 700 y 2 cajas × S/ 50 = 100,
@@ -534,8 +543,8 @@ test("el borrador: lo escrito sobrevive a una recarga y se puede descartar @celu
   await expect(page.locator("#compra-comprobante-numero")).toHaveValue(numero);
   await expect(page.locator("#compra-galones")).toHaveValue("33");
   await expect(page.locator("#compra-total-boleta")).toHaveValue("500");
-  await expect(page.locator("#compra-unidad")).not.toHaveValue("");
-  await expect(page.locator("#compra-proveedor")).not.toHaveValue("");
+  await expect(page.locator("#compra-unidad")).toContainText(marca);
+  await expect(page.locator("#compra-proveedor")).toContainText(grifoNombre);
 
   // Empezar de cero lo borra de verdad: otra recarga ya no lo trae.
   await page.getByRole("button", { name: "Empezar de cero" }).click();
@@ -573,4 +582,116 @@ test("el borrador se borra al registrar la compra: no vuelve en la recarga @celu
   await abrirCompraEnRuta(page);
   await expect(page.getByText(/Recuperamos lo que estabas escribiendo/)).toHaveCount(0);
   await expect(page.locator("#compra-comprobante-numero")).toHaveValue("");
+});
+
+/** Un conductor con su cuenta y sus unidades en Equipos (el conductor vigente de
+ *  la unidad es su DNI). Devuelve lo mínimo que piden las fixtures de conductor. */
+async function sembrarConductor(page: Page, marca: string, placas: string[]) {
+  const dni = `93${randomBytes(3).readUIntBE(0, 3).toString().padStart(6, "0").slice(0, 6)}`;
+  const password = `Clave-${marca}-9x`;
+  const nombre = `Conductor ${marca}`;
+  const alta = await page.request.post("/api/erp/usuarios", {
+    data: { nombre, dni, password, rol: "conductor_ruta" },
+  });
+  expect(alta.status(), "no se pudo crear el conductor de prueba").toBe(201);
+  for (const placa of placas) {
+    const equipo = await page.request.post("/api/erp/equipos", {
+      data: {
+        placa_codigo: placa,
+        tipo: "VOLQUETE",
+        tipo_medidor: "horometro",
+        conductor_nombre: nombre,
+        conductor_dni: dni,
+      },
+    });
+    expect(equipo.status(), "no se pudo crear la unidad del conductor").toBe(201);
+  }
+  return { dni, password, marca } as ViajeDeConductor;
+}
+
+test("el buscador de Unidad y Proveedor filtra, elige con Enter y no envía el formulario @celular", async ({
+  page,
+}) => {
+  const marca = `FIL-${unico()}`;
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  const { grifoNombre } = await sembrar(page, marca);
+  await abrirCompraEnRuta(page);
+
+  // Sin DNI de conductor no hay unidad que precargar.
+  await expect(page.locator("#compra-unidad")).toContainText("Elegir unidad");
+
+  await page.locator("#compra-unidad").click();
+  const buscador = page.locator('input[aria-controls="compra-unidad-lista"]');
+  // Mayúsculas y minúsculas dan igual.
+  await buscador.fill(marca.toLowerCase());
+  await expect(opcionesDe(page, "#compra-unidad")).toHaveCount(1);
+  await buscador.fill("zzz-no-existe");
+  await expect(page.locator("#compra-unidad-lista")).toContainText("Sin coincidencias");
+
+  // Escape cierra sin elegir.
+  await buscador.press("Escape");
+  await expect(page.locator("#compra-unidad-lista")).toHaveCount(0);
+  await expect(page.locator("#compra-unidad")).toContainText("Elegir unidad");
+
+  // Enter elige la primera coincidencia y NO envía el formulario.
+  await page.locator("#compra-unidad").click();
+  await buscador.fill(marca);
+  await buscador.press("Enter");
+  await expect(page.locator("#compra-unidad")).toContainText(marca);
+  await expect(page.getByRole("dialog", { name: "Registrar compra en ruta" })).toBeVisible();
+
+  await elegirPorTexto(page, "#compra-proveedor", grifoNombre);
+  await expect(page.locator("#compra-proveedor")).toContainText(grifoNombre);
+});
+
+test("conductor con una unidad a su nombre: sale elegida y la puede cambiar buscando", async ({
+  page,
+}) => {
+  const marca = unico();
+  const propia = `PRP-${marca}`;
+  const ajena = `OTR-${unico()}`;
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  await sembrar(page, ajena);
+  const conductor = await sembrarConductor(page, marca, [propia]);
+  try {
+    await entrarAMiViaje(page, conductor);
+    await page.getByRole("button", { name: "Compra en ruta" }).click();
+    await abrirFormulario(page);
+
+    await expect(page.locator("#compra-unidad")).toContainText(propia);
+
+    // Si no es la suya (no actualizaron Equipos), la busca en la lista.
+    await elegirPorTexto(page, "#compra-unidad", ajena);
+    await expect(page.locator("#compra-unidad")).toContainText(ajena);
+  } finally {
+    await darDeBajaAlConductor(page, conductor);
+  }
+});
+
+test("conductor con dos unidades a su nombre: no se elige ninguna y las suyas van primero", async ({
+  page,
+}) => {
+  const marca = unico();
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  await sembrar(page, `OTR-${unico()}`);
+  const conductor = await sembrarConductor(page, marca, [`PA-${marca}`, `PB-${marca}`]);
+  try {
+    await entrarAMiViaje(page, conductor);
+    await page.getByRole("button", { name: "Compra en ruta" }).click();
+    await abrirFormulario(page);
+
+    // Se abre la lista y se espera a que lleguen las unidades: sus dos unidades
+    // van arriba, antes que las demás, y ninguna quedó elegida.
+    await page.locator("#compra-unidad").click();
+    const opciones = opcionesDe(page, "#compra-unidad");
+    await expect(opciones.first()).toContainText(marca);
+    await expect(opciones.nth(1)).toContainText(marca);
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#compra-unidad")).toContainText("Elegir unidad");
+  } finally {
+    await darDeBajaAlConductor(page, conductor);
+  }
 });
