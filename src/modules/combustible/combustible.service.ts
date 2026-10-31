@@ -1390,6 +1390,7 @@ export class CombustibleService {
       clienteUuid: data.cliente_uuid,
       huella: huellaDeRegistro("compra_ruta", {
         grifo_id: data.grifo_id,
+        proveedor_otro: data.proveedor_otro,
         comprobante_tipo: data.comprobante_tipo,
         comprobante_numero: data.comprobante_numero,
         equipo_id: data.equipo_id,
@@ -1406,6 +1407,17 @@ export class CombustibleService {
       }),
       insertar: async () => {
         const despachadoEn = data.despachado_en ?? new Date().toISOString();
+        // "Otros" (0163): el grifo que se escribió a mano es un proveedor
+        // interno por nombre; de ahí en adelante la compra es como cualquier otra.
+        const grifoId =
+          data.proveedor_otro !== undefined
+            ? await this.repository.obtenerGrifoOtros(
+                client,
+                tenantId,
+                usuarioId,
+                data.proveedor_otro
+              )
+            : data.grifo_id!;
 
         // La diferencia con el papel se guarda, en centavos enteros.
         const centavos = (n: number) => Math.round(n * 100);
@@ -1423,7 +1435,7 @@ export class CombustibleService {
         const comunes = {
           origen: "compra_externa" as const,
           tipo_destino: "equipo" as const,
-          grifo_id: data.grifo_id,
+          grifo_id: grifoId,
           equipo_id: data.equipo_id,
           comprobante_tipo: data.comprobante_tipo,
           comprobante_numero: data.comprobante_numero,
@@ -1471,7 +1483,7 @@ export class CombustibleService {
 
         const compra = await this.repository.crearCompraRuta(client, tenantId, usuarioId, {
           clienteUuid: data.cliente_uuid,
-          grifoId: data.grifo_id,
+          grifoId,
           comprobanteTipo: data.comprobante_tipo,
           comprobanteNumero: data.comprobante_numero,
           equipoId: data.equipo_id,
@@ -6512,7 +6524,7 @@ export class CombustibleService {
       abastece_urea_ruta: boolean;
     }>(
       `SELECT id, nombre, abastece_urea, abastece_urea_ruta FROM combustible_grifos
-        WHERE tenant_id = $1 AND activo AND ${filtroUso}
+        WHERE tenant_id = $1 AND activo AND NOT es_otros AND ${filtroUso}
         ORDER BY nombre`,
       [tenantId]
     );

@@ -2135,6 +2135,7 @@ export class CombustibleController {
             compraId: compra.id,
             comprobanteTipo: compra.comprobante_tipo,
             comprobanteNumero: compra.comprobante_numero,
+            proveedorOtro: data.proveedor_otro ?? null,
             totalBoleta: compra.total_boleta,
             totalSistema: compra.total_sistema,
             diferencia: compra.diferencia,

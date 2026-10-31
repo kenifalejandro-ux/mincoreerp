@@ -75,6 +75,10 @@ interface UltimoMedidor {
   despachado_en: string;
 }
 
+/** El valor de "Otros" en la lista de proveedores (0163): un grifo que no está
+ *  en el catálogo, con el nombre escrito a mano. */
+const PROVEEDOR_OTROS = "otros";
+
 const centavos = (n: number) => Math.round(n * 100);
 const soles = (c: number) =>
   `S/ ${(c / 100).toLocaleString("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -203,6 +207,7 @@ function FormularioCompra({
     if (unidadDelViaje) setEquipoId(String(unidadDelViaje.equipo_id));
   }, [unidadDelViaje]);
   const [grifoId, setGrifoId] = useState("");
+  const [proveedorOtro, setProveedorOtro] = useState("");
   const [comprobanteTipo, setComprobanteTipo] = useState<"boleta" | "factura">("boleta");
   const [comprobanteNumero, setComprobanteNumero] = useState("");
   const [fecha, setFecha] = useState(ahoraParaInputLocal());
@@ -292,6 +297,7 @@ function FormularioCompra({
       setEquipoId(d.equipoId);
       lecturasDe.current = d.equipoId;
       setGrifoId(d.grifoId);
+      setProveedorOtro(d.proveedorOtro ?? "");
       setComprobanteTipo(d.comprobanteTipo);
       setComprobanteNumero(d.comprobanteNumero);
       setFecha(d.fecha);
@@ -356,6 +362,7 @@ function FormularioCompra({
       clienteUuid,
       equipoId,
       grifoId,
+      proveedorOtro,
       comprobanteTipo,
       comprobanteNumero,
       fecha,
@@ -387,6 +394,7 @@ function FormularioCompra({
     clienteUuid,
     equipoId,
     grifoId,
+    proveedorOtro,
     comprobanteTipo,
     comprobanteNumero,
     fecha,
@@ -421,7 +429,10 @@ function FormularioCompra({
     }
     return incluyeUrea ? provUrea : provCombustible;
   }, [incluyeCombustible, incluyeUrea, provCombustible, provUrea]);
-  const grifoVigente = proveedores.some((p) => String(p.id) === grifoId) ? grifoId : "";
+  const grifoVigente =
+    grifoId === PROVEEDOR_OTROS || proveedores.some((p) => String(p.id) === grifoId) ? grifoId : "";
+  const esOtros = grifoVigente === PROVEEDOR_OTROS;
+  const nombreOtro = proveedorOtro.trim().replace(/\s+/g, " ");
 
   // Las listas del buscador: las unidades del propio conductor van primero.
   const opcionesUnidad = useMemo(() => {
@@ -432,7 +443,10 @@ function FormularioCompra({
     }));
   }, [equipos, unidadesPropias]);
   const opcionesProveedor = useMemo(
-    () => proveedores.map((p) => ({ valor: String(p.id), etiqueta: p.nombre })),
+    () => [
+      ...proveedores.map((p) => ({ valor: String(p.id), etiqueta: p.nombre })),
+      { valor: PROVEEDOR_OTROS, etiqueta: "Otros (grifo no frecuente)" },
+    ],
     [proveedores]
   );
 
@@ -442,7 +456,8 @@ function FormularioCompra({
   // Autocompleta el C.U. con el precio vigente A LA FECHA de la compra (un vale
   // offline se carga horas antes de sincronizar). Nunca pisa lo tipeado.
   useEffect(() => {
-    if (!incluyeCombustible || costoEditado || !grifoVigente || unidad !== "gal") return;
+    // "Otros" no tiene precio de catálogo: el C.U. se escribe de la boleta.
+    if (!incluyeCombustible || costoEditado || !grifoVigente || esOtros || unidad !== "gal") return;
     const params = new URLSearchParams({
       tipo_combustible: tipoCombustible,
       fecha: fechaEditada ? new Date(fecha).toISOString() : new Date().toISOString(),
@@ -464,6 +479,7 @@ function FormularioCompra({
     incluyeCombustible,
     costoEditado,
     grifoVigente,
+    esOtros,
     tipoCombustible,
     fecha,
     fechaEditada,
@@ -526,6 +542,7 @@ function FormularioCompra({
   const faltantes: string[] = [];
   if (equipoId === "") faltantes.push("la unidad");
   if (grifoVigente === "") faltantes.push("el proveedor");
+  else if (esOtros && nombreOtro.length < 3) faltantes.push("el nombre del grifo");
   if (!incluyeCombustible && !incluyeUrea) faltantes.push("combustible o urea");
   if (incluyeCombustible) {
     if (!(Number(galones) > 0)) faltantes.push(unidad === "L" ? "los litros" : "los galones");
@@ -571,6 +588,7 @@ function FormularioCompra({
     setClienteUuid(crypto.randomUUID());
     setEquipoId("");
     setGrifoId("");
+    setProveedorOtro("");
     setComprobanteTipo("boleta");
     setComprobanteNumero("");
     setFecha(ahoraParaInputLocal());
@@ -605,7 +623,7 @@ function FormularioCompra({
     setError(null);
     try {
       const cuerpoSinUuid = {
-        grifo_id: Number(grifoVigente),
+        ...(esOtros ? { proveedor_otro: nombreOtro } : { grifo_id: Number(grifoVigente) }),
         comprobante_tipo: comprobanteTipo,
         comprobante_numero: comprobanteNumero.trim(),
         equipo_id: Number(equipoId),
@@ -803,6 +821,8 @@ function FormularioCompra({
                 etiquetaBuscador="Buscar proveedor"
                 onElegir={(valor) => {
                   setGrifoId(valor);
+                  // El precio que puso el proveedor anterior no es el de "Otros".
+                  if (valor === PROVEEDOR_OTROS && !costoEditado) setCostoUnitario("");
                   setCostoEditado(false);
                   // El precio de catálogo de la urea es por proveedor.
                   setRenglones((rs) =>
@@ -821,6 +841,23 @@ function FormularioCompra({
               />
             </div>
           </div>
+          {esOtros && (
+            <label className="flex flex-col gap-1">
+              <span className={CLASE_ETIQUETA}>Nombre del grifo</span>
+              <input
+                id="compra-proveedor-otro"
+                className={CLASE_CAMPO}
+                value={proveedorOtro}
+                maxLength={80}
+                onChange={(e) => setProveedorOtro(e.target.value)}
+                placeholder="Ej. Grifo El Sol"
+              />
+              <span className="text-xs text-gray-500">
+                Para un grifo que no usas seguido: el nombre queda en el historial. No hay precio de
+                catálogo, escribe el de la boleta.
+              </span>
+            </label>
+          )}
           {equipo && incluyeUrea && <ConductorDeLaUnidad equipo={equipo} />}
           {equipoId !== "" && incluyeCombustible && !equipo?.tipo_medidor && (
             <p className="text-xs text-red-600">

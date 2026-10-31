@@ -1202,7 +1202,17 @@ export const crearCompraRutaSchema = z
     // Lo genera el dispositivo UNA vez por compra. De él se derivan los uuids
     // de los dos despachos (combustible_despachos tiene UNIQUE sobre el suyo).
     cliente_uuid: z.string().uuid(),
-    grifo_id: z.number().int().positive().max(2147483647),
+    // Un proveedor del catálogo O "Otros" con el nombre del grifo escrito
+    // (0163): uno solo de los dos, lo valida el superRefine de abajo.
+    grifo_id: z.number().int().positive().max(2147483647).optional(),
+    proveedor_otro: z
+      .string()
+      .trim()
+      .max(80)
+      // Los espacios repetidos no hacen otro grifo.
+      .transform((s) => s.replace(/\s+/g, " "))
+      .refine((s) => s.length >= 3, "Escribe el nombre del grifo")
+      .optional(),
     comprobante_tipo: z.enum(TIPOS_COMPROBANTE_COMPRA),
     comprobante_numero: z
       .string()
@@ -1254,6 +1264,13 @@ export const crearCompraRutaSchema = z
         code: z.ZodIssueCode.custom,
         path: ["combustible"],
         message: "la compra necesita combustible, urea o los dos",
+      });
+    }
+    if ((data.grifo_id === undefined) === (data.proveedor_otro === undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["grifo_id"],
+        message: "elige un proveedor o escribe el nombre del grifo en Otros, no los dos",
       });
     }
   });

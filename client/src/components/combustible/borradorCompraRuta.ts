@@ -38,6 +38,9 @@ export interface BorradorCompraRuta {
   clienteUuid: string;
   equipoId: string;
   grifoId: string;
+  /** El nombre del grifo cuando el proveedor es "Otros" (0163); un borrador
+   *  viejo no lo trae. */
+  proveedorOtro?: string;
   comprobanteTipo: "boleta" | "factura";
   comprobanteNumero: string;
   fecha: string;

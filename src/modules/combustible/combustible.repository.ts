@@ -6207,7 +6207,7 @@ export class CombustibleRepository {
   async findGrifos(client: PoolClient, tenantId: string) {
     const result = await client.query(
       `SELECT id, nombre, ruc, activo, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta, usuario_id, creado_en
-       FROM combustible_grifos WHERE tenant_id = $1 ORDER BY nombre ASC`,
+       FROM combustible_grifos WHERE tenant_id = $1 AND NOT es_otros ORDER BY nombre ASC`,
       [tenantId]
     );
     return result.rows;
@@ -6218,10 +6218,45 @@ export class CombustibleRepository {
   async findGrifosDeRutaParaFormulario(client: PoolClient, tenantId: string) {
     const result = await client.query<{ id: number; nombre: string }>(
       `SELECT id, nombre FROM combustible_grifos
-       WHERE tenant_id = $1 AND activo AND abastece_ruta ORDER BY nombre ASC`,
+       WHERE tenant_id = $1 AND activo AND abastece_ruta AND NOT es_otros ORDER BY nombre ASC`,
       [tenantId]
     );
     return result.rows;
+  }
+
+  /** El proveedor interno de un grifo "Otros" (0163): uno por nombre, sin
+   *  distinguir mayúsculas. Se crea la primera vez que alguien lo escribe y
+   *  después se reutiliza. Va oculto (`es_otros`) de catálogo, precios y listas
+   *  de formulario, y vende ruta de combustible y de urea. Dos compras
+   *  simultáneas del mismo nombre nuevo: la que pierde la carrera lee la fila
+   *  de la otra. */
+  async obtenerGrifoOtros(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string | null,
+    nombreEscrito: string
+  ): Promise<number> {
+    const nombre = `Otros: ${nombreEscrito}`;
+    const buscar = async () => {
+      const r = await client.query<{ id: number }>(
+        `SELECT id FROM combustible_grifos WHERE tenant_id = $1 AND lower(nombre) = lower($2)`,
+        [tenantId, nombre]
+      );
+      return r.rows[0]?.id;
+    };
+    const existente = await buscar();
+    if (existente !== undefined) return existente;
+    await client.query(
+      `INSERT INTO combustible_grifos
+         (tenant_id, nombre, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta,
+          es_otros, usuario_id)
+       VALUES ($1, $2, true, false, false, true, true, $3)
+       ON CONFLICT DO NOTHING`,
+      [tenantId, nombre, usuarioId]
+    );
+    const creado = await buscar();
+    if (creado === undefined) throw new Error(`no se pudo registrar el proveedor "${nombre}"`);
+    return creado;
   }
 
   async findGrifoPorId(client: PoolClient, tenantId: string, id: number) {

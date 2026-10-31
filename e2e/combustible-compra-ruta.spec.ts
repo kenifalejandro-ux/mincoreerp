@@ -97,12 +97,26 @@ async function elegirPorTexto(page: Page, selector: string, texto: string) {
  *  total 800. */
 async function llenar(
   page: Page,
-  datos: { marca: string; grifoNombre: string; numero: string; total: string; foto?: boolean }
+  datos: {
+    marca: string;
+    grifoNombre: string;
+    numero: string;
+    total: string;
+    foto?: boolean;
+    /** El grifo no frecuente: en vez de un proveedor del catálogo, "Otros" con
+     *  este nombre escrito a mano. */
+    otros?: string;
+  }
 ) {
   await page.getByLabel("Incluye urea").check();
 
   await elegirPorTexto(page, "#compra-unidad", datos.marca);
-  await elegirPorTexto(page, "#compra-proveedor", datos.grifoNombre);
+  if (datos.otros !== undefined) {
+    await elegirPorTexto(page, "#compra-proveedor", "Otros (grifo no frecuente)");
+    await page.locator("#compra-proveedor-otro").fill(datos.otros);
+  } else {
+    await elegirPorTexto(page, "#compra-proveedor", datos.grifoNombre);
+  }
   await page.locator("#compra-comprobante-numero").fill(datos.numero);
   if (datos.foto) {
     // Solo el del formulario: el historial de abajo trae uno por cada fila.
@@ -694,4 +708,78 @@ test("conductor con dos unidades a su nombre: no se elige ninguna y las suyas va
   } finally {
     await darDeBajaAlConductor(page, conductor);
   }
+});
+
+/** El proveedor que el historial muestra para una boleta, según el servidor. */
+async function proveedorDelHistorial(page: Page, numero: string) {
+  const res = await page.request.get("/api/erp/combustible/compras-ruta");
+  const boletas = res.ok()
+    ? ((await res.json()) as { comprobante_numero: string; proveedor: string | null }[])
+    : [];
+  return boletas.find((b) => b.comprobante_numero === numero)?.proveedor ?? null;
+}
+
+test("proveedor Otros: pide el nombre del grifo, registra y el historial lo muestra @celular", async ({
+  page,
+}) => {
+  const marca = `OTR-${unico()}`;
+  const numero = `B001-${unico()}`;
+  const grifo = `Grifo Sol ${unico()}`;
+  const admin = adminA();
+
+  await loginPorUI(page, admin.email, admin.password);
+  await sembrar(page, marca);
+  await abrirCompraEnRuta(page);
+  // Todo lleno, pero con un nombre demasiado corto: no se puede registrar.
+  await llenar(page, { marca, grifoNombre: "", numero, total: "800", otros: "ab" });
+  await expect(page.locator("#compra-proveedor")).toContainText("Otros");
+  await expect(botonRegistrar(page)).toBeDisabled();
+  await expect(page.getByRole("status").filter({ hasText: "el nombre del grifo" })).toBeVisible();
+
+  await page.locator("#compra-proveedor-otro").fill(grifo);
+  await expect(botonRegistrar(page)).toBeEnabled();
+  await botonRegistrar(page).click();
+  await expect(
+    page.getByText(new RegExp(`Compra registrada \\(la boleta ${numero}\\)`))
+  ).toBeVisible({ timeout: 30_000 });
+
+  // El historial muestra el nombre que se escribió.
+  await expect(page.getByRole("row").filter({ hasText: numero })).toContainText(`Otros: ${grifo}`);
+  // Y el grifo no frecuente no se coló en el catálogo de proveedores.
+  const catalogo = await page.request.get("/api/erp/combustible/grifos");
+  expect(await catalogo.text()).not.toContain("Otros:");
+});
+
+test("proveedor Otros sin señal: la compra queda en el equipo y llega con el nombre del grifo", async ({
+  page,
+  context,
+}) => {
+  const marca = `OTS-${unico()}`;
+  const numero = `B001-${unico()}`;
+  const grifo = `Grifo Luna ${unico()}`;
+  const admin = adminA();
+
+  await loginPorUI(page, admin.email, admin.password);
+  await sembrar(page, marca);
+  // Todo se elige CON red (el conductor abre la app donde hay señal) y se
+  // registra sin ella.
+  await abrirCompraEnRuta(page);
+  await llenar(page, { marca, grifoNombre: "", numero, total: "800", otros: grifo });
+
+  await context.setOffline(true);
+  await botonRegistrar(page).click();
+  await expect(
+    page.getByText(/Sin conexión: la boleta .* quedó guardada en este equipo/)
+  ).toBeVisible({ timeout: 30_000 });
+  await context.setOffline(false);
+
+  await expect
+    .poll(async () => (await despachosDeLaBoleta(page, numero)).map((d) => d.producto).sort(), {
+      timeout: 60_000,
+      message: "la compra guardada sin red no llegó al servidor",
+    })
+    .toEqual(["combustible", "urea"]);
+  // Una sola compra, y con el nombre que se escribió.
+  expect(await despachosDeLaBoleta(page, numero)).toHaveLength(2);
+  expect(await proveedorDelHistorial(page, numero)).toBe(`Otros: ${grifo}`);
 });
