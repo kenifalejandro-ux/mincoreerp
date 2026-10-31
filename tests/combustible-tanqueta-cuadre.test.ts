@@ -418,14 +418,14 @@ describe("cuadre de la tanqueta: por la API", () => {
     expect((await cuadre(tq))[0]).toMatchObject({ estado: "sin_retorno", llevaAhora: null });
   });
 
-  it("una tanqueta de otra empresa o un id que no es un número dan 404", async () => {
+  it("una tanqueta de otra empresa da 404 y un id que no es un número válido da 400", async () => {
     const tq = await tanqueta();
     const u = await unidad();
     await llenar(tq);
     await asignar(tq, u.id);
     expect((await B.get(`/api/erp/combustible/tanquetas/${tq}/cuadre`)).status).toBe(404);
     for (const id of ["abc", "0", "-1", "99999999999999999999"]) {
-      expect((await A.get(`/api/erp/combustible/tanquetas/${id}/cuadre`)).status, id).toBe(404);
+      expect((await A.get(`/api/erp/combustible/tanquetas/${id}/cuadre`)).status, id).toBe(400);
     }
     expect(tB).toBeTruthy();
   });

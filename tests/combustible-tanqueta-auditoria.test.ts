@@ -889,6 +889,8 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
         if (ed.status !== esperado) fallos.push(`editar id=${id} -> ${ed.status}`);
         const hi = await admin.get(`/api/erp/combustible/tanquetas/${id}/historial`);
         if (hi.status !== esperado) fallos.push(`historial id=${id} -> ${hi.status}`);
+        const cu = await admin.get(`/api/erp/combustible/tanquetas/${id}/cuadre`);
+        if (cu.status !== esperado) fallos.push(`cuadre id=${id} -> ${cu.status}`);
       }
       expect(fallos).toEqual([]);
     });
