@@ -1821,7 +1821,12 @@ export class CombustibleRepository {
           WHERE c.id = combustible_despachos.tanque_excedente_id) AS tanque_excedente_codigo,
         (SELECT tq.codigo FROM combustible_tanquetas tq
           WHERE tq.id = COALESCE(combustible_despachos.tanqueta_origen_id,
-                                 combustible_despachos.tanqueta_destino_id)) AS tanqueta_codigo
+                                 combustible_despachos.tanqueta_destino_id)) AS tanqueta_codigo,
+        -- La placa de la unidad, para que el conductor la vea aunque su lista
+        -- de unidades no la traiga (tope de 200).
+        (SELECT e.placa_codigo FROM equipos e
+          WHERE e.id = combustible_despachos.equipo_id
+            AND e.tenant_id = combustible_despachos.tenant_id) AS placa_codigo
       FROM combustible_despachos
       WHERE ${condiciones.join(" AND ")}
       ORDER BY despachado_en DESC, id DESC

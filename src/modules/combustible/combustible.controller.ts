@@ -896,6 +896,22 @@ function idPresentacionUrea(valor: string | undefined): number | null {
 const soloSuyas = (req: Request): string | undefined =>
   req.usuario?.rol === "conductor_ruta" ? req.usuario.id : undefined;
 
+/** Campos del vale que no son del conductor: el costo promedio de la tanqueta
+ *  (el servidor ya le niega el del tanque propio) y quién anuló y por qué. */
+const CAMPOS_INTERNOS_DEL_VALE = [
+  "costo_unitario",
+  "costo_total",
+  "costo_origen",
+  "anulada_por",
+  "motivo_anulacion",
+];
+
+const sinDatosInternosDelVale = <T extends object>(fila: T): T => {
+  const copia = { ...fila } as Record<string, unknown>;
+  for (const campo of CAMPOS_INTERNOS_DEL_VALE) delete copia[campo];
+  return copia as T;
+};
+
 export class CombustibleController {
   async getAll(req: Request, res: Response) {
     try {
@@ -4267,7 +4283,14 @@ export class CombustibleController {
           ambitoDe(req)
         )
       );
-      res.json(armarRespuestaPaginada(filas, paginacion));
+      const respuesta = armarRespuestaPaginada(filas, paginacion);
+      // Lo que el conductor ve de las cargas que sacó de una tanqueta: sin el
+      // costo interno de lo que ella lleva ni lo que escribió quien anuló.
+      if (soloSuyas(req) !== undefined && origen === "tanqueta") {
+        res.json({ ...respuesta, data: respuesta.data.map(sinDatosInternosDelVale) });
+        return;
+      }
+      res.json(respuesta);
     } catch {
       res.status(500).json({ error: "Error al listar despachos" });
     }

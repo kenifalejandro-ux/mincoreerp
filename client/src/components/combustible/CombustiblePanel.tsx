@@ -50,7 +50,7 @@ import PreciosPagina from "./PreciosPagina";
 import Proveedores from "./Proveedores";
 import TanquetasPanel from "./Tanquetas";
 import CompraEnRuta from "./CompraEnRuta";
-import HistorialComprasRuta from "./HistorialComprasRuta";
+import HistorialCargasTanqueta from "./HistorialCargasTanqueta";
 import MiViaje from "./MiViaje";
 import ViajesPanel from "./ViajesPanel";
 import { comprimirImagen } from "./comprimirImagen";
@@ -3686,11 +3686,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       >
         <div className="shrink-0">
           <h1 className="text-lg sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight">
-            {esConductor ? "Mis compras en ruta" : "Control de Combustible"}
+            {esConductor ? "Mis cargas desde tanqueta" : "Control de Combustible"}
           </h1>
           <p className="text-xs sm:text-sm text-[#94a3b8]">
             {esConductor
-              ? "Tus boletas con combustible y urea. Para registrar una nueva, usa Compra en ruta."
+              ? "Las cargas que sacaste de una tanqueta. Para tus compras a un proveedor, usa Compra en ruta."
               : "Tanques y puntos de abastecimiento"}
           </p>
         </div>
@@ -3799,7 +3799,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {pestanaCombustible === "viajes" && <ViajesPanel />}
       {pestanaCombustible === "mi_viaje" && <MiViaje />}
       {pestanaCombustible === "compra_ruta" && <CompraEnRuta />}
-      {esConductor && pestanaCombustible === "tanques" && <HistorialComprasRuta />}
+      {esConductor && pestanaCombustible === "tanques" && <HistorialCargasTanqueta />}
       {!esConductor && pestanaCombustible === "tanques" && importacion.error && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-red-900 font-light flex-1">{importacion.error}</p>
