@@ -881,6 +881,14 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
           destino: "reserva",
         });
         if (li.status >= 500) fallos.push(`retorno id=${id} -> ${li.status}`);
+        const ed = await admin
+          .put(`/api/erp/combustible/tanquetas/${id}`)
+          .send({ activa: true, motivo: "prueba de auditoría" });
+        // Malformado (abc, -1, 0, 1.5) es 400; un entero enorme pero válido no existe: 404.
+        const esperado = ["99999999999", "2147483648"].includes(id) ? 404 : 400;
+        if (ed.status !== esperado) fallos.push(`editar id=${id} -> ${ed.status}`);
+        const hi = await admin.get(`/api/erp/combustible/tanquetas/${id}/historial`);
+        if (hi.status !== esperado) fallos.push(`historial id=${id} -> ${hi.status}`);
       }
       expect(fallos).toEqual([]);
     });
