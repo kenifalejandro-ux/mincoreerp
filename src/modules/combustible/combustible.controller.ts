@@ -5781,7 +5781,11 @@ export class CombustibleController {
   async cuadreTanqueta(req: Request, res: Response) {
     const tenantId = getTenantId(req);
     const id = Number(req.params.tanquetaId);
-    if (!Number.isSafeInteger(id) || id < 1 || !(await this.tanquetaVisible(req, id))) {
+    if (!Number.isSafeInteger(id) || id < 1) {
+      res.status(400).json({ error: "tanquetaId debe ser un número entero válido" });
+      return;
+    }
+    if (!(await this.tanquetaVisible(req, id))) {
       res.status(404).json({ error: "La tanqueta no existe" });
       return;
     }
