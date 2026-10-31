@@ -5590,6 +5590,10 @@ export class CombustibleController {
   async actualizarTanqueta(req: Request, res: Response) {
     const tenantId = getTenantId(req);
     const id = Number(req.params.tanquetaId);
+    if (!Number.isSafeInteger(id) || id < 1) {
+      res.status(400).json({ error: "tanquetaId debe ser un número entero válido" });
+      return;
+    }
     const data = req.validatedBody as ActualizarTanquetaInput;
     const antes = await this.tanquetaVisible(req, id);
     if (!antes) {
@@ -5760,6 +5764,10 @@ export class CombustibleController {
   async historialTanqueta(req: Request, res: Response) {
     const tenantId = getTenantId(req);
     const id = Number(req.params.tanquetaId);
+    if (!Number.isSafeInteger(id) || id < 1) {
+      res.status(400).json({ error: "tanquetaId debe ser un número entero válido" });
+      return;
+    }
     if (!(await this.tanquetaVisible(req, id))) {
       res.status(404).json({ error: "La tanqueta no existe" });
       return;
