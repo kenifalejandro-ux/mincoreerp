@@ -64,14 +64,25 @@ describe("pendientesDeLaCola", () => {
     expect(pendientesDeLaCola([e], "compras")).toHaveLength(0);
   });
 
-  it("la carga desde tanqueta va a compras; un vale del tanque propio no", () => {
+  it("la carga desde tanqueta va a su historial, no al de compras; el tanque propio a ninguno", () => {
     const tanqueta = entrada(`${C}/despachos`, {
       origen: "tanqueta",
       cantidad: 5,
       tipo_combustible: "Diésel B5",
     });
     const vale = entrada(`${C}/despachos`, { origen: "tanque_propio", cantidad: 5 });
-    expect(pendientesDeLaCola([tanqueta, vale], "compras")).toHaveLength(1);
+    const compra = entrada(`${C}/despachos`, { origen: "compra_externa", cantidad: 5 });
+    expect(pendientesDeLaCola([tanqueta, vale, compra], "tanqueta")).toHaveLength(1);
+    expect(pendientesDeLaCola([tanqueta, vale, compra], "tanqueta")[0]?.titulo).toBe(
+      "Carga desde tanqueta"
+    );
+    expect(pendientesDeLaCola([tanqueta, vale, compra], "compras")).toHaveLength(1);
+    expect(pendientesDeLaCola([tanqueta, vale, compra], "urea")).toHaveLength(0);
+  });
+
+  it("una compra en ruta unificada no aparece en el historial de tanqueta", () => {
+    const e = entrada(`${C}/compras-ruta`, { comprobante_numero: "1", combustible: {} });
+    expect(pendientesDeLaCola([e], "tanqueta")).toHaveLength(0);
   });
 
   it("las fotos, las lecturas y lo que no es POST no se muestran", () => {
@@ -79,6 +90,14 @@ describe("pendientesDeLaCola", () => {
     const lectura = entrada(`${C}/lecturas`, { combustible_id: 1 });
     const put = entrada(`${C}/despachos`, { origen: "tanqueta" }, { metodo: "PUT" });
     expect(pendientesDeLaCola([foto, lectura, put], "compras")).toHaveLength(0);
+  });
+
+  it("un body que es JSON pero no un objeto (null, número, lista) no revienta", () => {
+    const cuerpos = ["null", "5", "[]", '"texto"'];
+    const entradas = cuerpos.map((body) => entrada(`${C}/despachos`, undefined, { body }));
+    for (const ambito of ["compras", "urea", "tanqueta"] as const) {
+      expect(pendientesDeLaCola(entradas, ambito)).toHaveLength(0);
+    }
   });
 
   it("un body corrupto no revienta y la más reciente va primero", () => {

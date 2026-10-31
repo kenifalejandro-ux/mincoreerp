@@ -123,6 +123,17 @@ const requireHistorialDeDespachos = (req: Request, res: Response, next: NextFunc
   // quien tiene el historial completo del panel de Tanques.
   // Despachos y compras son vistas autónomas (historial_despacho /
   // historial_compras): sin filtro hacen falta las dos.
+  // El conductor ve las cargas que ÉL sacó de una tanqueta (el controller lo
+  // acota a sus propios vales con soloSuyas). No tiene el historial completo
+  // de despachos, pero sí el permiso de registrarlas: ese basta, y solo para
+  // este origen. Los demás perfiles siguen por la regla de abajo.
+  if (
+    req.query.origen === "tanqueta" &&
+    req.usuario?.rol === "conductor_ruta" &&
+    pestanaPermitida(req.usuario, "combustible", "tanques:registrar_despacho")
+  ) {
+    return next();
+  }
   if (!porOrigen) {
     return requirePestana("combustible", "tanques:historial_despacho")(req, res, (err?: unknown) =>
       err ? next(err) : requirePestana("combustible", "tanques:historial_compras")(req, res, next)

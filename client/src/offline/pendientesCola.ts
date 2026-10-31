@@ -11,9 +11,10 @@
 import type { EntradaCola } from "./offlineQueue";
 import { ETIQUETA_COMBUSTIBLE } from "../components/combustible/preciosUnificados";
 
-/** `compras`: Compra en ruta y Tanques (compra en ruta o carga desde tanqueta).
- *  `urea`: el historial de compras de urea en ruta. */
-export type AmbitoPendiente = "compras" | "urea";
+/** `compras`: el historial de Compra en ruta (boletas a un proveedor).
+ *  `urea`: el historial de compras de urea en ruta.
+ *  `tanqueta`: el historial de "Carga desde tanqueta" del conductor (Tanques). */
+export type AmbitoPendiente = "compras" | "urea" | "tanqueta";
 
 export interface Pendiente {
   clienteUuid: string;
@@ -70,7 +71,10 @@ export function pendienteParaHistorial(
 
   let b: Record<string, unknown>;
   try {
-    b = JSON.parse(entrada.body) as Record<string, unknown>;
+    const cuerpo: unknown = JSON.parse(entrada.body);
+    // "null", un número o una lista también son JSON válido y no son un body.
+    if (cuerpo === null || typeof cuerpo !== "object" || Array.isArray(cuerpo)) return null;
+    b = cuerpo as Record<string, unknown>;
   } catch {
     return null;
   }
@@ -78,6 +82,7 @@ export function pendienteParaHistorial(
   const base = { clienteUuid: entrada.clienteUuid, fecha, creadoEn: entrada.creadoEn };
 
   if (ruta === RUTA_COMPRAS) {
+    if (ambito === "tanqueta") return null;
     const combustible = b.combustible as
       { tipo_combustible?: string; cantidad?: number; unidad?: string } | undefined;
     const urea = b.urea as { lineas?: LineaUrea[] } | undefined;
@@ -101,7 +106,8 @@ export function pendienteParaHistorial(
     const lineas = b.lineas as LineaUrea[] | undefined;
     return { ...base, titulo: tituloComprobante(b, "Compra de urea"), detalle: textoUrea(lineas) };
   }
-  if (esUrea || (origen !== "tanqueta" && origen !== "compra_externa")) return null;
+  if (esUrea) return null;
+  if (ambito === "tanqueta" ? origen !== "tanqueta" : origen !== "compra_externa") return null;
   const cantidad = typeof b.cantidad === "number" ? b.cantidad : undefined;
   const titulo =
     origen === "tanqueta" ? "Carga desde tanqueta" : tituloComprobante(b, "Compra en ruta");
