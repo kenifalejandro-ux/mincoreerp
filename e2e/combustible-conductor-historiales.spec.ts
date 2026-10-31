@@ -21,6 +21,8 @@ import {
 import { adminA } from "./fixtures/entorno";
 import { primerGrifoActivo } from "./fixtures/grifos";
 
+const base = "/api/erp/combustible";
+
 test("el conductor ve sus boletas en Compra en ruta y sus cargas en Tanques @celular", async ({
   page,
 }) => {
@@ -172,6 +174,57 @@ test("el conductor ve sus boletas en Compra en ruta y sus cargas en Tanques @cel
     await page.context().setOffline(false);
     await page.getByRole("button", { name: "Consultar" }).click();
     await expect(filaCarga).toHaveCount(1);
+
+    // ── Confirmación al registrar por el formulario real ──────────────────
+    // Es lo ÚNICO que le dice al conductor que su carga quedó: el formulario
+    // se cierra solo. Con señal, el aviso verde; sin señal, que quedó en el equipo.
+    const abrirCarga = async (galones: string, medidor: string) => {
+      await page.getByRole("button", { name: "Carga desde tanqueta" }).first().click();
+      // La tanqueta y la unidad entran solas; el medidor se habilita con la unidad.
+      await expect(page.locator("#despacho-medidor-tanqueta")).toBeEnabled({ timeout: 15_000 });
+      await page.locator("#despacho-cantidad-tanqueta").fill(galones);
+      await page.locator("#despacho-medidor-tanqueta").fill(medidor);
+    };
+    const registrar = () =>
+      page.locator("form").getByRole("button", { name: "Registrar despacho" }).click();
+
+    await abrirCarga("5", "1100");
+    await registrar();
+    await expect(
+      page.getByText(`Despacho registrado: la carga desde ${tanqueta.codigo as string}.`)
+    ).toBeVisible();
+    await expect(filaCarga).toHaveCount(2);
+    // Se cierra con la X y no reaparece en otra pantalla.
+    await page.getByRole("button", { name: "Cerrar aviso de importación" }).click();
+    await expect(page.getByText(/Despacho registrado/)).toHaveCount(0);
+
+    // Sin señal: la carga se guarda en el equipo, el conductor lo ve y queda en cola.
+    await abrirCarga("3", "1200");
+    await page.context().setOffline(true);
+    await registrar();
+    await expect(
+      page.getByText(
+        new RegExp(
+          `Sin conexión: la carga desde ${tanqueta.codigo as string} quedó guardad. en este equipo`
+        )
+      )
+    ).toBeVisible();
+    await expect(page.getByText(/Pendientes de enviar \(1\)/)).toBeVisible();
+    // El aviso no se arrastra a otra pantalla, y el pendiente es de Tanques, no de Compra en ruta.
+    await page.getByRole("button", { name: "Compra en ruta" }).click();
+    await expect(page.getByRole("heading", { name: "Compra en ruta" })).toBeVisible();
+    await expect(page.getByText(/Sin conexión: la carga desde/)).toHaveCount(0);
+    await expect(page.getByText(/Pendientes de enviar/)).toHaveCount(0);
+    await page.getByRole("button", { name: "Tanques" }).click();
+    await expect(page.getByText(/Sin conexión: la carga desde/)).toHaveCount(0);
+    await expect(page.getByText(/Pendientes de enviar \(1\)/)).toBeVisible();
+
+    // Vuelve la señal: el pendiente se va y la fila aparece sola, UNA vez.
+    await page.context().setOffline(false);
+    await expect(page.getByText(/Pendientes de enviar/)).toHaveCount(0, { timeout: 60_000 });
+    await expect(filaCarga).toHaveCount(3, { timeout: 30_000 });
+    const enServidor = await page.request.get(`${base}/despachos?origen=tanqueta`);
+    expect((await enServidor.json()).data).toHaveLength(3);
 
     // ── El conductor B no ve nada de lo de A ───────────────────────────────
     await page.request.post("/api/auth/logout");

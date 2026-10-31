@@ -1734,6 +1734,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (pestanaInicial) setPestanaCombustible(pestanaInicial);
+    // Un aviso de la pantalla anterior no se arrastra a la nueva.
+    setMensajeExito(null);
   }, [pestanaInicial]);
   const [historialDespachos, setHistorialDespachos] = useState<DespachoHistorial[]>([]);
   const [despachosDesde, setDespachosDesde] = useState("");
@@ -3830,7 +3832,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           </button>
         </div>
       )}
-      {!esConductor && pestanaCombustible === "tanques" && mensajeExito && (
+      {/* También al conductor: es la única confirmación de su "Carga desde
+          tanqueta" (con señal, o "guardado en este equipo" sin ella). */}
+      {pestanaCombustible === "tanques" && mensajeExito && (
         <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-green-900 font-light flex-1">{mensajeExito}</p>
           <button
