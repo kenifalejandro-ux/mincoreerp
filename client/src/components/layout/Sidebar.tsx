@@ -68,10 +68,11 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
       const antiguo = usuario?.permisosPestanas?.["combustible:tanques:proveedores"];
       return antiguo ?? (usuario?.rol === "admin" || usuario?.rol === "operador");
     }
-    // 0119: el conductor también ve Urea, solo para registrar la compra en
-    // ruta (el panel le muestra únicamente ese botón).
+    // El conductor compra y consulta sus compras (urea incluida) en "Compra en
+    // ruta": no ve la pestaña Urea, que es del almacén. Un permiso que el admin
+    // le dio a mano sí manda (más arriba).
     if (usuario?.rol === "conductor_ruta")
-      return tab === "combustible" || tab === "combustible:urea" || tab === "combustible:mi_viaje";
+      return tab === "combustible" || tab === "combustible:mi_viaje";
     // Tanquetas: es donde recibe la tanqueta de vuelta (0143).
     if (usuario?.rol === "grifero") return tab === "combustible" || tab === "combustible:tanquetas";
     if (usuario?.rol === "encargado_urea") return tab === "combustible:urea";

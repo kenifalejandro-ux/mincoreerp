@@ -70,10 +70,10 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
     // robusta de perfiles): sin override, caen al fallback de abajo (ve
     // cualquier sub-pestaña mientras tenga el módulo asignado).
     if (usuario?.rol === "grifero") return tab === "combustible" || tab === "combustible:tanquetas";
-    // 0119: el conductor también ve Urea, solo para registrar la compra en
-    // ruta (el panel le muestra únicamente ese botón).
-    if (usuario?.rol === "conductor_ruta")
-      return tab === "combustible" || tab === "combustible:urea";
+    // El conductor compra y consulta sus compras (urea incluida) en "Compra en
+    // ruta": no ve la pestaña Urea, que es del almacén. Un permiso que el admin
+    // le dio a mano sí manda (más arriba).
+    if (usuario?.rol === "conductor_ruta") return tab === "combustible";
     if (usuario?.rol === "encargado_urea") return tab === "combustible:urea";
   }
   return (usuario?.modulosPermitidos ?? []).includes(moduloId);
