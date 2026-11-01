@@ -153,6 +153,9 @@ test("el conductor ve sus boletas en Compra en ruta y sus cargas en Tanques @cel
     // ── Tanques: su carga, y NO la boleta ──────────────────────────────────
     await page.getByRole("button", { name: "Tanquetas" }).click();
     await expect(page.getByRole("heading", { name: "Mi tanqueta", level: 1 })).toBeVisible();
+    // Sus cargas viven en la pestaña "Mis cargas" (la de Movimientos es el kardex de la tanqueta).
+    const misCargas = () => page.getByRole("tab", { name: "Mis cargas" }).click();
+    await misCargas();
     const filaCarga = page.getByRole("row").filter({ hasText: tanqueta.codigo as string });
     await expect(filaCarga).toHaveCount(1);
     await expect(filaCarga).toContainText(placa);
@@ -167,6 +170,7 @@ test("el conductor ve sus boletas en Compra en ruta y sus cargas en Tanques @cel
 
     // ── Sin señal: el historial avisa en vez de quedarse cargando ──────────
     await page.getByRole("button", { name: "Tanquetas" }).click();
+    await misCargas();
     await expect(filaCarga).toHaveCount(1);
     await page.context().setOffline(true);
     await page.getByRole("button", { name: "Consultar" }).click();
@@ -210,12 +214,21 @@ test("el conductor ve sus boletas en Compra en ruta y sus cargas en Tanques @cel
       )
     ).toBeVisible();
     await expect(page.getByText(/Pendientes de enviar \(1\)/)).toBeVisible();
+    // También se ve en "Movimientos" (la pestaña de entrada): si no, el conductor que cargó sin
+    // señal no vería nada y podría registrar la misma carga dos veces.
+    await page.getByRole("tab", { name: "Movimientos" }).click();
+    // El del historial sigue montado pero oculto: se cuenta solo el que se ve.
+    await expect(
+      page.getByText(/Pendientes de enviar \(1\)/).filter({ visible: true })
+    ).toHaveCount(1);
+    await misCargas();
     // El aviso no se arrastra a otra pantalla, y el pendiente es de Tanques, no de Compra en ruta.
     await page.getByRole("button", { name: "Compra en ruta" }).click();
     await expect(page.getByRole("heading", { name: "Compra en ruta" })).toBeVisible();
     await expect(page.getByText(/Sin conexión: la carga desde/)).toHaveCount(0);
     await expect(page.getByText(/Pendientes de enviar/)).toHaveCount(0);
     await page.getByRole("button", { name: "Tanquetas" }).click();
+    await misCargas();
     await expect(page.getByText(/Sin conexión: la carga desde/)).toHaveCount(0);
     await expect(page.getByText(/Pendientes de enviar \(1\)/)).toBeVisible();
 

@@ -1,19 +1,26 @@
 // "Mi tanqueta" del conductor: a la izquierda el cilindro de la tanqueta asignada a su unidad
-// (como "Nivel de tanque") y a la derecha lo que él sacó de ella ("Mis cargas"). Si la unidad
-// lleva más de una, un selector arriba. Solo lectura.
+// (como "Nivel de tanque") y a la derecha dos pestañas: los movimientos de la tanqueta (el kardex,
+// que cuadra con el cilindro) y "Mis cargas" (lo que él sacó). Si la unidad lleva más de una, un
+// selector arriba. Solo lectura.
 //
-// Los datos vienen de GET /tanquetas/mias (solo las de SU unidad). El cilindro baja solo cuando
-// alguien carga: se vuelve a pedir ante los eventos del servidor, agrupados en una sola recarga.
+// Los datos vienen de GET /tanquetas/mias y /tanquetas/:id/kardex (solo las de SU unidad). El
+// cilindro y el kardex bajan solos cuando alguien carga: se vuelve a pedir ante los eventos del
+// servidor, agrupados en una sola recarga.
 //
 // Si no se puede actualizar (sin señal, o el servidor responde con error) se queda lo último que
 // se supo y se dice, con su fecha. Lo último que se vio se guarda en este celular (como Mi viaje).
 //
-// El historial de cargas va SIEMPRE en el mismo lugar del árbol: si cambiara de sitio cuando
-// aparece o desaparece la tanqueta, React lo montaría de nuevo y perdería el filtro de fechas.
+// El historial de cargas va SIEMPRE en el mismo lugar del árbol (y solo se oculta al cambiar de
+// pestaña): si cambiara de sitio, React lo montaría de nuevo y perdería el filtro de fechas.
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import HistorialCargasTanqueta from "./HistorialCargasTanqueta";
+import KardexTanqueta from "./KardexTanqueta";
+import { leerKardex, type KardexDeTanqueta } from "./kardexTanquetaDatos";
 import NivelDeTanqueta, { type ProblemaDeActualizacion, type TanquetaMia } from "./NivelDeTanqueta";
+import PendientesDeEnvio from "./PendientesDeEnvio";
+import PestanasDeTanqueta from "./PestanasDeTanqueta";
+import { idPanel, idPestana, type VistaDeTanqueta } from "./pestanasDeTanquetaIds";
 import { useAuth } from "../../context/AuthContext";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
@@ -33,7 +40,18 @@ const EVENTOS = [
 interface CacheLocal {
   guardadoEn: string;
   tanquetas: TanquetaMia[];
+  /** Los movimientos de cada tanqueta (por id), recortados a los más recientes. */
+  kardex: Record<string, KardexDeTanqueta>;
 }
+
+/** Los movimientos con la tanqueta a la que pertenecen: nunca se pintan bajo otro cilindro. */
+interface KardexDe {
+  id: number;
+  datos: KardexDeTanqueta;
+}
+
+/** Lo máximo que se guarda de cada kardex en el celular. */
+const FILAS_EN_CACHE = 100;
 
 const claveCache = (usuarioId: string) => `mi-tanqueta:${usuarioId}`;
 
@@ -57,18 +75,17 @@ function esTanquetaValida(t: unknown): t is TanquetaMia {
 function leerCache(usuarioId: string): CacheLocal | null {
   try {
     const crudo = localStorage.getItem(claveCache(usuarioId));
-    const c = crudo ? (JSON.parse(crudo) as CacheLocal) : null;
-    return c && Array.isArray(c.tanquetas) && c.tanquetas.every(esTanquetaValida) ? c : null;
+    const c = crudo ? JSON.parse(crudo) : null;
+    if (!c || !Array.isArray(c.tanquetas) || !c.tanquetas.every(esTanquetaValida)) return null;
+    // Unos movimientos guardados con otra forma se descartan; las tanquetas se conservan.
+    const kardex: Record<string, KardexDeTanqueta> = {};
+    for (const [id, k] of Object.entries(c.kardex ?? {})) {
+      const leido = leerKardex(k);
+      if (leido) kardex[id] = leido;
+    }
+    return { guardadoEn: c.guardadoEn, tanquetas: c.tanquetas, kardex };
   } catch {
     return null;
-  }
-}
-
-function guardarCache(usuarioId: string, c: CacheLocal) {
-  try {
-    localStorage.setItem(claveCache(usuarioId), JSON.stringify(c));
-  } catch {
-    // Sin espacio o en modo privado: se sigue sin caché.
   }
 }
 
@@ -77,6 +94,8 @@ const fechaDelCache = (iso: unknown): Date | null => {
   const t = typeof iso === "string" ? Date.parse(iso) : NaN;
   return Number.isNaN(t) ? null : new Date(t);
 };
+
+const iguales = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 export default function MiTanqueta() {
   const { usuario } = useAuth();
@@ -88,16 +107,87 @@ export default function MiTanqueta() {
   const [sinUnidad, setSinUnidad] = useState(false);
   const [problema, setProblema] = useState<ProblemaDeActualizacion | null>(null);
   const [actualizadoEn, setActualizadoEn] = useState<Date | null>(null);
+  const [kardex, setKardex] = useState<KardexDe | null>(null);
+  const [cargandoKardex, setCargandoKardex] = useState(false);
+  const [errorKardex, setErrorKardex] = useState<string | null>(null);
+  const [vista, setVista] = useState<VistaDeTanqueta>("movimientos");
 
-  // Una consulta lenta no debe pisar a la que se pidió después (un evento, volver la señal).
+  // Una consulta lenta no debe pisar a la que se pidió después (un evento, volver la señal, otra
+  // tanqueta elegida).
   const pedido = useRef(0);
+  const pedidoKardex = useRef(0);
   const elegidaRef = useRef<number | null>(null);
+  const cache = useRef<CacheLocal>({ guardadoEn: "", tanquetas: [], kardex: {} });
+  // Lo último escrito en el celular: si no cambió, no se vuelve a escribir (cada refresco serializa
+  // hasta 300 filas).
+  const ultimoTexto = useRef("");
+
+  const guardar = useCallback(() => {
+    try {
+      const texto = JSON.stringify(cache.current);
+      if (texto === ultimoTexto.current) return;
+      localStorage.setItem(claveCache(usuarioId), texto);
+      ultimoTexto.current = texto;
+    } catch {
+      // Sin espacio o en modo privado: se sigue sin caché.
+    }
+  }, [usuarioId]);
+
+  const cargarKardex = useCallback(
+    async (id: number) => {
+      const mio = ++pedidoKardex.current;
+      setCargandoKardex(true);
+      try {
+        const res = await apiFetch(`/api/erp/combustible/tanquetas/${id}/kardex`);
+        const cuerpo = await res.json().catch(() => null);
+        if (mio !== pedidoKardex.current) return;
+        if (res.status === 404) {
+          // Ya no es de su unidad (la devolvieron al grifero): la lista la quitará en el próximo refresco.
+          setKardex(null);
+          setErrorKardex("Esta tanqueta ya no está asignada a tu unidad.");
+          return;
+        }
+        const datos = res.ok ? leerKardex(cuerpo) : null;
+        if (!datos) {
+          // Se queda lo que había (si había) y se dice.
+          setErrorKardex(mensajeDeError(cuerpo, "No se pudieron cargar los movimientos."));
+          return;
+        }
+        // Si nada cambió se conserva el mismo objeto: así la tabla no se repinta entera.
+        setKardex((previo) =>
+          previo?.id === id && iguales(previo.datos, datos) ? previo : { id, datos }
+        );
+        setErrorKardex(null);
+        cache.current.kardex[String(id)] = {
+          ...datos,
+          filas: datos.filas.slice(0, FILAS_EN_CACHE),
+          truncado: datos.truncado || datos.filas.length > FILAS_EN_CACHE,
+        };
+        guardar();
+      } catch {
+        if (mio !== pedidoKardex.current) return;
+        // Sin señal: lo último que se vio de esta tanqueta, y se dice que es lo guardado.
+        const guardado = cache.current.kardex[String(id)];
+        if (guardado) {
+          setKardex({ id, datos: guardado });
+          setErrorKardex("Sin conexión: se muestran los movimientos guardados en este celular.");
+        } else {
+          setErrorKardex("Sin conexión: no se pudieron cargar los movimientos.");
+        }
+      } finally {
+        if (mio === pedidoKardex.current) setCargandoKardex(false);
+      }
+    },
+    [guardar]
+  );
 
   const mostrar = useCallback((lista: TanquetaMia[]) => {
     setTanquetas(lista);
     // Se queda la que estaba mirando; si ya no es suya (la devolvieron), la primera.
     const sigue = lista.find((t) => t.id === elegidaRef.current);
     const id = sigue ? sigue.id : (lista[0]?.id ?? null);
+    // Un aviso de los movimientos de otra tanqueta no se queda bajo la nueva.
+    if (id !== elegidaRef.current) setErrorKardex(null);
     elegidaRef.current = id;
     setElegidaId(id);
   }, []);
@@ -120,14 +210,28 @@ export default function MiTanqueta() {
       setError(null);
       setProblema(null);
       setActualizadoEn(ahora);
-      guardarCache(usuarioId, { guardadoEn: ahora.toISOString(), tanquetas: cuerpo });
+      // Del caché se van los movimientos de tanquetas que ya no son suyas.
+      const siguen = new Set(cuerpo.map((t) => String(t.id)));
+      const kardexVigente = Object.fromEntries(
+        Object.entries(cache.current.kardex).filter(([id]) => siguen.has(id))
+      );
+      cache.current = { guardadoEn: ahora.toISOString(), tanquetas: cuerpo, kardex: kardexVigente };
+      guardar();
+      // Los movimientos de la que está mirando, junto con el cilindro: que cuadren.
+      if (elegidaRef.current !== null) void cargarKardex(elegidaRef.current);
+      else setKardex(null);
     } catch {
       if (mio !== pedido.current) return;
       // Sin señal: lo último que se vio.
       const guardado = leerCache(usuarioId);
       if (guardado && guardado.tanquetas.length > 0) {
+        cache.current = guardado;
         mostrar(guardado.tanquetas);
         setActualizadoEn(fechaDelCache(guardado.guardadoEn));
+        const id = elegidaRef.current;
+        const suyo = id === null ? undefined : guardado.kardex[String(id)];
+        setKardex(id !== null && suyo ? { id, datos: suyo } : null);
+        setErrorKardex(suyo ? null : "Sin conexión: no se pudieron cargar los movimientos.");
         setError(null);
       } else {
         setError("Sin conexión: no se pudo cargar tu tanqueta. Vuelve a intentarlo con señal.");
@@ -136,7 +240,7 @@ export default function MiTanqueta() {
     } finally {
       if (mio === pedido.current) setCargando(false);
     }
-  }, [usuarioId, mostrar]);
+  }, [usuarioId, mostrar, cargarKardex, guardar]);
 
   useEffect(() => {
     // Patrón estándar de carga al montar -- ver IpercView.tsx.
@@ -179,9 +283,14 @@ export default function MiTanqueta() {
   const elegir = (id: number) => {
     elegidaRef.current = id;
     setElegidaId(id);
+    setErrorKardex(null);
+    // Se pide la nueva; mientras llega no se ven los movimientos de la anterior (cada kardex
+    // sabe a qué tanqueta pertenece).
+    void cargarKardex(id);
   };
 
   const elegida = tanquetas.find((t) => t.id === elegidaId) ?? tanquetas[0];
+  const delaElegida = elegida && kardex?.id === elegida.id ? kardex.datos : null;
 
   return (
     <section className="mb-6 grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,260px)_minmax(0,1fr)]">
@@ -213,7 +322,35 @@ export default function MiTanqueta() {
         </div>
       )}
       <div className="min-w-0">
-        <HistorialCargasTanqueta />
+        {elegida && <PestanasDeTanqueta vista={vista} onCambiar={setVista} />}
+        {/* Lo registrado sin señal debe verse aunque esté en "Movimientos": el historial (donde
+            vive este aviso) queda oculto en esa pestaña. */}
+        {elegida && vista === "movimientos" && <PendientesDeEnvio ambito="tanqueta" />}
+        {elegida && vista === "movimientos" && (
+          <div
+            role="tabpanel"
+            id={idPanel("movimientos")}
+            aria-labelledby={idPestana("movimientos")}
+          >
+            <KardexTanqueta
+              key={elegida.id}
+              kardex={delaElegida}
+              codigo={elegida.codigo}
+              saldoCilindro={elegida.saldo}
+              cargando={cargandoKardex}
+              error={errorKardex}
+            />
+          </div>
+        )}
+        {/* Siempre montado y en el mismo lugar: solo se oculta (conserva su filtro de fechas). */}
+        <div
+          role={elegida ? "tabpanel" : undefined}
+          id={elegida ? idPanel("cargas") : undefined}
+          aria-labelledby={elegida ? idPestana("cargas") : undefined}
+          hidden={Boolean(elegida) && vista === "movimientos"}
+        >
+          <HistorialCargasTanqueta />
+        </div>
       </div>
     </section>
   );
