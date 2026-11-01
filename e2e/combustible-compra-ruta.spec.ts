@@ -745,6 +745,8 @@ test("proveedor Otros: pide el nombre del grifo, registra y el historial lo mues
 
   // El historial muestra el nombre que se escribió.
   await expect(page.getByRole("row").filter({ hasText: numero })).toContainText(`Otros: ${grifo}`);
+  // Y queda marcado como un grifo que no está en el catálogo.
+  await expect(page.getByRole("row").filter({ hasText: numero })).toContainText("no registrado");
   // Y el grifo no frecuente no se coló en el catálogo de proveedores.
   const catalogo = await page.request.get("/api/erp/combustible/grifos");
   expect(await catalogo.text()).not.toContain("Otros:");

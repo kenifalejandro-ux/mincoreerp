@@ -22,6 +22,8 @@ interface Boleta {
   clave: string;
   despachado_en: string;
   proveedor: string | null;
+  /** El grifo se escribió a mano ("Otros"), no es un proveedor del catálogo. */
+  proveedor_no_registrado?: boolean;
   placa_codigo: string | null;
   registrado_por: string | null;
   comprobante_tipo: string;
@@ -307,7 +309,14 @@ export default function HistorialComprasRuta() {
                         timeStyle: "short",
                       })}
                     </td>
-                    <td className="p-3 text-sm text-slate-700">{b.proveedor ?? "—"}</td>
+                    <td className="p-3 text-sm text-slate-700">
+                      {b.proveedor ?? "—"}
+                      {b.proveedor_no_registrado && (
+                        <span className="ml-2 rounded-full border border-slate-300 px-2 py-0.5 align-middle text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                          no registrado
+                        </span>
+                      )}
+                    </td>
                     <td className="p-3 text-sm text-slate-700">
                       {b.placa_codigo ?? "—"}
                       {b.registrado_por && (

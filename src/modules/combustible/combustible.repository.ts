@@ -550,6 +550,9 @@ const VALES_DEL_TALONARIO = `(
    WHERE a.tenant_id = $1 AND $2 = 'combustible' AND a.serie_talonario = $3
 ) AS vales`;
 
+/** El nombre del proveedor interno de los grifos no registrados (0164). */
+const NOMBRE_PROVEEDOR_OTROS = "Otros (grifo no frecuente)";
+
 export class CombustibleRepository {
   async findAll(client: PoolClient, tenantId: string, alcance?: AlcanceCombustible) {
     // Solo los tanques que el usuario ve (0100): su grifo o un surtidor suyo.
@@ -1164,7 +1167,7 @@ export class CombustibleRepository {
     presentacion, factor_litros, cantidad_bultos,
     -- 0130: de dónde salió el costo de la urea (declarado, promedio, boleta).
     costo_origen,
-    comprobante_tipo, comprobante_numero,
+    comprobante_tipo, comprobante_numero, proveedor_otro,
     -- Del archivo se publica lo que la pantalla necesita para decir "hay
     -- foto, pesa esto, la subió fulano": NUNCA comprobante_key ni
     -- comprobante_driver. Son la ubicación interna en el bucket y no le
@@ -1243,6 +1246,8 @@ export class CombustibleRepository {
        *  entradas o boleta de la compra en ruta). Corregir los litros de un
        *  envase recalcula cada uno distinto. */
       costoOrigen?: "declarado" | "promedio" | "boleta" | null;
+      /** 0164: el nombre del grifo no registrado (proveedor interno "Otros"). */
+      proveedorOtro?: string | null;
     }
   ) {
     try {
@@ -1263,7 +1268,7 @@ export class CombustibleRepository {
           conductor_nombre, conductor_dni, totalizador_lectura, surtidor_id,
           comprobante_tipo, comprobante_numero, cliente_uuid,
           excedente_linea_id, tanque_excedente_id, tanqueta_destino_id, tanqueta_origen_id,
-          tanqueta_lugar, costo_origen, cantidad_unidad
+          tanqueta_lugar, costo_origen, cantidad_unidad, proveedor_otro
         )
         -- El conductor se COPIA del equipo en este mismo INSERT (0083). Nadie
         -- lo tipea, y no se resuelve después con un JOIN a propósito: los
@@ -1282,7 +1287,7 @@ export class CombustibleRepository {
                CASE WHEN h.id IS NOT NULL THEN h.conductor_nombre ELSE e.conductor_nombre END,
                CASE WHEN h.id IS NOT NULL THEN h.conductor_dni ELSE e.conductor_dni END,
                $23::numeric, $24::int, $25, $26, $27::uuid,
-               $28::bigint, $29::int, $30::bigint, $31::bigint, $32, $33, $34
+               $28::bigint, $29::int, $30::bigint, $31::bigint, $32, $33, $34, $35
           FROM (SELECT 1) dummy
           LEFT JOIN equipos e ON e.id = $8::int AND e.tenant_id = $1
           LEFT JOIN LATERAL (
@@ -1331,6 +1336,7 @@ export class CombustibleRepository {
           data.tanquetaLugar ?? null,
           data.costoOrigen ?? null,
           data.cantidadUnidad ?? null,
+          data.proveedorOtro ?? null,
         ]
       );
       const fila = result.rows[0];
@@ -1450,7 +1456,9 @@ export class CombustibleRepository {
     producto: string,
     grifoId: number,
     comprobanteTipo: string,
-    comprobanteNumero: string
+    comprobanteNumero: string,
+    // 0164: dos grifos "Otros" con distinto nombre no son el mismo proveedor.
+    proveedorOtro: string | null = null
   ): Promise<{ id: number; despachado_en: string; comprobante_numero: string } | null> {
     const result = await client.query<{
       id: number;
@@ -1465,8 +1473,9 @@ export class CombustibleRepository {
          AND combustible_comprobante_canonico(comprobante_numero)
              = combustible_comprobante_canonico($4)
          AND producto = $5
+         AND COALESCE(lower(proveedor_otro), '') = COALESCE(lower($6::text), '')
          AND anulada_en IS NULL`,
-      [tenantId, grifoId, comprobanteTipo, comprobanteNumero, producto]
+      [tenantId, grifoId, comprobanteTipo, comprobanteNumero, producto, proveedorOtro]
     );
     return result.rows[0] ?? null;
   }
@@ -1664,7 +1673,11 @@ export class CombustibleRepository {
               combustible_comprobante_canonico(d.comprobante_numero) AS numero_canonico,
               d.comprobante_nombre, d.comprobante_subido_en,
               d.cantidad, d.cantidad_unidad, d.costo_unitario, d.tipo_combustible,
-              g.nombre AS proveedor, e.placa_codigo, u.nombre AS registrado_por,
+              CASE WHEN g.es_otros AND d.proveedor_otro IS NOT NULL
+                   THEN 'Otros: ' || d.proveedor_otro ELSE g.nombre END AS proveedor,
+              COALESCE(g.es_otros, false) AS proveedor_no_registrado,
+              d.proveedor_otro,
+              e.placa_codigo, u.nombre AS registrado_por,
               c.total_boleta, c.total_sistema, c.diferencia, c.motivo_descuadre,
               COALESCE((
                 SELECT json_agg(json_build_object(
@@ -1711,6 +1724,7 @@ export class CombustibleRepository {
           AND h.comprobante_tipo = d.comprobante_tipo
           AND combustible_comprobante_canonico(h.comprobante_numero)
               = combustible_comprobante_canonico(d.comprobante_numero)
+          AND COALESCE(lower(h.proveedor_otro), '') = COALESCE(lower(d.proveedor_otro), '')
           AND h.origen = 'compra_externa'
           AND h.anulada_en IS NULL
         WHERE d.tenant_id = $1 AND d.id = $2 AND d.origen = 'compra_externa'
@@ -3666,7 +3680,10 @@ export class CombustibleRepository {
               d.comprobante_nombre, d.comprobante_subido_en,
               d.cantidad, d.costo_unitario, (d.cantidad * d.costo_unitario) AS costo_total,
               d.conductor_nombre, d.observaciones, d.anulada_en, d.motivo_anulacion,
-              g.nombre AS proveedor, e.placa_codigo, e.tipo AS equipo_tipo,
+              CASE WHEN g.es_otros AND d.proveedor_otro IS NOT NULL
+                   THEN 'Otros: ' || d.proveedor_otro ELSE g.nombre END AS proveedor,
+              COALESCE(g.es_otros, false) AS proveedor_no_registrado,
+              e.placa_codigo, e.tipo AS equipo_tipo,
               u.nombre AS registrado_por,
               COALESCE((
                 SELECT json_agg(json_build_object(
@@ -6224,23 +6241,22 @@ export class CombustibleRepository {
     return result.rows;
   }
 
-  /** El proveedor interno de un grifo "Otros" (0163): uno por nombre, sin
-   *  distinguir mayúsculas. Se crea la primera vez que alguien lo escribe y
-   *  después se reutiliza. Va oculto (`es_otros`) de catálogo, precios y listas
-   *  de formulario, y vende ruta de combustible y de urea. Dos compras
-   *  simultáneas del mismo nombre nuevo: la que pierde la carrera lee la fila
-   *  de la otra. */
+  /** El proveedor interno "Otros" (0163/0164): UNO por empresa, para los grifos
+   *  que no están en el catálogo. Se crea la primera vez que se usa y va oculto
+   *  (`es_otros`) de catálogo, precios y listas de formulario; vende ruta de
+   *  combustible y de urea. El nombre que escribió quien compró NO es un
+   *  proveedor: vive en el despacho (`proveedor_otro`). Dos compras que lo
+   *  estrenan a la vez: la que pierde la carrera lee la fila de la otra. */
   async obtenerGrifoOtros(
     client: PoolClient,
     tenantId: string,
-    usuarioId: string | null,
-    nombreEscrito: string
+    usuarioId: string | null
   ): Promise<number> {
-    const nombre = `Otros: ${nombreEscrito}`;
     const buscar = async () => {
       const r = await client.query<{ id: number }>(
-        `SELECT id FROM combustible_grifos WHERE tenant_id = $1 AND lower(nombre) = lower($2)`,
-        [tenantId, nombre]
+        `SELECT id FROM combustible_grifos
+          WHERE tenant_id = $1 AND es_otros AND nombre = $2`,
+        [tenantId, NOMBRE_PROVEEDOR_OTROS]
       );
       return r.rows[0]?.id;
     };
@@ -6252,16 +6268,16 @@ export class CombustibleRepository {
           es_otros, usuario_id)
        VALUES ($1, $2, true, false, false, true, true, $3)
        ON CONFLICT DO NOTHING`,
-      [tenantId, nombre, usuarioId]
+      [tenantId, NOMBRE_PROVEEDOR_OTROS, usuarioId]
     );
     const creado = await buscar();
-    if (creado === undefined) throw new Error(`no se pudo registrar el proveedor "${nombre}"`);
+    if (creado === undefined) throw new Error("no se pudo registrar el proveedor Otros");
     return creado;
   }
 
   async findGrifoPorId(client: PoolClient, tenantId: string, id: number) {
     const result = await client.query(
-      `SELECT id, nombre, activo, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta, usuario_id, creado_en
+      `SELECT id, nombre, activo, abastece_ruta, abastece_tanque, abastece_urea, abastece_urea_ruta, es_otros, usuario_id, creado_en
        FROM combustible_grifos WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId]
     );
