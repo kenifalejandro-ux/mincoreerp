@@ -2537,6 +2537,22 @@ export const historialMioQuerySchema = z.object({
 });
 export type HistorialMioQuery = z.infer<typeof historialMioQuerySchema>;
 
+// Kardex de la tanqueta del conductor: período y quién la usó. La unidad es la placa y el conductor
+// su nombre más reciente tal como sale en las filas: el servidor reconoce a la persona por su DNI,
+// que el conductor no ve.
+export const kardexTanquetaQuerySchema = z
+  .object({
+    desde: fechaHora.optional(),
+    hasta: fechaHora.optional(),
+    unidad: z.string().trim().min(1).max(60).optional(),
+    conductor: z.string().trim().min(1).max(150).optional(),
+  })
+  .refine((q) => !q.desde || !q.hasta || new Date(q.desde) <= new Date(q.hasta), {
+    message: "desde no puede ser posterior a hasta",
+    path: ["hasta"],
+  });
+export type KardexTanquetaQuery = z.infer<typeof kardexTanquetaQuerySchema>;
+
 // ── Llegada y salida de cada parada ────────────────────────────────────────
 // `orden` es la parada a la que el que marca CREE que llega (o de la que cree
 // que sale): si el viaje ya avanzó, la marca se rechaza en vez de caer en otra.

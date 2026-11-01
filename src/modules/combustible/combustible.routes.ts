@@ -61,6 +61,7 @@ import {
   descansoMioSchema,
   entregaMandoSchema,
   historialMioQuerySchema,
+  kardexTanquetaQuerySchema,
   descansoViajeSchema,
   terminarDescansoMioSchema,
   terminarDescansoViajeSchema,
@@ -433,6 +434,13 @@ router.get(
   requirePestana("combustible", "tanques:registrar_despacho"),
   asyncHandler(controller.listarTanquetasParaFormulario.bind(controller))
 );
+// Las tanquetas de la unidad del conductor, para su pantalla (cilindro y kardex).
+router.get(
+  "/tanquetas/mias",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  requireRole("conductor_ruta"),
+  asyncHandler(controller.listarMisTanquetas.bind(controller))
+);
 // Asignar la unidad (0139): mismo permiso que editar la tanqueta.
 router.put(
   "/tanquetas/:tanquetaId/asignar",
@@ -453,6 +461,14 @@ router.get(
   "/tanquetas/:tanquetaId/historial",
   requirePestana("combustible", "tanquetas"),
   asyncHandler(controller.historialTanqueta.bind(controller))
+);
+// El kardex de la tanqueta de su unidad: lo que la mueve y el saldo después de cada fila.
+router.get(
+  "/tanquetas/:tanquetaId/kardex",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  requireRole("conductor_ruta"),
+  validateQuery(kardexTanquetaQuerySchema),
+  asyncHandler(controller.kardexDeMiTanqueta.bind(controller))
 );
 router.get(
   "/tanquetas/:tanquetaId/cuadre",
