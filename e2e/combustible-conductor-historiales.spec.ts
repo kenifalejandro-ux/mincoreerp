@@ -151,7 +151,7 @@ test("el conductor ve sus boletas en Compra en ruta y sus cargas en Tanques @cel
     expect(compra.status(), await compra.text()).toBe(201);
 
     // ── Tanques: su carga, y NO la boleta ──────────────────────────────────
-    await page.getByRole("button", { name: "Tanques" }).click();
+    await page.getByRole("button", { name: "Tanquetas" }).click();
     await expect(page.getByRole("heading", { name: "Mis cargas desde tanqueta" })).toBeVisible();
     const filaCarga = page.getByRole("row").filter({ hasText: tanqueta.codigo as string });
     await expect(filaCarga).toHaveCount(1);
@@ -166,7 +166,7 @@ test("el conductor ve sus boletas en Compra en ruta y sus cargas en Tanques @cel
     await expect(page.getByText(tanqueta.codigo as string)).toHaveCount(0);
 
     // ── Sin señal: el historial avisa en vez de quedarse cargando ──────────
-    await page.getByRole("button", { name: "Tanques" }).click();
+    await page.getByRole("button", { name: "Tanquetas" }).click();
     await expect(filaCarga).toHaveCount(1);
     await page.context().setOffline(true);
     await page.getByRole("button", { name: "Consultar" }).click();
@@ -215,7 +215,7 @@ test("el conductor ve sus boletas en Compra en ruta y sus cargas en Tanques @cel
     await expect(page.getByRole("heading", { name: "Compra en ruta" })).toBeVisible();
     await expect(page.getByText(/Sin conexión: la carga desde/)).toHaveCount(0);
     await expect(page.getByText(/Pendientes de enviar/)).toHaveCount(0);
-    await page.getByRole("button", { name: "Tanques" }).click();
+    await page.getByRole("button", { name: "Tanquetas" }).click();
     await expect(page.getByText(/Sin conexión: la carga desde/)).toHaveCount(0);
     await expect(page.getByText(/Pendientes de enviar \(1\)/)).toBeVisible();
 
@@ -229,7 +229,7 @@ test("el conductor ve sus boletas en Compra en ruta y sus cargas en Tanques @cel
     // ── El conductor B no ve nada de lo de A ───────────────────────────────
     await page.request.post("/api/auth/logout");
     await entrarAMiViaje(page, comoB);
-    await page.getByRole("button", { name: "Tanques" }).click();
+    await page.getByRole("button", { name: "Tanquetas" }).click();
     await expect(page.getByText("Todavía no hay cargas desde tanqueta registradas.")).toBeVisible();
     await expect(page.getByText(tanqueta.codigo as string)).toHaveCount(0);
     await page.getByRole("button", { name: "Compra en ruta" }).click();

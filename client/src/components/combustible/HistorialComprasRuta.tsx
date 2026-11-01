@@ -49,6 +49,13 @@ interface Boleta {
   foto_de: { id: number; producto: "combustible" | "urea" } | null;
 }
 
+type ProductoDelHistorial = "todas" | "combustible" | "urea";
+const PESTANAS_PRODUCTO: { valor: ProductoDelHistorial; etiqueta: string }[] = [
+  { valor: "todas", etiqueta: "Todas" },
+  { valor: "combustible", etiqueta: "Combustible" },
+  { valor: "urea", etiqueta: "Urea" },
+];
+
 const ETIQUETA_COMBUSTIBLE: Record<string, string> = {
   diesel_b5: "Diésel B5",
   gasolina_90: "Gasolina 90",
@@ -71,8 +78,12 @@ function urlDeLaFoto(b: Boleta): string | null {
 
 export default function HistorialComprasRuta() {
   const { usuario } = useAuth();
-  const puedeSubir =
-    seccionesCompraEnRuta(usuario).combustible || seccionesCompraEnRuta(usuario).urea;
+  const secciones = seccionesCompraEnRuta(usuario);
+  const puedeSubir = secciones.combustible || secciones.urea;
+  // Con los dos productos, el historial se puede filtrar por uno solo; con uno,
+  // no hay nada que separar.
+  const verPestanas = secciones.combustible && secciones.urea;
+  const [producto, setProducto] = useState<ProductoDelHistorial>("todas");
 
   const [desde, setDesde] = useState("");
   const [hasta, setHasta] = useState("");
@@ -176,8 +187,38 @@ export default function HistorialComprasRuta() {
     await cargar(desde, hasta);
   };
 
+  // Una boleta con los dos productos sale en las dos pestañas, completa.
+  const visibles =
+    producto === "todas"
+      ? boletas
+      : boletas.filter((b) => (producto === "combustible" ? b.combustible : b.urea) !== null);
+
   return (
     <section className="rounded-2xl border border-slate-200 bg-white">
+      {verPestanas && (
+        <div
+          className="flex gap-1 overflow-x-auto border-b border-slate-200 px-3.5 pt-2.5"
+          role="tablist"
+          aria-label="Compras por producto"
+        >
+          {PESTANAS_PRODUCTO.map((p) => (
+            <button
+              key={p.valor}
+              type="button"
+              role="tab"
+              aria-selected={producto === p.valor}
+              onClick={() => setProducto(p.valor)}
+              className={`-mb-px whitespace-nowrap border-b-2 px-3.5 py-2 text-sm font-medium ${
+                producto === p.valor
+                  ? "border-[#a3e635] text-slate-800"
+                  : "border-transparent text-slate-500 hover:text-white"
+              }`}
+            >
+              {p.etiqueta}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="flex flex-wrap items-end gap-3 border-b border-slate-200 p-4">
         <label className="flex flex-col gap-1 text-xs font-bold uppercase text-slate-700">
           Desde
@@ -208,7 +249,7 @@ export default function HistorialComprasRuta() {
           Consultar
         </button>
         <span className="ml-auto text-xs text-slate-500">
-          {boletas.length} {boletas.length === 1 ? "boleta" : "boletas"}
+          {visibles.length} {visibles.length === 1 ? "boleta" : "boletas"}
         </span>
       </div>
 
@@ -231,9 +272,11 @@ export default function HistorialComprasRuta() {
       <div className="overflow-x-auto">
         {cargando ? (
           <p className="py-10 text-center text-sm text-slate-500">Cargando historial...</p>
-        ) : boletas.length === 0 ? (
+        ) : visibles.length === 0 ? (
           <p className="py-10 text-center text-sm text-slate-500">
-            Todavía no hay compras en ruta registradas.
+            {producto === "todas"
+              ? "Todavía no hay compras en ruta registradas."
+              : `Todavía no hay compras en ruta con ${producto === "urea" ? "urea" : "combustible"}.`}
           </p>
         ) : (
           <table className="w-full min-w-max border-collapse text-left">
@@ -249,7 +292,7 @@ export default function HistorialComprasRuta() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {boletas.map((b) => {
+              {visibles.map((b) => {
                 const completa = b.con_foto === b.despachos;
                 const urlFoto = urlDeLaFoto(b);
                 return (

@@ -10,7 +10,7 @@
  * el equipo y se sincronice sola UNA vez (con su foto), y que el formulario sea
  * usable en el celular, que es donde lo llena el conductor.
  */
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
 import { loginPorUI } from "./fixtures/auth";
 import {
@@ -782,4 +782,142 @@ test("proveedor Otros sin señal: la compra queda en el equipo y llega con el no
   // Una sola compra, y con el nombre que se escribió.
   expect(await despachosDeLaBoleta(page, numero)).toHaveLength(2);
   expect(await proveedorDelHistorial(page, numero)).toBe(`Otros: ${grifo}`);
+});
+
+/** Una boleta del conductor por API: solo combustible, solo urea o los dos. */
+async function comprarPorApi(
+  page: Page,
+  datos: {
+    grifoId: number;
+    equipoId: number;
+    presentacion: string;
+    numero: string;
+    productos: "combustible" | "urea" | "ambos";
+    horometro: number;
+  }
+) {
+  const r = await page.request.post("/api/erp/combustible/compras-ruta", {
+    data: {
+      cliente_uuid: randomUUID(),
+      grifo_id: datos.grifoId,
+      comprobante_tipo: "boleta",
+      comprobante_numero: datos.numero,
+      equipo_id: datos.equipoId,
+      despachado_en: new Date().toISOString(),
+      ...(datos.productos !== "urea"
+        ? {
+            combustible: {
+              tipo_combustible: "diesel_b5",
+              cantidad: 40,
+              costo_unitario: 17.5,
+              lectura_horometro: datos.horometro,
+              horas_abastecidas: 12,
+            },
+          }
+        : {}),
+      ...(datos.productos !== "combustible"
+        ? {
+            urea: {
+              lineas: [
+                { presentacion: datos.presentacion, cantidad_bultos: 2, costo_unitario: 50 },
+              ],
+            },
+          }
+        : {}),
+    },
+  });
+  expect(r.status(), await r.text()).toBe(201);
+}
+
+test("conductor: sin pestaña Urea en el menú y su historial se filtra por producto", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const marca = unico();
+  const propia = `PRP-${marca}`;
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  const { grifoNombre } = await sembrar(page, `GRF-${marca}`);
+  const conductor = await sembrarConductor(page, marca, [propia]);
+  // Lo que el conductor necesita para comprar, leído mientras entra el admin.
+  const grifos = (await (
+    await page.request.get("/api/erp/combustible/grifos/para-formulario")
+  ).json()) as { id: number; nombre: string }[];
+  const grifoId = grifos.find((g) => g.nombre === grifoNombre)!.id;
+  const envases = (await (
+    await page.request.get("/api/erp/combustible/urea/presentaciones")
+  ).json()) as { codigo: string; activa: boolean }[];
+  const presentacion = envases.find((e) => e.activa)!.codigo;
+
+  try {
+    await entrarAMiViaje(page, conductor);
+    const equipos = (await (
+      await page.request.get("/api/erp/combustible/equipos-destino?pageSize=200")
+    ).json()) as { data: { id: number; placa_codigo: string }[] };
+    const equipoId = equipos.data.find((e) => e.placa_codigo === propia)!.id;
+
+    const soloCombustible = `B001-${unico()}`;
+    const soloUrea = `B001-${unico()}`;
+    const ambos = `B001-${unico()}`;
+    const base = { grifoId, equipoId, presentacion };
+    await comprarPorApi(page, {
+      ...base,
+      numero: soloCombustible,
+      productos: "combustible",
+      horometro: 5000,
+    });
+    await comprarPorApi(page, { ...base, numero: soloUrea, productos: "urea", horometro: 0 });
+    await comprarPorApi(page, { ...base, numero: ambos, productos: "ambos", horometro: 5100 });
+
+    // El menú de Combustible (ya abierto) tiene lo suyo y NO la pestaña Urea.
+    await expect(page.getByRole("button", { name: "Compra en ruta" })).toBeVisible();
+    // Para el conductor, "Tanques" se llama "Tanquetas": es lo que carga desde su tanqueta.
+    await expect(page.getByRole("button", { name: "Tanquetas" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Tanques", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Urea", exact: true })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Compra en ruta" }).click();
+    await expect(page.getByRole("heading", { name: "Compra en ruta", level: 1 })).toBeVisible();
+    await expect(page.getByRole("tablist", { name: "Compras por producto" })).toBeVisible();
+    const fila = (numero: string) => page.getByRole("row").filter({ hasText: numero });
+
+    // Todas: las tres.
+    await expect(page.getByText("3 boletas")).toBeVisible();
+    await expect(fila(soloCombustible)).toHaveCount(1);
+    await expect(fila(soloUrea)).toHaveCount(1);
+    await expect(fila(ambos)).toHaveCount(1);
+
+    // Combustible: la suya y la que trae los dos productos.
+    await page.getByRole("tab", { name: "Combustible" }).click();
+    await expect(page.getByText("2 boletas")).toBeVisible();
+    await expect(fila(soloCombustible)).toHaveCount(1);
+    await expect(fila(ambos)).toHaveCount(1);
+    await expect(fila(soloUrea)).toHaveCount(0);
+
+    // Urea: la suya y la que trae los dos productos.
+    await page.getByRole("tab", { name: "Urea" }).click();
+    await expect(page.getByText("2 boletas")).toBeVisible();
+    await expect(fila(soloUrea)).toHaveCount(1);
+    await expect(fila(ambos)).toHaveCount(1);
+    await expect(fila(soloCombustible)).toHaveCount(0);
+
+    await page.getByRole("tab", { name: "Todas" }).click();
+    await expect(page.getByText("3 boletas")).toBeVisible();
+  } finally {
+    await darDeBajaAlConductor(page, conductor);
+  }
+});
+
+test("admin: la pestaña Urea sigue en el menú y el historial trae las pestañas por producto", async ({
+  page,
+}) => {
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+  await expect(page.getByRole("button", { name: "Urea", exact: true })).toBeVisible();
+  // El admin sigue viendo "Tanques" con ese nombre.
+  await expect(page.getByRole("button", { name: "Tanques", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Compra en ruta" }).click();
+  await expect(page.getByRole("tablist", { name: "Compras por producto" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Todas" })).toHaveAttribute("aria-selected", "true");
 });
