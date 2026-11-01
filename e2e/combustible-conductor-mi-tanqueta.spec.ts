@@ -21,6 +21,12 @@ import {
 import { adminA } from "./fixtures/entorno";
 import { primerGrifoActivo } from "./fixtures/grifos";
 
+/** El service worker se interpone a `page.route` (en WebKit no se llega a interceptar nada: el
+ *  500 simulado de abajo nunca salía). Bloquearlo no debilita lo que este spec prueba: la pantalla
+ *  vuelve a pedir, guarda su caché en localStorage y avisa; nada de eso depende del service
+ *  worker. Mismo recurso que e2e/capa-b-cliente-uuid.spec.ts. */
+test.use({ serviceWorkers: "block" });
+
 const SIN_CARGAS = "Todavía no hay cargas desde tanqueta registradas.";
 
 const crear = async (page: Page, ruta: string, data: object, esperado = 201) => {
