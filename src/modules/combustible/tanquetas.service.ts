@@ -20,6 +20,7 @@ import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
 import { ALCANCE_TODO, type AlcanceCombustible } from "./alcance";
 import { CombustibleRepository } from "./combustible.repository";
 import { armarCuadre } from "./cuadreTanqueta";
+import { armarKardex, type FiltrosKardex } from "./kardexTanqueta";
 import { mensajeDeSalto } from "./valesDeTalonario";
 
 export const CAPACIDAD_TANQUETA_DEFECTO = 280;
@@ -1188,6 +1189,104 @@ export async function tanquetasParaFormulario(
     });
   }
   return resultado;
+}
+
+/** Las tanquetas de la unidad del conductor para su pantalla "Tanquetas": las que
+ *  la unidad lleva ahora, también la que ya se vació, hasta que la liberen o el
+ *  grifero la reciba de vuelta (el formulario de carga solo ofrece las que tienen
+ *  saldo; acá no puede desaparecer justo al llegar a cero). La que tiene saldo
+ *  primero, y entre ellas la más antigua, que es la que carga ahora. Sin costos. */
+export async function tanquetasDelConductor(
+  client: PoolClient,
+  tenantId: string,
+  alcance: AlcanceCombustible,
+  dni: string
+) {
+  const unidades = await unidadesDelConductor(client, tenantId, dni);
+  const todas = await listarTanquetas(client, tenantId, alcance, { soloActivas: true });
+  const suyas = todas
+    .filter((t) => t.equipo_asignado_id !== null && unidades.has(Number(t.equipo_asignado_id)))
+    .sort(
+      (a, b) =>
+        Number(b.asignada_vigente) - Number(a.asignada_vigente) ||
+        new Date(a.asignada_en).getTime() - new Date(b.asignada_en).getTime()
+    );
+  return {
+    sinUnidad: unidades.size === 0,
+    tanquetas: suyas.map((t) => ({
+      id: Number(t.id),
+      codigo: t.codigo as string,
+      capacidad: Number(t.capacidad),
+      saldo: Number(t.saldo),
+      libre: Number(t.libre),
+      asignada_vigente: t.asignada_vigente as boolean,
+      equipo_asignado_id: Number(t.equipo_asignado_id),
+      equipo_asignado: (t.equipo_asignado as string | null) ?? null,
+    })),
+  };
+}
+
+/** El kardex de una tanqueta de la unidad del conductor: todo lo que la mueve (también lo que
+ *  registraron otros: un relevo, el grifero), con el saldo que quedó después de cada fila. Null
+ *  si la tanqueta no existe, está de baja o no va con una unidad suya: el mismo 404 para todo,
+ *  así no se sabe si existe. */
+export async function kardexParaConductor(
+  client: PoolClient,
+  tenantId: string,
+  dni: string,
+  tanquetaId: number,
+  filtros: FiltrosKardex
+) {
+  const previa = await getTanqueta(client, tenantId, tanquetaId);
+  if (!previa || !previa.activa || previa.equipo_asignado_id === null) return null;
+  const unidades = await unidadesDelConductor(client, tenantId, dni);
+  if (!unidades.has(Number(previa.equipo_asignado_id))) return null;
+  // Una sola foto: toda escritura que mueve el saldo bloquea esta fila primero (bloquearTanqueta),
+  // así que con el bloqueo compartido espero a las que están en curso y las freno mientras leo.
+  // Sin esto, cada consulta ve su propia foto (READ COMMITTED) y una carga que se confirma entre
+  // el saldo y el historial hacía salir "no cuadra" sin que hubiera ningún error.
+  await client.query(
+    `SELECT 1 FROM combustible_tanquetas WHERE tenant_id = $1 AND id = $2 FOR SHARE`,
+    [tenantId, tanquetaId]
+  );
+  const t = await getTanqueta(client, tenantId, tanquetaId);
+  // Entre la comprobación y el bloqueo pudo devolverse al grifero o liberarse: ya no es suya.
+  if (!t || !t.activa || t.equipo_asignado_id === null) return null;
+  if (!unidades.has(Number(t.equipo_asignado_id))) return null;
+  const movimientos = await historialTanqueta(client, tenantId, tanquetaId);
+  const salidas = (await cuadreDeTanqueta(client, tenantId, tanquetaId)) ?? [];
+  const kardex = armarKardex(
+    movimientos.map((m) => ({
+      tipo: m.tipo,
+      id: String(m.id),
+      cantidad: m.cantidad === null ? null : Number(m.cantidad),
+      fecha: new Date(m.fecha),
+      anulada: m.anulada_en !== null,
+      referencia: m.tanque_codigo,
+      unidad: m.equipo,
+      serie: m.serie_talonario,
+      nVale: m.n_vale === null ? null : Number(m.n_vale),
+      conductor: m.conductor_nombre,
+      conductorDni: m.conductor_dni,
+    })),
+    salidas.map((s) => ({
+      vale: s.vale,
+      inicio: new Date(s.inicio),
+      fin: s.fin === null ? null : new Date(s.fin),
+    })),
+    Number(t.saldo),
+    filtros
+  );
+  return {
+    tanqueta: {
+      id: Number(t.id),
+      codigo: t.codigo as string,
+      capacidad: Number(t.capacidad),
+      saldo: Number(t.saldo),
+      libre: Number(t.libre),
+    },
+    ...kardex,
+  };
 }
 
 /** El vale del tanque a "reserva en cubeta" que llena una tanqueta (0114):

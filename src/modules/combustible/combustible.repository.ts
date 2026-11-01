@@ -1836,6 +1836,40 @@ export class CombustibleRepository {
         (SELECT tq.codigo FROM combustible_tanquetas tq
           WHERE tq.id = COALESCE(combustible_despachos.tanqueta_origen_id,
                                  combustible_despachos.tanqueta_destino_id)) AS tanqueta_codigo,
+        -- El vale con que salió la tanqueta a la unidad (la última salida que empezó antes de esta
+        -- carga y que no había vuelto): el conductor no tipea vale al cargar de una tanqueta. Mismas
+        -- tres fuentes y mismo corte por retorno que el cuadre de la tanqueta (cuadreTanqueta.ts).
+        CASE WHEN combustible_despachos.tanqueta_origen_id IS NULL THEN NULL ELSE (
+          SELECT s.serie || '-' || s.n_vale
+            FROM (
+              SELECT a.creado_en AS inicio, a.serie_talonario AS serie, a.n_vale
+                FROM combustible_tanqueta_asignaciones a
+               WHERE a.tenant_id = combustible_despachos.tenant_id
+                 AND a.tanqueta_id = combustible_despachos.tanqueta_origen_id
+              UNION ALL
+              SELECT dl.despachado_en, dl.serie_talonario, dl.n_vale
+                FROM combustible_despachos dl
+               WHERE dl.tenant_id = combustible_despachos.tenant_id
+                 AND dl.tanqueta_destino_id = combustible_despachos.tanqueta_origen_id
+                 AND dl.serie_talonario IS NOT NULL AND dl.anulada_en IS NULL
+              UNION ALL
+              SELECT rx.recibido_en, x.serie_talonario, x.n_vale
+                FROM combustible_recepcion_excedentes x
+                JOIN combustible_recepciones rx
+                  ON rx.id = x.recepcion_id AND rx.tenant_id = x.tenant_id
+               WHERE x.tenant_id = combustible_despachos.tenant_id
+                 AND x.tanqueta_id = combustible_despachos.tanqueta_origen_id
+                 AND x.tanqueta_equipo_id IS NOT NULL AND rx.anulada_en IS NULL
+            ) s
+           WHERE s.inicio <= combustible_despachos.despachado_en
+             AND NOT EXISTS (
+               SELECT 1 FROM combustible_tanqueta_retornos rt
+                WHERE rt.tenant_id = combustible_despachos.tenant_id
+                  AND rt.tanqueta_id = combustible_despachos.tanqueta_origen_id
+                  AND rt.creado_en > s.inicio
+                  AND rt.creado_en <= combustible_despachos.despachado_en)
+           ORDER BY s.inicio DESC LIMIT 1
+        ) END AS vale_salida,
         -- La placa de la unidad, para que el conductor la vea aunque su lista
         -- de unidades no la traiga (tope de 200).
         (SELECT e.placa_codigo FROM equipos e

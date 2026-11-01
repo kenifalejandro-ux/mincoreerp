@@ -97,6 +97,7 @@ import type {
   ActualizarTanquetaInput,
   AsignarTanquetaInput,
   RetornoTanquetaInput,
+  KardexTanquetaQuery,
 } from "../../server/schemas/combustible.schema";
 import {
   MENSAJE_SERIE,
@@ -5518,6 +5519,48 @@ export class CombustibleController {
         )
       )
     );
+  }
+
+  /** GET /tanquetas/mias: las tanquetas de la unidad del conductor para su pantalla
+   *  (cilindro y selector), incluida la que ya se vació. Sin costos. */
+  async listarMisTanquetas(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const { sinUnidad, tanquetas: suyas } = await withTenant(tenantId, (client) =>
+      tanquetas.tanquetasDelConductor(client, tenantId, alcanceDe(req), req.usuario!.dni ?? "")
+    );
+    // Su DNI no coincide con ninguna unidad de Equipos: la lista vacía lleva la marca (H-10).
+    if (sinUnidad) res.setHeader("X-Conductor-Sin-Unidad", "1");
+    res.json(suyas);
+  }
+
+  /** GET /tanquetas/:id/kardex: todo lo que mueve una tanqueta de su unidad, con el saldo
+   *  después de cada fila. Una tanqueta que no existe, está fuera de su alcance o va con otra
+   *  unidad da el mismo 404. */
+  async kardexDeMiTanqueta(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    // Solo dígitos: Number() también acepta "2940.0", "+2940", "2940e0" o "0xb7c".
+    const crudo = String(req.params.tanquetaId);
+    const id = /^[1-9][0-9]{0,14}$/.test(crudo) ? Number(crudo) : NaN;
+    if (!Number.isSafeInteger(id) || id < 1) {
+      res.status(400).json({ error: "tanquetaId debe ser un número entero válido" });
+      return;
+    }
+    const { desde, hasta, unidad, conductor } = req.validatedQuery as KardexTanquetaQuery;
+    const kardex = (await this.tanquetaVisible(req, id))
+      ? await withTenant(tenantId, (client) =>
+          tanquetas.kardexParaConductor(client, tenantId, req.usuario!.dni ?? "", id, {
+            desde: desde ? new Date(desde) : undefined,
+            hasta: hasta ? new Date(hasta) : undefined,
+            unidad,
+            conductor,
+          })
+        )
+      : null;
+    if (!kardex) {
+      res.status(404).json({ error: "La tanqueta no existe" });
+      return;
+    }
+    res.json(kardex);
   }
 
   /** GET /config/formulario-despacho (0113): lo único de la config que el

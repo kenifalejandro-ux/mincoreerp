@@ -157,6 +157,8 @@ describe("combustible: historial de cargas desde tanqueta del conductor", () => 
     const fila = suyas.body.data[0];
     expect(fila.id).toBe(carga.body.id);
     expect(fila.placa_codigo).toBe(placa);
+    // El conductor no tipea vale al cargar de una tanqueta: se muestra el de la salida (HMC-2).
+    expect(fila.vale_salida).toBe("HMC-2");
     for (const interno of [
       "costo_unitario",
       "costo_total",
@@ -173,6 +175,7 @@ describe("combustible: historial de cargas desde tanqueta del conductor", () => 
       (d: { id: number }) => d.id === carga.body.id
     );
     expect(Number(delAdmin.costo_unitario)).toBe(16);
+    expect(delAdmin.vale_salida).toBe("HMC-2");
 
     // El otro conductor no ve la carga de A.
     const deB = await b.get(`${base}/despachos?origen=tanqueta`);
