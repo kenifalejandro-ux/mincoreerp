@@ -249,6 +249,12 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
                       <div className="flex flex-col">
                         {submenusVisibles.map(({ tab: destino, label, Icono }, i) => {
                           const activo = activeTab === destino;
+                          // Para el conductor, "Tanques" es lo que carga desde su
+                          // tanqueta: así se entiende mejor.
+                          const etiqueta =
+                            destino === "combustible" && usuario?.rol === "conductor_ruta"
+                              ? "Tanquetas"
+                              : label;
                           return (
                             <div
                               key={destino}
@@ -271,7 +277,7 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
                                 }`}
                               >
                                 <Icono className="w-4 h-4 shrink-0" />
-                                {label}
+                                {etiqueta}
                               </button>
                             </div>
                           );

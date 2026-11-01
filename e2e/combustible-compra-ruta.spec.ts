@@ -871,7 +871,9 @@ test("conductor: sin pestaña Urea en el menú y su historial se filtra por prod
 
     // El menú de Combustible (ya abierto) tiene lo suyo y NO la pestaña Urea.
     await expect(page.getByRole("button", { name: "Compra en ruta" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Tanques" })).toBeVisible();
+    // Para el conductor, "Tanques" se llama "Tanquetas": es lo que carga desde su tanqueta.
+    await expect(page.getByRole("button", { name: "Tanquetas" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Tanques", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Urea", exact: true })).toHaveCount(0);
 
     await page.getByRole("button", { name: "Compra en ruta" }).click();
@@ -913,6 +915,8 @@ test("admin: la pestaña Urea sigue en el menú y el historial trae las pestaña
   await loginPorUI(page, admin.email, admin.password);
   await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
   await expect(page.getByRole("button", { name: "Urea", exact: true })).toBeVisible();
+  // El admin sigue viendo "Tanques" con ese nombre.
+  await expect(page.getByRole("button", { name: "Tanques", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Compra en ruta" }).click();
   await expect(page.getByRole("tablist", { name: "Compras por producto" })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Todas" })).toHaveAttribute("aria-selected", "true");
