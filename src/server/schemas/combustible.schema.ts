@@ -374,6 +374,22 @@ function exigirVale(
   }
 }
 
+/** El nombre de un grifo que no está en el catálogo ("Otros", 0164): una sola
+ *  forma Unicode (NFC), los espacios repetidos colapsados, sin caracteres
+ *  invisibles y con al menos 3 letras o números ("...." o "€€€" no dicen qué
+ *  grifo fue). */
+const nombreGrifoOtros = z
+  .string()
+  .transform((s) =>
+    s
+      .normalize("NFC")
+      .replace(/\s+/g, " ")
+      .replace(/[\p{Cc}\p{Cf}]/gu, "")
+      .trim()
+  )
+  .refine((s) => s.length <= 80, "El nombre del grifo es muy largo (máximo 80 letras)")
+  .refine((s) => (s.match(/[\p{L}\p{N}]/gu) ?? []).length >= 3, "Escribe el nombre del grifo");
+
 export const crearDespachoCombustibleSchema = z
   .object({
     // Mismo mecanismo que registrarLecturaCombustibleSchema -- lo genera
@@ -442,6 +458,9 @@ export const crearDespachoCombustibleSchema = z
       .min(1, "El número del comprobante es obligatorio")
       .max(40)
       .optional(),
+    // El grifo no registrado de la compra externa (0164): solo va con el
+    // proveedor interno "Otros"; el servicio lo exige.
+    proveedor_otro: nombreGrifoOtros.optional(),
 
     // Litros, siempre -- para combustible lo tipea el cargador; para urea
     // el SERVIDOR lo calcula (cantidad_bultos × factor de la presentación)
@@ -1205,14 +1224,7 @@ export const crearCompraRutaSchema = z
     // Un proveedor del catálogo O "Otros" con el nombre del grifo escrito
     // (0163): uno solo de los dos, lo valida el superRefine de abajo.
     grifo_id: z.number().int().positive().max(2147483647).optional(),
-    proveedor_otro: z
-      .string()
-      .trim()
-      .max(80)
-      // Los espacios repetidos no hacen otro grifo.
-      .transform((s) => s.replace(/\s+/g, " "))
-      .refine((s) => s.length >= 3, "Escribe el nombre del grifo")
-      .optional(),
+    proveedor_otro: nombreGrifoOtros.optional(),
     comprobante_tipo: z.enum(TIPOS_COMPROBANTE_COMPRA),
     comprobante_numero: z
       .string()

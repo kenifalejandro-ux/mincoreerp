@@ -522,6 +522,8 @@ interface CompraUreaFila {
   anulada_en: string | null;
   motivo_anulacion: string | null;
   proveedor: string | null;
+  /** El grifo se escribió a mano ("Otros"), no es un proveedor del catálogo. */
+  proveedor_no_registrado?: boolean;
   placa_codigo: string | null;
   equipo_tipo: string | null;
   registrado_por: string | null;
@@ -601,7 +603,14 @@ function TablaComprasUrea({
                 )}
               </td>
               <td className="px-4 py-2 whitespace-nowrap">{formatearFecha(f.despachado_en)}</td>
-              <td className="px-4 py-2">{f.proveedor ?? "—"}</td>
+              <td className="px-4 py-2">
+                {f.proveedor ?? "—"}
+                {f.proveedor_no_registrado && (
+                  <span className="ml-2 rounded-full border border-slate-300 px-2 py-0.5 align-middle text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                    no registrado
+                  </span>
+                )}
+              </td>
               <td className="px-4 py-2">
                 {f.placa_codigo ?? "—"}
                 {f.conductor_nombre && (

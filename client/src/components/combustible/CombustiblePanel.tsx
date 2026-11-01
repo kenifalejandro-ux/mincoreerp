@@ -362,6 +362,8 @@ interface DespachoHistorial {
   tanqueta_destino_id: string | number | null;
   comprobante_tipo: "boleta" | "factura" | null;
   comprobante_numero: string | null;
+  /** 0164: el nombre del grifo no registrado ("Otros"), si la compra lo trae. */
+  proveedor_otro?: string | null;
   comprobante_nombre: string | null;
   comprobante_subido_en: string | null;
   cantidad: string;
@@ -6107,7 +6109,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                             ? `${d.tanque_excedente_codigo ?? "Tanque"} (excedente)`
                             : d.origen === "tanqueta"
                               ? `Tanqueta ${d.tanqueta_codigo ?? ""} (${d.tanqueta_lugar === "planta" ? "planta" : "ruta"})`
-                              : (tanque?.tanque_nombre ?? grifo?.nombre ?? "—")}
+                              : (tanque?.tanque_nombre ??
+                                grifo?.nombre ??
+                                (d.proveedor_otro ? `Otros: ${d.proveedor_otro}` : "—"))}
                         </td>
                         <td className="p-3 text-sm text-slate-600">
                           {equipo

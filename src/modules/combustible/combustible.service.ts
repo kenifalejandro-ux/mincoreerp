@@ -1136,6 +1136,22 @@ export class CombustibleService {
           );
         }
 
+        // El nombre de un grifo no registrado (0164) solo existe en la compra
+        // externa y solo con el proveedor interno "Otros": con un proveedor del
+        // catálogo, el nombre escrito sería un dato que nadie mira.
+        if (data.proveedor_otro !== undefined) {
+          const grifoDeLaCompra =
+            data.origen === "compra_externa"
+              ? await this.repository.findGrifoPorId(client, tenantId, data.grifo_id!)
+              : null;
+          if (!grifoDeLaCompra?.es_otros) {
+            throw new AppError(
+              400,
+              "El nombre de un grifo no registrado solo va en una compra con el proveedor Otros"
+            );
+          }
+        }
+
         // Mismo criterio que el duplicado de vale, para la forma nueva: el
         // índice único de 0109 es la red real contra la carrera entre dos
         // requests; esto da el mensaje bueno en el caso común. Y acá importa
@@ -1148,7 +1164,8 @@ export class CombustibleService {
             data.producto,
             data.grifo_id!,
             data.comprobante_tipo,
-            data.comprobante_numero
+            data.comprobante_numero,
+            data.proveedor_otro ?? null
           );
           if (previa) {
             throw new Error(
@@ -1302,6 +1319,7 @@ export class CombustibleService {
           nVale: data.n_vale ?? null,
           comprobanteTipo: data.comprobante_tipo ?? null,
           comprobanteNumero: data.comprobante_numero ?? null,
+          proveedorOtro: data.proveedor_otro ?? null,
           clienteUuid: data.cliente_uuid ?? null,
           cantidad,
           lecturaContometro: data.lectura_contometro ?? null,
@@ -1407,16 +1425,12 @@ export class CombustibleService {
       }),
       insertar: async () => {
         const despachadoEn = data.despachado_en ?? new Date().toISOString();
-        // "Otros" (0163): el grifo que se escribió a mano es un proveedor
-        // interno por nombre; de ahí en adelante la compra es como cualquier otra.
+        // "Otros" (0163/0164): un grifo que no está en el catálogo cuelga del
+        // proveedor interno "Otros" (uno por empresa); el nombre que se escribió
+        // viaja en cada despacho y es lo que muestran el historial y los exportes.
         const grifoId =
           data.proveedor_otro !== undefined
-            ? await this.repository.obtenerGrifoOtros(
-                client,
-                tenantId,
-                usuarioId,
-                data.proveedor_otro
-              )
+            ? await this.repository.obtenerGrifoOtros(client, tenantId, usuarioId)
             : data.grifo_id!;
 
         // La diferencia con el papel se guarda, en centavos enteros.
@@ -1436,6 +1450,7 @@ export class CombustibleService {
           origen: "compra_externa" as const,
           tipo_destino: "equipo" as const,
           grifo_id: grifoId,
+          proveedor_otro: data.proveedor_otro,
           equipo_id: data.equipo_id,
           comprobante_tipo: data.comprobante_tipo,
           comprobante_numero: data.comprobante_numero,
@@ -1546,6 +1561,8 @@ export class CombustibleService {
       clave: string;
       despachado_en: string;
       proveedor: string | null;
+      /** 0164: el grifo se escribió a mano ("Otros"), no es un proveedor del catálogo. */
+      proveedor_no_registrado: boolean;
       placa_codigo: string | null;
       registrado_por: string | null;
       comprobante_tipo: string;
@@ -1576,13 +1593,14 @@ export class CombustibleService {
     }
     const grupos = new Map<string, Boleta>();
     for (const f of filas) {
-      const clave = `${f.grifo_id}|${f.comprobante_tipo}|${f.numero_canonico}`;
+      const clave = `${f.grifo_id}|${String(f.proveedor_otro ?? "").toLowerCase()}|${f.comprobante_tipo}|${f.numero_canonico}`;
       let b = grupos.get(clave);
       if (!b) {
         b = {
           clave,
           despachado_en: new Date(f.despachado_en).toISOString(),
           proveedor: f.proveedor,
+          proveedor_no_registrado: Boolean(f.proveedor_no_registrado),
           placa_codigo: f.placa_codigo,
           registrado_por: f.registrado_por,
           comprobante_tipo: f.comprobante_tipo,
