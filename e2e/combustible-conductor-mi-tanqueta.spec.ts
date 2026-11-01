@@ -158,7 +158,7 @@ test("Mi tanqueta: el cilindro baja solo cuando se carga y avisa sin señal @cel
     await page.getByRole("button", { name: "Tanquetas" }).click();
 
     // ── Su tanqueta, con lo que lleva, y su historial de cargas al lado ─────
-    await expect(page.getByRole("heading", { name: "Mi tanqueta", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Mi tanqueta", level: 1 })).toBeVisible();
     await expect(cilindro("120")).toBeVisible();
     await expect(page.getByText("Saldo según registros")).toBeVisible();
     await expect(page.getByText(`Unidad ${placa}`)).toBeVisible();
@@ -259,7 +259,7 @@ test("Mi tanqueta: el cilindro baja solo cuando se carga y avisa sin señal @cel
     // Se sale y se vuelve a entrar a la pantalla (sin recargar la página): se monta sin señal.
     await page.getByRole("button", { name: "Compra en ruta" }).click();
     await page.getByRole("button", { name: "Tanquetas" }).click();
-    await expect(page.getByRole("heading", { name: "Mi tanqueta", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Mi tanqueta", level: 1 })).toBeVisible();
     await expect(page.getByText(/Sin conexión: no se pudo cargar tu tanqueta/)).toBeVisible();
     await expect(page.getByText("Algo salió mal")).toHaveCount(0);
   } finally {
@@ -323,7 +323,7 @@ test("Mi tanqueta: selector con dos tanquetas, y mensajes sin tanqueta o sin uni
       await page.request.post("/api/auth/logout");
       await entrarAMiViaje(page, comoConductor(marca, c));
       await page.getByRole("button", { name: "Tanquetas" }).click();
-      await expect(page.getByRole("heading", { name: "Mi tanqueta", exact: true })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Mi tanqueta", level: 1 })).toBeVisible();
     };
 
     // ── Dos tanquetas: el selector arranca en la más antigua y cambia el cilindro ──

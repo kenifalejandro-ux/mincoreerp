@@ -152,7 +152,7 @@ test("el conductor ve sus boletas en Compra en ruta y sus cargas en Tanques @cel
 
     // ── Tanques: su carga, y NO la boleta ──────────────────────────────────
     await page.getByRole("button", { name: "Tanquetas" }).click();
-    await expect(page.getByRole("heading", { name: "Mi tanqueta", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Mi tanqueta", level: 1 })).toBeVisible();
     const filaCarga = page.getByRole("row").filter({ hasText: tanqueta.codigo as string });
     await expect(filaCarga).toHaveCount(1);
     await expect(filaCarga).toContainText(placa);

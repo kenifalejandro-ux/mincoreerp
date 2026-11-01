@@ -57,7 +57,7 @@ export default function NivelDeTanqueta({
     <div className="bg-[#192526] border border-[#2a2e37] rounded-lg p-6 flex flex-col items-center shadow-lg relative overflow-hidden">
       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#2a2e37] to-transparent" />
       <h2 className="text-sm font-bold uppercase tracking-widest text-[#94a3b8] mb-6 w-full text-center border-b border-[#2a2e37] pb-4">
-        Mi tanqueta
+        Nivel de tanqueta
       </h2>
       {tanquetas.length > 1 ? (
         <select
