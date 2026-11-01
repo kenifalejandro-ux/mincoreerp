@@ -386,7 +386,11 @@ function FormularioCompra({
     datosDelBorrador.current = datos;
     // Con una pausa: escribir en el almacenamiento en cada tecla es trabajo
     // de más, y la última tecla es la que importa.
-    const t = window.setTimeout(() => guardarBorrador(usuarioId, datos), 400);
+    // Si `limpiar` corrió antes de que venza la pausa (se registró la compra), el
+    // ref ya es null: guardar lo viejo resucitaría un borrador recién borrado.
+    const t = window.setTimeout(() => {
+      if (datosDelBorrador.current !== null) guardarBorrador(usuarioId, datos);
+    }, 400);
     return () => window.clearTimeout(t);
   }, [
     usuarioId,
