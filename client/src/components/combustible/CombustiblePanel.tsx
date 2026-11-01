@@ -50,7 +50,7 @@ import PreciosPagina from "./PreciosPagina";
 import Proveedores from "./Proveedores";
 import TanquetasPanel from "./Tanquetas";
 import CompraEnRuta from "./CompraEnRuta";
-import HistorialCargasTanqueta from "./HistorialCargasTanqueta";
+import MiTanqueta from "./MiTanqueta";
 import MiViaje from "./MiViaje";
 import ViajesPanel from "./ViajesPanel";
 import { comprimirImagen } from "./comprimirImagen";
@@ -3690,11 +3690,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       >
         <div className="shrink-0">
           <h1 className="text-lg sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight">
-            {esConductor ? "Mis cargas desde tanqueta" : "Control de Combustible"}
+            {esConductor ? "Mi tanqueta" : "Control de Combustible"}
           </h1>
           <p className="text-xs sm:text-sm text-[#94a3b8]">
             {esConductor
-              ? "Las cargas que sacaste de una tanqueta. Para tus compras a un proveedor, usa Compra en ruta."
+              ? "El nivel de tu tanqueta y lo que sacaste de ella. Para tus compras a un proveedor, usa Compra en ruta."
               : "Tanques y puntos de abastecimiento"}
           </p>
         </div>
@@ -3803,7 +3803,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {pestanaCombustible === "viajes" && <ViajesPanel />}
       {pestanaCombustible === "mi_viaje" && <MiViaje />}
       {pestanaCombustible === "compra_ruta" && <CompraEnRuta />}
-      {esConductor && pestanaCombustible === "tanques" && <HistorialCargasTanqueta />}
+      {/* Su tanqueta (cilindro) y, a la derecha, lo que él sacó de ella. */}
+      {esConductor && pestanaCombustible === "tanques" && <MiTanqueta />}
       {!esConductor && pestanaCombustible === "tanques" && importacion.error && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-red-900 font-light flex-1">{importacion.error}</p>
