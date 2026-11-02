@@ -137,7 +137,10 @@ export function armarKardex(
   saldoDeLaTanqueta: number,
   filtros: FiltrosKardex = {},
   /** Para probarlo con el tope más chico. */
-  tope: number = TOPE_FILAS
+  tope: number = TOPE_FILAS,
+  /** Qué movimientos puede ver quien pregunta. El saldo de cada fila se calcula con TODOS: lo que
+   *  se oculta no cambia el saldo real de la tanqueta, y los filtros solo ofrecen lo visible. */
+  visible: (m: MovimientoBruto) => boolean = () => true
 ): Kardex {
   // Un ajuste de cero no mueve nada: lo dice la fila de devolución o de la nueva asignación.
   const validos = movimientos.filter((m) => !(m.tipo === "retorno" && (m.cantidad ?? 0) === 0));
@@ -159,6 +162,7 @@ export function armarKardex(
   }
 
   let saldo = 0;
+  const clavesVisibles = new Set<string>(orden.filter(visible).map((m) => `${m.tipo}-${m.id}`));
   const todas: FilaKardex[] = orden.map((m) => {
     const { entra, sale } = efecto(m);
     if (!m.anulada) saldo = redondear(saldo + entra - sale);
@@ -185,12 +189,13 @@ export function armarKardex(
     };
   });
 
+  const propias = todas.filter((f) => clavesVisibles.has(f.clave));
   const distintos = (campo: "unidad" | "conductor") =>
-    [...new Set(todas.map((f) => f[campo]).filter((v): v is string => v !== null))].sort((a, b) =>
+    [...new Set(propias.map((f) => f[campo]).filter((v): v is string => v !== null))].sort((a, b) =>
       a.localeCompare(b, "es")
     );
 
-  const visibles = todas.filter(
+  const visibles = propias.filter(
     (f) =>
       (filtros.desde === undefined || new Date(f.fecha).getTime() >= filtros.desde.getTime()) &&
       (filtros.hasta === undefined || new Date(f.fecha).getTime() <= filtros.hasta.getTime()) &&

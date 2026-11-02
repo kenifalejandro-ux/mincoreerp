@@ -5533,7 +5533,23 @@ export class CombustibleController {
     res.json(suyas);
   }
 
-  /** GET /tanquetas/:id/kardex: todo lo que mueve una tanqueta de su unidad, con el saldo
+  /** GET /tanquetas/mias/cerradas: las tanquetas que fueron de una unidad suya y ya no, con el
+   *  cierre de cada salida. Su historial no desaparece al devolverla. */
+  async listarMisTanquetasCerradas(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    res.json(
+      await withTenant(tenantId, (client) =>
+        tanquetas.tanquetasCerradasDelConductor(
+          client,
+          tenantId,
+          alcanceDe(req),
+          req.usuario!.dni ?? ""
+        )
+      )
+    );
+  }
+
+  /** GET /tanquetas/:id/kardex: lo que pasó con la tanqueta mientras fue de su unidad, con el saldo
    *  después de cada fila. Una tanqueta que no existe, está fuera de su alcance o va con otra
    *  unidad da el mismo 404. */
   async kardexDeMiTanqueta(req: Request, res: Response) {

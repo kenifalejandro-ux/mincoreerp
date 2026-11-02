@@ -426,8 +426,9 @@ describe("kardex de la tanqueta del conductor: la API", () => {
         "carga_ruta",
         "carga_ruta",
         "asignacion",
-        "prevision",
       ]);
+      // El llenado de la tanqueta es anterior a su salida: el saldo lo cuenta, la fila no se ve.
+      expect(r.body.filas[r.body.filas.length - 1].saldo).toBe(100);
       const anulada = r.body.filas.find((f: { anulada: boolean }) => f.anulada);
       expect(anulada).toMatchObject({ entra: 0, sale: 0, cantidad: 7 });
     });
@@ -467,21 +468,16 @@ describe("kardex de la tanqueta del conductor: la API", () => {
     it("nada interno sale: ni costos, ni quién registró, ni motivos, ni DNI", async () => {
       const r = await kardex(ana.agente, t1.id);
       const texto = JSON.stringify(r.body);
-      for (const prohibido of [
-        ana.dni,
-        "costo",
-        "usuario",
-        "motivo",
-        "Digitada de más",
-        "conductor_dni",
-      ]) {
+      for (const prohibido of [ana.dni, "costo", "usuario", "Digitada de más", "conductor_dni"]) {
         expect(texto, prohibido).not.toContain(prohibido);
       }
+      // El motivo del ajuste solo sale en el cierre de salida, nunca en las filas.
+      expect(JSON.stringify(r.body.filas)).not.toContain("motivo");
       const mias = await ana.agente.get(`${base}/tanquetas/mias`);
       expect(JSON.stringify(mias.body)).not.toContain("costo");
     });
 
-    it("sale el nombre de quien cargó, sea quien sea, y se filtra por unidad y por conductor", async () => {
+    it("la carga de otra persona en su unidad (un relevo) no se muestra, ni su nombre", async () => {
       // Un relevo: la carga del admin queda a nombre de otro conductor (otro DNI).
       await withTenant(tenantId, (c) =>
         c.query(
@@ -491,14 +487,18 @@ describe("kardex de la tanqueta del conductor: la API", () => {
         )
       );
       const r = await kardex(ana.agente, t1.id);
-      expect(r.body.conductores).toEqual(["Ana Quispe", "Carlos Relevo"]);
+      expect(r.body.conductores).toEqual(["Ana Quispe"]);
+      expect(JSON.stringify(r.body)).not.toContain("Carlos");
+      expect(
+        r.body.filas.some((f: { clave: string }) => f.clave === `carga_ruta-${cargaDelAdmin}`)
+      ).toBe(false);
+      // Ocultar la fila no cambia el saldo: el cilindro sigue siendo el real.
+      expect(r.body.saldoFinal).toBe(85);
+      expect(r.body.cuadra).toBe(true);
       const deCarlos = await kardex(ana.agente, t1.id, "?conductor=Carlos%20Relevo");
-      expect(deCarlos.body.filas).toHaveLength(1);
-      expect(deCarlos.body.filas[0]).toMatchObject({ conductor: "Carlos Relevo", sale: 5 });
-      // El saldo de esa fila es el real de la tanqueta en ese momento, no el de la lista filtrada.
-      expect(deCarlos.body.filas[0].saldo).toBe(85);
+      expect(deCarlos.body.filas).toEqual([]);
       const dePlaca = await kardex(ana.agente, t1.id, `?unidad=${encodeURIComponent(ana.placa)}`);
-      expect(dePlaca.body.total).toBeGreaterThanOrEqual(4);
+      expect(dePlaca.body.total).toBeGreaterThanOrEqual(3);
       const deOtra = await kardex(ana.agente, t1.id, "?unidad=NO-EXISTE");
       expect(deOtra.body.filas).toEqual([]);
     });
@@ -723,13 +723,39 @@ describe("kardex de la tanqueta del conductor: la API", () => {
       expect((await kardex(rita.agente, id)).body.saldoFinal).toBe(260);
     }, 90_000);
 
-    it("al devolverla al grifero ya no es suya: sale de /mias y su kardex es 404", async () => {
+    it("al devolverla al grifero sale de /mias pero su historial se queda, como salida cerrada", async () => {
       const eva = await conductorConUnidad("Eva Retorno");
-      const { id } = await tanquetaDe(eva, 30);
-      const r = await recibirTanqueta(admin, id);
+      const { id, vale } = await tanquetaDe(eva, 30);
+      const r = await recibirTanqueta(admin, id, { calculado: 30, validado: 28, motivo: "Faltó" });
       expect(r.status, JSON.stringify(r.body)).toBe(201);
       expect((await eva.agente.get(`${base}/tanquetas/mias`)).body).toEqual([]);
-      expect((await kardex(eva.agente, id)).status).toBe(404);
+      const k = await kardex(eva.agente, id);
+      expect(k.status, JSON.stringify(k.body)).toBe(200);
+      expect(k.body.tanqueta.cerrada).toBe(true);
+      expect(k.body.salidas).toHaveLength(1);
+      expect(k.body.salidas[0]).toMatchObject({
+        vale,
+        estado: "cerrada",
+        salioCon: 30,
+        volvio: 28,
+        diferencia: -2,
+        entroDespues: 0,
+      });
+      expect(k.body.salidas[0].motivo).toBe("Faltó");
+      // La fila suelta del kardex sigue sin motivo; solo el cierre de salida lo lleva.
+      expect(JSON.stringify(k.body.filas)).not.toContain("Faltó");
+      const cerradas = await eva.agente.get(`${base}/tanquetas/mias/cerradas`);
+      expect(cerradas.status).toBe(200);
+      expect(cerradas.body).toHaveLength(1);
+      expect(cerradas.body[0]).toMatchObject({ id, salidas: [{ vale }] });
+    });
+
+    it("quien nunca tuvo la tanqueta no la ve: ni el kardex ni las cerradas", async () => {
+      const hugo = await conductorConUnidad("Hugo Ajeno");
+      const ivan = await conductorConUnidad("Ivan Dueño");
+      const { id } = await tanquetaDe(ivan, 40);
+      expect((await kardex(hugo.agente, id)).status).toBe(404);
+      expect((await hugo.agente.get(`${base}/tanquetas/mias/cerradas`)).body).toEqual([]);
     });
 
     it("pasa a otra unidad con un ajuste del grifero: cuadra, la fila sale sin motivo y cada salida lleva su vale", async () => {
@@ -750,20 +776,52 @@ describe("kardex de la tanqueta del conductor: la API", () => {
       const cargaGus = await cargar(gus.agente, id, gus, 7);
       expect(cargaGus.status, JSON.stringify(cargaGus.body)).toBe(201);
 
-      // Fer ya no la lleva; Gus sí, con todo lo anterior y el saldo real.
-      expect((await kardex(fer.agente, id)).status).toBe(404);
+      // Cada uno ve SOLO su salida; el saldo de cada fila es el real de la tanqueta.
+      expect(await saldoEnElPanel(id)).toBe(70);
+      const deFerK = await kardex(fer.agente, id);
+      expect(deFerK.status, JSON.stringify(deFerK.body)).toBe(200);
+      expect(deFerK.body.tanqueta.cerrada).toBe(true);
+      const ajuste = deFerK.body.filas.find((f: { tipo: string }) => f.tipo === "retorno");
+      expect(ajuste).toMatchObject({ sale: 3, entra: 0, unidad: fer.placa });
+      expect(JSON.stringify(deFerK.body.filas)).not.toContain("Faltó llenar la cubeta");
+      expect(deFerK.body.salidas[0].motivo).toBe("Faltó llenar la cubeta");
+      expect(JSON.stringify(deFerK.body)).not.toContain("Gus");
+      expect(
+        deFerK.body.filas.some(
+          (f: { clave: string }) => f.clave === `carga_ruta-${cargaGus.body.id}`
+        )
+      ).toBe(false);
+      expect(
+        deFerK.body.filas.find(
+          (f: { clave: string }) => f.clave === `carga_ruta-${cargaFer.body.id}`
+        ).vale
+      ).toBe(valeFer);
+      expect(deFerK.body.salidas).toHaveLength(1);
+      expect(deFerK.body.salidas[0]).toMatchObject({
+        vale: valeFer,
+        salioCon: 100,
+        cargo: 20,
+        volvio: 77,
+        diferencia: -3,
+        destinoDelRetorno: "reserva",
+      });
+
       const r = await kardex(gus.agente, id);
       expect(r.status, JSON.stringify(r.body)).toBe(200);
-      expect(await saldoEnElPanel(id)).toBe(70);
       expect([r.body.cuadra, r.body.saldoFinal]).toEqual([true, 70]);
-      const ajuste = r.body.filas.find((f: { tipo: string }) => f.tipo === "retorno");
-      expect(ajuste).toMatchObject({ sale: 3, entra: 0, unidad: fer.placa });
+      expect(r.body.tanqueta.cerrada).toBe(false);
+      // De Fer no ve nada: ni su carga, ni su nombre, ni el ajuste que el grifero le hizo a él.
+      expect(
+        r.body.filas.some((f: { clave: string }) => f.clave === `carga_ruta-${cargaFer.body.id}`)
+      ).toBe(false);
+      expect(r.body.filas.some((f: { tipo: string }) => f.tipo === "retorno")).toBe(false);
+      expect(JSON.stringify(r.body)).not.toContain("Fer");
+      // El motivo del ajuste de Fer es de la salida de Fer: Gus no lo ve.
       expect(JSON.stringify(r.body)).not.toContain("Faltó llenar la cubeta");
-
       const valeDe = (clave: string) =>
         r.body.filas.find((f: { clave: string }) => f.clave === clave).vale;
-      expect(valeDe(`carga_ruta-${cargaFer.body.id}`)).toBe(valeFer);
       expect(valeDe(`carga_ruta-${cargaGus.body.id}`)).toBe(`ASG-${valeGus}`);
+      expect(r.body.salidas).toHaveLength(1);
       expect(r.body.desdeSalidaActual).toBe(
         r.body.filas.find(
           (f: { vale: string; tipo: string }) =>
