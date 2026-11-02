@@ -3,7 +3,8 @@
 // que cuadra con el cilindro) y "Mis cargas" (lo que él sacó). Si la unidad lleva más de una, un
 // selector arriba. Solo lectura.
 //
-// Los datos vienen de GET /tanquetas/mias y /tanquetas/:id/kardex (solo las de SU unidad). El
+// Los datos vienen de GET /tanquetas/mias, /tanquetas/mias/cerradas (las que fueron de su unidad y
+// ya no: su historial no se pierde al devolverlas) y /tanquetas/:id/kardex (solo lo suyo). El
 // cilindro y el kardex bajan solos cuando alguien carga: se vuelve a pedir ante los eventos del
 // servidor, agrupados en una sola recarga.
 //
@@ -16,11 +17,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import HistorialCargasTanqueta from "./HistorialCargasTanqueta";
 import KardexTanqueta from "./KardexTanqueta";
-import { leerKardex, type KardexDeTanqueta } from "./kardexTanquetaDatos";
+import {
+  leerCerradas,
+  leerKardex,
+  type KardexDeTanqueta,
+  type TanquetaCerrada,
+} from "./kardexTanquetaDatos";
 import NivelDeTanqueta, { type ProblemaDeActualizacion, type TanquetaMia } from "./NivelDeTanqueta";
 import PendientesDeEnvio from "./PendientesDeEnvio";
 import PestanasDeTanqueta from "./PestanasDeTanqueta";
 import { idPanel, idPestana, type VistaDeTanqueta } from "./pestanasDeTanquetaIds";
+import SalidasCerradas from "./SalidasCerradas";
 import { useAuth } from "../../context/AuthContext";
 import { listarPendientes, suscribirseACola } from "../../offline/offlineQueue";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
@@ -36,12 +43,17 @@ const EVENTOS = [
   "combustible.recepcion_creada",
   "combustible.recepcion_anulada",
   "combustible.tanque_actualizado",
+  // Si el administrador corrige en Equipos la unidad o el conductor, la tanqueta que el grifero ya
+  // había asignado a esa unidad aparece sin que el conductor recargue.
+  "equipos.actualizado",
 ];
 
 /** Lo último que se vio, para cuando no hay señal. */
 interface CacheLocal {
   guardadoEn: string;
   tanquetas: TanquetaMia[];
+  /** Las que fueron de su unidad y ya no, con el cierre de cada salida. */
+  cerradas: TanquetaCerrada[];
   /** Los movimientos de cada tanqueta (por id), recortados a los más recientes. */
   kardex: Record<string, KardexDeTanqueta>;
 }
@@ -85,7 +97,12 @@ function leerCache(usuarioId: string): CacheLocal | null {
       const leido = leerKardex(k);
       if (leido) kardex[id] = leido;
     }
-    return { guardadoEn: c.guardadoEn, tanquetas: c.tanquetas, kardex };
+    return {
+      guardadoEn: c.guardadoEn,
+      tanquetas: c.tanquetas,
+      cerradas: leerCerradas(c.cerradas),
+      kardex,
+    };
   } catch {
     return null;
   }
@@ -109,6 +126,7 @@ export default function MiTanqueta() {
   const [sinUnidad, setSinUnidad] = useState(false);
   const [problema, setProblema] = useState<ProblemaDeActualizacion | null>(null);
   const [actualizadoEn, setActualizadoEn] = useState<Date | null>(null);
+  const [cerradas, setCerradas] = useState<TanquetaCerrada[]>([]);
   const [kardex, setKardex] = useState<KardexDe | null>(null);
   const [cargandoKardex, setCargandoKardex] = useState(false);
   const [errorKardex, setErrorKardex] = useState<string | null>(null);
@@ -124,7 +142,7 @@ export default function MiTanqueta() {
   const pedido = useRef(0);
   const pedidoKardex = useRef(0);
   const elegidaRef = useRef<number | null>(null);
-  const cache = useRef<CacheLocal>({ guardadoEn: "", tanquetas: [], kardex: {} });
+  const cache = useRef<CacheLocal>({ guardadoEn: "", tanquetas: [], cerradas: [], kardex: {} });
   // Lo último escrito en el celular: si no cambió, no se vuelve a escribir (cada refresco serializa
   // hasta 300 filas).
   const ultimoTexto = useRef("");
@@ -156,7 +174,7 @@ export default function MiTanqueta() {
         if (res.status === 404) {
           // Ya no es de su unidad (la devolvieron al grifero): la lista la quitará en el próximo refresco.
           setKardex(null);
-          setErrorKardex("Esta tanqueta ya no está asignada a tu unidad.");
+          setErrorKardex("Esta tanqueta ya no es de tu unidad.");
           return;
         }
         const datos = res.ok ? leerKardex(cuerpo) : null;
@@ -207,8 +225,13 @@ export default function MiTanqueta() {
   const cargar = useCallback(async () => {
     const mio = ++pedido.current;
     try {
-      const res = await apiFetch("/api/erp/combustible/tanquetas/mias");
+      const [res, resCerradas] = await Promise.all([
+        apiFetch("/api/erp/combustible/tanquetas/mias"),
+        apiFetch("/api/erp/combustible/tanquetas/mias/cerradas"),
+      ]);
       const cuerpo = await res.json().catch(() => null);
+      // Si las cerradas no se pudieron leer, se queda lo que había: no son lo esencial de la pantalla.
+      const cuerpoCerradas = resCerradas.ok ? await resCerradas.json().catch(() => null) : null;
       if (mio !== pedido.current) return;
       if (!res.ok || !Array.isArray(cuerpo) || !cuerpo.every(esTanquetaValida)) {
         // El servidor respondió, pero con un error: lo que hay en pantalla es viejo y se dice.
@@ -228,7 +251,16 @@ export default function MiTanqueta() {
       const kardexVigente = Object.fromEntries(
         Object.entries(cache.current.kardex).filter(([id]) => siguen.has(id))
       );
-      cache.current = { guardadoEn: ahora.toISOString(), tanquetas: cuerpo, kardex: kardexVigente };
+      const cerradasAhora = Array.isArray(cuerpoCerradas)
+        ? leerCerradas(cuerpoCerradas)
+        : cache.current.cerradas;
+      setCerradas(cerradasAhora);
+      cache.current = {
+        guardadoEn: ahora.toISOString(),
+        tanquetas: cuerpo,
+        cerradas: cerradasAhora,
+        kardex: kardexVigente,
+      };
       guardar();
       // Los movimientos de la que está mirando, junto con el cilindro: que cuadren.
       if (elegidaRef.current !== null) void cargarKardex(elegidaRef.current);
@@ -239,6 +271,7 @@ export default function MiTanqueta() {
       const guardado = leerCache(usuarioId);
       if (guardado && guardado.tanquetas.length > 0) {
         cache.current = guardado;
+        setCerradas(guardado.cerradas);
         mostrar(guardado.tanquetas);
         setActualizadoEn(fechaDelCache(guardado.guardadoEn));
         const id = elegidaRef.current;
@@ -413,6 +446,22 @@ export default function MiTanqueta() {
               error={errorKardex}
             />
           </div>
+        )}
+        {/* Lo que pasó cuando una tanqueta salió de su unidad: queda aunque ya no tenga ninguna. */}
+        {(!elegida || vista === "movimientos") && (
+          <SalidasCerradas
+            grupos={[
+              ...(elegida && delaElegida
+                ? [
+                    {
+                      codigo: elegida.codigo,
+                      salidas: delaElegida.salidas.filter((s) => s.estado !== "abierta"),
+                    },
+                  ]
+                : []),
+              ...cerradas.map((c) => ({ codigo: c.codigo, salidas: c.salidas })),
+            ]}
+          />
         )}
         {/* Siempre montado y en el mismo lugar: solo se oculta (conserva su filtro de fechas). */}
         <div

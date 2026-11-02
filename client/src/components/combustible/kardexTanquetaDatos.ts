@@ -21,8 +21,38 @@ export interface FilaKardex {
   lleva: number | null;
 }
 
+/** El cierre de una salida de la tanqueta: del vale a la unidad hasta que volvió al grifero. */
+export interface CierreDeSalida {
+  vale: string;
+  unidad: string | null;
+  inicio: string;
+  fin: string | null;
+  /** abierta: sigue con la unidad · cerrada: volvió · sin_retorno: se entregó de nuevo sin retorno. */
+  estado: string;
+  salioCon: number | null;
+  cargo: number;
+  cargas: number;
+  volvio: number | null;
+  diferencia: number | null;
+  /** Lo que escribió el grifero al corregir el saldo. */
+  motivo: string | null;
+  /** pozo, tanqueta o reserva: nunca el nombre de nadie. */
+  destinoDelRetorno: string | null;
+  /** Lo que le entró a la tanqueta después de salir (un llenado, un excedente). */
+  entroDespues: number;
+}
+
+/** Una tanqueta que fue de su unidad y ya no, con el cierre de cada salida. */
+export interface TanquetaCerrada {
+  id: number;
+  codigo: string;
+  salidas: CierreDeSalida[];
+}
+
 export interface KardexDeTanqueta {
   filas: FilaKardex[];
+  /** Las salidas que fueron de su unidad, con su cierre. */
+  salidas: CierreDeSalida[];
   total: number;
   truncado: boolean;
   unidades: string[];
@@ -62,6 +92,57 @@ function esFilaValida(f: unknown): f is FilaKardex {
   );
 }
 
+function leerCierre(c: unknown): CierreDeSalida | null {
+  if (typeof c !== "object" || c === null) return null;
+  const x = c as Record<string, unknown>;
+  if (
+    typeof x.vale !== "string" ||
+    typeof x.inicio !== "string" ||
+    Number.isNaN(Date.parse(x.inicio)) ||
+    typeof x.estado !== "string" ||
+    !numero(x.cargo) ||
+    !numero(x.cargas) ||
+    !textoONulo(x.unidad) ||
+    !textoONulo(x.fin) ||
+    !numeroONulo(x.salioCon) ||
+    !numeroONulo(x.volvio) ||
+    !numeroONulo(x.diferencia) ||
+    !textoONulo(x.motivo) ||
+    !textoONulo(x.destinoDelRetorno)
+  ) {
+    return null;
+  }
+  return {
+    vale: x.vale,
+    unidad: x.unidad as string | null,
+    inicio: x.inicio,
+    fin: x.fin as string | null,
+    estado: x.estado,
+    salioCon: x.salioCon as number | null,
+    cargo: x.cargo as number,
+    cargas: x.cargas as number,
+    volvio: x.volvio as number | null,
+    diferencia: x.diferencia as number | null,
+    motivo: x.motivo as string | null,
+    destinoDelRetorno: x.destinoDelRetorno as string | null,
+    entroDespues: numero(x.entroDespues) ? (x.entroDespues as number) : 0,
+  };
+}
+
+const leerCierres = (v: unknown): CierreDeSalida[] =>
+  Array.isArray(v) ? v.map(leerCierre).filter((c): c is CierreDeSalida => c !== null) : [];
+
+/** Las tanquetas cerradas con la forma que la pantalla necesita; las rotas se descartan. */
+export function leerCerradas(v: unknown): TanquetaCerrada[] {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((t) => {
+    if (typeof t !== "object" || t === null) return [];
+    const x = t as Record<string, unknown>;
+    if (!numero(x.id) || typeof x.codigo !== "string") return [];
+    return [{ id: x.id as number, codigo: x.codigo, salidas: leerCierres(x.salidas) }];
+  });
+}
+
 /** El kardex con la forma que la pantalla necesita, o null si lo recibido no se puede leer. Una fila
  *  rota se descarta sin llevarse todo el kardex; las claves repetidas se quedan con la primera. */
 export function leerKardex(k: unknown): KardexDeTanqueta | null {
@@ -83,6 +164,7 @@ export function leerKardex(k: unknown): KardexDeTanqueta | null {
     .filter((f) => !vistas.has(f.clave) && vistas.add(f.clave));
   return {
     filas,
+    salidas: leerCierres(x.salidas),
     total: x.total as number,
     truncado: x.truncado,
     unidades: textos(x.unidades),

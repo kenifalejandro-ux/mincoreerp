@@ -9,7 +9,9 @@
  *   - sin señal se queda el último saldo conocido y lo avisa; al volver la señal, se corrige;
  *   - dos tanquetas en la unidad: aparece el selector y cambia el cilindro;
  *   - sin tanqueta o sin unidad: un mensaje claro y su historial de cargas sigue ahí;
- *   - filtros del kardex por unidad (la tanqueta pasó por otra unidad);
+ *   - la tanqueta que pasó por otra unidad: el conductor ve solo lo suyo;
+ *   - la tanqueta devuelta al grifero sale de su cilindro pero su salida queda, con el cierre;
+ *   - si el administrador corrige la unidad en Equipos, la tanqueta aparece sola, sin recargar;
  *   - una carga hecha sin señal se descuenta del cilindro UNA vez y deja de descontarse al enviarse;
  *   - el descuento NO se pierde mientras la carga siga en la cola (con señal, o con un 500 del
  *     servidor) ni cuando la carga se envió pero la siguiente lectura falla;
@@ -783,5 +785,106 @@ test("Mi tanqueta: enviada la carga, una lectura que falla no la hace desaparece
     await page.unroute(mias).catch(() => {});
     await page.context().setOffline(false);
     await darDeBajaLosCreados(page, marca, creados);
+  }
+});
+
+test("Mi tanqueta: al devolverla, la tanqueta se va pero su salida queda con el cierre", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  const marca = randomBytes(3).toString("hex").toUpperCase();
+  const admin = adminA();
+  const creados: { dni: string; password: string }[] = [];
+  try {
+    await loginPorUI(page, admin.email, admin.password);
+    const { conductor, tanqueta: t1, tanque } = await sembrarConductor(page, marca, 100);
+    creados.push(conductor);
+    // El grifero la recibe de vuelta con 3 gal menos y el saldo vuelve al pozo.
+    const vuelve = await page.request.post(`/api/erp/combustible/tanquetas/${t1.id}/retorno`, {
+      data: {
+        saldo_calculado: 100,
+        saldo_validado: 97,
+        motivo: "Faltó llenar la cubeta",
+        destino: "pozo",
+        tanque_id: tanque.id,
+      },
+    });
+    expect(vuelve.status(), await vuelve.text()).toBe(201);
+
+    await page.request.post("/api/auth/logout");
+    await entrarAMiViaje(page, comoConductor(marca, conductor));
+    await page.getByRole("button", { name: "Tanquetas" }).click();
+    await expect(page.getByRole("heading", { name: "Mi tanqueta", level: 1 })).toBeVisible();
+    // Ya no hay cilindro, pero lo que pasó con su combustible sigue a la vista.
+    await expect(page.getByText(/No hay una tanqueta asignada a tu unidad/)).toBeVisible();
+    const salidas = page.getByRole("region", { name: "Salidas anteriores de la tanqueta" });
+    await expect(salidas).toBeVisible();
+    await expect(salidas).toContainText(t1.codigo);
+    await expect(salidas).toContainText(`C${marca}-1`);
+    await expect(salidas).toContainText("Salió con");
+    await expect(salidas).toContainText("100 gal");
+    await expect(salidas).toContainText("97 gal");
+    await expect(salidas).toContainText("Faltó llenar la cubeta");
+    await expect(salidas).toContainText("Volvió al pozo");
+  } finally {
+    await darDeBajaLosCreados(page, marca, creados);
+  }
+});
+
+test("Mi tanqueta: si el administrador corrige la unidad en Equipos, la tanqueta aparece sola", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(240_000);
+  const marca = randomBytes(3).toString("hex").toUpperCase();
+  const contexto = await browser.newContext();
+  const oficina = await contexto.newPage();
+  const admin = adminA();
+  const creados: { dni: string; password: string }[] = [];
+  try {
+    await loginPorUI(oficina, admin.email, admin.password);
+    const grifoInternoId = await primerGrifoActivo(oficina);
+    const conductor = nuevoConductor(marca, "96", `Conductor ${marca}`);
+    await crear(oficina, "/api/erp/usuarios", { ...conductor, rol: "conductor_ruta" });
+    creados.push(conductor);
+    const tanque = await crearTanque(oficina, marca, grifoInternoId);
+    // El grifero asignó la tanqueta a la unidad correcta, pero en Equipos esa unidad quedó con otro
+    // conductor (un error de digitación).
+    const equivocado = nuevoConductor(marca, "97", `Equivocado ${marca}`);
+    const placa = `VC-${marca}`;
+    const datosEquipo = {
+      placa_codigo: placa,
+      tipo: "VOLQUETE",
+      tipo_medidor: "horometro",
+      conductor_nombre: equivocado.nombre,
+      conductor_dni: equivocado.dni,
+      grifo_interno_id: grifoInternoId,
+    };
+    const equipo = await crear(oficina, "/api/erp/equipos", datosEquipo);
+    const t1 = await tanquetaConSaldo(oficina, marca, grifoInternoId, tanque.id, equipo.id, 1, 80);
+
+    await entrarAMiViaje(page, comoConductor(marca, conductor));
+    await page.getByRole("button", { name: "Tanquetas" }).click();
+    await expect(page.getByText(/no tiene ninguna unidad a su cargo/)).toBeVisible();
+
+    // El administrador corrige el conductor de la unidad: sin recargar, la tanqueta aparece.
+    const corrige = await oficina.request.put(`/api/erp/equipos/${equipo.id}`, {
+      data: {
+        placa_codigo: placa,
+        tipo: "VOLQUETE",
+        tipo_medidor: "horometro",
+        conductor_nombre: conductor.nombre,
+        conductor_dni: conductor.dni,
+        motivo_cambio: "Estaba mal digitado",
+      },
+    });
+    expect(corrige.status(), await corrige.text()).toBe(200);
+    await expect(
+      page.getByRole("img", { name: `${t1.codigo}: 80 de 280 galones`, exact: true })
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/no tiene ninguna unidad a su cargo/)).toHaveCount(0);
+  } finally {
+    await darDeBajaLosCreados(page, marca, creados);
+    await contexto.close();
   }
 });
