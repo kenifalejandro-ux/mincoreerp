@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import AlcanceCombustible from "./AlcanceCombustible";
-import { MODULOS_CLIENTE } from "../../modules/registry";
+import { ETIQUETAS_SIN_PANTALLA, MODULOS_CLIENTE } from "../../modules/registry";
 import {
   type AlertaDeModulo,
   guardarPermisosApi,
@@ -31,7 +31,7 @@ const NIVELES: { valor: "sin-acceso" | NivelModulo; titulo: string; detalle: str
 ];
 
 function nombreDeModulo(id: string): string {
-  return MODULOS_CLIENTE.find((m) => m.id === id)?.label ?? id;
+  return MODULOS_CLIENTE.find((m) => m.id === id)?.label ?? ETIQUETAS_SIN_PANTALLA[id] ?? id;
 }
 
 /** Los tres niveles de la pantalla contra los dos campos que guarda el

@@ -200,7 +200,7 @@ function parsearPlanillaEquipos(libro: WorkBook, utils: UtilidadesXlsx): FilaPla
 }
 
 export default function EquiposTable() {
-  const puedeEscribir = usePuedeEscribir("equipos");
+  const puedeEscribir = usePuedeEscribir("flota");
   const [equipos, setEquipos] = useState<Equipo[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");

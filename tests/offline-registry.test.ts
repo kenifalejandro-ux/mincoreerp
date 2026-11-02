@@ -18,17 +18,19 @@
 import { describe, it, expect } from "vitest";
 
 import { MODULOS } from "../src/modules/registry";
-import { ESCRITURAS_OFFLINE } from "../client/src/modules/offlineRegistry";
+import { ESCRITURAS_OFFLINE, RUTA_DE_MODULO } from "../client/src/modules/offlineRegistry";
 import { moduloParaEncolar, rutasOfflineDeclaradas } from "../client/src/offline/rutasOffline";
 
 describe("declaración de offline: backend vs cliente", () => {
   it("los dos registries declaran exactamente las mismas escrituras offline", () => {
     const delBackend = MODULOS.flatMap((m) =>
-      (m.offline?.escrituras ?? []).map((e) => `${e.metodo} /${m.id}${e.ruta}`)
+      (m.offline?.escrituras ?? []).map((e) => `${e.metodo} /${m.ruta ?? m.id}${e.ruta}`)
     ).sort();
 
     const delCliente = Object.entries(ESCRITURAS_OFFLINE)
-      .flatMap(([id, escrituras]) => escrituras.map((e) => `${e.metodo} /${id}${e.ruta}`))
+      .flatMap(([id, escrituras]) =>
+        escrituras.map((e) => `${e.metodo} /${RUTA_DE_MODULO[id] ?? id}${e.ruta}`)
+      )
       .sort();
 
     expect(delCliente).toEqual(delBackend);
@@ -86,7 +88,7 @@ describe("qué se encola y qué no", () => {
   });
 
   it("encola el POST de dar de alta un equipo", () => {
-    expect(moduloParaEncolar("/api/erp/equipos", "POST")).toBe("equipos");
+    expect(moduloParaEncolar("/api/erp/equipos", "POST")).toBe("flota");
   });
 
   it("NO encola editar ni eliminar un equipo", () => {

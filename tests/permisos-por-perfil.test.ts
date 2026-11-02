@@ -286,7 +286,7 @@ describe("permisos por perfil (autonomías)", () => {
     const operador = await sesionDe(emailOperador(), PASSWORD);
     expect((await operador.get("/api/auth/me")).status).toBe(200);
 
-    const cambio = await ponerNivel(operadorId, "equipos", { asignado: false });
+    const cambio = await ponerNivel(operadorId, "flota", { asignado: false });
     expect(cambio.body.recorta).toBe(true);
 
     // Sin esto, alguien a quien le acaban de quitar el acceso lo conserva
@@ -297,7 +297,7 @@ describe("permisos por perfil (autonomías)", () => {
   it("darle un módulo más no lo echa de su sesión", async () => {
     const operador = await sesionDe(emailOperador(), PASSWORD);
 
-    const cambio = await ponerNivel(operadorId, "equipos", { asignado: true, nivel: "operar" });
+    const cambio = await ponerNivel(operadorId, "flota", { asignado: true, nivel: "operar" });
     expect(cambio.body.recorta).toBe(false);
 
     expect((await operador.get("/api/auth/me")).status).toBe(200);
@@ -418,12 +418,12 @@ describe("permisos por perfil (autonomías)", () => {
       const lecturaId = await alta("lectura", "Perfil de consulta");
       const lectura = await permisosDe(lecturaId);
       expect(nivelDe(lectura, "combustible")).toBe("consultas");
-      expect(nivelDe(lectura, "equipos")).toBe("consultas");
+      expect(nivelDe(lectura, "flota")).toBe("consultas");
 
       const griferoId = await alta("grifero", "Perfil de cancha");
       const grifero = await permisosDe(griferoId);
       expect(nivelDe(grifero, "combustible")).toBe("operar");
-      expect(nivelDe(grifero, "equipos")).toBe("sin-acceso");
+      expect(nivelDe(grifero, "flota")).toBe("sin-acceso");
     });
 
     it("las vistas del Histórico nacen apagadas para los perfiles de cancha", async () => {
@@ -445,7 +445,7 @@ describe("permisos por perfil (autonomías)", () => {
       // sin el reset se quedaba con los módulos del perfil viejo, que es lo
       // que se veía en el panel del admin.
       const usuarioId = await alta("lectura", "Cambia de perfil");
-      expect(nivelDe(await permisosDe(usuarioId), "equipos")).toBe("consultas");
+      expect(nivelDe(await permisosDe(usuarioId), "flota")).toBe("consultas");
 
       const { modulos } = await permisosDe(usuarioId);
       const cambio = await admin.put(`/api/erp/usuarios/${usuarioId}/permisos`).send({
@@ -458,7 +458,7 @@ describe("permisos por perfil (autonomías)", () => {
       const despues = await permisosDe(usuarioId);
       expect(despues.rol).toBe("encargado_urea");
       expect(nivelDe(despues, "combustible")).toBe("operar");
-      expect(nivelDe(despues, "equipos")).toBe("sin-acceso");
+      expect(nivelDe(despues, "flota")).toBe("sin-acceso");
       // Y las pestañas también son las del perfil nuevo: Urea sí, Tanques no.
       const pestana = (clave: string) =>
         despues.pestanas.find((p) => p.pestana === clave)?.permitido;
@@ -470,7 +470,7 @@ describe("permisos por perfil (autonomías)", () => {
       // La ruta de plataforma solo cambiaba el rol: un Grifero pasado a
       // Operador se quedaba solo con Combustible.
       const usuarioId = await alta("grifero", "Pasa de cancha a oficina");
-      expect(nivelDe(await permisosDe(usuarioId), "equipos")).toBe("sin-acceso");
+      expect(nivelDe(await permisosDe(usuarioId), "flota")).toBe("sin-acceso");
 
       const cambiarA = async (rol: string) => {
         const res = await plataforma
@@ -483,23 +483,23 @@ describe("permisos por perfil (autonomías)", () => {
 
       const operador = await cambiarA("operador");
       expect(operador.rol).toBe("operador");
-      for (const m of ["equipos", "combustible", "dashboard", "checklists", "iperc"]) {
+      for (const m of ["flota", "combustible", "dashboard", "checklists", "iperc"]) {
         expect(nivelDe(operador, m)).toBe("operar");
       }
 
       const lectura = await cambiarA("lectura");
-      for (const m of ["equipos", "combustible", "dashboard", "checklists", "iperc"]) {
+      for (const m of ["flota", "combustible", "dashboard", "checklists", "iperc"]) {
         expect(nivelDe(lectura, m)).toBe("consultas");
       }
 
       const admin2 = await cambiarA("admin");
-      for (const m of ["equipos", "combustible", "dashboard"]) {
+      for (const m of ["flota", "combustible", "dashboard"]) {
         expect(nivelDe(admin2, m)).toBe("operar");
       }
 
       const urea = await cambiarA("encargado_urea");
       expect(nivelDe(urea, "combustible")).toBe("operar");
-      expect(nivelDe(urea, "equipos")).toBe("sin-acceso");
+      expect(nivelDe(urea, "flota")).toBe("sin-acceso");
     });
 
     // Un usuario que cambia de perfil tiene que quedar IDÉNTICO a uno recién
@@ -582,7 +582,7 @@ describe("permisos por perfil (autonomías)", () => {
           await porPlataforma(usuarioId)("operador");
           const operador = await permisosDe(usuarioId);
           expect(nivelDe(operador, "iperc")).toBe("sin-acceso");
-          expect(nivelDe(operador, "equipos")).toBe("operar");
+          expect(nivelDe(operador, "flota")).toBe("operar");
         } finally {
           await pool.query(
             `UPDATE tenant_modulos SET estado = 'habilitado' WHERE tenant_id = $1 AND modulo = 'iperc'`,

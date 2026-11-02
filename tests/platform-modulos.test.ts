@@ -34,7 +34,7 @@ describe("panel de plataforma: módulos por tenant y por usuario", () => {
 
   it("desactivar un módulo del tenant lo saca de modulosPermitidos en el próximo login, y bloquea la ruta con 403", async () => {
     const configuraciones = [
-      ...["repuestos", "combustible", "documentos", "dashboard", "equipos", "checklists"].map(
+      ...["repuestos", "combustible", "documentos", "dashboard", "flota", "checklists"].map(
         (modulo) => ({
           modulo,
           estado: "habilitado",
@@ -80,7 +80,7 @@ describe("panel de plataforma: módulos por tenant y por usuario", () => {
           "combustible",
           "documentos",
           "dashboard",
-          "equipos",
+          "flota",
           "checklists",
           "iperc",
         ].map((modulo) => ({ modulo, estado: "habilitado" })),

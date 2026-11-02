@@ -2,6 +2,17 @@
 
 import type { Request, Response, NextFunction } from "express";
 
+/** Ids con los que un módulo pudo viajar en un JWT emitido antes de renombrarlo.
+ *  `flota` se llamaba `equipos` hasta 0165: sin esto, quien ya estaba conectado
+ *  recibe 403 hasta que el token se renueva (hasta 30 min). Se quita en la
+ *  entrega de limpieza, junto con los alias de rutas viejas de Viajes. */
+const IDS_ANTERIORES: Record<string, string> = { flota: "equipos" };
+
+function tieneModulo(lista: string[], modulo: string): boolean {
+  const anterior = IDS_ANTERIORES[modulo];
+  return lista.includes(modulo) || (anterior !== undefined && lista.includes(anterior));
+}
+
 /** Debe usarse siempre después de authMiddleware. Bloquea un módulo entero
  *  (repuestos, combustible, etc.) si el tenant no lo tiene contratado o si
  *  el panel de plataforma no se lo asignó a este usuario en particular —
@@ -12,7 +23,7 @@ export function requireModulo(modulo: string) {
     if (!usuario) {
       return res.status(401).json({ ok: false, message: "No autenticado" });
     }
-    if (!usuario.modulosPermitidos.includes(modulo)) {
+    if (!tieneModulo(usuario.modulosPermitidos, modulo)) {
       return res.status(403).json({ ok: false, message: "Módulo no disponible" });
     }
     next();
@@ -49,7 +60,7 @@ export function requireNivelParaEscribir(modulo: string) {
     // Ausente = sesión emitida antes de 0089, cuando todo módulo asignado era
     // para operar. Se respeta eso hasta que la sesión se renueve.
     const soloConsulta = usuario.modulosConsulta ?? [];
-    const moduloEsConsulta = soloConsulta.includes(modulo);
+    const moduloEsConsulta = tieneModulo(soloConsulta, modulo);
     // Operador parte con acceso amplio a cualquier módulo (matriz robusta de
     // perfiles, profile_user.xlsx: "Operador = Sí" en Registrar/Editar/
     // Eliminar en general) -- lo único que lo frena acá es Lectura (siempre

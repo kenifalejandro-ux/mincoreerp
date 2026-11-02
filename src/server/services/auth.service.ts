@@ -23,6 +23,7 @@ import { esViolacionUnicidad } from "../shared/utils/pgError";
 import { escapeHtml } from "../shared/utils/html";
 import { mapaPermisosPestanas } from "./permisosPestanas.service";
 import { moduloPorDefectoDeRol } from "./perfilesDefaults";
+import { obtenerModulo } from "../../modules/registry";
 import {
   setCachedTokenVersion,
   invalidateCachedTokenVersion,
@@ -133,7 +134,8 @@ export function enBucketDeRollout(
  *  una vez y vale para todos. */
 const MODULOS_POR_ROL: Partial<Record<UsuarioPayload["rol"], string[]>> = {
   grifero: ["combustible"],
-  conductor_ruta: ["combustible"],
+  // Viajes: "Mi viaje" es del conductor, aunque ahora sea módulo propio.
+  conductor_ruta: ["combustible", "viajes"],
   encargado_urea: ["combustible"],
 };
 
@@ -174,8 +176,24 @@ export async function obtenerModulosConNivel(
 
   const permitidosPorRol = MODULOS_POR_ROL[rol];
 
+  // Un módulo que exige otro (viajes -> flota) solo se ve si la EMPRESA tiene
+  // el otro habilitado, aunque el usuario tenga la fila suelta.
+  const conRequisitos = result.rows.some((f) => obtenerModulo(f.modulo)?.requiere?.length);
+  const habilitadosDeLaEmpresa = conRequisitos
+    ? new Set(
+        (
+          await db.query(
+            `SELECT modulo FROM tenant_modulos WHERE tenant_id = $1 AND estado <> 'deshabilitado'`,
+            [tenantId]
+          )
+        ).rows.map((r) => r.modulo as string)
+      )
+    : null;
+
   return result.rows
     .filter((fila) => {
+      const requiere = obtenerModulo(fila.modulo)?.requiere ?? [];
+      if (requiere.some((m) => !habilitadosDeLaEmpresa?.has(m))) return false;
       // El rol RECORTA, nunca agrega: si el tenant no tiene el módulo
       // habilitado, ningún rol lo trae de vuelta.
       if (permitidosPorRol && !permitidosPorRol.includes(fila.modulo)) return false;

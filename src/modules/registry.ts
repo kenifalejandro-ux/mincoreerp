@@ -38,6 +38,7 @@ import repuestosRoutes from "./repuestos/repuestos.routes";
 import combustibleRoutes from "./combustible/combustible.routes";
 import documentosRoutes from "./documentos/documentos.routes";
 import equiposRoutes from "./equipos/equipos.routes";
+import viajesRoutes from "./viajes/viajes.routes";
 import checklistsRoutes from "./checklists/checklists.routes";
 import ipercRoutes from "./iperc/iperc.routes";
 import ordenesTrabajoRoutes from "./ordenes_trabajo/ordenes_trabajo.routes";
@@ -45,10 +46,19 @@ import type { ModuloDefinicion } from "./types";
 
 export const MODULOS: ModuloDefinicion[] = [
   {
-    id: "equipos",
-    label: "Equipos",
+    // Gestión operacional de flota: el módulo central. Hoy lo componen
+    // Registro de unidades (lo que antes era "Equipos") y, como módulo propio
+    // que cuelga de este, Viajes. Era `equipos` hasta la migración 0165
+    // (ALTER TYPE ... RENAME VALUE): las filas de tenant_modulos/usuario_modulos
+    // siguen siendo las mismas.
+    id: "flota",
+    label: "Gestión operacional de flota",
     icono: "🚜",
     version: "v1",
+    // La URL NO cambia: Combustible, Checklists, Órdenes de Trabajo y la cola
+    // offline de los celulares ya llaman a /api/erp/equipos. El id gobierna
+    // el acceso (requireModulo, cuotas, enum); la ruta, solo dónde se monta.
+    ruta: "equipos",
     router: equiposRoutes,
     // El grifo interno del equipo (0097) vive en platformBackup.service.ts,
     // que se restaura antes que cualquier módulo.
@@ -69,6 +79,21 @@ export const MODULOS: ModuloDefinicion[] = [
     // NO están acá a propósito: editar sobreescribe campos existentes y
     // borrar no debe reintentarse a ciegas.
     offline: { escrituras: [{ metodo: "POST", ruta: "/" }] },
+  },
+  {
+    // Viajes: programar viajes, seguir el recorrido de la unidad y medir cuánto
+    // combustible y urea cargó (lee las cargas de Combustible, no depende de
+    // él). Exige `flota` (ver `requiere`). En esta entrega es solo el
+    // módulo: sus rutas y sus tablas siguen registradas en Combustible, y se
+    // mueven en una entrega aparte.
+    id: "viajes",
+    label: "Viajes",
+    icono: "🧭",
+    version: "v1",
+    router: viajesRoutes,
+    requiere: ["flota"],
+    tablas: [],
+    raices: [],
   },
   {
     id: "combustible",

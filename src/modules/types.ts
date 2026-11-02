@@ -45,6 +45,15 @@ export interface ModuloDefinicion {
    *  adelante) — ver tests/module-registry.test.ts, que falla si diverge. */
   id: string;
   label: string;
+  /** Dónde se monta bajo /api/erp. Omitido = el id. Existe para que un módulo
+   *  pueda cambiar de id sin cambiar su URL (ver `flota`, que sigue en
+   *  /api/erp/equipos). Mismo valor que el cliente declara en
+   *  RUTA_DE_MODULO (client/src/modules/offlineRegistry.ts). */
+  ruta?: string;
+  /** Módulos que la EMPRESA tiene que tener habilitados para que este se vea
+   *  (ej. `viajes` exige `flota`). Se decide por empresa, no por usuario: a
+   *  un usuario no se le pide el módulo del que depende. */
+  requiere?: string[];
   icono: string;
   /** Puramente informativo hoy (ver tenant_modulos.version, migrations/0021)
    *  — ningún consumidor de modulosPermitidos lo lee todavía. */

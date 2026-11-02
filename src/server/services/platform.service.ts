@@ -31,6 +31,7 @@ import {
 } from "./auth.service";
 import { modulosDisponibles, reiniciarModulosDePerfil } from "./permisosTenant.service";
 import { MODULOS_ERP } from "../schemas/platform.schema";
+import { MODULOS } from "../../modules/registry";
 import { PRESENTACIONES_UREA_INICIALES } from "../schemas/combustible.schema";
 import { verificarCuota, CuotaExcedidaError, RECURSO_USUARIOS } from "./platformCuotas.service";
 import { esViolacionUnicidad, esViolacionForeignKey } from "../shared/utils/pgError";
@@ -304,6 +305,16 @@ export async function actualizarModulosTenantService(
   }
 
   const porModulo = new Map(configuraciones.map((c) => [c.modulo, c]));
+  // Un módulo que exige otro no se puede encender sin él (viajes -> flota).
+  for (const def of MODULOS) {
+    const quiereEncender = (porModulo.get(def.id)?.estado ?? "deshabilitado") !== "deshabilitado";
+    const faltante = (def.requiere ?? []).find(
+      (m) => (porModulo.get(m)?.estado ?? "deshabilitado") === "deshabilitado"
+    );
+    if (quiereEncender && faltante) {
+      throw new AppError(400, `El módulo "${def.label}" requiere tener habilitado "${faltante}"`);
+    }
+  }
   for (const modulo of MODULOS_ERP) {
     const config = porModulo.get(modulo);
     const estado = config?.estado ?? "deshabilitado";
@@ -327,6 +338,45 @@ export async function actualizarModulosTenantService(
 
 const MAX_INTENTOS_MODULO_GLOBAL = 3;
 
+/** Lo mismo que se exige módulo por módulo en actualizarModulosTenantService,
+ *  pero para el interruptor global: encender un módulo que exige otro solo si
+ *  TODAS las empresas tienen el otro, y apagar uno del que otros dependen solo
+ *  si ninguna empresa los tiene encendidos. Si no, queda un estado que después
+ *  hace fallar cualquier cambio de módulos de esa empresa con un mensaje que no
+ *  tiene que ver con lo que se estaba tocando. */
+async function validarDependenciasGlobales(modulo: string, estado: EstadoModulo): Promise<void> {
+  const habilitado = `estado <> 'deshabilitado'`;
+  if (estado !== "deshabilitado") {
+    for (const requerido of MODULOS.find((m) => m.id === modulo)?.requiere ?? []) {
+      const r = await pool.query(
+        `SELECT count(*)::int AS n FROM tenants t
+          WHERE NOT EXISTS (SELECT 1 FROM tenant_modulos tm
+                             WHERE tm.tenant_id = t.id AND tm.modulo = $1 AND tm.${habilitado})`,
+        [requerido]
+      );
+      if (r.rows[0].n > 0) {
+        throw new AppError(
+          400,
+          `${r.rows[0].n} empresa(s) no tienen habilitado "${requerido}", que este módulo requiere`
+        );
+      }
+    }
+    return;
+  }
+  for (const dependiente of MODULOS.filter((m) => m.requiere?.includes(modulo))) {
+    const r = await pool.query(
+      `SELECT count(*)::int AS n FROM tenant_modulos tm WHERE tm.modulo = $1 AND tm.${habilitado}`,
+      [dependiente.id]
+    );
+    if (r.rows[0].n > 0) {
+      throw new AppError(
+        400,
+        `${r.rows[0].n} empresa(s) tienen "${dependiente.label}" habilitado, que requiere este módulo: apágalo primero`
+      );
+    }
+  }
+}
+
 /** Aplica el mismo estado/porcentaje/versión de un módulo a TODOS los
  *  tenants de una sola vez — "apagar en caliente globalmente" (ej. un
  *  módulo con un bug grave) sin tener que recorrer tenant por tenant desde
@@ -348,6 +398,7 @@ export async function actualizarModuloGlobalService(
   config: { estado: EstadoModulo; rolloutPorcentaje?: number | null; version?: string | null },
   contexto: ContextoAuditoria
 ): Promise<{ tenantsAfectados: number }> {
+  await validarDependenciasGlobales(modulo, config.estado);
   for (let intento = 1; intento <= MAX_INTENTOS_MODULO_GLOBAL; intento++) {
     try {
       const result = await pool.query(

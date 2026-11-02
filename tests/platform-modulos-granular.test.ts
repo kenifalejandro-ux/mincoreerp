@@ -46,7 +46,7 @@ describe("enBucketDeRollout (determinístico, sin BD)", () => {
 
   it("mismos (tenant, módulo, usuario, porcentaje) siempre dan el mismo resultado", () => {
     const resultados = new Set(
-      Array.from({ length: 20 }, () => enBucketDeRollout("tenant-x", "equipos", "usuario-y", 42))
+      Array.from({ length: 20 }, () => enBucketDeRollout("tenant-x", "flota", "usuario-y", 42))
     );
     expect(resultados.size).toBe(1);
   });
@@ -75,7 +75,7 @@ describe("estado 'rollout' de punta a punta", () => {
       "combustible",
       "documentos",
       "dashboard",
-      "equipos",
+      "flota",
       "checklists",
     ].map((modulo) => ({ modulo, estado: "habilitado" as const }));
 

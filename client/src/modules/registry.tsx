@@ -69,8 +69,10 @@ export const MODULOS_CLIENTE: ModuloCliente[] = [
     componente: lazy(() => import("../components/documentos/DocumentosTable")),
   },
   {
-    id: "equipos",
-    label: "Equipos",
+    // Gestión operacional de flota (era `equipos`, ver migración 0165). Hoy
+    // abre Registro de unidades; Viajes se suma al grupo en una entrega aparte.
+    id: "flota",
+    label: "Gestión operacional de flota",
     icono: Tractor,
     componente: lazy(() => import("../components/equipos/EquiposTable")),
   },
@@ -93,3 +95,8 @@ export const MODULOS_CLIENTE: ModuloCliente[] = [
     componente: lazy(() => import("../components/ordenes_trabajo/OrdenesTrabajoView")),
   },
 ];
+
+/** Módulos que existen en el servidor pero todavía no tienen pantalla propia
+ *  en el menú: solo les falta el nombre para mostrarlos en Configuración y en
+ *  los avisos. Sin esto aparecerían con su id ("viajes"). */
+export const ETIQUETAS_SIN_PANTALLA: Record<string, string> = { viajes: "Viajes" };

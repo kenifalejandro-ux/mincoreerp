@@ -70,7 +70,7 @@ describe("registrarMetricaRequest / tenantMetricsMiddleware", () => {
           "combustible",
           "documentos",
           "dashboard",
-          "equipos",
+          "flota",
           "checklists",
         ].map((modulo) => ({ modulo, estado: "habilitado" })),
       }); // iperc queda deshabilitado (no está en la lista)

@@ -48,7 +48,7 @@ export const EquiposService = {
     return idempotentInsert({
       client,
       tenantId,
-      modulo: "equipos",
+      modulo: "flota",
       clienteUuid: data.cliente_uuid,
       insertar: async () => {
         // Con más de un grifo interno, el equipo tiene que decir a cuál
