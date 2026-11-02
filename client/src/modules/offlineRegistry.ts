@@ -86,6 +86,21 @@ export const ESCRITURAS_OFFLINE: Record<string, EscrituraOffline[]> = {
     { metodo: "POST", ruta: "/viajes/:viajeId/mando/retirar" },
   ],
 
+  // Lo mismo bajo el módulo propio de Viajes. El cliente todavía llama a las URL
+  // de Combustible (de arriba); estas quedan declaradas para cuando pase a las
+  // nuevas. Espejo de src/modules/registry.ts.
+  viajes: [
+    { metodo: "POST", ruta: "/:viajeId/iniciar-mio" },
+    { metodo: "POST", ruta: "/:viajeId/cerrar-mio" },
+    { metodo: "POST", ruta: "/:viajeId/llegada-mia" },
+    { metodo: "POST", ruta: "/:viajeId/salida-mia" },
+    { metodo: "POST", ruta: "/:viajeId/descanso-mio" },
+    { metodo: "POST", ruta: "/:viajeId/descanso-mio/terminar" },
+    { metodo: "POST", ruta: "/:viajeId/mando/entregar" },
+    { metodo: "POST", ruta: "/:viajeId/mando/aceptar" },
+    { metodo: "POST", ruta: "/:viajeId/mando/retirar" },
+  ],
+
   // Crear el registro (pólizas, SOAT, etc. son `documentos` con otro
   // nombre, no un tipo aparte) Y subir el archivo adjunto. `/:id/versiones`
   // usa un segmento comodín -- rutasOffline.ts lo matchea sin importar el

@@ -55,6 +55,10 @@ export const MODULOS: ModuloDefinicion[] = [
     label: "Gestión operacional de flota",
     icono: "🚜",
     version: "v1",
+    // Reparte el rollout como Combustible: `viajes` ya lo hace y, sin esto, con
+    // un porcentaje parcial alguien vería Viajes sin Flota (y al revés), y la
+    // pantalla de Viajes no podría elegir la unidad.
+    bucketDe: "combustible",
     // La URL NO cambia: Combustible, Checklists, Órdenes de Trabajo y la cola
     // offline de los celulares ya llaman a /api/erp/equipos. El id gobierna
     // el acceso (requireModulo, cuotas, enum); la ruta, solo dónde se monta.
@@ -92,8 +96,27 @@ export const MODULOS: ModuloDefinicion[] = [
     version: "v1",
     router: viajesRoutes,
     requiere: ["flota"],
+    bucketDe: "combustible",
     tablas: [],
     raices: [],
+    // "Mi viaje" (0124): el conductor marca salida y llegada en ruta, donde puede
+    // no haber señal. Misma declaración que la de Combustible (que se conserva
+    // mientras el cliente llame a las URL viejas); el reintento no duplica
+    // porque el service reconoce el cliente_uuid de la marca. Espejo de
+    // offlineRegistry.ts del cliente.
+    offline: {
+      escrituras: [
+        { metodo: "POST", ruta: "/:viajeId/iniciar-mio" },
+        { metodo: "POST", ruta: "/:viajeId/cerrar-mio" },
+        { metodo: "POST", ruta: "/:viajeId/llegada-mia" },
+        { metodo: "POST", ruta: "/:viajeId/salida-mia" },
+        { metodo: "POST", ruta: "/:viajeId/descanso-mio" },
+        { metodo: "POST", ruta: "/:viajeId/descanso-mio/terminar" },
+        { metodo: "POST", ruta: "/:viajeId/mando/entregar" },
+        { metodo: "POST", ruta: "/:viajeId/mando/aceptar" },
+        { metodo: "POST", ruta: "/:viajeId/mando/retirar" },
+      ],
+    },
   },
   {
     id: "combustible",
