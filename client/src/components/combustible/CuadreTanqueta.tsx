@@ -4,7 +4,14 @@ import { useEffect, useState } from "react";
 import { describirSalida, type SalidaCuadre } from "./cuadreTanquetaDatos";
 import { apiFetch } from "../../services/apiClient";
 
-export default function CuadreTanqueta({ tanquetaId }: { tanquetaId: string | number }) {
+export default function CuadreTanqueta({
+  tanquetaId,
+  version = 0,
+}: {
+  tanquetaId: string | number;
+  /** Sube cada vez que cambió algo de la tanqueta: se vuelve a pedir el cuadre sin cerrar la ventana. */
+  version?: number;
+}) {
   const [salidas, setSalidas] = useState<SalidaCuadre[] | null>(null);
   const [fallo, setFallo] = useState(false);
 
@@ -16,8 +23,10 @@ export default function CuadreTanqueta({ tanquetaId }: { tanquetaId: string | nu
       .then(async (res) => {
         const body = await res.json().catch(() => null);
         if (!vigente) return;
-        if (res.ok && Array.isArray(body)) setSalidas(body as SalidaCuadre[]);
-        else setFallo(true);
+        if (res.ok && Array.isArray(body)) {
+          setSalidas(body as SalidaCuadre[]);
+          setFallo(false);
+        } else setFallo(true);
       })
       .catch(() => {
         if (vigente) setFallo(true);
@@ -25,7 +34,7 @@ export default function CuadreTanqueta({ tanquetaId }: { tanquetaId: string | nu
     return () => {
       vigente = false;
     };
-  }, [tanquetaId]);
+  }, [tanquetaId, version]);
 
   if (fallo) {
     return (

@@ -7,7 +7,7 @@
 // uno por tanqueta. Los permisos los decide el servidor; el front solo evita
 // dibujar un botón que iba a dar 403.
 import { History, Pencil, Plus, Truck, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import AsignarTanqueta from "./AsignarTanqueta";
 import CuadreTanqueta from "./CuadreTanqueta";
@@ -155,6 +155,15 @@ function CilindroTanqueta({ t }: { t: Tanqueta }) {
   );
 }
 
+// Lo que mueve el saldo o la asignación de una tanqueta (el mismo criterio que "Mi tanqueta").
+const EVENTOS_DE_TANQUETAS = [
+  "combustible.despacho_creado",
+  "combustible.despacho_anulado",
+  "combustible.recepcion_creada",
+  "combustible.recepcion_anulada",
+  "combustible.tanque_actualizado",
+];
+
 const VACIO = { grifo_interno_id: "", codigo: "", capacidad: "280", motivo: "", activa: true };
 
 export default function TanquetasPanel() {
@@ -170,6 +179,10 @@ export default function TanquetasPanel() {
   const [guardando, setGuardando] = useState(false);
   const [historialDe, setHistorialDe] = useState<Tanqueta | null>(null);
   const [historial, setHistorial] = useState<MovimientoTanqueta[]>([]);
+  // Sube con cada aviso del servidor: lo que está abierto (historial, cuadre) se vuelve a pedir.
+  const [version, setVersion] = useState(0);
+  // El historial que está abierto, para que el aviso del servidor sepa cuál volver a pedir.
+  const historialAbierto = useRef<string | number | null>(null);
 
   const [asignando, setAsignando] = useState<Tanqueta | null>(null);
   const [recibiendo, setRecibiendo] = useState<Tanqueta | null>(null);
@@ -184,19 +197,24 @@ export default function TanquetasPanel() {
     );
   };
 
-  const cargar = useCallback(async () => {
-    setCargando(true);
+  // `enSilencio`: un refresco por evento no parpadea ni borra la lista si falla (sin señal, 500).
+  const cargar = useCallback(async (enSilencio = false) => {
+    if (!enSilencio) setCargando(true);
     try {
       const res = await apiFetch("/api/erp/combustible/tanquetas");
       const body = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(body?.error ?? body?.message ?? "No se pudieron cargar las tanquetas.");
+        if (!enSilencio) {
+          setError(body?.error ?? body?.message ?? "No se pudieron cargar las tanquetas.");
+        }
         return;
       }
       setError(null);
       setTanquetas(Array.isArray(body) ? body : []);
+    } catch {
+      // Sin señal: se queda lo que había.
     } finally {
-      setCargando(false);
+      if (!enSilencio) setCargando(false);
     }
   }, []);
 
@@ -204,6 +222,47 @@ export default function TanquetasPanel() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void cargar();
   }, [cargar]);
+
+  const leerHistorial = useCallback(async (id: string | number) => {
+    try {
+      const res = await apiFetch(`/api/erp/combustible/tanquetas/${id}/historial`);
+      const body = await res.json().catch(() => []);
+      if (res.ok && Array.isArray(body)) setHistorial(body);
+    } catch {
+      // Sin señal: se queda lo que había.
+    }
+  }, []);
+
+  // El saldo baja cuando alguien carga de la tanqueta (el conductor desde su celular) y cambia con
+  // lo que hace el grifero: se vuelve a pedir ante los eventos del servidor, juntando las ráfagas.
+  useEffect(() => {
+    let temporizador: number | undefined;
+    const refrescar = () => {
+      if (temporizador !== undefined) window.clearTimeout(temporizador);
+      temporizador = window.setTimeout(() => {
+        void cargar(true);
+        setVersion((v) => v + 1);
+        if (historialAbierto.current !== null) void leerHistorial(historialAbierto.current);
+      }, 100);
+    };
+    const es = new EventSource("/api/eventos/stream", { withCredentials: true });
+    EVENTOS_DE_TANQUETAS.forEach((tipo) => es.addEventListener(tipo, refrescar));
+    // Lo que pasó con el stream cerrado no llega como evento: al abrirse de nuevo se vuelve a mirar.
+    es.addEventListener("open", refrescar);
+    const alVolver = () => {
+      if (document.visibilityState === "visible") refrescar();
+    };
+    document.addEventListener("visibilitychange", alVolver);
+    window.addEventListener("focus", alVolver);
+    window.addEventListener("online", refrescar);
+    return () => {
+      if (temporizador !== undefined) window.clearTimeout(temporizador);
+      es.close();
+      document.removeEventListener("visibilitychange", alVolver);
+      window.removeEventListener("focus", alVolver);
+      window.removeEventListener("online", refrescar);
+    };
+  }, [cargar, leerHistorial]);
 
   const abrirNueva = () => {
     setForm({
@@ -271,11 +330,10 @@ export default function TanquetasPanel() {
   };
 
   const verHistorial = async (t: Tanqueta) => {
+    historialAbierto.current = t.id;
     setHistorialDe(t);
     setHistorial([]);
-    const res = await apiFetch(`/api/erp/combustible/tanquetas/${t.id}/historial`);
-    const body = await res.json().catch(() => []);
-    if (res.ok && Array.isArray(body)) setHistorial(body);
+    await leerHistorial(t.id);
   };
 
   const visibles = tanquetas.filter(
@@ -391,7 +449,7 @@ export default function TanquetasPanel() {
                   </p>
                 )}
                 {t.asignada_vigente && (
-                  <p className="text-[11px] text-[#BADC1E] mt-1 truncate">
+                  <p className="text-[11px] text-[#BADC1E] mt-1 break-words">
                     Va con la unidad {t.equipo_asignado}
                   </p>
                 )}
@@ -590,11 +648,14 @@ export default function TanquetasPanel() {
           id="combustible-tanqueta-historial"
           titulo={`Historial de ${historialDe.codigo}`}
           subtitulo="Lo que entró (excedente o previsión desde el tanque) y lo que se cargó a unidades, en ruta o en planta"
-          onCerrar={() => setHistorialDe(null)}
+          onCerrar={() => {
+            historialAbierto.current = null;
+            setHistorialDe(null);
+          }}
           anchoInicial={640}
           altoInicial={460}
         >
-          <CuadreTanqueta key={historialDe.id} tanquetaId={historialDe.id} />
+          <CuadreTanqueta key={historialDe.id} tanquetaId={historialDe.id} version={version} />
           {historial.length === 0 ? (
             <p className="p-4 text-sm text-[#94a3b8]">Sin movimientos todavía.</p>
           ) : (
