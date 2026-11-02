@@ -119,6 +119,36 @@ export function pendienteParaHistorial(
   };
 }
 
+/** Los galones que el conductor cargó de cada tanqueta y aún no se enviaron (por id de tanqueta).
+ *  Sirve para que el cilindro no mienta sin señal: la carga ya salió de la tanqueta aunque el
+ *  servidor todavía no lo sepa. Cada entrada cuenta una vez (la cola no repite un cliente_uuid). */
+export function galonesPendientesPorTanqueta(entradas: EntradaCola[]): Record<number, number> {
+  const porTanqueta: Record<number, number> = {};
+  const vistas = new Set<string>();
+  for (const e of entradas) {
+    if (vistas.has(e.clienteUuid) || pendienteParaHistorial(e, "tanqueta") === null) continue;
+    vistas.add(e.clienteUuid);
+    try {
+      const b = JSON.parse(e.body ?? "null") as Record<string, unknown>;
+      const id = b.tanqueta_origen_id;
+      const gal = b.cantidad;
+      if (typeof id === "number" && typeof gal === "number" && Number.isFinite(gal) && gal > 0) {
+        porTanqueta[id] = (porTanqueta[id] ?? 0) + gal;
+      }
+    } catch {
+      // Ya se validó arriba: un cuerpo ilegible no llega acá.
+    }
+  }
+  // Se redondea al final (no en cada suma: tres entradas chicas no deben dar 0) y un total que no
+  // es un número finito se descarta en vez de pintar "Infinity".
+  for (const [id, total] of Object.entries(porTanqueta)) {
+    const redondeado = Math.round(total * 100) / 100;
+    if (Number.isFinite(redondeado) && redondeado > 0) porTanqueta[Number(id)] = redondeado;
+    else delete porTanqueta[Number(id)];
+  }
+  return porTanqueta;
+}
+
 export function pendientesDeLaCola(entradas: EntradaCola[], ambito: AmbitoPendiente): Pendiente[] {
   return entradas
     .map((e) => pendienteParaHistorial(e, ambito))

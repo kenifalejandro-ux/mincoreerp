@@ -5,7 +5,7 @@
 // Cada fila cabe en UNA línea: lo largo (el conductor) se corta con "…" y el nombre completo sale
 // al pasar el cursor; si aun así no cabe, la tabla se desplaza de lado y la columna Saldo queda
 // fija a la derecha, siempre a la vista.
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import type { FilaKardex, KardexDeTanqueta } from "./kardexTanquetaDatos";
 
@@ -79,6 +79,7 @@ export default function KardexTanqueta({
   kardex,
   codigo,
   saldoCilindro,
+  conPendientes = false,
   cargando,
   error,
 }: {
@@ -87,12 +88,29 @@ export default function KardexTanqueta({
   /** El saldo que dice el cilindro: la etiqueta "cuadra" se compara con lo que se VE, no solo con
    *  lo que el servidor calculó en otro instante. */
   saldoCilindro: number;
+  /** Hay cargas sin enviar descontadas del cilindro: el kardex (del servidor) no las trae, así que
+   *  no se puede decir que "cuadra con el cilindro" que se ve. */
+  conPendientes?: boolean;
   cargando: boolean;
   error: string | null;
 }) {
   // Quien lo monta le pone `key` = la tanqueta, así que cada una parte con su lista corta.
   const [verTodas, setVerTodas] = useState(false);
-  const filas = kardex ? (verTodas ? kardex.filas : kardex.filas.slice(0, FILAS_INICIALES)) : [];
+  const [unidadElegida, setUnidadElegida] = useState("");
+  const [conductorElegido, setConductorElegido] = useState("");
+  // Al quitar los filtros el botón desaparece: el foco se lleva al primer selector, no al body.
+  const primerFiltro = useRef<HTMLSelectElement>(null);
+  // El saldo de cada fila ya es el real de la tanqueta en ese momento: filtrar solo oculta filas,
+  // no recalcula nada. Una opción que ya no existe tras un refresco se trata como "Todas".
+  const unidad = kardex?.unidades.includes(unidadElegida) ? unidadElegida : "";
+  const conductor = kardex?.conductores.includes(conductorElegido) ? conductorElegido : "";
+  const filtrado = unidad !== "" || conductor !== "";
+  const coinciden = kardex
+    ? kardex.filas.filter(
+        (f) => (!unidad || f.unidad === unidad) && (!conductor || f.conductor === conductor)
+      )
+    : [];
+  const filas = verTodas ? coinciden : coinciden.slice(0, FILAS_INICIALES);
   const alDia = kardex !== null && Math.abs(kardex.saldoFinal - saldoCilindro) < 0.005;
   return (
     <section
@@ -110,12 +128,18 @@ export default function KardexTanqueta({
               className={`rounded-sm border px-2 py-0.5 text-[10px] font-bold tracking-widest ${
                 !kardex.cuadra
                   ? "border-amber-400/50 bg-amber-400/10 text-amber-300"
-                  : alDia
+                  : alDia && !conPendientes
                     ? "border-lime-400/40 bg-lime-400/10 text-lime-300"
                     : "border-sky-400/40 bg-sky-400/10 text-sky-300"
               }`}
             >
-              {!kardex.cuadra ? "NO CUADRA" : alDia ? "CUADRA CON EL CILINDRO" : "ACTUALIZANDO…"}
+              {!kardex.cuadra
+                ? "NO CUADRA"
+                : conPendientes
+                  ? "AL DÍA CON EL SERVIDOR"
+                  : alDia
+                    ? "CUADRA CON EL CILINDRO"
+                    : "ACTUALIZANDO…"}
             </span>
           )}
         </div>
@@ -125,6 +149,64 @@ export default function KardexTanqueta({
           </span>
         )}
       </div>
+      {kardex && (kardex.unidades.length > 1 || kardex.conductores.length > 1) && (
+        <div className="flex flex-wrap items-end gap-3 border-b border-[#2a2e37] px-4 py-3">
+          {(
+            [
+              ["Unidad", kardex.unidades, unidad, setUnidadElegida],
+              ["Conductor", kardex.conductores, conductor, setConductorElegido],
+            ] as const
+          ).map(([nombre, opciones, valor, cambiar]) => (
+            <label
+              key={nombre}
+              className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[#94a3b8]"
+            >
+              {nombre}
+              <select
+                ref={nombre === "Unidad" ? primerFiltro : undefined}
+                aria-label={nombre}
+                value={valor}
+                onChange={(e) => cambiar(e.target.value)}
+                className="rounded border border-[#334155] bg-[#0D1719] px-2 py-1.5 text-xs font-normal normal-case tracking-normal text-white"
+              >
+                <option value="">Todas</option>
+                {opciones.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+          {filtrado && (
+            <button
+              type="button"
+              onClick={() => {
+                setUnidadElegida("");
+                setConductorElegido("");
+                primerFiltro.current?.focus();
+              }}
+              className="rounded border border-[#334155] px-3 py-1.5 text-xs font-semibold text-[#94a3b8] hover:text-white"
+            >
+              Quitar filtros
+            </button>
+          )}
+        </div>
+      )}
+      {/* Siempre montado: un aviso que se inserta ya armado no siempre lo anuncia un lector de
+          pantalla; uno que ya existe y cambia de texto, sí. */}
+      <p
+        role="status"
+        className={
+          filtrado && kardex
+            ? "border-b border-[#2a2e37] px-4 py-2 text-xs text-[#94a3b8]"
+            : "sr-only"
+        }
+      >
+        {filtrado && kardex
+          ? `Filtrado (${coinciden.length} de ${kardex.filas.length}): el saldo de cada fila es el real de la tanqueta en ese momento, por eso las filas mostradas no suman hasta el saldo.${unidad ? " Con una unidad elegida no salen los movimientos sin unidad (llenados y traspasos)." : ""}`
+          : ""}
+      </p>
       {error && <p className="px-4 py-3 text-sm text-amber-400">{error}</p>}
       {kardex && !kardex.cuadra && (
         <p className="border-b border-[#2a2e37] px-4 py-3 text-sm text-amber-400">
@@ -139,7 +221,11 @@ export default function KardexTanqueta({
       )}
       {kardex && filas.length === 0 && (
         <p className="p-8 text-center text-sm text-[#94a3b8]">
-          Todavía no hay movimientos en esta tanqueta.
+          {filtrado
+            ? kardex?.truncado
+              ? `Ningún movimiento coincide entre los ${kardex.filas.length} más recientes que se muestran; puede haber más antiguos.`
+              : "Ningún movimiento coincide con los filtros."
+            : "Todavía no hay movimientos en esta tanqueta."}
         </p>
       )}
       {kardex && filas.length > 0 && (
@@ -209,14 +295,14 @@ export default function KardexTanqueta({
           </table>
         </div>
       )}
-      {kardex && !verTodas && kardex.filas.length > FILAS_INICIALES && (
+      {kardex && !verTodas && coinciden.length > FILAS_INICIALES && (
         <div className="border-t border-[#2a2e37] px-4 py-2">
           <button
             type="button"
             onClick={() => setVerTodas(true)}
             className="rounded border border-[#334155] px-3 py-1 text-xs font-semibold text-[#94a3b8] hover:text-white"
           >
-            Ver las {kardex.filas.length - FILAS_INICIALES} restantes
+            Ver las {coinciden.length - FILAS_INICIALES} restantes
           </button>
         </div>
       )}

@@ -25,6 +25,9 @@ interface Carga {
   cantidad: number | string;
   anulada_en: string | null;
   placa_codigo: string | null;
+  /** El vale con que la tanqueta salió a la unidad: el conductor no tipea vale al cargar de una
+   *  tanqueta, así que la columna Vale muestra este. */
+  vale_salida?: string | null;
 }
 
 /** Lo máximo que se pide de una vez: más allá, el conductor acota con fechas. */
@@ -177,7 +180,7 @@ export default function HistorialCargasTanqueta() {
                   <td className="p-3 font-mono text-sm text-slate-800">
                     {c.serie_talonario && c.n_vale !== null
                       ? `${c.serie_talonario}-${c.n_vale}`
-                      : "—"}
+                      : (c.vale_salida ?? "—")}
                   </td>
                   <td className="whitespace-nowrap p-3 text-sm text-slate-600">
                     {new Date(c.despachado_en).toLocaleString("es-PE", {

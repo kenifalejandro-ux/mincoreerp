@@ -42,6 +42,7 @@ export default function NivelDeTanqueta({
   onElegir,
   problema,
   actualizadoEn,
+  enCola = 0,
 }: {
   tanquetas: TanquetaMia[];
   elegida: TanquetaMia;
@@ -49,10 +50,15 @@ export default function NivelDeTanqueta({
   /** No se pudo actualizar: lo que se ve es lo último que se supo. */
   problema: ProblemaDeActualizacion | null;
   actualizadoEn: Date | null;
+  /** Galones cargados de esta tanqueta sin señal y aún sin enviar. Ya vienen descontados en
+   *  `elegida` (quien lo monta ajusta saldo y libre); acá solo se dicen. */
+  enCola?: number;
 }) {
-  const pct = porcentajeDelNivel(elegida.saldo, elegida.capacidad);
-  const [color, claro, oscuro, brillo] = coloresDelNivel(elegida.saldo, pct);
-  const sobregiro = elegida.saldo < -0.005;
+  const saldo = elegida.saldo;
+  const libre = elegida.libre;
+  const pct = porcentajeDelNivel(saldo, elegida.capacidad);
+  const [color, claro, oscuro, brillo] = coloresDelNivel(saldo, pct);
+  const sobregiro = saldo < -0.005;
   return (
     <div className="bg-[#192526] border border-[#2a2e37] rounded-lg p-6 flex flex-col items-center shadow-lg relative overflow-hidden">
       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#2a2e37] to-transparent" />
@@ -86,7 +92,7 @@ export default function NivelDeTanqueta({
       </p>
       <div
         role="img"
-        aria-label={`${elegida.codigo}: ${formatear(elegida.saldo)} de ${formatear(elegida.capacidad)} galones`}
+        aria-label={`${elegida.codigo}: ${formatear(saldo)} de ${formatear(elegida.capacidad)} galones`}
         className="relative w-48 h-80 mb-6 flex justify-center"
       >
         {/* Capas de abajo hacia arriba: fondo -> líquido -> marcas -> vidrio. */}
@@ -131,9 +137,7 @@ export default function NivelDeTanqueta({
           Saldo según registros
         </div>
         <div className="font-mono text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight flex items-baseline justify-center gap-1">
-          <span className={sobregiro ? "text-red-400" : "text-white"}>
-            {formatear(elegida.saldo)}
-          </span>
+          <span className={sobregiro ? "text-red-400" : "text-white"}>{formatear(saldo)}</span>
           <span className="text-xs sm:text-sm text-[#94a3b8]">
             / {formatear(elegida.capacidad)} gal
           </span>
@@ -143,14 +147,24 @@ export default function NivelDeTanqueta({
             {Math.floor(pct)}%
           </span>
           <span className="text-[10px] font-mono uppercase text-[#94a3b8]">
-            · libre {formatear(espacioLibre(elegida.libre, elegida.capacidad))} gal
+            · libre {formatear(espacioLibre(libre, elegida.capacidad))} gal
           </span>
         </div>
       </div>
+      {/* Siempre montado: un aviso que se inserta ya armado no siempre lo anuncia un lector de
+          pantalla; uno que ya existe y cambia de texto, sí. */}
+      <p
+        role="status"
+        className={enCola > 0 ? "mt-3 w-full text-center text-xs text-amber-300" : "sr-only"}
+      >
+        {enCola > 0
+          ? `Incluye ${formatear(enCola)} gal cargados sin señal que aún no se enviaron.`
+          : ""}
+      </p>
       {sobregiro && (
         <p className="mt-3 w-full text-xs text-red-300 text-center">
-          Se cargaron {formatear(-elegida.saldo)} gal más de los que esta tanqueta tenía
-          registrados. Avisa al grifero.
+          Se cargaron {formatear(-saldo)} gal más de los que esta tanqueta tenía registrados. Avisa
+          al grifero.
         </p>
       )}
       <p className={`mt-3 text-[11px] ${problema ? "text-amber-400" : "text-[#94a3b8]"}`}>

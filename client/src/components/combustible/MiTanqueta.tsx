@@ -22,7 +22,9 @@ import PendientesDeEnvio from "./PendientesDeEnvio";
 import PestanasDeTanqueta from "./PestanasDeTanqueta";
 import { idPanel, idPestana, type VistaDeTanqueta } from "./pestanasDeTanquetaIds";
 import { useAuth } from "../../context/AuthContext";
+import { listarPendientes, suscribirseACola } from "../../offline/offlineQueue";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
+import { galonesPendientesPorTanqueta } from "../../offline/pendientesCola";
 import { apiFetch } from "../../services/apiClient";
 import { mensajeDeError } from "../../utils/mensajeDeError";
 
@@ -111,6 +113,11 @@ export default function MiTanqueta() {
   const [cargandoKardex, setCargandoKardex] = useState(false);
   const [errorKardex, setErrorKardex] = useState<string | null>(null);
   const [vista, setVista] = useState<VistaDeTanqueta>("movimientos");
+  // Galones cargados sin señal y aún en la cola, por tanqueta.
+  const [enCola, setEnCola] = useState<Record<number, number>>({});
+  // Galones que ya se enviaron (salieron de la cola sin que se rechazaran) y que el último saldo
+  // que se pudo leer todavía no incluye: se descuentan hasta la siguiente lectura buena.
+  const [confirmadas, setConfirmadas] = useState<Record<number, number>>({});
 
   // Una consulta lenta no debe pisar a la que se pidió después (un evento, volver la señal, otra
   // tanqueta elegida).
@@ -121,6 +128,11 @@ export default function MiTanqueta() {
   // Lo último escrito en el celular: si no cambió, no se vuelve a escribir (cada refresco serializa
   // hasta 300 filas).
   const ultimoTexto = useRef("");
+  // La cola de la última lectura, lo que salió de ella sin saber aún si se envió o se rechazó, y
+  // cuándo avisó la sincronización que envió algo sin rechazos.
+  const colaPrevia = useRef<Record<number, number>>({});
+  const salidas = useRef<{ id: number; g: number; t: number }[]>([]);
+  const envioLimpioEn = useRef(0);
 
   const guardar = useCallback(() => {
     try {
@@ -209,6 +221,7 @@ export default function MiTanqueta() {
       setSinUnidad(res.headers.get("X-Conductor-Sin-Unidad") === "1");
       setError(null);
       setProblema(null);
+      setConfirmadas({});
       setActualizadoEn(ahora);
       // Del caché se van los movimientos de tanquetas que ya no son suyas.
       const siguen = new Set(cuerpo.map((t) => String(t.id)));
@@ -248,7 +261,11 @@ export default function MiTanqueta() {
     void cargar();
     // Las ráfagas (una carga publica varios eventos) se juntan en una sola recarga.
     let temporizador: number | undefined;
+    let activo = true;
     const refrescar = () => {
+      // Una llamada que llega tarde (la cola avisa de forma diferida) no debe programar nada
+      // cuando la pantalla ya se fue.
+      if (!activo) return;
       if (temporizador !== undefined) window.clearTimeout(temporizador);
       temporizador = window.setTimeout(() => void cargar(), 100);
     };
@@ -266,10 +283,52 @@ export default function MiTanqueta() {
     window.addEventListener("online", refrescar);
     // La carga que acaba de registrar este celular, y la que estaba guardada sin señal.
     window.addEventListener("combustible:actualizado", refrescar);
-    const dejarDeOirCola = suscribirseASincronizacion(({ sincronizadas }) => {
-      if (sincronizadas > 0) refrescar();
+    const confirmar = (id: number, g: number) =>
+      setConfirmadas((c) => ({ ...c, [id]: Math.round(((c[id] ?? 0) + g) * 100) / 100 }));
+    const dejarDeOirCola = suscribirseASincronizacion(({ sincronizadas, descartadas }) => {
+      if (sincronizadas <= 0) return;
+      refrescar();
+      // Si la sincronización rechazó algo no se sabe qué salió bien: no se da nada por enviado
+      // (el próximo saldo bueno corrige la pantalla).
+      if (descartadas.length === 0) {
+        envioLimpioEn.current = Date.now();
+        for (const s of salidas.current) if (Date.now() - s.t < 3000) confirmar(s.id, s.g);
+      }
+      salidas.current = [];
+    });
+    // Lo que entra o sale de la cola cambia lo pendiente (y al entrar sin señal, el refresco falla
+    // y deja el aviso "sin señal" que activa el descuento).
+    let vivo = true;
+    const leerCola = () => {
+      listarPendientes()
+        .then((entradas) => {
+          if (!vivo) return;
+          const nueva = galonesPendientesPorTanqueta(entradas);
+          // Lo que salió de la cola: si la sincronización acaba de avisar que envió sin rechazos,
+          // se da por enviado; si no, queda anotado unos segundos por si el aviso llega después.
+          for (const [id, antes] of Object.entries(colaPrevia.current)) {
+            const salio = Math.round((antes - (nueva[Number(id)] ?? 0)) * 100) / 100;
+            if (salio <= 0) continue;
+            if (Date.now() - envioLimpioEn.current < 3000) confirmar(Number(id), salio);
+            else salidas.current.push({ id: Number(id), g: salio, t: Date.now() });
+          }
+          colaPrevia.current = nueva;
+          setEnCola(nueva);
+        })
+        .catch(() => {});
+    };
+    leerCola();
+    // La primera llamada la hace la propia suscripción al registrarse (para dar el estado
+    // inicial): no es un cambio, y refrescar ahí duplicaba la petición al montar.
+    let primera = true;
+    const dejarDeOirLaCola = suscribirseACola(() => {
+      leerCola();
+      if (primera) primera = false;
+      else refrescar();
     });
     return () => {
+      vivo = false;
+      dejarDeOirLaCola();
       if (temporizador !== undefined) window.clearTimeout(temporizador);
       es.close();
       document.removeEventListener("visibilitychange", alVolver);
@@ -291,16 +350,28 @@ export default function MiTanqueta() {
 
   const elegida = tanquetas.find((t) => t.id === elegidaId) ?? tanquetas[0];
   const delaElegida = elegida && kardex?.id === elegida.id ? kardex.datos : null;
+  // Lo cargado sin señal ya salió de la tanqueta: se descuenta mientras siga en la cola (con o
+  // sin señal: el servidor aún no lo tiene) y, una vez enviado, hasta que una lectura buena lo
+  // incluya. Un descuento que llegara a coincidir con el servidor sería una doble resta, que es
+  // mejor que mostrar de más: dura lo que tarde la cola en confirmar.
+  const descuentoDe = (id: number) => (enCola[id] ?? 0) + (confirmadas[id] ?? 0);
+  const ajustadas = tanquetas.map((t) => {
+    const d = descuentoDe(t.id);
+    return d > 0 ? { ...t, saldo: Math.round((t.saldo - d) * 100) / 100, libre: t.libre + d } : t;
+  });
+  const elegidaAjustada = elegida && ajustadas.find((t) => t.id === elegida.id);
+  const pendiente = elegida ? (enCola[elegida.id] ?? 0) : 0;
 
   return (
     <section className="mb-6 grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,260px)_minmax(0,1fr)]">
       {elegida ? (
         <NivelDeTanqueta
-          tanquetas={tanquetas}
-          elegida={elegida}
+          tanquetas={ajustadas}
+          elegida={elegidaAjustada ?? elegida}
           onElegir={elegir}
           problema={problema}
           actualizadoEn={actualizadoEn}
+          enCola={pendiente}
         />
       ) : (
         <div className="rounded-lg border border-[#2a2e37] bg-[#192526] p-6 text-sm">
@@ -337,6 +408,7 @@ export default function MiTanqueta() {
               kardex={delaElegida}
               codigo={elegida.codigo}
               saldoCilindro={elegida.saldo}
+              conPendientes={descuentoDe(elegida.id) > 0}
               cargando={cargandoKardex}
               error={errorKardex}
             />
