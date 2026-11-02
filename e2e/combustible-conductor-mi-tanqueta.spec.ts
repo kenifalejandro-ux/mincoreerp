@@ -159,6 +159,12 @@ test("Mi tanqueta: el cilindro baja solo cuando se carga y avisa sin señal @cel
     // El cilindro se nombra por lo que dice: "<código>: <saldo> de 280 galones".
     const cilindro = (saldo: string) =>
       page.getByRole("img", { name: `${t1.codigo}: ${saldo} de 280 galones`, exact: true });
+    // El kardex: una fila por movimiento, la más reciente primero; la última celda es el Saldo.
+    const kardex = page.getByRole("region", { name: "Movimientos de la tanqueta" });
+    const filaKardex = (texto: string) => kardex.getByRole("row").filter({ hasText: texto });
+    const saldoDe = (fila: ReturnType<typeof filaKardex>) => fila.getByRole("cell").last();
+    const valeDeLlenado = `P${marca}-1`;
+    const valeDeSalida = `C${marca}-1`;
 
     await entrarAMiViaje(page, comoConductor(marca, conductor));
     await page.getByRole("button", { name: "Tanquetas" }).click();
@@ -169,7 +175,47 @@ test("Mi tanqueta: el cilindro baja solo cuando se carga y avisa sin señal @cel
     await expect(page.getByText("Saldo según registros")).toBeVisible();
     await expect(page.getByText(`Unidad ${placa}`)).toBeVisible();
     await expect(page.getByText(/Actualizado a las/)).toBeVisible();
-    await expect(page.getByText(SIN_CARGAS)).toBeVisible();
+
+    // ── A la derecha, los movimientos de la tanqueta (kardex) que cuadran con el cilindro ──
+    await expect(page.getByRole("tab", { name: "Movimientos" })).toHaveAttribute(
+      "aria-selected",
+      "true"
+    );
+    await expect(kardex.getByText("CUADRA CON EL CILINDRO")).toBeVisible();
+    await expect(filaKardex("Llenada desde")).toContainText(valeDeLlenado);
+    const filaSalida = filaKardex("Salida a la unidad · 120 gal");
+    await expect(filaSalida).toContainText(valeDeSalida);
+    await expect(filaSalida).toContainText(placa);
+    await expect(saldoDe(filaSalida)).toHaveText("120");
+    // El Saldo siempre a la vista, y cada fila en una sola línea (no se parte en varias). A 1280 px
+    // la tabla cabe entera y la comprobación sería trivial: se hace también en un celular, donde
+    // la tabla se desplaza de lado y el Saldo debe quedarse fijo a la derecha.
+    const grande = page.viewportSize()!;
+    for (const ancho of [grande.width, 360]) {
+      await page.setViewportSize({ width: ancho, height: 800 });
+      // A 360 px el cilindro queda arriba y la tabla más abajo: se baja hasta ella. Con la tabla
+      // desplazada al inicio, un Saldo que no fuera fijo quedaría fuera por la derecha.
+      await filaSalida.scrollIntoViewIfNeeded();
+      await filaSalida.evaluate((fila) => {
+        const contenedor = fila.closest(".overflow-x-auto");
+        if (contenedor) contenedor.scrollLeft = 0;
+      });
+      await expect(saldoDe(filaSalida)).toBeInViewport();
+      expect((await filaSalida.boundingBox())!.height).toBeLessThan(50);
+    }
+    await page.setViewportSize(grande);
+
+    // Las pestañas se manejan con el teclado: flechas, y solo la activa está en el orden del Tab.
+    const pestanaMov = page.getByRole("tab", { name: "Movimientos" });
+    const pestanaCargas = page.getByRole("tab", { name: "Mis cargas" });
+    await expect(pestanaCargas).toHaveAttribute("tabindex", "-1");
+    await pestanaMov.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(pestanaCargas).toHaveAttribute("aria-selected", "true");
+    await expect(pestanaCargas).toBeFocused();
+    await page.keyboard.press("ArrowLeft");
+    await expect(pestanaMov).toHaveAttribute("aria-selected", "true");
+    await expect(pestanaMov).toBeFocused();
 
     // ── La oficina carga 10 gal a su unidad: el cilindro baja SOLO ─────────
     // El stream de eventos se abre un instante después de pintar la pantalla; un evento que sale
@@ -179,6 +225,13 @@ test("Mi tanqueta: el cilindro baja solo cuando se carga y avisa sin señal @cel
     const delaOficina = await cargaDeLaOficina(10, 1000);
     expect(delaOficina.status(), await delaOficina.text()).toBe(201);
     await expect(cilindro("110")).toBeVisible({ timeout: 20_000 });
+    // Y el kardex lo dice: la carga de otro (la oficina) con el vale de la salida y el saldo.
+    const fila10 = filaKardex("Carga en ruta").first();
+    await expect(fila10).toContainText("−10");
+    await expect(fila10).toContainText(valeDeSalida);
+    await expect(fila10).toContainText(conductor.nombre);
+    await expect(saldoDe(fila10)).toHaveText("110");
+    const idCarga10 = (await delaOficina.json()).id as number;
 
     // ── El conductor carga 5 gal por el formulario: también baja ───────────
     await page.getByRole("button", { name: "Carga desde tanqueta" }).first().click();
@@ -188,7 +241,28 @@ test("Mi tanqueta: el cilindro baja solo cuando se carga y avisa sin señal @cel
     await page.locator("form").getByRole("button", { name: "Registrar despacho" }).click();
     await expect(page.getByText(`Despacho registrado: la carga desde ${t1.codigo}.`)).toBeVisible();
     await expect(cilindro("105")).toBeVisible({ timeout: 20_000 });
+    const fila5 = filaKardex("Carga en ruta").first();
+    await expect(fila5).toContainText("−5");
+    await expect(saldoDe(fila5)).toHaveText("105");
+    // "Mis cargas" es solo lo que ÉL sacó: la de la oficina no está.
+    await page.getByRole("tab", { name: "Mis cargas" }).click();
     await expect(page.getByRole("row").filter({ hasText: placa })).toHaveCount(1);
+    await page.getByRole("tab", { name: "Movimientos" }).click();
+
+    // ── Se anula la carga de la oficina: el cilindro sube y el kardex la deja tachada ──
+    const anulada = await oficina.request.patch(
+      `/api/erp/combustible/despachos/${idCarga10}/anular`,
+      { data: { motivo: "Digitada de más" } }
+    );
+    expect(anulada.status(), await anulada.text()).toBe(200);
+    await expect(cilindro("115")).toBeVisible({ timeout: 20_000 });
+    const filaAnulada = filaKardex("Carga en ruta").filter({ hasText: "ANULADA" });
+    await expect(filaAnulada).toHaveCount(1);
+    // Columna Cantidad (la sexta): la cifra tachada, sin "+" ni "−" porque no movió nada.
+    await expect(filaAnulada.getByRole("cell").nth(5)).toHaveText(/^10$/);
+    // Una anulada no mueve el saldo: queda donde estaba antes de ella.
+    await expect(saldoDe(filaAnulada)).toHaveText("120");
+    await expect(saldoDe(filaKardex("Carga en ruta").first())).toHaveText("115");
 
     // ── Sobregiro: se cargó más de lo que tenía registrado ─────────────────
     // El servidor lo acepta (los galones en ruta son estimados). La pantalla dice el saldo real,
@@ -196,12 +270,17 @@ test("Mi tanqueta: el cilindro baja solo cuando se carga y avisa sin señal @cel
     const sobregiro = await cargaDeLaOficina(200, 1200);
     expect(sobregiro.status(), await sobregiro.text()).toBe(201);
     const negativo = page.getByRole("img", {
-      name: new RegExp(`^${t1.codigo}: [-−]95 de 280 galones$`),
+      name: new RegExp(`^${t1.codigo}: [-−]85 de 280 galones$`),
     });
     await expect(negativo).toBeVisible({ timeout: 20_000 });
     await expect(
-      page.getByText(/Se cargaron 95 gal más de los que esta tanqueta tenía/)
+      page.getByText(/Se cargaron 85 gal más de los que esta tanqueta tenía/)
     ).toBeVisible();
+    // El kardex lo muestra con el saldo negativo, y sigue cuadrando con el cilindro.
+    const fila200 = filaKardex("Carga en ruta").first();
+    await expect(fila200).toContainText("−200");
+    await expect(saldoDe(fila200)).toHaveText(/^[-−]85$/);
+    await expect(kardex.getByText("CUADRA CON EL CILINDRO")).toBeVisible();
     await expect(negativo.locator("div[style*='height']").first()).toHaveAttribute(
       "style",
       /height:\s*0%/
@@ -214,6 +293,7 @@ test("Mi tanqueta: el cilindro baja solo cuando se carga y avisa sin señal @cel
     await pedirDeNuevo();
     await expect(page.getByText(/Sin señal: último saldo conocido/)).toBeVisible();
     await expect(negativo).toBeVisible();
+    await expect(filaKardex("Carga en ruta").first()).toContainText("−200");
     // Vuelve la señal: lo corrige solo y deja de avisar.
     await page.context().setOffline(false);
     await pedirDeNuevo();
@@ -237,6 +317,7 @@ test("Mi tanqueta: el cilindro baja solo cuando se carga y avisa sin señal @cel
     await expect(page.getByText(/No se pudo actualizar/)).toHaveCount(0, { timeout: 20_000 });
 
     // ── La tanqueta desaparece de la lista: el filtro de fechas del historial NO se pierde ──
+    await page.getByRole("tab", { name: "Mis cargas" }).click();
     const desde = page.locator("#cargas-tanqueta-desde");
     await desde.fill("2026-01-01");
     await page.route(mias, (r) =>
@@ -249,6 +330,15 @@ test("Mi tanqueta: el cilindro baja solo cuando se carga y avisa sin señal @cel
     await pedirDeNuevo();
     await expect(negativo).toBeVisible({ timeout: 20_000 });
     await expect(desde).toHaveValue("2026-01-01");
+
+    // ── Sin señal y se vuelve a entrar a la pantalla: cilindro y movimientos salen del celular ──
+    await page.context().setOffline(true);
+    await page.getByRole("button", { name: "Compra en ruta" }).click();
+    await page.getByRole("button", { name: "Tanquetas" }).click();
+    await expect(negativo).toBeVisible();
+    await expect(page.getByText(/Sin señal: último saldo conocido/)).toBeVisible();
+    await expect(filaKardex("Carga en ruta").first()).toContainText("−200");
+    await expect(saldoDe(filaKardex("Carga en ruta").first())).toHaveText(/^[-−]85$/);
 
     // ── Sin señal con un caché de forma vieja o rota: no tumba la pantalla ──────────────
     await page.evaluate(() => {
@@ -341,7 +431,12 @@ test("Mi tanqueta: selector con dos tanquetas, y mensajes sin tanqueta o sin uni
     await expect(
       page.getByRole("img", { name: `${primera.codigo}: 120 de 280 galones`, exact: true })
     ).toBeVisible();
+    // Los movimientos son los de la tanqueta elegida, y cambian con ella.
+    const kardex = page.getByRole("region", { name: "Movimientos de la tanqueta" });
+    await expect(kardex).toContainText("Salida a la unidad · 120 gal");
     await selector.selectOption({ label: segunda.codigo });
+    await expect(kardex).toContainText("Salida a la unidad · 60 gal");
+    await expect(kardex).not.toContainText("120 gal");
     await expect(
       page.getByRole("img", { name: `${segunda.codigo}: 60 de 280 galones`, exact: true })
     ).toBeVisible();
@@ -349,11 +444,19 @@ test("Mi tanqueta: selector con dos tanquetas, y mensajes sin tanqueta o sin uni
       page.getByRole("img", { name: `${primera.codigo}: 120 de 280 galones`, exact: true })
     ).toHaveCount(0);
 
+    // "Mis cargas" es la otra pestaña y trae el historial del conductor.
+    await page.getByRole("tab", { name: "Mis cargas" }).click();
+    await expect(page.getByText(SIN_CARGAS)).toBeVisible();
+    await page.getByRole("tab", { name: "Movimientos" }).click();
+    await expect(kardex).toBeVisible();
+
     // ── Con unidad pero sin tanqueta: lo dice, y su historial sigue ahí ──────
     await irATanquetas(sinTanqueta);
     await expect(page.getByText(/No hay una tanqueta asignada a tu unidad/)).toBeVisible();
     // El logo de la cabecera también es una imagen: se busca solo un cilindro.
     await expect(page.getByRole("img", { name: /de 280 galones$/ })).toHaveCount(0);
+    // Sin tanqueta no hay kardex ni pestañas: se ve su historial directo.
+    await expect(page.getByRole("tab")).toHaveCount(0);
     await expect(page.getByText(SIN_CARGAS)).toBeVisible();
 
     // ── Sin unidad en Equipos: dice que revisen el DNI ──────────────────────
