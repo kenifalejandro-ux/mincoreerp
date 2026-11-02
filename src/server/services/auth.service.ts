@@ -199,7 +199,12 @@ export async function obtenerModulosConNivel(
       if (permitidosPorRol && !permitidosPorRol.includes(fila.modulo)) return false;
       if (fila.estado === "habilitado") return true;
       if (fila.estado === "deshabilitado") return false;
-      return enBucketDeRollout(tenantId, fila.modulo, usuarioId, fila.rolloutPorcentaje ?? 0);
+      return enBucketDeRollout(
+        tenantId,
+        obtenerModulo(fila.modulo)?.bucketDe ?? fila.modulo,
+        usuarioId,
+        fila.rolloutPorcentaje ?? 0
+      );
     })
     .map((fila) => ({
       modulo: fila.modulo as string,

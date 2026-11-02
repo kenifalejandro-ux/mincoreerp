@@ -54,6 +54,11 @@ export interface ModuloDefinicion {
    *  (ej. `viajes` exige `flota`). Se decide por empresa, no por usuario: a
    *  un usuario no se le pide el módulo del que depende. */
   requiere?: string[];
+  /** Con qué id se reparte a los usuarios en un rollout por porcentaje. Omitido
+   *  = el propio id. `viajes` salió de Combustible: si repartiera con su propio
+   *  id, con un porcentaje parcial un conductor podría quedar dentro de
+   *  Combustible y fuera de Viajes (y perder "Mi viaje"). */
+  bucketDe?: string;
   icono: string;
   /** Puramente informativo hoy (ver tenant_modulos.version, migrations/0021)
    *  — ningún consumidor de modulosPermitidos lo lee todavía. */
