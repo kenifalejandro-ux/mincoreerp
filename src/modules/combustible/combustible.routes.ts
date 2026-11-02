@@ -441,6 +441,13 @@ router.get(
   requireRole("conductor_ruta"),
   asyncHandler(controller.listarMisTanquetas.bind(controller))
 );
+// Las que fueron de su unidad y ya no: su historial no se pierde al devolverlas.
+router.get(
+  "/tanquetas/mias/cerradas",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  requireRole("conductor_ruta"),
+  asyncHandler(controller.listarMisTanquetasCerradas.bind(controller))
+);
 // Asignar la unidad (0139): mismo permiso que editar la tanqueta.
 router.put(
   "/tanquetas/:tanquetaId/asignar",

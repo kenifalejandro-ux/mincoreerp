@@ -168,7 +168,6 @@ test("Mi tanqueta: el cilindro baja solo cuando se carga y avisa sin señal @cel
     const kardex = page.getByRole("region", { name: "Movimientos de la tanqueta" });
     const filaKardex = (texto: string) => kardex.getByRole("row").filter({ hasText: texto });
     const saldoDe = (fila: ReturnType<typeof filaKardex>) => fila.getByRole("cell").last();
-    const valeDeLlenado = `P${marca}-1`;
     const valeDeSalida = `C${marca}-1`;
 
     await entrarAMiViaje(page, comoConductor(marca, conductor));
@@ -187,7 +186,8 @@ test("Mi tanqueta: el cilindro baja solo cuando se carga y avisa sin señal @cel
       "true"
     );
     await expect(kardex.getByText("CUADRA CON EL CILINDRO")).toBeVisible();
-    await expect(filaKardex("Llenada desde")).toContainText(valeDeLlenado);
+    // El llenado es anterior a su salida: el saldo lo cuenta, pero la fila no es del conductor.
+    await expect(filaKardex("Llenada desde")).toHaveCount(0);
     const filaSalida = filaKardex("Salida a la unidad · 120 gal");
     await expect(filaSalida).toContainText(valeDeSalida);
     await expect(filaSalida).toContainText(placa);
@@ -500,7 +500,7 @@ async function sembrarConductor(page: Page, marca: string, galones: number) {
   return { conductor, placa, equipo, tanqueta, tanque, grifoInternoId };
 }
 
-test("Mi tanqueta: los filtros del kardex por unidad, cuando la tanqueta pasó por otra unidad", async ({
+test("Mi tanqueta: cuando la tanqueta pasó por otra unidad, el conductor ve solo lo suyo", async ({
   page,
 }) => {
   test.setTimeout(240_000);
@@ -572,29 +572,15 @@ test("Mi tanqueta: los filtros del kardex por unidad, cuando la tanqueta pasó p
 
     const kardex = page.getByRole("region", { name: "Movimientos de la tanqueta" });
     const filas = (texto: string | RegExp) => kardex.getByRole("row").filter({ hasText: texto });
-    const filtroUnidad = kardex.getByLabel("Unidad", { exact: true });
-    await expect(filtroUnidad).toBeVisible();
-    await expect(filas("Carga en ruta")).toHaveCount(1);
-    await expect(filas(placaE).first()).toBeVisible();
-
-    // Solo X: queda su carga y desaparecen las filas de E; el saldo de cada fila sigue siendo real.
-    await filtroUnidad.selectOption({ label: placaX });
-    await expect(filas("Carga en ruta")).toHaveCount(1);
-    await expect(filas(placaE)).toHaveCount(0);
-    await expect(kardex.getByText(/Filtrado \(\d+ de \d+\)/)).toBeVisible();
-    await expect(filas("Carga en ruta").getByRole("cell").last()).toHaveText("80");
-
-    // Solo E: la carga de X ya no está.
-    await filtroUnidad.selectOption({ label: placaE });
+    await expect(kardex.getByText("CUADRA CON EL CILINDRO")).toBeVisible();
+    // Lo de la unidad X (su carga, su placa, su conductor) es de antes de la salida a E: no se ve.
+    await expect(filas("Salida a la unidad")).toContainText(placaE);
     await expect(filas("Carga en ruta")).toHaveCount(0);
-    await expect(filas(placaE).first()).toBeVisible();
-
-    // Una combinación sin filas lo dice, y "Quitar filtros" lo devuelve todo.
-    await kardex.getByLabel("Conductor", { exact: true }).selectOption({ label: previo.nombre });
-    await expect(kardex.getByText("Ningún movimiento coincide con los filtros.")).toBeVisible();
-    await kardex.getByRole("button", { name: "Quitar filtros" }).click();
-    await expect(filas("Carga en ruta")).toHaveCount(1);
-    await expect(kardex.getByText(/Filtrado/)).toHaveCount(0);
+    await expect(kardex.getByText(placaX)).toHaveCount(0);
+    await expect(kardex.getByText(previo.nombre)).toHaveCount(0);
+    // Con una sola unidad y sin otros conductores no hay nada que filtrar.
+    await expect(kardex.getByLabel("Unidad", { exact: true })).toHaveCount(0);
+    await expect(kardex.getByLabel("Conductor", { exact: true })).toHaveCount(0);
   } finally {
     await darDeBajaLosCreados(page, marca, creados);
   }
