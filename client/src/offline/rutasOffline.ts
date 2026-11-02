@@ -10,7 +10,7 @@
 // `tablas` o `cuota` en el registry del backend — ver
 // docs/adr/0002-contrato-de-modulo.md.
 
-import { ESCRITURAS_OFFLINE } from "../modules/offlineRegistry";
+import { ESCRITURAS_OFFLINE, RUTA_DE_MODULO } from "../modules/offlineRegistry";
 
 export interface RutaOffline {
   moduloId: string;
@@ -43,7 +43,7 @@ const RUTAS: RutaOffline[] = Object.entries(ESCRITURAS_OFFLINE).flatMap(([modulo
     metodo: escritura.metodo,
     // "/" es el montaje raíz del módulo: POST /api/erp/checklists, sin
     // barra final (así lo emite el cliente y así lo matchea Express).
-    path: `/api/erp/${moduloId}${escritura.ruta === "/" ? "" : escritura.ruta}`,
+    path: `/api/erp/${RUTA_DE_MODULO[moduloId] ?? moduloId}${escritura.ruta === "/" ? "" : escritura.ruta}`,
   }))
 );
 

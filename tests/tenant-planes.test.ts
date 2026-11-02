@@ -58,7 +58,7 @@ describe("seed de planes", () => {
       .set("Authorization", BEARER);
 
     expect(res.body.plan.limites.usuarios).toBeNull();
-    expect(res.body.plan.limites.equipos).toBeNull();
+    expect(res.body.plan.limites.flota).toBeNull();
     expect(res.body.plan.limites.checklists).toBeNull();
     expect(res.body.plan.limites.backup_bytes).toBe(100 * 1024 * 1024 * 1024);
   });
@@ -103,56 +103,56 @@ describe("precedencia: override > plan > registry", () => {
   /** Deja al tenant en un estado conocido: sin override y con el plan pedido. */
   async function estadoInicial(plan: string | null) {
     compartido ??= await nuevoTenant();
-    await fijarCuotaTenant(compartido.tenant.id, "equipos", undefined);
+    await fijarCuotaTenant(compartido.tenant.id, "flota", undefined);
     await asignarPlanATenantService(compartido.tenant.id, plan, contexto);
     return compartido.tenant.id;
   }
 
   it("sin plan ni override usa el default del registry", async () => {
     const tenantId = await estadoInicial(null);
-    const r = await resolverLimite(tenantId, "equipos");
+    const r = await resolverLimite(tenantId, "flota");
     expect(r.origen).toBe("registry");
     expect(r.limite).toBe(2000); // porDefecto de equipos en el registry
   });
 
   it("con plan asignado manda el plan sobre el registry", async () => {
     const tenantId = await estadoInicial("mype");
-    const r = await resolverLimite(tenantId, "equipos");
+    const r = await resolverLimite(tenantId, "flota");
     expect(r.origen).toBe("plan");
     expect(r.limite).toBe(20); // MYPE
   });
 
   it("un override puntual manda sobre el plan", async () => {
     const tenantId = await estadoInicial("mype"); // equipos = 20 por plan
-    await fijarCuotaTenant(tenantId, "equipos", 35, "negociado aparte");
+    await fijarCuotaTenant(tenantId, "flota", 35, "negociado aparte");
 
-    const r = await resolverLimite(tenantId, "equipos");
+    const r = await resolverLimite(tenantId, "flota");
     expect(r.origen).toBe("override");
     expect(r.limite).toBe(35);
   });
 
   it("borrar el override devuelve el control al PLAN, no al registry", async () => {
     const tenantId = await estadoInicial("mype");
-    await fijarCuotaTenant(tenantId, "equipos", 35);
-    await fijarCuotaTenant(tenantId, "equipos", undefined); // borra el override
+    await fijarCuotaTenant(tenantId, "flota", 35);
+    await fijarCuotaTenant(tenantId, "flota", undefined); // borra el override
 
-    const r = await resolverLimite(tenantId, "equipos");
+    const r = await resolverLimite(tenantId, "flota");
     expect(r.origen).toBe("plan");
     expect(r.limite).toBe(20);
   });
 
   it("ILIMITADO en el plan no cae al registry (null es un valor, no ausencia)", async () => {
     const tenantId = await estadoInicial("corporativo");
-    const r = await resolverLimite(tenantId, "equipos");
+    const r = await resolverLimite(tenantId, "flota");
     expect(r.origen).toBe("plan");
     expect(r.limite).toBeNull(); // ilimitado, NO los 2000 del registry
   });
 
   it("ILIMITADO en el override no cae al plan", async () => {
     const tenantId = await estadoInicial("mype"); // equipos = 20 por plan
-    await fijarCuotaTenant(tenantId, "equipos", null, "cliente especial");
+    await fijarCuotaTenant(tenantId, "flota", null, "cliente especial");
 
-    const r = await resolverLimite(tenantId, "equipos");
+    const r = await resolverLimite(tenantId, "flota");
     expect(r.origen).toBe("override");
     expect(r.limite).toBeNull();
   });
@@ -160,10 +160,10 @@ describe("precedencia: override > plan > registry", () => {
   it("un recurso que el plan NO define cae al registry", async () => {
     const tenantId = await estadoInicial("mype");
     const plan = await request(app).get("/api/platform/planes/mype").set("Authorization", BEARER);
-    // Se le saca a MYPE la fila de 'equipos': el plan deja de opinar sobre
+    // Se le saca a MYPE la fila de 'flota': el plan deja de opinar sobre
     // ese recurso. Es el mismo caso que un módulo NUEVO, que todavía no
     // tiene fila en ningún plan.
-    await pool.query(`DELETE FROM plan_limites WHERE plan_id = $1 AND recurso = 'equipos'`, [
+    await pool.query(`DELETE FROM plan_limites WHERE plan_id = $1 AND recurso = 'flota'`, [
       plan.body.plan.id,
     ]);
     // Este DELETE es directo a la tabla, sin pasar por fijarCuotaTenant ni
@@ -171,26 +171,26 @@ describe("precedencia: override > plan > registry", () => {
     // caché de resolverLimite() (ver platformCuotas.service.ts), igual que
     // tendría que hacerlo cualquier código real que tocara plan_limites
     // por fuera del service.
-    await invalidarCacheLimite(tenantId, "equipos");
+    await invalidarCacheLimite(tenantId, "flota");
     try {
-      const r = await resolverLimite(tenantId, "equipos");
+      const r = await resolverLimite(tenantId, "flota");
       expect(r.origen).toBe("registry");
       expect(r.limite).toBe(2000);
     } finally {
       await pool.query(
-        `INSERT INTO plan_limites (plan_id, recurso, limite) VALUES ($1, 'equipos', 20)`,
+        `INSERT INTO plan_limites (plan_id, recurso, limite) VALUES ($1, 'flota', 20)`,
         [plan.body.plan.id]
       );
-      await invalidarCacheLimite(tenantId, "equipos");
+      await invalidarCacheLimite(tenantId, "flota");
     }
   });
 
   it("quitar el plan (null) devuelve al tenant a los defaults del registry", async () => {
     const tenantId = await estadoInicial("mype");
-    expect(await limiteEfectivo(tenantId, "equipos")).toBe(20);
+    expect(await limiteEfectivo(tenantId, "flota")).toBe(20);
 
     await asignarPlanATenantService(tenantId, null, contexto);
-    const r = await resolverLimite(tenantId, "equipos");
+    const r = await resolverLimite(tenantId, "flota");
     expect(r.origen).toBe("registry");
     expect(r.limite).toBe(2000);
   });
@@ -218,7 +218,7 @@ describe("el enforcement respeta el plan", () => {
     const planId = (await pool.query(`SELECT id FROM planes WHERE codigo = $1`, [codigo])).rows[0]
       .id;
     await pool.query(
-      `INSERT INTO plan_limites (plan_id, recurso, limite) VALUES ($1, 'equipos', 2)`,
+      `INSERT INTO plan_limites (plan_id, recurso, limite) VALUES ($1, 'flota', 2)`,
       [planId]
     );
 
@@ -272,7 +272,7 @@ describe("cambio de plan: nunca destruye datos", () => {
     }
 
     // Se le fija un tope POR DEBAJO de lo que ya tiene.
-    await fijarCuotaTenant(tenant.id, "equipos", 1);
+    await fijarCuotaTenant(tenant.id, "flota", 1);
 
     // Los 3 equipos siguen ahí: bajar el tope no borra nada.
     const listado = await agente.get("/api/erp/equipos");
@@ -304,7 +304,7 @@ describe("cambio de plan: nunca destruye datos", () => {
       ])
     ).rows[0].id;
     await pool.query(
-      `INSERT INTO plan_limites (plan_id, recurso, limite) VALUES ($1, 'equipos', 1)`,
+      `INSERT INTO plan_limites (plan_id, recurso, limite) VALUES ($1, 'flota', 1)`,
       [planId]
     );
 
@@ -315,7 +315,7 @@ describe("cambio de plan: nunca destruye datos", () => {
         .send({ plan: codigo, motivo: "downgrade de prueba" });
 
       expect(res.status).toBe(200);
-      expect(res.body.recursosExcedidos).toContain("equipos");
+      expect(res.body.recursosExcedidos).toContain("flota");
     } finally {
       await pool.query(`UPDATE tenants SET plan_id = NULL WHERE id = $1`, [tenant.id]);
       await pool.query(`DELETE FROM planes WHERE id = $1`, [planId]);
@@ -325,10 +325,10 @@ describe("cambio de plan: nunca destruye datos", () => {
   it("subir de plan levanta el tope sin tocar nada", async () => {
     const { tenant } = await nuevoTenant();
     await asignarPlanATenantService(tenant.id, "mype", contexto);
-    expect(await limiteEfectivo(tenant.id, "equipos")).toBe(20);
+    expect(await limiteEfectivo(tenant.id, "flota")).toBe(20);
 
     await asignarPlanATenantService(tenant.id, "mediana", contexto);
-    expect(await limiteEfectivo(tenant.id, "equipos")).toBe(500);
+    expect(await limiteEfectivo(tenant.id, "flota")).toBe(500);
   });
 });
 
@@ -383,7 +383,7 @@ describe("API y auditoría", () => {
       )
     ).rows[0].id;
     await pool.query(
-      `INSERT INTO plan_limites (plan_id, recurso, limite) VALUES ($1, 'equipos', 7)`,
+      `INSERT INTO plan_limites (plan_id, recurso, limite) VALUES ($1, 'flota', 7)`,
       [planId]
     );
 
@@ -397,7 +397,7 @@ describe("API y auditoría", () => {
       // Un tenant que ya lo tenía (asignado antes de la baja) lo conserva:
       // dar de baja un plan no puede cambiarle los topes a nadie en silencio.
       await pool.query(`UPDATE tenants SET plan_id = $1 WHERE id = $2`, [planId, tenant.id]);
-      expect(await limiteEfectivo(tenant.id, "equipos")).toBe(7);
+      expect(await limiteEfectivo(tenant.id, "flota")).toBe(7);
     } finally {
       await pool.query(`UPDATE tenants SET plan_id = NULL WHERE id = $1`, [tenant.id]);
       await pool.query(`DELETE FROM planes WHERE id = $1`, [planId]);
@@ -434,11 +434,11 @@ describe("API y auditoría", () => {
       ])
     ).rows[0].id;
     await pool.query(
-      `INSERT INTO plan_limites (plan_id, recurso, limite) VALUES ($1, 'equipos', 3)`,
+      `INSERT INTO plan_limites (plan_id, recurso, limite) VALUES ($1, 'flota', 3)`,
       [planId]
     );
     await asignarPlanATenantService(tenant.id, codigo, contexto);
-    expect(await limiteEfectivo(tenant.id, "equipos")).toBe(3);
+    expect(await limiteEfectivo(tenant.id, "flota")).toBe(3);
 
     await pool.query(`DELETE FROM planes WHERE id = $1`, [planId]);
     // Mismo motivo que en el test anterior: el ON DELETE SET NULL corre a
@@ -450,7 +450,7 @@ describe("API y auditoría", () => {
     const sigueVivo = await pool.query(`SELECT plan_id FROM tenants WHERE id = $1`, [tenant.id]);
     expect(sigueVivo.rows).toHaveLength(1);
     expect(sigueVivo.rows[0].plan_id).toBeNull();
-    expect(await limiteEfectivo(tenant.id, "equipos")).toBe(2000);
+    expect(await limiteEfectivo(tenant.id, "flota")).toBe(2000);
   });
 });
 
@@ -467,7 +467,7 @@ describe("el resumen de cuotas expone de dónde sale cada límite", () => {
     const porRecurso = Object.fromEntries(res.body.cuotas.map((c: any) => [c.recurso, c]));
     expect(porRecurso.usuarios.origen).toBe("override");
     expect(porRecurso.usuarios.limite).toBe(3);
-    expect(porRecurso.equipos.origen).toBe("plan");
-    expect(porRecurso.equipos.limite).toBe(20);
+    expect(porRecurso.flota.origen).toBe("plan");
+    expect(porRecurso.flota.limite).toBe(20);
   });
 });

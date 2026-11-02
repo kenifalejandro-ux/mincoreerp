@@ -336,7 +336,7 @@ export default function LoginPage() {
     <div
       className="relative isolate min-h-screen flex items-center justify-center px-4 bg-[#DDF500]
              before:content-[''] before:absolute before:inset-0 
-             before:bg-[url('/portada-login/womenofficer8.jpg')] 
+             before:bg-[url('/portada-login/portada_erp.jpg')] 
              before:bg-cover before:bg-center before:bg-no-repeat 
              before:opacity-50 before:z-2"
     >
@@ -557,13 +557,13 @@ export default function LoginPage() {
         {/* El badge de reCAPTCHA está oculto por CSS (ver globals.css) --
             Google exige este aviso en su lugar, o viola sus Términos de
             Servicio de reCAPTCHA. */}
-        <p className="mt-4 text-center text-[11px] leading-snug text-slate-500">
+        <p className="mt-4 text-center text-[11px] leading-snug text-slate-800">
           Este sitio está protegido por reCAPTCHA y aplican la{" "}
           <a
             href="https://policies.google.com/privacy"
             target="_blank"
             rel="noreferrer"
-            className="underline hover:text-slate-300"
+            className="underline hover:text-slate-100"
           >
             Política de Privacidad
           </a>{" "}
@@ -572,7 +572,7 @@ export default function LoginPage() {
             href="https://policies.google.com/terms"
             target="_blank"
             rel="noreferrer"
-            className="underline hover:text-slate-300"
+            className="underline hover:text-slate-100"
           >
             Términos de Servicio
           </a>{" "}

@@ -168,7 +168,7 @@ describe("métricas por tenant: latencia y errores 4xx", () => {
           "combustible",
           "documentos",
           "dashboard",
-          "equipos",
+          "flota",
           "checklists",
         ].map((modulo) => ({ modulo, estado: "habilitado" })),
       }); // iperc queda deshabilitado

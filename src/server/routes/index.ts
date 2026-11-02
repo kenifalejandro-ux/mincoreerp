@@ -66,7 +66,7 @@ export function createApiRouter() {
   // tiene por qué consumir ni consultar cupo.
   for (const modulo of MODULOS) {
     router.use(
-      `/${modulo.id}`,
+      `/${modulo.ruta ?? modulo.id}`,
       requireModulo(modulo.id),
       requireNivelParaEscribir(modulo.id),
       requireCuota(modulo.id),

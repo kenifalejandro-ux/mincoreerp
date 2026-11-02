@@ -117,5 +117,9 @@ export const ESCRITURAS_OFFLINE: Record<string, EscrituraOffline[]> = {
   // señal, es un caso de campo real -- mismo criterio que checklists/iperc/
   // ordenes_trabajo. Editar (`PUT`) y eliminar (`DELETE`) NO están acá a
   // propósito: editar sobreescribe campos existentes -- ver ADR-0002 §8.
-  equipos: [{ metodo: "POST", ruta: "/" }],
+  flota: [{ metodo: "POST", ruta: "/" }],
 };
+
+/** Módulos cuya URL no es su id: `flota` sigue en /api/erp/equipos. Espejo del
+ *  campo `ruta` de src/modules/registry.ts. */
+export const RUTA_DE_MODULO: Record<string, string> = { flota: "equipos" };

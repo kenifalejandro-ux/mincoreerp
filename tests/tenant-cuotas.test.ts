@@ -54,33 +54,33 @@ describe("resolución del límite efectivo", () => {
   let compartido: Awaited<ReturnType<typeof nuevoTenant>>;
   async function tenantLimpio() {
     compartido ??= await nuevoTenant();
-    await fijarCuotaTenant(compartido.tenant.id, "equipos", undefined);
+    await fijarCuotaTenant(compartido.tenant.id, "flota", undefined);
     return compartido.tenant;
   }
 
   it("sin override usa el default declarado en el registry", async () => {
     const tenant = await tenantLimpio();
     // equipos declara porDefecto: 2_000 en src/modules/registry.ts
-    expect(await limiteEfectivo(tenant.id, "equipos")).toBe(2000);
+    expect(await limiteEfectivo(tenant.id, "flota")).toBe(2000);
   });
 
   it("un override por tenant pisa el default", async () => {
     const tenant = await tenantLimpio();
-    await fijarCuotaTenant(tenant.id, "equipos", 5, "plan reducido de prueba");
-    expect(await limiteEfectivo(tenant.id, "equipos")).toBe(5);
+    await fijarCuotaTenant(tenant.id, "flota", 5, "plan reducido de prueba");
+    expect(await limiteEfectivo(tenant.id, "flota")).toBe(5);
   });
 
   it("limite=null significa ILIMITADO, distinto de no tener override", async () => {
     const tenant = await tenantLimpio();
-    await fijarCuotaTenant(tenant.id, "equipos", null, "cliente enterprise");
-    expect(await limiteEfectivo(tenant.id, "equipos")).toBeNull();
+    await fijarCuotaTenant(tenant.id, "flota", null, "cliente enterprise");
+    expect(await limiteEfectivo(tenant.id, "flota")).toBeNull();
   });
 
   it("borrar el override devuelve al default del código, no a ilimitado", async () => {
     const tenant = await tenantLimpio();
-    await fijarCuotaTenant(tenant.id, "equipos", 5);
-    await fijarCuotaTenant(tenant.id, "equipos", undefined);
-    expect(await limiteEfectivo(tenant.id, "equipos")).toBe(2000);
+    await fijarCuotaTenant(tenant.id, "flota", 5);
+    await fijarCuotaTenant(tenant.id, "flota", undefined);
+    expect(await limiteEfectivo(tenant.id, "flota")).toBe(2000);
   });
 
   it("rechaza fijar una cuota sobre un recurso que no existe", async () => {
@@ -94,7 +94,7 @@ describe("resolución del límite efectivo", () => {
     const tenant = await tenantLimpio();
     const recursos = (await resumenCuotasTenant(tenant.id)).map((c) => c.recurso);
     expect(recursos).not.toContain("dashboard");
-    expect(recursos).toContain("equipos");
+    expect(recursos).toContain("flota");
     expect(recursos).toContain(RECURSO_USUARIOS);
   });
 });
@@ -102,7 +102,7 @@ describe("resolución del límite efectivo", () => {
 describe("bloqueo al exceder la cuota de un módulo", () => {
   it("deja crear hasta el límite y rechaza el siguiente con 403 y cuerpo estructurado", async () => {
     const { tenant, usuario } = await nuevoTenant();
-    await fijarCuotaTenant(tenant.id, "equipos", 2);
+    await fijarCuotaTenant(tenant.id, "flota", 2);
     const agente = await agenteDe(tenant, usuario.email);
 
     for (const n of [1, 2]) {
@@ -118,14 +118,14 @@ describe("bloqueo al exceder la cuota de un módulo", () => {
 
     expect(rechazado.status).toBe(403);
     expect(rechazado.body.error).toBe("cuota_excedida");
-    expect(rechazado.body.recurso).toBe("equipos");
+    expect(rechazado.body.recurso).toBe("flota");
     expect(rechazado.body.limite).toBe(2);
     expect(rechazado.body.uso).toBe(2);
   });
 
   it("un tenant excedido SIGUE pudiendo leer y borrar (si no, queda atrapado)", async () => {
     const { tenant, usuario } = await nuevoTenant();
-    await fijarCuotaTenant(tenant.id, "equipos", 1);
+    await fijarCuotaTenant(tenant.id, "flota", 1);
     const agente = await agenteDe(tenant, usuario.email);
 
     const creado = await agente
@@ -198,7 +198,7 @@ describe("bloqueo al exceder la cuota de un módulo", () => {
   it("la cuota de un tenant no afecta a otro", async () => {
     const a = await nuevoTenant();
     const b = await nuevoTenant();
-    await fijarCuotaTenant(a.tenant.id, "equipos", 0); // A no puede crear ninguno
+    await fijarCuotaTenant(a.tenant.id, "flota", 0); // A no puede crear ninguno
 
     const agenteA = await agenteDe(a.tenant, a.usuario.email);
     const agenteB = await agenteDe(b.tenant, b.usuario.email);
@@ -215,7 +215,7 @@ describe("bloqueo al exceder la cuota de un módulo", () => {
 
   it("un módulo ilimitado no bloquea nada", async () => {
     const { tenant, usuario } = await nuevoTenant();
-    await fijarCuotaTenant(tenant.id, "equipos", null);
+    await fijarCuotaTenant(tenant.id, "flota", null);
     const agente = await agenteDe(tenant, usuario.email);
 
     for (let i = 0; i < 3; i++) {
@@ -228,7 +228,7 @@ describe("bloqueo al exceder la cuota de un módulo", () => {
 
   it("el bloqueo queda auditado como failure", async () => {
     const { tenant, usuario } = await nuevoTenant();
-    await fijarCuotaTenant(tenant.id, "equipos", 0);
+    await fijarCuotaTenant(tenant.id, "flota", 0);
     const agente = await agenteDe(tenant, usuario.email);
     await agente.post("/api/erp/equipos").send({ placa_codigo: idUnico("EQ"), tipo: "X" });
 
@@ -239,7 +239,7 @@ describe("bloqueo al exceder la cuota de un módulo", () => {
     );
     expect(auditoria.rows).toHaveLength(1);
     expect(auditoria.rows[0].resultado).toBe("failure");
-    expect(auditoria.rows[0].detalle.recurso).toBe("equipos");
+    expect(auditoria.rows[0].detalle.recurso).toBe("flota");
   });
 });
 
@@ -375,7 +375,7 @@ describe("endpoints del panel", () => {
       .set("Authorization", BEARER);
 
     expect(res.status).toBe(200);
-    const equipos = res.body.cuotas.find((c: any) => c.recurso === "equipos");
+    const equipos = res.body.cuotas.find((c: any) => c.recurso === "flota");
     expect(equipos.uso).toBe(1);
     expect(equipos.limite).toBe(2000);
     expect(equipos.excedido).toBe(false);
@@ -390,13 +390,13 @@ describe("endpoints del panel", () => {
     const res = await request(app)
       .put(`/api/platform/tenants/${tenant.id}/cuotas`)
       .set("Authorization", BEARER)
-      .send({ recurso: "equipos", limite: 7, motivo: "plan piloto" });
+      .send({ recurso: "flota", limite: 7, motivo: "plan piloto" });
 
     expect(res.status).toBe(200);
-    expect(res.body.cuotas.find((c: any) => c.recurso === "equipos").limite).toBe(7);
+    expect(res.body.cuotas.find((c: any) => c.recurso === "flota").limite).toBe(7);
 
     const guardado = await pool.query(
-      `SELECT motivo FROM tenant_cuotas WHERE tenant_id = $1 AND recurso = 'equipos'`,
+      `SELECT motivo FROM tenant_cuotas WHERE tenant_id = $1 AND recurso = 'flota'`,
       [tenant.id]
     );
     expect(guardado.rows[0].motivo).toBe("plan piloto");
@@ -415,7 +415,7 @@ describe("endpoints del panel", () => {
 describe("integración con la salud del tenant", () => {
   it("alerta cuando una cuota está cerca del límite, y cuando ya se excedió", async () => {
     const { tenant, usuario } = await nuevoTenant();
-    await fijarCuotaTenant(tenant.id, "equipos", 4);
+    await fijarCuotaTenant(tenant.id, "flota", 4);
     const agente = await agenteDe(tenant, usuario.email);
 
     // 3 de 4 = 75%: todavía sin alerta de cuota.
@@ -435,7 +435,7 @@ describe("integración con la salud del tenant", () => {
       .get(`/api/platform/tenants/${tenant.id}/salud`)
       .set("Authorization", BEARER);
     expect(salud.body.salud.alertas).toContain("cuota_excedida");
-    expect(salud.body.salud.cuotas.find((c: any) => c.recurso === "equipos").porcentaje).toBe(100);
+    expect(salud.body.salud.cuotas.find((c: any) => c.recurso === "flota").porcentaje).toBe(100);
   });
 });
 
@@ -499,8 +499,8 @@ describe("medición del uso", () => {
       ])
     );
 
-    expect(await usoActual(a.tenant.id, "equipos")).toBe(1);
-    expect(await usoActual(b.tenant.id, "equipos")).toBe(0);
+    expect(await usoActual(a.tenant.id, "flota")).toBe(1);
+    expect(await usoActual(b.tenant.id, "flota")).toBe(0);
   });
 });
 
@@ -509,29 +509,29 @@ describe("caché de resolverLimite()", () => {
     const { tenant } = await nuevoTenant();
 
     // Primera lectura: cachea "sin override" (cae al plan/registry).
-    expect((await resolverLimite(tenant.id, "equipos")).origen).not.toBe("override");
+    expect((await resolverLimite(tenant.id, "flota")).origen).not.toBe("override");
 
     // Se escribe el override directo a la tabla, sin pasar por
     // fijarCuotaTenant — nadie invalida el caché por esto.
     await pool.query(
-      `INSERT INTO tenant_cuotas (tenant_id, recurso, limite) VALUES ($1, 'equipos', 7)
+      `INSERT INTO tenant_cuotas (tenant_id, recurso, limite) VALUES ($1, 'flota', 7)
        ON CONFLICT (tenant_id, recurso) DO UPDATE SET limite = 7`,
       [tenant.id]
     );
-    expect((await resolverLimite(tenant.id, "equipos")).origen).not.toBe("override"); // todavía cacheado
+    expect((await resolverLimite(tenant.id, "flota")).origen).not.toBe("override"); // todavía cacheado
 
-    await invalidarCacheLimite(tenant.id, "equipos");
-    const fresco = await resolverLimite(tenant.id, "equipos");
+    await invalidarCacheLimite(tenant.id, "flota");
+    const fresco = await resolverLimite(tenant.id, "flota");
     expect(fresco.origen).toBe("override");
     expect(fresco.limite).toBe(7);
   });
 
   it("fijarCuotaTenant invalida solo, sin necesidad de tocar el caché a mano", async () => {
     const { tenant } = await nuevoTenant();
-    await resolverLimite(tenant.id, "equipos"); // cachea el valor sin override
+    await resolverLimite(tenant.id, "flota"); // cachea el valor sin override
 
-    await fijarCuotaTenant(tenant.id, "equipos", 9, "prueba de invalidación");
-    const r = await resolverLimite(tenant.id, "equipos");
+    await fijarCuotaTenant(tenant.id, "flota", 9, "prueba de invalidación");
+    const r = await resolverLimite(tenant.id, "flota");
     expect(r.origen).toBe("override");
     expect(r.limite).toBe(9);
   });

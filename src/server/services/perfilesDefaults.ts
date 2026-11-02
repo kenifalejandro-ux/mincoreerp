@@ -24,12 +24,15 @@ export type NivelModulo = "operar" | "consultas";
  *  - Lectura consulta todo y nunca opera: el nivel es lo que de verdad le
  *    bloquea el POST/PUT/DELETE en `requireNivelParaEscribir`.
  *  - Los tres perfiles de cancha (grifero, conductor de ruta y encargado de
- *    urea) solo entran a Combustible; el resto de módulos ni les aparece. */
+ *    urea) solo entran a Combustible; el resto de módulos ni les aparece.
+ *    El conductor de ruta suma Viajes, donde vive "Mi viaje". */
 export function moduloPorDefectoDeRol(
   rol: UsuarioPayload["rol"],
   modulo: string
 ): { asignado: boolean; nivel: NivelModulo } {
   if (rol === "lectura") return { asignado: true, nivel: "consultas" };
   if (rol === "admin" || rol === "operador") return { asignado: true, nivel: "operar" };
+  // El conductor de ruta también entra a Viajes ("Mi viaje").
+  if (rol === "conductor_ruta" && modulo === "viajes") return { asignado: true, nivel: "operar" };
   return { asignado: modulo === "combustible", nivel: "operar" };
 }

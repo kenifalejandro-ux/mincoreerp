@@ -14,7 +14,7 @@
 import { useEffect, useState } from "react";
 
 import { useAuth } from "../../context/AuthContext";
-import { MODULOS_CLIENTE } from "../../modules/registry";
+import { ETIQUETAS_SIN_PANTALLA, MODULOS_CLIENTE } from "../../modules/registry";
 import { suscribirseAConectividad } from "../../offline/connectivity";
 import { suscribirseACola } from "../../offline/offlineQueue";
 import {
@@ -24,7 +24,11 @@ import {
 } from "../../offline/offlineSync";
 
 function labelDeModulo(moduloId: string): string {
-  return MODULOS_CLIENTE.find((m) => m.id === moduloId)?.label ?? moduloId;
+  return (
+    MODULOS_CLIENTE.find((m) => m.id === moduloId)?.label ??
+    ETIQUETAS_SIN_PANTALLA[moduloId] ??
+    moduloId
+  );
 }
 
 export default function EstadoOffline() {

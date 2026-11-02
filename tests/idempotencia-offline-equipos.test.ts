@@ -186,7 +186,7 @@ describe("idempotencia de escrituras offline (Equipos)", () => {
     await withTenant(tenantId, (client) =>
       client.query(
         `UPDATE idempotency_keys SET expires_at = now() - interval '1 hour'
-         WHERE tenant_id = $1 AND modulo = 'equipos' AND cliente_uuid = $2`,
+         WHERE tenant_id = $1 AND modulo = 'flota' AND cliente_uuid = $2`,
         [tenantId, vencido]
       )
     );
@@ -195,7 +195,7 @@ describe("idempotencia de escrituras offline (Equipos)", () => {
 
     const restantes = await withTenant(tenantId, (client) =>
       client.query(
-        `SELECT cliente_uuid FROM idempotency_keys WHERE tenant_id = $1 AND modulo = 'equipos'`,
+        `SELECT cliente_uuid FROM idempotency_keys WHERE tenant_id = $1 AND modulo = 'flota'`,
         [tenantId]
       )
     );
