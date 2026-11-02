@@ -160,6 +160,8 @@ test("el conductor ve sus boletas en Compra en ruta y sus cargas en Tanques @cel
     await expect(filaCarga).toHaveCount(1);
     await expect(filaCarga).toContainText(placa);
     await expect(filaCarga).toContainText("10 gal");
+    // El conductor no tipea vale al cargar de una tanqueta: la columna Vale trae el de la salida.
+    await expect(filaCarga).toContainText(`C${marca}-1`);
     await expect(page.getByText(numeroBoleta)).toHaveCount(0);
 
     // ── Compra en ruta: su boleta, y NO la carga ───────────────────────────

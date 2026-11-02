@@ -8,7 +8,12 @@
  *   - el sobregiro (saldo negativo) se dice y el líquido no se sale del vidrio;
  *   - sin señal se queda el último saldo conocido y lo avisa; al volver la señal, se corrige;
  *   - dos tanquetas en la unidad: aparece el selector y cambia el cilindro;
- *   - sin tanqueta o sin unidad: un mensaje claro y su historial de cargas sigue ahí.
+ *   - sin tanqueta o sin unidad: un mensaje claro y su historial de cargas sigue ahí;
+ *   - filtros del kardex por unidad (la tanqueta pasó por otra unidad);
+ *   - una carga hecha sin señal se descuenta del cilindro UNA vez y deja de descontarse al enviarse;
+ *   - el descuento NO se pierde mientras la carga siga en la cola (con señal, o con un 500 del
+ *     servidor) ni cuando la carga se envió pero la siguiente lectura falla;
+ *   - al salir de la pantalla no queda ninguna petición viva.
  */
 import { randomBytes } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
@@ -464,6 +469,333 @@ test("Mi tanqueta: selector con dos tanquetas, y mensajes sin tanqueta o sin uni
     await expect(page.getByText(/no tiene ninguna unidad a su cargo en Equipos/)).toBeVisible();
     await expect(page.getByText(SIN_CARGAS)).toBeVisible();
   } finally {
+    await darDeBajaLosCreados(page, marca, creados);
+  }
+});
+
+/** Un conductor con su unidad y una tanqueta con `galones`, para las pruebas de abajo. */
+async function sembrarConductor(page: Page, marca: string, galones: number) {
+  const conductor = nuevoConductor(marca, "96", `Conductor ${marca}`);
+  const grifoInternoId = await primerGrifoActivo(page);
+  await crear(page, "/api/erp/usuarios", { ...conductor, rol: "conductor_ruta" });
+  const tanque = await crearTanque(page, marca, grifoInternoId);
+  const placa = `VM-${marca}`;
+  const equipo = await crear(page, "/api/erp/equipos", {
+    placa_codigo: placa,
+    tipo: "VOLQUETE",
+    tipo_medidor: "horometro",
+    conductor_nombre: conductor.nombre,
+    conductor_dni: conductor.dni,
+    grifo_interno_id: grifoInternoId,
+  });
+  const tanqueta = await tanquetaConSaldo(
+    page,
+    marca,
+    grifoInternoId,
+    tanque.id,
+    equipo.id,
+    1,
+    galones
+  );
+  return { conductor, placa, equipo, tanqueta, tanque, grifoInternoId };
+}
+
+test("Mi tanqueta: los filtros del kardex por unidad, cuando la tanqueta pasó por otra unidad", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  const marca = randomBytes(3).toString("hex").toUpperCase();
+  const admin = adminA();
+  const creados: { dni: string; password: string }[] = [];
+  try {
+    await loginPorUI(page, admin.email, admin.password);
+    // La unidad E (del conductor que entra) recibe la tanqueta de la unidad X, que ya la usó.
+    const {
+      conductor,
+      placa: placaE,
+      equipo: equipoE,
+      tanqueta: t1,
+      tanque,
+      grifoInternoId,
+    } = await sembrarConductor(page, marca, 100);
+    creados.push(conductor);
+    // sembrarConductor la asignó a E: se la devuelve al grifero y se pasa por X primero.
+    const previo = nuevoConductor(marca, "93", `Previo ${marca}`);
+    const placaX = `VX-${marca}`;
+    const equipoX = await crear(page, "/api/erp/equipos", {
+      placa_codigo: placaX,
+      tipo: "VOLQUETE",
+      tipo_medidor: "horometro",
+      conductor_nombre: previo.nombre,
+      conductor_dni: previo.dni,
+      grifo_interno_id: grifoInternoId,
+    });
+    const tanquetaX = await tanquetaConSaldo(
+      page,
+      marca,
+      grifoInternoId,
+      tanque.id,
+      equipoX.id,
+      2,
+      100
+    );
+    const carga = await crear(page, "/api/erp/combustible/despachos", {
+      origen: "tanqueta",
+      tanqueta_origen_id: tanquetaX.id,
+      tipo_combustible: "diesel_b5",
+      tipo_destino: "equipo",
+      equipo_id: equipoX.id,
+      cantidad: 20,
+      lectura_horometro: 1000,
+    });
+    expect(carga.id).toBeTruthy();
+    // La tanqueta de X pasa a la unidad E con su vale: ahora el kardex tiene dos unidades.
+    const pasa = await page.request.post(`/api/erp/combustible/tanquetas/${tanquetaX.id}/retorno`, {
+      data: {
+        saldo_calculado: 80,
+        saldo_validado: 80,
+        destino: "unidad",
+        equipo_id: equipoE.id,
+        serie_talonario: `R${marca}`,
+        n_vale: 1,
+      },
+    });
+    expect(pasa.status(), await pasa.text()).toBe(201);
+    expect(t1.id).not.toBe(tanquetaX.id);
+
+    await page.request.post("/api/auth/logout");
+    await entrarAMiViaje(page, comoConductor(marca, conductor));
+    await page.getByRole("button", { name: "Tanquetas" }).click();
+    await expect(page.getByRole("heading", { name: "Mi tanqueta", level: 1 })).toBeVisible();
+    // Dos tanquetas en E (la suya y la que llegó): se elige la que pasó por X.
+    await page.getByLabel("Tanqueta", { exact: true }).selectOption({ label: tanquetaX.codigo });
+
+    const kardex = page.getByRole("region", { name: "Movimientos de la tanqueta" });
+    const filas = (texto: string | RegExp) => kardex.getByRole("row").filter({ hasText: texto });
+    const filtroUnidad = kardex.getByLabel("Unidad", { exact: true });
+    await expect(filtroUnidad).toBeVisible();
+    await expect(filas("Carga en ruta")).toHaveCount(1);
+    await expect(filas(placaE).first()).toBeVisible();
+
+    // Solo X: queda su carga y desaparecen las filas de E; el saldo de cada fila sigue siendo real.
+    await filtroUnidad.selectOption({ label: placaX });
+    await expect(filas("Carga en ruta")).toHaveCount(1);
+    await expect(filas(placaE)).toHaveCount(0);
+    await expect(kardex.getByText(/Filtrado \(\d+ de \d+\)/)).toBeVisible();
+    await expect(filas("Carga en ruta").getByRole("cell").last()).toHaveText("80");
+
+    // Solo E: la carga de X ya no está.
+    await filtroUnidad.selectOption({ label: placaE });
+    await expect(filas("Carga en ruta")).toHaveCount(0);
+    await expect(filas(placaE).first()).toBeVisible();
+
+    // Una combinación sin filas lo dice, y "Quitar filtros" lo devuelve todo.
+    await kardex.getByLabel("Conductor", { exact: true }).selectOption({ label: previo.nombre });
+    await expect(kardex.getByText("Ningún movimiento coincide con los filtros.")).toBeVisible();
+    await kardex.getByRole("button", { name: "Quitar filtros" }).click();
+    await expect(filas("Carga en ruta")).toHaveCount(1);
+    await expect(kardex.getByText(/Filtrado/)).toHaveCount(0);
+  } finally {
+    await darDeBajaLosCreados(page, marca, creados);
+  }
+});
+
+test("Mi tanqueta: una carga sin señal se descuenta del cilindro una sola vez @celular", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  const marca = randomBytes(3).toString("hex").toUpperCase();
+  const admin = adminA();
+  const creados: { dni: string; password: string }[] = [];
+  try {
+    await loginPorUI(page, admin.email, admin.password);
+    const { conductor, tanqueta: t1 } = await sembrarConductor(page, marca, 120);
+    creados.push(conductor);
+    const cilindro = (saldo: string) =>
+      page.getByRole("img", { name: `${t1.codigo}: ${saldo} de 280 galones`, exact: true });
+
+    await page.request.post("/api/auth/logout");
+    await entrarAMiViaje(page, comoConductor(marca, conductor));
+    await page.getByRole("button", { name: "Tanquetas" }).click();
+    await expect(cilindro("120")).toBeVisible();
+
+    // Se abre el formulario con señal (carga sus listas) y se registra SIN señal.
+    await page.getByRole("button", { name: "Carga desde tanqueta" }).first().click();
+    await expect(page.locator("#despacho-medidor-tanqueta")).toBeEnabled({ timeout: 15_000 });
+    await page.locator("#despacho-cantidad-tanqueta").fill("5");
+    await page.locator("#despacho-medidor-tanqueta").fill("1000");
+    await page.context().setOffline(true);
+    await page.locator("form").getByRole("button", { name: "Registrar despacho" }).click();
+    await expect(
+      page.getByText(
+        new RegExp(`Sin conexión: la carga desde ${t1.codigo} quedó guardad. en este equipo`)
+      )
+    ).toBeVisible();
+
+    // El cilindro ya descuenta lo cargado aunque el servidor no lo sepa, y lo dice.
+    await expect(cilindro("115")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/Incluye 5 gal cargados sin señal/)).toBeVisible();
+    await expect(page.getByText(/Sin señal: último saldo conocido/)).toBeVisible();
+
+    // Vuelve la señal: se envía, el aviso se va y el saldo queda en 115 (no 110: no se resta dos veces).
+    await page.context().setOffline(false);
+    await expect(page.getByText(/Incluye 5 gal/)).toHaveCount(0, { timeout: 60_000 });
+    await expect(cilindro("115")).toBeVisible({ timeout: 30_000 });
+    await expect(cilindro("110")).toHaveCount(0);
+    await expect(page.getByText(/Sin señal/)).toHaveCount(0, { timeout: 30_000 });
+    const mias = await page.request.get("/api/erp/combustible/tanquetas/mias");
+    expect(((await mias.json()) as { saldo: number }[])[0].saldo).toBe(115);
+  } finally {
+    await page.context().setOffline(false);
+    await darDeBajaLosCreados(page, marca, creados);
+  }
+});
+
+/** Abre el formulario con señal, deja llenos los campos y registra SIN señal (queda en la cola). */
+async function cargarSinSenal(page: Page, codigo: string, galones: string, medidor: string) {
+  await page.getByRole("button", { name: "Carga desde tanqueta" }).first().click();
+  await expect(page.locator("#despacho-medidor-tanqueta")).toBeEnabled({ timeout: 15_000 });
+  await page.locator("#despacho-cantidad-tanqueta").fill(galones);
+  await page.locator("#despacho-medidor-tanqueta").fill(medidor);
+  await page.context().setOffline(true);
+  await page.locator("form").getByRole("button", { name: "Registrar despacho" }).click();
+  await expect(
+    page.getByText(
+      new RegExp(`Sin conexión: la carga desde ${codigo} quedó guardad. en este equipo`)
+    )
+  ).toBeVisible();
+}
+
+const pedirDeNuevo = (page: Page) =>
+  page.evaluate(() => window.dispatchEvent(new Event("combustible:actualizado")));
+
+test("Mi tanqueta: el descuento sigue mientras la carga siga en la cola, con señal o con un 500 @celular", async ({
+  page,
+}) => {
+  test.setTimeout(300_000);
+  const marca = randomBytes(3).toString("hex").toUpperCase();
+  const admin = adminA();
+  const creados: { dni: string; password: string }[] = [];
+  const despachos = "**/api/erp/combustible/despachos";
+  const mias = "**/api/erp/combustible/tanquetas/mias";
+  try {
+    await loginPorUI(page, admin.email, admin.password);
+    const { conductor, tanqueta: t1 } = await sembrarConductor(page, marca, 120);
+    creados.push(conductor);
+    const cilindro = (saldo: string) =>
+      page.getByRole("img", { name: `${t1.codigo}: ${saldo} de 280 galones`, exact: true });
+    const kardex = page.getByRole("region", { name: "Movimientos de la tanqueta" });
+
+    await page.request.post("/api/auth/logout");
+    await entrarAMiViaje(page, comoConductor(marca, conductor));
+    await page.getByRole("button", { name: "Tanquetas" }).click();
+    await expect(cilindro("120")).toBeVisible();
+    await expect(kardex.getByText("CUADRA CON EL CILINDRO")).toBeVisible();
+
+    await cargarSinSenal(page, t1.codigo, "5", "1000");
+    await expect(cilindro("115")).toBeVisible({ timeout: 20_000 });
+    // El kardex viene del servidor y no trae la carga pendiente: no puede decir que "cuadra con el
+    // cilindro" que se ve.
+    await expect(kardex.getByText("AL DÍA CON EL SERVIDOR")).toBeVisible();
+    await expect(kardex.getByText("CUADRA CON EL CILINDRO")).toHaveCount(0);
+
+    // Vuelve la señal pero el servidor rechaza el envío con un 500: la carga sigue en la cola y el
+    // cilindro NO vuelve a 120.
+    await page.route(despachos, (r) =>
+      r.request().method() === "POST"
+        ? r.fulfill({ status: 500, contentType: "application/json", body: '{"error":"caído"}' })
+        : r.continue()
+    );
+    await page.context().setOffline(false);
+    await expect(page.getByText(/Sin señal/)).toHaveCount(0, { timeout: 30_000 });
+    // Se muestrea varias veces mientras la cola sigue llena: un salto a 120 en cualquier momento falla.
+    for (let i = 0; i < 6; i++) {
+      await expect(cilindro("120")).toHaveCount(0);
+      await expect(cilindro("115")).toBeVisible();
+      await expect(page.getByText(/Incluye 5 gal cargados sin señal/)).toBeVisible();
+      await page.waitForTimeout(500);
+    }
+
+    // La lectura del servidor falla con un 500 de la app: sigue el dato viejo, con el descuento.
+    await page.route(mias, (r) =>
+      r.fulfill({ status: 500, contentType: "application/json", body: '{"error":"falla"}' })
+    );
+    await pedirDeNuevo(page);
+    await expect(page.getByText(/No se pudo actualizar: último saldo conocido/)).toBeVisible();
+    await expect(cilindro("115")).toBeVisible();
+    await expect(cilindro("120")).toHaveCount(0);
+    await expect(page.getByText(/Incluye 5 gal cargados sin señal/)).toBeVisible();
+    await page.unroute(mias);
+
+    // El servidor se recupera: la cola envía, el aviso se va y queda 115 (nunca 110).
+    await page.unroute(despachos);
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await expect(page.getByText(/Incluye 5 gal/)).toHaveCount(0, { timeout: 90_000 });
+    await expect(cilindro("115")).toBeVisible({ timeout: 30_000 });
+    await expect(cilindro("110")).toHaveCount(0);
+  } finally {
+    await page.unroute(despachos).catch(() => {});
+    await page.unroute(mias).catch(() => {});
+    await page.context().setOffline(false);
+    await darDeBajaLosCreados(page, marca, creados);
+  }
+});
+
+test("Mi tanqueta: enviada la carga, una lectura que falla no la hace desaparecer del cilindro @celular", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  const marca = randomBytes(3).toString("hex").toUpperCase();
+  const admin = adminA();
+  const creados: { dni: string; password: string }[] = [];
+  const mias = "**/api/erp/combustible/tanquetas/mias";
+  try {
+    await loginPorUI(page, admin.email, admin.password);
+    const { conductor, tanqueta: t1 } = await sembrarConductor(page, marca, 120);
+    creados.push(conductor);
+    const cilindro = (saldo: string) =>
+      page.getByRole("img", { name: `${t1.codigo}: ${saldo} de 280 galones`, exact: true });
+
+    await page.request.post("/api/auth/logout");
+    await entrarAMiViaje(page, comoConductor(marca, conductor));
+    await page.getByRole("button", { name: "Tanquetas" }).click();
+    await expect(cilindro("120")).toBeVisible();
+    await cargarSinSenal(page, t1.codigo, "5", "1000");
+    await expect(cilindro("115")).toBeVisible({ timeout: 20_000 });
+
+    // Vuelve la señal, la carga se envía bien, pero la lectura siguiente se cae.
+    await page.route(mias, (r) => r.abort("connectionfailed"));
+    await page.context().setOffline(false);
+    await expect(page.getByText(/Incluye 5 gal/)).toHaveCount(0, { timeout: 90_000 });
+    // El servidor ya tiene 115 (esta petición no pasa por page.route).
+    const mio = await page.request.get("/api/erp/combustible/tanquetas/mias");
+    expect(((await mio.json()) as { saldo: number }[])[0].saldo).toBe(115);
+    // La pantalla, con la lectura caída, muestra el dato viejo MENOS lo enviado: nunca 120.
+    await expect(page.getByText(/Sin señal: último saldo conocido/)).toBeVisible({
+      timeout: 30_000,
+    });
+    for (let i = 0; i < 4; i++) {
+      await expect(cilindro("120")).toHaveCount(0);
+      await expect(cilindro("115")).toBeVisible();
+      await page.waitForTimeout(500);
+    }
+    // La lectura vuelve: queda 115 y sin avisos.
+    await page.unroute(mias);
+    await pedirDeNuevo(page);
+    await expect(page.getByText(/Sin señal/)).toHaveCount(0, { timeout: 20_000 });
+    await expect(cilindro("115")).toBeVisible();
+
+    // Al salir de la pantalla no queda ninguna petición viva (antes salía una a los ~100 ms).
+    let peticiones = 0;
+    page.on("request", (r) => {
+      if (r.url().includes("/tanquetas/mias")) peticiones++;
+    });
+    await page.getByRole("button", { name: "Compra en ruta" }).click();
+    await page.waitForTimeout(1200);
+    expect(peticiones).toBe(0);
+  } finally {
+    await page.unroute(mias).catch(() => {});
+    await page.context().setOffline(false);
     await darDeBajaLosCreados(page, marca, creados);
   }
 });

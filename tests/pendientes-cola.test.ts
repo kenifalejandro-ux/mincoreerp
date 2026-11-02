@@ -5,7 +5,10 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { pendientesDeLaCola } from "../client/src/offline/pendientesCola";
+import {
+  galonesPendientesPorTanqueta,
+  pendientesDeLaCola,
+} from "../client/src/offline/pendientesCola";
 import type { EntradaCola } from "../client/src/offline/offlineQueue";
 
 const entrada = (
@@ -114,5 +117,59 @@ describe("pendientesDeLaCola", () => {
     );
     const r = pendientesDeLaCola([mala, a, b], "compras");
     expect(r.map((p) => p.titulo)).toEqual(["2", "1"]);
+  });
+});
+
+describe("galonesPendientesPorTanqueta", () => {
+  const carga = (tanquetaId: unknown, cantidad: unknown, extra: Partial<EntradaCola> = {}) =>
+    entrada(
+      `${C}/despachos`,
+      { origen: "tanqueta", tanqueta_origen_id: tanquetaId, cantidad },
+      extra
+    );
+
+  it("suma por tanqueta lo cargado sin enviar", () => {
+    const r = galonesPendientesPorTanqueta([carga(7, 5), carga(7, 2.5), carga(9, 10)]);
+    expect(r).toEqual({ 7: 7.5, 9: 10 });
+  });
+
+  it("un mismo cliente_uuid cuenta una sola vez", () => {
+    const a = carga(7, 5, { clienteUuid: "igual" });
+    const b = carga(7, 5, { clienteUuid: "igual" });
+    expect(galonesPendientesPorTanqueta([a, b])).toEqual({ 7: 5 });
+  });
+
+  it("redondea al final: tres entradas chicas no dan cero y los decimales suman bien", () => {
+    expect(
+      galonesPendientesPorTanqueta([carga(1, 0.004), carga(1, 0.004), carga(1, 0.004)])
+    ).toEqual({ 1: 0.01 });
+    expect(galonesPendientesPorTanqueta([carga(1, 0.1), carga(1, 0.2)])).toEqual({ 1: 0.3 });
+  });
+
+  it("un total que no es finito se descarta y no contamina a las demás tanquetas", () => {
+    const r = galonesPendientesPorTanqueta([carga(1, 1e308), carga(1, 1e308), carga(2, 4)]);
+    expect(r).toEqual({ 2: 4 });
+  });
+
+  it("ignora lo que no es una carga de tanqueta o no tiene datos válidos", () => {
+    const basura = [
+      carga("7", 5),
+      carga(null, 5),
+      carga(7, "5"),
+      carga(7, -3),
+      carga(7, 0),
+      carga(7, Number.NaN),
+      entrada(`${C}/despachos`, { origen: "tanque_propio", tanqueta_origen_id: 7, cantidad: 5 }),
+      entrada(
+        `${C}/despachos`,
+        { origen: "tanqueta", tanqueta_origen_id: 7, cantidad: 5 },
+        {
+          metodo: "PUT",
+        }
+      ),
+      entrada(`${C}/compras-ruta`, { origen: "tanqueta", tanqueta_origen_id: 7, cantidad: 5 }),
+      entrada(`${C}/despachos`, undefined),
+    ];
+    expect(galonesPendientesPorTanqueta(basura)).toEqual({});
   });
 });
