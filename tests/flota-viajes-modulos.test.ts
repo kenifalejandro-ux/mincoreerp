@@ -47,8 +47,17 @@ type Empresa = Awaited<ReturnType<typeof crearTenantDePrueba>>;
 
 /** Prepara una empresa con Combustible y un usuario, corre el SQL de la
  *  migración y mira el resultado -- todo dentro de una transacción que se
- *  deshace. La migración abre una ventana NO FORCE sobre `usuarios`, así
- *  que el lock_timeout evita colgar a otros tests si algo la retiene. */
+ *  deshace.
+ *
+ *  La migración recorre TODAS las empresas y usuarios de la base. Con las tablas
+ *  reales, otro archivo de test que borra su empresa justo en ese momento hace
+ *  fallar la clave foránea (la migración copia una fila que ya no existe): la
+ *  suite corre en paralelo. Por eso la migración se corre sobre copias TEMPORALES
+ *  de `tenant_modulos`, `usuario_modulos` y `usuarios` (los nombres sin esquema
+ *  resuelven primero a las temporales): solo ven lo que este test les pone, no
+ *  bloquean ni leen nada de los demás, y el `ALTER TABLE usuarios` de la ventana
+ *  NO FORCE cae sobre la copia y no toca la tabla real. Lo que se prueba es la
+ *  lógica del SQL; el RLS y la clave foránea reales se comprobaron aparte. */
 async function conTraspaso<T>(
   preparar: (c: import("pg").PoolClient) => Promise<void>,
   leer: (c: import("pg").PoolClient) => Promise<T>,
@@ -58,7 +67,15 @@ async function conTraspaso<T>(
   try {
     await c.query("BEGIN");
     await c.query("SET LOCAL lock_timeout = '10s'");
+    for (const tabla of ["tenant_modulos", "usuario_modulos"]) {
+      await c.query(
+        `CREATE TEMP TABLE ${tabla} (LIKE public.${tabla} INCLUDING ALL) ON COMMIT DROP`
+      );
+    }
+    await c.query(`CREATE TEMP TABLE usuarios (id uuid PRIMARY KEY) ON COMMIT DROP`);
     await preparar(c);
+    // Los usuarios que el test dio de alta "existen" para la migración.
+    await c.query(`INSERT INTO usuarios SELECT DISTINCT usuario_id FROM usuario_modulos`);
     for (let i = 0; i < pasadas; i++) await c.query(SQL_ACCESOS);
     return await leer(c);
   } finally {
