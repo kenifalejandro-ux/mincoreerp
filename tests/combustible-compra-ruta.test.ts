@@ -580,9 +580,9 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
         conductor_dni: dni,
       });
       expect(unidad.status, JSON.stringify(unidad.body)).toBe(201);
-      const origen = await agente.post(`${base}/lugares`).send({ nombre: idUnico("ORI") });
-      const destino = await agente.post(`${base}/lugares`).send({ nombre: idUnico("DES") });
-      const v = await agente.post(`${base}/viajes`).send({
+      const origen = await agente.post("/api/erp/viajes/lugares").send({ nombre: idUnico("ORI") });
+      const destino = await agente.post("/api/erp/viajes/lugares").send({ nombre: idUnico("DES") });
+      const v = await agente.post("/api/erp/viajes").send({
         equipo_id: Number(unidad.body.id),
         origen_id: Number(origen.body.id),
         destino_id: Number(destino.body.id),
@@ -620,8 +620,8 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
 
     it("el viaje en curso gana al programado", async () => {
       const { a, dni, equipo } = await conductorConViaje(true);
-      const origen = await agente.post(`${base}/lugares`).send({ nombre: idUnico("O2") });
-      const destino = await agente.post(`${base}/lugares`).send({ nombre: idUnico("D2") });
+      const origen = await agente.post("/api/erp/viajes/lugares").send({ nombre: idUnico("O2") });
+      const destino = await agente.post("/api/erp/viajes/lugares").send({ nombre: idUnico("D2") });
       const otra = await agente.post("/api/erp/equipos").send({
         placa_codigo: idUnico("VK"),
         tipo: "VOLQUETE",
@@ -630,7 +630,7 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
         conductor_dni: dni,
       });
       expect(otra.status, JSON.stringify(otra.body)).toBe(201);
-      const programado = await agente.post(`${base}/viajes`).send({
+      const programado = await agente.post("/api/erp/viajes").send({
         equipo_id: Number(otra.body.id),
         origen_id: Number(origen.body.id),
         destino_id: Number(destino.body.id),
@@ -686,7 +686,7 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
     it("un viaje anulado no cuenta", async () => {
       const { a, viaje } = await conductorConViaje(false);
       const anular = await agente
-        .post(`${base}/viajes/${viaje}/anular`)
+        .post(`/api/erp/viajes/${viaje}/anular`)
         .send({ motivo: "Se programó por error" });
       expect(anular.status, JSON.stringify(anular.body)).toBe(200);
       expect((await a.get(`${base}/viajes/mi-unidad`)).body.data).toBeNull();

@@ -107,12 +107,12 @@ describe("combustible: medidor inconsistente se evalúa por fecha del vale", () 
       })
     ).body.id as number;
     const origen = (
-      await agente.post("/api/erp/combustible/lugares").send({ nombre: idUnico("Origen") })
+      await agente.post("/api/erp/viajes/lugares").send({ nombre: idUnico("Origen") })
     ).body.id;
     const destino = (
-      await agente.post("/api/erp/combustible/lugares").send({ nombre: idUnico("Destino") })
+      await agente.post("/api/erp/viajes/lugares").send({ nombre: idUnico("Destino") })
     ).body.id;
-    const v = await agente.post("/api/erp/combustible/viajes").send({
+    const v = await agente.post("/api/erp/viajes").send({
       equipo_id: eq,
       origen_id: Number(origen),
       destino_id: Number(destino),

@@ -41,7 +41,7 @@ export async function prepararViajeDeConductor(
   const grifoId = await primerGrifoActivo(page);
 
   const lugar = async (nombre: string) => {
-    const r = await page.request.post("/api/erp/combustible/lugares", { data: { nombre } });
+    const r = await page.request.post("/api/erp/viajes/lugares", { data: { nombre } });
     expect(r.status()).toBe(201);
     return Number((await r.json()).id);
   };
@@ -88,7 +88,7 @@ export async function prepararViajeDeConductor(
   }
   // Retroactivo: un viaje A → B ya hecho (salió hace 10 h y llegó hace 2 h), con un solo turno.
   const horasAtras = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
-  const programado = await page.request.post("/api/erp/combustible/viajes", {
+  const programado = await page.request.post("/api/erp/viajes", {
     data: {
       equipo_id: (await equipo.json()).id,
       paradas: opciones.retroactivo ? [idA, idB] : [idA, idB, idA],
@@ -132,7 +132,7 @@ export async function prepararViajeDeConductor(
       },
     });
     expect(otra.status()).toBe(201);
-    const extra = await page.request.post("/api/erp/combustible/viajes", {
+    const extra = await page.request.post("/api/erp/viajes", {
       data: {
         equipo_id: (await otra.json()).id,
         paradas: [idA, idB],

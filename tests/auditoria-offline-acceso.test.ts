@@ -210,7 +210,7 @@ describe("H6 — la marca de tenant se escribe aunque la limpieza no haya termin
     const { readFileSync } = await import("node:fs");
     const cfg = readFileSync("client/vite.config.js", "utf8");
     // El comentario puede nombrarlo; la lista de rutas cacheadas, no.
-    expect(cfg).not.toContain('"/api/erp/combustible/viajes/mios"');
+    expect(cfg).not.toContain('"/api/erp/viajes/mios"');
     const precarga = readFileSync("client/src/offline/precargaCatalogos.ts", "utf8");
     expect(precarga).not.toContain("viajes/mios");
   });

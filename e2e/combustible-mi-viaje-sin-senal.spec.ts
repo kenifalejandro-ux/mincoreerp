@@ -47,7 +47,7 @@ test("llegar a la parada y salir sin señal queda guardado y se envía en orden 
   await expect
     .poll(
       async () => {
-        const mios = await page.request.get("/api/erp/combustible/viajes/mios");
+        const mios = await page.request.get("/api/erp/viajes/mios");
         if (!mios.ok()) return "sin respuesta";
         const viaje = (
           (await mios.json()).data as {

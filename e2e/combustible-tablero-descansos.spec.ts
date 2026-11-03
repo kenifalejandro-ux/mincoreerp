@@ -21,7 +21,7 @@ test("el encargado marca el descanso y la llegada por el conductor, y no avanza 
   const grifoId = await primerGrifoActivo(page);
 
   const lugar = async (nombre: string) => {
-    const r = await page.request.post("/api/erp/combustible/lugares", { data: { nombre } });
+    const r = await page.request.post("/api/erp/viajes/lugares", { data: { nombre } });
     expect(r.status()).toBe(201);
     return Number((await r.json()).id);
   };
@@ -40,12 +40,12 @@ test("el encargado marca el descanso y la llegada por el conductor, y no avanza 
     },
   });
   expect(equipo.status()).toBe(201);
-  const programado = await page.request.post("/api/erp/combustible/viajes", {
+  const programado = await page.request.post("/api/erp/viajes", {
     data: { equipo_id: (await equipo.json()).id, paradas: [idA, idB, idA] },
   });
   expect(programado.status()).toBe(201);
   const viaje = await programado.json();
-  const salida = await page.request.post(`/api/erp/combustible/viajes/${viaje.id}/iniciar`, {
+  const salida = await page.request.post(`/api/erp/viajes/${viaje.id}/iniciar`, {
     data: { medidor_inicio: 100 },
   });
   expect(salida.status()).toBe(200);
@@ -78,7 +78,7 @@ test("el encargado marca el descanso y la llegada por el conductor, y no avanza 
     page.getByRole("button", { name: `Marcar por el conductor: Salida de ${b} hacia ${a}` })
   ).toBeVisible();
 
-  const lista = await page.request.get(`/api/erp/combustible/viajes/${viaje.id}`);
+  const lista = await page.request.get(`/api/erp/viajes/${viaje.id}`);
   const detalle = (await lista.json()).viaje as {
     paradas: { llegada_en: string | null; llegada_medidor: string | number | null }[];
     descansos: { fin_en: string | null; inicio_por: string; fin_por: string | null }[];

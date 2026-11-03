@@ -74,21 +74,10 @@ export const ESCRITURAS_OFFLINE: Record<string, EscrituraOffline[]> = {
     // compra. La cola drena en orden: el registro llega antes que su foto.
     { metodo: "POST", ruta: "/compras-ruta" },
     { metodo: "POST", ruta: "/compras-ruta/por-uuid/:clienteUuid/comprobante" },
-    // "Mi viaje" (0124): salida y llegada del conductor, sin señal en ruta.
-    { metodo: "POST", ruta: "/viajes/:viajeId/iniciar-mio" },
-    { metodo: "POST", ruta: "/viajes/:viajeId/cerrar-mio" },
-    { metodo: "POST", ruta: "/viajes/:viajeId/llegada-mia" },
-    { metodo: "POST", ruta: "/viajes/:viajeId/salida-mia" },
-    { metodo: "POST", ruta: "/viajes/:viajeId/descanso-mio" },
-    { metodo: "POST", ruta: "/viajes/:viajeId/descanso-mio/terminar" },
-    { metodo: "POST", ruta: "/viajes/:viajeId/mando/entregar" },
-    { metodo: "POST", ruta: "/viajes/:viajeId/mando/aceptar" },
-    { metodo: "POST", ruta: "/viajes/:viajeId/mando/retirar" },
   ],
 
-  // Lo mismo bajo el módulo propio de Viajes. El cliente todavía llama a las URL
-  // de Combustible (de arriba); estas quedan declaradas para cuando pase a las
-  // nuevas. Espejo de src/modules/registry.ts.
+  // "Mi viaje" (0124): salida, llegada, descanso y mando del conductor, sin señal en ruta.
+  // Espejo de src/modules/registry.ts.
   viajes: [
     { metodo: "POST", ruta: "/:viajeId/iniciar-mio" },
     { metodo: "POST", ruta: "/:viajeId/cerrar-mio" },

@@ -29,12 +29,6 @@ import {
   requireModulo,
   requireNivelParaEscribir,
 } from "../src/server/shared/middlewares/modulo.middleware";
-import {
-  exportarPlataformaService,
-  restaurarBackupPlataformaService,
-} from "../src/server/services/platformBackupPlataforma.service";
-import { guardarBackup, leerBackup } from "../src/server/services/platformBackupStorage";
-import type { ContextoAuditoria } from "../src/server/services/platformAudit.service";
 
 const BEARER = `Bearer ${env.platformAdminToken}`;
 const PASSWORD = "ClaveDePrueba123";
@@ -419,26 +413,7 @@ describe("módulos flota y viajes", () => {
       expect(intacta.rows[0].estado).toBe("habilitado");
     });
 
-    it("un backup de plataforma anterior al renombre (con `equipos`, sin `viajes`) se restaura sin error", async () => {
-      const contexto: ContextoAuditoria = {
-        ip: "127.0.0.1",
-        actorType: "platform_admin",
-        actorLabel: "test",
-      };
-      const backup = await exportarPlataformaService(contexto);
-      const ubicacion = { storage: backup.storage, key: backup.storageKey };
-      const contenido = JSON.parse(await leerBackup(ubicacion));
-      for (const tabla of ["tenant_modulos", "usuario_modulos"]) {
-        contenido.tablas[tabla] = (contenido.tablas[tabla] as { modulo: string }[])
-          .filter((f) => f.modulo !== "viajes")
-          .map((f) => (f.modulo === "flota" ? { ...f, modulo: "equipos" } : f));
-      }
-      await guardarBackup(backup.storageKey, JSON.stringify(contenido));
-
-      await expect(restaurarBackupPlataformaService(backup.id, contexto)).resolves.toBeDefined();
-    });
-
-    it("un token anterior al renombre (`equipos`) sigue abriendo Flota, y en consultas SIGUE sin escribir", () => {
+    it("el acceso a Flota se decide por el id `flota`: un nivel `consultas` no escribe y un token con el nombre viejo `equipos` ya no abre nada", () => {
       const pasa = (
         mw: (req: never, res: never, next: () => void) => void,
         usuario: object,
@@ -450,13 +425,16 @@ describe("módulos flota y viajes", () => {
         mw({ usuario, method: metodo } as never, res as never, () => (siguio = true));
         return { siguio, estado };
       };
-      const viejo = { rol: "operador", modulosPermitidos: ["equipos"], modulosConsulta: [] };
-      expect(pasa(requireModulo("flota"), viejo).siguio).toBe(true);
-      expect(pasa(requireModulo("flota"), { ...viejo, modulosPermitidos: [] }).estado).toBe(403);
+      const actual = { rol: "operador", modulosPermitidos: ["flota"], modulosConsulta: [] };
+      expect(pasa(requireModulo("flota"), actual).siguio).toBe(true);
+      // El alias de los tokens anteriores al renombre se retiró: el nombre viejo ya no sirve.
+      expect(
+        pasa(requireModulo("flota"), { ...actual, modulosPermitidos: ["equipos"] }).estado
+      ).toBe(403);
 
-      const enConsulta = { ...viejo, modulosConsulta: ["equipos"] };
+      const enConsulta = { ...actual, modulosConsulta: ["flota"] };
       expect(pasa(requireNivelParaEscribir("flota"), enConsulta, "POST").estado).toBe(403);
-      expect(pasa(requireNivelParaEscribir("flota"), viejo, "POST").siguio).toBe(true);
+      expect(pasa(requireNivelParaEscribir("flota"), actual, "POST").siguio).toBe(true);
     });
   });
 });

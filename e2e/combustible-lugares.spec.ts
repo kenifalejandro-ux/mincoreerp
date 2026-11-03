@@ -97,7 +97,7 @@ test("agregar, editar, buscar, desactivar y reactivar un lugar", async ({ page }
   await expect(fila(page, mina)).toContainText("Activo");
 
   // Quedó guardado en el servidor, no solo en pantalla.
-  const lista = await page.request.get("/api/erp/combustible/lugares");
+  const lista = await page.request.get("/api/erp/viajes/lugares");
   const guardado = (
     (await lista.json()).data as { nombre: string; tipo: string; activo: boolean }[]
   ).find((l) => l.nombre === mina);
@@ -112,7 +112,7 @@ test("un lugar desactivado no se ofrece al programar un viaje", async ({ page })
   const grifoId = await primerGrifoActivo(page);
 
   const crear = async (nombre: string) => {
-    const r = await page.request.post("/api/erp/combustible/lugares", {
+    const r = await page.request.post("/api/erp/viajes/lugares", {
       data: { nombre, tipo: "ciudad" },
     });
     expect(r.status()).toBe(201);
@@ -122,7 +122,7 @@ test("un lugar desactivado no se ofrece al programar un viaje", async ({ page })
   const baja = `Baja ${marca}`;
   await crear(vigente);
   const bajaId = await crear(baja);
-  const desactivar = await page.request.patch(`/api/erp/combustible/lugares/${bajaId}`, {
+  const desactivar = await page.request.patch(`/api/erp/viajes/lugares/${bajaId}`, {
     data: { activo: false },
   });
   expect(desactivar.status()).toBe(200);
@@ -158,7 +158,7 @@ test("un viaje cuyo lugar se desactivó se puede corregir sin cambiarlo", async 
   const grifoId = await primerGrifoActivo(page);
 
   const crear = async (nombre: string) => {
-    const r = await page.request.post("/api/erp/combustible/lugares", {
+    const r = await page.request.post("/api/erp/viajes/lugares", {
       data: { nombre, tipo: "mina" },
     });
     expect(r.status()).toBe(201);
@@ -179,7 +179,7 @@ test("un viaje cuyo lugar se desactivó se puede corregir sin cambiarlo", async 
   });
   expect(equipo.status()).toBe(201);
   const hace = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
-  const viaje = await page.request.post("/api/erp/combustible/viajes", {
+  const viaje = await page.request.post("/api/erp/viajes", {
     data: {
       equipo_id: (await equipo.json()).id,
       origen_id: Number(origen),
@@ -192,7 +192,7 @@ test("un viaje cuyo lugar se desactivó se puede corregir sin cambiarlo", async 
   const numero = (await viaje.json()).numero as number;
 
   // Después de la salida, alguien desactiva el destino.
-  const baja = await page.request.patch(`/api/erp/combustible/lugares/${destino}`, {
+  const baja = await page.request.patch(`/api/erp/viajes/lugares/${destino}`, {
     data: { activo: false },
   });
   expect(baja.status()).toBe(200);
@@ -253,7 +253,7 @@ test("el perfil Lectura no ve el botón de Lugares", async ({ page, browser }) =
       await expect(lectura.getByRole("button", { name: nombre, exact: true })).toHaveCount(0);
     }
     // Y la API tampoco le deja escribir.
-    const escribir = await lectura.request.post("/api/erp/combustible/lugares", {
+    const escribir = await lectura.request.post("/api/erp/viajes/lugares", {
       data: { nombre: `Intruso ${marca}`, tipo: "mina" },
     });
     expect(escribir.status()).toBe(403);

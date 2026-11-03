@@ -28,7 +28,7 @@ describe("equipos: conductor y rutas con historial (0126)", () => {
   let cusco: number;
 
   const lugar = async (agente: typeof admin, nombre: string) => {
-    const r = await agente.post("/api/erp/combustible/lugares").send({ nombre });
+    const r = await agente.post("/api/erp/viajes/lugares").send({ nombre });
     expect(r.status, JSON.stringify(r.body)).toBe(201);
     return Number(r.body.id);
   };

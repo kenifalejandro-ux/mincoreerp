@@ -53,7 +53,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
   }
 
   const lugar = async (nombre: string) =>
-    Number((await admin.post("/api/erp/combustible/lugares").send({ nombre })).body.id);
+    Number((await admin.post("/api/erp/viajes/lugares").send({ nombre })).body.id);
 
   const unidad = async () => {
     const r = await admin.post("/api/erp/equipos").send({
@@ -68,7 +68,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
   };
 
   const viaje = (equipo_id: number, extra: Record<string, unknown> = {}) =>
-    admin.post("/api/erp/combustible/viajes").send({
+    admin.post("/api/erp/viajes").send({
       equipo_id,
       origen_id: huamachuco,
       destino_id: bambamarca,
@@ -92,7 +92,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     });
 
   const consumo = async (equipo_id: number, producto = "combustible", agente = admin) =>
-    agente.get("/api/erp/combustible/viajes/consumo").query({ equipo_id, producto });
+    agente.get("/api/erp/viajes/consumo").query({ equipo_id, producto });
 
   beforeAll(async () => {
     const creado = await crearTenantDePrueba(password);
@@ -135,9 +135,9 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
 
   it("un lugar repetido (sin importar mayúsculas) da 409", async () => {
     const nombre = idUnico("Cajamarca");
-    expect((await admin.post("/api/erp/combustible/lugares").send({ nombre })).status).toBe(201);
+    expect((await admin.post("/api/erp/viajes/lugares").send({ nombre })).status).toBe(201);
     const otra = await admin
-      .post("/api/erp/combustible/lugares")
+      .post("/api/erp/viajes/lugares")
       .send({ nombre: ` ${nombre.toUpperCase()} ` });
     expect(otra.status).toBe(409);
   });
@@ -176,7 +176,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const urea = (await consumo(eq, "urea")).body.data[0];
     expect(Number(urea.cargas)).toBe(1);
 
-    const det = await admin.get(`/api/erp/combustible/viajes/${v.body.id}`);
+    const det = await admin.get(`/api/erp/viajes/${v.body.id}`);
     expect(det.status).toBe(200);
     expect(det.body.cargas.map((c: { producto: string }) => c.producto).sort()).toEqual([
       "combustible",
@@ -259,7 +259,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const fila = (await consumo(eq)).body.data[0];
     expect(Number(fila.cantidad)).toBeCloseTo(21, 2);
 
-    const det = await admin.get(`/api/erp/combustible/viajes/${v.body.id}`);
+    const det = await admin.get(`/api/erp/viajes/${v.body.id}`);
     const c = det.body.cargas.find(
       (x: { producto: string; origen: string }) =>
         x.producto === "combustible" && x.origen === "compra_externa"
@@ -274,7 +274,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(suma("urea_l")).toBeCloseTo(8, 2);
 
     // "Mi viaje" del conductor: su último viaje cerrado trae lo mismo.
-    const mios = await yo.agente.get("/api/erp/combustible/viajes/mios");
+    const mios = await yo.agente.get("/api/erp/viajes/mios");
     expect(mios.status).toBe(200);
     expect(Number(mios.body.data[0].combustible_gal)).toBeCloseTo(21, 2);
     expect(Number(mios.body.data[0].urea_l)).toBeCloseTo(8, 2);
@@ -286,7 +286,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
       inicio_en: hora(20),
     });
     expect(otra.status, JSON.stringify(otra.body)).toBe(201);
-    const det2 = await admin.get(`/api/erp/combustible/viajes/${otra.body.id}`);
+    const det2 = await admin.get(`/api/erp/viajes/${otra.body.id}`);
     expect(Number(det2.body.ruta.combustible_gal)).toBeCloseTo(21, 2);
     expect(Number(det2.body.ruta.urea_l)).toBeCloseTo(8, 2);
   });
@@ -321,14 +321,14 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect((await viaje(eq, { inicio_en: hora(60) })).status).toBe(409);
 
     const cierre = await admin
-      .post(`/api/erp/combustible/viajes/${b.body.id}/cerrar`)
+      .post(`/api/erp/viajes/${b.body.id}/cerrar`)
       .send({ fin_en: hora(55), motivo: "Marca de oficina" });
     expect(cierre.status).toBe(200);
     expect(cierre.body.estado).toBe("cerrado");
     expect(
       (
         await admin
-          .post(`/api/erp/combustible/viajes/${b.body.id}/cerrar`)
+          .post(`/api/erp/viajes/${b.body.id}/cerrar`)
           .send({ fin_en: hora(56), motivo: "Marca de oficina" })
       ).status
     ).toBe(409);
@@ -346,7 +346,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
   it("editar y anular piden motivo; el anulado sale del consumo y ya no se toca", async () => {
     const eq = await unidad();
     const v = (await viaje(eq, { inicio_en: hora(80), fin_en: hora(85) })).body;
-    const url = `/api/erp/combustible/viajes/${v.id}`;
+    const url = `/api/erp/viajes/${v.id}`;
 
     expect((await admin.put(url).send({ observaciones: "Lleva carga" })).status).toBe(400);
     const ed = await admin
@@ -368,13 +368,13 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
   });
 
   const programar = (equipo_id: number, extra: Record<string, unknown> = {}) =>
-    admin.post("/api/erp/combustible/viajes").send({
+    admin.post("/api/erp/viajes").send({
       equipo_id,
       origen_id: huamachuco,
       destino_id: bambamarca,
       ...extra,
     });
-  const url = (id: number | string, accion = "") => `/api/erp/combustible/viajes/${id}${accion}`;
+  const url = (id: number | string, accion = "") => `/api/erp/viajes/${id}${accion}`;
 
   it("un viaje programado no tiene salida, no cuenta cargas y no acepta medidores", async () => {
     const eq = await unidad();
@@ -553,11 +553,11 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
 
   it("Lectura consulta pero no registra; el grifero no ve viajes", async () => {
     const lectura = await conRol("lectura");
-    expect((await lectura.get("/api/erp/combustible/viajes")).status).toBe(200);
+    expect((await lectura.get("/api/erp/viajes")).status).toBe(200);
     expect((await consumo(1, "combustible", lectura)).status).toBe(200);
     expect(
       (
-        await lectura.post("/api/erp/combustible/viajes").send({
+        await lectura.post("/api/erp/viajes").send({
           equipo_id: 1,
           origen_id: huamachuco,
           destino_id: bambamarca,
@@ -565,12 +565,10 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
         })
       ).status
     ).toBe(403);
-    expect((await lectura.post("/api/erp/combustible/lugares").send({ nombre: "X" })).status).toBe(
-      403
-    );
+    expect((await lectura.post("/api/erp/viajes/lugares").send({ nombre: "X" })).status).toBe(403);
 
     const grifero = await conRol("grifero");
-    expect((await grifero.get("/api/erp/combustible/viajes")).status).toBe(403);
+    expect((await grifero.get("/api/erp/viajes")).status).toBe(403);
     expect((await consumo(1, "combustible", grifero)).status).toBe(403);
     expect((await consumo(1, "urea", grifero)).status).toBe(403);
   });
@@ -586,14 +584,13 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
       .post("/api/auth/login")
       .send({ tenantSlug: otro.tenant.slug, email: otro.usuario.email, password });
 
-    expect((await ajeno.get(`/api/erp/combustible/viajes/${v.id}`)).status).toBe(404);
-    expect((await ajeno.get("/api/erp/combustible/viajes")).body.data).toHaveLength(0);
+    expect((await ajeno.get(`/api/erp/viajes/${v.id}`)).status).toBe(404);
+    expect((await ajeno.get("/api/erp/viajes")).body.data).toHaveLength(0);
     expect(
-      (await ajeno.post(`/api/erp/combustible/viajes/${v.id}/anular`).send({ motivo: "ajeno" }))
-        .status
+      (await ajeno.post(`/api/erp/viajes/${v.id}/anular`).send({ motivo: "ajeno" })).status
     ).toBe(404);
     const propio = Number(
-      (await ajeno.post("/api/erp/combustible/lugares").send({ nombre: idUnico("Lima") })).body.id
+      (await ajeno.post("/api/erp/viajes/lugares").send({ nombre: idUnico("Lima") })).body.id
     );
     const eqAjeno = Number(
       (await ajeno.post("/api/erp/equipos").send({ placa_codigo: idUnico("VQ"), tipo: "VOLQUETE" }))
@@ -602,7 +599,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     // Lugar de otro tenant.
     expect(
       (
-        await ajeno.post("/api/erp/combustible/viajes").send({
+        await ajeno.post("/api/erp/viajes").send({
           equipo_id: eqAjeno,
           origen_id: huamachuco,
           destino_id: propio,
@@ -612,11 +609,11 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     ).toBe(400);
     // Unidad de otro tenant.
     const propio2 = Number(
-      (await ajeno.post("/api/erp/combustible/lugares").send({ nombre: idUnico("Ica") })).body.id
+      (await ajeno.post("/api/erp/viajes/lugares").send({ nombre: idUnico("Ica") })).body.id
     );
     expect(
       (
-        await ajeno.post("/api/erp/combustible/viajes").send({
+        await ajeno.post("/api/erp/viajes").send({
           equipo_id: eq,
           origen_id: propio,
           destino_id: propio2,
@@ -642,7 +639,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
       | "mando/aceptar"
       | "mando/retirar",
     body: object
-  ) => a.post(`/api/erp/combustible/viajes/${id}/${accion}`).send(body);
+  ) => a.post(`/api/erp/viajes/${id}/${accion}`).send(body);
 
   it("el conductor ve solo sus viajes (por su DNI) y no puede marcar los de otro", async () => {
     const yo = await conductor();
@@ -650,7 +647,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const eq = await unidad();
     const eq2 = await unidad();
     const mio = (
-      await admin.post("/api/erp/combustible/viajes").send({
+      await admin.post("/api/erp/viajes").send({
         equipo_id: eq,
         origen_id: huamachuco,
         destino_id: bambamarca,
@@ -659,7 +656,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
       })
     ).body;
     const ajeno = (
-      await admin.post("/api/erp/combustible/viajes").send({
+      await admin.post("/api/erp/viajes").send({
         equipo_id: eq2,
         origen_id: huamachuco,
         destino_id: bambamarca,
@@ -667,7 +664,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
       })
     ).body;
 
-    const lista = await yo.agente.get("/api/erp/combustible/viajes/mios");
+    const lista = await yo.agente.get("/api/erp/viajes/mios");
     expect(lista.status).toBe(200);
     expect(lista.body.data.map((v: { id: string }) => v.id)).toEqual([mio.id]);
     expect(lista.body.data[0].previo).toMatchObject({ tipo_medidor: "odometro" });
@@ -685,7 +682,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const yo = await conductor();
     const eq = await unidad();
     const v = (
-      await admin.post("/api/erp/combustible/viajes").send({
+      await admin.post("/api/erp/viajes").send({
         equipo_id: eq,
         origen_id: huamachuco,
         destino_id: bambamarca,
@@ -723,7 +720,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const yo = await conductor();
     const eq = await unidad();
     const v = (
-      await admin.post("/api/erp/combustible/viajes").send({
+      await admin.post("/api/erp/viajes").send({
         equipo_id: eq,
         origen_id: huamachuco,
         destino_id: bambamarca,
@@ -770,7 +767,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
 
     // Una carga en ruta entra al viaje y el conductor la ve en su tarjeta.
     expect((await cargar(eq, 30, (Date.parse(hace(120)) - T0) / H)).status).toBe(201);
-    const enCurso = (await yo.agente.get("/api/erp/combustible/viajes/mios")).body.data[0];
+    const enCurso = (await yo.agente.get("/api/erp/viajes/mios")).body.data[0];
     expect(Number(enCurso.combustible_gal)).toBeCloseTo(30, 1);
     // Ve sus propias cargas y lo que suele tardar la ruta (para estimar la
     // llegada), pero NADA de promedios de consumo ni comparaciones.
@@ -794,36 +791,28 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const yo = await conductor();
     const eq = await unidad();
     const v = (
-      await admin.post("/api/erp/combustible/viajes").send({
+      await admin.post("/api/erp/viajes").send({
         equipo_id: eq,
         origen_id: huamachuco,
         destino_id: bambamarca,
         conductor_dni: yo.dni,
       })
     ).body;
-    expect((await yo.agente.get("/api/erp/combustible/viajes")).status).toBe(403);
+    expect((await yo.agente.get("/api/erp/viajes")).status).toBe(403);
     expect(
-      (
-        await yo.agente
-          .post(`/api/erp/combustible/viajes/${v.id}/iniciar`)
-          .send({ medidor_inicio: 1 })
-      ).status
+      (await yo.agente.post(`/api/erp/viajes/${v.id}/iniciar`).send({ medidor_inicio: 1 })).status
     ).toBe(403);
     expect(
       (
         await yo.agente
-          .post("/api/erp/combustible/viajes")
+          .post("/api/erp/viajes")
           .send({ equipo_id: eq, origen_id: huamachuco, destino_id: bambamarca })
       ).status
     ).toBe(403);
-    expect((await (await conRol("grifero")).get("/api/erp/combustible/viajes/mios")).status).toBe(
-      403
-    );
-    expect((await (await conRol("lectura")).get("/api/erp/combustible/viajes/mios")).status).toBe(
-      403
-    );
+    expect((await (await conRol("grifero")).get("/api/erp/viajes/mios")).status).toBe(403);
+    expect((await (await conRol("lectura")).get("/api/erp/viajes/mios")).status).toBe(403);
 
-    const lista = await admin.get("/api/erp/combustible/viajes/conductores");
+    const lista = await admin.get("/api/erp/viajes/conductores");
     expect(lista.status).toBe(200);
     expect(lista.body.data.map((c: { dni: string }) => c.dni)).toContain(yo.dni);
   });
@@ -848,7 +837,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
       expect((await cargar(eq, gal, ini + 1)).status).toBe(201);
     }
     const p = (await programar(eq, { origen_id: a, destino_id: b })).body;
-    const det = await admin.get(`/api/erp/combustible/viajes/${p.id}`);
+    const det = await admin.get(`/api/erp/viajes/${p.id}`);
     expect(det.status).toBe(200);
     expect(det.body.ruta.viajes).toBe(3);
     expect(det.body.ruta.duracion_min).toBeCloseTo(240, 0);
@@ -896,7 +885,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
       inicio_en: hora(60),
     });
     expect(enRuta.status, JSON.stringify(enRuta.body)).toBe(201);
-    const det = await admin.get(`/api/erp/combustible/viajes/${enRuta.body.id}`);
+    const det = await admin.get(`/api/erp/viajes/${enRuta.body.id}`);
     const t = det.body.tramos as {
       esperado_min: number | null;
       esperado_viajes: number;
@@ -921,7 +910,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
       inicio_en: hora(70),
     });
     expect(enRuta2.status, JSON.stringify(enRuta2.body)).toBe(201);
-    const det2 = await admin.get(`/api/erp/combustible/viajes/${enRuta2.body.id}`);
+    const det2 = await admin.get(`/api/erp/viajes/${enRuta2.body.id}`);
     expect(det2.body.tramos[0]).toMatchObject({ esperado_min: 240, esperado_base: "todas" });
   });
 
@@ -1035,7 +1024,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const salir = async (programadaEn: string | null) => {
       const yo = await conductor();
       const eq = await unidad();
-      const v = await admin.post("/api/erp/combustible/viajes").send({
+      const v = await admin.post("/api/erp/viajes").send({
         equipo_id: eq,
         origen_id: huamachuco,
         destino_id: bambamarca,
@@ -1072,7 +1061,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const tarde = await programarPara(yo.dni, { salida_programada_en: enMin(120) });
     const primero = await programarPara(yo.dni, { salida_programada_en: enMin(60) });
 
-    const mios = (await yo.agente.get("/api/erp/combustible/viajes/mios")).body.data as {
+    const mios = (await yo.agente.get("/api/erp/viajes/mios")).body.data as {
       id: string;
       estado: string;
       cola_posicion: number | null;
@@ -1094,7 +1083,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     ).toBe(200);
 
     // Ya en curso el primero, los demás suben en la cola.
-    const despues = (await yo.agente.get("/api/erp/combustible/viajes/mios")).body.data as {
+    const despues = (await yo.agente.get("/api/erp/viajes/mios")).body.data as {
       id: string;
       cola_posicion: number | null;
     }[];
@@ -1186,7 +1175,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(
       (await admin.post(url(primero.id, "/anular")).send({ motivo: "Se canceló" })).status
     ).toBe(200);
-    const mios = (await yo.agente.get("/api/erp/combustible/viajes/mios")).body.data as {
+    const mios = (await yo.agente.get("/api/erp/viajes/mios")).body.data as {
       id: string;
       cola_posicion: number | null;
     }[];
@@ -1206,7 +1195,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const eq = await unidad();
     const conRelevo = await programar(eq, { conductor_dni: otro.dni, relevo_dni: yo.dni });
     expect(conRelevo.status, JSON.stringify(conRelevo.body)).toBe(201);
-    const mios = (await yo.agente.get("/api/erp/combustible/viajes/mios")).body.data as {
+    const mios = (await yo.agente.get("/api/erp/viajes/mios")).body.data as {
       id: string;
       estado: string;
       cola_posicion: number | null;
@@ -1218,8 +1207,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
   // ── Resumen por conductor ─────────────────────────────────────────────────
 
   const resumenDe = async (desde: string, hasta: string) =>
-    (await admin.get("/api/erp/combustible/viajes/resumen-conductores").query({ desde, hasta }))
-      .body.data as {
+    (await admin.get("/api/erp/viajes/resumen-conductores").query({ desde, hasta })).body.data as {
       dni: string;
       nombre: string;
       viajes: number;
@@ -1330,7 +1318,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const cerrado = async (programadaEn: string) => {
       const yo = await conductor();
       const eq = await unidad();
-      const v = await admin.post("/api/erp/combustible/viajes").send({
+      const v = await admin.post("/api/erp/viajes").send({
         equipo_id: eq,
         origen_id: huamachuco,
         destino_id: bambamarca,
@@ -1386,7 +1374,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
 
   it("A → B → A: origen y destino son la ida, hay tres paradas y las marcas de los extremos se copian", async () => {
     const eq = await unidad();
-    const p = await admin.post("/api/erp/combustible/viajes").send({
+    const p = await admin.post("/api/erp/viajes").send({
       equipo_id: eq,
       paradas: [huamachuco, bambamarca, huamachuco],
     });
@@ -1416,7 +1404,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
   it("paradas inválidas: seguidas iguales, lugar inexistente, desbordado, inconsistente o ya terminado", async () => {
     const eq = await unidad();
     const crear = (extra: Record<string, unknown>) =>
-      admin.post("/api/erp/combustible/viajes").send({ equipo_id: eq, ...extra });
+      admin.post("/api/erp/viajes").send({ equipo_id: eq, ...extra });
     expect((await crear({ paradas: [huamachuco, huamachuco, bambamarca] })).status).toBe(400);
     expect((await crear({ paradas: [huamachuco, 987654321] })).status).toBe(400);
     expect((await crear({ paradas: [huamachuco, 1e20] })).status).toBe(400); // no es un 500
@@ -1442,10 +1430,10 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
       .post("/api/auth/login")
       .send({ tenantSlug: otro.tenant.slug, email: otro.usuario.email, password });
     const lugarAjeno = Number(
-      (await ajeno.post("/api/erp/combustible/lugares").send({ nombre: idUnico("Lima") })).body.id
+      (await ajeno.post("/api/erp/viajes/lugares").send({ nombre: idUnico("Lima") })).body.id
     );
     const eq = await unidad();
-    const r = await admin.post("/api/erp/combustible/viajes").send({
+    const r = await admin.post("/api/erp/viajes").send({
       equipo_id: eq,
       paradas: [huamachuco, bambamarca, lugarAjeno],
     });
@@ -1475,7 +1463,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
 
     const eq2 = await unidad();
     const circuito = (
-      await admin.post("/api/erp/combustible/viajes").send({
+      await admin.post("/api/erp/viajes").send({
         equipo_id: eq2,
         paradas: [huamachuco, bambamarca, lejos, huamachuco],
       })
@@ -1500,9 +1488,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const yo = await conductor();
     const eq = await unidad();
     const v = (
-      await admin
-        .post("/api/erp/combustible/viajes")
-        .send({ equipo_id: eq, paradas, conductor_dni: yo.dni })
+      await admin.post("/api/erp/viajes").send({ equipo_id: eq, paradas, conductor_dni: yo.dni })
     ).body;
     const ini = await marcar(yo.agente, v.id, "iniciar-mio", { medidor_inicio: 100 });
     expect(ini.status, JSON.stringify(ini.body)).toBe(200);
@@ -1658,7 +1644,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const eq = await unidad();
     const v = (
       await admin
-        .post("/api/erp/combustible/viajes")
+        .post("/api/erp/viajes")
         .send({ equipo_id: eq, paradas: [huamachuco, bambamarca], conductor_dni: yo.dni })
     ).body;
     const futuro = new Date(Date.now() + 10 * 86_400_000).toISOString();
@@ -1686,7 +1672,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const sinSenal = { yo: await conductor(), id: 0 };
     const eq = await unidad();
     const salio = (
-      await admin.post("/api/erp/combustible/viajes").send({
+      await admin.post("/api/erp/viajes").send({
         equipo_id: eq,
         paradas: [huamachuco, bambamarca, huamachuco],
         conductor_dni: sinSenal.yo.dni,
@@ -1839,7 +1825,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const y = await lugar(idUnico("Destino"));
     const ida = async (h: number, gal: number) => {
       const eq = await unidad();
-      const r = await admin.post("/api/erp/combustible/viajes").send({
+      const r = await admin.post("/api/erp/viajes").send({
         equipo_id: eq,
         origen_id: x,
         destino_id: y,
@@ -1860,9 +1846,8 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect((await marcar(yo.agente, id, "salida-mia", { medidor: 150 })).status).toBe(200);
     expect((await marcar(yo.agente, id, "llegada-mia", { medidor: 250 })).status).toBe(200);
 
-    const filas = (
-      await admin.get("/api/erp/combustible/viajes/consumo").query({ producto: "combustible" })
-    ).body.data as { recorrido_clave: string; promedio_ruta: string; viajes_ruta: string }[];
+    const filas = (await admin.get("/api/erp/viajes/consumo").query({ producto: "combustible" }))
+      .body.data as { recorrido_clave: string; promedio_ruta: string; viajes_ruta: string }[];
     const delCircuito = filas.filter((f) => f.recorrido_clave === `${x}-${y}-${x}`);
     const delTramoSolo = filas.filter((f) => f.recorrido_clave === `${x}-${y}`);
     expect(delCircuito).toHaveLength(1);
@@ -2007,7 +1992,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const otro = await conductor();
     const eq = await unidad();
     const programado = (
-      await admin.post("/api/erp/combustible/viajes").send({
+      await admin.post("/api/erp/viajes").send({
         equipo_id: eq,
         paradas: [huamachuco, bambamarca, huamachuco],
         conductor_dni: otro.dni,
@@ -2061,14 +2046,14 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     parte_min?: string | number | null;
   };
   const historial = (agente: Agente, query: Record<string, string | number> = {}) =>
-    agente.get("/api/erp/combustible/viajes/mios/historial").query(query);
+    agente.get("/api/erp/viajes/mios/historial").query(query);
 
   it("el historial del conductor trae solo sus viajes cerrados, del más reciente al más viejo, por páginas", async () => {
     const yo = await conductor();
     const otro = await conductor();
     const cerrado = async (dni: string, h: number, ini: number, fin: number) => {
       const eq = await unidad(); // antes de armar la petición: dos en el mismo agente se pisan
-      const r = await admin.post("/api/erp/combustible/viajes").send({
+      const r = await admin.post("/api/erp/viajes").send({
         equipo_id: eq,
         origen_id: huamachuco,
         destino_id: bambamarca,
@@ -2087,7 +2072,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     await cerrado(otro.dni, 40, 10, 20);
     // Programado y en curso no son historial.
     const eqProgramado = await unidad();
-    await admin.post("/api/erp/combustible/viajes").send({
+    await admin.post("/api/erp/viajes").send({
       equipo_id: eqProgramado,
       paradas: [huamachuco, bambamarca],
       conductor_dni: yo.dni,
@@ -2143,7 +2128,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const titular = await conductor();
     const relevo = await conductor();
     const eq = await unidad();
-    const r = await admin.post("/api/erp/combustible/viajes").send({
+    const r = await admin.post("/api/erp/viajes").send({
       equipo_id: eq,
       paradas,
       conductor_dni: titular.dni,
@@ -2154,7 +2139,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     return { titular, relevo, eq, id: Number(r.body.id), viaje: r.body };
   }
   const miosDe = async (agente: Agente) =>
-    (await agente.get("/api/erp/combustible/viajes/mios")).body.data as {
+    (await agente.get("/api/erp/viajes/mios")).body.data as {
       id: string;
       mi_rol: string;
       volante_dni: string;
@@ -2167,7 +2152,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const titular = await conductor();
     const nuevo = (extra: Record<string, unknown>) =>
       unidad().then((eq) =>
-        admin.post("/api/erp/combustible/viajes").send({
+        admin.post("/api/erp/viajes").send({
           equipo_id: eq,
           paradas: [huamachuco, bambamarca],
           conductor_dni: titular.dni,
@@ -2228,7 +2213,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     // El mismo conductor, con otro viaje: no puede salir mientras maneja el primero.
     const eq2 = await unidad();
     const otro = (
-      await admin.post("/api/erp/combustible/viajes").send({
+      await admin.post("/api/erp/viajes").send({
         equipo_id: eq2,
         paradas: [huamachuco, bambamarca],
         conductor_dni: relevo.dni,
@@ -2317,7 +2302,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const titular = await conductor();
     const relevo = await conductor();
     const eq = await unidad();
-    const r = await admin.post("/api/erp/combustible/viajes").send({
+    const r = await admin.post("/api/erp/viajes").send({
       equipo_id: eq,
       paradas,
       conductor_dni: titular.dni,
@@ -2511,7 +2496,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     // La respuesta se perdió y la cola reenvía lo mismo: el viaje vuelve como quedó, sin rechazo.
     const reenvio = await marcar(titular.agente, id, "mando/retirar", { cliente_uuid: uuid });
     expect(reenvio.status, JSON.stringify(reenvio.body)).toBe(200);
-    const mios = (await titular.agente.get("/api/erp/combustible/viajes/mios")).body.data as {
+    const mios = (await titular.agente.get("/api/erp/viajes/mios")).body.data as {
       id: string;
       entrega_pendiente: unknown;
     }[];
@@ -2577,7 +2562,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
   };
   // El viaje como lo ve Mi viaje del conductor (la fila completa, con turnos y entrega).
   const viajeDe = async (a: Agente, id: number) =>
-    (await a.get("/api/erp/combustible/viajes/mios")).body.data.find(
+    (await a.get("/api/erp/viajes/mios")).body.data.find(
       (x: { id: string }) => Number(x.id) === id
     ) as {
       volante_dni: string;

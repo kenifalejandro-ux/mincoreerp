@@ -233,15 +233,6 @@ export interface ResultadoRestorePlataforma {
  *  eso cada fila corre en su propio SAVEPOINT: si el INSERT viola una FK,
  *  se vuelve a ese punto (sin perder el resto de la transacción) y la fila
  *  se cuenta como salteada. */
-/** Módulos que cambiaron de id: un backup anterior los trae con el nombre
- *  viejo y el enum de la base ya no lo conoce (0165). Se traduce al leer. */
-const MODULOS_RENOMBRADOS: Record<string, string> = { equipos: "flota" };
-
-function conModuloActual(fila: Record<string, unknown>): Record<string, unknown> {
-  const nuevo = typeof fila.modulo === "string" ? MODULOS_RENOMBRADOS[fila.modulo] : undefined;
-  return nuevo ? { ...fila, modulo: nuevo } : fila;
-}
-
 async function restaurarTablasPlataforma(
   backup: ContenidoBackupPlataforma
 ): Promise<ResultadoRestorePlataforma> {
@@ -257,8 +248,7 @@ async function restaurarTablasPlataforma(
       filasInsertadas[meta.nombre] = 0;
       filasSalteadasPorFk[meta.nombre] = 0;
 
-      for (const filaOriginal of filas) {
-        const fila = conModuloActual(filaOriginal);
+      for (const fila of filas) {
         const columnas = Object.keys(fila).filter((c) => !meta.columnasGeneradas?.includes(c));
         const placeholders = columnas.map((_, i) => `$${i + 1}`).join(", ");
 

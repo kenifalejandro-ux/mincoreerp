@@ -29,7 +29,7 @@ test("el titular entrega el mando sin señal y el relevo lo acepta", async ({ pa
   await page.context().setOffline(false);
 
   const pendiente = async () => {
-    const mios = await page.request.get("/api/erp/combustible/viajes/mios");
+    const mios = await page.request.get("/api/erp/viajes/mios");
     const fila = ((await mios.json()).data as { id: string; entrega_pendiente: unknown }[]).find(
       (x) => x.id === v.viajeId
     );
