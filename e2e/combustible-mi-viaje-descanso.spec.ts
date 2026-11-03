@@ -22,7 +22,7 @@ interface DescansoApi {
 }
 
 async function descansosDelServidor(page: Page, v: ViajeDeConductor): Promise<DescansoApi[]> {
-  const mios = await page.request.get("/api/erp/combustible/viajes/mios");
+  const mios = await page.request.get("/api/erp/viajes/mios");
   if (!mios.ok()) return [];
   const viaje = (
     (await mios.json()).data as { id: string; descansos: DescansoApi[] | null }[]

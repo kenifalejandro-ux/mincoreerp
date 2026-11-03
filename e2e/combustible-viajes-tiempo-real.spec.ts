@@ -92,7 +92,7 @@ test("un viaje que programa la oficina aparece en la cola del conductor sin reca
     const admin = adminA();
     await loginPorUI(oficina, admin.email, admin.password);
     const grifoId = await primerGrifoActivo(oficina);
-    const detalle = await oficina.request.get(`/api/erp/combustible/viajes/${v.viajeId}`);
+    const detalle = await oficina.request.get(`/api/erp/viajes/${v.viajeId}`);
     const { origen_id, destino_id } = (await detalle.json()).viaje as {
       origen_id: string;
       destino_id: string;
@@ -108,7 +108,7 @@ test("un viaje que programa la oficina aparece en la cola del conductor sin reca
       },
     });
     expect(unidad.status()).toBe(201);
-    const otro = await oficina.request.post("/api/erp/combustible/viajes", {
+    const otro = await oficina.request.post("/api/erp/viajes", {
       data: {
         equipo_id: (await unidad.json()).id,
         paradas: [Number(origen_id), Number(destino_id)],

@@ -34,7 +34,7 @@ test("retirar la entrega sin señal queda guardado, se envía al volver la red y
     });
 
     const pendiente = async () => {
-      const mios = await page.request.get("/api/erp/combustible/viajes/mios");
+      const mios = await page.request.get("/api/erp/viajes/mios");
       const fila = ((await mios.json()).data as { id: string; entrega_pendiente: unknown }[]).find(
         (x) => x.id === v.viajeId
       );
@@ -71,12 +71,9 @@ test("retirar la entrega sin señal queda guardado, se envía al volver la red y
     expect(aceptados).toHaveLength(1);
 
     // ── Un reenvío (la respuesta se perdió y la cola reintenta): el viaje vuelve como quedó ──
-    const reenvio = await page.request.post(
-      `/api/erp/combustible/viajes/${v.viajeId}/mando/retirar`,
-      {
-        data: aceptados[0].cuerpo as object,
-      }
-    );
+    const reenvio = await page.request.post(`/api/erp/viajes/${v.viajeId}/mando/retirar`, {
+      data: aceptados[0].cuerpo as object,
+    });
     expect(reenvio.status()).toBe(200);
     expect(await pendiente()).toBe(false);
   } finally {

@@ -700,18 +700,6 @@ export const MODULOS: ModuloDefinicion[] = [
         // urea o los dos, y su foto única apuntada por el uuid de la compra.
         { metodo: "POST", ruta: "/compras-ruta" },
         { metodo: "POST", ruta: "/compras-ruta/por-uuid/:clienteUuid/comprobante" },
-        // "Mi viaje" (0124): el conductor marca salida y llegada en ruta, donde
-        // puede no haber señal. El reintento no duplica: el service reconoce el
-        // cliente_uuid de la marca. Espejo de offlineRegistry.ts del cliente.
-        { metodo: "POST", ruta: "/viajes/:viajeId/iniciar-mio" },
-        { metodo: "POST", ruta: "/viajes/:viajeId/cerrar-mio" },
-        { metodo: "POST", ruta: "/viajes/:viajeId/llegada-mia" },
-        { metodo: "POST", ruta: "/viajes/:viajeId/salida-mia" },
-        { metodo: "POST", ruta: "/viajes/:viajeId/descanso-mio" },
-        { metodo: "POST", ruta: "/viajes/:viajeId/descanso-mio/terminar" },
-        { metodo: "POST", ruta: "/viajes/:viajeId/mando/entregar" },
-        { metodo: "POST", ruta: "/viajes/:viajeId/mando/aceptar" },
-        { metodo: "POST", ruta: "/viajes/:viajeId/mando/retirar" },
       ],
     },
   },

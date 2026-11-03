@@ -248,3 +248,15 @@ Las dos mitades son obligatorias: la primera prueba que no duplica, la segunda q
 - **Las pantallas de Checklists e IPERC son mínimas, no el flujo completo**: cubren listar, crear (plantilla/línea base/checklist/IPERC con ítems manuales) y aprobar/rechazar/eliminar. No cubren editar una plantilla o línea base existente, ni el flujo de "referenciar un ítem ya aprobado de la línea base" al crear un IPERC específico (el backend ya lo soporta vía `linea_base_item_id`, la UI no lo expone todavía) — se dejó así para no inflar el alcance de esta ronda; el backend no tiene ninguna limitación pendiente, es trabajo de UI puro cuando alguien lo necesite.
 - **El offline está declarado en los 7 módulos de negocio del ERP** (Checklists, IPERC, Combustible, Documentos, Repuestos, Órdenes de Trabajo y Equipos — sección 8) — incluido el archivo adjunto de Documentos (`POST /:id/versiones`), que motivó extender el motor genérico para soportar rutas con comodín y archivos binarios (`Blob` en IndexedDB en vez de JSON), ver el ejemplo de Documentos en la sección 8. En Documentos, Repuestos y Equipos, específicamente, editar (y en Documentos/Repuestos también la carga masiva) quedaron fuera por razones técnicas concretas, no por estar "menos evaluados" que el resto.
 - **No se versiona el comportamiento por `version`** — sigue siendo metadata informativa (igual que antes de este ADR), no algo que el código lea para branchear lógica.
+
+---
+
+## Actualización (noviembre de 2026): `flota` y `viajes`
+
+- **`equipos` pasó a llamarse `flota`** ("Gestión operacional de flota", el módulo central) y se creó el módulo **`viajes`** (migraciones 0165 y 0166, `ALTER TYPE modulo_erp RENAME VALUE`). El enum, las cuotas (`plan_limites`, `tenant_cuotas`) y los accesos de empresas y usuarios se migraron con ese renombre. La URL del módulo NO cambió: `flota` sigue montado en `/api/erp/equipos`.
+- **Tres campos nuevos en `ModuloDefinicion`** (`src/modules/types.ts`):
+  - `ruta`: dónde se monta bajo `/api/erp`, cuando no coincide con el id (`flota` → `equipos`). El cliente lo replica en `RUTA_DE_MODULO` (`client/src/modules/offlineRegistry.ts`).
+  - `requiere`: módulos que la **empresa** debe tener habilitados para que este se vea (`viajes` exige `flota`). Se aplica al calcular los módulos de cada usuario y en el panel de plataforma (por empresa y en el interruptor global).
+  - `bucketDe`: con qué id se reparte a los usuarios en un rollout por porcentaje (`viajes` y `flota` reparten como `combustible`).
+- **Las rutas de Viajes y Lugares** viven en `src/modules/viajes/viajes.routes.ts`, bajo `/api/erp/viajes`. Las lecturas que traen cargas exigen además el módulo Combustible. Los alias que tuvieron bajo Combustible se retiraron; queda solo `GET /api/erp/combustible/viajes/mi-unidad`, porque Compra en ruta no puede depender de Viajes. Los permisos de pestaña de Viajes siguen bajo el módulo `combustible` (`combustible:viajes`, `combustible:mi_viaje`, `combustible:viajes:consumo`, ...).
+- **Las alertas** se agrupan por módulo (Combustible, Urea, Flota; `src/modules/combustible/alertasPorModulo.ts`) y quien no tiene el módulo `viajes` no ve las de viaje.

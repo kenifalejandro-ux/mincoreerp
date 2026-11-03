@@ -34,10 +34,9 @@ test("la oficina termina el descanso del relevo que no maneja: pide motivo y man
     // `detiene === false` más abajo.
     const celularRelevo = await contextoRelevo.newPage();
     await entrarAMiViaje(celularRelevo, v, relevo);
-    const inicio = await celularRelevo.request.post(
-      `/api/erp/combustible/viajes/${v.viajeId}/descanso-mio`,
-      { data: { motivo: "Dormir" } }
-    );
+    const inicio = await celularRelevo.request.post(`/api/erp/viajes/${v.viajeId}/descanso-mio`, {
+      data: { motivo: "Dormir" },
+    });
     expect(inicio.status()).toBe(200);
 
     // La oficina abre el detalle del viaje.
@@ -82,7 +81,7 @@ test("la oficina termina el descanso del relevo que no maneja: pide motivo y man
     // El servidor lo cerró, y era el descanso que se señaló.
     // La pantalla se actualiza al terminar de recargar el viaje: con la máquina cargada tarda.
     await expect(campo).toBeHidden({ timeout: 20_000 });
-    const detalle = await oficina.request.get(`/api/erp/combustible/viajes/${v.viajeId}`);
+    const detalle = await oficina.request.get(`/api/erp/viajes/${v.viajeId}`);
     const descansos = (
       (await detalle.json()).viaje as {
         descansos: {

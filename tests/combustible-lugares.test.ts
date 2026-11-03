@@ -9,7 +9,7 @@ import request from "supertest";
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
-const LUGARES = "/api/erp/combustible/lugares";
+const LUGARES = "/api/erp/viajes/lugares";
 
 describe("combustible: lugares con tipo, ubicación y estado (0159)", () => {
   const tenants: string[] = [];
@@ -161,7 +161,7 @@ describe("combustible: lugares con tipo, ubicación y estado (0159)", () => {
     expect(eq.status, JSON.stringify(eq.body)).toBe(201);
     const ahora = Date.now();
     const nuevo = (inicio: number) =>
-      admin.post("/api/erp/combustible/viajes").send({
+      admin.post("/api/erp/viajes").send({
         equipo_id: Number(eq.body.id),
         origen_id: origen,
         destino_id: destino,
@@ -175,7 +175,7 @@ describe("combustible: lugares con tipo, ubicación y estado (0159)", () => {
     const bloqueado = await nuevo(-5);
     expect(bloqueado.status).toBe(400);
     // El viaje que ya existía sigue ahí, con su lugar.
-    const viejo = await admin.get(`/api/erp/combustible/viajes/${primero.body.id}`);
+    const viejo = await admin.get(`/api/erp/viajes/${primero.body.id}`);
     expect(viejo.status).toBe(200);
   });
 
@@ -315,7 +315,7 @@ describe("combustible: lugares con tipo, ubicación y estado (0159)", () => {
     });
     expect(eq.status, JSON.stringify(eq.body)).toBe(201);
     const ahora = Date.now();
-    const v = await admin.post("/api/erp/combustible/viajes").send({
+    const v = await admin.post("/api/erp/viajes").send({
       equipo_id: Number(eq.body.id),
       origen_id: origen,
       destino_id: destino,
@@ -326,7 +326,7 @@ describe("combustible: lugares con tipo, ubicación y estado (0159)", () => {
     await admin.patch(`${LUGARES}/${destino}`).send({ activo: false });
     await admin.patch(`${LUGARES}/${otro}`).send({ activo: false });
 
-    const url = `/api/erp/combustible/viajes/${v.body.id}`;
+    const url = `/api/erp/viajes/${v.body.id}`;
     const igual = await admin.put(url).send({
       origen_id: origen,
       destino_id: destino,

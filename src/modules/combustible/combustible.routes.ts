@@ -54,7 +54,7 @@ import {
 import { moverDeGrifoSchema } from "../../server/schemas/sedes.schema";
 import { cargarAlcance, GUARDIAS, requiereTanqueCompleto } from "./alcance";
 import { CombustibleController } from "./combustible.controller";
-import { registrarRutasDeViajes } from "../viajes/viajes.routes";
+import { viajesController } from "./viajes.controller";
 import { subirArchivoComprobante } from "./combustible.upload";
 import { EquiposController } from "../equipos/equipos.controller";
 // Se activa solo con importarse (setInterval + .unref()) -- mismo mecanismo
@@ -474,11 +474,16 @@ router.put(
   asyncHandler(controller.actualizarTanqueta.bind(controller))
 );
 
-// Viajes (0123): las rutas viven en el módulo `viajes` (viajes.routes.ts) y se
-// montan acá también como alias: el cliente actual y la cola offline de los
-// celulares todavía llaman a /combustible/viajes/... y /combustible/lugares.
-// Van en este mismo lugar, antes de /:id.
-registrarRutasDeViajes(router, "/viajes");
+// La unidad del viaje del conductor, para precargar "Compra en ruta". Es lo ÚNICO de Viajes
+// que sigue acá (las demás rutas viven en el módulo `viajes`, /api/erp/viajes): Compra en
+// ruta no puede depender de que la empresa tenga Viajes. Alcanza con poder registrar una
+// compra: no exige la pestaña "Mi viaje". Segmento literal, ANTES de /:id.
+router.get(
+  "/viajes/mi-unidad",
+  requirePestanaAlguna("tanques:registrar_despacho", "urea:registrar_compra"),
+  requireRole("admin", "operador", "conductor_ruta"),
+  asyncHandler(viajesController.miUnidad)
+);
 
 // Surtidores (migración 0098) -- segmentos literales, ANTES de /:id. La lista
 // la lee cualquier rol (el vale y la varilla la necesitan); lo que cambia la

@@ -17,7 +17,7 @@ test("programar un viaje de ida y vuelta y uno con varias paradas", async ({ pag
   const grifoId = await primerGrifoActivo(page);
 
   const lugar = async (nombre: string) => {
-    const r = await page.request.post("/api/erp/combustible/lugares", { data: { nombre } });
+    const r = await page.request.post("/api/erp/viajes/lugares", { data: { nombre } });
     expect(r.status()).toBe(201);
   };
   const a = `Huamachuco ${marca}`;
@@ -85,7 +85,7 @@ test("programar un viaje de ida y vuelta y uno con varias paradas", async ({ pag
   await expect(page.getByRole("cell", { name: `${a} → ${b} → ${c} → ${a}` })).toBeVisible();
 
   // El servidor guardó las paradas de los dos viajes, en orden.
-  const lista = await page.request.get("/api/erp/combustible/viajes", {
+  const lista = await page.request.get("/api/erp/viajes", {
     params: { equipo_id: String(equipoId), estado: "programado" },
   });
   const viajes = (await lista.json()).data as {

@@ -80,7 +80,7 @@ describe("viajes: por la API", () => {
   let seq = 0;
 
   const lugar = async (nombre: string) =>
-    Number((await admin.post("/api/erp/combustible/lugares").send({ nombre })).body.id);
+    Number((await admin.post("/api/erp/viajes/lugares").send({ nombre })).body.id);
   const unidad = async () => {
     const r = await admin.post("/api/erp/equipos").send({
       placa_codigo: idUnico("VQ"),
@@ -93,7 +93,7 @@ describe("viajes: por la API", () => {
     return Number(r.body.id);
   };
   const viaje = (equipo_id: number, extra: Record<string, unknown> = {}) =>
-    admin.post("/api/erp/combustible/viajes").send({
+    admin.post("/api/erp/viajes").send({
       equipo_id,
       origen_id: origen,
       destino_id: destino,
@@ -130,12 +130,12 @@ describe("viajes: por la API", () => {
     const programado = await viaje(u);
     expect(programado.status, JSON.stringify(programado.body)).toBe(201);
     const iniciar = await admin
-      .post(`/api/erp/combustible/viajes/${programado.body.id}/iniciar`)
+      .post(`/api/erp/viajes/${programado.body.id}/iniciar`)
       .send({ inicio_en: hace(731), motivo: "se olvidó de marcarlo" });
     expect(iniciar.status, JSON.stringify(iniciar.body)).toBe(400);
     expect(JSON.stringify(iniciar.body)).toContain(MENSAJE);
     const cerrar = await admin
-      .post(`/api/erp/combustible/viajes/${programado.body.id}/cerrar`)
+      .post(`/api/erp/viajes/${programado.body.id}/cerrar`)
       .send({ fin_en: hace(731), motivo: "se olvidó de marcarlo" });
     expect(cerrar.status, JSON.stringify(cerrar.body)).toBe(400);
     expect(JSON.stringify(cerrar.body)).toContain(MENSAJE);
@@ -149,7 +149,7 @@ describe("viajes: por la API", () => {
     const id = v.body.id;
 
     // El formulario reenvía las fechas guardadas junto con lo que cambió.
-    const sinTocar = await admin.put(`/api/erp/combustible/viajes/${id}`).send({
+    const sinTocar = await admin.put(`/api/erp/viajes/${id}`).send({
       inicio_en: v.body.inicio_en,
       fin_en: v.body.fin_en,
       observaciones: "corregí un dato",
@@ -157,14 +157,14 @@ describe("viajes: por la API", () => {
     });
     expect(sinTocar.status, JSON.stringify(sinTocar.body)).toBe(200);
 
-    const aLoViejo = await admin.put(`/api/erp/combustible/viajes/${id}`).send({
+    const aLoViejo = await admin.put(`/api/erp/viajes/${id}`).send({
       inicio_en: hace(731),
       motivo: "me equivoqué de fecha",
     });
     expect(aLoViejo.status, JSON.stringify(aLoViejo.body)).toBe(400);
     expect(JSON.stringify(aLoViejo.body)).toContain(MENSAJE);
 
-    const aOtraReciente = await admin.put(`/api/erp/combustible/viajes/${id}`).send({
+    const aOtraReciente = await admin.put(`/api/erp/viajes/${id}`).send({
       inicio_en: hace(299.5),
       motivo: "corrijo la hora de salida",
     });

@@ -40,9 +40,7 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
   });
 
   const lugar = async (nombre: string) =>
-    Number(
-      (await admin.post("/api/erp/combustible/lugares").send({ nombre: idUnico(nombre) })).body.id
-    );
+    Number((await admin.post("/api/erp/viajes/lugares").send({ nombre: idUnico(nombre) })).body.id);
   const unidad = async () => {
     const dni = String(42000000 + seq++);
     const r = await admin.post("/api/erp/equipos").send({
@@ -57,7 +55,7 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
   };
   const viaje = async (a: number, b: number, inicio: string, fin?: string) => {
     const u = await unidad();
-    const r = await admin.post("/api/erp/combustible/viajes").send({
+    const r = await admin.post("/api/erp/viajes").send({
       equipo_id: u.id,
       origen_id: a,
       destino_id: b,
@@ -92,9 +90,8 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
 
   describe("al marcar el descanso (E15e): sin esperar al worker", () => {
     const marcar = (id: number, motivo: string) =>
-      admin.post(`/api/erp/combustible/viajes/${id}/descanso`).send({ motivo });
-    const terminar = (id: number) =>
-      admin.post(`/api/erp/combustible/viajes/${id}/descanso/terminar`).send({});
+      admin.post(`/api/erp/viajes/${id}/descanso`).send({ motivo });
+    const terminar = (id: number) => admin.post(`/api/erp/viajes/${id}/descanso/terminar`).send({});
 
     it("una avería abre la alerta de unidad detenida al instante, y terminarla la cierra", async () => {
       const a = await lugar("Tabaconas");
@@ -163,12 +160,10 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
       const a = await lugar("Pomahuaca");
       const b = await lugar("Pucara");
       const v = await viaje(a, b, hace(2));
-      await admin.post(`/api/erp/combustible/viajes/${v.id}/descanso`).send({ motivo: "Avería" });
+      await admin.post(`/api/erp/viajes/${v.id}/descanso`).send({ motivo: "Avería" });
       expect((await alertas(v.id, "viaje_detenido"))[0].resuelta_en).toBeNull();
 
-      const an = await admin
-        .post(`/api/erp/combustible/viajes/${v.id}/anular`)
-        .send({ motivo: "Prueba" });
+      const an = await admin.post(`/api/erp/viajes/${v.id}/anular`).send({ motivo: "Prueba" });
       expect(an.status, JSON.stringify(an.body)).toBe(200);
       expect((await alertas(v.id, "viaje_detenido"))[0].resuelta_en).not.toBeNull();
     });
@@ -177,10 +172,10 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
       const a = await lugar("Sallique");
       const b = await lugar("Pimpingos");
       const v = await viaje(a, b, hace(2));
-      await admin.post(`/api/erp/combustible/viajes/${v.id}/descanso`).send({ motivo: "Bloqueo" });
+      await admin.post(`/api/erp/viajes/${v.id}/descanso`).send({ motivo: "Bloqueo" });
       expect((await alertas(v.id, "viaje_detenido"))[0].resuelta_en).toBeNull();
 
-      const ce = await admin.post(`/api/erp/combustible/viajes/${v.id}/cerrar`).send({});
+      const ce = await admin.post(`/api/erp/viajes/${v.id}/cerrar`).send({});
       expect(ce.status, JSON.stringify(ce.body)).toBe(200);
       expect((await alertas(v.id, "viaje_detenido"))[0].resuelta_en).not.toBeNull();
     });
@@ -195,7 +190,7 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
       expect(abierta).toHaveLength(1);
       expect(abierta[0].resuelta_en).toBeNull();
 
-      const ll = await admin.post(`/api/erp/combustible/viajes/${v.id}/llegada`).send({});
+      const ll = await admin.post(`/api/erp/viajes/${v.id}/llegada`).send({});
       expect(ll.status, JSON.stringify(ll.body)).toBe(200);
       expect(ll.body.estado).toBe("cerrado");
       expect((await alertas(v.id, "viaje_demorado"))[0].resuelta_en).not.toBeNull();
@@ -207,7 +202,7 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
       const c = await lugar("Chota Alto");
       await historial(a, b);
       const u = await unidad();
-      const r = await admin.post("/api/erp/combustible/viajes").send({
+      const r = await admin.post("/api/erp/viajes").send({
         equipo_id: u.id,
         paradas: [a, b, c],
         inicio_en: hace(6),
@@ -219,7 +214,7 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
       expect(antes).toHaveLength(1);
       expect(antes[0].resuelta_en).toBeNull();
 
-      const ll = await admin.post(`/api/erp/combustible/viajes/${id}/llegada`).send({ orden: 1 });
+      const ll = await admin.post(`/api/erp/viajes/${id}/llegada`).send({ orden: 1 });
       expect(ll.status, JSON.stringify(ll.body)).toBe(200);
       expect(ll.body.estado).toBe("en_curso");
       const despues = await alertas(id, "viaje_demorado");
@@ -236,7 +231,7 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
       expect((await alertas(v.id, "viaje_demorado"))[0].resuelta_en).toBeNull();
 
       const ed = await admin
-        .put(`/api/erp/combustible/viajes/${v.id}`)
+        .put(`/api/erp/viajes/${v.id}`)
         .send({ fin_en: hace(0.5), motivo: "Prueba" });
       expect(ed.status, JSON.stringify(ed.body)).toBe(200);
       expect(ed.body.estado).toBe("cerrado");
@@ -249,7 +244,7 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
       const enCurso = await viaje(a, b, hace(2));
       const anulado = await viaje(a, b, hace(2));
       const an = await admin
-        .post(`/api/erp/combustible/viajes/${anulado.id}/anular`)
+        .post(`/api/erp/viajes/${anulado.id}/anular`)
         .send({ motivo: "Prueba" });
       expect(an.status, JSON.stringify(an.body)).toBe(200);
       const vigentes = await withTenant(tenantId, (c) =>
@@ -338,9 +333,7 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
     expect(await alertas(v.id, "viaje_demorado")).toHaveLength(1);
 
     // Al anular el viaje, la alerta se resuelve sola.
-    const an = await admin
-      .post(`/api/erp/combustible/viajes/${v.id}/anular`)
-      .send({ motivo: "Prueba" });
+    const an = await admin.post(`/api/erp/viajes/${v.id}/anular`).send({ motivo: "Prueba" });
     expect(an.status, JSON.stringify(an.body)).toBe(200);
     // Al instante: sin correr el worker.
     const cerradas = await alertas(v.id, "viaje_demorado");

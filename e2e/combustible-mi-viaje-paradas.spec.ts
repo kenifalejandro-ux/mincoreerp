@@ -61,7 +61,7 @@ test("el conductor hace un viaje de ida y vuelta: llega, sale y termina", async 
   await expect(page.getByText(`Salida de ${v.b}`, { exact: true })).toBeVisible();
   await expect(page.getByText(`Llegada a ${v.a}`, { exact: true })).toBeVisible();
 
-  const mios = await page.request.get("/api/erp/combustible/viajes/mios");
+  const mios = await page.request.get("/api/erp/viajes/mios");
   const cerrado = ((await mios.json()).data as { id: string; estado: string }[]).find(
     (x) => x.id === v.viajeId
   );

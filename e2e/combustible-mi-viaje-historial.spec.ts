@@ -21,7 +21,7 @@ test("el conductor ve su viaje terminado en el historial, también sin señal", 
 
   // Hace el viaje completo con su sesión (por API: aquí se prueba el historial, no las marcas).
   const marcar = async (accion: string, medidor: Record<string, number>) => {
-    const r = await page.request.post(`/api/erp/combustible/viajes/${v.viajeId}/${accion}`, {
+    const r = await page.request.post(`/api/erp/viajes/${v.viajeId}/${accion}`, {
       data: medidor,
     });
     expect(r.status(), `${accion}: ${await r.text()}`).toBe(200);

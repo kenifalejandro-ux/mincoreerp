@@ -23,7 +23,7 @@ test("el relevo ve quién sale manejando y no inicia el viaje", async ({ page })
   await expect(page.getByText(`Sale manejando: Conductor ${v.marca}`)).toBeVisible();
   await expect(page.getByText(`Titular: Conductor ${v.marca}`)).toBeVisible();
 
-  const mios = await page.request.get("/api/erp/combustible/viajes/mios");
+  const mios = await page.request.get("/api/erp/viajes/mios");
   const fila = ((await mios.json()).data as { id: string; mi_rol: string }[]).find(
     (x) => x.id === v.viajeId
   );
