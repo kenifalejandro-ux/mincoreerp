@@ -5960,8 +5960,10 @@ export class CombustibleRepository {
   }
 
   /** El resumen diario por correo, por tipo y dentro del alcance de quien lo
-   *  recibe -- el MISMO WHERE que la Bandeja, así el correo no puede contar
-   *  algo que esa persona no ve al abrirla:
+   *  recibe (grifos y surtidores), con el mismo WHERE que la Bandeja SALVO el recorte
+   *  por módulo: el worker resuelve el alcance sin `modulosPermitidos`, así que el
+   *  correo todavía cuenta alertas de tipos cuyo módulo el destinatario puede no tener
+   *  (`sinTipos`, ver alertasPorModulo.ts). Pendiente: trabajo futuro. Por tipo:
    *  - `nuevas`: creadas en [desde, hasta).
    *  - `pendientes`: sin resolver al corte (creadas antes de `hasta`).
    *  - `vencidas`: sin resolver y creadas antes de `vencidasAntesDe`. */

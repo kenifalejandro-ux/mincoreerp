@@ -998,8 +998,10 @@ router.get(
   asyncHandler(controller.getSugerenciaConsumo.bind(controller))
 );
 
+// `(\\d+)`: un segmento que no es número (`/combustible/lugares`, un alias retirado) no es
+// un tanque. Sin esto caía acá con `NaN` y daba 500; así sigue de largo y da 404.
 router.get(
-  "/:id",
+  "/:id(\\d+)",
   requirePestana("combustible", "tanques:acciones:ver_tanque"),
   asyncHandler(controller.getById.bind(controller))
 );
@@ -1132,7 +1134,7 @@ router.post(
 
 // ✏️ actualizar tanque
 router.put(
-  "/:id",
+  "/:id(\\d+)",
   requirePestana("combustible", "tanques:acciones:editar"),
   requireRole("admin", "operador"),
   validate(actualizarTanqueCombustibleSchema),
@@ -1141,7 +1143,7 @@ router.put(
 
 // 🗑 soft-delete -- ver CombustibleController.delete
 router.delete(
-  "/:id",
+  "/:id(\\d+)",
   requirePestana("combustible", "tanques:acciones:eliminar"),
   requireRole("admin", "operador"),
   validate(bajaTanqueCombustibleSchema),

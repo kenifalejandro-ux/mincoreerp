@@ -33,12 +33,12 @@ tener.
 Todas viven en `.env` del servidor (Railway o local). Sin cualquiera de
 estas tres primeras, el restore no puede ni empezar:
 
-| Variable | Para qué |
-|---|---|
-| `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE` (o `DATABASE_URL`) | Conexión a Postgres — el restore corre dentro de una transacción `withTenant()` |
-| `BACKUP_ENCRYPTION_KEY` | Descifra el backup al leerlo (`leerBackup`, ver `backupCrypto.ts`) — sin esta clave el JSON no se puede abrir, ni para leerlo ni para restaurarlo |
-| `PLATFORM_ADMIN_TOKEN` | Credencial para llamar al endpoint de restore (ver paso 3) |
-| `BACKUP_STORAGE_DRIVER` + credenciales de S3 (si aplica) | Solo hace falta si el backup a restaurar vive en S3 — `platformBackup.service.ts` lee el driver de la propia fila (`tenant_backups.storage`), no de esta variable, así que un backup viejo en local se sigue leyendo de local aunque hoy el driver activo sea S3 |
+| Variable                                                                         | Para qué                                                                                                                                                                                                                                                         |
+| -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PG_HOST`, `PG_PORT`, `PG_USER`, `PG_PASSWORD`, `PG_DATABASE` (o `DATABASE_URL`) | Conexión a Postgres — el restore corre dentro de una transacción `withTenant()`                                                                                                                                                                                  |
+| `BACKUP_ENCRYPTION_KEY`                                                          | Descifra el backup al leerlo (`leerBackup`, ver `backupCrypto.ts`) — sin esta clave el JSON no se puede abrir, ni para leerlo ni para restaurarlo                                                                                                                |
+| `PLATFORM_ADMIN_TOKEN`                                                           | Credencial para llamar al endpoint de restore (ver paso 3)                                                                                                                                                                                                       |
+| `BACKUP_STORAGE_DRIVER` + credenciales de S3 (si aplica)                         | Solo hace falta si el backup a restaurar vive en S3 — `platformBackup.service.ts` lee el driver de la propia fila (`tenant_backups.storage`), no de esta variable, así que un backup viejo en local se sigue leyendo de local aunque hoy el driver activo sea S3 |
 
 Confirmá que están cargadas antes de seguir:
 
@@ -81,6 +81,36 @@ curl -s -H "Authorization: Bearer $PLATFORM_ADMIN_TOKEN" \
 
 Anotá el `backupId` (columna `id` de la fila elegida) — es lo único que
 necesitás del paso anterior.
+
+### Caso especial: backups de PLATAFORMA anteriores al 3 de noviembre de 2026
+
+Los backups de la capa de plataforma (`POST /api/platform/backups/plataforma/:backupId/restaurar`)
+tomados **antes del 3 de noviembre de 2026** guardan los módulos con el nombre viejo
+`equipos`. La migración `0165` (PR #434) lo renombró a `flota` en el enum `modulo_erp`, y
+ese valor ya no existe: restaurar uno de esos backups falla con
+`invalid input value for enum modulo_erp`.
+
+- **Qué lo trae:** las tablas `tenant_modulos` y `usuario_modulos` (columna `modulo`) del
+  backup de plataforma (`TABLAS_PLATAFORMA` en `platformBackupPlataforma.service.ts`).
+- **Qué NO se ve afectado:** los backups de **empresa**. No guardan `tenant_modulos` ni
+  `usuario_modulos`, y la única de sus tablas con una columna `modulo_erp`
+  (`usuario_alertas_correo`) solo recibe filas de `combustible`
+  (`MODULOS_CON_ALERTAS_POR_CORREO`). Tampoco hay que tocar nada en los backups de
+  plataforma tomados desde el 3 de noviembre de 2026.
+- **Qué hacer para restaurar uno viejo:** antes de restaurarlo, reemplazar `equipos` por
+  `flota` en la columna `modulo` de las filas de `tenant_modulos` y de `usuario_modulos`
+  dentro del archivo. Solo en esas dos tablas y solo en esa columna.
+- **Cómo se toca el archivo:** el backup es un `.json.gz.enc` (gzip + AES-256-GCM, formato
+  en `docs/architecture/backups-s3.md`, sección 2). **Hoy no hay un script** que lo
+  descifre y lo vuelva a cifrar: habría que escribirlo al momento, con la clave de
+  backups, y subir el archivo corregido al mismo `storage_key` antes de llamar al restore.
+  Practicalo antes con una copia, nunca sobre el único backup que tengas.
+- **Por qué no hay un traductor automático:** el código que traducía `equipos` a `flota`
+  al restaurar se eliminó a propósito, para no arrastrar un nombre muerto. El caso es solo
+  de backups viejos y hoy no hay datos de clientes en riesgo.
+- **La fecha exacta del corte** es cuando la migración corrió en producción. Para
+  confirmarla, solo mirar:
+  `SELECT applied_at FROM schema_migrations WHERE filename = '0165_modulos_flota_viajes_enum.sql';`
 
 ## 3. Ejecutar el restore
 
@@ -130,6 +160,7 @@ curl -s -X POST \
    su cuenta y la cuenta no se toca (si la cambió después del backup, sigue
    valiendo la nueva). Si la cuenta ya no existía, se recrea desde el backup.
    Ver `docs/architecture/cuentas-perfiles-y-administracion.md` §13.
+
 6. Todo en una sola transacción — si cualquier paso falla, `ROLLBACK`
    completo. El tenant nunca queda a medio restaurar.
 
@@ -190,10 +221,10 @@ insertado — ver la verificación del paso 3). En ese caso:
 
 ## Referencia rápida
 
-| Necesitás | Dónde |
-|---|---|
-| Confirmar que el camino de restore funciona hoy | `npm run backup:restore-drill:escritura` |
-| Listar backups de un tenant | `GET /api/platform/tenants/:id/backups` |
-| Restaurar | `POST /api/platform/backups/:backupId/restaurar` (`super_admin`, `confirmar: true`) |
-| Código fuente del restore | `src/server/services/platformBackup.service.ts` (`restaurarBackupService`) |
-| Backup de PLATAFORMA (no de un tenant) | `POST /api/platform/backups/plataforma/:backupId/restaurar` — aditivo, nunca vacía nada, ver `restaurarBackupPlataformaService` |
+| Necesitás                                       | Dónde                                                                                                                           |
+| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Confirmar que el camino de restore funciona hoy | `npm run backup:restore-drill:escritura`                                                                                        |
+| Listar backups de un tenant                     | `GET /api/platform/tenants/:id/backups`                                                                                         |
+| Restaurar                                       | `POST /api/platform/backups/:backupId/restaurar` (`super_admin`, `confirmar: true`)                                             |
+| Código fuente del restore                       | `src/server/services/platformBackup.service.ts` (`restaurarBackupService`)                                                      |
+| Backup de PLATAFORMA (no de un tenant)          | `POST /api/platform/backups/plataforma/:backupId/restaurar` — aditivo, nunca vacía nada, ver `restaurarBackupPlataformaService` |
