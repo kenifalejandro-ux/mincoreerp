@@ -165,7 +165,7 @@ export default function MiViaje() {
 
   const cargar = useCallback(async () => {
     try {
-      const res = await apiFetch("/api/erp/combustible/viajes/mios");
+      const res = await apiFetch("/api/erp/viajes/mios");
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error ?? "error");
       const delServidor: MiFila[] = Array.isArray(body?.data) ? body.data : [];
@@ -208,7 +208,8 @@ export default function MiViaje() {
     // rechazó alguna, se dice (el aviso global de pendientes solo cuenta cuántas).
     const dejarDeOirCola = suscribirseACola(refrescar);
     const dejarDeOirEnvio = suscribirseASincronizacion(({ descartadas }) => {
-      if (descartadas.some((d) => d.moduloId === "combustible")) {
+      // Las marcas viejas de la cola siguen con el módulo de Combustible; las nuevas, con el de Viajes.
+      if (descartadas.some((d) => d.moduloId === "combustible" || d.moduloId === "viajes")) {
         setAviso(
           "Una marca de tu viaje no se pudo enviar porque el viaje ya había avanzado. Mira cómo quedó y avisa a la oficina."
         );
@@ -334,7 +335,7 @@ export default function MiViaje() {
     setGuardando(true);
     setAviso(null);
     try {
-      const res = await apiFetch(`/api/erp/combustible/viajes/${v.id}/iniciar-mio`, {
+      const res = await apiFetch(`/api/erp/viajes/${v.id}/iniciar-mio`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...body, marcado_en: marcadoEn, cliente_uuid: crypto.randomUUID() }),

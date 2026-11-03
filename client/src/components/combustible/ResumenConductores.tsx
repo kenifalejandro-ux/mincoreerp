@@ -31,7 +31,7 @@ export function ResumenConductores({ desde, hasta }: { desde: string; hasta: str
         const q = new URLSearchParams();
         if (desde) q.set("desde", new Date(`${desde}T00:00:00`).toISOString());
         if (hasta) q.set("hasta", new Date(`${hasta}T23:59:59`).toISOString());
-        const res = await apiFetch(`/api/erp/combustible/viajes/resumen-conductores?${q}`);
+        const res = await apiFetch(`/api/erp/viajes/resumen-conductores?${q}`);
         const body = await res.json().catch(() => null);
         if (!vigente) return;
         if (!res.ok) {

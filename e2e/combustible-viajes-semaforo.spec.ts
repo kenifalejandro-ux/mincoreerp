@@ -29,7 +29,9 @@ test("la lista muestra el semáforo de cada viaje y se filtra por conductor y po
     const oficina = await contexto.newPage();
     const admin = adminA();
     await loginPorUI(oficina, admin.email, admin.password);
-    await oficina.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+    await oficina
+      .getByRole("button", { name: /^Gestión operacional de flota Abrir submenú$/ })
+      .click();
     await oficina.getByRole("button", { name: "Viajes" }).click();
 
     const fila = oficina.getByRole("row").filter({ hasText: `${v.a} → ${v.b} → ${v.a}` });

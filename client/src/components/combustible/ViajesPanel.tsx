@@ -209,7 +209,7 @@ export default function ViajesPanel() {
       if (filtroEquipo) q.set("equipo_id", filtroEquipo);
       if (desde) q.set("desde", new Date(`${desde}T00:00:00`).toISOString());
       if (hasta) q.set("hasta", new Date(`${hasta}T23:59:59`).toISOString());
-      const res = await apiFetch(`/api/erp/combustible/viajes?${q}`);
+      const res = await apiFetch(`/api/erp/viajes?${q}`);
       const body = await res.json().catch(() => null);
       if (!res.ok) {
         setError(body?.error ?? body?.message ?? "No se pudieron cargar los viajes.");
@@ -245,7 +245,7 @@ export default function ViajesPanel() {
   const cargarLugares = useCallback(async () => {
     const mio = ++pedidoLugares.current;
     try {
-      const res = await apiFetch("/api/erp/combustible/lugares");
+      const res = await apiFetch("/api/erp/viajes/lugares");
       const body = await res.json().catch(() => null);
       if (mio !== pedidoLugares.current) return;
       if (!res.ok) throw new Error("lugares");
@@ -278,7 +278,7 @@ export default function ViajesPanel() {
   useEffect(() => {
     if (!puedeProgramar) return;
     void (async () => {
-      const res = await apiFetch("/api/erp/combustible/viajes/conductores");
+      const res = await apiFetch("/api/erp/viajes/conductores");
       const body = await res.json().catch(() => null);
       if (!res.ok) return;
       setConductores(Array.isArray(body?.data) ? body.data : []);
@@ -332,7 +332,7 @@ export default function ViajesPanel() {
     } else if (m.tipo === "iniciar") {
       setForm({ ...FORM_VACIO, inicio_en: ahoraParaInputLocal() });
       void (async () => {
-        const res = await apiFetch(`/api/erp/combustible/viajes/${m.v.id}/medidor-previo`);
+        const res = await apiFetch(`/api/erp/viajes/${m.v.id}/medidor-previo`);
         const body = await res.json().catch(() => null);
         if (res.ok) setPrevio(body);
       })();
@@ -406,7 +406,7 @@ export default function ViajesPanel() {
     e.preventDefault();
     if (!modal) return;
     let ok = false;
-    const base = "/api/erp/combustible/viajes";
+    const base = "/api/erp/viajes";
     if (modal.tipo === "nuevo") {
       if (!form.equipo_id) {
         alert("Elige el conductor: de ahí salen la unidad y la ruta.");

@@ -76,6 +76,8 @@ export default function ConsumoPorViaje({
       const q = new URLSearchParams({ producto });
       if (desde) q.set("desde", desde);
       if (hasta) q.set("hasta", hasta);
+      // Sigue por Combustible hasta que esta vista pase a Viajes (con su permiso propio): el
+      // Histórico se ve con el módulo Combustible aunque no se tenga Viajes.
       const res = await apiFetch(`/api/erp/combustible/viajes/consumo?${q}`);
       const body = await res.json().catch(() => null);
       if (!res.ok) {
@@ -168,7 +170,8 @@ export default function ConsumoPorViaje({
       {error && <p className="text-sm text-red-600">{error}</p>}
       {!error && filas.length === 0 && !cargando && (
         <p className="text-sm text-slate-500">
-          No hay viajes en el período. Los viajes se registran en Combustible › Viajes.
+          No hay viajes en el período. Los viajes se registran en Gestión operacional de flota ›
+          Viajes.
         </p>
       )}
 

@@ -117,7 +117,7 @@ export function MiViajeParadas({
     setGuardando(true);
     onAviso(null);
     try {
-      const res = await apiFetch(`/api/erp/combustible/viajes/${viajeId}/${ruta}`, {
+      const res = await apiFetch(`/api/erp/viajes/${viajeId}/${ruta}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

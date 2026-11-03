@@ -17,7 +17,7 @@ import { adminA } from "./fixtures/entorno";
 import { primerGrifoActivo } from "./fixtures/grifos";
 
 const irAViajes = async (page: Page) => {
-  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+  await page.getByRole("button", { name: /^Gestión operacional de flota Abrir submenú$/ }).click();
   await page.getByRole("button", { name: "Viajes" }).click();
 };
 

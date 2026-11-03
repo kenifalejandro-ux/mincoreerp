@@ -52,7 +52,6 @@ import TanquetasPanel from "./Tanquetas";
 import CompraEnRuta from "./CompraEnRuta";
 import MiTanqueta from "./MiTanqueta";
 import MiViaje from "./MiViaje";
-import ViajesPanel from "./ViajesPanel";
 import { comprimirImagen } from "./comprimirImagen";
 import { DESTINOS_EXCEDENTE, type DestinoExcedente } from "./alertasTexto";
 
@@ -1542,7 +1541,6 @@ export interface CombustiblePanelProps {
   pestanaInicial?:
     | "tanques"
     | "tanquetas"
-    | "viajes"
     | "mi_viaje"
     | "compra_ruta"
     | "historico"
@@ -1723,7 +1721,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [pestanaCombustible, setPestanaCombustible] = useState<
     | "tanques"
     | "tanquetas"
-    | "viajes"
     | "mi_viaje"
     | "compra_ruta"
     | "historico"
@@ -3800,7 +3797,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         />
       )}
       {pestanaCombustible === "tanquetas" && <TanquetasPanel />}
-      {pestanaCombustible === "viajes" && <ViajesPanel />}
       {pestanaCombustible === "mi_viaje" && <MiViaje />}
       {pestanaCombustible === "compra_ruta" && <CompraEnRuta />}
       {/* Su tanqueta (cilindro) y, a la derecha, lo que él sacó de ella. */}

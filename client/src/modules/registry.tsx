@@ -70,11 +70,11 @@ export const MODULOS_CLIENTE: ModuloCliente[] = [
   },
   {
     // Gestión operacional de flota (era `equipos`, ver migración 0165). Hoy
-    // abre Registro de unidades; Viajes se suma al grupo en una entrega aparte.
+    // abre Registro de unidades y Viajes (ver FlotaPanel).
     id: "flota",
     label: "Gestión operacional de flota",
     icono: Tractor,
-    componente: lazy(() => import("../components/equipos/EquiposTable")),
+    componente: lazy(() => import("../components/flota/FlotaPanel")),
   },
   {
     id: "checklists",

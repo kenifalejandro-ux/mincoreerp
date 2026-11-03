@@ -44,7 +44,9 @@ test("la oficina termina el descanso del relevo que no maneja: pide motivo y man
     const oficina = await contextoOficina.newPage();
     const admin = adminA();
     await loginPorUI(oficina, admin.email, admin.password);
-    await oficina.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+    await oficina
+      .getByRole("button", { name: /^Gestión operacional de flota Abrir submenú$/ })
+      .click();
     await oficina.getByRole("button", { name: "Viajes" }).click();
     await oficina
       .getByRole("row")

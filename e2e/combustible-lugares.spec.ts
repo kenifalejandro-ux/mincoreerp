@@ -14,7 +14,7 @@ import { primerGrifoActivo } from "./fixtures/grifos";
 async function abrirViajes(page: Page) {
   const mostrar = page.getByRole("button", { name: "Mostrar menú" });
   if (await mostrar.isVisible()) await mostrar.click();
-  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+  await page.getByRole("button", { name: /^Gestión operacional de flota Abrir submenú$/ }).click();
   await page.getByRole("button", { name: "Viajes" }).click();
 }
 

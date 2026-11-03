@@ -66,7 +66,7 @@ export function DetalleViajeVentana({
   const [ahora, setAhora] = useState(() => Date.now());
 
   const cargar = useCallback(async () => {
-    const res = await apiFetch(`/api/erp/combustible/viajes/${viajeId}`);
+    const res = await apiFetch(`/api/erp/viajes/${viajeId}`);
     const body = await res.json().catch(() => null);
     if (!res.ok) setError(body?.error ?? "No se pudo cargar el viaje.");
     else {

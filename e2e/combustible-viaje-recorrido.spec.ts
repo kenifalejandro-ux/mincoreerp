@@ -41,7 +41,7 @@ test("programar un viaje de ida y vuelta y uno con varias paradas", async ({ pag
   expect(equipo.status()).toBe(201);
   const equipoId = (await equipo.json()).id as number;
 
-  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+  await page.getByRole("button", { name: /^Gestión operacional de flota Abrir submenú$/ }).click();
   await page.getByRole("button", { name: "Viajes" }).click();
 
   // Dentro de 3 horas, como lo escribe un datetime-local (hora local, sin zona).

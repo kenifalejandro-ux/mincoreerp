@@ -50,7 +50,7 @@ test("el encargado marca el descanso y la llegada por el conductor, y no avanza 
   });
   expect(salida.status()).toBe(200);
 
-  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+  await page.getByRole("button", { name: /^Gestión operacional de flota Abrir submenú$/ }).click();
   await page.getByRole("button", { name: "Viajes" }).click();
   await page.getByRole("button", { name: `Ver viaje V-${viaje.numero}` }).click();
   await expect(page.getByText("Sin descansos.")).toBeVisible();

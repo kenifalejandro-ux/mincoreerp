@@ -13,6 +13,7 @@ import {
   SearchCheck,
   ShieldCheck,
   Tag,
+  Tractor,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
@@ -24,6 +25,14 @@ import { puedeVerBandeja } from "../bandeja/bandejaAcceso";
 import { useContadorBandeja } from "../bandeja/useContadorBandeja";
 import { puedeCompraEnRuta } from "../combustible/compraEnRutaAcceso";
 import { puedeVerPrecios } from "../combustible/preciosAcceso";
+import { SubmenuDesplegable } from "../comunes/SubmenuDesplegable";
+import {
+  destinoDeFlota,
+  puedeVerFlota,
+  puedeVerMiViaje,
+  puedeVerUnidades,
+  puedeVerViajes,
+} from "../flota/flotaAcceso";
 
 // Submenú de Combustible. Los íconos son de trazo (lucide), los mismos que
 // usan las acciones de la tabla de tanques.
@@ -32,13 +41,19 @@ const SUBMENU_COMBUSTIBLE: { tab: string; label: string; Icono: LucideIcon }[] =
   { tab: "combustible:compra_ruta", label: "Compra en ruta", Icono: Receipt },
   { tab: "combustible", label: "Tanques", Icono: Fuel },
   { tab: "combustible:tanquetas", label: "Tanquetas", Icono: Cylinder },
-  { tab: "combustible:viajes", label: "Viajes", Icono: Route },
   { tab: "combustible:historico", label: "Histórico", Icono: History },
   { tab: "combustible:urea", label: "Urea", Icono: Droplets },
   { tab: "combustible:precios", label: "Precios", Icono: Tag },
   { tab: "combustible:proveedores", label: "Proveedores", Icono: Wrench },
   { tab: "combustible:auditoria", label: "Auditoría", Icono: SearchCheck },
   { tab: "combustible:bitacora", label: "Bitácora", Icono: ScrollText },
+];
+
+// Submenú de Gestión operacional de flota: Registro de unidades (lo que antes era
+// "Equipos") y Viajes, que salió de Combustible.
+const SUBMENU_FLOTA: { tab: string; label: string; Icono: LucideIcon }[] = [
+  { tab: "flota", label: "Registro de unidades", Icono: Tractor },
+  { tab: "flota:viajes", label: "Viajes", Icono: Route },
 ];
 
 interface SidebarProps {
@@ -51,7 +66,14 @@ interface SidebarProps {
 export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: SidebarProps) {
   const { usuario } = useAuth();
 
-  const tabs = MODULOS_CLIENTE.filter((modulo) => usuario?.modulosPermitidos.includes(modulo.id));
+  // Flota aparece si hay algo adentro: quien solo tiene Viajes (sin Registro de
+  // unidades) también ve el grupo.
+  const tabs = MODULOS_CLIENTE.filter((modulo) =>
+    modulo.id === "flota" ? puedeVerFlota(usuario) : usuario?.modulosPermitidos.includes(modulo.id)
+  );
+  const submenusFlota = SUBMENU_FLOTA.filter(({ tab }) =>
+    tab === "flota" ? puedeVerUnidades(usuario) : puedeVerViajes(usuario)
+  );
   const submenusVisibles = SUBMENU_COMBUSTIBLE.filter(({ tab }) => {
     // No tiene pestaña propia en la matriz de permisos: junta dos que sí (ver
     // compraEnRutaAcceso.ts).
@@ -59,10 +81,11 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
     // Precios une combustible y urea: se decide con los dos permisos (no hay
     // un permiso "combustible:precios"), igual que la pantalla.
     if (tab === "combustible:precios") return puedeVerPrecios(usuario);
+    // Mi viaje llama al módulo Viajes: sin él no se muestra (el servidor daría 403).
+    if (tab === "combustible:mi_viaje") return puedeVerMiViaje(usuario);
     const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
     const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
     if (override !== undefined) return override;
-    if (tab === "combustible:mi_viaje") return usuario?.rol === "conductor_ruta";
     // Era un botón de Tanques: se respeta su permiso anterior si existe.
     if (tab === "combustible:proveedores") {
       const antiguo = usuario?.permisosPestanas?.["combustible:tanques:proveedores"];
@@ -138,6 +161,8 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
   // Kenif pidió separarlos: click en "Combustible" navega, click en la
   // flecha despliega/pliega, cada uno su gesto.
   const [combustibleDesplegado, setCombustibleDesplegado] = useState(false);
+  // Igual el de Gestión operacional de flota.
+  const [flotaDesplegada, setFlotaDesplegada] = useState(false);
 
   return (
     <aside
@@ -165,7 +190,7 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
       <nav className="flex-1 py-4 flex flex-col gap-1">
         {!hayDashboard && botonBandeja}
         {tabs.map((tab) => {
-          // Combustible es, por ahora, el único módulo con submenú: adentro
+          // Combustible (y, aparte, Gestión operacional de flota) tiene submenú: adentro
           // viven el Histórico que pidió el cliente (consumo, recepciones,
           // compras externas, por conductor, por vehículo -- ver
           // HistoricoCliente.tsx), Urea (migración 0092, mismas tablas,
@@ -179,21 +204,31 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
           // que el resaltado del ítem padre siga encendido con cualquiera
           // de sus sub-pestañas.
           const esCombustible = tab.id === "combustible";
+          const esFlota = tab.id === "flota";
+          const tieneSubmenu = esCombustible || esFlota;
           const isActive = esCombustible
             ? activeTab === "combustible" || activeTab.startsWith("combustible:")
-            : activeTab === tab.id;
+            : esFlota
+              ? activeTab === "flota" || activeTab.startsWith("flota:")
+              : activeTab === tab.id;
+          const desplegado = esCombustible ? combustibleDesplegado : flotaDesplegada;
+          const alternarDespliegue = () =>
+            esCombustible ? setCombustibleDesplegado((v) => !v) : setFlotaDesplegada((v) => !v);
           return (
             <Fragment key={tab.id}>
               <div>
                 <button
                   onClick={() => {
                     if (esCombustible) setCombustibleDesplegado(true);
+                    if (esFlota) setFlotaDesplegada(true);
                     setActiveTab(
                       esCombustible && usuario?.rol === "encargado_urea"
                         ? "combustible:urea"
                         : esCombustible
                           ? "combustible"
-                          : tab.id
+                          : esFlota
+                            ? destinoDeFlota(usuario)
+                            : tab.id
                     );
                   }}
                   className={`group w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all relative ${
@@ -212,15 +247,15 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
                     className={`shrink-0 ${isActive ? "text-[#0A1014]" : "text-slate-400 group-hover:text-[#0A1014]"}`}
                   />
                   <span className="tracking-tight flex-1">{tab.label}</span>
-                  {esCombustible && (
+                  {tieneSubmenu && (
                     <span
                       role="button"
-                      aria-label={combustibleDesplegado ? "Cerrar submenú" : "Abrir submenú"}
+                      aria-label={desplegado ? "Cerrar submenú" : "Abrir submenú"}
                       onClick={(e) => {
                         e.stopPropagation();
-                        setCombustibleDesplegado((v) => !v);
+                        alternarDespliegue();
                       }}
-                      className={`p-1 rounded transition-transform ${combustibleDesplegado ? "rotate-180" : ""}`}
+                      className={`p-1 rounded transition-transform ${desplegado ? "rotate-180" : ""}`}
                     >
                       <ChevronDown
                         size={16}
@@ -231,60 +266,20 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
                     </span>
                   )}
                 </button>
-                {esCombustible && (
-                  /* Despliegue animado: la altura pasa de 0fr a 1fr (así no hace
-                   falta medir nada) y cada subitem entra con un pequeño
-                   desfase, deslizándose desde la izquierda. `invisible` con
-                   la misma transición saca los ítems ocultos del foco de
-                   teclado recién cuando terminó de cerrarse. */
-                  <div
-                    aria-hidden={!combustibleDesplegado}
-                    className={`grid transition-[grid-template-rows,visibility] duration-300 ease-out motion-reduce:transition-none ${
-                      combustibleDesplegado
-                        ? "grid-rows-[1fr] visible"
-                        : "grid-rows-[0fr] invisible"
-                    }`}
-                  >
-                    <div className="overflow-hidden">
-                      <div className="flex flex-col">
-                        {submenusVisibles.map(({ tab: destino, label, Icono }, i) => {
-                          const activo = activeTab === destino;
-                          // Para el conductor, "Tanques" es lo que carga desde su
-                          // tanqueta: así se entiende mejor.
-                          const etiqueta =
-                            destino === "combustible" && usuario?.rol === "conductor_ruta"
-                              ? "Tanquetas"
-                              : label;
-                          return (
-                            <div
-                              key={destino}
-                              style={{
-                                transitionDelay: combustibleDesplegado ? `${80 + i * 50}ms` : "0ms",
-                              }}
-                              className={`transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none ${
-                                combustibleDesplegado
-                                  ? "opacity-100 translate-x-0"
-                                  : "opacity-0 -translate-x-3"
-                              }`}
-                            >
-                              <button
-                                onClick={() => setActiveTab(destino)}
-                                tabIndex={combustibleDesplegado ? 0 : -1}
-                                className={`group w-full text-left pl-12 pr-6 py-2.5 text-sm flex items-center gap-3 transition-all ${
-                                  activo
-                                    ? "text-[#BADC1E] font-semibold"
-                                    : "text-slate-500 hover:text-[#BADC1E] font-medium"
-                                }`}
-                              >
-                                <Icono className="w-4 h-4 shrink-0" />
-                                {etiqueta}
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
+                {tieneSubmenu && (
+                  <SubmenuDesplegable
+                    items={esCombustible ? submenusVisibles : submenusFlota}
+                    desplegado={desplegado}
+                    activeTab={activeTab}
+                    setActiveTab={setActiveTab}
+                    // Para el conductor, "Tanques" es lo que carga desde su
+                    // tanqueta: así se entiende mejor.
+                    etiquetaDe={({ tab: destino, label }) =>
+                      destino === "combustible" && usuario?.rol === "conductor_ruta"
+                        ? "Tanquetas"
+                        : label
+                    }
+                  />
                 )}
               </div>
               {tab.id === "dashboard" && botonBandeja}

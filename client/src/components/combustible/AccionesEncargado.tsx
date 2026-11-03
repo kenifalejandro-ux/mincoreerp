@@ -90,7 +90,7 @@ export function AccionesEncargado({
     setGuardando(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/erp/combustible/viajes/${viaje.id}/${ruta}`, {
+      const res = await apiFetch(`/api/erp/viajes/${viaje.id}/${ruta}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(cuerpo),

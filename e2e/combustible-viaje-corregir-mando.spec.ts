@@ -19,7 +19,7 @@ test("la oficina corrige un cambio de mando olvidado y se ven los dos tramos", a
   const v = await prepararViajeDeConductor(page, { conRelevo: true, retroactivo: true });
 
   await page.goto("/");
-  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+  await page.getByRole("button", { name: /^Gestión operacional de flota Abrir submenú$/ }).click();
   await page.getByRole("button", { name: "Viajes" }).click();
   await page
     .getByRole("row")
