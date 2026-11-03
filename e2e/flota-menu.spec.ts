@@ -8,7 +8,7 @@
  *   - Viajes ya no está dentro del submenú de Combustible;
  *   - quien tiene solo el módulo Viajes (sin Registro de unidades) ve el grupo con
  *     un único ítem, y tocar el grupo lo lleva a Viajes;
- *   - el conductor no ve el grupo: su "Mi viaje" sigue en Combustible.
+ *   - el conductor no ve el grupo: sus pantallas (Mi viaje, Compra en ruta, Tanquetas) van sueltas, sin el encabezado Combustible.
  */
 import { randomBytes } from "node:crypto";
 import { test, expect, type Browser, type BrowserContext, type Page } from "@playwright/test";
@@ -162,7 +162,7 @@ test("quien tiene Viajes pero NO Combustible no ve el grupo de Flota (el servido
   }
 });
 
-test("el conductor no ve el grupo de Flota: su Mi viaje sigue dentro de Combustible", async ({
+test("el conductor no ve el grupo de Flota ni el de Combustible: sus pantallas van sueltas", async ({
   page,
   browser,
 }) => {
@@ -174,6 +174,17 @@ test("el conductor no ve el grupo de Flota: su Mi viaje sigue dentro de Combusti
     await expect(conductor.getByRole("heading", { name: "Mi viaje" })).toBeVisible();
     await expect(grupoFlota(conductor)).toHaveCount(0);
     await expect(conductor.getByRole("button", { name: "Registro de unidades" })).toHaveCount(0);
+    // Sus pantallas van sueltas, sin el encabezado "Combustible" ni su submenú.
+    await expect(grupoCombustible(conductor)).toHaveCount(0);
+    for (const nombre of ["Mi viaje", "Compra en ruta", "Tanquetas"]) {
+      await expect(conductor.getByRole("button", { name: nombre, exact: true })).toBeVisible();
+    }
+    await expect(conductor.getByRole("button", { name: "Tanques", exact: true })).toHaveCount(0);
+    // El ítem de la pantalla abierta queda marcado (Mi viaje es con lo que abre).
+    await expect(conductor.getByRole("button", { name: "Mi viaje", exact: true })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
   } finally {
     await contexto.close();
     await darDeBajaAlConductor(page, v);
@@ -220,8 +231,10 @@ test("un conductor cuya empresa no le da el módulo Viajes no ve Mi viaje (la pa
     await conductor.getByLabel("Confirmar nueva contraseña").fill(nueva);
     await conductor.getByRole("button", { name: "Guardar y continuar" }).click();
 
-    await grupoCombustible(conductor).click();
-    await expect(conductor.getByRole("button", { name: "Tanquetas" })).toBeVisible();
+    await expect(conductor.getByRole("button", { name: "Tanquetas", exact: true })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
     await expect(conductor.getByRole("button", { name: "Compra en ruta" })).toBeVisible();
     await expect(conductor.getByRole("button", { name: "Mi viaje" })).toHaveCount(0);
   } finally {
