@@ -170,9 +170,8 @@ export async function entrarAMiViaje(
   await page.getByLabel("Nueva contraseña", { exact: true }).fill(nueva);
   await page.getByLabel("Confirmar nueva contraseña").fill(nueva);
   await page.getByRole("button", { name: "Guardar y continuar" }).click();
-  // El conductor no tiene Dashboard: espera su menú de Combustible.
-  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
-  await page.getByRole("button", { name: "Mi viaje" }).click();
+  // El conductor no tiene Dashboard ni el encabezado "Combustible": sus pantallas van sueltas.
+  await page.getByRole("button", { name: "Mi viaje", exact: true }).click();
 }
 
 /** Revisa y confirma el viaje programado y lo inicia con el odómetro dado. */

@@ -92,6 +92,9 @@ function primeraPestania(usuario: UsuarioDeSesion): string {
   const override = (pestana: string) => usuario?.permisosPestanas?.[`combustible:${pestana}`];
   if (usuario?.rol === "conductor_ruta" && puedeVerMiViaje(usuario)) return "combustible:mi_viaje";
   if (usuario?.rol === "conductor_ruta" && override("tanques") !== false) return "combustible";
+  // Sin Mi viaje ni Tanquetas, la pantalla que le queda es Compra en ruta.
+  if (usuario?.rol === "conductor_ruta" && puedeCompraEnRuta(usuario))
+    return "combustible:compra_ruta";
   if (usuario?.rol === "encargado_urea" && override("urea") !== false) return "combustible:urea";
   if (usuario?.rol === "grifero" && override("tanques") !== false) return "combustible";
   if (

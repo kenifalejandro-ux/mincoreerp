@@ -871,7 +871,7 @@ test("conductor: sin pestaña Urea en el menú y su historial se filtra por prod
     await comprarPorApi(page, { ...base, numero: soloUrea, productos: "urea", horometro: 0 });
     await comprarPorApi(page, { ...base, numero: ambos, productos: "ambos", horometro: 5100 });
 
-    // El menú de Combustible (ya abierto) tiene lo suyo y NO la pestaña Urea.
+    // El menú del conductor (sin encabezado, con sus pantallas sueltas) tiene lo suyo y NO la pestaña Urea.
     await expect(page.getByRole("button", { name: "Compra en ruta" })).toBeVisible();
     // Para el conductor, "Tanques" se llama "Tanquetas": es lo que carga desde su tanqueta.
     await expect(page.getByRole("button", { name: "Tanquetas" })).toBeVisible();

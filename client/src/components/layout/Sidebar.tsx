@@ -205,6 +205,49 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
           // de sus sub-pestañas.
           const esCombustible = tab.id === "combustible";
           const esFlota = tab.id === "flota";
+          // El conductor de ruta no sabe de "módulos": ve sus pantallas (Mi viaje, Compra en
+          // ruta, Tanquetas) sueltas, sin el encabezado "Combustible" ni el submenú.
+          if (esCombustible && usuario?.rol === "conductor_ruta") {
+            return (
+              <Fragment key={tab.id}>
+                {submenusVisibles.map(({ tab: destino, label, Icono }) => {
+                  const activo = activeTab === destino;
+                  // "Tanques" es lo que el conductor carga desde su tanqueta: para él es "Tanquetas".
+                  // Si además se le dio a mano la pantalla de tanquetas de la oficina, esa conserva
+                  // otro nombre para que no haya dos botones iguales.
+                  const tieneSuTanqueta = submenusVisibles.some((i) => i.tab === "combustible");
+                  const etiqueta =
+                    destino === "combustible"
+                      ? "Tanquetas"
+                      : destino === "combustible:tanquetas" && tieneSuTanqueta
+                        ? "Todas las tanquetas"
+                        : label;
+                  return (
+                    <button
+                      key={destino}
+                      onClick={() => setActiveTab(destino)}
+                      aria-current={activo ? "page" : undefined}
+                      className={`group w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all relative ${
+                        activo
+                          ? "bg-[#BADC1E] text-[#0A1014] hover:bg-[#BADC1E] font-semibold"
+                          : "text-slate-500 hover:bg-[#BADC1E] hover:text-[#0A1014] font-medium"
+                      }`}
+                    >
+                      {activo && (
+                        <div className="absolute left-0 top-0 bottom-0 w-1.5 z-2 bg-[#BADC1E]" />
+                      )}
+                      <Icono
+                        size={18}
+                        strokeWidth={2}
+                        className={`shrink-0 ${activo ? "text-[#0A1014]" : "text-slate-400 group-hover:text-[#0A1014]"}`}
+                      />
+                      <span className="tracking-tight">{etiqueta}</span>
+                    </button>
+                  );
+                })}
+              </Fragment>
+            );
+          }
           const tieneSubmenu = esCombustible || esFlota;
           const isActive = esCombustible
             ? activeTab === "combustible" || activeTab.startsWith("combustible:")
@@ -272,13 +315,6 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
                     desplegado={desplegado}
                     activeTab={activeTab}
                     setActiveTab={setActiveTab}
-                    // Para el conductor, "Tanques" es lo que carga desde su
-                    // tanqueta: así se entiende mejor.
-                    etiquetaDe={({ tab: destino, label }) =>
-                      destino === "combustible" && usuario?.rol === "conductor_ruta"
-                        ? "Tanquetas"
-                        : label
-                    }
                   />
                 )}
               </div>

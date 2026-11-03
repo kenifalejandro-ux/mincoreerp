@@ -18,8 +18,6 @@ interface SubmenuDesplegableProps {
   desplegado: boolean;
   activeTab: string;
   setActiveTab: (tab: string) => void;
-  /** Cambia el texto de un ítem para ciertos perfiles (ej. "Tanques" -> "Tanquetas"). */
-  etiquetaDe?: (item: ItemDeSubmenu) => string;
 }
 
 export function SubmenuDesplegable({
@@ -27,7 +25,6 @@ export function SubmenuDesplegable({
   desplegado,
   activeTab,
   setActiveTab,
-  etiquetaDe,
 }: SubmenuDesplegableProps) {
   return (
     <div
@@ -59,7 +56,7 @@ export function SubmenuDesplegable({
                   }`}
                 >
                   <Icono className="w-4 h-4 shrink-0" />
-                  {etiquetaDe ? etiquetaDe(item) : label}
+                  {label}
                 </button>
               </div>
             );
