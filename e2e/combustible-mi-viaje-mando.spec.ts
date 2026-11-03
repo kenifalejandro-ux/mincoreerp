@@ -65,7 +65,7 @@ test("el titular entrega el mando sin señal y el relevo lo acepta", async ({ pa
 
   // ── La oficina ve quién manejó cada tramo ──────────────────────────────
   await page.goto("/");
-  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+  await page.getByRole("button", { name: /^Gestión operacional de flota Abrir submenú$/ }).click();
   await page.getByRole("button", { name: "Viajes" }).click();
   await page
     .getByRole("row")

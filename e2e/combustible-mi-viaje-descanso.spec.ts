@@ -124,7 +124,9 @@ test("una avería o un tráfico dicen qué pasó, en el celular y en el panel de
     const oficina = await contexto.newPage();
     const admin = adminA();
     await loginPorUI(oficina, admin.email, admin.password);
-    await oficina.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+    await oficina
+      .getByRole("button", { name: /^Gestión operacional de flota Abrir submenú$/ })
+      .click();
     await oficina.getByRole("button", { name: "Viajes" }).click();
 
     await entrarAMiViaje(page, v);

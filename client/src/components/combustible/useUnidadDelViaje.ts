@@ -54,6 +54,8 @@ export function useUnidadDelViaje(activo: boolean, usuarioId: string | undefined
   const cargar = useCallback(async () => {
     if (!usuarioId) return;
     try {
+      // Por la puerta de Combustible a propósito: Compra en ruta no puede depender de que la
+      // empresa tenga el módulo Viajes (la puerta de /api/erp/viajes da 403 sin él).
       const res = await apiFetch("/api/erp/combustible/viajes/mi-unidad");
       if (!res.ok) return;
       const body = await res.json().catch(() => null);

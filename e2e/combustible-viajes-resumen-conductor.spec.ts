@@ -13,7 +13,7 @@ test("el resumen por conductor muestra los viajes, los km y las horas de cada un
   test.setTimeout(120_000);
   const v = await prepararViajeDeConductor(page, { retroactivo: true });
 
-  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+  await page.getByRole("button", { name: /^Gestión operacional de flota Abrir submenú$/ }).click();
   await page.getByRole("button", { name: "Viajes" }).click();
 
   const resumen = page.getByTestId("resumen-conductores");

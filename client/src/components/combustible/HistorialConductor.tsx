@@ -47,7 +47,7 @@ export function HistorialConductor({ usuarioId }: { usuarioId: string }) {
       try {
         const q = new URLSearchParams({ limite: "20" });
         if (antes) q.set("antes", antes);
-        const res = await apiFetch(`/api/erp/combustible/viajes/mios/historial?${q}`);
+        const res = await apiFetch(`/api/erp/viajes/mios/historial?${q}`);
         const body = (await res.json().catch(() => null)) as Pagina | null;
         if (!res.ok || !body) throw new Error("error");
         setSinSenal(false);

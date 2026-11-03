@@ -4,6 +4,7 @@ import { Suspense, lazy, useEffect, useState, type ComponentType } from "react";
 import { puedeVerBandeja } from "./components/bandeja/bandejaAcceso";
 import { puedeCompraEnRuta } from "./components/combustible/compraEnRutaAcceso";
 import { puedeVerPrecios } from "./components/combustible/preciosAcceso";
+import { puedeVerMiViaje, puedeVerUnidades, puedeVerViajes } from "./components/flota/flotaAcceso";
 import Layout from "./components/layout/Layout";
 import { useAuth } from "./context/AuthContext";
 import { MODULOS_CLIENTE } from "./modules/registry";
@@ -52,16 +53,22 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
   if (moduloId === "administracion") return usuario?.rol === "admin";
   // La Bandeja no es un módulo: junta las alertas de los que sí lo son.
   if (moduloId === "bandeja") return puedeVerBandeja(usuario);
+  // Gestión operacional de flota: "flota" es Registro de unidades y
+  // "flota:viajes" la lista de viajes (mismas reglas que el menú).
+  if (moduloId === "flota") {
+    return tab === "flota:viajes" ? puedeVerViajes(usuario) : puedeVerUnidades(usuario);
+  }
   if (moduloId === "combustible") {
     // Compra en ruta junta dos permisos (combustible y urea): mismos que el menú.
     if (tab === "combustible:compra_ruta") return puedeCompraEnRuta(usuario);
     // Precios une combustible y urea: mismos dos permisos que el menú.
     if (tab === "combustible:precios") return puedeVerPrecios(usuario);
+    // Mi viaje llama al módulo Viajes: sin él no se abre (el servidor daría 403).
+    if (tab === "combustible:mi_viaje") return puedeVerMiViaje(usuario);
     const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
     const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
     if (override !== undefined) return override;
     // "Mi viaje" (0124) es del conductor: el resto gestiona desde Viajes.
-    if (tab === "combustible:mi_viaje") return usuario?.rol === "conductor_ruta";
     if (tab === "combustible:proveedores") {
       const antiguo = usuario?.permisosPestanas?.["combustible:tanques:proveedores"];
       return antiguo ?? (usuario?.rol === "admin" || usuario?.rol === "operador");
@@ -83,8 +90,7 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
  *  que sí, en el orden del menú. */
 function primeraPestania(usuario: UsuarioDeSesion): string {
   const override = (pestana: string) => usuario?.permisosPestanas?.[`combustible:${pestana}`];
-  if (usuario?.rol === "conductor_ruta" && override("mi_viaje") !== false)
-    return "combustible:mi_viaje";
+  if (usuario?.rol === "conductor_ruta" && puedeVerMiViaje(usuario)) return "combustible:mi_viaje";
   if (usuario?.rol === "conductor_ruta" && override("tanques") !== false) return "combustible";
   if (usuario?.rol === "encargado_urea" && override("urea") !== false) return "combustible:urea";
   if (usuario?.rol === "grifero" && override("tanques") !== false) return "combustible";
@@ -161,7 +167,7 @@ function App() {
         : moduloIdActivo === "bandeja"
           ? BandejaView
           : moduloActivo?.componente;
-  // Combustible es, por ahora, el único módulo con sub-pestaña (ver
+  // Combustible y Gestión operacional de flota son los módulos con sub-pestaña (ver
   // Sidebar.tsx) -- se la pasamos como prop en vez de que el panel la lea
   // de activeTab directamente, para no acoplar ese componente al formato
   // "modulo:subpestaña" del sidebar.
@@ -173,25 +179,25 @@ function App() {
               ? "historico"
               : tabActiva === "combustible:tanquetas"
                 ? "tanquetas"
-                : tabActiva === "combustible:viajes"
-                  ? "viajes"
-                  : tabActiva === "combustible:mi_viaje"
-                    ? "mi_viaje"
-                    : tabActiva === "combustible:compra_ruta"
-                      ? "compra_ruta"
-                      : tabActiva === "combustible:urea"
-                        ? "urea"
-                        : tabActiva === "combustible:precios"
-                          ? "precios"
-                          : tabActiva === "combustible:proveedores"
-                            ? "proveedores"
-                            : tabActiva === "combustible:auditoria"
-                              ? "auditoria"
-                              : tabActiva === "combustible:bitacora"
-                                ? "bitacora"
-                                : "tanques",
+                : tabActiva === "combustible:mi_viaje"
+                  ? "mi_viaje"
+                  : tabActiva === "combustible:compra_ruta"
+                    ? "compra_ruta"
+                    : tabActiva === "combustible:urea"
+                      ? "urea"
+                      : tabActiva === "combustible:precios"
+                        ? "precios"
+                        : tabActiva === "combustible:proveedores"
+                          ? "proveedores"
+                          : tabActiva === "combustible:auditoria"
+                            ? "auditoria"
+                            : tabActiva === "combustible:bitacora"
+                              ? "bitacora"
+                              : "tanques",
         }
-      : {};
+      : moduloIdActivo === "flota"
+        ? { pestanaInicial: tabActiva === "flota:viajes" ? "viajes" : "unidades" }
+        : {};
 
   // El registry tipa cada componente sin props (ComponentType<{}>) porque la
   // gran mayoría no las recibe -- Combustible es la única excepción, así que

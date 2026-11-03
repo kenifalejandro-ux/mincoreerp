@@ -47,7 +47,8 @@ export default function RutasEditor({
 
       {lugares.length < 2 ? (
         <p className="text-[11px] text-[#94a3b8]">
-          Hacen falta al menos dos lugares cargados. Se crean en Combustible › Viajes › Lugares.
+          Hacen falta al menos dos lugares cargados. Se crean en Gestión operacional de flota ›
+          Viajes › Lugares.
         </p>
       ) : value.length === 0 ? (
         <p className="text-[11px] text-[#94a3b8]">

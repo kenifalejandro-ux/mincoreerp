@@ -61,7 +61,7 @@ export function CorregirMando({
     setGuardando(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/erp/combustible/viajes/${viaje.id}/mando/corregir`, {
+      const res = await apiFetch(`/api/erp/viajes/${viaje.id}/mando/corregir`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

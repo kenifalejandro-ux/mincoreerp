@@ -126,7 +126,7 @@ export function LugaresPanel({
         return;
       }
       const res = await apiFetch(
-        form.id ? `/api/erp/combustible/lugares/${form.id}` : "/api/erp/combustible/lugares",
+        form.id ? `/api/erp/viajes/lugares/${form.id}` : "/api/erp/viajes/lugares",
         {
           method: form.id ? "PATCH" : "POST",
           headers: { "Content-Type": "application/json" },
@@ -149,7 +149,7 @@ export function LugaresPanel({
     if (cambiando) return;
     setCambiando(l.id);
     try {
-      const res = await apiFetch(`/api/erp/combustible/lugares/${l.id}`, {
+      const res = await apiFetch(`/api/erp/viajes/lugares/${l.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ activo: !l.activo }),

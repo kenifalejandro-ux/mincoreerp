@@ -17,6 +17,7 @@ import { apiFetch } from "../../services/apiClient";
 import { mensajeDeError } from "../../utils/mensajeDeError";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 import { useSedes } from "../comunes/useSedes";
+import { puedeVerViajes as puedeVerViajesDeFlota } from "../flota/flotaAcceso";
 
 import {
   ETIQUETA_TIPO_ALERTA,
@@ -109,7 +110,8 @@ export default function BandejaAlertas() {
   // El viaje de una alerta de viaje (0156), abierto en su ventana. Quien no ve la pestaña Viajes no
   // recibe el botón (el servidor le daría 403).
   const { usuario } = useAuth();
-  const puedeVerViajes = usuario?.permisosPestanas?.["combustible:viajes"] !== false;
+  // El viaje se abre por el módulo Viajes: sin él el servidor respondería 403.
+  const puedeVerViajes = puedeVerViajesDeFlota(usuario);
   const [viajeAbierto, setViajeAbierto] = useState<string | null>(null);
   // La alerta a la que se llegó desde la campanita, pedida por su id: la lista
   // trae 50 por página y la clickeada puede ser más antigua que eso.

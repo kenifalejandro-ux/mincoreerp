@@ -730,7 +730,7 @@ export default function EquiposTable() {
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-10">
         <div>
           <h1 className="text-lg sm:text-xl lg:text-2xl font-bold text-white tracking-tight">
-            Equipos
+            Registro de unidades
           </h1>
           <p className="text-xs sm:text-sm text-[#94a3b8]">
             Maestro de la flota: datos de cada unidad, su conductor y sus rutas, con historial
