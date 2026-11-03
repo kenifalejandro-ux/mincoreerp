@@ -1,13 +1,19 @@
 // client/src/components/combustible/CampanitaAlertas.tsx
 //
-// Campanita de alertas de combustible (hueco de talonario, vale anulado) --
+// Campanita de alertas (hueco de talonario, vale anulado, viaje demorado, urea...) --
 // visible en el Header para gerencia (rol admin) con el módulo habilitado.
-// Solo combustible por ahora (ver la decisión en el plan): si otro módulo
-// necesita esto mañana, se replica el patrón, no se generaliza de entrada.
+// Las agrupa por módulo (Combustible, Urea, Flota): el servidor ya entrega solo las
+// de los módulos que cada persona tiene.
 
 import { Bell } from "lucide-react";
 import { useState } from "react";
 
+import {
+  ETIQUETA_GRUPO_ALERTA,
+  GRUPOS_DE_ALERTA,
+  grupoDeAlerta,
+  type GrupoDeAlerta,
+} from "./alertasTexto";
 import { CLAVE_ALERTA_PENDIENTE, useAlertasCombustibleStream } from "./useAlertasCombustibleStream";
 
 const ETIQUETA_TIPO: Record<string, string> = {
@@ -124,6 +130,16 @@ export default function CampanitaAlertas({ activo, onIrACombustible }: Campanita
       new CustomEvent("combustible:abrir-alerta", { detail: { alertaId: Number(alertaId) } })
     );
   };
+  // Por módulo, y dentro de cada uno lo crítico primero (el orden entre iguales se conserva).
+  const porGrupo = GRUPOS_DE_ALERTA.reduce(
+    (acc, g) => {
+      acc[g] = alertas
+        .filter((a) => grupoDeAlerta(a.tipo) === g)
+        .sort((x, y) => Number(y.critica) - Number(x.critica));
+      return acc;
+    },
+    {} as Record<GrupoDeAlerta, typeof alertas>
+  );
   // Un contador solo no distingue "tres avisos de reposición" de "tres
   // sospechas de robo". El color del badge sí.
   const criticasSinLeer = alertas.filter((a) => a.critica).length;
@@ -135,7 +151,7 @@ export default function CampanitaAlertas({ activo, onIrACombustible }: Campanita
       <button
         onClick={() => setAbierta((v) => !v)}
         className="relative p-2 text-slate-400 hover:text-[#DDF500] hover:bg-white/5 rounded-md transition-all"
-        title="Alertas de combustible"
+        title="Alertas"
       >
         <Bell size={18} className={criticasSinLeer > 0 ? "animate-pulse" : undefined} />
         {noLeidas > 0 && (
@@ -155,7 +171,7 @@ export default function CampanitaAlertas({ activo, onIrACombustible }: Campanita
           <div className="fixed inset-0 z-40" onClick={() => setAbierta(false)} />
           <div className="fixed inset-x-2 top-16 sm:absolute sm:inset-x-auto sm:top-auto sm:right-0 mt-2 sm:w-80 bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden">
             <div className="p-3 border-b border-slate-100 flex items-center justify-between">
-              <span className="text-sm font-bold text-slate-800">Alertas de combustible</span>
+              <span className="text-sm font-bold text-slate-800">Alertas</span>
               {noLeidas > 0 && (
                 <button
                   onClick={() => marcarTodasLeidas()}
@@ -170,35 +186,43 @@ export default function CampanitaAlertas({ activo, onIrACombustible }: Campanita
               {alertas.length === 0 ? (
                 <p className="p-4 text-sm text-slate-400 text-center">Sin alertas pendientes</p>
               ) : (
-                [...alertas]
-                  .sort((x, y) => Number(y.critica) - Number(x.critica))
-                  .map((a) => (
-                    <button
-                      key={a.id}
-                      type="button"
-                      onClick={() => abrirAlerta(a.id)}
-                      title="Ver en la bandeja de alertas"
-                      className={
-                        "w-full text-left cursor-pointer hover:bg-slate-100/70 transition-colors " +
-                        (a.critica
-                          ? "p-3 border-b border-slate-50 last:border-0 border-l-4 border-l-red-500 bg-red-50/40"
-                          : "p-3 border-b border-slate-50 last:border-0 border-l-4 border-l-transparent")
-                      }
-                    >
-                      {a.critica && (
-                        <p className="text-[10px] font-bold text-red-600 uppercase tracking-wide">
-                          Requiere revisión
+                GRUPOS_DE_ALERTA.filter((g) => porGrupo[g].length > 0).map((g) => (
+                  <section key={g} aria-label={ETIQUETA_GRUPO_ALERTA[g]}>
+                    <h3 className="sticky top-0 z-10 flex items-center justify-between bg-slate-50 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                      {ETIQUETA_GRUPO_ALERTA[g]}
+                      <span className="tabular-nums">{porGrupo[g].length}</span>
+                    </h3>
+                    {porGrupo[g].map((a) => (
+                      <button
+                        key={a.id}
+                        type="button"
+                        onClick={() => abrirAlerta(a.id)}
+                        title="Ver en la bandeja de alertas"
+                        className={
+                          "w-full text-left cursor-pointer hover:bg-slate-100/70 transition-colors " +
+                          (a.critica
+                            ? "p-3 border-b border-slate-50 last:border-0 border-l-4 border-l-red-500 bg-red-50/40"
+                            : "p-3 border-b border-slate-50 last:border-0 border-l-4 border-l-transparent")
+                        }
+                      >
+                        {a.critica && (
+                          <p className="text-[10px] font-bold text-red-600 uppercase tracking-wide">
+                            Requiere revisión
+                          </p>
+                        )}
+                        <p className="text-sm font-semibold text-slate-800">{formatearAlerta(a)}</p>
+                        {a.tipo === "vale_anulado" && typeof a.detalle.motivo === "string" && (
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Motivo: {a.detalle.motivo}
+                          </p>
+                        )}
+                        <p className="text-[10px] text-slate-400 mt-1">
+                          {new Date(a.creado_en).toLocaleString("es-PE")}
                         </p>
-                      )}
-                      <p className="text-sm font-semibold text-slate-800">{formatearAlerta(a)}</p>
-                      {a.tipo === "vale_anulado" && typeof a.detalle.motivo === "string" && (
-                        <p className="text-xs text-slate-500 mt-0.5">Motivo: {a.detalle.motivo}</p>
-                      )}
-                      <p className="text-[10px] text-slate-400 mt-1">
-                        {new Date(a.creado_en).toLocaleString("es-PE")}
-                      </p>
-                    </button>
-                  ))
+                      </button>
+                    ))}
+                  </section>
+                ))
               )}
             </div>
 

@@ -27,8 +27,9 @@ import {
   type DestinatarioDeAlerta,
 } from "../../server/shared/utils/destinatariosAlertas";
 import { getTenantId } from "../../server/shared/utils/request";
+import { tiposSinModulo } from "./alertasPorModulo";
 
-export type AlcanceCombustible =
+export type AlcanceCombustible = (
   | { todo: true }
   | {
       todo: false;
@@ -36,11 +37,26 @@ export type AlcanceCombustible =
       grifos: number[];
       /** Surtidores sueltos: solo sus vales. */
       surtidores: number[];
-    };
+    }
+) & {
+  /** Tipos de alerta que quien mira NO ve porque su módulo dueño no lo tiene (ver
+   *  alertasPorModulo.ts). Se aplica a TODA consulta de alertas, también al administrador. */
+  sinTipos?: string[];
+};
 
 export const ALCANCE_TODO: AlcanceCombustible = { todo: true };
 
 export async function resolverAlcance(
+  client: PoolClient,
+  tenantId: string,
+  usuario: { id: string; rol: string; modulosPermitidos?: string[] }
+): Promise<AlcanceCombustible> {
+  const alcance = await resolverGrifos(client, tenantId, usuario);
+  const sinTipos = tiposSinModulo(usuario.modulosPermitidos);
+  return sinTipos ? { ...alcance, sinTipos } : alcance;
+}
+
+async function resolverGrifos(
   client: PoolClient,
   tenantId: string,
   usuario: { id: string; rol: string }
@@ -143,6 +159,12 @@ export function filtroAlertaVisible(a: AlcanceCombustible, col: string, desde: n
                          AND dv.surtidor_id = ANY($${desde + 1}::int[])))`,
     valores: [a.grifos, a.surtidores],
   };
+}
+
+/** Las alertas de un módulo que quien mira no tiene (alertasPorModulo.ts). */
+export function filtroModuloDeAlerta(a: AlcanceCombustible, col: string, desde: number): Filtro {
+  if (!a.sinTipos?.length) return { sql: "TRUE", valores: [] };
+  return { sql: `${col}.tipo <> ALL($${desde}::text[])`, valores: [a.sinTipos] };
 }
 
 /** El grifo de un lote de alertas RECIÉN CREADAS, para enrutar su aviso.
