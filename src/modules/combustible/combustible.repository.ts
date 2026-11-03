@@ -367,8 +367,9 @@ const JOIN_ULTIMA_LECTURA = `
   ) sv ON true
 `;
 
-/** Todo lo que ENTRA al tanque y mueve su nivel: las recepciones y el saldo
- *  que una tanqueta devuelve al pozo (0145). Mismas columnas para los dos, así
+/** Todo lo que ENTRA al tanque y mueve su nivel: las recepciones, el saldo
+ *  que una tanqueta devuelve al pozo (0145) y lo que se pasa de la cisterna
+ *  al tanque (0169). Mismas columnas para los dos, así
  *  cada cuenta del módulo cambia `FROM combustible_recepciones r` por esto y
  *  lo ve completo.
  *
@@ -386,6 +387,10 @@ const ENTRADAS_NIVEL = `(
          t.costo_unitario_pozo, NULL::timestamptz, false
     FROM combustible_tanqueta_retornos t
    WHERE t.destino = 'pozo'
+  UNION ALL
+  SELECT c.tenant_id, c.combustible_id, c.id, c.creado_en, c.cantidad,
+         c.costo_unitario, NULL::timestamptz, false
+    FROM combustible_cisterna_traslados c
 )`;
 
 const JOIN_NIVEL_TEORICO = `
@@ -486,14 +491,19 @@ const LATERAL_DIFERENCIA_RECEPCION = `
        WHERE d.combustible_id = r.combustible_id AND d.anulada_en IS NULL
          AND d.despachado_en > antes.leido_en AND d.despachado_en <= despues.leido_en
     ) salidas ON true
-    -- Lo que una tanqueta devolvió al pozo entre las dos lecturas (0145): subió
-    -- el nivel, pero no es parte de lo recibido. Sin restarlo se vería como un
-    -- sobrante de esta recepción.
+    -- Lo que una tanqueta devolvió al pozo entre las dos lecturas (0145), o lo
+    -- que se pasó de la cisterna al tanque (0169): subió el nivel, pero no es
+    -- parte de lo recibido. Sin restarlo se vería como un sobrante de esta
+    -- recepción.
     LEFT JOIN LATERAL (
-      SELECT SUM(t.cantidad_pozo) AS total FROM combustible_tanqueta_retornos t
-       WHERE t.tenant_id = r.tenant_id AND t.combustible_id = r.combustible_id
-         AND t.destino = 'pozo'
-         AND t.creado_en > antes.leido_en AND t.creado_en <= despues.leido_en
+      SELECT COALESCE((SELECT SUM(t.cantidad_pozo) FROM combustible_tanqueta_retornos t
+                        WHERE t.tenant_id = r.tenant_id AND t.combustible_id = r.combustible_id
+                          AND t.destino = 'pozo'
+                          AND t.creado_en > antes.leido_en AND t.creado_en <= despues.leido_en), 0)
+           + COALESCE((SELECT SUM(c.cantidad) FROM combustible_cisterna_traslados c
+                        WHERE c.tenant_id = r.tenant_id AND c.combustible_id = r.combustible_id
+                          AND c.creado_en > antes.leido_en AND c.creado_en <= despues.leido_en), 0)
+             AS total
     ) pozo ON true
     LEFT JOIN LATERAL (
       SELECT COUNT(*) AS entregas,
@@ -5368,6 +5378,23 @@ export class CombustibleRepository {
 
         UNION ALL
 
+        -- Lo que se pasó de la cisterna al tanque (0169): entra como una
+        -- recepción, sin proveedor ni documento.
+        SELECT c.creado_en, 2, 'cisterna_al_tanque',
+               c.id::text,
+               NULL,
+               'Cisterna de la recepción #' || x.recepcion_id,
+               c.cantidad, 0::numeric,
+               NULL::numeric,
+               c.usuario_id, NULL::timestamptz, NULL::text,
+               NULL::numeric, NULL::text
+          FROM combustible_cisterna_traslados c
+          JOIN combustible_recepcion_excedentes x ON x.id = c.linea_id AND x.tenant_id = $1
+         WHERE c.tenant_id = $1 AND c.combustible_id = $2
+           AND c.creado_en >= $3::timestamptz AND c.creado_en <= $4::timestamptz
+
+        UNION ALL
+
         -- Un despacho a una tanqueta sin vale (0161) es un traspaso interno:
         -- sin documento, y con su propio tipo para nombrarlo así.
         SELECT d.despachado_en, 1,
@@ -5452,7 +5479,7 @@ export class CombustibleRepository {
       ),
       marcados AS (
         SELECT m.*,
-               COALESCE(m.tipo IN ('despacho', 'recepcion', 'retorno_tanqueta', 'traspaso_tanqueta')
+               COALESCE(m.tipo IN ('despacho', 'recepcion', 'retorno_tanqueta', 'cisterna_al_tanque', 'traspaso_tanqueta')
                         AND m.ocurrido_en < (SELECT p.en FROM primera p), false) AS historico
           FROM movimientos m
       )
@@ -5703,7 +5730,9 @@ export class CombustibleRepository {
                   WHERE r.tenant_id = $1 AND r.combustible_id = $2 AND r.anulada_en IS NULL
                     AND r.id <> $3),
                 (SELECT MAX(t.creado_en) FROM combustible_tanqueta_retornos t
-                  WHERE t.tenant_id = $1 AND t.combustible_id = $2 AND t.destino = 'pozo')
+                  WHERE t.tenant_id = $1 AND t.combustible_id = $2 AND t.destino = 'pozo'),
+                (SELECT MAX(c.creado_en) FROM combustible_cisterna_traslados c
+                  WHERE c.tenant_id = $1 AND c.combustible_id = $2)
               ) AS ultimo`,
       [tenantId, combustibleId, excluirRecepcionId]
     );
@@ -7991,7 +8020,9 @@ export class CombustibleRepository {
          SELECT x.id, x.cantidad,
                 COALESCE((SELECT SUM(d.cantidad) FROM combustible_despachos d
                            WHERE d.tenant_id = x.tenant_id AND d.excedente_linea_id = x.id
-                             AND d.anulada_en IS NULL), 0) AS salido,
+                             AND d.anulada_en IS NULL), 0)
+                + COALESCE((SELECT SUM(t.cantidad) FROM combustible_cisterna_traslados t
+                             WHERE t.tenant_id = x.tenant_id AND t.linea_id = x.id), 0) AS salido,
                 r.id AS recepcion_id, r.recibido_en, r.costo_unitario,
                 c.id AS combustible_id, c.codigo AS tanque_codigo, c.tanque_nombre,
                 c.tipo_combustible, c.unidad, r.grifo_interno_id, g.nombre AS proveedor
@@ -8045,13 +8076,70 @@ export class CombustibleRepository {
       [tenantId, recepcionId]
     );
     const r = await client.query<{ n: string }>(
-      `SELECT count(*)::text AS n
-         FROM combustible_despachos d
-         JOIN combustible_recepcion_excedentes x ON x.id = d.excedente_linea_id
-        WHERE d.tenant_id = $1 AND x.recepcion_id = $2 AND d.anulada_en IS NULL`,
+      `SELECT (
+          (SELECT count(*) FROM combustible_despachos d
+             JOIN combustible_recepcion_excedentes x ON x.id = d.excedente_linea_id
+            WHERE d.tenant_id = $1 AND x.recepcion_id = $2 AND d.anulada_en IS NULL)
+        + (SELECT count(*) FROM combustible_cisterna_traslados t
+             JOIN combustible_recepcion_excedentes x ON x.id = t.linea_id
+            WHERE t.tenant_id = $1 AND x.recepcion_id = $2)
+        )::text AS n`,
       [tenantId, recepcionId]
     );
     return Number(r.rows[0].n);
+  }
+
+  /** Lo que se pasa de la cisterna al tanque (0169): una entrada del tanque que
+   *  no es una compra. El costo es el de la factura de la recepción original. */
+  async crearTrasladoCisterna(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: { lineaId: number; combustibleId: number; cantidad: number; costoUnitario: number }
+  ) {
+    const r = await client.query<{
+      id: string;
+      linea_id: string;
+      combustible_id: number;
+      cantidad: string;
+      costo_unitario: string;
+      creado_en: Date;
+    }>(
+      `INSERT INTO combustible_cisterna_traslados
+         (tenant_id, linea_id, combustible_id, cantidad, costo_unitario, usuario_id)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, linea_id, combustible_id, cantidad, costo_unitario, creado_en`,
+      [tenantId, data.lineaId, data.combustibleId, data.cantidad, data.costoUnitario, usuarioId]
+    );
+    return r.rows[0];
+  }
+
+  /** El tanque que recibe lo de la cisterna (0169), bloqueado: dos pases a la
+   *  vez no se reparten el mismo espacio libre. */
+  async bloquearTanqueDeTraslado(client: PoolClient, tenantId: string, id: number) {
+    const r = await client.query<{
+      id: number;
+      codigo: string;
+      unidad: string;
+      tipo_combustible: string;
+      capacidad_total: string;
+      activo: boolean;
+      grifo_interno_id: number | null;
+    }>(
+      `SELECT id, codigo, unidad, tipo_combustible, capacidad_total, activo, grifo_interno_id
+         FROM combustible WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+      [tenantId, id]
+    );
+    return r.rows[0] ?? null;
+  }
+
+  async findTrasladoCisternaPorId(client: PoolClient, tenantId: string, id: number) {
+    const r = await client.query(
+      `SELECT id, linea_id, combustible_id, cantidad, costo_unitario, creado_en
+         FROM combustible_cisterna_traslados WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, id]
+    );
+    return r.rows[0] ?? null;
   }
 
   /** Cuántos de estos equipos existen en el tenant (RLS ya filtra, el

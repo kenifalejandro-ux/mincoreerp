@@ -324,6 +324,18 @@ export const MODULOS: ModuloDefinicion[] = [
           decidido_por: "usuarios",
         },
       },
+      // Lo que se pasa de la cisterna al tanque (0169). Va DESPUÉS de las líneas
+      // del excedente y de `combustible`: las referencia, y el restore inserta
+      // en este orden con las FK activas.
+      {
+        nombre: "combustible_cisterna_traslados",
+        pk: "serial",
+        fks: {
+          linea_id: "combustible_recepcion_excedentes",
+          combustible_id: "combustible",
+          usuario_id: "usuarios",
+        },
+      },
       // Fase B (migrations/0062) -- el vale digital. Va DESPUÉS de tanquetas y
       // de las líneas del excedente (0112/0114): las referencia, y el restore
       // inserta en este orden con las FK activas. A diferencia de
@@ -700,6 +712,8 @@ export const MODULOS: ModuloDefinicion[] = [
         // La compra en ruta unificada (0135): una boleta con combustible,
         // urea o los dos, y su foto única apuntada por el uuid de la compra.
         { metodo: "POST", ruta: "/compras-ruta" },
+        // Pasar lo que queda en la cisterna a un tanque (0169): idempotente por cliente_uuid.
+        { metodo: "POST", ruta: "/despachos/cisterna-al-tanque" },
         { metodo: "POST", ruta: "/compras-ruta/por-uuid/:clienteUuid/comprobante" },
       ],
     },

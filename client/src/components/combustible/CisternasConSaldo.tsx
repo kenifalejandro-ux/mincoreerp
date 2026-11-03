@@ -37,7 +37,19 @@ interface TanquetaOpcion {
   libre: number;
 }
 
-type SalidaA = "equipo" | "tanqueta";
+interface TanqueOpcion {
+  id: number;
+  codigo: string;
+  tanque_nombre: string;
+  tipo_combustible: string;
+  unidad: string;
+  capacidad_total: string;
+  nivel_teorico: string | null;
+  activo: boolean;
+  grifo_interno_id: number | null;
+}
+
+type SalidaA = "equipo" | "tanqueta" | "tanque";
 
 const FORM_INICIAL = {
   destino: "equipo" as SalidaA,
@@ -47,6 +59,7 @@ const FORM_INICIAL = {
   n_vale: "",
   medidor: "",
   tanqueta_id: "",
+  tanque_id: "",
   unidadTanqueta: {} as UnidadYVale,
 };
 
@@ -55,10 +68,12 @@ const formatear = (n: number) => n.toLocaleString("es-PE");
 export default function CisternasConSaldo({
   cisternas,
   equipos,
+  tanques,
   onRegistrado,
 }: {
   cisternas: CisternaConSaldo[];
   equipos: UnidadOpcion[];
+  tanques: TanqueOpcion[];
   onRegistrado: (mensaje: string) => Promise<void>;
 }) {
   const [elegida, setElegida] = useState<CisternaConSaldo | null>(null);
@@ -85,8 +100,45 @@ export default function CisternasConSaldo({
 
   const cambiar = (cambio: Partial<typeof FORM_INICIAL>) => setForm((f) => ({ ...f, ...cambio }));
 
+  // Pasar lo que queda al tanque (0169): una entrada del tanque, sin vale ni medidor.
+  const registrarAlTanque = async (c: CisternaConSaldo) => {
+    const cantidad = Number(form.cantidad);
+    setEnviando(true);
+    setError(null);
+    try {
+      const res = await apiFetch("/api/erp/combustible/despachos/cisterna-al-tanque", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cliente_uuid: clienteUuid,
+          linea_id: Number(c.id),
+          combustible_id: Number(form.tanque_id),
+          cantidad,
+        }),
+      });
+      if (!res.ok) {
+        const cuerpo = await res.json().catch(() => ({}));
+        setError(mensajeDeError(cuerpo, "No se pudo pasar la cisterna al tanque."));
+        return;
+      }
+      const tanque = tanques.find((t) => String(t.id) === form.tanque_id)?.codigo ?? "el tanque";
+      setElegida(null);
+      await onRegistrado(
+        res.status === 202
+          ? `Sin conexión: el pase de ${formatear(cantidad)} ${c.unidad} de la cisterna a ${tanque} quedó guardado en este equipo y se enviará solo cuando vuelva la señal.`
+          : `Pase registrado: ${formatear(cantidad)} ${c.unidad} de la cisterna a ${tanque}.`
+      );
+    } finally {
+      setEnviando(false);
+    }
+  };
+
   const registrar = async (c: CisternaConSaldo) => {
     if (enviando) return;
+    if (form.destino === "tanque") {
+      await registrarAlTanque(c);
+      return;
+    }
     const cantidad = Number(form.cantidad);
     const aUnidad = form.destino === "equipo";
     const unidadDeLaTanqueta = form.unidadTanqueta.tanqueta_equipo_id ?? "";
@@ -147,16 +199,34 @@ export default function CisternasConSaldo({
   const saldo = elegida ? Number(elegida.saldo) : 0;
   const cantidad = Number(form.cantidad);
   const tanquetaElegida = tanquetas.find((t) => String(t.id) === form.tanqueta_id);
+  // Un tanque recibe lo de la cisterna si es de la misma sede, producto y unidad.
+  const tanquesDestino = elegida
+    ? tanques.filter(
+        (t) =>
+          t.activo &&
+          t.grifo_interno_id === elegida.grifo_interno_id &&
+          t.tipo_combustible === elegida.tipo_combustible &&
+          t.unidad === elegida.unidad
+      )
+    : [];
+  const tanqueElegido = tanquesDestino.find((t) => String(t.id) === form.tanque_id);
+  // null = el tanque no tiene varilla: sin ella no se sabe cuánto espacio queda.
+  const libreDelTanque =
+    tanqueElegido && tanqueElegido.nivel_teorico !== null
+      ? Math.max(0, Number(tanqueElegido.capacidad_total) - Number(tanqueElegido.nivel_teorico))
+      : null;
   const unidadDeTanqueta = (form.unidadTanqueta.tanqueta_equipo_id ?? "") !== "";
   const cantidadValida = cantidad > 0 && cantidad <= saldo + 0.001;
   const destinoCompleto =
     form.destino === "equipo"
       ? form.equipo_id !== "" && form.serie_talonario.trim() !== "" && Number(form.n_vale) > 0
-      : form.tanqueta_id !== "" &&
-        (tanquetaElegida ? cantidad <= tanquetaElegida.libre + 0.001 : true) &&
-        (!unidadDeTanqueta ||
-          ((form.unidadTanqueta.serie_talonario ?? "").trim() !== "" &&
-            Number(form.unidadTanqueta.n_vale) > 0));
+      : form.destino === "tanque"
+        ? form.tanque_id !== "" && libreDelTanque !== null && cantidad <= libreDelTanque + 0.001
+        : form.tanqueta_id !== "" &&
+          (tanquetaElegida ? cantidad <= tanquetaElegida.libre + 0.001 : true) &&
+          (!unidadDeTanqueta ||
+            ((form.unidadTanqueta.serie_talonario ?? "").trim() !== "" &&
+              Number(form.unidadTanqueta.n_vale) > 0));
   const campo = "w-full border border-slate-200 rounded-xl p-3 text-sm";
   const etiqueta = "text-xs font-bold text-slate-700 uppercase";
 
@@ -221,6 +291,7 @@ export default function CisternasConSaldo({
                         destino: e.target.value as SalidaA,
                         equipo_id: "",
                         tanqueta_id: "",
+                        tanque_id: "",
                         medidor: "",
                         unidadTanqueta: {},
                       })
@@ -228,6 +299,7 @@ export default function CisternasConSaldo({
                   >
                     <option value="equipo">A una unidad</option>
                     <option value="tanqueta">A una tanqueta</option>
+                    <option value="tanque">Al tanque</option>
                   </select>
                 </div>
                 <div className="col-span-12 sm:col-span-6 space-y-1">
@@ -312,6 +384,39 @@ export default function CisternasConSaldo({
                     </div>
                   )}
                 </div>
+              ) : form.destino === "tanque" ? (
+                <div className="space-y-1">
+                  <label htmlFor="cis-tanque" className={etiqueta}>
+                    Tanque
+                  </label>
+                  <select
+                    id="cis-tanque"
+                    className={campo}
+                    value={form.tanque_id}
+                    onChange={(e) => cambiar({ tanque_id: e.target.value })}
+                  >
+                    <option value="">Elegir...</option>
+                    {tanquesDestino.map((t) => {
+                      const libre =
+                        t.nivel_teorico === null
+                          ? null
+                          : Math.max(0, Number(t.capacidad_total) - Number(t.nivel_teorico));
+                      return (
+                        <option key={t.id} value={t.id}>
+                          {t.codigo} ·{" "}
+                          {libre === null
+                            ? "sin varilla"
+                            : `libre ${formatear(Number(libre.toFixed(2)))}`}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  {tanquesDestino.length === 0 && (
+                    <p className="text-xs text-amber-700">
+                      No hay un tanque de esta sede con el mismo producto y unidad.
+                    </p>
+                  )}
+                </div>
               ) : (
                 <>
                   <div className="space-y-1">
@@ -355,11 +460,20 @@ export default function CisternasConSaldo({
                         tanquetaElegida &&
                         cantidad > tanquetaElegida.libre + 0.001
                       ? `${tanquetaElegida.codigo} solo admite ${formatear(tanquetaElegida.libre)} gal.`
-                      : !destinoCompleto
-                        ? form.destino === "equipo"
-                          ? "Elige la unidad y anota el vale."
-                          : "Elige la tanqueta (y el vale si la lleva una unidad)."
-                        : `Quedarán ${formatear(Number((saldo - cantidad).toFixed(2)))} ${elegida.unidad} en la cisterna.`}
+                      : form.destino === "tanque" && tanqueElegido && libreDelTanque === null
+                        ? `${tanqueElegido.codigo} no tiene lectura de varilla: registra una antes.`
+                        : form.destino === "tanque" &&
+                            tanqueElegido &&
+                            libreDelTanque !== null &&
+                            cantidad > libreDelTanque + 0.001
+                          ? `${tanqueElegido.codigo} solo tiene espacio para ${formatear(Number(libreDelTanque.toFixed(2)))} ${elegida.unidad}.`
+                          : !destinoCompleto
+                            ? form.destino === "equipo"
+                              ? "Elige la unidad y anota el vale."
+                              : form.destino === "tanque"
+                                ? "Elige el tanque."
+                                : "Elige la tanqueta (y el vale si la lleva una unidad)."
+                            : `Quedarán ${formatear(Number((saldo - cantidad).toFixed(2)))} ${elegida.unidad} en la cisterna.`}
               </p>
               {error && (
                 <p role="alert" className="text-sm text-red-700">
@@ -381,7 +495,11 @@ export default function CisternasConSaldo({
                 onClick={() => registrar(elegida)}
                 className="flex-1 bg-sky-600 text-white font-bold py-3 rounded-2xl hover:bg-sky-700 disabled:opacity-50"
               >
-                {enviando ? "Registrando..." : "Registrar salida"}
+                {enviando
+                  ? "Registrando..."
+                  : form.destino === "tanque"
+                    ? "Pasar al tanque"
+                    : "Registrar salida"}
               </button>
             </div>
           </div>

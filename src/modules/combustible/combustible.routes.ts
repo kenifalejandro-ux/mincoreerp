@@ -13,6 +13,7 @@ import {
   cargaMasivaTanquesCombustibleSchema,
   anularLecturaCombustibleSchema,
   crearDespachoCombustibleSchema,
+  trasladarCisternaSchema,
   crearCompraRutaSchema,
   crearGrifoCombustibleSchema,
   actualizarGrifoCombustibleSchema,
@@ -401,6 +402,14 @@ router.get(
   "/despachos/cisternas-con-saldo",
   requirePestana("combustible", "tanques:registrar_despacho"),
   asyncHandler(controller.listarCisternasConSaldo.bind(controller))
+);
+// Pasar lo que queda en la cisterna a un tanque con espacio (0169).
+router.post(
+  "/despachos/cisterna-al-tanque",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  requireRole("admin", "operador", "grifero"),
+  validate(trasladarCisternaSchema),
+  asyncHandler(controller.trasladarCisternaAlTanque.bind(controller))
 );
 
 // Tanquetas / cubetas (migración 0111) -- segmentos literales, ANTES de /:id.

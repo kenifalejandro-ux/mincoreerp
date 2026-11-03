@@ -73,6 +73,8 @@ export const ESCRITURAS_OFFLINE: Record<string, EscrituraOffline[]> = {
     // los dos, creada en UNA llamada, y su foto única apuntada por el uuid de la
     // compra. La cola drena en orden: el registro llega antes que su foto.
     { metodo: "POST", ruta: "/compras-ruta" },
+    // Pasar lo que queda en la cisterna a un tanque (0169): idempotente por cliente_uuid.
+    { metodo: "POST", ruta: "/despachos/cisterna-al-tanque" },
     { metodo: "POST", ruta: "/compras-ruta/por-uuid/:clienteUuid/comprobante" },
   ],
 

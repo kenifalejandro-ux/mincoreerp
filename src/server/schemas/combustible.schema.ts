@@ -2358,6 +2358,16 @@ export const retornoTanquetaSchema = z
   });
 export type RetornoTanquetaInput = z.infer<typeof retornoTanquetaSchema>;
 
+// Lo que queda en la cisterna se pasa a un tanque con espacio (0169). `cantidad`
+// está en la unidad del tanque; el servidor valida saldo, sede, producto y capacidad.
+export const trasladarCisternaSchema = z.object({
+  cliente_uuid: z.string().uuid().optional(),
+  linea_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  combustible_id: z.number().int().positive().max(2147483647),
+  cantidad: z.number().positive().max(10_000_000),
+});
+export type TrasladarCisternaInput = z.infer<typeof trasladarCisternaSchema>;
+
 // ── Viajes (0123) ──────────────────────────────────────────────────────────
 const fechaHora = z.string().datetime({ offset: true });
 /** Una hora que escribe la oficina o una carga retroactiva (no la marca del celular, que el
