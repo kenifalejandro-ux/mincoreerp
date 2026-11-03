@@ -54,6 +54,7 @@ import MiTanqueta from "./MiTanqueta";
 import MiViaje from "./MiViaje";
 import { comprimirImagen } from "./comprimirImagen";
 import { DESTINOS_EXCEDENTE, type DestinoExcedente } from "./alertasTexto";
+import CisternasConSaldo, { type CisternaConSaldo } from "./CisternasConSaldo";
 
 interface SurtidorDelTanque {
   id: number;
@@ -1928,6 +1929,17 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // es el que los regulariza.
   const puedeDespachar = !esConductor && permiteTanque("registrar_despacho");
   const [excedentesPendientes, setExcedentesPendientes] = useState<ExcedentePendiente[]>([]);
+  // Lo que quedó en la cisterna con saldo (0168): se reparte con vales.
+  const [cisternasConSaldo, setCisternasConSaldo] = useState<CisternaConSaldo[]>([]);
+  const cargarCisternasConSaldo = useCallback(async () => {
+    if (!puedeDespachar) {
+      setCisternasConSaldo([]);
+      return;
+    }
+    const res = await apiFetch("/api/erp/combustible/despachos/cisternas-con-saldo");
+    const body = await res.json().catch(() => null);
+    setCisternasConSaldo(res.ok && Array.isArray(body) ? body : []);
+  }, [puedeDespachar]);
   const cargarExcedentesPendientes = useCallback(async () => {
     if (!puedeDespachar) {
       setExcedentesPendientes([]);
@@ -1971,9 +1983,16 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       cargarEquipos(),
       cargarGrifos(),
       cargarExcedentesPendientes(),
+      cargarCisternasConSaldo(),
     ]).finally(() => setLoading(false));
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [cargarTanques, cargarEquipos, cargarGrifos, cargarExcedentesPendientes]);
+  }, [
+    cargarTanques,
+    cargarEquipos,
+    cargarGrifos,
+    cargarExcedentesPendientes,
+    cargarCisternasConSaldo,
+  ]);
 
   // Cuando la cola offline termina de drenar, una lectura cargada sin señal
   // ya existe del lado del servidor -- recargar pone nivel_actual al día
@@ -2015,7 +2034,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   const actualizarVistasCombustible = async () => {
     window.dispatchEvent(new Event("combustible:actualizado"));
-    const tareas: Promise<void>[] = [cargarTanques(), cargarExcedentesPendientes()];
+    const tareas: Promise<void>[] = [
+      cargarTanques(),
+      cargarExcedentesPendientes(),
+      cargarCisternasConSaldo(),
+    ];
     if (modalKardexAbierto && kardexTanqueId !== null) {
       tareas.push(cargarKardex(kardexTanqueId));
     }
@@ -2036,6 +2059,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       temporizador = window.setTimeout(() => {
         void Promise.allSettled([
           cargarTanques(),
+          // Lo que queda en la cisterna baja con cada salida de cualquier persona (0168).
+          cargarCisternasConSaldo(),
           ...(modalKardexAbierto && kardexTanqueId !== null ? [cargarKardex(kardexTanqueId)] : []),
         ]);
       }, 100);
@@ -2074,7 +2099,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       document.removeEventListener("visibilitychange", alVolver);
       window.removeEventListener("focus", alVolver);
     };
-  }, [cargarTanques, cargarKardex, modalKardexAbierto, kardexTanqueId]);
+  }, [cargarTanques, cargarCisternasConSaldo, cargarKardex, modalKardexAbierto, kardexTanqueId]);
 
   /** Descarga el kardex del período que está en pantalla.
    *
@@ -3831,6 +3856,16 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           </button>
         </div>
       )}
+      {!esConductor && pestanaCombustible === "tanques" && puedeDespachar && (
+        <CisternasConSaldo
+          cisternas={cisternasConSaldo}
+          equipos={equipos}
+          onRegistrado={async (mensaje) => {
+            setMensajeExito(mensaje);
+            await actualizarVistasCombustible();
+          }}
+        />
+      )}
       {/* También al conductor: es la única confirmación de su "Carga desde
           tanqueta" (con señal, o "guardado en este equipo" sin ella). */}
       {pestanaCombustible === "tanques" && mensajeExito && (
@@ -4539,6 +4574,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                             ahí a unidades o se lleva en ruta.
                           </li>
                           <li>Cargarlo directamente de la cisterna a las unidades.</li>
+                          <li>
+                            Dejarlo en la cisterna: queda como saldo y se reparte desde ahí después,
+                            a unidades, a tanquetas o al tanque.
+                          </li>
                           <li>Devolverlo al proveedor.</li>
                         </ol>
                       </div>
@@ -8114,6 +8153,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                             ? "Completa cada línea: cantidad, y la tanqueta o la unidad (y el vale si la tanqueta lleva unidad)."
                             : "El reparto cubre todo el excedente."}
                   </p>
+                  {lineasReparto.some((l) => l.destino === "cisterna") && (
+                    <p className="text-xs text-sky-800">
+                      Lo que se deja en la cisterna se queda en ella como saldo y se reparte desde
+                      ahí con vales (aviso &quot;Cisterna con saldo&quot; en Tanques).
+                    </p>
+                  )}
                   {libres.length === 0 && (
                     <p className="text-xs text-amber-700">
                       No hay tanquetas con espacio libre en esta sede. Dalas de alta en Combustible

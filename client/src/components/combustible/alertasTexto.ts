@@ -10,11 +10,12 @@ import { duracion } from "./viajesFormato";
 /** Una duración, o "?" si el detalle no la trae (no inventar "0 min" por un dato faltante). */
 const tiempo = (min: number | undefined) => (typeof min === "number" ? duracion(min) : "?");
 
-export type DestinoExcedente = "cubeta" | "equipo" | "devolucion";
+export type DestinoExcedente = "cubeta" | "equipo" | "cisterna" | "devolucion";
 
 export const DESTINOS_EXCEDENTE: Record<DestinoExcedente, string> = {
   cubeta: "Tanqueta o cubeta",
   equipo: "Directo a unidades",
+  cisterna: "Dejar en cisterna",
   devolucion: "Devolver al proveedor",
 };
 

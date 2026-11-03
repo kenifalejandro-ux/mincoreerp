@@ -119,6 +119,7 @@ export default defineConfig({
                   "/api/erp/combustible/grifos",
                   "/api/erp/combustible/grifos/para-formulario",
                   "/api/erp/combustible/tanquetas/formulario",
+                  "/api/erp/combustible/despachos/cisternas-con-saldo",
                   "/api/erp/combustible/config/formulario-despacho",
                   "/api/erp/combustible/urea/proveedores",
                   "/api/erp/combustible/urea/presentaciones",

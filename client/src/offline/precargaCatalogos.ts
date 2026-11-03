@@ -36,6 +36,8 @@ const GRIFERO = [
   `${C}/grifos`,
   `${C}/tanquetas/formulario`,
   `${C}/config/formulario-despacho`,
+  // Lo que quedó en la cisterna (0168): el aviso de Tanques y su salida.
+  `${C}/despachos/cisternas-con-saldo`,
 ];
 
 // Operador: lo de los dos, más Equipos.
