@@ -785,3 +785,22 @@ export function describirDetalleAlerta(a: AlertaCombustible): string {
   }
   return "—";
 }
+
+/** El módulo al que pertenece cada alerta. Espejo de `grupoDeAlerta` en
+ *  src/modules/combustible/alertasPorModulo.ts (el servidor decide además quién ve cada grupo). */
+export type GrupoDeAlerta = "combustible" | "urea" | "flota";
+
+export function grupoDeAlerta(tipo: string): GrupoDeAlerta {
+  if (tipo === "viaje_demorado" || tipo === "viaje_detenido") return "flota";
+  if (tipo.startsWith("urea_")) return "urea";
+  return "combustible";
+}
+
+export const ETIQUETA_GRUPO_ALERTA: Record<GrupoDeAlerta, string> = {
+  combustible: "Combustible",
+  urea: "Urea",
+  flota: "Flota",
+};
+
+/** El orden en que se muestran los grupos. */
+export const GRUPOS_DE_ALERTA: GrupoDeAlerta[] = ["combustible", "urea", "flota"];

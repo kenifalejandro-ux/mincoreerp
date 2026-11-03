@@ -125,6 +125,7 @@ import type { EstadoAlertas, FiltrosAlertas } from "./combustible.repository";
 import * as surtidores from "./surtidores.service";
 import * as tanquetas from "./tanquetas.service";
 import { revisarValesDeTalonario } from "./valesDeTalonario";
+import type { GrupoDeAlerta } from "./alertasPorModulo";
 import * as viajes from "./viajes.service";
 import { alcanceDe, ambitoDe, grifoDeAlertas, grifosDelFiltro } from "./alcance";
 
@@ -863,6 +864,11 @@ function filtrosAlertasDe(q: Request["query"]): FiltrosAlertas | { error: string
   if (tipo !== undefined) {
     if (!/^[a-z_]{1,60}$/.test(tipo)) return { error: "tipo inválido" };
     filtros.tipo = tipo;
+  }
+  const modulo = texto(q.modulo);
+  if (modulo !== undefined) {
+    if (!["combustible", "urea", "flota"].includes(modulo)) return { error: "modulo inválido" };
+    filtros.grupo = modulo as GrupoDeAlerta;
   }
   const grifo = texto(q.grifo_interno_id);
   if (grifo !== undefined) {

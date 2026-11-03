@@ -8,10 +8,12 @@ import type {
 import type { Paginacion } from "../../server/shared/utils/pagination";
 import { esViolacionUnicidad, esViolacionForeignKey } from "../../server/shared/utils/pgError";
 import { LITROS_POR_GALON, litrosSql } from "../../server/shared/utils/unidades";
+import { TIPOS_DE_ALERTA_DE_FLOTA, type GrupoDeAlerta } from "./alertasPorModulo";
 import {
   agregarAmbitoVales,
   destinatariosDeAlertasEnGrifo,
   filtroAlertaVisible,
+  filtroModuloDeAlerta,
   filtroHechoDeGrifo,
   filtroTanqueVisible,
   filtroVale,
@@ -230,6 +232,8 @@ export interface FiltrosAlertas {
   producto?: string;
   estado?: EstadoAlertas;
   tipo?: string;
+  /** El módulo dueño de la alerta (alertasPorModulo.ts): la Bandeja agrupa por él. */
+  grupo?: GrupoDeAlerta;
   grifoInternoId?: number;
   /** Días de Lima, "AAAA-MM-DD", ambos inclusive. */
   desde?: string;
@@ -5877,6 +5881,16 @@ export class CombustibleRepository {
       condiciones.push("a.congelada_en IS NOT NULL");
     if (filtros.producto !== undefined) condiciones.push(`a.producto = ${param(filtros.producto)}`);
     if (filtros.tipo !== undefined) condiciones.push(`a.tipo = ${param(filtros.tipo)}`);
+    // Mismo reparto que grupoDeAlerta(): flota = viajes, urea = urea_*, y el resto es Combustible.
+    if (filtros.grupo === "flota") {
+      condiciones.push(`a.tipo = ANY(${param([...TIPOS_DE_ALERTA_DE_FLOTA])}::text[])`);
+    } else if (filtros.grupo === "urea") {
+      condiciones.push("a.tipo LIKE 'urea\\_%'");
+    } else if (filtros.grupo === "combustible") {
+      condiciones.push(
+        `(a.tipo NOT LIKE 'urea\\_%' AND a.tipo <> ALL(${param([...TIPOS_DE_ALERTA_DE_FLOTA])}::text[]))`
+      );
+    }
     if (filtros.grifoInternoId !== undefined) {
       condiciones.push(`a.grifo_interno_id = ${param(filtros.grifoInternoId)}`);
     }
@@ -5901,6 +5915,9 @@ export class CombustibleRepository {
     const fAlcance = filtroAlertaVisible(alcance, "a", valores.length + 1);
     condiciones.push(fAlcance.sql);
     valores.push(...fAlcance.valores);
+    const fModulo = filtroModuloDeAlerta(alcance, "a", valores.length + 1);
+    condiciones.push(fModulo.sql);
+    valores.push(...fModulo.valores);
     return { condiciones, valores };
   }
 
@@ -6096,19 +6113,21 @@ export class CombustibleRepository {
   ) {
     if (ids && ids.length > 0) {
       const f = filtroAlertaVisible(alcance, "combustible_alertas", 3);
+      const m = filtroModuloDeAlerta(alcance, "combustible_alertas", 3 + f.valores.length);
       await client.query(
         `UPDATE combustible_alertas SET leida_en = now()
          WHERE tenant_id = $1 AND id = ANY($2::bigint[]) AND leida_en IS NULL
-           AND ${f.sql}`,
-        [tenantId, ids, ...f.valores]
+           AND ${f.sql} AND ${m.sql}`,
+        [tenantId, ids, ...f.valores, ...m.valores]
       );
       return;
     }
     const f = filtroAlertaVisible(alcance, "combustible_alertas", 2);
+    const m = filtroModuloDeAlerta(alcance, "combustible_alertas", 2 + f.valores.length);
     await client.query(
       `UPDATE combustible_alertas SET leida_en = now()
-       WHERE tenant_id = $1 AND leida_en IS NULL AND ${f.sql}`,
-      [tenantId, ...f.valores]
+       WHERE tenant_id = $1 AND leida_en IS NULL AND ${f.sql} AND ${m.sql}`,
+      [tenantId, ...f.valores, ...m.valores]
     );
   }
 
@@ -6173,6 +6192,7 @@ export class CombustibleRepository {
     // esconde no se puede cerrar por id. Fuera del alcance = 404, igual que
     // una alerta que no existe.
     const f = filtroAlertaVisible(alcance, "combustible_alertas", 7);
+    const m = filtroModuloDeAlerta(alcance, "combustible_alertas", 7 + f.valores.length);
     const result = await client.query(
       `
       UPDATE combustible_alertas
@@ -6186,10 +6206,19 @@ export class CombustibleRepository {
             'autorevision', $6::boolean
           )
       WHERE id = $2 AND tenant_id = $3
-        AND tipo = ANY($5::text[]) AND resuelta_en IS NULL AND ${f.sql}
+        AND tipo = ANY($5::text[]) AND resuelta_en IS NULL AND ${f.sql} AND ${m.sql}
       RETURNING id, tipo, serie_talonario, n_vale, despacho_id, detalle, creado_en, leida_en, resuelta_en, resuelta_por
       `,
-      [usuarioId, alertaId, tenantId, motivo, TIPOS_REVISABLES, autorevision, ...f.valores]
+      [
+        usuarioId,
+        alertaId,
+        tenantId,
+        motivo,
+        TIPOS_REVISABLES,
+        autorevision,
+        ...f.valores,
+        ...m.valores,
+      ]
     );
     return result.rows[0] ?? null;
   }

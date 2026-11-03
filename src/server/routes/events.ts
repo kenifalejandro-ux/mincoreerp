@@ -42,7 +42,8 @@ eventosRouter.get(
       canal: canalDeTenant(tenantId),
       reponer: (desdeId) => reponerEventosTenant(tenantId, desdeId),
       suscribir: suscribirCanal,
-      adaptar: alcance.todo ? undefined : vaciarEventoDeCombustible,
+      // Sin contenido también a quien no ve algún tipo de alerta por no tener su módulo.
+      adaptar: alcance.todo && !alcance.sinTipos ? undefined : vaciarEventoDeCombustible,
     });
   })
 );

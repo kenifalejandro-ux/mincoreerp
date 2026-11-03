@@ -10,9 +10,10 @@ export interface UsuarioParaBandeja {
   permisosPestanas?: Record<string, boolean>;
 }
 
-/** Los módulos que alimentan la Bandeja y quién ve las alertas de cada uno.
- *  Hoy solo Combustible genera alertas; cuando otro módulo las tenga, se agrega
- *  una entrada acá y su pantalla en BandejaView. */
+/** Las pantallas de la Bandeja y quién ve cada una. Hoy hay una sola, con las alertas de
+ *  Combustible, Urea y Flota agrupadas por módulo (el servidor entrega solo las de los
+ *  módulos que cada persona tiene); cuando otro módulo tenga las suyas, se agrega una
+ *  entrada acá y su pantalla en BandejaView. */
 export const MODULOS_CON_BANDEJA: {
   id: string;
   etiqueta: string;
@@ -20,7 +21,7 @@ export const MODULOS_CON_BANDEJA: {
 }[] = [
   {
     id: "combustible",
-    etiqueta: "Combustible",
+    etiqueta: "Alertas",
     // Las mismas alertas que la pestaña "Alertas" de Tanques: el servidor
     // exige admin u operador (y ese permiso por usuario si se lo cambiaron).
     visiblePara: (u) => {

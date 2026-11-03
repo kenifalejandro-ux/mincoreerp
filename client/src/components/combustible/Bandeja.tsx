@@ -20,10 +20,14 @@ import { useSedes } from "../comunes/useSedes";
 import { puedeVerViajes as puedeVerViajesDeFlota } from "../flota/flotaAcceso";
 
 import {
+  ETIQUETA_GRUPO_ALERTA,
   ETIQUETA_TIPO_ALERTA,
+  GRUPOS_DE_ALERTA,
   describirDetalleAlerta,
+  grupoDeAlerta,
   referenciaAlerta,
   type AlertaCombustible,
+  type GrupoDeAlerta,
 } from "./alertasTexto";
 import { DetalleViajeVentana } from "./DetalleViaje";
 import { CLAVE_ALERTA_PENDIENTE, useAlertasCombustibleStream } from "./useAlertasCombustibleStream";
@@ -93,6 +97,7 @@ export default function BandejaAlertas() {
   // "Todas" porque abrirla ya la marcó leída y puede estar resuelta.
   const [alertaInicial] = useState(leerAlertaPendiente);
   const [estado, setEstado] = useState<Estado>(alertaInicial !== null ? "todas" : "pendientes");
+  const [modulo, setModulo] = useState<"" | GrupoDeAlerta>("");
   const [tipo, setTipo] = useState("");
   const [grifo, setGrifo] = useState("");
   const [desde, setDesde] = useState("");
@@ -134,13 +139,14 @@ export default function BandejaAlertas() {
 
   const filtrosQuery = useMemo(() => {
     const p = new URLSearchParams();
+    if (modulo) p.set("modulo", modulo);
     if (tipo) p.set("tipo", tipo);
     if (grifo) p.set("grifo_interno_id", grifo);
     if (desde) p.set("desde", desde);
     if (hasta) p.set("hasta", hasta);
     if (busquedaAplicada) p.set("q", busquedaAplicada);
     return p;
-  }, [tipo, grifo, desde, hasta, busquedaAplicada]);
+  }, [modulo, tipo, grifo, desde, hasta, busquedaAplicada]);
 
   // Número de la última petición: una respuesta lenta de un filtro anterior no
   // puede pisar la de lo que el usuario tiene seleccionado ahora (pasa al
@@ -298,12 +304,17 @@ export default function BandejaAlertas() {
   };
 
   const totalPaginas = Math.max(1, Math.ceil(total / TAMANO_PAGINA));
+  // Los tipos que se ofrecen son los del módulo elegido (sin módulo, todos).
   const tiposOrdenados = useMemo(
     () =>
-      (Object.entries(ETIQUETA_TIPO_ALERTA) as [string, string][]).sort((x, y) =>
-        x[1].localeCompare(y[1], "es")
-      ),
-    []
+      (Object.entries(ETIQUETA_TIPO_ALERTA) as [string, string][])
+        .filter(([valor]) => !modulo || grupoDeAlerta(valor) === modulo)
+        .sort((x, y) => x[1].localeCompare(y[1], "es")),
+    [modulo]
+  );
+  // Flota solo se ofrece a quien tiene Viajes: el servidor tampoco le entrega esas alertas.
+  const modulosDelFiltro = GRUPOS_DE_ALERTA.filter(
+    (g) => g !== "flota" || (usuario?.modulosPermitidos ?? []).includes("viajes")
   );
 
   return (
@@ -341,6 +352,27 @@ export default function BandejaAlertas() {
             placeholder="Buscar por vale, tanque o detalle"
             className="w-full border border-slate-200 rounded-lg pl-9 pr-3 py-2 text-sm"
           />
+        </label>
+        <label className="w-full sm:w-44">
+          <span className="sr-only">Módulo</span>
+          <select
+            value={modulo}
+            onChange={(e) =>
+              cambiarFiltro(() => {
+                setModulo(e.target.value as "" | GrupoDeAlerta);
+                // Un tipo de otro módulo ya no aplica.
+                setTipo("");
+              })
+            }
+            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
+          >
+            <option value="">Todos los módulos</option>
+            {modulosDelFiltro.map((g) => (
+              <option key={g} value={g}>
+                {ETIQUETA_GRUPO_ALERTA[g]}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="w-full sm:w-56">
           <span className="sr-only">Tipo de alerta</span>
@@ -463,6 +495,9 @@ export default function BandejaAlertas() {
                         )}
                         {a.resuelta_en && <span className="text-emerald-600">Resuelta</span>}
                         {a.congelada_en && <span className="text-amber-600">Congelada</span>}
+                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-500">
+                          {ETIQUETA_GRUPO_ALERTA[grupoDeAlerta(a.tipo)]}
+                        </span>
                         <span className="font-mono truncate">{referenciaAlerta(a)}</span>
                         {a.grifo_nombre && <span className="truncate">· {a.grifo_nombre}</span>}
                       </div>
