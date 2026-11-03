@@ -430,7 +430,9 @@ describe("permisos por perfil (autonomías)", () => {
       const conductorId = await alta("conductor_ruta", "Conductor de ruta");
       const conductor = await permisosDe(conductorId);
       const vistas = conductor.pestanas.filter((p) => p.pestana.startsWith("historico:"));
-      expect(vistas).toHaveLength(7);
+      // "Consumo por viaje" ya no es una vista del Histórico: vive en Viajes (`viajes:consumo`).
+      expect(vistas).toHaveLength(6);
+      expect(vistas.some((v) => v.pestana === "historico:por_viaje")).toBe(false);
       expect(vistas.every((v) => !v.permitido)).toBe(true);
 
       const lecturaId = await alta("lectura", "Consulta con histórico");

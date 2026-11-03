@@ -23,10 +23,15 @@ export function puedeVerUnidades(usuario: UsuarioDeFlota | undefined): boolean {
   return !!usuario && usuario.modulosPermitidos.includes("flota");
 }
 
+/** Las acciones que cuelgan de Viajes: darle UNA a un perfil que no ve Viajes le
+ *  abre el submenú (el servidor lo hace igual, ver `pestanaPermitida`). */
+const ACCIONES_DE_VIAJES = ["nuevo", "editar", "lugares", "consumo"];
+
 /** La lista de viajes de la oficina: hace falta el módulo `viajes` Y el módulo
  *  Combustible (el servidor exige los dos: la lista trae las cargas de cada
  *  viaje, que son datos de Combustible), y que el perfil no la tenga apagada.
- *  Sin permiso puesto a mano, la ven todos menos los perfiles de cancha. */
+ *  Sin permiso puesto a mano, la ven todos menos los perfiles de cancha, salvo que
+ *  a alguno se le haya dado a mano una acción de Viajes (p. ej. "Consumo por viaje"). */
 export function puedeVerViajes(usuario: UsuarioDeFlota | undefined): boolean {
   if (
     !usuario ||
@@ -36,6 +41,20 @@ export function puedeVerViajes(usuario: UsuarioDeFlota | undefined): boolean {
     return false;
   }
   const override = usuario.permisosPestanas?.["combustible:viajes"];
+  if (override !== undefined) return override;
+  if (
+    ACCIONES_DE_VIAJES.some((a) => usuario.permisosPestanas?.[`combustible:viajes:${a}`] === true)
+  )
+    return true;
+  return !PERFILES_DE_CANCHA.includes(usuario.rol);
+}
+
+/** La pestaña "Consumo por viaje" dentro de Viajes: lo mismo que la lista y,
+ *  además, su permiso propio (`viajes:consumo`). Sin permiso puesto a mano, la ven
+ *  todos los que ven la lista (admin, operador y Lectura). */
+export function puedeVerConsumoDeViajes(usuario: UsuarioDeFlota | undefined): boolean {
+  if (!usuario || !puedeVerViajes(usuario)) return false;
+  const override = usuario.permisosPestanas?.["combustible:viajes:consumo"];
   if (override !== undefined) return override;
   return !PERFILES_DE_CANCHA.includes(usuario.rol);
 }

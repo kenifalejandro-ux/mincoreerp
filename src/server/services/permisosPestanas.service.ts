@@ -53,7 +53,6 @@ const vistasHistorico: DefinicionPestana[] = [
   ["por_conductor", "Ranking de consumo por conductor"],
   ["por_vehiculo", "Ranking de consumo por vehículo"],
   ["por_grifo", "Ranking de consumo por origen"],
-  ["por_viaje", "Consumo por viaje"],
 ].map(([id, nombre]) => ({
   modulo: "combustible",
   pestana: `historico:${id}`,
@@ -99,6 +98,8 @@ const accionesViajes: DefinicionPestana[] = [
   // Cerrar, editar y anular: las tres corrigen un viaje ya abierto.
   ["editar", "Editar, cerrar o anular viaje"],
   ["lugares", "Catálogo de lugares"],
+  // El ranking de consumo por viaje (antes la vista `historico:por_viaje`, migración 0167).
+  ["consumo", "Consumo por viaje"],
 ].map(([id, nombre]) => ({
   modulo: "combustible",
   pestana: `viajes:${id}`,
@@ -291,6 +292,7 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
     "tanques:acciones:ver_tanque",
     "tanquetas",
     "viajes",
+    "viajes:consumo",
     "historico",
     ...vistasHistorico.map((item) => item.pestana),
     "urea",

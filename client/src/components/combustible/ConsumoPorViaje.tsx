@@ -48,8 +48,8 @@ interface FilaRanking {
   promedio: number;
 }
 
-/** Histórico › Por viaje. `desde`/`hasta` llegan del filtro de período del
- *  Histórico que la contiene (ISO o vacío). */
+/** Viajes › Consumo por viaje. `desde`/`hasta` llegan del filtro de período de
+ *  la vista que la contiene (ISO o vacío). */
 export default function ConsumoPorViaje({
   producto,
   desde,
@@ -76,9 +76,7 @@ export default function ConsumoPorViaje({
       const q = new URLSearchParams({ producto });
       if (desde) q.set("desde", desde);
       if (hasta) q.set("hasta", hasta);
-      // Sigue por Combustible hasta que esta vista pase a Viajes (con su permiso propio): el
-      // Histórico se ve con el módulo Combustible aunque no se tenga Viajes.
-      const res = await apiFetch(`/api/erp/combustible/viajes/consumo?${q}`);
+      const res = await apiFetch(`/api/erp/viajes/consumo?${q}`);
       const body = await res.json().catch(() => null);
       if (!res.ok) {
         setError(body?.error ?? body?.message ?? "No se pudo cargar el consumo por viaje.");

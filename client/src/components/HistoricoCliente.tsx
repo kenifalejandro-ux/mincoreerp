@@ -42,16 +42,9 @@ import { useSedes } from "./comunes/useSedes";
 import { useAuth } from "../context/AuthContext";
 import { apiFetch } from "../services/apiClient";
 import { exportarCsv } from "../utils/exportarCsv";
-import ConsumoPorViaje from "./combustible/ConsumoPorViaje";
 
 type Vista =
-  | "despachos"
-  | "recepciones"
-  | "compras_externas"
-  | "por_conductor"
-  | "por_vehiculo"
-  | "por_grifo"
-  | "por_viaje";
+  "despachos" | "recepciones" | "compras_externas" | "por_conductor" | "por_vehiculo" | "por_grifo";
 
 const VISTAS: { valor: Vista; etiqueta: string }[] = [
   { valor: "despachos", etiqueta: "Histórico de despachos (tanque propio)" },
@@ -60,7 +53,6 @@ const VISTAS: { valor: Vista; etiqueta: string }[] = [
   { valor: "por_conductor", etiqueta: "Ranking de consumo por conductor" },
   { valor: "por_vehiculo", etiqueta: "Ranking de consumo por vehículo" },
   { valor: "por_grifo", etiqueta: "Ranking de consumo por origen (grifo interno y proveedores)" },
-  { valor: "por_viaje", etiqueta: "Consumo por viaje (ranking por ruta)" },
 ];
 
 /** El espejo en el front del default del backend (`defaultsDeRol` en
@@ -237,20 +229,8 @@ export default function HistoricoCliente() {
   const [porVehiculo, setPorVehiculo] = useState<VehiculoFila[]>([]);
   const [porGrifo, setPorGrifo] = useState<GrifoFila[]>([]);
 
-  // La vista por viaje trae sus datos sola; acá solo se le pasa el período
-  // aplicado con "Consultar".
-  const [periodoViaje, setPeriodoViaje] = useState({ desde: "", hasta: "", n: 0 });
-
   const cargar = useCallback(
     async (v: Vista, d: string, h: string, agr: Agrupacion, sede: string) => {
-      if (v === "por_viaje") {
-        setPeriodoViaje((p) => ({
-          desde: d ? new Date(`${d}T00:00:00`).toISOString() : "",
-          hasta: h ? new Date(`${h}T23:59:59`).toISOString() : "",
-          n: p.n + 1,
-        }));
-        return;
-      }
       setCargando(true);
       setError(null);
       try {
@@ -322,8 +302,6 @@ export default function HistoricoCliente() {
         return porVehiculo as unknown as Record<string, unknown>[];
       case "por_grifo":
         return porGrifo as unknown as Record<string, unknown>[];
-      case "por_viaje":
-        return [];
     }
   };
 
@@ -447,33 +425,31 @@ export default function HistoricoCliente() {
         >
           {cargando ? "Cargando…" : "Consultar"}
         </button>
-        {vista !== "por_viaje" && (
-          <div className="ml-auto flex items-end gap-3">
-            <label
-              className="px-4 py-2  bg-[#192526]  text-slate-500 hover:bg-[#1e2128] border border-[#2a2e37] font-medium rounded-xl transition-all cursor-pointer text-sm flex items-center gap-2"
-              title="Elegir el Excel con el histórico real del cliente (2025 a hoy)"
-            >
-              <FileSpreadsheet className="w-4 h-4 shrink-0" />
-              <span>Importar Excel</span>
-              <input
-                type="file"
-                accept=".xlsx,.xls"
-                className="hidden"
-                onChange={handleSeleccionArchivo}
-              />
-            </label>
-            <button
-              type="button"
-              onClick={handleExportar}
-              disabled={filasDeLaVista().length === 0}
-              className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Exportar la vista actual a CSV"
-            >
-              <Download className="w-4 h-4 shrink-0" />
-              Exportar
-            </button>
-          </div>
-        )}
+        <div className="ml-auto flex items-end gap-3">
+          <label
+            className="px-4 py-2  bg-[#192526]  text-slate-500 hover:bg-[#1e2128] border border-[#2a2e37] font-medium rounded-xl transition-all cursor-pointer text-sm flex items-center gap-2"
+            title="Elegir el Excel con el histórico real del cliente (2025 a hoy)"
+          >
+            <FileSpreadsheet className="w-4 h-4 shrink-0" />
+            <span>Importar Excel</span>
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={handleSeleccionArchivo}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={handleExportar}
+            disabled={filasDeLaVista().length === 0}
+            className="flex items-center gap-2 px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-50 font-medium rounded-xl transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Exportar la vista actual a CSV"
+          >
+            <Download className="w-4 h-4 shrink-0" />
+            Exportar
+          </button>
+        </div>
       </div>
       {archivoAImportar && (
         <div className="mx-4 mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
@@ -531,14 +507,6 @@ export default function HistoricoCliente() {
         )}
         {vista === "por_grifo" && (
           <TablaGrifo filas={porGrifo} cargando={cargando} agrupacion={agrupacion} />
-        )}
-        {vista === "por_viaje" && (
-          <ConsumoPorViaje
-            producto="combustible"
-            desde={periodoViaje.desde}
-            hasta={periodoViaje.hasta}
-            recargar={periodoViaje.n}
-          />
         )}
       </div>
     </div>

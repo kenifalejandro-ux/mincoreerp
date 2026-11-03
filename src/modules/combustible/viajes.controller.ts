@@ -275,11 +275,11 @@ export const viajesController = {
     res.json({ data: filas });
   },
 
-  /** El Histórico de cada producto tiene su propio permiso: combustible pide
-   *  la vista "Por viaje", urea la consulta de Urea. */
+  /** Cada producto tiene su propio permiso: combustible pide "Consumo por viaje"
+   *  (pestaña de Viajes), urea la consulta de Urea. */
   async listarConsumo(req: Request, res: Response) {
     const q = req.validatedQuery as ListarViajesQuery;
-    const pestana = q.producto === "urea" ? "urea:vista" : "historico:por_viaje";
+    const pestana = q.producto === "urea" ? "urea:vista" : "viajes:consumo";
     const u = req.usuario!;
     if (
       !pestanaPermitida(
