@@ -4,9 +4,9 @@
 // (Sidebar), la pantalla activa (App) y los avisos que llevan a un viaje: así
 // los tres coinciden con lo que el servidor deja pasar.
 //
-// Los permisos de pestaña de Viajes siguen siendo los de siempre
-// (`combustible:viajes`): se migran a `viajes:*` en una entrega aparte, junto
-// con el servidor.
+// Los permisos de pestaña de Viajes siguen bajo el módulo `combustible`
+// (`combustible:viajes`, `combustible:mi_viaje`, ...): no se migran a `viajes:*`.
+// El servidor los lee con esas mismas claves.
 
 type UsuarioDeFlota = {
   rol: string;

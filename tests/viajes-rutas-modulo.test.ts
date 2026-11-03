@@ -87,14 +87,51 @@ describe("rutas de Viajes: las dos puertas", () => {
       "/api/erp/combustible/lugares",
     ]) {
       const res = await admin.get(ruta);
-      expect(res.status, ruta).not.toBe(200);
-      expect(res.status, ruta).toBeGreaterThanOrEqual(400);
+      // 404 limpio: caer en `/:id` de Combustible con "lugares" como id daba un 500.
+      expect(res.status, ruta).toBe(404);
     }
     expect(
       (await admin.post("/api/erp/combustible/lugares").send({ nombre: "X" })).status
     ).toBeGreaterThanOrEqual(400);
     // Solo `mi-unidad` queda por Combustible.
     expect((await admin.get("/api/erp/combustible/viajes/mi-unidad")).status).toBe(200);
+  });
+
+  it("un id que no es número en Combustible da 404 también con alcance restringido, y las rutas legítimas siguen", async () => {
+    const e = await nueva();
+    const admin = await sesion(e);
+    const email = `${idUnico("operador")}@test.local`;
+    const alta = await admin.post("/api/erp/usuarios").send({
+      nombre: "Operador con alcance",
+      email,
+      password: PASSWORD,
+      rol: "operador",
+      dni: "87654321",
+    });
+    expect(alta.status).toBe(201);
+    // `asignado` sin accesos: el alcance deja de ser `todo` (el guardia ya no se salta).
+    await withTenant(e.tenant.id, (c) =>
+      c.query(`UPDATE usuarios SET alcance_combustible = 'asignado' WHERE id = $1`, [alta.body.id])
+    );
+    const acotado = await sesion(e, email);
+
+    for (const [quien, agente] of [
+      ["admin", admin],
+      ["alcance restringido", acotado],
+    ] as const) {
+      for (const ruta of [
+        "/api/erp/combustible/lugares",
+        "/api/erp/combustible/viajes",
+        "/api/erp/combustible/abc",
+      ]) {
+        const res = await agente.get(ruta);
+        expect(res.status, `${quien} ${ruta}`).toBe(404);
+      }
+    }
+    // Lo legítimo no cambia: la lista, `mi-unidad` y un tanque que no existe (404 del servicio).
+    expect((await admin.get("/api/erp/combustible")).status).toBe(200);
+    expect((await admin.get("/api/erp/combustible/viajes/mi-unidad")).status).toBe(200);
+    expect((await admin.get("/api/erp/combustible/999999")).status).toBe(404);
   });
 
   it("sin el módulo `viajes`: las rutas de Viajes dan 403 y Compra en ruta sigue pudiendo pedir su unidad", async () => {
@@ -132,6 +169,29 @@ describe("rutas de Viajes: las dos puertas", () => {
     // Lo que no lee cargas sigue disponible: el catálogo de lugares y el alta.
     expect((await admin.get("/api/erp/viajes/lugares")).status).toBe(200);
     expect((await admin.get("/api/erp/viajes/conductores")).status).toBe(200);
+  });
+
+  it("sin el módulo Combustible, el último medidor y el inicio del viaje (que lo comparan con la última carga) dan 403", async () => {
+    const e = await nueva();
+    expect((await ponerModulos(e, { combustible: "deshabilitado" })).status).toBe(200);
+    const admin = await sesion(e);
+
+    // `medidorPrevio` lee combustible_despachos: lo usan estas tres rutas y ninguna otra.
+    const lecturas = [
+      admin.get("/api/erp/viajes/999999/medidor-previo"),
+      admin.post("/api/erp/viajes/999999/iniciar").send({}),
+      admin.post("/api/erp/viajes/999999/iniciar-mio").send({}),
+    ];
+    for (const res of await Promise.all(lecturas)) {
+      expect(res.status).toBe(403);
+      expect(res.body.message).toMatch(/Módulo no disponible/);
+    }
+
+    // Las marcas que NO leen cargas no exigen Combustible: llegan al servicio (viaje inexistente).
+    for (const sufijo of ["cerrar-mio", "cerrar", "llegada-mia", "salida", "descanso-mio"]) {
+      const res = await admin.post(`/api/erp/viajes/999999/${sufijo}`).send({});
+      expect(res.body.message ?? "", sufijo).not.toMatch(/Módulo no disponible/);
+    }
   });
 
   it("sin Flota (y por lo tanto sin Viajes) las rutas de Viajes dan 403, y `mi-unidad` sigue", async () => {

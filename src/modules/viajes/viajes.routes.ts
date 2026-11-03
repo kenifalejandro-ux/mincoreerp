@@ -52,7 +52,8 @@ router.use(cargarAlcance);
 // Lo que LEE las cargas (vales: serie, número, litros, tanque, grifo) exige también el
 // módulo Combustible: `pestanaPermitida` solo mira el perfil y no comprueba que el
 // usuario tenga ese módulo, así que sin esto alguien con solo Viajes leería datos de
-// Combustible que nadie le dio.
+// Combustible que nadie le dio. También el último medidor (`medidor-previo` y el inicio
+// del viaje, que lo compara con la última carga); las demás marcas no leen cargas.
 const lecturaDeCargas = requireModulo("combustible");
 
 // Viajes (0123) -- segmentos literales, ANTES de /:id. Lectura ve el panel;
@@ -120,6 +121,7 @@ router.get(
 );
 router.post(
   "/:viajeId(\\d+)/iniciar-mio",
+  lecturaDeCargas,
   requirePestana("combustible", "mi_viaje"),
   validate(iniciarMiViajeSchema),
   asyncHandler(viajesController.iniciarMio)
@@ -200,11 +202,13 @@ router.post(
 );
 router.get(
   "/:viajeId(\\d+)/medidor-previo",
+  lecturaDeCargas,
   requirePestana("combustible", "viajes"),
   asyncHandler(viajesController.medidorPrevio)
 );
 router.post(
   "/:viajeId(\\d+)/iniciar",
+  lecturaDeCargas,
   requirePestana("combustible", "viajes:editar"),
   requireRole("admin", "operador"),
   validate(iniciarViajeSchema),

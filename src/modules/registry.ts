@@ -87,9 +87,10 @@ export const MODULOS: ModuloDefinicion[] = [
   {
     // Viajes: programar viajes, seguir el recorrido de la unidad y medir cuánto
     // combustible y urea cargó (lee las cargas de Combustible, no depende de
-    // él). Exige `flota` (ver `requiere`). En esta entrega es solo el
-    // módulo: sus rutas y sus tablas siguen registradas en Combustible, y se
-    // mueven en una entrega aparte.
+    // él). Exige `flota` (ver `requiere`). Sus rutas viven en
+    // `src/modules/viajes/viajes.routes.ts`; sus tablas (`combustible_viajes`,
+    // `combustible_lugares`, ...) siguen registradas en Combustible, para el
+    // respaldo y la restauración.
     id: "viajes",
     label: "Viajes",
     icono: "🧭",
@@ -100,10 +101,10 @@ export const MODULOS: ModuloDefinicion[] = [
     tablas: [],
     raices: [],
     // "Mi viaje" (0124): el conductor marca salida y llegada en ruta, donde puede
-    // no haber señal. Misma declaración que la de Combustible (que se conserva
-    // mientras el cliente llame a las URL viejas); el reintento no duplica
-    // porque el service reconoce el cliente_uuid de la marca. Espejo de
-    // offlineRegistry.ts del cliente.
+    // no haber señal. Solo se declara acá: Combustible ya no tiene estas rutas
+    // (los alias se retiraron). El reintento no duplica porque el service
+    // reconoce el cliente_uuid de la marca. Espejo de offlineRegistry.ts del
+    // cliente.
     offline: {
       escrituras: [
         { metodo: "POST", ruta: "/:viajeId/iniciar-mio" },
