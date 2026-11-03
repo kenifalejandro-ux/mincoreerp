@@ -75,7 +75,7 @@ export interface ExcedenteRecepcionDetalle {
   }[];
 }
 
-export type DestinoExcedente = "cubeta" | "equipo" | "devolucion";
+export type DestinoExcedente = "cubeta" | "equipo" | "devolucion" | "cisterna";
 
 /** Una línea del reparto del excedente (migración 0110). */
 export interface LineaRepartoExcedente {
@@ -2630,13 +2630,29 @@ export class CombustibleService {
    *  a una unidad (0112). La línea pendiente es la fuente de verdad: unidad,
    *  cantidad y combustible tienen que coincidir, y el costo es el de la
    *  factura de esa recepción (no lo que venga en el body). Todos los
-   *  mensajes dicen "el excedente": el controller los traduce a 400. */
+   *  mensajes dicen "el excedente": el controller los traduce a 400.
+   *
+   *  La línea se BLOQUEA antes de mirarla (0168): sin el índice único de
+   *  0112, es lo que impide que dos vales a la vez regularicen el mismo
+   *  pendiente o se lleven más de lo que queda en la cisterna. */
   private async validarDespachoDeExcedente(
     client: PoolClient,
     tenantId: string,
     data: CrearDespachoCombustibleInput,
     alcance?: AlcanceCombustible
   ) {
+    const destino = await this.repository.bloquearLineaExcedente(
+      client,
+      tenantId,
+      data.excedente_linea_id!,
+      alcance && !alcance.todo ? alcance.grifos : null
+    );
+    if (destino === "cisterna") {
+      return this.validarSalidaDeCisterna(client, tenantId, data, alcance);
+    }
+    if (data.tipo_destino !== "equipo") {
+      throw new Error("el excedente indicado no está en una cisterna: no se pasa a una tanqueta");
+    }
     const [linea] = await this.repository.findExcedentesPendientes(
       client,
       tenantId,
@@ -2676,6 +2692,67 @@ export class CombustibleService {
       lineaId: Number(linea.id),
       tanqueId: Number(linea.combustible_id),
       costoUnitario: Number(linea.costo_unitario),
+    };
+  }
+
+  /** Una salida de lo que quedó en la cisterna (0168), a una unidad o a una
+   *  tanqueta. La línea ya está bloqueada: el saldo que se lee es el último.
+   *  La cantidad la pone quien carga (no es la de la línea, es una parte),
+   *  sin pasarse del saldo; el costo es el de la factura. */
+  private async validarSalidaDeCisterna(
+    client: PoolClient,
+    tenantId: string,
+    data: CrearDespachoCombustibleInput,
+    alcance?: AlcanceCombustible
+  ) {
+    const [cisterna] = await this.repository.findCisternasConSaldo(
+      client,
+      tenantId,
+      alcance && !alcance.todo ? alcance.grifos : null,
+      data.excedente_linea_id!
+    );
+    if (!cisterna) {
+      throw new Error(
+        "el excedente en cisterna no tiene saldo: ya se repartió entero, o su recepción se anuló"
+      );
+    }
+    const saldo = Number(cisterna.saldo);
+    if (data.cantidad! > saldo + 0.01) {
+      throw new Error(
+        `el excedente en cisterna tiene ${saldo} ${cisterna.unidad} y el vale dice ${data.cantidad}`
+      );
+    }
+    if (cisterna.tipo_combustible !== data.tipo_combustible) {
+      throw new Error(
+        `el excedente es de ${cisterna.tipo_combustible} y el vale dice ${data.tipo_combustible}`
+      );
+    }
+    if (data.tipo_destino === "reserva_cubeta") {
+      if (cisterna.unidad !== "gal") {
+        throw new Error(
+          `la tanqueta mide en galones y el excedente en cisterna en ${cisterna.unidad}: no se puede pasar`
+        );
+      }
+      await tanquetas.validarLlenadoDeTanqueta(
+        client,
+        tenantId,
+        data.tanqueta_destino_id!,
+        Number(cisterna.grifo_interno_id),
+        data.cantidad!
+      );
+    } else {
+      const equipo = await EquiposRepository.findTipoMedidor(client, tenantId, data.equipo_id!);
+      if (equipo?.tipo_medidor === "horometro" && data.lectura_odometro !== undefined) {
+        throw new Error(`el equipo ${data.equipo_id} se mide por horómetro, no por odómetro`);
+      }
+      if (equipo?.tipo_medidor === "odometro" && data.lectura_horometro !== undefined) {
+        throw new Error(`el equipo ${data.equipo_id} se mide por odómetro, no por horómetro`);
+      }
+    }
+    return {
+      lineaId: Number(cisterna.id),
+      tanqueId: Number(cisterna.combustible_id),
+      costoUnitario: Number(cisterna.costo_unitario),
     };
   }
 
@@ -2745,6 +2822,10 @@ export class CombustibleService {
 
   listarExcedentesPendientes(client: PoolClient, tenantId: string, grifos: number[] | null) {
     return this.repository.findExcedentesPendientes(client, tenantId, grifos);
+  }
+
+  listarCisternasConSaldo(client: PoolClient, tenantId: string, grifos: number[] | null) {
+    return this.repository.findCisternasConSaldo(client, tenantId, grifos);
   }
 
   getDespachoPideMedidor(client: PoolClient, tenantId: string) {

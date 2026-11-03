@@ -396,6 +396,12 @@ router.get(
   requirePestana("combustible", "tanques:registrar_despacho"),
   asyncHandler(controller.listarExcedentesPendientes.bind(controller))
 );
+// Lo que quedó en la cisterna con saldo (0168): se reparte con despachos.
+router.get(
+  "/despachos/cisternas-con-saldo",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  asyncHandler(controller.listarCisternasConSaldo.bind(controller))
+);
 
 // Tanquetas / cubetas (migración 0111) -- segmentos literales, ANTES de /:id.
 // El panel lo ve quien tenga la pestaña (Lectura incluida); dar de alta o

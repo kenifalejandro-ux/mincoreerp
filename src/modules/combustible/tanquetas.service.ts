@@ -1016,11 +1016,15 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
          LEFT JOIN usuarios u ON u.id = x.decidido_por
         WHERE x.tenant_id = $1 AND x.tanqueta_id = $2
        UNION ALL
+       -- Del tanque (0114) o de la cisterna (0168): esta no tiene combustible_id,
+       -- se nombra por el tanque de su recepción.
        SELECT 'prevision', d.id::text, d.cantidad, d.despachado_en, d.anulada_en,
-              c.codigo, NULL, NULL, NULL, NULL, d.serie_talonario, d.n_vale, u.nombre,
+              COALESCE(c.codigo, 'la cisterna de ' || ce.codigo), NULL, NULL, NULL, NULL,
+              d.serie_talonario, d.n_vale, u.nombre,
               d.conductor_nombre, d.conductor_dni, NULL
          FROM combustible_despachos d
-         JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = d.tenant_id
+         LEFT JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = d.tenant_id
+         LEFT JOIN combustible ce ON ce.id = d.tanque_excedente_id AND ce.tenant_id = d.tenant_id
          LEFT JOIN usuarios u ON u.id = d.usuario_id
         WHERE d.tenant_id = $1 AND d.tanqueta_destino_id = $2
        UNION ALL

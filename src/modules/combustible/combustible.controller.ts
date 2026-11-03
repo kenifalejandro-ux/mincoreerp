@@ -2036,10 +2036,7 @@ export class CombustibleController {
       // géneros a propósito: el mensaje nombra el papel que el cargador
       // tiene en la mano, y este `includes` es lo único que separa un 409
       // de un 500 que la cola offline reintentaría para siempre.
-      (err.message.includes("ya está registrado") ||
-        err.message.includes("ya está registrada") ||
-        // 0112: la línea del excedente ya tiene su despacho vigente.
-        err.message.includes("ya tiene su despacho registrado"))
+      (err.message.includes("ya está registrado") || err.message.includes("ya está registrada"))
     ) {
       // 409: no es un dato mal formado, es el mismo papel cargado dos
       // veces -- mismo criterio que el vale duplicado del punto 5. Y es un
@@ -2054,9 +2051,8 @@ export class CombustibleController {
       (err.message.includes("el contómetro marcó") ||
         // Tanquetas (0114): llenarla desde el tanque o cargar desde ella.
         err.message.includes("la tanqueta") ||
-        // Despacho de excedente de cisterna (0112).
-        (err.message.includes("el excedente") &&
-          !err.message.includes("ya tiene su despacho registrado")) ||
+        // Despacho de excedente de cisterna (0112) y de lo que quedó en ella (0168).
+        err.message.includes("el excedente") ||
         err.message.includes("no existe en este tenant") ||
         err.message.includes("no tiene tipo de medidor configurado") ||
         err.message.includes("se mide por") ||
@@ -5605,6 +5601,18 @@ export class CombustibleController {
     res.json(
       await withTenant(tenantId, (client) =>
         service.listarExcedentesPendientes(client, tenantId, alcance.todo ? null : alcance.grifos)
+      )
+    );
+  }
+
+  /** GET /despachos/cisternas-con-saldo (0168): lo que quedó en la cisterna
+   *  del proveedor y todavía se puede repartir. Solo las sedes del alcance. */
+  async listarCisternasConSaldo(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const alcance = alcanceDe(req);
+    res.json(
+      await withTenant(tenantId, (client) =>
+        service.listarCisternasConSaldo(client, tenantId, alcance.todo ? null : alcance.grifos)
       )
     );
   }
