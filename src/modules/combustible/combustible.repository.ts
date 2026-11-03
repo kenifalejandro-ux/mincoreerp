@@ -1349,12 +1349,6 @@ export class CombustibleRepository {
       }
       return fila;
     } catch (err) {
-      if (
-        esViolacionUnicidad(err) &&
-        ((err as { constraint?: string }).constraint ?? "").includes("excedente_linea")
-      ) {
-        throw new Error("ese excedente ya tiene su despacho registrado", { cause: err });
-      }
       if (esViolacionUnicidad(err)) {
         // Dos índices únicos distintos pueden saltar acá: el del vale
         // (0062/0092) y el del comprobante (0109). El mensaje nombra el que
@@ -7968,10 +7962,88 @@ export class CombustibleRepository {
     return r.rows;
   }
 
+  /** Lo que quedó en la cisterna (0168) y todavía tiene saldo: la línea menos
+   *  lo que ya salió en despachos vigentes, a unidades o a tanquetas. Con
+   *  `lineaId`, esa sola línea (sin saldo, no vuelve). */
+  async findCisternasConSaldo(
+    client: PoolClient,
+    tenantId: string,
+    grifos: number[] | null,
+    lineaId: number | null = null
+  ) {
+    const r = await client.query<{
+      id: string;
+      cantidad: string;
+      salido: string;
+      saldo: string;
+      recepcion_id: string;
+      recibido_en: Date;
+      costo_unitario: string;
+      combustible_id: number;
+      tanque_codigo: string;
+      tanque_nombre: string;
+      tipo_combustible: string;
+      unidad: string;
+      grifo_interno_id: number | null;
+      proveedor: string | null;
+    }>(
+      `SELECT * FROM (
+         SELECT x.id, x.cantidad,
+                COALESCE((SELECT SUM(d.cantidad) FROM combustible_despachos d
+                           WHERE d.tenant_id = x.tenant_id AND d.excedente_linea_id = x.id
+                             AND d.anulada_en IS NULL), 0) AS salido,
+                r.id AS recepcion_id, r.recibido_en, r.costo_unitario,
+                c.id AS combustible_id, c.codigo AS tanque_codigo, c.tanque_nombre,
+                c.tipo_combustible, c.unidad, r.grifo_interno_id, g.nombre AS proveedor
+           FROM combustible_recepcion_excedentes x
+           JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
+           JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
+           LEFT JOIN combustible_grifos g ON g.id = r.grifo_id AND g.tenant_id = r.tenant_id
+          WHERE x.tenant_id = $1 AND x.destino = 'cisterna' AND r.anulada_en IS NULL
+            AND ($2::int[] IS NULL OR r.grifo_interno_id = ANY($2::int[]))
+            AND ($3::bigint IS NULL OR x.id = $3::bigint)
+       ) s
+       CROSS JOIN LATERAL (SELECT (s.cantidad - s.salido)::numeric(14,2) AS saldo) l
+       WHERE l.saldo > 0.005
+       ORDER BY s.recibido_en, s.id`,
+      [tenantId, grifos, lineaId]
+    );
+    return r.rows;
+  }
+
+  /** Bloquea una línea del reparto (0168) para que dos despachos de excedente
+   *  no la regularicen ni la vacíen a la vez. Devuelve su destino, o null si
+   *  no existe o su sede está fuera del alcance. */
+  async bloquearLineaExcedente(
+    client: PoolClient,
+    tenantId: string,
+    lineaId: number,
+    grifos: number[] | null
+  ) {
+    const r = await client.query<{ destino: string }>(
+      `SELECT x.destino
+         FROM combustible_recepcion_excedentes x
+         JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
+        WHERE x.tenant_id = $1 AND x.id = $2
+          AND ($3::int[] IS NULL OR r.grifo_interno_id = ANY($3::int[]))
+          FOR UPDATE OF x`,
+      [tenantId, lineaId, grifos]
+    );
+    return r.rows[0]?.destino ?? null;
+  }
+
   /** Despachos vigentes que regularizan excedentes de esta recepción: con
    *  alguno, anular la recepción dejaría un vale apuntando a una entrega que
    *  "no existió". */
   async contarDespachosDeExcedente(client: PoolClient, tenantId: string, recepcionId: number) {
+    // Las mismas líneas que bloquea cada despacho de excedente (0168): si uno
+    // está en curso, se espera a que termine y se lo cuenta; si llega después,
+    // ve la recepción ya anulada.
+    await client.query(
+      `SELECT id FROM combustible_recepcion_excedentes
+        WHERE tenant_id = $1 AND recepcion_id = $2 FOR UPDATE`,
+      [tenantId, recepcionId]
+    );
     const r = await client.query<{ n: string }>(
       `SELECT count(*)::text AS n
          FROM combustible_despachos d

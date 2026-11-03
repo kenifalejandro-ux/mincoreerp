@@ -1011,6 +1011,7 @@ export async function enviarCorreoSobrestockRecepcion(
     cubeta: "tanqueta o cubeta",
     equipo: "directo a unidades",
     devolucion: "devuelto al proveedor",
+    cisterna: "se queda en la cisterna",
   };
   await avisar("sobrestock_recepcion", {
     destinatarios,

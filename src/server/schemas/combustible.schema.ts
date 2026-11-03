@@ -794,12 +794,14 @@ export const crearDespachoCombustibleSchema = z
 
     if (
       data.tanqueta_destino_id !== undefined &&
-      (data.origen !== "tanque_propio" || data.tipo_destino !== "reserva_cubeta")
+      ((data.origen !== "tanque_propio" && data.origen !== "excedente_recepcion") ||
+        data.tipo_destino !== "reserva_cubeta")
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["tanqueta_destino_id"],
-        message: "tanqueta_destino_id solo aplica a un vale del tanque a 'reserva_cubeta'",
+        message:
+          "tanqueta_destino_id solo aplica a un vale del tanque o de la cisterna a 'reserva_cubeta'",
       });
     }
     if (data.tanqueta_equipo_id !== undefined && data.tanqueta_destino_id === undefined) {
@@ -902,8 +904,27 @@ export const crearDespachoCombustibleSchema = z
     // Combustible que la cisterna cargó directo a una unidad porque no cabía
     // en el tanque. Lleva vale (misma secuencia que el tanque) y el medidor de
     // la unidad, pero no sale de ningún tanque ni surtidor.
+    //
+    // Lo que quedó en la cisterna (0168) también puede ir a una tanqueta: como
+    // el traspaso del tanque (0161), sin unidad no lleva vale y con unidad sí.
     if (data.origen === "excedente_recepcion") {
-      exigirVale(data, ctx, "un despacho de excedente");
+      const aTanqueta = data.tipo_destino === "reserva_cubeta";
+      if (!aTanqueta || data.tanqueta_equipo_id !== undefined) {
+        exigirVale(data, ctx, "un despacho de excedente");
+      } else if ((data.serie_talonario === undefined) !== (data.n_vale === undefined)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [data.serie_talonario === undefined ? "serie_talonario" : "n_vale"],
+          message: "serie_talonario y n_vale van juntos: los dos o ninguno",
+        });
+      } else if (data.serie_talonario === undefined && data.cliente_uuid === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["cliente_uuid"],
+          message:
+            "un traspaso sin vale necesita cliente_uuid: evita que un reenvío se cargue dos veces",
+        });
+      }
       if (data.excedente_linea_id === undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -911,11 +932,28 @@ export const crearDespachoCombustibleSchema = z
           message: "excedente_linea_id es obligatorio: qué excedente pendiente se despacha",
         });
       }
-      if (data.tipo_destino !== "equipo") {
+      if (data.tipo_destino !== "equipo" && !aTanqueta) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["tipo_destino"],
-          message: "el excedente directo a unidades siempre va a un equipo",
+          message: "el excedente va a una unidad o, desde la cisterna, a una tanqueta",
+        });
+      }
+      if (aTanqueta && data.tanqueta_destino_id === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["tanqueta_destino_id"],
+          message: "tanqueta_destino_id es obligatorio: a qué tanqueta va el excedente",
+        });
+      }
+      if (
+        aTanqueta &&
+        (data.lectura_horometro !== undefined || data.lectura_odometro !== undefined)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["lectura_horometro"],
+          message: "llenar una tanqueta no lleva medidor: el medidor es de la unidad que carga",
         });
       }
       if (data.lectura_horometro !== undefined && data.lectura_odometro !== undefined) {
@@ -1778,7 +1816,9 @@ export const crearRecepcionCombustibleSchema = z
       .array(
         z
           .object({
-            destino: z.enum(["cubeta", "equipo", "devolucion"]),
+            // 'cisterna' (0168): se queda en la cisterna del proveedor y se
+            // reparte después, con despachos de excedente.
+            destino: z.enum(["cubeta", "equipo", "devolucion", "cisterna"]),
             cantidad: z.number().positive(),
             equipo_id: z.number().int().positive().optional(),
             // A cuál tanqueta va una línea de 'cubeta' (0111).
