@@ -466,7 +466,10 @@ export const crearDespachoCombustibleSchema = z
     // el SERVIDOR lo calcula (cantidad_bultos × factor de la presentación)
     // y por eso acá queda opcional: mandarlo para un vale de urea es un
     // error de forma, no un dato a confiar.
-    cantidad: z.number().positive().optional(),
+    // Mínimo una centésima: la columna es NUMERIC(14,2) con CHECK (cantidad > 0). Con 0.004
+    // Postgres redondeaba a 0.00, el CHECK fallaba y salía un 500 que una cola sin señal
+    // reintenta. No es `multipleOf`: un contómetro con 3 decimales se guarda redondeado hoy.
+    cantidad: z.number().min(0.01).optional(),
 
     // Solo tanque_propio -- chequeo intra-vale del punto 5.
     lectura_contometro: z.number().nonnegative().optional(),
@@ -1282,7 +1285,8 @@ export const crearCompraRutaSchema = z
       .object({
         tipo_combustible: z.enum(TIPOS_COMBUSTIBLE),
         // En la unidad de la boleta (`unidad`); sin ella, galones.
-        cantidad: z.number().positive().max(100_000),
+        // Mínimo una centésima, igual que en el despacho (ver allá).
+        cantidad: z.number().min(0.01).max(100_000),
         unidad: z.enum(["gal", "L"]).optional(),
         costo_unitario: z.number().positive().max(10_000),
         // Exactamente uno de los dos según el medidor de la unidad; el
@@ -1767,7 +1771,8 @@ export const crearRecepcionCombustibleSchema = z
 
     // Litros, para combustible. Para urea el servidor lo calcula (ver
     // presentacion/cantidad_bultos abajo), así que queda opcional acá.
-    cantidad: z.number().positive().optional(),
+    // Mínimo una centésima, igual que en el despacho (ver allá).
+    cantidad: z.number().min(0.01).optional(),
     // Obligatorio salvo en la urea con renglones, donde cada renglón trae el
     // suyo (ver `lineas`).
     costo_unitario: z.number().positive().optional(),
@@ -1824,7 +1829,8 @@ export const crearRecepcionCombustibleSchema = z
             // 'cisterna' (0168): se queda en la cisterna del proveedor y se
             // reparte después, con despachos de excedente.
             destino: z.enum(["cubeta", "equipo", "devolucion", "cisterna"]),
-            cantidad: z.number().positive(),
+            // Mínimo una centésima, igual que en el despacho (ver allá).
+            cantidad: z.number().min(0.01),
             equipo_id: z.number().int().positive().optional(),
             // A cuál tanqueta va una línea de 'cubeta' (0111).
             tanqueta_id: z.number().int().positive().optional(),
