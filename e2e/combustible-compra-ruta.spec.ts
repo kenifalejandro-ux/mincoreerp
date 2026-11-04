@@ -93,23 +93,20 @@ async function elegirPorTexto(page: Page, selector: string, texto: string) {
   await opcionesDe(page, selector).filter({ hasText: texto }).click();
 }
 
-/** Llena la boleta completa: 40 gal × S/ 17.50 = 700 y 2 cajas × S/ 50 = 100,
- *  total 800. */
-async function llenar(
-  page: Page,
-  datos: {
-    marca: string;
-    grifoNombre: string;
-    numero: string;
-    total: string;
-    foto?: boolean;
-    /** El grifo no frecuente: en vez de un proveedor del catálogo, "Otros" con
-     *  este nombre escrito a mano. */
-    otros?: string;
-  }
-) {
-  await page.getByLabel("Incluye urea").check();
+const botonSiguiente = (page: Page) =>
+  page.getByRole("dialog").getByRole("button", { name: "Siguiente", exact: true });
 
+/** Avanza un paso (espera a que el botón se habilite: el paso está completo). */
+async function siguiente(page: Page) {
+  await expect(botonSiguiente(page)).toBeEnabled();
+  await botonSiguiente(page).click();
+}
+
+/** Paso 1: la unidad y el proveedor (o "Otros" con el nombre escrito a mano). */
+async function llenarUnidad(
+  page: Page,
+  datos: { marca: string; grifoNombre: string; otros?: string }
+) {
   await elegirPorTexto(page, "#compra-unidad", datos.marca);
   if (datos.otros !== undefined) {
     await elegirPorTexto(page, "#compra-proveedor", "Otros (grifo no frecuente)");
@@ -117,6 +114,48 @@ async function llenar(
   } else {
     await elegirPorTexto(page, "#compra-proveedor", datos.grifoNombre);
   }
+}
+
+/** Pasos 2 a 6, hasta el resumen: 40 gal × S/ 17.50 = 700 y 2 cajas × S/ 50 = 100,
+ *  total 800. Con `litros`, la cantidad va en litros y el precio se escribe. */
+async function llenarResto(
+  page: Page,
+  datos: { numero: string; foto?: boolean; litros?: { cantidad: string; costo: string } }
+) {
+  await siguiente(page);
+
+  // ¿Qué compraste?
+  await page.getByRole("dialog").getByRole("button", { name: "Las dos", exact: true }).click();
+  await siguiente(page);
+
+  // Combustible
+  if (datos.litros) {
+    await page.locator("#compra-unidad-medida").selectOption("L");
+    await expect(page.getByText("Litros", { exact: true })).toBeVisible();
+    // Cambiar de unidad vacía el precio (el de catálogo es por galón): se escribe el de la boleta.
+    await expect(page.locator("#compra-costo-unitario")).toHaveValue("");
+    await page.locator("#compra-galones").fill(datos.litros.cantidad);
+    await page.locator("#compra-costo-unitario").fill(datos.litros.costo);
+  } else {
+    await page.locator("#compra-galones").fill("40");
+    await page.locator("#compra-costo-unitario").fill("17.5");
+  }
+  await siguiente(page);
+
+  // Lectura del medidor y horas
+  await page.locator("#compra-medidor").fill("5000");
+  // Primera carga de la unidad: no hay anterior, las horas se escriben a mano.
+  await page.locator("#compra-horas").fill("12");
+  await siguiente(page);
+
+  // Urea
+  const urea = page.locator("section", { hasText: "Qué se compró" });
+  await urea.locator('input[type="number"]').nth(0).fill("2");
+  await urea.locator('input[type="number"]').nth(1).fill("50");
+  await siguiente(page);
+
+  // Comprobante. El formulario abre en Factura; estas pruebas registran boletas.
+  await page.locator("#compra-comprobante-tipo").selectOption("boleta");
   await page.locator("#compra-comprobante-numero").fill(datos.numero);
   if (datos.foto) {
     // Solo el del formulario: el historial de abajo trae uno por cada fila.
@@ -126,18 +165,26 @@ async function llenar(
       .setInputFiles({ name: "boleta.jpg", mimeType: "image/jpeg", buffer: JPEG_1X1 });
     await expect(page.locator("form").getByText(/boleta\.jpg/)).toBeVisible();
   }
+  await siguiente(page);
+  await expect(page.getByText("Resumen de tu compra")).toBeVisible();
+}
 
-  await page.locator("#compra-galones").fill("40");
-  await page.locator("#compra-medidor").fill("5000");
-  // Primera carga de la unidad: no hay anterior, las horas se escriben a mano.
-  await page.locator("#compra-horas").fill("12");
-  await page.locator("#compra-costo-unitario").fill("17.5");
-
-  const urea = page.locator("section", { hasText: "Qué se compró" });
-  await urea.locator('input[type="number"]').nth(0).fill("2");
-  await urea.locator('input[type="number"]').nth(1).fill("50");
-
-  await page.locator("#compra-total-boleta").fill(datos.total);
+/** Llena la boleta completa y deja el formulario en el resumen, listo para registrar. */
+async function llenar(
+  page: Page,
+  datos: {
+    marca: string;
+    grifoNombre: string;
+    numero: string;
+    foto?: boolean;
+    /** El grifo no frecuente: en vez de un proveedor del catálogo, "Otros" con
+     *  este nombre escrito a mano. */
+    otros?: string;
+    litros?: { cantidad: string; costo: string };
+  }
+) {
+  await llenarUnidad(page, datos);
+  await llenarResto(page, datos);
 }
 
 const botonRegistrar = (page: Page) =>
@@ -176,18 +223,18 @@ async function flujoCompleto(page: Page) {
   const { grifoNombre } = await sembrar(page, marca);
   await abrirCompraEnRuta(page);
 
-  // Sin boleta que comparar, el botón no deja enviar.
-  await expect(botonRegistrar(page)).toBeDisabled();
+  // Sin unidad ni proveedor, el primer paso no deja avanzar.
+  await expect(botonSiguiente(page)).toBeDisabled();
 
-  await llenar(page, { marca, grifoNombre, numero, total: "800", foto: true });
+  await llenar(page, { marca, grifoNombre, numero, foto: true });
 
-  // El cuadre se calcula en vivo, con lo que dice el papel.
-  await expect(page.getByText("Cuadra: la boleta coincide con lo registrado.")).toBeVisible();
+  // El resumen trae el total que calculó el sistema.
+  await expect(page.locator("#compra-total-boleta")).toHaveText("S/ 800.00");
   await expect(botonRegistrar(page)).toBeEnabled();
 
   await botonRegistrar(page).click();
   await expect(
-    page.getByText(new RegExp(`Compra registrada \\(la boleta ${numero}\\)`))
+    page.getByText(new RegExp(`Tu compra se registró con éxito \\(la boleta ${numero}\\)`))
   ).toBeVisible({ timeout: 30_000 });
 
   // Los dos productos quedaron con LA MISMA boleta, y la foto en los dos.
@@ -226,18 +273,19 @@ test("compra en ruta: la unidad de la boleta (L) se guarda y el historial la mue
   await abrirCompraEnRuta(page);
 
   // 70 L × S/ 17.5 = 1225 + 2 cajas de urea × S/ 50 = 100.
-  await llenar(page, { marca, grifoNombre, numero, total: "1325", foto: false });
-  await page.locator("#compra-unidad-medida").selectOption("L");
-  await expect(page.getByText("Litros", { exact: true })).toBeVisible();
-  // Cambiar de unidad vacía el precio (el de catálogo es por galón): se escribe el de la boleta.
-  await expect(page.locator("#compra-costo-unitario")).toHaveValue("");
-  await page.locator("#compra-galones").fill("70");
-  await page.locator("#compra-costo-unitario").fill("17.5");
+  await llenar(page, {
+    marca,
+    grifoNombre,
+    numero,
+    foto: false,
+    litros: { cantidad: "70", costo: "17.5" },
+  });
+  await expect(page.locator("#compra-total-boleta")).toContainText(/S\/\s*1[,.\s]?325\.00/);
   await expect(botonRegistrar(page)).toBeEnabled();
 
   await botonRegistrar(page).click();
   await expect(
-    page.getByText(new RegExp(`Compra registrada \\(la boleta ${numero}\\)`))
+    page.getByText(new RegExp(`Tu compra se registró con éxito \\(la boleta ${numero}\\)`))
   ).toBeVisible({ timeout: 30_000 });
 
   await expect
@@ -262,29 +310,6 @@ test.describe("en pantalla de celular @celular", () => {
   test("compra en ruta: el mismo flujo en 393x852", async ({ page }) => {
     await flujoCompleto(page);
   });
-});
-
-test("un total distinto al del sistema se registra igual, sin pedir motivo @celular", async ({
-  page,
-}) => {
-  const marca = `DSC-${unico()}`;
-  const numero = `B001-${unico()}`;
-  const admin = adminA();
-
-  await loginPorUI(page, admin.email, admin.password);
-  const { grifoNombre } = await sembrar(page, marca);
-  await abrirCompraEnRuta(page);
-  await llenar(page, { marca, grifoNombre, numero, total: "810" });
-
-  // El grifo maneja su precio: no hay motivo ni bloqueo.
-  await expect(page.locator("#compra-motivo")).toHaveCount(0);
-  await expect(botonRegistrar(page)).toBeEnabled();
-  await botonRegistrar(page).click();
-
-  await expect(
-    page.getByText(new RegExp(`Compra registrada \\(la boleta ${numero}\\)`))
-  ).toBeVisible({ timeout: 30_000 });
-  await expect.poll(async () => (await despachosDeLaBoleta(page, numero)).length).toBe(2);
 });
 
 test("sin señal la compra queda en el equipo y se sincroniza sola, una sola vez, con su foto @celular", async ({
@@ -320,7 +345,7 @@ test("sin señal la compra queda en el equipo y se sincroniza sola, una sola vez
   // Unidad, proveedor y catálogos se eligen TODAVÍA CON RED: es el caso real,
   // el conductor abre la app donde hay señal y la pierde camino.
   await abrirCompraEnRuta(page);
-  await llenar(page, { marca, grifoNombre, numero, total: "800", foto: true });
+  await llenar(page, { marca, grifoNombre, numero, foto: true });
 
   // ── Se corta la red ──────────────────────────────────────────────────
   await context.setOffline(true);
@@ -394,6 +419,17 @@ async function registrarCargaPrevia(
   expect(r.status(), await r.text()).toBe(201);
 }
 
+/** Unidad y proveedor, "Combustible" y una carga cualquiera: deja el formulario en el
+ *  paso de la lectura del medidor y las horas. */
+async function irAlMedidor(page: Page, marca: string, grifoNombre: string) {
+  await llenarUnidad(page, { marca, grifoNombre });
+  await siguiente(page);
+  await siguiente(page);
+  await page.locator("#compra-galones").fill("10");
+  await page.locator("#compra-costo-unitario").fill("10");
+  await siguiente(page);
+}
+
 test("horas abastecidas: se calculan solas desde la carga anterior y lo escrito a mano manda @celular", async ({
   page,
 }) => {
@@ -404,8 +440,7 @@ test("horas abastecidas: se calculan solas desde la carga anterior y lo escrito 
   await registrarCargaPrevia(page, marca, grifoNombre, 1000);
 
   await abrirCompraEnRuta(page);
-  await elegirPorTexto(page, "#compra-unidad", marca);
-  await elegirPorTexto(page, "#compra-proveedor", grifoNombre);
+  await irAlMedidor(page, marca, grifoNombre);
 
   const horas = page.locator("#compra-horas");
   const horometro = page.locator("#compra-medidor");
@@ -438,8 +473,7 @@ test("horas abastecidas: una unidad sin carga anterior queda a mano, sin inventa
   const { grifoNombre } = await sembrar(page, marca);
 
   await abrirCompraEnRuta(page);
-  await elegirPorTexto(page, "#compra-unidad", marca);
-  await elegirPorTexto(page, "#compra-proveedor", grifoNombre);
+  await irAlMedidor(page, marca, grifoNombre);
   await page.locator("#compra-medidor").fill("500");
 
   await expect(page.getByText(/No hay una carga anterior con horómetro/)).toBeVisible();
@@ -458,10 +492,10 @@ test("el historial junta la boleta en una fila y la foto única se sube y se ree
   const { grifoNombre } = await sembrar(page, marca);
   await abrirCompraEnRuta(page);
   // Sin foto: es lo que pasa cuando el conductor no la tiene a mano al comprar.
-  await llenar(page, { marca, grifoNombre, numero, total: "800" });
+  await llenar(page, { marca, grifoNombre, numero });
   await botonRegistrar(page).click();
   await expect(
-    page.getByText(new RegExp(`Compra registrada \\(la boleta ${numero}\\)`))
+    page.getByText(new RegExp(`Tu compra se registró con éxito \\(la boleta ${numero}\\)`))
   ).toBeVisible({ timeout: 30_000 });
 
   // UNA sola fila con combustible y urea juntos.
@@ -519,7 +553,6 @@ test("el borrador: lo escrito sobrevive a una recarga y se puede descartar @celu
   page,
 }) => {
   const marca = `BOR-${unico()}`;
-  const numero = `B001-${unico()}`;
   const admin = adminA();
 
   await loginPorUI(page, admin.email, admin.password);
@@ -529,11 +562,10 @@ test("el borrador: lo escrito sobrevive a una recarga y se puede descartar @celu
   // Un formulario recién abierto no deja borrador.
   expect(await hayBorrador(page)).toBe(false);
 
-  await elegirPorTexto(page, "#compra-unidad", marca);
-  await elegirPorTexto(page, "#compra-proveedor", grifoNombre);
-  await page.locator("#compra-comprobante-numero").fill(numero);
-  await page.locator("#compra-galones").fill("33");
-  await page.locator("#compra-total-boleta").fill("500");
+  await llenarUnidad(page, { marca, grifoNombre });
+  await siguiente(page);
+  await siguiente(page);
+  await page.locator("#compra-galones").fill("37.21");
   // Se espera a que el borrador ya traiga LO ÚLTIMO que se escribió (el guardado
   // tiene una pausa de 400 ms), no solo a que exista uno.
   await expect
@@ -544,7 +576,7 @@ test("el borrador: lo escrito sobrevive a una recarga y se puede descartar @celu
             Object.entries(localStorage).some(
               ([k, v]) => k.startsWith("mincore:compra-ruta-borrador:") && v.includes(n)
             ),
-          numero
+          "37.21"
         ),
       { message: "el borrador no quedó con lo último escrito" }
     )
@@ -554,21 +586,22 @@ test("el borrador: lo escrito sobrevive a una recarga y se puede descartar @celu
   await page.reload();
   await abrirCompraEnRuta(page);
   await expect(page.getByText(/Recuperamos lo que estabas escribiendo/)).toBeVisible();
-  await expect(page.locator("#compra-comprobante-numero")).toHaveValue(numero);
-  await expect(page.locator("#compra-galones")).toHaveValue("33");
-  await expect(page.locator("#compra-total-boleta")).toHaveValue("500");
+  // El formulario vuelve al primer paso con lo escrito puesto.
   await expect(page.locator("#compra-unidad")).toContainText(marca);
   await expect(page.locator("#compra-proveedor")).toContainText(grifoNombre);
+  await siguiente(page);
+  await siguiente(page);
+  await expect(page.locator("#compra-galones")).toHaveValue("37.21");
 
   // Empezar de cero lo borra de verdad: otra recarga ya no lo trae.
   await page.getByRole("button", { name: "Empezar de cero" }).click();
-  await expect(page.locator("#compra-comprobante-numero")).toHaveValue("");
+  await expect(page.locator("#compra-unidad")).toContainText("Elegir unidad");
   await expect(page.getByText(/Recuperamos lo que estabas escribiendo/)).toHaveCount(0);
   await expect.poll(() => hayBorrador(page)).toBe(false);
   await page.reload();
   await abrirCompraEnRuta(page);
   await expect(page.getByText(/Recuperamos lo que estabas escribiendo/)).toHaveCount(0);
-  await expect(page.locator("#compra-comprobante-numero")).toHaveValue("");
+  await expect(page.locator("#compra-unidad")).toContainText("Elegir unidad");
 });
 
 test("el borrador se borra al registrar la compra: no vuelve en la recarga @celular", async ({
@@ -581,12 +614,12 @@ test("el borrador se borra al registrar la compra: no vuelve en la recarga @celu
   await loginPorUI(page, admin.email, admin.password);
   const { grifoNombre } = await sembrar(page, marca);
   await abrirCompraEnRuta(page);
-  await llenar(page, { marca, grifoNombre, numero, total: "800" });
+  await llenar(page, { marca, grifoNombre, numero });
   await expect.poll(() => hayBorrador(page)).toBe(true);
 
   await botonRegistrar(page).click();
   await expect(
-    page.getByText(new RegExp(`Compra registrada \\(la boleta ${numero}\\)`))
+    page.getByText(new RegExp(`Tu compra se registró con éxito \\(la boleta ${numero}\\)`))
   ).toBeVisible({ timeout: 30_000 });
   await expect
     .poll(() => hayBorrador(page), { message: "el borrador quedó tras registrar" })
@@ -595,7 +628,7 @@ test("el borrador se borra al registrar la compra: no vuelve en la recarga @celu
   await page.reload();
   await abrirCompraEnRuta(page);
   await expect(page.getByText(/Recuperamos lo que estabas escribiendo/)).toHaveCount(0);
-  await expect(page.locator("#compra-comprobante-numero")).toHaveValue("");
+  await expect(page.locator("#compra-unidad")).toContainText("Elegir unidad");
 });
 
 /** Un conductor con su cuenta y sus unidades en Equipos (el conductor vigente de
@@ -730,17 +763,18 @@ test("proveedor Otros: pide el nombre del grifo, registra y el historial lo mues
   await loginPorUI(page, admin.email, admin.password);
   await sembrar(page, marca);
   await abrirCompraEnRuta(page);
-  // Todo lleno, pero con un nombre demasiado corto: no se puede registrar.
-  await llenar(page, { marca, grifoNombre: "", numero, total: "800", otros: "ab" });
+  // Un nombre demasiado corto no deja pasar del primer paso.
+  await llenarUnidad(page, { marca, grifoNombre: "", otros: "ab" });
   await expect(page.locator("#compra-proveedor")).toContainText("Otros");
-  await expect(botonRegistrar(page)).toBeDisabled();
+  await expect(botonSiguiente(page)).toBeDisabled();
   await expect(page.getByRole("status").filter({ hasText: "el nombre del grifo" })).toBeVisible();
 
   await page.locator("#compra-proveedor-otro").fill(grifo);
+  await llenarResto(page, { numero });
   await expect(botonRegistrar(page)).toBeEnabled();
   await botonRegistrar(page).click();
   await expect(
-    page.getByText(new RegExp(`Compra registrada \\(la boleta ${numero}\\)`))
+    page.getByText(new RegExp(`Tu compra se registró con éxito \\(la boleta ${numero}\\)`))
   ).toBeVisible({ timeout: 30_000 });
 
   // El historial muestra el nombre que se escribió.
@@ -766,7 +800,7 @@ test("proveedor Otros sin señal: la compra queda en el equipo y llega con el no
   // Todo se elige CON red (el conductor abre la app donde hay señal) y se
   // registra sin ella.
   await abrirCompraEnRuta(page);
-  await llenar(page, { marca, grifoNombre: "", numero, total: "800", otros: grifo });
+  await llenar(page, { marca, grifoNombre: "", numero, otros: grifo });
 
   await context.setOffline(true);
   await botonRegistrar(page).click();

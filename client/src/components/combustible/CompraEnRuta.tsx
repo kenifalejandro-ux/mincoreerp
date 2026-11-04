@@ -46,10 +46,6 @@ import HistorialComprasRuta from "./HistorialComprasRuta";
 import { SelectorBuscable } from "./SelectorBuscable";
 import { useUnidadDelViaje } from "./useUnidadDelViaje";
 
-/** Hasta cuánto se da por "cuadra" en el aviso de pantalla (no bloquea nada)
- *  : el redondeo por línea. */
-const TOLERANCIA_CENTAVOS = 10;
-
 type TipoCombustible = "diesel_b5" | "gasolina_90" | "glp";
 const ETIQUETA_COMBUSTIBLE: Record<TipoCombustible, string> = {
   diesel_b5: "Diésel B5",
@@ -121,6 +117,18 @@ function Seccion({
       </div>
       {(activa ?? true) && children}
     </section>
+  );
+}
+
+/** Los pasos del formulario: uno por pantalla, para el celular. */
+type Paso = "unidad" | "queCompro" | "combustible" | "medidor" | "urea" | "comprobante" | "resumen";
+
+function ResumenLinea({ nombre, valor }: { nombre: string; valor: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span className="min-w-0 text-slate-600">{nombre}</span>
+      <span className="shrink-0 font-semibold tabular-nums">{valor}</span>
+    </div>
   );
 }
 
@@ -208,7 +216,7 @@ function FormularioCompra({
   }, [unidadDelViaje]);
   const [grifoId, setGrifoId] = useState("");
   const [proveedorOtro, setProveedorOtro] = useState("");
-  const [comprobanteTipo, setComprobanteTipo] = useState<"boleta" | "factura">("boleta");
+  const [comprobanteTipo, setComprobanteTipo] = useState<"boleta" | "factura">("factura");
   const [comprobanteNumero, setComprobanteNumero] = useState("");
   const [fecha, setFecha] = useState(ahoraParaInputLocal());
   // Mismo criterio que el despacho: si nadie toca la hora, se manda el momento
@@ -248,6 +256,8 @@ function FormularioCompra({
   }, [presentaciones]);
 
   const [totalBoleta, setTotalBoleta] = useState("");
+  const [paso, setPaso] = useState<Paso>("unidad");
+  const inicioPaso = useRef<HTMLDivElement>(null);
   const [observaciones, setObservaciones] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -535,34 +545,82 @@ function FormularioCompra({
     ? renglones.reduce((a, r) => a + centavos(Number(r.cantidad || 0) * Number(r.precio || 0)), 0)
     : 0;
   const totalSistemaC = totalCombustibleC + totalUreaC;
-  const hayTotalBoleta = totalBoleta.trim() !== "" && Number.isFinite(Number(totalBoleta));
-  const totalBoletaC = hayTotalBoleta ? centavos(Number(totalBoleta)) : 0;
-  const diferenciaC = totalBoletaC - totalSistemaC;
-  const cuadra = Math.abs(diferenciaC) <= TOLERANCIA_CENTAVOS;
+  // El total del comprobante lo calcula el sistema: el conductor no lo escribe.
+  const nombreComprobante = comprobanteTipo === "factura" ? "factura" : "boleta";
 
   const urea = estadoRenglones(renglones, true);
   // Qué falta para poder registrar, en palabras: un botón apagado sin decir por
   // qué hace pensar que lo que falta es la foto (que es opcional).
-  const faltantes: string[] = [];
-  if (equipoId === "") faltantes.push("la unidad");
-  if (grifoVigente === "") faltantes.push("el proveedor");
-  else if (esOtros && nombreOtro.length < 3) faltantes.push("el nombre del grifo");
-  if (!incluyeCombustible && !incluyeUrea) faltantes.push("combustible o urea");
+  const faltantesPaso: Record<Paso, string[]> = {
+    unidad: [],
+    queCompro: [],
+    combustible: [],
+    medidor: [],
+    urea: [],
+    comprobante: [],
+    resumen: [],
+  };
+  if (equipoId === "") faltantesPaso.unidad.push("la unidad");
+  if (grifoVigente === "") faltantesPaso.unidad.push("el proveedor");
+  else if (esOtros && nombreOtro.length < 3) faltantesPaso.unidad.push("el nombre del grifo");
+  if (!incluyeCombustible && !incluyeUrea) faltantesPaso.queCompro.push("combustible o urea");
   if (incluyeCombustible) {
-    if (!(Number(galones) > 0)) faltantes.push(unidad === "L" ? "los litros" : "los galones");
-    if (!(Number(costoUnitario) > 0)) faltantes.push("el C.U. del combustible");
-    if (equipo && !equipo.tipo_medidor) {
-      faltantes.push("el tipo de medidor de la unidad (se configura en Equipos)");
-    } else if ((midePorOdometro ? odometro : horometro) === "" && equipo) {
-      faltantes.push("la lectura del medidor");
+    if (!(Number(galones) > 0)) {
+      faltantesPaso.combustible.push(unidad === "L" ? "los litros" : "los galones");
     }
-    if (horasMostradas === "") faltantes.push("las horas abastecidas");
+    if (!(Number(costoUnitario) > 0)) faltantesPaso.combustible.push("el C.U. del combustible");
+    if (equipo && !equipo.tipo_medidor) {
+      faltantesPaso.medidor.push("el tipo de medidor de la unidad (se configura en Equipos)");
+    } else if ((midePorOdometro ? odometro : horometro) === "" && equipo) {
+      faltantesPaso.medidor.push("la lectura del medidor");
+    }
+    if (horasMostradas === "") faltantesPaso.medidor.push("las horas abastecidas");
   }
   if (incluyeUrea) {
-    if (activas.length === 0) faltantes.push("un envase de urea activo");
-    else if (!urea.listos) faltantes.push("cantidad y precio de la urea");
+    if (activas.length === 0) faltantesPaso.urea.push("un envase de urea activo");
+    else if (!urea.listos) faltantesPaso.urea.push("cantidad y precio de la urea");
   }
-  if (comprobanteNumero.trim() === "") faltantes.push("el N° del comprobante");
+  if (comprobanteNumero.trim() === "") faltantesPaso.comprobante.push("el N° del comprobante");
+
+  // Un solo producto por permiso: no hay nada que elegir, el paso se salta.
+  const pasos: Paso[] = [
+    "unidad",
+    ...(soloUna ? [] : (["queCompro"] as const)),
+    ...(incluyeCombustible ? (["combustible", "medidor"] as const) : []),
+    ...(incluyeUrea ? (["urea"] as const) : []),
+    "comprobante",
+    "resumen",
+  ];
+  const pasoActual: Paso = pasos.includes(paso) ? paso : "unidad";
+  const indice = pasos.indexOf(pasoActual);
+  const puedeAvanzar = faltantesPaso[pasoActual].length === 0;
+  // Cambiar lo que se compró puede dejar un paso anterior incompleto (el
+  // proveedor tiene que vender lo que se compra): el resumen manda a corregirlo.
+  const primerPasoConFalta = pasos.find((p) => faltantesPaso[p].length > 0);
+  const faltantes = pasos.flatMap((p) => faltantesPaso[p]);
+  const irA = (p: Paso) => {
+    setPaso(p);
+    inicioPaso.current?.scrollIntoView?.({ block: "start" });
+  };
+  const siguiente = () => {
+    if (puedeAvanzar && indice < pasos.length - 1) irA(pasos[indice + 1]);
+  };
+  const atras = () => {
+    if (indice > 0) irA(pasos[indice - 1]);
+  };
+  const opcionesQueCompro = [
+    { texto: "Combustible", combustible: true, urea: false, visible: secciones.combustible },
+    { texto: "Urea", combustible: false, urea: true, visible: secciones.urea },
+    {
+      texto: "Las dos",
+      combustible: true,
+      urea: true,
+      visible: secciones.combustible && secciones.urea,
+    },
+  ].filter((o) => o.visible);
+  const nombreProveedor = esOtros
+    ? nombreOtro
+    : (proveedores.find((p) => String(p.id) === grifoVigente)?.nombre ?? "—");
   const puedeEnviar = !enviando && faltantes.length === 0;
 
   // ── Foto ────────────────────────────────────────────────────────────────
@@ -589,11 +647,12 @@ function FormularioCompra({
     datosDelBorrador.current = null;
     huellaEnvio.current = null;
     setBorradorRecuperadoEn(null);
+    setPaso("unidad");
     setClienteUuid(crypto.randomUUID());
     setEquipoId("");
     setGrifoId("");
     setProveedorOtro("");
-    setComprobanteTipo("boleta");
+    setComprobanteTipo("factura");
     setComprobanteNumero("");
     setFecha(ahoraParaInputLocal());
     setFechaEditada(false);
@@ -619,6 +678,12 @@ function FormularioCompra({
 
   const enviar = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Enter dentro de un campo manda el formulario: antes del resumen solo
+    // avanza de paso, nunca registra.
+    if (pasoActual !== "resumen") {
+      siguiente();
+      return;
+    }
     // El botón bloqueado no alcanza: un segundo toque entra antes de que
     // React repinte. El uuid igual impediría el duplicado, pero evitamos el
     // viaje.
@@ -632,7 +697,7 @@ function FormularioCompra({
         comprobante_numero: comprobanteNumero.trim(),
         equipo_id: Number(equipoId),
         despachado_en: fechaIso(),
-        total_boleta: hayTotalBoleta ? Number(totalBoleta) : totalSistemaC / 100,
+        total_boleta: totalSistemaC / 100,
         observaciones: observaciones.trim() || undefined,
         combustible: incluyeCombustible
           ? {
@@ -712,12 +777,12 @@ function FormularioCompra({
         res.status === 202
           ? `Sin conexión: ${papel} quedó guardada en este equipo y se enviará sola${foto ? ", con su foto," : ""} cuando vuelva la señal.`
           : resultadoFoto === "sin_foto"
-            ? `Compra registrada (${papel}). Tienes 24 horas para adjuntar la foto desde el historial.`
+            ? `Tu compra se registró con éxito (${papel}). Tienes 24 horas para adjuntar la foto desde el historial.`
             : resultadoFoto === "fallo"
-              ? `Compra registrada (${papel}), pero la foto NO se pudo subir: adjúntala desde el historial.`
+              ? `Tu compra se registró con éxito (${papel}), pero la foto NO se pudo subir: adjúntala desde el historial.`
               : resultadoFoto === "encolada"
-                ? `Compra registrada (${papel}). La foto se enviará cuando vuelva la señal.`
-                : `Compra registrada (${papel}), con su comprobante.`;
+                ? `Tu compra se registró con éxito (${papel}). La foto se enviará cuando vuelva la señal.`
+                : `Tu compra se registró con éxito (${papel}), con su comprobante.`;
       // Primero limpiar (borra el borrador) y recién después avisar: avisar cierra
       // la ventana y desmonta este formulario.
       limpiar();
@@ -775,116 +840,153 @@ function FormularioCompra({
       )}
 
       <form onSubmit={enviar} noValidate>
-        <Seccion titulo="Unidad y proveedor" textoInterruptor="">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {/* Un <div> con su etiqueta aparte: dentro de un <label>, un clic en la
+        <div ref={inicioPaso} className="scroll-mt-16">
+          <p className="text-xs font-semibold text-slate-500">
+            Paso {indice + 1} de {pasos.length}
+          </p>
+          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200">
+            <div
+              className="h-full rounded-full bg-[#BADC1E] transition-all"
+              style={{ width: `${((indice + 1) / pasos.length) * 100}%` }}
+            />
+          </div>
+        </div>
+
+        {pasoActual === "unidad" && (
+          <Seccion titulo="Unidad y proveedor" textoInterruptor="">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {/* Un <div> con su etiqueta aparte: dentro de un <label>, un clic en la
                 lista del buscador reactivaría el botón y la cerraría. */}
-            <div className="flex flex-col gap-1">
-              <label htmlFor="compra-unidad" className={CLASE_ETIQUETA}>
-                Unidad
-              </label>
-              {unidadDelViaje ? (
-                <>
-                  <input
+              <div className="flex flex-col gap-1">
+                <label htmlFor="compra-unidad" className={CLASE_ETIQUETA}>
+                  Unidad
+                </label>
+                {unidadDelViaje ? (
+                  <>
+                    <input
+                      id="compra-unidad"
+                      className={CLASE_CAMPO}
+                      value={unidadDelViaje.placa_codigo}
+                      readOnly
+                      aria-readonly="true"
+                    />
+                    <span className="text-xs text-gray-500">
+                      Es la unidad de tu viaje. Si no es la correcta, avisa al encargado.
+                    </span>
+                  </>
+                ) : (
+                  <SelectorBuscable
                     id="compra-unidad"
-                    className={CLASE_CAMPO}
-                    value={unidadDelViaje.placa_codigo}
-                    readOnly
-                    aria-readonly="true"
+                    opciones={opcionesUnidad}
+                    valor={equipoId}
+                    placeholder="Elegir unidad"
+                    etiquetaBuscador="Buscar unidad"
+                    onElegir={(valor) => {
+                      // Otra unidad, otro contexto: lo escrito para la anterior no aplica.
+                      setEquipoId(valor);
+                      setHorasEditadas(false);
+                      setHorometro("");
+                      setOdometro("");
+                    }}
                   />
-                  <span className="text-xs text-gray-500">
-                    Es la unidad de tu viaje. Si no es la correcta, avisa al encargado.
-                  </span>
-                </>
-              ) : (
+                )}
+              </div>
+              <div className="flex flex-col gap-1">
+                <label htmlFor="compra-proveedor" className={CLASE_ETIQUETA}>
+                  Proveedor
+                </label>
                 <SelectorBuscable
-                  id="compra-unidad"
-                  opciones={opcionesUnidad}
-                  valor={equipoId}
-                  placeholder="Elegir unidad"
-                  etiquetaBuscador="Buscar unidad"
+                  id="compra-proveedor"
+                  opciones={opcionesProveedor}
+                  valor={grifoVigente}
+                  placeholder="Elegir proveedor"
+                  etiquetaBuscador="Buscar proveedor"
                   onElegir={(valor) => {
-                    // Otra unidad, otro contexto: lo escrito para la anterior no aplica.
-                    setEquipoId(valor);
-                    setHorasEditadas(false);
-                    setHorometro("");
-                    setOdometro("");
+                    setGrifoId(valor);
+                    // El precio que puso el proveedor anterior no es el de "Otros".
+                    if (valor === PROVEEDOR_OTROS && !costoEditado) setCostoUnitario("");
+                    setCostoEditado(false);
+                    // El precio de catálogo de la urea es por proveedor.
+                    setRenglones((rs) =>
+                      rs.map((r) => {
+                        if (!r.precioAuto) return r;
+                        const v = precioVigenteUrea(
+                          preciosUrea,
+                          valor,
+                          r.presentacion,
+                          fechaEditada ? fecha : ""
+                        );
+                        return { ...r, precio: v ? String(Number(v.precio_por_bulto)) : "" };
+                      })
+                    );
                   }}
                 />
-              )}
+              </div>
             </div>
-            <div className="flex flex-col gap-1">
-              <label htmlFor="compra-proveedor" className={CLASE_ETIQUETA}>
-                Proveedor
+            {esOtros && (
+              <label className="flex flex-col gap-1">
+                <span className={CLASE_ETIQUETA}>Nombre del grifo</span>
+                <input
+                  id="compra-proveedor-otro"
+                  className={CLASE_CAMPO}
+                  value={proveedorOtro}
+                  maxLength={80}
+                  onChange={(e) => setProveedorOtro(e.target.value)}
+                  placeholder="Ej. Grifo El Sol"
+                />
+                <span className="text-xs text-gray-500">
+                  Para un grifo que no usas seguido: el nombre queda en el historial. No hay precio
+                  de catálogo, escribe el de la boleta.
+                </span>
               </label>
-              <SelectorBuscable
-                id="compra-proveedor"
-                opciones={opcionesProveedor}
-                valor={grifoVigente}
-                placeholder="Elegir proveedor"
-                etiquetaBuscador="Buscar proveedor"
-                onElegir={(valor) => {
-                  setGrifoId(valor);
-                  // El precio que puso el proveedor anterior no es el de "Otros".
-                  if (valor === PROVEEDOR_OTROS && !costoEditado) setCostoUnitario("");
-                  setCostoEditado(false);
-                  // El precio de catálogo de la urea es por proveedor.
-                  setRenglones((rs) =>
-                    rs.map((r) => {
-                      if (!r.precioAuto) return r;
-                      const v = precioVigenteUrea(
-                        preciosUrea,
-                        valor,
-                        r.presentacion,
-                        fechaEditada ? fecha : ""
-                      );
-                      return { ...r, precio: v ? String(Number(v.precio_por_bulto)) : "" };
-                    })
-                  );
-                }}
-              />
-            </div>
-          </div>
-          {esOtros && (
-            <label className="flex flex-col gap-1">
-              <span className={CLASE_ETIQUETA}>Nombre del grifo</span>
-              <input
-                id="compra-proveedor-otro"
-                className={CLASE_CAMPO}
-                value={proveedorOtro}
-                maxLength={80}
-                onChange={(e) => setProveedorOtro(e.target.value)}
-                placeholder="Ej. Grifo El Sol"
-              />
-              <span className="text-xs text-gray-500">
-                Para un grifo que no usas seguido: el nombre queda en el historial. No hay precio de
-                catálogo, escribe el de la boleta.
-              </span>
-            </label>
-          )}
-          {equipo && incluyeUrea && <ConductorDeLaUnidad equipo={equipo} />}
-          {equipoId !== "" && incluyeCombustible && !equipo?.tipo_medidor && (
-            <p className="text-xs text-red-600">
-              Esta unidad no tiene tipo de medidor (horómetro/odómetro). Configúralo en Equipos
-              antes de continuar.
-            </p>
-          )}
-          {proveedores.length === 0 && (
-            <p className="text-xs text-amber-700">
-              {incluyeCombustible && incluyeUrea
-                ? "Ningún proveedor vende combustible y urea en ruta a la vez. Registra cada producto por separado o pídele a un administrador que marque el proveedor."
-                : "No hay proveedores marcados para esto. Pídele a un administrador que los marque en Combustible → Proveedores."}
-            </p>
-          )}
-        </Seccion>
+            )}
+            {equipo && incluyeUrea && <ConductorDeLaUnidad equipo={equipo} />}
+            {equipoId !== "" && incluyeCombustible && !equipo?.tipo_medidor && (
+              <p className="text-xs text-red-600">
+                Esta unidad no tiene tipo de medidor (horómetro/odómetro). Configúralo en Equipos
+                antes de continuar.
+              </p>
+            )}
+            {proveedores.length === 0 && (
+              <p className="text-xs text-amber-700">
+                {incluyeCombustible && incluyeUrea
+                  ? "Ningún proveedor vende combustible y urea en ruta a la vez. Registra cada producto por separado o pídele a un administrador que marque el proveedor."
+                  : "No hay proveedores marcados para esto. Pídele a un administrador que los marque en Combustible → Proveedores."}
+              </p>
+            )}
+          </Seccion>
+        )}
 
-        {secciones.combustible && (
-          <Seccion
-            titulo="Combustible"
-            activa={soloUna ? undefined : incluyeCombustible}
-            onCambiar={soloUna ? undefined : setIncluyeCombustible}
-            textoInterruptor="Incluye combustible"
-          >
+        {pasoActual === "queCompro" && (
+          <Seccion titulo="¿Qué compraste?" textoInterruptor="">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {opcionesQueCompro.map((o) => {
+                const elegida = incluyeCombustible === o.combustible && incluyeUrea === o.urea;
+                return (
+                  <button
+                    key={o.texto}
+                    type="button"
+                    aria-pressed={elegida}
+                    onClick={() => {
+                      setIncluyeCombustible(o.combustible);
+                      setIncluyeUrea(o.urea);
+                    }}
+                    className={`rounded-xl border px-4 py-4 text-sm font-semibold ${
+                      elegida
+                        ? "border-[#BADC1E] bg-[#BADC1E] text-[#0A1014]"
+                        : "border-slate-200 text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    {o.texto}
+                  </button>
+                );
+              })}
+            </div>
+          </Seccion>
+        )}
+
+        {pasoActual === "combustible" && (
+          <Seccion titulo="Combustible" textoInterruptor="">
             <div className="grid grid-cols-6 gap-3">
               <label className="col-span-3 flex flex-col gap-1">
                 <span className={CLASE_ETIQUETA}>Combustible</span>
@@ -936,22 +1038,7 @@ function FormularioCompra({
                   </select>
                 </div>
               </label>
-              <label className="col-span-2 flex flex-col gap-1">
-                <span className={CLASE_ETIQUETA}>{midePorOdometro ? "Odómetro" : "Horómetro"}</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  disabled={!equipo?.tipo_medidor}
-                  id="compra-medidor"
-                  className={CLASE_CAMPO}
-                  value={midePorOdometro ? odometro : horometro}
-                  onChange={(e) =>
-                    midePorOdometro ? setOdometro(e.target.value) : setHorometro(e.target.value)
-                  }
-                />
-              </label>
-              <label className="col-span-2 flex flex-col gap-1">
+              <label className="col-span-6 flex flex-col gap-1">
                 <span className={CLASE_ETIQUETA}>C.U. (S/ {unidad})</span>
                 <input
                   type="number"
@@ -969,12 +1056,41 @@ function FormularioCompra({
                   <span className="text-xs text-slate-400">Precio por litro, el de la boleta</span>
                 )}
               </label>
-              <label className="col-span-2 flex flex-col gap-1">
-                <span className={CLASE_ETIQUETA}>C. total</span>
+            </div>
+            <p className="text-xs text-slate-400">
+              El costo se autocompleta con el precio vigente a la fecha. Puedes corregirlo si ese
+              día pagaste distinto.
+            </p>
+          </Seccion>
+        )}
+
+        {pasoActual === "medidor" && (
+          <Seccion
+            titulo={
+              midePorOdometro ? "Odómetro y horas abastecidas" : "Horómetro y horas abastecidas"
+            }
+            textoInterruptor=""
+          >
+            {equipoId !== "" && !equipo?.tipo_medidor && (
+              <p className="text-xs text-red-600">
+                Esta unidad no tiene tipo de medidor (horómetro/odómetro). Configúralo en Equipos
+                antes de continuar.
+              </p>
+            )}
+            <div className="grid grid-cols-6 gap-3">
+              <label className="col-span-6 flex flex-col gap-1">
+                <span className={CLASE_ETIQUETA}>{midePorOdometro ? "Odómetro" : "Horómetro"}</span>
                 <input
-                  readOnly
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  disabled={!equipo?.tipo_medidor}
+                  id="compra-medidor"
                   className={CLASE_CAMPO}
-                  value={totalCombustibleC > 0 ? soles(totalCombustibleC) : "—"}
+                  value={midePorOdometro ? odometro : horometro}
+                  onChange={(e) =>
+                    midePorOdometro ? setOdometro(e.target.value) : setHorometro(e.target.value)
+                  }
                 />
               </label>
               <label className="col-span-6 flex flex-col gap-1">
@@ -1005,20 +1121,11 @@ function FormularioCompra({
                 )}
               </label>
             </div>
-            <p className="text-xs text-slate-400">
-              El costo se autocompleta con el precio vigente a la fecha. Puedes corregirlo si ese
-              día pagaste distinto.
-            </p>
           </Seccion>
         )}
 
-        {secciones.urea && (
-          <Seccion
-            titulo="Urea"
-            activa={soloUna ? undefined : incluyeUrea}
-            onCambiar={soloUna ? undefined : setIncluyeUrea}
-            textoInterruptor="Incluye urea"
-          >
+        {pasoActual === "urea" && (
+          <Seccion titulo="Urea" textoInterruptor="">
             {activas.length === 0 && <AvisoSinEnvases />}
             <RenglonesUrea
               renglones={renglones}
@@ -1036,149 +1143,195 @@ function FormularioCompra({
           </Seccion>
         )}
 
-        <Seccion titulo="Datos de la boleta" textoInterruptor="">
-          <div className="grid grid-cols-[8rem_minmax(0,1fr)] gap-3">
-            <label className="flex flex-col gap-1">
-              <span className={CLASE_ETIQUETA}>Comprobante</span>
-              <select
-                id="compra-comprobante-tipo"
-                className={CLASE_CAMPO}
-                value={comprobanteTipo}
-                onChange={(e) => setComprobanteTipo(e.target.value as "boleta" | "factura")}
-              >
-                <option value="boleta">Boleta</option>
-                <option value="factura">Factura</option>
-              </select>
-            </label>
-            <label className="flex min-w-0 flex-col gap-1">
-              <span className={CLASE_ETIQUETA}>N° del comprobante</span>
-              <input
-                id="compra-comprobante-numero"
-                className={CLASE_CAMPO}
-                value={comprobanteNumero}
-                onChange={(e) => setComprobanteNumero(e.target.value)}
-                placeholder="Ej. B001-00012345"
-              />
-            </label>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="flex flex-col gap-1">
-              <span className={CLASE_ETIQUETA}>Fecha y hora</span>
-              <input
-                type="datetime-local"
-                id="compra-fecha"
-                className={CLASE_CAMPO}
-                value={fecha}
-                onChange={(e) => {
-                  setFecha(e.target.value);
-                  setFechaEditada(true);
-                }}
-              />
-            </label>
-            <div className="flex flex-col gap-1">
-              <span className={CLASE_ETIQUETA}>
-                Foto o PDF de la boleta (opcional ahora; 24 h para subirla)
-              </span>
-              <BotonArchivo
-                archivo={foto}
-                onElegir={elegirFoto}
-                texto="Subir foto de la boleta"
-                destacado
-              />
-              {errorFoto && <span className="text-xs text-red-600">{errorFoto}</span>}
+        {pasoActual === "comprobante" && (
+          <Seccion titulo={`Datos de la ${nombreComprobante}`} textoInterruptor="">
+            <div className="grid grid-cols-[8rem_minmax(0,1fr)] gap-3">
+              <label className="flex flex-col gap-1">
+                <span className={CLASE_ETIQUETA}>Comprobante</span>
+                <select
+                  id="compra-comprobante-tipo"
+                  className={CLASE_CAMPO}
+                  value={comprobanteTipo}
+                  onChange={(e) => setComprobanteTipo(e.target.value as "boleta" | "factura")}
+                >
+                  <option value="boleta">Boleta</option>
+                  <option value="factura">Factura</option>
+                </select>
+              </label>
+              <label className="flex min-w-0 flex-col gap-1">
+                <span className={CLASE_ETIQUETA}>N° del comprobante</span>
+                <input
+                  id="compra-comprobante-numero"
+                  className={CLASE_CAMPO}
+                  value={comprobanteNumero}
+                  onChange={(e) => setComprobanteNumero(e.target.value)}
+                  placeholder="Ej. B001-00012345"
+                />
+              </label>
             </div>
-          </div>
-        </Seccion>
-
-        <Seccion titulo="Cuadre con el papel" textoInterruptor="">
-          <div className="grid grid-cols-3 gap-2">
-            {[
-              ["Combustible", totalCombustibleC],
-              ["Urea", totalUreaC],
-              ["Suma del sistema", totalSistemaC],
-            ].map(([nombre, valor]) => (
-              <div key={nombre as string} className="rounded-xl border border-slate-200 p-2">
-                <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                  {nombre}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1">
+                <span className={CLASE_ETIQUETA}>Fecha y hora</span>
+                <input
+                  type="datetime-local"
+                  id="compra-fecha"
+                  className={CLASE_CAMPO}
+                  value={fecha}
+                  onChange={(e) => {
+                    setFecha(e.target.value);
+                    setFechaEditada(true);
+                  }}
+                />
+              </label>
+              <div className="flex flex-col gap-1">
+                <span className={CLASE_ETIQUETA}>
+                  Foto o PDF de la {nombreComprobante} (opcional ahora; 24 h para subirla)
                 </span>
-                <span className="text-sm font-bold tabular-nums text-slate-800">
-                  {soles(valor as number)}
+                <BotonArchivo
+                  archivo={foto}
+                  onElegir={elegirFoto}
+                  texto={`Subir foto de la ${nombreComprobante}`}
+                  destacado
+                />
+                {errorFoto && <span className="text-xs text-red-600">{errorFoto}</span>}
+              </div>
+            </div>
+            <p className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-500">
+              Si ahora no tienes la foto, no pasa nada: tienes 24 horas para subirla después desde
+              el historial.
+            </p>
+          </Seccion>
+        )}
+
+        {pasoActual === "resumen" && (
+          <Seccion titulo="Resumen de tu compra" textoInterruptor="">
+            <div className="flex flex-col gap-2 rounded-xl border border-slate-200 p-3 text-sm text-slate-800">
+              <ResumenLinea nombre="Unidad" valor={equipo ? equipo.placa_codigo : "—"} />
+              <ResumenLinea nombre="Proveedor" valor={nombreProveedor} />
+              <ResumenLinea
+                nombre={comprobanteTipo === "factura" ? "Factura" : "Boleta"}
+                valor={comprobanteNumero.trim() || "—"}
+              />
+              <ResumenLinea
+                nombre="Fecha y hora"
+                valor={new Date(fechaIso()).toLocaleString("es-PE", {
+                  dateStyle: "short",
+                  timeStyle: "short",
+                })}
+              />
+              {incluyeCombustible && (
+                <div className="border-t border-slate-200 pt-2">
+                  <ResumenLinea
+                    nombre={`${ETIQUETA_COMBUSTIBLE[tipoCombustible]}: ${galones} ${unidad} × S/ ${costoUnitario}`}
+                    valor={soles(totalCombustibleC)}
+                  />
+                  <p className="text-xs text-slate-500">
+                    {midePorOdometro ? "Odómetro" : "Horómetro"}:{" "}
+                    {midePorOdometro ? odometro : horometro} · Horas abastecidas: {horasMostradas}
+                  </p>
+                </div>
+              )}
+              {incluyeUrea && (
+                <div className="border-t border-slate-200 pt-2">
+                  {renglones.map((r) => (
+                    <ResumenLinea
+                      key={r.clave}
+                      nombre={`Urea ${presentaciones.find((x) => x.codigo === r.presentacion)?.nombre ?? r.presentacion}: ${r.cantidad} × S/ ${r.precio}`}
+                      valor={soles(centavos(Number(r.cantidad || 0) * Number(r.precio || 0)))}
+                    />
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center justify-between border-t border-slate-300 pt-2 text-base font-bold">
+                <span>Total de la {nombreComprobante}</span>
+                <span id="compra-total-boleta" className="tabular-nums">
+                  {soles(totalSistemaC)}
                 </span>
               </div>
-            ))}
-          </div>
-          <label className="flex flex-col gap-1">
-            <span className={CLASE_ETIQUETA}>Total de la boleta (opcional)</span>
-            <input
-              type="number"
-              min={0}
-              step="0.01"
-              id="compra-total-boleta"
-              className={CLASE_CAMPO}
-              value={totalBoleta}
-              onChange={(e) => setTotalBoleta(e.target.value)}
-              placeholder="Ej. 745.00"
-            />
-          </label>
-          {!hayTotalBoleta ? (
-            <p className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-500">
-              Si quieres, escribe el total del papel; si no, se guarda la suma del sistema.
-            </p>
-          ) : cuadra ? (
-            <p
-              role="status"
-              className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800"
-            >
-              Cuadra: la boleta coincide con lo registrado.
-            </p>
-          ) : (
-            <p className="rounded-xl border border-slate-200 px-3 py-2 text-xs text-slate-500">
-              El grifo maneja su propio precio: se guarda el total de la boleta y la diferencia (
-              {soles(Math.abs(diferenciaC))}) queda registrada.
-            </p>
-          )}
-          <label className="flex flex-col gap-1">
-            <span className={CLASE_ETIQUETA}>Observaciones (opcional)</span>
-            <input
-              className={CLASE_CAMPO}
-              value={observaciones}
-              onChange={(e) => setObservaciones(e.target.value)}
-            />
-          </label>
-        </Seccion>
+            </div>
+            <label className="flex flex-col gap-1">
+              <span className={CLASE_ETIQUETA}>Observaciones (opcional)</span>
+              <input
+                className={CLASE_CAMPO}
+                value={observaciones}
+                onChange={(e) => setObservaciones(e.target.value)}
+              />
+            </label>
+          </Seccion>
+        )}
 
         {error && (
           <div role="alert" className="mb-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">
             {error}
           </div>
         )}
-        {faltantes.length > 0 && !enviando && (
+        {pasoActual !== "resumen" && faltantesPaso[pasoActual].length > 0 && (
           <div
             role="status"
             className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
           >
-            <strong>Para registrar falta:</strong> {faltantes.join(", ")}.
-            <span className="mt-1 block text-xs">
-              La foto de la boleta es opcional: puedes subirla después desde el historial.
+            <strong>Para continuar falta:</strong> {faltantesPaso[pasoActual].join(", ")}.
+          </div>
+        )}
+        {pasoActual === "resumen" && primerPasoConFalta && (
+          <div
+            role="status"
+            className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"
+          >
+            <span>
+              <strong>Para registrar falta:</strong> {faltantes.join(", ")}.
             </span>
+            <button
+              type="button"
+              onClick={() => irA(primerPasoConFalta)}
+              className="rounded-lg border border-amber-300 px-3 py-1 text-xs font-semibold hover:bg-amber-100"
+            >
+              Corregir
+            </button>
           </div>
         )}
         <div className="flex justify-end gap-2 border-t border-slate-200 py-4">
-          <button
-            type="button"
-            onClick={limpiar}
-            disabled={enviando}
-            className="rounded-xl px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-          >
-            Limpiar
-          </button>
-          <button
-            type="submit"
-            disabled={!puedeEnviar}
-            className="rounded-xl border border-[#BADC1E] bg-[#BADC1E] px-5 py-2 text-sm font-semibold text-[#0A1014] hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {enviando ? "Guardando…" : "Registrar compra"}
-          </button>
+          {indice === 0 ? (
+            <button
+              key="limpiar"
+              type="button"
+              onClick={limpiar}
+              disabled={enviando}
+              className="rounded-xl px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Limpiar
+            </button>
+          ) : (
+            <button
+              key="atras"
+              type="button"
+              onClick={atras}
+              disabled={enviando}
+              className="rounded-xl px-4 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Atrás
+            </button>
+          )}
+          {pasoActual === "resumen" ? (
+            <button
+              key="registrar"
+              type="submit"
+              disabled={!puedeEnviar}
+              className="rounded-xl border border-[#BADC1E] bg-[#BADC1E] px-5 py-2 text-sm font-semibold text-[#0A1014] hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {enviando ? "Guardando…" : "Registrar compra"}
+            </button>
+          ) : (
+            <button
+              key="siguiente"
+              type="button"
+              onClick={siguiente}
+              disabled={!puedeAvanzar}
+              className="rounded-xl border border-[#BADC1E] bg-[#BADC1E] px-5 py-2 text-sm font-semibold text-[#0A1014] hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Siguiente
+            </button>
+          )}
         </div>
       </form>
     </div>
