@@ -38,6 +38,7 @@ const ETIQUETA_TIPO: Record<string, string> = {
   recepcion_discrepante: "La guía no coincide con la recepción",
   recepcion_sin_validar: "Recepción sin validar",
   comprobante_sin_foto: "Comprobante sin foto",
+  cisterna_con_saldo: "Cisterna con saldo sin repartir",
   tanqueta_retorno_diferencia: "Tanqueta devuelta con otro saldo",
   recepcion_retroactiva: "Recepción cargada con atraso",
   consumo_excedido: "Consumo por encima del máximo",

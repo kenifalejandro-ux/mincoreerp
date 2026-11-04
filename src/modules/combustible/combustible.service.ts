@@ -3442,6 +3442,7 @@ export class CombustibleService {
       stockMaximoUreaL: number | null;
       toleranciaPrecioUreaPct: number | null;
       despachoPideMedidor: boolean;
+      diasCisternaConSaldo: number;
     },
     usuarioId: string
   ) {
@@ -3481,6 +3482,7 @@ export class CombustibleService {
       stock_maximo_urea_l: number | null;
       tolerancia_precio_urea_pct: number | null;
       despacho_pide_medidor: boolean;
+      dias_cisterna_con_saldo: number;
     },
     ahora: {
       ventana_gracia_horas: number;
@@ -3501,6 +3503,7 @@ export class CombustibleService {
       stock_maximo_urea_l: number | null;
       tolerancia_precio_urea_pct: number | null;
       despacho_pide_medidor: boolean;
+      dias_cisterna_con_saldo: number;
     }
   ) {
     const cambios: { control: string; de: string; a: string }[] = [];
@@ -3577,6 +3580,16 @@ export class CombustibleService {
     // ventana de descuadre, porque acá subir es lo que debilita.
     // Subir los días sin vigilancia deja al tanque ciego más tiempo antes de
     // que el sistema insista.
+    // Subir los días que una cisterna puede seguir con saldo sin alertar la deja
+    // olvidada más tiempo (0170).
+    if (ahora.dias_cisterna_con_saldo > antes.dias_cisterna_con_saldo) {
+      cambios.push({
+        control: "Días tolerados con una cisterna con saldo",
+        de: `${antes.dias_cisterna_con_saldo} días`,
+        a: `${ahora.dias_cisterna_con_saldo} días`,
+      });
+    }
+
     if (ahora.dias_sin_vigilancia > antes.dias_sin_vigilancia) {
       cambios.push({
         control: "Días tolerados sin vigilancia",
@@ -4739,6 +4752,35 @@ export class CombustibleService {
       }))
     );
     return { alertas: compras };
+  }
+
+  /** CISTERNA CON SALDO (0170). Primero cierra las alertas cuya cisterna ya se vació o
+   *  cuya recepción se anuló; después abre una por cada cisterna que pasó el plazo de la
+   *  empresa con saldo. Va solo al ERP (campanita y Bandeja): una cisterna olvidada no es
+   *  un robo en curso. */
+  async evaluarCisternasConSaldo(client: PoolClient, tenantId: string) {
+    await this.repository.resolverCisternasSinSaldo(client, tenantId);
+    const vencidas = await this.repository.findCisternasVencidas(client, tenantId);
+    if (vencidas.length === 0) return { alertas: [] as typeof vencidas };
+    await this.repository.crearAlertas(
+      client,
+      tenantId,
+      vencidas.map((c) => ({
+        tipo: "cisterna_con_saldo" as const,
+        recepcionId: Number(c.recepcion_id),
+        combustibleId: c.combustible_id,
+        detalle: {
+          tanqueNombre: c.tanque_nombre,
+          codigo: c.tanque_codigo,
+          proveedor: c.proveedor,
+          saldo: Number(c.saldo),
+          unidad: c.unidad,
+          recibidaEn: new Date(c.recibido_en).toISOString(),
+          plazoDias: Number(c.dias),
+        },
+      }))
+    );
+    return { alertas: vencidas };
   }
 
   /** La fila de la alerta `viaje_detenido` de una detención abierta (0156). */

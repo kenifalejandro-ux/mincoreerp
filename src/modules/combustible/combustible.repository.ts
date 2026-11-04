@@ -172,6 +172,8 @@ export const TIPOS_ALERTA = [
   // detenido por una avería, un accidente, un huaico, un bloqueo o el tráfico.
   "viaje_demorado",
   "viaje_detenido",
+  // ── Migración 0170: la cisterna del proveedor sigue con saldo pasado el plazo.
+  "cisterna_con_saldo",
 ] as const;
 
 export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];
@@ -196,6 +198,8 @@ export const TIPOS_ESTADO = [
   // 0156: se resuelven solos cuando el viaje llega, se cierra, se anula o la detención termina.
   "viaje_demorado",
   "viaje_detenido",
+  // 0170: se resuelve sola cuando la cisterna se vacía o se anula su recepción.
+  "cisterna_con_saldo",
 ] as const satisfies readonly TipoAlertaCombustible[];
 
 /** Todo lo que no es estado es un HALLAZGO: si nadie lo explica dentro de la
@@ -2594,8 +2598,10 @@ export class CombustibleRepository {
     const diasVarillaControl = await this.getDiasSinVarillaDeControl(client, tenantId);
     const topesUrea = await this.getTopesUrea(client, tenantId);
     const pideMedidor = await this.getDespachoPideMedidor(client, tenantId);
+    const diasCisterna = await this.getDiasCisternaConSaldo(client, tenantId);
     return {
       despacho_pide_medidor: pideMedidor,
+      dias_cisterna_con_saldo: diasCisterna,
       recepcion_requiere_validacion: politica.requiere,
       horas_para_validar_recepcion: politica.horas,
       dias_sin_varilla_de_control: diasVarillaControl,
@@ -2684,6 +2690,7 @@ export class CombustibleRepository {
       stockMaximoUreaL: number | null;
       toleranciaPrecioUreaPct: number | null;
       despachoPideMedidor: boolean;
+      diasCisternaConSaldo: number;
     },
     usuarioId: string
   ) {
@@ -2696,9 +2703,10 @@ export class CombustibleRepository {
          recepcion_requiere_validacion, horas_para_validar_recepcion,
          dias_sin_varilla_de_control, tope_diario_urea_l, ratio_urea_diesel_max_pct,
          dias_sin_conteo_urea, despacho_pide_medidor,
-         stock_minimo_urea_l, stock_maximo_urea_l, tolerancia_precio_urea_pct)
+         stock_minimo_urea_l, stock_maximo_urea_l, tolerancia_precio_urea_pct,
+         dias_cisterna_con_saldo)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
-              $18, $19, $20)
+              $18, $19, $20, $21)
       ON CONFLICT (tenant_id) DO UPDATE
         SET ventana_gracia_horas = EXCLUDED.ventana_gracia_horas,
             dias_sin_medir = EXCLUDED.dias_sin_medir,
@@ -2718,6 +2726,7 @@ export class CombustibleRepository {
             stock_minimo_urea_l = EXCLUDED.stock_minimo_urea_l,
             stock_maximo_urea_l = EXCLUDED.stock_maximo_urea_l,
             tolerancia_precio_urea_pct = EXCLUDED.tolerancia_precio_urea_pct,
+            dias_cisterna_con_saldo = EXCLUDED.dias_cisterna_con_saldo,
             actualizado_por = EXCLUDED.actualizado_por,
             actualizado_en = now()
       RETURNING ventana_gracia_horas, dias_sin_medir, dias_ventana_descuadre,
@@ -2727,7 +2736,7 @@ export class CombustibleRepository {
                 dias_sin_varilla_de_control, tope_diario_urea_l,
                 ratio_urea_diesel_max_pct, dias_sin_conteo_urea, despacho_pide_medidor,
                 stock_minimo_urea_l, stock_maximo_urea_l, tolerancia_precio_urea_pct,
-                actualizado_en, actualizado_por
+                dias_cisterna_con_saldo, actualizado_en, actualizado_por
       `,
       [
         tenantId,
@@ -2750,6 +2759,7 @@ export class CombustibleRepository {
         valores.stockMinimoUreaL,
         valores.stockMaximoUreaL,
         valores.toleranciaPrecioUreaPct,
+        valores.diasCisternaConSaldo,
       ]
     );
     const fila = result.rows[0];
@@ -8352,6 +8362,89 @@ export class CombustibleRepository {
   /** Compras externas cuyo comprobante sigue sin foto pasadas `horas` horas y
    *  todavía sin alerta abierta por eso (0129). La foto se sube DESPUÉS de
    *  registrar la compra, por eso se espera un plazo. */
+  /** Días que una cisterna puede seguir con saldo antes de alertar (0170). */
+  async getDiasCisternaConSaldo(client: PoolClient, tenantId: string): Promise<number> {
+    const r = await client.query<{ dias: number }>(
+      `SELECT dias_cisterna_con_saldo AS dias FROM combustible_config WHERE tenant_id = $1`,
+      [tenantId]
+    );
+    return r.rows.length === 0 ? 10 : Number(r.rows[0].dias);
+  }
+
+  /** Las cisternas (una por recepción) que pasado el plazo todavía tienen saldo y
+   *  no tienen ya su alerta abierta (0170). El saldo es el de `findCisternasConSaldo`:
+   *  lo recibido menos las salidas vigentes y los pases al tanque. */
+  async findCisternasVencidas(client: PoolClient, tenantId: string) {
+    const r = await client.query<{
+      recepcion_id: string;
+      combustible_id: number;
+      recibido_en: Date;
+      tanque_codigo: string;
+      tanque_nombre: string;
+      unidad: string;
+      proveedor: string | null;
+      saldo: string;
+      dias: number;
+    }>(
+      `SELECT r.id AS recepcion_id, r.combustible_id, r.recibido_en,
+              c.codigo AS tanque_codigo, c.tanque_nombre, c.unidad, g.nombre AS proveedor,
+              SUM(x.cantidad - sal.salido)::numeric(14,2) AS saldo, cfg.dias
+         FROM combustible_recepcion_excedentes x
+         JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
+         JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
+         LEFT JOIN combustible_grifos g ON g.id = r.grifo_id AND g.tenant_id = r.tenant_id
+        CROSS JOIN LATERAL (
+          SELECT COALESCE((SELECT dias_cisterna_con_saldo FROM combustible_config
+                            WHERE tenant_id = $1), 10) AS dias
+        ) cfg
+        CROSS JOIN LATERAL (
+          SELECT COALESCE((SELECT SUM(d.cantidad) FROM combustible_despachos d
+                            WHERE d.tenant_id = x.tenant_id AND d.excedente_linea_id = x.id
+                              AND d.anulada_en IS NULL), 0)
+               + COALESCE((SELECT SUM(t.cantidad) FROM combustible_cisterna_traslados t
+                            WHERE t.tenant_id = x.tenant_id AND t.linea_id = x.id), 0) AS salido
+        ) sal
+        WHERE x.tenant_id = $1 AND x.destino = 'cisterna' AND r.anulada_en IS NULL
+          AND r.recibido_en < now() - make_interval(days => cfg.dias)
+          AND NOT EXISTS (
+            SELECT 1 FROM combustible_alertas a
+             WHERE a.tenant_id = $1 AND a.recepcion_id = r.id
+               AND a.tipo = 'cisterna_con_saldo' AND a.resuelta_en IS NULL)
+        GROUP BY r.id, r.combustible_id, r.recibido_en, c.codigo, c.tanque_nombre, c.unidad,
+                 g.nombre, cfg.dias
+       HAVING SUM(x.cantidad - sal.salido) > 0.005
+        ORDER BY r.recibido_en`,
+      [tenantId]
+    );
+    return r.rows;
+  }
+
+  /** Cierra las alertas de cisterna con saldo cuya cisterna ya se vació o cuya
+   *  recepción se anuló (0170). Lo resuelve el hecho, no una persona. */
+  async resolverCisternasSinSaldo(client: PoolClient, tenantId: string): Promise<number> {
+    const r = await client.query(
+      `UPDATE combustible_alertas a SET resuelta_en = now()
+        WHERE a.tenant_id = $1 AND a.tipo = 'cisterna_con_saldo' AND a.resuelta_en IS NULL
+          AND (
+            EXISTS (SELECT 1 FROM combustible_recepciones r
+                     WHERE r.tenant_id = $1 AND r.id = a.recepcion_id AND r.anulada_en IS NOT NULL)
+            OR COALESCE((SELECT SUM(x.cantidad) FROM combustible_recepcion_excedentes x
+                          WHERE x.tenant_id = $1 AND x.recepcion_id = a.recepcion_id
+                            AND x.destino = 'cisterna'), 0)
+             - COALESCE((SELECT SUM(d.cantidad) FROM combustible_despachos d
+                           JOIN combustible_recepcion_excedentes x ON x.id = d.excedente_linea_id
+                          WHERE d.tenant_id = $1 AND x.recepcion_id = a.recepcion_id
+                            AND x.destino = 'cisterna' AND d.anulada_en IS NULL), 0)
+             - COALESCE((SELECT SUM(t.cantidad) FROM combustible_cisterna_traslados t
+                           JOIN combustible_recepcion_excedentes x ON x.id = t.linea_id
+                          WHERE t.tenant_id = $1 AND x.recepcion_id = a.recepcion_id), 0)
+               <= 0.005
+          )`,
+      [tenantId]
+    );
+    return r.rowCount ?? 0;
+  }
+
   async findComprobantesSinFoto(client: PoolClient, tenantId: string, horas: number) {
     const r = await client.query<{
       id: number;
