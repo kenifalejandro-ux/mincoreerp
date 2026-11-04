@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import type { CisternaConSaldo } from "./cisternasTipos";
 import UnidadYValeDeLinea, { type UnidadYVale } from "./UnidadYValeDeLinea";
 import { apiFetch } from "../../services/apiClient";
 import { mensajeDeError } from "../../utils/mensajeDeError";
@@ -11,19 +12,7 @@ import { mensajeDeError } from "../../utils/mensajeDeError";
 // unidad no lleva vale), o se pasa al tanque. El servidor valida el saldo, la sede y el espacio;
 // acá solo se avisa antes de mandar.
 
-export interface CisternaConSaldo {
-  id: string;
-  cantidad: string;
-  saldo: string;
-  recepcion_id: string;
-  recibido_en: string;
-  costo_unitario: string;
-  tanque_codigo: string;
-  tipo_combustible: "diesel_b5" | "gasolina_90" | "glp";
-  unidad: string;
-  grifo_interno_id: number | null;
-  proveedor: string | null;
-}
+export type { CisternaConSaldo };
 
 interface UnidadOpcion {
   id: number;

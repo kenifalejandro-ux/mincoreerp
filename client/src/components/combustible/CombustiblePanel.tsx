@@ -54,9 +54,10 @@ import MiTanqueta from "./MiTanqueta";
 import MiViaje from "./MiViaje";
 import { comprimirImagen } from "./comprimirImagen";
 import { DESTINOS_EXCEDENTE, type DestinoExcedente } from "./alertasTexto";
-import RepartirCisterna, { type CisternaConSaldo } from "./CisternasConSaldo";
-import CisternasPestana, { AvisoCisternas, type CisternaDeLista } from "./CisternasPestana";
 import { puedeVerCisternas } from "./cisternasAcceso";
+import RepartirCisterna from "./CisternasConSaldo";
+import CisternasPestana, { AvisoCisternas } from "./CisternasPestana";
+import type { CisternaConSaldo, CisternaDeLista } from "./cisternasTipos";
 
 interface SurtidorDelTanque {
   id: number;
@@ -1952,10 +1953,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     const body = await res.json().catch(() => null);
     setCisternasConSaldo(res.ok && Array.isArray(body) ? body : []);
   }, [puedeDespachar]);
-  // La pestaña "Cisternas": las que tienen saldo, con su proveedor y sus salidas. La ve quien
+  // La pestaña "Cisternas": las que tienen saldo y el historial de las vaciadas o anuladas, con su
+  // proveedor y sus salidas. La ve quien
   // tenga el permiso de la pestaña (Lectura también): no es la lista de arriba, que es de quien
   // reparte. null = aún no llegó; si falla se conserva lo último que se supo.
   const [cisternasLista, setCisternasLista] = useState<CisternaDeLista[] | null>(null);
+  const [cisternasHistorial, setCisternasHistorial] = useState<CisternaDeLista[] | null>(null);
   const [errorCisternas, setErrorCisternas] = useState<string | null>(null);
   const [cisternaARepartir, setCisternaARepartir] = useState<CisternaConSaldo | null>(null);
   const verCisternas = puedeVerCisternas(usuario);
@@ -1965,19 +1968,26 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   }, [pestanaCombustible]);
   // Una respuesta vieja no pisa a la nueva: solo vale la última petición.
   const ultimaCargaCisternas = useRef(0);
+  const traerCisternas = async (estado: "saldo" | "historial") => {
+    const res = await apiFetch(`/api/erp/combustible/despachos/cisternas?estado=${estado}`);
+    const body = await res.json().catch(() => null);
+    return res.ok && Array.isArray(body) ? (body as CisternaDeLista[]) : null;
+  };
   const cargarCisternasLista = useCallback(async () => {
     if (!verCisternas || !enCisternas.current) return;
     const n = ++ultimaCargaCisternas.current;
     try {
-      const res = await apiFetch("/api/erp/combustible/despachos/cisternas?estado=saldo");
-      const body = await res.json().catch(() => null);
+      // Las dos vistas juntas: cambiar de "Con saldo" a "Historial" es instantáneo, y una cisterna
+      // que se acaba de vaciar ya está en el historial.
+      const [conSaldo, vaciadas] = await Promise.all([
+        traerCisternas("saldo"),
+        traerCisternas("historial"),
+      ]);
       if (n !== ultimaCargaCisternas.current) return;
-      if (!res.ok || !Array.isArray(body)) {
-        setErrorCisternas("No se pudieron cargar las cisternas.");
-        return;
-      }
-      setCisternasLista(body);
-      setErrorCisternas(null);
+      // Lo que falló conserva lo último que se supo.
+      if (conSaldo) setCisternasLista(conSaldo);
+      if (vaciadas) setCisternasHistorial(vaciadas);
+      setErrorCisternas(conSaldo && vaciadas ? null : "No se pudieron cargar las cisternas.");
     } catch {
       if (n === ultimaCargaCisternas.current)
         setErrorCisternas("Sin señal: no se pudo actualizar.");
@@ -3932,6 +3942,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {pestanaCombustible === "cisternas" && verCisternas && (
         <CisternasPestana
           cisternas={cisternasLista}
+          historial={cisternasHistorial}
           error={errorCisternas}
           puedeRepartir={puedeDespachar}
           onRepartir={setCisternaARepartir}
