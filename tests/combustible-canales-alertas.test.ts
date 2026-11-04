@@ -59,16 +59,18 @@ describe("catálogo de canales", () => {
     expect([...TIPOS_CRITICOS].sort()).toEqual(esperados.sort());
   });
 
-  it("el reparto decidido con Kenif: 27 al momento, 16 al resumen, 4 solo en el ERP", () => {
+  it("el reparto decidido con Kenif: 27 al momento, 16 al resumen, 5 solo en el ERP", () => {
     const cuenta = (canal: string) =>
       Object.values(CATALOGO_ALERTAS).filter((c) => c.canal === canal).length;
     // 25: se sumó urea_litros_corregidos (0130); 26: urea_conteo_alterado
     // (0132). Los dos al momento.
     // 0156: las dos alertas de un viaje en curso van solo al ERP pero son URGENTES (ver más abajo):
     // el correo tiene un tope, la campanita no.
+    // 0170: cisterna_con_saldo (una cisterna que sigue con saldo pasado el plazo) va solo al
+    // ERP, sin correo y sin ser urgente: Kenif dijo "solo bandeja".
     expect(cuenta("al_momento")).toBe(27);
     expect(cuenta("resumen")).toBe(16);
-    expect(cuenta("solo_erp")).toBe(4);
+    expect(cuenta("solo_erp")).toBe(5);
   });
 
   it("los avisos de configuración salen al momento; un tipo desconocido va al resumen", () => {

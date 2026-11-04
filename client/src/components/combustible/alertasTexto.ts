@@ -48,6 +48,7 @@ export interface AlertaCombustible {
     | "recepcion_discrepante"
     | "recepcion_sin_validar"
     | "comprobante_sin_foto"
+    | "cisterna_con_saldo"
     | "recepcion_retroactiva"
     | "consumo_excedido"
     | "varilla_sin_control"
@@ -111,6 +112,7 @@ export const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   recepcion_discrepante: "La guía no coincide con la recepción",
   recepcion_sin_validar: "Recepción sin validar",
   comprobante_sin_foto: "Comprobante sin foto",
+  cisterna_con_saldo: "Cisterna con saldo sin repartir",
   recepcion_retroactiva: "Recepción cargada con atraso",
   consumo_excedido: "Consumo por encima del máximo",
   varilla_sin_control: "Solo mide quien despacha",
@@ -436,6 +438,21 @@ export function describirDetalleAlerta(a: AlertaCombustible): string {
     return (
       `De una recepción de ${cantidadRecepcion ?? "?"} ${unidad ?? ""} no cabían ` +
       `${excedenteLitros ?? "?"} ${unidad ?? ""}. Reparto: ${partes || "sin detalle"}`
+    );
+  }
+  if (a.tipo === "cisterna_con_saldo") {
+    const { saldo, unidad, proveedor, plazoDias, recibidaEn } = a.detalle as {
+      saldo?: number;
+      unidad?: string;
+      proveedor?: string | null;
+      plazoDias?: number;
+      recibidaEn?: string;
+    };
+    const desde = recibidaEn ? ` del ${new Date(recibidaEn).toLocaleDateString("es-PE")}` : "";
+    return (
+      `La cisterna${proveedor ? ` de ${proveedor}` : ""}${desde} sigue con ` +
+      `${saldo ?? "?"} ${unidad ?? ""} sin repartir pasados ${plazoDias ?? "?"} días: ` +
+      `repartirla a unidades, tanquetas o al tanque desde Tanques`
     );
   }
   if (a.tipo === "comprobante_sin_foto") {

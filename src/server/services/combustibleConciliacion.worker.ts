@@ -226,6 +226,14 @@ async function conciliarTenant(
       >["alertas"],
     }
   );
+  // Cisterna del proveedor que sigue con saldo pasado el plazo (0170): solo campanita y Bandeja.
+  const cisternas = await paso(
+    "cisterna_con_saldo",
+    () => service.evaluarCisternasConSaldo(client, tenantId),
+    {
+      alertas: [] as Awaited<ReturnType<CombustibleService["evaluarCisternasConSaldo"]>>["alertas"],
+    }
+  );
   // Viajes en curso demorados o detenidos (0156). Va en el worker y no event-driven porque la
   // demora es lo que pasa cuando NO llega la marca de llegada. Corre cada hora: la alerta puede
   // salir hasta una hora después de pasado el margen.
@@ -263,6 +271,7 @@ async function conciliarTenant(
     historial,
     diferencias,
     sinFoto,
+    cisternas,
     viajesEnRuta,
   };
 }
@@ -291,6 +300,11 @@ async function avisarResultado(tenantId: string, r: ResultadoTenant): Promise<vo
   if (r.sinFoto.alertas.length > 0) {
     await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
       tipo: "comprobante_sin_foto",
+    }).catch((err) => logger.warn({ err, tenantId }, "No se pudo publicar el evento"));
+  }
+  if (r.cisternas.alertas.length > 0) {
+    await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+      tipo: "cisterna_con_saldo",
     }).catch((err) => logger.warn({ err, tenantId }, "No se pudo publicar el evento"));
   }
   // Viajes en ruta (0156): sin correo propio todavía (el envío no está activo en producción);

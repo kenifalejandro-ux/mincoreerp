@@ -4697,6 +4697,7 @@ export class CombustibleController {
             recepcionRequiereValidacion: nueva.recepcion_requiere_validacion,
             horasParaValidarRecepcion: nueva.horas_para_validar_recepcion,
             diasSinVarillaDeControl: nueva.dias_sin_varilla_de_control,
+            diasCisternaConSaldo: nueva.dias_cisterna_con_saldo,
             topeDiarioUreaL: nueva.tope_diario_urea_l,
             ratioUreaDieselMaxPct: nueva.ratio_urea_diesel_max_pct,
             diasSinConteoUrea: nueva.dias_sin_conteo_urea,

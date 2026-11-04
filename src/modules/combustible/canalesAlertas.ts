@@ -101,6 +101,9 @@ export const CATALOGO_ALERTAS: Record<
   varilla_sin_control: { canal: "resumen", nombre: "Tanque sin varilla de control" },
   recepcion_sin_validar: { canal: "resumen", nombre: "Recepción sin validar" },
   comprobante_sin_foto: { canal: "resumen", nombre: "Comprobante sin foto" },
+  // Una cisterna que sigue con saldo pasado el plazo (0170): solo campanita y Bandeja,
+  // sin correo -- es algo que quedó sin repartir, no un robo en curso.
+  cisterna_con_saldo: { canal: "solo_erp", nombre: "Cisterna con saldo sin repartir" },
   // ── Un viaje en curso: no llegó a la hora estimada, o está detenido ──────
   // Las dos son URGENTES en la campanita y la Bandeja pero NO mandan correo: el correo tiene un tope
   // (plan gratis de Brevo) y con muchas unidades se agotaría en días. La campanita se entera al

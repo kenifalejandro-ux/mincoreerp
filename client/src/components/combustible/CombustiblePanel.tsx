@@ -1779,6 +1779,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [diasVentanaDescuadre, setDiasVentanaDescuadre] = useState("30");
   const [diasCargaRetro, setDiasCargaRetro] = useState("3");
   const [diasSinVig, setDiasSinVig] = useState("7");
+  // Días que una cisterna del proveedor puede seguir con saldo antes de alertar (0170).
+  const [diasCisterna, setDiasCisterna] = useState("10");
   // Política de quién toma varilla (0085). Arranca en true porque es el
   // default del servidor: es lo que hace hoy la mayoría.
   const [grifieroVarilla, setGrifieroVarilla] = useState(true);
@@ -3320,6 +3322,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       if (bodyConfig?.dias_sin_vigilancia !== undefined) {
         setDiasSinVig(String(bodyConfig.dias_sin_vigilancia));
       }
+      if (bodyConfig?.dias_cisterna_con_saldo !== undefined) {
+        setDiasCisterna(String(bodyConfig.dias_cisterna_con_saldo));
+      }
       if (bodyConfig?.grifero_registra_varilla !== undefined) {
         setGrifieroVarilla(Boolean(bodyConfig.grifero_registra_varilla));
       }
@@ -3362,11 +3367,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     const diasVentana = Number(diasVentanaDescuadre);
     const diasRetro = Number(diasCargaRetro);
     const diasVig = Number(diasSinVig);
+    const diasCis = Number(diasCisterna);
     if (guardandoVentana || !Number.isInteger(horas) || horas < 1 || horas > 8760) return;
     if (!Number.isInteger(dias) || dias < 1 || dias > 365) return;
     if (!Number.isInteger(diasVentana) || diasVentana < 7 || diasVentana > 365) return;
     if (!Number.isInteger(diasRetro) || diasRetro < 1 || diasRetro > 90) return;
     if (!Number.isInteger(diasVig) || diasVig < 1 || diasVig > 90) return;
+    if (!Number.isInteger(diasCis) || diasCis < 1 || diasCis > 90) return;
     setGuardandoVentana(true);
     try {
       // Campo vacío = null = sin configurar. Number("") es 0, que acá
@@ -3392,6 +3399,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           dias_ventana_descuadre: diasVentana,
           dias_carga_retroactiva: diasRetro,
           dias_sin_vigilancia: diasVig,
+          dias_cisterna_con_saldo: diasCis,
           llenados_por_dia_max: llenados,
           tope_diario_sin_capacidad_l: topeSC,
           grifero_registra_varilla: grifieroVarilla,
@@ -7291,6 +7299,29 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               value={diasSinVig}
               onChange={(e) => {
                 setDiasSinVig(e.target.value);
+                setMensajeVentana(null);
+              }}
+            />
+            <span className="text-sm text-slate-500">días</span>
+
+            {/* Cuántos días puede seguir con saldo la cisterna del proveedor
+                  antes de que el sistema avise en la Bandeja (0170). Subirlo
+                  la deja olvidada más tiempo: pide motivo, como los demás. */}
+            <label
+              htmlFor="dias-cisterna"
+              className="text-xs font-bold text-slate-700 uppercase ml-2"
+            >
+              Avisar si la cisterna sigue con saldo después de
+            </label>
+            <input
+              id="dias-cisterna"
+              type="number"
+              min={1}
+              max={90}
+              className="w-20 border border-slate-200 rounded-lg p-2 outline-none focus:ring-2 focus:ring-slate-900"
+              value={diasCisterna}
+              onChange={(e) => {
+                setDiasCisterna(e.target.value);
                 setMensajeVentana(null);
               }}
             />

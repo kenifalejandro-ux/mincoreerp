@@ -1462,6 +1462,11 @@ export const configCombustibleSchema = z
     // aflojamiento auditado (un PUT viejo sin el campo choca con eso y pide
     // motivo, no apaga en silencio).
     despacho_pide_medidor: z.boolean().default(false),
+    // Días que una cisterna del proveedor puede seguir con saldo antes de alertar
+    // (0170). Con default y no requerido, igual que los de arriba: un PUT de una
+    // pantalla vieja que no lo mande lo deja en 10, y si eso sube el plazo que la
+    // empresa tenía, cuenta como aflojamiento y pide motivo.
+    dias_cisterna_con_saldo: z.number().int().min(1).max(90).default(10),
     // ── Urea (migración 0092) ─────────────────────────────────────────────
     // Los dos umbrales arrancan en NULL -- mismo criterio que el resto del
     // módulo desde 0075/0079: el cliente todavía no dio un número operativo
