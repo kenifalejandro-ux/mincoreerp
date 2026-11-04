@@ -26,12 +26,36 @@ export interface SalidaDeCisterna {
   destino: string | null;
 }
 
+/** Una línea del reparto del sobrante de la recepción (0110/0168). */
+export interface LineaDeReparto {
+  id: string;
+  destino: "cubeta" | "equipo" | "devolucion" | "cisterna";
+  cantidad: string;
+  /** Código de la tanqueta (cubeta) o placa de la unidad (equipo, con Flota); null si no hay. */
+  destino_nombre: string | null;
+}
+
+/** Una fila del kardex de la cisterna: la entrada y cada salida, con el saldo que quedó. */
+export interface MovimientoDeCisterna {
+  tipo: "entrada" | SalidaDeCisterna["tipo"];
+  cantidad: string;
+  fecha: string;
+  destino: string | null;
+  saldo: number;
+}
+
 /** Una cisterna de la pestaña "Cisternas": con saldo, vaciada o de una recepción anulada. */
 export interface CisternaDeLista extends CisternaConSaldo {
   estado: "con_saldo" | "vaciada" | "anulada";
   /** El proveedor de la recepción (para filtrar el historial); null si no tiene. */
   proveedor_id: number | null;
   salidas: SalidaDeCisterna[];
+  /** Lo que sigue lo trae el listado desde el PR del desglose; ausente en datos viejos de la caché
+   *  sin señal: la tarjeta se arma igual con lo que haya. */
+  al_tanque?: string;
+  entregado?: string;
+  reparto?: LineaDeReparto[];
+  movimientos?: MovimientoDeCisterna[];
   /** Días que se le dan a una cisterna con saldo antes de alertar. Ausente: sin color de plazo. */
   plazo_dias?: number | null;
   /** Solo en las anuladas: quién, cuándo y por qué. */
