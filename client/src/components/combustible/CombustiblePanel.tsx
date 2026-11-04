@@ -54,7 +54,9 @@ import MiTanqueta from "./MiTanqueta";
 import MiViaje from "./MiViaje";
 import { comprimirImagen } from "./comprimirImagen";
 import { DESTINOS_EXCEDENTE, type DestinoExcedente } from "./alertasTexto";
-import CisternasConSaldo, { type CisternaConSaldo } from "./CisternasConSaldo";
+import RepartirCisterna, { type CisternaConSaldo } from "./CisternasConSaldo";
+import CisternasPestana, { AvisoCisternas, type CisternaDeLista } from "./CisternasPestana";
+import { puedeVerCisternas } from "./cisternasAcceso";
 
 interface SurtidorDelTanque {
   id: number;
@@ -1548,6 +1550,7 @@ export interface CombustiblePanelProps {
   pestanaInicial?:
     | "tanques"
     | "tanquetas"
+    | "cisternas"
     | "mi_viaje"
     | "compra_ruta"
     | "historico"
@@ -1728,6 +1731,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [pestanaCombustible, setPestanaCombustible] = useState<
     | "tanques"
     | "tanquetas"
+    | "cisternas"
     | "mi_viaje"
     | "compra_ruta"
     | "historico"
@@ -1948,6 +1952,41 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     const body = await res.json().catch(() => null);
     setCisternasConSaldo(res.ok && Array.isArray(body) ? body : []);
   }, [puedeDespachar]);
+  // La pestaña "Cisternas": las que tienen saldo, con su proveedor y sus salidas. La ve quien
+  // tenga el permiso de la pestaña (Lectura también): no es la lista de arriba, que es de quien
+  // reparte. null = aún no llegó; si falla se conserva lo último que se supo.
+  const [cisternasLista, setCisternasLista] = useState<CisternaDeLista[] | null>(null);
+  const [errorCisternas, setErrorCisternas] = useState<string | null>(null);
+  const [cisternaARepartir, setCisternaARepartir] = useState<CisternaConSaldo | null>(null);
+  const verCisternas = puedeVerCisternas(usuario);
+  const enCisternas = useRef(false);
+  useEffect(() => {
+    enCisternas.current = pestanaCombustible === "cisternas";
+  }, [pestanaCombustible]);
+  // Una respuesta vieja no pisa a la nueva: solo vale la última petición.
+  const ultimaCargaCisternas = useRef(0);
+  const cargarCisternasLista = useCallback(async () => {
+    if (!verCisternas || !enCisternas.current) return;
+    const n = ++ultimaCargaCisternas.current;
+    try {
+      const res = await apiFetch("/api/erp/combustible/despachos/cisternas?estado=saldo");
+      const body = await res.json().catch(() => null);
+      if (n !== ultimaCargaCisternas.current) return;
+      if (!res.ok || !Array.isArray(body)) {
+        setErrorCisternas("No se pudieron cargar las cisternas.");
+        return;
+      }
+      setCisternasLista(body);
+      setErrorCisternas(null);
+    } catch {
+      if (n === ultimaCargaCisternas.current)
+        setErrorCisternas("Sin señal: no se pudo actualizar.");
+    }
+  }, [verCisternas]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (pestanaCombustible === "cisternas") void cargarCisternasLista();
+  }, [pestanaCombustible, cargarCisternasLista]);
   const cargarExcedentesPendientes = useCallback(async () => {
     if (!puedeDespachar) {
       setExcedentesPendientes([]);
@@ -2046,6 +2085,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       cargarTanques(),
       cargarExcedentesPendientes(),
       cargarCisternasConSaldo(),
+      cargarCisternasLista(),
     ];
     if (modalKardexAbierto && kardexTanqueId !== null) {
       tareas.push(cargarKardex(kardexTanqueId));
@@ -2069,6 +2109,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           cargarTanques(),
           // Lo que queda en la cisterna baja con cada salida de cualquier persona (0168).
           cargarCisternasConSaldo(),
+          cargarCisternasLista(),
           ...(modalKardexAbierto && kardexTanqueId !== null ? [cargarKardex(kardexTanqueId)] : []),
         ]);
       }, 100);
@@ -2107,7 +2148,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       document.removeEventListener("visibilitychange", alVolver);
       window.removeEventListener("focus", alVolver);
     };
-  }, [cargarTanques, cargarCisternasConSaldo, cargarKardex, modalKardexAbierto, kardexTanqueId]);
+  }, [
+    cargarTanques,
+    cargarCisternasConSaldo,
+    cargarCisternasLista,
+    cargarKardex,
+    modalKardexAbierto,
+    kardexTanqueId,
+  ]);
 
   /** Descarga el kardex del período que está en pantalla.
    *
@@ -3716,6 +3764,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       <div
         className={`flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 lg:gap-6 mb-6 lg:mb-10 ${
           pestanaCombustible === "urea" ||
+          pestanaCombustible === "cisternas" ||
           pestanaCombustible === "mi_viaje" ||
           pestanaCombustible === "compra_ruta" ||
           pestanaCombustible === "precios" ||
@@ -3870,11 +3919,31 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           </button>
         </div>
       )}
-      {!esConductor && pestanaCombustible === "tanques" && puedeDespachar && (
-        <CisternasConSaldo
-          cisternas={cisternasConSaldo}
+      {!esConductor && pestanaCombustible === "tanques" && puedeDespachar && verCisternas && (
+        <AvisoCisternas
+          cantidad={cisternasConSaldo.length}
+          onVer={() =>
+            window.dispatchEvent(
+              new CustomEvent("mincore:ir-a-pestana", { detail: "combustible:cisternas" })
+            )
+          }
+        />
+      )}
+      {pestanaCombustible === "cisternas" && verCisternas && (
+        <CisternasPestana
+          cisternas={cisternasLista}
+          error={errorCisternas}
+          puedeRepartir={puedeDespachar}
+          onRepartir={setCisternaARepartir}
+        />
+      )}
+      {cisternaARepartir && (
+        <RepartirCisterna
+          key={cisternaARepartir.id}
+          cisterna={cisternaARepartir}
           equipos={equipos}
           tanques={tanques}
+          onCerrar={() => setCisternaARepartir(null)}
           onRegistrado={async (mensaje) => {
             setMensajeExito(mensaje);
             await actualizarVistasCombustible();
@@ -3883,7 +3952,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       )}
       {/* También al conductor: es la única confirmación de su "Carga desde
           tanqueta" (con señal, o "guardado en este equipo" sin ella). */}
-      {pestanaCombustible === "tanques" && mensajeExito && (
+      {(pestanaCombustible === "tanques" || pestanaCombustible === "cisternas") && mensajeExito && (
         <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-green-900 font-light flex-1">{mensajeExito}</p>
           <button

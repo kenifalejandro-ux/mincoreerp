@@ -7,13 +7,14 @@ import {
   History,
   Inbox,
   Navigation,
-  Route,
   Receipt,
+  Route,
   ScrollText,
   SearchCheck,
   ShieldCheck,
   Tag,
   Tractor,
+  Truck,
   Wrench,
   type LucideIcon,
 } from "lucide-react";
@@ -23,6 +24,7 @@ import { useAuth } from "../../context/AuthContext";
 import { MODULOS_CLIENTE } from "../../modules/registry";
 import { puedeVerBandeja } from "../bandeja/bandejaAcceso";
 import { useContadorBandeja } from "../bandeja/useContadorBandeja";
+import { puedeVerCisternas } from "../combustible/cisternasAcceso";
 import { puedeCompraEnRuta } from "../combustible/compraEnRutaAcceso";
 import { puedeVerPrecios } from "../combustible/preciosAcceso";
 import { SubmenuDesplegable } from "../comunes/SubmenuDesplegable";
@@ -41,6 +43,7 @@ const SUBMENU_COMBUSTIBLE: { tab: string; label: string; Icono: LucideIcon }[] =
   { tab: "combustible:compra_ruta", label: "Compra en ruta", Icono: Receipt },
   { tab: "combustible", label: "Tanques", Icono: Fuel },
   { tab: "combustible:tanquetas", label: "Tanquetas", Icono: Cylinder },
+  { tab: "combustible:cisternas", label: "Cisternas", Icono: Truck },
   { tab: "combustible:historico", label: "Histórico", Icono: History },
   { tab: "combustible:urea", label: "Urea", Icono: Droplets },
   { tab: "combustible:precios", label: "Precios", Icono: Tag },
@@ -78,6 +81,8 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
     // No tiene pestaña propia en la matriz de permisos: junta dos que sí (ver
     // compraEnRutaAcceso.ts).
     if (tab === "combustible:compra_ruta") return puedeCompraEnRuta(usuario);
+    // Cisternas tiene su permiso propio: el grifero la ve aunque su fallback solo muestre dos.
+    if (tab === "combustible:cisternas") return puedeVerCisternas(usuario);
     // Precios une combustible y urea: se decide con los dos permisos (no hay
     // un permiso "combustible:precios"), igual que la pantalla.
     if (tab === "combustible:precios") return puedeVerPrecios(usuario);

@@ -38,6 +38,8 @@ const GRIFERO = [
   `${C}/config/formulario-despacho`,
   // Lo que quedó en la cisterna (0168): el aviso de Tanques y su salida.
   `${C}/despachos/cisternas-con-saldo`,
+  // La pestaña Cisternas (con saldo, proveedor y salidas): se abre sin señal con lo último que se supo.
+  `${C}/despachos/cisternas?estado=saldo`,
 ];
 
 // Operador: lo de los dos, más Equipos.
