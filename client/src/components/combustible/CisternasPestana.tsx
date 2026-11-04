@@ -7,8 +7,9 @@ import { useState } from "react";
 
 import CisternaAcostada from "./CisternaAcostada";
 import CisternaCapsula from "./CisternaCapsula";
-import type { CisternaConSaldo, CisternaDeLista, SalidaDeCisterna } from "./cisternasTipos";
-import { filtrarHistorial, proveedoresDe, QUE_ES, type FiltroEstado } from "./historialCisternas";
+import type { CisternaConSaldo, CisternaDeLista } from "./cisternasTipos";
+import { renglonesDelDesglose, textoDelMovimiento, totalEntregado } from "./desgloseCisterna";
+import { filtrarHistorial, proveedoresDe, type FiltroEstado } from "./historialCisternas";
 import {
   diasConSaldo,
   estadoDelPlazo,
@@ -25,9 +26,6 @@ const CHIP_PLAZO: Record<EstadoDelPlazo, string> = {
   vencido: "text-red-400",
 };
 
-/** Cuántas salidas se muestran en la tarjeta; el resto queda en el historial. */
-const SALIDAS_VISIBLES = 4;
-
 function TarjetaCisterna({
   c,
   puedeRepartir,
@@ -42,7 +40,8 @@ function TarjetaCisterna({
   const pct = porcentajeDelNivel(saldo, inicial);
   const dias = diasConSaldo(c.recibido_en);
   const plazo = estadoDelPlazo(dias, c.plazo_dias);
-  const salidas = c.salidas ?? [];
+  const desglose = renglonesDelDesglose(c);
+  const movimientos = c.movimientos ?? [];
   return (
     <article className="bg-[#192526] border border-[#2a2e37] rounded-lg p-4 sm:p-6 shadow-lg flex flex-col gap-4">
       <header className="flex flex-wrap items-baseline justify-between gap-2">
@@ -52,62 +51,106 @@ function TarjetaCisterna({
           tanque {c.tanque_codigo}
         </p>
       </header>
-      <div className="flex justify-center">
-        <CisternaAcostada
-          pct={pct}
-          plazo={plazo}
-          descripcion={`Cisterna de ${c.proveedor ?? "proveedor sin nombre"}: ${formatear(saldo)} de ${formatear(inicial)} ${c.unidad}`}
-        />
-      </div>
-      <div className="bg-[#0D1719] border border-[#334155] rounded px-4 py-3 text-center">
-        <div className="text-[10px] text-[#94a3b8] font-bold uppercase mb-1">
-          Queda de lo que sobró
-        </div>
-        <div className="font-mono text-2xl font-bold tracking-tight flex items-baseline justify-center gap-1 text-white">
-          <span>{formatear(saldo)}</span>
-          <span className="text-xs text-[#94a3b8]">
-            / {formatear(inicial)} {c.unidad}
-          </span>
-        </div>
-        <p className={`mt-1 text-xs ${CHIP_PLAZO[plazo]}`}>
-          {dias === 0 ? "Llegó hoy" : `Lleva ${dias} ${dias === 1 ? "día" : "días"} con saldo`}
-          {c.plazo_dias ? ` · plazo ${c.plazo_dias} días` : ""}
-          {plazo === "vencido" ? " · plazo vencido" : ""}
-        </p>
-      </div>
-      {salidas.length > 0 && (
-        <section aria-label="Salidas de esta cisterna">
-          <h3 className="text-[10px] text-[#94a3b8] font-bold uppercase mb-2">Salidas</h3>
-          <ul className="space-y-1">
-            {salidas.slice(-SALIDAS_VISIBLES).map((s) => (
-              <li key={s.id} className="flex justify-between gap-3 text-xs text-[#e2e8f0]">
-                <span className="truncate">
-                  {QUE_ES[s.tipo]}
-                  {s.destino ? ` ${s.destino}` : ""}
-                </span>
-                <span className="font-mono shrink-0">
-                  {formatear(Number(s.cantidad))} {c.unidad} ·{" "}
-                  {new Date(s.fecha).toLocaleDateString("es-PE")}
-                </span>
-              </li>
-            ))}
-          </ul>
-          {salidas.length > SALIDAS_VISIBLES && (
-            <p className="mt-1 text-[11px] text-[#94a3b8]">
-              y {salidas.length - SALIDAS_VISIBLES} salidas anteriores
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-6">
+        <div className="flex flex-col gap-4">
+          <div className="flex justify-center">
+            <CisternaAcostada
+              pct={pct}
+              plazo={plazo}
+              descripcion={`Cisterna de ${c.proveedor ?? "proveedor sin nombre"}: ${formatear(saldo)} de ${formatear(inicial)} ${c.unidad}`}
+            />
+          </div>
+          <div className="bg-[#0D1719] border border-[#334155] rounded px-4 py-3 text-center">
+            <div className="text-[10px] text-[#94a3b8] font-bold uppercase mb-1">
+              Queda de lo que sobró
+            </div>
+            <div className="font-mono text-2xl font-bold tracking-tight flex items-baseline justify-center gap-1 text-white">
+              <span>{formatear(saldo)}</span>
+              <span className="text-xs text-[#94a3b8]">
+                / {formatear(inicial)} {c.unidad}
+              </span>
+            </div>
+            <p className="text-xs font-mono text-[#94a3b8]">{pct.toFixed(0)} %</p>
+            <p className={`mt-1 text-xs ${CHIP_PLAZO[plazo]}`}>
+              {dias === 0 ? "Llegó hoy" : `Lleva ${dias} ${dias === 1 ? "día" : "días"} con saldo`}
+              {c.plazo_dias ? ` · plazo ${c.plazo_dias} días` : ""}
+              {plazo === "vencido" ? " · plazo vencido" : ""}
             </p>
+          </div>
+          {puedeRepartir && (
+            <button
+              type="button"
+              onClick={() => onRepartir(c)}
+              className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-all active:scale-95 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d]"
+            >
+              Repartir
+            </button>
           )}
-        </section>
-      )}
-      {puedeRepartir && (
-        <button
-          type="button"
-          onClick={() => onRepartir(c)}
-          className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-all active:scale-95 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d]"
-        >
-          Repartir
-        </button>
-      )}
+        </div>
+        <div className="flex flex-col gap-5">
+          {desglose.length > 0 && (
+            <section aria-label="Adónde fue lo que llegó">
+              <h3 className="text-[10px] text-[#94a3b8] font-bold uppercase mb-2">
+                Adónde fue lo que llegó · {formatear(totalEntregado(c))} {c.unidad}
+              </h3>
+              <ul className="space-y-1">
+                {desglose.map((r) => (
+                  <li
+                    key={r.clave}
+                    className={`flex justify-between gap-3 text-xs ${
+                      r.enCisterna ? "text-cyan-300 font-semibold" : "text-[#e2e8f0]"
+                    }`}
+                  >
+                    <span>{r.texto}</span>
+                    <span className="font-mono shrink-0">
+                      {formatear(r.cantidad)} {c.unidad}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          <section aria-label="Movimientos de esta cisterna">
+            <h3 className="text-[10px] text-[#94a3b8] font-bold uppercase mb-2">
+              Movimientos de la cisterna
+            </h3>
+            {movimientos.length === 0 ? (
+              <p className="text-xs text-[#94a3b8]">Todavía no salió nada de esta cisterna.</p>
+            ) : (
+              <table className="w-full text-xs text-[#e2e8f0]">
+                <thead>
+                  <tr className="text-left text-[10px] uppercase text-[#94a3b8]">
+                    <th className="pb-1 font-bold">Movimiento</th>
+                    <th className="pb-1 font-bold text-right">Cantidad</th>
+                    <th className="pb-1 font-bold text-right">Saldo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {movimientos.map((m, i) => (
+                    <tr key={`${m.tipo}-${i}`} className="border-t border-[#2a2e37]">
+                      <td className="py-1 pr-2">
+                        {textoDelMovimiento(m)}
+                        <span className="block text-[10px] text-[#64748b]">
+                          {new Date(m.fecha).toLocaleDateString("es-PE")}
+                        </span>
+                      </td>
+                      <td
+                        className={`py-1 text-right font-mono ${
+                          m.tipo === "entrada" ? "text-cyan-300" : ""
+                        }`}
+                      >
+                        {m.tipo === "entrada" ? "+" : "−"}
+                        {formatear(Number(m.cantidad))}
+                      </td>
+                      <td className="py-1 text-right font-mono">{formatear(m.saldo)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+        </div>
+      </div>
     </article>
   );
 }
@@ -236,7 +279,7 @@ export default function CisternasPestana({
             No hay cisternas con saldo.
           </div>
         ) : (
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4">
             {lista.map((c) => (
               <TarjetaCisterna
                 key={c.id}
