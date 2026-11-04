@@ -336,7 +336,15 @@ export const viajesController = {
     const id = Number(req.params.viajeId);
     const data = req.validatedBody as IniciarViajeInput;
     const { antes, despues } = await withTenant(tenantId, (c) =>
-      viajes.iniciarViaje(c, tenantId, req.usuario!.id, id, data)
+      viajes.iniciarViaje(
+        c,
+        tenantId,
+        req.usuario!.id,
+        id,
+        data,
+        undefined,
+        req.usuario!.rol === "admin"
+      )
     );
     await auditar(req, "viaje_iniciar", {
       viajeId: id,

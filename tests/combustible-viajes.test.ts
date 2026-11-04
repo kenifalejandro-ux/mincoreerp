@@ -392,6 +392,15 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect((await admin.post(url(p.body.id, "/cerrar")).send({})).status).toBe(409);
   });
 
+  it("iniciar: el admin puede salir sin la lectura del medidor", async () => {
+    const eq = await unidad();
+    const p = (await programar(eq)).body;
+    const ini = await admin.post(url(p.id, "/iniciar")).send({});
+    expect(ini.status, JSON.stringify(ini.body)).toBe(200);
+    expect(ini.body.estado).toBe("en_curso");
+    expect(ini.body.medidor_inicio).toBeNull();
+  });
+
   it("iniciar: la hora la pone el servidor, pide medidor y no admite uno menor al previo", async () => {
     const eq = await unidad();
     // Viaje anterior cerrado con llegada a 5000 km: es el medidor previo.
@@ -407,7 +416,6 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     const previo = await admin.get(url(p.id, "/medidor-previo"));
     expect(previo.body).toMatchObject({ tipo_medidor: "odometro", valor: 5000, fuente: "viaje" });
 
-    expect((await admin.post(url(p.id, "/iniciar")).send({})).status).toBe(400);
     expect((await admin.post(url(p.id, "/iniciar")).send({ medidor_inicio: 4999 })).status).toBe(
       400
     );

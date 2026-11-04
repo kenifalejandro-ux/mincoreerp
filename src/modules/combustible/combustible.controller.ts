@@ -1914,6 +1914,12 @@ export class CombustibleController {
       const tenantId = getTenantId(req);
       const data = req.validatedBody as CrearDespachoCombustibleInput;
 
+      // medidor_omitido lo pone solo el servicio de la compra en ruta.
+      if (data.medidor_omitido) {
+        res.status(400).json({ error: "medidor_omitido no se envía en un despacho" });
+        return;
+      }
+
       if (req.usuario!.rol === "encargado_urea" && data.producto !== "urea") {
         res
           .status(403)
@@ -2121,7 +2127,7 @@ export class CombustibleController {
       }
 
       const { fila, creado, entradas } = await withTenant(tenantId, (client) =>
-        service.crearCompraRuta(client, tenantId, usuario.id, data, alcanceDe(req))
+        service.crearCompraRuta(client, tenantId, usuario.id, data, alcanceDe(req), usuario.rol)
       );
 
       // Reintento de un envío que ya se había guardado: 200 y no 201, para que

@@ -214,10 +214,11 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
   });
 
   it("si el combustible falla, la urea NO queda guardada", async () => {
-    // Sin horómetro: la unidad se mide por horómetro y el combustible lo exige.
+    // Sin horómetro: la unidad se mide por horómetro y el combustible lo exige
+    // (al conductor; el admin puede omitirlo, 0171).
     const body = cuerpo();
     delete (body.combustible as Record<string, unknown>).lectura_horometro;
-    const r = await crear(body);
+    const r = await crear(body, await nuevoUsuario("conductor_ruta"));
     expect(r.status).toBe(400);
     expect(await contarDespachos(body.comprobante_numero)).toBe(0);
   });
@@ -297,6 +298,51 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
     const r = await crear(cuerpo(), conductor);
     expect(r.status).toBe(201);
     expect(r.body.compra.usuario_id).toBeTruthy();
+  });
+
+  it("el admin registra sin medidor ni horas y la compra queda marcada (0171)", async () => {
+    const comp = numero();
+    const r = await crear(
+      cuerpo({
+        comprobante_numero: comp,
+        total_boleta: undefined,
+        combustible: { tipo_combustible: "diesel_b5", cantidad: 10, costo_unitario: 17.5 },
+        urea: undefined,
+      })
+    );
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const fila = await withTenant(tenantId, (cl) =>
+      cl.query(
+        `SELECT lectura_horometro, lectura_odometro, horas_abastecidas, observaciones
+           FROM combustible_despachos WHERE tenant_id = $1 AND comprobante_numero = $2`,
+        [tenantId, comp]
+      )
+    );
+    expect(fila.rows[0].lectura_horometro).toBeNull();
+    expect(fila.rows[0].horas_abastecidas).toBeNull();
+    expect(fila.rows[0].observaciones).toContain("sin lectura del medidor");
+  });
+
+  it("el conductor sigue obligado a dar medidor y horas: 400 y no se guarda nada", async () => {
+    const conductor = await nuevoUsuario("conductor_ruta");
+    const comp = numero();
+    const r = await crear(
+      cuerpo({
+        comprobante_numero: comp,
+        combustible: { tipo_combustible: "diesel_b5", cantidad: 10, costo_unitario: 17.5 },
+        urea: undefined,
+      }),
+      conductor
+    );
+    expect(r.status).toBe(400);
+    expect(await contarDespachos(comp)).toBe(0);
+  });
+
+  it("medidor_omitido no se acepta en el despacho público", async () => {
+    const r = await agente
+      .post("/api/erp/combustible/despachos")
+      .send({ producto: "combustible", origen: "compra_externa", medidor_omitido: true });
+    expect(r.status).toBe(400);
   });
 
   it("Lectura no puede: 403, y no se guarda nada", async () => {

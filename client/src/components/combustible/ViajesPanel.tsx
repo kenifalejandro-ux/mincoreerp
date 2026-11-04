@@ -1236,7 +1236,7 @@ export default function ViajesPanel() {
                         type: "number",
                         min: 0,
                         step: "0.1",
-                        required: true,
+                        required: usuario?.rol !== "admin",
                         autoFocus: true,
                       })}
                     {previo?.valor != null && form.medidor_inicio !== "" && (
