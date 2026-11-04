@@ -536,7 +536,13 @@ const pctConSigno = (v: number | null) => (v === null ? "—" : `${v > 0 ? "+" :
 interface FilaKardex {
   ocurrido_en: string;
   tipo:
-    "recepcion" | "despacho" | "lectura" | "precinto" | "retorno_tanqueta" | "traspaso_tanqueta";
+    | "recepcion"
+    | "despacho"
+    | "lectura"
+    | "precinto"
+    | "retorno_tanqueta"
+    | "cisterna_al_tanque"
+    | "traspaso_tanqueta";
   referencia_id: string;
   documento: string | null;
   detalle: string | null;
@@ -3860,6 +3866,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         <CisternasConSaldo
           cisternas={cisternasConSaldo}
           equipos={equipos}
+          tanques={tanques}
           onRegistrado={async (mensaje) => {
             setMensajeExito(mensaje);
             await actualizarVistasCombustible();
@@ -6402,11 +6409,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           ? "Despacho"
                           : f.tipo === "traspaso_tanqueta"
                             ? "Traspaso a tanqueta"
-                            : f.tipo === "retorno_tanqueta"
-                              ? "Retorno de tanqueta"
-                              : f.tipo === "precinto"
-                                ? "Precinto"
-                                : "Varilla";
+                            : f.tipo === "cisterna_al_tanque"
+                              ? "Cisterna al tanque"
+                              : f.tipo === "retorno_tanqueta"
+                                ? "Retorno de tanqueta"
+                                : f.tipo === "precinto"
+                                  ? "Precinto"
+                                  : "Varilla";
                     return (
                       <tr
                         key={`${f.tipo}-${f.referencia_id}`}

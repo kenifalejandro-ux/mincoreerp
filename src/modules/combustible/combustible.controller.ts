@@ -62,6 +62,7 @@ import type {
   CargaMasivaTanquesCombustibleInput,
   AnularLecturaCombustibleInput,
   CrearDespachoCombustibleInput,
+  TrasladarCisternaInput,
   CrearGrifoCombustibleInput,
   ActualizarGrifoCombustibleInput,
   CrearPreciosCombustibleMasivoInput,
@@ -4834,11 +4835,13 @@ export class CombustibleController {
               ? "Despacho"
               : f.tipo === "traspaso_tanqueta"
                 ? "Traspaso a tanqueta"
-                : f.tipo === "retorno_tanqueta"
-                  ? "Retorno de tanqueta"
-                  : f.tipo === "precinto"
-                    ? "Precinto"
-                    : "Varilla",
+                : f.tipo === "cisterna_al_tanque"
+                  ? "Cisterna al tanque"
+                  : f.tipo === "retorno_tanqueta"
+                    ? "Retorno de tanqueta"
+                    : f.tipo === "precinto"
+                      ? "Precinto"
+                      : "Varilla",
           f.documento,
           f.detalle,
           f.entrada || "",
@@ -4947,11 +4950,13 @@ export class CombustibleController {
             ? "Despacho"
             : f.tipo === "traspaso_tanqueta"
               ? "Traspaso a tanqueta"
-              : f.tipo === "retorno_tanqueta"
-                ? "Retorno de tanqueta"
-                : f.tipo === "precinto"
-                  ? "Precinto"
-                  : "Varilla",
+              : f.tipo === "cisterna_al_tanque"
+                ? "Cisterna al tanque"
+                : f.tipo === "retorno_tanqueta"
+                  ? "Retorno de tanqueta"
+                  : f.tipo === "precinto"
+                    ? "Precinto"
+                    : "Varilla",
         f.documento,
         f.detalle,
         litros(f.entrada || null),
@@ -5615,6 +5620,40 @@ export class CombustibleController {
         service.listarCisternasConSaldo(client, tenantId, alcance.todo ? null : alcance.grifos)
       )
     );
+  }
+
+  /** POST /despachos/cisterna-al-tanque (0169): pasa lo que quedó en la cisterna
+   *  a un tanque con espacio. Idempotente por cliente_uuid (sin señal se encola). */
+  async trasladarCisternaAlTanque(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const data = req.validatedBody as TrasladarCisternaInput;
+      const { fila, creado } = await withTenant(tenantId, (client) =>
+        service.trasladarCisternaAlTanque(client, tenantId, req.usuario!.id, data, alcanceDe(req))
+      );
+      // Un reintento ya guardado: 200, sin duplicar auditoría ni evento.
+      if (!creado) {
+        res.status(200).json(fila ?? { error: "Este pase ya se había registrado" });
+        return;
+      }
+      await registrarAuditoria({
+        accion: "combustible.cisterna_al_tanque",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          trasladoId: fila!.id,
+          lineaId: data.linea_id,
+          tanqueId: data.combustible_id,
+          cantidad: data.cantidad,
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
+      await publicarEventoTenant(tenantId, "combustible.despacho_creado", {});
+      res.status(201).json(fila);
+    } catch (err) {
+      this.responderErrorDeDespacho(err, res);
+    }
   }
 
   /** null si no existe o si su grifo está fuera del alcance del usuario. */

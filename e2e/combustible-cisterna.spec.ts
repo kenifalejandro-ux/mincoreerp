@@ -251,3 +251,78 @@ test("Dejar en cisterna: una salida sin señal queda guardada en el equipo y lle
     await vaciar(page, marca, equipoId, serie, 3);
   }
 });
+
+test("Dejar en cisterna: se pasa al tanque, sube su nivel y no excede su espacio libre", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const marca = randomBytes(3).toString("hex").toUpperCase();
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  const { grifoInternoId, tanqueId, equipoId, proveedorId } = await preparar(page, marca);
+  const serie = `T${marca}`;
+  try {
+    // Otro tanque de la misma sede, producto y unidad, con espacio y con varilla.
+    const destino = await page.request.post("/api/erp/combustible", {
+      data: {
+        codigo: `CD-${marca}`,
+        tanque_nombre: `Tanque destino ${marca}`,
+        tipo_combustible: "diesel_b5",
+        unidad: "gal",
+        tipo_punto: "fijo",
+        capacidad_total: 1000,
+        nivel_actual: 700,
+        requiere_documento: false,
+        grifo_interno_id: grifoInternoId,
+      },
+    });
+    expect(destino.status(), "no se pudo crear el tanque destino").toBe(201);
+    const destinoId = (await destino.json()).id as number;
+    const rec = await page.request.post("/api/erp/combustible/recepciones", {
+      data: {
+        combustible_id: tanqueId,
+        grifo_id: proveedorId,
+        cantidad: 500,
+        costo_unitario: 17.5,
+        recibido_en: new Date().toISOString(),
+        reparto_excedente: [{ destino: "cisterna", cantidad: 500 }],
+      },
+    });
+    expect(rec.status(), "no se pudo registrar la recepción de prueba").toBe(201);
+    const cisterna = (await miCisterna(page, marca))!;
+
+    await page.reload();
+    await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+    await irATanques(page).click();
+    const fila = page.getByText(new RegExp(`recepción #${cisterna.recepcion_id} `)).locator("..");
+    await fila.getByRole("button", { name: "Repartir" }).click();
+
+    await page.locator("#cis-destino").selectOption("tanque");
+    const valor = await page
+      .locator("#cis-tanque option", { hasText: `CD-${marca}` })
+      .getAttribute("value");
+    await page.locator("#cis-tanque").selectOption(valor!);
+    // Sin vale ni medidor: es una entrada del tanque.
+    await expect(page.locator("#cis-vale")).toHaveCount(0);
+    await expect(page.locator("#cis-medidor")).toHaveCount(0);
+
+    // El tanque tiene 300 gal de espacio: 400 no entran, aunque la cisterna los tenga.
+    const pasar = page.getByRole("button", { name: "Pasar al tanque" });
+    await page.locator("#cis-cantidad").fill("400");
+    await expect(page.getByText(/solo tiene espacio para 300/)).toBeVisible();
+    await expect(pasar).toBeDisabled();
+    await page.locator("#cis-cantidad").fill("250");
+    await expect(pasar).toBeEnabled();
+    await pasar.click();
+    await expect(
+      page.getByText(`Pase registrado: 250 gal de la cisterna a CD-${marca}.`)
+    ).toBeVisible();
+    await expect(fila).toContainText("Quedan 250 gal");
+
+    const ficha = await (await page.request.get(`/api/erp/combustible/${destinoId}`)).json();
+    expect(Number(ficha.nivel_teorico), "el nivel del tanque subió").toBe(950);
+    expect(Number((await miCisterna(page, marca))!.saldo)).toBe(250);
+  } finally {
+    await vaciar(page, marca, equipoId, serie, 1);
+  }
+});

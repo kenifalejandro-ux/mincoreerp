@@ -22,6 +22,7 @@ import type {
   CorregirLitrosUreaInput,
   CrearPuntoPrecintoInput,
   CambiarPrecintoInput,
+  TrasladarCisternaInput,
 } from "../../server/schemas/combustible.schema";
 import { crearDespachoCombustibleSchema } from "../../server/schemas/combustible.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
@@ -2754,6 +2755,119 @@ export class CombustibleService {
       tanqueId: Number(cisterna.combustible_id),
       costoUnitario: Number(cisterna.costo_unitario),
     };
+  }
+
+  /** Pasa lo que quedó en la cisterna a un tanque con espacio (0169). Es una
+   *  ENTRADA del tanque que no es una compra: suma al nivel y al costo promedio
+   *  (con el costo de la factura), pero no abre ciclo ni cuenta como entrega.
+   *  Mismas reglas que el retorno de una tanqueta al pozo: misma sede, mismo
+   *  producto, y el tanque tiene que tener varilla y espacio. La línea y el
+   *  tanque se bloquean: dos pases a la vez ven lo que dejó el primero. */
+  trasladarCisternaAlTanque(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: TrasladarCisternaInput,
+    alcance?: AlcanceCombustible
+  ) {
+    return idempotentInsert({
+      client,
+      tenantId,
+      modulo: "combustible",
+      clienteUuid: data.cliente_uuid,
+      huella: huellaDeRegistro("cisterna_traslado", {
+        linea_id: data.linea_id,
+        combustible_id: data.combustible_id,
+        cantidad: data.cantidad,
+      }),
+      insertar: async () => {
+        const grifos = alcance && !alcance.todo ? alcance.grifos : null;
+        const destino = await this.repository.bloquearLineaExcedente(
+          client,
+          tenantId,
+          data.linea_id,
+          grifos
+        );
+        if (destino !== "cisterna") {
+          throw new AppError(400, "El excedente indicado no está en una cisterna");
+        }
+        const [cisterna] = await this.repository.findCisternasConSaldo(
+          client,
+          tenantId,
+          grifos,
+          data.linea_id
+        );
+        if (!cisterna) {
+          throw new AppError(
+            400,
+            "La cisterna no tiene saldo: ya se repartió entera, o su recepción se anuló"
+          );
+        }
+        const saldo = Number(cisterna.saldo);
+        if (data.cantidad > saldo + 0.01) {
+          throw new AppError(
+            400,
+            `En la cisterna quedan ${saldo} ${cisterna.unidad} y se quieren pasar ${data.cantidad}`
+          );
+        }
+        const tanque = await this.repository.bloquearTanqueDeTraslado(
+          client,
+          tenantId,
+          data.combustible_id
+        );
+        if (!tanque) throw new AppError(400, "El tanque elegido no existe");
+        if (!tanque.activo) throw new AppError(400, `El tanque ${tanque.codigo} está dado de baja`);
+        if (Number(tanque.grifo_interno_id) !== Number(cisterna.grifo_interno_id)) {
+          throw new AppError(
+            400,
+            `El tanque ${tanque.codigo} es de otra sede: la cisterna solo se pasa a un tanque de su grifo`
+          );
+        }
+        if (tanque.tipo_combustible !== cisterna.tipo_combustible) {
+          throw new AppError(
+            400,
+            `La cisterna es de ${cisterna.tipo_combustible} y el tanque ${tanque.codigo} de ${tanque.tipo_combustible}: no se pueden mezclar productos`
+          );
+        }
+        if (tanque.unidad !== cisterna.unidad) {
+          throw new AppError(
+            400,
+            `La cisterna se mide en ${cisterna.unidad} y el tanque ${tanque.codigo} en ${tanque.unidad}: elige un tanque en la misma unidad`
+          );
+        }
+        const nivel = await this.repository.findNivelTeoricoVigenteA(
+          client,
+          tenantId,
+          data.combustible_id,
+          new Date().toISOString()
+        );
+        if (nivel === null) {
+          throw new AppError(
+            400,
+            `El tanque ${tanque.codigo} no tiene lectura de varilla: registra una antes de pasarle combustible`
+          );
+        }
+        const capacidad = Number(tanque.capacidad_total);
+        if (nivel + data.cantidad > capacidad + 0.005) {
+          const libre = Math.max(0, Number((capacidad - nivel).toFixed(2)));
+          throw new AppError(
+            400,
+            `El tanque ${tanque.codigo} solo tiene espacio para ${libre} ${tanque.unidad} ` +
+              `(capacidad ${capacidad}, nivel teórico ${nivel}): no entran ${data.cantidad}`
+          );
+        }
+        const fila = await this.repository.crearTrasladoCisterna(client, tenantId, usuarioId, {
+          lineaId: data.linea_id,
+          combustibleId: data.combustible_id,
+          cantidad: data.cantidad,
+          costoUnitario: Number(cisterna.costo_unitario),
+        });
+        // El costo promedio del tanque se rehace entero con lo que acaba de entrar.
+        await this.repository.recalcularCostoPromedio(client, tenantId, data.combustible_id);
+        return { id: Number(fila.id), fila };
+      },
+      recuperar: (filaId) => this.repository.findTrasladoCisternaPorId(client, tenantId, filaId),
+    });
   }
 
   /** La carga en ruta desde una tanqueta (0114): la tanqueta existe, está
