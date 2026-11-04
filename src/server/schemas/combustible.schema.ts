@@ -2382,6 +2382,14 @@ export const trasladarCisternaSchema = z.object({
 });
 export type TrasladarCisternaInput = z.infer<typeof trasladarCisternaSchema>;
 
+// Pestaña "Cisternas": "saldo" son las que todavía tienen combustible; "historial", las vaciadas
+// y las de una recepción anulada. El proveedor filtra por su id en el catálogo de grifos externos.
+export const cisternasListadoQuerySchema = z.object({
+  estado: z.enum(["saldo", "historial"]).default("saldo"),
+  proveedor_id: z.coerce.number().int().positive().max(2147483647).optional(),
+});
+export type CisternasListadoQuery = z.infer<typeof cisternasListadoQuerySchema>;
+
 // ── Viajes (0123) ──────────────────────────────────────────────────────────
 const fechaHora = z.string().datetime({ offset: true });
 /** Una hora que escribe la oficina o una carga retroactiva (no la marca del celular, que el

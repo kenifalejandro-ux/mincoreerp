@@ -2942,6 +2942,15 @@ export class CombustibleService {
     return this.repository.findCisternasConSaldo(client, tenantId, grifos);
   }
 
+  listarCisternas(
+    client: PoolClient,
+    tenantId: string,
+    grifos: number[] | null,
+    filtros: { estado: "saldo" | "historial"; proveedorId: number | null; conPlaca: boolean }
+  ) {
+    return this.repository.findCisternas(client, tenantId, grifos, filtros);
+  }
+
   getDespachoPideMedidor(client: PoolClient, tenantId: string) {
     return this.repository.getDespachoPideMedidor(client, tenantId);
   }

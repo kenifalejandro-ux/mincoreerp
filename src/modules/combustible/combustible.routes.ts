@@ -14,6 +14,7 @@ import {
   anularLecturaCombustibleSchema,
   crearDespachoCombustibleSchema,
   trasladarCisternaSchema,
+  cisternasListadoQuerySchema,
   crearCompraRutaSchema,
   crearGrifoCombustibleSchema,
   actualizarGrifoCombustibleSchema,
@@ -396,6 +397,13 @@ router.get(
   "/despachos/excedentes-pendientes",
   requirePestana("combustible", "tanques:registrar_despacho"),
   asyncHandler(controller.listarExcedentesPendientes.bind(controller))
+);
+// Pestaña "Cisternas": con saldo e historial (vaciadas y anuladas), con sus salidas.
+router.get(
+  "/despachos/cisternas",
+  requirePestana("combustible", "cisternas"),
+  validateQuery(cisternasListadoQuerySchema),
+  asyncHandler(controller.listarCisternas.bind(controller))
 );
 // Lo que quedó en la cisterna con saldo (0168): se reparte con despachos.
 router.get(
