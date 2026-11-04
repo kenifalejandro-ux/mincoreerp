@@ -351,6 +351,20 @@ describe("combustible: de la cisterna al tanque es una entrada del tanque (0169)
     expect(r.status, JSON.stringify(r.body)).toBe(201);
   });
 
+  it("la cantidad va en centésimas: 0.004, 0.001 o 10.005 son 400, no 500 ni un redondeo callado", async () => {
+    const { lineaId } = await cisterna(500);
+    const tq = await tanque({ nivel: 1000 });
+    for (const cantidad of [0.004, 0.001, 10.005]) {
+      const r = await pasar(admin, lineaId, tq, cantidad);
+      expect(r.status, `cantidad ${cantidad}: ${JSON.stringify(r.body)}`).toBe(400);
+    }
+    // Nada se guardó, y una cantidad en centésimas (con el error típico de coma flotante) pasa.
+    expect(await saldoDe(lineaId)).toBe(500);
+    expect((await pasar(admin, lineaId, tq, 0.07)).status).toBe(201);
+    expect((await pasar(admin, lineaId, tq, 10.01)).status).toBe(201);
+    expect(await saldoDe(lineaId)).toBe(489.92);
+  });
+
   it("un tanque o una línea que no existen son 400, no 500", async () => {
     const { lineaId } = await cisterna(500);
     expect((await pasar(admin, lineaId, 2147483000, 10)).status).toBe(400);
