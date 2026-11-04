@@ -1,9 +1,14 @@
 // La pestaña "Cisternas": lo que quedó en la cisterna del proveedor, con su nivel dibujado, su
-// antigüedad frente al plazo y lo que ya salió de ella. Repartir y pasar al tanque se hacen desde
+// antigüedad frente al plazo y lo que ya salió de ella; y su Historial (las vaciadas y las de una
+// recepción anulada), con filtros por proveedor y estado. Repartir y pasar al tanque se hacen desde
 // acá (el modal es RepartirCisterna). Lectura la ve sin botones. El servidor ya filtra por sede y
 // por permiso: acá solo se muestra.
+import { useState } from "react";
+
 import CisternaAcostada from "./CisternaAcostada";
-import type { CisternaConSaldo } from "./CisternasConSaldo";
+import CisternaCapsula from "./CisternaCapsula";
+import type { CisternaConSaldo, CisternaDeLista, SalidaDeCisterna } from "./cisternasTipos";
+import { filtrarHistorial, proveedoresDe, QUE_ES, type FiltroEstado } from "./historialCisternas";
 import {
   diasConSaldo,
   estadoDelPlazo,
@@ -11,29 +16,7 @@ import {
   type EstadoDelPlazo,
 } from "./nivelCisterna";
 
-export interface SalidaDeCisterna {
-  id: string;
-  tipo: "unidad" | "tanqueta" | "tanque";
-  cantidad: string;
-  fecha: string;
-  /** Placa, código de tanqueta o de tanque. Sin Flota la placa no viene. */
-  destino: string | null;
-}
-
-export interface CisternaDeLista extends CisternaConSaldo {
-  estado: "con_saldo" | "vaciada" | "anulada";
-  salidas: SalidaDeCisterna[];
-  /** Días que se le dan a una cisterna con saldo antes de alertar. Ausente: sin color de plazo. */
-  plazo_dias?: number | null;
-}
-
 const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
-
-const QUE_ES: Record<SalidaDeCisterna["tipo"], string> = {
-  unidad: "Unidad",
-  tanqueta: "Tanqueta",
-  tanque: "Tanque",
-};
 
 const CHIP_PLAZO: Record<EstadoDelPlazo, string> = {
   sin_plazo: "text-[#94a3b8]",
@@ -129,18 +112,38 @@ function TarjetaCisterna({
   );
 }
 
+type Vista = "saldo" | "historial";
+
+const BOTON_VISTA =
+  "px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all active:scale-95 border";
+const CAMPO_FILTRO =
+  "bg-[#0D1719] border border-[#334155] rounded px-3 py-2 text-sm font-semibold text-white";
+
 export default function CisternasPestana({
   cisternas,
+  historial,
   error,
   puedeRepartir,
   onRepartir,
 }: {
-  /** null: todavía no llegó la primera respuesta. */
+  /** Las que tienen saldo. null: todavía no llegó la primera respuesta. */
   cisternas: CisternaDeLista[] | null;
+  /** Las vaciadas y las de una recepción anulada. null: todavía no llegó. */
+  historial: CisternaDeLista[] | null;
   error: string | null;
   puedeRepartir: boolean;
   onRepartir: (c: CisternaConSaldo) => void;
 }) {
+  const [vista, setVista] = useState<Vista>("saldo");
+  const [proveedor, setProveedor] = useState("");
+  const [estado, setEstado] = useState<FiltroEstado>("todas");
+  const proveedores = proveedoresDe(historial ?? []);
+  // Un proveedor que ya no está en la lista (se recargó el historial) no deja el filtro "pegado"
+  // en algo que no existe: se trata como "todos".
+  const proveedorVigente = proveedores.some((p) => p.valor === proveedor) ? proveedor : "";
+  const visibles = filtrarHistorial(historial ?? [], proveedorVigente, estado);
+  const lista = vista === "saldo" ? cisternas : historial;
+  const cuenta = (l: CisternaDeLista[] | null) => (l ? ` (${l.length})` : "");
   return (
     <div>
       <div className="mb-6 lg:mb-10">
@@ -148,30 +151,112 @@ export default function CisternasPestana({
           Cisternas
         </h1>
         <p className="text-xs sm:text-sm text-[#94a3b8]">
-          Combustible que quedó en la cisterna del proveedor y todavía se puede repartir
+          {vista === "saldo"
+            ? "Combustible que quedó en la cisterna del proveedor y todavía se puede repartir"
+            : "Las cisternas que ya se vaciaron y las de una recepción anulada"}
         </p>
       </div>
+      <div role="group" aria-label="Vista de cisternas" className="mb-6 flex flex-wrap gap-2">
+        {(
+          [
+            ["saldo", "Con saldo", cisternas],
+            ["historial", "Historial", historial],
+          ] as const
+        ).map(([valor, texto, datos]) => (
+          <button
+            key={valor}
+            type="button"
+            aria-pressed={vista === valor}
+            onClick={() => setVista(valor)}
+            className={`${BOTON_VISTA} ${
+              vista === valor
+                ? "bg-[#192526] text-white border-[#a3e635]"
+                : "bg-transparent text-[#e2e8f0] border-[#334155] hover:bg-[#2a2e37]"
+            }`}
+          >
+            {texto}
+            {cuenta(datos)}
+          </button>
+        ))}
+      </div>
+      {vista === "historial" && historial && historial.length > 0 && (
+        <div className="mb-6 flex flex-wrap items-end gap-3">
+          <div className="space-y-1">
+            <label
+              htmlFor="cisternas-filtro-proveedor"
+              className="block text-[10px] text-[#94a3b8] font-bold uppercase"
+            >
+              Proveedor
+            </label>
+            <select
+              id="cisternas-filtro-proveedor"
+              className={CAMPO_FILTRO}
+              value={proveedorVigente}
+              onChange={(e) => setProveedor(e.target.value)}
+            >
+              <option value="">Todos</option>
+              {proveedores.map((p) => (
+                <option key={p.valor} value={p.valor}>
+                  {p.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <label
+              htmlFor="cisternas-filtro-estado"
+              className="block text-[10px] text-[#94a3b8] font-bold uppercase"
+            >
+              Estado
+            </label>
+            <select
+              id="cisternas-filtro-estado"
+              className={CAMPO_FILTRO}
+              value={estado}
+              onChange={(e) => setEstado(e.target.value as FiltroEstado)}
+            >
+              <option value="todas">Todas</option>
+              <option value="vaciada">Vaciadas</option>
+              <option value="anulada">Anuladas</option>
+            </select>
+          </div>
+        </div>
+      )}
       {error && (
         <p role="alert" className="mb-4 text-sm font-medium text-amber-300">
           {error}
-          {cisternas ? " Lo que se ve es lo último que se supo." : ""}
+          {lista ? " Lo que se ve es lo último que se supo." : ""}
         </p>
       )}
-      {cisternas === null ? (
+      {lista === null ? (
         !error && <p className="text-sm text-[#94a3b8]">Cargando cisternas...</p>
-      ) : cisternas.length === 0 ? (
+      ) : vista === "saldo" ? (
+        lista.length === 0 ? (
+          <div className="bg-[#192526] border border-dashed border-[#334155] rounded-xl p-10 text-center text-[#94a3b8]">
+            No hay cisternas con saldo.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            {lista.map((c) => (
+              <TarjetaCisterna
+                key={c.id}
+                c={c}
+                puedeRepartir={puedeRepartir}
+                onRepartir={onRepartir}
+              />
+            ))}
+          </div>
+        )
+      ) : visibles.length === 0 ? (
         <div className="bg-[#192526] border border-dashed border-[#334155] rounded-xl p-10 text-center text-[#94a3b8]">
-          No hay cisternas con saldo.
+          {lista.length === 0
+            ? "Todavía no hay cisternas en el historial."
+            : "Ninguna cisterna coincide con el filtro."}
         </div>
       ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          {cisternas.map((c) => (
-            <TarjetaCisterna
-              key={c.id}
-              c={c}
-              puedeRepartir={puedeRepartir}
-              onRepartir={onRepartir}
-            />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {visibles.map((c) => (
+            <CisternaCapsula key={c.id} c={c} />
           ))}
         </div>
       )}

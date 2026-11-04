@@ -40,6 +40,7 @@ const GRIFERO = [
   `${C}/despachos/cisternas-con-saldo`,
   // La pestaña Cisternas (con saldo, proveedor y salidas): se abre sin señal con lo último que se supo.
   `${C}/despachos/cisternas?estado=saldo`,
+  `${C}/despachos/cisternas?estado=historial`,
 ];
 
 // Operador: lo de los dos, más Equipos.
