@@ -2942,13 +2942,28 @@ export class CombustibleService {
     return this.repository.findCisternasConSaldo(client, tenantId, grifos);
   }
 
-  listarCisternas(
+  /** Las cisternas con su kardex: la entrada (lo que sobró en la recepción) y cada salida, con el
+   *  saldo que quedaba después de cada fila. Las salidas ya vienen ordenadas y sin las anuladas. */
+  async listarCisternas(
     client: PoolClient,
     tenantId: string,
     grifos: number[] | null,
     filtros: { estado: "saldo" | "historial"; proveedorId: number | null; conPlaca: boolean }
   ) {
-    return this.repository.findCisternas(client, tenantId, grifos, filtros);
+    const filas = await this.repository.findCisternas(client, tenantId, grifos, filtros);
+    return filas.map((c) => {
+      let saldo = Number(c.cantidad);
+      const movimientos = [
+        { tipo: "entrada", cantidad: c.cantidad, fecha: c.recibido_en, destino: null, saldo },
+        ...(
+          c.salidas as { tipo: string; cantidad: string; fecha: string; destino: string | null }[]
+        ).map((o) => {
+          saldo = Math.round((saldo - Number(o.cantidad)) * 100) / 100;
+          return { ...o, saldo };
+        }),
+      ];
+      return { ...c, movimientos };
+    });
   }
 
   getDespachoPideMedidor(client: PoolClient, tenantId: string) {
