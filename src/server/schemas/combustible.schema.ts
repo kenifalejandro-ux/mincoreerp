@@ -2369,7 +2369,10 @@ export const trasladarCisternaSchema = z.object({
   cliente_uuid: z.string().uuid().optional(),
   linea_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   combustible_id: z.number().int().positive().max(2147483647),
-  cantidad: z.number().positive().max(10_000_000),
+  // En centésimas: la columna es NUMERIC(14,2) y su CHECK pide cantidad > 0. Sin esto,
+  // 0.004 se redondeaba a 0.00 y salía como 500 (que una cola sin señal reintenta), y 10.005
+  // se guardaba como 10.01 después de validar el saldo y el espacio con 10.005.
+  cantidad: z.number().positive().multipleOf(0.01).max(10_000_000),
 });
 export type TrasladarCisternaInput = z.infer<typeof trasladarCisternaSchema>;
 
