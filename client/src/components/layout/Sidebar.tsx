@@ -37,19 +37,37 @@ import {
 } from "../flota/flotaAcceso";
 
 // Submenú de Combustible. Los íconos son de trazo (lucide), los mismos que
-// usan las acciones de la tabla de tanques.
-const SUBMENU_COMBUSTIBLE: { tab: string; label: string; Icono: LucideIcon }[] = [
+// usan las acciones de la tabla de tanques. El orden sigue el flujo: primero el alta (proveedores
+// y sus precios), luego la cisterna que recibe, el tanque y la tanqueta que reparten, la urea y
+// la compra en ruta; al final lo que se consulta (histórico, auditoría, bitácora).
+const SUBMENU_COMBUSTIBLE_BASE: { tab: string; label: string; Icono: LucideIcon }[] = [
   { tab: "combustible:mi_viaje", label: "Mi viaje", Icono: Navigation },
-  { tab: "combustible:compra_ruta", label: "Compra en ruta", Icono: Receipt },
+  { tab: "combustible:proveedores", label: "Proveedores", Icono: Wrench },
+  { tab: "combustible:precios", label: "Precios", Icono: Tag },
+  { tab: "combustible:cisternas", label: "Cisternas", Icono: Truck },
   { tab: "combustible", label: "Tanques", Icono: Fuel },
   { tab: "combustible:tanquetas", label: "Tanquetas", Icono: Cylinder },
-  { tab: "combustible:cisternas", label: "Cisternas", Icono: Truck },
-  { tab: "combustible:historico", label: "Histórico", Icono: History },
   { tab: "combustible:urea", label: "Urea", Icono: Droplets },
-  { tab: "combustible:precios", label: "Precios", Icono: Tag },
-  { tab: "combustible:proveedores", label: "Proveedores", Icono: Wrench },
+  { tab: "combustible:compra_ruta", label: "Compra en ruta", Icono: Receipt },
+  { tab: "combustible:historico", label: "Histórico", Icono: History },
   { tab: "combustible:auditoria", label: "Auditoría", Icono: SearchCheck },
   { tab: "combustible:bitacora", label: "Bitácora", Icono: ScrollText },
+];
+
+// El grifero y el conductor ven pocas pestañas y las conocen en este orden: se les deja como estaba,
+// el orden por flujo de arriba es el de quien administra.
+const ORDEN_DE_CAMPO = [
+  "combustible:mi_viaje",
+  "combustible:compra_ruta",
+  "combustible",
+  "combustible:tanquetas",
+  "combustible:cisternas",
+  "combustible:historico",
+  "combustible:urea",
+  "combustible:precios",
+  "combustible:proveedores",
+  "combustible:auditoria",
+  "combustible:bitacora",
 ];
 
 // Submenú de Gestión operacional de flota: Registro de unidades (lo que antes era
@@ -77,7 +95,13 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
   const submenusFlota = SUBMENU_FLOTA.filter(({ tab }) =>
     tab === "flota" ? puedeVerUnidades(usuario) : puedeVerViajes(usuario)
   );
-  const submenusVisibles = SUBMENU_COMBUSTIBLE.filter(({ tab }) => {
+  const deCampo = usuario?.rol === "grifero" || usuario?.rol === "conductor_ruta";
+  const submenuCombustible = deCampo
+    ? [...SUBMENU_COMBUSTIBLE_BASE].sort(
+        (a, b) => ORDEN_DE_CAMPO.indexOf(a.tab) - ORDEN_DE_CAMPO.indexOf(b.tab)
+      )
+    : SUBMENU_COMBUSTIBLE_BASE;
+  const submenusVisibles = submenuCombustible.filter(({ tab }) => {
     // No tiene pestaña propia en la matriz de permisos: junta dos que sí (ver
     // compraEnRutaAcceso.ts).
     if (tab === "combustible:compra_ruta") return puedeCompraEnRuta(usuario);
