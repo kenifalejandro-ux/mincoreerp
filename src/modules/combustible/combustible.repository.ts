@@ -8068,6 +8068,26 @@ export class CombustibleRepository {
               s.costo_unitario, s.combustible_id, s.tanque_codigo, s.tanque_nombre,
               s.tipo_combustible, s.unidad, s.grifo_interno_id, s.proveedor_id, s.proveedor,
               s.anulada_en, s.anulada_por_nombre, s.motivo_anulacion,
+              -- De dónde sale lo que se ve: al_tanque es lo que entró a la varilla (la columna
+              -- cantidad de la recepción no cuenta el sobrante) y entregado, lo que la cisterna
+              -- del proveedor dejó en total (0110: cantidad + cantidad_derivada).
+              s.al_tanque, (s.al_tanque + s.cantidad_derivada)::numeric(14,2) AS entregado,
+              -- Adónde fue el sobrante de esa recepción, línea por línea (0110/0168). Una línea
+              -- cubeta dice su tanqueta si ya la tenía; equipo, la placa si hay módulo Flota.
+              COALESCE((
+                SELECT json_agg(rp ORDER BY rp.id::bigint)
+                  FROM (
+                    SELECT x2.id::text AS id, x2.destino, x2.cantidad,
+                           CASE WHEN x2.destino = 'cubeta' THEN tq2.codigo
+                                WHEN x2.destino = 'equipo' THEN eq2.placa_codigo END AS destino_nombre
+                      FROM combustible_recepcion_excedentes x2
+                      LEFT JOIN combustible_tanquetas tq2
+                             ON tq2.tenant_id = x2.tenant_id AND tq2.id = x2.tanqueta_id
+                      LEFT JOIN equipos eq2
+                             ON $5::boolean AND eq2.id = x2.equipo_id AND eq2.tenant_id = x2.tenant_id
+                     WHERE x2.tenant_id = $1 AND x2.recepcion_id = s.recepcion_id
+                  ) rp
+              ), '[]'::json) AS reparto,
               -- El plazo de la empresa (0170; 10 si nunca lo configuró), para que la pantalla
               -- pinte el aviso sin que quien la ve tenga que leer la configuración.
               COALESCE((SELECT cc.dias_cisterna_con_saldo FROM combustible_config cc
@@ -8099,6 +8119,7 @@ export class CombustibleRepository {
                   + COALESCE((SELECT SUM(t.cantidad) FROM combustible_cisterna_traslados t
                                WHERE t.tenant_id = x.tenant_id AND t.linea_id = x.id), 0) AS salido,
                   r.id AS recepcion_id, r.recibido_en, r.costo_unitario,
+                  r.cantidad AS al_tanque, r.cantidad_derivada,
                   c.id AS combustible_id, c.codigo AS tanque_codigo, c.tanque_nombre,
                   c.tipo_combustible, c.unidad, r.grifo_interno_id,
                   r.grifo_id AS proveedor_id, g.nombre AS proveedor,
