@@ -1,9 +1,9 @@
 /** e2e/combustible-cisterna.spec.ts
  *
  * El excedente que se queda en la cisterna del proveedor (0168): la opción
- * "Dejar en cisterna" del reparto, el aviso con el saldo en Tanques, y su
- * reparto a una unidad (con vale y medidor) o a una tanqueta (sin unidad no
- * lleva vale), también sin señal.
+ * "Dejar en cisterna" del reparto, el aviso corto en Tanques que lleva a la
+ * pestaña "Cisternas", y su reparto desde ahí a una unidad (con vale y medidor),
+ * a una tanqueta (sin unidad no lleva vale) o al tanque, también sin señal.
  *
  * Por qué en un navegador real: la API ya la cubren los tests de servidor. Lo
  * que solo se ve acá es que la línea "cisterna" no pida unidad, que el aviso
@@ -92,6 +92,14 @@ async function vaciar(page: Page, marca: string, equipoId: number, serie: string
 }
 
 const irATanques = (page: Page) => page.getByRole("button", { name: "Tanques", exact: true });
+const irACisternas = (page: Page) => page.getByRole("button", { name: "Cisternas", exact: true });
+
+/** La tarjeta de la cisterna de ESTA corrida en la pestaña "Cisternas". */
+const tarjetaDe = (page: Page, recepcionId: string) =>
+  page.locator("article").filter({ hasText: `Recepción #${recepcionId} ` });
+
+/** "300 / 500 gal": lo que queda sobre lo que quedó al recibir. */
+const queda = (saldo: number, inicial: number) => new RegExp(`${saldo}\\s*/\\s*${inicial} gal`);
 
 test("Dejar en cisterna: el reparto no pide unidad y el saldo se reparte a una unidad y a una tanqueta", async ({
   page,
@@ -138,11 +146,13 @@ test("Dejar en cisterna: el reparto no pide unidad y el saldo se reparte a una u
     const ficha = await (await page.request.get(`/api/erp/combustible/${tanqueId}`)).json();
     expect(Number(ficha.nivel_teorico), "al tanque no entró nada").toBe(2000);
 
-    // ── El aviso en Tanques ────────────────────────────────────────────────
+    // ── El aviso corto en Tanques lleva a la pestaña "Cisternas" ───────────
     await irATanques(page).click();
-    const fila = () =>
-      page.getByText(new RegExp(`recepción #${cisterna!.recepcion_id} `)).locator("..");
-    await expect(fila()).toContainText("Quedan 500 gal");
+    const aviso = page.getByText(/con saldo por repartir/).locator("..");
+    await expect(aviso).toBeVisible();
+    await aviso.getByRole("button", { name: "Ver" }).click();
+    const fila = () => tarjetaDe(page, cisterna!.recepcion_id);
+    await expect(fila()).toContainText(queda(500, 500));
     await fila().getByRole("button", { name: "Repartir" }).click();
 
     // A una unidad: con vale y medidor, y no deja pasarse del saldo.
@@ -161,7 +171,9 @@ test("Dejar en cisterna: el reparto no pide unidad y el saldo se reparte a una u
     await expect(
       page.getByText(`Salida registrada: 200 gal de la cisterna a ${placa}.`)
     ).toBeVisible();
-    await expect(fila()).toContainText("Quedan 300 gal");
+    await expect(fila()).toContainText(queda(300, 500));
+    // La salida aparece en la tarjeta, con la placa de la unidad.
+    await expect(fila()).toContainText(placa);
 
     // A una tanqueta sin unidad: sin vale, y el saldo baja otra vez.
     await fila().getByRole("button", { name: "Repartir" }).click();
@@ -174,7 +186,7 @@ test("Dejar en cisterna: el reparto no pide unidad y el saldo se reparte a una u
     await expect(registrar).toBeEnabled();
     await registrar.click();
     await expect(page.getByText(/Salida registrada: 100 gal de la cisterna a TQ-/)).toBeVisible();
-    await expect(fila()).toContainText("Quedan 200 gal");
+    await expect(fila()).toContainText(queda(200, 500));
     expect(Number((await miCisterna(page, marca))!.saldo)).toBe(200);
   } finally {
     await vaciar(page, marca, equipoId, serie, 2);
@@ -207,11 +219,11 @@ test("Dejar en cisterna: una salida sin señal queda guardada en el equipo y lle
     await page.reload();
     // Recargada, la página vuelve al Dashboard con el submenú cerrado.
     await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
-    await irATanques(page).click();
-    const fila = page.getByText(new RegExp(`recepción #${cisterna.recepcion_id} `)).locator("..");
-    await expect(fila).toContainText("Quedan 400 gal");
+    await irACisternas(page).click();
+    const fila = tarjetaDe(page, cisterna.recepcion_id);
+    await expect(fila).toContainText(queda(400, 400));
 
-    // Otra persona reparte 50: el aviso baja solo, sin recargar la página.
+    // Otra persona reparte 50: la tarjeta baja sola, sin recargar la página.
     const otra = await page.request.post("/api/erp/combustible/despachos", {
       data: {
         origen: "excedente_recepcion",
@@ -227,7 +239,7 @@ test("Dejar en cisterna: una salida sin señal queda guardada en el equipo y lle
       },
     });
     expect(otra.status(), "no se pudo registrar la salida de otra persona").toBe(201);
-    await expect(fila).toContainText("Quedan 350 gal", { timeout: 15_000 });
+    await expect(fila).toContainText(queda(350, 400), { timeout: 15_000 });
 
     // Sin señal: se abre el reparto, se registra y queda en la cola del equipo.
     await page.context().setOffline(true);
@@ -293,8 +305,8 @@ test("Dejar en cisterna: se pasa al tanque, sube su nivel y no excede su espacio
 
     await page.reload();
     await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
-    await irATanques(page).click();
-    const fila = page.getByText(new RegExp(`recepción #${cisterna.recepcion_id} `)).locator("..");
+    await irACisternas(page).click();
+    const fila = tarjetaDe(page, cisterna.recepcion_id);
     await fila.getByRole("button", { name: "Repartir" }).click();
 
     await page.locator("#cis-destino").selectOption("tanque");
@@ -317,12 +329,87 @@ test("Dejar en cisterna: se pasa al tanque, sube su nivel y no excede su espacio
     await expect(
       page.getByText(`Pase registrado: 250 gal de la cisterna a CD-${marca}.`)
     ).toBeVisible();
-    await expect(fila).toContainText("Quedan 250 gal");
+    await expect(fila).toContainText(queda(250, 500));
 
     const ficha = await (await page.request.get(`/api/erp/combustible/${destinoId}`)).json();
     expect(Number(ficha.nivel_teorico), "el nivel del tanque subió").toBe(950);
     expect(Number((await miCisterna(page, marca))!.saldo)).toBe(250);
   } finally {
     await vaciar(page, marca, equipoId, serie, 1);
+  }
+});
+
+test("Cisternas: el perfil Lectura ve la pestaña y la cisterna, pero sin el botón Repartir", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(120_000);
+  const marca = randomBytes(3).toString("hex").toUpperCase();
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  const { tanqueId, equipoId, proveedorId } = await preparar(page, marca);
+  const serie = `L${marca}`;
+
+  const email = `lectura-cisterna-${marca.toLowerCase()}@mincoreerp.test`;
+  const temporal = `Temporal!${marca}2026`;
+  const alta = await page.request.post("/api/erp/usuarios", {
+    data: { nombre: `Lectura ${marca}`, email, password: temporal, rol: "lectura" },
+  });
+  expect(alta.status(), await alta.text()).toBe(201);
+  const usuarioId = (await alta.json()).id as string;
+  const actuales = await (await page.request.get(`/api/erp/usuarios/${usuarioId}/permisos`)).json();
+  const habilitar = await page.request.put(`/api/erp/usuarios/${usuarioId}/permisos`, {
+    data: {
+      modulos: actuales.modulos.map((m: { modulo: string; asignado: boolean; nivel: string }) => ({
+        modulo: m.modulo,
+        asignado: m.modulo === "combustible" ? true : m.asignado,
+        nivel: m.nivel,
+      })),
+      motivo: "spec e2e: Lectura con Combustible",
+    },
+  });
+  expect(habilitar.status(), await habilitar.text()).toBe(200);
+
+  const contexto = await browser.newContext();
+  const lectura = await contexto.newPage();
+  try {
+    const rec = await page.request.post("/api/erp/combustible/recepciones", {
+      data: {
+        combustible_id: tanqueId,
+        grifo_id: proveedorId,
+        cantidad: 300,
+        costo_unitario: 17.5,
+        recibido_en: new Date().toISOString(),
+        reparto_excedente: [{ destino: "cisterna", cantidad: 300 }],
+      },
+    });
+    expect(rec.status(), "no se pudo registrar la recepción de prueba").toBe(201);
+    const cisterna = (await miCisterna(page, marca))!;
+
+    await lectura.goto("/");
+    await lectura.getByLabel("Correo").fill(email);
+    await lectura.getByLabel("Contraseña").fill(temporal);
+    await lectura.getByRole("button", { name: "Ingresar" }).click();
+    await lectura.locator("#passwordActual").fill(temporal);
+    await lectura.locator("#passwordNueva").fill(`${temporal}Nueva`);
+    await lectura.locator("#confirmacion").fill(`${temporal}Nueva`);
+    await lectura.getByRole("button", { name: "Guardar y continuar" }).click();
+    await expect(lectura.getByRole("button", { name: "Dashboard" })).toBeVisible();
+
+    await lectura.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+    await irACisternas(lectura).click();
+    const tarjeta = tarjetaDe(lectura, cisterna.recepcion_id);
+    await expect(tarjeta).toContainText(queda(300, 300));
+    await expect(tarjeta).toContainText(`CISTERNA ${marca}`);
+    await expect(tarjeta.getByRole("button", { name: "Repartir" })).toHaveCount(0);
+    // Tampoco el aviso de Tanques (que es de quien reparte).
+    await irATanques(lectura).click();
+    await expect(lectura.getByText(/con saldo por repartir/)).toHaveCount(0);
+  } finally {
+    await contexto.close();
+    await vaciar(page, marca, equipoId, serie, 1);
+    await page.request.patch(`/api/erp/usuarios/${usuarioId}/estado`, {
+      data: { estado: "inactivo", motivo: "Usuario de prueba automatizada" },
+    });
   }
 });

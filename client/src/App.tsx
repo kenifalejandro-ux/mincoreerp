@@ -2,6 +2,7 @@
 import { Suspense, lazy, useEffect, useState, type ComponentType } from "react";
 
 import { puedeVerBandeja } from "./components/bandeja/bandejaAcceso";
+import { puedeVerCisternas } from "./components/combustible/cisternasAcceso";
 import { puedeCompraEnRuta } from "./components/combustible/compraEnRutaAcceso";
 import { puedeVerPrecios } from "./components/combustible/preciosAcceso";
 import { puedeVerMiViaje, puedeVerUnidades, puedeVerViajes } from "./components/flota/flotaAcceso";
@@ -61,6 +62,8 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
   if (moduloId === "combustible") {
     // Compra en ruta junta dos permisos (combustible y urea): mismos que el menú.
     if (tab === "combustible:compra_ruta") return puedeCompraEnRuta(usuario);
+    // Cisternas: mismo permiso que el menú.
+    if (tab === "combustible:cisternas") return puedeVerCisternas(usuario);
     // Precios une combustible y urea: mismos dos permisos que el menú.
     if (tab === "combustible:precios") return puedeVerPrecios(usuario);
     // Mi viaje llama al módulo Viajes: sin él no se abre (el servidor daría 403).
@@ -182,21 +185,23 @@ function App() {
               ? "historico"
               : tabActiva === "combustible:tanquetas"
                 ? "tanquetas"
-                : tabActiva === "combustible:mi_viaje"
-                  ? "mi_viaje"
-                  : tabActiva === "combustible:compra_ruta"
-                    ? "compra_ruta"
-                    : tabActiva === "combustible:urea"
-                      ? "urea"
-                      : tabActiva === "combustible:precios"
-                        ? "precios"
-                        : tabActiva === "combustible:proveedores"
-                          ? "proveedores"
-                          : tabActiva === "combustible:auditoria"
-                            ? "auditoria"
-                            : tabActiva === "combustible:bitacora"
-                              ? "bitacora"
-                              : "tanques",
+                : tabActiva === "combustible:cisternas"
+                  ? "cisternas"
+                  : tabActiva === "combustible:mi_viaje"
+                    ? "mi_viaje"
+                    : tabActiva === "combustible:compra_ruta"
+                      ? "compra_ruta"
+                      : tabActiva === "combustible:urea"
+                        ? "urea"
+                        : tabActiva === "combustible:precios"
+                          ? "precios"
+                          : tabActiva === "combustible:proveedores"
+                            ? "proveedores"
+                            : tabActiva === "combustible:auditoria"
+                              ? "auditoria"
+                              : tabActiva === "combustible:bitacora"
+                                ? "bitacora"
+                                : "tanques",
         }
       : moduloIdActivo === "flota"
         ? { pestanaInicial: tabActiva === "flota:viajes" ? "viajes" : "unidades" }

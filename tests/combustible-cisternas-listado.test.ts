@@ -32,6 +32,7 @@ interface Cisterna {
   anulada_por_nombre: string | null;
   motivo_anulacion: string | null;
   salidas: Salida[];
+  plazo_dias: number;
 }
 
 const BASE = "/api/erp/combustible";
@@ -185,6 +186,8 @@ describe("combustible: listado de cisternas (pestaña Cisternas)", () => {
     expect(Number(c.saldo)).toBe(400);
     expect(Number(c.salido)).toBe(600);
     expect(c.anulada_en).toBeNull();
+    // El plazo de la empresa (10 si nunca lo configuró) viaja con cada cisterna.
+    expect(c.plazo_dias).toBe(10);
     const tipos = c.salidas.map((s) => s.tipo).sort();
     expect(tipos).toEqual(["tanque", "tanqueta", "unidad"]);
     expect(c.salidas.find((s) => s.tipo === "unidad")?.destino).toBe(unidad.placa);

@@ -8068,6 +8068,10 @@ export class CombustibleRepository {
               s.costo_unitario, s.combustible_id, s.tanque_codigo, s.tanque_nombre,
               s.tipo_combustible, s.unidad, s.grifo_interno_id, s.proveedor_id, s.proveedor,
               s.anulada_en, s.anulada_por_nombre, s.motivo_anulacion,
+              -- El plazo de la empresa (0170; 10 si nunca lo configuró), para que la pantalla
+              -- pinte el aviso sin que quien la ve tenga que leer la configuración.
+              COALESCE((SELECT cc.dias_cisterna_con_saldo FROM combustible_config cc
+                         WHERE cc.tenant_id = $1), 10) AS plazo_dias,
               COALESCE((
                 SELECT json_agg(o ORDER BY o.fecha, o.id)
                   FROM (
