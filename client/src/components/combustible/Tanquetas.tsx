@@ -29,7 +29,7 @@ interface Tanqueta {
   libre: string;
   /** De dónde entró lo que tiene (0115): no se clasifica la tanqueta, se
    *  muestra cómo se usó. */
-  entradas_excedente: string;
+  entradas_cisterna: string;
   entradas_prevision: string;
   entradas_traslado: string;
   salidas: string;
@@ -437,12 +437,12 @@ export default function TanquetasPanel() {
                 <p className="text-xs font-mono text-[#94a3b8]">
                   {pct.toFixed(0)}% · libre {formatear(Number(t.libre))} gal
                 </p>
-                {(Number(t.entradas_excedente) > 0 ||
+                {(Number(t.entradas_cisterna) > 0 ||
                   Number(t.entradas_prevision) > 0 ||
                   Number(t.entradas_traslado) > 0) && (
                   <p className="text-[11px] text-[#64748b] mt-1">
-                    Entró: {formatear(Number(t.entradas_excedente))} de excedente ·{" "}
-                    {formatear(Number(t.entradas_prevision))} de previsión
+                    Entró: {formatear(Number(t.entradas_prevision))} del tanque ·{" "}
+                    {formatear(Number(t.entradas_cisterna))} de la cisterna
                     {Number(t.entradas_traslado) > 0 &&
                       ` · ${formatear(Number(t.entradas_traslado))} de otra tanqueta`}{" "}
                     · salió {formatear(Number(t.salidas))}
