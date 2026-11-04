@@ -8052,6 +8052,75 @@ export class CombustibleRepository {
     return r.rows;
   }
 
+  /** Las cisternas de la pestaña "Cisternas": una por línea de reparto con destino cisterna,
+   *  con su estado y lo que salió de ella. `saldo` son las que aún tienen combustible;
+   *  `historial`, las vaciadas y las de una recepción anulada (que se ven, marcadas, y no se
+   *  pueden repartir). La placa de la unidad solo se lee con el módulo Flota (`conPlaca`): sin
+   *  él la salida a unidad se muestra sin placa y nada falla. */
+  async findCisternas(
+    client: PoolClient,
+    tenantId: string,
+    grifos: number[] | null,
+    filtros: { estado: "saldo" | "historial"; proveedorId: number | null; conPlaca: boolean }
+  ) {
+    const r = await client.query(
+      `SELECT s.id, s.cantidad, s.salido, l.saldo, e.estado, s.recepcion_id, s.recibido_en,
+              s.costo_unitario, s.combustible_id, s.tanque_codigo, s.tanque_nombre,
+              s.tipo_combustible, s.unidad, s.grifo_interno_id, s.proveedor_id, s.proveedor,
+              s.anulada_en, s.anulada_por_nombre, s.motivo_anulacion,
+              COALESCE((
+                SELECT json_agg(o ORDER BY o.fecha, o.id)
+                  FROM (
+                    SELECT d.id::text AS id,
+                           CASE WHEN d.tipo_destino = 'equipo' THEN 'unidad' ELSE 'tanqueta' END AS tipo,
+                           d.cantidad, d.despachado_en AS fecha,
+                           CASE WHEN d.tipo_destino = 'equipo' THEN eq.placa_codigo ELSE t.codigo END AS destino
+                      FROM combustible_despachos d
+                      LEFT JOIN equipos eq ON $5::boolean AND eq.id = d.equipo_id AND eq.tenant_id = d.tenant_id
+                      LEFT JOIN combustible_tanquetas t
+                             ON t.tenant_id = d.tenant_id AND t.id = d.tanqueta_destino_id
+                     WHERE d.tenant_id = $1 AND d.excedente_linea_id = s.id AND d.anulada_en IS NULL
+                    UNION ALL
+                    SELECT 't' || tr.id::text, 'tanque', tr.cantidad, tr.creado_en, cb.codigo
+                      FROM combustible_cisterna_traslados tr
+                      JOIN combustible cb ON cb.id = tr.combustible_id AND cb.tenant_id = tr.tenant_id
+                     WHERE tr.tenant_id = $1 AND tr.linea_id = s.id
+                  ) o
+              ), '[]'::json) AS salidas
+         FROM (
+           SELECT x.id, x.cantidad, x.tenant_id,
+                  COALESCE((SELECT SUM(d.cantidad) FROM combustible_despachos d
+                             WHERE d.tenant_id = x.tenant_id AND d.excedente_linea_id = x.id
+                               AND d.anulada_en IS NULL), 0)
+                  + COALESCE((SELECT SUM(t.cantidad) FROM combustible_cisterna_traslados t
+                               WHERE t.tenant_id = x.tenant_id AND t.linea_id = x.id), 0) AS salido,
+                  r.id AS recepcion_id, r.recibido_en, r.costo_unitario,
+                  c.id AS combustible_id, c.codigo AS tanque_codigo, c.tanque_nombre,
+                  c.tipo_combustible, c.unidad, r.grifo_interno_id,
+                  r.grifo_id AS proveedor_id, g.nombre AS proveedor,
+                  r.anulada_en, ua.nombre AS anulada_por_nombre, r.motivo_anulacion
+             FROM combustible_recepcion_excedentes x
+             JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
+             JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
+             LEFT JOIN combustible_grifos g ON g.id = r.grifo_id AND g.tenant_id = r.tenant_id
+             LEFT JOIN usuarios ua ON ua.id = r.anulada_por
+            WHERE x.tenant_id = $1 AND x.destino = 'cisterna'
+              AND ($2::int[] IS NULL OR r.grifo_interno_id = ANY($2::int[]))
+              AND ($3::int IS NULL OR r.grifo_id = $3::int)
+         ) s
+         CROSS JOIN LATERAL (SELECT (s.cantidad - s.salido)::numeric(14,2) AS saldo) l
+         CROSS JOIN LATERAL (
+           SELECT CASE WHEN s.anulada_en IS NOT NULL THEN 'anulada'
+                       WHEN l.saldo > 0.005 THEN 'con_saldo'
+                       ELSE 'vaciada' END AS estado
+         ) e
+        WHERE CASE WHEN $4::text = 'saldo' THEN e.estado = 'con_saldo' ELSE e.estado <> 'con_saldo' END
+        ORDER BY s.recibido_en DESC, s.id DESC`,
+      [tenantId, grifos, filtros.proveedorId, filtros.estado, filtros.conPlaca]
+    );
+    return r.rows;
+  }
+
   /** Bloquea una línea del reparto (0168) para que dos despachos de excedente
    *  no la regularicen ni la vacíen a la vez. Devuelve su destino, o null si
    *  no existe o su sede está fuera del alcance. */

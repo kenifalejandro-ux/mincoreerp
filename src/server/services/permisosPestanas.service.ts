@@ -173,6 +173,15 @@ export const PESTANAS_CONFIGURABLES: DefinicionPestana[] = [
     padre: null,
   },
   ...accionesTanquetas,
+  // Cisternas: lo que quedó en la cisterna del proveedor, con su historial. Lectura la ve
+  // (sin repartir): repartir y pasar al tanque siguen siendo "tanques:registrar_despacho".
+  {
+    modulo: "combustible",
+    pestana: "cisternas",
+    nombre: "Cisternas",
+    nivel: "submenu",
+    padre: null,
+  },
   // Viajes (0123): A → B de una unidad. Lectura los ve; crearlos o corregirlos
   // es una acción aparte.
   { modulo: "combustible", pestana: "viajes", nombre: "Viajes", nivel: "submenu", padre: null },
@@ -291,6 +300,7 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
     "tanques:acciones:historial_varilla",
     "tanques:acciones:ver_tanque",
     "tanquetas",
+    "cisternas",
     "viajes",
     "viajes:consumo",
     "historico",
@@ -338,6 +348,7 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
     "tanquetas",
     "tanquetas:asignar",
     "tanquetas:retorno",
+    "cisternas",
   ];
   // Conductor: solo el despacho externo. Las vistas del Histórico nacen
   // apagadas para los tres perfiles de cancha -- "el Admin decide si les da

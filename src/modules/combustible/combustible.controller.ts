@@ -63,6 +63,7 @@ import type {
   AnularLecturaCombustibleInput,
   CrearDespachoCombustibleInput,
   TrasladarCisternaInput,
+  CisternasListadoQuery,
   CrearGrifoCombustibleInput,
   ActualizarGrifoCombustibleInput,
   CrearPreciosCombustibleMasivoInput,
@@ -5619,6 +5620,25 @@ export class CombustibleController {
     res.json(
       await withTenant(tenantId, (client) =>
         service.listarCisternasConSaldo(client, tenantId, alcance.todo ? null : alcance.grifos)
+      )
+    );
+  }
+
+  /** GET /despachos/cisternas: la pestaña "Cisternas". `estado=saldo` (por defecto) son las que
+   *  aún tienen combustible; `historial`, las vaciadas y las de una recepción anulada. Solo las
+   *  sedes del alcance. La placa de las unidades solo viaja si el usuario tiene Flota. */
+  async listarCisternas(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const alcance = alcanceDe(req);
+    const { estado, proveedor_id } = req.validatedQuery as CisternasListadoQuery;
+    const conPlaca = (req.usuario?.modulosPermitidos ?? []).includes("flota");
+    res.json(
+      await withTenant(tenantId, (client) =>
+        service.listarCisternas(client, tenantId, alcance.todo ? null : alcance.grifos, {
+          estado,
+          proveedorId: proveedor_id ?? null,
+          conPlaca,
+        })
       )
     );
   }
