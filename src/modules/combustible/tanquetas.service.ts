@@ -46,18 +46,26 @@ const SQL_ENTRADAS = `
      WHERE r.tenant_id = t.tenant_id AND r.tanqueta_destino_id = t.id AND r.destino = 'tanqueta'
   ), 0))`;
 
-/** Lo que entró por cada camino, para que el panel muestre de dónde vino. */
-const SQL_ENTRADAS_EXCEDENTE = `
-  COALESCE((
+/** Lo que entró por cada camino, para que el panel muestre de dónde vino. "Del tanque" es la
+ *  reserva en cubeta (0114): sale de un tanque y está en su kardex. "De la cisterna" es todo lo
+ *  que nunca pasó por un tanque: el sobrante que la recepción mandó directo a la tanqueta (0111)
+ *  y lo repartido después desde la cisterna (0168, despacho con `excedente_linea_id`). */
+const SQL_ENTRADAS_CISTERNA = `
+  (COALESCE((
     SELECT SUM(x.cantidad)
       FROM combustible_recepcion_excedentes x
       JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
      WHERE x.tenant_id = t.tenant_id AND x.tanqueta_id = t.id AND r.anulada_en IS NULL
-  ), 0)`;
+  ), 0) + COALESCE((
+    SELECT SUM(d.cantidad) FROM combustible_despachos d
+     WHERE d.tenant_id = t.tenant_id AND d.tanqueta_destino_id = t.id AND d.anulada_en IS NULL
+       AND d.excedente_linea_id IS NOT NULL
+  ), 0))`;
 const SQL_ENTRADAS_PREVISION = `
   COALESCE((
     SELECT SUM(d.cantidad) FROM combustible_despachos d
      WHERE d.tenant_id = t.tenant_id AND d.tanqueta_destino_id = t.id AND d.anulada_en IS NULL
+       AND d.excedente_linea_id IS NULL
   ), 0)`;
 
 const SQL_ENTRADAS_TRASLADO = `
@@ -97,7 +105,7 @@ const COLUMNAS = `
   t.equipo_asignado_id, t.asignada_en,
   ${SQL_ASIGNADA_VIGENTE} AS asignada_vigente,
   ${SQL_ENTRADAS} AS entradas,
-  ${SQL_ENTRADAS_EXCEDENTE} AS entradas_excedente,
+  ${SQL_ENTRADAS_CISTERNA} AS entradas_cisterna,
   ${SQL_ENTRADAS_PREVISION} AS entradas_prevision,
   ${SQL_ENTRADAS_TRASLADO} AS entradas_traslado,
   ${SQL_SALIDAS} AS salidas,
