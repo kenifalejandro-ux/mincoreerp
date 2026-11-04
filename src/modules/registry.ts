@@ -255,6 +255,19 @@ export const MODULOS: ModuloDefinicion[] = [
           anulada_por: "usuarios",
         },
       },
+      // La compra de una cisterna, antes de que llegue (0171). Va ANTES de las
+      // recepciones: la siguiente migración hará que una recepción la apunte.
+      {
+        nombre: "combustible_compras_cisterna",
+        pk: "serial",
+        fks: {
+          grifo_id: "combustible_grifos",
+          grifo_interno_id: "grifos_internos",
+          usuario_id: "usuarios",
+          habilitada_por: "usuarios",
+          anulada_por: "usuarios",
+        },
+      },
       // Fase C (migrations/0064) -- cuánto ENTRA al tanque y a qué costo.
       // Mismo criterio que combustible_despachos/combustible_precios: sin
       // ON DELETE, así que necesita su propia entrada en `raices`. A
@@ -613,6 +626,10 @@ export const MODULOS: ModuloDefinicion[] = [
       // 0135: referencia a los despachos, se borra antes que ellos.
       "combustible_compras_ruta",
       "combustible_precios",
+      // 0171: referencia a proveedores sin ON DELETE -- se borra antes que ellos
+      // (RAICES_WIPE invierte este orden). Va antes de las recepciones: la siguiente
+      // migración hará que una recepción la apunte.
+      "combustible_compras_cisterna",
       "combustible_recepciones",
       // Fase D: las tres cascadean desde `tenants`, no desde ninguna tabla
       // de este módulo, así que el wipe de un tenant (que NO borra la fila

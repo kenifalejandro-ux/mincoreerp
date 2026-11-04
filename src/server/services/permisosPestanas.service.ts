@@ -182,6 +182,16 @@ export const PESTANAS_CONFIGURABLES: DefinicionPestana[] = [
     nivel: "submenu",
     padre: null,
   },
+  // Registrar la compra de una cisterna, habilitarla a la cancha y anularla: lo hace la encargada.
+  // Nace solo para el admin; el operador no la trae por defecto (ver defaultsDeRol) y se le da
+  // persona por persona.
+  {
+    modulo: "combustible",
+    pestana: "cisternas:registrar_compra",
+    nombre: "Registrar compras de cisterna",
+    nivel: "pestana",
+    padre: "cisternas",
+  },
   // Viajes (0123): A → B de una unidad. Lectura los ve; crearlos o corregirlos
   // es una acción aparte.
   { modulo: "combustible", pestana: "viajes", nombre: "Viajes", nivel: "submenu", padre: null },
@@ -286,7 +296,9 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
   // Operador ve y opera cualquier módulo -- incluye crear/editar/eliminar en
   // Combustible (ver requireRole en combustible.routes.ts).
   // "Mi viaje" es del conductor: el operador programa y cierra desde Viajes.
-  const amplio = admin.filter((item) => item !== "principal" && item !== "mi_viaje");
+  const amplio = admin.filter(
+    (item) => item !== "principal" && item !== "mi_viaje" && item !== "cisternas:registrar_compra"
+  );
   // Lectura: solo lo informativo. Ni "Registrar X", ni Alertas/Proveedores/
   // Surtidores/Precios/Nuevo tanque, ni las acciones de escritura del panel
   // ("No visible / acción bloqueada" en la matriz, distinto de "Solo

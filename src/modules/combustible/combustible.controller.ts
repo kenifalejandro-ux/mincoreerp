@@ -64,6 +64,8 @@ import type {
   CrearDespachoCombustibleInput,
   TrasladarCisternaInput,
   CisternasListadoQuery,
+  CrearCompraCisternaInput,
+  AnularCompraCisternaInput,
   CrearGrifoCombustibleInput,
   ActualizarGrifoCombustibleInput,
   CrearPreciosCombustibleMasivoInput,
@@ -125,6 +127,7 @@ import {
 import { ESTADOS_ALERTAS } from "./combustible.repository";
 import type { EstadoAlertas, FiltrosAlertas } from "./combustible.repository";
 import * as surtidores from "./surtidores.service";
+import * as compras from "./comprasCisterna.service";
 import * as tanquetas from "./tanquetas.service";
 import { revisarValesDeTalonario } from "./valesDeTalonario";
 import type { GrupoDeAlerta } from "./alertasPorModulo";
@@ -5675,6 +5678,87 @@ export class CombustibleController {
     } catch (err) {
       this.responderErrorDeDespacho(err, res);
     }
+  }
+
+  /** GET /compras-cisterna (0171): las compras de cisterna de las sedes del alcance. Quien no las
+   *  gestiona (la cancha) solo ve las que ya están por llegar. */
+  async listarComprasCisterna(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const gestiona = pestanaPermitida(req.usuario!, "combustible", "cisternas:registrar_compra");
+    res.json(
+      await withTenant(tenantId, (client) =>
+        compras.listarCompras(client, tenantId, alcanceDe(req), gestiona)
+      )
+    );
+  }
+
+  /** POST /compras-cisterna: la encargada registra una compra. Idempotente por cliente_uuid
+   *  (sin señal se encola). */
+  async crearCompraCisterna(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const data = req.validatedBody as CrearCompraCisternaInput;
+    const { fila, creado } = await withTenant(tenantId, (client) =>
+      compras.crearCompra(client, tenantId, req.usuario!.id, data, alcanceDe(req))
+    );
+    // Un reintento ya guardado: 200, sin duplicar auditoría ni evento.
+    if (!creado) {
+      res.status(200).json(fila);
+      return;
+    }
+    await registrarAuditoria({
+      accion: "combustible.compra_cisterna_crear",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { compraId: fila.id, ...data },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.compra_cisterna_actualizada", {});
+    res.status(201).json(fila);
+  }
+
+  /** PATCH /compras-cisterna/:compraId/habilitar: abre la compra a la cancha antes del día. */
+  async habilitarCompraCisterna(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.compraId);
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ error: "El identificador de la compra no es válido" });
+      return;
+    }
+    const fila = await withTenant(tenantId, (client) =>
+      compras.habilitarCompra(client, tenantId, req.usuario!.id, id, alcanceDe(req))
+    );
+    await registrarAuditoria({
+      accion: "combustible.compra_cisterna_habilitar",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { compraId: id },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.compra_cisterna_actualizada", {});
+    res.json(fila);
+  }
+
+  /** PATCH /compras-cisterna/:compraId/anular: con motivo; nunca se borra. */
+  async anularCompraCisterna(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.compraId);
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ error: "El identificador de la compra no es válido" });
+      return;
+    }
+    const { motivo } = req.validatedBody as AnularCompraCisternaInput;
+    const fila = await withTenant(tenantId, (client) =>
+      compras.anularCompra(client, tenantId, req.usuario!.id, id, motivo, alcanceDe(req))
+    );
+    await registrarAuditoria({
+      accion: "combustible.compra_cisterna_anular",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { compraId: id, motivo },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.compra_cisterna_actualizada", {});
+    res.json(fila);
   }
 
   /** null si no existe o si su grifo está fuera del alcance del usuario. */
