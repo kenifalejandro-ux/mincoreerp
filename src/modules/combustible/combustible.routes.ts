@@ -14,6 +14,8 @@ import {
   anularLecturaCombustibleSchema,
   crearDespachoCombustibleSchema,
   trasladarCisternaSchema,
+  crearCompraCisternaSchema,
+  anularCompraCisternaSchema,
   cisternasListadoQuerySchema,
   crearCompraRutaSchema,
   crearGrifoCombustibleSchema,
@@ -418,6 +420,35 @@ router.post(
   requireRole("admin", "operador", "grifero"),
   validate(trasladarCisternaSchema),
   asyncHandler(controller.trasladarCisternaAlTanque.bind(controller))
+);
+
+// La compra de una cisterna, antes de que llegue (0171). La lista la ve quien tenga la pestaña
+// Cisternas -- la cancha solo recibe las compras ya por llegar (lo decide el controlador); registrar,
+// habilitar y anular son de quien gestiona compras (la encargada: admin por defecto).
+router.get(
+  "/compras-cisterna",
+  requirePestana("combustible", "cisternas"),
+  asyncHandler(controller.listarComprasCisterna.bind(controller))
+);
+router.post(
+  "/compras-cisterna",
+  requirePestana("combustible", "cisternas:registrar_compra"),
+  requireRole("admin", "operador"),
+  validate(crearCompraCisternaSchema),
+  asyncHandler(controller.crearCompraCisterna.bind(controller))
+);
+router.patch(
+  "/compras-cisterna/:compraId/habilitar",
+  requirePestana("combustible", "cisternas:registrar_compra"),
+  requireRole("admin", "operador"),
+  asyncHandler(controller.habilitarCompraCisterna.bind(controller))
+);
+router.patch(
+  "/compras-cisterna/:compraId/anular",
+  requirePestana("combustible", "cisternas:registrar_compra"),
+  requireRole("admin", "operador"),
+  validate(anularCompraCisternaSchema),
+  asyncHandler(controller.anularCompraCisterna.bind(controller))
 );
 
 // Tanquetas / cubetas (migración 0111) -- segmentos literales, ANTES de /:id.

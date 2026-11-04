@@ -2740,3 +2740,45 @@ export const aceptarMandoSchema = entregaMandoSchema.pick({
   cliente_uuid: true,
 });
 export type AceptarMandoInput = z.infer<typeof aceptarMandoSchema>;
+
+// ── Compra de una cisterna, antes de que llegue (migración 0171) ──────────
+// No es una orden de compra: la encargada anota lo que ya compró para que la descarga sepa de
+// quién es, cuánto dice la factura y a qué costo.
+
+const soloFecha = (campo: string) =>
+  z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, `${campo} debe ser una fecha (AAAA-MM-DD)`)
+    .refine((v) => !Number.isNaN(new Date(`${v}T00:00:00Z`).getTime()), {
+      message: `${campo} no es una fecha válida`,
+    });
+
+export const crearCompraCisternaSchema = z
+  .object({
+    /** Lo genera el equipo al registrar, online u offline: un reintento no duplica la compra. */
+    cliente_uuid: z.string().uuid().optional(),
+    grifo_interno_id: z.number().int().positive(),
+    grifo_id: z.number().int().positive(),
+    tipo_combustible: z.enum(["diesel_b5", "gasolina_90", "glp"]),
+    unidad: z.enum(["gal", "L"]).default("gal"),
+    tipo_documento: z.enum(TIPOS_DOCUMENTO_RECEPCION),
+    numero_documento: z.string().trim().min(1, "El número del documento es obligatorio").max(100),
+    fecha_compra: soloFecha("La fecha de compra"),
+    llegada_estimada: soloFecha("La fecha estimada de llegada"),
+    cantidad_facturada: z.number().min(0.01, "La cantidad facturada debe ser mayor que cero"),
+    costo_unitario: z.number().positive("El costo debe ser mayor que cero"),
+    placa: z.string().trim().max(20).optional(),
+    chofer: z.string().trim().max(120).optional(),
+  })
+  .refine((v) => v.llegada_estimada >= v.fecha_compra, {
+    path: ["llegada_estimada"],
+    message: "La llegada no puede ser antes de la compra",
+  });
+
+export type CrearCompraCisternaInput = z.infer<typeof crearCompraCisternaSchema>;
+
+export const anularCompraCisternaSchema = z.object({
+  motivo: z.string().trim().min(1, "El motivo de la anulación es obligatorio").max(500),
+});
+
+export type AnularCompraCisternaInput = z.infer<typeof anularCompraCisternaSchema>;
