@@ -179,8 +179,7 @@ export default function ViajesPanel() {
   const [guardando, setGuardando] = useState(false);
   const [verId, setVerId] = useState<string | null>(null);
   const [retro, setRetro] = useState(false);
-  // Un viaje con varias paradas no se registra ya terminado: se marca parada por parada.
-  const retroVale = retro && paradasDelRecorrido(recorrido).length <= 2;
+  const retroVale = retro;
   const [horaManual, setHoraManual] = useState(false);
   const [rutaDudosa, setRutaDudosa] = useState(false);
   const [previo, setPrevio] = useState<MedidorPrevio | null>(null);
@@ -1090,7 +1089,6 @@ export default function ViajesPanel() {
                         <input
                           type="checkbox"
                           checked={retroVale}
-                          disabled={paradasDelRecorrido(recorrido).length > 2}
                           onChange={(e) => setRetro(e.target.checked)}
                         />
                         Registrar un viaje que ya se hizo (con sus horas y medidores)

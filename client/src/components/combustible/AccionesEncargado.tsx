@@ -110,10 +110,7 @@ export function AccionesEncargado({
   const textoMotivo = motivoGuardado(motivo, otro);
   const motivoDescansoValido = textoMotivo.length >= 3;
   const medidorNumero = medidor.trim() === "" ? null : Number(medidor);
-  const marcaValida =
-    motivoMarca.trim().length >= 3 &&
-    hora !== "" &&
-    (viaje.tipo_medidor === null || medidorNumero !== null);
+  const marcaValida = motivoMarca.trim().length >= 3 && hora !== "";
 
   return (
     <div className="rounded-2xl bg-[#192526] border border-[#2a2e37] p-4 space-y-3">
@@ -238,7 +235,7 @@ export function AccionesEncargado({
               {viaje.tipo_medidor !== null && (
                 <>
                   <label className="block text-xs text-[#94a3b8]" htmlFor="enc-medidor">
-                    {etiquetaMedidor}
+                    {etiquetaMedidor} (opcional)
                   </label>
                   <input
                     id="enc-medidor"

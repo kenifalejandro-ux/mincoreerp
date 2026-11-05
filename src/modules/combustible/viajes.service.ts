@@ -898,9 +898,11 @@ function validarMedidorDeParada(
   v: { medidor_inicio: string | null },
   medidor: number | null | undefined,
   previo: string | null,
-  que: "llegada" | "salida"
+  que: "llegada" | "salida",
+  /** La oficina marca por el conductor sin saber el medidor: solo al conductor se le exige. */
+  exigirMedidor: boolean
 ) {
-  if (v.medidor_inicio != null && medidor == null)
+  if (exigirMedidor && v.medidor_inicio != null && medidor == null)
     throw new AppError(400, `Falta el medidor de ${que}`);
   if (medidor != null && previo != null && medidor < Number(previo)) {
     throw new AppError(
@@ -1015,7 +1017,13 @@ export async function llegarAParada(
     anterior.salida_en as Date,
     "La llegada tiene que ser posterior a la salida de la parada anterior"
   );
-  validarMedidorDeParada(v, data.medidor, anterior.salida_medidor, "llegada");
+  validarMedidorDeParada(
+    v,
+    data.medidor,
+    anterior.salida_medidor,
+    "llegada",
+    dniConductor !== undefined
+  );
   await guardarMarcaDeParada(client, tenantId, id, pos.hacia, "llegada", {
     hora,
     medidor: data.medidor ?? null,
@@ -1078,7 +1086,13 @@ export async function salirDeParada(
     parada.llegada_en as Date,
     "La salida tiene que ser posterior a la llegada a la parada"
   );
-  validarMedidorDeParada(v, data.medidor, parada.llegada_medidor, "salida");
+  validarMedidorDeParada(
+    v,
+    data.medidor,
+    parada.llegada_medidor,
+    "salida",
+    dniConductor !== undefined
+  );
   await guardarMarcaDeParada(client, tenantId, id, pos.en, "salida", {
     hora,
     medidor: data.medidor ?? null,
