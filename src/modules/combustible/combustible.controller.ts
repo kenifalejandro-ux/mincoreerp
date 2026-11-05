@@ -5793,6 +5793,16 @@ export class CombustibleController {
     res.json(fila);
   }
 
+  /** GET /compras-cisterna/formulario: proveedores de tanque, sedes y precios para el formulario. */
+  async datosFormularioCompraCisterna(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    res.json(
+      await withTenant(tenantId, (client) =>
+        compras.datosParaElFormulario(client, tenantId, alcanceDe(req))
+      )
+    );
+  }
+
   /** GET /compras-cisterna/tolerancia: los galones de diferencia que se aceptan entre el documento
    *  y lo descargado. */
   async obtenerToleranciaCompras(req: Request, res: Response) {

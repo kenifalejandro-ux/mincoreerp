@@ -19,3 +19,16 @@ export function puedeVerCisternas(usuario: UsuarioParaCisternas | null | undefin
   if (override !== undefined) return override;
   return !!usuario && ROLES_CON_PESTANA.includes(usuario.rol);
 }
+
+export interface UsuarioParaCompras extends UsuarioParaCisternas {
+  rol: string;
+}
+
+/** Quién gestiona las compras de cisterna (registrar, habilitar, anular): el admin siempre; los
+ *  demás, solo si el admin les dio el permiso. Espejo de `cisternas:registrar_compra` en el
+ *  servidor, que no se concede por defecto a nadie más. */
+export function puedeGestionarCompras(usuario: UsuarioParaCompras | null | undefined): boolean {
+  if (!usuario) return false;
+  if (usuario.rol === "admin") return true;
+  return usuario.permisosPestanas?.["combustible:cisternas:registrar_compra"] === true;
+}

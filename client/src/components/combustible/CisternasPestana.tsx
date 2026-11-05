@@ -8,6 +8,7 @@ import { useState } from "react";
 import CisternaAcostada from "./CisternaAcostada";
 import CisternaCapsula from "./CisternaCapsula";
 import type { CisternaConSaldo, CisternaDeLista } from "./cisternasTipos";
+import ComprasCisterna from "./ComprasCisterna";
 import { renglonesDelDesglose, textoDelMovimiento, totalEntregado } from "./desgloseCisterna";
 import { filtrarHistorial, proveedoresDe, type FiltroEstado } from "./historialCisternas";
 import {
@@ -155,7 +156,7 @@ function TarjetaCisterna({
   );
 }
 
-type Vista = "saldo" | "historial";
+type Vista = "saldo" | "historial" | "compras";
 
 const BOTON_VISTA =
   "px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all active:scale-95 border";
@@ -168,6 +169,8 @@ export default function CisternasPestana({
   error,
   puedeRepartir,
   onRepartir,
+  puedeGestionarCompras = false,
+  puedeFijarTolerancia = false,
 }: {
   /** Las que tienen saldo. null: todavía no llegó la primera respuesta. */
   cisternas: CisternaDeLista[] | null;
@@ -176,6 +179,9 @@ export default function CisternasPestana({
   error: string | null;
   puedeRepartir: boolean;
   onRepartir: (c: CisternaConSaldo) => void;
+  /** Quien registra las compras de cisterna ve además la vista "Compras" (0171). */
+  puedeGestionarCompras?: boolean;
+  puedeFijarTolerancia?: boolean;
 }) {
   const [vista, setVista] = useState<Vista>("saldo");
   const [proveedor, setProveedor] = useState("");
@@ -196,7 +202,9 @@ export default function CisternasPestana({
         <p className="text-xs sm:text-sm text-[#94a3b8]">
           {vista === "saldo"
             ? "Combustible que quedó en la cisterna del proveedor y todavía se puede repartir"
-            : "Las cisternas que ya se vaciaron y las de una recepción anulada"}
+            : vista === "historial"
+              ? "Las cisternas que ya se vaciaron y las de una recepción anulada"
+              : "Lo que compraste y viene en camino: registra la compra y habilítala a la cancha"}
         </p>
       </div>
       <div role="group" aria-label="Vista de cisternas" className="mb-6 flex flex-wrap gap-2">
@@ -204,6 +212,7 @@ export default function CisternasPestana({
           [
             ["saldo", "Con saldo", cisternas],
             ["historial", "Historial", historial],
+            ...(puedeGestionarCompras ? [["compras", "Compras", null] as const] : []),
           ] as const
         ).map(([valor, texto, datos]) => (
           <button
@@ -265,43 +274,49 @@ export default function CisternasPestana({
           </div>
         </div>
       )}
-      {error && (
-        <p role="alert" className="mb-4 text-sm font-medium text-amber-300">
-          {error}
-          {lista ? " Lo que se ve es lo último que se supo." : ""}
-        </p>
-      )}
-      {lista === null ? (
-        !error && <p className="text-sm text-[#94a3b8]">Cargando cisternas...</p>
-      ) : vista === "saldo" ? (
-        lista.length === 0 ? (
-          <div className="bg-[#192526] border border-dashed border-[#334155] rounded-xl p-10 text-center text-[#94a3b8]">
-            No hay cisternas con saldo.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-4">
-            {lista.map((c) => (
-              <TarjetaCisterna
-                key={c.id}
-                c={c}
-                puedeRepartir={puedeRepartir}
-                onRepartir={onRepartir}
-              />
-            ))}
-          </div>
-        )
-      ) : visibles.length === 0 ? (
-        <div className="bg-[#192526] border border-dashed border-[#334155] rounded-xl p-10 text-center text-[#94a3b8]">
-          {lista.length === 0
-            ? "Todavía no hay cisternas en el historial."
-            : "Ninguna cisterna coincide con el filtro."}
-        </div>
+      {vista === "compras" && puedeGestionarCompras ? (
+        <ComprasCisterna puedeFijarTolerancia={puedeFijarTolerancia} />
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          {visibles.map((c) => (
-            <CisternaCapsula key={c.id} c={c} />
-          ))}
-        </div>
+        <>
+          {error && (
+            <p role="alert" className="mb-4 text-sm font-medium text-amber-300">
+              {error}
+              {lista ? " Lo que se ve es lo último que se supo." : ""}
+            </p>
+          )}
+          {lista === null ? (
+            !error && <p className="text-sm text-[#94a3b8]">Cargando cisternas...</p>
+          ) : vista === "saldo" ? (
+            lista.length === 0 ? (
+              <div className="bg-[#192526] border border-dashed border-[#334155] rounded-xl p-10 text-center text-[#94a3b8]">
+                No hay cisternas con saldo.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-4">
+                {lista.map((c) => (
+                  <TarjetaCisterna
+                    key={c.id}
+                    c={c}
+                    puedeRepartir={puedeRepartir}
+                    onRepartir={onRepartir}
+                  />
+                ))}
+              </div>
+            )
+          ) : visibles.length === 0 ? (
+            <div className="bg-[#192526] border border-dashed border-[#334155] rounded-xl p-10 text-center text-[#94a3b8]">
+              {lista.length === 0
+                ? "Todavía no hay cisternas en el historial."
+                : "Ninguna cisterna coincide con el filtro."}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {visibles.map((c) => (
+                <CisternaCapsula key={c.id} c={c} />
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

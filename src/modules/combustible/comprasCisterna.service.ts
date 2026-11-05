@@ -28,7 +28,7 @@ const COLUMNAS = `
   c.tipo_combustible, c.unidad, c.tipo_documento, c.numero_documento,
   to_char(c.fecha_compra, 'YYYY-MM-DD') AS fecha_compra,
   to_char(c.llegada_estimada, 'YYYY-MM-DD') AS llegada_estimada,
-  c.cantidad_facturada, c.costo_unitario, c.placa, c.chofer,
+  c.cantidad_facturada, c.costo_unitario, c.placa, c.chofer, c.transportista, c.transportista_ruc,
   c.habilitada_en, c.creado_en, c.anulada_en, c.motivo_anulacion, rv.id AS recepcion_id,
   CASE WHEN c.anulada_en IS NOT NULL THEN 'anulada'
        WHEN rv.id IS NOT NULL THEN 'recibida'
@@ -105,9 +105,10 @@ export async function crearCompra(
       `INSERT INTO combustible_compras_cisterna
          (tenant_id, cliente_uuid, grifo_interno_id, grifo_id, tipo_combustible, unidad,
           tipo_documento, numero_documento, fecha_compra, llegada_estimada,
-          cantidad_facturada, costo_unitario, placa, chofer, usuario_id)
+          cantidad_facturada, costo_unitario, placa, chofer, usuario_id,
+          transportista, transportista_ruc)
        VALUES ($1, COALESCE($2::uuid, gen_random_uuid()), $3, $4, $5, $6, $7, $8, $9, $10,
-               $11, $12, $13, $14, $15)
+               $11, $12, $13, $14, $15, $16, $17)
        RETURNING id`,
       [
         tenantId,
@@ -125,6 +126,8 @@ export async function crearCompra(
         data.placa || null,
         data.chofer || null,
         usuarioId,
+        data.transportista || null,
+        data.transportista_ruc || null,
       ]
     );
     return {
@@ -449,4 +452,45 @@ export async function avisarDescargaSinCompra(
   await repository.crearAlertas(client, tenantId, [
     { tipo: "recepcion_sin_compra", recepcionId, combustibleId, detalle: {} },
   ]);
+}
+
+/** Lo que necesita el formulario de "Registrar compra": los proveedores de tanque activos, las sedes
+ *  del alcance y el último precio de compra de cada proveedor por combustible. Va en un solo
+ *  pedido y detrás del permiso de registrar compras: no depende de los listados de despacho. */
+export async function datosParaElFormulario(
+  client: PoolClient,
+  tenantId: string,
+  alcance: AlcanceCombustible
+) {
+  const proveedores = await client.query(
+    `SELECT id, nombre FROM combustible_grifos
+      WHERE tenant_id = $1 AND activo AND abastece_tanque AND NOT es_otros
+      ORDER BY lower(nombre)`,
+    [tenantId]
+  );
+  const valores: unknown[] = [tenantId];
+  let filtro = "";
+  if (!alcance.todo) {
+    valores.push(alcance.grifos);
+    filtro = "AND g.id = ANY($2::int[])";
+  }
+  const sedes = await client.query(
+    `SELECT g.id, g.nombre, s.nombre AS sede
+       FROM grifos_internos g
+       JOIN sedes s ON s.id = g.sede_id AND s.tenant_id = g.tenant_id
+      WHERE g.tenant_id = $1 AND g.activo ${filtro}
+      ORDER BY s.nombre, g.nombre`,
+    valores
+  );
+  // El precio vigente HOY de cada proveedor por combustible (el más reciente que ya rige).
+  const precios = await client.query(
+    `SELECT DISTINCT ON (grifo_id, tipo_combustible)
+            grifo_id, tipo_combustible, precio_unitario
+       FROM combustible_precios
+      WHERE tenant_id = $1 AND grifo_id IS NOT NULL AND anulada_en IS NULL
+        AND vigente_desde <= now()
+      ORDER BY grifo_id, tipo_combustible, vigente_desde DESC, id DESC`,
+    [tenantId]
+  );
+  return { proveedores: proveedores.rows, sedes: sedes.rows, precios: precios.rows };
 }
