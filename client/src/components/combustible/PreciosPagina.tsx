@@ -55,14 +55,23 @@ const ETIQUETA_TIPO: Record<TipoPrecio, string> = {
   externa: "Compra a proveedor de ruta",
 };
 
+/** Lo que el grifero puso en el último vale de un tanque. */
+interface UltimoPrecioGrifero {
+  combustible_id: number;
+  precio_unitario: string;
+  despachado_en: string;
+}
+
 interface Datos {
   precios: PrecioCombustibleApi[];
+  ultimosGrifero: UltimoPrecioGrifero[];
   preciosUrea: PrecioUreaApi[];
   proveedoresUrea: ProveedorUreaPrecio[];
   presentaciones: PresentacionPrecio[];
 }
 const DATOS_VACIOS: Datos = {
   precios: [],
+  ultimosGrifero: [],
   preciosUrea: [],
   proveedoresUrea: [],
   presentaciones: [],
@@ -218,38 +227,47 @@ export default function PreciosPagina({
   const cargar = useCallback(async () => {
     const mio = ++pedido.current;
     const lista: string[] = [];
-    const [precios, preciosUrea, proveedoresUrea, presentaciones] = await Promise.all([
-      puedeCombustible
-        ? pedirLista<PrecioCombustibleApi>(
-            "/api/erp/combustible/precios",
-            "los precios de combustible",
-            lista
-          )
-        : Promise.resolve<PrecioCombustibleApi[]>([]),
-      puedeUrea
-        ? pedirLista<PrecioUreaApi>(
-            "/api/erp/combustible/urea/precios",
-            "los precios de urea",
-            lista
-          )
-        : Promise.resolve<PrecioUreaApi[]>([]),
-      puedeUrea
-        ? pedirLista<ProveedorUreaPrecio>(
-            "/api/erp/combustible/urea/proveedores",
-            "los proveedores de urea",
-            lista
-          )
-        : Promise.resolve<ProveedorUreaPrecio[]>([]),
-      puedeUrea
-        ? pedirLista<PresentacionPrecio>(
-            "/api/erp/combustible/urea/presentaciones",
-            "las presentaciones de urea",
-            lista
-          )
-        : Promise.resolve<PresentacionPrecio[]>([]),
-    ]);
+    const [precios, ultimosGrifero, preciosUrea, proveedoresUrea, presentaciones] =
+      await Promise.all([
+        puedeCombustible
+          ? pedirLista<PrecioCombustibleApi>(
+              "/api/erp/combustible/precios",
+              "los precios de combustible",
+              lista
+            )
+          : Promise.resolve<PrecioCombustibleApi[]>([]),
+        // Informativo: si no carga, Precios funciona igual, sin esa línea.
+        puedeCombustible
+          ? pedirLista<UltimoPrecioGrifero>(
+              "/api/erp/combustible/precios/ultimo-grifero",
+              "el último precio del grifero",
+              []
+            )
+          : Promise.resolve<UltimoPrecioGrifero[]>([]),
+        puedeUrea
+          ? pedirLista<PrecioUreaApi>(
+              "/api/erp/combustible/urea/precios",
+              "los precios de urea",
+              lista
+            )
+          : Promise.resolve<PrecioUreaApi[]>([]),
+        puedeUrea
+          ? pedirLista<ProveedorUreaPrecio>(
+              "/api/erp/combustible/urea/proveedores",
+              "los proveedores de urea",
+              lista
+            )
+          : Promise.resolve<ProveedorUreaPrecio[]>([]),
+        puedeUrea
+          ? pedirLista<PresentacionPrecio>(
+              "/api/erp/combustible/urea/presentaciones",
+              "las presentaciones de urea",
+              lista
+            )
+          : Promise.resolve<PresentacionPrecio[]>([]),
+      ]);
     if (mio !== pedido.current) return;
-    setDatos({ precios, preciosUrea, proveedoresUrea, presentaciones });
+    setDatos({ precios, ultimosGrifero, preciosUrea, proveedoresUrea, presentaciones });
     setFallos(lista);
     setAhora(Date.now());
     setCargado(true);
@@ -278,6 +296,10 @@ export default function PreciosPagina({
     [datos, tanques, grifos, puedeCombustible, puedeUrea, fallaComb, fallaUrea]
   );
   const porClave = useMemo(() => new Map(filas.map((f) => [f.clave, f])), [filas]);
+  const ultimoGriferoDe = useMemo(
+    () => new Map(datos.ultimosGrifero.map((u) => [u.combustible_id, u])),
+    [datos.ultimosGrifero]
+  );
 
   const [producto, setProducto] = useState<"todos" | ProductoPrecio>("todos");
   const [tipo, setTipo] = useState<"todos" | TipoPrecio>("todos");
@@ -778,6 +800,33 @@ export default function PreciosPagina({
                       ) : (
                         <span className="text-sm font-semibold text-amber-400">Sin precio</span>
                       )}
+                      {v &&
+                        f.producto === "combustible" &&
+                        f.tipo === "interna" &&
+                        (() => {
+                          const u = ultimoGriferoDe.get(f.destinoId);
+                          if (!u) return null;
+                          const precioGrifero = Number(u.precio_unitario);
+                          const dg = variacionPct(precioGrifero, v.precio);
+                          return (
+                            <span className="mt-1 block text-xs text-[#94a3b8]">
+                              Último del grifero:{" "}
+                              <span className="font-mono font-semibold text-white">
+                                {fmtPrecio(precioGrifero)}
+                              </span>
+                              {Math.abs(dg) >= 0.05 && (
+                                <span
+                                  className={`ml-1 font-mono ${dg > 0 ? "text-amber-400" : "text-emerald-400"}`}
+                                >
+                                  {dg > 0 ? "▲" : "▼"} {textoVariacion(dg)}
+                                </span>
+                              )}
+                              <span className="block text-[#64748b]">
+                                {fmtFecha(u.despachado_en)}
+                              </span>
+                            </span>
+                          );
+                        })()}
                       {prog && (
                         <span className="mt-1 block text-xs text-sky-400">
                           Programado: {fmtPrecio(prog.precio)} desde {fmtFecha(prog.desde, false)}

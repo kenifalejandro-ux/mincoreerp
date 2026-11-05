@@ -1268,18 +1268,11 @@ export class CombustibleService {
                 }
             : null;
 
-        // EL COSTO DEL VALE DEL TANQUE PROPIO LO PONE EL SERVIDOR.
-        //
-        // Venía tal cual del body, también en tanque_propio, así que cualquiera
-        // podía declarar S/ 0,01 por litro y dejar sin sentido el costo por
-        // equipo, por centro de costo y el kardex valorizado -- sin tocar un
-        // solo litro. El precio de un litro del tanque no es un dato del vale:
-        // es el precio vigente del catálogo o, si no hay, el costo promedio
-        // ponderado del propio tanque (Fase C).
-        //
-        // Si no hay ninguno de los dos (tanque nuevo, sin compras ni catálogo)
-        // se respeta lo que vino: es el único caso en que el cargador sabe
-        // más que el sistema.
+        // El costo del vale del tanque propio es el que escribió quien lo cargó:
+        // el formulario sugiere el precio vigente, pero el que vale es el que el
+        // grifero pagó o cobró ese día. No pisa el catálogo (Precios), que sigue
+        // siendo el piso; Precios solo muestra cuánto se aleja el último precio
+        // del grifero (ver ultimoPrecioGrifero).
         // UREA: el costo que viene en el body es POR BULTO (lo que dice la
         // boleta: "S/ 40 la caja") y se guarda POR LITRO, igual que el
         // combustible -- costo_total se calcula como cantidad (L) × unitario.
@@ -1294,16 +1287,7 @@ export class CombustibleService {
             ? excedente.costoUnitario
             : desdeTanqueta
               ? desdeTanqueta.costoUnitario
-              : data.origen === "tanque_propio"
-                ? await this.resolverCostoDelTanque(
-                    client,
-                    tenantId,
-                    data.combustible_id!,
-                    data.tipo_combustible!,
-                    despachadoEn,
-                    data.costo_unitario!
-                  )
-                : data.costo_unitario!;
+              : data.costo_unitario!;
 
         const surtidorId = await this.resolverSurtidorDelVale(client, tenantId, data, despachadoEn);
 
@@ -1736,31 +1720,6 @@ export class CombustibleService {
         `marcados como faltantes. Si el talonario realmente arranca en ${nVale}, cargalo como una ` +
         `serie nueva`
     );
-  }
-
-  /** El precio de un litro que sale del tanque propio: catálogo vigente a la
-   *  fecha del vale, si no el costo promedio ponderado del tanque, y si no lo
-   *  declarado. Ver el comentario en crearDespacho. */
-  private async resolverCostoDelTanque(
-    client: PoolClient,
-    tenantId: string,
-    combustibleId: number,
-    tipoCombustible: string,
-    fecha: string,
-    declarado: number
-  ): Promise<number> {
-    const precio = await this.repository.findPrecioVigente(
-      client,
-      tenantId,
-      tipoCombustible,
-      { combustibleId, grifoId: null },
-      fecha
-    );
-    if (precio) return Number(precio.precio_unitario);
-
-    const tanque = await this.repository.findById(client, tenantId, combustibleId);
-    const promedio = tanque ? Number(tanque.costo_promedio) : 0;
-    return promedio > 0 ? promedio : declarado;
   }
 
   // ── Catálogo de presentaciones de urea (migración 0116) ──────────────
@@ -7937,6 +7896,11 @@ export class CombustibleService {
 
   listarPrecios(client: PoolClient, tenantId: string) {
     return this.repository.findPrecios(client, tenantId);
+  }
+
+  /** El último precio que un grifero puso en un vale, por tanque. */
+  ultimoPrecioGrifero(client: PoolClient, tenantId: string) {
+    return this.repository.findUltimoPrecioGrifero(client, tenantId);
   }
 
   /** El mismo precio para varios tanques o varios proveedores de ruta. Se
