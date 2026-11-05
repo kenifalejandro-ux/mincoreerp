@@ -333,6 +333,11 @@ const COLUMNAS_TANQUE = `
        THEN (sv.surtidores->0->>'totalizador_tolerancia')::numeric END AS totalizador_tolerancia,
   CASE WHEN jsonb_array_length(sv.surtidores) = 1
        THEN (sv.surtidores->0->>'totalizador_actual')::numeric END AS totalizador_actual,
+  -- La primera varilla vigente del tanque (la inicial, al crearlo): una recepción no puede ser
+  -- anterior a ella, porque no se sabría cuánto había. La pantalla lo avisa antes de registrar.
+  (SELECT MIN(l0.leido_en) FROM combustible_lecturas l0
+    WHERE l0.combustible_id = c.id AND l0.tenant_id = c.tenant_id AND l0.anulada_en IS NULL)
+    AS primera_lectura_en,
   ultima.nivel AS nivel_actual,
   ultima.leido_en AS fecha_actualizacion,
   ROUND((ultima.nivel / c.capacidad_total) * 100, 2) AS porcentaje,
@@ -7018,6 +7023,18 @@ export class CombustibleRepository {
              r.cantidad_derivada,
              c.tanque_nombre, g.nombre AS grifo_nombre,
              c.umbral_diferencia_pct, c.umbral_diferencia_piso,
+             -- La compra de cisterna a la que corresponde (0173), con lo que decía su documento y
+             -- la diferencia contra lo descargado (tanque + sobrante), en galones: negativa si
+             -- llegó menos. NULL sin compra o en la urea. Mismo cálculo que diferenciaEnGalones.
+             r.compra_id, co.numero_documento AS compra_documento,
+             co.cantidad_facturada AS compra_cantidad, co.unidad AS compra_unidad,
+             CASE WHEN r.compra_id IS NULL THEN NULL
+                  ELSE ROUND(
+                    ((r.cantidad + r.cantidad_derivada)
+                       / CASE WHEN c.unidad = 'L' THEN ${LITROS_POR_GALON} ELSE 1 END
+                     - co.cantidad_facturada
+                       / CASE WHEN co.unidad = 'L' THEN ${LITROS_POR_GALON} ELSE 1 END)::numeric,
+                    2) END AS diferencia_compra_galones,
              autor.nombre AS registrada_por_nombre,
              anulador.nombre AS anulada_por_nombre,
              -- Cuánto se midió de menos (o de más) respecto de lo facturado.
@@ -7050,6 +7067,8 @@ export class CombustibleRepository {
       LEFT JOIN usuarios autor ON autor.id = r.usuario_id
       LEFT JOIN usuarios anulador ON anulador.id = r.anulada_por
       LEFT JOIN usuarios validador ON validador.id = r.validada_por
+      LEFT JOIN combustible_compras_cisterna co
+             ON co.id = r.compra_id AND co.tenant_id = r.tenant_id
       ${LATERAL_DIFERENCIA_RECEPCION}
       WHERE ${condiciones.join(" AND ")}
       ORDER BY r.recibido_en DESC, r.id DESC
