@@ -9,6 +9,9 @@ import type {
   LineaDeReparto,
 } from "../client/src/components/combustible/cisternasTipos";
 import {
+  detalleDelMovimiento,
+  diferenciaConElDocumento,
+  lineasDeOrigen,
   renglonesDelDesglose,
   textoDelMovimiento,
   totalEntregado,
@@ -123,5 +126,103 @@ describe("textoDelMovimiento", () => {
   });
   it("una salida sin destino (sin Flota, sin placa) sigue diciendo qué fue", () => {
     expect(textoDelMovimiento(fila("unidad", null))).toBe("A la unidad");
+  });
+});
+
+// El mismo formato de números que usa la pantalla (la configuración regional de quien corre la
+// prueba no tiene por qué ser la misma).
+const fmt = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 4 });
+
+describe("lineasDeOrigen", () => {
+  it("documento, costo y transporte con su RUC; solo las que se saben", () => {
+    const c = cisterna({
+      tipo_documento: "guia_remision",
+      numero_documento: "TRR1-00003638",
+      costo_unitario: "24.5",
+      transportista: "CORPORACION KIME S.A.C.",
+      transportista_ruc: "20602504655",
+    });
+    expect(lineasDeOrigen(c)).toEqual([
+      { etiqueta: "Guía de remisión", valor: "TRR1-00003638" },
+      { etiqueta: "Costo por gal", valor: fmt(24.5) },
+      { etiqueta: "Transporte", valor: "CORPORACION KIME S.A.C. · RUC 20602504655" },
+    ]);
+  });
+
+  it("una cisterna de antes de las compras no trae documento ni transporte: esas líneas no salen", () => {
+    expect(lineasDeOrigen(cisterna({ costo_unitario: "16.5" }))).toEqual([
+      { etiqueta: "Costo por gal", valor: fmt(16.5) },
+    ]);
+    expect(lineasDeOrigen(cisterna({ costo_unitario: "0" }))).toEqual([]);
+  });
+
+  it("un transportista sin RUC sale solo con su nombre; una factura se nombra factura", () => {
+    const c = cisterna({
+      tipo_documento: "factura",
+      numero_documento: "F001-77",
+      costo_unitario: "0",
+      transportista: "TRANSPORTES X",
+    });
+    expect(lineasDeOrigen(c)).toEqual([
+      { etiqueta: "Factura", valor: "F001-77" },
+      { etiqueta: "Transporte", valor: "TRANSPORTES X" },
+    ]);
+  });
+});
+
+describe("diferenciaConElDocumento", () => {
+  const conDiferencia = (dif: string, tolerancia: number | string | null = 3) =>
+    cisterna({
+      entregado: "995",
+      compra_cantidad: "1000",
+      compra_unidad: "gal",
+      diferencia_compra_galones: dif,
+      tolerancia_galones: tolerancia,
+    });
+
+  it("dice lo que decía el documento, lo descargado y la diferencia con su signo", () => {
+    const d = diferenciaConElDocumento(conDiferencia("-5"))!;
+    expect(d.texto).toBe(`Documento ${fmt(1000)} gal · Descargado 995 gal · −5 gal`);
+    const mas = diferenciaConElDocumento(conDiferencia("2"))!;
+    expect(mas.texto).toContain("+2 gal");
+    expect(diferenciaConElDocumento(conDiferencia("0"))!.texto).toContain("sin diferencia");
+  });
+
+  it("solo está 'fuera' pasada la tolerancia de la empresa; en el límite, no", () => {
+    expect(diferenciaConElDocumento(conDiferencia("-5"))!.fuera).toBe(true);
+    expect(diferenciaConElDocumento(conDiferencia("-3"))!.fuera).toBe(false);
+    expect(diferenciaConElDocumento(conDiferencia("-5", 10))!.fuera).toBe(false);
+    expect(diferenciaConElDocumento(conDiferencia("4", "3"))!.fuera).toBe(true);
+    // Sin tolerancia en los datos (caché vieja), vale la de siempre: 3.
+    expect(diferenciaConElDocumento(conDiferencia("-5", null))!.fuera).toBe(true);
+  });
+
+  it("sin compra no hay documento contra qué comparar", () => {
+    expect(diferenciaConElDocumento(cisterna())).toBeNull();
+    expect(
+      diferenciaConElDocumento(cisterna({ diferencia_compra_galones: null, compra_cantidad: null }))
+    ).toBeNull();
+  });
+});
+
+describe("detalleDelMovimiento", () => {
+  const fila = (extra: Record<string, unknown> = {}) => ({
+    tipo: "unidad" as const,
+    cantidad: "10",
+    fecha: "2026-11-04T19:32:00Z",
+    destino: "VQ-9",
+    saldo: 0,
+    ...extra,
+  });
+
+  it("la hora, quién lo registró y su vale, en ese orden", () => {
+    const d = detalleDelMovimiento(fila({ por: "Noemi", vale: "CLS-77" }));
+    expect(d).toMatch(/^\d{1,2}:\d{2}.* · Noemi · vale CLS-77$/);
+  });
+
+  it("lo que no se sabe no sale: sin vale, sin persona, o con una fecha ilegible", () => {
+    expect(detalleDelMovimiento(fila({ por: "Noemi" }))).toMatch(/^\d{1,2}:\d{2}.* · Noemi$/);
+    expect(detalleDelMovimiento(fila())).toMatch(/^\d{1,2}:\d{2}[^·]*$/);
+    expect(detalleDelMovimiento(fila({ fecha: "no es fecha", por: "Noemi" }))).toBe("Noemi");
   });
 });

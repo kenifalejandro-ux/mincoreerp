@@ -2990,7 +2990,16 @@ export class CombustibleService {
     return filas.map((c) => {
       let saldo = Number(c.cantidad);
       const movimientos = [
-        { tipo: "entrada", cantidad: c.cantidad, fecha: c.recibido_en, destino: null, saldo },
+        {
+          tipo: "entrada",
+          cantidad: c.cantidad,
+          fecha: c.recibido_en,
+          destino: null,
+          // Quién la registró, con la hora (la fecha ya viaja completa).
+          por: c.registrada_por_nombre ?? null,
+          vale: null,
+          saldo,
+        },
         ...(
           c.salidas as { tipo: string; cantidad: string; fecha: string; destino: string | null }[]
         ).map((o) => {

@@ -8100,6 +8100,20 @@ export class CombustibleRepository {
               -- cantidad de la recepción no cuenta el sobrante) y entregado, lo que la cisterna
               -- del proveedor dejó en total (0110: cantidad + cantidad_derivada).
               s.al_tanque, (s.al_tanque + s.cantidad_derivada)::numeric(14,2) AS entregado,
+              -- El origen de la cisterna: el documento de la recepción, quién la registró y, si vino
+              -- de una compra (0171), su transportista y lo que decía contra lo descargado, en
+              -- galones (negativa si llegó menos), con la tolerancia de la empresa para pintarla.
+              s.tipo_documento, s.numero_documento, s.registrada_por_nombre, s.compra_id,
+              s.transportista, s.transportista_ruc, s.compra_cantidad, s.compra_unidad,
+              CASE WHEN s.compra_id IS NULL THEN NULL
+                   ELSE ROUND(
+                     ((s.al_tanque + s.cantidad_derivada)
+                        / CASE WHEN s.unidad = 'L' THEN ${LITROS_POR_GALON} ELSE 1 END
+                      - s.compra_cantidad
+                        / CASE WHEN s.compra_unidad = 'L' THEN ${LITROS_POR_GALON} ELSE 1 END)::numeric,
+                     2) END AS diferencia_compra_galones,
+              COALESCE((SELECT cc.tolerancia_diferencia_compra FROM combustible_config cc
+                         WHERE cc.tenant_id = $1), 3) AS tolerancia_galones,
               -- Adónde fue el sobrante de esa recepción, línea por línea (0110/0168). Una línea
               -- cubeta dice su tanqueta si ya la tenía; equipo, la placa si hay módulo Flota.
               COALESCE((
@@ -8126,16 +8140,24 @@ export class CombustibleRepository {
                     SELECT d.id::text AS id,
                            CASE WHEN d.tipo_destino = 'equipo' THEN 'unidad' ELSE 'tanqueta' END AS tipo,
                            d.cantidad, d.despachado_en AS fecha,
-                           CASE WHEN d.tipo_destino = 'equipo' THEN eq.placa_codigo ELSE t.codigo END AS destino
+                           CASE WHEN d.tipo_destino = 'equipo' THEN eq.placa_codigo ELSE t.codigo END AS destino,
+                           -- Quién la registró y su vale del talonario (la salida a una tanqueta no
+                           -- lleva vale).
+                           ud.nombre AS por,
+                           CASE WHEN d.n_vale IS NULL THEN NULL
+                                ELSE concat_ws('-', d.serie_talonario, d.n_vale::text) END AS vale
                       FROM combustible_despachos d
+                      LEFT JOIN usuarios ud ON ud.id = d.usuario_id
                       LEFT JOIN equipos eq ON $5::boolean AND eq.id = d.equipo_id AND eq.tenant_id = d.tenant_id
                       LEFT JOIN combustible_tanquetas t
                              ON t.tenant_id = d.tenant_id AND t.id = d.tanqueta_destino_id
                      WHERE d.tenant_id = $1 AND d.excedente_linea_id = s.id AND d.anulada_en IS NULL
                     UNION ALL
-                    SELECT 't' || tr.id::text, 'tanque', tr.cantidad, tr.creado_en, cb.codigo
+                    SELECT 't' || tr.id::text, 'tanque', tr.cantidad, tr.creado_en, cb.codigo,
+                           utr.nombre, NULL::text
                       FROM combustible_cisterna_traslados tr
                       JOIN combustible cb ON cb.id = tr.combustible_id AND cb.tenant_id = tr.tenant_id
+                      LEFT JOIN usuarios utr ON utr.id = tr.usuario_id
                      WHERE tr.tenant_id = $1 AND tr.linea_id = s.id
                   ) o
               ), '[]'::json) AS salidas
@@ -8148,6 +8170,9 @@ export class CombustibleRepository {
                                WHERE t.tenant_id = x.tenant_id AND t.linea_id = x.id), 0) AS salido,
                   r.id AS recepcion_id, r.recibido_en, r.costo_unitario,
                   r.cantidad AS al_tanque, r.cantidad_derivada,
+                  r.tipo_documento, r.numero_documento, r.compra_id, ur.nombre AS registrada_por_nombre,
+                  co.transportista, co.transportista_ruc,
+                  co.cantidad_facturada AS compra_cantidad, co.unidad AS compra_unidad,
                   c.id AS combustible_id, c.codigo AS tanque_codigo, c.tanque_nombre,
                   c.tipo_combustible, c.unidad, r.grifo_interno_id,
                   r.grifo_id AS proveedor_id, g.nombre AS proveedor,
@@ -8157,6 +8182,9 @@ export class CombustibleRepository {
              JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
              LEFT JOIN combustible_grifos g ON g.id = r.grifo_id AND g.tenant_id = r.tenant_id
              LEFT JOIN usuarios ua ON ua.id = r.anulada_por
+             LEFT JOIN usuarios ur ON ur.id = r.usuario_id
+             LEFT JOIN combustible_compras_cisterna co
+                    ON co.id = r.compra_id AND co.tenant_id = r.tenant_id
             WHERE x.tenant_id = $1 AND x.destino = 'cisterna'
               AND ($2::int[] IS NULL OR r.grifo_interno_id = ANY($2::int[]))
               AND ($3::int IS NULL OR r.grifo_id = $3::int)

@@ -24,6 +24,9 @@ export interface SalidaDeCisterna {
   fecha: string;
   /** Placa, código de tanqueta o de tanque. Sin Flota la placa no viene. */
   destino: string | null;
+  /** Quién la registró, y su vale del talonario ("CLS-77"; la salida a una tanqueta no lleva). */
+  por?: string | null;
+  vale?: string | null;
 }
 
 /** Una línea del reparto del sobrante de la recepción (0110/0168). */
@@ -42,6 +45,8 @@ export interface MovimientoDeCisterna {
   fecha: string;
   destino: string | null;
   saldo: number;
+  por?: string | null;
+  vale?: string | null;
 }
 
 /** Una cisterna de la pestaña "Cisternas": con saldo, vaciada o de una recepción anulada. */
@@ -56,6 +61,19 @@ export interface CisternaDeLista extends CisternaConSaldo {
   entregado?: string;
   reparto?: LineaDeReparto[];
   movimientos?: MovimientoDeCisterna[];
+  /** El origen: el documento de la recepción y quién la registró; si vino de una compra, su
+   *  transportista y lo que decía el documento contra lo descargado (galones, negativa si llegó
+   *  menos), con la tolerancia de la empresa. Ausentes en datos viejos de la caché sin señal. */
+  tipo_documento?: string | null;
+  numero_documento?: string | null;
+  registrada_por_nombre?: string | null;
+  compra_id?: string | null;
+  transportista?: string | null;
+  transportista_ruc?: string | null;
+  compra_cantidad?: string | null;
+  compra_unidad?: string | null;
+  diferencia_compra_galones?: string | null;
+  tolerancia_galones?: number | string | null;
   /** Días que se le dan a una cisterna con saldo antes de alertar. Ausente: sin color de plazo. */
   plazo_dias?: number | null;
   /** Solo en las anuladas: quién, cuándo y por qué. */
