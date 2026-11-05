@@ -1582,7 +1582,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     const override = usuario?.permisosPestanas?.[`combustible:tanques:${id}`];
     if (override !== undefined) return override;
     if (esAdmin) return true;
-    if (esGrifero) return id === "registrar_recepcion" || id === "registrar_despacho";
+    if (esGrifero) return id === "registrar_despacho";
     // Sus compras (solo las suyas, el servidor las filtra) para subir el
     // comprobante después. El historial de despachos es del grifero.
     if (esConductor) return id === "registrar_despacho" || id === "historial_compras";
@@ -1591,6 +1591,18 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     // Surtidores/Precios/Nuevo tanque.
     if (esLectura)
       return id === "importar_excel" || id === "historial_despacho" || id === "historial_compras";
+    return true;
+  };
+  /** Los permisos de la recepción, que viven en Cisternas (0175): registrarla, validarla y anularla,
+   *  y repartir el excedente. El servidor exige lo mismo ruta por ruta. */
+  const permiteCisterna = (
+    id: "registrar_recepcion" | "gestion_recepciones" | "decidir_excedente"
+  ) => {
+    const override = usuario?.permisosPestanas?.[`combustible:cisternas:${id}`];
+    if (override !== undefined) return override;
+    if (esAdmin) return true;
+    if (esGrifero) return id === "registrar_recepcion";
+    if (esConductor || usuario?.rol === "encargado_urea" || esLectura) return false;
     return true;
   };
   const permiteAccionTanque = (id: string) => {
@@ -1916,23 +1928,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // Se fija al ABRIR el modal, no al apretar el botón -- ver
   // patron_doble_clic_formularios: el botón bloqueado solo no alcanza.
   const [clienteUuidRecepcion, setClienteUuidRecepcion] = useState("");
-  const [modalHistorialRecepcionesAbierto, setModalHistorialRecepcionesAbierto] = useState(false);
-  const [historialRecepciones, setHistorialRecepciones] = useState<RecepcionHistorial[]>([]);
-  const [recepcionesDesde, setRecepcionesDesde] = useState("");
-  const [recepcionesHasta, setRecepcionesHasta] = useState("");
-  const [errorHistorialRecepciones, setErrorHistorialRecepciones] = useState<string | null>(null);
-  const [recepcionesTotal, setRecepcionesTotal] = useState(0);
-  const [cargandoHistorialRecepciones, setCargandoHistorialRecepciones] = useState(false);
-  const [recepcionAAnular, setRecepcionAAnular] = useState<RecepcionHistorial | null>(null);
-  // Validar una recepción contra la guía. El modal NO muestra la cantidad que
-  // cargó quien recibió: si la mostrara, validar sería apretar "sí" y el
-  // segundo testigo no existiría (5ª auditoría).
-  const [recepcionAValidar, setRecepcionAValidar] = useState<RecepcionHistorial | null>(null);
-  const [cantidadDeLaGuia, setCantidadDeLaGuia] = useState("");
-  const [validandoRecepcion, setValidandoRecepcion] = useState(false);
-  const [motivoAnulacionRecepcion, setMotivoAnulacionRecepcion] = useState("");
-  const [anulandoRecepcion, setAnulandoRecepcion] = useState(false);
-
   const cargarTanques = useCallback(async () => {
     if (esConductor) {
       setTanques([]);
@@ -1989,7 +1984,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     if (!verCisternas || !enCisternas.current) return;
     const n = ++ultimaCargaCisternas.current;
     try {
-      // Las dos vistas juntas: cambiar de "Con saldo" a "Historial" es instantáneo, y una cisterna
+      // Las dos vistas juntas: cambiar de "Cisternas" a "Historial" es instantáneo, y una cisterna
       // que se acaba de vaciar ya está en el historial.
       const [conSaldo, vaciadas, compras] = await Promise.all([
         traerCisternas("saldo"),
@@ -3678,7 +3673,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         const body = await res.json().catch(() => ({}));
         // 409 = el excedente espera una decisión (0110), no es un error.
         if (res.status === 409 && body.requiereDecision) {
-          if (!permiteTanque("decidir_excedente")) {
+          if (!permiteCisterna("decidir_excedente")) {
             alert(
               `Esta recepción no cabe: sobran ${Number(body.detalle.excedenteLitros).toLocaleString("es-PE")} ${body.detalle.unidad}. ` +
                 "Tu perfil no puede decidir a dónde va el excedente: pídele a quien tenga ese permiso que registre la recepción."
@@ -3713,95 +3708,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       );
     } finally {
       setEnviandoRecepcion(false);
-    }
-  };
-
-  const cargarHistorialRecepciones = useCallback(async (desde: string, hasta: string) => {
-    setCargandoHistorialRecepciones(true);
-    setErrorHistorialRecepciones(null);
-    try {
-      const res = await apiFetch(
-        `/api/erp/combustible/recepciones?${paramsDePeriodo(desde, hasta)}`
-      );
-      const body = await res.json().catch(() => null);
-      if (!res.ok) {
-        setHistorialRecepciones([]);
-        setRecepcionesTotal(0);
-        setErrorHistorialRecepciones(mensajeDeFalloDeHistorial(res.status));
-        return;
-      }
-      setHistorialRecepciones(Array.isArray(body?.data) ? body.data : []);
-      setRecepcionesTotal(Number(body?.pagination?.total ?? 0));
-    } finally {
-      setCargandoHistorialRecepciones(false);
-    }
-  }, []);
-
-  const abrirModalHistorialRecepciones = async () => {
-    setModalHistorialRecepcionesAbierto(true);
-    await cargarHistorialRecepciones(recepcionesDesde, recepcionesHasta);
-  };
-
-  const handleValidarRecepcion = async () => {
-    if (validandoRecepcion || !recepcionAValidar || cantidadDeLaGuia.trim() === "") return;
-    setValidandoRecepcion(true);
-    try {
-      const res = await apiFetch(
-        `/api/erp/combustible/recepciones/${recepcionAValidar.id}/validar`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cantidad_documento: Number(cantidadDeLaGuia) }),
-        }
-      );
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        alert(mensajeDeError(body, "No se pudo validar la recepción."));
-        return;
-      }
-      setRecepcionAValidar(null);
-      setCantidadDeLaGuia("");
-      // El resultado se dice acá y no solo en la campanita: quien valida tiene
-      // que enterarse EN EL MOMENTO de que los dos números no coinciden.
-      setMensajeExito(
-        body.discrepancia
-          ? `La guía dice ${body.discrepancia.cantidadDocumento} y se habían registrado ` +
-              `${body.discrepancia.cantidadRegistrada} ` +
-              `(${body.discrepancia.diferencia > 0 ? "+" : ""}${body.discrepancia.diferencia}). ` +
-              `Se abrió una alerta para revisarlo.`
-          : "Recepción validada: la guía coincide con lo registrado."
-      );
-      await cargarHistorialRecepciones(recepcionesDesde, recepcionesHasta);
-      window.dispatchEvent(new Event("combustible:actualizado"));
-    } finally {
-      setValidandoRecepcion(false);
-    }
-  };
-
-  const handleAnularRecepcion = async () => {
-    if (anulandoRecepcion || !recepcionAAnular || !motivoAnulacionRecepcion.trim()) return;
-    setAnulandoRecepcion(true);
-    try {
-      const res = await apiFetch(`/api/erp/combustible/recepciones/${recepcionAAnular.id}/anular`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ motivo: motivoAnulacionRecepcion }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        alert(mensajeDeError(body, "No se pudo anular la recepción."));
-        return;
-      }
-      setRecepcionAAnular(null);
-      setMotivoAnulacionRecepcion("");
-      // El costo promedio del tanque se recalculó sin esta fila -- hay que
-      // recargar las dos cosas.
-      await Promise.all([
-        cargarHistorialRecepciones(recepcionesDesde, recepcionesHasta),
-        actualizarVistasCombustible(),
-      ]);
-    } finally {
-      setAnulandoRecepcion(false);
     }
   };
 
@@ -3978,12 +3884,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           puedeGestionarCompras={puedeGestionarCompras(usuario)}
           puedeFijarTolerancia={usuario?.rol === "admin"}
           compras={comprasCisterna}
-          puedeRecibir={permiteTanque("registrar_recepcion")}
-          puedeValidar={permiteTanque("gestion_recepciones")}
+          puedeRecibir={permiteCisterna("registrar_recepcion")}
+          puedeGestionarRecepciones={permiteCisterna("gestion_recepciones")}
           onRecibirCompra={(c) => abrirModalRecepcion(c)}
           onRecepcionSinCompra={() => abrirModalRecepcion()}
-          onValidarRecepciones={() => void abrirModalHistorialRecepciones()}
           onCambioCompras={() => void actualizarVistasCombustible()}
+          onCambioRecepciones={() => void actualizarVistasCombustible()}
           onMensaje={setMensajeExito}
         />
       )}
@@ -8386,406 +8292,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             </div>
           );
         })()}
-      {/* Modal: historial de recepciones (con anulación) */}
-      {modalHistorialRecepcionesAbierto && (
-        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white w-full max-w-5xl rounded-3xl shadow-2xl max-h-[85vh] flex flex-col">
-            <div className="p-6 border-b flex justify-between items-center shrink-0">
-              <div>
-                <h3 className="text-xl font-bold">Historial de recepciones</h3>
-                <p className="text-sm text-slate-500">
-                  Entradas de combustible, de la más reciente a la más antigua
-                </p>
-              </div>
-              <button
-                onClick={() => setModalHistorialRecepcionesAbierto(false)}
-                aria-label="Cerrar"
-                className="text-slate-400 hover:text-slate-900"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <BarraDePeriodo
-              idBase="recepciones"
-              desde={recepcionesDesde}
-              hasta={recepcionesHasta}
-              onCambiarDesde={setRecepcionesDesde}
-              onCambiarHasta={setRecepcionesHasta}
-              onVerPeriodo={() => cargarHistorialRecepciones(recepcionesDesde, recepcionesHasta)}
-              onLimpiar={() => {
-                setRecepcionesDesde("");
-                setRecepcionesHasta("");
-                cargarHistorialRecepciones("", "");
-              }}
-              cargando={cargandoHistorialRecepciones}
-              error={errorHistorialRecepciones}
-              mostrados={historialRecepciones.length}
-              total={recepcionesTotal}
-              queSeCuenta="recepciones"
-            />
-
-            <div className="p-6 overflow-y-auto overflow-x-auto">
-              {cargandoHistorialRecepciones ? (
-                <p className="text-center text-slate-500 py-8">Cargando historial...</p>
-              ) : historialRecepciones.length === 0 ? (
-                <p className="text-center text-slate-500 py-8">
-                  Todavía no hay recepciones registradas.
-                </p>
-              ) : (
-                <table className="w-full min-w-max text-left border-collapse">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Fecha
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Tanque
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Proveedor
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest">
-                        Documento
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                        Cantidad
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                        C.U
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                        C.TOTAL
-                      </th>
-                      <th
-                        className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right"
-                        title="Lo medido con varilla menos lo facturado, ya descontados los despachos del período"
-                      >
-                        Diferencia
-                      </th>
-                      <th
-                        className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest"
-                        title="Administración escribe la cantidad que dice la guía, sin ver la registrada. Es el único control que ve una entrega registrada por menos de lo que entró."
-                      >
-                        Guía
-                      </th>
-                      <th className="p-3 text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                        Acciones
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {historialRecepciones.map((r) => {
-                      const anulada = r.anulada_en !== null;
-                      return (
-                        <tr
-                          key={r.id}
-                          className={anulada ? "bg-slate-50/60 text-slate-400" : undefined}
-                        >
-                          <td className="p-3 text-sm">
-                            {formatearFecha(r.recibido_en)}
-                            {r.registrada_por_nombre && (
-                              <p className="text-xs text-slate-400">{r.registrada_por_nombre}</p>
-                            )}
-                          </td>
-                          <td className="p-3 text-sm">{r.tanque_nombre}</td>
-                          <td className="p-3 text-sm">{r.grifo_nombre}</td>
-                          <td className="p-3 text-sm">
-                            {r.tipo_documento ? (
-                              <>
-                                <span className="text-xs text-slate-500">
-                                  {ETIQUETA_TIPO_DOCUMENTO[r.tipo_documento]}
-                                </span>
-                                <p className="font-mono text-xs">{r.numero_documento}</p>
-                              </>
-                            ) : (
-                              <span className="text-xs text-slate-400 italic">Sin documento</span>
-                            )}
-                          </td>
-                          <td className="p-3 text-sm text-right">
-                            {Number(r.cantidad).toLocaleString("es-PE")}
-                          </td>
-                          <td className="p-3 text-sm text-right">
-                            {Number(r.costo_unitario).toFixed(4)}
-                          </td>
-                          <td className="p-3 text-sm text-right font-medium">
-                            {Number(r.costo_total).toLocaleString("es-PE", {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </td>
-                          {/* La diferencia entre lo facturado y lo medido. Es
-                              el dato que delata una entrega corta -- y el que
-                              va a alimentar la calibración del umbral en Fase
-                              D, por eso se muestra desde ya aunque todavía no
-                              haya motor de conciliación. */}
-                          <td className="p-3 text-sm text-right">
-                            {r.diferencia_litros === null ? (
-                              <span
-                                className="text-slate-300"
-                                title="Falta la lectura de varilla antes o después de la descarga, o hubo otra recepción en el mismo período: sin eso no se puede atribuir la diferencia a esta entrega."
-                              >
-                                —
-                              </span>
-                            ) : (
-                              (() => {
-                                const litros = Number(r.diferencia_litros);
-                                const pct = (litros / Number(r.cantidad)) * 100;
-                                // null = sin configurar (0075): el dato se
-                                // muestra sin juzgar, que es lo correcto hasta
-                                // tener historial con qué calibrar. Con umbral
-                                // 0 sí pinta, porque ahora significa
-                                // "cualquier diferencia cuenta" -- de ahí que
-                                // se pregunte por null y no por `> 0`.
-                                // La tolerancia es piso + % de lo entregado
-                                // (0101), la misma cuenta que hace la alerta.
-                                // Comparar solo contra el porcentaje pintaría
-                                // de rojo entregas que el sistema no alertó.
-                                //
-                                // La base del % es lo entregado por TODO el
-                                // GRUPO cuando hay varias recepciones entre
-                                // las mismas dos varillas -- `r.cantidad` es
-                                // solo esta fila. Usar la de esta fila sola
-                                // pintaba "excede" recepciones que la alerta
-                                // real (que sí suma el grupo) no consideraba
-                                // sospechosas.
-                                const cantidadParaLaCuenta = r.cantidad_del_grupo ?? r.cantidad;
-                                const tolerado =
-                                  r.umbral_diferencia_pct === null
-                                    ? null
-                                    : Number(r.umbral_diferencia_piso ?? 0) +
-                                      (Number(cantidadParaLaCuenta) *
-                                        Number(r.umbral_diferencia_pct)) /
-                                        100;
-                                const excede = tolerado !== null && Math.abs(litros) > tolerado;
-                                return (
-                                  <span
-                                    className={
-                                      excede
-                                        ? "font-bold text-red-600"
-                                        : litros < 0
-                                          ? "text-amber-600"
-                                          : "text-slate-500"
-                                    }
-                                    title={`Medido: ${Number(r.nivel_antes).toLocaleString("es-PE")} → ${Number(r.nivel_despues).toLocaleString("es-PE")}`}
-                                  >
-                                    {litros > 0 ? "+" : ""}
-                                    {litros.toLocaleString("es-PE", {
-                                      maximumFractionDigits: 2,
-                                    })}
-                                    <span className="block text-[11px] font-normal">
-                                      {pct > 0 ? "+" : ""}
-                                      {pct.toFixed(1)}%
-                                    </span>
-                                    {Number(r.entregas_en_grupo) > 1 && (
-                                      <span
-                                        className="block text-[11px] font-normal text-slate-400"
-                                        title="Entre las mismas dos varillas entraron varias entregas: la diferencia es de todas juntas, no se le puede atribuir a una sola."
-                                      >
-                                        {r.entregas_en_grupo} entregas juntas
-                                      </span>
-                                    )}
-                                  </span>
-                                );
-                              })()
-                            )}
-                          </td>
-                          <td className="p-3 text-sm">
-                            {r.validada_en !== null ? (
-                              <span
-                                className="text-xs text-slate-600"
-                                title={`Validada por ${r.validada_por_nombre ?? "—"} el ${formatearFecha(r.validada_en)}`}
-                              >
-                                Guía: {Number(r.cantidad_documento).toLocaleString("es-PE")}
-                                {Number(r.cantidad_documento) !== Number(r.cantidad) && (
-                                  <span className="block text-[11px] font-bold text-red-600">
-                                    no coincide
-                                  </span>
-                                )}
-                              </span>
-                            ) : r.requiere_validacion && !anulada ? (
-                              <span className="text-xs font-semibold text-amber-600">
-                                Pendiente de validar
-                              </span>
-                            ) : (
-                              <span className="text-xs text-slate-300">—</span>
-                            )}
-                          </td>
-                          <td className="p-3 text-sm text-right">
-                            {anulada ? (
-                              // La anulada NO se esconde: es evidencia de que
-                              // hubo un error, igual que una lectura o un
-                              // precio anulado (0058 / 0063).
-                              <span
-                                className="text-xs text-red-400"
-                                title={r.motivo_anulacion ?? undefined}
-                              >
-                                Anulada
-                                {r.anulada_por_nombre ? ` por ${r.anulada_por_nombre}` : ""}
-                              </span>
-                            ) : (
-                              <div className="flex gap-3 justify-end">
-                                {r.requiere_validacion && r.validada_en === null && (
-                                  <button
-                                    onClick={() => {
-                                      setRecepcionAValidar(r);
-                                      setCantidadDeLaGuia("");
-                                    }}
-                                    className="text-xs font-semibold text-emerald-600 hover:text-emerald-800 hover:underline"
-                                    title="Escribí la cantidad que dice la guía del proveedor"
-                                  >
-                                    Validar
-                                  </button>
-                                )}
-                                <button
-                                  onClick={() => {
-                                    setRecepcionAAnular(r);
-                                    setMotivoAnulacionRecepcion("");
-                                  }}
-                                  className="text-xs text-red-500 hover:text-red-700 hover:underline"
-                                >
-                                  Anular
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-      {/* Modal: anular recepción -- motivo OBLIGATORIO, mismo criterio que
-          lecturas y precios: es lo único que distingue un error de tipeo de
-          alguien borrando un número que no le conviene. */}
-      {recepcionAValidar && (
-        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
-          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl">
-            <div className="p-6 border-b">
-              <h3 className="text-xl font-bold">Validar contra la guía</h3>
-              <p className="text-sm text-slate-600">
-                Escribí la cantidad que dice la guía o la factura del proveedor.{" "}
-                <strong>No mostramos a propósito</strong> la cantidad que se registró en cancha: si
-                la vieras, validar sería confirmar un número en vez de leer el documento.
-              </p>
-            </div>
-            <div className="p-6 space-y-4">
-              <div className="text-sm text-slate-600">
-                <p>
-                  <span className="text-slate-400">Tanque:</span> {recepcionAValidar.tanque_nombre}
-                </p>
-                <p>
-                  <span className="text-slate-400">Proveedor:</span>{" "}
-                  {recepcionAValidar.grifo_nombre}
-                </p>
-                <p>
-                  <span className="text-slate-400">Documento:</span>{" "}
-                  {recepcionAValidar.numero_documento ?? "sin documento"}
-                </p>
-                <p>
-                  <span className="text-slate-400">Recibida:</span>{" "}
-                  {formatearFecha(recepcionAValidar.recibido_en)}
-                </p>
-              </div>
-              <div>
-                <label
-                  htmlFor="cantidad-de-la-guia"
-                  className="block text-xs font-bold text-slate-700 uppercase tracking-widest mb-1"
-                >
-                  Cantidad según la guía
-                </label>
-                <input
-                  id="cantidad-de-la-guia"
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  value={cantidadDeLaGuia}
-                  onChange={(e) => setCantidadDeLaGuia(e.target.value)}
-                  className="w-full p-3 border rounded-xl"
-                  autoFocus
-                />
-              </div>
-            </div>
-            <div className="p-6 border-t flex justify-end gap-3">
-              <button
-                onClick={() => setRecepcionAValidar(null)}
-                className="px-4 py-2 rounded-xl border text-slate-600"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={handleValidarRecepcion}
-                disabled={validandoRecepcion || cantidadDeLaGuia.trim() === ""}
-                className="px-4 py-2 rounded-xl bg-emerald-600 text-white font-semibold disabled:opacity-50"
-              >
-                {validandoRecepcion ? "Validando..." : "Validar"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/**Modal: recepción anular */}
-      {recepcionAAnular && (
-        <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
-          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl">
-            <div className="p-6 border-b">
-              <h3 className="text-xl font-bold">Anular recepción</h3>
-              <p className="text-sm text-slate-500">
-                La fila no se borra: queda marcada como anulada y el costo promedio del tanque se
-                recalcula sin ella.
-              </p>
-            </div>
-            <div className="p-6 space-y-4">
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm">
-                <p>
-                  <strong>{recepcionAAnular.tanque_nombre}</strong> ·{" "}
-                  {Number(recepcionAAnular.cantidad).toLocaleString("es-PE")} a{" "}
-                  {Number(recepcionAAnular.costo_unitario).toFixed(4)}
-                </p>
-                <p className="text-xs text-slate-500">
-                  {recepcionAAnular.grifo_nombre} · {formatearFecha(recepcionAAnular.recibido_en)}
-                </p>
-              </div>
-              <div className="space-y-1">
-                <label
-                  htmlFor="motivo-anulacion-recepcion"
-                  className="text-xs font-bold text-slate-700 uppercase"
-                >
-                  Motivo de la anulación *
-                </label>
-                <textarea
-                  id="motivo-anulacion-recepcion"
-                  rows={3}
-                  maxLength={500}
-                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-                  placeholder="Ej: se cargó la factura de otra cisterna"
-                  value={motivoAnulacionRecepcion}
-                  onChange={(e) => setMotivoAnulacionRecepcion(e.target.value)}
-                />
-              </div>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setRecepcionAAnular(null)}
-                  className="flex-1 border border-slate-200 text-slate-600 font-medium py-3 rounded-2xl hover:bg-slate-50"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleAnularRecepcion}
-                  disabled={anulandoRecepcion || !motivoAnulacionRecepcion.trim()}
-                  className="flex-1 bg-red-600 text-white font-bold py-3 rounded-2xl hover:bg-red-700 disabled:opacity-50"
-                >
-                  {anulandoRecepcion ? "Anulando..." : "Anular recepción"}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
       {importacion.filasPendientes && (
         <ModalVistaPreviaImportacion
           filas={importacion.filasPendientes}

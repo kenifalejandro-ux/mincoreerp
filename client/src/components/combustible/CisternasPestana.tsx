@@ -26,6 +26,7 @@ import {
   porcentajeDelNivel,
   type EstadoDelPlazo,
 } from "./nivelCisterna";
+import RecepcionesCisterna from "./RecepcionesCisterna";
 import TarjetaCompraPorLlegar from "./TarjetaCompraPorLlegar";
 
 const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
@@ -192,7 +193,7 @@ function TarjetaCisterna({
   );
 }
 
-type Vista = "saldo" | "historial" | "compras";
+type Vista = "saldo" | "historial" | "compras" | "recepciones";
 
 const BOTON_VISTA =
   "px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap transition-all active:scale-95 border";
@@ -209,10 +210,10 @@ export default function CisternasPestana({
   puedeFijarTolerancia = false,
   compras = null,
   puedeRecibir = false,
-  puedeValidar = false,
+  puedeGestionarRecepciones = false,
   onRecibirCompra = () => {},
   onRecepcionSinCompra = () => {},
-  onValidarRecepciones = () => {},
+  onCambioRecepciones = () => {},
   onCambioCompras = () => {},
   onMensaje = () => {},
 }: {
@@ -230,12 +231,13 @@ export default function CisternasPestana({
   compras?: CompraDeCisterna[] | null;
   /** Puede registrar la recepción de una cisterna (el grifero, el operador y el admin). */
   puedeRecibir?: boolean;
-  /** Puede validar y anular recepciones (admin y operador). */
-  puedeValidar?: boolean;
+  /** Puede ver el historial de recepciones y anularlas (admin y operador). */
+  puedeGestionarRecepciones?: boolean;
   onRecibirCompra?: (c: CompraDeCisterna) => void;
   /** Una descarga sin compra registrada: la cancha no se frena si la encargada no la anotó. */
   onRecepcionSinCompra?: () => void;
-  onValidarRecepciones?: () => void;
+  /** Una recepción se anuló: las cisternas, los tanques y las compras cambian. */
+  onCambioRecepciones?: () => void;
   onCambioCompras?: () => void;
   onMensaje?: (mensaje: string) => void;
 }) {
@@ -266,13 +268,15 @@ export default function CisternasPestana({
         </h1>
         <p className="text-xs sm:text-sm text-[#94a3b8]">
           {vista === "saldo"
-            ? "Combustible que quedó en la cisterna del proveedor y todavía se puede repartir"
+            ? "Las cisternas que vienen en camino y las que tienen combustible por repartir"
             : vista === "historial"
               ? "Las cisternas que ya se vaciaron y las de una recepción anulada"
-              : "Lo que compraste y viene en camino: registra la compra y habilítala a la cancha"}
+              : vista === "compras"
+                ? "Lo que compraste y viene en camino: registra la compra y habilítala a la cancha"
+                : "Las descargas de combustible, también las anuladas, contra lo que decía el documento"}
         </p>
       </div>
-      {(puedeGestionarCompras || puedeRecibir || puedeValidar) && (
+      {(puedeGestionarCompras || puedeRecibir) && (
         <div className="mb-4 flex flex-wrap items-center gap-2">
           {puedeGestionarCompras && (
             <BotonRegistrarCompra
@@ -291,23 +295,15 @@ export default function CisternasPestana({
               Recepción sin compra registrada
             </button>
           )}
-          {puedeValidar && (
-            <button
-              type="button"
-              onClick={onValidarRecepciones}
-              className="px-4 py-2 rounded-lg text-sm font-semibold transition-all active:scale-95 bg-transparent text-[#e2e8f0] border border-[#334155] hover:bg-[#2a2e37]"
-            >
-              Validar recepciones
-            </button>
-          )}
         </div>
       )}
       <div role="group" aria-label="Vista de cisternas" className="mb-6 flex flex-wrap gap-2">
         {(
           [
-            ["saldo", "Con saldo", cisternas],
+            ["saldo", "Cisternas", cisternas],
             ["historial", "Historial", historial],
             ...(puedeGestionarCompras ? [["compras", "Compras", null] as const] : []),
+            ...(puedeGestionarRecepciones ? [["recepciones", "Recepciones", null] as const] : []),
           ] as const
         ).map(([valor, texto, datos]) => (
           <button
@@ -322,7 +318,10 @@ export default function CisternasPestana({
             }`}
           >
             {texto}
-            {cuenta(datos)}
+            {/* "Cisternas" cuenta las que vienen en camino y las que tienen saldo. */}
+            {valor === "saldo" && cisternas
+              ? ` (${cisternas.length + pendientes.length})`
+              : cuenta(datos)}
           </button>
         ))}
       </div>
@@ -371,6 +370,8 @@ export default function CisternasPestana({
       )}
       {vista === "compras" && puedeGestionarCompras ? (
         <ComprasCisterna puedeFijarTolerancia={puedeFijarTolerancia} />
+      ) : vista === "recepciones" && puedeGestionarRecepciones ? (
+        <RecepcionesCisterna onCambio={onCambioRecepciones} />
       ) : (
         <>
           {error && (

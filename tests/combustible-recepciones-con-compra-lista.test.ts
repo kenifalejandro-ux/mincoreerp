@@ -253,6 +253,19 @@ describe("combustible: datos de las recepciones con su compra", () => {
     });
   });
 
+  it("la lista trae la unidad del tanque y la tolerancia de la empresa, para pintar la diferencia", async () => {
+    const tq = await tanque({ unidad: "L", capacidad_total: 200000, nivel_actual: 10000 });
+    const r = await recibir(tq, {
+      tipo_documento: "factura",
+      numero_documento: "F-UNIDAD",
+      cantidad: 400,
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const f = (await fila(r.body.id, tq)) as unknown as Record<string, unknown>;
+    expect(f.tanque_unidad).toBe("L");
+    expect(Number(f.tolerancia_galones)).toBe(3);
+  });
+
   it("los campos que ya salían en la lista siguen saliendo", async () => {
     const tq = await tanque();
     const r = await recibir(tq, { tipo_documento: "factura", numero_documento: "F-CAMPOS" });

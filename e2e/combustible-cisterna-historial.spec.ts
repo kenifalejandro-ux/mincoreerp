@@ -176,8 +176,8 @@ test("Historial: la vaciada y la anulada salen con su proveedor, y los filtros l
 
     // En un celular el menú lateral se abre como cajón y tapa los botones: se vuelve a escritorio.
     await page.setViewportSize({ width: 1280, height: 800 });
-    // ── De vuelta en "Con saldo" sigue estando la C ────────────────────────
-    await vista.getByRole("button", { name: /^Con saldo/ }).click();
+    // ── De vuelta en "Cisternas" sigue estando la C ────────────────────────
+    await vista.getByRole("button", { name: /^Cisternas/ }).click();
     await expect(tarjetaDe(page, c.recepcionId)).toBeVisible();
   } finally {
     // La C se deja vacía para no ensuciar el aviso de las demás specs.

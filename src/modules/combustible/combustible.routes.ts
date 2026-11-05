@@ -742,7 +742,7 @@ router.get(
 );
 router.post(
   "/recepciones",
-  requirePestanaSegunProducto("tanques:registrar_recepcion", "urea:registrar_entrada"),
+  requirePestanaSegunProducto("cisternas:registrar_recepcion", "urea:registrar_entrada"),
   requireRole("admin", "operador", "grifero", "encargado_urea"),
   validate(crearRecepcionCombustibleSchema),
   asyncHandler(controller.crearRecepcion.bind(controller))
@@ -756,7 +756,7 @@ router.post(
 // diferencia no disparaba una sola alerta.
 router.patch(
   "/recepciones/:recepcionId/validar",
-  requirePestana("combustible", "tanques:gestion_recepciones"),
+  requirePestana("combustible", "cisternas:gestion_recepciones"),
   requireRole("admin"),
   validate(validarRecepcionCombustibleSchema),
   asyncHandler(controller.validarRecepcion.bind(controller))
@@ -764,7 +764,7 @@ router.patch(
 
 router.patch(
   "/recepciones/:recepcionId/anular",
-  requirePestana("combustible", "tanques:gestion_recepciones"),
+  requirePestana("combustible", "cisternas:gestion_recepciones"),
   requireRole("admin", "operador"),
   validate(anularRecepcionCombustibleSchema),
   asyncHandler(controller.anularRecepcion.bind(controller))
