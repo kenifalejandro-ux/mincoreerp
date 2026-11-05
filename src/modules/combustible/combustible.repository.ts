@@ -7021,11 +7021,13 @@ export class CombustibleRepository {
              r.creado_en, r.anulada_en, r.anulada_por, r.motivo_anulacion,
              r.requiere_validacion, r.cantidad_documento, r.validada_en, r.validada_por,
              r.cantidad_derivada,
-             c.tanque_nombre, g.nombre AS grifo_nombre,
+             c.tanque_nombre, c.unidad AS tanque_unidad, g.nombre AS grifo_nombre,
              c.umbral_diferencia_pct, c.umbral_diferencia_piso,
              -- La compra de cisterna a la que corresponde (0173), con lo que decía su documento y
              -- la diferencia contra lo descargado (tanque + sobrante), en galones: negativa si
              -- llegó menos. NULL sin compra o en la urea. Mismo cálculo que diferenciaEnGalones.
+             COALESCE((SELECT cc.tolerancia_diferencia_compra FROM combustible_config cc
+                        WHERE cc.tenant_id = $1), 3) AS tolerancia_galones,
              r.compra_id, co.numero_documento AS compra_documento,
              co.cantidad_facturada AS compra_cantidad, co.unidad AS compra_unidad,
              CASE WHEN r.compra_id IS NULL THEN NULL

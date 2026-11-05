@@ -6953,7 +6953,7 @@ export class CombustibleController {
         !pestanaPermitida(
           { rol: req.usuario!.rol, permisosPestanas: req.usuario!.permisosPestanas },
           "combustible",
-          "tanques:decidir_excedente"
+          "cisternas:decidir_excedente"
         )
       ) {
         res
