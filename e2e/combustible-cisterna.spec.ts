@@ -118,7 +118,8 @@ test("Dejar en cisterna: el reparto no pide unidad y el saldo se reparte a una u
   try {
     // ── La recepción: tanque lleno, llegan 500 y todo se queda en la cisterna ──
     await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
-    await page.getByRole("button", { name: "Registrar recepción" }).first().click();
+    await irACisternas(page).click();
+    await page.getByRole("button", { name: "Recepción sin compra registrada" }).click();
     await page.locator("#recepcion-tanque").selectOption(String(tanqueId));
     await page.locator("#recepcion-grifo").selectOption({ label: `CISTERNA ${marca}` });
     await page.locator("#recepcion-cantidad").fill("500");

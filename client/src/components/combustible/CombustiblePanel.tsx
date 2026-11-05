@@ -55,6 +55,7 @@ import MiViaje from "./MiViaje";
 import { comprimirImagen } from "./comprimirImagen";
 import { DESTINOS_EXCEDENTE, type DestinoExcedente } from "./alertasTexto";
 import { puedeGestionarCompras, puedeVerCisternas } from "./cisternasAcceso";
+import type { CompraDeCisterna } from "./comprasCisternaTipos";
 import RepartirCisterna from "./CisternasConSaldo";
 import CisternasPestana, { AvisoCisternas } from "./CisternasPestana";
 import type { CisternaConSaldo, CisternaDeLista } from "./cisternasTipos";
@@ -103,6 +104,8 @@ interface Tanque {
   // supere limite_excedente_pct.
   modo_excedente_recepcion: "estricto" | "flexible";
   limite_excedente_pct: string | null;
+  /** La fecha de su primera varilla vigente (0173+): una recepción no puede ser anterior. */
+  primera_lectura_en: string | null;
   requiere_documento: boolean;
   // Totalizador acumulativo del surtidor (0094). Apagado hasta confirmar con
   // el cliente que sus surtidores lo tienen y que el grifero lo anota.
@@ -1896,6 +1899,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   // --- Recepciones (Fase C, migrations/0064) ---
   const [modalRecepcionAbierto, setModalRecepcionAbierto] = useState(false);
+  // La compra de cisterna desde la que se abrió la recepción (null: una descarga sin compra registrada).
+  const [compraDeLaRecepcion, setCompraDeLaRecepcion] = useState<CompraDeCisterna | null>(null);
   const [recepcionForm, setRecepcionForm] = useState(RECEPCION_FORM_INICIAL);
   const [recibidoEn, setRecibidoEn] = useState(ahoraParaInputLocal());
   // Mismo mecanismo que en lecturas y despachos: si el operador no toca el
@@ -1959,6 +1964,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // reparte. null = aún no llegó; si falla se conserva lo último que se supo.
   const [cisternasLista, setCisternasLista] = useState<CisternaDeLista[] | null>(null);
   const [cisternasHistorial, setCisternasHistorial] = useState<CisternaDeLista[] | null>(null);
+  // Las compras de cisterna que vienen en camino (0171): tarjetas llenas con "Registrar recepción".
+  const [comprasCisterna, setComprasCisterna] = useState<CompraDeCisterna[] | null>(null);
   const [errorCisternas, setErrorCisternas] = useState<string | null>(null);
   const [cisternaARepartir, setCisternaARepartir] = useState<CisternaConSaldo | null>(null);
   const verCisternas = puedeVerCisternas(usuario);
@@ -1973,17 +1980,24 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     const body = await res.json().catch(() => null);
     return res.ok && Array.isArray(body) ? (body as CisternaDeLista[]) : null;
   };
+  const traerCompras = async () => {
+    const res = await apiFetch("/api/erp/combustible/compras-cisterna");
+    const body = await res.json().catch(() => null);
+    return res.ok && Array.isArray(body) ? (body as CompraDeCisterna[]) : null;
+  };
   const cargarCisternasLista = useCallback(async () => {
     if (!verCisternas || !enCisternas.current) return;
     const n = ++ultimaCargaCisternas.current;
     try {
       // Las dos vistas juntas: cambiar de "Con saldo" a "Historial" es instantáneo, y una cisterna
       // que se acaba de vaciar ya está en el historial.
-      const [conSaldo, vaciadas] = await Promise.all([
+      const [conSaldo, vaciadas, compras] = await Promise.all([
         traerCisternas("saldo"),
         traerCisternas("historial"),
+        traerCompras(),
       ]);
       if (n !== ultimaCargaCisternas.current) return;
+      if (compras) setComprasCisterna(compras);
       // Lo que falló conserva lo último que se supo.
       if (conSaldo) setCisternasLista(conSaldo);
       if (vaciadas) setCisternasHistorial(vaciadas);
@@ -2135,6 +2149,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       "combustible.despacho_anulado",
       "combustible.recepcion_creada",
       "combustible.recepcion_anulada",
+      "combustible.compra_cisterna_actualizada",
       "combustible.alerta_creada",
       "combustible.alerta_resuelta",
       "combustible.alertas_actualizadas",
@@ -3494,8 +3509,31 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   // --- Recepciones (Fase C, migrations/0064) ---
 
-  const abrirModalRecepcion = () => {
-    setRecepcionForm(RECEPCION_FORM_INICIAL);
+  const abrirModalRecepcion = (compra?: CompraDeCisterna) => {
+    // Desde la tarjeta de una compra, el formulario nace con lo que ella ya dice: proveedor,
+    // documento, costo y la cantidad del documento (se puede corregir: la evaporación). El tanque se
+    // elige solo si en esa sede hay uno solo del mismo combustible.
+    const tanquesPosibles = compra
+      ? tanques.filter(
+          (t) =>
+            t.activo &&
+            t.grifo_interno_id === compra.grifo_interno_id &&
+            t.tipo_combustible === compra.tipo_combustible
+        )
+      : [];
+    setCompraDeLaRecepcion(compra ?? null);
+    setRecepcionForm(
+      compra
+        ? {
+            combustible_id: tanquesPosibles.length === 1 ? String(tanquesPosibles[0].id) : "",
+            grifo_id: String(compra.grifo_id),
+            cantidad: String(Number(compra.cantidad_facturada)),
+            costo_unitario: String(Number(compra.costo_unitario)),
+            tipo_documento: compra.tipo_documento,
+            numero_documento: compra.numero_documento,
+          }
+        : RECEPCION_FORM_INICIAL
+    );
     setPrecintosRecepcion({});
     setRecibidoEn(ahoraParaInputLocal());
     setHoraRecepcionEditadaAMano(false);
@@ -3568,6 +3606,17 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     return null;
   })();
 
+  /** La recepción no puede ser anterior a la primera varilla del tanque: sin ella no se sabe cuánto
+   *  había. El servidor lo rechaza igual; acá se dice ANTES de registrar y con la fecha exacta.
+   *  Solo puede pasar si la hora se editó a mano: la de ahora nunca es anterior. */
+  const avisoFechaRecepcion = (() => {
+    if (!horaRecepcionEditadaAMano || !tanqueRecepcion?.primera_lectura_en) return null;
+    const primera = new Date(tanqueRecepcion.primera_lectura_en);
+    const fecha = new Date(recibidoEn);
+    if (Number.isNaN(fecha.getTime()) || fecha >= primera) return null;
+    return `La primera varilla de este tanque es del ${primera.toLocaleString("es-PE")}: la recepción no puede ser anterior. Pon esa fecha u otra posterior.`;
+  })();
+
   const handleRegistrarRecepcion = async (e: React.FormEvent) => {
     e.preventDefault();
     await enviarRecepcion();
@@ -3597,6 +3646,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           cliente_uuid: clienteUuidRecepcion,
           combustible_id: Number(recepcionForm.combustible_id),
           grifo_id: Number(recepcionForm.grifo_id),
+          compra_id: compraDeLaRecepcion ? Number(compraDeLaRecepcion.id) : undefined,
           cantidad: Number(recepcionForm.cantidad),
           costo_unitario: Number(recepcionForm.costo_unitario),
           tipo_documento: conDocumento ? recepcionForm.tipo_documento : undefined,
@@ -3831,19 +3881,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 <FileText className="w-4 h-4 shrink-0" /> Historial de compras
               </button>
             )}
-            {/* La CONSULTA del historial de recepciones se mudó al submenú
-                Histórico. Este botón queda porque adentro viven además
-                "Validar" (el control cruzado contra la guía: el grifero
-                registra, el admin valida) y "Anular", que no existen en
-                ningún otro lado -- por eso ahora se llama por lo que hace. */}
-            {permiteTanque("gestion_recepciones") && (
-              <button
-                onClick={abrirModalHistorialRecepciones}
-                className={`${BTN_BASE} ${BTN_ESTILO.lime}`}
-              >
-                <FileText className="w-4 h-4 shrink-0" /> Validar recepciones
-              </button>
-            )}
             {permiteTanque("alertas") && (
               <button onClick={abrirModalAlertas} className={`${BTN_BASE} ${BTN_ESTILO.lime}`}>
                 <Bell className="w-4 h-4 shrink-0" /> Configurar alertas
@@ -3855,14 +3892,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 className={`${BTN_BASE} ${BTN_ESTILO.muted}`}
               >
                 <Fuel className="w-4 h-4 shrink-0" /> Surtidores
-              </button>
-            )}
-            {permiteTanque("registrar_recepcion") && (
-              <button
-                onClick={abrirModalRecepcion}
-                className={`${BTN_BASE} ${BTN_ESTILO.secundary}`}
-              >
-                <Truck className="w-4 h-4 shrink-0" /> Registrar recepción
               </button>
             )}
             {permiteTanque("registrar_despacho") && (
@@ -3948,6 +3977,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           onRepartir={setCisternaARepartir}
           puedeGestionarCompras={puedeGestionarCompras(usuario)}
           puedeFijarTolerancia={usuario?.rol === "admin"}
+          compras={comprasCisterna}
+          puedeRecibir={permiteTanque("registrar_recepcion")}
+          puedeValidar={permiteTanque("gestion_recepciones")}
+          onRecibirCompra={(c) => abrirModalRecepcion(c)}
+          onRecepcionSinCompra={() => abrirModalRecepcion()}
+          onValidarRecepciones={() => void abrirModalHistorialRecepciones()}
+          onCambioCompras={() => void actualizarVistasCombustible()}
+          onMensaje={setMensajeExito}
         />
       )}
       {cisternaARepartir && (
@@ -7819,6 +7856,21 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             </div>
 
             <form onSubmit={handleRegistrarRecepcion} className="p-6 space-y-4">
+              {compraDeLaRecepcion && (
+                <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 text-sm text-sky-900">
+                  Recibes la compra{" "}
+                  <strong>
+                    {compraDeLaRecepcion.tipo_documento === "factura" ? "factura" : "guía"}{" "}
+                    {compraDeLaRecepcion.numero_documento}
+                  </strong>{" "}
+                  de {compraDeLaRecepcion.proveedor}: el documento dice{" "}
+                  <strong>
+                    {Number(compraDeLaRecepcion.cantidad_facturada).toLocaleString("es-PE")}{" "}
+                    {compraDeLaRecepcion.unidad}
+                  </strong>
+                  . Pon lo que realmente descargaste.
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1">
                   <label
@@ -7838,7 +7890,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   >
                     <option value="">Elegí un tanque...</option>
                     {tanques
-                      .filter((t) => t.activo)
+                      .filter(
+                        (t) =>
+                          t.activo &&
+                          (!compraDeLaRecepcion ||
+                            (t.grifo_interno_id === compraDeLaRecepcion.grifo_interno_id &&
+                              t.tipo_combustible === compraDeLaRecepcion.tipo_combustible))
+                      )
                       .map((t) => (
                         <option key={t.id} value={t.id}>
                           {t.codigo} — {t.tanque_nombre}
@@ -7856,6 +7914,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   <select
                     id="recepcion-grifo"
                     required
+                    disabled={compraDeLaRecepcion !== null}
                     className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={recepcionForm.grifo_id}
                     onChange={(e) =>
@@ -7994,6 +8053,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   </label>
                   <select
                     id="recepcion-tipo-doc"
+                    disabled={compraDeLaRecepcion !== null}
                     className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={recepcionForm.tipo_documento}
                     onChange={(e) =>
@@ -8023,6 +8083,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     // combustible.requiere_documento.
                     required={tanqueRecepcion?.requiere_documento !== false}
                     maxLength={100}
+                    disabled={compraDeLaRecepcion !== null}
                     placeholder="F001-00012345"
                     className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={recepcionForm.numero_documento}
@@ -8065,11 +8126,23 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   Cuándo entró el combustible, no cuándo se carga al sistema. Define contra qué
                   lectura se calcula el costo promedio.
                 </p>
+                {avisoFechaRecepcion && (
+                  <p
+                    role="alert"
+                    className="text-xs text-red-800 bg-red-50 border border-red-200 rounded-xl p-3"
+                  >
+                    {avisoFechaRecepcion}
+                  </p>
+                )}
               </div>
 
               <button
                 type="submit"
-                disabled={enviandoRecepcion || avisoCapacidadRecepcion !== null}
+                disabled={
+                  enviandoRecepcion ||
+                  avisoCapacidadRecepcion !== null ||
+                  avisoFechaRecepcion !== null
+                }
                 className="w-full bg-sky-600 text-white font-bold py-4 rounded-2xl hover:bg-sky-700 transition-all mt-2 disabled:opacity-50"
               >
                 {enviandoRecepcion ? "Registrando..." : "Registrar recepción"}

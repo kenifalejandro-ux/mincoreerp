@@ -10,12 +10,7 @@ import {
   proveedoresDeCompras,
   type FiltroDeEstado,
 } from "./comprasCisternaLogica";
-import type {
-  CompraDeCisterna,
-  DatosParaElFormulario,
-  EstadoDeCompra,
-} from "./comprasCisternaTipos";
-import RegistrarCompraCisterna from "./RegistrarCompraCisterna";
+import type { CompraDeCisterna, EstadoDeCompra } from "./comprasCisternaTipos";
 import { apiFetch } from "../../services/apiClient";
 import { mensajeDeError } from "../../utils/mensajeDeError";
 
@@ -50,13 +45,11 @@ export default function ComprasCisterna({
   puedeFijarTolerancia: boolean;
 }) {
   const [compras, setCompras] = useState<CompraDeCisterna[] | null>(null);
-  const [datos, setDatos] = useState<DatosParaElFormulario | null>(null);
   const [tolerancia, setTolerancia] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [estado, setEstado] = useState<FiltroDeEstado>("pendientes");
   const [proveedor, setProveedor] = useState("");
-  const [registrando, setRegistrando] = useState(false);
   const [anulando, setAnulando] = useState<CompraDeCisterna | null>(null);
   const [motivo, setMotivo] = useState("");
   const [trabajando, setTrabajando] = useState<string | null>(null);
@@ -66,21 +59,18 @@ export default function ComprasCisterna({
   const cargar = useCallback(async () => {
     const n = ++ultimaCarga.current;
     try {
-      const [rc, rd, rt] = await Promise.all([
+      const [rc, rt] = await Promise.all([
         apiFetch("/api/erp/combustible/compras-cisterna"),
-        apiFetch("/api/erp/combustible/compras-cisterna/formulario"),
         apiFetch("/api/erp/combustible/compras-cisterna/tolerancia"),
       ]);
       if (n !== ultimaCarga.current) return;
-      const [bc, bd, bt] = await Promise.all([
+      const [bc, bt] = await Promise.all([
         rc.json().catch(() => null),
-        rd.json().catch(() => null),
         rt.json().catch(() => null),
       ]);
       if (rc.ok && Array.isArray(bc)) setCompras(bc as CompraDeCisterna[]);
-      if (rd.ok && bd) setDatos(bd as DatosParaElFormulario);
       if (rt.ok && bt) setTolerancia(String(bt.tolerancia_galones));
-      setError(rc.ok && rd.ok && rt.ok ? null : "No se pudieron cargar las compras.");
+      setError(rc.ok && rt.ok ? null : "No se pudieron cargar las compras.");
     } catch {
       if (n === ultimaCarga.current) setError("Sin señal: no se pudo actualizar.");
     }
@@ -174,14 +164,6 @@ export default function ComprasCisterna({
   return (
     <div>
       <div className="mb-6 flex flex-wrap items-end gap-3">
-        <button
-          type="button"
-          disabled={!datos}
-          onClick={() => setRegistrando(true)}
-          className="px-4 py-2 rounded-lg text-sm font-semibold transition-all active:scale-95 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] disabled:opacity-50"
-        >
-          Registrar compra
-        </button>
         <div className="space-y-1">
           <label
             htmlFor="compras-filtro-estado"
@@ -374,17 +356,6 @@ export default function ComprasCisterna({
             );
           })}
         </div>
-      )}
-      {registrando && datos && compras && (
-        <RegistrarCompraCisterna
-          compras={compras}
-          datos={datos}
-          onCerrar={() => setRegistrando(false)}
-          onRegistrado={(texto) => {
-            setMensaje(texto);
-            void cargar();
-          }}
-        />
       )}
       {anulando && (
         <div className="fixed inset-0 bg-[#0D1719]/90 backdrop-blur-sm flex justify-center items-center z-[60] p-4">

@@ -5,10 +5,12 @@
 // por permiso: acá solo se muestra.
 import { useState } from "react";
 
+import BotonRegistrarCompra from "./BotonRegistrarCompra";
 import CisternaAcostada from "./CisternaAcostada";
 import CisternaCapsula from "./CisternaCapsula";
 import type { CisternaConSaldo, CisternaDeLista } from "./cisternasTipos";
 import ComprasCisterna from "./ComprasCisterna";
+import type { CompraDeCisterna } from "./comprasCisternaTipos";
 import { renglonesDelDesglose, textoDelMovimiento, totalEntregado } from "./desgloseCisterna";
 import { filtrarHistorial, proveedoresDe, type FiltroEstado } from "./historialCisternas";
 import {
@@ -17,6 +19,7 @@ import {
   porcentajeDelNivel,
   type EstadoDelPlazo,
 } from "./nivelCisterna";
+import TarjetaCompraPorLlegar from "./TarjetaCompraPorLlegar";
 
 const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
 
@@ -171,6 +174,14 @@ export default function CisternasPestana({
   onRepartir,
   puedeGestionarCompras = false,
   puedeFijarTolerancia = false,
+  compras = null,
+  puedeRecibir = false,
+  puedeValidar = false,
+  onRecibirCompra = () => {},
+  onRecepcionSinCompra = () => {},
+  onValidarRecepciones = () => {},
+  onCambioCompras = () => {},
+  onMensaje = () => {},
 }: {
   /** Las que tienen saldo. null: todavía no llegó la primera respuesta. */
   cisternas: CisternaDeLista[] | null;
@@ -182,6 +193,18 @@ export default function CisternasPestana({
   /** Quien registra las compras de cisterna ve además la vista "Compras" (0171). */
   puedeGestionarCompras?: boolean;
   puedeFijarTolerancia?: boolean;
+  /** Las compras de cisterna que el usuario puede ver (la cancha, solo las por llegar). */
+  compras?: CompraDeCisterna[] | null;
+  /** Puede registrar la recepción de una cisterna (el grifero, el operador y el admin). */
+  puedeRecibir?: boolean;
+  /** Puede validar y anular recepciones (admin y operador). */
+  puedeValidar?: boolean;
+  onRecibirCompra?: (c: CompraDeCisterna) => void;
+  /** Una descarga sin compra registrada: la cancha no se frena si la encargada no la anotó. */
+  onRecepcionSinCompra?: () => void;
+  onValidarRecepciones?: () => void;
+  onCambioCompras?: () => void;
+  onMensaje?: (mensaje: string) => void;
 }) {
   const [vista, setVista] = useState<Vista>("saldo");
   const [proveedor, setProveedor] = useState("");
@@ -193,6 +216,15 @@ export default function CisternasPestana({
   const visibles = filtrarHistorial(historial ?? [], proveedorVigente, estado);
   const lista = vista === "saldo" ? cisternas : historial;
   const cuenta = (l: CisternaDeLista[] | null) => (l ? ` (${l.length})` : "");
+  // Las cisternas que vienen en camino: la cancha ve las "por llegar"; quien registra compras ve
+  // también las registradas que todavía no se habilitaron. Las que llegan antes, primero.
+  const pendientes = (compras ?? [])
+    .filter(
+      (c) => c.estado === "por_llegar" || (puedeGestionarCompras && c.estado === "registrada")
+    )
+    .sort(
+      (a, b) => a.llegada_estimada.localeCompare(b.llegada_estimada) || Number(a.id) - Number(b.id)
+    );
   return (
     <div>
       <div className="mb-6 lg:mb-10">
@@ -207,6 +239,36 @@ export default function CisternasPestana({
               : "Lo que compraste y viene en camino: registra la compra y habilítala a la cancha"}
         </p>
       </div>
+      {(puedeGestionarCompras || puedeRecibir || puedeValidar) && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {puedeGestionarCompras && (
+            <BotonRegistrarCompra
+              onRegistrado={(mensaje) => {
+                onMensaje(mensaje);
+                onCambioCompras();
+              }}
+            />
+          )}
+          {puedeRecibir && (
+            <button
+              type="button"
+              onClick={onRecepcionSinCompra}
+              className="px-4 py-2 rounded-lg text-sm font-semibold transition-all active:scale-95 bg-transparent text-[#e2e8f0] border border-[#334155] hover:bg-[#2a2e37]"
+            >
+              Recepción sin compra registrada
+            </button>
+          )}
+          {puedeValidar && (
+            <button
+              type="button"
+              onClick={onValidarRecepciones}
+              className="px-4 py-2 rounded-lg text-sm font-semibold transition-all active:scale-95 bg-transparent text-[#e2e8f0] border border-[#334155] hover:bg-[#2a2e37]"
+            >
+              Validar recepciones
+            </button>
+          )}
+        </div>
+      )}
       <div role="group" aria-label="Vista de cisternas" className="mb-6 flex flex-wrap gap-2">
         {(
           [
@@ -287,12 +349,22 @@ export default function CisternasPestana({
           {lista === null ? (
             !error && <p className="text-sm text-[#94a3b8]">Cargando cisternas...</p>
           ) : vista === "saldo" ? (
-            lista.length === 0 ? (
+            lista.length === 0 && pendientes.length === 0 ? (
               <div className="bg-[#192526] border border-dashed border-[#334155] rounded-xl p-10 text-center text-[#94a3b8]">
-                No hay cisternas con saldo.
+                No hay cisternas con saldo ni por llegar.
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-4">
+                {pendientes.map((c) => (
+                  <TarjetaCompraPorLlegar
+                    key={`compra-${c.id}`}
+                    c={c}
+                    puedeRecibir={puedeRecibir}
+                    puedeGestionar={puedeGestionarCompras}
+                    onRecibir={onRecibirCompra}
+                    onCambio={onCambioCompras}
+                  />
+                ))}
                 {lista.map((c) => (
                   <TarjetaCisterna
                     key={c.id}
