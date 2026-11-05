@@ -2778,12 +2778,17 @@ export class CombustibleController {
           despachadoEn: data.despachado_en ?? new Date().toISOString(),
         });
 
-        const tope = await service.evaluarTopeDiario(client, tenantId, {
-          despachoId,
-          equipoId: data.equipo_id ?? null,
-          tipoDestino: data.tipo_destino,
-          despachadoEn: data.despachado_en ?? new Date().toISOString(),
-        });
+        // Una unidad sin alta no tiene tope propio, y juntar todas las placas libres en
+        // un solo "destino" mezclaría camiones distintos y daría alertas falsas.
+        const tope =
+          data.tipo_destino === "unidad_sin_alta"
+            ? null
+            : await service.evaluarTopeDiario(client, tenantId, {
+                despachoId,
+                equipoId: data.equipo_id ?? null,
+                tipoDestino: data.tipo_destino,
+                despachadoEn: data.despachado_en ?? new Date().toISOString(),
+              });
 
         // El equipo es de otro grifo (0100). Solo alerta, sin correo: los
         // equipos se prestan entre plantas.

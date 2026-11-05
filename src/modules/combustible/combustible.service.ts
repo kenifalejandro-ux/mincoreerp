@@ -1185,6 +1185,24 @@ export class CombustibleService {
           }
         }
 
+        // Placa libre (0176): si la unidad ya se dio de alta (la oficina la registró
+        // mientras el vale esperaba en la cola sin señal, o el grifero tipeó una que
+        // sí existe), el vale va a ESA unidad y no queda como "sin alta". Se reasigna
+        // sobre el mismo `data` a propósito: el controller lo lee después para sus
+        // alertas de consumo y medidor, y tienen que ver la unidad real.
+        if (data.tipo_destino === "unidad_sin_alta" && data.placa_sin_alta !== undefined) {
+          const existente = await this.repository.findEquipoIdPorPlaca(
+            client,
+            tenantId,
+            data.placa_sin_alta
+          );
+          if (existente !== null) {
+            data.tipo_destino = "equipo";
+            data.equipo_id = existente;
+            data.placa_sin_alta = undefined;
+          }
+        }
+
         // La unidad es de ESTA empresa. La FK de la tabla no lo impide (apunta a
         // equipos(id) sin tenant): sin esto, un vale podía guardarse apuntando a la
         // unidad de otra empresa.
@@ -1306,6 +1324,7 @@ export class CombustibleService {
           tipoCombustible: esUrea ? null : data.tipo_combustible!,
           tipoDestino: data.tipo_destino,
           equipoId: data.equipo_id ?? null,
+          placaSinAlta: data.placa_sin_alta ?? null,
           serieTalonario: data.serie_talonario ?? null,
           nVale: data.n_vale ?? null,
           comprobanteTipo: data.comprobante_tipo ?? null,

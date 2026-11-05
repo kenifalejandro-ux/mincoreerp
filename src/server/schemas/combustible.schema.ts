@@ -280,7 +280,15 @@ const ORIGENES_DESPACHO = [
   "tanqueta",
   "almacen",
 ] as const;
-const TIPOS_DESTINO_DESPACHO = ["equipo", "planta", "reserva_cubeta"] as const;
+// 'unidad_sin_alta' (0176): el grifero escribe la placa de una unidad que la oficina
+// todavía no dio de alta, para no esperar. Solo el vale del tanque propio.
+const TIPOS_DESTINO_DESPACHO = ["equipo", "planta", "reserva_cubeta", "unidad_sin_alta"] as const;
+
+/** La placa tal como se guarda: mayúsculas, sin espacios ni guiones. "t8m-821 " y
+ *  "T8M 821" son la misma unidad. */
+export function normalizarPlaca(texto: string): string {
+  return texto.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
 
 // Qué papel entrega el proveedor en la ruta (0109). Mismo vocabulario que
 // `facturas.comprobante_tipo` de billing (0041), que ya usa 'boleta' y
@@ -431,6 +439,13 @@ export const crearDespachoCombustibleSchema = z
     tipo_destino: z.enum(TIPOS_DESTINO_DESPACHO),
     // Solo cuando tipo_destino = 'equipo'.
     equipo_id: z.number().int().positive().max(2147483647).optional(),
+    // Solo cuando tipo_destino = 'unidad_sin_alta' (0176). Llega normalizada.
+    placa_sin_alta: z
+      .string()
+      .trim()
+      .transform(normalizarPlaca)
+      .pipe(z.string().min(3, "La placa tiene que tener al menos 3 letras o números").max(20))
+      .optional(),
 
     // El talonario -- reinicia por serie/mes, ver hallazgo 6. Desde 0092
     // el espacio de nombres es (serie_talonario, producto): el cliente
@@ -796,6 +811,28 @@ export const crearDespachoCombustibleSchema = z
         code: z.ZodIssueCode.custom,
         path: ["equipo_id"],
         message: "equipo_id solo aplica cuando tipo_destino es 'equipo'",
+      });
+    }
+    if (data.tipo_destino === "unidad_sin_alta") {
+      if (data.placa_sin_alta === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["placa_sin_alta"],
+          message: "La placa es obligatoria cuando la unidad no está dada de alta",
+        });
+      }
+      if (data.origen !== "tanque_propio" || data.producto !== "combustible") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["tipo_destino"],
+          message: "La unidad sin alta solo aplica a un vale de combustible del tanque propio",
+        });
+      }
+    } else if (data.placa_sin_alta !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["placa_sin_alta"],
+        message: "placa_sin_alta solo aplica cuando tipo_destino es 'unidad_sin_alta'",
       });
     }
 
