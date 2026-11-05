@@ -54,7 +54,7 @@ import MiTanqueta from "./MiTanqueta";
 import MiViaje from "./MiViaje";
 import { comprimirImagen } from "./comprimirImagen";
 import { DESTINOS_EXCEDENTE, type DestinoExcedente } from "./alertasTexto";
-import { puedeVerCisternas } from "./cisternasAcceso";
+import { puedeGestionarCompras, puedeVerCisternas } from "./cisternasAcceso";
 import RepartirCisterna from "./CisternasConSaldo";
 import CisternasPestana, { AvisoCisternas } from "./CisternasPestana";
 import type { CisternaConSaldo, CisternaDeLista } from "./cisternasTipos";
@@ -3946,6 +3946,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           error={errorCisternas}
           puedeRepartir={puedeDespachar}
           onRepartir={setCisternaARepartir}
+          puedeGestionarCompras={puedeGestionarCompras(usuario)}
+          puedeFijarTolerancia={usuario?.rol === "admin"}
         />
       )}
       {cisternaARepartir && (

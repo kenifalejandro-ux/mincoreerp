@@ -434,6 +434,12 @@ router.get(
 );
 // Los literales ANTES de /:compraId (aquí solo hay PATCH con segmento, pero se deja el orden claro).
 router.get(
+  "/compras-cisterna/formulario",
+  requirePestana("combustible", "cisternas:registrar_compra"),
+  requireRole("admin", "operador"),
+  asyncHandler(controller.datosFormularioCompraCisterna.bind(controller))
+);
+router.get(
   "/compras-cisterna/tolerancia",
   requirePestana("combustible", "cisternas:registrar_compra"),
   requireRole("admin", "operador"),

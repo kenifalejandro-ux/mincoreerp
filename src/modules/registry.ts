@@ -731,6 +731,9 @@ export const MODULOS: ModuloDefinicion[] = [
         { metodo: "POST", ruta: "/compras-ruta" },
         // Pasar lo que queda en la cisterna a un tanque (0169): idempotente por cliente_uuid.
         { metodo: "POST", ruta: "/despachos/cisterna-al-tanque" },
+        // La compra de una cisterna (0171): la encargada la registra aunque no haya señal;
+        // idempotente por cliente_uuid.
+        { metodo: "POST", ruta: "/compras-cisterna" },
         { metodo: "POST", ruta: "/compras-ruta/por-uuid/:clienteUuid/comprobante" },
       ],
     },

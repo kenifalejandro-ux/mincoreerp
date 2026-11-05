@@ -2783,6 +2783,20 @@ export const crearCompraCisternaSchema = z
     costo_unitario: z.number().positive("El costo debe ser mayor que cero"),
     placa: z.string().trim().max(20).optional(),
     chofer: z.string().trim().max(120).optional(),
+    /** La empresa que trae el combustible (0174): razón social y RUC, texto libre. */
+    transportista: z.string().trim().max(150).optional(),
+    transportista_ruc: z
+      .string()
+      .trim()
+      .refine(
+        (v) => v === "" || /^\d{11}$/.test(v),
+        "El RUC del transportista debe tener 11 dígitos"
+      )
+      .optional(),
+  })
+  .refine((v) => !v.transportista_ruc || !!v.transportista, {
+    path: ["transportista"],
+    message: "Si das el RUC del transportista, di también su nombre",
   })
   .refine((v) => v.llegada_estimada >= v.fecha_compra, {
     path: ["llegada_estimada"],
