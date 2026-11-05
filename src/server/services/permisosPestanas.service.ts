@@ -20,19 +20,10 @@ const pestañasTanques: DefinicionPestana[] = [
   // Las compras en ruta tienen su propia vista, autónoma de la de despachos:
   // el conductor sube desde ahí el comprobante que no pudo subir al comprar.
   ["historial_compras", "Historial de compras"],
-  // La CONSULTA de recepciones vive en el Histórico; acá queda lo que no
-  // existe en ningún otro lado: validar la recepción contra la guía (el
-  // control cruzado -- uno registra, otro valida) y anularla.
-  ["gestion_recepciones", "Validar recepciones"],
   ["alertas", "Alertas"],
   ["proveedores", "Proveedores"],
   ["surtidores", "Surtidores"],
   ["precios", "Precios"],
-  ["registrar_recepcion", "Registrar recepción"],
-  // Repartir el excedente de una recepción que no cabe (0110). Solo cuando el
-  // tanque tiene marcada la casilla "dejar decidir". No nace para el grifero:
-  // el Admin decide quién.
-  ["decidir_excedente", "Decidir excedente de recepción"],
   ["registrar_despacho", "Registrar despacho"],
   ["nuevo_tanque", "Nuevo tanque"],
 ].map(([id, nombre]) => ({
@@ -182,6 +173,22 @@ export const PESTANAS_CONFIGURABLES: DefinicionPestana[] = [
     nivel: "submenu",
     padre: null,
   },
+  // La recepción vive en Cisternas (0175): registrarla, validarla contra la guía y anularla (el
+  // control cruzado -- uno registra, otro valida), y repartir el excedente cuando no cabe en el
+  // tanque (solo si el tanque tiene marcada la casilla "dejar decidir"; no nace para el grifero: el
+  // Admin decide quién). Antes eran `tanques:registrar_recepcion`, `tanques:gestion_recepciones` y
+  // `tanques:decidir_excedente`; la migración copia lo que se había marcado a mano.
+  ...[
+    ["registrar_recepcion", "Registrar recepción"],
+    ["gestion_recepciones", "Validar recepciones"],
+    ["decidir_excedente", "Decidir excedente de recepción"],
+  ].map(([id, nombre]) => ({
+    modulo: "combustible",
+    pestana: `cisternas:${id}`,
+    nombre,
+    nivel: "pestana" as const,
+    padre: "cisternas",
+  })),
   // Registrar la compra de una cisterna, habilitarla a la cancha y anularla: lo hace la encargada.
   // Nace solo para el admin; el operador no la trae por defecto (ver defaultsDeRol) y se le da
   // persona por persona.
@@ -351,7 +358,7 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
   // motivo obligatorio y dejando alerta (nota de la fila 21 de la matriz).
   const grifero = [
     "tanques",
-    "tanques:registrar_recepcion",
+    "cisternas:registrar_recepcion",
     "tanques:registrar_despacho",
     "tanques:acciones:registrar_lectura_varilla",
     "tanques:acciones:anular_lectura_varilla",

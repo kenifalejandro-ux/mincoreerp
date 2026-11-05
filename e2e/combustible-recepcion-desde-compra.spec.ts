@@ -144,7 +144,13 @@ test("Los botones de recepción viven en Cisternas y salieron de Tanques", async
   await page.getByRole("button", { name: "Cisternas", exact: true }).click();
   await expect(page.getByRole("button", { name: "Registrar compra", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Recepción sin compra registrada" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Validar recepciones" })).toBeVisible();
+  // "Validar recepciones" ya no existe: queda el historial de recepciones, con su anulación.
+  await expect(page.getByRole("button", { name: "Validar recepciones" })).toHaveCount(0);
+  await expect(
+    page
+      .getByRole("group", { name: "Vista de cisternas" })
+      .getByRole("button", { name: /^Recepciones/ })
+  ).toBeVisible();
 });
 
 test("Repartir: la serie, el número de vale y el medidor quedan en una sola fila", async ({
