@@ -48,6 +48,8 @@ const ALTO_POR_DEFECTO = 560;
  *  localStorage a mano. */
 const MARGEN_VISIBLE = 140;
 const ALTO_BARRA = 56;
+/** Aire que queda debajo del panel cuando se lo acomoda a una pantalla baja. */
+const MARGEN_ABAJO = 12;
 
 const X_INICIAL = 96;
 const MARGEN_AL_MENU = 24;
@@ -114,8 +116,11 @@ function limitarPosicion(x: number, y: number, ancho: number) {
  *  de achicar la ventana del navegador. */
 function acomodarAPantalla(geometria: GeometriaPanel): GeometriaPanel {
   const ancho = limitar(geometria.ancho, ANCHO_MIN, window.innerWidth - 24);
-  const alto = limitar(geometria.alto, ALTO_MIN, window.innerHeight - 24);
-  return { ...limitarPosicion(geometria.x, geometria.y, ancho), ancho, alto };
+  const posicion = limitarPosicion(geometria.x, geometria.y, ancho);
+  // El alto descuenta dónde empieza: sin restar `y`, en una laptop baja el borde de abajo (y el
+  // botón Guardar) quedaba fuera de la pantalla.
+  const alto = limitar(geometria.alto, ALTO_MIN, window.innerHeight - posicion.y - MARGEN_ABAJO);
+  return { ...posicion, ancho, alto };
 }
 
 /** Copia los estilos de esta página al documento de la ventana desprendida,
