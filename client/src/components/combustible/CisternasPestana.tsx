@@ -11,7 +11,14 @@ import CisternaCapsula from "./CisternaCapsula";
 import type { CisternaConSaldo, CisternaDeLista } from "./cisternasTipos";
 import ComprasCisterna from "./ComprasCisterna";
 import type { CompraDeCisterna } from "./comprasCisternaTipos";
-import { renglonesDelDesglose, textoDelMovimiento, totalEntregado } from "./desgloseCisterna";
+import {
+  detalleDelMovimiento,
+  diferenciaConElDocumento,
+  lineasDeOrigen,
+  renglonesDelDesglose,
+  textoDelMovimiento,
+  totalEntregado,
+} from "./desgloseCisterna";
 import { filtrarHistorial, proveedoresDe, type FiltroEstado } from "./historialCisternas";
 import {
   diasConSaldo,
@@ -45,6 +52,8 @@ function TarjetaCisterna({
   const dias = diasConSaldo(c.recibido_en);
   const plazo = estadoDelPlazo(dias, c.plazo_dias);
   const desglose = renglonesDelDesglose(c);
+  const origen = lineasDeOrigen(c);
+  const diferencia = diferenciaConElDocumento(c);
   const movimientos = c.movimientos ?? [];
   return (
     <article className="bg-[#192526] border border-[#2a2e37] rounded-lg p-4 sm:p-6 shadow-lg flex flex-col gap-4">
@@ -92,6 +101,21 @@ function TarjetaCisterna({
           )}
         </div>
         <div className="flex flex-col gap-5">
+          {origen.length > 0 && (
+            <section aria-label="Origen de la cisterna">
+              <h3 className="text-[10px] text-[#94a3b8] font-bold uppercase mb-2">
+                De dónde viene
+              </h3>
+              <dl className="space-y-1 text-xs text-[#e2e8f0]">
+                {origen.map((l) => (
+                  <div key={l.etiqueta} className="flex justify-between gap-3">
+                    <dt className="text-[#94a3b8]">{l.etiqueta}</dt>
+                    <dd className="text-right">{l.valor}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          )}
           {desglose.length > 0 && (
             <section aria-label="Adónde fue lo que llegó">
               <h3 className="text-[10px] text-[#94a3b8] font-bold uppercase mb-2">
@@ -112,6 +136,14 @@ function TarjetaCisterna({
                   </li>
                 ))}
               </ul>
+              {diferencia && (
+                <p
+                  className={`mt-2 text-xs ${diferencia.fuera ? "text-red-400 font-semibold" : "text-[#94a3b8]"}`}
+                >
+                  {diferencia.texto}
+                  {diferencia.fuera ? " · pasa la tolerancia" : ""}
+                </p>
+              )}
             </section>
           )}
           <section aria-label="Movimientos de esta cisterna">
@@ -136,6 +168,7 @@ function TarjetaCisterna({
                         {textoDelMovimiento(m)}
                         <span className="block text-[10px] text-[#64748b]">
                           {new Date(m.fecha).toLocaleDateString("es-PE")}
+                          {detalleDelMovimiento(m) ? ` · ${detalleDelMovimiento(m)}` : ""}
                         </span>
                       </td>
                       <td

@@ -216,9 +216,9 @@ export default function RegistrarCompraCisterna({
               />
             </div>
           </div>
-          <div className="grid grid-cols-12 gap-2">
-            <div className="col-span-12 sm:col-span-4 space-y-1">
-              <label htmlFor="compra-emision" className={ETIQUETA}>
+          <div className="grid grid-cols-12 gap-2 items-end">
+            <div className="col-span-12 sm:col-span-3 space-y-1">
+              <label htmlFor="compra-emision" className={`${ETIQUETA} block whitespace-nowrap`}>
                 Fecha de emisión
               </label>
               <input
@@ -229,9 +229,9 @@ export default function RegistrarCompraCisterna({
                 onChange={(e) => cambiar("fecha_compra", e.target.value)}
               />
             </div>
-            <div className="col-span-12 sm:col-span-4 space-y-1">
-              <label htmlFor="compra-llegada" className={ETIQUETA}>
-                Llegada a planta (estimada)
+            <div className="col-span-12 sm:col-span-3 space-y-1">
+              <label htmlFor="compra-llegada" className={`${ETIQUETA} block whitespace-nowrap`}>
+                Llegada a planta
               </label>
               <input
                 id="compra-llegada"
@@ -241,8 +241,8 @@ export default function RegistrarCompraCisterna({
                 onChange={(e) => cambiar("llegada_estimada", e.target.value)}
               />
             </div>
-            <div className="col-span-8 sm:col-span-3 space-y-1">
-              <label htmlFor="compra-cantidad" className={ETIQUETA}>
+            <div className="col-span-8 sm:col-span-4 space-y-1">
+              <label htmlFor="compra-cantidad" className={`${ETIQUETA} block whitespace-nowrap`}>
                 Cantidad
               </label>
               <input
@@ -255,9 +255,9 @@ export default function RegistrarCompraCisterna({
                 onChange={(e) => cambiar("cantidad_facturada", e.target.value)}
               />
             </div>
-            <div className="col-span-4 sm:col-span-1 space-y-1">
-              <label htmlFor="compra-unidad" className={ETIQUETA}>
-                Un.
+            <div className="col-span-4 sm:col-span-2 space-y-1">
+              <label htmlFor="compra-unidad" className={`${ETIQUETA} block whitespace-nowrap`}>
+                Unidad
               </label>
               <select
                 id="compra-unidad"
@@ -271,8 +271,8 @@ export default function RegistrarCompraCisterna({
             </div>
           </div>
           <p className="text-xs text-slate-500">
-            La llegada a planta no es la fecha de salida del proveedor que trae la guía: es cuándo
-            esperas la cisterna. Ese día la cancha ya la ve para descargarla.
+            La llegada a planta es la fecha estimada en que esperas la cisterna (no la de salida del
+            proveedor que trae la guía). Ese día la cancha ya la ve para descargarla.
           </p>
           <div className="grid grid-cols-12 gap-2">
             <div className="col-span-12 sm:col-span-6 space-y-1">
