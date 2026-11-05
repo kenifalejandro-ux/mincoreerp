@@ -19,8 +19,9 @@ test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente 
   page,
 }) => {
   // Recorre cuatro pantallas (nuevo tanque, recepción, despacho, tanquetas):
-  // los 30 s por defecto no alcanzan cuando corre en paralelo con otra spec.
-  test.setTimeout(90_000);
+  // los 30 s por defecto no alcanzan cuando corre en paralelo con otra spec. Sola tarda unos 45 s;
+  // con otras cuatro de combustible al lado llegó a 110 s.
+  test.setTimeout(180_000);
   const marca = randomBytes(3).toString("hex").toUpperCase();
   const admin = adminA();
   await loginPorUI(page, admin.email, admin.password);
@@ -89,7 +90,8 @@ test("nuevo tanque: sin tolerancia, capacidad 10000 por defecto, y el excedente 
 
   // ── La recepción que no cabe: tanque lleno, llegan 600 ─────────────────
   await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
-  await page.getByRole("button", { name: "Registrar recepción" }).first().click();
+  await page.getByRole("button", { name: "Cisternas", exact: true }).click();
+  await page.getByRole("button", { name: "Recepción sin compra registrada" }).click();
   await page.locator("#recepcion-tanque").selectOption(String(tanqueId));
   await page.locator("#recepcion-grifo").selectOption({ label: `CISTERNA ${marca}` });
   await page.locator("#recepcion-cantidad").fill("600");

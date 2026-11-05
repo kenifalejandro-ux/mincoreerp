@@ -287,8 +287,8 @@ export default function RepartirCisterna({
             </div>
           </div>
           {form.destino === "equipo" ? (
-            <div className="grid grid-cols-12 gap-2">
-              <div className="col-span-12 sm:col-span-6 space-y-1">
+            <div className="grid grid-cols-12 gap-2 items-end">
+              <div className="col-span-12 space-y-1">
                 <label htmlFor="cis-unidad" className={etiqueta}>
                   Unidad
                 </label>
@@ -306,20 +306,24 @@ export default function RepartirCisterna({
                   ))}
                 </select>
               </div>
-              <div className="col-span-6 sm:col-span-3 space-y-1">
-                <label htmlFor="cis-serie" className={etiqueta}>
-                  Serie del talonario
+              {/* El vale va en una sola fila, con etiquetas cortas que no se parten: antes la serie
+                  ("Serie del talonario") ocupaba dos líneas y su campo quedaba más abajo que el del
+                  número de vale. */}
+              <div className="col-span-4 space-y-1">
+                <label htmlFor="cis-serie" className={`${etiqueta} block whitespace-nowrap`}>
+                  Serie
                 </label>
                 <input
                   id="cis-serie"
                   maxLength={20}
+                  placeholder="CLS"
                   className={campo}
                   value={form.serie_talonario}
                   onChange={(e) => cambiar({ serie_talonario: e.target.value })}
                 />
               </div>
-              <div className="col-span-6 sm:col-span-3 space-y-1">
-                <label htmlFor="cis-vale" className={etiqueta}>
+              <div className="col-span-4 space-y-1">
+                <label htmlFor="cis-vale" className={`${etiqueta} block whitespace-nowrap`}>
                   N° de vale
                 </label>
                 <input
@@ -332,26 +336,27 @@ export default function RepartirCisterna({
                   onChange={(e) => cambiar({ n_vale: e.target.value })}
                 />
               </div>
-              {equipos.find((e) => String(e.id) === form.equipo_id)?.tipo_medidor && (
-                <div className="col-span-12 space-y-1">
-                  <label htmlFor="cis-medidor" className={etiqueta}>
-                    {equipos.find((e) => String(e.id) === form.equipo_id)?.tipo_medidor ===
-                    "horometro"
-                      ? "Horómetro"
-                      : "Odómetro"}{" "}
-                    de la unidad
-                  </label>
-                  <input
-                    id="cis-medidor"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    className={campo}
-                    value={form.medidor}
-                    onChange={(e) => cambiar({ medidor: e.target.value })}
-                  />
-                </div>
-              )}
+              <div className="col-span-4 space-y-1">
+                {equipos.find((e) => String(e.id) === form.equipo_id)?.tipo_medidor ? (
+                  <>
+                    <label htmlFor="cis-medidor" className={`${etiqueta} block whitespace-nowrap`}>
+                      {equipos.find((e) => String(e.id) === form.equipo_id)?.tipo_medidor ===
+                      "horometro"
+                        ? "Horómetro"
+                        : "Odómetro"}
+                    </label>
+                    <input
+                      id="cis-medidor"
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      className={campo}
+                      value={form.medidor}
+                      onChange={(e) => cambiar({ medidor: e.target.value })}
+                    />
+                  </>
+                ) : null}
+              </div>
             </div>
           ) : form.destino === "tanque" ? (
             <div className="space-y-1">
