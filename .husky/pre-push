@@ -4,6 +4,9 @@
 # inestables las hace el CI en el PR). El resto de los e2e también los corre el
 # CI. Omitir es decisión consciente: SKIP_VERIFICAR=1 git push
 # (o SKIP_E2E=1 si no hay Docker).
+# Si ese mismo contenido (y base) ya pasó `npm run verificar` en verde, no se
+# repite: dice "ya verificado" y sale. Cambió una línea -> corre completo.
+# Forzarlo: npm run verificar -- --forzar
 npm run verificar || {
   echo ""
   echo "Push bloqueado: arreglá lo marcado con 'ERROR EN' y volvé a intentar."
