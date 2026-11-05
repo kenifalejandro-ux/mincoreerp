@@ -6745,6 +6745,19 @@ export class CombustibleController {
     }
   }
 
+  /** GET /precios/ultimo-grifero -- el último precio puesto por el grifero, por tanque. */
+  async ultimoPrecioGrifero(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const filas = await withTenant(tenantId, (client) =>
+        service.ultimoPrecioGrifero(client, tenantId)
+      );
+      res.json(filas);
+    } catch {
+      res.status(500).json({ error: "Error al leer el último precio del grifero" });
+    }
+  }
+
   /** POST /precios/masivo -- el mismo precio a varios tanques o proveedores
    *  de ruta, todo o nada. Una entrada de bitácora por precio creado, con la
    *  misma acción que el alta individual, para que la bitácora no distinga

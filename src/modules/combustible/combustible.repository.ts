@@ -6570,6 +6570,24 @@ export class CombustibleRepository {
     return result.rows;
   }
 
+  /** El precio del último vale no anulado de cada tanque propio: lo que el
+   *  grifero puso. Precios lo muestra al lado del vigente, sin reemplazarlo. */
+  async findUltimoPrecioGrifero(client: PoolClient, tenantId: string) {
+    const r = await client.query(
+      `SELECT DISTINCT ON (d.combustible_id)
+              d.combustible_id, d.costo_unitario AS precio_unitario, d.despachado_en
+         FROM combustible_despachos d
+        WHERE d.tenant_id = $1
+          AND d.origen = 'tanque_propio'
+          AND d.producto = 'combustible'
+          AND d.combustible_id IS NOT NULL
+          AND d.anulada_en IS NULL
+        ORDER BY d.combustible_id, d.despachado_en DESC, d.id DESC`,
+      [tenantId]
+    );
+    return r.rows;
+  }
+
   async findPrecioPorId(client: PoolClient, tenantId: string, id: number) {
     const result = await client.query(
       `SELECT id, combustible_id, grifo_id, anulada_en

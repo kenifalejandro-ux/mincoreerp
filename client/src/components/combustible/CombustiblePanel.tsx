@@ -3983,9 +3983,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           Nivel
                         </th>
                         <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#64748b] uppercase tracking-widest">
-                          Costo prom.
-                        </th>
-                        <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#64748b] uppercase tracking-widest">
                           Estado
                         </th>
                         <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#64748b] uppercase tracking-widest text-right">
@@ -4059,22 +4056,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                                     Última lectura: {formatearFecha(t.fecha_actualizacion!)}
                                   </p>
                                 </>
-                              )}
-                            </td>
-                            {/* Fase C (0064) -- solo lectura: lo escribe el motor de
-                        recepciones. 0 significa "todavía no se registró
-                        ninguna compra", no "sale gratis": decirlo con
-                        palabras evita que se lea como un precio real. */}
-                            <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
-                              {Number(t.costo_promedio) === 0 ? (
-                                <span className="inline-block rounded-full border border-[#334155] bg-[#0D1719] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-[#94a3b8]">
-                                  Sin recepciones
-                                </span>
-                              ) : (
-                                <span className="font-mono font-medium text-[#cbd5e1]">
-                                  {t.moneda} {Number(t.costo_promedio).toFixed(4)}
-                                  <span className="text-slate-400 font-normal"> / {t.unidad}</span>
-                                </span>
                               )}
                             </td>
                             <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">

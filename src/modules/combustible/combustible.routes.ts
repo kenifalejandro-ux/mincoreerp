@@ -689,6 +689,11 @@ router.get(
   asyncHandler(controller.getPrecioVigenteParaFormulario.bind(controller))
 );
 router.get(
+  "/precios/ultimo-grifero",
+  requirePestana("combustible", "tanques:precios"),
+  asyncHandler(controller.ultimoPrecioGrifero.bind(controller))
+);
+router.get(
   "/precios/vigente",
   requirePestana("combustible", "tanques:precios"),
   asyncHandler(controller.getPrecioVigente.bind(controller))
