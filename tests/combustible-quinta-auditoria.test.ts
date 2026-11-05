@@ -748,7 +748,7 @@ describe("combustible: los diez huecos de la 5ª auditoría", () => {
     expect((await admin.delete(`/api/erp/iperc/lineas-base/${borrador.body.id}`)).status).toBe(200);
   });
 
-  it("el costo del vale del tanque propio lo pone el servidor, no el body", async () => {
+  it("el costo del vale del tanque propio es el que puso el grifero, no el promedio del tanque", async () => {
     const tq = await tanque({
       umbral_descuadre_pct: null,
       umbral_descuadre_ciclo_pct: null,
@@ -761,9 +761,10 @@ describe("combustible: los diez huecos de la 5ª auditoría", () => {
     const despacho = await vale(operador, tq.id, {
       cantidad: 100,
       lectura_contometro: 100,
-      costo_unitario: 0.01,
+      costo_unitario: 27.5,
     });
     expect(despacho.status).toBe(201);
-    expect(Number(despacho.body.costo_unitario)).toBeCloseTo(16.8, 2);
+    // Se guarda lo que escribió el grifero; no lo pisa el promedio ni el catálogo.
+    expect(Number(despacho.body.costo_unitario)).toBeCloseTo(27.5, 2);
   });
 });
