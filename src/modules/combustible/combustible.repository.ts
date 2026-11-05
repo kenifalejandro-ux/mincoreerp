@@ -174,6 +174,10 @@ export const TIPOS_ALERTA = [
   "viaje_detenido",
   // ── Migración 0170: la cisterna del proveedor sigue con saldo pasado el plazo.
   "cisterna_con_saldo",
+  // ── Migración 0173: lo descargado difiere del documento de la compra más que la tolerancia, y
+  // una descarga que se hizo sin compra registrada (se resuelve al vincularla).
+  "compra_diferencia",
+  "recepcion_sin_compra",
 ] as const;
 
 export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];
@@ -200,6 +204,8 @@ export const TIPOS_ESTADO = [
   "viaje_detenido",
   // 0170: se resuelve sola cuando la cisterna se vacía o se anula su recepción.
   "cisterna_con_saldo",
+  // 0173: se resuelve sola cuando se vincula la compra a la recepción.
+  "recepcion_sin_compra",
 ] as const satisfies readonly TipoAlertaCombustible[];
 
 /** Todo lo que no es estado es un HALLAZGO: si nadie lo explica dentro de la
@@ -6881,6 +6887,8 @@ export class CombustibleRepository {
        *  fila y no se consulta después: apagar la política mañana no puede
        *  borrar las validaciones que hoy se deben. */
       requiereValidacion: boolean;
+      /** La compra de cisterna a la que se vincula (0173); null si no hay. */
+      compraId?: number | null;
     }
   ) {
     try {
@@ -6890,9 +6898,9 @@ export class CombustibleRepository {
           tenant_id, producto, combustible_id, grifo_id, cantidad,
           presentacion, factor_litros, cantidad_bultos, costo_unitario,
           tipo_documento, numero_documento, recibido_en, usuario_id, requiere_validacion,
-          cantidad_derivada
+          cantidad_derivada, compra_id
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
         RETURNING ${CombustibleRepository.COLUMNAS_RECEPCION}
         `,
         [
@@ -6911,6 +6919,7 @@ export class CombustibleRepository {
           usuarioId,
           data.requiereValidacion,
           data.cantidadDerivada,
+          data.compraId ?? null,
         ]
       );
       return result.rows[0];

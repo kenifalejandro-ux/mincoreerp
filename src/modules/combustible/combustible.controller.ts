@@ -66,6 +66,8 @@ import type {
   CisternasListadoQuery,
   CrearCompraCisternaInput,
   AnularCompraCisternaInput,
+  VincularCompraCisternaInput,
+  ToleranciaCompraCisternaInput,
   CrearGrifoCombustibleInput,
   ActualizarGrifoCombustibleInput,
   CrearPreciosCombustibleMasivoInput,
@@ -5767,6 +5769,61 @@ export class CombustibleController {
     res.json(fila);
   }
 
+  /** PATCH /compras-cisterna/:compraId/vincular: la compra se vincula a una recepción que se hizo
+   *  antes (la cancha descargó sin que la compra estuviera registrada). */
+  async vincularCompraCisterna(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.compraId);
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ error: "El identificador de la compra no es válido" });
+      return;
+    }
+    const { recepcion_id } = req.validatedBody as VincularCompraCisternaInput;
+    const fila = await withTenant(tenantId, (client) =>
+      compras.vincularCompra(client, tenantId, id, recepcion_id, alcanceDe(req))
+    );
+    await registrarAuditoria({
+      accion: "combustible.compra_cisterna_vincular",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { compraId: id, recepcionId: recepcion_id },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.compra_cisterna_actualizada", {});
+    res.json(fila);
+  }
+
+  /** GET /compras-cisterna/tolerancia: los galones de diferencia que se aceptan entre el documento
+   *  y lo descargado. */
+  async obtenerToleranciaCompras(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    res.json({
+      tolerancia_galones: await withTenant(tenantId, (client) =>
+        compras.obtenerTolerancia(client, tenantId)
+      ),
+    });
+  }
+
+  /** PUT /compras-cisterna/tolerancia: la administradora fija la tolerancia (la evaporación del
+   *  viaje todavía no está medida). Subirla afloja el control: queda en la auditoría con el valor
+   *  anterior. */
+  async fijarToleranciaCompras(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const { tolerancia_galones } = req.validatedBody as ToleranciaCompraCisternaInput;
+    const { antes, ahora } = await withTenant(tenantId, async (client) => ({
+      antes: await compras.obtenerTolerancia(client, tenantId),
+      ahora: await compras.fijarTolerancia(client, tenantId, req.usuario!.id, tolerancia_galones),
+    }));
+    await registrarAuditoria({
+      accion: "combustible.compra_cisterna_tolerancia",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { antes, ahora },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    res.json({ tolerancia_galones: ahora });
+  }
+
   /** null si no existe o si su grifo está fuera del alcance del usuario. */
   private async tanquetaVisible(req: Request, id: number) {
     const tenantId = getTenantId(req);
@@ -6895,7 +6952,13 @@ export class CombustibleController {
         return;
       }
       const { fila, creado, excedenteAceptado } = await withTenant(tenantId, (client) =>
-        service.crearRecepcion(client, tenantId, req.usuario!.id, data, alcanceDe(req))
+        service.crearRecepcion(client, tenantId, req.usuario!.id, data, alcanceDe(req), {
+          gestionaCompras: pestanaPermitida(
+            { rol: req.usuario!.rol, permisosPestanas: req.usuario!.permisosPestanas },
+            "combustible",
+            "cisternas:registrar_compra"
+          ),
+        })
       );
 
       // Reintento de un envío ya guardado (doble clic sobre el mismo
@@ -6915,6 +6978,7 @@ export class CombustibleController {
           combustibleId: data.combustible_id,
           cantidad: data.cantidad,
           costoUnitario: data.costo_unitario,
+          compraId: data.compra_id ?? null,
           // Quién decidió a dónde fue el excedente, y qué eligió (0110).
           repartoExcedente: data.reparto_excedente ?? null,
         },

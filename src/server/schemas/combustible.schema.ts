@@ -1772,6 +1772,9 @@ export const crearRecepcionCombustibleSchema = z
     // proveedor "aparte" que el cliente confirmó (pregunta 9), marcado con
     // `abastece_urea`.
     grifo_id: z.number().int().positive(),
+    // La compra de cisterna a la que corresponde esta descarga (0173). Opcional: sin ella la
+    // recepción es la de siempre. Solo combustible.
+    compra_id: z.number().int().positive().optional(),
 
     // Litros, para combustible. Para urea el servidor lo calcula (ver
     // presentacion/cantidad_bultos abajo), así que queda opcional acá.
@@ -1913,6 +1916,13 @@ export const crearRecepcionCombustibleSchema = z
     }
 
     if (data.producto === "urea") {
+      if (data.compra_id !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["compra_id"],
+          message: "compra_id no aplica a una recepción de urea",
+        });
+      }
       if (data.combustible_id !== undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -2786,3 +2796,16 @@ export const anularCompraCisternaSchema = z.object({
 });
 
 export type AnularCompraCisternaInput = z.infer<typeof anularCompraCisternaSchema>;
+
+export const vincularCompraCisternaSchema = z.object({
+  recepcion_id: z.number().int().positive(),
+});
+
+export type VincularCompraCisternaInput = z.infer<typeof vincularCompraCisternaSchema>;
+
+export const toleranciaCompraCisternaSchema = z.object({
+  /** Galones que se aceptan de diferencia entre el documento y lo descargado (la evaporación). */
+  tolerancia_galones: z.number().min(0).max(1000),
+});
+
+export type ToleranciaCompraCisternaInput = z.infer<typeof toleranciaCompraCisternaSchema>;
