@@ -16,6 +16,8 @@ import {
   trasladarCisternaSchema,
   crearCompraCisternaSchema,
   anularCompraCisternaSchema,
+  vincularCompraCisternaSchema,
+  toleranciaCompraCisternaSchema,
   cisternasListadoQuerySchema,
   crearCompraRutaSchema,
   crearGrifoCombustibleSchema,
@@ -430,6 +432,20 @@ router.get(
   requirePestana("combustible", "cisternas"),
   asyncHandler(controller.listarComprasCisterna.bind(controller))
 );
+// Los literales ANTES de /:compraId (aquí solo hay PATCH con segmento, pero se deja el orden claro).
+router.get(
+  "/compras-cisterna/tolerancia",
+  requirePestana("combustible", "cisternas:registrar_compra"),
+  requireRole("admin", "operador"),
+  asyncHandler(controller.obtenerToleranciaCompras.bind(controller))
+);
+router.put(
+  "/compras-cisterna/tolerancia",
+  requirePestana("combustible", "cisternas:registrar_compra"),
+  requireRole("admin"),
+  validate(toleranciaCompraCisternaSchema),
+  asyncHandler(controller.fijarToleranciaCompras.bind(controller))
+);
 router.post(
   "/compras-cisterna",
   requirePestana("combustible", "cisternas:registrar_compra"),
@@ -442,6 +458,13 @@ router.patch(
   requirePestana("combustible", "cisternas:registrar_compra"),
   requireRole("admin", "operador"),
   asyncHandler(controller.habilitarCompraCisterna.bind(controller))
+);
+router.patch(
+  "/compras-cisterna/:compraId/vincular",
+  requirePestana("combustible", "cisternas:registrar_compra"),
+  requireRole("admin", "operador"),
+  validate(vincularCompraCisternaSchema),
+  asyncHandler(controller.vincularCompraCisterna.bind(controller))
 );
 router.patch(
   "/compras-cisterna/:compraId/anular",

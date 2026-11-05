@@ -104,6 +104,8 @@ export const CATALOGO_ALERTAS: Record<
   // Una cisterna que sigue con saldo pasado el plazo (0170): solo campanita y Bandeja,
   // sin correo -- es algo que quedó sin repartir, no un robo en curso.
   cisterna_con_saldo: { canal: "solo_erp", nombre: "Cisterna con saldo sin repartir" },
+  compra_diferencia: { canal: "solo_erp", nombre: "Lo descargado no cuadra con la compra" },
+  recepcion_sin_compra: { canal: "solo_erp", nombre: "Descarga sin compra registrada" },
   // ── Un viaje en curso: no llegó a la hora estimada, o está detenido ──────
   // Las dos son URGENTES en la campanita y la Bandeja pero NO mandan correo: el correo tiene un tope
   // (plan gratis de Brevo) y con muchas unidades se agotaría en días. La campanita se entera al

@@ -2,6 +2,12 @@
 
 import type { PoolClient } from "pg";
 
+import {
+  avisarDescargaSinCompra,
+  avisarDiferencia,
+  cargarCompraParaRecepcion,
+  motivoCompraNoCoincide,
+} from "./comprasCisterna.service";
 import * as tanquetas from "./tanquetas.service";
 import * as viajes from "./viajes.service";
 import type { Paginacion } from "../../server/shared/utils/pagination";
@@ -8040,8 +8046,11 @@ export class CombustibleService {
     client: PoolClient,
     tenantId: string,
     usuarioId: string,
-    data: CrearRecepcionCombustibleInput,
-    alcance?: AlcanceCombustible
+    datosEntrada: CrearRecepcionCombustibleInput,
+    alcance?: AlcanceCombustible,
+    /** `gestionaCompras`: quien registra compras (la encargada) puede recibir una compra aún no
+     *  habilitada; la cancha solo las que ya están por llegar. */
+    opciones: { gestionaCompras?: boolean } = {}
   ) {
     // Capturada por el closure de `insertar` de más abajo. Vive FUERA de
     // idempotentInsert porque su tipo genérico solo transporta la fila de
@@ -8053,17 +8062,31 @@ export class CombustibleService {
       client,
       tenantId,
       modulo: "combustible",
-      clienteUuid: data.cliente_uuid,
+      clienteUuid: datosEntrada.cliente_uuid,
       huella: huellaDeRegistro("recepcion", {
-        producto: data.producto,
-        combustible_id: data.combustible_id,
-        grifo_id: data.grifo_id,
-        cantidad: data.cantidad,
-        lineas: data.lineas,
-        tipo_documento: data.tipo_documento,
-        numero_documento: data.numero_documento,
+        producto: datosEntrada.producto,
+        combustible_id: datosEntrada.combustible_id,
+        grifo_id: datosEntrada.grifo_id,
+        cantidad: datosEntrada.cantidad,
+        lineas: datosEntrada.lineas,
+        tipo_documento: datosEntrada.tipo_documento,
+        numero_documento: datosEntrada.numero_documento,
+        compra_id: datosEntrada.compra_id,
       }),
       insertar: async () => {
+        // La compra elegida (0173): del mismo combustible, grifo y proveedor, y todavía sin recibir.
+        // Aporta el documento si no se escribió, así no se vuelve a tipear.
+        const {
+          datos: data,
+          compra,
+          unidadDelTanque,
+        } = await this.aplicarCompraARecepcion(
+          client,
+          tenantId,
+          datosEntrada,
+          alcance,
+          opciones.gestionaCompras ?? false
+        );
         const recibidoEn = data.recibido_en ?? new Date().toISOString();
         const esUrea = data.producto === "urea";
         // La recepción es del grifo entero (0100); la de urea, de la empresa.
@@ -8151,6 +8174,7 @@ export class CombustibleService {
           numeroDocumento: data.numero_documento ?? null,
           recibidoEn,
           requiereValidacion: politica.requiere,
+          compraId: compra ? Number(compra.id) : null,
         });
 
         // El costo promedio PONDERADO es un concepto del TANQUE (Fase C): la
@@ -8204,6 +8228,21 @@ export class CombustibleService {
             });
           }
         }
+        // Lo descargado contra lo que dice el documento de la compra, o la anotación de que se
+        // descargó sin compra registrada (0173).
+        if (!esUrea) {
+          if (compra) {
+            await avisarDiferencia(client, tenantId, {
+              compra,
+              recepcionId: Number(fila.id),
+              combustibleId: data.combustible_id!,
+              descargado: cantidadEntregada,
+              unidadDelTanque: unidadDelTanque!,
+            });
+          } else {
+            await avisarDescargaSinCompra(client, tenantId, Number(fila.id), data.combustible_id!);
+          }
+        }
         return {
           id: Number(fila.id),
           fila: await this.conRenglonesUrea(client, tenantId, "recepcion", fila),
@@ -8218,6 +8257,53 @@ export class CombustibleService {
         ),
     });
     return { ...resultado, excedenteAceptado };
+  }
+
+  /** Si la recepción trae una compra (0173), la carga y la contrasta con el tanque. Devuelve los
+   *  datos con el documento de la compra cuando no se escribió uno. Sin compra, no toca nada. */
+  private async aplicarCompraARecepcion(
+    client: PoolClient,
+    tenantId: string,
+    datos: CrearRecepcionCombustibleInput,
+    alcance: AlcanceCombustible | undefined,
+    gestiona: boolean
+  ) {
+    if (datos.compra_id === undefined) {
+      return { datos, compra: null, unidadDelTanque: null };
+    }
+    if (datos.producto === "urea") {
+      throw new AppError(400, "compra_id no aplica a una recepción de urea");
+    }
+    const compra = await cargarCompraParaRecepcion(
+      client,
+      tenantId,
+      datos.compra_id,
+      alcance,
+      gestiona
+    );
+    const tanque = await client.query<{
+      tipo_combustible: string;
+      grifo_interno_id: number;
+      unidad: string;
+    }>(
+      `SELECT tipo_combustible, grifo_interno_id, unidad FROM combustible
+        WHERE id = $1 AND tenant_id = $2`,
+      [datos.combustible_id, tenantId]
+    );
+    if (!tanque.rows[0]) {
+      throw new AppError(400, `combustible_id ${datos.combustible_id} no existe en este tenant`);
+    }
+    const motivo = motivoCompraNoCoincide(compra, tanque.rows[0], datos.grifo_id);
+    if (motivo) throw new AppError(400, motivo);
+    return {
+      datos: {
+        ...datos,
+        tipo_documento: datos.tipo_documento ?? compra.tipo_documento,
+        numero_documento: datos.numero_documento ?? compra.numero_documento,
+      },
+      compra,
+      unidadDelTanque: tanque.rows[0].unidad,
+    };
   }
 
   /** Las tres reglas que dependen de otra fila, así que Zod (que solo ve el
