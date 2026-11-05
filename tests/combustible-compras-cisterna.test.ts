@@ -28,7 +28,12 @@ interface Compra {
   motivo_anulacion: string | null;
 }
 
-const enDias = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+// La fecha en hora de Lima, como la calcula el servidor: en UTC, pasadas las 19:00 de Lima
+// ya es "mañana" y el estado por_llegar de las compras de hoy no coincidía.
+const enDias = (n: number) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(
+    new Date(Date.now() + n * 86_400_000)
+  );
 
 describe("combustible: compras de cisterna", () => {
   let tenantId: string;

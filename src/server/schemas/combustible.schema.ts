@@ -488,6 +488,10 @@ export const crearDespachoCombustibleSchema = z
     lectura_horometro: z.number().nonnegative().optional(),
     lectura_odometro: z.number().nonnegative().optional(),
     horas_abastecidas: z.number().nonnegative().optional(),
+    // Solo lo pone el servicio de la compra en ruta cuando la registra un
+    // administrador (0172): el medidor y las horas dejan de ser obligatorios.
+    // El endpoint público de despacho lo rechaza.
+    medidor_omitido: z.literal(true).optional(),
 
     // Solo compra_externa de combustible (0158): la unidad que dice la boleta.
     // Sin ella son galones, que es lo que pedía el formulario antes.
@@ -1136,7 +1140,7 @@ export const crearDespachoCombustibleSchema = z
           message: "surtidor_id no aplica a 'compra_externa' (no hay surtidor propio)",
         });
       }
-      if (data.horas_abastecidas === undefined) {
+      if (data.horas_abastecidas === undefined && !data.medidor_omitido) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["horas_abastecidas"],
@@ -1145,7 +1149,7 @@ export const crearDespachoCombustibleSchema = z
       }
       const tieneHorometro = data.lectura_horometro !== undefined;
       const tieneOdometro = data.lectura_odometro !== undefined;
-      if (tieneHorometro === tieneOdometro) {
+      if (tieneHorometro === tieneOdometro && !(data.medidor_omitido && !tieneHorometro)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["lectura_horometro"],

@@ -430,6 +430,8 @@ function FormularioCompra({
   ]);
 
   const equipo = equipos.find((e) => String(e.id) === equipoId);
+  // Solo el administrador puede registrar la compra sin medidor ni horas.
+  const medidorOpcional = usuario?.rol === "admin";
   const midePorHorometro = equipo?.tipo_medidor === "horometro";
   const midePorOdometro = equipo?.tipo_medidor === "odometro";
 
@@ -571,10 +573,12 @@ function FormularioCompra({
     if (!(Number(costoUnitario) > 0)) faltantesPaso.combustible.push("el C.U. del combustible");
     if (equipo && !equipo.tipo_medidor) {
       faltantesPaso.medidor.push("el tipo de medidor de la unidad (se configura en Equipos)");
-    } else if ((midePorOdometro ? odometro : horometro) === "" && equipo) {
+    } else if (!medidorOpcional && (midePorOdometro ? odometro : horometro) === "" && equipo) {
       faltantesPaso.medidor.push("la lectura del medidor");
     }
-    if (horasMostradas === "") faltantesPaso.medidor.push("las horas abastecidas");
+    if (!medidorOpcional && horasMostradas === "") {
+      faltantesPaso.medidor.push("las horas abastecidas");
+    }
   }
   if (incluyeUrea) {
     if (activas.length === 0) faltantesPaso.urea.push("un envase de urea activo");
@@ -705,9 +709,10 @@ function FormularioCompra({
               cantidad: Number(galones),
               unidad,
               costo_unitario: Number(costoUnitario),
-              lectura_horometro: midePorHorometro ? Number(horometro) : undefined,
-              lectura_odometro: midePorOdometro ? Number(odometro) : undefined,
-              horas_abastecidas: Number(horasMostradas),
+              lectura_horometro:
+                midePorHorometro && horometro !== "" ? Number(horometro) : undefined,
+              lectura_odometro: midePorOdometro && odometro !== "" ? Number(odometro) : undefined,
+              horas_abastecidas: horasMostradas !== "" ? Number(horasMostradas) : undefined,
             }
           : undefined,
         urea: incluyeUrea

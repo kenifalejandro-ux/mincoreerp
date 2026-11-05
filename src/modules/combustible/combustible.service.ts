@@ -1394,8 +1394,17 @@ export class CombustibleService {
     tenantId: string,
     usuarioId: string,
     data: CrearCompraRutaInput,
-    alcance?: AlcanceCombustible
+    alcance?: AlcanceCombustible,
+    rol?: string
   ) {
+    // Solo el administrador puede registrar la compra sin medidor ni horas
+    // (0172): el conductor, que tiene el medidor delante, sigue obligado.
+    const medidorOmitido =
+      rol === "admin" &&
+      data.combustible !== undefined &&
+      (data.combustible.horas_abastecidas === undefined ||
+        (data.combustible.lectura_horometro === undefined &&
+          data.combustible.lectura_odometro === undefined));
     // Lo que entró en cada despacho, para que el controlador dispare sus
     // alertas. Queda vacío en un reintento: no se creó nada nuevo.
     const entradas: {
@@ -1458,12 +1467,25 @@ export class CombustibleService {
           despachado_en: despachadoEn,
           observaciones: data.observaciones,
         };
+        // La marca queda en la boleta: un registro sin lectura no debe pasar
+        // por uno completo.
+        const sinLectura =
+          medidorOmitido &&
+          data.combustible?.lectura_horometro === undefined &&
+          data.combustible?.lectura_odometro === undefined;
+        const observacionesCombustible = sinLectura
+          ? [data.observaciones, "Registrada por administración sin lectura del medidor"]
+              .filter(Boolean)
+              .join(" · ")
+              .slice(0, 500)
+          : data.observaciones;
 
         let despachoCombustible: FilaDespachoCreada | null = null;
         if (data.combustible) {
           const entrada = parsearEntradaDespacho("Combustible", {
             ...comunes,
             cliente_uuid: uuidDerivado(data.cliente_uuid, "combustible"),
+            observaciones: observacionesCombustible,
             producto: "combustible",
             tipo_combustible: data.combustible.tipo_combustible,
             cantidad: data.combustible.cantidad,
@@ -1472,6 +1494,7 @@ export class CombustibleService {
             lectura_horometro: data.combustible.lectura_horometro,
             lectura_odometro: data.combustible.lectura_odometro,
             horas_abastecidas: data.combustible.horas_abastecidas,
+            medidor_omitido: medidorOmitido ? true : undefined,
           });
           const r = await this.crearDespacho(client, tenantId, usuarioId, entrada, alcance);
           if (!r.creado || !r.fila) {
@@ -2618,6 +2641,13 @@ export class CombustibleService {
       throw new Error(
         `el equipo ${equipoId} no tiene tipo de medidor configurado -- asignale horómetro u odómetro en Equipos antes de registrar un despacho de compra externa`
       );
+    }
+    if (
+      data.medidor_omitido &&
+      data.lectura_horometro === undefined &&
+      data.lectura_odometro === undefined
+    ) {
+      return;
     }
     if (equipo.tipo_medidor === "horometro" && data.lectura_horometro === undefined) {
       throw new Error(`el equipo ${equipoId} se mide por horómetro, no por odómetro`);

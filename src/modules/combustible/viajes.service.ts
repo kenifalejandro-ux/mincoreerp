@@ -648,7 +648,9 @@ export async function iniciarViaje(
   id: number,
   data: MarcaInicio,
   /** Presente cuando marca el propio conductor: solo su viaje. */
-  dniConductor?: string
+  dniConductor?: string,
+  /** El administrador puede iniciar el viaje sin la lectura del medidor. */
+  medidorOpcional = false
 ) {
   const v = await viajeParaCambiar(client, tenantId, id);
   // Reintento de la cola: la marca ya entró, se devuelve como quedó. Primero que sea del viaje (un
@@ -666,7 +668,7 @@ export async function iniciarViaje(
     data.cliente_uuid
   );
   const previo = await medidorPrevio(client, tenantId, v.equipo_id, inicio);
-  if (previo.tipo_medidor && data.medidor_inicio == null) {
+  if (previo.tipo_medidor && data.medidor_inicio == null && !medidorOpcional) {
     throw new AppError(
       400,
       `Falta el ${previo.tipo_medidor === "horometro" ? "horómetro" : "odómetro"} de salida`
