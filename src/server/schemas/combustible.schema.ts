@@ -489,7 +489,7 @@ export const crearDespachoCombustibleSchema = z
     lectura_odometro: z.number().nonnegative().optional(),
     horas_abastecidas: z.number().nonnegative().optional(),
     // Solo lo pone el servicio de la compra en ruta cuando la registra un
-    // administrador (0171): el medidor y las horas dejan de ser obligatorios.
+    // administrador (0172): el medidor y las horas dejan de ser obligatorios.
     // El endpoint público de despacho lo rechaza.
     medidor_omitido: z.literal(true).optional(),
 

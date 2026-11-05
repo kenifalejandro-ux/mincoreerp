@@ -1398,7 +1398,7 @@ export class CombustibleService {
     rol?: string
   ) {
     // Solo el administrador puede registrar la compra sin medidor ni horas
-    // (0171): el conductor, que tiene el medidor delante, sigue obligado.
+    // (0172): el conductor, que tiene el medidor delante, sigue obligado.
     const medidorOmitido =
       rol === "admin" &&
       data.combustible !== undefined &&

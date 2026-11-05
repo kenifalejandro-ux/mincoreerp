@@ -215,7 +215,7 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
 
   it("si el combustible falla, la urea NO queda guardada", async () => {
     // Sin horómetro: la unidad se mide por horómetro y el combustible lo exige
-    // (al conductor; el admin puede omitirlo, 0171).
+    // (al conductor; el admin puede omitirlo, 0172).
     const body = cuerpo();
     delete (body.combustible as Record<string, unknown>).lectura_horometro;
     const r = await crear(body, await nuevoUsuario("conductor_ruta"));
@@ -300,7 +300,7 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
     expect(r.body.compra.usuario_id).toBeTruthy();
   });
 
-  it("el admin registra sin medidor ni horas y la compra queda marcada (0171)", async () => {
+  it("el admin registra sin medidor ni horas y la compra queda marcada (0172)", async () => {
     const comp = numero();
     const r = await crear(
       cuerpo({
