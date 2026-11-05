@@ -1782,6 +1782,17 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     // Sin hora a mano la pone el servidor, y no pide motivo.
     expect((await admin.post(url(id, "/salida")).send({ medidor: 150 })).status).toBe(200);
   });
+
+  it("la oficina marca llegada y salida sin medidor; al conductor se le sigue exigiendo", async () => {
+    const { yo, id } = await circuitoEnCurso();
+    const sinMedidor = await marcar(yo.agente, id, "llegada-mia", {});
+    expect(sinMedidor.status).toBe(400);
+    expect(JSON.stringify(sinMedidor.body)).toMatch(/Falta el medidor/);
+    const llegada = await admin.post(url(id, "/llegada")).send({ orden: 1 });
+    expect(llegada.status, JSON.stringify(llegada.body)).toBe(200);
+    expect((await admin.post(url(id, "/salida")).send({ orden: 1 })).status).toBe(200);
+  });
+
   // ── Consumo por tramo y comparación por recorrido ────────────────────────
 
   const cargarAhora = async (equipo_id: number, cantidad: number) => {
