@@ -37,6 +37,10 @@
  *   npm run verificar -- --modulo     todos los tests del módulo tocado, sin el mapa
  *   npm run verificar -- --completo   suite entera y todos los specs (chromium y firefox)
  *   npm run verificar -- --solo-e2e   salta vitest (para repetir solo el e2e)
+ *   npm run verificar -- --forzar     corre aunque este contenido ya haya pasado en verde
+ *
+ * Una corrida normal en verde graba el contenido verificado (verificarCache.ts);
+ * si el pre-push encuentra exactamente el mismo contenido, no repite.
  *
  * Lo corre solo el hook pre-push. Omitirlo es una decisión consciente y
  * visible: SKIP_VERIFICAR=1 git push   (o SKIP_E2E=1 si no hay Docker).
@@ -54,6 +58,14 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { levantarBase } from "./baseDesechable";
+import {
+  archivoRegistro,
+  arbolDeTrabajo,
+  grabarVerde,
+  leerRegistro,
+  yaVerificada,
+  type Clave,
+} from "./verificarCache";
 import { analizarDiff, type MapaTests } from "./mapaTestsLogica";
 import {
   colisionesDeMigraciones,
@@ -68,6 +80,7 @@ const RAPIDO = args.has("--rapido");
 const COMPLETO = args.has("--completo");
 const SOLO_E2E = args.has("--solo-e2e");
 const MODULO = args.has("--modulo");
+const FORZAR = args.has("--forzar");
 /** Días que puede tener el mapa de tests antes de que se deje de usar. */
 const DIAS_MAX_MAPA = 14;
 
@@ -227,6 +240,25 @@ async function main(): Promise<number> {
   const ref = git("rev-parse", "--verify", "-q", "origin/main") ? "origin/main" : "main";
   const base = git("merge-base", "HEAD", ref) || ref;
 
+  // Contenido ya verificado en verde: no se repite (solo corrida normal, ver verificarCache.ts).
+  const normal = !RAPIDO && !COMPLETO && !MODULO && !SOLO_E2E;
+  const clave: Clave = {
+    arbol: normal ? arbolDeTrabajo(raiz) : "",
+    base,
+    migracionesMain: git("rev-parse", "-q", "--verify", `${ref}:migrations`),
+  };
+  const registro = archivoRegistro(raiz);
+  if (normal && !FORZAR && yaVerificada(leerRegistro(registro), clave)) {
+    console.log(verde("✔ ya verificado en verde, no repito (mismo contenido, misma base)."));
+    console.log("  Para correrlo igual: npm run verificar -- --forzar");
+    return 0;
+  }
+  /** Graba el verde, salvo que se haya saltado algo o el contenido haya cambiado durante la corrida. */
+  const grabar = (specsOmitidos: boolean) => {
+    if (!normal || specsOmitidos || arbolDeTrabajo(raiz) !== clave.arbol) return;
+    grabarVerde(registro, clave);
+  };
+
   const cambiados = archivosCambiados(base);
   const sel: Seleccion = seleccionarVerificacion(
     cambiados,
@@ -310,6 +342,7 @@ async function main(): Promise<number> {
   if (!hayTests && !hayE2e) {
     if (specs.length > 0)
       console.log(amarillo("⚠️  e2e OMITIDO (SKIP_E2E=1). El CI será la primera revisión."));
+    else grabar(false);
     return resumen(true);
   }
 
@@ -379,6 +412,7 @@ async function main(): Promise<number> {
     } else if (specs.length > 0) {
       console.log(amarillo("⚠️  e2e OMITIDO (SKIP_E2E=1). El CI será la primera revisión."));
     }
+    if (ok) grabar(specs.length > 0 && !hayE2e);
     return resumen(ok);
   } finally {
     bajarDocker();
