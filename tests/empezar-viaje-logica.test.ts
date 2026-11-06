@@ -108,9 +108,16 @@ describe("empezar un viaje: lógica del celular", () => {
   });
 
   it("el cuerpo de crear-mio: unidad registrada o nueva, relevo por id y el mismo id_cliente", () => {
-    const reg = cuerpoCrearMiViaje(nuevo({ odometro: "1000", relevoId: "u-1" }), "uuid-1");
+    const reg = cuerpoCrearMiViaje(
+      nuevo({ odometro: "1000", relevoId: "u-1" }),
+      "uuid-1",
+      "2026-11-06T10:00:00.000Z"
+    );
     expect(reg).toEqual({
       id_cliente: "uuid-1",
+      // La cola sin señal lee `cliente_uuid`: es el mismo identificador.
+      cliente_uuid: "uuid-1",
+      marcado_en: "2026-11-06T10:00:00.000Z",
       equipo_id: 10,
       paradas: [1, 2],
       relevo_usuario_id: "u-1",
@@ -118,10 +125,13 @@ describe("empezar un viaje: lógica del celular", () => {
     });
     const nva = cuerpoCrearMiViaje(
       nuevo({ unidad: "nueva", placa: " abc-123 ", odometro: "5", tipo: "ida_vuelta" }),
-      "uuid-2"
+      "uuid-2",
+      "2026-11-06T10:00:00.000Z"
     );
     expect(nva).toEqual({
       id_cliente: "uuid-2",
+      cliente_uuid: "uuid-2",
+      marcado_en: "2026-11-06T10:00:00.000Z",
       unidad_nueva: { placa: "ABC-123", nombre: "Juan Constante" },
       paradas: [1, 2, 1],
       medidor_inicio: 5,

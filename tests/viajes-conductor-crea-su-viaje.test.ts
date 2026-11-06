@@ -328,4 +328,54 @@ describe("viajes: el conductor crea su propio viaje (0179)", () => {
     );
     expect(mal.status).toBe(400);
   });
+  it("creado sin señal: el reenvío trae la hora del celular, que vale como salida, y no duplica", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    const marcado = new Date(Date.now() - 2 * 3_600_000).toISOString();
+    const base = cuerpoNuevo(placaNueva(), { marcado_en: marcado });
+    const cuerpo = { ...base, cliente_uuid: base.id_cliente }; // lo que lee la cola del celular
+    const r = await crear(c.agente, cuerpo);
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.inicio_origen_hora).toBe("dispositivo");
+    expect(Math.abs(Date.parse(r.body.inicio_en) - Date.parse(marcado))).toBeLessThan(1000);
+    // Otro reenvío del mismo identificador (la cola no sabe si el primero llegó): el mismo viaje.
+    const otra = await crear(c.agente, cuerpo);
+    expect(otra.status).toBe(200);
+    expect(otra.body.id).toBe(r.body.id);
+  });
+
+  it("la unidad «por completar» deja de serlo cuando la oficina le pone su tipo real", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    const placa = placaNueva();
+    const r = await crear(c.agente, cuerpoNuevo(placa));
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const id = Number(r.body.equipo_id);
+    const lista = async () =>
+      (await admin.get("/api/erp/equipos?page=1&pageSize=200")).body.data.find(
+        (e: { id: number }) => e.id === id
+      );
+    expect((await lista()).por_completar).toBe(true);
+
+    // Editar sin cambiar el tipo provisional no la completa.
+    const igual = await admin.put(`/api/erp/equipos/${id}`).send({
+      placa_codigo: placa.toUpperCase(),
+      tipo: "Por completar",
+      conductor_nombre: "Conductor de Prueba",
+      conductor_dni: c.dni,
+      marca: "Volvo",
+    });
+    expect(igual.status, JSON.stringify(igual.body)).toBe(200);
+    expect((await lista()).por_completar).toBe(true);
+
+    const hecho = await admin.put(`/api/erp/equipos/${id}`).send({
+      placa_codigo: placa.toUpperCase(),
+      tipo: "VOLQUETE",
+      conductor_nombre: "Conductor de Prueba",
+      conductor_dni: c.dni,
+      marca: "Volvo",
+    });
+    expect(hecho.status, JSON.stringify(hecho.body)).toBe(200);
+    expect((await lista()).por_completar).toBe(false);
+  });
 });

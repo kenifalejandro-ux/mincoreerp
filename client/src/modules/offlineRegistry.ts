@@ -84,6 +84,7 @@ export const ESCRITURAS_OFFLINE: Record<string, EscrituraOffline[]> = {
   // "Mi viaje" (0124): salida, llegada, descanso y mando del conductor, sin señal en ruta.
   // Espejo de src/modules/registry.ts.
   viajes: [
+    { metodo: "POST", ruta: "/crear-mio" },
     { metodo: "POST", ruta: "/:viajeId/iniciar-mio" },
     { metodo: "POST", ruta: "/:viajeId/cerrar-mio" },
     { metodo: "POST", ruta: "/:viajeId/llegada-mia" },

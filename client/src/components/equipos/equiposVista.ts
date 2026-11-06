@@ -32,6 +32,8 @@ export interface Equipo {
   rutas: { origen_id: number; destino_id: number; origen: string; destino: string }[];
   activo: boolean;
   creado_en: string;
+  /** La registró el conductor con solo la placa, su nombre y la ruta: falta completarla (0179). */
+  por_completar?: boolean;
   // El grifo interno al que pertenece (0097). Se cambia con "Mover de grifo".
   grifo_interno_id: number | null;
 }

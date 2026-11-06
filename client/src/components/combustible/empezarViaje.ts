@@ -129,11 +129,15 @@ export function errorDelPaso(paso: PasoViaje, b: BorradorViaje, c: CatalogoViaje
   return "";
 }
 
-/** El cuerpo de `POST /api/erp/viajes/crear-mio`. `idCliente` es el mismo en todos los reintentos. */
-export function cuerpoCrearMiViaje(b: BorradorViaje, idCliente: string) {
+/** El cuerpo de `POST /api/erp/viajes/crear-mio`. `idCliente` es el mismo en todos los reintentos;
+ *  va también como `cliente_uuid`, que es el que lee la cola sin señal. `marcadoEn` es la hora en
+ *  que tocó «Salir ahora»: sin señal, vale como hora de salida. */
+export function cuerpoCrearMiViaje(b: BorradorViaje, idCliente: string, marcadoEn: string) {
   const lectura = lecturaOdometro(b.odometro);
   return {
     id_cliente: idCliente,
+    cliente_uuid: idCliente,
+    marcado_en: marcadoEn,
     ...(b.unidad === "nueva"
       ? { unidad_nueva: { placa: b.placa.trim().toUpperCase(), nombre: b.nombre.trim() } }
       : { equipo_id: b.unidad as number }),

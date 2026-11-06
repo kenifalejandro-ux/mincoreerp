@@ -3,12 +3,14 @@
 // pide: la pone el servidor. Los chequeos (medidor, traslape, viaje ya asignado) son los del servidor.
 import { useRef, useState } from "react";
 
+import type { CreacionPendiente } from "./creacionPendiente";
 import {
   PASOS,
   borradorInicial,
   conRutaDeUnidad,
   cuerpoCrearMiViaje,
   errorDelPaso,
+  lecturaOdometro,
   paradasFinales,
   unidadRegistrada,
   type BorradorViaje,
@@ -68,12 +70,15 @@ export function EmpezarMiViaje({
   nombreConductor,
   onCancelar,
   onCreado,
+  onEncolado,
 }: {
   catalogo: CatalogoViaje;
   nombreConductor: string;
   onCancelar: () => void;
   /** Se llamó al servidor y el viaje quedó creado (o ya existía): el padre vuelve a leer sus viajes. */
   onCreado: () => void;
+  /** Sin señal: el viaje quedó guardado en el celular y la cola lo enviará al volver la conexión. */
+  onEncolado: (p: CreacionPendiente) => void;
 }) {
   const [b, setB] = useState<BorradorViaje>(() => borradorInicial(catalogo, nombreConductor));
   const [paso, setPaso] = useState<PasoViaje>("tipo");
@@ -133,11 +138,24 @@ export function EmpezarMiViaje({
     setGuardando(true);
     setAviso(null);
     try {
+      const marcadoEn = new Date().toISOString();
       const res = await apiFetch("/api/erp/viajes/crear-mio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cuerpoCrearMiViaje(b, idCliente.current)),
+        body: JSON.stringify(cuerpoCrearMiViaje(b, idCliente.current, marcadoEn)),
       });
+      if (res.status === 202) {
+        // Sin señal: la cola lo tiene guardado y lo envía sola; aquí queda el resumen para mostrarlo.
+        onEncolado({
+          idCliente: idCliente.current,
+          unidad: b.unidad === "nueva" ? `${b.placa} (unidad nueva)` : (unidad?.placa ?? "—"),
+          ruta: paradasFinales(b).map(lugar).join(" → "),
+          marcadoEn,
+          odometro: lecturaOdometro(b.odometro) ?? 0,
+          unidadNueva: b.unidad === "nueva",
+        });
+        return;
+      }
       const r = await res.json().catch(() => ({}));
       if (res.status === 409 && r.details?.viaje) {
         // Ya tiene un viaje (la oficina le programó uno): no se creó otro, se le muestra ese.

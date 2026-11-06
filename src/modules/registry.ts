@@ -107,6 +107,9 @@ export const MODULOS: ModuloDefinicion[] = [
     // cliente.
     offline: {
       escrituras: [
+        // El conductor crea e inicia su propio viaje (0179): el reintento no duplica porque
+        // `crear-mio` reconoce el `id_cliente`, que el celular manda también como cliente_uuid.
+        { metodo: "POST", ruta: "/crear-mio" },
         { metodo: "POST", ruta: "/:viajeId/iniciar-mio" },
         { metodo: "POST", ruta: "/:viajeId/cerrar-mio" },
         { metodo: "POST", ruta: "/:viajeId/llegada-mia" },
