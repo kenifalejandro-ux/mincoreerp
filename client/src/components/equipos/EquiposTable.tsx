@@ -35,7 +35,7 @@ import {
 } from "./equiposVista";
 import HistorialEquipo from "./HistorialEquipo";
 import RutasEditor, { type LugarOpcion, type RutaForm } from "./RutasEditor";
-import TarjetaEquipo, { EstadoUnidadBadge } from "./TarjetaEquipo";
+import TarjetaEquipo, { EstadoUnidadBadge, PorCompletarChip } from "./TarjetaEquipo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import {
@@ -1067,6 +1067,7 @@ export default function EquiposTable() {
                       <div className="font-mono text-xs sm:text-sm font-semibold text-white">
                         {e.placa_codigo}
                       </div>
+                      {e.por_completar && <PorCompletarChip />}
                       {e.codigo_interno && (
                         <div className="font-mono text-[11px] text-[#94a3b8]">
                           {e.codigo_interno}

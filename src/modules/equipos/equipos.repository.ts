@@ -50,7 +50,7 @@ const RUTAS_VIGENTES = `COALESCE((
 // una no obligue a tocar cuatro queries y olvidarse de la quinta.
 const COLUMNAS_EQUIPO = `id, placa_codigo, codigo_interno, tipo, marca, modelo, tipo_medidor,
   capacidad_tanque, capacidad_tanque_unidad, consumo_maximo_l,
-  conductor_nombre, conductor_dni, usa_urea, activo, creado_en, grifo_interno_id`;
+  conductor_nombre, conductor_dni, usa_urea, activo, creado_en, grifo_interno_id, por_completar`;
 
 const COLUMNAS_EQUIPO_CON_RUTAS = `${COLUMNAS_EQUIPO}, ${RUTAS_VIGENTES}`;
 
@@ -139,7 +139,10 @@ export const EquiposRepository = {
         conductor_nombre = $9,
         conductor_dni = $10,
         consumo_maximo_l = $11,
-        usa_urea = $12
+        usa_urea = $12,
+        -- «Por completar» (0179): la unidad que registró el conductor se completa al ponerle su
+        -- tipo real; mientras el tipo siga siendo el provisional, la marca se mantiene.
+        por_completar = (por_completar AND $3::varchar = 'Por completar')
       WHERE id = $13 AND tenant_id = $14
       RETURNING ${COLUMNAS_EQUIPO}`,
       [

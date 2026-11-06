@@ -30,6 +30,15 @@ export function EstadoUnidadBadge({ equipo, soloPunto }: { equipo: Equipo; soloP
   );
 }
 
+/** «Por completar» (0179): la unidad la registró el conductor y la oficina agrega el resto. */
+export function PorCompletarChip() {
+  return (
+    <span className="inline-block rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300">
+      Por completar
+    </span>
+  );
+}
+
 function Falta({ texto }: { texto: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[#f0b429]">
@@ -196,6 +205,7 @@ export default function TarjetaEquipo({
           >
             {e.placa_codigo}
           </div>
+          {e.por_completar && <PorCompletarChip />}
           <div className="text-[11px] uppercase tracking-wider text-[#94a3b8] truncate">
             {e.tipo}
             {e.codigo_interno && !compacta ? ` · ${e.codigo_interno}` : ""}

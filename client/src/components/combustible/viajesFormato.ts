@@ -6,6 +6,8 @@ export type Producto = "combustible" | "urea";
 export interface FilaViaje {
   id: string;
   numero: number;
+  /** Lo creó el propio conductor desde su celular (0179). */
+  creado_por_conductor?: boolean;
   equipo_id: number;
   placa_codigo: string;
   codigo_interno: string | null;

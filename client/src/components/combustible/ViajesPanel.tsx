@@ -748,6 +748,11 @@ export default function ViajesPanel() {
                   <td className="p-3 font-mono whitespace-nowrap">V-{v.numero}</td>
                   <td className="p-3">
                     {ruta(v)}
+                    {v.creado_por_conductor && (
+                      <span className="ml-2 rounded-full bg-[#BADC1E]/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#BADC1E]">
+                        Creado por el conductor
+                      </span>
+                    )}
                     {v.ruta_por_confirmar && (
                       <span
                         title={v.nota_ruta ?? "El conductor avisó a la oficina"}
