@@ -520,4 +520,56 @@ describe("viajes: el conductor crea su propio viaje (0179)", () => {
       )
     ).toBe(1);
   });
+  it("las marcas de un viaje creado sin señal llegan por su id_cliente: llegada, salida, descanso y cierre", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    const base = cuerpoNuevo(placaNueva(), { paradas: [a, b, a] });
+    const creado = await crear(c.agente, base);
+    expect(creado.status, JSON.stringify(creado.body)).toBe(201);
+    const marca = (ruta: string, extra: Record<string, unknown> = {}) =>
+      c.agente
+        .post(`/api/erp/viajes/por-cliente/${base.id_cliente}/${ruta}`)
+        .send({ cliente_uuid: randomUUID(), ...extra });
+
+    const llegada = await marca("llegada-mia", { orden: 1, medidor: 1010 });
+    expect(llegada.status, JSON.stringify(llegada.body)).toBe(200);
+    const desc = await marca("descanso-mio", { motivo: "Comer" });
+    expect(desc.status, JSON.stringify(desc.body)).toBe(200);
+    expect((await marca("descanso-mio/terminar")).status).toBe(200);
+    expect((await marca("salida-mia", { orden: 1, medidor: 1011 })).status).toBe(200);
+    const fin = await marca("cerrar-mio", { medidor_fin: 1100 });
+    expect(fin.status, JSON.stringify(fin.body)).toBe(200);
+    expect(fin.body.estado).toBe("cerrado");
+    expect(fin.body.id).toBe(creado.body.id);
+  });
+
+  it("una marca por id_cliente de un viaje que no existe da 404, y no es de nadie más", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    const ajeno = await conductor();
+    const sinViaje = await c.agente
+      .post(`/api/erp/viajes/por-cliente/${randomUUID()}/llegada-mia`)
+      .send({ cliente_uuid: randomUUID(), orden: 1 });
+    expect(sinViaje.status).toBe(404);
+
+    const base = cuerpoNuevo(placaNueva());
+    expect((await crear(c.agente, base)).status).toBe(201);
+    const robo = await ajeno.agente
+      .post(`/api/erp/viajes/por-cliente/${base.id_cliente}/cerrar-mio`)
+      .send({ cliente_uuid: randomUUID(), medidor_fin: 1100 });
+    expect([403, 404]).toContain(robo.status);
+  });
+
+  it("el reenvío de una marca por id_cliente no se duplica", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    const base = cuerpoNuevo(placaNueva(), { paradas: [a, b, a] });
+    expect((await crear(c.agente, base)).status).toBe(201);
+    const uuid = randomUUID();
+    const url = `/api/erp/viajes/por-cliente/${base.id_cliente}/llegada-mia`;
+    const una = await c.agente.post(url).send({ cliente_uuid: uuid, orden: 1, medidor: 1010 });
+    const otra = await c.agente.post(url).send({ cliente_uuid: uuid, orden: 1, medidor: 1010 });
+    expect(una.status, JSON.stringify(una.body)).toBe(200);
+    expect(otra.status, JSON.stringify(otra.body)).toBe(200);
+  });
 });

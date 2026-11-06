@@ -177,6 +177,24 @@ router.post(
   validate(terminarDescansoMioSchema),
   asyncHandler(viajesController.terminarDescansoMio)
 );
+// Las mismas marcas, para un viaje que el conductor creó sin señal: llegan por su `id_cliente` porque
+// el celular aún no conoce el número del viaje (0179). El resto del camino es el de siempre.
+const MARCAS_POR_CLIENTE = [
+  ["cerrar-mio", cerrarMiViajeSchema, viajesController.cerrarMio],
+  ["llegada-mia", llegadaMiaSchema, viajesController.llegadaMia],
+  ["salida-mia", salidaMiaSchema, viajesController.salidaMia],
+  ["descanso-mio", descansoMioSchema, viajesController.descansoMio],
+  ["descanso-mio/terminar", terminarDescansoMioSchema, viajesController.terminarDescansoMio],
+] as const;
+for (const [marca, esquema, manejador] of MARCAS_POR_CLIENTE) {
+  router.post(
+    `/por-cliente/:idCliente([0-9a-fA-F-]{36})/${marca}`,
+    requirePestana("combustible", "mi_viaje"),
+    asyncHandler(viajesController.resolverPorCliente),
+    validate(esquema),
+    asyncHandler(manejador)
+  );
+}
 router.post(
   "/:viajeId(\\d+)/mando/entregar",
   requirePestana("combustible", "mi_viaje"),

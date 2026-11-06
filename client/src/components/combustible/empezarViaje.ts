@@ -7,6 +7,8 @@ export interface CatalogoUnidad {
   id: number;
   placa: string;
   tipo: string;
+  /** Qué lee el conductor en el tablero al marcar (null = no configurado). */
+  tipo_medidor: "horometro" | "odometro" | null;
   por_completar: boolean;
   asignada_a_mi: boolean;
   ruta: { origen_id: number; destino_id: number; origen: string; destino: string } | null;
