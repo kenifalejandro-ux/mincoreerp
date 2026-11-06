@@ -19,6 +19,8 @@ import { LineaAhoraSiguiente } from "./AhoraSiguiente";
 import { ColaViajes, type ItemCola } from "./ColaViajes";
 import {
   creacionEnCola,
+  esViajeLocal,
+  filaDePendiente,
   guardarCatalogo,
   guardarPendiente,
   leerCatalogo,
@@ -171,15 +173,6 @@ export default function MiViaje() {
   // «Empezar un viaje» (0179): solo si la empresa lo tiene encendido; el catálogo trae esa respuesta.
   const [catalogo, setCatalogo] = useState<CatalogoViaje | null>(null);
   const [creando, setCreando] = useState(false);
-  // El viaje que creó sin señal y la cola todavía no envió (se guarda: sobrevive a recargar la app).
-  const [pendiente, setPendiente] = useState<CreacionPendiente | null>(() =>
-    leerPendiente(usuarioId)
-  );
-  const dejarPendiente = (p: CreacionPendiente | null) => {
-    setPendiente(p);
-    guardarPendiente(usuarioId, p);
-  };
-
   useEffect(() => {
     filasRef.current = filas;
   }, [filas]);
@@ -204,20 +197,27 @@ export default function MiViaje() {
             Boolean(local.entrega_retirada && f.entrega_pendiente));
         return masAdelantado ? local : f;
       });
-      setFilas(data);
+      // El viaje creado sin señal: mientras la cola no lo envíe se sigue mostrando, con lo que se haya
+      // marcado en este celular. Cuando ya existe en el servidor (o la cola lo descartó), se suelta.
+      let conLocal = data;
+      const guardado = leerPendiente(usuarioId);
+      if (guardado) {
+        const yaHayViaje = data.some((f) => f.estado === "programado" || f.estado === "en_curso");
+        if (yaHayViaje || !(await creacionEnCola(guardado.idCliente))) {
+          guardarPendiente(usuarioId, null);
+        } else {
+          const idLocal = `cli:${guardado.idCliente}`;
+          const local =
+            filasRef.current.find((l) => l.id === idLocal) ??
+            leerCache(usuarioId)?.find((l) => l.id === idLocal) ??
+            filaDePendiente(guardado);
+          conLocal = [...data, local];
+        }
+      }
+      setFilas(conLocal);
       setSinDni(Boolean(body?.sinDni));
       setSinSenal(false);
-      guardarCache(usuarioId, data);
-      // El viaje creado sin señal ya existe en el servidor (o la cola lo descartó): el aviso sobra.
-      const guardado = leerPendiente(usuarioId);
-      if (
-        guardado &&
-        (data.some((f) => f.estado === "programado" || f.estado === "en_curso") ||
-          !(await creacionEnCola(guardado.idCliente)))
-      ) {
-        guardarPendiente(usuarioId, null);
-        setPendiente(null);
-      }
+      guardarCache(usuarioId, conLocal);
     } catch {
       // Sin señal: lo último que se vio, con lo marcado en este celular.
       const cache = leerCache(usuarioId);
@@ -243,7 +243,6 @@ export default function MiViaje() {
       if (descartadas.some((d) => d.url.endsWith("/viajes/crear-mio"))) {
         // El viaje que creó sin señal no se creó otro: ya tenía uno (la oficina se lo programó).
         guardarPendiente(usuarioId, null);
-        setPendiente(null);
         setAviso(
           "No se creó el viaje que empezaste sin señal: la oficina ya te había programado uno. Ese es el tuyo; míralo aquí abajo."
         );
@@ -473,7 +472,12 @@ export default function MiViaje() {
           void cargar();
         }}
         onEncolado={(p) => {
-          dejarPendiente(p);
+          const guardada = { ...p, conductorDni: usuario?.dni ?? "" };
+          guardarPendiente(usuarioId, guardada);
+          // El viaje ya se ve en curso en este celular: se puede marcar aunque el servidor no lo conozca.
+          const nuevas = [...filas, filaDePendiente(guardada)];
+          setFilas(nuevas);
+          guardarCache(usuarioId, nuevas);
           setCreando(false);
           setAviso("Sin señal: quedó guardado en el celular y se enviará solo al volver la señal.");
         }}
@@ -491,6 +495,12 @@ export default function MiViaje() {
           <CloudOff className="w-5 h-5 shrink-0" /> Sin señal: ves lo último guardado en el celular.
         </div>
       )}
+      {actual && esViajeLocal(actual.id) && (
+        <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-200">
+          Pendiente de enviar: tu viaje se creará en cuanto vuelva la señal. Puedes seguir marcando
+          llegadas y descansos; todo se envía en orden.
+        </div>
+      )}
       {aviso && (
         <div className="rounded-xl bg-[#192526] border border-[#334155] p-3 text-sm text-[#e2e8f0]">
           {aviso}
@@ -502,29 +512,7 @@ export default function MiViaje() {
         </p>
       )}
 
-      {!actual && !sinDni && pendiente && (
-        <div className="rounded-3xl bg-gradient-to-br from-[#16222a] to-[#0D1719] border border-amber-500/30 p-6 space-y-2">
-          <span className="inline-block rounded-full bg-amber-500/15 px-3 py-1 text-xs font-bold uppercase tracking-wide text-amber-300">
-            Pendiente de enviar
-          </span>
-          <p className="text-lg font-extrabold text-white">{pendiente.ruta}</p>
-          <p className="text-sm text-[#94a3b8]">
-            {pendiente.unidad} · odómetro {pendiente.odometro.toLocaleString("es-PE")} km · tocaste
-            «Salir ahora» a las{" "}
-            {new Date(pendiente.marcadoEn).toLocaleTimeString("es-PE", {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-          </p>
-          <p className="text-sm text-[#cbd5e1]">
-            Se enviará solo al volver la señal
-            {pendiente.unidadNueva ? ", junto con tu unidad nueva" : ""}. Cuando llegue podrás
-            marcar tus llegadas y descansos.
-          </p>
-        </div>
-      )}
-
-      {!actual && !sinDni && !pendiente && (
+      {!actual && !sinDni && (
         <div className="rounded-3xl bg-gradient-to-br from-[#16222a] to-[#0D1719] border border-[#2a2e37] p-8 text-center space-y-3">
           <div className="mx-auto w-16 h-16 rounded-full bg-[#192526] border border-[#334155] flex items-center justify-center text-[#BADC1E]">
             <Navigation className="w-8 h-8" aria-hidden />

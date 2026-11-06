@@ -134,6 +134,8 @@ export interface CatalogoParaCrear {
     id: number;
     placa: string;
     tipo: string;
+    /** Qué lee el conductor en el tablero al marcar (null = no configurado). */
+    tipo_medidor: "horometro" | "odometro" | null;
     por_completar: boolean;
     /** La unidad que Equipos le tiene asignada a este conductor. */
     asignada_a_mi: boolean;
@@ -161,7 +163,7 @@ export async function catalogoParaCrear(
     [tenantId]
   );
   const unidades = await client.query(
-    `SELECT e.id::int, COALESCE(e.placa_codigo, e.codigo_interno) AS placa, e.tipo, e.por_completar,
+    `SELECT e.id::int, COALESCE(e.placa_codigo, e.codigo_interno) AS placa, e.tipo, e.tipo_medidor, e.por_completar,
             COALESCE(btrim(e.conductor_dni) = $2, false) AS asignada_a_mi,
             r.origen_id::int, r.destino_id::int, lo.nombre AS origen, ld.nombre AS destino
        FROM equipos e
@@ -203,6 +205,7 @@ export async function catalogoParaCrear(
       id: u.id,
       placa: u.placa,
       tipo: u.tipo,
+      tipo_medidor: u.tipo_medidor ?? null,
       por_completar: u.por_completar,
       asignada_a_mi: u.asignada_a_mi === true,
       ruta:

@@ -165,6 +165,17 @@ export function EmpezarMiViaje({
           marcadoEn,
           odometro: lecturaOdometro(b.odometro) ?? 0,
           unidadNueva: b.unidad === "nueva",
+          paradas: paradasFinales(b).map((l) => ({
+            id: typeof l === "number" ? l : null,
+            nombre: lugar(l),
+          })),
+          placa: b.unidad === "nueva" ? b.placa.trim().toUpperCase() : (unidad?.placa ?? ""),
+          tipoUnidad: unidad?.tipo ?? "Por completar",
+          tipoMedidor: unidad?.tipo_medidor ?? null,
+          conductorNombre: nombreConductor,
+          conductorDni: "",
+          relevoNombre:
+            catalogo.relevos.find((r) => r.id === b.relevoId)?.nombre || b.relevoNombre || null,
         });
         return;
       }

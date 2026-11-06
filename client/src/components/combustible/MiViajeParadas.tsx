@@ -6,6 +6,7 @@ import { Flag, MapPin, Moon, Play } from "lucide-react";
 import { useState } from "react";
 
 import { AvisoSalto } from "./AvisoSalto";
+import { PREFIJO_VIAJE_LOCAL, esViajeLocal } from "./creacionPendiente";
 import { MandoViaje } from "./MandoViaje";
 import {
   detalleDe,
@@ -117,7 +118,11 @@ export function MiViajeParadas({
     setGuardando(true);
     onAviso(null);
     try {
-      const res = await apiFetch(`/api/erp/viajes/${viajeId}/${ruta}`, {
+      // Un viaje creado sin señal aún no tiene número: sus marcas van por su id_cliente.
+      const base = esViajeLocal(viajeId)
+        ? `por-cliente/${viajeId.slice(PREFIJO_VIAJE_LOCAL.length)}`
+        : viajeId;
+      const res = await apiFetch(`/api/erp/viajes/${base}/${ruta}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

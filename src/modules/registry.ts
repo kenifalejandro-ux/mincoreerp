@@ -110,6 +110,12 @@ export const MODULOS: ModuloDefinicion[] = [
         // El conductor crea e inicia su propio viaje (0179): el reintento no duplica porque
         // `crear-mio` reconoce el `id_cliente`, que el celular manda también como cliente_uuid.
         { metodo: "POST", ruta: "/crear-mio" },
+        // Las marcas de un viaje creado sin señal, por su id_cliente (0179).
+        { metodo: "POST", ruta: "/por-cliente/:idCliente/cerrar-mio" },
+        { metodo: "POST", ruta: "/por-cliente/:idCliente/llegada-mia" },
+        { metodo: "POST", ruta: "/por-cliente/:idCliente/salida-mia" },
+        { metodo: "POST", ruta: "/por-cliente/:idCliente/descanso-mio" },
+        { metodo: "POST", ruta: "/por-cliente/:idCliente/descanso-mio/terminar" },
         { metodo: "POST", ruta: "/:viajeId/iniciar-mio" },
         { metodo: "POST", ruta: "/:viajeId/cerrar-mio" },
         { metodo: "POST", ruta: "/:viajeId/llegada-mia" },

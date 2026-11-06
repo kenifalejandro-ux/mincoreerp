@@ -1,4 +1,4 @@
-import type { Request, Response } from "express";
+import type { NextFunction, Request, Response } from "express";
 import type { PoolClient } from "pg";
 import { logger } from "../../server/config/logger";
 import { capturarError } from "../../server/config/sentry";
@@ -421,6 +421,23 @@ export const viajesController = {
     const tenantId = getTenantId(req);
     const puede = await withTenant(tenantId, (c) => conductorPuedeCrearViaje(c, tenantId));
     res.json({ puede_crear_viaje: puede });
+  },
+
+  /** Las marcas del conductor sobre un viaje que creó sin señal: llegan por su `id_cliente` (el celular
+   *  aún no conoce el número). Lo busca y deja `viajeId` para que siga el mismo camino de siempre.
+   *  Si el viaje todavía no existe, 404: la cola envía en orden, así que solo pasa si su creación se
+   *  descartó, y entonces estas marcas se descartan con ella. */
+  async resolverPorCliente(req: Request, res: Response, next: NextFunction) {
+    const tenantId = getTenantId(req);
+    const r = await withTenant(tenantId, (c) =>
+      c.query(`SELECT id FROM combustible_viajes WHERE tenant_id = $1 AND id_cliente = $2`, [
+        tenantId,
+        req.params.idCliente,
+      ])
+    );
+    if (!r.rows[0]) throw new AppError(404, "Ese viaje todavía no existe");
+    req.params.viajeId = String(r.rows[0].id);
+    next();
   },
 
   /** GET /viajes/mios/catalogo: lugares, unidades con su ruta y relevos para armar el viaje. Con el
