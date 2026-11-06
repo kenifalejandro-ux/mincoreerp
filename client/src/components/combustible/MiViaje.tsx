@@ -17,6 +17,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { LineaAhoraSiguiente } from "./AhoraSiguiente";
 import { ColaViajes, type ItemCola } from "./ColaViajes";
+import { EmpezarMiViaje } from "./EmpezarMiViaje";
+import type { CatalogoViaje } from "./empezarViaje";
 import { HistorialConductor } from "./HistorialConductor";
 import { MiViajeParadas } from "./MiViajeParadas";
 import {
@@ -158,6 +160,9 @@ export default function MiViaje() {
   const [guardando, setGuardando] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   const [ahora, setAhora] = useState(() => Date.now());
+  // «Empezar un viaje» (0179): solo si la empresa lo tiene encendido; el catálogo trae esa respuesta.
+  const [catalogo, setCatalogo] = useState<CatalogoViaje | null>(null);
+  const [creando, setCreando] = useState(false);
 
   useEffect(() => {
     filasRef.current = filas;
@@ -230,6 +235,19 @@ export default function MiViaje() {
   const programado = filas.find((f) => f.estado === "programado");
   const ultimo = filas.find((f) => f.estado === "cerrado");
   const actual = enCurso ?? programado;
+  const sinViaje = !cargando && !actual && !sinDni && !sinSenal;
+  useEffect(() => {
+    // Sin viaje no hay nada que crear si la empresa no lo permite; con viaje no se pide nada.
+    if (!sinViaje) return;
+    let vivo = true;
+    apiFetch("/api/erp/viajes/mios/catalogo")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((c: CatalogoViaje | null) => vivo && setCatalogo(c?.puede_crear_viaje ? c : null))
+      .catch(() => vivo && setCatalogo(null));
+    return () => {
+      vivo = false;
+    };
+  }, [sinViaje]);
   // Sus viajes por salir, en el orden de la cola. Con uno solo no hay nada que mostrar, salvo que
   // otro ya esté en curso y este espere.
   const cola = filas
@@ -405,6 +423,21 @@ export default function MiViaje() {
 
   if (cargando) return <p className="text-[#94a3b8]">Cargando tu viaje...</p>;
 
+  if (creando && catalogo) {
+    return (
+      <EmpezarMiViaje
+        catalogo={catalogo}
+        nombreConductor={usuario?.nombre ?? ""}
+        onCancelar={() => setCreando(false)}
+        onCreado={() => {
+          setCreando(false);
+          setAviso("Viaje iniciado. ¡Buen viaje!");
+          void cargar();
+        }}
+      />
+    );
+  }
+
   return (
     <div className="max-w-xl mx-auto space-y-4">
       {encabezado}
@@ -433,8 +466,15 @@ export default function MiViaje() {
           </div>
           <p className="text-lg font-extrabold text-white">Sin viaje por ahora</p>
           <p className="text-sm text-[#94a3b8]">
-            Cuando la oficina te programe uno aparecerá aquí, con tu ruta y tu unidad.
+            {catalogo
+              ? "Cuando la oficina te programe uno aparecerá aquí, o empieza el tuyo ahora."
+              : "Cuando la oficina te programe uno aparecerá aquí, con tu ruta y tu unidad."}
           </p>
+          {catalogo && (
+            <button type="button" className={BTN_LIMA} onClick={() => setCreando(true)}>
+              Empezar un viaje
+            </button>
+          )}
         </div>
       )}
 
