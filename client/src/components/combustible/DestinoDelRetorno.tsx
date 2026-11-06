@@ -22,7 +22,7 @@ interface TanqueDelPozo {
   grifo_interno_id: number | null;
 }
 
-const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
+const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 3 });
 
 export default function DestinoDelRetorno({
   tanqueta,
@@ -59,7 +59,7 @@ export default function DestinoDelRetorno({
     };
   }, []);
 
-  const hayCantidad = cantidad > 0.005;
+  const hayCantidad = cantidad > 0.0005;
   const unidades = useUnidadesDeDestino(tanqueta.equipo_asignado_id);
 
   // Los tanques de la sede, con el espacio que les queda y cuánto entraría en su unidad.
@@ -69,7 +69,7 @@ export default function DestinoDelRetorno({
     .map((t) => {
       const libre = Math.max(0, Number(t.capacidad_total) - Number(t.nivel_teorico));
       const entra = t.unidad === "L" ? cantidad * LITROS_POR_GALON : cantidad;
-      return { t, libre, entra, cabe: entra <= libre + 0.005 };
+      return { t, libre, entra, cabe: entra <= libre + 0.0005 };
     });
 
   const otrasConEspacio = otras

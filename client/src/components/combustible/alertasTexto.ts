@@ -656,7 +656,7 @@ export function describirDetalleAlerta(a: AlertaCombustible): string {
     };
     if (descuadreLitros === undefined) return "—";
     const magnitud = Math.abs(descuadreLitros).toLocaleString("es-PE", {
-      maximumFractionDigits: 2,
+      maximumFractionDigits: 3,
     });
     const desde = cicloDesde ? new Date(cicloDesde).toLocaleDateString("es-PE") : "?";
     return (
@@ -698,7 +698,7 @@ export function describirDetalleAlerta(a: AlertaCombustible): string {
     // signo: un "-500" pide que el lector traduzca, y esta columna se lee de
     // reojo entre muchas filas.
     const magnitud = Math.abs(descuadreLitros).toLocaleString("es-PE", {
-      maximumFractionDigits: 2,
+      maximumFractionDigits: 3,
     });
     const base =
       `${sentido === "falta" ? "Faltan" : "Sobran"} ${magnitud} ${unidad ?? ""}: ` +

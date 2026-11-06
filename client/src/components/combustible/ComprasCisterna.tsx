@@ -18,7 +18,7 @@ import { mensajeDeError } from "../../utils/mensajeDeError";
 // descargó), con "Registrar compra", habilitarla a la cancha antes del día, anularla y la tolerancia
 // que se acepta entre lo que dice el documento y lo que se descarga. Lo ve quien gestiona compras.
 
-const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
+const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 3 });
 
 const CHIP: Record<EstadoDeCompra, string> = {
   registrada: "border-[#334155] text-[#94a3b8]",

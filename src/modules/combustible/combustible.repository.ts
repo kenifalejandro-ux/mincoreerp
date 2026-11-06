@@ -7073,7 +7073,7 @@ export class CombustibleRepository {
                        / CASE WHEN c.unidad = 'L' THEN ${LITROS_POR_GALON} ELSE 1 END
                      - co.cantidad_facturada
                        / CASE WHEN co.unidad = 'L' THEN ${LITROS_POR_GALON} ELSE 1 END)::numeric,
-                    2) END AS diferencia_compra_galones,
+                    3) END AS diferencia_compra_galones,
              autor.nombre AS registrada_por_nombre,
              anulador.nombre AS anulada_por_nombre,
              -- Cuánto se midió de menos (o de más) respecto de lo facturado.
@@ -8111,8 +8111,8 @@ export class CombustibleRepository {
             AND ($2::int[] IS NULL OR r.grifo_interno_id = ANY($2::int[]))
             AND ($3::bigint IS NULL OR x.id = $3::bigint)
        ) s
-       CROSS JOIN LATERAL (SELECT (s.cantidad - s.salido)::numeric(14,2) AS saldo) l
-       WHERE l.saldo > 0.005
+       CROSS JOIN LATERAL (SELECT (s.cantidad - s.salido)::numeric(14,3) AS saldo) l
+       WHERE l.saldo > 0.0005
        ORDER BY s.recibido_en, s.id`,
       [tenantId, grifos, lineaId]
     );
@@ -8138,7 +8138,7 @@ export class CombustibleRepository {
               -- De dónde sale lo que se ve: al_tanque es lo que entró a la varilla (la columna
               -- cantidad de la recepción no cuenta el sobrante) y entregado, lo que la cisterna
               -- del proveedor dejó en total (0110: cantidad + cantidad_derivada).
-              s.al_tanque, (s.al_tanque + s.cantidad_derivada)::numeric(14,2) AS entregado,
+              s.al_tanque, (s.al_tanque + s.cantidad_derivada)::numeric(14,3) AS entregado,
               -- El origen de la cisterna: el documento de la recepción, quién la registró y, si vino
               -- de una compra (0171), su transportista y lo que decía contra lo descargado, en
               -- galones (negativa si llegó menos), con la tolerancia de la empresa para pintarla.
@@ -8150,7 +8150,7 @@ export class CombustibleRepository {
                         / CASE WHEN s.unidad = 'L' THEN ${LITROS_POR_GALON} ELSE 1 END
                       - s.compra_cantidad
                         / CASE WHEN s.compra_unidad = 'L' THEN ${LITROS_POR_GALON} ELSE 1 END)::numeric,
-                     2) END AS diferencia_compra_galones,
+                     3) END AS diferencia_compra_galones,
               COALESCE((SELECT cc.tolerancia_diferencia_compra FROM combustible_config cc
                          WHERE cc.tenant_id = $1), 3) AS tolerancia_galones,
               -- Adónde fue el sobrante de esa recepción, línea por línea (0110/0168). Una línea
@@ -8228,10 +8228,10 @@ export class CombustibleRepository {
               AND ($2::int[] IS NULL OR r.grifo_interno_id = ANY($2::int[]))
               AND ($3::int IS NULL OR r.grifo_id = $3::int)
          ) s
-         CROSS JOIN LATERAL (SELECT (s.cantidad - s.salido)::numeric(14,2) AS saldo) l
+         CROSS JOIN LATERAL (SELECT (s.cantidad - s.salido)::numeric(14,3) AS saldo) l
          CROSS JOIN LATERAL (
            SELECT CASE WHEN s.anulada_en IS NOT NULL THEN 'anulada'
-                       WHEN l.saldo > 0.005 THEN 'con_saldo'
+                       WHEN l.saldo > 0.0005 THEN 'con_saldo'
                        ELSE 'vaciada' END AS estado
          ) e
         WHERE CASE WHEN $4::text = 'saldo' THEN e.estado = 'con_saldo' ELSE e.estado <> 'con_saldo' END
@@ -8577,7 +8577,7 @@ export class CombustibleRepository {
     }>(
       `SELECT r.id AS recepcion_id, r.combustible_id, r.recibido_en,
               c.codigo AS tanque_codigo, c.tanque_nombre, c.unidad, g.nombre AS proveedor,
-              SUM(x.cantidad - sal.salido)::numeric(14,2) AS saldo, cfg.dias
+              SUM(x.cantidad - sal.salido)::numeric(14,3) AS saldo, cfg.dias
          FROM combustible_recepcion_excedentes x
          JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
          JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
@@ -8601,7 +8601,7 @@ export class CombustibleRepository {
                AND a.tipo = 'cisterna_con_saldo' AND a.resuelta_en IS NULL)
         GROUP BY r.id, r.combustible_id, r.recibido_en, c.codigo, c.tanque_nombre, c.unidad,
                  g.nombre, cfg.dias
-       HAVING SUM(x.cantidad - sal.salido) > 0.005
+       HAVING SUM(x.cantidad - sal.salido) > 0.0005
         ORDER BY r.recibido_en`,
       [tenantId]
     );
@@ -8627,7 +8627,7 @@ export class CombustibleRepository {
              - COALESCE((SELECT SUM(t.cantidad) FROM combustible_cisterna_traslados t
                            JOIN combustible_recepcion_excedentes x ON x.id = t.linea_id
                           WHERE t.tenant_id = $1 AND x.recepcion_id = a.recepcion_id), 0)
-               <= 0.005
+               <= 0.0005
           )`,
       [tenantId]
     );

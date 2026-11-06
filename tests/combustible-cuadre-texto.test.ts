@@ -75,7 +75,7 @@ describe("cuadre de la tanqueta: el texto de cada salida", () => {
   it("sin remanente no se agrega nada, ni por el ruido de los decimales", () => {
     expect(d({})).not.toContain("había");
     expect(
-      d({ salioCon: 100, cargo: 70, debiaVolver: 30.004, volvio: 30.004, diferencia: 0 })
+      d({ salioCon: 100, cargo: 70, debiaVolver: 30.0004, volvio: 30.0004, diferencia: 0 })
     ).not.toContain("había");
     // sin cantidad en el vale (anterior a la 0142) no hay con qué comparar
     expect(d({ salioCon: null })).not.toContain("había");

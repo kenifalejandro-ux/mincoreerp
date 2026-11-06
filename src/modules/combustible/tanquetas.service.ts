@@ -330,7 +330,7 @@ const MARGEN_RETORNO_PCT = 0.05;
 
 export function retornoPideAlerta(calculado: number, validado: number): boolean {
   const diferencia = validado - calculado;
-  if (diferencia > 0.005) return true;
+  if (diferencia > 0.0005) return true;
   return -diferencia > Math.max(MARGEN_RETORNO_GAL, calculado * MARGEN_RETORNO_PCT);
 }
 
@@ -374,8 +374,8 @@ async function faltanteAcumuladoDeLaTanqueta(
   tanquetaId: number
 ): Promise<FaltanteAcumulado> {
   const r = await client.query<{ n: number; faltante: number; calculado: number }>(
-    `SELECT count(*) FILTER (WHERE diferencia < -0.005)::int AS n,
-            COALESCE(SUM(-diferencia) FILTER (WHERE diferencia < -0.005), 0)::float AS faltante,
+    `SELECT count(*) FILTER (WHERE diferencia < -0.0005)::int AS n,
+            COALESCE(SUM(-diferencia) FILTER (WHERE diferencia < -0.0005), 0)::float AS faltante,
             COALESCE(SUM(saldo_calculado), 0)::float AS calculado
        FROM combustible_tanqueta_retornos
       WHERE tenant_id = $1 AND tanqueta_id = $2
@@ -470,7 +470,7 @@ async function prepararEntradaAlPozo(
   tanqueId: number | undefined
 ) {
   if (tanqueId === undefined) throw new AppError(400, "Elige el tanque al que vuelve el saldo");
-  if (saldoValidado <= 0.005) {
+  if (saldoValidado <= 0.0005) {
     throw new AppError(400, "La tanqueta volvió vacía: no hay saldo que devolver al pozo");
   }
   const r = await client.query<{
@@ -508,7 +508,7 @@ async function prepararEntradaAlPozo(
   }
   const enGalones = tanque.unidad === "gal";
   const cantidad = Number(
-    (enGalones ? saldoValidado : saldoValidado * LITROS_POR_GALON).toFixed(2)
+    (enGalones ? saldoValidado : saldoValidado * LITROS_POR_GALON).toFixed(3)
   );
   const repo = new CombustibleRepository();
   const nivel = await repo.findNivelTeoricoVigenteA(
@@ -524,8 +524,8 @@ async function prepararEntradaAlPozo(
     );
   }
   const capacidad = Number(tanque.capacidad_total);
-  if (nivel + cantidad > capacidad + 0.005) {
-    const libre = Math.max(0, Number((capacidad - nivel).toFixed(2)));
+  if (nivel + cantidad > capacidad + 0.0005) {
+    const libre = Math.max(0, Number((capacidad - nivel).toFixed(3)));
     throw new AppError(
       400,
       `El tanque ${tanque.codigo} solo tiene espacio para ${libre} ${tanque.unidad} ` +
@@ -559,7 +559,7 @@ async function prepararTrasladoATanqueta(
   if (destinoId === Number(origen.id)) {
     throw new AppError(400, "El saldo no puede pasar a la misma tanqueta que lo devuelve");
   }
-  if (saldoValidado <= 0.005) {
+  if (saldoValidado <= 0.0005) {
     throw new AppError(400, "La tanqueta volvió vacía: no hay saldo que pasar a otra");
   }
   // Una tanqueta vacía que quedó con su unidad vieja la olvida antes de recibir.
@@ -640,7 +640,7 @@ export async function registrarRetornoTanqueta(
     );
   }
   const saldo = Number(t.saldo);
-  if (Math.abs(saldo - datos.saldoCalculado) > 0.005) {
+  if (Math.abs(saldo - datos.saldoCalculado) > 0.0005) {
     throw new AppError(
       409,
       `El saldo de la tanqueta ${t.codigo} cambió (ahora ${saldo} gal): ábrela de nuevo`
@@ -650,7 +650,7 @@ export async function registrarRetornoTanqueta(
     throw new AppError(400, `La tanqueta ${t.codigo} no admite más de ${Number(t.capacidad)} gal`);
   }
   const motivo = datos.motivo?.trim() ?? "";
-  if (Math.abs(datos.saldoValidado - saldo) > 0.005 && motivo.length < 3) {
+  if (Math.abs(datos.saldoValidado - saldo) > 0.0005 && motivo.length < 3) {
     throw new AppError(400, "Si el saldo que volvió no coincide con el calculado, explica por qué");
   }
   const destino = datos.destino ?? "reserva";
@@ -739,7 +739,7 @@ export async function registrarRetornoTanqueta(
           unidad: unidad.rows[0]?.placa_codigo ?? null,
           saldoCalculado: saldo,
           saldoValidado: datos.saldoValidado,
-          diferencia: Number((datos.saldoValidado - saldo).toFixed(2)),
+          diferencia: Number((datos.saldoValidado - saldo).toFixed(3)),
           motivo,
           usuarioId: datos.usuarioId,
           // Solo si el aviso es por el faltante acumulado: con qué cifras se avisó.
@@ -748,8 +748,8 @@ export async function registrarRetornoTanqueta(
                 acumulado: {
                   dias: UMBRAL_FALTANTE_ACUMULADO.dias,
                   retornos: acumulado.retornosConFaltante,
-                  faltante: Number(acumulado.faltante.toFixed(2)),
-                  calculado: Number(acumulado.calculado.toFixed(2)),
+                  faltante: Number(acumulado.faltante.toFixed(3)),
+                  calculado: Number(acumulado.calculado.toFixed(3)),
                 },
               }
             : {}),
@@ -785,7 +785,7 @@ export async function tanquetasSinSaldoParaAnular(
     const id = Number(l.tanqueta_id);
     await bloquearTanqueta(client, tenantId, id);
     const t = await getTanqueta(client, tenantId, id);
-    if (t && Number(t.saldo) - Number(l.cantidad) < -0.005) {
+    if (t && Number(t.saldo) - Number(l.cantidad) < -0.0005) {
       sinSaldo.push({
         codigo: t.codigo,
         saldo: Number(t.saldo),
@@ -1279,7 +1279,7 @@ function cierresDelConductor(
             new Date(m.fecha).getTime() < hasta
         )
         .reduce((suma, m) => suma + Number(m.cantidad), 0);
-      return { ...s, entroDespues: Number(entroDespues.toFixed(2)) };
+      return { ...s, entroDespues: Number(entroDespues.toFixed(3)) };
     });
 }
 

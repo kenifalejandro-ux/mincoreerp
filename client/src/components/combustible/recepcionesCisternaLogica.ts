@@ -61,7 +61,7 @@ export function diferenciaDeLaRecepcion(
   if (!Number.isFinite(dif)) return null;
   const tolerancia = Number(r.tolerancia_galones ?? 3);
   if (dif === 0) return { texto: "Sin diferencia", fuera: false };
-  const n = Math.abs(dif).toLocaleString("es-PE", { maximumFractionDigits: 2 });
+  const n = Math.abs(dif).toLocaleString("es-PE", { maximumFractionDigits: 3 });
   return {
     texto: `${dif > 0 ? "+" : "−"}${n} gal`,
     fuera: Math.abs(dif) > tolerancia,

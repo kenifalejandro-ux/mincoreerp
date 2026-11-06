@@ -29,7 +29,7 @@ import {
 import RecepcionesCisterna from "./RecepcionesCisterna";
 import TarjetaCompraPorLlegar from "./TarjetaCompraPorLlegar";
 
-const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
+const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 3 });
 
 const CHIP_PLAZO: Record<EstadoDelPlazo, string> = {
   sin_plazo: "text-[#94a3b8]",

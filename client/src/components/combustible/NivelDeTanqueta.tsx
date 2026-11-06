@@ -20,7 +20,7 @@ const RADIO_INT = "rounded-t-[60px] rounded-b-3xl";
 
 /** Lo que se muestra de un número: un -0.004 no debe verse "-0". */
 const formatear = (n: number) =>
-  (Math.abs(n) < 0.005 ? 0 : n).toLocaleString("es-PE", { maximumFractionDigits: 2 });
+  (Math.abs(n) < 0.0005 ? 0 : n).toLocaleString("es-PE", { maximumFractionDigits: 3 });
 
 const hora = (d: Date) => d.toLocaleTimeString("es-PE", { hour: "numeric", minute: "2-digit" });
 
@@ -58,7 +58,7 @@ export default function NivelDeTanqueta({
   const libre = elegida.libre;
   const pct = porcentajeDelNivel(saldo, elegida.capacidad);
   const [color, claro, oscuro, brillo] = coloresDelNivel(saldo, pct);
-  const sobregiro = saldo < -0.005;
+  const sobregiro = saldo < -0.0005;
   return (
     <div className="bg-[#192526] border border-[#2a2e37] rounded-lg p-6 flex flex-col items-center shadow-lg relative overflow-hidden">
       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#2a2e37] to-transparent" />

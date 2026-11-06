@@ -272,11 +272,11 @@ function repartoPropuesto(detalle: DetalleExcedente): LineaReparto[] {
     const va = Math.min(resta, t.libre);
     lineas.push({
       destino: "cubeta",
-      cantidad: String(Number(va.toFixed(2))),
+      cantidad: String(Number(va.toFixed(3))),
       equipo_id: "",
       tanqueta_id: String(t.id),
     });
-    resta = Number((resta - va).toFixed(2));
+    resta = Number((resta - va).toFixed(3));
   }
   if (resta > 0.001) {
     lineas.push({ destino: "equipo", cantidad: String(resta), equipo_id: "", tanqueta_id: "" });
@@ -804,7 +804,7 @@ function SugerenciaCompacta({
   const piso = sugerencia.piso ?? 0;
   const pct = sugerencia.pct ?? 0;
   const mov = sugerencia.movimientoTipico ?? 0;
-  const enLitros = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
+  const enLitros = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 3 });
   /** El par traducido a la única unidad que se puede juzgar de un vistazo. */
   const tolerancia = (p: number, pc: number) => enLitros(p + (pc / 100) * mov);
 
@@ -4460,8 +4460,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   <input
                     id="tanque-capacidad"
                     type="number"
-                    min={0.01}
-                    step="0.01"
+                    min={0.001}
+                    step="0.001"
                     required
                     className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={formData.capacidad_total}
@@ -4479,7 +4479,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     id="tanque-nivel-minimo"
                     type="number"
                     min={0}
-                    step="0.01"
+                    step="0.001"
                     className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={formData.nivel_minimo}
                     onChange={(e) => setFormData({ ...formData, nivel_minimo: e.target.value })}
@@ -4502,7 +4502,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     id="tanque-nivel-actual"
                     type="number"
                     min={0}
-                    step="0.01"
+                    step="0.001"
                     className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={formData.nivel_actual}
                     onChange={(e) => setFormData({ ...formData, nivel_actual: e.target.value })}
@@ -5139,7 +5139,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   id="combustible-nivel"
                   type="number"
                   min={0}
-                  step="0.01"
+                  step="0.001"
                   required
                   className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                   value={nivel}
@@ -5545,8 +5545,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           <input
                             id="despacho-cantidad-tanqueta"
                             type="number"
-                            min={0.01}
-                            step="0.01"
+                            min={0.001}
+                            step="0.001"
                             required
                             className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                             value={despachoForm.cantidad}
@@ -5660,7 +5660,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         id="despacho-cantidad"
                         type="number"
                         min={0}
-                        step="0.01"
+                        step="0.001"
                         required
                         className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                         value={despachoForm.cantidad}
@@ -5680,7 +5680,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         id="despacho-contometro"
                         type="number"
                         min={0}
-                        step="0.01"
+                        step="0.001"
                         required
                         className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none"
                         value={despachoForm.lectura_contometro}
@@ -7999,7 +7999,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     type="number"
                     required
                     min={0}
-                    step="0.01"
+                    step="0.001"
                     className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                     value={recepcionForm.cantidad}
                     onChange={(e) =>
@@ -8187,7 +8187,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {excedentePendiente &&
         (() => {
           const suma = lineasReparto.reduce((acc, l) => acc + (Number(l.cantidad) || 0), 0);
-          const falta = Number((excedentePendiente.excedenteLitros - suma).toFixed(2));
+          const falta = Number((excedentePendiente.excedenteLitros - suma).toFixed(3));
           const libres = excedentePendiente.tanquetasLibres ?? [];
           // Lo que cada tanqueta recibe sumando todas las líneas que la usan:
           // el tope es su espacio libre (el servidor lo vuelve a validar).
@@ -8204,7 +8204,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               (!l.tanqueta_equipo_id ||
                 ((l.serie_talonario ?? "").trim() !== "" && Number(l.n_vale) > 0))
           );
-          const completo = Math.abs(falta) < 0.01 && lineasCompletas && pasadas.length === 0;
+          const completo = Math.abs(falta) < 0.001 && lineasCompletas && pasadas.length === 0;
           const actualizar = (i: number, cambio: Partial<LineaReparto>) =>
             setLineasReparto(lineasReparto.map((l, j) => (j === i ? { ...l, ...cambio } : l)));
           const u = excedentePendiente.unidad;
@@ -8270,7 +8270,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           id={`exc-cantidad-${i}`}
                           type="number"
                           min={0}
-                          step="0.01"
+                          step="0.001"
                           className="w-full border border-slate-200 rounded-xl p-3 text-sm"
                           value={l.cantidad}
                           onChange={(e) => actualizar(i, { cantidad: e.target.value })}

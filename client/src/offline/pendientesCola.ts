@@ -142,7 +142,7 @@ export function galonesPendientesPorTanqueta(entradas: EntradaCola[]): Record<nu
   // Se redondea al final (no en cada suma: tres entradas chicas no deben dar 0) y un total que no
   // es un número finito se descarta en vez de pintar "Infinity".
   for (const [id, total] of Object.entries(porTanqueta)) {
-    const redondeado = Math.round(total * 100) / 100;
+    const redondeado = Math.round(total * 1000) / 1000;
     if (Number.isFinite(redondeado) && redondeado > 0) porTanqueta[Number(id)] = redondeado;
     else delete porTanqueta[Number(id)];
   }

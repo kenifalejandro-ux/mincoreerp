@@ -16,7 +16,7 @@ import { mensajeDeError } from "../../utils/mensajeDeError";
 // tiene "Repartir", esta tiene "Registrar recepción": ahí el grifero la recibe y la distribuye (al
 // tanque, y lo que sobre a tanquetas, a unidades o se queda en la cisterna).
 
-const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
+const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 3 });
 
 const BOTON =
   "flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold transition-all active:scale-95 border";

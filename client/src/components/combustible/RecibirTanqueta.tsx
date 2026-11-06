@@ -43,7 +43,7 @@ export default function RecibirTanqueta({
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const distinto = volvio !== "" && Math.abs(Number(volvio) - calculado) > 0.005;
+  const distinto = volvio !== "" && Math.abs(Number(volvio) - calculado) > 0.0005;
   const valido =
     volvio !== "" &&
     Number(volvio) >= 0 &&

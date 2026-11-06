@@ -176,8 +176,8 @@ function resumirHistorico(
   const fechas = h.map((f) => new Date(f.ocurrido_en).getTime());
   return {
     movimientos: h.length,
-    litros_salida: Number(h.reduce((a, f) => a + f.salida, 0).toFixed(2)),
-    litros_entrada: Number(h.reduce((a, f) => a + f.entrada, 0).toFixed(2)),
+    litros_salida: Number(h.reduce((a, f) => a + f.salida, 0).toFixed(3)),
+    litros_entrada: Number(h.reduce((a, f) => a + f.entrada, 0).toFixed(3)),
     desde: new Date(Math.min(...fechas)).toISOString(),
     hasta: new Date(Math.max(...fechas)).toISOString(),
   };
@@ -2545,7 +2545,10 @@ export class CombustibleService {
     if (data.origen === "excedente_recepcion" || data.origen === "tanqueta") return;
 
     if (data.origen === "tanque_propio") {
-      if (Number(data.lectura_contometro) !== Number(data.cantidad)) {
+      if (
+        Math.round(Number(data.lectura_contometro) * 1000) !==
+        Math.round(Number(data.cantidad) * 1000)
+      ) {
         throw new Error(
           `el contómetro marcó ${data.lectura_contometro} pero se declararon ${data.cantidad} -- revisá el vale`
         );
@@ -2684,7 +2687,7 @@ export class CombustibleService {
         `el excedente es para la unidad ${linea.equipo ?? linea.equipo_id}, no para la del vale`
       );
     }
-    if (Math.abs(Number(linea.cantidad) - data.cantidad!) > 0.01) {
+    if (Math.abs(Number(linea.cantidad) - data.cantidad!) > 0.001) {
       throw new Error(
         `el excedente pendiente es de ${Number(linea.cantidad)} ${linea.unidad} y el vale dice ${data.cantidad}`
       );
@@ -2732,7 +2735,7 @@ export class CombustibleService {
       );
     }
     const saldo = Number(cisterna.saldo);
-    if (data.cantidad! > saldo + 0.01) {
+    if (data.cantidad! > saldo + 0.001) {
       throw new Error(
         `el excedente en cisterna tiene ${saldo} ${cisterna.unidad} y el vale dice ${data.cantidad}`
       );
@@ -2818,7 +2821,7 @@ export class CombustibleService {
           );
         }
         const saldo = Number(cisterna.saldo);
-        if (data.cantidad > saldo + 0.01) {
+        if (data.cantidad > saldo + 0.001) {
           throw new AppError(
             400,
             `En la cisterna quedan ${saldo} ${cisterna.unidad} y se quieren pasar ${data.cantidad}`
@@ -2862,8 +2865,8 @@ export class CombustibleService {
           );
         }
         const capacidad = Number(tanque.capacidad_total);
-        if (nivel + data.cantidad > capacidad + 0.005) {
-          const libre = Math.max(0, Number((capacidad - nivel).toFixed(2)));
+        if (nivel + data.cantidad > capacidad + 0.0005) {
+          const libre = Math.max(0, Number((capacidad - nivel).toFixed(3)));
           throw new AppError(
             400,
             `El tanque ${tanque.codigo} solo tiene espacio para ${libre} ${tanque.unidad} ` +
@@ -4513,16 +4516,16 @@ export class CombustibleService {
       diasVentana: dias,
       desde: datos.desde_en ? new Date(datos.desde_en).toISOString() : null,
       tramos,
-      descuadreLitros: Number(descuadre.toFixed(2)),
+      descuadreLitros: Number(descuadre.toFixed(3)),
       sentido: descuadre < 0 ? ("falta" as const) : ("sobra" as const),
       umbralPct,
       piso,
-      movimiento: Number(movimiento.toFixed(2)),
-      toleradoLitros: Number(toleradoLitros.toFixed(2)),
+      movimiento: Number(movimiento.toFixed(3)),
+      toleradoLitros: Number(toleradoLitros.toFixed(3)),
       // El promedio por tramo es el número que hace entendible el hallazgo:
       // "se fueron 1.500 L" asusta, "50 L por medición durante un mes"
       // explica QUÉ pasó y por qué ningún control por tramo lo vio.
-      promedioPorTramo: Number((descuadre / tramos).toFixed(2)),
+      promedioPorTramo: Number((descuadre / tramos).toFixed(3)),
     };
   }
 
@@ -4677,8 +4680,8 @@ export class CombustibleService {
       toleranciaLitros: CombustibleService.TOLERANCIA_VARILLA_EXACTA_L,
       tramos: tramos.map((t) => ({
         leidoEn: new Date(t.leidoEn).toISOString(),
-        descuadreLitros: Number(t.descuadre.toFixed(2)),
-        movidoLitros: Number((t.despachos + t.recepciones).toFixed(2)),
+        descuadreLitros: Number(t.descuadre.toFixed(3)),
+        movidoLitros: Number((t.despachos + t.recepciones).toFixed(3)),
       })),
     };
   }
@@ -5606,7 +5609,7 @@ export class CombustibleService {
           norm(e.marca) && norm(e.modelo)
             ? [medidor, norm(e.tipo), norm(e.marca), norm(e.modelo)].join("|")
             : null,
-        litros_cargados: Number(litrosPeriodo.toFixed(2)),
+        litros_cargados: Number(litrosPeriodo.toFixed(3)),
         consumo_maximo_l: e.consumo_maximo_l === null ? null : Number(e.consumo_maximo_l),
         periodo: periodo.ok ? periodo : null,
         sin_datos_motivo: periodo.ok ? null : periodo.motivo,
@@ -7074,7 +7077,7 @@ export class CombustibleService {
     return {
       ...base,
       motivo: "excede_nivel" as const,
-      nivelAntes: Number((despues + cantidad).toFixed(2)),
+      nivelAntes: Number((despues + cantidad).toFixed(3)),
     };
   }
 
@@ -7178,7 +7181,7 @@ export class CombustibleService {
     const ultima = previas[previas.length - 1];
     if (ultima.cantidad === cantidadNueva) return null;
 
-    const diferencia = Number((cantidadNueva - ultima.cantidad).toFixed(2));
+    const diferencia = Number((cantidadNueva - ultima.cantidad).toFixed(3));
     return {
       anulacionesPrevias: previas.length,
       cantidadAnulada: ultima.cantidad,
@@ -7275,9 +7278,9 @@ export class CombustibleService {
     if (sinEste.totalL > topeL) return null; // Ya estaba pasado: no es un hallazgo nuevo.
 
     return {
-      acumuladoL: Number(conEste.totalL.toFixed(2)),
-      topeL: Number(topeL.toFixed(2)),
-      excesoL: Number((conEste.totalL - topeL).toFixed(2)),
+      acumuladoL: Number(conEste.totalL.toFixed(3)),
+      topeL: Number(topeL.toFixed(3)),
+      excesoL: Number((conEste.totalL - topeL).toFixed(3)),
       valesEnLaVentana: conEste.vales,
       // Qué ventana de 24 h es la que no cierra. Con la ventana simétrica ya
       // no es "las 24 h antes del vale", así que hay que decirlo o el aviso
@@ -7335,8 +7338,8 @@ export class CombustibleService {
       let difTramo: number | null = null;
 
       if (esLectura && !anulada && nivelMedido !== null) {
-        difAcumulada = Number((nivelMedido - saldoTeorico).toFixed(2));
-        difTramo = Number((difAcumulada - (ultimaDifValida ?? 0)).toFixed(2));
+        difAcumulada = Number((nivelMedido - saldoTeorico).toFixed(3));
+        difTramo = Number((difAcumulada - (ultimaDifValida ?? 0)).toFixed(3));
         ultimaDifValida = difAcumulada;
       }
 
@@ -7381,16 +7384,16 @@ export class CombustibleService {
       // no tienen saldo teórico y no sirven de punto de partida.
       saldo_inicial: (() => {
         const f = filas.find((x) => x.saldo_teorico !== null);
-        return f ? Number((f.saldo_teorico! - f.entrada + f.salida).toFixed(2)) : null;
+        return f ? Number((f.saldo_teorico! - f.entrada + f.salida).toFixed(3)) : null;
       })(),
       filas,
       // El cierre del período, que es lo que un auditor copia al informe.
       resumen: {
         entradas: Number(
-          filas.reduce((a, f) => a + (f.anulada || f.historico ? 0 : f.entrada), 0).toFixed(2)
+          filas.reduce((a, f) => a + (f.anulada || f.historico ? 0 : f.entrada), 0).toFixed(3)
         ),
         salidas: Number(
-          filas.reduce((a, f) => a + (f.anulada || f.historico ? 0 : f.salida), 0).toFixed(2)
+          filas.reduce((a, f) => a + (f.anulada || f.historico ? 0 : f.salida), 0).toFixed(3)
         ),
         // Lo previo a la primera varilla: se ve, pero no entra a la cuenta.
         historico: resumirHistorico(filas),
@@ -7665,7 +7668,7 @@ export class CombustibleService {
         ? null
         : {
             cantidad: indices.length,
-            descuadres: indices.map((i) => Number(puntos[i].descuadre.toFixed(2))),
+            descuadres: indices.map((i) => Number(puntos[i].descuadre.toFixed(3))),
             mediciones: indices.map((i) => puntos[i]),
             sinEllos:
               limpios.length >= CombustibleService.MINIMO_MUESTRA
@@ -7686,7 +7689,7 @@ export class CombustibleService {
        *  leer la sugerencia sin hacer la cuenta a mano: "en un tramo normal
        *  de este tanque, esto tolera X litros". */
       movimientoTipico: Number(
-        CombustibleService.mediana(puntos.map((p) => p.movimiento)).toFixed(2)
+        CombustibleService.mediana(puntos.map((p) => p.movimiento)).toFixed(3)
       ),
       atipicos,
       muestra: puntos,
@@ -7747,12 +7750,12 @@ export class CombustibleService {
    *  porcentaje a partir de estos puntos. */
   private static puntosDeTramo(intervalos: IntervaloCalibracion[]) {
     return CombustibleService.tramosMedidos(intervalos).map((i) => ({
-      descuadre: Number(i.descuadre.toFixed(2)),
+      descuadre: Number(i.descuadre.toFixed(3)),
       // El movimiento: lo que pasó por los medidores en el tramo. Suma, no
       // resta -- el error de medir una recepción no se compensa con el de
       // medir un despacho.
-      movimiento: Number((i.despachos + i.recepciones).toFixed(2)),
-      descuadreLitros: Number(i.descuadre.toFixed(2)),
+      movimiento: Number((i.despachos + i.recepciones).toFixed(3)),
+      descuadreLitros: Number(i.descuadre.toFixed(3)),
       leidoEn: i.leido_en,
       // Los pasos de la cuenta, para la exportación: con esto cada fila del
       // archivo muestra de dónde sale su descuadre, no solo el resultado.
@@ -8141,10 +8144,10 @@ export class CombustibleService {
         // `cantidad` sigue siendo lo que mueve el kardex y el nivel teórico.
         const cantidadDerivada = excedenteAceptado
           ? Number(
-              excedenteAceptado.reparto.reduce((suma, linea) => suma + linea.cantidad, 0).toFixed(2)
+              excedenteAceptado.reparto.reduce((suma, linea) => suma + linea.cantidad, 0).toFixed(3)
             )
           : 0;
-        const cantidad = Number((cantidadEntregada - cantidadDerivada).toFixed(2));
+        const cantidad = Number((cantidadEntregada - cantidadDerivada).toFixed(3));
 
         const fila = await this.repository.crearRecepcion(client, tenantId, usuarioId, {
           producto: data.producto,
@@ -8368,7 +8371,7 @@ export class CombustibleService {
 
     const capacidad = Number(tanque.capacidad_total);
     const totalTrasRecepcion = nivelTeorico + data.cantidad!;
-    const excedenteLitros = Number((totalTrasRecepcion - capacidad).toFixed(2));
+    const excedenteLitros = Number((totalTrasRecepcion - capacidad).toFixed(3));
 
     if (excedenteLitros <= 0) {
       if (data.reparto_excedente) {
@@ -8413,8 +8416,8 @@ export class CombustibleService {
     }
 
     const reparto = data.reparto_excedente;
-    const sumaReparto = Number(reparto.reduce((suma, l) => suma + l.cantidad, 0).toFixed(2));
-    if (Math.abs(sumaReparto - excedenteLitros) > 0.01) {
+    const sumaReparto = Number(reparto.reduce((suma, l) => suma + l.cantidad, 0).toFixed(3));
+    if (Math.abs(sumaReparto - excedenteLitros) > 0.001) {
       throw new Error(
         `el reparto del excedente suma ${sumaReparto} y el excedente es ${excedenteLitros}: tienen que coincidir`
       );
@@ -8556,14 +8559,14 @@ export class CombustibleService {
     // Lo que dice la guía es la entrega completa: lo que entró al tanque más
     // el excedente que se derivó (0110).
     const cantidadRegistrada = Number(fila.cantidad) + Number(fila.cantidad_derivada ?? 0);
-    const diferencia = Number((cantidadDocumento - cantidadRegistrada).toFixed(2));
+    const diferencia = Number((cantidadDocumento - cantidadRegistrada).toFixed(3));
     const autovalidacion = fila.usuario_id !== null && fila.usuario_id === usuarioId;
 
     return {
       recepcion: fila,
       autovalidacion,
       discrepancia:
-        Math.abs(diferencia) < 0.01
+        Math.abs(diferencia) < 0.001
           ? null
           : {
               cantidadRegistrada,

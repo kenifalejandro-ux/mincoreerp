@@ -1017,7 +1017,7 @@ function FormularioCompra({
                   <input
                     type="number"
                     min={0}
-                    step="0.01"
+                    step="0.001"
                     id="compra-galones"
                     className={`${CLASE_CAMPO} min-w-0 flex-1`}
                     value={galones}

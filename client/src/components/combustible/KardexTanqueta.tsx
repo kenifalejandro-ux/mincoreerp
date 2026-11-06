@@ -11,7 +11,7 @@ import type { FilaKardex, KardexDeTanqueta } from "./kardexTanquetaDatos";
 
 // Los formateadores se crean UNA vez: `toLocaleString` arma uno nuevo en cada llamada y con 500
 // filas por refresco eso congelaba la pantalla (190 ms contra 3 ms).
-const NUMERO = new Intl.NumberFormat("es-PE", { maximumFractionDigits: 2 });
+const NUMERO = new Intl.NumberFormat("es-PE", { maximumFractionDigits: 3 });
 const DIA = new Intl.DateTimeFormat("es-PE", { day: "2-digit", month: "2-digit", year: "2-digit" });
 const HORA = new Intl.DateTimeFormat("es-PE", {
   hour: "2-digit",
@@ -20,7 +20,7 @@ const HORA = new Intl.DateTimeFormat("es-PE", {
 });
 
 /** Lo que se muestra de un número: un -0.004 no debe verse "-0". */
-const formatear = (n: number) => NUMERO.format(Math.abs(n) < 0.005 ? 0 : n);
+const formatear = (n: number) => NUMERO.format(Math.abs(n) < 0.0005 ? 0 : n);
 
 /** "31/10/26 · 23:17": fecha y hora corta en una sola línea (24 h para ahorrar ancho). */
 const fechaCorta = (iso: string) => {
@@ -111,7 +111,7 @@ export default function KardexTanqueta({
       )
     : [];
   const filas = verTodas ? coinciden : coinciden.slice(0, FILAS_INICIALES);
-  const alDia = kardex !== null && Math.abs(kardex.saldoFinal - saldoCilindro) < 0.005;
+  const alDia = kardex !== null && Math.abs(kardex.saldoFinal - saldoCilindro) < 0.0005;
   return (
     <section
       className="min-w-0 overflow-hidden rounded-md border border-t-2 border-[#2a2e37] border-t-[#BADC1E]/70 bg-[#192526]"
