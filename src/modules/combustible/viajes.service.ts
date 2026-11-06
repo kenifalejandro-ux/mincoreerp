@@ -1295,6 +1295,127 @@ export async function terminarDescanso(
   return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
 }
 
+// ── Poner al día un viaje ──────────────────────────────────────────────────
+
+export type AccionPonerAlDia =
+  | { tipo: "llegada" | "salida"; en: string; orden?: number; medidor?: number | null }
+  | { tipo: "descanso"; motivo: string; desde: string; hasta?: string };
+
+/** Lo que quedó guardado en cada paso, en el orden en que se aplicó. */
+export interface PasoPuestoAlDia {
+  clase: "llegada" | "salida" | "descanso_inicio" | "descanso_fin";
+  /** La acción que lo pidió, en la lista que llegó (desde 0). */
+  indice: number;
+  orden: number | null;
+  cierra: boolean;
+  medidor: number | null;
+  motivo: string | null;
+}
+
+// Con la misma hora, el fin de un descanso va antes que la marca (un viaje con un descanso abierto
+// no avanza) y el inicio de otro va después (se llega y recién se duerme).
+const PESO_PASO = { descanso_fin: 0, llegada: 1, salida: 1, descanso_inicio: 2 } as const;
+const NOMBRE_PASO: Record<PasoPuestoAlDia["clase"], string> = {
+  llegada: "llegada",
+  salida: "salida",
+  descanso_inicio: "inicio del descanso",
+  descanso_fin: "fin del descanso",
+};
+
+/** La oficina registra de una vez lo que ya pasó y nadie marcó. Las acciones llegan en cualquier
+ *  orden: se ordenan por hora y se aplican una a una con las mismas reglas de siempre, dentro de la
+ *  transacción del que llama. Si una falla, el que llama la deshace entera (todo o nada) y el error
+ *  dice cuál fue. Las horas son a mano: el motivo único acompaña a las que lo piden. */
+export async function ponerAlDiaViaje(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  id: number,
+  data: { motivo: string; acciones: AccionPonerAlDia[] }
+) {
+  type Paso = {
+    clase: PasoPuestoAlDia["clase"];
+    indice: number;
+    hora: string;
+    accion: AccionPonerAlDia;
+  };
+  const pasos: Paso[] = data.acciones.flatMap((accion, indice): Paso[] => {
+    if (accion.tipo !== "descanso")
+      return [{ clase: accion.tipo, indice, hora: accion.en, accion }];
+    if (accion.hasta && Date.parse(accion.hasta) <= Date.parse(accion.desde)) {
+      throw new AppError(
+        400,
+        `Acción ${indice + 1} (descanso): el fin tiene que ser después del inicio`,
+        { indice }
+      );
+    }
+    const inicio: Paso = { clase: "descanso_inicio", indice, hora: accion.desde, accion };
+    return accion.hasta
+      ? [inicio, { clase: "descanso_fin", indice, hora: accion.hasta, accion }]
+      : [inicio];
+  });
+  pasos.sort(
+    (x, y) =>
+      Date.parse(x.hora) - Date.parse(y.hora) ||
+      PESO_PASO[x.clase] - PESO_PASO[y.clase] ||
+      x.indice - y.indice
+  );
+
+  const hechos: PasoPuestoAlDia[] = [];
+  let antes: Record<string, unknown> | null = null;
+  let despues: Record<string, unknown> | null = null;
+  for (const p of pasos) {
+    try {
+      let r: ResultadoMarca | ResultadoDescanso;
+      let orden: number | null = null;
+      let cierra = false;
+      let medidor: number | null = null;
+      let motivo: string | null = null;
+      if (p.accion.tipo !== "descanso") {
+        const a = p.accion;
+        const marca = { medidor: a.medidor, orden: a.orden, hora: a.en };
+        const m =
+          p.clase === "llegada"
+            ? await llegarAParada(client, tenantId, usuarioId, id, marca)
+            : await salirDeParada(client, tenantId, usuarioId, id, marca);
+        r = m;
+        orden = m.orden;
+        cierra = m.cierra;
+        medidor = a.medidor ?? null;
+      } else if (p.clase === "descanso_inicio") {
+        motivo = p.accion.motivo;
+        r = await iniciarDescanso(client, tenantId, usuarioId, id, {
+          motivo,
+          hora: p.accion.desde,
+        });
+      } else {
+        motivo = data.motivo;
+        r = await terminarDescanso(client, tenantId, usuarioId, id, {
+          motivo,
+          hora: p.accion.hasta,
+        });
+      }
+      antes ??= r.antes;
+      despues = r.despues;
+      hechos.push({ clase: p.clase, indice: p.indice, orden, cierra, medidor, motivo });
+    } catch (err) {
+      if (err instanceof AppError) {
+        throw new AppError(
+          err.statusCode,
+          `Acción ${p.indice + 1} (${NOMBRE_PASO[p.clase]}): ${err.message}`,
+          { indice: p.indice }
+        );
+      }
+      throw err;
+    }
+  }
+  return {
+    antes: antes as Record<string, unknown>,
+    despues: despues ?? (await getViaje(client, tenantId, id)),
+    pasos: hechos,
+  };
+}
+
 // ── Entrega del mando (0153) ───────────────────────────────────────────────
 
 export interface MarcaMando {
