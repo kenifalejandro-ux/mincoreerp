@@ -8,6 +8,7 @@ import { AccionesEncargado } from "./AccionesEncargado";
 import { CorregirMando } from "./CorregirMando";
 import { avanceEstimado, estadoDelViaje, paradasDelViaje } from "./paradasViaje";
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
+import { PonerAlDia } from "./PonerAlDia";
 import { QuienManejo } from "./QuienManejo";
 import { TramosViaje, type TramoDelViaje } from "./TramosViaje";
 import {
@@ -55,11 +56,14 @@ export function DetalleViajeVentana({
   viajeId,
   onCerrar,
   puedeEditar = false,
+  enfocarPonerAlDia = false,
 }: {
   viajeId: string;
   onCerrar: () => void;
   /** La oficina que puede editar viajes marca descansos y llegadas por el conductor. */
   puedeEditar?: boolean;
+  /** Se abrió desde «Poner al día» de la lista: baja hasta ese bloque. */
+  enfocarPonerAlDia?: boolean;
 }) {
   const [datos, setDatos] = useState<Detalle | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -257,12 +261,15 @@ export function DetalleViajeVentana({
             onCambio={cargar}
           />
 
-          <AccionesEncargado
+          <PonerAlDia
             viaje={v}
             etiquetaMedidor={etiquetaMedidor}
             puedeEditar={puedeEditar}
             onCambio={cargar}
+            enfocar={enfocarPonerAlDia}
           />
+
+          <AccionesEncargado viaje={v} puedeEditar={puedeEditar} onCambio={cargar} />
 
           {(v.ruta_por_confirmar || v.estado === "anulado") && (
             <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 text-sm text-amber-200">

@@ -1,6 +1,18 @@
 // Combustible › Viajes (0123): registrar, cerrar, corregir y anular viajes.
 // El análisis (ranking, desvío) vive en el Histórico de cada producto.
-import { Ban, Download, Eye, Flag, Lock, MapPin, Pencil, Play, Plus, X } from "lucide-react";
+import {
+  Ban,
+  Download,
+  Eye,
+  Flag,
+  ListChecks,
+  Lock,
+  MapPin,
+  Pencil,
+  Play,
+  Plus,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CeldaDesvio } from "./ConsumoPorViaje";
@@ -178,6 +190,8 @@ export default function ViajesPanel() {
   const pedidoLugares = useRef(0);
   const [guardando, setGuardando] = useState(false);
   const [verId, setVerId] = useState<string | null>(null);
+  /** Se abrió desde «Poner al día»: el detalle baja hasta ese bloque. */
+  const [verAlDia, setVerAlDia] = useState(false);
   const [retro, setRetro] = useState(false);
   const retroVale = retro;
   const [horaManual, setHoraManual] = useState(false);
@@ -807,7 +821,10 @@ export default function ViajesPanel() {
                   <td className="p-3">
                     <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                       <button
-                        onClick={() => setVerId(v.id)}
+                        onClick={() => {
+                          setVerAlDia(false);
+                          setVerId(v.id);
+                        }}
                         aria-label={`Ver viaje V-${v.numero}`}
                         title="Ver cargas"
                         className="p-1.5 rounded border border-[#334155] text-[#94a3b8] hover:text-white"
@@ -822,6 +839,19 @@ export default function ViajesPanel() {
                           className="p-1.5 rounded border border-[#334155] text-[#94a3b8] hover:text-emerald-400"
                         >
                           <Play className="w-4 h-4" />
+                        </button>
+                      )}
+                      {permite("editar") && v.estado === "en_curso" && (
+                        <button
+                          onClick={() => {
+                            setVerAlDia(true);
+                            setVerId(v.id);
+                          }}
+                          aria-label={`Poner al día viaje V-${v.numero}`}
+                          title="Poner al día: registrar lo que ya pasó"
+                          className="p-1.5 rounded border border-[#BADC1E]/50 text-[#BADC1E] hover:bg-[#BADC1E]/10"
+                        >
+                          <ListChecks className="w-4 h-4" />
                         </button>
                       )}
                       {permite("editar") && v.estado === "en_curso" && (
@@ -1385,6 +1415,7 @@ export default function ViajesPanel() {
           viajeId={verId}
           onCerrar={() => setVerId(null)}
           puedeEditar={permite("editar")}
+          enfocarPonerAlDia={verAlDia}
         />
       )}
     </div>

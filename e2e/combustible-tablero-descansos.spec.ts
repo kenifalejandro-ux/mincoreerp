@@ -1,9 +1,10 @@
 /** e2e/combustible-tablero-descansos.spec.ts
  *
  * El encargado, desde el detalle de un viaje en curso: marca el descanso del conductor (con motivo
- * obligatorio), no puede marcar el recorrido mientras el descanso siga abierto, lo termina y marca
- * por él la llegada que se olvidó (con hora, odómetro y motivo). El preparativo va por API; no
- * hace falta una cuenta de conductor porque la oficina marca por él.
+ * obligatorio), no puede poner al día el recorrido mientras el descanso siga abierto, lo termina y
+ * registra por él la llegada que se olvidó, con su fecha y hora reales («Poner al día»: hora,
+ * odómetro y motivo). El preparativo va por API; no hace falta una cuenta de conductor porque la
+ * oficina marca por él.
  */
 import { randomBytes } from "node:crypto";
 import { test, expect } from "@playwright/test";
@@ -45,8 +46,13 @@ test("el encargado marca el descanso y la llegada por el conductor, y no avanza 
   });
   expect(programado.status()).toBe(201);
   const viaje = await programado.json();
+  // Salió hace 3 horas: la llegada que se olvidó cae «hace 1 h», después de esa salida.
   const salida = await page.request.post(`/api/erp/viajes/${viaje.id}/iniciar`, {
-    data: { medidor_inicio: 100 },
+    data: {
+      medidor_inicio: 100,
+      inicio_en: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+      motivo: "preparativo del e2e",
+    },
   });
   expect(salida.status()).toBe(200);
 
@@ -62,20 +68,23 @@ test("el encargado marca el descanso y la llegada por el conductor, y no avanza 
   await marcarDescanso.click();
   await expect(page.getByText(/marcado por la oficina/)).toBeVisible();
 
-  // Con el descanso abierto no se marca el recorrido.
+  // Con el descanso abierto no se pone al día el recorrido.
   await expect(page.getByText("Termina el descanso para marcar el recorrido.")).toBeVisible();
-  await expect(page.getByRole("button", { name: /Marcar por el conductor/ })).toBeHidden();
+  await expect(page.getByRole("button", { name: /^Guardar/ })).toBeHidden();
   await page.getByRole("button", { name: "Terminar descanso (encargado)" }).click();
 
-  // Marca la llegada a B por el conductor, con odómetro y motivo.
-  await page.getByRole("button", { name: `Marcar por el conductor: Llegada a ${b}` }).click();
-  const marcar = page.getByRole("button", { name: "Marcar", exact: true });
-  await expect(marcar).toBeDisabled(); // faltan odómetro y motivo
-  await page.getByLabel("Odómetro").fill("150");
+  // Pone al día la llegada a B, con su hora real (hace 1 h), odómetro y motivo.
+  const llegadaB = page.getByRole("group", { name: `Llegada a ${b}`, exact: true });
+  const guardar = page.getByRole("button", { name: /^Guardar/ });
+  await expect(guardar).toBeDisabled(); // todavía no se llenó nada
+  await llegadaB.getByRole("button", { name: "Hace 1 h" }).click();
+  await llegadaB.getByLabel(/Odómetro/).fill("150");
+  await expect(guardar).toBeDisabled(); // falta el motivo
   await page.getByLabel("Motivo (obligatorio)").fill("el conductor no tenía señal");
-  await marcar.click();
+  await expect(guardar).toBeEnabled();
+  await guardar.click();
   await expect(
-    page.getByRole("button", { name: `Marcar por el conductor: Salida de ${b} hacia ${a}` })
+    page.getByRole("group", { name: `Salida de ${b} hacia ${a}`, exact: true })
   ).toBeVisible();
 
   const lista = await page.request.get(`/api/erp/viajes/${viaje.id}`);
