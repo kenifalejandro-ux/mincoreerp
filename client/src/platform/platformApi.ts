@@ -130,6 +130,8 @@ export interface TenantPlataforma {
   activo: boolean;
   dominioPersonalizado: string | null;
   dominioEstado: EstadoDominio;
+  /** Los conductores pueden crear su propio viaje desde el celular (0179). */
+  conductorCreaViaje: boolean;
 }
 
 export interface DominioTenant {
@@ -172,6 +174,18 @@ export async function cambiarEstadoTenantApi(
   const res = await platformFetch(
     `/tenants/${tenantId}/estado`,
     jsonInit("PATCH", { activo, motivo })
+  );
+  await parseOrThrow(res);
+}
+
+export async function cambiarConductorCreaViajeApi(
+  tenantId: string,
+  activo: boolean,
+  motivo?: string
+): Promise<void> {
+  const res = await platformFetch(
+    `/tenants/${tenantId}/conductor-crea-viaje`,
+    jsonInit("PUT", { activo, motivo })
   );
   await parseOrThrow(res);
 }

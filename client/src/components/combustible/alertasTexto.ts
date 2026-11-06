@@ -72,7 +72,8 @@ export interface AlertaCombustible {
     | "urea_litros_corregidos"
     | "urea_conteo_alterado"
     | "viaje_demorado"
-    | "viaje_detenido";
+    | "viaje_detenido"
+    | "viaje_creado_por_conductor";
   // Nullable desde 0073: las alertas de recepción y de nivel no son sobre
   // un vale, se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -80,7 +81,7 @@ export interface AlertaCombustible {
   despacho_id: number | null;
   combustible_id: number | null;
   recepcion_id: number | null;
-  /** El viaje de `viaje_demorado` y `viaje_detenido` (0156). */
+  /** El viaje de `viaje_demorado`, `viaje_detenido` (0156) y `viaje_creado_por_conductor` (0179). */
   viaje_id?: number | string | null;
   detalle: Record<string, unknown>;
   creado_en: string;
@@ -139,6 +140,8 @@ export const ETIQUETA_TIPO_ALERTA: Record<AlertaCombustible["tipo"], string> = {
   // Un viaje en curso (0156).
   viaje_demorado: "Viaje demorado",
   viaje_detenido: "Unidad detenida",
+  // El conductor creó su propio viaje desde el celular (0179).
+  viaje_creado_por_conductor: "Viaje creado por el conductor",
 };
 
 /** La columna "Vale" de las tablas de alertas y anomalías. Desde la
@@ -394,6 +397,22 @@ export function describirDetalleAlerta(a: AlertaCombustible): string {
       `${d.donde ? ` (${d.donde})` : ""}.` +
       `${d.motivo && d.motivo !== d.detencion ? ` Motivo: ${d.motivo}.` : ""}` +
       ` Marcado por ${d.marcadoPor ?? "el conductor"}. El tiempo detenido no cuenta como demora.`
+    );
+  }
+  if (a.tipo === "viaje_creado_por_conductor") {
+    const d = a.detalle as {
+      viajeNumero?: number;
+      unidad?: string | null;
+      conductor?: string | null;
+      de?: string | null;
+      a?: string | null;
+      unidadNueva?: boolean;
+    };
+    return (
+      `${d.conductor ?? "Un conductor"} creó y empezó el viaje V-${d.viajeNumero ?? "?"} ` +
+      `de ${d.unidad ?? "una unidad"} (${d.de ?? "?"} a ${d.a ?? "?"}).` +
+      `${d.unidadNueva ? " La unidad es nueva: está en Equipos como «por completar»." : ""}` +
+      " Revísalo y corrígelo si hace falta."
     );
   }
   if (a.tipo === "tanqueta_retorno_diferencia") {
@@ -809,7 +828,13 @@ export function describirDetalleAlerta(a: AlertaCombustible): string {
 export type GrupoDeAlerta = "combustible" | "urea" | "flota";
 
 export function grupoDeAlerta(tipo: string): GrupoDeAlerta {
-  if (tipo === "viaje_demorado" || tipo === "viaje_detenido") return "flota";
+  if (
+    tipo === "viaje_demorado" ||
+    tipo === "viaje_detenido" ||
+    tipo === "viaje_creado_por_conductor"
+  ) {
+    return "flota";
+  }
   if (tipo.startsWith("urea_")) return "urea";
   return "combustible";
 }

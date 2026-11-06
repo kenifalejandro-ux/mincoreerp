@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 
 import CambiarEstadoDialog from "./CambiarEstadoDialog";
 import CambiarPerfilDialog from "./CambiarPerfilDialog";
+import ConductorCreaViajeTenant from "./ConductorCreaViajeTenant";
 import EliminarUsuarioDialog from "./EliminarUsuarioDialog";
 import PasswordInput from "./PasswordInput";
 import PlanYCuotasTenant from "./PlanYCuotasTenant";
@@ -202,6 +203,13 @@ export default function TenantDetalleView({
         modulos={modulos}
         onModulosChange={setModulos}
         onError={setError}
+      />
+
+      <ConductorCreaViajeTenant
+        tenantId={tenant.id}
+        inicial={tenant.conductorCreaViaje}
+        onError={setError}
+        onCambio={onCambio}
       />
 
       <div className="flex items-center justify-between mb-2">
