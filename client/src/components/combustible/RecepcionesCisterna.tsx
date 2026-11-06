@@ -5,6 +5,8 @@ import {
   estadoDeRecepcion,
   ETIQUETA_ESTADO_RECEPCION,
   filtrarRecepciones,
+  finDelDiaLima,
+  inicioDelDiaLima,
   totalEntregadoDeLaRecepcion,
   type EstadoDeRecepcion,
   type FiltroDeEstadoRecepcion,
@@ -44,8 +46,8 @@ export default function RecepcionesCisterna({ onCambio = () => {} }: { onCambio?
   const cargar = useCallback(async () => {
     try {
       const params = new URLSearchParams({ producto: "combustible", pageSize: "200" });
-      if (desde) params.set("desde", new Date(`${desde}T00:00:00`).toISOString());
-      if (hasta) params.set("hasta", new Date(`${hasta}T23:59:59.999`).toISOString());
+      if (desde) params.set("desde", inicioDelDiaLima(desde));
+      if (hasta) params.set("hasta", finDelDiaLima(hasta));
       const res = await apiFetch(`/api/erp/combustible/recepciones?${params}`);
       const body = await res.json().catch(() => null);
       if (!res.ok) {
