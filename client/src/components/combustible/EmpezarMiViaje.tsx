@@ -7,20 +7,24 @@ import type { CreacionPendiente } from "./creacionPendiente";
 import {
   PASOS,
   borradorInicial,
+  buscarRelevos,
   buscarUnidades,
   conRutaDeUnidad,
   cuerpoCrearMiViaje,
   errorDelPaso,
   lecturaOdometro,
+  nombreDeLugar,
   normalizarPlaca,
   paradasFinales,
   unidadAsignada,
   unidadRegistrada,
   type BorradorViaje,
   type CatalogoViaje,
+  type Lugar,
   type PasoViaje,
   type TipoViaje,
 } from "./empezarViaje";
+import { SelectorLugar } from "./SelectorLugar";
 import { apiFetch } from "../../services/apiClient";
 
 const BTN_LIMA =
@@ -89,13 +93,16 @@ export function EmpezarMiViaje({
   // Con unidad asignada se ve solo esa; «No es mi unidad» abre el buscador. Sin asignada, va directo.
   const asignada = unidadAsignada(catalogo);
   const [cambiando, setCambiando] = useState(!asignada);
+  const [busquedaRelevo, setBusquedaRelevo] = useState("");
+  // Lo que se buscó al pulsar «Validar»: hasta entonces no se muestra nada.
+  const [relevoValidado, setRelevoValidado] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   // Un identificador por intento de crear: el reintento de un envío que no se sabe si llegó no duplica.
   const idCliente = useRef(crypto.randomUUID());
 
-  const lugar = (id: number | null) => catalogo.lugares.find((l) => l.id === id)?.nombre ?? "—";
+  const lugar = (l: Lugar) => nombreDeLugar(l, catalogo) || "—";
   const unidad = unidadRegistrada(catalogo, b.unidad);
   const error = errorDelPaso(paso, b, catalogo);
   // Con la odómetro vacío o la placa a medio escribir no se grita: el botón solo queda apagado.
@@ -105,33 +112,13 @@ export function EmpezarMiViaje({
   const i = PASOS.indexOf(paso);
   const set = (cambios: Partial<BorradorViaje>) => setB((v) => ({ ...v, ...cambios }));
   const sinRuta = b.unidad === "nueva" || !unidad?.ruta;
-  const lugaresOpciones = (
-    <>
-      <option value="">Elegir…</option>
-      {catalogo.lugares.map((l) => (
-        <option key={l.id} value={l.id}>
-          {l.nombre}
-        </option>
-      ))}
-    </>
-  );
-  const selector = (
-    valor: number | null,
-    onChange: (id: number | null) => void,
-    etiqueta: string
-  ) => (
-    <div>
-      <label className={ETIQUETA}>
-        {etiqueta}
-        <select
-          className={`${CAMPO} mt-1.5 normal-case tracking-normal font-normal`}
-          value={valor ?? ""}
-          onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
-        >
-          {lugaresOpciones}
-        </select>
-      </label>
-    </div>
+  const selector = (valor: Lugar, onChange: (l: Lugar) => void, etiqueta: string) => (
+    <SelectorLugar
+      etiqueta={etiqueta}
+      valor={valor}
+      lugares={catalogo.lugares}
+      onChange={onChange}
+    />
   );
 
   const elegirUnidad = (id: number | "nueva") => {
@@ -146,6 +133,11 @@ export function EmpezarMiViaje({
       conRutaDeUnidad({ ...v, unidad: "nueva", motivoUnidad: "", placa: v.placa || busqueda }, null)
     );
   };
+  /** Un conductor con cuenta se elige por su id; uno que solo está en Equipos se anota por su nombre. */
+  const elegirRelevo = (r: CatalogoViaje["relevos"][number]) =>
+    set(
+      r.con_cuenta ? { relevoId: r.id, relevoNombre: "" } : { relevoId: "", relevoNombre: r.nombre }
+    );
   const dejarSinUnidad = () => {
     setEditaRuta(false);
     setB((v) => conRutaDeUnidad({ ...v, unidad: null, motivoUnidad: "" }, null));
@@ -438,18 +430,107 @@ export function EmpezarMiViaje({
       </>
     );
   } else if (paso === "relevo") {
+    const hayRelevo = Boolean(b.relevoId || b.relevoNombre);
+    const elegido = catalogo.relevos.find((r) => r.id === b.relevoId);
+    const encontrados = relevoValidado ? buscarRelevos(catalogo, relevoValidado) : [];
     cuerpo = (
       <>
         <h3 className="text-xl font-extrabold text-white">¿Vas con relevo?</h3>
-        <p className="text-sm text-[#94a3b8]">El relevo puede tomar el volante en la ruta.</p>
-        <Opcion activa={b.relevoId === ""} onClick={() => set({ relevoId: "" })}>
+        <Opcion
+          activa={!hayRelevo}
+          onClick={() => {
+            setBusquedaRelevo("");
+            setRelevoValidado(null);
+            set({ relevoId: "", relevoNombre: "" });
+          }}
+        >
           <b className="text-white">Sin relevo</b>
         </Opcion>
-        {catalogo.relevos.map((r) => (
-          <Opcion key={r.id} activa={b.relevoId === r.id} onClick={() => set({ relevoId: r.id })}>
-            <b className="text-white">{r.nombre}</b>
-          </Opcion>
-        ))}
+        {hayRelevo ? (
+          <div className="rounded-2xl border border-[#BADC1E] bg-[#17261c] p-4">
+            <p className="text-xs text-[#BADC1E] mb-1">Relevo</p>
+            <b className="text-white text-lg">{elegido?.nombre ?? b.relevoNombre}</b>
+            {!elegido && (
+              <span className="block text-xs text-[#94a3b8]">
+                Sin cuenta: queda anotado en el viaje, no maneja en el sistema.
+              </span>
+            )}
+            <button
+              type="button"
+              className="mt-2 text-[#BADC1E] font-semibold"
+              onClick={() => {
+                setBusquedaRelevo("");
+                setRelevoValidado(null);
+                set({ relevoId: "", relevoNombre: "" });
+              }}
+            >
+              Cambiar
+            </button>
+          </div>
+        ) : (
+          <>
+            <label className={ETIQUETA} htmlFor="busca-relevo">
+              Nombre del relevo
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                id="busca-relevo"
+                className={`${CAMPO} normal-case tracking-normal font-normal flex-1 min-w-0`}
+                autoComplete="off"
+                placeholder="Ej. Nicolas"
+                value={busquedaRelevo}
+                onChange={(e) => {
+                  setBusquedaRelevo(e.target.value);
+                  setRelevoValidado(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && busquedaRelevo.trim().length >= 2) {
+                    e.preventDefault();
+                    setRelevoValidado(busquedaRelevo.trim());
+                  }
+                }}
+              />
+              <button
+                type="button"
+                disabled={busquedaRelevo.trim().length < 2}
+                onClick={() => setRelevoValidado(busquedaRelevo.trim())}
+                className="shrink-0 h-[50px] rounded-full bg-[#BADC1E] px-5 font-extrabold text-[#0D1719] hover:brightness-110 disabled:opacity-50"
+              >
+                Validar
+              </button>
+            </div>
+            {relevoValidado !== null && (
+              <>
+                {encontrados.length > 0 ? (
+                  <>
+                    <p className="text-sm text-[#94a3b8]">
+                      {encontrados.length === 1 ? "Encontré a:" : "Encontré varios, elige uno:"}
+                    </p>
+                    {encontrados.map((r) => (
+                      <Opcion key={r.id} activa={false} onClick={() => elegirRelevo(r)}>
+                        <b className="text-white">{r.nombre}</b>
+                      </Opcion>
+                    ))}
+                  </>
+                ) : (
+                  <p className="text-sm text-[#94a3b8]">No hay nadie con ese nombre.</p>
+                )}
+                <Opcion
+                  activa={false}
+                  onClick={() => set({ relevoId: "", relevoNombre: relevoValidado })}
+                >
+                  <b className="block text-white">
+                    {encontrados.length > 0 ? "Ninguno de estos: s" : "S"}igue con {relevoValidado}{" "}
+                    para este viaje
+                  </b>
+                  <span className="text-xs text-[#94a3b8]">
+                    Se anota su nombre en el viaje y sigues
+                  </span>
+                </Opcion>
+              </>
+            )}
+          </>
+        )}
       </>
     );
   } else {
@@ -462,7 +543,10 @@ export function EmpezarMiViaje({
             ["Unidad", b.unidad === "nueva" ? `${b.placa} (unidad nueva)` : (unidad?.placa ?? "—")],
             ["Tipo", TIPOS.find((t) => t.id === b.tipo)?.titulo ?? ""],
             ["Ruta", paradasFinales(b).map(lugar).join(" → ")],
-            ["Relevo", relevo?.nombre ?? "Sin relevo"],
+            [
+              "Relevo",
+              relevo?.nombre ?? (b.relevoNombre ? `${b.relevoNombre} (sin cuenta)` : "Sin relevo"),
+            ],
             ["Hora de salida", "Ahora (la pone el sistema)"],
           ].map(([k, v]) => (
             <div key={k} className="flex justify-between gap-3">

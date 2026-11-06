@@ -84,6 +84,49 @@ async function unidadDeLaPlaca(
   return { equipoId, creada: true };
 }
 
+/** Los lugares del recorrido como ids: los que ya son del catálogo se dejan; los que el conductor
+ *  escribió se buscan por nombre (sin importar mayúsculas) y, si no existen, se agregan al catálogo.
+ *  Un lugar dado de baja no se reutiliza en silencio: se avisa. */
+async function resolverLugares(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  paradas: CrearMiViajeInput["paradas"]
+): Promise<number[]> {
+  const ids: number[] = [];
+  for (const p of paradas) {
+    if (typeof p === "number") {
+      ids.push(p);
+      continue;
+    }
+    const nombre = p.nombre.trim();
+    const buscar = () =>
+      client.query(
+        `SELECT id::int, activo FROM combustible_lugares
+          WHERE tenant_id = $1 AND lower(trim(nombre)) = lower(trim($2))`,
+        [tenantId, nombre]
+      );
+    let fila = (await buscar()).rows[0];
+    if (!fila) {
+      await client.query(
+        `INSERT INTO combustible_lugares (tenant_id, nombre, creado_por)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (tenant_id, lower(trim(nombre))) DO NOTHING`,
+        [tenantId, nombre, usuarioId]
+      );
+      fila = (await buscar()).rows[0];
+    }
+    if (!fila.activo) {
+      throw new AppError(
+        400,
+        `El lugar «${nombre}» está dado de baja: pídele a la oficina que lo active`
+      );
+    }
+    ids.push(fila.id);
+  }
+  return ids;
+}
+
 export interface CatalogoParaCrear {
   puede_crear_viaje: boolean;
   lugares: { id: number; nombre: string }[];
@@ -97,8 +140,9 @@ export interface CatalogoParaCrear {
     /** Su ruta habitual en Equipos (la primera vigente), o null si no tiene. */
     ruta: { origen_id: number; destino_id: number; origen: string; destino: string } | null;
   }[];
-  /** Otros conductores activos que pueden ir de relevo. Sin DNI: se elige por su id de usuario. */
-  relevos: { id: string; nombre: string }[];
+  /** Otros conductores que pueden ir de relevo, sin DNI. Con cuenta se elige por su id de usuario;
+   *  los que solo figuran en Equipos (`con_cuenta: false`) se anotan por su nombre. */
+  relevos: { id: string; nombre: string; con_cuenta: boolean }[];
 }
 
 /** Lo que el celular necesita para armar el viaje: lugares, unidades con su ruta y posibles
@@ -132,11 +176,24 @@ export async function catalogoParaCrear(
                lower(COALESCE(e.placa_codigo, e.codigo_interno))`,
     [tenantId, c.dni.trim()]
   );
+  // Los conductores con cuenta, más los que solo están anotados en Equipos (una fila por DNI, sin
+  // repetir a quien ya tiene cuenta ni a quien está haciendo el viaje).
   const relevos = await client.query(
-    `SELECT id, nombre FROM usuarios
-      WHERE tenant_id = $1 AND rol = 'conductor_ruta' AND activo AND id <> $2
-        AND COALESCE(btrim(dni), '') <> '' AND btrim(dni) <> $3
-      ORDER BY lower(nombre)`,
+    `SELECT id, nombre, con_cuenta FROM (
+       SELECT id::text AS id, nombre, true AS con_cuenta FROM usuarios
+        WHERE tenant_id = $1 AND rol = 'conductor_ruta' AND activo AND id <> $2
+          AND COALESCE(btrim(dni), '') <> '' AND btrim(dni) <> $3
+       UNION ALL
+       SELECT 'eq:' || min(e.id)::text, min(btrim(e.conductor_nombre)), false FROM equipos e
+        WHERE e.tenant_id = $1 AND e.activo
+          AND COALESCE(btrim(e.conductor_dni), '') <> ''
+          AND COALESCE(btrim(e.conductor_nombre), '') <> ''
+          AND btrim(e.conductor_dni) <> $3
+          AND NOT EXISTS (SELECT 1 FROM usuarios u
+                           WHERE u.tenant_id = e.tenant_id AND u.rol = 'conductor_ruta'
+                             AND u.activo AND btrim(u.dni) = btrim(e.conductor_dni))
+        GROUP BY btrim(e.conductor_dni)
+     ) r ORDER BY lower(nombre)`,
     [tenantId, c.usuarioId, c.dni.trim()]
   );
   return {
@@ -209,12 +266,15 @@ export async function crearMiViaje(
     });
   }
 
+  // Los lugares escritos a mano se agregan al catálogo antes de armar el viaje y la ruta de la unidad.
+  const paradas = await resolverLugares(client, tenantId, c.usuarioId, data.paradas);
+
   let equipoId = data.equipo_id;
   let unidadNueva = false;
   if (data.unidad_nueva) {
     const u = await unidadDeLaPlaca(client, tenantId, c, data.unidad_nueva, {
-      origen_id: data.paradas[0],
-      destino_id: data.paradas[1],
+      origen_id: paradas[0],
+      destino_id: paradas[1],
     });
     equipoId = u.equipoId;
     unidadNueva = u.creada;
@@ -238,11 +298,16 @@ export async function crearMiViaje(
     equipo_id: equipoId!,
     conductor_nombre: c.nombre,
     conductor_dni: dni,
-    paradas: data.paradas,
+    paradas,
     relevo_dni: relevoDni,
-    observaciones: data.motivo_unidad
-      ? `Unidad distinta a la asignada. Motivo: ${data.motivo_unidad}`
-      : undefined,
+    // Lo informativo que el conductor dejó: por qué otra unidad y el relevo que no tiene cuenta.
+    observaciones:
+      [
+        data.motivo_unidad ? `Unidad distinta a la asignada. Motivo: ${data.motivo_unidad}` : "",
+        data.relevo_nombre ? `Relevo sin cuenta: ${data.relevo_nombre}` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ") || undefined,
     sale: "titular",
   } as Parameters<typeof crearViaje>[3]);
   const id = Number(creado.id);
