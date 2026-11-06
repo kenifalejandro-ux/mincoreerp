@@ -36,6 +36,7 @@ import {
   listarViajesQuerySchema,
   llegadaMiaSchema,
   llegadaViajeSchema,
+  ponerAlDiaSchema,
   salidaMiaSchema,
   salidaViajeSchema,
   terminarDescansoMioSchema,
@@ -248,6 +249,15 @@ router.post(
   requireRole("admin", "operador"),
   validate(terminarDescansoViajeSchema),
   asyncHandler(viajesController.terminarDescanso)
+);
+// Poner al día: la oficina registra de una vez lo que ya pasó (llegadas, salidas, descansos), con
+// sus horas reales. Todo o nada.
+router.post(
+  "/:viajeId(\\d+)/poner-al-dia",
+  requirePestana("combustible", "viajes:editar"),
+  requireRole("admin", "operador"),
+  validate(ponerAlDiaSchema),
+  asyncHandler(viajesController.ponerAlDia)
 );
 router.put(
   "/:viajeId(\\d+)",

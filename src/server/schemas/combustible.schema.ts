@@ -2785,6 +2785,37 @@ export const terminarDescansoViajeSchema = z
   });
 export type TerminarDescansoViajeInput = z.infer<typeof terminarDescansoViajeSchema>;
 
+// ── Poner al día un viaje ──────────────────────────────────────────────────
+// La oficina registra de una vez lo que ya pasó y nadie marcó: llegadas, salidas y descansos con su
+// fecha y hora reales. Se guarda todo o nada. Las horas son siempre a mano, así que el motivo es
+// obligatorio; el servicio las ordena por hora, así que llegan en cualquier orden.
+const accionPonerAlDia = z.discriminatedUnion("tipo", [
+  z.object({
+    tipo: z.literal("llegada"),
+    en: fechaHoraNoMuyAntigua,
+    orden: ordenParada,
+    medidor,
+  }),
+  z.object({
+    tipo: z.literal("salida"),
+    en: fechaHoraNoMuyAntigua,
+    orden: ordenParada,
+    medidor,
+  }),
+  z.object({
+    tipo: z.literal("descanso"),
+    motivo: motivoDescanso.min(3),
+    desde: fechaHoraNoMuyAntigua,
+    hasta: fechaHoraNoMuyAntigua.optional(),
+  }),
+]);
+
+export const ponerAlDiaSchema = z.object({
+  motivo,
+  acciones: z.array(accionPonerAlDia).min(1).max(40),
+});
+export type PonerAlDiaInput = z.infer<typeof ponerAlDiaSchema>;
+
 // ── Entrega del mando (0153) ───────────────────────────────────────────────
 // Quien maneja entrega el volante con el medidor del tablero; el otro conductor acepta.
 export const entregaMandoSchema = z.object({

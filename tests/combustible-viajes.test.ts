@@ -1793,6 +1793,103 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect((await admin.post(url(id, "/salida")).send({ orden: 1 })).status).toBe(200);
   });
 
+  // ── Poner al día un viaje ────────────────────────────────────────────────
+
+  /** Un viaje A → B → A que salió hace días y sigue en curso: nadie marcó nada después. */
+  async function viajeAtrasado(extra: Record<string, unknown> = {}) {
+    const eq = await unidad();
+    const v = await admin.post("/api/erp/viajes").send({
+      equipo_id: eq,
+      paradas: [huamachuco, bambamarca, huamachuco],
+      inicio_en: hora(0),
+      ...extra,
+    });
+    expect(v.status, JSON.stringify(v.body)).toBe(201);
+    return Number(v.body.id);
+  }
+
+  it("poner al día: aplica llegadas, salida y descanso en el orden de sus horas aunque lleguen desordenados, y la llegada final cierra", async () => {
+    const id = await viajeAtrasado();
+    const r = await admin.post(url(id, "/poner-al-dia")).send({
+      motivo: "no se marcó a tiempo",
+      acciones: [
+        { tipo: "llegada", en: hora(30), orden: 2 },
+        { tipo: "salida", en: hora(12), orden: 1 },
+        { tipo: "llegada", en: hora(10), orden: 1 },
+        { tipo: "descanso", motivo: "Dormir", desde: hora(14), hasta: hora(20) },
+      ],
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.estado).toBe("cerrado");
+    const p = await paradasDe(id);
+    expect(Date.parse(p[1].llegada_en!)).toBe(Date.parse(hora(10)));
+    expect(Date.parse(p[1].salida_en!)).toBe(Date.parse(hora(12)));
+    expect(Date.parse(p[2].llegada_en!)).toBe(Date.parse(hora(30)));
+  });
+
+  it("poner al día es todo o nada: si una acción falla no se guarda ninguna y el error dice cuál", async () => {
+    const id = await viajeAtrasado();
+    const futura = new Date(Date.now() + 3_600_000).toISOString();
+    const r = await admin.post(url(id, "/poner-al-dia")).send({
+      motivo: "se olvidó de marcar",
+      acciones: [
+        { tipo: "llegada", en: hora(10), orden: 1 },
+        { tipo: "salida", en: futura, orden: 1 },
+      ],
+    });
+    expect(r.status).toBe(400);
+    expect(JSON.stringify(r.body)).toMatch(/Acción 2/);
+    expect((await paradasDe(id))[1].llegada_en).toBeNull();
+  });
+
+  it("poner al día rechaza una parada que ya no corresponde (alguien marcó mientras tanto)", async () => {
+    const id = await viajeAtrasado();
+    const r = await admin.post(url(id, "/poner-al-dia")).send({
+      motivo: "se olvidó de marcar",
+      acciones: [{ tipo: "llegada", en: hora(10), orden: 2 }],
+    });
+    expect(r.status).toBe(409);
+    expect((await paradasDe(id))[1].llegada_en).toBeNull();
+  });
+
+  it("poner al día: la llegada final pide el medidor si el viaje salió con uno, y no deja nada a medias", async () => {
+    const id = await viajeAtrasado({ medidor_inicio: 100 });
+    const acciones = (medidorFinal?: number) => [
+      { tipo: "llegada", en: hora(10), orden: 1 },
+      { tipo: "salida", en: hora(12), orden: 1 },
+      { tipo: "llegada", en: hora(30), orden: 2, medidor: medidorFinal },
+    ];
+    const sin = await admin
+      .post(url(id, "/poner-al-dia"))
+      .send({ motivo: "no se marcó a tiempo", acciones: acciones() });
+    expect(sin.status).toBe(400);
+    expect(JSON.stringify(sin.body)).toMatch(/Acción 3/);
+    expect(JSON.stringify(sin.body)).toMatch(/medidor/);
+    expect((await paradasDe(id))[1].llegada_en).toBeNull();
+    const con = await admin
+      .post(url(id, "/poner-al-dia"))
+      .send({ motivo: "no se marcó a tiempo", acciones: acciones(160) });
+    expect(con.status, JSON.stringify(con.body)).toBe(200);
+    expect(con.body.estado).toBe("cerrado");
+  });
+
+  it("poner al día es de la oficina: un conductor no puede, y pide motivo y al menos una acción", async () => {
+    const id = await viajeAtrasado();
+    const una = [{ tipo: "llegada", en: hora(10), orden: 1 }];
+    const yo = await conductor();
+    const delConductor = await yo.agente
+      .post(url(id, "/poner-al-dia"))
+      .send({ motivo: "abc", acciones: una });
+    expect([403, 404]).toContain(delConductor.status);
+    expect(
+      (await admin.post(url(id, "/poner-al-dia")).send({ motivo: "", acciones: una })).status
+    ).toBe(400);
+    expect(
+      (await admin.post(url(id, "/poner-al-dia")).send({ motivo: "abc", acciones: [] })).status
+    ).toBe(400);
+    expect((await paradasDe(id))[1].llegada_en).toBeNull();
+  });
+
   // ── Consumo por tramo y comparación por recorrido ────────────────────────
 
   const cargarAhora = async (equipo_id: number, cantidad: number) => {

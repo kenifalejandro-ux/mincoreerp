@@ -23,6 +23,7 @@ import type {
   IniciarMiViajeInput,
   IniciarViajeInput,
   ListarViajesQuery,
+  PonerAlDiaInput,
 } from "../../server/schemas/combustible.schema";
 import { ambitoDe } from "./alcance";
 import { CombustibleService } from "./combustible.service";
@@ -492,6 +493,50 @@ export const viajesController = {
   salidaMia: marcaDeParada("salida", true),
   llegada: marcaDeParada("llegada", false),
   salida: marcaDeParada("salida", false),
+
+  /** La oficina pone al día lo que nadie marcó: llegadas, salidas y descansos con sus horas reales,
+   *  todo o nada. Cada paso queda en la auditoría como si se hubiera marcado por separado. */
+  async ponerAlDia(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.viajeId);
+    const b = req.validatedBody as PonerAlDiaInput;
+    const { r, alertaCambio } = await withTenant(tenantId, async (c) => {
+      const r = await viajes.ponerAlDiaViaje(c, tenantId, req.usuario!.id, id, b);
+      // Igual que las marcas sueltas: llegar termina el tramo (y la demora de su alerta), y un
+      // descanso abre o cierra la alerta de unidad detenida.
+      const cierraDemora = r.pasos.some((p) => p.clase === "llegada")
+        ? await cerrarAlertasDelViaje(c, tenantId, id)
+        : false;
+      const cambiaDetencion = r.pasos.some((p) => p.clase.startsWith("descanso"))
+        ? await alertaDeDetencion(c, tenantId, id)
+        : false;
+      return { r, alertaCambio: cierraDemora || cambiaDetencion };
+    });
+    if (alertaCambio) await avisarCampanita(tenantId);
+    for (const p of r.pasos) {
+      const accion =
+        p.clase === "llegada"
+          ? p.cierra
+            ? "viaje_cerrar"
+            : "viaje_llegada"
+          : p.clase === "salida"
+            ? "viaje_salida"
+            : p.clase === "descanso_inicio"
+              ? "viaje_descanso_iniciar"
+              : "viaje_descanso_terminar";
+      await auditar(req, accion, {
+        viajeId: id,
+        numero: r.antes.numero,
+        parada: p.orden,
+        por: "oficina",
+        medidor: p.medidor,
+        motivo: p.motivo ?? b.motivo,
+        manual: true,
+        puestoAlDia: true,
+      });
+    }
+    res.json(r.despues);
+  },
 
   async cerrar(req: Request, res: Response) {
     const tenantId = getTenantId(req);
