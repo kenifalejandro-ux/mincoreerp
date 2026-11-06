@@ -113,6 +113,11 @@ export const CATALOGO_ALERTAS: Record<
   // "al_momento" con su propio mensaje (combustibleAlertas.mailer.ts).
   viaje_demorado: { canal: "solo_erp", nombre: "Viaje demorado", urgente: true },
   viaje_detenido: { canal: "solo_erp", nombre: "Unidad detenida", urgente: true },
+  // Un aviso para que la oficina lo siga, no una urgencia: solo campanita y Bandeja, sin correo.
+  viaje_creado_por_conductor: {
+    canal: "solo_erp",
+    nombre: "Viaje creado por el conductor",
+  },
   // ── Resumen: compras y saldos ──────────────────────────────────────────
   urea_stock_excedido: { canal: "resumen", nombre: "Urea: compra sobre el máximo del depósito" },
   urea_precio_fuera_de_catalogo: { canal: "resumen", nombre: "Urea: precio fuera de catálogo" },

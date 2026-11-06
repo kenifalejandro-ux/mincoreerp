@@ -10,7 +10,12 @@
  */
 
 /** Los tipos de alerta de Gestión operacional de flota (migración 0156). */
-export const TIPOS_DE_ALERTA_DE_FLOTA: readonly string[] = ["viaje_demorado", "viaje_detenido"];
+export const TIPOS_DE_ALERTA_DE_FLOTA: readonly string[] = [
+  "viaje_demorado",
+  "viaje_detenido",
+  // 0179: el conductor creó su propio viaje desde el celular.
+  "viaje_creado_por_conductor",
+];
 
 export type GrupoDeAlerta = "combustible" | "urea" | "flota";
 

@@ -16,6 +16,7 @@ import type {
   CorregirMandoInput,
   CorregirMarcaDeParadaInput,
   CrearLugarInput,
+  CrearMiViajeInput,
   EditarLugarInput,
   CrearViajeInput,
   EditarViajeInput,
@@ -28,6 +29,7 @@ import type {
 import { ambitoDe } from "./alcance";
 import { CombustibleService } from "./combustible.service";
 import * as viajes from "./viajes.service";
+import { conductorPuedeCrearViaje, crearMiViaje } from "./viajesCreadosPorConductor";
 
 const combustible = new CombustibleService();
 
@@ -408,6 +410,58 @@ export const viajesController = {
       });
     }
     res.json(r.despues);
+  },
+
+  /** ¿Puede este conductor ver «Empezar un viaje»? Lo decide el interruptor de su empresa. */
+  async miConfig(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const puede = await withTenant(tenantId, (c) => conductorPuedeCrearViaje(c, tenantId));
+    res.json({ puede_crear_viaje: puede });
+  },
+
+  /** El conductor crea e inicia su propio viaje (0179). 201 al crearlo, 200 si es un reintento del
+   *  mismo identificador, 403 con el interruptor de la empresa apagado y 409 si ya tiene un viaje
+   *  (se devuelve el que tiene). La alerta para la oficina se abre en un SAVEPOINT: si falla, el
+   *  viaje se guarda igual. */
+  async crearMio(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const data = req.validatedBody as CrearMiViajeInput;
+    const { r, alertaCambio } = await withTenant(tenantId, async (c) => {
+      const r = await crearMiViaje(
+        c,
+        tenantId,
+        { usuarioId: req.usuario!.id, dni: req.usuario!.dni ?? "", nombre: req.usuario!.nombre },
+        data
+      );
+      if (r.repetido) return { r, alertaCambio: false };
+      const v = r.viaje;
+      const alertaCambio = await enSavepoint(c, tenantId, Number(v.id), () =>
+        combustible.abrirAlertaViajeCreadoPorConductor(
+          c,
+          tenantId,
+          {
+            id: Number(v.id),
+            numero: v.numero,
+            unidad: v.placa_codigo ?? v.codigo_interno ?? null,
+            conductor: v.conductor_nombre ?? null,
+          },
+          { de: v.origen ?? null, a: v.destino ?? null, unidadNueva: r.unidadNueva }
+        )
+      );
+      return { r, alertaCambio };
+    });
+    if (alertaCambio) await avisarCampanita(tenantId);
+    if (!r.repetido) {
+      await auditar(req, "viaje_crear_mio", {
+        viajeId: Number(r.viaje.id),
+        numero: r.viaje.numero,
+        por: "conductor",
+        unidad_nueva: r.unidadNueva,
+        origen_hora: r.viaje.inicio_origen_hora,
+        id_cliente: data.id_cliente,
+      });
+    }
+    res.status(r.repetido ? 200 : 201).json(r.viaje);
   },
 
   async cerrarMio(req: Request, res: Response) {

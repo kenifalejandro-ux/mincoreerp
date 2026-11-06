@@ -24,6 +24,7 @@ import {
   corregirMandoSchema,
   corregirMarcaDeParadaSchema,
   crearLugarSchema,
+  crearMiViajeSchema,
   crearViajeSchema,
   descansoMioSchema,
   descansoViajeSchema,
@@ -114,6 +115,20 @@ router.get(
   requirePestana("combustible", "mi_viaje"),
   validateQuery(historialMioQuerySchema),
   asyncHandler(viajesController.historialMio)
+);
+// El conductor crea e inicia su propio viaje (0179): solo si la empresa lo tiene encendido en
+// plataforma (403 si no). `config` le dice al celular si mostrar «Empezar un viaje».
+router.get(
+  "/mios/config",
+  requirePestana("combustible", "mi_viaje"),
+  asyncHandler(viajesController.miConfig)
+);
+router.post(
+  "/crear-mio",
+  lecturaDeCargas,
+  requirePestana("combustible", "mi_viaje"),
+  validate(crearMiViajeSchema),
+  asyncHandler(viajesController.crearMio)
 );
 router.get(
   "/conductores",
