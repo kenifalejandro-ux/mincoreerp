@@ -123,6 +123,11 @@ router.get(
   requirePestana("combustible", "mi_viaje"),
   asyncHandler(viajesController.miConfig)
 );
+router.get(
+  "/mios/catalogo",
+  requirePestana("combustible", "mi_viaje"),
+  asyncHandler(viajesController.miCatalogo)
+);
 router.post(
   "/crear-mio",
   lecturaDeCargas,

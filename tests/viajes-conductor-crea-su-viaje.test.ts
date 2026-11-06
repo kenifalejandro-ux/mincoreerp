@@ -268,4 +268,64 @@ describe("viajes: el conductor crea su propio viaje (0179)", () => {
     expect(eq.rows[0].conductor_dni).toBe(u.body.conductor_dni);
     expect(eq.rows[0].por_completar).toBe(false);
   });
+  it("el catálogo del celular: apagado no entrega nada; encendido trae lugares, unidades con su ruta y relevos sin DNI", async () => {
+    const c = await conductor();
+    const otro = await conductor();
+    await interruptor(false);
+    const apagado = await c.agente.get("/api/erp/viajes/mios/catalogo");
+    expect(apagado.status).toBe(200);
+    expect(apagado.body).toEqual({
+      puede_crear_viaje: false,
+      lugares: [],
+      unidades: [],
+      relevos: [],
+    });
+
+    await interruptor(true);
+    const placa = idUnico("CT");
+    const u = await admin.post("/api/erp/equipos").send({
+      placa_codigo: placa,
+      tipo: "VOLQUETE",
+      tipo_medidor: "odometro",
+      conductor_nombre: "Yo",
+      conductor_dni: c.dni,
+      rutas: [{ origen_id: a, destino_id: b }],
+    });
+    expect(u.status, JSON.stringify(u.body)).toBe(201);
+
+    const r = await c.agente.get("/api/erp/viajes/mios/catalogo");
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.puede_crear_viaje).toBe(true);
+    expect(r.body.lugares.map((l: { id: number }) => l.id)).toEqual(expect.arrayContaining([a, b]));
+    // La unidad que Equipos le asignó va primera, con su ruta.
+    expect(r.body.unidades[0]).toMatchObject({
+      id: Number(u.body.id),
+      placa,
+      asignada_a_mi: true,
+      ruta: { origen_id: a, destino_id: b },
+    });
+    // Los relevos son otros conductores, sin DNI y sin él mismo.
+    expect(r.body.relevos.length).toBeGreaterThan(0);
+    for (const rel of r.body.relevos) expect(Object.keys(rel).sort()).toEqual(["id", "nombre"]);
+    expect(JSON.stringify(r.body.relevos)).not.toContain(c.dni);
+    expect(JSON.stringify(r.body.relevos)).toContain(otro.dni);
+  });
+
+  it("elegir al relevo por su id de usuario lo deja como relevo del viaje", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    const otro = await conductor();
+    const cat = await c.agente.get("/api/erp/viajes/mios/catalogo");
+    const relevo = cat.body.relevos.find((x: { nombre: string }) => x.nombre.includes(otro.dni));
+    expect(relevo).toBeTruthy();
+    const r = await crear(c.agente, cuerpoNuevo(placaNueva(), { relevo_usuario_id: relevo.id }));
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.relevo_dni).toBe(otro.dni);
+    // Un id que no es de un conductor activo se rechaza.
+    const mal = await crear(
+      (await conductor()).agente,
+      cuerpoNuevo(placaNueva(), { relevo_usuario_id: randomUUID() })
+    );
+    expect(mal.status).toBe(400);
+  });
 });

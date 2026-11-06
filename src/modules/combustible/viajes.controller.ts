@@ -29,7 +29,11 @@ import type {
 import { ambitoDe } from "./alcance";
 import { CombustibleService } from "./combustible.service";
 import * as viajes from "./viajes.service";
-import { conductorPuedeCrearViaje, crearMiViaje } from "./viajesCreadosPorConductor";
+import {
+  catalogoParaCrear,
+  conductorPuedeCrearViaje,
+  crearMiViaje,
+} from "./viajesCreadosPorConductor";
 
 const combustible = new CombustibleService();
 
@@ -417,6 +421,20 @@ export const viajesController = {
     const tenantId = getTenantId(req);
     const puede = await withTenant(tenantId, (c) => conductorPuedeCrearViaje(c, tenantId));
     res.json({ puede_crear_viaje: puede });
+  },
+
+  /** GET /viajes/mios/catalogo: lugares, unidades con su ruta y relevos para armar el viaje. Con el
+   *  interruptor de la empresa apagado devuelve `puede_crear_viaje: false` y nada más. */
+  async miCatalogo(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const data = await withTenant(tenantId, (c) =>
+      catalogoParaCrear(c, tenantId, {
+        usuarioId: req.usuario!.id,
+        dni: req.usuario!.dni ?? "",
+        nombre: req.usuario!.nombre,
+      })
+    );
+    res.json(data);
   },
 
   /** El conductor crea e inicia su propio viaje (0179). 201 al crearlo, 200 si es un reintento del
