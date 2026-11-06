@@ -306,7 +306,9 @@ describe("viajes: el conductor crea su propio viaje (0179)", () => {
     });
     // Los relevos son otros conductores, sin DNI y sin él mismo.
     expect(r.body.relevos.length).toBeGreaterThan(0);
-    for (const rel of r.body.relevos) expect(Object.keys(rel).sort()).toEqual(["id", "nombre"]);
+    for (const rel of r.body.relevos) {
+      expect(Object.keys(rel).sort()).toEqual(["con_cuenta", "id", "nombre"]);
+    }
     expect(JSON.stringify(r.body.relevos)).not.toContain(c.dni);
     expect(JSON.stringify(r.body.relevos)).toContain(otro.dni);
   });
@@ -377,5 +379,145 @@ describe("viajes: el conductor crea su propio viaje (0179)", () => {
     });
     expect(hecho.status, JSON.stringify(hecho.body)).toBe(200);
     expect((await lista()).por_completar).toBe(false);
+  });
+  it("la unidad asignada va primera en el catálogo aunque haya unidades sin conductor", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    // Unidades SIN conductor (dni nulo): antes del arreglo ordenaban antes que la asignada.
+    for (let n = 0; n < 3; n++) {
+      const sin = await admin.post("/api/erp/equipos").send({
+        placa_codigo: idUnico("AA"),
+        tipo: "VOLQUETE",
+      });
+      expect(sin.status, JSON.stringify(sin.body)).toBe(201);
+    }
+    const mia = await admin.post("/api/erp/equipos").send({
+      placa_codigo: idUnico("ZZ"),
+      tipo: "VOLQUETE",
+      conductor_nombre: "Yo",
+      conductor_dni: c.dni,
+    });
+    expect(mia.status, JSON.stringify(mia.body)).toBe(201);
+    const r = await c.agente.get("/api/erp/viajes/mios/catalogo");
+    expect(r.body.unidades[0]).toMatchObject({ id: Number(mia.body.id), asignada_a_mi: true });
+    expect(r.body.unidades.filter((u: { asignada_a_mi: boolean }) => u.asignada_a_mi)).toHaveLength(
+      1
+    );
+  });
+
+  it("el motivo de salir en otra unidad queda en las observaciones del viaje", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    const u = await admin.post("/api/erp/equipos").send({
+      placa_codigo: idUnico("MT"),
+      tipo: "VOLQUETE",
+      tipo_medidor: "odometro",
+    });
+    expect(u.status, JSON.stringify(u.body)).toBe(201);
+    const r = await crear(c.agente, {
+      id_cliente: randomUUID(),
+      equipo_id: Number(u.body.id),
+      paradas: [a, b],
+      medidor_inicio: 10,
+      motivo_unidad: "La mía está en taller",
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const fila = await withTenant(tenantId, (cl) =>
+      cl.query(`SELECT observaciones FROM combustible_viajes WHERE tenant_id = $1 AND id = $2`, [
+        tenantId,
+        Number(r.body.id),
+      ])
+    );
+    expect(fila.rows[0].observaciones).toContain("La mía está en taller");
+  });
+  it("un relevo sin cuenta queda anotado en el viaje; no es relevo del sistema ni se mezcla con uno registrado", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    const r = await crear(c.agente, cuerpoNuevo(placaNueva(), { relevo_nombre: "Pedro Soto" }));
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.relevo_dni).toBeNull();
+    const fila = await withTenant(tenantId, (cl) =>
+      cl.query(`SELECT observaciones FROM combustible_viajes WHERE tenant_id = $1 AND id = $2`, [
+        tenantId,
+        Number(r.body.id),
+      ])
+    );
+    expect(fila.rows[0].observaciones).toContain("Relevo sin cuenta: Pedro Soto");
+
+    const otro = await conductor();
+    const cat = await otro.agente.get("/api/erp/viajes/mios/catalogo");
+    const reg = cat.body.relevos[0];
+    const mezcla = await crear(
+      otro.agente,
+      cuerpoNuevo(placaNueva(), { relevo_nombre: "Pedro Soto", relevo_usuario_id: reg.id })
+    );
+    expect(mezcla.status).toBe(400);
+  });
+  it("un conductor que solo está anotado en Equipos también se puede elegir de relevo, sin DNI y sin repetirse", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    const dniSinCuenta = String(41500000 + seq++);
+    const nombre = `Jhuver Nicolas Julca ${idUnico("X").replace(/[0-9]/g, "")}`;
+    // Dos unidades con el MISMO conductor (sin cuenta): sale una sola vez.
+    for (let n = 0; n < 2; n++) {
+      const u = await admin.post("/api/erp/equipos").send({
+        placa_codigo: idUnico("EQ"),
+        tipo: "VOLQUETE",
+        conductor_nombre: nombre,
+        conductor_dni: dniSinCuenta,
+      });
+      expect(u.status, JSON.stringify(u.body)).toBe(201);
+    }
+    const r = await c.agente.get("/api/erp/viajes/mios/catalogo");
+    const filas = r.body.relevos.filter((x: { nombre: string }) => x.nombre === nombre);
+    expect(filas).toHaveLength(1);
+    expect(filas[0].con_cuenta).toBe(false);
+    expect(filas[0].id).toMatch(/^eq:/);
+    expect(JSON.stringify(r.body)).not.toContain(dniSinCuenta);
+    // Un conductor de Equipos que SÍ tiene cuenta sale con su cuenta, no duplicado.
+    const otro = await conductor();
+    await admin.post("/api/erp/equipos").send({
+      placa_codigo: idUnico("EC"),
+      tipo: "VOLQUETE",
+      conductor_nombre: "Otro con cuenta",
+      conductor_dni: otro.dni,
+    });
+    const r2 = await c.agente.get("/api/erp/viajes/mios/catalogo");
+    expect(
+      r2.body.relevos.filter((x: { nombre: string }) => x.nombre === "Otro con cuenta")
+    ).toHaveLength(0);
+    expect(
+      r2.body.relevos.filter((x: { nombre: string }) => x.nombre.includes(otro.dni))
+    ).toHaveLength(1);
+  });
+  it("un lugar escrito a mano se agrega al catálogo una sola vez (sin importar mayúsculas) y el viaje lo usa", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    const c2 = await conductor();
+    const nuevoLugar = `Chepén ${idUnico("L")}`;
+    const r = await crear(c.agente, {
+      id_cliente: randomUUID(),
+      unidad_nueva: { placa: placaNueva(), nombre: "Conductor de Prueba" },
+      paradas: [a, { nombre: nuevoLugar }],
+      medidor_inicio: 1,
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.destino).toBe(nuevoLugar);
+    // Otro conductor escribe el mismo nombre en minúsculas: usa el mismo lugar, no crea otro.
+    const r2 = await crear(c2.agente, {
+      id_cliente: randomUUID(),
+      unidad_nueva: { placa: placaNueva(), nombre: "Otro Conductor" },
+      paradas: [{ nombre: nuevoLugar.toLowerCase() }, b],
+      medidor_inicio: 1,
+    });
+    expect(r2.status, JSON.stringify(r2.body)).toBe(201);
+    expect(Number(r2.body.origen_id)).toBe(Number(r.body.destino_id));
+    expect(
+      await contar(
+        `SELECT count(*) AS n FROM combustible_lugares
+          WHERE tenant_id = $1 AND lower(trim(nombre)) = lower($2)`,
+        [nuevoLugar]
+      )
+    ).toBe(1);
   });
 });

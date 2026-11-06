@@ -44,6 +44,8 @@ let drenandoAhora = false;
 export interface EntradaDescartada {
   moduloId: string;
   error: string;
+  /** La request que se descartó, para que quien avisa al usuario distinga de qué fue. */
+  url: string;
 }
 
 type OyenteResultado = (resultado: {
@@ -183,7 +185,11 @@ export async function drenar(): Promise<{ sincronizadas: number; fallidas: numbe
       } else if (resultado === "descartar") {
         await quitarDeLaCola(entrada.clienteUuid);
         fallidas++;
-        descartadas.push({ moduloId: entrada.moduloId, error: detalle ?? "Error desconocido" });
+        descartadas.push({
+          moduloId: entrada.moduloId,
+          error: detalle ?? "Error desconocido",
+          url: entrada.url,
+        });
       } else {
         // Se cortó la red de nuevo (o el servidor está caído): frenar acá
         // y dejar el resto para la próxima. Seguir intentando las que

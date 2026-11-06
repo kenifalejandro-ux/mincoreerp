@@ -2699,16 +2699,34 @@ export const crearMiViajeSchema = z
       })
       .optional(),
     // El recorrido completo: A → B (solo ida), A → B → A o A → B → C → A.
-    paradas: z.array(z.number().int().positive()).min(2).max(20),
+    // Cada lugar es uno del catálogo (su id) o uno nuevo que el conductor escribió ({ nombre }): se
+    // agrega al catálogo si no existe (sin importar mayúsculas).
+    paradas: z
+      .array(
+        z.union([
+          z.number().int().positive(),
+          z.object({ nombre: z.string().trim().min(2).max(80) }),
+        ])
+      )
+      .min(2)
+      .max(20),
     relevo_dni: z.string().trim().min(1).max(15).nullable().optional(),
     // El celular elige al relevo por su id de usuario (no ve los DNI de los demás).
     relevo_usuario_id: z.string().uuid().optional(),
+    // Un relevo que no está registrado: solo su nombre, como dato informativo del viaje.
+    relevo_nombre: z.string().trim().min(3).max(150).optional(),
+    // Por qué sale en una unidad distinta a la que tiene asignada (opcional).
+    motivo_unidad: z.string().trim().max(500).optional(),
     medidor_inicio: z.number().min(0).max(99999999),
     marcado_en: fechaHora.optional(),
   })
   .refine((d) => (d.equipo_id === undefined) !== (d.unidad_nueva === undefined), {
     message: "Elige una unidad registrada o registra la tuya, no las dos",
     path: ["equipo_id"],
+  })
+  .refine((d) => !(d.relevo_nombre && (d.relevo_usuario_id || d.relevo_dni)), {
+    message: "El relevo es uno registrado o solo un nombre, no los dos",
+    path: ["relevo_nombre"],
   });
 export type CrearMiViajeInput = z.infer<typeof crearMiViajeSchema>;
 
