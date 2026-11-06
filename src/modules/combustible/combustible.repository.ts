@@ -1892,6 +1892,7 @@ export class CombustibleRepository {
                SELECT 1 FROM combustible_tanqueta_retornos rt
                 WHERE rt.tenant_id = combustible_despachos.tenant_id
                   AND rt.tanqueta_id = combustible_despachos.tanqueta_origen_id
+                  AND rt.equipo_id IS NOT NULL
                   AND rt.creado_en > s.inicio
                   AND rt.creado_en <= combustible_despachos.despachado_en)
            ORDER BY s.inicio DESC LIMIT 1

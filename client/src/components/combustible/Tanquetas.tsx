@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import AsignarTanqueta from "./AsignarTanqueta";
 import CuadreTanqueta from "./CuadreTanqueta";
+import DevolverAlTanque from "./DevolverAlTanque";
 import RecibirTanqueta from "./RecibirTanqueta";
 import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
@@ -186,6 +187,7 @@ export default function TanquetasPanel() {
 
   const [asignando, setAsignando] = useState<Tanqueta | null>(null);
   const [recibiendo, setRecibiendo] = useState<Tanqueta | null>(null);
+  const [devolviendo, setDevolviendo] = useState<Tanqueta | null>(null);
 
   const permite = (accion: "nueva" | "editar" | "asignar" | "retorno") => {
     const override = usuario?.permisosPestanas?.[`combustible:tanquetas:${accion}`];
@@ -481,6 +483,15 @@ export default function TanquetasPanel() {
                       Recibir de vuelta
                     </button>
                   )}
+                  {permite("retorno") && !t.asignada_vigente && Number(t.saldo) > 0.0005 && (
+                    <button
+                      onClick={() => setDevolviendo(t)}
+                      aria-label={`Retornar ${t.codigo} al tanque`}
+                      className="px-2 py-1 rounded border border-[#BADC1E] text-[#BADC1E] text-xs font-bold hover:bg-[#BADC1E] hover:text-[#0D1719]"
+                    >
+                      Retornar al tanque
+                    </button>
+                  )}
                   {permite("editar") && (
                     <button
                       onClick={() => abrirEdicion(t)}
@@ -618,6 +629,17 @@ export default function TanquetasPanel() {
             </form>
           </div>
         </div>
+      )}
+
+      {devolviendo && (
+        <DevolverAlTanque
+          tanqueta={devolviendo}
+          onCerrar={() => setDevolviendo(null)}
+          onListo={() => {
+            setDevolviendo(null);
+            void cargar();
+          }}
+        />
       )}
 
       {recibiendo && (

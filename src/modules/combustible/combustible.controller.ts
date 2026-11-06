@@ -103,6 +103,7 @@ import type {
   ActualizarTanquetaInput,
   AsignarTanquetaInput,
   RetornoTanquetaInput,
+  DevolverTanquetaAlPozoInput,
   KardexTanquetaQuery,
 } from "../../server/schemas/combustible.schema";
 import {
@@ -6071,6 +6072,50 @@ export class CombustibleController {
     res.json(
       await withTenant(tenantId, (client) => tanquetas.historialTanqueta(client, tenantId, id))
     );
+  }
+
+  /** El grifero devuelve al tanque (pozo) lo que sobra de una tanqueta sin unidad (0178). */
+  async devolverTanquetaAlPozo(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.tanquetaId);
+    if (!Number.isSafeInteger(id) || id < 1) {
+      res.status(400).json({ error: "tanquetaId debe ser un número entero válido" });
+      return;
+    }
+    const { cantidad, tanque_id, motivo } = req.validatedBody as DevolverTanquetaAlPozoInput;
+    const antes = await this.tanquetaVisible(req, id);
+    if (!antes) {
+      res.status(404).json({ error: "La tanqueta no existe" });
+      return;
+    }
+    const hecho = await withTenant(tenantId, (client) =>
+      tanquetas.devolverSaldoAlPozo(client, tenantId, id, {
+        cantidad,
+        tanqueId: tanque_id,
+        motivo,
+        usuarioId: req.usuario!.id,
+      })
+    );
+    if (!hecho) {
+      res.status(404).json({ error: "La tanqueta no existe" });
+      return;
+    }
+    await registrarAuditoria({
+      accion: "combustible.tanqueta_devolver_al_pozo",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: {
+        tanquetaId: id,
+        codigo: antes.codigo,
+        cantidad,
+        tanqueId: tanque_id,
+        motivo: motivo ?? null,
+        retornoId: hecho.retornoId,
+      },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.tanque_actualizado", {});
+    res.status(201).json({ ...hecho.tanqueta, retorno_id: hecho.retornoId });
   }
 
   /** GET /tanquetas/:id/cuadre -- el cuadre de cada salida a una unidad (solo lectura). */

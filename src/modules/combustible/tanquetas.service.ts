@@ -760,6 +760,65 @@ export async function registrarRetornoTanqueta(
   return { tanqueta: await getTanqueta(client, tenantId, id), alerta };
 }
 
+/** El grifero devuelve al tanque (pozo) todo el saldo de una tanqueta, o la parte que quiera,
+ *  sin que la tanqueta venga de ninguna unidad (0178). Reusa la entrada al pozo del retorno
+ *  (misma sede, mismo producto, cabida, unidad y costo) y se guarda en la misma tabla, con
+ *  `equipo_id` NULL: así el nivel del tanque, su kardex y su costo promedio la cuentan igual.
+ *
+ *  Lo que devuelve es lo que baja el saldo de la tanqueta, y no es un ajuste: se guarda como
+ *  calculado = validado, sin diferencia y sin alerta. Una tanqueta que va con una unidad NO
+ *  entra por acá: ese saldo se cuadra al recibirla de vuelta (registrarRetornoTanqueta). */
+export async function devolverSaldoAlPozo(
+  client: PoolClient,
+  tenantId: string,
+  id: number,
+  datos: { cantidad: number; tanqueId: number; motivo?: string; usuarioId: string }
+) {
+  await bloquearTanqueta(client, tenantId, id);
+  const t = await getTanqueta(client, tenantId, id);
+  if (!t) return null;
+  if (t.asignada_vigente) {
+    throw new AppError(
+      400,
+      `La tanqueta ${t.codigo} va con la unidad ${t.equipo_asignado ?? ""}: su saldo se cuadra al recibirla de vuelta`
+    );
+  }
+  const saldo = Number(t.saldo);
+  if (saldo <= 0.0005) {
+    throw new AppError(400, `La tanqueta ${t.codigo} no tiene saldo que devolver`);
+  }
+  if (datos.cantidad > saldo + 0.0005) {
+    throw new AppError(
+      400,
+      `La tanqueta ${t.codigo} solo tiene ${saldo} gal: no se pueden devolver ${datos.cantidad}`
+    );
+  }
+  const pozo = await prepararEntradaAlPozo(client, tenantId, t, datos.cantidad, datos.tanqueId);
+  const motivo = datos.motivo?.trim() ?? "";
+  const retorno = await client.query<{ id: string }>(
+    `INSERT INTO combustible_tanqueta_retornos
+       (tenant_id, tanqueta_id, equipo_id, saldo_calculado, saldo_validado, motivo, usuario_id,
+        destino, combustible_id, cantidad_pozo, costo_unitario_pozo)
+     VALUES ($1, $2, NULL, $3, $3, $4, $5, 'pozo', $6, $7, $8)
+     RETURNING id`,
+    [
+      tenantId,
+      id,
+      datos.cantidad,
+      motivo || null,
+      datos.usuarioId,
+      pozo.tanqueId,
+      pozo.cantidad,
+      pozo.costo,
+    ]
+  );
+  await new CombustibleRepository().recalcularCostoPromedio(client, tenantId, pozo.tanqueId);
+  return {
+    retornoId: Number(retorno.rows[0].id),
+    tanqueta: await getTanqueta(client, tenantId, id),
+  };
+}
+
 /** Las tanquetas que recibieron excedente de esta recepción y que, sin él,
  *  quedarían en negativo: el combustible ya salió (cargas, o un retorno al pozo
  *  o a otra tanqueta). Anular la recepción dejaría esa salida sin respaldo y,
@@ -970,7 +1029,8 @@ export async function cuadreDeTanqueta(client: PoolClient, tenantId: string, id:
             r.diferencia, r.motivo, r.destino
        FROM combustible_tanqueta_retornos r
        LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id
-      WHERE r.tenant_id = $1 AND r.tanqueta_id = $2`,
+      -- Lo que el grifero devolvió al pozo sin unidad (0178) no cierra ninguna salida.
+      WHERE r.tenant_id = $1 AND r.tanqueta_id = $2 AND r.equipo_id IS NOT NULL`,
     [tenantId, id]
   );
   const cargas = await client.query(
@@ -1050,7 +1110,7 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
          FROM combustible_tanqueta_retornos r
          LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id
          LEFT JOIN usuarios u ON u.id = r.usuario_id
-        WHERE r.tenant_id = $1 AND r.tanqueta_id = $2
+        WHERE r.tenant_id = $1 AND r.tanqueta_id = $2 AND r.equipo_id IS NOT NULL
        UNION ALL
        SELECT 'retorno_pozo', r.id::text, r.saldo_validado, r.creado_en, NULL, c.codigo, NULL,
               e.placa_codigo, NULL, NULL, NULL, NULL, u.nombre, NULL, NULL, NULL

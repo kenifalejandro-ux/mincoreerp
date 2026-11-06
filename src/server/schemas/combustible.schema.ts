@@ -2440,6 +2440,19 @@ export const retornoTanquetaSchema = z
   });
 export type RetornoTanquetaInput = z.infer<typeof retornoTanquetaSchema>;
 
+// El grifero devuelve al tanque (pozo) lo que sobra de una tanqueta que no va con ninguna unidad
+// (0178): todo el saldo o la parte que quiera, en galones, y a qué tanque. El motivo es opcional.
+export const devolverTanquetaAlPozoSchema = z.object({
+  cantidad: z
+    .number()
+    .min(0.001, "La cantidad debe ser mayor que cero")
+    .max(100000)
+    .refine(hastaTresDecimales, MSG_TRES_DECIMALES),
+  tanque_id: z.number().int().positive().max(2147483647),
+  motivo: z.string().trim().max(500).optional(),
+});
+export type DevolverTanquetaAlPozoInput = z.infer<typeof devolverTanquetaAlPozoSchema>;
+
 // Lo que queda en la cisterna se pasa a un tanque con espacio (0169). `cantidad`
 // está en la unidad del tanque; el servidor valida saldo, sede, producto y capacidad.
 export const trasladarCisternaSchema = z.object({

@@ -55,6 +55,7 @@ import {
   actualizarTanquetaSchema,
   asignarTanquetaSchema,
   retornoTanquetaSchema,
+  devolverTanquetaAlPozoSchema,
   kardexTanquetaQuerySchema,
 } from "../../server/schemas/combustible.schema";
 import { moverDeGrifoSchema } from "../../server/schemas/sedes.schema";
@@ -523,6 +524,15 @@ router.post(
   requireRole("admin", "operador", "grifero"),
   validate(retornoTanquetaSchema),
   asyncHandler(controller.retornoTanqueta.bind(controller))
+);
+// Devolver al tanque (pozo) lo que sobra de una tanqueta sin unidad (0178): mismo permiso y
+// mismos roles que el retorno, que es de donde sale la entrada al pozo.
+router.post(
+  "/tanquetas/:tanquetaId/devolver-al-pozo",
+  requirePestana("combustible", "tanquetas:retorno"),
+  requireRole("admin", "operador", "grifero"),
+  validate(devolverTanquetaAlPozoSchema),
+  asyncHandler(controller.devolverTanquetaAlPozo.bind(controller))
 );
 router.get(
   "/tanquetas/:tanquetaId/historial",
