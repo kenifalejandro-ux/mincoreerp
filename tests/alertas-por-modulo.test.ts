@@ -91,7 +91,13 @@ describe("alertas por módulo", () => {
   it("solo se recortan alertas a quien tiene la lista de módulos y no tiene `viajes`", () => {
     expect(tiposSinModulo(["combustible", "viajes"])).toBeUndefined();
     expect(tiposSinModulo(undefined)).toBeUndefined(); // el correo no la trae: no se recorta
-    expect(tiposSinModulo(["combustible"])).toEqual(["viaje_demorado", "viaje_detenido"]);
+    // 0179: «viaje creado por el conductor» también es de Flota.
+    expect(tiposSinModulo(["combustible"])).toEqual([
+      "viaje_demorado",
+      "viaje_detenido",
+      "viaje_creado_por_conductor",
+    ]);
+    expect(grupoDeAlerta("viaje_creado_por_conductor")).toBe("flota");
   });
 
   it("con el módulo `viajes`, el administrador ve y cuenta las cuatro, y el filtro `modulo` las reparte", async () => {
