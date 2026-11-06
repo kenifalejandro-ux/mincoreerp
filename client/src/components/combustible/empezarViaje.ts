@@ -36,6 +36,8 @@ export interface BorradorViaje {
   paradas: (number | null)[];
   relevoId: string;
   odometro: string;
+  /** Por qué sale en una unidad distinta a la asignada (opcional). */
+  motivoUnidad: string;
 }
 
 const RE_PLACA = /^[A-Z0-9]{3,20}$/;
@@ -54,6 +56,16 @@ export function unidadRegistrada(c: CatalogoViaje, id: UnidadElegida): CatalogoU
   return typeof id === "number" ? (c.unidades.find((u) => u.id === id) ?? null) : null;
 }
 
+/** Las unidades que coinciden con lo que escribió (por placa), como máximo `max`: el celular nunca
+ *  muestra la flota entera. Con menos de 2 letras no se busca. La asignada al conductor no se repite. */
+export function buscarUnidades(c: CatalogoViaje, texto: string, max = 6): CatalogoUnidad[] {
+  const q = normalizarPlaca(texto);
+  if (q.length < 2) return [];
+  return c.unidades
+    .filter((u) => !u.asignada_a_mi && normalizarPlaca(u.placa).includes(q))
+    .slice(0, max);
+}
+
 /** Un borrador nuevo: con la unidad asignada ya marcada y su ruta puesta, para que solo confirme. */
 export function borradorInicial(c: CatalogoViaje, nombre: string): BorradorViaje {
   const u = unidadAsignada(c);
@@ -68,6 +80,7 @@ export function borradorInicial(c: CatalogoViaje, nombre: string): BorradorViaje
       paradas: [null, null, null],
       relevoId: "",
       odometro: "",
+      motivoUnidad: "",
     },
     u
   );
@@ -132,7 +145,13 @@ export function errorDelPaso(paso: PasoViaje, b: BorradorViaje, c: CatalogoViaje
 /** El cuerpo de `POST /api/erp/viajes/crear-mio`. `idCliente` es el mismo en todos los reintentos;
  *  va también como `cliente_uuid`, que es el que lee la cola sin señal. `marcadoEn` es la hora en
  *  que tocó «Salir ahora»: sin señal, vale como hora de salida. */
-export function cuerpoCrearMiViaje(b: BorradorViaje, idCliente: string, marcadoEn: string) {
+export function cuerpoCrearMiViaje(
+  b: BorradorViaje,
+  idCliente: string,
+  marcadoEn: string,
+  /** El id de la unidad que Equipos le asignó (null si no tiene): el motivo solo vale si eligió otra. */
+  asignadaId: number | null = null
+) {
   const lectura = lecturaOdometro(b.odometro);
   return {
     id_cliente: idCliente,
@@ -143,6 +162,10 @@ export function cuerpoCrearMiViaje(b: BorradorViaje, idCliente: string, marcadoE
       : { equipo_id: b.unidad as number }),
     paradas: paradasFinales(b) as number[],
     ...(b.relevoId ? { relevo_usuario_id: b.relevoId } : {}),
+    // El motivo solo vale si eligió una unidad registrada distinta a la que tiene asignada.
+    ...(b.motivoUnidad.trim() && typeof b.unidad === "number" && b.unidad !== asignadaId
+      ? { motivo_unidad: b.motivoUnidad.trim() }
+      : {}),
     medidor_inicio: lectura as number,
   };
 }

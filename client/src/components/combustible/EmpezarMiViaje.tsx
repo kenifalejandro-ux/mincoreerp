@@ -7,11 +7,14 @@ import type { CreacionPendiente } from "./creacionPendiente";
 import {
   PASOS,
   borradorInicial,
+  buscarUnidades,
   conRutaDeUnidad,
   cuerpoCrearMiViaje,
   errorDelPaso,
   lecturaOdometro,
+  normalizarPlaca,
   paradasFinales,
+  unidadAsignada,
   unidadRegistrada,
   type BorradorViaje,
   type CatalogoViaje,
@@ -83,6 +86,10 @@ export function EmpezarMiViaje({
   const [b, setB] = useState<BorradorViaje>(() => borradorInicial(catalogo, nombreConductor));
   const [paso, setPaso] = useState<PasoViaje>("tipo");
   const [editaRuta, setEditaRuta] = useState(false);
+  // Con unidad asignada se ve solo esa; «No es mi unidad» abre el buscador. Sin asignada, va directo.
+  const asignada = unidadAsignada(catalogo);
+  const [cambiando, setCambiando] = useState(!asignada);
+  const [busqueda, setBusqueda] = useState("");
   const [guardando, setGuardando] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
   // Un identificador por intento de crear: el reintento de un envío que no se sabe si llegó no duplica.
@@ -94,7 +101,7 @@ export function EmpezarMiViaje({
   // Con la odómetro vacío o la placa a medio escribir no se grita: el botón solo queda apagado.
   const callado =
     (paso === "confirmar" && b.odometro === "") ||
-    (paso === "unidad" && b.unidad === "nueva" && !b.placa);
+    (paso === "unidad" && (b.unidad === null || (b.unidad === "nueva" && !b.placa)));
   const i = PASOS.indexOf(paso);
   const set = (cambios: Partial<BorradorViaje>) => setB((v) => ({ ...v, ...cambios }));
   const sinRuta = b.unidad === "nueva" || !unidad?.ruta;
@@ -130,7 +137,18 @@ export function EmpezarMiViaje({
   const elegirUnidad = (id: number | "nueva") => {
     const u = unidadRegistrada(catalogo, id);
     setEditaRuta(false);
-    setB((v) => conRutaDeUnidad({ ...v, unidad: id }, u));
+    setB((v) => conRutaDeUnidad({ ...v, unidad: id, motivoUnidad: "" }, u));
+  };
+  /** La unidad no está registrada: sigue con esa placa (la que ya escribió en el buscador). */
+  const usarComoNueva = () => {
+    setEditaRuta(false);
+    setB((v) =>
+      conRutaDeUnidad({ ...v, unidad: "nueva", motivoUnidad: "", placa: v.placa || busqueda }, null)
+    );
+  };
+  const dejarSinUnidad = () => {
+    setEditaRuta(false);
+    setB((v) => conRutaDeUnidad({ ...v, unidad: null, motivoUnidad: "" }, null));
   };
 
   const salir = async () => {
@@ -142,7 +160,9 @@ export function EmpezarMiViaje({
       const res = await apiFetch("/api/erp/viajes/crear-mio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(cuerpoCrearMiViaje(b, idCliente.current, marcadoEn)),
+        body: JSON.stringify(
+          cuerpoCrearMiViaje(b, idCliente.current, marcadoEn, asignada?.id ?? null)
+        ),
       });
       if (res.status === 202) {
         // Sin señal: la cola lo tiene guardado y lo envía sola; aquí queda el resumen para mostrarlo.
@@ -188,56 +208,159 @@ export function EmpezarMiViaje({
       </>
     );
   } else if (paso === "unidad") {
+    const resultados = buscarUnidades(catalogo, busqueda);
+    // Lo escrito parece una placa y no es ninguna de las registradas: se puede seguir con ella.
+    const placaBuscada = normalizarPlaca(busqueda);
+    const placaBuscadaNueva =
+      placaBuscada.length >= 3 &&
+      !catalogo.unidades.some((u) => normalizarPlaca(u.placa) === placaBuscada);
+    const otra = typeof b.unidad === "number" && b.unidad !== asignada?.id ? unidad : null;
+    const detalleUnidad = (u: NonNullable<typeof unidad>) => (
+      <>
+        <b className="text-white text-lg">{u.placa}</b>{" "}
+        <span className="text-[#94a3b8]">· {u.tipo}</span>
+        <span className="block text-xs text-[#94a3b8]">
+          {u.ruta ? `Ruta: ${u.ruta.origen} → ${u.ruta.destino}` : "Sin ruta asignada"}
+        </span>
+      </>
+    );
     cuerpo = (
       <>
         <h3 className="text-xl font-extrabold text-white">¿Cuál es tu unidad?</h3>
-        <p className="text-sm text-[#94a3b8]">
-          {catalogo.unidades.some((u) => u.asignada_a_mi)
-            ? "Viene marcada la que tienes asignada; puedes cambiarla."
-            : "No tienes una unidad asignada. Elige la tuya o regístrala ahora."}
-        </p>
-        {catalogo.unidades.map((u) => (
-          <Opcion key={u.id} activa={b.unidad === u.id} onClick={() => elegirUnidad(u.id)}>
-            <b className="text-white">{u.placa}</b>{" "}
-            <span className="text-[#94a3b8]">· {u.tipo}</span>
-            <span className="block text-xs text-[#94a3b8]">
-              {u.ruta ? `Ruta: ${u.ruta.origen} → ${u.ruta.destino}` : "Sin ruta asignada"}
-              {u.asignada_a_mi ? " · Asignada a ti" : ""}
-            </span>
-          </Opcion>
-        ))}
-        <Opcion activa={b.unidad === "nueva"} onClick={() => elegirUnidad("nueva")}>
-          <b className="block text-white">Mi unidad no está registrada</b>
-          <span className="text-xs text-[#94a3b8]">Registrarla ahora con su placa</span>
-        </Opcion>
-        {b.unidad === "nueva" && (
-          <div className="rounded-2xl border border-[#BADC1E] bg-[#192526] p-4 space-y-3">
-            <label className={ETIQUETA}>
-              Placa de la unidad
-              <input
-                className={`${CAMPO} mt-1.5 font-mono uppercase tracking-widest`}
-                maxLength={20}
-                autoComplete="off"
-                autoCapitalize="characters"
-                placeholder="ABC-123"
-                value={b.placa}
-                onChange={(e) => set({ placa: e.target.value.toUpperCase() })}
-              />
-            </label>
-            <label className={ETIQUETA}>
-              Tu nombre
-              <input
-                className={`${CAMPO} mt-1.5 normal-case tracking-normal font-normal`}
-                autoComplete="off"
-                value={b.nombre}
-                onChange={(e) => set({ nombre: e.target.value })}
-              />
-            </label>
-            <p className="text-xs text-[#94a3b8]">
-              Se guarda en Registro de unidades solo con la placa, tu nombre y la ruta que ingreses.
-              La oficina completa el resto después.
-            </p>
-          </div>
+        {asignada && !cambiando && (
+          <>
+            <div className="rounded-2xl border border-[#BADC1E] bg-[#17261c] p-4">
+              <p className="text-xs text-[#BADC1E] mb-1">Asignada a ti</p>
+              {detalleUnidad(asignada)}
+            </div>
+            <button
+              type="button"
+              className="w-full rounded-2xl border border-[#BADC1E] px-4 py-3 text-left text-[#BADC1E] hover:bg-[#17261c]"
+              onClick={() => {
+                setCambiando(true);
+                dejarSinUnidad();
+              }}
+            >
+              <b className="block">No es mi unidad</b>
+              <span className="text-xs text-[#94a3b8]">Buscar otra o registrar la mía</span>
+            </button>
+          </>
+        )}
+        {cambiando && (
+          <>
+            {asignada && (
+              <button
+                type="button"
+                className="text-[#BADC1E] font-semibold py-1 text-left"
+                onClick={() => {
+                  setCambiando(false);
+                  setBusqueda("");
+                  elegirUnidad(asignada.id);
+                }}
+              >
+                ← Volver a mi unidad ({asignada.placa})
+              </button>
+            )}
+            {!asignada && (
+              <p className="text-sm text-[#94a3b8]">
+                No tienes una unidad asignada. Búscala por su placa; si no está registrada, sigues
+                con esa placa como unidad nueva.
+              </p>
+            )}
+            {otra ? (
+              <div className="rounded-2xl border border-[#BADC1E] bg-[#17261c] p-4">
+                {detalleUnidad(otra)}
+              </div>
+            ) : (
+              b.unidad !== "nueva" && (
+                <>
+                  <label className={ETIQUETA}>
+                    Busca por placa
+                    <input
+                      className={`${CAMPO} mt-1.5 font-mono uppercase tracking-widest`}
+                      autoComplete="off"
+                      autoCapitalize="characters"
+                      placeholder="Ej. ABC"
+                      value={busqueda}
+                      onChange={(e) => setBusqueda(e.target.value.toUpperCase())}
+                    />
+                  </label>
+                  {resultados.map((u) => (
+                    <Opcion key={u.id} activa={false} onClick={() => elegirUnidad(u.id)}>
+                      {detalleUnidad(u)}
+                    </Opcion>
+                  ))}
+                  {busqueda.trim().length >= 2 && resultados.length === 0 && (
+                    <p className="text-sm text-[#94a3b8]">No hay unidades con esa placa.</p>
+                  )}
+                  {placaBuscadaNueva && (
+                    <Opcion activa={false} onClick={usarComoNueva}>
+                      <b className="block text-white">
+                        Pulsa aquí para seguir con {busqueda.trim()}
+                      </b>
+                      <span className="text-xs text-[#94a3b8]">
+                        No está registrada: se registra como unidad nueva y sigues con tu viaje
+                      </span>
+                    </Opcion>
+                  )}
+                </>
+              )
+            )}
+            {otra && (
+              <>
+                <label className={ETIQUETA}>
+                  Motivo (opcional)
+                  <input
+                    className={`${CAMPO} mt-1.5 normal-case tracking-normal font-normal`}
+                    maxLength={500}
+                    autoComplete="off"
+                    placeholder="Ej. la mía está en taller"
+                    value={b.motivoUnidad}
+                    onChange={(e) => set({ motivoUnidad: e.target.value })}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="text-[#BADC1E] font-semibold py-1 text-left"
+                  onClick={() => {
+                    setBusqueda("");
+                    dejarSinUnidad();
+                  }}
+                >
+                  Elegir otra
+                </button>
+              </>
+            )}
+            {b.unidad === "nueva" && (
+              <div className="rounded-2xl border border-[#BADC1E] bg-[#192526] p-4 space-y-3">
+                <label className={ETIQUETA}>
+                  Placa de la unidad
+                  <input
+                    className={`${CAMPO} mt-1.5 font-mono uppercase tracking-widest`}
+                    maxLength={20}
+                    autoComplete="off"
+                    autoCapitalize="characters"
+                    placeholder="ABC-123"
+                    value={b.placa}
+                    onChange={(e) => set({ placa: e.target.value.toUpperCase() })}
+                  />
+                </label>
+                <label className={ETIQUETA}>
+                  Tu nombre
+                  <input
+                    className={`${CAMPO} mt-1.5 normal-case tracking-normal font-normal`}
+                    autoComplete="off"
+                    value={b.nombre}
+                    onChange={(e) => set({ nombre: e.target.value })}
+                  />
+                </label>
+                <p className="text-xs text-[#94a3b8]">
+                  Se guarda en Registro de unidades solo con la placa, tu nombre y la ruta que
+                  ingreses. La oficina completa el resto después.
+                </p>
+              </div>
+            )}
+          </>
         )}
       </>
     );

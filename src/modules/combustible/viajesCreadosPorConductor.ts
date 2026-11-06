@@ -118,7 +118,7 @@ export async function catalogoParaCrear(
   );
   const unidades = await client.query(
     `SELECT e.id::int, COALESCE(e.placa_codigo, e.codigo_interno) AS placa, e.tipo, e.por_completar,
-            (btrim(e.conductor_dni) = $2) AS asignada_a_mi,
+            COALESCE(btrim(e.conductor_dni) = $2, false) AS asignada_a_mi,
             r.origen_id::int, r.destino_id::int, lo.nombre AS origen, ld.nombre AS destino
        FROM equipos e
        LEFT JOIN LATERAL (
@@ -128,7 +128,8 @@ export async function catalogoParaCrear(
        LEFT JOIN combustible_lugares lo ON lo.tenant_id = e.tenant_id AND lo.id = r.origen_id
        LEFT JOIN combustible_lugares ld ON ld.tenant_id = e.tenant_id AND ld.id = r.destino_id
       WHERE e.tenant_id = $1 AND e.activo
-      ORDER BY (btrim(e.conductor_dni) = $2) DESC, lower(COALESCE(e.placa_codigo, e.codigo_interno))`,
+      ORDER BY COALESCE(btrim(e.conductor_dni) = $2, false) DESC,
+               lower(COALESCE(e.placa_codigo, e.codigo_interno))`,
     [tenantId, c.dni.trim()]
   );
   const relevos = await client.query(
@@ -239,6 +240,9 @@ export async function crearMiViaje(
     conductor_dni: dni,
     paradas: data.paradas,
     relevo_dni: relevoDni,
+    observaciones: data.motivo_unidad
+      ? `Unidad distinta a la asignada. Motivo: ${data.motivo_unidad}`
+      : undefined,
     sale: "titular",
   } as Parameters<typeof crearViaje>[3]);
   const id = Number(creado.id);

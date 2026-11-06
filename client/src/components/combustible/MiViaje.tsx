@@ -240,7 +240,14 @@ export default function MiViaje() {
     const dejarDeOirCola = suscribirseACola(refrescar);
     const dejarDeOirEnvio = suscribirseASincronizacion(({ descartadas }) => {
       // Las marcas viejas de la cola siguen con el módulo de Combustible; las nuevas, con el de Viajes.
-      if (descartadas.some((d) => d.moduloId === "combustible" || d.moduloId === "viajes")) {
+      if (descartadas.some((d) => d.url.endsWith("/viajes/crear-mio"))) {
+        // El viaje que creó sin señal no se creó otro: ya tenía uno (la oficina se lo programó).
+        guardarPendiente(usuarioId, null);
+        setPendiente(null);
+        setAviso(
+          "No se creó el viaje que empezaste sin señal: la oficina ya te había programado uno. Ese es el tuyo; míralo aquí abajo."
+        );
+      } else if (descartadas.some((d) => d.moduloId === "combustible" || d.moduloId === "viajes")) {
         setAviso(
           "Una marca de tu viaje no se pudo enviar porque el viaje ya había avanzado. Mira cómo quedó y avisa a la oficina."
         );
@@ -255,7 +262,7 @@ export default function MiViaje() {
       window.removeEventListener("online", refrescar);
       window.clearInterval(reloj);
     };
-  }, [cargar]);
+  }, [cargar, usuarioId]);
 
   const enCurso = filas.find((f) => f.estado === "en_curso");
   const programado = filas.find((f) => f.estado === "programado");

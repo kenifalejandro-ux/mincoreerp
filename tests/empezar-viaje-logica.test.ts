@@ -9,6 +9,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   borradorInicial,
+  buscarUnidades,
   conRutaDeUnidad,
   cuerpoCrearMiViaje,
   errorDelPaso,
@@ -105,6 +106,44 @@ describe("empezar un viaje: lógica del celular", () => {
     expect(errorOdometro(nuevo({ odometro: "148 230,5" }))).toBe("");
     expect(errorDelPaso("confirmar", nuevo({ odometro: "" }), catalogo)).toMatch(/odómetro/);
     expect(errorDelPaso("tipo", nuevo(), catalogo)).toBe("");
+  });
+
+  it("el buscador no muestra la flota entera: pide 2 letras, tope de 6 y no repite la asignada", () => {
+    const muchas: CatalogoViaje = {
+      ...catalogo,
+      unidades: [
+        ...catalogo.unidades,
+        ...Array.from({ length: 20 }, (_, n) => ({
+          id: 100 + n,
+          placa: `ABC-${100 + n}`,
+          tipo: "Volquete",
+          por_completar: false,
+          asignada_a_mi: false,
+          ruta: null,
+        })),
+      ],
+    };
+    expect(buscarUnidades(muchas, "")).toEqual([]);
+    expect(buscarUnidades(muchas, "a")).toEqual([]);
+    expect(buscarUnidades(muchas, "abc")).toHaveLength(6);
+    expect(buscarUnidades(muchas, "abc", 3)).toHaveLength(3);
+    // Sin guion ni mayúsculas, y la asignada (TAF-822) no aparece entre los resultados.
+    expect(buscarUnidades(muchas, "rex 00").map((u) => u.placa)).toEqual(["REX-001"]);
+    expect(buscarUnidades(muchas, "taf")).toEqual([]);
+  });
+
+  it("el motivo solo viaja si eligió una unidad registrada distinta a la asignada", () => {
+    const cuerpo = (extra: Partial<BorradorViaje>) =>
+      cuerpoCrearMiViaje(
+        nuevo({ odometro: "1", motivoUnidad: " en taller ", ...extra }),
+        "u",
+        "t",
+        10
+      );
+    expect(cuerpo({ unidad: 11 })).toMatchObject({ motivo_unidad: "en taller" });
+    expect("motivo_unidad" in cuerpo({ unidad: 10 })).toBe(false);
+    expect("motivo_unidad" in cuerpo({ unidad: 11, motivoUnidad: "  " })).toBe(false);
+    expect("motivo_unidad" in cuerpo({ unidad: "nueva", placa: "ABC-123" })).toBe(false);
   });
 
   it("el cuerpo de crear-mio: unidad registrada o nueva, relevo por id y el mismo id_cliente", () => {

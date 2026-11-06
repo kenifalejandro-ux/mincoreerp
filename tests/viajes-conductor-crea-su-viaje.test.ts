@@ -378,4 +378,54 @@ describe("viajes: el conductor crea su propio viaje (0179)", () => {
     expect(hecho.status, JSON.stringify(hecho.body)).toBe(200);
     expect((await lista()).por_completar).toBe(false);
   });
+  it("la unidad asignada va primera en el catálogo aunque haya unidades sin conductor", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    // Unidades SIN conductor (dni nulo): antes del arreglo ordenaban antes que la asignada.
+    for (let n = 0; n < 3; n++) {
+      const sin = await admin.post("/api/erp/equipos").send({
+        placa_codigo: idUnico("AA"),
+        tipo: "VOLQUETE",
+      });
+      expect(sin.status, JSON.stringify(sin.body)).toBe(201);
+    }
+    const mia = await admin.post("/api/erp/equipos").send({
+      placa_codigo: idUnico("ZZ"),
+      tipo: "VOLQUETE",
+      conductor_nombre: "Yo",
+      conductor_dni: c.dni,
+    });
+    expect(mia.status, JSON.stringify(mia.body)).toBe(201);
+    const r = await c.agente.get("/api/erp/viajes/mios/catalogo");
+    expect(r.body.unidades[0]).toMatchObject({ id: Number(mia.body.id), asignada_a_mi: true });
+    expect(r.body.unidades.filter((u: { asignada_a_mi: boolean }) => u.asignada_a_mi)).toHaveLength(
+      1
+    );
+  });
+
+  it("el motivo de salir en otra unidad queda en las observaciones del viaje", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    const u = await admin.post("/api/erp/equipos").send({
+      placa_codigo: idUnico("MT"),
+      tipo: "VOLQUETE",
+      tipo_medidor: "odometro",
+    });
+    expect(u.status, JSON.stringify(u.body)).toBe(201);
+    const r = await crear(c.agente, {
+      id_cliente: randomUUID(),
+      equipo_id: Number(u.body.id),
+      paradas: [a, b],
+      medidor_inicio: 10,
+      motivo_unidad: "La mía está en taller",
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const fila = await withTenant(tenantId, (cl) =>
+      cl.query(`SELECT observaciones FROM combustible_viajes WHERE tenant_id = $1 AND id = $2`, [
+        tenantId,
+        Number(r.body.id),
+      ])
+    );
+    expect(fila.rows[0].observaciones).toContain("La mía está en taller");
+  });
 });

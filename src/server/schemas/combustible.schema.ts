@@ -2703,6 +2703,8 @@ export const crearMiViajeSchema = z
     relevo_dni: z.string().trim().min(1).max(15).nullable().optional(),
     // El celular elige al relevo por su id de usuario (no ve los DNI de los demás).
     relevo_usuario_id: z.string().uuid().optional(),
+    // Por qué sale en una unidad distinta a la que tiene asignada (opcional).
+    motivo_unidad: z.string().trim().max(500).optional(),
     medidor_inicio: z.number().min(0).max(99999999),
     marcado_en: fechaHora.optional(),
   })
