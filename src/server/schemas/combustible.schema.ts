@@ -2701,6 +2701,8 @@ export const crearMiViajeSchema = z
     // El recorrido completo: A → B (solo ida), A → B → A o A → B → C → A.
     paradas: z.array(z.number().int().positive()).min(2).max(20),
     relevo_dni: z.string().trim().min(1).max(15).nullable().optional(),
+    // El celular elige al relevo por su id de usuario (no ve los DNI de los demás).
+    relevo_usuario_id: z.string().uuid().optional(),
     medidor_inicio: z.number().min(0).max(99999999),
     marcado_en: fechaHora.optional(),
   })

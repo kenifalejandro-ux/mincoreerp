@@ -84,6 +84,83 @@ async function unidadDeLaPlaca(
   return { equipoId, creada: true };
 }
 
+export interface CatalogoParaCrear {
+  puede_crear_viaje: boolean;
+  lugares: { id: number; nombre: string }[];
+  unidades: {
+    id: number;
+    placa: string;
+    tipo: string;
+    por_completar: boolean;
+    /** La unidad que Equipos le tiene asignada a este conductor. */
+    asignada_a_mi: boolean;
+    /** Su ruta habitual en Equipos (la primera vigente), o null si no tiene. */
+    ruta: { origen_id: number; destino_id: number; origen: string; destino: string } | null;
+  }[];
+  /** Otros conductores activos que pueden ir de relevo. Sin DNI: se elige por su id de usuario. */
+  relevos: { id: string; nombre: string }[];
+}
+
+/** Lo que el celular necesita para armar el viaje: lugares, unidades con su ruta y posibles
+ *  relevos. Con el interruptor de la empresa apagado no se entrega nada. */
+export async function catalogoParaCrear(
+  client: PoolClient,
+  tenantId: string,
+  c: ConductorQueCrea
+): Promise<CatalogoParaCrear> {
+  if (!(await conductorPuedeCrearViaje(client, tenantId))) {
+    return { puede_crear_viaje: false, lugares: [], unidades: [], relevos: [] };
+  }
+  const lugares = await client.query(
+    `SELECT id::int, nombre FROM combustible_lugares
+      WHERE tenant_id = $1 AND activo ORDER BY lower(nombre)`,
+    [tenantId]
+  );
+  const unidades = await client.query(
+    `SELECT e.id::int, COALESCE(e.placa_codigo, e.codigo_interno) AS placa, e.tipo, e.por_completar,
+            (btrim(e.conductor_dni) = $2) AS asignada_a_mi,
+            r.origen_id::int, r.destino_id::int, lo.nombre AS origen, ld.nombre AS destino
+       FROM equipos e
+       LEFT JOIN LATERAL (
+         SELECT origen_id, destino_id FROM equipo_rutas
+          WHERE tenant_id = e.tenant_id AND equipo_id = e.id AND hasta IS NULL
+          ORDER BY id LIMIT 1) r ON true
+       LEFT JOIN combustible_lugares lo ON lo.tenant_id = e.tenant_id AND lo.id = r.origen_id
+       LEFT JOIN combustible_lugares ld ON ld.tenant_id = e.tenant_id AND ld.id = r.destino_id
+      WHERE e.tenant_id = $1 AND e.activo
+      ORDER BY (btrim(e.conductor_dni) = $2) DESC, lower(COALESCE(e.placa_codigo, e.codigo_interno))`,
+    [tenantId, c.dni.trim()]
+  );
+  const relevos = await client.query(
+    `SELECT id, nombre FROM usuarios
+      WHERE tenant_id = $1 AND rol = 'conductor_ruta' AND activo AND id <> $2
+        AND COALESCE(btrim(dni), '') <> '' AND btrim(dni) <> $3
+      ORDER BY lower(nombre)`,
+    [tenantId, c.usuarioId, c.dni.trim()]
+  );
+  return {
+    puede_crear_viaje: true,
+    lugares: lugares.rows,
+    unidades: unidades.rows.map((u) => ({
+      id: u.id,
+      placa: u.placa,
+      tipo: u.tipo,
+      por_completar: u.por_completar,
+      asignada_a_mi: u.asignada_a_mi === true,
+      ruta:
+        u.origen_id && u.destino_id
+          ? {
+              origen_id: u.origen_id,
+              destino_id: u.destino_id,
+              origen: u.origen,
+              destino: u.destino,
+            }
+          : null,
+    })),
+    relevos: relevos.rows,
+  };
+}
+
 export async function crearMiViaje(
   client: PoolClient,
   tenantId: string,
@@ -142,6 +219,18 @@ export async function crearMiViaje(
     unidadNueva = u.creada;
   }
 
+  // El relevo llega por su id de usuario (el celular no ve DNI ajenos): se resuelve aquí.
+  let relevoDni: string | undefined = data.relevo_dni ?? undefined;
+  if (data.relevo_usuario_id) {
+    const rel = await client.query(
+      `SELECT btrim(dni) AS dni FROM usuarios
+        WHERE tenant_id = $1 AND id = $2 AND rol = 'conductor_ruta' AND activo`,
+      [tenantId, data.relevo_usuario_id]
+    );
+    if (!rel.rows[0]?.dni) throw new AppError(400, "El relevo tiene que ser un conductor activo");
+    relevoDni = rel.rows[0].dni;
+  }
+
   // El viaje lleva SU copia del conductor: es quien lo crea, sin tocar el conductor asignado a la
   // unidad en Equipos. Nace programado y se inicia enseguida en la misma transacción.
   const creado = await crearViaje(client, tenantId, c.usuarioId, {
@@ -149,7 +238,7 @@ export async function crearMiViaje(
     conductor_nombre: c.nombre,
     conductor_dni: dni,
     paradas: data.paradas,
-    relevo_dni: data.relevo_dni ?? undefined,
+    relevo_dni: relevoDni,
     sale: "titular",
   } as Parameters<typeof crearViaje>[3]);
   const id = Number(creado.id);
