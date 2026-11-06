@@ -2,6 +2,12 @@ import { z } from "zod";
 
 import { grifoNoEditable } from "./sedes.schema";
 
+/** Las cantidades de combustible admiten hasta 3 decimales (120.234): es la escala de las
+ *  columnas (NUMERIC(…,3)). Un cuarto decimal se rechaza con un mensaje claro en vez de
+ *  guardarse redondeado en silencio. */
+const hastaTresDecimales = (n: number) => Math.abs(n * 1000 - Math.round(n * 1000)) < 1e-6;
+const MSG_TRES_DECIMALES = "Usa como máximo 3 decimales (por ejemplo 120.234)";
+
 // ── Tanques / puntos de abastecimiento (Fase A, ver
 // docs/architecture/control-de-combustible.md) ─────────────────────────────
 
@@ -23,9 +29,9 @@ export const crearTanqueCombustibleSchema = z.object({
   unidad: z.enum(UNIDADES_COMBUSTIBLE),
   tipo_punto: z.enum(TIPOS_PUNTO_COMBUSTIBLE),
   ubicacion: z.string().trim().max(200).optional(),
-  capacidad_total: z.number().positive(),
-  nivel_actual: z.number().nonnegative().default(0),
-  nivel_minimo: z.number().nonnegative().default(0),
+  capacidad_total: z.number().positive().refine(hastaTresDecimales, MSG_TRES_DECIMALES),
+  nivel_actual: z.number().nonnegative().refine(hastaTresDecimales, MSG_TRES_DECIMALES).default(0),
+  nivel_minimo: z.number().nonnegative().refine(hastaTresDecimales, MSG_TRES_DECIMALES).default(0),
   moneda: z.string().trim().length(3).default("PEN"),
   // Configuración de Fase C (migrations/0064). Los defaults reproducen el
   // comportamiento anterior a esa migración -- un tanque creado sin tocar
@@ -105,8 +111,8 @@ export const actualizarTanqueCombustibleSchema = z.object({
   unidad: z.enum(UNIDADES_COMBUSTIBLE),
   tipo_punto: z.enum(TIPOS_PUNTO_COMBUSTIBLE),
   ubicacion: z.string().trim().max(200).optional(),
-  capacidad_total: z.number().positive(),
-  nivel_minimo: z.number().nonnegative(),
+  capacidad_total: z.number().positive().refine(hastaTresDecimales, MSG_TRES_DECIMALES),
+  nivel_minimo: z.number().nonnegative().refine(hastaTresDecimales, MSG_TRES_DECIMALES),
   moneda: z.string().trim().length(3),
   activo: z.boolean(),
   // Sin `.default()`, como el resto de este schema: PUT reemplaza la fila
@@ -199,7 +205,7 @@ export const registrarLecturaCombustibleSchema = z.object({
   // un reintento del mismo envío no duplica (ver idempotentInsert.ts).
   cliente_uuid: z.string().uuid().optional(),
   combustible_id: z.number().int().positive(),
-  nivel: z.number().nonnegative(),
+  nivel: z.number().nonnegative().refine(hastaTresDecimales, MSG_TRES_DECIMALES),
   // Cuándo se TOMÓ la lectura, no cuándo llegó al servidor -- decide si
   // actualiza nivel_actual (ver combustible.repository.ts). Opcional:
   // sin dato, el service usa now() (siempre "la más reciente" en ese caso).
@@ -481,13 +487,17 @@ export const crearDespachoCombustibleSchema = z
     // el SERVIDOR lo calcula (cantidad_bultos × factor de la presentación)
     // y por eso acá queda opcional: mandarlo para un vale de urea es un
     // error de forma, no un dato a confiar.
-    // Mínimo una centésima: la columna es NUMERIC(14,2) con CHECK (cantidad > 0). Con 0.004
-    // Postgres redondeaba a 0.00, el CHECK fallaba y salía un 500 que una cola sin señal
-    // reintenta. No es `multipleOf`: un contómetro con 3 decimales se guarda redondeado hoy.
-    cantidad: z.number().min(0.01).optional(),
+    // Mínimo una milésima: la columna es NUMERIC(12,3) con CHECK (cantidad > 0). Con 0.0004
+    // Postgres redondeaba a 0.000, el CHECK fallaba y salía un 500 que una cola sin señal
+    // reintenta. Hasta 3 decimales: un cuarto decimal se rechaza (no se guarda redondeado).
+    cantidad: z.number().min(0.001).refine(hastaTresDecimales, MSG_TRES_DECIMALES).optional(),
 
     // Solo tanque_propio -- chequeo intra-vale del punto 5.
-    lectura_contometro: z.number().nonnegative().optional(),
+    lectura_contometro: z
+      .number()
+      .nonnegative()
+      .refine(hastaTresDecimales, MSG_TRES_DECIMALES)
+      .optional(),
 
     // Solo tanque_propio, y solo si el tanque usa totalizador (lo valida el
     // servicio, que ve la fila del tanque): la lectura del contador
@@ -1326,8 +1336,8 @@ export const crearCompraRutaSchema = z
       .object({
         tipo_combustible: z.enum(TIPOS_COMBUSTIBLE),
         // En la unidad de la boleta (`unidad`); sin ella, galones.
-        // Mínimo una centésima, igual que en el despacho (ver allá).
-        cantidad: z.number().min(0.01).max(100_000),
+        // Mínimo una milésima, igual que en el despacho (ver allá).
+        cantidad: z.number().min(0.001).max(100_000).refine(hastaTresDecimales, MSG_TRES_DECIMALES),
         unidad: z.enum(["gal", "L"]).optional(),
         costo_unitario: z.number().positive().max(10_000),
         // Exactamente uno de los dos según el medidor de la unidad; el
@@ -1815,8 +1825,8 @@ export const crearRecepcionCombustibleSchema = z
 
     // Litros, para combustible. Para urea el servidor lo calcula (ver
     // presentacion/cantidad_bultos abajo), así que queda opcional acá.
-    // Mínimo una centésima, igual que en el despacho (ver allá).
-    cantidad: z.number().min(0.01).optional(),
+    // Mínimo una milésima, igual que en el despacho (ver allá).
+    cantidad: z.number().min(0.001).refine(hastaTresDecimales, MSG_TRES_DECIMALES).optional(),
     // Obligatorio salvo en la urea con renglones, donde cada renglón trae el
     // suyo (ver `lineas`).
     costo_unitario: z.number().positive().optional(),
@@ -1873,8 +1883,8 @@ export const crearRecepcionCombustibleSchema = z
             // 'cisterna' (0168): se queda en la cisterna del proveedor y se
             // reparte después, con despachos de excedente.
             destino: z.enum(["cubeta", "equipo", "devolucion", "cisterna"]),
-            // Mínimo una centésima, igual que en el despacho (ver allá).
-            cantidad: z.number().min(0.01),
+            // Mínimo una milésima, igual que en el despacho (ver allá).
+            cantidad: z.number().min(0.001).refine(hastaTresDecimales, MSG_TRES_DECIMALES),
             equipo_id: z.number().int().positive().optional(),
             // A cuál tanqueta va una línea de 'cubeta' (0111).
             tanqueta_id: z.number().int().positive().optional(),
@@ -2351,14 +2361,24 @@ export const crearTanquetaSchema = z.object({
   grifo_interno_id: z.number().int().positive(),
   // Sin código, el servidor asigna el siguiente (TQT-001...).
   codigo: z.string().trim().min(1).max(30).optional(),
-  capacidad: z.number().positive().max(100000).default(280),
+  capacidad: z
+    .number()
+    .positive()
+    .max(100000)
+    .refine(hastaTresDecimales, MSG_TRES_DECIMALES)
+    .default(280),
 });
 
 export type CrearTanquetaInput = z.infer<typeof crearTanquetaSchema>;
 
 export const actualizarTanquetaSchema = z.object({
   codigo: z.string().trim().min(1).max(30).optional(),
-  capacidad: z.number().positive().max(100000).optional(),
+  capacidad: z
+    .number()
+    .positive()
+    .max(100000)
+    .refine(hastaTresDecimales, MSG_TRES_DECIMALES)
+    .optional(),
   activa: z.boolean().optional(),
   motivo: z.string().trim().min(1).max(500).optional(),
 });
@@ -2382,7 +2402,7 @@ export type AsignarTanquetaInput = z.infer<typeof asignarTanquetaSchema>;
 export const retornoTanquetaSchema = z
   .object({
     saldo_calculado: z.number().positive().max(100000),
-    saldo_validado: z.number().min(0).max(100000),
+    saldo_validado: z.number().min(0).max(100000).refine(hastaTresDecimales, MSG_TRES_DECIMALES),
     motivo: z.string().trim().max(500).optional(),
     destino: z.enum(["reserva", "pozo", "tanqueta", "unidad"]),
     tanque_id: z.number().int().positive().optional(),
@@ -2426,10 +2446,10 @@ export const trasladarCisternaSchema = z.object({
   cliente_uuid: z.string().uuid().optional(),
   linea_id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   combustible_id: z.number().int().positive().max(2147483647),
-  // En centésimas: la columna es NUMERIC(14,2) y su CHECK pide cantidad > 0. Sin esto,
-  // 0.004 se redondeaba a 0.00 y salía como 500 (que una cola sin señal reintenta), y 10.005
-  // se guardaba como 10.01 después de validar el saldo y el espacio con 10.005.
-  cantidad: z.number().positive().multipleOf(0.01).max(10_000_000),
+  // En milésimas: la columna es NUMERIC(14,3) y su CHECK pide cantidad > 0. Sin esto,
+  // 0.0004 se redondeaba a 0.000 y salía como 500 (que una cola sin señal reintenta), y 10.0005
+  // se guardaba como 10.001 después de validar el saldo y el espacio con 10.0005.
+  cantidad: z.number().positive().multipleOf(0.001).max(10_000_000),
 });
 export type TrasladarCisternaInput = z.infer<typeof trasladarCisternaSchema>;
 
@@ -2816,7 +2836,10 @@ export const crearCompraCisternaSchema = z
     numero_documento: z.string().trim().min(1, "El número del documento es obligatorio").max(100),
     fecha_compra: soloFecha("La fecha de compra"),
     llegada_estimada: soloFecha("La fecha estimada de llegada"),
-    cantidad_facturada: z.number().min(0.01, "La cantidad facturada debe ser mayor que cero"),
+    cantidad_facturada: z
+      .number()
+      .min(0.001, "La cantidad facturada debe ser mayor que cero")
+      .refine(hastaTresDecimales, MSG_TRES_DECIMALES),
     costo_unitario: z.number().positive("El costo debe ser mayor que cero"),
     placa: z.string().trim().max(20).optional(),
     chofer: z.string().trim().max(120).optional(),

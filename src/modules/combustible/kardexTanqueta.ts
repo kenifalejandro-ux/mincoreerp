@@ -91,9 +91,9 @@ export interface Kardex {
 /** Lo máximo que se devuelve de una vez: más allá, el conductor acota con fechas o filtros. */
 export const TOPE_FILAS = 500;
 
-const TOLERANCIA = 0.01;
+const TOLERANCIA = 0.001;
 
-const redondear = (n: number) => Number(n.toFixed(2));
+const redondear = (n: number) => Number(n.toFixed(3));
 
 const ENTRADAS: ReadonlySet<TipoMovimientoKardex> = new Set([
   "excedente",

@@ -5,6 +5,8 @@ import {
   estadoDeRecepcion,
   ETIQUETA_ESTADO_RECEPCION,
   filtrarRecepciones,
+  finDelDiaLima,
+  inicioDelDiaLima,
   totalEntregadoDeLaRecepcion,
   type EstadoDeRecepcion,
   type FiltroDeEstadoRecepcion,
@@ -44,8 +46,8 @@ export default function RecepcionesCisterna({ onCambio = () => {} }: { onCambio?
   const cargar = useCallback(async () => {
     try {
       const params = new URLSearchParams({ producto: "combustible", pageSize: "200" });
-      if (desde) params.set("desde", new Date(`${desde}T00:00:00`).toISOString());
-      if (hasta) params.set("hasta", new Date(`${hasta}T23:59:59.999`).toISOString());
+      if (desde) params.set("desde", inicioDelDiaLima(desde));
+      if (hasta) params.set("hasta", finDelDiaLima(hasta));
       const res = await apiFetch(`/api/erp/combustible/recepciones?${params}`);
       const body = await res.json().catch(() => null);
       if (!res.ok) {
@@ -202,16 +204,16 @@ export default function RecepcionesCisterna({ onCambio = () => {} }: { onCambio?
                     <dt className="text-[10px] text-[#94a3b8] font-bold uppercase">Descargado</dt>
                     <dd className="font-mono text-[#e2e8f0]">
                       {totalEntregadoDeLaRecepcion(r).toLocaleString("es-PE", {
-                        maximumFractionDigits: 2,
+                        maximumFractionDigits: 3,
                       })}{" "}
                       {unidad}
                     </dd>
                     {Number(r.cantidad_derivada) > 0 && (
                       <dd className="text-[10px] text-[#94a3b8]">
-                        {Number(r.cantidad).toLocaleString("es-PE", { maximumFractionDigits: 2 })}{" "}
+                        {Number(r.cantidad).toLocaleString("es-PE", { maximumFractionDigits: 3 })}{" "}
                         al tanque ·{" "}
                         {Number(r.cantidad_derivada).toLocaleString("es-PE", {
-                          maximumFractionDigits: 2,
+                          maximumFractionDigits: 3,
                         })}{" "}
                         de sobrante
                       </dd>

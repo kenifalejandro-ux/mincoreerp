@@ -4,7 +4,7 @@
 // otras personas (el servidor solo manda pozo, otra tanqueta o reserva).
 import type { CierreDeSalida } from "./kardexTanquetaDatos";
 
-const NUMERO = new Intl.NumberFormat("es-PE", { maximumFractionDigits: 2 });
+const NUMERO = new Intl.NumberFormat("es-PE", { maximumFractionDigits: 3 });
 const FECHA = new Intl.DateTimeFormat("es-PE", {
   day: "2-digit",
   month: "2-digit",
@@ -59,7 +59,7 @@ function Salida({ s }: { s: CierreDeSalida }) {
           <dd className="font-mono text-white">{volvio ? gal(s.volvio!) : "—"}</dd>
         </div>
       </dl>
-      {volvio && s.diferencia !== null && Math.abs(s.diferencia) >= 0.005 && (
+      {volvio && s.diferencia !== null && Math.abs(s.diferencia) >= 0.0005 && (
         <p className="mt-2 text-amber-300">
           El grifero corrigió el saldo: {s.diferencia > 0 ? "+" : ""}
           {gal(s.diferencia)}

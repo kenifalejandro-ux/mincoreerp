@@ -8,6 +8,8 @@ import {
   diferenciaDeLaRecepcion,
   estadoDeRecepcion,
   filtrarRecepciones,
+  finDelDiaLima,
+  inicioDelDiaLima,
   totalEntregadoDeLaRecepcion,
   type RecepcionDeLista,
 } from "../client/src/components/combustible/recepcionesCisternaLogica";
@@ -107,5 +109,18 @@ describe("filtrarRecepciones", () => {
     expect(filtrarRecepciones(lista, "por_validar")).toHaveLength(1);
     expect(filtrarRecepciones(lista, "validada")).toHaveLength(1);
     expect(filtrarRecepciones(lista, "registrada")).toHaveLength(1);
+  });
+});
+
+describe("el período se lee en hora de Lima, no en la del navegador", () => {
+  it("el día de Lima va de las 05:00 UTC a las 04:59 UTC del siguiente", () => {
+    expect(inicioDelDiaLima("2026-11-05")).toBe("2026-11-05T05:00:00.000Z");
+    expect(finDelDiaLima("2026-11-05")).toBe("2026-11-06T04:59:59.999Z");
+  });
+
+  it("lo recibido la noche del 5 en Lima (01:42 UTC del 6) cabe en el 'hasta' del 5", () => {
+    const recibido = Date.parse("2026-11-06T01:42:35.207Z");
+    expect(recibido).toBeLessThanOrEqual(Date.parse(finDelDiaLima("2026-11-05")));
+    expect(recibido).toBeGreaterThanOrEqual(Date.parse(inicioDelDiaLima("2026-11-05")));
   });
 });

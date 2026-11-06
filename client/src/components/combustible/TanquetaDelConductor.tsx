@@ -9,7 +9,7 @@ export interface TanquetaAsignadaVista {
   equipo_asignado: string | null;
 }
 
-const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
+const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 3 });
 
 export default function TanquetaDelConductor({
   tanquetas,

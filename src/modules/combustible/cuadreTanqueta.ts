@@ -50,7 +50,7 @@ export interface SalidaCuadre {
   llevaAhora: number | null;
 }
 
-const redondear = (n: number) => Number(n.toFixed(2));
+const redondear = (n: number) => Number(n.toFixed(3));
 
 export function armarCuadre(
   salidas: SalidaBruta[],

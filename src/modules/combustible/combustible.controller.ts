@@ -5457,7 +5457,7 @@ export class CombustibleController {
         // primera confirme su alerta, y así ve que el aviso ya salió.
         await service.bloquearTanqueta(client, tenantId, data.tanqueta_origen_id!);
         const t = await service.saldoDeTanqueta(client, tenantId, data.tanqueta_origen_id!);
-        if (!t || t.saldo >= -0.01) return null;
+        if (!t || t.saldo >= -0.001) return null;
         const creadas = await service.crearAlertas(client, tenantId, [
           {
             tipo: "tanqueta_sobregirada",

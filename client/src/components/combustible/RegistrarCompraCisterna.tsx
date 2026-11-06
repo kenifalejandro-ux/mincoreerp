@@ -249,7 +249,7 @@ export default function RegistrarCompraCisterna({
                 id="compra-cantidad"
                 type="number"
                 min={0}
-                step="0.01"
+                step="0.001"
                 className={CAMPO}
                 value={form.cantidad_facturada}
                 onChange={(e) => cambiar("cantidad_facturada", e.target.value)}

@@ -111,7 +111,7 @@ export function diferenciaConElDocumento(
   const dif = Number(c.diferencia_compra_galones);
   if (!Number.isFinite(dif)) return null;
   const tolerancia = Number(c.tolerancia_galones ?? 3);
-  const f = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
+  const f = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 3 });
   const unidad = c.compra_unidad ?? "gal";
   const signo = dif > 0 ? "+" : dif < 0 ? "−" : "";
   return {

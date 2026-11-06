@@ -19,19 +19,19 @@ export interface SalidaCuadre {
   llevaAhora: number | null;
 }
 
-const gal = (n: number) => `${n.toLocaleString("es-PE", { maximumFractionDigits: 2 })} gal`;
+const gal = (n: number) => `${n.toLocaleString("es-PE", { maximumFractionDigits: 3 })} gal`;
 
 /** La diferencia con su signo: −2 gal falta, +2 gal sobra. */
 const conSigno = (n: number) => `${n < 0 ? "−" : "+"}${gal(Math.abs(n))}`;
 
-const TOLERANCIA = 0.005;
+const TOLERANCIA = 0.0005;
 
 /** Lo que el vale dice que debería quedar es salió con − cargó. Si el saldo real es otro, la
  *  tanqueta ya traía combustible o entró algo durante la salida: se dice, para que la cuenta de
  *  la línea se pueda seguir. */
 function explicarAjuste(s: SalidaCuadre, saldoReal: number | null): string | null {
   if (s.salioCon === null || saldoReal === null) return null;
-  const falta = Number((saldoReal - (s.salioCon - s.cargo)).toFixed(2));
+  const falta = Number((saldoReal - (s.salioCon - s.cargo)).toFixed(3));
   if (Math.abs(falta) < TOLERANCIA) return null;
   return falta > 0
     ? `había ${gal(falta)} más: ya los tenía la tanqueta o entraron durante la salida`

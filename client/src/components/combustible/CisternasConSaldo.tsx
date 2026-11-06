@@ -279,7 +279,7 @@ export default function RepartirCisterna({
                 id="cis-cantidad"
                 type="number"
                 min={0}
-                step="0.01"
+                step="0.001"
                 className={campo}
                 value={form.cantidad}
                 onChange={(e) => cambiar({ cantidad: e.target.value })}
@@ -380,7 +380,7 @@ export default function RepartirCisterna({
                       {t.codigo} ·{" "}
                       {libre === null
                         ? "sin varilla"
-                        : `libre ${formatear(Number(libre.toFixed(2)))}`}
+                        : `libre ${formatear(Number(libre.toFixed(3)))}`}
                     </option>
                   );
                 })}
@@ -440,14 +440,14 @@ export default function RepartirCisterna({
                         tanqueElegido &&
                         libreDelTanque !== null &&
                         cantidad > libreDelTanque + 0.001
-                      ? `${tanqueElegido.codigo} solo tiene espacio para ${formatear(Number(libreDelTanque.toFixed(2)))} ${elegida.unidad}.`
+                      ? `${tanqueElegido.codigo} solo tiene espacio para ${formatear(Number(libreDelTanque.toFixed(3)))} ${elegida.unidad}.`
                       : !destinoCompleto
                         ? form.destino === "equipo"
                           ? "Elige la unidad y anota el vale."
                           : form.destino === "tanque"
                             ? "Elige el tanque."
                             : "Elige la tanqueta (y el vale si la lleva una unidad)."
-                        : `Quedarán ${formatear(Number((saldo - cantidad).toFixed(2)))} ${elegida.unidad} en la cisterna.`}
+                        : `Quedarán ${formatear(Number((saldo - cantidad).toFixed(3)))} ${elegida.unidad} en la cisterna.`}
           </p>
           {error && (
             <p role="alert" className="text-sm text-red-700">

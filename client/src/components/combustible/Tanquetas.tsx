@@ -123,7 +123,7 @@ const describirMovimiento = (m: MovimientoTanqueta) => {
 const esSalida = (tipo: MovimientoTanqueta["tipo"]) =>
   tipo.startsWith("carga_") || tipo === "retorno_pozo" || tipo === "retorno_traslado";
 
-const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
+const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 3 });
 
 function CilindroTanqueta({ t }: { t: Tanqueta }) {
   const capacidad = Number(t.capacidad);
@@ -568,7 +568,7 @@ export default function TanquetasPanel() {
                   id="tanqueta-capacidad"
                   type="number"
                   min={1}
-                  step="0.01"
+                  step="0.001"
                   required
                   className="w-full border border-slate-200 rounded-xl p-3 text-sm"
                   value={form.capacidad}

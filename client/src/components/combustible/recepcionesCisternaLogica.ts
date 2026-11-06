@@ -61,7 +61,7 @@ export function diferenciaDeLaRecepcion(
   if (!Number.isFinite(dif)) return null;
   const tolerancia = Number(r.tolerancia_galones ?? 3);
   if (dif === 0) return { texto: "Sin diferencia", fuera: false };
-  const n = Math.abs(dif).toLocaleString("es-PE", { maximumFractionDigits: 2 });
+  const n = Math.abs(dif).toLocaleString("es-PE", { maximumFractionDigits: 3 });
   return {
     texto: `${dif > 0 ? "+" : "−"}${n} gal`,
     fuera: Math.abs(dif) > tolerancia,
@@ -76,3 +76,12 @@ export function filtrarRecepciones(
 ): RecepcionDeLista[] {
   return filtro === "todas" ? lista : lista.filter((r) => estadoDeRecepcion(r) === filtro);
 }
+
+/** El período se elige en fechas de Lima (el calendario de quien mira la pantalla), pero
+ *  `new Date("2026-11-05T23:59:59.999")` las lee en la zona del NAVEGADOR: en uno en UTC, el
+ *  "hasta" de hoy cortaba a las 18:59 de Lima y dejaba fuera lo recibido esa noche. Perú no
+ *  tiene horario de verano, así que -05:00 es siempre Lima. */
+export const inicioDelDiaLima = (fecha: string) =>
+  new Date(`${fecha}T00:00:00-05:00`).toISOString();
+export const finDelDiaLima = (fecha: string) =>
+  new Date(`${fecha}T23:59:59.999-05:00`).toISOString();

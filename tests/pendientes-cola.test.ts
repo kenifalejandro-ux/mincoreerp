@@ -142,7 +142,9 @@ describe("galonesPendientesPorTanqueta", () => {
   it("redondea al final: tres entradas chicas no dan cero y los decimales suman bien", () => {
     expect(
       galonesPendientesPorTanqueta([carga(1, 0.004), carga(1, 0.004), carga(1, 0.004)])
-    ).toEqual({ 1: 0.01 });
+    ).toEqual({ 1: 0.012 });
+    // Un total que no llega ni a media milésima sí se descarta: no se pinta "0".
+    expect(galonesPendientesPorTanqueta([carga(1, 0.0001), carga(1, 0.0001)])).toEqual({});
     expect(galonesPendientesPorTanqueta([carga(1, 0.1), carga(1, 0.2)])).toEqual({ 1: 0.3 });
   });
 

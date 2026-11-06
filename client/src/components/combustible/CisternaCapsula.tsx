@@ -5,7 +5,7 @@ import type { CisternaDeLista } from "./cisternasTipos";
 import { diasQueDuro, fechaDeLaUltimaSalida, QUE_ES } from "./historialCisternas";
 import { porcentajeDelNivel } from "./nivelCisterna";
 
-const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 2 });
+const formatear = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 3 });
 const fecha = (iso: string) => new Date(iso).toLocaleDateString("es-PE");
 
 const ESTADO: Record<"vaciada" | "anulada", { texto: string; chip: string; barra: string }> = {
