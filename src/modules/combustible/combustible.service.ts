@@ -4886,7 +4886,36 @@ export class CombustibleService {
     for (const tipo of ["viaje_demorado", "viaje_detenido"] as const) {
       cerradas += await this.repository.resolverAlertaDeUnViaje(client, tenantId, tipo, viajeId);
     }
+    // La de «creado por el conductor» solo se cierra si el viaje terminó (cerrado o anulado).
+    cerradas += await this.repository.resolverViajesCreadosPorConductorTerminados(
+      client,
+      tenantId,
+      viajeId
+    );
     return cerradas > 0;
+  }
+
+  /** El conductor creó su propio viaje (0179): una alerta de ESTADO para que la oficina lo siga.
+   *  Se abre una sola vez por viaje (índice único parcial) y se cierra sola al terminar el viaje. */
+  async abrirAlertaViajeCreadoPorConductor(
+    client: PoolClient,
+    tenantId: string,
+    viaje: { id: number; numero: number; unidad: string | null; conductor: string | null },
+    detalle: { de: string | null; a: string | null; unidadNueva: boolean }
+  ) {
+    await this.repository.crearAlertas(client, tenantId, [
+      {
+        tipo: "viaje_creado_por_conductor",
+        viajeId: viaje.id,
+        detalle: {
+          viajeNumero: viaje.numero,
+          unidad: viaje.unidad,
+          conductor: viaje.conductor,
+          ...detalle,
+        },
+      },
+    ]);
+    return true;
   }
 
   /** VIAJES EN RUTA (0156): un viaje demorado (pasó la hora estimada de llegada del tramo, sin
@@ -4910,6 +4939,9 @@ export class CombustibleService {
       "viaje_detenido",
       detenidos.map((d) => d.viaje_id)
     );
+    // Red de seguridad de «creado por el conductor» (0179): si un viaje terminó por un camino que
+    // no cerró su alerta al instante, aquí se cierra.
+    await this.repository.resolverViajesCreadosPorConductorTerminados(client, tenantId);
     const yaDemorados = await this.repository.viajesConAlertaAbierta(
       client,
       tenantId,

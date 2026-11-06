@@ -178,6 +178,9 @@ export const TIPOS_ALERTA = [
   // una descarga que se hizo sin compra registrada (se resuelve al vincularla).
   "compra_diferencia",
   "recepcion_sin_compra",
+  // ── Migración 0179: el conductor creó su propio viaje desde el celular (se resuelve sola al
+  // cerrarse o anularse el viaje).
+  "viaje_creado_por_conductor",
 ] as const;
 
 export type TipoAlertaCombustible = (typeof TIPOS_ALERTA)[number];
@@ -206,6 +209,8 @@ export const TIPOS_ESTADO = [
   "cisterna_con_saldo",
   // 0173: se resuelve sola cuando se vincula la compra a la recepción.
   "recepcion_sin_compra",
+  // 0179: se resuelve sola cuando el viaje se cierra o se anula.
+  "viaje_creado_por_conductor",
 ] as const satisfies readonly TipoAlertaCombustible[];
 
 /** Todo lo que no es estado es un HALLAZGO: si nadie lo explica dentro de la
@@ -8710,6 +8715,27 @@ export class CombustibleRepository {
         WHERE tenant_id = $1 AND tipo = $2 AND resuelta_en IS NULL AND viaje_id IS NOT NULL
           AND NOT (viaje_id = ANY($3::bigint[]))`,
       [tenantId, tipo, viajeIdsVigentes]
+    );
+    return r.rowCount ?? 0;
+  }
+
+  /** Cierra la alerta «viaje creado por el conductor» (0179) de los viajes que ya terminaron
+   *  (cerrados o anulados); con `viajeId`, solo la de ese viaje. Se mira el ESTADO del viaje y no
+   *  la operación que se hizo: llegar a una parada o editar no la cierran, terminar el viaje sí, por
+   *  cualquier camino. Lo resuelve el hecho, no una persona. */
+  async resolverViajesCreadosPorConductorTerminados(
+    client: PoolClient,
+    tenantId: string,
+    viajeId?: number
+  ): Promise<number> {
+    const r = await client.query(
+      `UPDATE combustible_alertas a SET resuelta_en = now()
+        WHERE a.tenant_id = $1 AND a.tipo = 'viaje_creado_por_conductor' AND a.resuelta_en IS NULL
+          AND ($2::bigint IS NULL OR a.viaje_id = $2)
+          AND EXISTS (SELECT 1 FROM combustible_viajes v
+                       WHERE v.tenant_id = a.tenant_id AND v.id = a.viaje_id
+                         AND v.estado IN ('cerrado', 'anulado'))`,
+      [tenantId, viajeId ?? null]
     );
     return r.rowCount ?? 0;
   }

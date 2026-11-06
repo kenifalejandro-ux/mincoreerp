@@ -309,6 +309,15 @@ export const asignarPlanTenantSchema = z.object({
 
 export type AsignarPlanTenantInput = z.infer<typeof asignarPlanTenantSchema>;
 
+// Interruptor por empresa: los conductores pueden crear su propio viaje desde el celular
+// (migración 0179). Apagado por defecto; plataforma lo enciende para quien lo pida.
+export const conductorCreaViajeSchema = z.object({
+  activo: z.boolean(),
+  motivo: z.string().trim().max(500).optional(),
+});
+
+export type ConductorCreaViajeInput = z.infer<typeof conductorCreaViajeSchema>;
+
 // ── Billing / suscripciones (migración 0041) ────────────────────────────
 
 export const crearSuscripcionSchema = z.object({

@@ -9,6 +9,7 @@ import { describe, it, expect } from "vitest";
 import {
   ETIQUETA_TIPO_ALERTA,
   describirDetalleAlerta,
+  grupoDeAlerta,
   referenciaAlerta,
   type AlertaCombustible,
 } from "../client/src/components/combustible/alertasTexto";
@@ -113,5 +114,31 @@ describe("alertas de un viaje en curso: textos de la Bandeja", () => {
     } as unknown as AlertaCombustible);
     expect(t).toContain("detenido por huaico");
     expect(t).not.toContain("Motivo:");
+  });
+  it("el viaje creado por el conductor dice quién lo creó, la ruta y si la unidad es nueva", () => {
+    const a = {
+      ...base,
+      tipo: "viaje_creado_por_conductor",
+      detalle: {
+        viajeNumero: 7,
+        unidad: "ABC-123",
+        conductor: "Juan Constante",
+        de: "Trujillo",
+        a: "Picota",
+        unidadNueva: true,
+      },
+    } as unknown as AlertaCombustible;
+    expect(ETIQUETA_TIPO_ALERTA.viaje_creado_por_conductor).toBe("Viaje creado por el conductor");
+    expect(referenciaAlerta(a)).toBe("V-7");
+    expect(grupoDeAlerta(a.tipo)).toBe("flota");
+    const t = describirDetalleAlerta(a);
+    expect(t).toContain("Juan Constante creó y empezó el viaje V-7 de ABC-123");
+    expect(t).toContain("Trujillo a Picota");
+    expect(t).toContain("por completar");
+    const sinNueva = describirDetalleAlerta({
+      ...a,
+      detalle: { ...a.detalle, unidadNueva: false },
+    } as unknown as AlertaCombustible);
+    expect(sinNueva).not.toContain("por completar");
   });
 });

@@ -76,6 +76,7 @@ import {
   restaurarBackupPlataformaSchema,
   fijarCuotaTenantSchema,
   asignarPlanTenantSchema,
+  conductorCreaViajeSchema,
   crearSuscripcionSchema,
   cambiarPlanSuscripcionSchema,
   extenderGraciaSchema,
@@ -101,6 +102,7 @@ import {
 import {
   crearTenantConAdminService,
   cambiarEstadoTenantService,
+  cambiarConductorCreaViajeService,
   listarTenantsService,
   obtenerModulosTenantService,
   actualizarModulosTenantService,
@@ -700,6 +702,28 @@ export function createPlatformRouter() {
       try {
         const tenants = await listarTenantsService();
         res.status(200).json({ ok: true, tenants });
+      } catch (err) {
+        next(err);
+      }
+    })
+  );
+
+  // Interruptor por empresa (0179): que sus conductores puedan crear su propio viaje desde el
+  // celular. super_admin: cambia lo que los conductores de esa empresa pueden hacer.
+  router.put(
+    "/tenants/:id/conductor-crea-viaje",
+    platformSuperAdminMiddleware,
+    validate(conductorCreaViajeSchema),
+    asyncHandler(async (req, res, next) => {
+      try {
+        const { activo, motivo } = req.validatedBody as { activo: boolean; motivo?: string };
+        const tenant = await cambiarConductorCreaViajeService(
+          req.params.id,
+          activo,
+          motivo,
+          contextoDe(req)
+        );
+        res.status(200).json({ ok: true, tenant });
       } catch (err) {
         next(err);
       }

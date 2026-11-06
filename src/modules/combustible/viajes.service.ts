@@ -2185,6 +2185,7 @@ const volanteDni = (v: string) =>
 const COLUMNAS_VIAJE = `
   v.id, v.numero, v.equipo_id, e.placa_codigo, e.codigo_interno, e.tipo AS equipo_tipo,
   e.tipo_medidor, v.conductor_nombre, v.conductor_dni,
+  v.creado_por_conductor, e.por_completar AS equipo_por_completar,
   v.origen_id, lo.nombre AS origen, v.destino_id, ld.nombre AS destino,
   v.inicio_en, v.fin_en, v.medidor_previo, v.medidor_inicio, v.medidor_fin,
   v.salida_programada_en, v.desfase_tolerancia_min,

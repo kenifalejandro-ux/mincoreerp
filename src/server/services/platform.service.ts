@@ -192,14 +192,44 @@ export async function listarTenantsService(): Promise<
     activo: boolean;
     dominioPersonalizado: string | null;
     dominioEstado: string;
+    conductorCreaViaje: boolean;
   })[]
 > {
   const result = await pool.query(
     `SELECT id, nombre, slug, activo, dominio_personalizado AS "dominioPersonalizado",
-            dominio_estado AS "dominioEstado"
+            dominio_estado AS "dominioEstado", conductor_crea_viaje AS "conductorCreaViaje"
      FROM tenants ORDER BY nombre`
   );
   return result.rows;
+}
+
+/** Enciende o apaga que los conductores de una empresa creen su propio viaje (0179). Queda en la
+ *  auditoría de plataforma con el valor de antes y el de después. */
+export async function cambiarConductorCreaViajeService(
+  tenantId: string,
+  activo: boolean,
+  motivo: string | undefined,
+  contexto: ContextoAuditoria
+): Promise<{ id: string; conductorCreaViaje: boolean }> {
+  const anterior = await pool.query(`SELECT conductor_crea_viaje FROM tenants WHERE id = $1`, [
+    tenantId,
+  ]);
+  if (anterior.rows.length === 0) throw new AppError(404, "Tenant no encontrado");
+  await pool.query(`UPDATE tenants SET conductor_crea_viaje = $1 WHERE id = $2`, [
+    activo,
+    tenantId,
+  ]);
+  await registrarAuditoria({
+    accion: "cambiar_conductor_crea_viaje",
+    tenantId,
+    detalle: {
+      before: { conductorCreaViaje: anterior.rows[0].conductor_crea_viaje },
+      after: { conductorCreaViaje: activo },
+      motivo: motivo ?? null,
+    },
+    contexto,
+  });
+  return { id: tenantId, conductorCreaViaje: activo };
 }
 
 /** Los cuatro estados del ciclo de vida de un tenant -- ver

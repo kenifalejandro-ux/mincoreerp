@@ -66,6 +66,7 @@ const ETIQUETA_TIPO: Record<string, string> = {
   // Un viaje en curso (0156).
   viaje_demorado: "Viaje demorado",
   viaje_detenido: "Unidad detenida",
+  viaje_creado_por_conductor: "Viaje creado por el conductor",
 };
 
 /** No toda alerta es sobre un vale (migración 0073): las de nivel bajo van

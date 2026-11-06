@@ -59,7 +59,7 @@ describe("catálogo de canales", () => {
     expect([...TIPOS_CRITICOS].sort()).toEqual(esperados.sort());
   });
 
-  it("el reparto decidido con Kenif: 27 al momento, 16 al resumen, 7 solo en el ERP", () => {
+  it("el reparto decidido con Kenif: 27 al momento, 16 al resumen, 8 solo en el ERP", () => {
     const cuenta = (canal: string) =>
       Object.values(CATALOGO_ALERTAS).filter((c) => c.canal === canal).length;
     // 25: se sumó urea_litros_corregidos (0130); 26: urea_conteo_alterado
@@ -71,9 +71,11 @@ describe("catálogo de canales", () => {
     // 0173: compra_diferencia (lo descargado no cuadra con el documento de la compra) y
     // recepcion_sin_compra (se descargó sin compra registrada) también van solo al ERP: Kenif dijo
     // "genera alerta en la bandeja".
+    // 0179: viaje_creado_por_conductor (el conductor creó su propio viaje) va solo al ERP, sin
+    // correo y sin ser urgente: es un aviso para que la oficina lo siga en la Bandeja.
     expect(cuenta("al_momento")).toBe(27);
     expect(cuenta("resumen")).toBe(16);
-    expect(cuenta("solo_erp")).toBe(7);
+    expect(cuenta("solo_erp")).toBe(8);
   });
 
   it("los avisos de configuración salen al momento; un tipo desconocido va al resumen", () => {

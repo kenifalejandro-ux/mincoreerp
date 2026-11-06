@@ -2678,6 +2678,38 @@ export const iniciarMiViajeSchema = z.object({
 });
 export type IniciarMiViajeInput = z.infer<typeof iniciarMiViajeSchema>;
 
+// ── El conductor crea e inicia su propio viaje (0179) ──────────────────────
+// `id_cliente` lo genera el celular al empezar: un reenvío sin señal con el mismo
+// identificador devuelve el viaje que ya existe. La unidad es una que ya está
+// registrada (`equipo_id`) o una nueva que registra con su placa (`unidad_nueva`).
+// La hora de salida no se pide: es la del servidor, o la del celular (`marcado_en`)
+// si el viaje se creó sin señal. El medidor de salida es obligatorio.
+export const crearMiViajeSchema = z
+  .object({
+    id_cliente: z.string().uuid(),
+    equipo_id: z.number().int().positive().optional(),
+    unidad_nueva: z
+      .object({
+        placa: z
+          .string()
+          .trim()
+          .max(20)
+          .refine((p) => /^[A-Z0-9]{3,20}$/.test(normalizarPlaca(p)), "Escribe la placa"),
+        nombre: z.string().trim().min(5, "Escribe tu nombre completo").max(150),
+      })
+      .optional(),
+    // El recorrido completo: A → B (solo ida), A → B → A o A → B → C → A.
+    paradas: z.array(z.number().int().positive()).min(2).max(20),
+    relevo_dni: z.string().trim().min(1).max(15).nullable().optional(),
+    medidor_inicio: z.number().min(0).max(99999999),
+    marcado_en: fechaHora.optional(),
+  })
+  .refine((d) => (d.equipo_id === undefined) !== (d.unidad_nueva === undefined), {
+    message: "Elige una unidad registrada o registra la tuya, no las dos",
+    path: ["equipo_id"],
+  });
+export type CrearMiViajeInput = z.infer<typeof crearMiViajeSchema>;
+
 export const cerrarMiViajeSchema = z.object({
   medidor_fin: medidor,
   marcado_en: fechaHora.optional(),
