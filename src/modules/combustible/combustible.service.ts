@@ -1215,6 +1215,8 @@ export class CombustibleService {
 
         await this.validarFormaDespacho(client, tenantId, data);
 
+        // OJO: este origen lo usa la pestaña Cisternas para repartir el excedente a una unidad
+        // o a una tanqueta. No es código huérfano: no lo quites ni lo renombres (ver el schema).
         // El excedente de cisterna (0112): la línea pendiente manda la unidad,
         // la cantidad, el combustible y el COSTO (el de la factura). Lo que no
         // coincide es un 400, no un dato a confiar.

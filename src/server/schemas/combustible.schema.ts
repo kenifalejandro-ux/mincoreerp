@@ -271,8 +271,14 @@ export type AnularLecturaCombustibleInput = z.infer<typeof anularLecturaCombusti
 // ── Despachos (Fase B, ver docs/architecture/control-de-combustible.md
 // puntos 1, 2 y 5, y migrations/0062) ───────────────────────────────────
 
-// 'excedente_recepcion' (0112): el vale que regulariza un excedente cargado
-// directo de la cisterna a una unidad. No sale de ningún tanque.
+// 'excedente_recepcion' (0112): la salida del excedente de una cisterna a una unidad o a
+// una tanqueta. No sale de ningún tanque.
+//
+// NO BORRAR NI RENOMBRAR: aunque el formulario «Registrar despacho» ya no lo ofrece, la
+// pestaña Cisternas (CisternasConSaldo.tsx) lo manda cada vez que se reparte lo que queda en
+// una cisterna, y las salidas guardadas sin señal en los celulares también lo traen. Lo
+// protegen tests/combustible-cisternas-origen, combustible-despacho-excedente y
+// combustible-cisterna. Si algún día se desacopla, primero se aceptan los dos nombres.
 // 'tanqueta' (0114): la carga en ruta desde una tanqueta, que registra el
 // conductor con el medidor de la unidad. No sale de ningún tanque.
 // 'almacen' (0119): solo urea -- el reparto desde el depósito de la empresa,
