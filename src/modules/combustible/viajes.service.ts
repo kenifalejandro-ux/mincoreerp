@@ -1120,6 +1120,71 @@ export interface MarcaDescanso {
   descanso_id?: number;
 }
 
+/** El conductor deja constancia de quién va al volante cuando su relevo NO tiene cuenta (0180): solo
+ *  historial, como un descanso o un odómetro; no cambia turnos, cola ni mando. */
+export async function registrarManejo(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  id: number,
+  data: { quien: "titular" | "relevo"; marcado_en?: string; cliente_uuid?: string },
+  dniConductor: string
+): Promise<ResultadoDescanso> {
+  const v = await viajeParaCambiar(client, tenantId, id);
+  exigirDelViaje(v, dniConductor);
+  if (data.cliente_uuid) {
+    const rep = await client.query(
+      `SELECT 1 FROM combustible_viaje_manejo WHERE tenant_id = $1 AND cliente_uuid = $2`,
+      [tenantId, data.cliente_uuid]
+    );
+    if (rep.rows[0])
+      return { antes: v, despues: await getViaje(client, tenantId, id), repetido: true };
+  }
+  if (!v.relevo_sin_cuenta) {
+    throw new AppError(
+      409,
+      "Este viaje no tiene un relevo sin cuenta: el mando se entrega desde el celular del relevo"
+    );
+  }
+  if (v.estado !== "en_curso") throw new AppError(409, "El viaje no está en curso");
+  const { hora, origen } = await horaDeLaMarca(
+    client,
+    undefined,
+    data.marcado_en,
+    data.cliente_uuid
+  );
+  if (Date.parse(hora) <= new Date(v.inicio_en).getTime()) {
+    throw new AppError(400, "Tiene que ser después de la salida del viaje");
+  }
+  // Lo último que quedó dicho: no se repite («maneja el relevo» dos veces seguidas) ni se desordena.
+  const ultimo = await client.query(
+    `SELECT quien, en FROM combustible_viaje_manejo
+      WHERE tenant_id = $1 AND viaje_id = $2 ORDER BY en DESC, id DESC LIMIT 1`,
+    [tenantId, id]
+  );
+  const quienAhora = ultimo.rows[0]?.quien ?? "titular";
+  if (quienAhora === data.quien) {
+    throw new AppError(409, data.quien === "relevo" ? "Ya maneja el relevo" : "Ya manejas tú");
+  }
+  if (ultimo.rows[0] && Date.parse(hora) <= new Date(ultimo.rows[0].en as string).getTime()) {
+    throw new AppError(400, "Tiene que ser después de lo último anotado");
+  }
+  await client.query(
+    `INSERT INTO combustible_viaje_manejo (tenant_id, viaje_id, quien, en, origen_hora, cliente_uuid, creado_por)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      tenantId,
+      id,
+      data.quien,
+      hora,
+      origen === "dispositivo" ? "dispositivo" : "servidor",
+      data.cliente_uuid ?? null,
+      usuarioId,
+    ]
+  );
+  return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false };
+}
+
 export interface ResultadoDescanso {
   antes: Record<string, unknown>;
   despues: Record<string, unknown> | null;
@@ -2239,6 +2304,11 @@ const COLUMNAS_VIAJE = `
             'inicio_por', d.inicio_por, 'fin_por', d.fin_por) ORDER BY d.inicio_en)
      FROM combustible_viaje_descansos d
     WHERE d.tenant_id = v.tenant_id AND d.viaje_id = v.id) AS descansos,
+  v.relevo_sin_cuenta,
+  (SELECT json_agg(json_build_object('quien', m.quien, 'en', m.en, 'origen_hora', m.origen_hora)
+                   ORDER BY m.en, m.id)
+     FROM combustible_viaje_manejo m
+    WHERE m.tenant_id = v.tenant_id AND m.viaje_id = v.id) AS manejo,
   ${recorridoClave("v")} AS recorrido_clave`;
 
 const JOINS_VIAJE = `

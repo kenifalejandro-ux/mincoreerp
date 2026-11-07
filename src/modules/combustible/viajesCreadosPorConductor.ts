@@ -327,9 +327,10 @@ export async function crearMiViaje(
     dni
   );
   await client.query(
-    `UPDATE combustible_viajes SET creado_por_conductor = true, id_cliente = $3
+    `UPDATE combustible_viajes SET creado_por_conductor = true, id_cliente = $3,
+            relevo_sin_cuenta = $4
       WHERE tenant_id = $1 AND id = $2`,
-    [tenantId, id, data.id_cliente]
+    [tenantId, id, data.id_cliente, data.relevo_nombre?.trim() || null]
   );
   return { viaje: await getViaje(client, tenantId, id), repetido: false, unidadNueva };
 }

@@ -18,6 +18,9 @@ export interface FilaViaje {
   /** El relevo del viaje y quién va al volante (0152). */
   relevo_dni?: string | null;
   relevo_nombre?: string | null;
+  /** Un relevo anotado sin cuenta (0180): no maneja en el sistema; solo queda el historial de quién iba al volante. */
+  relevo_sin_cuenta?: string | null;
+  manejo?: { quien: "titular" | "relevo"; en: string; origen_hora?: string }[] | null;
   volante_dni?: string | null;
   turnos?: TurnoViaje[] | null;
   entrega_pendiente?: EntregaPendiente | null;

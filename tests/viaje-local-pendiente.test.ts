@@ -10,6 +10,7 @@ import {
   PREFIJO_VIAJE_LOCAL,
   esViajeLocal,
   filaDePendiente,
+  rutaDeViaje,
   type CreacionPendiente,
 } from "../client/src/components/combustible/creacionPendiente";
 import {
@@ -36,6 +37,7 @@ const pendiente: CreacionPendiente = {
   conductorNombre: "Juan Constante",
   conductorDni: "70000001",
   relevoNombre: "Pedro Soto",
+  relevoSinCuenta: true,
 };
 
 describe("viaje creado sin señal: cómo se ve en el celular", () => {
@@ -61,6 +63,19 @@ describe("viaje creado sin señal: cómo se ve en el celular", () => {
     const m = proximaMarca(paradasDelViaje(filaDePendiente(pendiente)));
     expect(m).toMatchObject({ accion: "llegada-mia", orden: 1, cierra: false, minimo: 1000 });
     expect(estadoDelViaje(paradasDelViaje(filaDePendiente(pendiente)), [])?.detenido).toBeFalsy();
+  });
+
+  it("la URL de un viaje local va por su id_cliente; la de uno del servidor, por su número", () => {
+    expect(rutaDeViaje(filaDePendiente(pendiente).id)).toBe(`por-cliente/${pendiente.idCliente}`);
+    expect(rutaDeViaje("123")).toBe("123");
+  });
+
+  it("el relevo sin cuenta deja abierto el historial de quién maneja; uno registrado, no", () => {
+    const sin = filaDePendiente(pendiente);
+    expect(sin.relevo_sin_cuenta).toBe("Pedro Soto");
+    expect(sin.manejo).toEqual([]);
+    const con = filaDePendiente({ ...pendiente, relevoSinCuenta: false });
+    expect(con.relevo_sin_cuenta).toBeNull();
   });
 
   it("el relevo anotado sin cuenta no activa el mando: no hay DNI de relevo", () => {

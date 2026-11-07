@@ -22,12 +22,18 @@ export interface CreacionPendiente {
   conductorNombre: string;
   conductorDni: string;
   relevoNombre: string | null;
+  /** El relevo no tiene cuenta (se anotó por su nombre): se podrá marcar «el relevo maneja». */
+  relevoSinCuenta: boolean;
 }
 
 /** El viaje creado sin señal se identifica en el celular con este prefijo y su `id_cliente`: aún no
  *  tiene número del servidor. Sus marcas viajan por `/por-cliente/<id_cliente>/…`. */
 export const PREFIJO_VIAJE_LOCAL = "cli:";
 export const esViajeLocal = (id: string) => id.startsWith(PREFIJO_VIAJE_LOCAL);
+
+/** La parte de la URL que identifica el viaje: su número, o `por-cliente/<id_cliente>` si aún no existe. */
+export const rutaDeViaje = (id: string) =>
+  esViajeLocal(id) ? `por-cliente/${id.slice(PREFIJO_VIAJE_LOCAL.length)}` : id;
 
 /** El viaje que el conductor creó sin señal, tal como se ve en «Mi viaje»: en curso, con su salida
  *  ya marcada, para que pueda marcar llegadas, descansos y el cierre aunque el servidor aún no lo
@@ -60,6 +66,8 @@ export function filaDePendiente(p: CreacionPendiente) {
     conductor_dni: p.conductorDni,
     relevo_dni: null,
     relevo_nombre: p.relevoNombre,
+    relevo_sin_cuenta: p.relevoSinCuenta ? p.relevoNombre : null,
+    manejo: [],
     volante_dni: p.conductorDni,
     turnos: null,
     entrega_pendiente: null,

@@ -2803,6 +2803,14 @@ export type SalidaViajeInput = z.infer<typeof salidaViajeSchema>;
 // lo marca por él y entonces el motivo es obligatorio: queda quién lo hizo y por qué.
 const motivoDescanso = z.string().trim().max(80);
 
+// «El relevo maneja» de un relevo sin cuenta (0180): solo deja constancia de quién va al volante.
+export const manejaMioSchema = z.object({
+  quien: z.enum(["titular", "relevo"]),
+  marcado_en: fechaHora.optional(),
+  cliente_uuid: z.string().uuid().optional(),
+});
+export type ManejaMioInput = z.infer<typeof manejaMioSchema>;
+
 export const descansoMioSchema = z.object({
   motivo: motivoDescanso.nullable().optional(),
   marcado_en: fechaHora.optional(),

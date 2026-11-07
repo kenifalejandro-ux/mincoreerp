@@ -572,4 +572,61 @@ describe("viajes: el conductor crea su propio viaje (0179)", () => {
     expect(una.status, JSON.stringify(una.body)).toBe(200);
     expect(otra.status, JSON.stringify(otra.body)).toBe(200);
   });
+  it("con un relevo sin cuenta, «el relevo maneja» solo deja historial, se alterna y no se repite", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    const base = cuerpoNuevo(placaNueva(), { relevo_nombre: "Pedro Soto" });
+    const creado = await crear(c.agente, base);
+    expect(creado.status, JSON.stringify(creado.body)).toBe(201);
+    expect(creado.body.relevo_sin_cuenta).toBe("Pedro Soto");
+    const id = creado.body.id;
+    const maneja = (quien: string, extra: Record<string, unknown> = {}) =>
+      c.agente.post(`/api/erp/viajes/${id}/maneja-mio`).send({ quien, ...extra });
+
+    const uno = await maneja("relevo", { cliente_uuid: randomUUID() });
+    expect(uno.status, JSON.stringify(uno.body)).toBe(200);
+    expect(uno.body.manejo.map((m: { quien: string }) => m.quien)).toEqual(["relevo"]);
+    // No cambia turnos ni mando: el titular sigue siendo el del volante en el sistema.
+    expect(uno.body.relevo_dni).toBeNull();
+    // Dos veces lo mismo no tiene sentido.
+    expect((await maneja("relevo")).status).toBe(409);
+    const dos = await maneja("titular");
+    expect(dos.status, JSON.stringify(dos.body)).toBe(200);
+    expect(dos.body.manejo.map((m: { quien: string }) => m.quien)).toEqual(["relevo", "titular"]);
+  });
+
+  it("«el relevo maneja» por id_cliente (viaje creado sin señal) no duplica con el mismo identificador", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    const base = cuerpoNuevo(placaNueva(), { relevo_nombre: "Pedro Soto" });
+    expect((await crear(c.agente, base)).status).toBe(201);
+    const uuid = randomUUID();
+    const url = `/api/erp/viajes/por-cliente/${base.id_cliente}/maneja-mio`;
+    const una = await c.agente.post(url).send({ quien: "relevo", cliente_uuid: uuid });
+    const otra = await c.agente.post(url).send({ quien: "relevo", cliente_uuid: uuid });
+    expect(una.status, JSON.stringify(una.body)).toBe(200);
+    expect(otra.status, JSON.stringify(otra.body)).toBe(200);
+    expect(otra.body.manejo).toHaveLength(1);
+  });
+
+  it("sin relevo sin cuenta no hay «el relevo maneja», y un ajeno no puede anotarlo", async () => {
+    await interruptor(true);
+    const c = await conductor();
+    const ajeno = await conductor();
+    const sinRelevo = await crear(c.agente, cuerpoNuevo(placaNueva()));
+    expect(sinRelevo.status).toBe(201);
+    const r = await c.agente
+      .post(`/api/erp/viajes/${sinRelevo.body.id}/maneja-mio`)
+      .send({ quien: "relevo" });
+    expect(r.status).toBe(409);
+
+    const conRelevo = await crear(
+      (await conductor()).agente,
+      cuerpoNuevo(placaNueva(), { relevo_nombre: "Pedro Soto" })
+    );
+    const robo = await ajeno.agente
+      .post(`/api/erp/viajes/${conRelevo.body.id}/maneja-mio`)
+      .send({ quien: "relevo" });
+    expect(robo.status).toBe(404);
+  });
 });
