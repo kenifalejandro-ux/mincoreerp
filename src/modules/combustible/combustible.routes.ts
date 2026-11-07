@@ -158,7 +158,8 @@ for (const [param, guardia] of Object.entries(GUARDIAS)) router.param(param, gua
 router.get(
   "/",
   requirePestana("combustible", "tanques"),
-  requireRole("admin", "operador", "lectura", "grifero"),
+  // El conductor lo pide para cargar en el grifo de la empresa (Despacho grifo).
+  requireRole("admin", "operador", "lectura", "grifero", "conductor_ruta"),
   asyncHandler(controller.getAll.bind(controller))
 );
 
@@ -169,6 +170,14 @@ router.get(
   "/equipos-destino",
   requireRole("admin", "operador", "grifero", "conductor_ruta", "encargado_urea"),
   asyncHandler(EquiposController.getAll)
+);
+
+// La unidad que Equipos le asignó al conductor: precarga la placa de «Despacho grifo».
+router.get(
+  "/mi-unidad-asignada",
+  requirePestana("combustible", "tanques:registrar_despacho"),
+  requireRole("conductor_ruta"),
+  asyncHandler(controller.miUnidadAsignada.bind(controller))
 );
 
 // Despachos (Fase B) -- segmentos literales, van ANTES de /:id: si /:id

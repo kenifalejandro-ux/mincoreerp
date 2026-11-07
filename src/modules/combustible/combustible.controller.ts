@@ -940,6 +940,31 @@ export class CombustibleController {
     }
   }
 
+  /** GET /mi-unidad-asignada: la unidad que Equipos le tiene asignada al conductor (por su DNI),
+   *  para que «Despacho grifo» le precargue la placa. Sin unidad: `data: null`. */
+  async miUnidadAsignada(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const dni = (req.usuario!.dni ?? "").trim();
+      if (!dni) {
+        res.json({ data: null });
+        return;
+      }
+      const r = await withTenant(tenantId, (client) =>
+        client.query<{ equipo_id: number; placa_codigo: string }>(
+          `SELECT id::int AS equipo_id, COALESCE(placa_codigo, codigo_interno) AS placa_codigo
+             FROM equipos
+            WHERE tenant_id = $1 AND activo AND btrim(conductor_dni) = $2
+            ORDER BY id LIMIT 1`,
+          [tenantId, dni]
+        )
+      );
+      res.json({ data: r.rows[0] ?? null });
+    } catch {
+      res.status(500).json({ error: "Error al obtener tu unidad" });
+    }
+  }
+
   async getById(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
@@ -1938,7 +1963,8 @@ export class CombustibleController {
       const noPermitido = service.motivoOrigenNoPermitido(
         req.usuario!.rol,
         data.origen,
-        data.tanqueta_lugar
+        data.tanqueta_lugar,
+        data.origen === "tanque_propio" ? data.tipo_destino : undefined
       );
       if (noPermitido) {
         res.status(403).json({ error: noPermitido });
@@ -6907,13 +6933,9 @@ export class CombustibleController {
           .json({ error: "Mandá exactamente uno de combustible_id o grifo_id, nunca los dos" });
         return;
       }
-      // El conductor solo compra en proveedores: el costo promedio de un
-      // tanque propio no es suyo.
-      if (soloParaFormulario && combustibleId !== null && req.usuario?.rol === "conductor_ruta") {
-        res.status(403).json({ error: "Sin permiso para consultar el costo de un tanque" });
-        return;
-      }
-
+      // El conductor también carga en el grifo de la empresa (Despacho grifo) y, como el grifero,
+      // recibe el precio vigente para el vale. Solo el número: `soloParaFormulario` ya recorta
+      // la ficha del precio.
       const precio = await withTenant(tenantId, (client) =>
         soloParaFormulario
           ? service.obtenerPrecioVigenteParaFormulario(

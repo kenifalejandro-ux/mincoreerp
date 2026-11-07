@@ -1013,7 +1013,8 @@ export class CombustibleService {
   motivoOrigenNoPermitido(
     rol: UsuarioPayload["rol"],
     origen: "tanque_propio" | "compra_externa" | "excedente_recepcion" | "tanqueta" | "almacen",
-    tanquetaLugar?: "ruta" | "planta"
+    tanquetaLugar?: "ruta" | "planta",
+    tipoDestino?: string
   ): string | null {
     // El reparto del almacén de urea (0119): el conductor no reparte del
     // depósito -- compra en ruta, como con el combustible. El grifero tampoco:
@@ -1041,6 +1042,14 @@ export class CombustibleService {
     if (rol === "grifero" && origen === "excedente_recepcion") return null;
     if (rol === "grifero" && origen !== "tanque_propio") {
       return "Tu usuario registra vales del tanque, no compras en grifos de ruta";
+    }
+    // El conductor también carga en el grifo de la empresa cuando el grifero no está
+    // (noches): solo a una unidad, con o sin alta. Planta, reserva en cubeta y «Otros»
+    // son del grifero.
+    if (rol === "conductor_ruta" && origen === "tanque_propio") {
+      return tipoDestino === "equipo" || tipoDestino === "unidad_sin_alta"
+        ? null
+        : "Tu usuario carga en el grifo solo a una unidad";
     }
     if (rol === "conductor_ruta" && origen !== "compra_externa") {
       return "Tu usuario registra compras en grifos de ruta, no despachos del tanque";

@@ -1559,6 +1559,7 @@ export interface CombustiblePanelProps {
     | "tanquetas"
     | "cisternas"
     | "mi_viaje"
+    | "despacho_grifo"
     | "compra_ruta"
     | "historico"
     | "urea"
@@ -1769,6 +1770,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     | "tanquetas"
     | "cisternas"
     | "mi_viaje"
+    | "despacho_grifo"
     | "compra_ruta"
     | "historico"
     | "urea"
@@ -1777,6 +1779,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     | "auditoria"
     | "bitacora"
   >(pestanaInicial ?? "tanques");
+  // «Despacho grifo»: el conductor carga en el grifo de la empresa (cuando el grifero no está).
+  // Es el vale del tanque propio, con el destino fijo en «Unidad».
+  const conductorEnGrifo = esConductor && pestanaCombustible === "despacho_grifo";
+  // El conductor en su flujo de siempre: carga desde la tanqueta que lleva.
+  const conductorEnTanqueta = esConductor && !conductorEnGrifo;
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (pestanaInicial) setPestanaCombustible(pestanaInicial);
@@ -1949,14 +1956,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // patron_doble_clic_formularios: el botón bloqueado solo no alcanza.
   const [clienteUuidRecepcion, setClienteUuidRecepcion] = useState("");
   const cargarTanques = useCallback(async () => {
-    if (esConductor) {
+    if (conductorEnTanqueta) {
       setTanques([]);
       return;
     }
     const res = await apiFetch("/api/erp/combustible");
     const data = await res.json();
     setTanques(Array.isArray(data) ? data : []);
-  }, [esConductor]);
+  }, [conductorEnTanqueta]);
 
   // Excedentes de cisterna sin vale (0112). Los ve quien registra despachos:
   // es el que los regulariza.
@@ -2834,12 +2841,43 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
 
   // --- Registrar despacho (Fase B) ---
 
+  /** La placa de la unidad que Equipos le asignó al conductor: entra sola al vale. Sin señal usa la
+   *  última vista en este dispositivo. Si no tiene unidad, el campo queda para escribirla. */
+  const precargarMiUnidad = () => {
+    const clave = `unidad-grifo:${usuario?.id ?? ""}`;
+    const poner = (placa: string | null | undefined) => {
+      if (placa) escribirUnidad(placa);
+    };
+    apiFetch("/api/erp/combustible/mi-unidad-asignada")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("sin respuesta"))))
+      .then((b) => {
+        const placa: string | null = b?.data?.placa_codigo ?? null;
+        try {
+          if (placa) localStorage.setItem(clave, placa);
+          else localStorage.removeItem(clave);
+        } catch {
+          // Sin almacenamiento: solo se pierde la vista sin señal.
+        }
+        poner(placa);
+      })
+      .catch(() => {
+        try {
+          poner(localStorage.getItem(clave));
+        } catch {
+          // Sin almacenamiento ni señal: la escribe él.
+        }
+      });
+  };
+
   const abrirModalDespacho = () => {
     setDespachoForm({
       ...DESPACHO_FORM_INICIAL,
-      origen: esConductor ? "tanqueta" : DESPACHO_FORM_INICIAL.origen,
-      combustible_id: esConductor ? "" : tanqueUnico,
+      origen: conductorEnTanqueta ? "tanqueta" : DESPACHO_FORM_INICIAL.origen,
+      combustible_id: conductorEnTanqueta ? "" : tanqueUnico,
+      // En el grifo el destino es siempre una unidad.
+      ...(conductorEnGrifo ? { tipo_destino: "equipo" as const } : {}),
     });
+    if (conductorEnGrifo) precargarMiUnidad();
     setDespachadoEn(ahoraParaInputLocal());
     setHoraDespachoEditadaAMano(false);
     setCostoEditadoAMano(false);
@@ -2857,7 +2895,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         const lista: TanquetaFormulario[] = Array.isArray(b) ? b : [];
         setTanquetasFormulario(lista);
         // El conductor no elige (0139): entra la tanqueta activa de su unidad.
-        if (esConductor && lista[0]) {
+        if (conductorEnTanqueta && lista[0]) {
           setDespachoForm((f) => ({
             ...f,
             tanqueta_origen_id: String(lista[0].id),
@@ -3718,6 +3756,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           pestanaCombustible === "urea" ||
           pestanaCombustible === "cisternas" ||
           pestanaCombustible === "mi_viaje" ||
+          pestanaCombustible === "despacho_grifo" ||
           pestanaCombustible === "compra_ruta" ||
           pestanaCombustible === "precios" ||
           pestanaCombustible === "proveedores"
@@ -3820,6 +3859,28 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       {pestanaCombustible === "compra_ruta" && <CompraEnRuta />}
       {/* Su tanqueta (cilindro) y, a la derecha, lo que él sacó de ella. */}
       {esConductor && pestanaCombustible === "tanques" && <MiTanqueta />}
+      {/* Despacho grifo: el conductor carga en el grifo de la empresa (no en ruta). */}
+      {conductorEnGrifo && (
+        <div className="space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h1 className="text-lg sm:text-xl lg:text-2xl font-extrabold text-white tracking-tight">
+                Despacho grifo
+              </h1>
+              <p className="text-xs sm:text-sm text-[#94a3b8]">
+                Para cargar combustible en el grifo de la empresa y registrar tu vale. Si compras en
+                un grifo de ruta, usa Compra en ruta.
+              </p>
+            </div>
+            <button
+              onClick={abrirModalDespacho}
+              className={`${BTN_BASE} ${BTN_ESTILO.primary} shrink-0`}
+            >
+              <ClipboardCheck className="w-4 h-4 shrink-0" /> Registrar despacho
+            </button>
+          </div>
+        </div>
+      )}
       {!esConductor && pestanaCombustible === "tanques" && importacion.error && (
         <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
           <p className="text-sm text-red-900 font-light flex-1">{importacion.error}</p>
@@ -3876,18 +3937,21 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       )}
       {/* También al conductor: es la única confirmación de su "Carga desde
           tanqueta" (con señal, o "guardado en este equipo" sin ella). */}
-      {(pestanaCombustible === "tanques" || pestanaCombustible === "cisternas") && mensajeExito && (
-        <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
-          <p className="text-sm text-green-900 font-light flex-1">{mensajeExito}</p>
-          <button
-            className="text-green-500 hover:text-green-700 shrink-0"
-            onClick={() => setMensajeExito(null)}
-            aria-label="Cerrar aviso de importación"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
+      {(pestanaCombustible === "tanques" ||
+        pestanaCombustible === "cisternas" ||
+        pestanaCombustible === "despacho_grifo") &&
+        mensajeExito && (
+          <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
+            <p className="text-sm text-green-900 font-light flex-1">{mensajeExito}</p>
+            <button
+              className="text-green-500 hover:text-green-700 shrink-0"
+              onClick={() => setMensajeExito(null)}
+              aria-label="Cerrar aviso de importación"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       {/**AGREGAR MAS COLUMNAS  */}{" "}
       {!esConductor &&
         pestanaCombustible === "tanques" &&
@@ -5144,7 +5208,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b flex justify-between items-center">
               <h3 className="text-xl font-bold">
-                {esConductor
+                {conductorEnTanqueta
                   ? "Carga desde tanqueta"
                   : grifoDelVale
                     ? `Registrar despacho | ${grifoDelVale.sede}`
@@ -5168,7 +5232,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   >
                     Origen
                   </label>
-                  {esConductor ? (
+                  {conductorEnTanqueta ? (
                     // El conductor registra lo que carga en ruta: en un grifo
                     // externo, o desde una tanqueta que lleva (0114).
                     <select
@@ -5233,7 +5297,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   // planta sigue la config de la empresa (0113).
                   const pideMedidor = enRuta || formPideMedidor;
                   const medidor = equipoSeleccionado?.tipo_medidor ?? null;
-                  if (esConductor && !elegida) {
+                  if (conductorEnTanqueta && !elegida) {
                     return (
                       <TanquetaDelConductor
                         tanquetas={[]}
@@ -5244,13 +5308,16 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   }
                   return (
                     <>
-                      {esConductor && (
+                      {conductorEnTanqueta && (
                         <TanquetaDelConductor
                           tanquetas={tanquetasFormulario}
                           cantidad={despachoForm.cantidad}
                         />
                       )}
-                      <div hidden={esConductor} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div
+                        hidden={conductorEnTanqueta}
+                        className="grid grid-cols-1 sm:grid-cols-2 gap-4"
+                      >
                         <div className="space-y-1">
                           <label
                             htmlFor="despacho-tanqueta-origen"
@@ -5314,12 +5381,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                           </select>
                         </div>
                       </div>
-                      <p hidden={esConductor} className="text-xs text-slate-600">
+                      <p hidden={conductorEnTanqueta} className="text-xs text-slate-600">
                         {enRuta
                           ? "Lo que se cargó a la unidad desde la tanqueta que va en ruta. No lleva vale: la tanqueta salió con el suyo."
                           : "La tanqueta se quedó en la planta y desde ahí se cargó a la unidad: lleva vale del talonario, como un despacho del tanque."}
                       </p>
-                      <div hidden={esConductor} className="space-y-1">
+                      <div hidden={conductorEnTanqueta} className="space-y-1">
                         <label
                           htmlFor="despacho-equipo-tanqueta"
                           className="text-xs font-bold text-slate-700 uppercase"
@@ -5623,7 +5690,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     </label>
                     <select
                       id="despacho-tipo-destino"
-                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                      // El conductor solo carga a una unidad, por seguridad: no se puede cambiar.
+                      disabled={conductorEnGrifo}
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900 disabled:opacity-70"
                       value={despachoForm.tipo_destino}
                       onChange={(e) =>
                         setDespachoForm({
@@ -5635,11 +5704,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         })
                       }
                     >
-                      {Object.entries(ETIQUETA_TIPO_DESTINO).map(([valor, etiqueta]) => (
-                        <option key={valor} value={valor}>
-                          {etiqueta}
-                        </option>
-                      ))}
+                      {Object.entries(ETIQUETA_TIPO_DESTINO)
+                        .filter(([valor]) => !conductorEnGrifo || valor === "equipo")
+                        .map(([valor, etiqueta]) => (
+                          <option key={valor} value={valor}>
+                            {etiqueta}
+                          </option>
+                        ))}
                     </select>
                   </div>
                   {despachoForm.tipo_destino === "equipo" &&

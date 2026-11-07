@@ -25,7 +25,7 @@ import { MODULOS_CLIENTE } from "../../modules/registry";
 import { puedeVerBandeja } from "../bandeja/bandejaAcceso";
 import { useContadorBandeja } from "../bandeja/useContadorBandeja";
 import { puedeVerCisternas } from "../combustible/cisternasAcceso";
-import { puedeCompraEnRuta } from "../combustible/compraEnRutaAcceso";
+import { puedeCompraEnRuta, puedeVerDespachoGrifo } from "../combustible/compraEnRutaAcceso";
 import { puedeVerPrecios } from "../combustible/preciosAcceso";
 import { SubmenuDesplegable } from "../comunes/SubmenuDesplegable";
 import {
@@ -42,6 +42,7 @@ import {
 // la compra en ruta; al final lo que se consulta (histórico, auditoría, bitácora).
 const SUBMENU_COMBUSTIBLE_BASE: { tab: string; label: string; Icono: LucideIcon }[] = [
   { tab: "combustible:mi_viaje", label: "Mi viaje", Icono: Navigation },
+  { tab: "combustible:despacho_grifo", label: "Despacho grifo", Icono: Fuel },
   { tab: "combustible:proveedores", label: "Proveedores", Icono: Wrench },
   { tab: "combustible:precios", label: "Precios", Icono: Tag },
   { tab: "combustible:cisternas", label: "Cisternas", Icono: Truck },
@@ -58,6 +59,7 @@ const SUBMENU_COMBUSTIBLE_BASE: { tab: string; label: string; Icono: LucideIcon 
 // el orden por flujo de arriba es el de quien administra.
 const ORDEN_DE_CAMPO = [
   "combustible:mi_viaje",
+  "combustible:despacho_grifo",
   "combustible:compra_ruta",
   "combustible",
   "combustible:tanquetas",
@@ -112,6 +114,8 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
     if (tab === "combustible:precios") return puedeVerPrecios(usuario);
     // Mi viaje llama al módulo Viajes: sin él no se muestra (el servidor daría 403).
     if (tab === "combustible:mi_viaje") return puedeVerMiViaje(usuario);
+    // Despacho grifo es solo del conductor (habilitado por su perfil, sin casilla propia por ahora).
+    if (tab === "combustible:despacho_grifo") return puedeVerDespachoGrifo(usuario);
     const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
     const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
     if (override !== undefined) return override;

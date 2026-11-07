@@ -215,10 +215,19 @@ describe("combustible: roles de cancha (migración 0085)", () => {
 
   // ── El cruce que requireRole no puede frenar ─────────────────────────
 
-  it("el conductor de ruta NO puede despachar del tanque de la empresa", async () => {
-    // La misma URL que acaba de usar legítimamente, con otro `origen`.
-    const res = await conductor.post("/api/erp/combustible/despachos").send(valeDelTanque());
-    expect(res.status).toBe(403);
+  it("el conductor de ruta despacha del tanque de la empresa SOLO a una unidad", async () => {
+    // «Despacho grifo»: carga cuando el grifero no está. A una unidad, sí.
+    const aUnidad = await conductor.post("/api/erp/combustible/despachos").send(valeDelTanque());
+    expect(aUnidad.status).toBe(201);
+    // Cualquier otro destino sigue siendo del grifero.
+    const aOtros = await conductor.post("/api/erp/combustible/despachos").send(
+      valeDelTanque({
+        tipo_destino: "otro",
+        equipo_id: undefined,
+        otro_detalle: "2 galones para la bomba de agua",
+      })
+    );
+    expect(aOtros.status).toBe(403);
   });
 
   it("el grifero NO puede registrar compras en grifos de ruta", async () => {
@@ -230,7 +239,11 @@ describe("combustible: roles de cancha (migración 0085)", () => {
     // Un permiso que se evalúa después de escribir no es un permiso: si el
     // vale quedara creado y solo fallara la respuesta, el combustible ya
     // habría salido del tanque en los números.
-    const vale = valeDelTanque();
+    const vale = valeDelTanque({
+      tipo_destino: "otro",
+      equipo_id: undefined,
+      otro_detalle: "2 galones para la bomba de agua",
+    });
     const res = await conductor.post("/api/erp/combustible/despachos").send(vale);
     expect(res.status).toBe(403);
 
@@ -310,8 +323,8 @@ describe("combustible: roles de cancha (migración 0085)", () => {
     expect((await conductor.get("/api/erp/iperc")).status).toBe(403);
   });
 
-  it("el conductor solo consulta unidades para despachar, no tanques ni el módulo Equipos", async () => {
-    expect((await conductor.get("/api/erp/combustible")).status).toBe(403);
+  it("el conductor consulta tanques y unidades para cargar en el grifo, pero no el módulo Equipos", async () => {
+    expect((await conductor.get("/api/erp/combustible")).status).toBe(200);
     expect((await conductor.get("/api/erp/equipos?pageSize=200")).status).toBe(403);
 
     const unidades = await conductor
