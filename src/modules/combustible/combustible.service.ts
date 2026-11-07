@@ -1325,6 +1325,7 @@ export class CombustibleService {
           tipoDestino: data.tipo_destino,
           equipoId: data.equipo_id ?? null,
           placaSinAlta: data.placa_sin_alta ?? null,
+          otroDetalle: data.otro_detalle ?? null,
           serieTalonario: data.serie_talonario ?? null,
           nVale: data.n_vale ?? null,
           comprobanteTipo: data.comprobante_tipo ?? null,

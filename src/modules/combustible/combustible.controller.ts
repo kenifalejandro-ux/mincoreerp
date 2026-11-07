@@ -2782,7 +2782,7 @@ export class CombustibleController {
         // Una unidad sin alta no tiene tope propio, y juntar todas las placas libres en
         // un solo "destino" mezclaría camiones distintos y daría alertas falsas.
         const tope =
-          data.tipo_destino === "unidad_sin_alta"
+          data.tipo_destino === "unidad_sin_alta" || data.tipo_destino === "otro"
             ? null
             : await service.evaluarTopeDiario(client, tenantId, {
                 despachoId,

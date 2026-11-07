@@ -1195,7 +1195,7 @@ export class CombustibleRepository {
   // de cantidad/costo_unitario.
   private static readonly COLUMNAS_DESPACHO = `
     id, tenant_id, producto, origen, combustible_id, grifo_id, tipo_combustible,
-    tipo_destino, equipo_id, placa_sin_alta, serie_talonario, n_vale, cantidad,
+    tipo_destino, equipo_id, placa_sin_alta, otro_detalle, serie_talonario, n_vale, cantidad,
     lectura_contometro, totalizador_lectura, surtidor_id, lectura_horometro, lectura_odometro,
     horas_abastecidas, cantidad_unidad,
     presentacion, factor_litros, cantidad_bultos,
@@ -1242,6 +1242,8 @@ export class CombustibleRepository {
       equipoId: number | null;
       // 0176: la placa de una unidad que todavía no está dada de alta.
       placaSinAlta?: string | null;
+      // 0181: texto libre de un despacho a «Otros».
+      otroDetalle?: string | null;
       // Desde 0109 son opcionales: la compra externa de combustible se
       // identifica con el comprobante del proveedor, no con un vale.
       serieTalonario: string | null;
@@ -1304,7 +1306,7 @@ export class CombustibleRepository {
           conductor_nombre, conductor_dni, totalizador_lectura, surtidor_id,
           comprobante_tipo, comprobante_numero, cliente_uuid,
           excedente_linea_id, tanque_excedente_id, tanqueta_destino_id, tanqueta_origen_id,
-          tanqueta_lugar, costo_origen, cantidad_unidad, proveedor_otro, placa_sin_alta
+          tanqueta_lugar, costo_origen, cantidad_unidad, proveedor_otro, placa_sin_alta, otro_detalle
         )
         -- El conductor se COPIA del equipo en este mismo INSERT (0083). Nadie
         -- lo tipea, y no se resuelve después con un JOIN a propósito: los
@@ -1323,7 +1325,7 @@ export class CombustibleRepository {
                CASE WHEN h.id IS NOT NULL THEN h.conductor_nombre ELSE e.conductor_nombre END,
                CASE WHEN h.id IS NOT NULL THEN h.conductor_dni ELSE e.conductor_dni END,
                $23::numeric, $24::int, $25, $26, $27::uuid,
-               $28::bigint, $29::int, $30::bigint, $31::bigint, $32, $33, $34, $35, $36
+               $28::bigint, $29::int, $30::bigint, $31::bigint, $32, $33, $34, $35, $36, $37
           FROM (SELECT 1) dummy
           LEFT JOIN equipos e ON e.id = $8::int AND e.tenant_id = $1
           LEFT JOIN LATERAL (
@@ -1374,6 +1376,7 @@ export class CombustibleRepository {
           data.cantidadUnidad ?? null,
           data.proveedorOtro ?? null,
           data.placaSinAlta ?? null,
+          data.otroDetalle ?? null,
         ]
       );
       const fila = result.rows[0];
@@ -5440,6 +5443,7 @@ export class CombustibleRepository {
                  WHEN e.placa_codigo IS NOT NULL THEN
                    e.placa_codigo || COALESCE(' · conductor ' || NULLIF(d.conductor_nombre, ''), '')
                  WHEN d.placa_sin_alta IS NOT NULL THEN d.placa_sin_alta || ' (sin alta)'
+                 WHEN d.otro_detalle IS NOT NULL THEN 'Otros · ' || d.otro_detalle
                  WHEN d.tipo_destino = 'planta' THEN 'Consumo en planta'
                  ELSE d.tipo_destino
                END,

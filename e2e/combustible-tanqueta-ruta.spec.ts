@@ -1,8 +1,8 @@
 /** e2e/combustible-tanqueta-ruta.spec.ts
  *
  * El ciclo de la tanqueta en la pantalla (0114): se llena desde el tanque con
- * un vale a "Reserva en cubeta" eligiendo la tanqueta, se carga en ruta desde
- * ella con el medidor de la unidad, y el panel de Tanquetas muestra el saldo.
+ * un vale a "Reserva en cubeta" eligiendo la tanqueta, y el panel de Tanquetas
+ * muestra el saldo. La carga desde la tanqueta es del conductor, no de este formulario.
  */
 import { randomBytes } from "node:crypto";
 import { test, expect } from "@playwright/test";
@@ -71,48 +71,10 @@ test("tanqueta: previsión desde el tanque y carga en ruta", async ({ page }) =>
   await page.locator("form").getByRole("button", { name: "Registrar despacho" }).click();
   await expect(page.getByText(/Despacho registrado/)).toBeVisible();
 
-  // ── 3b: carga en ruta desde la tanqueta ────────────────────────────────
-  await page.getByRole("button", { name: "Registrar despacho" }).first().click();
-  await page.locator("#despacho-origen").selectOption("tanqueta");
-  // Sin vale: la tanqueta ya salió con el suyo.
-  await expect(page.locator("#despacho-serie")).toHaveCount(0);
-  await page
-    .locator("#despacho-tanqueta-origen")
-    .selectOption({ label: `${codigoTanqueta} (quedan 280 gal)` });
-  await page.locator("#despacho-equipo-tanqueta").selectOption({ label: `${placa} — VOLQUETE` });
-  await page.locator("#despacho-cantidad-tanqueta").fill("100");
-  // El costo se ve (el de lo que entró: la previsión a S/ 16) y no se edita.
-  await expect(page.locator("#despacho-costo-unitario")).toHaveValue("16");
-  await expect(page.locator("#despacho-costo-unitario")).toHaveAttribute("readonly", "");
-  await page.locator("#despacho-medidor-tanqueta").fill("1500");
-  await page.locator("form").getByRole("button", { name: "Registrar despacho" }).click();
-  await expect(page.getByText(new RegExp(`la carga desde ${codigoTanqueta}`))).toBeVisible();
-
-  // ── 0115: carga EN PLANTA desde la misma tanqueta, con vale ────────────
-  await page.getByRole("button", { name: "Registrar despacho" }).first().click();
-  await page.locator("#despacho-origen").selectOption("tanqueta");
-  await page.locator("#despacho-tanqueta-lugar").selectOption("planta");
-  await page
-    .locator("#despacho-tanqueta-origen")
-    .selectOption({ label: `${codigoTanqueta} (quedan 180 gal)` });
-  await page.locator("#despacho-equipo-tanqueta").selectOption({ label: `${placa} — VOLQUETE` });
-  await page.locator("#despacho-cantidad-tanqueta").fill("50");
-  // En planta lleva vale; el horómetro no se pide por defecto (0113).
-  await expect(page.locator("#despacho-medidor-tanqueta")).toHaveCount(0);
-  await page.locator("#despacho-serie").fill(`T${marca}`);
-  await page.locator("#despacho-n-vale").fill("1");
-  await page.locator("form").getByRole("button", { name: "Registrar despacho" }).click();
-  await expect(page.getByText(new RegExp(`el vale 1 de la serie T${marca}`))).toBeVisible();
-
-  // ── La última lectura aparece sola al elegir la unidad (en ruta) ───────
-  await page.getByRole("button", { name: "Registrar despacho" }).first().click();
-  await page.locator("#despacho-origen").selectOption("tanqueta");
-  await page.locator("#despacho-equipo-tanqueta").selectOption({ label: `${placa} — VOLQUETE` });
-  await expect(page.getByText(/Última lectura: 1,500 h/)).toBeVisible();
   await page.reload();
   await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
 
-  // El tanque bajó solo por la previsión (8000 - 280), no por la carga en ruta.
+  // El tanque bajó solo por la previsión (8000 - 280).
   const ficha = await (await page.request.get(`/api/erp/combustible/${tanqueId}`)).json();
   expect(Number(ficha.nivel_teorico)).toBe(7720);
 
@@ -121,7 +83,7 @@ test("tanqueta: previsión desde el tanque y carga en ruta", async ({ page }) =>
   const tarjeta = page
     .locator("div", { has: page.getByText(codigoTanqueta, { exact: true }) })
     .last();
-  // 280 - 100 en ruta - 50 en planta = 130 → libre 150.
-  await expect(tarjeta.getByText(/libre 150 gal/)).toBeVisible();
+  // Recién llena: 280 de 280.
+  await expect(tarjeta.getByText(/libre 0 gal/)).toBeVisible();
   await expect(tarjeta.getByText(`Va con la unidad ${placa}`)).toBeVisible();
 });
