@@ -288,7 +288,14 @@ const ORIGENES_DESPACHO = [
 ] as const;
 // 'unidad_sin_alta' (0176): el grifero escribe la placa de una unidad que la oficina
 // todavía no dio de alta, para no esperar. Solo el vale del tanque propio.
-const TIPOS_DESTINO_DESPACHO = ["equipo", "planta", "reserva_cubeta", "unidad_sin_alta"] as const;
+// 'otro' (0181): salida del tanque sin unidad ni tanqueta (galones sueltos al personal, etc.), con un texto libre.
+const TIPOS_DESTINO_DESPACHO = [
+  "equipo",
+  "planta",
+  "reserva_cubeta",
+  "unidad_sin_alta",
+  "otro",
+] as const;
 
 /** La placa tal como se guarda: mayúsculas, sin espacios ni guiones. "t8m-821 " y
  *  "T8M 821" son la misma unidad. */
@@ -452,6 +459,9 @@ export const crearDespachoCombustibleSchema = z
       .transform(normalizarPlaca)
       .pipe(z.string().min(3, "La placa tiene que tener al menos 3 letras o números").max(20))
       .optional(),
+
+    // Solo cuando tipo_destino = 'otro' (0181): lo que el grifero redacta (a quién y para qué).
+    otro_detalle: z.string().trim().min(1, "Escribí a quién o para qué es").max(250).optional(),
 
     // El talonario -- reinicia por serie/mes, ver hallazgo 6. Desde 0092
     // el espacio de nombres es (serie_talonario, producto): el cliente
@@ -843,6 +853,29 @@ export const crearDespachoCombustibleSchema = z
         code: z.ZodIssueCode.custom,
         path: ["placa_sin_alta"],
         message: "placa_sin_alta solo aplica cuando tipo_destino es 'unidad_sin_alta'",
+      });
+    }
+
+    if (data.tipo_destino === "otro") {
+      if (data.otro_detalle === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["otro_detalle"],
+          message: "Escribí a quién o para qué es",
+        });
+      }
+      if (data.origen !== "tanque_propio" || data.producto !== "combustible") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["tipo_destino"],
+          message: "«Otros» solo aplica a un vale de combustible del tanque propio",
+        });
+      }
+    } else if (data.otro_detalle !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["otro_detalle"],
+        message: "otro_detalle solo aplica cuando tipo_destino es 'otro'",
       });
     }
 

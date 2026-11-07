@@ -319,7 +319,7 @@ interface ExcedentePendiente {
   unidad: string;
   proveedor: string | null;
 }
-type TipoDestinoDespacho = "equipo" | "planta" | "reserva_cubeta";
+type TipoDestinoDespacho = "equipo" | "planta" | "reserva_cubeta" | "otro";
 
 /** El valor del selector de unidad que significa "otra unidad, no registrada" (0176). */
 const UNIDAD_SIN_ALTA = "sin_alta";
@@ -331,6 +331,8 @@ const ETIQUETA_TIPO_DESTINO: Record<TipoDestinoDespacho, string> = {
   equipo: "Unidad",
   planta: "Planta (sin placa)",
   reserva_cubeta: "Reserva en cubeta",
+  // 0181: sin unidad ni tanqueta; el grifero escribe a quién o para qué.
+  otro: "Otros (escribir)",
 };
 
 /** Catálogo de grifos externos (migrations/0063) -- reemplaza el texto
@@ -367,6 +369,8 @@ interface DespachoHistorial {
   equipo_id: number | null;
   /** 0176: la placa de una unidad que no estaba dada de alta al despachar. */
   placa_sin_alta?: string | null;
+  /** 0181: lo que el grifero escribió en un despacho a «Otros». */
+  otro_detalle?: string | null;
   tipo_combustible: Tanque["tipo_combustible"];
   // Null en una compra en ruta desde 0109: se identifica con el comprobante
   // del proveedor, no con un vale.
@@ -1365,6 +1369,8 @@ const DESPACHO_FORM_INICIAL = {
   // cuando no coincide con ninguna unidad dada de alta.
   unidad_texto: "",
   placa_sin_alta: "",
+  // 0181: a quién o para qué (destino «Otros»).
+  otro_detalle: "",
   serie_talonario: "",
   n_vale: "",
   cantidad: "",
@@ -1726,6 +1732,21 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [equipos, setEquipos] = useState<Equipo[]>([]);
   const [modalDespachoAbierto, setModalDespachoAbierto] = useState(false);
   const [despachoForm, setDespachoForm] = useState(DESPACHO_FORM_INICIAL);
+  // Con un solo tanque activo a la vista (cada usuario ve los de su sede), el vale del tanque
+  // propio lo trae elegido: el grifero no lo marca en cada despacho. Con varios queda en
+  // «Elegir tanque» como siempre, y el grifero puede cambiarlo.
+  const tanqueUnico = (() => {
+    const activos = tanques.filter((t) => t.activo);
+    return activos.length === 1 ? String(activos[0].id) : "";
+  })();
+  // La sede y el grifo del tanque del vale: la sede va en el título del formulario y el grifo
+  // en el Origen. Un grifo puede tener varios tanques; el tanque se elige abajo.
+  const grifoDelVale = grifosInternos.grifosActivos.find(
+    (g) =>
+      g.id ===
+      tanques.find((t) => t.id === Number(despachoForm.combustible_id || tanqueUnico))
+        ?.grifo_interno_id
+  );
   const [despachadoEn, setDespachadoEn] = useState(ahoraParaInputLocal());
   // Mismo motivo que horaEditadaAMano de la lectura: si nadie toca el
   // campo, se manda el momento real del submit (con segundos), no el
@@ -2850,6 +2871,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     setDespachoForm({
       ...DESPACHO_FORM_INICIAL,
       origen: esConductor ? "tanqueta" : DESPACHO_FORM_INICIAL.origen,
+      combustible_id: esConductor ? "" : tanqueUnico,
     });
     setDespachadoEn(ahoraParaInputLocal());
     setHoraDespachoEditadaAMano(false);
@@ -3107,11 +3129,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     });
   };
 
-  const abrirDespachoDeExcedente = (lineaId: string) => {
-    abrirModalDespacho();
-    elegirExcedentePendiente(lineaId);
-  };
-
   const handleRegistrarDespacho = async (e: React.FormEvent) => {
     e.preventDefault();
     if (enviandoDespacho) return;
@@ -3197,6 +3214,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                   ? Number(despachoForm.equipo_id)
                   : undefined,
               placa_sin_alta: sinAlta ? despachoForm.placa_sin_alta : undefined,
+              otro_detalle:
+                despachoForm.tipo_destino === "otro" ? despachoForm.otro_detalle.trim() : undefined,
               // Un traspaso a una tanqueta sin unidad no lleva vale (0161).
               serie_talonario: sinVale ? undefined : despachoForm.serie_talonario,
               n_vale: sinVale ? undefined : Number(despachoForm.n_vale),
@@ -3887,24 +3906,6 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             aria-label="Cerrar aviso de error"
           >
             <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
-      {!esConductor && pestanaCombustible === "tanques" && excedentesPendientes.length > 0 && (
-        <div className="mb-6 bg-amber-50 border border-amber-200 rounded-lg p-4 flex flex-wrap items-center gap-3">
-          <p className="text-sm text-amber-900 flex-1">
-            <strong>
-              {excedentesPendientes.length === 1
-                ? "Hay 1 excedente cargado directo a una unidad sin vale."
-                : `Hay ${excedentesPendientes.length} excedentes cargados directo a unidades sin vale.`}
-            </strong>{" "}
-            Registralos como despacho para que cuenten en el consumo de cada unidad.
-          </p>
-          <button
-            onClick={() => abrirDespachoDeExcedente(excedentesPendientes[0].id)}
-            className="text-sm font-bold text-amber-900 underline"
-          >
-            Registrar despacho
           </button>
         </div>
       )}
@@ -5220,7 +5221,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b flex justify-between items-center">
               <h3 className="text-xl font-bold">
-                {esConductor ? "Carga desde tanqueta" : "Registrar despacho"}
+                {esConductor
+                  ? "Carga desde tanqueta"
+                  : grifoDelVale
+                    ? `Registrar despacho | ${grifoDelVale.sede}`
+                    : "Registrar despacho"}
               </h3>
               <button
                 onClick={() => setModalDespachoAbierto(false)}
@@ -5232,7 +5237,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             </div>
 
             <form onSubmit={handleRegistrarDespacho} className="p-6 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-[2fr_2fr] gap-4">
                 <div className="space-y-1">
                   <label
                     htmlFor="despacho-origen"
@@ -5259,28 +5264,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       <option value="tanqueta">Desde tanqueta</option>
                     </select>
                   ) : (
-                    <select
+                    // Quien no es conductor despacha del tanque propio: sin opciones. Las tanquetas y el excedente tienen su propia pestaña.
+                    <div
                       id="despacho-origen"
-                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-                      value={despachoForm.origen}
-                      onChange={(e) =>
-                        setDespachoForm({
-                          ...DESPACHO_FORM_INICIAL,
-                          origen: e.target.value as OrigenDespacho,
-                          // El grifero carga desde la tanqueta en la planta (0115).
-                          tanqueta_lugar: esGrifero ? "planta" : "ruta",
-                        })
-                      }
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm bg-slate-50 text-slate-700"
                     >
-                      <option value="tanque_propio">Tanque propio</option>
-                      <option value="tanqueta">Desde tanqueta</option>
-                      <option value="excedente_recepcion">
-                        Excedente directo a unidad
-                        {excedentesPendientes.length > 0
-                          ? ` (${excedentesPendientes.length} pendiente${excedentesPendientes.length === 1 ? "" : "s"})`
-                          : ""}
-                      </option>
-                    </select>
+                      {grifoDelVale?.nombre ?? "Grifo propio"}
+                    </div>
                   )}
                 </div>
                 <div className="space-y-1">
@@ -5938,6 +5928,32 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         ) : null}
                       </div>
                     )}
+                  {despachoForm.tipo_destino === "otro" && (
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="despacho-otro-detalle"
+                        className="text-xs font-bold text-slate-700 uppercase"
+                      >
+                        A quién o para qué
+                      </label>
+                      <input
+                        id="despacho-otro-detalle"
+                        type="text"
+                        required
+                        maxLength={250}
+                        autoComplete="off"
+                        placeholder="Ej.: 2 galones para Antonio, bomba de agua"
+                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                        value={despachoForm.otro_detalle}
+                        onChange={(e) =>
+                          setDespachoForm({ ...despachoForm, otro_detalle: e.target.value })
+                        }
+                      />
+                      <p className="text-xs text-slate-500">
+                        Sale del tanque con su vale y queda en el historial con lo que escribas.
+                      </p>
+                    </div>
+                  )}
                   {despachoForm.tipo_destino === "reserva_cubeta" &&
                     (() => {
                       // Solo las tanquetas de la sede del tanque, con lugar (0114).
@@ -6314,6 +6330,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                                 title="La unidad no estaba dada de alta cuando se despachó"
                               >
                                 sin alta
+                              </span>
+                            </>
+                          ) : d.otro_detalle ? (
+                            <>
+                              {d.otro_detalle}{" "}
+                              <span className="ml-1 rounded-full border border-slate-500/40 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-500">
+                                otros
                               </span>
                             </>
                           ) : d.tanqueta_codigo && d.origen === "tanque_propio" ? (
