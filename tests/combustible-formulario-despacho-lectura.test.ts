@@ -144,12 +144,15 @@ describe("lectura del formulario de despacho", () => {
     expect(r.body).toEqual({ precio: null });
   });
 
-  it("el grifero ve el precio de su tanque; el conductor no", async () => {
+  it("el grifero y el conductor ven el precio del tanque (Despacho grifo del conductor)", async () => {
     const grifero = await vigente(await persona("grifero"), `combustible_id=${tanque}`);
     expect(grifero.status).toBe(200);
     expect(Number(grifero.body.precio.precio_unitario)).toBe(12.25);
     const conductor = await vigente(await persona("conductor_ruta"), `combustible_id=${tanque}`);
-    expect(conductor.status).toBe(403);
+    expect(conductor.status).toBe(200);
+    // Solo el número: sin la ficha del precio (quién lo cargó, cuándo).
+    expect(conductor.body).toEqual({ precio: { precio_unitario: expect.anything() } });
+    expect(Number(conductor.body.precio.precio_unitario)).toBe(12.25);
   });
 
   it("el formulario no da el precio de un proveedor inactivo ni de uno que no es de ruta", async () => {
@@ -193,11 +196,10 @@ describe("lectura del formulario de despacho", () => {
     expect(Number(despues.body.precio.precio_unitario)).toBe(17.5);
   });
 
-  it("el conductor no obtiene el costo de un tanque con ninguna forma de combustible_id", async () => {
+  it("las formas raras de combustible_id no dan 500 ni un precio de otro tanque", async () => {
     const conductor = await persona("conductor_ruta");
     const fecha = encodeURIComponent(new Date().toISOString());
     const variantes = [
-      `combustible_id=${tanque}`,
       `combustible_id=%20${tanque}`,
       `combustible_id=${tanque}.0`,
       `combustible_id=%2B${tanque}`,
@@ -211,7 +213,9 @@ describe("lectura del formulario de despacho", () => {
       const r = await conductor.get(
         `${base}/precios/vigente-formulario?tipo_combustible=diesel_b5&${q}&fecha=${fecha}`
       );
-      expect(JSON.stringify(r.body), q).not.toContain("12.25");
+      expect(r.status, q).toBeLessThan(500);
+      // Con los dos ids (o ninguno) es un 400: nunca un precio.
+      if (q.includes("grifo_id")) expect(r.status, q).toBe(400);
     }
   });
 

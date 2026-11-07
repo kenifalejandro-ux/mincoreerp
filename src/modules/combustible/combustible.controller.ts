@@ -6933,13 +6933,9 @@ export class CombustibleController {
           .json({ error: "Mandá exactamente uno de combustible_id o grifo_id, nunca los dos" });
         return;
       }
-      // El conductor solo compra en proveedores: el costo promedio de un
-      // tanque propio no es suyo.
-      if (soloParaFormulario && combustibleId !== null && req.usuario?.rol === "conductor_ruta") {
-        res.status(403).json({ error: "Sin permiso para consultar el costo de un tanque" });
-        return;
-      }
-
+      // El conductor también carga en el grifo de la empresa (Despacho grifo) y, como el grifero,
+      // recibe el precio vigente para el vale. Solo el número: `soloParaFormulario` ya recorta
+      // la ficha del precio.
       const precio = await withTenant(tenantId, (client) =>
         soloParaFormulario
           ? service.obtenerPrecioVigenteParaFormulario(
