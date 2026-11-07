@@ -3,7 +3,10 @@ import { Suspense, lazy, useEffect, useState, type ComponentType } from "react";
 
 import { puedeVerBandeja } from "./components/bandeja/bandejaAcceso";
 import { puedeVerCisternas } from "./components/combustible/cisternasAcceso";
-import { puedeCompraEnRuta } from "./components/combustible/compraEnRutaAcceso";
+import {
+  puedeCompraEnRuta,
+  puedeVerDespachoGrifo,
+} from "./components/combustible/compraEnRutaAcceso";
 import { puedeVerPrecios } from "./components/combustible/preciosAcceso";
 import { puedeVerMiViaje, puedeVerUnidades, puedeVerViajes } from "./components/flota/flotaAcceso";
 import Layout from "./components/layout/Layout";
@@ -68,6 +71,7 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
     if (tab === "combustible:precios") return puedeVerPrecios(usuario);
     // Mi viaje llama al módulo Viajes: sin él no se abre (el servidor daría 403).
     if (tab === "combustible:mi_viaje") return puedeVerMiViaje(usuario);
+    if (tab === "combustible:despacho_grifo") return puedeVerDespachoGrifo(usuario);
     const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
     const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
     if (override !== undefined) return override;
@@ -189,19 +193,21 @@ function App() {
                   ? "cisternas"
                   : tabActiva === "combustible:mi_viaje"
                     ? "mi_viaje"
-                    : tabActiva === "combustible:compra_ruta"
-                      ? "compra_ruta"
-                      : tabActiva === "combustible:urea"
-                        ? "urea"
-                        : tabActiva === "combustible:precios"
-                          ? "precios"
-                          : tabActiva === "combustible:proveedores"
-                            ? "proveedores"
-                            : tabActiva === "combustible:auditoria"
-                              ? "auditoria"
-                              : tabActiva === "combustible:bitacora"
-                                ? "bitacora"
-                                : "tanques",
+                    : tabActiva === "combustible:despacho_grifo"
+                      ? "despacho_grifo"
+                      : tabActiva === "combustible:compra_ruta"
+                        ? "compra_ruta"
+                        : tabActiva === "combustible:urea"
+                          ? "urea"
+                          : tabActiva === "combustible:precios"
+                            ? "precios"
+                            : tabActiva === "combustible:proveedores"
+                              ? "proveedores"
+                              : tabActiva === "combustible:auditoria"
+                                ? "auditoria"
+                                : tabActiva === "combustible:bitacora"
+                                  ? "bitacora"
+                                  : "tanques",
         }
       : moduloIdActivo === "flota"
         ? { pestanaInicial: tabActiva === "flota:viajes" ? "viajes" : "unidades" }

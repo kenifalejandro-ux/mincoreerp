@@ -47,3 +47,14 @@ export function puedeCompraEnRuta(usuario: UsuarioParaCompraEnRuta | null | unde
   const s = seccionesCompraEnRuta(usuario);
   return s.combustible || s.urea;
 }
+
+/** «Despacho grifo»: el conductor carga en el grifo de la empresa (no en ruta). Solo él, y por
+ *  ahora sin casilla propia: lo habilita su perfil. Si el admin le apagó «Registrar despacho», el
+ *  servidor ya le negaría el vale, así que tampoco se dibuja. */
+export function puedeVerDespachoGrifo(
+  usuario: UsuarioParaCompraEnRuta | null | undefined
+): boolean {
+  if (usuario?.rol !== "conductor_ruta") return false;
+  if (usuario.modulosPermitidos && !usuario.modulosPermitidos.includes("combustible")) return false;
+  return usuario.permisosPestanas?.["combustible:tanques:registrar_despacho"] ?? true;
+}
