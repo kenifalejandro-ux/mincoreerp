@@ -14,6 +14,7 @@ import { TramosViaje, type TramoDelViaje } from "./TramosViaje";
 import {
   desfaseSalida,
   duracion,
+  fechaHora,
   fmt,
   ruta,
   unidadLabel,
@@ -289,6 +290,32 @@ export function DetalleViajeVentana({
             descansos={v.descansos}
             turnos={v.turnos}
           />
+
+          {v.relevo_sin_cuenta && (
+            <div className="rounded-xl border border-[#334155] bg-[#14201f] p-3 text-sm">
+              <p className="font-semibold text-white">
+                Quién manejó{" "}
+                <span className="font-normal text-[#94a3b8]">(lo anotó el conductor)</span>
+              </p>
+              <p className="text-xs text-[#94a3b8]">
+                Relevo sin cuenta: {v.relevo_sin_cuenta}. Solo historial: no cuenta como turno.
+              </p>
+              {v.manejo && v.manejo.length > 0 ? (
+                <ul className="mt-2 space-y-1">
+                  {v.manejo.map((m) => (
+                    <li key={m.en} className="text-[#e2e8f0]">
+                      <span className="font-mono text-xs text-[#94a3b8]">{fechaHora(m.en)}</span>{" "}
+                      {m.quien === "relevo"
+                        ? `Pasó a manejar ${v.relevo_sin_cuenta}`
+                        : "Volvió a manejar el conductor"}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-[#94a3b8]">Todavía no anotó ningún cambio.</p>
+              )}
+            </div>
+          )}
         </div>
       )}
     </VentanaFlotante>

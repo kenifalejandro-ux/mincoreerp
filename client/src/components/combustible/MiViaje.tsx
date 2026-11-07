@@ -44,6 +44,7 @@ import {
   type ParadaMia,
 } from "./paradasViaje";
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
+import { QuienManejaSinCuenta } from "./QuienManejaSinCuenta";
 import {
   desfaseSalida,
   duracion as duracionMin,
@@ -716,6 +717,18 @@ export default function MiViaje() {
                 Volver
               </button>
             </div>
+          )}
+
+          {/* ── Con un relevo sin cuenta: solo anota quién va al volante ── */}
+          {actual.estado === "en_curso" && actual.relevo_sin_cuenta && (
+            <QuienManejaSinCuenta
+              viajeId={actual.id}
+              relevoNombre={actual.relevo_sin_cuenta}
+              manejo={actual.manejo ?? []}
+              onLocal={(manejo) => aplicarLocal(actual.id, { manejo })}
+              onAviso={setAviso}
+              onRecargar={cargar}
+            />
           )}
 
           {/* ── En curso: llegar y salir de cada parada ── */}

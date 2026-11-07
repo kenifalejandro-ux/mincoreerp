@@ -37,6 +37,7 @@ import {
   listarViajesQuerySchema,
   llegadaMiaSchema,
   llegadaViajeSchema,
+  manejaMioSchema,
   ponerAlDiaSchema,
   salidaMiaSchema,
   salidaViajeSchema,
@@ -166,6 +167,12 @@ router.post(
   asyncHandler(viajesController.salidaMia)
 );
 router.post(
+  "/:viajeId(\\d+)/maneja-mio",
+  requirePestana("combustible", "mi_viaje"),
+  validate(manejaMioSchema),
+  asyncHandler(viajesController.manejaMio)
+);
+router.post(
   "/:viajeId(\\d+)/descanso-mio",
   requirePestana("combustible", "mi_viaje"),
   validate(descansoMioSchema),
@@ -185,6 +192,7 @@ const MARCAS_POR_CLIENTE = [
   ["salida-mia", salidaMiaSchema, viajesController.salidaMia],
   ["descanso-mio", descansoMioSchema, viajesController.descansoMio],
   ["descanso-mio/terminar", terminarDescansoMioSchema, viajesController.terminarDescansoMio],
+  ["maneja-mio", manejaMioSchema, viajesController.manejaMio],
 ] as const;
 for (const [marca, esquema, manejador] of MARCAS_POR_CLIENTE) {
   router.post(

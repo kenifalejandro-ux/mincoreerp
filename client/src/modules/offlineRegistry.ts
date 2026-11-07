@@ -91,6 +91,9 @@ export const ESCRITURAS_OFFLINE: Record<string, EscrituraOffline[]> = {
     { metodo: "POST", ruta: "/por-cliente/:idCliente/salida-mia" },
     { metodo: "POST", ruta: "/por-cliente/:idCliente/descanso-mio" },
     { metodo: "POST", ruta: "/por-cliente/:idCliente/descanso-mio/terminar" },
+    // «El relevo maneja» de un relevo sin cuenta: solo historial (0180).
+    { metodo: "POST", ruta: "/por-cliente/:idCliente/maneja-mio" },
+    { metodo: "POST", ruta: "/:viajeId/maneja-mio" },
     { metodo: "POST", ruta: "/:viajeId/iniciar-mio" },
     { metodo: "POST", ruta: "/:viajeId/cerrar-mio" },
     { metodo: "POST", ruta: "/:viajeId/llegada-mia" },

@@ -22,6 +22,7 @@ import type {
   EditarViajeInput,
   HistorialMioQuery,
   IniciarMiViajeInput,
+  ManejaMioInput,
   IniciarViajeInput,
   ListarViajesQuery,
   PonerAlDiaInput,
@@ -522,6 +523,25 @@ export const viajesController = {
         por: "conductor",
         origen_hora: r.despues?.fin_origen_hora,
         ...data,
+      });
+    }
+    res.json(r.despues);
+  },
+
+  /** «El relevo maneja» de un relevo sin cuenta: solo deja historial (0180). */
+  async manejaMio(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.viajeId);
+    const data = req.validatedBody as ManejaMioInput;
+    const r = await withTenant(tenantId, (c) =>
+      viajes.registrarManejo(c, tenantId, req.usuario!.id, id, data, req.usuario!.dni ?? "")
+    );
+    if (!r.repetido) {
+      await auditar(req, "viaje_maneja", {
+        viajeId: id,
+        numero: r.antes.numero,
+        por: "conductor",
+        quien: data.quien,
       });
     }
     res.json(r.despues);

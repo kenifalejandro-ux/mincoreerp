@@ -116,6 +116,9 @@ export const MODULOS: ModuloDefinicion[] = [
         { metodo: "POST", ruta: "/por-cliente/:idCliente/salida-mia" },
         { metodo: "POST", ruta: "/por-cliente/:idCliente/descanso-mio" },
         { metodo: "POST", ruta: "/por-cliente/:idCliente/descanso-mio/terminar" },
+        // «El relevo maneja» de un relevo sin cuenta: solo historial (0180).
+        { metodo: "POST", ruta: "/por-cliente/:idCliente/maneja-mio" },
+        { metodo: "POST", ruta: "/:viajeId/maneja-mio" },
         { metodo: "POST", ruta: "/:viajeId/iniciar-mio" },
         { metodo: "POST", ruta: "/:viajeId/cerrar-mio" },
         { metodo: "POST", ruta: "/:viajeId/llegada-mia" },
@@ -439,6 +442,12 @@ export const MODULOS: ModuloDefinicion[] = [
         nombre: "combustible_viaje_descansos",
         pk: "serial",
         fks: { viaje_id: "combustible_viajes", creado_por: "usuarios", cerrado_por: "usuarios" },
+      },
+      // Quién va al volante cuando el relevo no tiene cuenta (0180): cascadea desde el viaje.
+      {
+        nombre: "combustible_viaje_manejo",
+        pk: "serial",
+        fks: { viaje_id: "combustible_viajes", creado_por: "usuarios" },
       },
       // Entregas del mando entre titular y relevo (0153): cascadean desde el viaje.
       {

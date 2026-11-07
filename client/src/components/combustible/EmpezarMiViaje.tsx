@@ -176,6 +176,7 @@ export function EmpezarMiViaje({
           conductorDni: "",
           relevoNombre:
             catalogo.relevos.find((r) => r.id === b.relevoId)?.nombre || b.relevoNombre || null,
+          relevoSinCuenta: !b.relevoId && Boolean(b.relevoNombre),
         });
         return;
       }
