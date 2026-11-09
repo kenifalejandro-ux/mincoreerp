@@ -42,6 +42,30 @@ const SPECS = [
 ];
 const sel = (...f: string[]) => seleccionarVerificacion(f, TESTS, SPECS);
 
+describe("verificar: flota no arrastra combustible", () => {
+  const T = [
+    ...TESTS,
+    "tests/viajes-tramos.test.ts",
+    "tests/combustible-viajes.test.ts",
+    "tests/empezar-viaje-logica.test.ts",
+  ];
+  it("viajes dentro de src/modules/combustible y equipos son módulo flota", () => {
+    expect(moduloDeArchivo("src/modules/combustible/viajes.service.ts")).toBe("flota");
+    expect(moduloDeArchivo("src/modules/equipos/equipos.service.ts")).toBe("flota");
+    expect(moduloDeArchivo("client/src/features/viajes/X.tsx")).toBe("flota");
+    expect(moduloDeArchivo("src/modules/combustible/combustible.service.ts")).toBe("combustible");
+  });
+  it("tocar viajes corre los tests de flota y ninguno de urea", () => {
+    const r = seleccionarVerificacion(["src/modules/combustible/viajes.service.ts"], T, SPECS);
+    expect(r.tests).toEqual([
+      "tests/combustible-viajes.test.ts",
+      "tests/empezar-viaje-logica.test.ts",
+      "tests/equipos-rutas.test.ts",
+      "tests/viajes-tramos.test.ts",
+    ]);
+  });
+});
+
 describe("verificar: qué se corre según lo que cambió", () => {
   it("solo documentación no verifica nada", () => {
     expect(sel("docs/architecture/urea-industrial.md", "README.md").nada).toBe(true);
