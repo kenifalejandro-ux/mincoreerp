@@ -14,11 +14,14 @@ export function SelectorLugar({
   valor,
   lugares,
   onChange,
+  pieNuevo = " (se agrega a los lugares)",
 }: {
   etiqueta: string;
   valor: Lugar;
   lugares: { id: number; nombre: string }[];
   onChange: (l: Lugar) => void;
+  /** Lo que se avisa al usar un texto que no está en el catálogo; vacío si no se agrega. */
+  pieNuevo?: string;
 }) {
   const nombreInicial =
     typeof valor === "string" ? valor : (lugares.find((l) => l.id === valor)?.nombre ?? "");
@@ -89,7 +92,7 @@ export function SelectorLugar({
               className="block w-full min-h-[44px] border-b border-[#334155] px-4 py-2 text-left text-sm text-[#BADC1E] hover:bg-[#1f2c2e]"
               onClick={() => elegir(texto.trim(), texto.trim())}
             >
-              Usar «{texto.trim()}»{filtrados.length === 0 ? " (se agrega a los lugares)" : ""}
+              Usar «{texto.trim()}»{filtrados.length === 0 ? pieNuevo : ""}
             </button>
           )}
           {filtrados.map((l) => (
