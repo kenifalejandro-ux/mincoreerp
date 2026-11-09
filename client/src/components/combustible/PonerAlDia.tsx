@@ -350,6 +350,14 @@ export function PonerAlDia({
                   className={INPUT}
                 />
               )}
+              <input
+                aria-label={`¿Dónde? del descanso ${i + 1} (opcional)`}
+                placeholder="¿Dónde? (opcional)"
+                maxLength={160}
+                value={d.donde ?? ""}
+                onChange={(e) => cambiarDescanso(d.clave, { donde: e.target.value })}
+                className={INPUT}
+              />
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label htmlFor={`pad-d-desde-${d.clave}`} className={ETIQUETA}>

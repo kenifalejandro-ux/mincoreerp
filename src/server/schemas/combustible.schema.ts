@@ -2841,6 +2841,9 @@ export type SalidaViajeInput = z.infer<typeof salidaViajeSchema>;
 // El conductor marca el suyo (motivo opcional: Dormir, Comer, Avería o lo que escriba). La oficina
 // lo marca por él y entonces el motivo es obligatorio: queda quién lo hizo y por qué.
 const motivoDescanso = z.string().trim().max(80);
+// «¿Dónde?» del descanso (opcional): si se escribe, reemplaza al «En ruta hacia…» automático y deja
+// también un punto en el historial de ubicaciones del viaje (0182).
+const dondeDescanso = z.string().trim().max(160).nullable().optional();
 
 // «El relevo maneja» de un relevo sin cuenta (0180): solo deja constancia de quién va al volante.
 export const manejaMioSchema = z.object({
@@ -2852,6 +2855,7 @@ export type ManejaMioInput = z.infer<typeof manejaMioSchema>;
 
 export const descansoMioSchema = z.object({
   motivo: motivoDescanso.nullable().optional(),
+  donde: dondeDescanso,
   marcado_en: fechaHora.optional(),
   cliente_uuid: z.string().uuid().optional(),
 });
@@ -2865,6 +2869,7 @@ export type TerminarDescansoMioInput = z.infer<typeof terminarDescansoMioSchema>
 
 export const descansoViajeSchema = z.object({
   motivo: motivoDescanso.min(3),
+  donde: dondeDescanso,
   inicio_en: fechaHoraNoMuyAntigua.optional(),
 });
 export type DescansoViajeInput = z.infer<typeof descansoViajeSchema>;
@@ -2921,6 +2926,7 @@ const accionPonerAlDia = z.discriminatedUnion("tipo", [
   z.object({
     tipo: z.literal("descanso"),
     motivo: motivoDescanso.min(3),
+    donde: dondeDescanso,
     desde: fechaHoraNoMuyAntigua,
     hasta: fechaHoraNoMuyAntigua.optional(),
   }),

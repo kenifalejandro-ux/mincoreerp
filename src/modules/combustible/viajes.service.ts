@@ -1113,6 +1113,8 @@ export async function salirDeParada(
 
 export interface MarcaDescanso {
   motivo?: string | null;
+  /** «¿Dónde?» opcional: si viene, reemplaza al texto automático y suma un punto al historial. */
+  donde?: string | null;
   /** Hora a mano (la oficina marca por quien se olvidó; con motivo). */
   hora?: string;
   marcado_en?: string;
@@ -1331,12 +1333,14 @@ export async function iniciarDescanso(
     throw new AppError(400, "El descanso empieza antes de que terminara el anterior");
   }
   const viaje = await getViaje(client, tenantId, id);
+  const dondeEscrito = data.donde?.trim() || null;
   try {
-    await client.query(
+    const ins = await client.query(
       `INSERT INTO combustible_viaje_descansos (
          tenant_id, viaje_id, conductor_dni, conductor_nombre, inicio_en, motivo, donde,
          inicio_por, inicio_origen_hora, inicio_cliente_uuid, creado_por, detiene)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       RETURNING id`,
       [
         tenantId,
         id,
@@ -1344,7 +1348,7 @@ export async function iniciarDescanso(
         persona === normalizarDni(v.relevo_dni) ? v.relevo_nombre : v.conductor_nombre,
         hora,
         data.motivo?.trim() || null,
-        dondeEstaElViaje(viaje?.paradas),
+        dondeEscrito ?? dondeEstaElViaje(viaje?.paradas),
         dniConductor === undefined ? "oficina" : "conductor",
         origen,
         uuid,
@@ -1352,6 +1356,16 @@ export async function iniciarDescanso(
         persona === alVolante,
       ]
     );
+    // Con «¿Dónde?» escrito, el descanso deja también un punto en el historial del viaje. Un
+    // reintento de la cola ya salió arriba (mismo uuid), así que el punto no se duplica.
+    if (dondeEscrito) {
+      await client.query(
+        `INSERT INTO combustible_viaje_ubicaciones (
+           tenant_id, viaje_id, texto, registrado_en, origen, descanso_id, creado_por)
+         VALUES ($1,$2,$3,$4,'descanso',$5,$6)`,
+        [tenantId, id, dondeEscrito, hora, ins.rows[0].id, usuarioId]
+      );
+    }
   } catch (err) {
     if (!esViolacionUnicidad(err)) throw err;
     const abierto = (err as { constraint?: string }).constraint === "uq_viaje_descanso_abierto";
@@ -1434,7 +1448,7 @@ export async function terminarDescanso(
 
 export type AccionPonerAlDia =
   | { tipo: "llegada" | "salida"; en: string; orden?: number; medidor?: number | null }
-  | { tipo: "descanso"; motivo: string; desde: string; hasta?: string };
+  | { tipo: "descanso"; motivo: string; donde?: string | null; desde: string; hasta?: string };
 
 /** Lo que quedó guardado en cada paso, en el orden en que se aplicó. */
 export interface PasoPuestoAlDia {
@@ -1521,6 +1535,7 @@ export async function ponerAlDiaViaje(
         motivo = p.accion.motivo;
         r = await iniciarDescanso(client, tenantId, usuarioId, id, {
           motivo,
+          donde: p.accion.donde,
           hora: p.accion.desde,
         });
       } else {
