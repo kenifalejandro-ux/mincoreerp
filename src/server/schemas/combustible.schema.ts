@@ -2884,6 +2884,23 @@ export const terminarDescansoViajeSchema = z
   });
 export type TerminarDescansoViajeInput = z.infer<typeof terminarDescansoViajeSchema>;
 
+// ── Ubicación del viaje (0182) ─────────────────────────────────────────────
+// La oficina anota dónde está la unidad: un lugar del catálogo o un texto libre (lo que ve en su
+// GPS externo), con la hora en que estaba ahí (por defecto, ahora) y una nota. Sin GPS real.
+export const registrarUbicacionSchema = z
+  .object({
+    lugar_id: z.number().int().positive().nullable().optional(),
+    texto: z.string().trim().max(160).nullable().optional(),
+    nota: z.string().trim().max(300).nullable().optional(),
+    registrado_en: fechaHoraNoMuyAntigua.optional(),
+    cliente_uuid: z.string().uuid().optional(),
+  })
+  .refine((v) => v.lugar_id != null || (v.texto?.length ?? 0) > 0, {
+    message: "Elige un lugar o escribe dónde está",
+    path: ["texto"],
+  });
+export type RegistrarUbicacionInput = z.infer<typeof registrarUbicacionSchema>;
+
 // ── Poner al día un viaje ──────────────────────────────────────────────────
 // La oficina registra de una vez lo que ya pasó y nadie marcó: llegadas, salidas y descansos con su
 // fecha y hora reales. Se guarda todo o nada. Las horas son siempre a mano, así que el motivo es
