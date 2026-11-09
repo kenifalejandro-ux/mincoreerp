@@ -31,6 +31,7 @@ import { RecorridoViaje } from "./RecorridoViaje";
 import { ResumenConductores } from "./ResumenConductores";
 import { SelectorConductor, type OpcionConductor } from "./SelectorConductor";
 import { SelectorRelevo } from "./SelectorRelevo";
+import { haceCuanto } from "./ubicacionesLogica";
 import {
   desfaseSalida,
   fechaHora,
@@ -163,6 +164,12 @@ function MarcaHora({ origen }: { origen: FilaViaje["inicio_origen_hora"] }) {
 export default function ViajesPanel() {
   const { usuario } = useAuth();
   const [viajes, setViajes] = useState<FilaViaje[]>([]);
+  // Para el «hace 2 h» de la última ubicación: se refresca cada minuto.
+  const [ahoraMs, setAhoraMs] = useState(() => Date.now());
+  useEffect(() => {
+    const reloj = window.setInterval(() => setAhoraMs(Date.now()), 60_000);
+    return () => window.clearInterval(reloj);
+  }, []);
   const [lugares, setLugares] = useState<Lugar[]>([]);
   const [equipos, setEquipos] = useState<Equipo[]>([]);
   const [totalEquipos, setTotalEquipos] = useState(0);
@@ -748,6 +755,13 @@ export default function ViajesPanel() {
                   <td className="p-3 font-mono whitespace-nowrap">V-{v.numero}</td>
                   <td className="p-3">
                     {ruta(v)}
+                    {v.ultima_ubicacion && v.estado === "en_curso" && (
+                      <div className="mt-0.5 flex items-center gap-1 text-xs text-[#94a3b8]">
+                        <MapPin className="w-3 h-3 shrink-0 text-[#BADC1E]" aria-hidden />
+                        {v.ultima_ubicacion.texto} ·{" "}
+                        {haceCuanto(v.ultima_ubicacion.registrado_en, ahoraMs)}
+                      </div>
+                    )}
                     {v.creado_por_conductor && (
                       <span className="ml-2 rounded-full bg-[#BADC1E]/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#BADC1E]">
                         Creado por el conductor

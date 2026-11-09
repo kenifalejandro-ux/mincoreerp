@@ -53,6 +53,7 @@ type CuerpoMarca = {
 
 type CuerpoDescanso = {
   motivo?: string | null;
+  donde?: string | null;
   marcado_en?: string;
   cliente_uuid?: string;
   inicio_en?: string;
@@ -114,6 +115,7 @@ function marcaDeDescanso(que: "inicio" | "fin", delConductor: boolean) {
     const b = req.validatedBody as CuerpoDescanso;
     const marca = {
       motivo: b.motivo,
+      donde: b.donde,
       marcado_en: b.marcado_en,
       cliente_uuid: b.cliente_uuid,
       hora: que === "inicio" ? b.inicio_en : b.fin_en,
@@ -137,6 +139,7 @@ function marcaDeDescanso(que: "inicio" | "fin", delConductor: boolean) {
         numero: r.antes.numero,
         por: delConductor ? "conductor" : "oficina",
         motivo: b.motivo ?? null,
+        donde: b.donde?.trim() || null,
         manual: marca.hora !== undefined,
       });
     }

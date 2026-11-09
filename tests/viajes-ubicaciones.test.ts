@@ -179,6 +179,65 @@ describe("viajes: ubicaciones del viaje (0182)", () => {
     expect(b.status, JSON.stringify(b.body)).toBe(409);
   });
 
+  it("el descanso con «¿Dónde?» guarda ese texto y deja un punto; sin él queda el automático", async () => {
+    const v = await nuevoViaje(hace(20));
+    const id = Number(v.body.id);
+    const a = await admin
+      .post(`/api/erp/viajes/${id}/descanso`)
+      .send({ motivo: "Dormir", donde: "  Hostal El Paso, km 120  " });
+    expect(a.status, JSON.stringify(a.body)).toBe(200);
+    const d = (a.body.descansos as { donde: string }[])[0];
+    expect(d.donde).toBe("Hostal El Paso, km 120");
+    expect(a.body.ultima_ubicacion.texto).toBe("Hostal El Paso, km 120");
+    expect(a.body.ultima_ubicacion.origen).toBe("descanso");
+    expect((await admin.post(`/api/erp/viajes/${id}/descanso/terminar`).send({})).status).toBe(200);
+    const b = await admin.post(`/api/erp/viajes/${id}/descanso`).send({ motivo: "Comer" });
+    expect(b.status, JSON.stringify(b.body)).toBe(200);
+    expect((b.body.descansos as { donde: string }[])[1].donde).toMatch(/^En /);
+    expect(b.body.ubicaciones).toHaveLength(1);
+  });
+
+  it("«Poner al día» con descanso y «¿Dónde?» deja el punto con la hora del descanso", async () => {
+    const v = await nuevoViaje(hace(30));
+    const id = Number(v.body.id);
+    const desde = hace(10);
+    const r = await admin.post(`/api/erp/viajes/${id}/poner-al-dia`).send({
+      motivo: "Se olvidaron de marcar",
+      acciones: [
+        { tipo: "descanso", motivo: "Dormir", donde: "Grifo Norte", desde, hasta: hace(6) },
+      ],
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.despues?.ultima_ubicacion?.texto ?? r.body.ultima_ubicacion?.texto).toBe(
+      "Grifo Norte"
+    );
+    const n = await withTenant(tenants[0], (c) =>
+      c.query(
+        `SELECT registrado_en FROM combustible_viaje_ubicaciones
+          WHERE viaje_id = $1 AND origen = 'descanso'`,
+        [id]
+      )
+    );
+    expect(n.rows).toHaveLength(1);
+    expect(Math.abs(new Date(n.rows[0].registrado_en).getTime() - Date.parse(desde))).toBeLessThan(
+      1000
+    );
+  });
+
+  it("un «¿Dónde?» de más de 160 caracteres da 400 y un cuerpo sin él sigue entrando", async () => {
+    const v = await nuevoViaje(hace(15));
+    const id = Number(v.body.id);
+    const largo = await admin
+      .post(`/api/erp/viajes/${id}/descanso`)
+      .send({ motivo: "Dormir", donde: "x".repeat(161) });
+    expect(largo.status).toBe(400);
+    const vacio = await admin
+      .post(`/api/erp/viajes/${id}/descanso`)
+      .send({ motivo: "Dormir", donde: "   " });
+    expect(vacio.status, JSON.stringify(vacio.body)).toBe(200);
+    expect(vacio.body.ubicaciones ?? []).toHaveLength(0);
+  });
+
   it("otro tenant no ve el viaje ni sus ubicaciones", async () => {
     expect((await ubicar(viajeId, { texto: "X" }, otro)).status).toBe(404);
     // Y desde su propio tenant la fila sigue ahí: el 404 no borró nada.
