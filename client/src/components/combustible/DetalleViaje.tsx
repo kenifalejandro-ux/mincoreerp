@@ -11,6 +11,7 @@ import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./P
 import { PonerAlDia } from "./PonerAlDia";
 import { QuienManejo } from "./QuienManejo";
 import { TramosViaje, type TramoDelViaje } from "./TramosViaje";
+import { UbicacionesViaje } from "./UbicacionesViaje";
 import {
   desfaseSalida,
   duracion,
@@ -254,6 +255,8 @@ export function DetalleViajeVentana({
             medidor={etiquetaMedidor}
             ahora={ahora}
           />
+
+          <UbicacionesViaje viaje={v} puedeEditar={puedeEditar} onCambio={cargar} ahora={ahora} />
 
           <CorregirMando
             viaje={v}
