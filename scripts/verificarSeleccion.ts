@@ -68,19 +68,33 @@ const HUMO_MIGRACION = [
 
 /** El módulo al que pertenece un archivo, o null si es compartido/ajeno. */
 export function moduloDeArchivo(archivo: string): string | null {
+  // Flota (Registro de unidades + Viajes): la lógica de viajes todavía vive en
+  // src/modules/combustible/viajes*, pero no es combustible.
+  if (/^src\/modules\/(equipos|viajes)\//.test(archivo)) return "flota";
+  if (/^src\/modules\/combustible\/viajes/.test(archivo)) return "flota";
   const m = archivo.match(/^src\/modules\/([^/]+)\//);
   if (m) return m[1];
   if (archivo.startsWith("client/src/")) {
-    if (/urea|combustible|tanque|surtidor|viaje|grifo|kardex|alerta/i.test(archivo)) {
+    if (/viaje|equipo/i.test(archivo)) return "flota";
+    if (/urea|combustible|tanque|surtidor|grifo|kardex|alerta/i.test(archivo)) {
       return "combustible";
     }
     if (/checklist/i.test(archivo)) return "checklists";
-    if (/equipo/i.test(archivo)) return "equipos";
   }
   return null;
 }
 
 const comoNombreDeTest = (modulo: string) => modulo.replace(/_/g, "-");
+
+/** Los tests de un módulo. Flota se reconoce por nombre: sus tests tienen
+ *  prefijos mezclados (viajes-*, equipos-*, combustible-viajes-*, …). */
+export function testsDeModulo(modulo: string, testsExistentes: string[]): string[] {
+  if (modulo === "flota") {
+    return testsExistentes.filter((t) => /\/[^/]*(viaje|equipo|flota)[^/]*\.test\.ts$/.test(t));
+  }
+  const prefijo = `tests/${comoNombreDeTest(modulo)}`;
+  return testsExistentes.filter((t) => t.startsWith(prefijo));
+}
 
 export function seleccionarVerificacion(
   cambiados: string[],
@@ -169,8 +183,7 @@ export function seleccionarVerificacion(
       motivos.push(`${nuevos.length} tests que no están en el mapa (posteriores a su generación)`);
   }
   for (const m of modulos) {
-    const prefijo = `tests/${comoNombreDeTest(m)}`;
-    const deModulo = testsExistentes.filter((t) => t.startsWith(prefijo));
+    const deModulo = testsDeModulo(m, testsExistentes);
     deModulo.forEach((t) => tests.add(t));
     motivos.push(`módulo ${m}: ${deModulo.length} archivos de test`);
   }
