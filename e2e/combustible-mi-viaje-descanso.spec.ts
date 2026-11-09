@@ -17,6 +17,7 @@ import { adminA } from "./fixtures/entorno";
 
 interface DescansoApi {
   motivo: string | null;
+  donde?: string;
   inicio_en: string;
   fin_en: string | null;
 }
@@ -158,5 +159,52 @@ test("una avería o un tráfico dicen qué pasó, en el celular y en el panel de
   } finally {
     await contexto.close();
   }
+  await darDeBajaAlConductor(page, v);
+});
+
+test("el conductor dice dónde descansa, con señal y sin señal; sin escribir nada queda el automático", async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(150_000);
+  const v = await prepararViajeDeConductor(page);
+  await entrarAMiViaje(page, v);
+  await iniciarMiViaje(page, "100");
+  const llegar = page.getByRole("button", { name: `Llegué a ${v.b}`, exact: true });
+  await expect(llegar).toBeVisible();
+
+  // Con señal y con «¿Dónde?» escrito.
+  await page.getByRole("button", { name: "Descansar" }).click();
+  await page.getByLabel("¿Dónde descansas? (opcional)").fill("Hostal El Paso");
+  await page.getByRole("button", { name: "Empezar descanso" }).click();
+  await expect(page.getByText("Descansando").first()).toBeVisible();
+  await page.getByRole("button", { name: "Terminar descanso" }).click();
+  await expect(llegar).toBeVisible();
+
+  // Sin señal: el «¿Dónde?» viaja en la cola.
+  await context.setOffline(true);
+  await page.getByRole("button", { name: "Descansar" }).click();
+  await page.getByLabel("¿Dónde descansas? (opcional)").fill("Grifo del km 85");
+  await page.getByRole("button", { name: "Empezar descanso" }).click();
+  await expect(page.getByText(/Sin señal: quedó guardado en el celular/)).toBeVisible();
+  await page.waitForTimeout(1200);
+  await page.getByRole("button", { name: "Terminar descanso" }).click();
+  await expect(llegar).toBeVisible();
+  await context.setOffline(false);
+  await expect
+    .poll(async () => (await descansosDelServidor(page, v)).map((d) => d.donde), {
+      message: "los dos descansos tienen que llegar con su «¿Dónde?»",
+      timeout: 60_000,
+    })
+    .toEqual(["Hostal El Paso", "Grifo del km 85"]);
+
+  // Sin escribir nada: el texto automático, sin campo obligatorio.
+  await page.getByRole("button", { name: "Descansar" }).click();
+  await page.getByRole("button", { name: "Empezar descanso" }).click();
+  await expect(page.getByText("Descansando").first()).toBeVisible();
+  const ultimo = (await descansosDelServidor(page, v)).at(-1);
+  expect(ultimo?.donde).toMatch(/^En /);
+  await page.getByRole("button", { name: "Terminar descanso" }).click();
+
   await darDeBajaAlConductor(page, v);
 });

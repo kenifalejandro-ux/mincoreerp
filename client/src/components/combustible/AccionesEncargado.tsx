@@ -50,6 +50,7 @@ export function AccionesEncargado({
   const abiertos = descansos.filter((d) => !d.fin_en);
   const [motivo, setMotivo] = useState("");
   const [otro, setOtro] = useState("");
+  const [donde, setDonde] = useState("");
   const [motivoFin, setMotivoFin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [guardando, setGuardando] = useState(false);
@@ -153,14 +154,27 @@ export function AccionesEncargado({
                   className={INPUT}
                 />
               )}
+              <input
+                aria-label="¿Dónde? (opcional)"
+                placeholder="¿Dónde? (opcional)"
+                maxLength={160}
+                value={donde}
+                onChange={(e) => setDonde(e.target.value)}
+                className={INPUT}
+              />
               <button
                 className={BTN_SEC}
                 disabled={guardando || !motivoDescansoValido}
                 onClick={() =>
-                  void mandar("descanso", { motivo: textoMotivo }, () => {
-                    setMotivo("");
-                    setOtro("");
-                  })
+                  void mandar(
+                    "descanso",
+                    { motivo: textoMotivo, ...(donde.trim() ? { donde: donde.trim() } : {}) },
+                    () => {
+                      setMotivo("");
+                      setOtro("");
+                      setDonde("");
+                    }
+                  )
                 }
               >
                 <Moon className="inline w-4 h-4 mr-1" aria-hidden />
