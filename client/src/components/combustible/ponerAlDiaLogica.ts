@@ -32,6 +32,8 @@ export interface DescansoPorPoner {
   motivo: string;
   /** El detalle que piden "Otro" y "Tráfico". */
   otro: string;
+  /** «¿Dónde?» opcional del descanso. */
+  donde?: string;
   desde: string;
   /** Vacío si el descanso sigue abierto: entonces no puede haber marcas después. */
   hasta: string;
@@ -262,6 +264,7 @@ export function armarAcciones(
     acciones.push({
       tipo: "descanso",
       motivo: motivoGuardado(d.motivo, d.otro),
+      ...(d.donde?.trim() ? { donde: d.donde.trim() } : {}),
       desde: new Date(deValorLocal(d.desde) as number).toISOString(),
       ...(hasta !== null ? { hasta: new Date(hasta).toISOString() } : {}),
     });

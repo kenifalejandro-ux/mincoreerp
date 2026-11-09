@@ -104,3 +104,57 @@ test("la oficina termina el descanso del relevo que no maneja: pide motivo y man
     await darDeBajaAlConductor(page, v);
   }
 });
+
+test("la encargada marca un descanso con «¿Dónde?» y queda en el descanso y en el historial del viaje", async ({
+  page,
+  browser,
+}) => {
+  test.setTimeout(180_000);
+  const v = await prepararViajeDeConductor(page);
+  const contextoOficina = await browser.newContext();
+  try {
+    await entrarAMiViaje(page, v);
+    await iniciarMiViaje(page, "100");
+    await expect(page.getByRole("button", { name: `Llegué a ${v.b}`, exact: true })).toBeVisible();
+
+    const oficina = await contextoOficina.newPage();
+    const admin = adminA();
+    await loginPorUI(oficina, admin.email, admin.password);
+    await oficina
+      .getByRole("button", { name: /^Gestión operacional de flota Abrir submenú$/ })
+      .click();
+    await oficina.getByRole("button", { name: "Viajes" }).click();
+    await oficina
+      .getByRole("row")
+      .filter({ hasText: `${v.a} → ${v.b} → ${v.a}` })
+      .first()
+      .click();
+
+    await oficina.getByRole("button", { name: "Dormir" }).click();
+    await oficina.getByLabel("¿Dónde? (opcional)").fill("Hostal El Paso, km 120");
+    const envio = oficina.waitForRequest(
+      (r) => r.method() === "POST" && r.url().endsWith(`/viajes/${v.viajeId}/descanso`)
+    );
+    await oficina.getByRole("button", { name: "Marcar descanso (encargado)" }).click();
+    expect(((await envio).postDataJSON() as { donde?: string }).donde).toBe(
+      "Hostal El Paso, km 120"
+    );
+
+    await expect(
+      oficina.getByRole("button", { name: "Terminar descanso (encargado)" })
+    ).toBeVisible({ timeout: 20_000 });
+    const detalle = await oficina.request.get(`/api/erp/viajes/${v.viajeId}`);
+    const viaje = (await detalle.json()).viaje as {
+      descansos: { donde: string }[];
+      ultima_ubicacion: { texto: string; origen: string } | null;
+    };
+    expect(viaje.descansos[0].donde).toBe("Hostal El Paso, km 120");
+    expect(viaje.ultima_ubicacion).toMatchObject({
+      texto: "Hostal El Paso, km 120",
+      origen: "descanso",
+    });
+  } finally {
+    await contextoOficina.close();
+    await darDeBajaAlConductor(page, v);
+  }
+});

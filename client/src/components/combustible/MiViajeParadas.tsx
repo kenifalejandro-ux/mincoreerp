@@ -103,6 +103,8 @@ export function MiViajeParadas({
   const [eligiendoMotivo, setEligiendoMotivo] = useState(false);
   const [motivo, setMotivo] = useState("");
   const [otro, setOtro] = useState("");
+  // «¿Dónde?» opcional: el conductor dice dónde descansa; no maneja el catálogo de lugares.
+  const [donde, setDonde] = useState("");
   const [guardando, setGuardando] = useState(false);
 
   /** Manda una marca y la deja en el celular si no hay señal (202). `local` es cómo queda el
@@ -190,7 +192,7 @@ export function MiViajeParadas({
   const empezarDescanso = () =>
     void mandar(
       "descanso-mio",
-      { motivo: textoDelMotivo || null },
+      { motivo: textoDelMotivo || null, ...(donde.trim() ? { donde: donde.trim() } : {}) },
       (marcadoEn) => ({
         descansos: conDescansoLocal(descansos, "empezar", marcadoEn, textoDelMotivo || null),
       }),
@@ -349,6 +351,14 @@ export function MiViajeParadas({
               className="w-full bg-[#0D1719] border border-[#334155] rounded-xl px-4 py-3 text-white"
             />
           )}
+          <input
+            aria-label="¿Dónde descansas? (opcional)"
+            placeholder="¿Dónde descansas? (opcional)"
+            maxLength={160}
+            value={donde}
+            onChange={(e) => setDonde(e.target.value)}
+            className="w-full bg-[#0D1719] border border-[#334155] rounded-xl px-4 py-3 text-white"
+          />
           <button className={BTN_LIMA} disabled={guardando} onClick={empezarDescanso}>
             Empezar descanso
           </button>
