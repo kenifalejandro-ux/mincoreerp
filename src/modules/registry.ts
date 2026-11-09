@@ -449,6 +449,18 @@ export const MODULOS: ModuloDefinicion[] = [
         pk: "serial",
         fks: { viaje_id: "combustible_viajes", creado_por: "usuarios" },
       },
+      // Historial de ubicaciones del viaje (0182): cascadea desde el viaje y, si nació de un
+      // descanso, desde ese descanso (que va antes).
+      {
+        nombre: "combustible_viaje_ubicaciones",
+        pk: "serial",
+        fks: {
+          viaje_id: "combustible_viajes",
+          lugar_id: "combustible_lugares",
+          descanso_id: "combustible_viaje_descansos",
+          creado_por: "usuarios",
+        },
+      },
       // Entregas del mando entre titular y relevo (0153): cascadean desde el viaje.
       {
         nombre: "combustible_viaje_entregas",

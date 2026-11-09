@@ -11,6 +11,7 @@ import type {
   EditarLugarInput,
   EditarViajeInput,
   ListarViajesQuery,
+  RegistrarUbicacionInput,
 } from "../../server/schemas/combustible.schema";
 import { agregarAmbitoVales, type AmbitoVales } from "./alcance";
 import { detencionDe } from "./motivosDetencion";
@@ -1201,6 +1202,75 @@ async function exigirSinDescansoAbierto(client: PoolClient, tenantId: string, vi
   if (r.rows[0]) throw new AppError(409, "Termina el descanso para continuar el viaje");
 }
 
+/** La oficina anota dónde está la unidad de un viaje en curso: un lugar del catálogo o un texto
+ *  libre, con la hora en que estaba ahí (puede ser pasada, no futura) y una nota. Cada anotación
+ *  suma un punto al historial. El reintento con el mismo identificador devuelve el viaje como quedó. */
+export async function registrarUbicacion(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  id: number,
+  data: RegistrarUbicacionInput
+): Promise<ResultadoDescanso & { texto: string }> {
+  const v = await viajeParaCambiar(client, tenantId, id);
+  const uuid = data.cliente_uuid ?? null;
+  if (uuid) {
+    const rep = await client.query(
+      `SELECT texto FROM combustible_viaje_ubicaciones
+        WHERE tenant_id = $1 AND cliente_uuid = $2`,
+      [tenantId, uuid]
+    );
+    if (rep.rows[0]) {
+      return {
+        antes: v,
+        despues: await getViaje(client, tenantId, id),
+        repetido: true,
+        texto: rep.rows[0].texto,
+      };
+    }
+  }
+  if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
+  if (v.estado !== "en_curso") throw new AppError(409, "El viaje ya está cerrado");
+  const cuando = data.registrado_en ? Date.parse(data.registrado_en) : Date.now();
+  if (cuando > Date.now() + MARGEN_RELOJ_MS) {
+    throw new AppError(400, "La hora de la ubicación no puede ser futura");
+  }
+  if (cuando < new Date(v.inicio_en as Date).getTime()) {
+    throw new AppError(400, "La ubicación tiene que ser posterior a la salida del viaje");
+  }
+  let texto = data.texto?.trim() ?? "";
+  const lugarId = data.lugar_id ?? null;
+  if (lugarId !== null) {
+    const l = await client.query(
+      `SELECT nombre FROM combustible_lugares WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, lugarId]
+    );
+    if (!l.rows[0]) throw new AppError(400, "El lugar no existe");
+    texto = l.rows[0].nombre;
+  }
+  try {
+    await client.query(
+      `INSERT INTO combustible_viaje_ubicaciones (
+         tenant_id, viaje_id, lugar_id, texto, nota, registrado_en, origen, cliente_uuid, creado_por)
+       VALUES ($1,$2,$3,$4,$5,$6,'oficina',$7,$8)`,
+      [
+        tenantId,
+        id,
+        lugarId,
+        texto,
+        data.nota?.trim() || null,
+        new Date(cuando).toISOString(),
+        uuid,
+        usuarioId,
+      ]
+    );
+  } catch (err) {
+    if (!esViolacionUnicidad(err)) throw err;
+    throw new AppError(409, "Esa ubicación ya se registró");
+  }
+  return { antes: v, despues: await getViaje(client, tenantId, id), repetido: false, texto };
+}
+
 /** Dónde está el viaje, para anotarlo en el descanso: "En ruta hacia B" o "En B". */
 function dondeEstaElViaje(paradas: { lugar: string }[] | null): string {
   const filas = (paradas ?? []) as unknown as (FilaParada & { lugar: string })[];
@@ -2247,6 +2317,12 @@ const volanteDni = (v: string) =>
                         WHERE t.tenant_id = ${v}.tenant_id AND t.viaje_id = ${v}.id
                         ORDER BY t.inicio_en DESC LIMIT 1), btrim(${v}.conductor_dni)) END`;
 
+/** Tolerancia entre el reloj del celular o la PC y el del servidor. */
+const MARGEN_RELOJ_MS = 5 * 60 * 1000;
+
+/** Cuántos puntos del historial de ubicaciones viajan dentro de cada viaje (los más recientes). */
+const MAXIMO_UBICACIONES_EN_VIAJE = 50;
+
 const COLUMNAS_VIAJE = `
   v.id, v.numero, v.equipo_id, e.placa_codigo, e.codigo_interno, e.tipo AS equipo_tipo,
   e.tipo_medidor, v.conductor_nombre, v.conductor_dni,
@@ -2304,6 +2380,21 @@ const COLUMNAS_VIAJE = `
             'inicio_por', d.inicio_por, 'fin_por', d.fin_por) ORDER BY d.inicio_en)
      FROM combustible_viaje_descansos d
     WHERE d.tenant_id = v.tenant_id AND d.viaje_id = v.id) AS descansos,
+  (SELECT json_agg(x.fila ORDER BY x.registrado_en DESC, x.id DESC)
+     FROM (SELECT u.id, u.registrado_en,
+                  json_build_object('id', u.id, 'lugar_id', u.lugar_id, 'texto', u.texto,
+                                    'nota', u.nota, 'registrado_en', u.registrado_en,
+                                    'origen', u.origen) AS fila
+             FROM combustible_viaje_ubicaciones u
+            WHERE u.tenant_id = v.tenant_id AND u.viaje_id = v.id
+            ORDER BY u.registrado_en DESC, u.id DESC
+            LIMIT ${MAXIMO_UBICACIONES_EN_VIAJE}) x) AS ubicaciones,
+  (SELECT json_build_object('id', u.id, 'lugar_id', u.lugar_id, 'texto', u.texto,
+                            'nota', u.nota, 'registrado_en', u.registrado_en, 'origen', u.origen)
+     FROM combustible_viaje_ubicaciones u
+    WHERE u.tenant_id = v.tenant_id AND u.viaje_id = v.id
+    ORDER BY u.registrado_en DESC, u.id DESC
+    LIMIT 1) AS ultima_ubicacion,
   v.relevo_sin_cuenta,
   (SELECT json_agg(json_build_object('quien', m.quien, 'en', m.en, 'origen_hora', m.origen_hora)
                    ORDER BY m.en, m.id)

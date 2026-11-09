@@ -39,6 +39,7 @@ import {
   llegadaViajeSchema,
   manejaMioSchema,
   ponerAlDiaSchema,
+  registrarUbicacionSchema,
   salidaMiaSchema,
   salidaViajeSchema,
   terminarDescansoMioSchema,
@@ -281,6 +282,14 @@ router.post(
   requireRole("admin", "operador"),
   validate(salidaViajeSchema),
   asyncHandler(viajesController.salida)
+);
+// Ubicación del viaje: la oficina anota dónde está la unidad (lugar del catálogo o texto libre).
+router.post(
+  "/:viajeId(\\d+)/ubicaciones",
+  requirePestana("combustible", "viajes:editar"),
+  requireRole("admin", "operador"),
+  validate(registrarUbicacionSchema),
+  asyncHandler(viajesController.registrarUbicacion)
 );
 router.post(
   "/:viajeId(\\d+)/descanso",

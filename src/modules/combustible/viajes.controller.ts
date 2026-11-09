@@ -26,6 +26,7 @@ import type {
   IniciarViajeInput,
   ListarViajesQuery,
   PonerAlDiaInput,
+  RegistrarUbicacionInput,
 } from "../../server/schemas/combustible.schema";
 import { ambitoDe } from "./alcance";
 import { CombustibleService } from "./combustible.service";
@@ -545,6 +546,28 @@ export const viajesController = {
       });
     }
     res.json(r.despues);
+  },
+
+  /** La oficina anota dónde está la unidad del viaje (lugar del catálogo o texto libre). */
+  async registrarUbicacion(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.viajeId);
+    const b = req.validatedBody as RegistrarUbicacionInput;
+    const r = await withTenant(tenantId, (c) =>
+      viajes.registrarUbicacion(c, tenantId, req.usuario!.id, id, b)
+    );
+    if (!r.repetido) {
+      await auditar(req, "viaje_ubicacion", {
+        viajeId: id,
+        numero: r.antes.numero,
+        por: "oficina",
+        lugarId: b.lugar_id ?? null,
+        texto: r.texto,
+        nota: b.nota?.trim() || null,
+        manual: b.registrado_en !== undefined,
+      });
+    }
+    res.status(r.repetido ? 200 : 201).json(r.despues);
   },
 
   descansoMio: marcaDeDescanso("inicio", true),
