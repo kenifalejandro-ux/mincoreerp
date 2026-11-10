@@ -33,6 +33,7 @@ import {
   puntosTendencia,
   valorEnTanques,
 } from "../components/controlTv/controlTvLogica";
+import { DetalleTv, type DetalleDatos } from "../components/controlTv/DetalleTv";
 import { IconoTipo } from "../components/controlTv/iconosUnidad";
 import type {
   EnvaseTv,
@@ -66,7 +67,7 @@ interface Resumen {
   };
   eventos?: EventoTv[];
   combustible?: {
-    tanques: { nivel: number | string | null; costo_promedio: number | null }[];
+    tanques: { capacidad: number; nivel: number | string | null; costo_promedio: number | null }[];
     total_en_tanques_gal: number;
     tanquetas: { saldo_total_gal: number; items: TanquetaTv[] };
     cisternas: { con_saldo: number; saldo_gal: number; por_llegar: number; por_llegar_gal: number };
@@ -83,12 +84,18 @@ interface Resumen {
 
 interface Consumo {
   consumo?: {
-    total: { gal: number; costo: number };
+    total: {
+      gal: number;
+      costo: number;
+      interno_gal: number;
+      tanqueta_gal: number;
+      ruta_gal: number;
+    };
     serie: SerieConsumo[];
     agrupado_por: "hora" | "dia";
   };
+  entrada?: { recepciones: number; recibido_gal: number; diferencia_gal: number; costo: number };
   niveles?: NivelTanque[];
-  entrada?: { recepciones: number; recibido_gal: number; diferencia_gal: number };
 }
 
 const soles = (n: number) => `S/ ${fmt(n, 0)}`;
@@ -303,6 +310,8 @@ export default function ControlViajesTv() {
   const [sinConexion, setSinConexion] = useState(false);
   const [ahora, setAhora] = useState(() => Date.now());
   const [pantallaCompleta, setPantallaCompleta] = useState(false);
+  const [pagina, setPagina] = useState<"resumen" | "detalle">("resumen");
+  const [detalle, setDetalle] = useState<DetalleDatos | null>(null);
   // La unidad que se está mirando (null = el TV central); sale también del enlace del ícono de la fila.
   const [unidad, setUnidad] = useState<string | null>(() =>
     new URLSearchParams(window.location.search).get("unidad")
@@ -326,22 +335,26 @@ export default function ControlViajesTv() {
         return null;
       }
     };
-    const [r, c, v] = await Promise.all([
+    const [r, c, v, d] = await Promise.all([
       pedir<Resumen>("/api/erp/viajes/control-tv/resumen"),
       pedir<Consumo>(`/api/erp/viajes/control-tv/consumo?periodo=${periodo}`),
       pedir<{ data: FilaViaje[] }>("/api/erp/viajes?estado=en_curso"),
+      pagina === "detalle"
+        ? pedir<DetalleDatos>(`/api/erp/viajes/control-tv/detalle?periodo=${periodo}`)
+        : Promise.resolve(null),
     ]);
     if (mio !== pedido.current) return;
     // Lo que no llegó se queda como estaba: la pantalla nunca se vacía por un fallo de red.
     if (r) setResumen(r);
     if (c) setConsumo(c);
     if (v && Array.isArray(v.data)) setViajes(v.data);
+    if (d) setDetalle(d);
     setSinConexion(!r);
     if (r) {
       setUltimaCarga(Date.now());
       setVersion((n) => n + 1);
     }
-  }, [periodo]);
+  }, [periodo, pagina]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -409,6 +422,22 @@ export default function ControlViajesTv() {
           <div className="flex-1" />
           {!unidad && (
             <div className="inline-flex gap-0.5 rounded-xl border border-white/10 bg-white/5 p-0.5">
+              {(["resumen", "detalle"] as const).map((p) => (
+                <button
+                  key={p}
+                  aria-pressed={pagina === p}
+                  onClick={() => setPagina(p)}
+                  className={`rounded-lg px-3.5 py-1.5 text-sm font-bold ${
+                    pagina === p ? "bg-[#BADC1E] text-[#0D1719]" : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  {p === "resumen" ? "Resumen" : "Detalle"}
+                </button>
+              ))}
+            </div>
+          )}
+          {!unidad && pagina === "resumen" && (
+            <div className="inline-flex gap-0.5 rounded-xl border border-white/10 bg-white/5 p-0.5">
               {PERIODOS.map((p) => (
                 <button
                   key={p.id}
@@ -463,6 +492,29 @@ export default function ControlViajesTv() {
             onCambiar={elegir}
             onVolver={() => elegir(null)}
           />
+        ) : pagina === "detalle" ? (
+          comb ? (
+            <DetalleTv
+              periodo={periodo}
+              onPeriodo={setPeriodo}
+              detalle={detalle}
+              comb={{
+                total_gal: comb.total_en_tanques_gal,
+                capacidad_gal: comb.tanques.reduce((s, t) => s + t.capacidad, 0),
+                consumo: consumo?.consumo
+                  ? {
+                      ...consumo.consumo.total,
+                      serie: consumo.consumo.serie,
+                    }
+                  : null,
+                entrada: consumo?.entrada ?? null,
+              }}
+            />
+          ) : (
+            <p className="py-20 text-center text-slate-400">
+              El detalle necesita el módulo de Combustible.
+            </p>
+          )
         ) : (
           <>
             <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fit,minmax(215px,1fr))]">

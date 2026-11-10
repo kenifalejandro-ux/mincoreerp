@@ -32,6 +32,7 @@ import type {
 import { ambitoDe } from "./alcance";
 import { CombustibleService } from "./combustible.service";
 import { consumoControlTv, resumenControlTv, type PeriodoTv } from "./controlTv.service";
+import { detalleControlTv } from "./controlTvDetalle.service";
 import * as viajes from "./viajes.service";
 import {
   catalogoParaCrear,
@@ -659,6 +660,28 @@ export const viajesController = {
     res.json(
       await withTenant(tenantId, (c) =>
         consumoControlTv(c, tenantId, periodo.periodo, ambitoDe(req), combustible)
+      )
+    );
+  },
+
+  /** La pestaña «Detalle» del Control TV: el consumo anterior, la urea, las últimas recepciones
+   *  contra su factura, las unidades que más se desvían y lo que cuesta comprar en ruta. Sin
+   *  Combustible responde vacío, no 403. */
+  async controlTvDetalle(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const u = req.usuario!;
+    if (!u.modulosPermitidos.includes("combustible")) return res.json({});
+    const q = req.validatedQuery as { periodo: PeriodoTv };
+    res.json(
+      await withTenant(tenantId, (c) =>
+        detalleControlTv(
+          c,
+          tenantId,
+          q.periodo,
+          ambitoDe(req),
+          combustible,
+          pestanaPermitida(u, "combustible", "urea:vista")
+        )
       )
     );
   },
