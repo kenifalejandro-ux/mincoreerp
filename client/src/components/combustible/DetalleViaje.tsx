@@ -6,10 +6,12 @@ import { useCallback, useEffect, useState } from "react";
 
 import { AccionesEncargado } from "./AccionesEncargado";
 import { CorregirMando } from "./CorregirMando";
+import { horasDelViaje } from "./horasViaje";
 import { avanceEstimado, estadoDelViaje, paradasDelViaje } from "./paradasViaje";
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
 import { PonerAlDia } from "./PonerAlDia";
 import { QuienManejo } from "./QuienManejo";
+import { TarjetasHoras } from "./TarjetasHoras";
 import { TramosViaje, type TramoDelViaje } from "./TramosViaje";
 import { UbicacionesViaje } from "./UbicacionesViaje";
 import {
@@ -247,7 +249,14 @@ export function DetalleViajeVentana({
             />
           </div>
 
-          <TramosViaje tramos={datos.tramos ?? []} medidor={etiquetaMedidor} />
+          <TarjetasHoras horas={horasDelViaje(paradasV, ahora)} />
+
+          <TramosViaje
+            tramos={datos.tramos ?? []}
+            medidor={etiquetaMedidor}
+            descansos={v.descansos}
+            ahora={ahora}
+          />
 
           <QuienManejo
             turnos={v.turnos ?? []}

@@ -1,6 +1,7 @@
 // La lógica de las ubicaciones de un viaje (0182) para la oficina: qué se manda, qué se rechaza antes
 // de mandar y cómo se lee «hace 2 h». Pura, sin pantalla: se prueba sola.
 import type { Lugar } from "./empezarViaje";
+import type { ParadaMia } from "./paradasViaje";
 import { deValorLocal } from "./ponerAlDiaLogica";
 import { duracion } from "./viajesFormato";
 
@@ -76,4 +77,26 @@ export function lugaresDelCatalogo(datos: unknown): { id: number; nombre: string
   return (datos as { id: number | string; nombre: string; activo?: boolean }[])
     .filter((l) => l.activo !== false)
     .map((l) => ({ id: Number(l.id), nombre: l.nombre }));
+}
+
+/** Dónde está el viaje según lo más reciente: la última marca del recorrido (llegada o salida de una
+ *  parada) o el último punto de ubicación. Un punto viejo no pisa una marca más nueva. */
+export function ubicacionVigente(
+  paradas: ParadaMia[] | null | undefined,
+  ultima: UbicacionViaje | null | undefined
+): { texto: string; en: string } | null {
+  let marca: { texto: string; en: string; t: number } | null = null;
+  for (const p of paradas ?? []) {
+    for (const [iso, texto] of [
+      [p.llegada_en, `Llegó a ${p.lugar}`],
+      [p.salida_en, `Salió de ${p.lugar}`],
+    ] as const) {
+      const t = iso ? Date.parse(iso) : NaN;
+      if (!Number.isNaN(t) && (!marca || t > marca.t)) marca = { texto, en: iso as string, t };
+    }
+  }
+  const punto = ultima ? { texto: ultima.texto, en: ultima.registrado_en } : null;
+  if (marca && (!punto || marca.t > Date.parse(punto.en)))
+    return { texto: marca.texto, en: marca.en };
+  return punto;
 }
