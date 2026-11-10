@@ -23,6 +23,7 @@ import {
   cerrarViajeSchema,
   corregirMandoSchema,
   corregirMarcaDeParadaSchema,
+  marcaSinOrdenSchema,
   crearLugarSchema,
   crearMiViajeSchema,
   crearViajeSchema,
@@ -234,6 +235,14 @@ router.post(
   requireRole("admin", "operador"),
   validate(corregirMarcaDeParadaSchema),
   asyncHandler(viajesController.corregirMarca)
+);
+// Marcar la llegada o la salida de cualquier parada, sin orden (solo la oficina).
+router.post(
+  "/:viajeId(\\d+)/marcas",
+  requirePestana("combustible", "viajes:editar"),
+  requireRole("admin", "operador"),
+  validate(marcaSinOrdenSchema),
+  asyncHandler(viajesController.marcarSinOrden)
 );
 router.get(
   "/:viajeId(\\d+)",

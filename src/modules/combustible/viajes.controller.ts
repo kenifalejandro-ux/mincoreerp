@@ -25,6 +25,7 @@ import type {
   ManejaMioInput,
   IniciarViajeInput,
   ListarViajesQuery,
+  MarcaSinOrdenInput,
   PonerAlDiaInput,
   RegistrarUbicacionInput,
 } from "../../server/schemas/combustible.schema";
@@ -622,6 +623,40 @@ export const viajesController = {
       medidor: data.medidor ?? null,
       motivo: data.motivo,
     });
+    res.json(r.despues);
+  },
+  /** La oficina marca cualquier parada sin orden; cambiar una marca puesta queda auditado con su
+   *  hora anterior y el motivo. */
+  async marcarSinOrden(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.viajeId);
+    const b = req.validatedBody as MarcaSinOrdenInput;
+    const { r, alertaCambio } = await withTenant(tenantId, async (c) => {
+      const r = await viajes.marcarParadaSinOrden(c, tenantId, req.usuario!.id, id, b);
+      const cierra = b.que === "llegada" && !r.repetido;
+      const detencion =
+        b.descanso && !r.repetido ? await alertaDeDetencion(c, tenantId, id) : false;
+      return {
+        r,
+        alertaCambio: (cierra ? await cerrarAlertasDelViaje(c, tenantId, id) : false) || detencion,
+      };
+    });
+    if (alertaCambio) await avisarCampanita(tenantId);
+    if (!r.repetido) {
+      await auditar(req, r.cierra ? "viaje_cerrar" : `viaje_${b.que}`, {
+        viajeId: id,
+        numero: r.antes.numero,
+        parada: r.orden,
+        por: "oficina",
+        medidor: b.medidor ?? null,
+        motivo: b.motivo ?? null,
+        manual: b.hora !== undefined,
+        reemplazo: b.reemplazar ? { antes: r.previo } : undefined,
+        descanso: b.descanso
+          ? { desde: b.descanso.desde, hasta: b.descanso.hasta ?? null }
+          : undefined,
+      });
+    }
     res.json(r.despues);
   },
   llegadaMia: marcaDeParada("llegada", true),
