@@ -50,9 +50,14 @@ test("la oficina anota ubicaciones del viaje: catálogo y texto libre, con histo
     await abrirDetalleEnLaOficina(oficina, v);
 
     await expect(oficina.getByText("Todavía no hay ubicaciones anotadas.")).toBeVisible();
+    // «Actualizar ubicación» abre el formulario; la hora ya viene con la de ahora.
+    await oficina.getByRole("button", { name: "Actualizar ubicación" }).click();
     const registrar = oficina.getByRole("button", { name: "Registrar ubicación" });
-    // «Poner al día» tiene sus propios atajos con el mismo nombre: aquí solo los de la ubicación.
-    const atajos = oficina.getByLabel("Cuándo estaba ahí").locator("xpath=..");
+    const local = (ms: number) => {
+      const d = new Date(ms);
+      const p2 = (n: number) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    };
 
     // Sin lugar no se manda nada.
     await registrar.click();
@@ -62,7 +67,6 @@ test("la oficina anota ubicaciones del viaje: catálogo y texto libre, con histo
     // minuto de la salida y se tiene que aceptar (la hora se ajusta a la salida).
     await oficina.getByLabel("Dónde está").fill(v.a);
     await oficina.getByRole("option", { name: v.a, exact: true }).click();
-    await atajos.getByRole("button", { name: "Ahora", exact: true }).click();
     await oficina.getByLabel("Nota (opcional)").fill("Según el GPS");
     await registrar.click();
     await expect(oficina.getByText("Ubicación registrada.")).toBeVisible();
@@ -74,7 +78,7 @@ test("la oficina anota ubicaciones del viaje: catálogo y texto libre, con histo
     // Una hora anterior a la salida se avisa antes de mandar, y no suma un punto.
     await oficina.getByLabel("Dónde está").fill("Grifo viejo");
     await oficina.getByRole("option", { name: "Usar «Grifo viejo»" }).click();
-    await atajos.getByRole("button", { name: "Hace 6 h", exact: true }).click();
+    await oficina.getByLabel("Cuándo estaba ahí").fill(local(Date.now() - 6 * 3_600_000));
     await registrar.click();
     await expect(oficina.getByRole("alert")).toContainText("posterior a la salida");
     await expect(historial.getByRole("listitem")).toHaveCount(1);
@@ -85,7 +89,7 @@ test("la oficina anota ubicaciones del viaje: catálogo y texto libre, con histo
     await expect(oficina.getByRole("alert")).toContainText("no puede ser futura");
 
     // Texto libre: queda el que se escribió, y es la última.
-    await atajos.getByRole("button", { name: "Ahora", exact: true }).click();
+    await oficina.getByLabel("Cuándo estaba ahí").fill(local(Date.now()));
     await registrar.click();
     await expect(oficina.getByText("Ubicación registrada.")).toBeVisible();
     await expect(historial.getByRole("listitem")).toHaveCount(2);

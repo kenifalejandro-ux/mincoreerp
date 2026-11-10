@@ -2,14 +2,14 @@
 // cargado y cuándo llega, comparado con lo que suele tomar esa ruta. Se
 // actualiza solo mientras está abierto.
 import { Droplets, Flag, Fuel, Gauge, MapPin, Play, Timer } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AccionesEncargado } from "./AccionesEncargado";
+import { AccionesViaje, type PanelAbierto } from "./AccionesViaje";
 import { CorregirMando } from "./CorregirMando";
 import { horasDelViaje } from "./horasViaje";
 import { avanceEstimado, estadoDelViaje, paradasDelViaje } from "./paradasViaje";
 import { BarraRuta, LineaTiempo, TarjetaViaje, Tile, type CargaViaje } from "./PiezasViaje";
-import { PonerAlDia } from "./PonerAlDia";
 import { QuienManejo } from "./QuienManejo";
 import { TarjetasHoras } from "./TarjetasHoras";
 import { TramosViaje, type TramoDelViaje } from "./TramosViaje";
@@ -60,18 +60,20 @@ export function DetalleViajeVentana({
   viajeId,
   onCerrar,
   puedeEditar = false,
-  enfocarPonerAlDia = false,
+  enfocarAcciones = false,
 }: {
   viajeId: string;
   onCerrar: () => void;
   /** La oficina que puede editar viajes marca descansos y llegadas por el conductor. */
   puedeEditar?: boolean;
-  /** Se abrió desde «Poner al día» de la lista: baja hasta ese bloque. */
-  enfocarPonerAlDia?: boolean;
+  /** Se abrió desde el botón de actualizar de la lista: baja hasta los botones de registro. */
+  enfocarAcciones?: boolean;
 }) {
   const [datos, setDatos] = useState<Detalle | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ahora, setAhora] = useState(() => Date.now());
+  const [panel, setPanel] = useState<PanelAbierto>(null);
+  const accionesRef = useRef<HTMLDivElement>(null);
 
   const cargar = useCallback(async () => {
     const res = await apiFetch(`/api/erp/viajes/${viajeId}`);
@@ -97,6 +99,12 @@ export function DetalleViajeVentana({
       window.clearInterval(reloj);
     };
   }, [cargar]);
+
+  useEffect(() => {
+    if (enfocarAcciones && datos) accionesRef.current?.scrollIntoView({ block: "start" });
+    // Solo al abrir la ventana con los datos ya cargados.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enfocarAcciones, !!datos]);
 
   const v = datos?.viaje;
   const enCurso = v?.estado === "en_curso";
@@ -265,21 +273,31 @@ export function DetalleViajeVentana({
             ahora={ahora}
           />
 
-          <UbicacionesViaje viaje={v} puedeEditar={puedeEditar} onCambio={cargar} ahora={ahora} />
+          {puedeEditar && (v.estado === "en_curso" || v.estado === "cerrado") && (
+            <div ref={accionesRef}>
+              <AccionesViaje
+                viaje={v}
+                panel={panel}
+                onPanel={setPanel}
+                onCambio={cargar}
+                etiquetaMedidor={etiquetaMedidor}
+              />
+            </div>
+          )}
+
+          <UbicacionesViaje
+            viaje={v}
+            puedeEditar={puedeEditar}
+            onCambio={cargar}
+            ahora={ahora}
+            formularioAbierto={panel === "ubicacion"}
+          />
 
           <CorregirMando
             viaje={v}
             etiquetaMedidor={etiquetaMedidor}
             puedeEditar={puedeEditar}
             onCambio={cargar}
-          />
-
-          <PonerAlDia
-            viaje={v}
-            etiquetaMedidor={etiquetaMedidor}
-            puedeEditar={puedeEditar}
-            onCambio={cargar}
-            enfocar={enfocarPonerAlDia}
           />
 
           <AccionesEncargado viaje={v} puedeEditar={puedeEditar} onCambio={cargar} />

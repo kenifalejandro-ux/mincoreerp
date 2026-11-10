@@ -1438,7 +1438,7 @@ export default function ViajesPanel() {
           viajeId={verId}
           onCerrar={() => setVerId(null)}
           puedeEditar={permite("editar")}
-          enfocarPonerAlDia={verAlDia}
+          enfocarAcciones={verAlDia}
         />
       )}
     </div>
