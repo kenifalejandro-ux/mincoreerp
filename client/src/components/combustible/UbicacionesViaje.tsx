@@ -6,7 +6,7 @@ import { MapPin } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import type { Lugar } from "./empezarViaje";
-import { aValorLocal, horaDeAtajo, type Atajo } from "./ponerAlDiaLogica";
+import { aValorLocal } from "./ponerAlDiaLogica";
 import { SelectorLugar } from "./SelectorLugar";
 import {
   cuerpoDeUbicacion,
@@ -21,26 +21,21 @@ const INPUT =
   "w-full bg-[#0D1719] border border-[#334155] rounded-xl px-3 py-2 text-sm text-white [color-scheme:dark]";
 const BTN =
   "bg-[#BADC1E] text-[#0D1719] font-bold px-4 py-2 rounded-xl hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed";
-const CHIP =
-  "px-3 py-1 rounded-full border border-[#334155] text-[#cbd5e1] text-sm font-semibold hover:border-[#BADC1E]";
-
-const ATAJOS: { id: Atajo; texto: string }[] = [
-  { id: "ahora", texto: "Ahora" },
-  { id: "hace1h", texto: "Hace 1 h" },
-  { id: "hace6h", texto: "Hace 6 h" },
-];
 
 export function UbicacionesViaje({
   viaje,
   puedeEditar,
   onCambio,
   ahora,
+  formularioAbierto = true,
 }: {
   viaje: FilaViaje;
   puedeEditar: boolean;
   onCambio: () => Promise<void>;
   /** La hora de ahora (ms), para el «hace 2 h»: la pantalla la refresca sola. */
   ahora: number;
+  /** «Actualizar ubicación» abre el formulario; cerrado, solo se ve el historial. */
+  formularioAbierto?: boolean;
 }) {
   const historial = viaje.ubicaciones ?? [];
   const ultima = viaje.ultima_ubicacion ?? null;
@@ -153,7 +148,7 @@ export function UbicacionesViaje({
         </ul>
       )}
 
-      {puedeAnotar && (
+      {puedeAnotar && formularioAbierto && (
         <div className="space-y-3 border-t border-[#2a2e37] pt-3">
           <SelectorLugar
             key={claveSelector}
@@ -178,18 +173,6 @@ export function UbicacionesViaje({
                 onChange={(e) => setHora(e.target.value)}
                 className={INPUT}
               />
-              <div className="mt-2 flex flex-wrap gap-2">
-                {ATAJOS.map((a) => (
-                  <button
-                    key={a.id}
-                    type="button"
-                    className={CHIP}
-                    onClick={() => setHora(horaDeAtajo(a.id, Date.now(), null) ?? hora)}
-                  >
-                    {a.texto}
-                  </button>
-                ))}
-              </div>
             </div>
             <div>
               <label
