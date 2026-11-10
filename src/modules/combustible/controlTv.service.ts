@@ -5,8 +5,13 @@
 // hay 403 ni error.
 import type { PoolClient } from "pg";
 
-import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
-import type { AlcanceCombustible } from "./alcance";
+import { LITROS_POR_GALON, litrosSql } from "../../server/shared/utils/unidades";
+import {
+  agregarAmbitoVales,
+  filtroHechoDeGrifo,
+  type AlcanceCombustible,
+  type AmbitoVales,
+} from "./alcance";
 import { listarCompras } from "./comprasCisterna.service";
 import type { CombustibleService } from "./combustible.service";
 import { detencionDe } from "./motivosDetencion";
@@ -181,5 +186,171 @@ export async function resumenControlTv(
       ? { combustible: await combustible(client, tenantId, ctx.alcance, servicio) }
       : {}),
     ...(ctx.combustible && ctx.urea ? { urea: await urea(client, tenantId, servicio) } : {}),
+  };
+}
+
+// ── Consumo y entrada de combustible por período ───────────────────────────
+
+export const PERIODOS_TV = ["24h", "7d", "30d"] as const;
+export type PeriodoTv = (typeof PERIODOS_TV)[number];
+
+/** 24 h se agrupa por hora; 7 y 30 días, por día. Los cortes son de la hora de Lima. */
+const PERIODO: Record<PeriodoTv, { unidad: "hour" | "day"; n: number; paso: string }> = {
+  "24h": { unidad: "hour", n: 24, paso: "1 hour" },
+  "7d": { unidad: "day", n: 7, paso: "1 day" },
+  "30d": { unidad: "day", n: 30, paso: "1 day" },
+};
+const INICIO_SQL = `date_trunc($2::text, now(), 'America/Lima') - ($3::int - 1) * $4::interval`;
+
+type Grupo = "interno" | "tanqueta" | "ruta";
+const GRUPOS: Grupo[] = ["interno", "tanqueta", "ruta"];
+
+/** Lo que llegó a una unidad, en galones y en soles, por hora o por día y por origen: grifo
+ *  interno, tanqueta o compra en ruta. El vale que solo llena una tanqueta desde el tanque
+ *  (destino «reserva_cubeta») es un traspaso entre depósitos y NO cuenta: el combustible se cuenta
+ *  cuando de ahí se carga a una unidad. Los cortes vacíos salen en 0 para que la gráfica no tenga huecos. */
+async function consumo(
+  client: PoolClient,
+  tenantId: string,
+  periodo: PeriodoTv,
+  ambito: AmbitoVales
+) {
+  const { unidad, n, paso } = PERIODO[periodo];
+  const valores: unknown[] = [tenantId, unidad, n, paso];
+  const condiciones = [
+    "d.tenant_id = $1",
+    "d.producto = 'combustible'",
+    "d.anulada_en IS NULL",
+    "d.tipo_destino IS DISTINCT FROM 'reserva_cubeta'",
+    `d.despachado_en >= ${INICIO_SQL}`,
+  ];
+  agregarAmbitoVales(condiciones, valores, "d", ambito);
+  const r = await client.query<{
+    t: Date;
+    grupo: Grupo | null;
+    gal: string | null;
+    costo: string | null;
+  }>(
+    `WITH b AS (
+       SELECT generate_series(${INICIO_SQL}, date_trunc($2::text, now(), 'America/Lima'),
+                              $4::interval) AS t),
+     v AS (
+       SELECT date_trunc($2::text, d.despachado_en, 'America/Lima') AS t,
+              CASE WHEN d.origen = 'tanqueta' THEN 'tanqueta'
+                   WHEN d.origen IN ('tanque_propio', 'excedente_recepcion') THEN 'interno'
+                   ELSE 'ruta' END AS grupo,
+              SUM(${litrosSql("t")}) / ${LITROS_POR_GALON} AS gal,
+              SUM(d.cantidad * d.costo_unitario) AS costo
+         FROM combustible_despachos d
+         LEFT JOIN combustible t ON t.id = COALESCE(d.combustible_id, d.tanque_excedente_id)
+                                AND t.tenant_id = d.tenant_id
+        WHERE ${condiciones.join(" AND ")}
+        GROUP BY 1, 2)
+     SELECT b.t, v.grupo, v.gal, v.costo FROM b LEFT JOIN v ON v.t = b.t ORDER BY b.t`,
+    valores
+  );
+  const porCorte = new Map<string, Record<Grupo, { gal: number; costo: number }>>();
+  for (const f of r.rows) {
+    const clave = f.t.toISOString();
+    const fila =
+      porCorte.get(clave) ??
+      (Object.fromEntries(GRUPOS.map((g) => [g, { gal: 0, costo: 0 }])) as Record<
+        Grupo,
+        { gal: number; costo: number }
+      >);
+    if (f.grupo) fila[f.grupo] = { gal: num(f.gal), costo: num(f.costo) };
+    porCorte.set(clave, fila);
+  }
+  const total = { gal: 0, costo: 0, interno_gal: 0, tanqueta_gal: 0, ruta_gal: 0 };
+  const serie = [...porCorte].map(([t, g]) => {
+    const gal = GRUPOS.reduce((s, k) => s + g[k].gal, 0);
+    const costo = GRUPOS.reduce((s, k) => s + g[k].costo, 0);
+    total.gal += gal;
+    total.costo += costo;
+    for (const k of GRUPOS) total[`${k}_gal` as const] += g[k].gal;
+    return {
+      t,
+      gal,
+      costo,
+      interno_gal: g.interno.gal,
+      tanqueta_gal: g.tanqueta.gal,
+      ruta_gal: g.ruta.gal,
+    };
+  });
+  return { periodo, agrupado_por: unidad === "hour" ? "hora" : "dia", total, serie };
+}
+
+/** Lo que entró a la empresa en el período: lo recibido (al tanque y lo que sobró para tanquetas y
+ *  cisternas), lo que decían las facturas y la diferencia, más las últimas recepciones. Todo en
+ *  galones. La diferencia solo se calcula en las recepciones que vienen de una compra registrada. */
+async function entrada(
+  client: PoolClient,
+  tenantId: string,
+  periodo: PeriodoTv,
+  alcance: AlcanceCombustible
+) {
+  const { unidad, n, paso } = PERIODO[periodo];
+  const valores: unknown[] = [tenantId, unidad, n, paso];
+  const f = filtroHechoDeGrifo(alcance, "r", valores.length + 1);
+  valores.push(...f.valores);
+  const gal = (col: string, u: string) =>
+    `(${col} / CASE WHEN ${u} = 'L' THEN ${LITROS_POR_GALON} ELSE 1 END)`;
+  const desde = `
+    FROM combustible_recepciones r
+    JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
+    LEFT JOIN combustible_compras_cisterna co ON co.id = r.compra_id AND co.tenant_id = r.tenant_id
+   WHERE r.tenant_id = $1 AND r.producto = 'combustible' AND r.anulada_en IS NULL
+     AND r.recibido_en >= ${INICIO_SQL} AND ${f.sql}`;
+  const recibido = gal("r.cantidad + r.cantidad_derivada", "c.unidad");
+  const dif = `(${recibido} - ${gal("co.cantidad_facturada", "co.unidad")})`;
+  const resumen = await client.query(
+    `SELECT count(*)::int AS recepciones,
+            COALESCE(SUM(${gal("r.cantidad", "c.unidad")}), 0) AS al_tanque_gal,
+            COALESCE(SUM(${gal("r.cantidad_derivada", "c.unidad")}), 0) AS derivado_gal,
+            COALESCE(SUM(r.cantidad * r.costo_unitario), 0) AS costo,
+            COALESCE(SUM(CASE WHEN r.compra_id IS NOT NULL
+                              THEN ${gal("co.cantidad_facturada", "co.unidad")} END), 0) AS facturado_gal,
+            COALESCE(SUM(CASE WHEN r.compra_id IS NOT NULL THEN ${dif} END), 0) AS diferencia_gal
+       ${desde}`,
+    valores
+  );
+  const ultimas = await client.query(
+    `SELECT r.id, r.recibido_en, c.tanque_nombre, ${recibido} AS gal,
+            r.cantidad * r.costo_unitario AS costo, co.numero_documento AS compra_documento,
+            CASE WHEN r.compra_id IS NOT NULL THEN ${dif} END AS diferencia_gal
+       ${desde} ORDER BY r.recibido_en DESC, r.id DESC LIMIT 5`,
+    valores
+  );
+  const x = resumen.rows[0];
+  return {
+    recepciones: x.recepciones as number,
+    recibido_gal: num(x.al_tanque_gal) + num(x.derivado_gal),
+    al_tanque_gal: num(x.al_tanque_gal),
+    derivado_gal: num(x.derivado_gal),
+    costo: num(x.costo),
+    facturado_gal: num(x.facturado_gal),
+    diferencia_gal: num(x.diferencia_gal),
+    ultimas: ultimas.rows.map((u) => ({
+      id: u.id,
+      recibido_en: new Date(u.recibido_en).toISOString(),
+      tanque: u.tanque_nombre,
+      gal: num(u.gal),
+      costo: num(u.costo),
+      compra_documento: u.compra_documento ?? null,
+      diferencia_gal: u.diferencia_gal == null ? null : num(u.diferencia_gal),
+    })),
+  };
+}
+
+/** El consumo y la entrada del período. Solo con Combustible: sin él, el que llama no lo pide. */
+export async function consumoControlTv(
+  client: PoolClient,
+  tenantId: string,
+  periodo: PeriodoTv,
+  ambito: AmbitoVales
+) {
+  return {
+    consumo: await consumo(client, tenantId, periodo, ambito),
+    entrada: await entrada(client, tenantId, periodo, ambito.alcance),
   };
 }

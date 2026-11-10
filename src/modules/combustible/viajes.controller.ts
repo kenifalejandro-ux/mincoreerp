@@ -31,7 +31,7 @@ import type {
 } from "../../server/schemas/combustible.schema";
 import { ambitoDe } from "./alcance";
 import { CombustibleService } from "./combustible.service";
-import { resumenControlTv } from "./controlTv.service";
+import { consumoControlTv, resumenControlTv, type PeriodoTv } from "./controlTv.service";
 import * as viajes from "./viajes.service";
 import {
   catalogoParaCrear,
@@ -645,6 +645,19 @@ export const viajesController = {
           },
           combustible
         )
+      )
+    );
+  },
+
+  /** El consumo y la entrada de combustible del período (24 h, 7 o 30 días) para el Control TV. Sin
+   *  el módulo Combustible no hay nada que calcular: responde vacío, no 403. */
+  async controlTvConsumo(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    if (!req.usuario!.modulosPermitidos.includes("combustible")) return res.json({});
+    const periodo = req.validatedQuery as { periodo: PeriodoTv };
+    res.json(
+      await withTenant(tenantId, (c) =>
+        consumoControlTv(c, tenantId, periodo.periodo, ambitoDe(req))
       )
     );
   },

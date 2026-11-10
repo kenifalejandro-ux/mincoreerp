@@ -2995,6 +2995,12 @@ export const marcaSinOrdenSchema = z
   .refine((v) => (!v.hora && !v.reemplazar) || (v.motivo?.length ?? 0) >= 3, MENSAJE_MOTIVO_HORA);
 export type MarcaSinOrdenInput = z.infer<typeof marcaSinOrdenSchema>;
 
+// Control TV: el período del consumo y de la entrada de combustible (24 h por hora; 7 y 30 días por día).
+export const controlTvConsumoQuerySchema = z.object({
+  periodo: z.enum(["24h", "7d", "30d"]).default("24h"),
+});
+export type ControlTvConsumoQuery = z.infer<typeof controlTvConsumoQuerySchema>;
+
 export const aceptarMandoSchema = entregaMandoSchema.pick({
   marcado_en: true,
   cliente_uuid: true,
