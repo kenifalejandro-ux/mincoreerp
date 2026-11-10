@@ -5,13 +5,14 @@
 // Mismo criterio que server.ts en el backend.
 import "./config/sentry";
 
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { registerSW } from "virtual:pwa-register";
 
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { AuthProvider } from "./context/AuthContext";
+import { puedeVerControlTv } from "./components/flota/flotaAcceso";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 import { iniciarSincronizacionOffline } from "./offline/offlineSync";
 import ResetPasswordPage from "./pages/ResetPasswordPage";
 import PlatformApp from "./platform/PlatformApp";
@@ -21,6 +22,10 @@ import "./styles/globals.css"; // estilos globales
 import "./styles/index.css"; // si lo necesitas
 import "./styles/tema-oscuro.css"; // paleta oscura del ERP (ver el archivo)
 import "./styles/responsive.css"; // adaptación a pantalla común a todo el ERP
+
+// El Control TV (pantalla de la gerencia) se carga aparte: el ERP de todos los días no la baja.
+// eslint-disable-next-line react-refresh/only-export-components
+const ControlViajesTv = lazy(() => import("./pages/ControlViajesTv"));
 
 // Opcional: si vas a usar íconos (Lucide, Heroicons, etc.)
 // import './lib/icons';
@@ -72,10 +77,43 @@ function RutaActual() {
     return <PlatformApp />;
   }
 
+  if (window.location.pathname === "/control-tv") {
+    return (
+      <AuthProvider>
+        <ControlTvRuta />
+      </AuthProvider>
+    );
+  }
+
   return (
     <AuthProvider>
       <App />
     </AuthProvider>
+  );
+}
+
+// /control-tv: pantalla propia, fuera del menú del ERP, pero con la sesión del tenant. Sin sesión
+// muestra el inicio de sesión de siempre y, al entrar, la pantalla; sin el permiso «Control TV»,
+// un aviso.
+// eslint-disable-next-line react-refresh/only-export-components
+function ControlTvRuta() {
+  const { usuario, cargando } = useAuth();
+  if (cargando) return null;
+  if (!usuario) return <App />;
+  if (!puedeVerControlTv(usuario)) {
+    return (
+      <p className="p-8 text-center text-slate-300">
+        Tu perfil no tiene acceso al Control TV.{" "}
+        <a href="/" className="underline">
+          Volver
+        </a>
+      </p>
+    );
+  }
+  return (
+    <Suspense fallback={null}>
+      <ControlViajesTv />
+    </Suspense>
   );
 }
 

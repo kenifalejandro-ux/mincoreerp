@@ -84,3 +84,12 @@ export function puedeVerFlota(usuario: UsuarioDeFlota | undefined): boolean {
 export function destinoDeFlota(usuario: UsuarioDeFlota | undefined): "flota" | "flota:viajes" {
   return puedeVerUnidades(usuario) ? "flota" : "flota:viajes";
 }
+
+/** El Control TV (pantalla de la gerencia): hace falta el módulo `viajes`. Admin y Lectura lo ven por
+ *  defecto; el administrador de la empresa lo da o lo quita por persona (el servidor exige lo mismo). */
+export function puedeVerControlTv(usuario: UsuarioDeFlota | undefined): boolean {
+  if (!usuario || !usuario.modulosPermitidos.includes("viajes")) return false;
+  const override = usuario.permisosPestanas?.["combustible:viajes:control_tv"];
+  if (override !== undefined) return override;
+  return usuario.rol === "admin" || usuario.rol === "lectura";
+}
