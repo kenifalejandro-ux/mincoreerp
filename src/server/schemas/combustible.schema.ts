@@ -2972,6 +2972,29 @@ export const corregirMarcaDeParadaSchema = z
   });
 export type CorregirMarcaDeParadaInput = z.infer<typeof corregirMarcaDeParadaSchema>;
 
+// La oficina registra la llegada o la salida de cualquier parada, sin orden (el servidor solo cuida
+// que las horas no se crucen). Con hora a mano o al reemplazar una marca pide motivo.
+export const marcaSinOrdenSchema = z
+  .object({
+    que: z.enum(["llegada", "salida"]),
+    orden: z.number().int().min(0).max(19),
+    hora: fechaHoraNoMuyAntigua.optional(),
+    medidor,
+    reemplazar: z.boolean().optional(),
+    motivo: motivo.optional(),
+    cliente_uuid: z.string().uuid().optional(),
+    descanso: z
+      .object({
+        motivo: motivoDescanso.min(3),
+        donde: dondeDescanso,
+        desde: fechaHoraNoMuyAntigua,
+        hasta: fechaHoraNoMuyAntigua.optional(),
+      })
+      .optional(),
+  })
+  .refine((v) => (!v.hora && !v.reemplazar) || (v.motivo?.length ?? 0) >= 3, MENSAJE_MOTIVO_HORA);
+export type MarcaSinOrdenInput = z.infer<typeof marcaSinOrdenSchema>;
+
 export const aceptarMandoSchema = entregaMandoSchema.pick({
   marcado_en: true,
   cliente_uuid: true,

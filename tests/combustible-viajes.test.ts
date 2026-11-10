@@ -2920,4 +2920,172 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     expect(cm.status, JSON.stringify(cm.body)).toBe(200);
     expect((await descansos()).map((d) => d.detiene)).toEqual([true]);
   });
+
+  // ── Marcar sin orden (POST /viajes/:id/marcas) ───────────────────────────
+
+  const marcas = (id: number, cuerpo: Record<string, unknown>, agente: Agente = admin) =>
+    agente.post(url(id, "/marcas")).send(cuerpo);
+  const M = "no se marcó a tiempo";
+
+  it("marcas: la llegada final cierra el viaje aunque falten las intermedias, y después se completan", async () => {
+    const id = await viajeAtrasado();
+    const fin = await marcas(id, { que: "llegada", orden: 2, hora: hora(30), motivo: M });
+    expect(fin.status, JSON.stringify(fin.body)).toBe(200);
+    expect(fin.body.estado).toBe("cerrado");
+    expect((await marcas(id, { que: "salida", orden: 1, hora: hora(12), motivo: M })).status).toBe(
+      200
+    );
+    expect((await marcas(id, { que: "llegada", orden: 1, hora: hora(10), motivo: M })).status).toBe(
+      200
+    );
+    const p = await paradasDe(id);
+    expect(Date.parse(p[1].llegada_en!)).toBe(Date.parse(hora(10)));
+    expect(Date.parse(p[1].salida_en!)).toBe(Date.parse(hora(12)));
+  });
+
+  it("marcas: solo cuida que las horas no se crucen y no sean futuras", async () => {
+    const id = await viajeAtrasado();
+    expect((await marcas(id, { que: "llegada", orden: 1, hora: hora(10), motivo: M })).status).toBe(
+      200
+    );
+    // Salida antes de la llegada de la misma parada, o antes de la salida del origen.
+    expect((await marcas(id, { que: "salida", orden: 1, hora: hora(5), motivo: M })).status).toBe(
+      400
+    );
+    expect((await marcas(id, { que: "llegada", orden: 2, hora: hora(8), motivo: M })).status).toBe(
+      400
+    );
+    const futura = new Date(Date.now() + 3_600_000).toISOString();
+    expect((await marcas(id, { que: "salida", orden: 1, hora: futura, motivo: M })).status).toBe(
+      400
+    );
+    // La llegada final cierra; ya cerrado, una intermedia no puede pasarla.
+    expect((await marcas(id, { que: "llegada", orden: 2, hora: hora(30), motivo: M })).status).toBe(
+      200
+    );
+    expect((await marcas(id, { que: "salida", orden: 1, hora: hora(50), motivo: M })).status).toBe(
+      400
+    );
+  });
+
+  it("marcas: rechaza llegada al origen, salida de la última y paradas que no existen", async () => {
+    const id = await viajeAtrasado();
+    expect((await marcas(id, { que: "llegada", orden: 0, hora: hora(1), motivo: M })).status).toBe(
+      400
+    );
+    expect((await marcas(id, { que: "salida", orden: 2, hora: hora(1), motivo: M })).status).toBe(
+      400
+    );
+    expect((await marcas(id, { que: "llegada", orden: 7, hora: hora(1), motivo: M })).status).toBe(
+      400
+    );
+  });
+
+  it("marcas: hora a mano y reemplazo piden motivo; repetir sin «reemplazar» da 409", async () => {
+    const id = await viajeAtrasado();
+    expect((await marcas(id, { que: "llegada", orden: 1, hora: hora(10) })).status).toBe(400);
+    expect((await marcas(id, { que: "llegada", orden: 1, hora: hora(10), motivo: M })).status).toBe(
+      200
+    );
+    expect((await marcas(id, { que: "llegada", orden: 1, hora: hora(11), motivo: M })).status).toBe(
+      409
+    );
+    expect(
+      (await marcas(id, { que: "llegada", orden: 1, hora: hora(11), reemplazar: true })).status
+    ).toBe(400);
+    const r = await marcas(id, {
+      que: "llegada",
+      orden: 1,
+      hora: hora(11),
+      reemplazar: true,
+      motivo: "Se anotó mal la hora",
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(Date.parse((await paradasDe(id))[1].llegada_en!)).toBe(Date.parse(hora(11)));
+  });
+
+  it("marcas: cambia la hora de la salida del origen y de la llegada final", async () => {
+    const id = await viajeAtrasado();
+    await marcas(id, { que: "llegada", orden: 2, hora: hora(30), motivo: M });
+    const sale = await marcas(id, {
+      que: "salida",
+      orden: 0,
+      hora: hora(2),
+      reemplazar: true,
+      motivo: "Salió más tarde",
+    });
+    expect(sale.status, JSON.stringify(sale.body)).toBe(200);
+    expect(Date.parse(sale.body.viaje?.inicio_en ?? sale.body.inicio_en)).toBe(Date.parse(hora(2)));
+    const llega = await marcas(id, {
+      que: "llegada",
+      orden: 2,
+      hora: hora(31),
+      reemplazar: true,
+      motivo: "Llegó más tarde",
+    });
+    expect(llega.status, JSON.stringify(llega.body)).toBe(200);
+    const p = await paradasDe(id);
+    expect(Date.parse(p[0].salida_en!)).toBe(Date.parse(hora(2)));
+    expect(Date.parse(p[2].llegada_en!)).toBe(Date.parse(hora(31)));
+    // El medidor de los extremos no se cambia por aquí.
+    expect(
+      (
+        await marcas(id, {
+          que: "llegada",
+          orden: 2,
+          hora: hora(32),
+          reemplazar: true,
+          motivo: "Prueba",
+          medidor: 500,
+        })
+      ).status
+    ).toBe(400);
+  });
+
+  it("marcas: un descanso abierto no bloquea, y puede registrarse el descanso junto con la marca", async () => {
+    const id = await viajeAtrasado();
+    const d = await admin
+      .post(url(id, "/descanso"))
+      .send({ motivo: "Almuerzo", inicio_en: hora(5) });
+    expect(d.status, JSON.stringify(d.body)).toBe(200);
+    expect((await marcas(id, { que: "llegada", orden: 1, hora: hora(10), motivo: M })).status).toBe(
+      200
+    );
+    const otro = await viajeAtrasado();
+    const r = await marcas(otro, {
+      que: "llegada",
+      orden: 1,
+      hora: hora(10),
+      motivo: M,
+      descanso: { motivo: "Dormir", desde: hora(6), hasta: hora(8) },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const descansos = (await admin.get(url(otro))).body.viaje.descansos as unknown[];
+    expect(descansos).toHaveLength(1);
+    // Un descanso posterior a la marca no vale.
+    const mal = await marcas(otro, {
+      que: "salida",
+      orden: 1,
+      hora: hora(12),
+      motivo: M,
+      descanso: { motivo: "Dormir", desde: hora(13) },
+    });
+    expect(mal.status).toBe(400);
+  });
+
+  it("marcas: el reintento con el mismo identificador no duplica, y el conductor no puede usarla", async () => {
+    const id = await viajeAtrasado();
+    const cuerpo = {
+      que: "llegada",
+      orden: 1,
+      hora: hora(10),
+      motivo: M,
+      cliente_uuid: crypto.randomUUID(),
+    };
+    expect((await marcas(id, cuerpo)).status).toBe(200);
+    expect((await marcas(id, cuerpo)).status).toBe(200);
+    expect(Date.parse((await paradasDe(id))[1].llegada_en!)).toBe(Date.parse(hora(10)));
+    const yo = await conductor();
+    expect((await marcas(id, { ...cuerpo, cliente_uuid: undefined }, yo.agente)).status).toBe(403);
+  });
 });

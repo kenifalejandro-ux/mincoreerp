@@ -739,7 +739,9 @@ export async function cerrarViaje(
   usuarioId: string,
   id: number,
   data: MarcaFin,
-  dniConductor?: string
+  dniConductor?: string,
+  /** La oficina cierra con la llegada final aunque falten marcas intermedias. */
+  sinOrden = false
 ) {
   const v = await viajeParaCambiar(client, tenantId, id);
   exigirDelViaje(v, dniConductor);
@@ -753,7 +755,7 @@ export async function cerrarViaje(
   // El conductor no cierra con el descanso abierto; la oficina que cierra por él lo termina.
   if (dniConductor !== undefined) await exigirSinDescansoAbierto(client, tenantId, id);
   const paradasDelViaje = await leerParadas(client, tenantId, id);
-  if (paradasDelViaje.length > 2) {
+  if (!sinOrden && paradasDelViaje.length > 2) {
     const pos = posicion(paradasDelViaje);
     if (pos.tipo !== "en_marcha" || pos.hacia !== paradasDelViaje.length - 1) {
       throw new AppError(
@@ -1107,6 +1109,210 @@ export async function salirDeParada(
     orden: pos.en,
     cierra: false,
   };
+}
+
+export interface MarcaSinOrden {
+  que: "llegada" | "salida";
+  orden: number;
+  /** Hora a mano; sin ella manda el reloj del servidor. */
+  hora?: string;
+  medidor?: number | null;
+  /** Hay una marca puesta y se quiere cambiar: pide motivo. */
+  reemplazar?: boolean;
+  motivo?: string;
+  cliente_uuid?: string;
+  /** Un descanso que ocurrió antes de esta marca (en el camino o durante la estadía). */
+  descanso?: { motivo: string; donde?: string | null; desde: string; hasta?: string };
+}
+
+/** La oficina registra o cambia la llegada o la salida de CUALQUIER parada, sin orden: solo exige
+ *  que las horas no se crucen con las otras marcas del viaje. Un descanso abierto no la bloquea.
+ *  Cambiar una marca puesta (incluida la salida del origen y la llegada final) pide motivo. La
+ *  llegada final sin marcar cierra el viaje; el medidor del origen y de la llegada final ya
+ *  puestos se corrigen editando el viaje. */
+export async function marcarParadaSinOrden(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  id: number,
+  data: MarcaSinOrden
+): Promise<ResultadoMarca & { previo: Date | null }> {
+  const v = await viajeParaCambiar(client, tenantId, id);
+  const paradas = await leerParadas(client, tenantId, id);
+  const uuid = data.cliente_uuid ?? null;
+  if (
+    uuid &&
+    (v.fin_cliente_uuid === uuid ||
+      paradas.some((p) => p.llegada_cliente_uuid === uuid || p.salida_cliente_uuid === uuid))
+  ) {
+    return {
+      antes: v,
+      despues: await getViaje(client, tenantId, id),
+      repetido: true,
+      orden: null,
+      cierra: false,
+      previo: null,
+    };
+  }
+  if (v.estado === "programado") throw new AppError(409, "El viaje todavía no salió");
+  const n = paradas.length;
+  const { que, orden } = data;
+  if (!Number.isInteger(orden) || orden < 0 || orden > n - 1) {
+    throw new AppError(400, "Esa parada no existe en el viaje");
+  }
+  if (que === "llegada" && orden === 0) {
+    throw new AppError(400, "El origen no tiene llegada: solo salida");
+  }
+  if (que === "salida" && orden === n - 1) {
+    throw new AppError(400, "La última parada no tiene salida: solo llegada");
+  }
+  const actual = paradas[orden][`${que}_en`];
+  if (actual && !data.reemplazar) {
+    throw new AppError(409, "Esa marca ya está registrada: usa «Reemplazar» e indica el motivo");
+  }
+  const motivo = data.motivo?.trim() ?? "";
+  if ((actual || data.hora) && motivo.length < 3) {
+    throw new AppError(
+      400,
+      actual ? "Reemplazar una marca pide un motivo" : "Poner la hora a mano pide un motivo"
+    );
+  }
+  const { hora, origen } = await horaDeLaMarca(client, data.hora, undefined, undefined);
+  const t = Date.parse(hora);
+
+  // Las horas no se cruzan con las otras marcas del viaje (las que existan, en cualquier orden).
+  const marcas = paradas.flatMap((p) => [
+    { orden: p.orden, que: "llegada", en: p.llegada_en, med: p.llegada_medidor },
+    { orden: p.orden, que: "salida", en: p.salida_en, med: p.salida_medidor },
+  ]);
+  const i = marcas.findIndex((m) => m.orden === orden && m.que === que);
+  const antes = marcas.slice(0, i).reverse();
+  const despues = marcas.slice(i + 1);
+  const previa = antes.find((m) => m.en != null);
+  const siguiente = despues.find((m) => m.en != null);
+  if (previa && t <= new Date(previa.en as Date).getTime()) {
+    throw new AppError(400, "La hora tiene que ser posterior a la marca anterior del viaje");
+  }
+  if (siguiente && t >= new Date(siguiente.en as Date).getTime()) {
+    throw new AppError(400, "La hora tiene que ser anterior a la marca siguiente del viaje");
+  }
+
+  const esExtremo = orden === 0 || orden === n - 1;
+  if (data.medidor != null && esExtremo && actual) {
+    throw new AppError(
+      400,
+      "El medidor del origen y de la llegada final se corrige editando el viaje"
+    );
+  }
+  if (data.medidor != null && !(esExtremo && !actual && orden === n - 1)) {
+    const piso = antes.find((m) => m.med != null)?.med ?? null;
+    validarMedidorDeParada(v, data.medidor, piso, que, false);
+    const techo = despues.find((m) => m.med != null)?.med;
+    if (techo != null && data.medidor > Number(techo)) {
+      throw new AppError(
+        400,
+        `El medidor (${data.medidor}) es mayor que la marca siguiente (${Number(techo)})`
+      );
+    }
+  }
+
+  // El descanso va antes de la marca: así el que cierra el viaje lo encuentra ya registrado.
+  const d = data.descanso;
+  if (d) {
+    if (d.hasta && Date.parse(d.hasta) <= Date.parse(d.desde)) {
+      throw new AppError(400, "El fin del descanso tiene que ser después del inicio");
+    }
+    if (Date.parse(d.hasta ?? d.desde) > t) {
+      throw new AppError(400, "El descanso tiene que ser anterior a la marca");
+    }
+    await iniciarDescanso(client, tenantId, usuarioId, id, {
+      motivo: d.motivo,
+      donde: d.donde,
+      hora: d.desde,
+    });
+    if (d.hasta) {
+      await terminarDescanso(client, tenantId, usuarioId, id, { motivo: d.motivo, hora: d.hasta });
+    }
+  }
+
+  const resultado = (
+    cierra: boolean,
+    repetido = false
+  ): Promise<ResultadoMarca & { previo: Date | null }> =>
+    getViaje(client, tenantId, id).then((despues) => ({
+      antes: v,
+      despues,
+      repetido,
+      orden,
+      cierra,
+      previo: actual,
+    }));
+  const inicio = new Date(v.inicio_en as Date).toISOString();
+  const fin = v.fin_en ? new Date(v.fin_en as Date).toISOString() : null;
+
+  if (orden === 0) {
+    // La salida del origen es el inicio del propio viaje.
+    await validarVentanaConMarcas(client, tenantId, id, hora, fin, null, null);
+    await validarSinTraslape(client, tenantId, v.equipo_id, hora, fin, id);
+    await client.query(
+      `UPDATE combustible_viajes SET inicio_en = $2, inicio_origen_hora = 'manual' WHERE id = $1`,
+      [id, hora]
+    );
+    await sincronizarExtremos(client, tenantId, id);
+    return resultado(false);
+  }
+  if (orden === n - 1 && actual) {
+    // Cambiar la hora de la llegada final (el viaje ya cerró).
+    await validarVentanaConMarcas(client, tenantId, id, inicio, hora, null, null);
+    await validarSinTraslape(client, tenantId, v.equipo_id, inicio, hora, id);
+    await client.query(
+      `UPDATE combustible_viajes SET fin_en = $2, fin_origen_hora = 'manual' WHERE id = $1`,
+      [id, hora]
+    );
+    await sincronizarExtremos(client, tenantId, id);
+    return resultado(false);
+  }
+  if (orden === n - 1) {
+    if (v.estado !== "en_curso") throw new AppError(409, "El viaje no está en curso");
+    const r = await cerrarViaje(
+      client,
+      tenantId,
+      usuarioId,
+      id,
+      {
+        medidor_fin: data.medidor,
+        fin_en: data.hora ? hora : undefined,
+        cliente_uuid: uuid ?? undefined,
+      },
+      undefined,
+      true
+    );
+    return {
+      antes: r.antes,
+      despues: r.despues,
+      repetido: r.repetido,
+      orden,
+      cierra: true,
+      previo: null,
+    };
+  }
+  if (actual) {
+    // Una parada intermedia con la marca ya puesta: la misma corrección de siempre.
+    await corregirMarcaDeParada(client, tenantId, id, orden, {
+      que,
+      hora,
+      medidor: data.medidor ?? undefined,
+      motivo,
+    });
+    return resultado(false);
+  }
+  await guardarMarcaDeParada(client, tenantId, id, orden, que, {
+    hora,
+    medidor: data.medidor ?? null,
+    origen,
+    uuid,
+  });
+  return resultado(false);
 }
 
 // ── Descansos ──────────────────────────────────────────────────────────────
