@@ -66,6 +66,10 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   await expect(tv.getByRole("button", { name: "Pantalla completa" })).toBeVisible();
   // La unidad del viaje aparece en la vista en vivo con su tipo.
   await expect(tv.getByTitle(new RegExp(`TV-${marca}`))).toBeVisible();
+  // Cada tipo tiene su propio largo: el volquete se dibuja más ancho que alto (44×24 en su lienzo).
+  const dibujo = tv.getByTitle(new RegExp(`TV-${marca}`)).locator("svg");
+  const caja = await dibujo.boundingBox();
+  expect(caja!.width).toBeGreaterThan(caja!.height * 1.5);
 
   // Tocar la unidad abre SU Control TV: el conductor primero, con su placa, y las horas del viaje.
   await tv
