@@ -186,6 +186,35 @@ describe("control TV: consumo y entrada", () => {
     });
   });
 
+  it("las cargas de un viaje traen su costo, para el costo de la unidad en el Control TV", async () => {
+    const lugar = async (nombre: string) =>
+      Number((await admin.post("/api/erp/viajes/lugares").send({ nombre })).body.id);
+    const a = await lugar(idUnico("Origen"));
+    const b = await lugar(idUnico("Destino"));
+    const eq = await admin.post("/api/erp/equipos").send({
+      placa_codigo: idUnico("VC"),
+      tipo: "VOLQUETE",
+      tipo_medidor: "horometro",
+      grifo_interno_id: principal,
+      conductor_nombre: "Juan Pérez",
+      conductor_dni: String(42000000 + seq++),
+    });
+    expect(eq.status, JSON.stringify(eq.body)).toBe(201);
+    const viaje = await admin.post("/api/erp/viajes").send({
+      equipo_id: eq.body.id,
+      origen_id: a,
+      destino_id: b,
+      inicio_en: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+    });
+    expect(viaje.status, JSON.stringify(viaje.body)).toBe(201);
+    const carga = await vale({ tipo_destino: "equipo", equipo_id: eq.body.id, medidor: 50 }, 7);
+    expect(carga.status, JSON.stringify(carga.body)).toBe(201);
+    const d = await admin.get(`/api/erp/viajes/${viaje.body.id}`);
+    expect(d.status).toBe(200);
+    expect(d.body.cargas).toHaveLength(1);
+    expect(Number(d.body.cargas[0].costo)).toBeCloseTo(7 * 16, 2);
+  });
+
   it("permiso «Control TV»: lectura sí, operador y conductor no, y el operador lo recibe si se le da", async () => {
     for (const ruta of [URL, "/api/erp/viajes/control-tv/resumen"]) {
       expect((await (await persona("lectura")).agente.get(ruta)).status, ruta).toBe(200);

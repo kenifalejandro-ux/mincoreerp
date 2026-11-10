@@ -3157,7 +3157,7 @@ export async function cargasDelViaje(
     `SELECT d.id, d.producto, d.origen, d.despachado_en, d.cantidad,
             CASE WHEN ${ES_GALON_D} THEN 'gal'
                  WHEN d.producto = 'urea' THEN 'L' ELSE COALESCE(c.unidad, 'L') END AS unidad,
-            ${LITROS_DE_D} AS litros,
+            ${LITROS_DE_D} AS litros, d.cantidad * d.costo_unitario AS costo,
             d.serie_talonario, d.n_vale, d.conductor_nombre,
             d.lectura_horometro, d.lectura_odometro,
             c.tanque_nombre, g.nombre AS grifo

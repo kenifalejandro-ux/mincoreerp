@@ -62,13 +62,19 @@ export function AccionesViaje({
   const p = viaje.paradas ?? [];
   // En una ruta A → B → A la salida de B es la del retorno.
   const retorno = p.length === 3 && p[2].lugar_id === p[0].lugar_id;
-  const botones: { id: Exclude<PanelAbierto, null>; texto: string; icono: typeof MapPin }[] = [
-    { id: "ubicacion", texto: "Actualizar ubicación", icono: MapPin },
-    { id: "llegada", texto: "Registrar llegada", icono: LogIn },
+  const botones: {
+    id: Exclude<PanelAbierto, null>;
+    texto: string;
+    icono: typeof MapPin;
+    color: string;
+  }[] = [
+    { id: "ubicacion", texto: "Actualizar ubicación", icono: MapPin, color: "text-sky-400" },
+    { id: "llegada", texto: "Registrar llegada", icono: LogIn, color: "text-emerald-400" },
     {
       id: "salida",
       texto: retorno ? "Registrar salida de retorno" : "Registrar salida",
       icono: LogOut,
+      color: "text-amber-400",
     },
   ];
   return (
@@ -80,13 +86,13 @@ export function AccionesViaje({
             type="button"
             aria-pressed={panel === b.id}
             onClick={() => onPanel(panel === b.id ? null : b.id)}
-            className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-bold ${
+            className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-bold text-white ${
               panel === b.id
-                ? "border-[#BADC1E] bg-[#BADC1E]/10 text-[#BADC1E]"
-                : "border-[#334155] bg-[#0D1719] text-white hover:border-[#BADC1E]"
+                ? "border-[#BADC1E] bg-[#BADC1E]/25"
+                : "border-[#BADC1E]/50 bg-[#BADC1E]/10 hover:bg-[#BADC1E]/20"
             }`}
           >
-            <b.icono className="w-4 h-4" aria-hidden />
+            <b.icono className={`w-4 h-4 ${b.color}`} aria-hidden />
             {b.texto}
           </button>
         ))}

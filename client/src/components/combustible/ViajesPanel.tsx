@@ -585,18 +585,7 @@ export default function ViajesPanel() {
   return (
     <div className="space-y-6">
       <div className="space-y-3">
-        {/* El Control TV engloba todo el resumen: va arriba del todo, a la derecha del título. */}
-        <div className="flex items-center justify-between gap-4">
-          <h2 className="text-2xl font-bold text-white">Viajes</h2>
-          {verTv && (
-            <button
-              onClick={() => window.open("/control-tv", "_blank")}
-              className="flex items-center gap-2 border border-[#BADC1E]/60 bg-[#BADC1E]/10 text-[#BADC1E] font-bold px-4 py-2 rounded-lg hover:bg-[#BADC1E]/20"
-            >
-              <Tv className="w-4 h-4" /> Control TV
-            </button>
-          )}
-        </div>
+        <h2 className="text-2xl font-bold text-white">Viajes</h2>
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-sm text-[#94a3b8]">
