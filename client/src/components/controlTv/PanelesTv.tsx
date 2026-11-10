@@ -98,22 +98,43 @@ export function PanelTanquetas({
           return (
             <li
               key={t.id}
-              className="grid grid-cols-[minmax(0,1fr)_90px_64px] items-center gap-2 text-sm"
+              className="grid grid-cols-[24px_minmax(0,1fr)_70px_64px] items-center gap-2 text-[12.5px]"
             >
+              <svg
+                viewBox="0 0 30 40"
+                className="h-8 w-6"
+                role="img"
+                aria-label={`${t.codigo} al ${pct} por ciento`}
+              >
+                <rect
+                  x={4}
+                  y={3}
+                  width={22}
+                  height={34}
+                  rx={6}
+                  fill="#0b1416"
+                  stroke="#ffffff40"
+                  strokeWidth={1.5}
+                />
+                <rect
+                  x={4}
+                  y={3 + 34 * (1 - pct / 100)}
+                  width={22}
+                  height={(34 * pct) / 100}
+                  rx={4}
+                  fill={pct < 100 ? "#fbbf24" : "#9bbd1c"}
+                />
+              </svg>
               <div className="min-w-0">
                 <b className="block truncate">{t.codigo}</b>
-                <small className="block truncate text-xs text-slate-400">
+                <small className="block truncate text-[11px] text-slate-400">
                   {t.equipo_asignado ? `Unidad ${t.equipo_asignado}` : (t.grifo ?? "")}
                 </small>
               </div>
-              <div
-                className="h-1.5 rounded bg-white/10"
-                role="img"
-                aria-label={`${pct} por ciento`}
-              >
+              <div className="h-1.5 overflow-hidden rounded bg-white/10">
                 <i
-                  className="block h-full rounded"
-                  style={{ width: `${pct}%`, background: pct < 100 ? "#fbbf24" : "#9bbd1c" }}
+                  className="block h-full rounded bg-gradient-to-r from-emerald-400 to-sky-400"
+                  style={{ width: `${pct}%` }}
                 />
               </div>
               <em className="text-right font-bold not-italic tabular-nums">
@@ -165,7 +186,8 @@ export function PanelConsumo({
   const pr = 10;
   const pt = 12;
   const pb = 26;
-  const tope = topeRedondo(Math.max(...serie.map((s) => s.gal), 0) * 1.05);
+  const pico = Math.max(...serie.map((s) => s.gal), 0);
+  const tope = topeRedondo(pico * 1.05);
   const paso = (W - pl - pr) / Math.max(serie.length, 1);
   const ancho = Math.min(24, paso * 0.72);
   const Y = (v: number) => pt + (H - pt - pb) * (1 - v / tope);
@@ -255,6 +277,18 @@ export function PanelConsumo({
                     />
                   ) : null;
                 })}
+                {s.gal === pico && s.gal > 0 && (
+                  <text
+                    x={x + ancho / 2}
+                    y={Y(s.gal) - 4}
+                    textAnchor="middle"
+                    fill="#e2e8f0"
+                    fontSize={11}
+                    fontWeight={700}
+                  >
+                    {fmt(s.gal, 0)}
+                  </text>
+                )}
                 {j % cada === 0 && (
                   <text
                     x={x + ancho / 2}
@@ -277,9 +311,9 @@ export function PanelConsumo({
 
 // ── El tanque con su tendencia ────────────────────────────────────────────
 
-function DibujoTanque({ pct, minPct }: { pct: number; minPct: number }) {
+function DibujoTanque({ pct, minPct }: { pct: number; minPct: number | null }) {
   const y = 10 + 130 * (1 - pct / 100);
-  const ym = 10 + 130 * (1 - minPct / 100);
+  const ym = minPct === null ? 0 : 10 + 130 * (1 - minPct / 100);
   return (
     <svg
       viewBox="0 0 110 160"
@@ -310,13 +344,15 @@ function DibujoTanque({ pct, minPct }: { pct: number; minPct: number }) {
       <g clipPath="url(#tvTanqueClip)">
         <rect x={12} y={y} width={86} height={140 - y} fill="url(#tvTanque)" />
       </g>
-      <line x1={12} x2={98} y1={ym} y2={ym} stroke="#fbbf24" strokeWidth={2} />
+      {minPct !== null && <line x1={12} x2={98} y1={ym} y2={ym} stroke="#fbbf24" strokeWidth={2} />}
       <text x={55} y={y + 26} textAnchor="middle" fill="#0b1416" fontSize={22} fontWeight={800}>
         {pct}%
       </text>
-      <text x={55} y={154} textAnchor="middle" fill="#94a3b8" fontSize={10}>
-        mín. {minPct}%
-      </text>
+      {minPct !== null && (
+        <text x={55} y={154} textAnchor="middle" fill="#94a3b8" fontSize={10}>
+          mín. {minPct}%
+        </text>
+      )}
     </svg>
   );
 }
@@ -385,7 +421,7 @@ export function PanelTanque({
         </select>
       )}
       <div className="grid min-h-0 flex-1 grid-cols-[96px_minmax(0,1fr)] items-center gap-2">
-        <DibujoTanque pct={pct} minPct={minPct} />
+        <DibujoTanque pct={pct} minPct={t.minimo !== null ? minPct : null} />
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex items-center justify-between gap-2">
             <Leyenda

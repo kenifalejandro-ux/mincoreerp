@@ -48,6 +48,7 @@ import {
   PanelTanquetas,
   PanelUrea,
 } from "../components/controlTv/PanelesTv";
+import { VistaUnidad } from "../components/controlTv/VistaUnidad";
 import { apiFetch } from "../services/apiClient";
 
 type Periodo = "24h" | "7d" | "30d";
@@ -199,7 +200,13 @@ function Dona({ f }: { f: Resumen["flota"] }) {
 
 /** La vista en vivo: cada unidad como el ícono de su tipo, de «Salida» a «Regreso» según sus marcas.
  *  Sin GPS es una estimación; con GPS será el mapa real. */
-function VistaEnVivo({ viajes }: { viajes: FilaViaje[] }) {
+function VistaEnVivo({
+  viajes,
+  onElegir,
+}: {
+  viajes: FilaViaje[];
+  onElegir: (id: string) => void;
+}) {
   const filas = 9;
   const orden = [4, 3, 5, 2, 6, 1, 7, 0, 8];
   const ultimo = orden.map(() => -99);
@@ -255,10 +262,12 @@ function VistaEnVivo({ viajes }: { viajes: FilaViaje[] }) {
           const cat = categoriaDe(v);
           const estado = estadoDelViaje(paradasDelViaje(v), v.descansos)?.texto ?? "";
           return (
-            <span
+            <button
               key={v.id}
+              onClick={() => onElegir(v.id)}
+              aria-label={`Ver ${unidadLabel(v)} en su Control TV`}
               title={`${unidadLabel(v)} · ${v.conductor_nombre ?? "sin conductor"} · ${v.equipo_tipo ?? "Otro"} · ${estado}`}
-              className={`absolute grid h-[30px] w-10 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-lg border bg-[#0b1719]/80 ${
+              className={`absolute grid h-[30px] w-10 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-lg border bg-[#0b1719]/80 cursor-pointer hover:bg-white/15 hover:z-10 ${
                 cat === "detenida" ? "animate-pulse motion-reduce:animate-none" : ""
               }`}
               style={{
@@ -269,7 +278,7 @@ function VistaEnVivo({ viajes }: { viajes: FilaViaje[] }) {
               }}
             >
               <IconoTipo tipo={v.equipo_tipo} className="w-8 h-6" />
-            </span>
+            </button>
           );
         })}
       </div>
@@ -294,6 +303,16 @@ export default function ControlViajesTv() {
   const [sinConexion, setSinConexion] = useState(false);
   const [ahora, setAhora] = useState(() => Date.now());
   const [pantallaCompleta, setPantallaCompleta] = useState(false);
+  // La unidad que se está mirando (null = el TV central); sale también del enlace del ícono de la fila.
+  const [unidad, setUnidad] = useState<string | null>(() =>
+    new URLSearchParams(window.location.search).get("unidad")
+  );
+  // Sube con cada actualización: la vista de la unidad se refresca junto con el tablero.
+  const [version, setVersion] = useState(0);
+  const elegir = (id: string | null) => {
+    setUnidad(id);
+    window.history.replaceState(null, "", id ? `/control-tv?unidad=${id}` : "/control-tv");
+  };
   // Una respuesta lenta no pisa a una más nueva.
   const pedido = useRef(0);
 
@@ -318,7 +337,10 @@ export default function ControlViajesTv() {
     if (c) setConsumo(c);
     if (v && Array.isArray(v.data)) setViajes(v.data);
     setSinConexion(!r);
-    if (r) setUltimaCarga(Date.now());
+    if (r) {
+      setUltimaCarga(Date.now());
+      setVersion((n) => n + 1);
+    }
   }, [periodo]);
 
   useEffect(() => {
@@ -385,22 +407,24 @@ export default function ControlViajesTv() {
           <span className="text-sm font-black tracking-[.28em] text-[#BADC1E]">MINCORE</span>
           <h1 className="text-xl font-bold">Control de viajes</h1>
           <div className="flex-1" />
-          <div className="inline-flex gap-0.5 rounded-xl border border-white/10 bg-white/5 p-0.5">
-            {PERIODOS.map((p) => (
-              <button
-                key={p.id}
-                aria-pressed={periodo === p.id}
-                onClick={() => setPeriodo(p.id)}
-                className={`rounded-lg px-3.5 py-1.5 text-sm font-bold ${
-                  periodo === p.id
-                    ? "bg-[#BADC1E] text-[#0D1719]"
-                    : "text-slate-400 hover:text-white"
-                }`}
-              >
-                {p.t}
-              </button>
-            ))}
-          </div>
+          {!unidad && (
+            <div className="inline-flex gap-0.5 rounded-xl border border-white/10 bg-white/5 p-0.5">
+              {PERIODOS.map((p) => (
+                <button
+                  key={p.id}
+                  aria-pressed={periodo === p.id}
+                  onClick={() => setPeriodo(p.id)}
+                  className={`rounded-lg px-3.5 py-1.5 text-sm font-bold ${
+                    periodo === p.id
+                      ? "bg-[#BADC1E] text-[#0D1719]"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  {p.t}
+                </button>
+              ))}
+            </div>
+          )}
           <span className="flex items-center gap-2 text-xs text-slate-400" role="status">
             <span
               className={`h-2 w-2 rounded-full ${sinConexion ? "bg-amber-400" : "bg-emerald-400"}`}
@@ -430,6 +454,15 @@ export default function ControlViajesTv() {
 
         {!f ? (
           <p className="py-20 text-center text-slate-400">Cargando el control de viajes…</p>
+        ) : unidad ? (
+          <VistaUnidad
+            viajes={viajes}
+            id={unidad}
+            version={version}
+            ahora={ahora}
+            onCambiar={elegir}
+            onVolver={() => elegir(null)}
+          />
         ) : (
           <>
             <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fit,minmax(215px,1fr))]">
@@ -492,7 +525,9 @@ export default function ControlViajesTv() {
                   <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.16em] text-slate-400">
                     <Truck className="w-4 h-4 text-[#BADC1E]" /> Flota en operación
                   </h2>
-                  <span className="text-xs text-slate-400">{f.activos} viajes</span>
+                  <span className="text-xs text-slate-400">
+                    {f.activos} {f.activos === 1 ? "viaje" : "viajes"}
+                  </span>
                 </div>
                 <div className="flex items-center gap-4">
                   <Dona f={f} />
@@ -530,7 +565,7 @@ export default function ControlViajesTv() {
                     ))}
                 </ul>
               </section>
-              <VistaEnVivo viajes={viajes} />
+              <VistaEnVivo viajes={viajes} onElegir={elegir} />
               {comb && <PanelTanquetas tanquetas={comb.tanquetas} cisternas={comb.cisternas} />}
             </div>
 

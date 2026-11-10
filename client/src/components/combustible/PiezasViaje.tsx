@@ -29,6 +29,8 @@ export interface CargaViaje {
   grifo: string | null;
   lectura_horometro: string | null;
   lectura_odometro: string | null;
+  /** Cuánto costó la carga (cantidad por costo unitario); null si no tiene costo. */
+  costo?: string | null;
 }
 
 export function BarraRuta({

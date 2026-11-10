@@ -52,10 +52,10 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   await page.getByRole("button", { name: /^Gestión operacional de flota Abrir submenú$/ }).click();
   await page.getByRole("button", { name: "Viajes" }).click();
 
-  // El ícono de la fila abre el Control TV en otra pestaña.
+  // El ícono TV de la barra superior (junto a la fecha) abre el Control TV central en otra pestaña.
   const [tv] = await Promise.all([
     context.waitForEvent("page"),
-    page.getByRole("button", { name: `Ver en el Control TV el viaje V-${viaje.numero}` }).click(),
+    page.getByRole("button", { name: "Control TV", exact: true }).click(),
   ]);
   await tv.waitForLoadState();
   expect(tv.url()).toContain("/control-tv");
@@ -66,6 +66,22 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   await expect(tv.getByRole("button", { name: "Pantalla completa" })).toBeVisible();
   // La unidad del viaje aparece en la vista en vivo con su tipo.
   await expect(tv.getByTitle(new RegExp(`TV-${marca}`))).toBeVisible();
+
+  // Tocar la unidad abre SU Control TV: el conductor primero, con su placa, y las horas del viaje.
+  await tv
+    .getByRole("button", { name: new RegExp(`Ver .*TV-${marca}.* en su Control TV`) })
+    .click();
+  await expect(tv.getByRole("heading", { name: `Conductor ${marca}` })).toBeVisible();
+  await expect(tv.getByText(`TV-${marca}`).first()).toBeVisible();
+  await expect(tv.getByText("Cómo se fue el tiempo")).toBeVisible();
+  await expect(tv.getByText("Consumo del recorrido actual")).toBeVisible();
+  await expect(tv.getByText("Dónde está")).toBeVisible();
+  expect(tv.url()).toContain(`unidad=${viaje.id}`);
+  // «TV central» vuelve al tablero de todas las unidades.
+  await tv.getByRole("button", { name: "TV central" }).click();
+  await expect(tv.getByText("Flota en operación")).toBeVisible();
+  expect(tv.url()).not.toContain("unidad=");
+
   // Los paneles de abajo: tanquetas, consumo y la franja de últimos eventos (la salida del viaje
   // recién preparado no es un evento, pero la franja siempre está).
   await expect(tv.getByRole("heading", { name: "Tanquetas" })).toBeVisible();
@@ -79,13 +95,14 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   await expect(tv.getByText("Flota en operación")).toBeVisible();
   await expect(tv.getByRole("heading", { name: "Consumo por día" })).toBeVisible();
 
-  // El botón «TV» de la cabecera de Viajes abre lo mismo.
-  const [otra] = await Promise.all([
+  // El ícono TV de la fila del viaje abre directamente la vista de esa unidad.
+  const [fila] = await Promise.all([
     context.waitForEvent("page"),
-    page.getByRole("button", { name: "Control TV", exact: true }).click(),
+    page.getByRole("button", { name: `Ver en el Control TV el viaje V-${viaje.numero}` }).click(),
   ]);
-  await otra.waitForLoadState();
-  await expect(otra.getByRole("heading", { name: "Control de viajes" })).toBeVisible();
+  await fila.waitForLoadState();
+  expect(fila.url()).toContain(`unidad=${viaje.id}`);
+  await expect(fila.getByRole("heading", { name: `Conductor ${marca}` })).toBeVisible();
 
   // «Salir» vuelve al ERP.
   await tv.getByRole("button", { name: "Salir" }).click();

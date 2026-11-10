@@ -1,8 +1,9 @@
-import { LogOut, User as UserIcon } from "lucide-react";
+import { LogOut, Tv, User as UserIcon } from "lucide-react";
 
 import SelectorEmpresa from "./SelectorEmpresa";
 import { useAuth } from "../../context/AuthContext";
 import CampanitaAlertas from "../combustible/CampanitaAlertas";
+import { puedeVerControlTv } from "../flota/flotaAcceso";
 
 interface HeaderProps {
   onIrACombustible?: () => void;
@@ -38,6 +39,18 @@ export default function Header({ onIrACombustible }: HeaderProps) {
 
           {/* Date and User */}
           <div className="flex items-center gap-2 sm:gap-4 lg:gap-6 shrink-0">
+            {/* El Control TV engloba todo el resumen: va arriba, al lado de la fecha. */}
+            {puedeVerControlTv(usuario) && (
+              <button
+                onClick={() => window.open("/control-tv", "_blank")}
+                aria-label="Control TV"
+                title="Control TV: la flota y el combustible en pantalla completa"
+                className="p-2 rounded-md border border-[#BADC1E]/50 text-[#BADC1E] hover:bg-[#BADC1E]/10 transition-all"
+              >
+                <Tv size={18} />
+              </button>
+            )}
+
             <div className="hidden lg:block text-right">
               <p className="text-sm font-medium text-slate-300 font-mono">
                 {new Date()
