@@ -66,14 +66,23 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   await expect(tv.getByRole("button", { name: "Pantalla completa" })).toBeVisible();
   // La unidad del viaje aparece en la vista en vivo con su tipo.
   await expect(tv.getByTitle(new RegExp(`TV-${marca}`))).toBeVisible();
-  // Cambiar de período no vacía la pantalla.
+  // Los paneles de abajo: tanquetas, consumo y la franja de últimos eventos (la salida del viaje
+  // recién preparado no es un evento, pero la franja siempre está).
+  await expect(tv.getByRole("heading", { name: "Tanquetas" })).toBeVisible();
+  await expect(tv.getByRole("heading", { name: "Consumo por hora" })).toBeVisible();
+  await expect(tv.getByRole("heading", { name: "Últimos eventos" })).toBeVisible();
+  // El consumo se puede ver también como tabla, con los mismos números.
+  await tv.getByRole("button", { name: "Tabla" }).first().click();
+  await expect(tv.getByRole("columnheader", { name: "Grifo interno" })).toBeVisible();
+  // Cambiar de período no vacía la pantalla, y el consumo pasa a ser por día.
   await tv.getByRole("button", { name: "7 días" }).click();
   await expect(tv.getByText("Flota en operación")).toBeVisible();
+  await expect(tv.getByRole("heading", { name: "Consumo por día" })).toBeVisible();
 
   // El botón «TV» de la cabecera de Viajes abre lo mismo.
   const [otra] = await Promise.all([
     context.waitForEvent("page"),
-    page.getByRole("button", { name: "TV", exact: true }).click(),
+    page.getByRole("button", { name: "Control TV", exact: true }).click(),
   ]);
   await otra.waitForLoadState();
   await expect(otra.getByRole("heading", { name: "Control de viajes" })).toBeVisible();

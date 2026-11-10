@@ -642,6 +642,7 @@ export const viajesController = {
             alcance,
             combustible: tieneCombustible,
             urea: tieneCombustible && pestanaPermitida(u, "combustible", "urea:vista"),
+            usuarioId: u.id,
           },
           combustible
         )
@@ -657,7 +658,7 @@ export const viajesController = {
     const periodo = req.validatedQuery as { periodo: PeriodoTv };
     res.json(
       await withTenant(tenantId, (c) =>
-        consumoControlTv(c, tenantId, periodo.periodo, ambitoDe(req))
+        consumoControlTv(c, tenantId, periodo.periodo, ambitoDe(req), combustible)
       )
     );
   },

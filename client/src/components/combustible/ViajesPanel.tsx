@@ -584,53 +584,58 @@ export default function ViajesPanel() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
+      <div className="space-y-3">
+        {/* El Control TV engloba todo el resumen: va arriba del todo, a la derecha del título. */}
+        <div className="flex items-center justify-between gap-4">
           <h2 className="text-2xl font-bold text-white">Viajes</h2>
-          <p className="text-sm text-[#94a3b8]">
-            Cada viaje es el recorrido de una unidad de un lugar a otro. Sus cargas de combustible y
-            urea se toman solas: las de esa unidad entre la salida (incluida la tanqueada previa) y
-            la llegada.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            onClick={() =>
-              void exportarViajesExcel(
-                visibles,
-                textoDeEstado,
-                `Viajes ${desde || "todo"}${hasta ? ` a ${hasta}` : ""}.xlsx`
-              )
-            }
-            disabled={visibles.length === 0}
-            className="flex items-center gap-2 border border-[#334155] text-[#cbd5e1] px-4 py-2 rounded-lg hover:text-white disabled:opacity-40"
-          >
-            <Download className="w-4 h-4" /> Exportar a Excel
-          </button>
-          {permite("lugares") && (
-            <button
-              onClick={() => setLugaresAbierto(true)}
-              className="flex items-center gap-2 border border-[#334155] text-[#cbd5e1] px-4 py-2 rounded-lg hover:text-white"
-            >
-              <MapPin className="w-4 h-4" /> Lugares
-            </button>
-          )}
           {verTv && (
             <button
               onClick={() => window.open("/control-tv", "_blank")}
-              className="flex items-center gap-2 border border-[#BADC1E]/60 text-[#BADC1E] px-4 py-2 rounded-lg hover:bg-[#BADC1E]/10"
+              className="flex items-center gap-2 border border-[#BADC1E]/60 bg-[#BADC1E]/10 text-[#BADC1E] font-bold px-4 py-2 rounded-lg hover:bg-[#BADC1E]/20"
             >
-              <Tv className="w-4 h-4" /> TV
+              <Tv className="w-4 h-4" /> Control TV
             </button>
           )}
-          {permite("nuevo") && (
+        </div>
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-sm text-[#94a3b8]">
+              Cada viaje es el recorrido de una unidad de un lugar a otro. Sus cargas de combustible
+              y urea se toman solas: las de esa unidad entre la salida (incluida la tanqueada
+              previa) y la llegada.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
             <button
-              onClick={() => abrir({ tipo: "nuevo" })}
-              className="flex items-center gap-2 bg-[#BADC1E] text-[#0D1719] font-bold px-4 py-2 rounded-lg hover:brightness-110"
+              onClick={() =>
+                void exportarViajesExcel(
+                  visibles,
+                  textoDeEstado,
+                  `Viajes ${desde || "todo"}${hasta ? ` a ${hasta}` : ""}.xlsx`
+                )
+              }
+              disabled={visibles.length === 0}
+              className="flex items-center gap-2 border border-[#334155] text-[#cbd5e1] px-4 py-2 rounded-lg hover:text-white disabled:opacity-40"
             >
-              <Plus className="w-4 h-4" /> Nuevo viaje
+              <Download className="w-4 h-4" /> Exportar a Excel
             </button>
-          )}
+            {permite("lugares") && (
+              <button
+                onClick={() => setLugaresAbierto(true)}
+                className="flex items-center gap-2 border border-[#334155] text-[#cbd5e1] px-4 py-2 rounded-lg hover:text-white"
+              >
+                <MapPin className="w-4 h-4" /> Lugares
+              </button>
+            )}
+            {permite("nuevo") && (
+              <button
+                onClick={() => abrir({ tipo: "nuevo" })}
+                className="flex items-center gap-2 bg-[#BADC1E] text-[#0D1719] font-bold px-4 py-2 rounded-lg hover:brightness-110"
+              >
+                <Plus className="w-4 h-4" /> Nuevo viaje
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

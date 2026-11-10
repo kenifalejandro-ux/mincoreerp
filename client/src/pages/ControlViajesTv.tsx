@@ -34,6 +34,20 @@ import {
   valorEnTanques,
 } from "../components/controlTv/controlTvLogica";
 import { IconoTipo } from "../components/controlTv/iconosUnidad";
+import type {
+  EnvaseTv,
+  EventoTv,
+  NivelTanque,
+  SerieConsumo,
+  TanquetaTv,
+} from "../components/controlTv/paneles";
+import {
+  FranjaEventos,
+  PanelConsumo,
+  PanelTanque,
+  PanelTanquetas,
+  PanelUrea,
+} from "../components/controlTv/PanelesTv";
 import { apiFetch } from "../services/apiClient";
 
 type Periodo = "24h" | "7d" | "30d";
@@ -49,16 +63,30 @@ interface Resumen {
     detenidas: number;
     por_tipo: { tipo: string; cantidad: number }[];
   };
+  eventos?: EventoTv[];
   combustible?: {
     tanques: { nivel: number | string | null; costo_promedio: number | null }[];
     total_en_tanques_gal: number;
+    tanquetas: { saldo_total_gal: number; items: TanquetaTv[] };
+    cisternas: { con_saldo: number; saldo_gal: number; por_llegar: number; por_llegar_gal: number };
     alertas: { criticas: number; por_revisar: number };
   };
-  urea?: { autonomia_dias: number | null };
+  urea?: {
+    stock_l: number;
+    minimo_l: number | null;
+    maximo_l: number | null;
+    autonomia_dias: number | null;
+    envases: EnvaseTv[];
+  };
 }
 
 interface Consumo {
-  consumo?: { total: { gal: number; costo: number }; serie: { gal: number }[] };
+  consumo?: {
+    total: { gal: number; costo: number };
+    serie: SerieConsumo[];
+    agrupado_por: "hora" | "dia";
+  };
+  niveles?: NivelTanque[];
   entrada?: { recepciones: number; recibido_gal: number; diferencia_gal: number };
 }
 
@@ -458,7 +486,7 @@ export default function ControlViajesTv() {
               )}
             </div>
 
-            <div className="grid gap-2.5 lg:grid-cols-[minmax(280px,.8fr)_minmax(0,2fr)]">
+            <div className="grid gap-2.5 lg:grid-cols-[minmax(280px,.8fr)_minmax(0,2fr)_minmax(300px,.95fr)]">
               <section className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
                 <div className="flex items-baseline justify-between">
                   <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.16em] text-slate-400">
@@ -503,7 +531,29 @@ export default function ControlViajesTv() {
                 </ul>
               </section>
               <VistaEnVivo viajes={viajes} />
+              {comb && <PanelTanquetas tanquetas={comb.tanquetas} cisternas={comb.cisternas} />}
             </div>
+
+            {comb && (
+              <div className="grid gap-2.5 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(320px,.9fr)]">
+                {consumo?.consumo && (
+                  <PanelConsumo
+                    serie={consumo.consumo.serie}
+                    porHora={consumo.consumo.agrupado_por === "hora"}
+                    total={gal}
+                  />
+                )}
+                {consumo?.niveles && consumo.niveles.length > 0 && (
+                  <PanelTanque
+                    niveles={consumo.niveles}
+                    ahora={ahora}
+                    periodoMs={{ "24h": 24, "7d": 168, "30d": 720 }[periodo] * 3_600_000}
+                  />
+                )}
+                {resumen?.urea && <PanelUrea urea={resumen.urea} ahora={ahora} />}
+              </div>
+            )}
+            <FranjaEventos eventos={resumen?.eventos ?? []} />
           </>
         )}
       </div>
