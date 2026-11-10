@@ -120,6 +120,16 @@ export function filtroHechoDeGrifo(a: AlcanceCombustible, col: string, desde: nu
   return { sql: `${col}.grifo_interno_id = ANY($${desde}::int[])`, valores: [a.grifos] };
 }
 
+/** Una unidad que quien mira puede ver: la de su grifo (o los de su sede). Con alcance «todo» no filtra. Una
+ *  unidad sin grifo asignado solo la ve quien tiene alcance «todo». */
+export function unidadEnAlcance(a: AlcanceCombustible, col: string, desde: number): Filtro {
+  if (a.todo) return { sql: "TRUE", valores: [] as unknown[] };
+  return {
+    sql: `${col}.grifo_interno_id = ANY($${desde}::int[])`,
+    valores: [a.grifos] as unknown[],
+  };
+}
+
 /** Un VALE: del tanque propio, por su grifo o su surtidor; de compra externa,
  *  por el grifo del equipo o porque lo cargó el propio usuario (igual la carga
  *  en ruta desde tanqueta, 0114: la registra el conductor). La urea no se

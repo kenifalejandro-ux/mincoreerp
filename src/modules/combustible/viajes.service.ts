@@ -13,7 +13,7 @@ import type {
   ListarViajesQuery,
   RegistrarUbicacionInput,
 } from "../../server/schemas/combustible.schema";
-import { agregarAmbitoVales, type AmbitoVales } from "./alcance";
+import { agregarAmbitoVales, unidadEnAlcance, type AmbitoVales } from "./alcance";
 import { detencionDe } from "./motivosDetencion";
 import { repartirPorTramo } from "./viajesTramos";
 import { LITROS_POR_GALON, esGalonSql, litrosSql } from "../../server/shared/utils/unidades";
@@ -2658,6 +2658,14 @@ export async function listarViajes(
     valores.push(q.hasta);
     cond.push(`(v.inicio_en IS NULL OR v.inicio_en <= $${valores.length}::timestamptz)`);
   }
+  // Con alcance a un grifo o sede, solo los viajes de las unidades de ese grifo.
+  if (ambito) {
+    const f = unidadEnAlcance(ambito.alcance, "e", valores.length + 1);
+    if (f.sql !== "TRUE") {
+      cond.push(f.sql);
+      valores.push(...f.valores);
+    }
+  }
   const condCargas: string[] = [
     "d.tenant_id = v.tenant_id",
     "d.equipo_id = v.equipo_id",
@@ -3131,6 +3139,22 @@ export async function viajesDetenidos(
   return [...por.values()];
 }
 
+/** ¿La unidad es de un grifo que quien mira puede ver? Con alcance «todo», siempre. */
+async function unidadVisible(
+  client: PoolClient,
+  tenantId: string,
+  equipoId: number,
+  ambito: AmbitoVales
+) {
+  const f = unidadEnAlcance(ambito.alcance, "e", 3);
+  if (f.sql === "TRUE") return true;
+  const r = await client.query(
+    `SELECT 1 FROM equipos e WHERE e.tenant_id = $1 AND e.id = $2 AND ${f.sql}`,
+    [tenantId, equipoId, ...f.valores]
+  );
+  return r.rows.length > 0;
+}
+
 /** Las cargas del viaje, de los dos productos, una por una. */
 export async function cargasDelViaje(
   client: PoolClient,
@@ -3142,6 +3166,8 @@ export async function cargasDelViaje(
 ) {
   const viaje = await getViaje(client, tenantId, id);
   if (!viaje) return null;
+  // Fuera del alcance es un 404, igual que algo que no existe: no se revela que existe.
+  if (ambito && !(await unidadVisible(client, tenantId, viaje.equipo_id, ambito))) return null;
   const ruta = await estadisticasRuta(client, tenantId, viaje.recorrido_clave, Number(viaje.id));
   if (!viaje.inicio_en) return { viaje, cargas: [], ruta, tramos: [] };
   const valores: unknown[] = [tenantId, viaje.equipo_id, viaje.ventana_desde, viaje.ventana_hasta];
