@@ -122,6 +122,8 @@ describe("ubicacionVigente", () => {
       origen: "punto",
     });
     expect(ubicacionVigente(sale, null)?.texto).toBe("Salió de L1");
+    // Un punto anotado en el mismo instante de la salida (la hora se ajusta a ella) cuenta.
+    expect(ubicacionVigente(sale, punto(0))?.origen).toBe("punto");
   });
   it("después de salir de una parada vuelven a contar los puntos nuevos, no los viejos", () => {
     const salio = [parada(0, 1, null, 0), parada(1, 2, 14, 20)];

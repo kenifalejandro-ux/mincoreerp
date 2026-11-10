@@ -88,7 +88,8 @@ export interface UbicacionVigente {
 
 /** Dónde está el viaje. Si la última marca del recorrido es una llegada, la unidad está en esa
  *  parada y manda la llegada: ningún punto de ubicación la pisa. Si salió (o aún no hay marcas), vale
- *  el último punto anotado, siempre que sea posterior a la salida; si no, «Salió de X». */
+ *  el último punto anotado, siempre que no sea anterior a la salida (uno anotado en el minuto de la salida cuenta); si no,
+ *  «Salió de X». */
 export function ubicacionVigente(
   paradas: ParadaMia[] | null | undefined,
   ultima: UbicacionViaje | null | undefined
@@ -109,7 +110,7 @@ export function ubicacionVigente(
   const punto: UbicacionVigente | null = ultima
     ? { texto: ultima.texto, en: ultima.registrado_en, origen: "punto" }
     : null;
-  if (marca && (!punto || marca.t >= Date.parse(punto.en))) {
+  if (marca && (!punto || marca.t > Date.parse(punto.en))) {
     return { texto: marca.texto, en: marca.en, origen: "salida" };
   }
   return punto;
