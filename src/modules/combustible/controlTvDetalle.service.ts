@@ -5,9 +5,14 @@
 import type { PoolClient } from "pg";
 
 import { LITROS_POR_GALON, litrosSql } from "../../server/shared/utils/unidades";
-import { agregarAmbitoVales, filtroHechoDeGrifo, type AmbitoVales } from "./alcance";
+import {
+  agregarAmbitoVales,
+  filtroHechoDeGrifo,
+  type AlcanceCombustible,
+  type AmbitoVales,
+} from "./alcance";
 import type { CombustibleService } from "./combustible.service";
-import { INICIO_SQL, PERIODO, type PeriodoTv } from "./controlTv.service";
+import { INICIO_SQL, PERIODO, unidadEnAlcance, type PeriodoTv } from "./controlTv.service";
 
 const num = (x: unknown) => Number(x ?? 0);
 
@@ -152,7 +157,8 @@ async function desvios(
   client: PoolClient,
   tenantId: string,
   periodo: PeriodoTv,
-  servicio: CombustibleService
+  servicio: CombustibleService,
+  alcance: AlcanceCombustible
 ) {
   const hasta = new Date();
   const horas = { "24h": 24, "7d": 168, "30d": 720 }[periodo];
@@ -162,7 +168,19 @@ async function desvios(
     new Date(hasta.getTime() - horas * 3_600_000).toISOString(),
     hasta.toISOString()
   );
+  const f = unidadEnAlcance(alcance, "e", 2);
+  const visibles = alcance.todo
+    ? null
+    : new Set(
+        (
+          await client.query<{ id: number }>(
+            `SELECT e.id FROM equipos e WHERE e.tenant_id = $1 AND ${f.sql}`,
+            [tenantId, ...f.valores]
+          )
+        ).rows.map((x) => x.id)
+      );
   return reporte.equipos
+    .filter((e) => !visibles || visibles.has(e.equipo_id))
     .filter((e) => e.periodo && (e.vs_pares_pct !== null || e.vs_pasado_pct !== null))
     .sort(
       (a, b) =>
@@ -262,7 +280,7 @@ export async function detalleControlTv(
     consumo_anterior_gal: await consumoAnteriorGal(client, tenantId, periodo, ambito),
     ...(conUrea ? { urea: await urea(client, tenantId, periodo) } : {}),
     recepciones: await ultimasRecepciones(client, tenantId, ambito),
-    desvios: await desvios(client, tenantId, periodo, servicio),
+    desvios: await desvios(client, tenantId, periodo, servicio, ambito.alcance),
     compra_ruta: await compraRuta(client, tenantId, periodo, ambito),
   };
 }

@@ -197,4 +197,67 @@ describe("control TV: resumen", () => {
     // La de la primera empresa sigue con lo suyo.
     expect((await admin.get(URL)).body.flota.activos).toBe(4);
   });
+
+  it("con alcance a un grifo, la flota, los eventos y el encabezado son solo de ese grifo", async () => {
+    const otra = await crearTenantDePrueba(PASSWORD);
+    tenants.push(otra.tenant.id);
+    const adm = await entrar(otra, otra.usuario.email);
+    const sedes = (await adm.get("/api/erp/sedes")).body.sedes;
+    const grifoA = sedes[0].grifos[0].id as number;
+    const grifoB = (
+      await adm
+        .post("/api/erp/administracion/grifos")
+        .send({ sede_id: sedes[0].id, nombre: "Grifo B" })
+    ).body.id as number;
+    const a = Number(
+      (await adm.post("/api/erp/viajes/lugares").send({ nombre: idUnico("O") })).body.id
+    );
+    const b = Number(
+      (await adm.post("/api/erp/viajes/lugares").send({ nombre: idUnico("D") })).body.id
+    );
+    const viaje = async (grifo: number) => {
+      const eq = await adm.post("/api/erp/equipos").send({
+        placa_codigo: idUnico("G"),
+        tipo: "VOLQUETE",
+        tipo_medidor: "odometro",
+        conductor_nombre: "Juan Pérez",
+        conductor_dni: String(42000000 + seq++),
+        grifo_interno_id: grifo,
+      });
+      expect(eq.status, JSON.stringify(eq.body)).toBe(201);
+      const v = await adm
+        .post("/api/erp/viajes")
+        .send({ equipo_id: eq.body.id, paradas: [a, b], inicio_en: hora(0) });
+      expect(v.status, JSON.stringify(v.body)).toBe(201);
+    };
+    await viaje(grifoA);
+    await viaje(grifoB);
+
+    const dni = String(87900000 + Math.floor(Math.random() * 90000));
+    const alta = await adm
+      .post("/api/erp/usuarios")
+      .send({ nombre: "Lectura", dni, password: PASSWORD, rol: "lectura" });
+    expect(alta.status, JSON.stringify(alta.body)).toBe(201);
+    const p = await adm.put(`/api/erp/usuarios/${alta.body.id}/permisos`).send({
+      modulos: [],
+      alcanceCombustible: { todo: false, sedes: [], grifos: [grifoA], surtidores: [] },
+      motivo: "Solo el grifo A",
+    });
+    expect(p.status, JSON.stringify(p.body)).toBe(200);
+    const lector = request.agent(app);
+    await lector
+      .post("/api/auth/login")
+      .send({ tenantSlug: otra.tenant.slug, identificador: dni, password: PASSWORD })
+      .expect(200);
+
+    // El administrador ve las dos (alcance todo); el lector, solo la de su grifo.
+    const todo = await adm.get(URL);
+    expect(todo.body.flota.activos).toBe(2);
+    expect(todo.body.sedes).toBeNull();
+    expect(todo.body.empresa).toBe(otra.tenant.nombre);
+    const mio = await lector.get(URL);
+    expect(mio.status, JSON.stringify(mio.body)).toBe(200);
+    expect(mio.body.flota.activos).toBe(1);
+    expect(Array.isArray(mio.body.sedes)).toBe(true);
+  });
 });

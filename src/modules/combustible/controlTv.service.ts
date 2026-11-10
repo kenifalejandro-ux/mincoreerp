@@ -28,6 +28,16 @@ export interface ContextoControlTv {
   usuarioId: string;
 }
 
+/** Una unidad que quien mira puede ver: la de su grifo (o los de su sede). Con alcance «todo» no filtra. Una
+ *  unidad sin grifo asignado solo la ve quien tiene alcance «todo». */
+export function unidadEnAlcance(a: AlcanceCombustible, col: string, desde: number) {
+  if (a.todo) return { sql: "TRUE", valores: [] as unknown[] };
+  return {
+    sql: `${col}.grifo_interno_id = ANY($${desde}::int[])`,
+    valores: [a.grifos] as unknown[],
+  };
+}
+
 const num = (x: unknown) => Number(x ?? 0);
 const aGalones = (cantidad: unknown, unidad: unknown) =>
   unidad === "L" ? num(cantidad) / LITROS_POR_GALON : num(cantidad);
@@ -42,7 +52,8 @@ interface FilaViajeVivo {
 
 /** La flota por estado: en ruta, retornando, en parada, descansando o detenida (avería, accidente...),
  *  más cuántas unidades de cada tipo hay en operación. */
-async function flota(client: PoolClient, tenantId: string) {
+async function flota(client: PoolClient, tenantId: string, alcance: AlcanceCombustible) {
+  const fU = unidadEnAlcance(alcance, "e", 2);
   const r = await client.query<FilaViajeVivo>(
     `SELECT e.tipo, v.estado,
             (SELECT json_agg(json_build_object('orden', p.orden, 'lugar_id', p.lugar_id,
@@ -56,8 +67,8 @@ async function flota(client: PoolClient, tenantId: string) {
          SELECT d.id, d.motivo FROM combustible_viaje_descansos d
           WHERE d.tenant_id = v.tenant_id AND d.viaje_id = v.id AND d.fin_en IS NULL AND d.detiene
           LIMIT 1) d ON true
-      WHERE v.tenant_id = $1 AND v.estado IN ('programado', 'en_curso')`,
-    [tenantId]
+      WHERE v.tenant_id = $1 AND v.estado IN ('programado', 'en_curso') AND ${fU.sql}`,
+    [tenantId, ...fU.valores]
   );
   const c = {
     programados: 0,
@@ -253,6 +264,7 @@ async function eventos(client: PoolClient, tenantId: string, ctx: ContextoContro
     }
   }
 
+  const fLl = unidadEnAlcance(ctx.alcance, "e", 2);
   const llegadas = await client.query(
     `SELECT p.llegada_en AS t, e.placa_codigo AS placa, v.conductor_nombre AS conductor, l.nombre AS lugar
        FROM combustible_viaje_paradas p
@@ -260,8 +272,9 @@ async function eventos(client: PoolClient, tenantId: string, ctx: ContextoContro
        JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
        JOIN combustible_lugares l ON l.id = p.lugar_id AND l.tenant_id = p.tenant_id
       WHERE p.tenant_id = $1 AND p.orden > 0 AND p.llegada_en IS NOT NULL AND v.estado <> 'anulado'
+        AND ${fLl.sql}
       ORDER BY p.llegada_en DESC LIMIT 5`,
-    [tenantId]
+    [tenantId, ...fLl.valores]
   );
   for (const l of llegadas.rows) {
     poner(
@@ -277,8 +290,9 @@ async function eventos(client: PoolClient, tenantId: string, ctx: ContextoContro
        JOIN combustible_viajes v ON v.id = d.viaje_id AND v.tenant_id = d.tenant_id
        JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
       WHERE d.tenant_id = $1 AND d.detiene AND v.estado <> 'anulado'
+        AND ${fLl.sql}
       ORDER BY d.inicio_en DESC LIMIT 10`,
-    [tenantId]
+    [tenantId, ...fLl.valores]
   );
   for (const d of detenidas.rows) {
     const motivo = detencionDe(d.motivo);
@@ -297,6 +311,25 @@ async function eventos(client: PoolClient, tenantId: string, ctx: ContextoContro
     .map(({ ms: _ms, ...e }) => e);
 }
 
+/** La empresa y las sedes que quien mira tiene a la vista, para el encabezado de la pantalla. Con
+ *  alcance «todo» no se listan sedes: el encabezado dice «Todas las sedes». */
+async function encabezado(client: PoolClient, tenantId: string, alcance: AlcanceCombustible) {
+  const e = await client.query<{ nombre: string }>(`SELECT nombre FROM tenants WHERE id = $1`, [
+    tenantId,
+  ]);
+  let sedes: string[] | null = null;
+  if (!alcance.todo) {
+    const r = await client.query<{ nombre: string }>(
+      `SELECT DISTINCT s.nombre FROM grifos_internos g
+         JOIN sedes s ON s.id = g.sede_id AND s.tenant_id = g.tenant_id
+        WHERE g.tenant_id = $1 AND g.id = ANY($2::int[]) ORDER BY s.nombre`,
+      [tenantId, alcance.grifos]
+    );
+    sedes = r.rows.map((x) => x.nombre);
+  }
+  return { empresa: e.rows[0]?.nombre ?? "", sedes };
+}
+
 /** El resumen completo. Los bloques de combustible y urea solo aparecen si el contexto los permite. */
 export async function resumenControlTv(
   client: PoolClient,
@@ -306,7 +339,8 @@ export async function resumenControlTv(
 ) {
   return {
     generado_en: new Date().toISOString(),
-    flota: await flota(client, tenantId),
+    ...(await encabezado(client, tenantId, ctx.alcance)),
+    flota: await flota(client, tenantId, ctx.alcance),
     eventos: await eventos(client, tenantId, ctx),
     ...(ctx.combustible
       ? { combustible: await combustible(client, tenantId, ctx.alcance, servicio) }

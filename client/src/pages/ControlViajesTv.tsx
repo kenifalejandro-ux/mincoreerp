@@ -55,6 +55,9 @@ import { apiFetch } from "../services/apiClient";
 type Periodo = "24h" | "7d" | "30d";
 
 interface Resumen {
+  empresa?: string;
+  /** null = todas las sedes; si no, las sedes de quien mira. */
+  sedes?: string[] | null;
   flota: {
     activos: number;
     programados: number;
@@ -417,8 +420,23 @@ export default function ControlViajesTv() {
     >
       <div className="mx-auto flex max-w-[1900px] flex-col gap-3">
         <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <span className="text-sm font-black tracking-[.28em] text-[#BADC1E]">MINCORE</span>
-          <h1 className="text-xl font-bold">Control de viajes</h1>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 border-r border-white/10 pr-3 text-slate-400">
+              <img src="/logos/mincore-logo-256-sin-fondo.png" alt="" className="h-7 w-7" />
+              <span className="text-xs font-bold tracking-wider">Mincore ERP</span>
+            </div>
+            <div>
+              <h1 className="text-xl font-bold leading-tight">
+                {resumen?.empresa || "Control de viajes"}
+              </h1>
+              <p className="text-xs text-slate-400">
+                Control de viajes ·{" "}
+                {resumen?.sedes === undefined || resumen?.sedes === null
+                  ? "Todas las sedes"
+                  : resumen.sedes.join(", ") || "Sin sede"}
+              </p>
+            </div>
+          </div>
           <div className="flex-1" />
           {!unidad && (
             <div className="inline-flex gap-0.5 rounded-xl border border-white/10 bg-white/5 p-0.5">
