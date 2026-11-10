@@ -13,6 +13,7 @@ import {
   errorDeUbicacion,
   haceCuanto,
   lugaresDelCatalogo,
+  ubicacionVigente,
 } from "./ubicacionesLogica";
 import { diaHora, type FilaViaje } from "./viajesFormato";
 import { apiFetch } from "../../services/apiClient";
@@ -38,7 +39,12 @@ export function UbicacionesViaje({
   formularioAbierto?: boolean;
 }) {
   const historial = viaje.ubicaciones ?? [];
-  const ultima = viaje.ultima_ubicacion ?? null;
+  // Si la unidad llegó a una parada, manda la llegada; si no, el último punto anotado.
+  const vigente = ubicacionVigente(viaje.paradas, viaje.ultima_ubicacion);
+  const enParada = viaje.estado === "en_curso" && vigente?.origen === "llegada" ? vigente : null;
+  const ultima = enParada
+    ? { texto: enParada.texto, registrado_en: enParada.en }
+    : (viaje.ultima_ubicacion ?? null);
   const puedeAnotar = puedeEditar && viaje.estado === "en_curso";
 
   const [lugares, setLugares] = useState<{ id: number; nombre: string }[]>([]);

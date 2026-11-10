@@ -104,13 +104,29 @@ describe("ubicacionVigente", () => {
     registrado_en: iso(h),
     origen: "oficina",
   });
-  const paradas = [parada(0, 1, null, 0), parada(1, 2, 14, null)];
+  const sale = [parada(0, 1, null, 0)];
+  const enB = [parada(0, 1, null, 0), parada(1, 2, 14, null)];
 
-  it("una marca más nueva gana al punto viejo", () => {
-    expect(ubicacionVigente(paradas, punto(5))).toEqual({ texto: "Llegó a L2", en: iso(14) });
+  it("llegó a una parada: manda la llegada, aunque haya un punto más viejo o más nuevo", () => {
+    expect(ubicacionVigente(enB, punto(5))).toEqual({
+      texto: "En L2",
+      en: iso(14),
+      origen: "llegada",
+    });
+    expect(ubicacionVigente(enB, punto(20))?.texto).toBe("En L2");
   });
-  it("un punto más nuevo gana a la marca", () => {
-    expect(ubicacionVigente(paradas, punto(20))?.texto).toBe("Tupac Amarú");
+  it("en camino: el punto más nuevo que la salida, o «Salió de X»", () => {
+    expect(ubicacionVigente(sale, punto(5))).toEqual({
+      texto: "Tupac Amarú",
+      en: iso(5),
+      origen: "punto",
+    });
+    expect(ubicacionVigente(sale, null)?.texto).toBe("Salió de L1");
+  });
+  it("después de salir de una parada vuelven a contar los puntos nuevos, no los viejos", () => {
+    const salio = [parada(0, 1, null, 0), parada(1, 2, 14, 20)];
+    expect(ubicacionVigente(salio, punto(5))?.texto).toBe("Salió de L2");
+    expect(ubicacionVigente(salio, punto(25))?.texto).toBe("Tupac Amarú");
   });
   it("sin marcas ni punto no hay ubicación", () => {
     expect(ubicacionVigente([], null)).toBeNull();

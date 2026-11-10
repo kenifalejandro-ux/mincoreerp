@@ -79,24 +79,38 @@ export function lugaresDelCatalogo(datos: unknown): { id: number; nombre: string
     .map((l) => ({ id: Number(l.id), nombre: l.nombre }));
 }
 
-/** Dónde está el viaje según lo más reciente: la última marca del recorrido (llegada o salida de una
- *  parada) o el último punto de ubicación. Un punto viejo no pisa una marca más nueva. */
+export interface UbicacionVigente {
+  texto: string;
+  en: string;
+  /** De dónde sale: la llegada a una parada, la salida de una parada o un punto anotado. */
+  origen: "llegada" | "salida" | "punto";
+}
+
+/** Dónde está el viaje. Si la última marca del recorrido es una llegada, la unidad está en esa
+ *  parada y manda la llegada: ningún punto de ubicación la pisa. Si salió (o aún no hay marcas), vale
+ *  el último punto anotado, siempre que sea posterior a la salida; si no, «Salió de X». */
 export function ubicacionVigente(
   paradas: ParadaMia[] | null | undefined,
   ultima: UbicacionViaje | null | undefined
-): { texto: string; en: string } | null {
-  let marca: { texto: string; en: string; t: number } | null = null;
+): UbicacionVigente | null {
+  let marca: { texto: string; en: string; t: number; origen: "llegada" | "salida" } | null = null;
   for (const p of paradas ?? []) {
-    for (const [iso, texto] of [
-      [p.llegada_en, `Llegó a ${p.lugar}`],
-      [p.salida_en, `Salió de ${p.lugar}`],
+    for (const [iso, origen, texto] of [
+      [p.llegada_en, "llegada", `En ${p.lugar}`],
+      [p.salida_en, "salida", `Salió de ${p.lugar}`],
     ] as const) {
       const t = iso ? Date.parse(iso) : NaN;
-      if (!Number.isNaN(t) && (!marca || t > marca.t)) marca = { texto, en: iso as string, t };
+      if (!Number.isNaN(t) && (!marca || t > marca.t)) {
+        marca = { texto, en: iso as string, t, origen };
+      }
     }
   }
-  const punto = ultima ? { texto: ultima.texto, en: ultima.registrado_en } : null;
-  if (marca && (!punto || marca.t > Date.parse(punto.en)))
-    return { texto: marca.texto, en: marca.en };
+  if (marca?.origen === "llegada") return { texto: marca.texto, en: marca.en, origen: "llegada" };
+  const punto: UbicacionVigente | null = ultima
+    ? { texto: ultima.texto, en: ultima.registrado_en, origen: "punto" }
+    : null;
+  if (marca && (!punto || marca.t >= Date.parse(punto.en))) {
+    return { texto: marca.texto, en: marca.en, origen: "salida" };
+  }
   return punto;
 }
