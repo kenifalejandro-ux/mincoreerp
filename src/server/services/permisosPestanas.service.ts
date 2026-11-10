@@ -91,6 +91,9 @@ const accionesViajes: DefinicionPestana[] = [
   ["lugares", "Catálogo de lugares"],
   // El ranking de consumo por viaje (antes la vista `historico:por_viaje`, migración 0167).
   ["consumo", "Consumo por viaje"],
+  // La pantalla de la gerencia (Control TV): flota, combustible y urea en tiempo real. Admin y
+  // Lectura la ven por defecto; el administrador de la empresa la da o quita por persona.
+  ["control_tv", "Control TV (pantalla de la gerencia)"],
 ].map(([id, nombre]) => ({
   modulo: "combustible",
   pestana: `viajes:${id}`,
@@ -304,7 +307,11 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
   // Combustible (ver requireRole en combustible.routes.ts).
   // "Mi viaje" es del conductor: el operador programa y cierra desde Viajes.
   const amplio = admin.filter(
-    (item) => item !== "principal" && item !== "mi_viaje" && item !== "cisternas:registrar_compra"
+    (item) =>
+      item !== "principal" &&
+      item !== "mi_viaje" &&
+      item !== "cisternas:registrar_compra" &&
+      item !== "viajes:control_tv"
   );
   // Lectura: solo lo informativo. Ni "Registrar X", ni Alertas/Proveedores/
   // Surtidores/Precios/Nuevo tanque, ni las acciones de escritura del panel
@@ -322,6 +329,7 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
     "cisternas",
     "viajes",
     "viajes:consumo",
+    "viajes:control_tv",
     "historico",
     ...vistasHistorico.map((item) => item.pestana),
     "urea",

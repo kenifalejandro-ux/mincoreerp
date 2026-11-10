@@ -22,6 +22,7 @@ import {
   cerrarMiViajeSchema,
   cerrarViajeSchema,
   corregirMandoSchema,
+  controlTvConsumoQuerySchema,
   corregirMarcaDeParadaSchema,
   marcaSinOrdenSchema,
   crearLugarSchema,
@@ -236,12 +237,19 @@ router.post(
   validate(corregirMarcaDeParadaSchema),
   asyncHandler(viajesController.corregirMarca)
 );
-// Resumen del Control TV: solo gerencia (admin y lectura). Combustible y Urea son opcionales: sin
-// ese módulo el bloque no viene. Va antes de /:viajeId.
+// Control TV (gerencia): lo ve quien tenga la pestaña «Control TV» (admin y lectura por defecto; el
+// administrador de la empresa la puede dar o quitar por persona). Combustible y Urea son opcionales:
+// sin ese módulo el bloque no viene. Van antes de /:viajeId.
 router.get(
   "/control-tv/resumen",
-  requireRole("admin", "lectura"),
+  requirePestana("combustible", "viajes:control_tv"),
   asyncHandler(viajesController.controlTvResumen)
+);
+router.get(
+  "/control-tv/consumo",
+  requirePestana("combustible", "viajes:control_tv"),
+  validateQuery(controlTvConsumoQuerySchema),
+  asyncHandler(viajesController.controlTvConsumo)
 );
 // Marcar la llegada o la salida de cualquier parada, sin orden (solo la oficina).
 router.post(
