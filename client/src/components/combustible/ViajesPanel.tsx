@@ -1,18 +1,6 @@
 // Combustible › Viajes (0123): registrar, cerrar, corregir y anular viajes.
 // El análisis (ranking, desvío) vive en el Histórico de cada producto.
-import {
-  Ban,
-  Download,
-  Eye,
-  Flag,
-  ListChecks,
-  Lock,
-  MapPin,
-  Pencil,
-  Play,
-  Plus,
-  X,
-} from "lucide-react";
+import { Ban, Download, Eye, Flag, Lock, MapPin, Pencil, Play, Plus, Tv, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CeldaDesvio } from "./ConsumoPorViaje";
@@ -46,6 +34,7 @@ import {
 import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
 import { ahoraParaInputLocal, paraInputLocal } from "../../utils/fechaLocal";
+import { puedeVerControlTv } from "../flota/flotaAcceso";
 
 interface Equipo {
   id: number;
@@ -198,8 +187,6 @@ export default function ViajesPanel() {
   const pedidoLugares = useRef(0);
   const [guardando, setGuardando] = useState(false);
   const [verId, setVerId] = useState<string | null>(null);
-  /** Se abrió desde «Poner al día»: el detalle baja hasta ese bloque. */
-  const [verAlDia, setVerAlDia] = useState(false);
   const [retro, setRetro] = useState(false);
   const retroVale = retro;
   const [horaManual, setHoraManual] = useState(false);
@@ -221,6 +208,7 @@ export default function ViajesPanel() {
   };
 
   const puedeProgramar = permite("nuevo");
+  const verTv = puedeVerControlTv(usuario);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -627,6 +615,14 @@ export default function ViajesPanel() {
               <MapPin className="w-4 h-4" /> Lugares
             </button>
           )}
+          {verTv && (
+            <button
+              onClick={() => window.open("/control-tv", "_blank")}
+              className="flex items-center gap-2 border border-[#BADC1E]/60 text-[#BADC1E] px-4 py-2 rounded-lg hover:bg-[#BADC1E]/10"
+            >
+              <Tv className="w-4 h-4" /> TV
+            </button>
+          )}
           {permite("nuevo") && (
             <button
               onClick={() => abrir({ tipo: "nuevo" })}
@@ -844,10 +840,7 @@ export default function ViajesPanel() {
                   <td className="p-3">
                     <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                       <button
-                        onClick={() => {
-                          setVerAlDia(false);
-                          setVerId(v.id);
-                        }}
+                        onClick={() => setVerId(v.id)}
                         aria-label={`Ver viaje V-${v.numero}`}
                         title="Ver cargas"
                         className="p-1.5 rounded border border-[#334155] text-[#94a3b8] hover:text-white"
@@ -864,17 +857,14 @@ export default function ViajesPanel() {
                           <Play className="w-4 h-4" />
                         </button>
                       )}
-                      {permite("editar") && v.estado === "en_curso" && (
+                      {verTv && v.estado === "en_curso" && (
                         <button
-                          onClick={() => {
-                            setVerAlDia(true);
-                            setVerId(v.id);
-                          }}
-                          aria-label={`Poner al día viaje V-${v.numero}`}
-                          title="Poner al día: registrar lo que ya pasó"
+                          onClick={() => window.open(`/control-tv?unidad=${v.id}`, "_blank")}
+                          aria-label={`Ver en el Control TV el viaje V-${v.numero}`}
+                          title="Ver en el Control TV"
                           className="p-1.5 rounded border border-[#BADC1E]/50 text-[#BADC1E] hover:bg-[#BADC1E]/10"
                         >
-                          <ListChecks className="w-4 h-4" />
+                          <Tv className="w-4 h-4" />
                         </button>
                       )}
                       {permite("editar") && v.estado === "en_curso" && (
@@ -1438,7 +1428,6 @@ export default function ViajesPanel() {
           viajeId={verId}
           onCerrar={() => setVerId(null)}
           puedeEditar={permite("editar")}
-          enfocarAcciones={verAlDia}
         />
       )}
     </div>
