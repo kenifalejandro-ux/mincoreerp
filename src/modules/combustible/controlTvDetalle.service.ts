@@ -8,11 +8,12 @@ import { LITROS_POR_GALON, litrosSql } from "../../server/shared/utils/unidades"
 import {
   agregarAmbitoVales,
   filtroHechoDeGrifo,
+  unidadEnAlcance,
   type AlcanceCombustible,
   type AmbitoVales,
 } from "./alcance";
 import type { CombustibleService } from "./combustible.service";
-import { INICIO_SQL, PERIODO, unidadEnAlcance, type PeriodoTv } from "./controlTv.service";
+import { INICIO_SQL, PERIODO, type PeriodoTv } from "./controlTv.service";
 
 const num = (x: unknown) => Number(x ?? 0);
 

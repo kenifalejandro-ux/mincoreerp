@@ -9,6 +9,7 @@ import { LITROS_POR_GALON, litrosSql } from "../../server/shared/utils/unidades"
 import {
   agregarAmbitoVales,
   filtroHechoDeGrifo,
+  unidadEnAlcance,
   type AlcanceCombustible,
   type AmbitoVales,
 } from "./alcance";
@@ -26,16 +27,6 @@ export interface ContextoControlTv {
   urea: boolean;
   /** Quien mira (el alcance de los vales incluye lo que cargó él mismo). */
   usuarioId: string;
-}
-
-/** Una unidad que quien mira puede ver: la de su grifo (o los de su sede). Con alcance «todo» no filtra. Una
- *  unidad sin grifo asignado solo la ve quien tiene alcance «todo». */
-export function unidadEnAlcance(a: AlcanceCombustible, col: string, desde: number) {
-  if (a.todo) return { sql: "TRUE", valores: [] as unknown[] };
-  return {
-    sql: `${col}.grifo_interno_id = ANY($${desde}::int[])`,
-    valores: [a.grifos] as unknown[],
-  };
 }
 
 const num = (x: unknown) => Number(x ?? 0);
