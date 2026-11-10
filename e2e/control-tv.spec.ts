@@ -95,6 +95,26 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   await expect(tv.getByText("Flota en operación")).toBeVisible();
   await expect(tv.getByRole("heading", { name: "Consumo por día" })).toBeVisible();
 
+  // «Detalle»: lo que la gerencia usa para decidir.
+  await tv.getByRole("button", { name: "Detalle" }).click();
+  await expect(tv.getByRole("heading", { name: "Cómo se mueve el combustible" })).toBeVisible();
+  await expect(tv.getByRole("heading", { name: /^Combustible · / })).toBeVisible();
+  await expect(
+    tv.getByRole("heading", { name: "Últimas recepciones de combustible" })
+  ).toBeVisible();
+  await expect(tv.getByRole("heading", { name: "Para decidir" })).toBeVisible();
+  await expect(tv.getByRole("heading", { name: "Unidades que más se desvían" })).toBeVisible();
+  await expect(tv.getByRole("heading", { name: "Compra en ruta: cuánto cuesta" })).toBeVisible();
+  // El período del detalle cambia sin vaciar la pantalla, y «Tabla» muestra los mismos números.
+  await tv.getByRole("button", { name: "7 días" }).click();
+  await expect(tv.getByRole("heading", { name: "Combustible · últimos 7 días" })).toBeVisible();
+  await tv.getByRole("button", { name: "Tabla" }).click();
+  await expect(
+    tv.getByRole("columnheader", { name: /Compra en ruta \(gal\)/ }).first()
+  ).toBeVisible();
+  await tv.getByRole("button", { name: "Resumen" }).click();
+  await expect(tv.getByText("Flota en operación")).toBeVisible();
+
   // El ícono TV de la fila del viaje abre directamente la vista de esa unidad.
   const [fila] = await Promise.all([
     context.waitForEvent("page"),

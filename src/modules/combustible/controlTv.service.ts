@@ -321,12 +321,12 @@ export const PERIODOS_TV = ["24h", "7d", "30d"] as const;
 export type PeriodoTv = (typeof PERIODOS_TV)[number];
 
 /** 24 h se agrupa por hora; 7 y 30 días, por día. Los cortes son de la hora de Lima. */
-const PERIODO: Record<PeriodoTv, { unidad: "hour" | "day"; n: number; paso: string }> = {
+export const PERIODO: Record<PeriodoTv, { unidad: "hour" | "day"; n: number; paso: string }> = {
   "24h": { unidad: "hour", n: 24, paso: "1 hour" },
   "7d": { unidad: "day", n: 7, paso: "1 day" },
   "30d": { unidad: "day", n: 30, paso: "1 day" },
 };
-const INICIO_SQL = `date_trunc($2::text, now(), 'America/Lima') - ($3::int - 1) * $4::interval`;
+export const INICIO_SQL = `date_trunc($2::text, now(), 'America/Lima') - ($3::int - 1) * $4::interval`;
 
 type Grupo = "interno" | "tanqueta" | "ruta";
 const GRUPOS: Grupo[] = ["interno", "tanqueta", "ruta"];

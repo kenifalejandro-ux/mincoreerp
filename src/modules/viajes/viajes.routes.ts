@@ -251,6 +251,12 @@ router.get(
   validateQuery(controlTvConsumoQuerySchema),
   asyncHandler(viajesController.controlTvConsumo)
 );
+router.get(
+  "/control-tv/detalle",
+  requirePestana("combustible", "viajes:control_tv"),
+  validateQuery(controlTvConsumoQuerySchema),
+  asyncHandler(viajesController.controlTvDetalle)
+);
 // Marcar la llegada o la salida de cualquier parada, sin orden (solo la oficina).
 router.post(
   "/:viajeId(\\d+)/marcas",
