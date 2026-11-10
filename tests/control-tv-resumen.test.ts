@@ -121,6 +121,16 @@ describe("control TV: resumen", () => {
     // Esta empresa tiene Combustible: el bloque viene con sus totales.
     // La avería abrió su alerta crítica de unidad detenida.
     expect(r.body.combustible.alertas.criticas).toBe(1);
+    // Los últimos eventos traen la llegada a la parada y la detención, el más nuevo primero.
+    const tipos = (r.body.eventos as { tipo: string; titulo: string }[]).map((e) => e.tipo);
+    expect(tipos).toContain("llegada");
+    expect(tipos).toContain("detenida");
+    expect(r.body.eventos.length).toBeLessThanOrEqual(5);
+    const ts = (r.body.eventos as { t: string }[]).map((e) => Date.parse(e.t));
+    expect(ts).toEqual([...ts].sort((x, y) => y - x));
+    expect(r.body.eventos.find((e: { tipo: string }) => e.tipo === "detenida").titulo).toBe(
+      "Detenida por avería"
+    );
   });
 
   it("el bloque de combustible suma lo que hay en los tanques y trae la urea por envase", async () => {
@@ -170,6 +180,11 @@ describe("control TV: resumen", () => {
     expect(r.body.flota.activos).toBe(0);
     expect(r.body).not.toHaveProperty("combustible");
     expect(r.body).not.toHaveProperty("urea");
+    // Los eventos de Viajes sí vienen, pero ninguno de combustible.
+    expect(Array.isArray(r.body.eventos)).toBe(true);
+    expect(
+      r.body.eventos.every((e: { tipo: string }) => ["llegada", "detenida"].includes(e.tipo))
+    ).toBe(true);
   });
 
   it("cada empresa ve solo su flota", async () => {

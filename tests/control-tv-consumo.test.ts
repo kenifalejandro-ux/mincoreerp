@@ -132,6 +132,22 @@ describe("control TV: consumo y entrada", () => {
     expect(r.body.consumo.serie).toHaveLength(24);
     const suma = r.body.consumo.serie.reduce((s: number, x: { gal: number }) => s + x.gal, 0);
     expect(suma).toBeCloseTo(10, 2);
+
+    // Los últimos eventos: la carga a la unidad sí; el llenado de la tanqueta no es un evento.
+    const ev = (await admin.get("/api/erp/viajes/control-tv/resumen")).body.eventos as {
+      tipo: string;
+      detalle: string;
+    }[];
+    const cargas = ev.filter((e) => e.tipo === "carga");
+    expect(cargas).toHaveLength(1);
+    expect(cargas[0].detalle).toContain("10.0 gal");
+    expect(cargas[0].detalle).toContain("desde el tanque");
+
+    // El nivel del tanque trae su lectura inicial, su capacidad y su mínimo.
+    const nv = r.body.niveles.find((n: { nombre: string }) => n.nombre === "Tanque TV");
+    expect(nv).toMatchObject({ capacidad: 50000, minimo: 100, unidad: "gal" });
+    expect(nv.puntos.length).toBeGreaterThanOrEqual(1);
+    expect(nv.puntos[0].nivel).toBeCloseTo(40000, 0);
   });
 
   it("7 y 30 días se agrupan por día; el período por defecto es 24 h; uno inválido da 400", async () => {

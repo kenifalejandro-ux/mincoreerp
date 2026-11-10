@@ -24,6 +24,8 @@ export interface ContextoControlTv {
   combustible: boolean;
   /** Además, ve la pestaña de Urea. */
   urea: boolean;
+  /** Quien mira (el alcance de los vales incluye lo que cargó él mismo). */
+  usuarioId: string;
 }
 
 const num = (x: unknown) => Number(x ?? 0);
@@ -172,6 +174,129 @@ async function urea(client: PoolClient, tenantId: string, servicio: CombustibleS
   };
 }
 
+// ── Últimos eventos ────────────────────────────────────────────────────────
+
+export interface EventoTv {
+  t: string;
+  tipo: "carga" | "compra_ruta" | "recepcion" | "llegada" | "detenida";
+  titulo: string;
+  detalle: string;
+}
+
+/** Los últimos 5 movimientos de la empresa: cargas a unidades, compras en ruta, recepciones de
+ *  cisterna, llegadas a una parada y unidades detenidas. Las dos primeras clases solo si tiene
+ *  Combustible; las llegadas y las detenciones salen de Viajes. */
+async function eventos(client: PoolClient, tenantId: string, ctx: ContextoControlTv) {
+  const todos: (EventoTv & { ms: number })[] = [];
+  const poner = (t: Date, tipo: EventoTv["tipo"], titulo: string, detalle: string) =>
+    todos.push({ t: new Date(t).toISOString(), ms: new Date(t).getTime(), tipo, titulo, detalle });
+
+  if (ctx.combustible) {
+    const valores: unknown[] = [tenantId];
+    const condiciones = [
+      "d.tenant_id = $1",
+      "d.producto = 'combustible'",
+      "d.anulada_en IS NULL",
+      "d.tipo_destino IS DISTINCT FROM 'reserva_cubeta'",
+      "d.despachado_en >= now() - interval '7 days'",
+    ];
+    agregarAmbitoVales(condiciones, valores, "d", {
+      alcance: ctx.alcance,
+      usuarioId: ctx.usuarioId,
+      grifos: null,
+    });
+    const cargas = await client.query(
+      `SELECT d.despachado_en AS t, d.origen, e.placa_codigo AS placa,
+              ${litrosSql("t")} / ${LITROS_POR_GALON} AS gal
+         FROM combustible_despachos d
+         LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
+         LEFT JOIN combustible t ON t.id = COALESCE(d.combustible_id, d.tanque_excedente_id)
+                                AND t.tenant_id = d.tenant_id
+        WHERE ${condiciones.join(" AND ")}
+        ORDER BY d.despachado_en DESC LIMIT 5`,
+      valores
+    );
+    for (const c of cargas.rows) {
+      const origen =
+        c.origen === "tanqueta"
+          ? "desde tanqueta"
+          : c.origen === "compra_externa"
+            ? "compra en ruta"
+            : "desde el tanque";
+      const compra = c.origen === "compra_externa";
+      poner(
+        c.t,
+        compra ? "compra_ruta" : "carga",
+        compra ? "Compra en ruta" : `Carga ${c.placa ?? "a unidad"}`,
+        `${c.placa && compra ? `${c.placa} · ` : ""}${num(c.gal).toFixed(1)} gal · ${origen}`
+      );
+    }
+    const fHecho = filtroHechoDeGrifo(ctx.alcance, "r", 2);
+    const recepciones = await client.query(
+      `SELECT r.recibido_en AS t, c.tanque_nombre,
+              (r.cantidad + r.cantidad_derivada)
+                / CASE WHEN c.unidad = 'L' THEN ${LITROS_POR_GALON} ELSE 1 END AS gal
+         FROM combustible_recepciones r
+         JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
+        WHERE r.tenant_id = $1 AND r.producto = 'combustible' AND r.anulada_en IS NULL
+          AND ${fHecho.sql}
+        ORDER BY r.recibido_en DESC LIMIT 5`,
+      [tenantId, ...fHecho.valores]
+    );
+    for (const r of recepciones.rows) {
+      poner(
+        r.t,
+        "recepcion",
+        "Recepción de cisterna",
+        `${num(r.gal).toFixed(0)} gal · ${r.tanque_nombre}`
+      );
+    }
+  }
+
+  const llegadas = await client.query(
+    `SELECT p.llegada_en AS t, e.placa_codigo AS placa, v.conductor_nombre AS conductor, l.nombre AS lugar
+       FROM combustible_viaje_paradas p
+       JOIN combustible_viajes v ON v.id = p.viaje_id AND v.tenant_id = p.tenant_id
+       JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+       JOIN combustible_lugares l ON l.id = p.lugar_id AND l.tenant_id = p.tenant_id
+      WHERE p.tenant_id = $1 AND p.orden > 0 AND p.llegada_en IS NOT NULL AND v.estado <> 'anulado'
+      ORDER BY p.llegada_en DESC LIMIT 5`,
+    [tenantId]
+  );
+  for (const l of llegadas.rows) {
+    poner(
+      l.t,
+      "llegada",
+      `Llegada a ${l.lugar}`,
+      `${l.placa}${l.conductor ? ` · ${l.conductor}` : ""}`
+    );
+  }
+  const detenidas = await client.query(
+    `SELECT d.inicio_en AS t, e.placa_codigo AS placa, d.conductor_nombre AS conductor, d.motivo
+       FROM combustible_viaje_descansos d
+       JOIN combustible_viajes v ON v.id = d.viaje_id AND v.tenant_id = d.tenant_id
+       JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+      WHERE d.tenant_id = $1 AND d.detiene AND v.estado <> 'anulado'
+      ORDER BY d.inicio_en DESC LIMIT 10`,
+    [tenantId]
+  );
+  for (const d of detenidas.rows) {
+    const motivo = detencionDe(d.motivo);
+    if (motivo) {
+      poner(
+        d.t,
+        "detenida",
+        `Detenida por ${motivo.toLowerCase()}`,
+        `${d.placa}${d.conductor ? ` · ${d.conductor}` : ""}`
+      );
+    }
+  }
+  return todos
+    .sort((a, b) => b.ms - a.ms)
+    .slice(0, 5)
+    .map(({ ms: _ms, ...e }) => e);
+}
+
 /** El resumen completo. Los bloques de combustible y urea solo aparecen si el contexto los permite. */
 export async function resumenControlTv(
   client: PoolClient,
@@ -182,6 +307,7 @@ export async function resumenControlTv(
   return {
     generado_en: new Date().toISOString(),
     flota: await flota(client, tenantId),
+    eventos: await eventos(client, tenantId, ctx),
     ...(ctx.combustible
       ? { combustible: await combustible(client, tenantId, ctx.alcance, servicio) }
       : {}),
@@ -342,15 +468,52 @@ async function entrada(
   };
 }
 
-/** El consumo y la entrada del período. Solo con Combustible: sin él, el que llama no lo pide. */
+/** El nivel de cada tanque en el período, con sus lecturas de varilla (no se inventa nada entre una
+ *  y otra: son los puntos medidos), más su capacidad y su mínimo. */
+async function niveles(
+  client: PoolClient,
+  tenantId: string,
+  periodo: PeriodoTv,
+  alcance: AlcanceCombustible,
+  servicio: CombustibleService
+) {
+  const { unidad, n, paso } = PERIODO[periodo];
+  const tanques = (await servicio.getAll(client, tenantId, alcance)).filter(
+    (t: { activo: boolean }) => t.activo
+  );
+  if (tanques.length === 0) return [];
+  const lecturas = await client.query<{ combustible_id: number; t: Date; nivel: string }>(
+    `SELECT combustible_id, leido_en AS t, nivel FROM combustible_lecturas
+      WHERE tenant_id = $1 AND anulada_en IS NULL AND combustible_id = ANY($5::int[])
+        AND leido_en >= ${INICIO_SQL}
+      ORDER BY leido_en`,
+    [tenantId, unidad, n, paso, tanques.map((t: { id: number }) => t.id)]
+  );
+  return tanques.map((t: Record<string, unknown>) => ({
+    id: t.id,
+    nombre: t.tanque_nombre,
+    unidad: t.unidad,
+    capacidad: num(t.capacidad_total),
+    minimo: t.nivel_minimo == null ? null : num(t.nivel_minimo),
+    nivel_actual: t.nivel_teorico ?? t.nivel_actual ?? null,
+    puntos: lecturas.rows
+      .filter((l) => l.combustible_id === t.id)
+      .map((l) => ({ t: new Date(l.t).toISOString(), nivel: num(l.nivel) })),
+  }));
+}
+
+/** El consumo, la entrada y el nivel de los tanques del período. Solo con Combustible: sin él, el
+ *  que llama no lo pide. */
 export async function consumoControlTv(
   client: PoolClient,
   tenantId: string,
   periodo: PeriodoTv,
-  ambito: AmbitoVales
+  ambito: AmbitoVales,
+  servicio: CombustibleService
 ) {
   return {
     consumo: await consumo(client, tenantId, periodo, ambito),
     entrada: await entrada(client, tenantId, periodo, ambito.alcance),
+    niveles: await niveles(client, tenantId, periodo, ambito.alcance, servicio),
   };
 }
