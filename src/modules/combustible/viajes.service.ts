@@ -820,7 +820,7 @@ export async function cerrarViaje(
 
 // ── Llegar y salir de cada parada ──────────────────────────────────────────
 
-interface FilaParada {
+export interface FilaParada {
   orden: number;
   llegada_en: Date | null;
   llegada_medidor: string | null;
@@ -852,7 +852,7 @@ type Posicion =
   | { tipo: "terminado" };
 
 /** En qué punto del recorrido va el viaje, según las marcas de sus paradas. */
-function posicion(p: FilaParada[]): Posicion {
+export function posicion(p: FilaParada[]): Posicion {
   for (let i = 0; i < p.length - 1; i++) {
     if (p[i].salida_en == null)
       return i === 0 ? { tipo: "sin_salir" } : { tipo: "en_parada", en: i };

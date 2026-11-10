@@ -236,6 +236,13 @@ router.post(
   validate(corregirMarcaDeParadaSchema),
   asyncHandler(viajesController.corregirMarca)
 );
+// Resumen del Control TV: solo gerencia (admin y lectura). Combustible y Urea son opcionales: sin
+// ese módulo el bloque no viene. Va antes de /:viajeId.
+router.get(
+  "/control-tv/resumen",
+  requireRole("admin", "lectura"),
+  asyncHandler(viajesController.controlTvResumen)
+);
 // Marcar la llegada o la salida de cualquier parada, sin orden (solo la oficina).
 router.post(
   "/:viajeId(\\d+)/marcas",

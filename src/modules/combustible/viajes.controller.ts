@@ -31,6 +31,7 @@ import type {
 } from "../../server/schemas/combustible.schema";
 import { ambitoDe } from "./alcance";
 import { CombustibleService } from "./combustible.service";
+import { resumenControlTv } from "./controlTv.service";
 import * as viajes from "./viajes.service";
 import {
   catalogoParaCrear,
@@ -625,6 +626,29 @@ export const viajesController = {
     });
     res.json(r.despues);
   },
+  /** El resumen del Control TV (gerencia): flota por estado y, si la empresa tiene Combustible,
+   *  inventario, alertas y urea. Sin ese módulo el bloque falta, no es un error. */
+  async controlTvResumen(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const u = req.usuario!;
+    const tieneCombustible = u.modulosPermitidos.includes("combustible");
+    const alcance = ambitoDe(req).alcance;
+    res.json(
+      await withTenant(tenantId, (c) =>
+        resumenControlTv(
+          c,
+          tenantId,
+          {
+            alcance,
+            combustible: tieneCombustible,
+            urea: tieneCombustible && pestanaPermitida(u, "combustible", "urea:vista"),
+          },
+          combustible
+        )
+      )
+    );
+  },
+
   /** La oficina marca cualquier parada sin orden; cambiar una marca puesta queda auditado con su
    *  hora anterior y el motivo. */
   async marcarSinOrden(req: Request, res: Response) {
