@@ -12,9 +12,35 @@ import {
   puntosTendencia,
   valorEnTanques,
 } from "../client/src/components/controlTv/controlTvLogica";
-import { claseDeTipo } from "../client/src/components/controlTv/tiposUnidad";
+import { anchoDeIcono, claseDeTipo, FORMAS } from "../client/src/components/controlTv/tiposUnidad";
 import { puedeVerControlTv } from "../client/src/components/flota/flotaAcceso";
 import type { FilaViaje } from "../client/src/components/combustible/viajesFormato";
+
+describe("FORMAS: cada tipo tiene su dibujo y su propio largo", () => {
+  const clases = Object.keys(FORMAS) as (keyof typeof FORMAS)[];
+  it("hay un dibujo para cada una de las 12 clases", () => {
+    expect(clases).toHaveLength(12);
+    for (const c of clases) {
+      expect(FORMAS[c].w, c).toBeGreaterThan(0);
+      expect(FORMAS[c].d.length, c).toBeGreaterThan(20);
+    }
+  });
+  it("el tráiler es el más largo y la camioneta está entre las más cortas", () => {
+    const ancho = (c: keyof typeof FORMAS) => FORMAS[c].w;
+    for (const c of clases)
+      if (c !== "trailer") expect(ancho("trailer"), c).toBeGreaterThan(ancho(c));
+    expect(ancho("bombona")).toBeGreaterThan(ancho("volquete"));
+    expect(ancho("carreta")).toBeGreaterThan(ancho("baranda"));
+    expect(ancho("camioneta")).toBeLessThan(ancho("volquete"));
+  });
+  it("el ancho en píxeles crece con el alto y respeta la proporción del dibujo", () => {
+    expect(anchoDeIcono("Tráiler", 24)).toBe(FORMAS.trailer.w);
+    expect(anchoDeIcono("Tráiler", 48)).toBe(FORMAS.trailer.w * 2);
+    // Un tipo desconocido o vacío se dibuja como «Otro».
+    expect(anchoDeIcono("Grúa", 24)).toBe(FORMAS.otro.w);
+    expect(anchoDeIcono(null, 24)).toBe(FORMAS.otro.w);
+  });
+});
 
 describe("claseDeTipo: un ícono por tipo de unidad", () => {
   it("reconoce los 12 tipos del registro, sin mayúsculas ni tildes", () => {

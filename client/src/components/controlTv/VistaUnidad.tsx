@@ -205,7 +205,7 @@ export function VistaUnidad({
           {unidadLabel(v)}
         </span>
         <span className="flex items-center gap-1.5 text-slate-300">
-          <IconoTipo tipo={v.equipo_tipo} className="w-8 h-6" />
+          <IconoTipo tipo={v.equipo_tipo} alto={30} />
           {v.equipo_tipo ?? "Otro"}
         </span>
         <span
@@ -273,11 +273,11 @@ export function VistaUnidad({
                 );
               })}
               <span
-                className="absolute top-2 grid h-10 w-12 -translate-x-1/2 place-items-center rounded-full bg-[#BADC1E] text-[#0D1719] shadow-[0_0_0_6px_#BADC1E33]"
+                className="absolute top-2 grid h-10 -translate-x-1/2 place-items-center rounded-full bg-[#BADC1E] px-3 text-[#0D1719] shadow-[0_0_0_6px_#BADC1E33]"
                 style={{ left: `${frac * 100}%` }}
                 title={unidadLabel(v)}
               >
-                <IconoTipo tipo={v.equipo_tipo} className="w-8 h-6" />
+                <IconoTipo tipo={v.equipo_tipo} alto={26} />
               </span>
             </div>
           </Seccion>

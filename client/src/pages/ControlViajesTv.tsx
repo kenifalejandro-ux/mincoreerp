@@ -49,6 +49,7 @@ import {
   PanelTanquetas,
   PanelUrea,
 } from "../components/controlTv/PanelesTv";
+import { anchoDeIcono } from "../components/controlTv/tiposUnidad";
 import { VistaUnidad } from "../components/controlTv/VistaUnidad";
 import { apiFetch } from "../services/apiClient";
 
@@ -102,6 +103,9 @@ interface Consumo {
 }
 
 const soles = (n: number) => `S/ ${fmt(n, 0)}`;
+/** Alto del ícono dentro de la ficha de la vista en vivo. */
+const ALTO_FICHA = 26;
+
 const PERIODOS: { id: Periodo; t: string }[] = [
   { id: "24h", t: "24 h" },
   { id: "7d", t: "7 días" },
@@ -220,6 +224,10 @@ function VistaEnVivo({
   const filas = 9;
   const orden = [4, 3, 5, 2, 6, 1, 7, 0, 8];
   const ultimo = orden.map(() => -99);
+  const anchoDe = orden.map(() => 4.6);
+  // Lo que ocupa cada ficha, en % del ancho (se estima sobre unos 900 px): un tráiler es más largo
+  // que una camioneta, y las fichas de una misma fila no se montan.
+  const ancho = (v: FilaViaje) => (anchoDeIcono(v.equipo_tipo, ALTO_FICHA) + 16) / 9;
   const puestas = viajes
     .map((v) => ({ v, x: 4 + posicionEnRuta(v) * 92 }))
     .sort((a, b) => a.x - b.x)
@@ -229,11 +237,12 @@ function VistaEnVivo({
       let px = x;
       let fila = -1;
       for (let intento = 0; intento < 40 && fila < 0; intento++) {
-        fila = orden.find((o) => px - ultimo[o] >= 4.6) ?? -1;
+        fila = orden.find((o) => px - ultimo[o] >= (ancho(v) + anchoDe[o]) / 2 + 0.6) ?? -1;
         if (fila < 0) px += 1.2;
       }
       if (fila < 0) fila = orden[0];
       ultimo[fila] = px;
+      anchoDe[fila] = ancho(v);
       return { v, x: Math.min(px, 97), fila };
     });
   const color = Object.fromEntries(CATS.map((c) => [c.k, c.c]));
@@ -277,7 +286,7 @@ function VistaEnVivo({
               onClick={() => onElegir(v.id)}
               aria-label={`Ver ${unidadLabel(v)} en su Control TV`}
               title={`${unidadLabel(v)} · ${v.conductor_nombre ?? "sin conductor"} · ${v.equipo_tipo ?? "Otro"} · ${estado}`}
-              className={`absolute grid h-[30px] w-10 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-lg border bg-[#0b1719]/80 cursor-pointer hover:bg-white/15 hover:z-10 ${
+              className={`absolute grid h-[34px] -translate-x-1/2 -translate-y-1/2 place-items-center rounded-lg border bg-[#0b1719]/80 px-2 cursor-pointer hover:bg-white/15 hover:z-10 ${
                 cat === "detenida" ? "animate-pulse motion-reduce:animate-none" : ""
               }`}
               style={{
@@ -287,7 +296,7 @@ function VistaEnVivo({
                 borderColor: color[cat],
               }}
             >
-              <IconoTipo tipo={v.equipo_tipo} className="w-8 h-6" />
+              <IconoTipo tipo={v.equipo_tipo} alto={ALTO_FICHA} />
             </button>
           );
         })}
@@ -626,7 +635,7 @@ export default function ControlViajesTv() {
                     .sort((a, b) => b.cantidad - a.cantidad)
                     .map((t) => (
                       <li key={t.tipo} className="flex min-w-0 items-center gap-1.5 text-slate-300">
-                        <IconoTipo tipo={t.tipo} className="w-6 h-[18px] shrink-0 text-[#BADC1E]" />
+                        <IconoTipo tipo={t.tipo} alto={20} className="shrink-0 text-[#BADC1E]" />
                         <em className="min-w-0 flex-1 truncate not-italic text-slate-400">
                           {t.tipo}
                         </em>
