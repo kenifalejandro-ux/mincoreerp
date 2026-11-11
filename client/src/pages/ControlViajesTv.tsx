@@ -164,14 +164,17 @@ const ESTILO_AJUSTADO = `
   .tv-fila-mapa > *, .tv-fila-abajo > * { min-height: 0; overflow: hidden; }
   /* La vista de una unidad también cabe: el mapa y la columna de la derecha arriba, tres tarjetas abajo. */
   .tv-unidad { display: grid; flex: 1 1 auto; min-height: 0; grid-template-rows: auto minmax(0, 1fr); }
-  .tv-unidad-cuerpo { min-height: 0; grid-template-rows: minmax(0, 1.5fr) minmax(0, .8fr); }
+  .tv-unidad-cuerpo { min-height: 0; grid-template-rows: minmax(0, 1.4fr) minmax(0, 1fr); }
   .tv-unidad-cuerpo > * { min-height: 0; }
+  @media (max-width: 1500px) { .tv-unidad-cuerpo { grid-template-rows: minmax(0, 2.3fr) minmax(0, 1fr); } }
   .tv-unidad-cuerpo > .tv-unidad-abajo > * { min-height: 0; overflow: hidden; }
   .tv-unidad-mapa > section { flex: 1 1 auto; min-height: 0; }
 }`;
 
 export default function ControlViajesTv() {
   const [periodo, setPeriodo] = useState<Periodo>("24h");
+  // El período de los resúmenes de la vista de una unidad (30 días era lo único que mostraba).
+  const [periodoUnidad, setPeriodoUnidad] = useState<Periodo>("30d");
   const [resumen, setResumen] = useState<Resumen | null>(null);
   const [consumo, setConsumo] = useState<Consumo | null>(null);
   const [viajes, setViajes] = useState<FilaViaje[]>([]);
@@ -458,15 +461,15 @@ export default function ControlViajesTv() {
               ))}
             </div>
           )}
-          {!unidad && pagina === "resumen" && (
+          {(unidad || pagina === "resumen") && (
             <div className="inline-flex gap-0.5 rounded-xl border border-white/10 bg-white/5 p-0.5">
               {PERIODOS.map((p) => (
                 <button
                   key={p.id}
-                  aria-pressed={periodo === p.id}
-                  onClick={() => setPeriodo(p.id)}
+                  aria-pressed={(unidad ? periodoUnidad : periodo) === p.id}
+                  onClick={() => (unidad ? setPeriodoUnidad(p.id) : setPeriodo(p.id))}
                   className={`rounded-lg px-3.5 py-1.5 text-sm font-bold ${
-                    periodo === p.id
+                    (unidad ? periodoUnidad : periodo) === p.id
                       ? "bg-[#BADC1E] text-[#0D1719]"
                       : "text-slate-400 hover:text-white"
                   }`}
@@ -510,6 +513,7 @@ export default function ControlViajesTv() {
             viajes={viajes}
             lugares={lugares}
             id={unidad}
+            periodo={periodoUnidad}
             version={version}
             ahora={ahora}
             onCambiar={elegir}

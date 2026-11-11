@@ -33,7 +33,7 @@ import { ambitoDe } from "./alcance";
 import { CombustibleService } from "./combustible.service";
 import { consumoControlTv, resumenControlTv, type PeriodoTv } from "./controlTv.service";
 import { detalleControlTv } from "./controlTvDetalle.service";
-import { resumenDeUnidad } from "./controlTvUnidad.service";
+import { resumenDeUnidad, type PeriodoUnidadTv } from "./controlTvUnidad.service";
 import * as viajes from "./viajes.service";
 import {
   catalogoParaCrear,
@@ -694,8 +694,9 @@ export const viajesController = {
     const tenantId = getTenantId(req);
     if (!req.usuario!.modulosPermitidos.includes("combustible")) return res.json({});
     const id = Number(req.params.viajeId);
+    const { periodo } = req.validatedQuery as { periodo: PeriodoUnidadTv };
     const r = await withTenant(tenantId, (c) =>
-      resumenDeUnidad(c, tenantId, id, ambitoDe(req), combustible)
+      resumenDeUnidad(c, tenantId, id, ambitoDe(req), combustible, periodo)
     );
     if (!r) return res.status(404).json({ error: "El viaje no existe" });
     res.json(r);

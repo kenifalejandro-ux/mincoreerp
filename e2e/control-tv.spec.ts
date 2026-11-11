@@ -74,8 +74,8 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   await expect(tv.getByText("Vista en vivo")).toBeVisible();
   await expect(tv.getByText("Viajes activos")).toBeVisible();
   await expect(tv.getByRole("button", { name: "Pantalla completa", exact: true })).toBeVisible();
-  // La vista en vivo es el mapa (sin «Marcas»): su leyenda es el filtro y dice cuántas unidades hay.
-  await expect(tv.getByRole("button", { name: "Marcas", exact: true })).toHaveCount(0);
+  // La vista en vivo abre en el mapa digital; «Marcas» está a su lado y la leyenda es el filtro.
+  await expect(tv.getByRole("button", { name: "Marcas", exact: true })).toBeVisible();
   await expect(tv.getByRole("img", { name: /Mapa de las unidades en ruta/ })).toBeVisible();
   await expect(tv.getByRole("button", { name: /^Todas\s*\d+$/ })).toBeVisible();
   await expect(tv.getByRole("button", { name: /^En ruta\s*\d+$/ })).toBeVisible();
@@ -104,11 +104,12 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   // La vista de la unidad: el mapa al medio («Dónde está») y la información del conductor alrededor.
   await expect(tv.getByText("Dónde está")).toBeVisible();
   for (const t of [
-    "Estado operacional",
+    "Consumo acumulado del viaje",
     "Tiempos del viaje",
     "Conductor y relevo",
     "Alertas activas",
-    "Cargas y rendimiento",
+    "Consumo por tramo",
+    "Rendimiento y cargas",
   ]) {
     await expect(tv.getByRole("heading", { name: t })).toBeVisible();
   }
@@ -124,7 +125,9 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
     await tv.setViewportSize({ width: ancho, height: alto });
     await expect(tv.getByRole("heading", { name: "Alertas activas" })).toBeVisible();
     const mapa = await tv.getByText("Dónde está").boundingBox();
-    const estadoOp = await tv.getByRole("heading", { name: "Estado operacional" }).boundingBox();
+    const estadoOp = await tv
+      .getByRole("heading", { name: "Consumo acumulado del viaje" })
+      .boundingBox();
     expect(estadoOp!.x, nombre).toBeGreaterThan(mapa!.x + 300);
     const desborde = await tv
       .locator("div.fixed.inset-0")

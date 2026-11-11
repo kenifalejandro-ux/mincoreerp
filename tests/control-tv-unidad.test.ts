@@ -122,6 +122,18 @@ describe("control TV: resumen de una unidad", () => {
     await closeDatabase();
   });
 
+  it("el período elige cuántos días mira el resumen (24 h, 7 días, 30 días) y uno raro es 400", async () => {
+    const dias = async (q: string) => (await admin.get(`${url(v.enRuta)}${q}`)).body.dias;
+    expect(await dias("")).toBe(30);
+    expect(await dias("?periodo=24h")).toBe(1);
+    expect(await dias("?periodo=7d")).toBe(7);
+    expect(await dias("?periodo=30d")).toBe(30);
+    // Lo de hace horas entra en cualquier período; los contadores no se pierden al achicarlo.
+    const corto = await admin.get(`${url(v.enRuta)}?periodo=24h`);
+    expect(corto.body.conductor).toMatchObject({ en_ruta: 1, terminados: 1 });
+    expect((await admin.get(`${url(v.enRuta)}?periodo=1y`)).status).toBe(400);
+  });
+
   it("cuenta los viajes del conductor como titular, y el relevo aparte", async () => {
     const r = await admin.get(url(v.enRuta));
     expect(r.status, JSON.stringify(r.body)).toBe(200);

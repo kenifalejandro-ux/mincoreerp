@@ -19,6 +19,7 @@ import {
   type LugarMapa,
   type Punto,
 } from "./mapaLogica";
+import { MarcasEnVivo } from "./MarcasEnVivo";
 import { paradasDelViaje } from "../combustible/paradasViaje";
 import { PERU_DEPARTAMENTOS } from "../combustible/peruDepartamentos";
 import { unidadLabel, type FilaViaje } from "../combustible/viajesFormato";
@@ -55,14 +56,16 @@ export function MapaDigital({
   const [filtro, setFiltro] = useState<FiltroEstado>("todas");
   const [elegida, setElegida] = useState<string | null>(null);
   // Digital (dibujado, sin internet) o Satélite (necesita internet); se recuerda lo que eligió cada persona.
-  const [capa, setCapa] = useState<"digital" | "satelite">(() => {
+  type Capa = "marcas" | "digital" | "satelite";
+  const [capa, setCapa] = useState<Capa>(() => {
     try {
-      return localStorage.getItem("controlTv.capaMapa") === "satelite" ? "satelite" : "digital";
+      const guardada = localStorage.getItem("controlTv.capaMapa");
+      return guardada === "satelite" || guardada === "marcas" ? guardada : "digital";
     } catch {
       return "digital";
     }
   });
-  const cambiarCapa = (c: "digital" | "satelite") => {
+  const cambiarCapa = (c: Capa) => {
     setCapa(c);
     try {
       localStorage.setItem("controlTv.capaMapa", c);
@@ -379,7 +382,7 @@ export function MapaDigital({
           {titulo}
         </h2>
         <div className="ml-auto inline-flex gap-0.5 rounded-lg border border-white/10 bg-white/5 p-0.5">
-          {(["digital", "satelite"] as const).map((k) => (
+          {(["marcas", "digital", "satelite"] as const).map((k) => (
             <button
               key={k}
               aria-pressed={capa === k}
@@ -388,7 +391,7 @@ export function MapaDigital({
                 capa === k ? "bg-[#BADC1E] text-[#0D1719]" : "text-slate-400 hover:text-white"
               }`}
             >
-              {k === "digital" ? "Digital" : "Satélite"}
+              {k === "marcas" ? "Marcas" : k === "digital" ? "Digital" : "Satélite"}
             </button>
           ))}
         </div>
@@ -444,15 +447,22 @@ export function MapaDigital({
           <canvas
             ref={base}
             aria-hidden
-            className={`absolute inset-0 h-full w-full ${capa === "satelite" ? "hidden" : ""}`}
+            className={`absolute inset-0 h-full w-full ${capa !== "digital" ? "hidden" : ""}`}
           />
           <canvas
             ref={vivo}
             onClick={alTocar}
             role="img"
             aria-label="Mapa de las unidades en ruta, posición estimada por las marcas"
-            className={`absolute inset-0 h-full w-full cursor-pointer ${capa === "satelite" ? "hidden" : ""}`}
+            className={`absolute inset-0 h-full w-full cursor-pointer ${capa !== "digital" ? "hidden" : ""}`}
           />
+          {capa === "marcas" && (
+            <MarcasEnVivo
+              viajes={visibles.map((f) => f.v)}
+              onElegir={onElegir}
+              anchoPanel={tamano.w || 900}
+            />
+          )}
           {capa === "satelite" && (
             <Suspense
               fallback={
@@ -470,7 +480,7 @@ export function MapaDigital({
               />
             </Suspense>
           )}
-          {lugares.filter((l) => puntoDeLugar(l)).length === 0 && (
+          {capa !== "marcas" && lugares.filter((l) => puntoDeLugar(l)).length === 0 && (
             <p className="absolute inset-x-4 top-3 rounded-lg border border-amber-400/30 bg-amber-400/10 p-2 text-xs text-amber-200">
               Todavía no hay lugares con punto en el mapa. Ponlos en Viajes → Lugares y las rutas
               aparecerán aquí.
@@ -509,8 +519,8 @@ export function MapaDigital({
               ))}
             </ul>
           )}
-          {sinUbicar.length > 0 && (
-            <p className="absolute bottom-12 left-3 right-3 rounded-lg bg-black/60 px-2 py-1 text-[11px] text-amber-200">
+          {capa !== "marcas" && sinUbicar.length > 0 && (
+            <p className="pointer-events-none absolute bottom-12 left-3 right-3 rounded-lg bg-black/60 px-2 py-1 text-[11px] text-amber-200">
               {sinUbicar.length} {sinUbicar.length === 1 ? "unidad" : "unidades"} sin ubicar en el
               mapa (su lugar no tiene punto):{" "}
               {sinUbicar
