@@ -33,6 +33,8 @@ import {
 } from "../components/controlTv/controlTvLogica";
 import { DetalleTv, type DetalleDatos } from "../components/controlTv/DetalleTv";
 import { IconoTipo } from "../components/controlTv/iconosUnidad";
+import { MapaDigital } from "../components/controlTv/MapaDigital";
+import type { LugarMapa } from "../components/controlTv/mapaLogica";
 import type {
   EnvaseTv,
   EventoTv,
@@ -166,10 +168,13 @@ function Dona({ f }: { f: Resumen["flota"] }) {
  *  Sin GPS es una estimación; con GPS será el mapa real. */
 function VistaEnVivo({
   viajes,
+  lugares,
   onElegir,
   anchoPanel = 900,
 }: {
   viajes: FilaViaje[];
+  /** Los lugares con su punto en el mapa (para la vista «Mapa»). */
+  lugares: LugarMapa[];
   onElegir: (id: string) => void;
   /** Ancho aproximado del panel en píxeles (unos 360 en el celular): sirve para separar las fichas. */
   anchoPanel?: number;
@@ -200,6 +205,22 @@ function VistaEnVivo({
       return { v, x: Math.min(px, 97), fila };
     });
   const color = Object.fromEntries(CATS.map((c) => [c.k, c.c]));
+  // Marcas (los carriles de salida a regreso) o Mapa; se recuerda lo que eligió cada persona.
+  const [vista, setVista] = useState<"marcas" | "mapa">(() => {
+    try {
+      return localStorage.getItem("controlTv.vistaEnVivo") === "mapa" ? "mapa" : "marcas";
+    } catch {
+      return "marcas";
+    }
+  });
+  const cambiarVista = (v: "marcas" | "mapa") => {
+    setVista(v);
+    try {
+      localStorage.setItem("controlTv.vistaEnVivo", v);
+    } catch {
+      // Sin almacenamiento: la elección vale solo mientras esté abierta la pantalla.
+    }
+  };
   return (
     <section className="flex min-h-[300px] flex-col gap-2 rounded-2xl sm:min-h-[420px] border border-white/10 bg-white/[0.04] p-3">
       <div className="flex items-baseline justify-between gap-2">
@@ -207,53 +228,71 @@ function VistaEnVivo({
           <span className="h-2 w-2 rounded-full bg-emerald-400" aria-hidden />
           Vista en vivo
         </h2>
-        <span className="text-xs text-slate-400">
-          Posición estimada por las marcas · con GPS será el mapa real
+        <div className="inline-flex gap-0.5 rounded-lg border border-white/10 bg-white/5 p-0.5">
+          {(["marcas", "mapa"] as const).map((k) => (
+            <button
+              key={k}
+              aria-pressed={vista === k}
+              onClick={() => cambiarVista(k)}
+              className={`min-h-7 rounded-md px-2.5 text-xs font-bold ${
+                vista === k ? "bg-[#BADC1E] text-[#0D1719]" : "text-slate-400 hover:text-white"
+              }`}
+            >
+              {k === "marcas" ? "Marcas" : "Mapa"}
+            </button>
+          ))}
+        </div>
+        <span className="hidden text-xs text-slate-400 min-[1500px]:inline">
+          Posición estimada por las marcas · con GPS será la real
         </span>
       </div>
-      <div
-        className="relative flex-1 min-h-[260px] overflow-hidden sm:min-h-[360px] rounded-xl border border-[#BADC1E]/20"
-        style={{
-          background:
-            "radial-gradient(ellipse at 50% 50%, #1c3a2a55, transparent 70%), repeating-linear-gradient(0deg, #BADC1E12 0 1px, transparent 1px 34px), repeating-linear-gradient(90deg, #BADC1E12 0 1px, transparent 1px 34px), #081210",
-        }}
-      >
-        {[
-          ["Salida", "4%"],
-          ["Destino", "50%"],
-          ["Regreso", "96%"],
-        ].map(([t, l]) => (
-          <span
-            key={t}
-            className="absolute top-1.5 -translate-x-1/2 text-[10px] uppercase tracking-[.14em] text-slate-400"
-            style={{ left: l }}
-          >
-            {t}
-          </span>
-        ))}
-        {puestas.map(({ v, x, fila }) => {
-          const cat = categoriaDe(v);
-          const estado = estadoDelViaje(paradasDelViaje(v), v.descansos)?.texto ?? "";
-          return (
-            <button
-              key={v.id}
-              onClick={() => onElegir(v.id)}
-              aria-label={`Ver ${unidadLabel(v)} en su Control TV`}
-              title={`${unidadLabel(v)} · ${v.conductor_nombre ?? "sin conductor"} · ${v.equipo_tipo ?? "Otro"} · ${estado}`}
-              className={`absolute grid h-[24px] -translate-x-1/2 -translate-y-1/2 place-items-center rounded-lg px-1.5 cursor-pointer hover:bg-white/15 hover:z-10 ${
-                cat === "detenida" ? "animate-pulse motion-reduce:animate-none" : ""
-              }`}
-              style={{
-                left: `${x.toFixed(2)}%`,
-                top: `${(9 + ((fila + 0.5) / filas) * 88).toFixed(2)}%`,
-                color: color[cat],
-              }}
+      {vista === "mapa" ? (
+        <MapaDigital viajes={viajes} lugares={lugares} onElegir={onElegir} />
+      ) : (
+        <div
+          className="relative flex-1 min-h-[260px] overflow-hidden sm:min-h-[360px] rounded-xl border border-[#BADC1E]/20"
+          style={{
+            background:
+              "radial-gradient(ellipse at 50% 50%, #1c3a2a55, transparent 70%), repeating-linear-gradient(0deg, #BADC1E12 0 1px, transparent 1px 34px), repeating-linear-gradient(90deg, #BADC1E12 0 1px, transparent 1px 34px), #081210",
+          }}
+        >
+          {[
+            ["Salida", "4%"],
+            ["Destino", "50%"],
+            ["Regreso", "96%"],
+          ].map(([t, l]) => (
+            <span
+              key={t}
+              className="absolute top-1.5 -translate-x-1/2 text-[10px] uppercase tracking-[.14em] text-slate-400"
+              style={{ left: l }}
             >
-              <IconoTipo tipo={v.equipo_tipo} alto={ALTO_FICHA} />
-            </button>
-          );
-        })}
-      </div>
+              {t}
+            </span>
+          ))}
+          {puestas.map(({ v, x, fila }) => {
+            const cat = categoriaDe(v);
+            const estado = estadoDelViaje(paradasDelViaje(v), v.descansos)?.texto ?? "";
+            return (
+              <button
+                key={v.id}
+                onClick={() => onElegir(v.id)}
+                aria-label={`Ver ${unidadLabel(v)} en su Control TV`}
+                title={`${unidadLabel(v)} · ${v.conductor_nombre ?? "sin conductor"} · ${v.equipo_tipo ?? "Otro"} · ${estado}`}
+                className={`absolute grid h-[24px] -translate-x-1/2 -translate-y-1/2 place-items-center rounded-lg px-1.5 cursor-pointer hover:bg-white/15 hover:z-10 ${
+                  cat === "detenida" ? "animate-pulse motion-reduce:animate-none" : ""
+                }`}
+                style={{
+                  left: `${x.toFixed(2)}%`,
+                  top: `${(9 + ((fila + 0.5) / filas) * 88).toFixed(2)}%`,
+                  color: color[cat],
+                }}
+              >
+                <IconoTipo tipo={v.equipo_tipo} alto={ALTO_FICHA} />
+              </button>
+            );
+          })}
+        </div>
+      )}
       <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
         {CATS.map((c) => (
           <li key={c.k} className="flex items-center gap-1.5">
@@ -279,6 +318,7 @@ export default function ControlViajesTv() {
   const movil = useEsMovil();
   const [tab, setTab] = useState<TabMovil>("resumen");
   const [detalle, setDetalle] = useState<DetalleDatos | null>(null);
+  const [lugares, setLugares] = useState<LugarMapa[]>([]);
   // La unidad que se está mirando (null = el TV central); sale también del enlace del ícono de la fila.
   const [unidad, setUnidad] = useState<string | null>(() =>
     new URLSearchParams(window.location.search).get("unidad")
@@ -305,14 +345,21 @@ export default function ControlViajesTv() {
         return null;
       }
     };
-    const [r, c, v, d] = await Promise.all([
+    const refrescarDetalle =
+      pagina === "detalle" ||
+      ultimoDetalle.current.periodo !== periodo ||
+      Date.now() - ultimoDetalle.current.t > 5 * 60_000;
+    const [r, c, v, d, l] = await Promise.all([
       pedir<Resumen>("/api/erp/viajes/control-tv/resumen"),
       pedir<Consumo>(`/api/erp/viajes/control-tv/consumo?periodo=${periodo}`),
       pedir<{ data: FilaViaje[] }>("/api/erp/viajes?estado=en_curso"),
-      pagina === "detalle" ||
-      ultimoDetalle.current.periodo !== periodo ||
-      Date.now() - ultimoDetalle.current.t > 5 * 60_000
+      refrescarDetalle
         ? pedir<DetalleDatos>(`/api/erp/viajes/control-tv/detalle?periodo=${periodo}`)
+        : Promise.resolve(null),
+      // Los lugares con su punto cambian poco: se piden con el detalle. Sin permiso de Viajes la lista
+      // no llega y el mapa dice que no hay lugares ubicados, sin romper nada.
+      refrescarDetalle
+        ? pedir<{ data: LugarMapa[] }>("/api/erp/viajes/lugares")
         : Promise.resolve(null),
     ]);
     if (mio !== pedido.current) return;
@@ -320,6 +367,7 @@ export default function ControlViajesTv() {
     if (r) setResumen(r);
     if (c) setConsumo(c);
     if (v && Array.isArray(v.data)) setViajes(v.data);
+    if (l && Array.isArray(l.data)) setLugares(l.data);
     if (d) {
       setDetalle(d);
       ultimoDetalle.current = { t: Date.now(), periodo };
@@ -632,7 +680,7 @@ export default function ControlViajesTv() {
             {tab === "flota" && (
               <>
                 {seccionFlota}
-                <VistaEnVivo viajes={viajes} onElegir={elegir} anchoPanel={340} />
+                <VistaEnVivo viajes={viajes} lugares={lugares} onElegir={elegir} anchoPanel={340} />
               </>
             )}
             {tab === "combustible" && comb && (
@@ -699,7 +747,7 @@ export default function ControlViajesTv() {
 
             <div className="grid gap-2.5 lg:grid-cols-[minmax(280px,.8fr)_minmax(0,2fr)_minmax(300px,.95fr)]">
               {seccionFlota}
-              <VistaEnVivo viajes={viajes} onElegir={elegir} />
+              <VistaEnVivo viajes={viajes} lugares={lugares} onElegir={elegir} />
               {comb && <PanelTanquetas tanquetas={comb.tanquetas} cisternas={comb.cisternas} />}
             </div>
 

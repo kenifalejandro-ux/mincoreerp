@@ -24,6 +24,16 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   };
   const a = await lugar(`Origen TV ${marca}`);
   const b = await lugar(`Destino TV ${marca}`);
+  // Los dos lugares con su punto en el mapa (Trujillo y Tocache, aproximados): el mapa digital los dibuja.
+  for (const [id, lat, lon] of [
+    [a, -8.1116, -79.0288],
+    [b, -8.1833, -76.5167],
+  ] as const) {
+    const r = await page.request.patch(`/api/erp/viajes/lugares/${id}`, {
+      data: { latitud: lat, longitud: lon },
+    });
+    expect(r.status()).toBe(200);
+  }
   const equipo = await page.request.post("/api/erp/equipos", {
     data: {
       placa_codigo: `TV-${marca}`,
@@ -119,6 +129,21 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
     }
   }
   await tv.setViewportSize({ width: 1920, height: 1080 });
+
+  // Vista en vivo como mapa: dibuja la unidad, la lista lateral sale en pantalla completa y se puede volver.
+  await tv.getByRole("button", { name: "Mapa", exact: true }).click();
+  await expect(tv.getByRole("img", { name: /Mapa de las unidades en ruta/ })).toBeVisible();
+  await tv.getByRole("button", { name: "Mapa en pantalla completa" }).click();
+  await expect(
+    tv.getByRole("button", { name: "Salir de pantalla completa del mapa" })
+  ).toBeVisible();
+  await expect(tv.getByText(`TV-${marca}`).first()).toBeVisible();
+  if (process.env.CAPTURAS_TV) {
+    await tv.screenshot({ path: `${process.env.CAPTURAS_TV}/mapa-completa.png` });
+  }
+  await tv.keyboard.press("Escape");
+  await expect(tv.getByRole("button", { name: "Mapa en pantalla completa" })).toBeVisible();
+  await tv.getByRole("button", { name: "Marcas", exact: true }).click();
 
   // Los paneles de abajo: tanquetas y la franja de últimos eventos (la salida del viaje recién
   // preparado no es un evento, pero la franja siempre está).
