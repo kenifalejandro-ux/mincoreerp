@@ -267,6 +267,26 @@ async function compraRuta(
   };
 }
 
+/** Lo que tardó cada viaje cerrado en los últimos 30 días (horas, de la salida a la llegada final), para
+ *  el histograma de duración del Resumen. Solo las unidades que quien mira puede ver; como mucho 500. */
+async function duracionesDeViajes(
+  client: PoolClient,
+  tenantId: string,
+  alcance: AlcanceCombustible
+) {
+  const f = unidadEnAlcance(alcance, "e", 2);
+  const r = await client.query<{ horas: string }>(
+    `SELECT ROUND((EXTRACT(EPOCH FROM (v.fin_en - v.inicio_en)) / 3600)::numeric, 1) AS horas
+       FROM combustible_viajes v
+       JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+      WHERE v.tenant_id = $1 AND v.estado = 'cerrado' AND v.inicio_en IS NOT NULL
+        AND v.fin_en > v.inicio_en AND v.fin_en >= now() - interval '30 days' AND ${f.sql}
+      ORDER BY v.fin_en DESC LIMIT 500`,
+    [tenantId, ...f.valores]
+  );
+  return r.rows.map((x) => num(x.horas));
+}
+
 /** Todo lo de la pestaña «Detalle». La urea solo si quien mira ve Urea. */
 export async function detalleControlTv(
   client: PoolClient,
@@ -283,5 +303,6 @@ export async function detalleControlTv(
     recepciones: await ultimasRecepciones(client, tenantId, ambito),
     desvios: await desvios(client, tenantId, periodo, servicio, ambito.alcance),
     compra_ruta: await compraRuta(client, tenantId, periodo, ambito),
+    duraciones_h: await duracionesDeViajes(client, tenantId, ambito.alcance),
   };
 }

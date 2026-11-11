@@ -147,9 +147,12 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
     await expect(nav.getByRole("button", { name: t })).toBeVisible();
   }
   await expect(tv.getByRole("button", { name: "Pantalla completa" })).toBeHidden();
-  // Las cifras van de a dos por fila.
-  const uno = await tv.getByText("Viajes activos").boundingBox();
-  const dos = await tv.getByText("Combustible en la empresa").boundingBox();
+  // En el celular, el Resumen son gráficos (no las tarjetas de escritorio), de a dos por fila.
+  await expect(tv.getByRole("heading", { name: "Duración de los viajes" })).toBeVisible();
+  // Lo primero que ve la gerencia: la flota (y, si hay, las unidades detenidas y el tanque).
+  await expect(tv.getByRole("heading", { name: "Flota en operación" })).toBeVisible();
+  const uno = await tv.getByRole("heading", { name: "Autonomía y urea" }).boundingBox();
+  const dos = await tv.getByRole("heading", { name: /^Consumo por (hora|día)$/ }).boundingBox();
   expect(Math.abs(uno!.y - dos!.y)).toBeLessThan(4);
   expect(dos!.x).toBeGreaterThan(uno!.x + 100);
   const lateral = await tv

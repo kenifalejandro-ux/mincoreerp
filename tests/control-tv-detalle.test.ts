@@ -149,6 +149,8 @@ describe("control TV: detalle", () => {
     expect(r.body.recepciones[0].recibido_gal).toBeCloseTo(500, 2);
     expect(r.body.recepciones[0].tolerancia_gal).toBe(3);
     expect(Array.isArray(r.body.desvios)).toBe(true);
+    // La duración de los viajes cerrados (para el histograma del Resumen): una lista de horas.
+    expect(Array.isArray(r.body.duraciones_h)).toBe(true);
     expect(r.body.urea.total.l).toBe(0);
     expect(r.body.urea.serie).toHaveLength(24);
   });

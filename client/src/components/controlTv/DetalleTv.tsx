@@ -8,6 +8,8 @@ import { fmt } from "../combustible/viajesFormato";
 
 export interface DetalleDatos {
   consumo_anterior_gal: number;
+  /** Lo que tardó cada viaje cerrado de los últimos 30 días, en horas (para el histograma del Resumen). */
+  duraciones_h?: number[];
   urea?: {
     total: { l: number; almacen_l: number; ruta_l: number; costo: number };
     anterior_l: number;

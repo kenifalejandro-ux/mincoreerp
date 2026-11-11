@@ -50,6 +50,7 @@ import {
   PanelTanquetas,
   PanelUrea,
 } from "../components/controlTv/PanelesTv";
+import { ResumenCorporativo, UnidadesDetenidas } from "../components/controlTv/ResumenCorporativo";
 import { anchoDeIcono } from "../components/controlTv/tiposUnidad";
 import { useEsMovil } from "../components/controlTv/useEsMovil";
 import { VistaUnidad } from "../components/controlTv/VistaUnidad";
@@ -365,6 +366,9 @@ export default function ControlViajesTv() {
   };
   // Una respuesta lenta no pisa a una más nueva.
   const pedido = useRef(0);
+  // Los gráficos del Resumen del celular usan el detalle (desvíos, duración de viajes, consumo anterior);
+  // es pesado, así que fuera de su pestaña se pide al abrir, al cambiar de período y cada 5 minutos.
+  const ultimoDetalle = useRef({ t: 0, periodo: "" });
 
   const cargar = useCallback(async () => {
     const mio = ++pedido.current;
@@ -380,7 +384,10 @@ export default function ControlViajesTv() {
       pedir<Resumen>("/api/erp/viajes/control-tv/resumen"),
       pedir<Consumo>(`/api/erp/viajes/control-tv/consumo?periodo=${periodo}`),
       pedir<{ data: FilaViaje[] }>("/api/erp/viajes?estado=en_curso"),
-      pagina === "detalle"
+      pagina === "detalle" ||
+      (movil &&
+        (ultimoDetalle.current.periodo !== periodo ||
+          Date.now() - ultimoDetalle.current.t > 5 * 60_000))
         ? pedir<DetalleDatos>(`/api/erp/viajes/control-tv/detalle?periodo=${periodo}`)
         : Promise.resolve(null),
     ]);
@@ -389,16 +396,18 @@ export default function ControlViajesTv() {
     if (r) setResumen(r);
     if (c) setConsumo(c);
     if (v && Array.isArray(v.data)) setViajes(v.data);
-    if (d) setDetalle(d);
+    if (d) {
+      setDetalle(d);
+      ultimoDetalle.current = { t: Date.now(), periodo };
+    }
     setSinConexion(!r);
     if (r) {
       setUltimaCarga(Date.now());
       setVersion((n) => n + 1);
     }
-  }, [periodo, pagina]);
+  }, [periodo, pagina, movil]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void cargar();
     const es = new EventSource("/api/eventos/stream", { withCredentials: true });
     const refrescar = () => void cargar();
@@ -729,7 +738,33 @@ export default function ControlViajesTv() {
           />
         ) : movil && pagina === "resumen" ? (
           <>
-            {tab === "resumen" && <div className="grid grid-cols-2 gap-2">{tarjetas(true)}</div>}
+            {tab === "resumen" && f && (
+              <ResumenCorporativo
+                movil
+                intro={
+                  <>
+                    {seccionFlota}
+                    <UnidadesDetenidas viajes={viajes} onElegir={elegir} />
+                    {consumo?.niveles && consumo.niveles.length > 0 && (
+                      <PanelTanque
+                        niveles={consumo.niveles}
+                        ahora={ahora}
+                        periodoMs={{ "24h": 24, "7d": 168, "30d": 720 }[periodo] * 3_600_000}
+                      />
+                    )}
+                  </>
+                }
+                d={{
+                  flota: f,
+                  combustible: comb,
+                  urea: resumen?.urea ?? null,
+                  consumo: consumo?.consumo,
+                  niveles: consumo?.niveles,
+                  detalle,
+                  periodo,
+                }}
+              />
+            )}
             {tab === "flota" && (
               <>
                 {seccionFlota}
