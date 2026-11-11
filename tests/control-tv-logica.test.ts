@@ -210,7 +210,7 @@ describe("Resumen corporativo: cuentas de los gráficos", () => {
     expect(r[0].pct).toBe(-50);
     expect(r[1].pct).toBe(40);
     expect(topDesvios([], 5)).toEqual([]);
-    expect(colorDesvio(40)).toBe("#f87171");
+    expect(colorDesvio(40)).toBe("#ef2f2f");
     expect(colorDesvio(-20)).toBe("#a3c93a");
   });
 });

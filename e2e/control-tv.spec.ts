@@ -101,21 +101,41 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
     .dispatchEvent("click");
   await expect(tv.getByRole("heading", { name: `Conductor ${marca}` })).toBeVisible();
   await expect(tv.getByText(`TV-${marca}`).first()).toBeVisible();
-  await expect(tv.getByText("Cómo se fue el tiempo")).toBeVisible();
-  await expect(tv.getByText("Consumo del recorrido actual")).toBeVisible();
+  // La vista de la unidad: el mapa al medio («Dónde está») y la información del conductor alrededor.
   await expect(tv.getByText("Dónde está")).toBeVisible();
+  for (const t of [
+    "Estado operacional",
+    "Tiempos del viaje",
+    "Conductor y relevo",
+    "Alertas activas",
+    "Cargas y rendimiento",
+  ]) {
+    await expect(tv.getByRole("heading", { name: t })).toBeVisible();
+  }
+  await expect(tv.getByRole("heading", { name: /^Resumen de la unidad/ })).toBeVisible();
+  await expect(tv.getByText("EN RUTA", { exact: true })).toBeVisible();
   expect(tv.url()).toContain(`unidad=${viaje.id}`);
-  // En una pantalla de TV (1920×1080) la unidad cabe sin bajar y se reparte en columnas: el consumo
-  // queda a la derecha del recorrido, no debajo.
+  // A 1920×990 y 1366×700 la unidad cabe sin bajar, y el mapa queda a la izquierda de la columna de
+  // estado operacional (no debajo).
+  for (const [ancho, alto, nombre] of [
+    [1920, 990, "1920x990"],
+    [1366, 820, "1366x820"],
+  ] as const) {
+    await tv.setViewportSize({ width: ancho, height: alto });
+    await expect(tv.getByRole("heading", { name: "Alertas activas" })).toBeVisible();
+    const mapa = await tv.getByText("Dónde está").boundingBox();
+    const estadoOp = await tv.getByRole("heading", { name: "Estado operacional" }).boundingBox();
+    expect(estadoOp!.x, nombre).toBeGreaterThan(mapa!.x + 300);
+    const desborde = await tv
+      .locator("div.fixed.inset-0")
+      .first()
+      .evaluate((el) => el.scrollHeight - el.clientHeight);
+    expect(desborde, `unidad ${nombre} sin scroll`).toBeLessThanOrEqual(1);
+    if (process.env.CAPTURAS_TV) {
+      await tv.screenshot({ path: `${process.env.CAPTURAS_TV}/unidad-${nombre}.png` });
+    }
+  }
   await tv.setViewportSize({ width: 1920, height: 1080 });
-  const desborde = await tv
-    .locator("div.fixed.inset-0")
-    .first()
-    .evaluate((el) => el.scrollHeight - el.clientHeight);
-  expect(desborde).toBeLessThanOrEqual(0);
-  const tiempo = await tv.getByText("Cómo se fue el tiempo").boundingBox();
-  const consumo = await tv.getByText("Consumo del recorrido actual").boundingBox();
-  expect(consumo!.x).toBeGreaterThan(tiempo!.x + 200);
   // «TV central» vuelve al tablero de todas las unidades.
   await tv.getByRole("button", { name: "TV central" }).click();
   await expect(tv.getByText("Flota en operación")).toBeVisible();
@@ -261,17 +281,10 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   await tv.goto(`/control-tv?unidad=${viaje.id}`);
   await expect(tv.getByRole("heading", { name: `Conductor ${marca}` })).toBeVisible();
   await expect(nav).toBeHidden();
-  const resumenUnidad = tv.getByText("Cómo se fue el tiempo");
-  await expect(resumenUnidad).toBeVisible();
-  await expect(tv.locator("details", { hasText: "Cómo se fue el tiempo" })).not.toHaveAttribute(
-    "open",
-    ""
-  );
-  await resumenUnidad.click();
-  await expect(tv.locator("details", { hasText: "Cómo se fue el tiempo" })).toHaveAttribute(
-    "open",
-    ""
-  );
+  const tiempos = tv.locator("details", { hasText: "Tiempos del viaje" });
+  await expect(tiempos).toHaveAttribute("open", "");
+  await tiempos.locator("summary").click();
+  await expect(tiempos).not.toHaveAttribute("open", "");
   const lateralUnidad = await tv
     .locator("div.fixed.inset-0")
     .first()

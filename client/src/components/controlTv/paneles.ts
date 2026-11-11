@@ -56,7 +56,7 @@ export const COLOR_EVENTO: Record<EventoTv["tipo"], string> = {
   compra_ruta: "#60a5fa",
   recepcion: "#22d3ee",
   llegada: "#a78bfa",
-  detenida: "#f87171",
+  detenida: "#ef2f2f",
 };
 
 /** Un número "redondo" para el tope de una gráfica. */
