@@ -8,11 +8,14 @@ import { CATS, categoriaDe, type CatTv } from "./controlTvLogica";
 import {
   aPixel,
   arcosDelViaje,
+  contarPorEstado,
   encuadre,
+  filtrarPorEstado,
   posicionEnMapa,
   puntoDeLugar,
   puntosDelViaje,
   separar,
+  type FiltroEstado,
   type LugarMapa,
   type Punto,
 } from "./mapaLogica";
@@ -40,7 +43,7 @@ export function MapaDigital({
   onElegir: (id: string) => void;
 }) {
   const [completa, setCompleta] = useState(false);
-  const [filtro, setFiltro] = useState<CatTv | "todas">("todas");
+  const [filtro, setFiltro] = useState<FiltroEstado>("todas");
   const [elegida, setElegida] = useState<string | null>(null);
   // Digital (dibujado, sin internet) o Satélite (necesita internet); se recuerda lo que eligió cada persona.
   const [capa, setCapa] = useState<"digital" | "satelite">(() => {
@@ -75,7 +78,7 @@ export function MapaDigital({
       })),
     [viajes, porId]
   );
-  const visibles = filas.filter((f) => filtro === "todas" || f.cat === filtro);
+  const visibles = filtrarPorEstado(filas, filtro);
   const datosSatelite = useMemo(() => {
     const unidades = visibles.map((f) => {
       const p = paradasDelViaje(f.v);
@@ -150,25 +153,6 @@ export function MapaDigital({
     x.setTransform(dpr, 0, 0, dpr, 0, 0);
     x.clearRect(0, 0, W, H);
     const pix = (lat: number, lon: number) => aPixel({ lat, lon }, marco, W, H);
-    // cuadrícula
-    const paso = marco.lon1 - marco.lon0 > 10 ? 1 : 0.5;
-    x.lineWidth = 1;
-    for (let lo = Math.ceil(marco.lon0); lo <= marco.lon1; lo += paso) {
-      const a = pix(0, lo).x;
-      x.strokeStyle = Number.isInteger(lo) ? "rgba(244,241,234,.075)" : "rgba(244,241,234,.035)";
-      x.beginPath();
-      x.moveTo(a, 0);
-      x.lineTo(a, H);
-      x.stroke();
-    }
-    for (let la = Math.ceil(marco.lat0); la <= marco.lat1; la += paso) {
-      const b = pix(la, 0).y;
-      x.strokeStyle = Number.isInteger(la) ? "rgba(244,241,234,.075)" : "rgba(244,241,234,.035)";
-      x.beginPath();
-      x.moveTo(0, b);
-      x.lineTo(W, b);
-      x.stroke();
-    }
     const trazar = (ctx: CanvasRenderingContext2D) =>
       PERU_DEPARTAMENTOS.forEach((d) => {
         ctx.beginPath();
@@ -367,34 +351,24 @@ export function MapaDigital({
     if (mejor) onElegir(mejor.id);
   };
 
+  // Cuántas unidades hay en cada estado (la leyenda de abajo es el filtro y dice cuántas son).
+  const conteo = (k: FiltroEstado) => contarPorEstado(filas, k);
+
   return (
-    <div
+    <section
       className={
         completa
           ? "fixed inset-0 z-50 flex flex-col gap-2 p-3"
-          : "flex min-h-[320px] flex-1 flex-col gap-2"
+          : "flex min-h-[300px] flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.04] p-3"
       }
       // El fondo va en línea: la clase z-50 de la app trae su propio fondo blanco y lo pisaba.
-      style={completa ? { background: "#0a0a0a" } : undefined}
+      style={completa ? { background: "#070d0e" } : undefined}
     >
       <div className="flex flex-wrap items-center gap-2">
-        <ul className="flex flex-wrap gap-x-3 gap-y-1">
-          {(["todas", ...CATS.map((c) => c.k)] as const).map((k) => (
-            <li key={k}>
-              <button
-                aria-pressed={filtro === k}
-                onClick={() => setFiltro(k)}
-                className={`min-h-7 border-b-[1.5px] text-[10px] font-bold uppercase tracking-[.14em] ${
-                  filtro === k
-                    ? "border-[#BADC1E] text-[#BADC1E]"
-                    : "border-transparent text-slate-400 hover:text-white"
-                }`}
-              >
-                {k === "todas" ? "Todas" : (CATS.find((c) => c.k === k)?.t ?? k)}
-              </button>
-            </li>
-          ))}
-        </ul>
+        <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.16em] text-slate-400">
+          <span className="h-2 w-2 rounded-full bg-emerald-400" aria-hidden />
+          Vista en vivo
+        </h2>
         <div className="ml-auto inline-flex gap-0.5 rounded-lg border border-white/10 bg-white/5 p-0.5">
           {(["digital", "satelite"] as const).map((k) => (
             <button
@@ -451,8 +425,12 @@ export function MapaDigital({
         )}
         <div
           ref={caja}
-          className="relative min-h-[260px] overflow-hidden rounded-xl border border-white/10"
-          style={{ background: "#0a0a0a" }}
+          className="relative min-h-[240px] overflow-hidden rounded-xl border border-[#BADC1E]/20"
+          style={{
+            // El fondo verde oscuro con la cuadrícula de lima que tenía la vista de «Marcas».
+            background:
+              "radial-gradient(ellipse at 50% 50%, #1c3a2a55, transparent 70%), repeating-linear-gradient(0deg, #BADC1E12 0 1px, transparent 1px 34px), repeating-linear-gradient(90deg, #BADC1E12 0 1px, transparent 1px 34px), #081210",
+          }}
         >
           <canvas
             ref={base}
@@ -489,8 +467,39 @@ export function MapaDigital({
               aparecerán aquí.
             </p>
           )}
+          <ul className="sr-only">
+            {filas.map((f) => (
+              <li key={f.v.id}>
+                <button onClick={() => onElegir(f.v.id)}>
+                  {`Ver ${unidadLabel(f.v)} en su Control TV`}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <ul className="absolute bottom-2 left-3 flex max-w-[calc(100%-1.5rem)] flex-wrap items-center justify-start gap-x-1 gap-y-0.5 rounded-xl border border-white/10 bg-[#060c0d]/75 px-1.5 py-1 backdrop-blur-sm">
+            {(["todas", ...CATS.map((c) => c.k)] as const).map((k) => (
+              <li key={k}>
+                <button
+                  aria-pressed={filtro === k}
+                  onClick={() => setFiltro(k)}
+                  className={`flex min-h-7 items-center gap-1.5 rounded-lg px-2.5 text-[11.5px] font-semibold ${
+                    filtro === k
+                      ? "bg-[#BADC1E]/15 text-white shadow-[inset_0_0_0_1px_rgba(186,220,30,.55)]"
+                      : "text-slate-300 hover:bg-white/10"
+                  }`}
+                >
+                  <i
+                    className="h-[3px] w-3.5 rounded"
+                    style={{ background: k === "todas" ? "#BADC1E" : COLOR[k] }}
+                  />
+                  {k === "todas" ? "Todas" : (CATS.find((c) => c.k === k)?.t ?? k)}
+                  <b className="tabular-nums text-white">{conteo(k)}</b>
+                </button>
+              </li>
+            ))}
+          </ul>
           {sinUbicar.length > 0 && (
-            <p className="absolute bottom-2 left-3 right-3 rounded-lg bg-black/60 px-2 py-1 text-[11px] text-amber-200">
+            <p className="absolute bottom-12 left-3 right-3 rounded-lg bg-black/60 px-2 py-1 text-[11px] text-amber-200">
               {sinUbicar.length} {sinUbicar.length === 1 ? "unidad" : "unidades"} sin ubicar en el
               mapa (su lugar no tiene punto):{" "}
               {sinUbicar
@@ -502,6 +511,6 @@ export function MapaDigital({
           )}
         </div>
       </div>
-    </div>
+    </section>
   );
 }

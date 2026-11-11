@@ -1,5 +1,6 @@
 // La lógica pura del mapa digital del Control TV: dónde queda cada lugar y cada unidad, cómo se
 // encuadra el mapa en la zona de trabajo y cómo se separan las unidades que están juntas. Sin pantalla.
+import type { CatTv } from "./controlTvLogica";
 import { paradasDelViaje, posicion } from "../combustible/paradasViaje";
 import type { FilaViaje } from "../combustible/viajesFormato";
 
@@ -182,4 +183,16 @@ export function escaparHtml(texto: string): string {
     /[&<>"']/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string
   );
+}
+
+export type FiltroEstado = CatTv | "todas";
+
+/** Cuántas unidades hay en un estado (o en total con «todas»): lo que dice la leyenda del mapa. */
+export function contarPorEstado<T extends { cat: CatTv }>(filas: T[], k: FiltroEstado): number {
+  return k === "todas" ? filas.length : filas.filter((f) => f.cat === k).length;
+}
+
+/** Las unidades que deja ver el filtro elegido en la leyenda. */
+export function filtrarPorEstado<T extends { cat: CatTv }>(filas: T[], k: FiltroEstado): T[] {
+  return k === "todas" ? filas : filas.filter((f) => f.cat === k);
 }

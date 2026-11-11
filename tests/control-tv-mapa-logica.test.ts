@@ -8,8 +8,10 @@ import type { FilaViaje } from "../client/src/components/combustible/viajesForma
 import {
   aPixel,
   arcosDelViaje,
+  contarPorEstado,
   encuadre,
   escaparHtml,
+  filtrarPorEstado,
   posicionEnMapa,
   puntoDeLugar,
   puntosDelViaje,
@@ -240,5 +242,48 @@ describe("escaparHtml: el texto del mapa satélite no mete código en la pantall
 
   it("escapa también lo ya escapado: no se cuela una entidad", () => {
     expect(escaparHtml("&lt;")).toBe("&amp;lt;");
+  });
+});
+
+describe("la leyenda del mapa es el filtro: cuenta y filtra por estado", () => {
+  const filas = [
+    { id: "a", cat: "ruta" as const },
+    { id: "b", cat: "ruta" as const },
+    { id: "c", cat: "retorno" as const },
+    { id: "d", cat: "detenida" as const },
+    { id: "e", cat: "parada" as const },
+  ];
+
+  it("cada estado cuenta sus unidades y «todas» las cuenta todas", () => {
+    expect(contarPorEstado(filas, "todas")).toBe(5);
+    expect(contarPorEstado(filas, "ruta")).toBe(2);
+    expect(contarPorEstado(filas, "retorno")).toBe(1);
+    expect(contarPorEstado(filas, "detenida")).toBe(1);
+    expect(contarPorEstado(filas, "parada")).toBe(1);
+    expect(contarPorEstado(filas, "descansa")).toBe(0);
+  });
+
+  it("los conteos de los estados suman el total (ninguna unidad se pierde ni se repite)", () => {
+    const estados = ["ruta", "retorno", "parada", "descansa", "detenida"] as const;
+    const suma = estados.reduce((s, k) => s + contarPorEstado(filas, k), 0);
+    expect(suma).toBe(contarPorEstado(filas, "todas"));
+  });
+
+  it("filtrar deja solo las de ese estado, y «todas» las deja todas, en el mismo orden", () => {
+    expect(filtrarPorEstado(filas, "ruta").map((f) => f.id)).toEqual(["a", "b"]);
+    expect(filtrarPorEstado(filas, "detenida").map((f) => f.id)).toEqual(["d"]);
+    expect(filtrarPorEstado(filas, "todas").map((f) => f.id)).toEqual(["a", "b", "c", "d", "e"]);
+    expect(filtrarPorEstado(filas, "descansa")).toEqual([]);
+  });
+
+  it("el conteo de la leyenda coincide con lo que muestra el filtro", () => {
+    for (const k of ["todas", "ruta", "retorno", "parada", "descansa", "detenida"] as const) {
+      expect(filtrarPorEstado(filas, k)).toHaveLength(contarPorEstado(filas, k));
+    }
+  });
+
+  it("sin unidades, todo es cero y no falla", () => {
+    expect(contarPorEstado([], "todas")).toBe(0);
+    expect(filtrarPorEstado([], "ruta")).toEqual([]);
   });
 });

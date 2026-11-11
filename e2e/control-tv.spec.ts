@@ -73,18 +73,32 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   await expect(tv.getByText("Flota en operación")).toBeVisible();
   await expect(tv.getByText("Vista en vivo")).toBeVisible();
   await expect(tv.getByText("Viajes activos")).toBeVisible();
-  await expect(tv.getByRole("button", { name: "Pantalla completa" })).toBeVisible();
-  // La unidad del viaje aparece en la vista en vivo con su tipo.
-  await expect(tv.getByTitle(new RegExp(`TV-${marca}`))).toBeVisible();
-  // Cada tipo tiene su propio largo: el volquete se dibuja más ancho que alto (44×24 en su lienzo).
-  const dibujo = tv.getByTitle(new RegExp(`TV-${marca}`)).locator("svg");
-  const caja = await dibujo.boundingBox();
-  expect(caja!.width).toBeGreaterThan(caja!.height * 1.5);
+  await expect(tv.getByRole("button", { name: "Pantalla completa", exact: true })).toBeVisible();
+  // La vista en vivo es el mapa (sin «Marcas»): su leyenda es el filtro y dice cuántas unidades hay.
+  await expect(tv.getByRole("button", { name: "Marcas", exact: true })).toHaveCount(0);
+  await expect(tv.getByRole("img", { name: /Mapa de las unidades en ruta/ })).toBeVisible();
+  await expect(tv.getByRole("button", { name: /^Todas\s*\d+$/ })).toBeVisible();
+  await expect(tv.getByRole("button", { name: /^En ruta\s*\d+$/ })).toBeVisible();
+  // La leyenda es el filtro: pulsar un estado lo marca (aria-pressed) y volver a «Todas» lo quita.
+  const detenidas = tv.getByRole("button", { name: /^Detenidas\s*\d+$/ });
+  await detenidas.click();
+  await expect(detenidas).toHaveAttribute("aria-pressed", "true");
+  await expect(tv.getByRole("button", { name: /^Todas\s*\d+$/ })).toHaveAttribute(
+    "aria-pressed",
+    "false"
+  );
+  await tv.getByRole("button", { name: /^Todas\s*\d+$/ }).click();
+  await expect(tv.getByRole("button", { name: /^Todas\s*\d+$/ })).toHaveAttribute(
+    "aria-pressed",
+    "true"
+  );
+  await expect(tv.getByRole("button", { name: "Digital", exact: true })).toBeVisible();
 
   // Tocar la unidad abre SU Control TV: el conductor primero, con su placa, y las horas del viaje.
+  // (El mapa es un lienzo: cada unidad tiene además un botón oculto con su nombre, para teclado y lectores.)
   await tv
     .getByRole("button", { name: new RegExp(`Ver .*TV-${marca}.* en su Control TV`) })
-    .click();
+    .dispatchEvent("click");
   await expect(tv.getByRole("heading", { name: `Conductor ${marca}` })).toBeVisible();
   await expect(tv.getByText(`TV-${marca}`).first()).toBeVisible();
   await expect(tv.getByText("Cómo se fue el tiempo")).toBeVisible();
@@ -128,11 +142,20 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
       await tv.screenshot({ path: `${process.env.CAPTURAS_TV}/escritorio-${ancho}.png` });
     }
   }
+  // La TV cabe en la pantalla de un navegador común sin bajar: 1920×990, con el mapa y los paneles de abajo.
+  await tv.setViewportSize({ width: 1920, height: 990 });
+  await expect(tv.getByRole("heading", { name: "Últimos eventos" })).toBeVisible();
+  const desborde990 = await tv
+    .locator("div.fixed.inset-0")
+    .first()
+    .evaluate((el) => el.scrollHeight - el.clientHeight);
+  expect(desborde990, "1920×990 sin scroll").toBeLessThanOrEqual(1);
+  if (process.env.CAPTURAS_TV) {
+    await tv.screenshot({ path: `${process.env.CAPTURAS_TV}/tv-1920x990.png` });
+  }
   await tv.setViewportSize({ width: 1920, height: 1080 });
 
-  // Vista en vivo como mapa: dibuja la unidad, la lista lateral sale en pantalla completa y se puede volver.
-  await tv.getByRole("button", { name: "Mapa", exact: true }).click();
-  await expect(tv.getByRole("img", { name: /Mapa de las unidades en ruta/ })).toBeVisible();
+  // El mapa en pantalla completa: la lista lateral sale y se puede volver.
   await tv.getByRole("button", { name: "Mapa en pantalla completa" }).click();
   await expect(
     tv.getByRole("button", { name: "Salir de pantalla completa del mapa" })
@@ -154,7 +177,6 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   await expect(tv.getByRole("img", { name: /Mapa de las unidades en ruta/ })).toBeVisible();
   await tv.keyboard.press("Escape");
   await expect(tv.getByRole("button", { name: "Mapa en pantalla completa" })).toBeVisible();
-  await tv.getByRole("button", { name: "Marcas", exact: true }).click();
 
   // Los paneles de abajo: tanquetas y la franja de últimos eventos (la salida del viaje recién
   // preparado no es un evento, pero la franja siempre está).
@@ -201,7 +223,7 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   for (const t of ["Resumen", "Flota", "Combustible", "Eventos"]) {
     await expect(nav.getByRole("button", { name: t })).toBeVisible();
   }
-  await expect(tv.getByRole("button", { name: "Pantalla completa" })).toBeHidden();
+  await expect(tv.getByRole("button", { name: "Pantalla completa", exact: true })).toBeHidden();
   // En el celular, el Resumen son gráficos (no las tarjetas de escritorio), de a dos por fila.
   await expect(tv.getByRole("heading", { name: "Duración de los viajes" })).toBeVisible();
   // Lo primero que ve la gerencia: la flota (y, si hay, las unidades detenidas y el tanque).
