@@ -2,7 +2,7 @@
 // las rutas de los viajes y cada unidad como una luz del color de su estado. No usa internet. Sin GPS,
 // la posición es una estimación por las marcas; con pantalla completa y una lista lateral con filtros.
 import { Maximize2, Minimize2 } from "lucide-react";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { CATS, categoriaDe, type CatTv } from "./controlTvLogica";
 import {
@@ -37,10 +37,19 @@ export function MapaDigital({
   viajes,
   lugares,
   onElegir,
+  titulo = "Vista en vivo",
+  sinLeyenda = false,
+  pie,
 }: {
   viajes: FilaViaje[];
   lugares: LugarMapa[];
   onElegir: (id: string) => void;
+  /** El título de la tarjeta («Dónde está» en la vista de una unidad). */
+  titulo?: string;
+  /** Sin la leyenda de estados que filtra (con una sola unidad no hace falta). */
+  sinLeyenda?: boolean;
+  /** Una línea debajo del mapa (por ejemplo, desde cuándo está ahí la unidad). */
+  pie?: ReactNode;
 }) {
   const [completa, setCompleta] = useState(false);
   const [filtro, setFiltro] = useState<FiltroEstado>("todas");
@@ -367,7 +376,7 @@ export function MapaDigital({
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.16em] text-slate-400">
           <span className="h-2 w-2 rounded-full bg-emerald-400" aria-hidden />
-          Vista en vivo
+          {titulo}
         </h2>
         <div className="ml-auto inline-flex gap-0.5 rounded-lg border border-white/10 bg-white/5 p-0.5">
           {(["digital", "satelite"] as const).map((k) => (
@@ -476,28 +485,30 @@ export function MapaDigital({
               </li>
             ))}
           </ul>
-          <ul className="absolute bottom-2 left-3 flex max-w-[calc(100%-1.5rem)] flex-wrap items-center justify-start gap-x-1 gap-y-0.5 rounded-xl border border-white/10 bg-[#060c0d]/75 px-1.5 py-1 backdrop-blur-sm">
-            {(["todas", ...CATS.map((c) => c.k)] as const).map((k) => (
-              <li key={k}>
-                <button
-                  aria-pressed={filtro === k}
-                  onClick={() => setFiltro(k)}
-                  className={`flex min-h-7 items-center gap-1.5 rounded-lg px-2.5 text-[11.5px] font-semibold ${
-                    filtro === k
-                      ? "bg-[#BADC1E]/15 text-white shadow-[inset_0_0_0_1px_rgba(186,220,30,.55)]"
-                      : "text-slate-300 hover:bg-white/10"
-                  }`}
-                >
-                  <i
-                    className="h-[3px] w-3.5 rounded"
-                    style={{ background: k === "todas" ? "#BADC1E" : COLOR[k] }}
-                  />
-                  {k === "todas" ? "Todas" : (CATS.find((c) => c.k === k)?.t ?? k)}
-                  <b className="tabular-nums text-white">{conteo(k)}</b>
-                </button>
-              </li>
-            ))}
-          </ul>
+          {!sinLeyenda && (
+            <ul className="absolute bottom-2 left-3 flex max-w-[calc(100%-1.5rem)] flex-wrap items-center justify-start gap-x-1 gap-y-0.5 rounded-xl border border-white/10 bg-[#060c0d]/75 px-1.5 py-1 backdrop-blur-sm">
+              {(["todas", ...CATS.map((c) => c.k)] as const).map((k) => (
+                <li key={k}>
+                  <button
+                    aria-pressed={filtro === k}
+                    onClick={() => setFiltro(k)}
+                    className={`flex min-h-7 items-center gap-1.5 rounded-lg px-2.5 text-[11.5px] font-semibold ${
+                      filtro === k
+                        ? "bg-[#BADC1E]/15 text-white shadow-[inset_0_0_0_1px_rgba(186,220,30,.55)]"
+                        : "text-slate-300 hover:bg-white/10"
+                    }`}
+                  >
+                    <i
+                      className="h-[3px] w-3.5 rounded"
+                      style={{ background: k === "todas" ? "#BADC1E" : COLOR[k] }}
+                    />
+                    {k === "todas" ? "Todas" : (CATS.find((c) => c.k === k)?.t ?? k)}
+                    <b className="tabular-nums text-white">{conteo(k)}</b>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
           {sinUbicar.length > 0 && (
             <p className="absolute bottom-12 left-3 right-3 rounded-lg bg-black/60 px-2 py-1 text-[11px] text-amber-200">
               {sinUbicar.length} {sinUbicar.length === 1 ? "unidad" : "unidades"} sin ubicar en el
@@ -511,6 +522,7 @@ export function MapaDigital({
           )}
         </div>
       </div>
+      {pie && <div className="text-xs text-slate-400">{pie}</div>}
     </section>
   );
 }

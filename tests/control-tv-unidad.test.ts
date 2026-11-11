@@ -154,6 +154,11 @@ describe("control TV: resumen de una unidad", () => {
     expect(Array.isArray(r.body.ultimas_cargas)).toBe(true);
     expect(r.body.alertas).toMatchObject({ total: expect.any(Number) });
     expect(Array.isArray(r.body.alertas.ultimas)).toBe(true);
+    // Cada alerta trae su gravedad (crítica, media o info) y la cuenta de críticas.
+    expect(typeof r.body.alertas.criticas).toBe("number");
+    for (const al of r.body.alertas.ultimas as { gravedad: string }[]) {
+      expect(["critica", "media", "info"]).toContain(al.gravedad);
+    }
   });
 
   it("solo lo ven admin y lectura; el operador y el conductor reciben 403, sin sesión 401", async () => {

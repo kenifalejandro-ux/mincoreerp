@@ -84,7 +84,9 @@ const Valor = ({ n, u }: { n: string; u?: string }) => (
 function Delta({ pct, de }: { pct: number | null; de: string }) {
   if (pct === null || !Number.isFinite(pct)) return null;
   return (
-    <span className={`ml-2 text-xs font-semibold ${pct > 0 ? "text-red-400" : "text-emerald-400"}`}>
+    <span
+      className={`ml-2 text-xs font-semibold ${pct > 0 ? "text-[#ff3b3b]" : "text-emerald-400"}`}
+    >
       {pct > 0 ? "▲" : "▼"} {fmt(Math.abs(pct), 0)} % {de}
     </span>
   );
@@ -369,7 +371,7 @@ export function ResumenCorporativo({
                   auto === null
                     ? "#475569"
                     : auto < 3
-                      ? "#f87171"
+                      ? "#ef2f2f"
                       : auto < 6
                         ? "#fbbf24"
                         : "#34d399"
@@ -383,7 +385,7 @@ export function ResumenCorporativo({
                   v={urea.stock_l / ureaMax}
                   color={
                     urea.minimo_l != null && urea.stock_l < urea.minimo_l
-                      ? "#f87171"
+                      ? "#ef2f2f"
                       : urea.minimo_l != null && urea.stock_l < urea.minimo_l * 2
                         ? "#fbbf24"
                         : "#34d399"
@@ -485,7 +487,7 @@ function etq(iso: string, porHora: boolean): string {
 function Chip({ t, n, rojo = false }: { t: string; n: number; rojo?: boolean }) {
   return (
     <li className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[13px]">
-      {t} <b className={rojo ? "text-red-400" : "text-[#BADC1E]"}>{n}</b>
+      {t} <b className={rojo ? "text-[#ff3b3b]" : "text-[#BADC1E]"}>{n}</b>
     </li>
   );
 }
@@ -501,8 +503,8 @@ export function UnidadesDetenidas({
   const detenidas = viajes.filter((v) => categoriaDe(v) === "detenida");
   if (detenidas.length === 0) return null;
   return (
-    <section className="flex flex-col gap-1.5 rounded-xl border border-red-400/40 bg-red-400/10 p-3">
-      <h2 className="text-[11px] font-bold uppercase tracking-[.14em] text-red-200">
+    <section className="flex flex-col gap-1.5 rounded-xl border border-[#ef2f2f]/55 bg-[#ef2f2f]/15 p-3">
+      <h2 className="text-[11px] font-bold uppercase tracking-[.14em] text-[#ff7b7b]">
         Unidades detenidas · {detenidas.length}
       </h2>
       <ul className="flex flex-col gap-1">
@@ -514,7 +516,7 @@ export function UnidadesDetenidas({
             >
               <span className="min-w-0">
                 <b className="block text-sm">{unidadLabel(v)}</b>
-                <span className="block truncate text-xs text-red-100">
+                <span className="block truncate text-xs text-[#ff9a9a]">
                   {estadoDelViaje(paradasDelViaje(v), v.descansos)?.texto ?? "Detenida"}
                   {v.conductor_nombre ? ` · ${v.conductor_nombre}` : ""}
                 </span>

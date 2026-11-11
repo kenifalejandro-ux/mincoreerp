@@ -162,6 +162,12 @@ const ESTILO_AJUSTADO = `
     grid-template-rows: auto minmax(0, 1.7fr) minmax(0, .85fr) auto; }
   .tv-cabe > * { min-height: 0; }
   .tv-fila-mapa > *, .tv-fila-abajo > * { min-height: 0; overflow: hidden; }
+  /* La vista de una unidad también cabe: el mapa y la columna de la derecha arriba, tres tarjetas abajo. */
+  .tv-unidad { display: grid; flex: 1 1 auto; min-height: 0; grid-template-rows: auto minmax(0, 1fr); }
+  .tv-unidad-cuerpo { min-height: 0; grid-template-rows: minmax(0, 1.5fr) minmax(0, .8fr); }
+  .tv-unidad-cuerpo > * { min-height: 0; }
+  .tv-unidad-cuerpo > .tv-unidad-abajo > * { min-height: 0; overflow: hidden; }
+  .tv-unidad-mapa > section { flex: 1 1 auto; min-height: 0; }
 }`;
 
 export default function ControlViajesTv() {
@@ -502,6 +508,7 @@ export default function ControlViajesTv() {
         ) : unidad ? (
           <VistaUnidad
             viajes={viajes}
+            lugares={lugares}
             id={unidad}
             version={version}
             ahora={ahora}

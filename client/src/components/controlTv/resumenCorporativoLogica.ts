@@ -61,7 +61,7 @@ export function topDesvios(desvios: DesvioTv[], n = 5): { placa: string; pct: nu
 
 /** El color de un desvío: sobre el promedio es alerta; por debajo, bien. */
 export function colorDesvio(pct: number): string {
-  if (pct >= 30) return "#f87171";
+  if (pct >= 30) return "#ef2f2f";
   if (pct >= 15) return "#fb923c";
   if (pct > 5) return "#fbbf24";
   return "#a3c93a";
@@ -70,7 +70,7 @@ export function colorDesvio(pct: number): string {
 /** Las zonas de la barra de autonomía sobre una escala de 10 días: roja menos de 3, ámbar de 3 a 6. */
 export const ESCALA_AUTONOMIA_DIAS = 10;
 export const ZONAS_AUTONOMIA: [number, string][] = [
-  [0.3, "#f87171"],
+  [0.3, "#ef2f2f"],
   [0.6, "#fbbf24"],
   [1, "#34d399"],
 ];
@@ -112,3 +112,6 @@ export function compararConNormal(
 export const nombreAlerta = (tipo: string) =>
   (ETIQUETA_TIPO_ALERTA as Record<string, string>)[tipo] ??
   tipo.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+
+/** Qué tan grave es una alerta: lo calcula el servidor con las reglas de la campanita. */
+export type GravedadAlerta = "critica" | "media" | "info";

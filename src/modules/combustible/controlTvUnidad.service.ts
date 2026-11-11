@@ -7,6 +7,7 @@ import type { PoolClient } from "pg";
 import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
 import type { AmbitoVales } from "./alcance";
 import type { CombustibleService } from "./combustible.service";
+import { canalDeFila, TIPOS_CRITICOS } from "./canalesAlertas";
 import { getViaje, recorridoClave, unidadVisible } from "./viajes.service";
 
 const DIAS = 30;
@@ -124,6 +125,16 @@ async function ultimasCargas(client: PoolClient, tenantId: string, equipoId: num
   }));
 }
 
+export type GravedadAlerta = "critica" | "media" | "info";
+const RANGO: Record<GravedadAlerta, number> = { critica: 0, media: 1, info: 2 };
+
+/** Qué tan grave es una alerta, con las mismas reglas que la campanita: crítica si va al momento o es
+ *  urgente (TIPOS_CRITICOS); media si va en el resumen del día; info si es solo un aviso en el ERP. */
+export function gravedadDeAlerta(tipo: string): GravedadAlerta {
+  if ((TIPOS_CRITICOS as readonly string[]).includes(tipo)) return "critica";
+  return canalDeFila(tipo) === "resumen" ? "media" : "info";
+}
+
 /** Las alertas abiertas (sin resolver) sobre la unidad: las de sus viajes y las de sus vales. */
 async function alertasAbiertas(client: PoolClient, tenantId: string, equipoId: number) {
   const r = await client.query(
@@ -137,12 +148,20 @@ async function alertasAbiertas(client: PoolClient, tenantId: string, equipoId: n
       ORDER BY a.creado_en DESC`,
     [tenantId, equipoId]
   );
+  const todas = r.rows.map((x) => ({
+    tipo: x.tipo as string,
+    creado_en: new Date(x.creado_en).toISOString(),
+    gravedad: gravedadDeAlerta(x.tipo as string),
+  }));
+  // Primero las más graves; a igual gravedad, las más nuevas (ya vienen así de la consulta).
+  const ordenadas = todas
+    .map((a, i) => ({ a, i }))
+    .sort((x, y) => RANGO[x.a.gravedad] - RANGO[y.a.gravedad] || x.i - y.i)
+    .map((x) => x.a);
   return {
-    total: r.rows.length,
-    ultimas: r.rows.slice(0, 3).map((x) => ({
-      tipo: x.tipo as string,
-      creado_en: new Date(x.creado_en).toISOString(),
-    })),
+    total: todas.length,
+    criticas: todas.filter((a) => a.gravedad === "critica").length,
+    ultimas: ordenadas.slice(0, 3),
   };
 }
 

@@ -1,12 +1,36 @@
 // El Control TV de UNA unidad: conductor primero (con la placa al lado), su estado, las horas del
 // viaje, el recorrido, cómo se fue el tiempo, lo que consumió en este recorrido, quién maneja y dónde
 // está. Solo lectura. Se abre tocando la unidad en la vista en vivo o desde el ícono TV de su fila.
-import { ArrowLeft, ChevronLeft, ChevronRight, MapPin } from "lucide-react";
+import {
+  ArrowLeft,
+  Bell,
+  ChartColumn,
+  ChevronLeft,
+  ChevronRight,
+  CircleCheck,
+  Clock,
+  Coins,
+  Droplet,
+  Fuel,
+  MapPin,
+  Route,
+  Timer,
+  Truck,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { CATS, categoriaDe, posicionEnRuta } from "./controlTvLogica";
+import { CATS, categoriaDe } from "./controlTvLogica";
 import { IconoTipo } from "./iconosUnidad";
-import { ResumenDeLaUnidad, ViajesDelConductor, type ResumenUnidad } from "./ResumenUnidadTv";
+import { MapaDigital } from "./MapaDigital";
+import type { LugarMapa } from "./mapaLogica";
+import {
+  AlertasActivas,
+  CargasYRendimiento,
+  ResumenViajes,
+  type ResumenUnidad,
+} from "./ResumenUnidadTv";
 import { SeccionTv } from "./SeccionTv";
 import { apiFetch } from "../../services/apiClient";
 import { descansoEnVentana, horasDelViaje } from "../combustible/horasViaje";
@@ -34,33 +58,19 @@ const iniciales = (n: string | null) =>
     .join("")
     .toUpperCase();
 
-function Cifra({ titulo, min, tono }: { titulo: string; min: number | null; tono: string }) {
-  return (
-    <div className={`${CARD} !py-2 ${titulo === "Total" ? "border-[#BADC1E]/50" : ""}`}>
-      <small className="block text-[11px] uppercase tracking-[.14em] text-slate-400">
-        {titulo}
-      </small>
-      <b
-        className="block whitespace-nowrap text-xl font-extrabold leading-tight"
-        style={{ color: tono }}
-      >
-        {min === null ? "—" : duracion(min)}
-      </b>
-    </div>
-  );
-}
-
 function Seccion({
   titulo,
+  icono,
   children,
   abierta,
 }: {
   titulo: string;
+  icono?: ReactNode;
   children: ReactNode;
   abierta?: boolean;
 }) {
   return (
-    <SeccionTv titulo={titulo} abierta={abierta}>
+    <SeccionTv titulo={titulo} icono={icono} abierta={abierta}>
       {children}
     </SeccionTv>
   );
@@ -68,6 +78,7 @@ function Seccion({
 
 export function VistaUnidad({
   viajes,
+  lugares,
   id,
   version,
   ahora,
@@ -76,6 +87,8 @@ export function VistaUnidad({
 }: {
   /** Los viajes en curso: de ahí salen Anterior y Siguiente. */
   viajes: FilaViaje[];
+  /** Los lugares con su punto en el mapa (para dibujar la ruta de esta unidad). */
+  lugares: LugarMapa[];
   id: string;
   /** Sube cada vez que el Control TV se refresca: esta vista se actualiza con él. */
   version: number;
@@ -178,7 +191,6 @@ export function VistaUnidad({
   const estado = estadoDelViaje(paradas, v.descansos);
   const cat = CATS.find((c) => c.k === categoriaDe(v)) ?? CATS[0];
   const horas = horasDelViaje(paradas, ahora);
-  const frac = Math.max(0, Math.min(1, posicionEnRuta(v)));
   const donde = ubicacionVigente(paradas, v.ultima_ubicacion);
   const tramos = datos.tramos ?? [];
   const actual = tramos.find((t) => !t.llegada_en);
@@ -230,100 +242,205 @@ export function VistaUnidad({
   const totalSeg = segmentos.reduce((s, x) => s + x.min, 0) || 1;
   const abierto = v.descansos?.find((d) => !d.fin_en && d.detiene !== false);
 
+  const hora = abierto
+    ? new Date(abierto.inicio_en).toLocaleTimeString("es-PE", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
+  const detenida = categoriaDe(v) === "detenida";
+  const ESTADO_TXT: Record<string, string> = {
+    ruta: "EN RUTA",
+    retorno: "RETORNANDO",
+    parada: "EN PARADA",
+    descansa: "DESCANSANDO",
+    detenida: "DETENIDA",
+  };
+  const catK = categoriaDe(v);
+  const colorEstado = catK === "detenida" ? ROJO : catK === "descansa" ? "#fbbf24" : "#34d399";
+  const nAlertas = resumen?.alertas.total;
+  const hayCriticas = (resumen?.alertas.criticas ?? 0) > 0;
+  const enMarcha = horas?.enRuta ?? null;
+
   return (
-    <div className="flex flex-col gap-2">
-      {barra}
+    <div className="tv-unidad flex flex-col gap-2.5">
       {error && <p className="text-xs text-amber-300">{error}</p>}
 
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#BADC1E] text-sm font-black text-[#0D1719]">
-          {iniciales(v.conductor_nombre)}
-        </span>
-        <h1 className="text-xl font-bold">{v.conductor_nombre ?? "Sin conductor"}</h1>
-        <span className="rounded-md border border-white/20 bg-white/10 px-2 py-0.5 text-sm font-extrabold tracking-wider">
-          {unidadLabel(v)}
-        </span>
-        <span className="flex items-center gap-1.5 text-sm text-slate-300">
-          <IconoTipo tipo={v.equipo_tipo} alto={20} />
-          {v.equipo_tipo ?? "Otro"}
-        </span>
-        <span
-          className="rounded-full px-2.5 py-0.5 text-xs font-bold"
-          style={{ background: `${cat.c}26`, color: cat.c }}
-        >
-          {estado?.texto ?? "En curso"}
-        </span>
-        {v.relevo_nombre && (
-          <span className="text-xs text-slate-400">Relevo: {v.relevo_nombre}</span>
-        )}
-      </header>
+      <div className="grid gap-2.5 min-[1200px]:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] min-[1700px]:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+        <header className={`${CARD} flex flex-wrap items-center gap-x-3 gap-y-2 !py-2`}>
+          <button
+            onClick={onVolver}
+            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl border border-[#BADC1E]/60 bg-[#BADC1E]/10 px-3 py-1.5 text-xs font-bold text-[#BADC1E] hover:bg-[#BADC1E]/20"
+          >
+            <ArrowLeft className="h-4 w-4" /> TV central
+          </button>
+          {orden.length > 1 && (
+            <span className="inline-flex items-center gap-1">
+              <button
+                onClick={() => ir(-1)}
+                aria-label="Unidad anterior"
+                className="rounded-lg border border-white/15 bg-white/5 p-1.5 hover:border-[#BADC1E]"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => ir(1)}
+                aria-label="Unidad siguiente"
+                className="rounded-lg border border-white/15 bg-white/5 p-1.5 hover:border-[#BADC1E]"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+              <span className="hidden text-[11px] text-slate-400 min-[1700px]:inline">
+                {pos + 1} de {orden.length}
+              </span>
+            </span>
+          )}
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full border-2 border-[#BADC1E] bg-[#BADC1E]/15 text-[#BADC1E]">
+            <Truck className="h-5 w-5" aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <h1 className="truncate text-lg font-bold leading-tight min-[1700px]:text-xl">
+              {v.conductor_nombre ?? "Sin conductor"}
+            </h1>
+            {v.conductor_dni && (
+              <small className="inline-block rounded-md border border-white/20 px-1.5 text-[11px] text-slate-300">
+                DNI {v.conductor_dni}
+              </small>
+            )}
+          </div>
+          <span className="whitespace-nowrap rounded-lg border border-white/20 bg-white/10 px-2 py-0.5 text-[13px] font-extrabold tracking-wider">
+            {unidadLabel(v)}
+          </span>
+          <span className="hidden items-center gap-1.5 text-sm text-slate-300 min-[1700px]:flex">
+            <IconoTipo tipo={v.equipo_tipo} alto={20} />
+            {v.equipo_tipo ?? "Otro"}
+          </span>
+          <span className="flex items-center gap-1.5 text-[13px] text-slate-200">
+            <MapPin className="h-4 w-4 text-amber-400" aria-hidden />
+            <b>{paradas[0].lugar}</b> →
+            <MapPin className="h-4 w-4 text-emerald-400" aria-hidden />
+            <b>{paradas[paradas.length - 1].lugar}</b>
+          </span>
+          <span
+            className="hidden whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-bold min-[1400px]:inline"
+            style={{ background: `${cat.c}26`, color: cat.c }}
+          >
+            {estado?.texto ?? "En curso"}
+            {hora ? ` desde las ${hora}` : ""}
+          </span>
+        </header>
 
-      {abierto && (
-        <p className="rounded-xl border border-red-400/40 bg-red-400/10 px-3 py-2 text-base font-bold text-red-100">
-          {estado?.texto} desde las{" "}
-          {new Date(abierto.inicio_en).toLocaleTimeString("es-PE", {
-            hour: "2-digit",
-            minute: "2-digit",
-          })}
-        </p>
-      )}
-
-      <div className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))]">
-        {horas?.idaYVuelta ? (
-          <>
-            <Cifra titulo="Ida" min={horas.ida} tono="#38bdf8" />
-            <Cifra titulo="Estadía" min={horas.estadia} tono="#a78bfa" />
-            <Cifra titulo="Vuelta" min={horas.vuelta} tono="#38bdf8" />
-          </>
-        ) : (
-          <>
-            <Cifra titulo="En ruta" min={horas?.enRuta ?? null} tono="#38bdf8" />
-            <Cifra titulo="En paradas" min={horas?.enParadas ?? null} tono="#a78bfa" />
-          </>
-        )}
-        <Cifra titulo="Total" min={horas?.total ?? null} tono="#f1f5f9" />
+        <div className="grid grid-cols-2 gap-2 min-[700px]:grid-cols-4">
+          <Kpi
+            Icono={CircleCheck}
+            color={colorEstado}
+            titulo="Estado"
+            valor={ESTADO_TXT[catK]}
+            pie={detenida ? "detenida" : "de la unidad"}
+            tono={colorEstado}
+            borde
+          />
+          <Kpi
+            Icono={Clock}
+            color="#38bdf8"
+            titulo="En ruta"
+            valor={enMarcha === null ? "—" : duracion(enMarcha)}
+            pie="manejando"
+            tono="#38bdf8"
+          />
+          <Kpi
+            Icono={Timer}
+            color="#a78bfa"
+            titulo="Total"
+            valor={horas ? duracion(horas.total) : "—"}
+            pie="desde la salida"
+          />
+          <Kpi
+            Icono={Bell}
+            color={hayCriticas ? ROJO : "#fbbf24"}
+            titulo="Alertas abiertas"
+            valor={nAlertas === undefined ? "—" : String(nAlertas)}
+            pie={hayCriticas ? `${resumen?.alertas.criticas} críticas` : "sin resolver"}
+            tono={hayCriticas ? ROJO : "#fbbf24"}
+            borde
+          />
+        </div>
       </div>
 
-      <div className="grid gap-2 lg:grid-cols-2 xl:grid-cols-3">
-        <div className="flex min-w-0 flex-col gap-2">
-          <Seccion titulo="Recorrido">
-            <div className="relative mx-8 mb-1 mt-0.5 h-[62px]">
-              <div className="absolute inset-x-0 top-6 h-1.5 rounded bg-white/10" />
-              <div
-                className="absolute left-0 top-6 h-1.5 rounded bg-gradient-to-r from-emerald-400 to-sky-400"
-                style={{ width: `${frac * 100}%` }}
-              />
-              {paradas.map((p, i) => {
-                const x = (i / (paradas.length - 1)) * 100;
-                const hecho = i === 0 ? !!p.salida_en : !!p.llegada_en;
-                return (
-                  <div key={p.orden} className="absolute top-0" style={{ left: `${x}%` }}>
-                    <i
-                      className={`absolute left-0 top-[20px] block h-3.5 w-3.5 -translate-x-1/2 rounded-full border-[3px] ${
-                        hecho
-                          ? "border-emerald-400 bg-emerald-400"
-                          : "border-slate-600 bg-[#0b1719]"
-                      }`}
-                    />
-                    <span className="absolute left-0 top-[40px] w-28 -translate-x-1/2 text-center text-xs leading-tight text-slate-400">
-                      <b className="block text-xs text-slate-100">{p.lugar}</b>
-                    </span>
-                  </div>
-                );
-              })}
-              <span
-                className="absolute top-[13px] grid h-7 -translate-x-1/2 place-items-center rounded-full bg-[#BADC1E] px-2 text-[#0D1719] shadow-[0_0_0_4px_#BADC1E33]"
-                style={{ left: `${frac * 100}%` }}
-                title={unidadLabel(v)}
-              >
-                <IconoTipo tipo={v.equipo_tipo} alto={18} />
+      <div className="tv-unidad-cuerpo grid gap-2.5 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
+        <div className="tv-unidad-mapa flex min-h-[320px] min-w-0 flex-col">
+          <MapaDigital
+            viajes={[v]}
+            lugares={lugares}
+            onElegir={() => undefined}
+            titulo="Dónde está"
+            sinLeyenda
+            pie={
+              <span className="flex flex-wrap items-center gap-x-2">
+                <MapPin className="inline h-3.5 w-3.5 text-emerald-400" aria-hidden />
+                <b className="text-slate-100">{donde?.texto ?? "Sin ubicación todavía"}</b>
+                {donde && <span>· {haceCuanto(donde.en, ahora)} · estimada por las marcas</span>}
               </span>
+            }
+          />
+        </div>
+
+        <div className="flex min-w-0 flex-col gap-2.5">
+          <Seccion
+            titulo="Estado operacional"
+            icono={<ChartColumn className="h-4 w-4 text-sky-400" aria-hidden />}
+          >
+            <div className="grid grid-cols-4 gap-1.5">
+              <Dato Icono={Fuel} color="#34d399" valor={`${fmt(gal, 0)} gal`} texto="consumido" />
+              <Dato Icono={Droplet} color="#38bdf8" valor={`${fmt(urea, 0)} L`} texto="de urea" />
+              <Dato
+                Icono={Coins}
+                color="#fbbf24"
+                valor={`S/ ${fmt(costo, 0)}`}
+                texto="costo acumulado"
+              />
+              <Dato
+                Icono={Timer}
+                color="#38bdf8"
+                valor={horas ? duracion(horas.total) : "—"}
+                texto="tiempo total"
+              />
             </div>
+            {vsPromedio !== null && (
+              <p className={`text-xs ${vsPromedio > 20 ? "text-[#ff3b3b]" : "text-slate-400"}`}>
+                {vsPromedio > 0 ? "+" : ""}
+                {fmt(vsPromedio, 0)}% vs. promedio de la ruta
+              </p>
+            )}
+            {tramos.length > 0 && (
+              <ul className="text-xs tabular-nums">
+                {tramos.map((t) => (
+                  <li
+                    key={t.orden}
+                    className={`flex items-center gap-2 border-t border-white/10 py-1 ${
+                      t === actual ? "font-bold text-slate-100" : "text-slate-300"
+                    }`}
+                  >
+                    <Route className="h-3.5 w-3.5 shrink-0 text-[#BADC1E]" aria-hidden />
+                    <span className="min-w-0 flex-1 truncate">
+                      {t.de} → {t.a}
+                      {t === actual && <span className="ml-1.5 text-[#BADC1E]">en curso</span>}
+                    </span>
+                    <span className="shrink-0 text-slate-400">
+                      {fmt(t.combustible_gal, 1)} gal · {fmt(t.urea_l, 1)} L
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </Seccion>
 
-          <Seccion titulo="Cómo se fue el tiempo" abierta={false}>
+          <Seccion
+            titulo="Tiempos del viaje"
+            icono={<Clock className="h-4 w-4 text-sky-400" aria-hidden />}
+          >
             <div
-              className="flex h-7 gap-[3px] overflow-hidden rounded-lg"
+              className="flex h-5 gap-[3px] overflow-hidden rounded-md"
               role="img"
               aria-label="Tiempo manejando, en paradas y descansando"
             >
@@ -331,98 +448,40 @@ export function VistaUnidad({
                 <div
                   key={`${s.t}-${i}`}
                   title={`${s.tip}: ${duracion(s.min)}`}
-                  className="grid min-w-[6px] place-items-center overflow-hidden whitespace-nowrap text-[11px] font-bold text-[#04121a]"
+                  className="grid min-w-[6px] place-items-center overflow-hidden whitespace-nowrap text-[10px] font-bold text-[#04121a]"
                   style={{ flex: `${s.min / totalSeg} 1 0`, background: COLOR[s.t] }}
                 >
-                  {s.min / totalSeg > 0.12 ? duracion(s.min) : ""}
+                  {s.min / totalSeg > 0.14 ? duracion(s.min) : ""}
                 </div>
               ))}
             </div>
-            <ul className="flex flex-wrap gap-x-4 text-xs text-slate-400">
-              {[
-                ["ruta", "Manejando"],
-                ["est", "En una parada"],
-                ["desc", "Descansando"],
-              ].map(([k, t]) => (
-                <li key={k} className="flex items-center gap-1.5">
-                  <i
-                    className="h-[3px] w-3.5 rounded"
-                    style={{ background: COLOR[k as keyof typeof COLOR] }}
-                  />
-                  {t}
+            <ul className="grid grid-cols-3 gap-1 text-[11px] text-slate-400">
+              {(
+                [
+                  ["ruta", "Manejando", horas?.enRuta ?? 0],
+                  ["est", "En paradas", horas?.enParadas ?? 0],
+                  [
+                    "desc",
+                    "Descanso",
+                    segmentos.filter((x) => x.t === "desc").reduce((a, x) => a + x.min, 0),
+                  ],
+                ] as const
+              ).map(([k, t, min]) => (
+                <li key={k}>
+                  <span className="flex items-center gap-1.5">
+                    <i className="h-2 w-2 rounded-full" style={{ background: COLOR[k] }} />
+                    {t}
+                  </span>
+                  <b className="ml-3.5 block text-xs text-slate-100">{duracion(min)}</b>
                 </li>
               ))}
             </ul>
           </Seccion>
-        </div>
 
-        <div className="flex min-w-0 flex-col gap-2">
-          <Seccion titulo="Consumo del recorrido actual">
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <small className="block text-[11px] text-slate-400">Combustible</small>
-                <b className="text-xl tabular-nums">{fmt(gal, 1)}</b>{" "}
-                <em className="text-xs not-italic text-slate-400">gal</em>
-                {vsPromedio !== null && (
-                  <i
-                    className={`block text-xs not-italic ${vsPromedio > 20 ? "text-red-400" : "text-slate-400"}`}
-                  >
-                    {vsPromedio > 0 ? "+" : ""}
-                    {fmt(vsPromedio, 0)}% vs. promedio de la ruta
-                  </i>
-                )}
-              </div>
-              <div>
-                <small className="block text-[11px] text-slate-400">Urea</small>
-                <b className="text-xl tabular-nums">{fmt(urea, 1)}</b>{" "}
-                <em className="text-xs not-italic text-slate-400">L</em>
-              </div>
-              <div>
-                <small className="block text-[11px] text-slate-400">Costo</small>
-                <b className="text-xl tabular-nums">S/ {fmt(costo, 0)}</b>
-              </div>
-            </div>
-            {tramos.length > 0 && (
-              <table className="w-full text-xs tabular-nums">
-                <thead className="text-xs uppercase text-slate-400">
-                  <tr className="text-left">
-                    <th className="py-0.5 font-semibold">Tramo</th>
-                    <th className="py-0.5 text-right font-semibold">Combustible</th>
-                    <th className="py-0.5 text-right font-semibold">Urea</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tramos.map((t) => (
-                    <tr
-                      key={t.orden}
-                      className={`border-t border-white/10 ${t === actual ? "bg-[#BADC1E]/10 font-bold" : ""}`}
-                    >
-                      <td className="py-1">
-                        {t.de} → {t.a}
-                        {t === actual && (
-                          <span className="ml-2 text-xs text-[#BADC1E]">en curso</span>
-                        )}
-                      </td>
-                      <td className="py-1 text-right">{fmt(t.combustible_gal, 1)} gal</td>
-                      <td className="py-1 text-right">{fmt(t.urea_l, 1)} L</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </Seccion>
-          <ResumenDeLaUnidad
-            datos={resumen}
-            ahora={ahora}
-            enRutaMin={horas?.enRuta ?? null}
-            enRutaEsperadoMin={esperadoRuta}
-            estadiaMin={horas?.enParadas ?? null}
-          />
-        </div>
-
-        <div className="flex min-w-0 flex-col gap-2">
-          <ViajesDelConductor datos={resumen} />
-          <Seccion titulo="Conductor y relevo" abierta={false}>
+          <Seccion
+            titulo="Conductor y relevo"
+            icono={<Users className="h-4 w-4 text-emerald-400" aria-hidden />}
+          >
             {[
               { n: v.conductor_nombre, dni: v.conductor_dni, rol: "Titular" },
               ...(v.relevo_nombre
@@ -430,7 +489,7 @@ export function VistaUnidad({
                 : []),
             ].map((p) => (
               <div key={p.rol} className="flex items-center gap-3">
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#BADC1E] text-xs font-black text-[#0D1719]">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#BADC1E] text-xs font-black text-[#0D1719]">
                   {iniciales(p.n ?? null)}
                 </span>
                 <div className="min-w-0 flex-1">
@@ -443,8 +502,9 @@ export function VistaUnidad({
                 </div>
               </div>
             ))}
+            {!v.relevo_nombre && <p className="text-xs text-slate-400">Sin relevo en este viaje</p>}
             {(v.turnos?.length ?? 0) > 1 && (
-              <ul className="border-t border-white/10 pt-2 text-sm">
+              <ul className="border-t border-white/10 pt-1.5 text-xs">
                 {v.turnos?.map((t) => (
                   <li key={t.inicio_en} className="flex justify-between gap-2 py-0.5">
                     <span>{t.conductor_nombre ?? t.conductor_dni}</span>
@@ -459,32 +519,89 @@ export function VistaUnidad({
               </ul>
             )}
           </Seccion>
+        </div>
 
-          <Seccion titulo="Dónde está">
-            <p className="flex items-center gap-2 text-lg font-extrabold leading-tight">
-              <MapPin className="h-5 w-5 shrink-0 text-[#BADC1E]" aria-hidden />
-              {donde?.texto ?? "Sin ubicación todavía"}
-            </p>
-            {donde && <small className="text-slate-400">{haceCuanto(donde.en, ahora)}</small>}
-            {(v.ubicaciones?.length ?? 0) > 0 && (
-              <ul className="border-t border-white/10 pt-2 text-sm">
-                {v.ubicaciones?.slice(0, 5).map((u) => (
-                  <li key={u.id} className="flex justify-between gap-2 py-0.5">
-                    <span>{u.texto}</span>
-                    <span className="text-slate-400">{haceCuanto(u.registrado_en, ahora)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="mt-1 grid min-h-[96px] place-items-center rounded-xl border-2 border-dashed border-white/15 p-3 text-center text-xs text-slate-400">
-              <span>
-                <b className="block text-sm text-slate-100">Mapa</b>
-                Con GPS aquí se verá la unidad en el mapa real.
-              </span>
-            </div>
-          </Seccion>
+        <div className="tv-unidad-abajo grid gap-2.5 lg:col-span-2 lg:grid-cols-[minmax(0,.95fr)_minmax(0,1.15fr)_minmax(0,1fr)]">
+          <ResumenViajes datos={resumen} />
+          <AlertasActivas datos={resumen} ahora={ahora} />
+          <CargasYRendimiento
+            datos={resumen}
+            ahora={ahora}
+            enRutaMin={horas?.enRuta ?? null}
+            enRutaEsperadoMin={esperadoRuta}
+            estadiaMin={horas?.enParadas ?? null}
+          />
         </div>
       </div>
+    </div>
+  );
+}
+
+const ROJO = "#ef2f2f";
+
+/** Una de las cuatro cifras de arriba: ícono, título, valor y una línea de pie, siempre en una fila. */
+function Kpi({
+  Icono,
+  color,
+  titulo,
+  valor,
+  pie,
+  tono,
+  borde = false,
+}: {
+  Icono: LucideIcon;
+  color: string;
+  titulo: string;
+  valor: string;
+  pie: string;
+  tono?: string;
+  borde?: boolean;
+}) {
+  return (
+    <div
+      className={`${CARD} flex items-center gap-2 !px-2.5 !py-1.5`}
+      style={borde ? { borderColor: `${color}66` } : undefined}
+    >
+      <Icono
+        className="h-[18px] w-[18px] shrink-0 min-[1700px]:h-5 min-[1700px]:w-5"
+        style={{ color }}
+        aria-hidden
+      />
+      <div className="min-w-0">
+        <small className="block whitespace-nowrap text-[8.5px] uppercase tracking-[.1em] text-slate-400 min-[1700px]:text-[9.5px]">
+          {titulo}
+        </small>
+        <b
+          className="block whitespace-nowrap text-[14px] font-extrabold leading-tight tabular-nums min-[1700px]:text-base"
+          style={tono ? { color: tono } : undefined}
+        >
+          {valor}
+        </b>
+        <span className="block whitespace-nowrap text-[9.5px] text-slate-400 min-[1700px]:text-[10.5px]">
+          {pie}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** Un dato del estado operacional: ícono arriba, valor y su nombre. */
+function Dato({
+  Icono,
+  color,
+  valor,
+  texto,
+}: {
+  Icono: LucideIcon;
+  color: string;
+  valor: string;
+  texto: string;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-0.5 rounded-lg bg-white/[0.04] px-1 py-2 text-center">
+      <Icono className="h-5 w-5" style={{ color }} aria-hidden />
+      <b className="whitespace-nowrap text-[15px] tabular-nums leading-tight">{valor}</b>
+      <small className="text-[10px] text-slate-400">{texto}</small>
     </div>
   );
 }

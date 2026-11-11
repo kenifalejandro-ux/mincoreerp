@@ -374,7 +374,7 @@ export function DetalleTv({
                           </td>
                           <td className="px-2 py-1.5 text-right">{fmt(r.recibido_gal, 0)}</td>
                           <td
-                            className={`px-2 py-1.5 text-right ${mal ? "font-bold text-red-400" : ""}`}
+                            className={`px-2 py-1.5 text-right ${mal ? "font-bold text-[#ff3b3b]" : ""}`}
                           >
                             {d === null
                               ? "—"
@@ -434,7 +434,7 @@ export function DetalleTv({
                           {[d.vs_pares_pct, d.vs_pasado_pct].map((p, i) => (
                             <td
                               key={i}
-                              className={`px-2 py-1.5 text-right ${p !== null && p > 20 ? "font-bold text-red-400" : ""}`}
+                              className={`px-2 py-1.5 text-right ${p !== null && p > 20 ? "font-bold text-[#ff3b3b]" : ""}`}
                             >
                               {p === null ? "—" : `${signo(p)}${fmt(Math.abs(p), 0)} %`}
                             </td>

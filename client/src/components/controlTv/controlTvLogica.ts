@@ -11,7 +11,7 @@ export const CATS: { k: CatTv; t: string; c: string }[] = [
   { k: "retorno", t: "Retornando", c: "#2dd4bf" },
   { k: "parada", t: "En parada", c: "#a78bfa" },
   { k: "descansa", t: "Descansando", c: "#fbbf24" },
-  { k: "detenida", t: "Detenidas", c: "#f87171" },
+  { k: "detenida", t: "Detenidas", c: "#ef2f2f" },
 ];
 
 /** El estado de una unidad en curso: detenida (avería, accidente...), descansando, en parada,

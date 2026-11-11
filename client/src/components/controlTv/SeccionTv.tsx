@@ -10,10 +10,13 @@ const TITULO = "text-[11px] font-bold uppercase tracking-[.16em] text-slate-400"
 
 export function SeccionTv({
   titulo,
+  icono,
   children,
   abierta = true,
 }: {
   titulo: string;
+  /** Un ícono que va antes del título. */
+  icono?: ReactNode;
   children: ReactNode;
   /** En el celular, si arranca abierta. */
   abierta?: boolean;
@@ -22,7 +25,10 @@ export function SeccionTv({
   if (!movil) {
     return (
       <section className={`${CARD} flex flex-col gap-1.5`}>
-        <h2 className={TITULO}>{titulo}</h2>
+        <h2 className={`${TITULO} flex items-center gap-2`}>
+          {icono}
+          {titulo}
+        </h2>
         {children}
       </section>
     );
@@ -32,7 +38,10 @@ export function SeccionTv({
       <summary
         className={`${TITULO} flex min-h-9 cursor-pointer list-none items-center justify-between [&::-webkit-details-marker]:hidden`}
       >
-        {titulo}
+        <span className="flex items-center gap-2">
+          {icono}
+          {titulo}
+        </span>
         <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" aria-hidden />
       </summary>
       <div className="mt-1.5 flex flex-col gap-1.5">{children}</div>
