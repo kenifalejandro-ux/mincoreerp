@@ -6,6 +6,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { CATS, categoriaDe, posicionEnRuta } from "./controlTvLogica";
 import { IconoTipo } from "./iconosUnidad";
+import { ResumenDeLaUnidad, ViajesDelConductor, type ResumenUnidad } from "./ResumenUnidadTv";
 import { apiFetch } from "../../services/apiClient";
 import { descansoEnVentana, horasDelViaje } from "../combustible/horasViaje";
 import { estadoDelViaje, paradasDelViaje } from "../combustible/paradasViaje";
@@ -76,6 +77,8 @@ export function VistaUnidad({
 }) {
   const [datos, setDatos] = useState<Detalle | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [resumen, setResumen] = useState<ResumenUnidad | null>(null);
+  const ultimoResumen = useRef({ id: "", t: 0 });
   // Una respuesta lenta no pisa a una más nueva, ni la de una unidad que ya se dejó.
   const pedido = useRef(0);
 
@@ -92,6 +95,26 @@ export function VistaUnidad({
         } else setError(body?.error ?? "No se pudo cargar la unidad.");
       } catch {
         if (mio === pedido.current) setError("Sin conexión: se muestra lo último.");
+      }
+    })();
+  }, [id, version]);
+
+  // El resumen de la unidad (conductor, rendimiento, alertas) es más pesado y cambia poco: se pide al
+  // abrir la unidad y se refresca como mucho cada 5 minutos, no en cada vuelta del Control TV.
+  useEffect(() => {
+    const u = ultimoResumen.current;
+    const ahoraMs = Date.now();
+    if (u.id === id && ahoraMs - u.t < 5 * 60_000) return;
+    if (u.id !== id) setResumen(null);
+    ultimoResumen.current = { id, t: ahoraMs };
+    void (async () => {
+      try {
+        const res = await apiFetch(`/api/erp/viajes/control-tv/unidad/${id}`);
+        const body = await res.json().catch(() => null);
+        if (ultimoResumen.current.id !== id) return;
+        if (res.ok && body?.dias) setResumen(body);
+      } catch {
+        // Sin conexión: se queda lo último; el detalle del viaje ya avisa del corte.
       }
     })();
   }, [id, version]);
@@ -158,6 +181,12 @@ export function VistaUnidad({
     .filter((c) => c.producto === "urea")
     .reduce((s, c) => s + Number(c.cantidad) * (c.unidad === "gal" ? LITROS_POR_GALON : 1), 0);
   const costo = datos.cargas.reduce((s, c) => s + Number(c.costo ?? 0), 0);
+  // Lo que suele tardar manejando los tramos que ya salieron; sin referencia en alguno, no se compara.
+  const salidos = tramos.filter((t) => t.salida_en);
+  const esperadoRuta =
+    salidos.length > 0 && salidos.every((t) => t.esperado_min != null)
+      ? salidos.reduce((sum, t) => sum + (t.esperado_min ?? 0), 0)
+      : null;
   const promedio = datos.ruta.combustible_gal;
   const vsPromedio = promedio ? ((gal - promedio) / promedio) * 100 : null;
 
@@ -374,9 +403,17 @@ export function VistaUnidad({
               </table>
             )}
           </Seccion>
+          <ResumenDeLaUnidad
+            datos={resumen}
+            ahora={ahora}
+            enRutaMin={horas?.enRuta ?? null}
+            enRutaEsperadoMin={esperadoRuta}
+            estadiaMin={horas?.enParadas ?? null}
+          />
         </div>
 
         <div className="flex min-w-0 flex-col gap-2">
+          <ViajesDelConductor datos={resumen} />
           <Seccion titulo="Conductor y relevo">
             {[
               { n: v.conductor_nombre, dni: v.conductor_dni, rol: "Titular" },

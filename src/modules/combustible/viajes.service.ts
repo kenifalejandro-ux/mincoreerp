@@ -2524,7 +2524,7 @@ export async function anularViaje(
 
 /** El recorrido como clave (los ids de lugar en orden, "7-9-7"): dos viajes se comparan entre
  *  sí solo si hacen el mismo recorrido. `v` es el alias de la fila del viaje. */
-const recorridoClave = (v: string) =>
+export const recorridoClave = (v: string) =>
   `(SELECT string_agg(rp.lugar_id::text, '-' ORDER BY rp.orden)
       FROM combustible_viaje_paradas rp
      WHERE rp.tenant_id = ${v}.tenant_id AND rp.viaje_id = ${v}.id)`;
@@ -3140,7 +3140,7 @@ export async function viajesDetenidos(
 }
 
 /** ¿La unidad es de un grifo que quien mira puede ver? Con alcance «todo», siempre. */
-async function unidadVisible(
+export async function unidadVisible(
   client: PoolClient,
   tenantId: string,
   equipoId: number,
