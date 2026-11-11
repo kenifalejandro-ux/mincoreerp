@@ -2548,12 +2548,24 @@ const ubicacionDeLugar = textoDeLugar(0, 120)
   .nullable()
   .optional();
 
-export const crearLugarSchema = z.object({
-  nombre: nombreDeLugar,
-  // Opcional en la API (los tests y scripts crean lugares solo con nombre); la pantalla lo exige.
-  tipo: tipoDeLugar.optional(),
-  ubicacion: ubicacionDeLugar,
-});
+// El punto del lugar en el mapa: grados decimales. Van juntos (los dos o ninguno); null los borra.
+const latitudDeLugar = z.number().min(-90).max(90).nullable().optional();
+const longitudDeLugar = z.number().min(-180).max(180).nullable().optional();
+const MENSAJE_PUNTO = "La latitud y la longitud van juntas: manda las dos o ninguna";
+const puntoCompleto = (d: { latitud?: number | null; longitud?: number | null }) =>
+  (d.latitud === undefined) === (d.longitud === undefined) &&
+  (d.latitud == null) === (d.longitud == null);
+
+export const crearLugarSchema = z
+  .object({
+    nombre: nombreDeLugar,
+    // Opcional en la API (los tests y scripts crean lugares solo con nombre); la pantalla lo exige.
+    tipo: tipoDeLugar.optional(),
+    ubicacion: ubicacionDeLugar,
+    latitud: latitudDeLugar,
+    longitud: longitudDeLugar,
+  })
+  .refine(puntoCompleto, { message: MENSAJE_PUNTO });
 export type CrearLugarInput = z.infer<typeof crearLugarSchema>;
 
 export const editarLugarSchema = z
@@ -2561,11 +2573,14 @@ export const editarLugarSchema = z
     nombre: nombreDeLugar.optional(),
     tipo: tipoDeLugar.optional(),
     ubicacion: ubicacionDeLugar,
+    latitud: latitudDeLugar,
+    longitud: longitudDeLugar,
     activo: z.boolean().optional(),
   })
   .refine((d) => Object.values(d).some((v) => v !== undefined), {
     message: "No hay nada que cambiar",
-  });
+  })
+  .refine(puntoCompleto, { message: MENSAJE_PUNTO });
 export type EditarLugarInput = z.infer<typeof editarLugarSchema>;
 
 const toleranciaDesfase = z.number().int().min(0).max(240);

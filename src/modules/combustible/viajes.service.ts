@@ -52,8 +52,8 @@ async function margenPrevioHoras(client: PoolClient, tenantId: string): Promise<
 
 export async function listarLugares(client: PoolClient, tenantId: string) {
   const r = await client.query(
-    `SELECT id, nombre, tipo, ubicacion, activo FROM combustible_lugares
-      WHERE tenant_id = $1 ORDER BY lower(nombre)`,
+    `SELECT id, nombre, tipo, ubicacion, latitud::float8 AS latitud, longitud::float8 AS longitud, activo
+       FROM combustible_lugares WHERE tenant_id = $1 ORDER BY lower(nombre)`,
     [tenantId]
   );
   return r.rows;
@@ -67,9 +67,18 @@ export async function crearLugar(
 ) {
   try {
     const r = await client.query(
-      `INSERT INTO combustible_lugares (tenant_id, nombre, tipo, ubicacion, creado_por)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id, nombre, tipo, ubicacion, activo`,
-      [tenantId, data.nombre.trim(), data.tipo ?? null, data.ubicacion ?? null, usuarioId]
+      `INSERT INTO combustible_lugares (tenant_id, nombre, tipo, ubicacion, latitud, longitud, creado_por)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, nombre, tipo, ubicacion, latitud::float8 AS latitud, longitud::float8 AS longitud, activo`,
+      [
+        tenantId,
+        data.nombre.trim(),
+        data.tipo ?? null,
+        data.ubicacion ?? null,
+        data.latitud ?? null,
+        data.longitud ?? null,
+        usuarioId,
+      ]
     );
     return r.rows[0];
   } catch (err) {
@@ -87,8 +96,8 @@ export async function editarLugar(
   data: EditarLugarInput
 ) {
   const actual = await client.query(
-    `SELECT id, nombre, tipo, ubicacion, activo FROM combustible_lugares
-      WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+    `SELECT id, nombre, tipo, ubicacion, latitud::float8 AS latitud, longitud::float8 AS longitud, activo
+       FROM combustible_lugares WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
     [tenantId, id]
   );
   const antes = actual.rows[0];
@@ -97,18 +106,34 @@ export async function editarLugar(
     nombre: data.nombre?.trim() ?? antes.nombre,
     tipo: data.tipo ?? antes.tipo,
     ubicacion: data.ubicacion === undefined ? antes.ubicacion : data.ubicacion,
+    latitud: data.latitud === undefined ? antes.latitud : data.latitud,
+    longitud: data.longitud === undefined ? antes.longitud : data.longitud,
     activo: data.activo ?? antes.activo,
   };
-  const campos = (["nombre", "tipo", "ubicacion", "activo"] as const).filter(
+  // El punto va completo o no va (la base lo exige también): se avisa antes con un 400.
+  if ((despues.latitud === null) !== (despues.longitud === null)) {
+    throw new AppError(400, "La latitud y la longitud van juntas: manda las dos o ninguna");
+  }
+  const campos = (["nombre", "tipo", "ubicacion", "latitud", "longitud", "activo"] as const).filter(
     (k) => despues[k] !== antes[k]
   );
   // Sin cambios no se escribe nada (y el controller no audita ni avisa a nadie).
   if (!campos.length) return { antes, despues: { id, ...despues }, campos };
   try {
     await client.query(
-      `UPDATE combustible_lugares SET nombre = $3, tipo = $4, ubicacion = $5, activo = $6
+      `UPDATE combustible_lugares
+          SET nombre = $3, tipo = $4, ubicacion = $5, latitud = $6, longitud = $7, activo = $8
         WHERE tenant_id = $1 AND id = $2`,
-      [tenantId, id, despues.nombre, despues.tipo, despues.ubicacion, despues.activo]
+      [
+        tenantId,
+        id,
+        despues.nombre,
+        despues.tipo,
+        despues.ubicacion,
+        despues.latitud,
+        despues.longitud,
+        despues.activo,
+      ]
     );
   } catch (err) {
     if (esViolacionUnicidad(err)) throw new AppError(409, `El lugar "${despues.nombre}" ya existe`);
