@@ -151,10 +151,25 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   await expect(tv.getByRole("heading", { name: "Duración de los viajes" })).toBeVisible();
   // Lo primero que ve la gerencia: la flota (y, si hay, las unidades detenidas y el tanque).
   await expect(tv.getByRole("heading", { name: "Flota en operación" })).toBeVisible();
-  const uno = await tv.getByRole("heading", { name: "Autonomía y urea" }).boundingBox();
-  const dos = await tv.getByRole("heading", { name: /^Consumo por (hora|día)$/ }).boundingBox();
-  expect(Math.abs(uno!.y - dos!.y)).toBeLessThan(4);
-  expect(dos!.x).toBeGreaterThan(uno!.x + 100);
+  // Los gráficos van en dos columnas: entre los que haya (según los datos), unos quedan a la izquierda
+  // y otros a la derecha, y los de una misma fila están a la misma altura.
+  const cajas = [];
+  for (const nombre of [
+    "Autonomía y urea",
+    "De dónde llegó el combustible",
+    /^Consumo por (hora|día)$/,
+    "Duración de los viajes",
+    "Unidades que más se desvían",
+  ]) {
+    const encabezado = tv.getByRole("heading", { name: nombre });
+    if ((await encabezado.count()) === 0) continue;
+    const c = await encabezado.boundingBox();
+    if (c) cajas.push(c);
+  }
+  expect(cajas.length).toBeGreaterThanOrEqual(3);
+  expect(Math.max(...cajas.map((c) => c.x)) - Math.min(...cajas.map((c) => c.x))).toBeGreaterThan(
+    100
+  );
   const lateral = await tv
     .locator("div.fixed.inset-0")
     .first()
