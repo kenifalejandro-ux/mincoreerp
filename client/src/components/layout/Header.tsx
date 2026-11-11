@@ -3,6 +3,7 @@ import { LogOut, Tv, User as UserIcon } from "lucide-react";
 import SelectorEmpresa from "./SelectorEmpresa";
 import { useAuth } from "../../context/AuthContext";
 import CampanitaAlertas from "../combustible/CampanitaAlertas";
+import { marcarNovedadVista, novedadVigente } from "../controlTv/novedad";
 import { puedeVerControlTv } from "../flota/flotaAcceso";
 
 interface HeaderProps {
@@ -42,12 +43,23 @@ export default function Header({ onIrACombustible }: HeaderProps) {
             {/* El Control TV engloba todo el resumen: va arriba, al lado de la fecha. */}
             {puedeVerControlTv(usuario) && (
               <button
-                onClick={() => window.open("/control-tv", "_blank")}
+                onClick={() => {
+                  marcarNovedadVista();
+                  window.open("/control-tv", "_blank");
+                }}
                 aria-label="Control TV"
                 title="Control TV: la flota y el combustible en pantalla completa"
-                className="p-2 rounded-md border border-[#BADC1E]/50 text-[#BADC1E] hover:bg-[#BADC1E]/10 transition-all"
+                className="relative p-2 rounded-md border border-[#BADC1E]/50 text-[#BADC1E] hover:bg-[#BADC1E]/10 transition-all"
               >
                 <Tv size={18} />
+                {novedadVigente() && (
+                  <span
+                    aria-hidden
+                    className="absolute -top-2 -right-3 rounded-full bg-sky-500 px-1.5 text-[9px] font-extrabold uppercase leading-4 tracking-wide text-white shadow"
+                  >
+                    Nuevo
+                  </span>
+                )}
               </button>
             )}
 

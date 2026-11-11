@@ -5,7 +5,9 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useEffect, useRef, useState } from "react";
 
+import { svgDeTipo } from "./iconosCanvas";
 import { escaparHtml, type PosicionMapa, type Punto } from "./mapaLogica";
+import { anchoDeIcono } from "./tiposUnidad";
 
 export interface UnidadSatelite {
   id: string;
@@ -13,6 +15,8 @@ export interface UnidadSatelite {
   conductor: string;
   ruta: string;
   color: string;
+  /** El tipo de unidad, para dibujar su avatar. */
+  tipo: string | null;
   pos: PosicionMapa | null;
 }
 
@@ -20,11 +24,37 @@ export interface LugarSatelite {
   id: string;
   nombre: string;
   punto: Punto;
+  /** El pin de GPS va en el origen y en el destino; una parada es un punto chico. */
+  papel: "origen" | "destino" | "parada";
 }
 
 const TILES =
   "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
 const ATRIBUCION = "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics";
+
+/** El pin de GPS (la punta queda en el lugar): ámbar en la salida, verde en la llegada. */
+function pinDe(papel: "origen" | "destino"): L.DivIcon {
+  const col = papel === "origen" ? "#fbbf24" : "#34d399";
+  return L.divIcon({
+    className: "",
+    iconSize: [22, 28],
+    iconAnchor: [11, 27],
+    html: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="28" fill="rgba(6,12,13,.92)" stroke="${col}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="filter:drop-shadow(0 0 4px ${col})"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3" fill="${col}" stroke="none"/></svg>`,
+  });
+}
+
+/** El avatar de la unidad: el ícono de su tipo, del color de su estado, en una cápsula oscura. */
+function avatarDe(u: UnidadSatelite, elegida: boolean): L.DivIcon {
+  const alto = 8;
+  const w = Math.round(anchoDeIcono(u.tipo, alto));
+  const ancho = w + 8;
+  return L.divIcon({
+    className: "",
+    iconSize: [ancho, 13],
+    iconAnchor: [ancho / 2, 6.5],
+    html: `<div style="width:${ancho}px;height:13px;display:grid;place-items:center;border-radius:5px;background:rgba(6,12,13,.92);border:${elegida ? 1.5 : 1}px solid ${elegida ? "#fff" : u.color};box-sizing:border-box">${svgDeTipo(u.tipo, u.color, alto)}</div>`,
+  });
+}
 
 export default function MapaSatelite({
   unidades,
@@ -96,29 +126,30 @@ export default function MapaSatelite({
       }).addTo(g);
     }
     for (const l of lugares) {
-      L.circleMarker([l.punto.lat, l.punto.lon], {
-        radius: 5,
-        color: "#BADC1E",
-        weight: 2,
-        fillColor: "#fbffe0",
-        fillOpacity: 1,
-      })
+      const marca =
+        l.papel === "parada"
+          ? L.circleMarker([l.punto.lat, l.punto.lon], {
+              radius: 3.5,
+              color: "#BADC1E",
+              weight: 1.5,
+              fillColor: "#fbffe0",
+              fillOpacity: 1,
+            })
+          : L.marker([l.punto.lat, l.punto.lon], { icon: pinDe(l.papel), keyboard: false });
+      marca
         .bindTooltip(escaparHtml(l.nombre), {
           permanent: true,
           direction: "right",
-          offset: [8, 0],
+          offset: [l.papel === "parada" ? 6 : 10, l.papel === "parada" ? 0 : -12],
           className: "etq-lugar",
         })
         .addTo(g);
     }
     for (const u of unidades) {
       if (!u.pos) continue;
-      const marca = L.circleMarker([u.pos.punto.lat, u.pos.punto.lon], {
-        radius: elegida === u.id ? 9 : 7,
-        color: "#fff",
-        weight: elegida === u.id ? 3 : 1.5,
-        fillColor: u.color,
-        fillOpacity: 1,
+      const marca = L.marker([u.pos.punto.lat, u.pos.punto.lon], {
+        icon: avatarDe(u, elegida === u.id),
+        keyboard: false,
       });
       marca
         .bindTooltip(
@@ -126,7 +157,7 @@ export default function MapaSatelite({
           {
             permanent: elegida === u.id,
             direction: "top",
-            offset: [0, -8],
+            offset: [0, -9],
             className: "etq-unidad",
           }
         )

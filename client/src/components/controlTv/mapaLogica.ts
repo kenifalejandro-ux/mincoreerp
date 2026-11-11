@@ -104,7 +104,14 @@ export function posicionEnMapa(v: FilaViaje, lugares: Map<string, LugarMapa>): P
 
 /** El recuadro que encuadra todos los puntos con un margen, y con la proporción del lienzo para que el
  *  mapa no se deforme. Sin puntos, toda la zona norte del Perú. */
-export function encuadre(puntos: Punto[], ancho: number, alto: number, margen = 0.18): Caja {
+export function encuadre(
+  puntos: Punto[],
+  ancho: number,
+  alto: number,
+  margen = 0.18,
+  /** El recuadro mínimo, en grados: 3 en la flota (se ve la zona); menos en la vista de una unidad. */
+  minGrados = 3
+): Caja {
   if (puntos.length === 0) return { lon0: -81.6, lon1: -73.6, lat0: -9.9, lat1: -3.5 };
   const lons = puntos.map((p) => p.lon);
   const lats = puntos.map((p) => p.lat);
@@ -112,8 +119,8 @@ export function encuadre(puntos: Punto[], ancho: number, alto: number, margen = 
   let lon1 = Math.max(...lons);
   let lat0 = Math.min(...lats);
   let lat1 = Math.max(...lats);
-  // Un solo punto (o todos casi juntos): se abre un recuadro mínimo de unos 3 grados.
-  const MIN = 3;
+  // Un solo punto (o todos casi juntos): se abre un recuadro mínimo.
+  const MIN = minGrados;
   if (lon1 - lon0 < MIN) {
     const c = (lon0 + lon1) / 2;
     lon0 = c - MIN / 2;
@@ -145,6 +152,59 @@ export function encuadre(puntos: Punto[], ancho: number, alto: number, margen = 
     lat1 += (nuevo - h) / 2;
   }
   return { lon0, lon1, lat0, lat1 };
+}
+
+/** Mueve el encuadre lo que se arrastró (en píxeles): arrastrar a la derecha muestra lo de la izquierda. */
+export function desplazar(c: Caja, dx: number, dy: number, ancho: number, alto: number): Caja {
+  const mx = (dx / ancho) * (c.lon1 - c.lon0);
+  const my = (dy / alto) * (c.lat1 - c.lat0);
+  return { lon0: c.lon0 - mx, lon1: c.lon1 - mx, lat0: c.lat0 + my, lat1: c.lat1 + my };
+}
+
+/** Los lados del encuadre en grados: ni más cerca que una zona de unos 6 km ni más lejos que el país. */
+export const ZOOM_MIN_GRADOS = 0.06;
+export const ZOOM_MAX_GRADOS = 16;
+
+/** Acerca (factor > 1) o aleja (< 1) el encuadre dejando quieto el punto bajo (ax, ay), en píxeles. */
+export function acercar(
+  c: Caja,
+  factor: number,
+  ax: number,
+  ay: number,
+  ancho: number,
+  alto: number
+): Caja {
+  const w = c.lon1 - c.lon0;
+  const h = c.lat1 - c.lat0;
+  if (!(factor > 0) || !(w > 0) || !(h > 0)) return c;
+  // El ancho nuevo se acota; el alto sigue su proporción.
+  const nw = Math.min(ZOOM_MAX_GRADOS, Math.max(ZOOM_MIN_GRADOS, w / factor));
+  const nh = (h * nw) / w;
+  const fx = ax / ancho;
+  const fy = ay / alto;
+  const lon = c.lon0 + fx * w;
+  const lat = c.lat1 - fy * h;
+  return {
+    lon0: lon - fx * nw,
+    lon1: lon - fx * nw + nw,
+    lat1: lat + fy * nh,
+    lat0: lat + fy * nh - nh,
+  };
+}
+
+/** La unidad que está más cerca del puntero, dentro del radio; null si ninguna. */
+export function masCercana(
+  puestas: { id: string; x: number; y: number }[],
+  x: number,
+  y: number,
+  radio = 14
+): string | null {
+  let mejor: { id: string; d: number } | null = null;
+  for (const p of puestas) {
+    const d = Math.hypot(p.x - x, p.y - y);
+    if (d <= radio && (!mejor || d < mejor.d)) mejor = { id: p.id, d };
+  }
+  return mejor?.id ?? null;
 }
 
 export const aPixel = (p: Punto, c: Caja, ancho: number, alto: number) => ({
