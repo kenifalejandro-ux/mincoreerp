@@ -1,0 +1,176 @@
+// La lógica pura del mapa digital del Control TV: dónde queda cada lugar y cada unidad, cómo se
+// encuadra el mapa en la zona de trabajo y cómo se separan las unidades que están juntas. Sin pantalla.
+import { paradasDelViaje, posicion } from "../combustible/paradasViaje";
+import type { FilaViaje } from "../combustible/viajesFormato";
+
+export interface LugarMapa {
+  id: string | number;
+  nombre: string;
+  latitud?: number | null;
+  longitud?: number | null;
+}
+
+export interface Punto {
+  lat: number;
+  lon: number;
+}
+
+export interface Caja {
+  lon0: number;
+  lon1: number;
+  lat0: number;
+  lat1: number;
+}
+
+/** El punto de un lugar, o null si todavía no se ubicó en el mapa. */
+export function puntoDeLugar(l: LugarMapa | undefined): Punto | null {
+  if (!l || l.latitud == null || l.longitud == null) return null;
+  const lat = Number(l.latitud);
+  const lon = Number(l.longitud);
+  return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
+}
+
+/** Los puntos de las paradas de un viaje, en orden; null en las paradas cuyo lugar no tiene punto. */
+export function puntosDelViaje(v: FilaViaje, lugares: Map<string, LugarMapa>): (Punto | null)[] {
+  return paradasDelViaje(v).map((p) => puntoDeLugar(lugares.get(String(p.lugar_id))));
+}
+
+/** El recorrido dibujado: cada tramo entre dos paradas con punto es un arco suave; el tramo con un
+ *  extremo sin punto no se dibuja. Devuelve las muestras del arco de cada tramo (null si no hay). */
+export function arcosDelViaje(puntos: (Punto | null)[], muestras = 24): (Punto[] | null)[] {
+  const tramos: (Punto[] | null)[] = [];
+  for (let i = 0; i < puntos.length - 1; i++) {
+    const a = puntos[i];
+    const b = puntos[i + 1];
+    if (!a || !b) {
+      tramos.push(null);
+      continue;
+    }
+    const dx = b.lon - a.lon;
+    const dy = b.lat - a.lat;
+    const L = Math.hypot(dx, dy);
+    // El arco se curva siempre hacia el mismo lado del sentido de la marcha: así la vuelta (que va al
+    // revés) queda del lado opuesto de la ida y las dos no se superponen.
+    const h = L * 0.12;
+    const cx = (a.lon + b.lon) / 2 - (L ? (dy / L) * h : 0);
+    const cy = (a.lat + b.lat) / 2 + (L ? (dx / L) * h : 0);
+    const pts: Punto[] = [];
+    for (let k = 0; k <= muestras; k++) {
+      const t = k / muestras;
+      pts.push({
+        lon: (1 - t) * (1 - t) * a.lon + 2 * (1 - t) * t * cx + t * t * b.lon,
+        lat: (1 - t) * (1 - t) * a.lat + 2 * (1 - t) * t * cy + t * t * b.lat,
+      });
+    }
+    tramos.push(pts);
+  }
+  return tramos;
+}
+
+export interface PosicionMapa {
+  punto: Punto;
+  /** El tramo en el que va (0 = de la primera a la segunda parada) y qué fracción de él lleva. */
+  tramo: number | null;
+  fraccion: number;
+}
+
+/** Dónde se dibuja la unidad: en su parada si está detenida en una, a mitad del tramo si va en camino.
+ *  Sin el punto de lo que necesita, null (la unidad queda «sin ubicar»). Es una estimación por las
+ *  marcas, no GPS. */
+export function posicionEnMapa(v: FilaViaje, lugares: Map<string, LugarMapa>): PosicionMapa | null {
+  const paradas = paradasDelViaje(v);
+  const puntos = puntosDelViaje(v, lugares);
+  const pos = posicion(paradas);
+  if (pos.tipo === "en_parada") {
+    const p = puntos[pos.en];
+    return p ? { punto: p, tramo: null, fraccion: 0 } : null;
+  }
+  if (pos.tipo === "en_marcha") {
+    const a = puntos[pos.hacia - 1];
+    const b = puntos[pos.hacia];
+    if (!a || !b) return null;
+    const arco = arcosDelViaje(puntos)[pos.hacia - 1];
+    if (!arco) return null;
+    return { punto: arco[Math.floor(arco.length / 2)], tramo: pos.hacia - 1, fraccion: 0.5 };
+  }
+  if (pos.tipo === "sin_salir") {
+    const p = puntos[0];
+    return p ? { punto: p, tramo: null, fraccion: 0 } : null;
+  }
+  const ultimo = puntos[puntos.length - 1];
+  return ultimo ? { punto: ultimo, tramo: null, fraccion: 1 } : null;
+}
+
+/** El recuadro que encuadra todos los puntos con un margen, y con la proporción del lienzo para que el
+ *  mapa no se deforme. Sin puntos, toda la zona norte del Perú. */
+export function encuadre(puntos: Punto[], ancho: number, alto: number, margen = 0.18): Caja {
+  if (puntos.length === 0) return { lon0: -81.6, lon1: -73.6, lat0: -9.9, lat1: -3.5 };
+  const lons = puntos.map((p) => p.lon);
+  const lats = puntos.map((p) => p.lat);
+  let lon0 = Math.min(...lons);
+  let lon1 = Math.max(...lons);
+  let lat0 = Math.min(...lats);
+  let lat1 = Math.max(...lats);
+  // Un solo punto (o todos casi juntos): se abre un recuadro mínimo de unos 3 grados.
+  const MIN = 3;
+  if (lon1 - lon0 < MIN) {
+    const c = (lon0 + lon1) / 2;
+    lon0 = c - MIN / 2;
+    lon1 = c + MIN / 2;
+  }
+  if (lat1 - lat0 < MIN) {
+    const c = (lat0 + lat1) / 2;
+    lat0 = c - MIN / 2;
+    lat1 = c + MIN / 2;
+  }
+  const mx = (lon1 - lon0) * margen;
+  const my = (lat1 - lat0) * margen;
+  lon0 -= mx;
+  lon1 += mx;
+  lat0 -= my;
+  lat1 += my;
+  // Se ensancha el lado corto hasta la proporción del lienzo (un grado de longitud y de latitud miden
+  // casi lo mismo cerca del ecuador).
+  const razon = ancho / alto;
+  const w = lon1 - lon0;
+  const h = lat1 - lat0;
+  if (w / h < razon) {
+    const nuevo = h * razon;
+    lon0 -= (nuevo - w) / 2;
+    lon1 += (nuevo - w) / 2;
+  } else {
+    const nuevo = w / razon;
+    lat0 -= (nuevo - h) / 2;
+    lat1 += (nuevo - h) / 2;
+  }
+  return { lon0, lon1, lat0, lat1 };
+}
+
+export const aPixel = (p: Punto, c: Caja, ancho: number, alto: number) => ({
+  x: ((p.lon - c.lon0) / (c.lon1 - c.lon0)) * ancho,
+  y: ((c.lat1 - p.lat) / (c.lat1 - c.lat0)) * alto,
+});
+
+/** A las unidades que caen casi en el mismo píxel se les da un pequeño corrimiento en círculo, para que
+ *  se vean todas y no una tape a otra. Devuelve el desplazamiento de cada una, en el mismo orden. */
+export function separar(
+  pixeles: { x: number; y: number }[],
+  radio = 11
+): { dx: number; dy: number }[] {
+  const grupos: { x: number; y: number; n: number }[] = [];
+  return pixeles.map((p) => {
+    let g = grupos.find((q) => Math.hypot(q.x - p.x, q.y - p.y) < radio);
+    if (!g) {
+      g = { x: p.x, y: p.y, n: 0 };
+      grupos.push(g);
+    }
+    const k = g.n++;
+    if (k === 0) return { dx: 0, dy: 0 };
+    // Anillos de 6, 12, 18 unidades alrededor del centro del grupo.
+    const anillo = Math.ceil((-3 + Math.sqrt(9 + 12 * k)) / 6) || 1;
+    const dentro = k - 3 * anillo * (anillo - 1) - 1;
+    const total = 6 * anillo;
+    const ang = (dentro / total) * Math.PI * 2 - Math.PI / 2;
+    return { dx: Math.cos(ang) * radio * anillo, dy: Math.sin(ang) * radio * anillo };
+  });
+}
