@@ -2,7 +2,7 @@
 // las rutas de los viajes y cada unidad como una luz del color de su estado. No usa internet. Sin GPS,
 // la posición es una estimación por las marcas; con pantalla completa y una lista lateral con filtros.
 import { Maximize2, Minimize2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { CATS, categoriaDe, type CatTv } from "./controlTvLogica";
 import {
@@ -19,6 +19,9 @@ import {
 import { paradasDelViaje } from "../combustible/paradasViaje";
 import { PERU_DEPARTAMENTOS } from "../combustible/peruDepartamentos";
 import { unidadLabel, type FilaViaje } from "../combustible/viajesFormato";
+
+// El satélite (Leaflet y su hoja de estilos) se baja solo cuando alguien lo pide.
+const MapaSatelite = lazy(() => import("./MapaSatelite"));
 
 const COLOR = Object.fromEntries(CATS.map((c) => [c.k, c.c])) as Record<CatTv, string>;
 const DORADO = "233,200,147";
@@ -39,6 +42,22 @@ export function MapaDigital({
   const [completa, setCompleta] = useState(false);
   const [filtro, setFiltro] = useState<CatTv | "todas">("todas");
   const [elegida, setElegida] = useState<string | null>(null);
+  // Digital (dibujado, sin internet) o Satélite (necesita internet); se recuerda lo que eligió cada persona.
+  const [capa, setCapa] = useState<"digital" | "satelite">(() => {
+    try {
+      return localStorage.getItem("controlTv.capaMapa") === "satelite" ? "satelite" : "digital";
+    } catch {
+      return "digital";
+    }
+  });
+  const cambiarCapa = (c: "digital" | "satelite") => {
+    setCapa(c);
+    try {
+      localStorage.setItem("controlTv.capaMapa", c);
+    } catch {
+      // Sin almacenamiento: vale solo mientras esté abierta la pantalla.
+    }
+  };
   const [tamano, setTamano] = useState({ w: 0, h: 0 });
   const caja = useRef<HTMLDivElement>(null);
   const base = useRef<HTMLCanvasElement>(null);
@@ -57,6 +76,36 @@ export function MapaDigital({
     [viajes, porId]
   );
   const visibles = filas.filter((f) => filtro === "todas" || f.cat === filtro);
+  const datosSatelite = useMemo(() => {
+    const unidades = visibles.map((f) => {
+      const p = paradasDelViaje(f.v);
+      return {
+        id: f.v.id,
+        placa: unidadLabel(f.v),
+        conductor: f.v.conductor_nombre ?? "sin conductor",
+        ruta: `${p[0].lugar} → ${p[p.length - 1].lugar}`,
+        color: COLOR[f.cat],
+        pos: f.pos,
+      };
+    });
+    const vistos = new Set<string>();
+    const lugaresConPunto: { id: string; nombre: string; punto: Punto }[] = [];
+    const rutas: Punto[][] = [];
+    for (const f of filas) {
+      paradasDelViaje(f.v).forEach((p, i) => {
+        const id = String(p.lugar_id);
+        const pt = f.puntos[i];
+        if (pt && !vistos.has(id)) {
+          vistos.add(id);
+          lugaresConPunto.push({ id, nombre: p.lugar, punto: pt });
+        }
+      });
+      for (const arco of arcosDelViaje(f.puntos)) if (arco) rutas.push(arco);
+    }
+    return { unidades, lugaresConPunto, rutas };
+    // `visibles` se recalcula con `filas` y `filtro`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filas, filtro]);
   const sinUbicar = visibles.filter((f) => !f.pos);
 
   // Se encuadra en lo que hay: los lugares con punto y las unidades.
@@ -346,12 +395,26 @@ export function MapaDigital({
             </li>
           ))}
         </ul>
+        <div className="ml-auto inline-flex gap-0.5 rounded-lg border border-white/10 bg-white/5 p-0.5">
+          {(["digital", "satelite"] as const).map((k) => (
+            <button
+              key={k}
+              aria-pressed={capa === k}
+              onClick={() => cambiarCapa(k)}
+              className={`min-h-7 rounded-md px-2.5 text-xs font-bold ${
+                capa === k ? "bg-[#BADC1E] text-[#0D1719]" : "text-slate-400 hover:text-white"
+              }`}
+            >
+              {k === "digital" ? "Digital" : "Satélite"}
+            </button>
+          ))}
+        </div>
         <button
           onClick={() => setCompleta((v) => !v)}
           aria-label={
             completa ? "Salir de pantalla completa del mapa" : "Mapa en pantalla completa"
           }
-          className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-xs font-semibold hover:border-[#BADC1E]"
+          className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-xs font-semibold hover:border-[#BADC1E]"
         >
           {completa ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           {completa ? "Salir" : "Pantalla completa"}
@@ -391,14 +454,35 @@ export function MapaDigital({
           className="relative min-h-[260px] overflow-hidden rounded-xl border border-white/10"
           style={{ background: "#0a0a0a" }}
         >
-          <canvas ref={base} aria-hidden className="absolute inset-0 h-full w-full" />
+          <canvas
+            ref={base}
+            aria-hidden
+            className={`absolute inset-0 h-full w-full ${capa === "satelite" ? "hidden" : ""}`}
+          />
           <canvas
             ref={vivo}
             onClick={alTocar}
             role="img"
             aria-label="Mapa de las unidades en ruta, posición estimada por las marcas"
-            className="absolute inset-0 h-full w-full cursor-pointer"
+            className={`absolute inset-0 h-full w-full cursor-pointer ${capa === "satelite" ? "hidden" : ""}`}
           />
+          {capa === "satelite" && (
+            <Suspense
+              fallback={
+                <p className="absolute inset-0 grid place-items-center text-sm text-slate-400">
+                  Cargando el satélite…
+                </p>
+              }
+            >
+              <MapaSatelite
+                unidades={datosSatelite.unidades}
+                lugares={datosSatelite.lugaresConPunto}
+                rutas={datosSatelite.rutas}
+                elegida={elegida}
+                onElegir={onElegir}
+              />
+            </Suspense>
+          )}
           {lugares.filter((l) => puntoDeLugar(l)).length === 0 && (
             <p className="absolute inset-x-4 top-3 rounded-lg border border-amber-400/30 bg-amber-400/10 p-2 text-xs text-amber-200">
               Todavía no hay lugares con punto en el mapa. Ponlos en Viajes → Lugares y las rutas

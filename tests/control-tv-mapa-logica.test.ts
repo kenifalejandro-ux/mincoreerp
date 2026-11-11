@@ -9,6 +9,7 @@ import {
   aPixel,
   arcosDelViaje,
   encuadre,
+  escaparHtml,
   posicionEnMapa,
   puntoDeLugar,
   puntosDelViaje,
@@ -220,5 +221,24 @@ describe("separar: las unidades juntas se ven todas", () => {
     const d = separar(Array.from({ length: 40 }, () => ({ x: 0, y: 0 })));
     expect(d).toHaveLength(40);
     expect(d.every((o) => Number.isFinite(o.dx) && Number.isFinite(o.dy))).toBe(true);
+  });
+});
+
+describe("escaparHtml: el texto del mapa satélite no mete código en la pantalla", () => {
+  it("escapa los cinco caracteres que cierran o abren etiquetas y atributos", () => {
+    expect(escaparHtml(`<img src=x onerror="alert(1)">`)).toBe(
+      "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;"
+    );
+    expect(escaparHtml("Tom & Jerry's")).toBe("Tom &amp; Jerry&#39;s");
+    expect(escaparHtml("<script>")).not.toContain("<");
+  });
+
+  it("no toca un texto normal, con tildes o ñ, ni el vacío", () => {
+    expect(escaparHtml("Yurimaguas · José Núñez")).toBe("Yurimaguas · José Núñez");
+    expect(escaparHtml("")).toBe("");
+  });
+
+  it("escapa también lo ya escapado: no se cuela una entidad", () => {
+    expect(escaparHtml("&lt;")).toBe("&amp;lt;");
   });
 });
