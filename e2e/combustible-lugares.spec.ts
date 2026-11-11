@@ -54,6 +54,8 @@ test("agregar, editar, buscar, desactivar y reactivar un lugar", async ({ page }
   await expect(fila(page, mina).getByRole("cell").nth(1)).toHaveText("Mina");
   await expect(fila(page, mina)).toContainText("Hualgayoc, Cajamarca");
   await expect(fila(page, mina)).toContainText("Activo");
+  // Todavía no tiene punto en el mapa: la tabla lo dice.
+  await expect(fila(page, mina)).toContainText("sin ubicar en el mapa");
 
   // Un nombre repetido (aunque cambien las mayúsculas) no se guarda y avisa en el formulario.
   await page.getByRole("button", { name: "Agregar lugar" }).click();
@@ -74,10 +76,22 @@ test("agregar, editar, buscar, desactivar y reactivar un lugar", async ({ page }
   ).toHaveCount(0);
   await edicion.getByLabel("Tipo", { exact: true }).selectOption({ label: "Abastecimiento" });
   await edicion.getByLabel(/^Ubicación/).fill("");
+  // El punto en el mapa: una coordenada que no se entiende avisa y no guarda; una buena se pega.
+  await edicion.getByLabel(/^Punto en el mapa/).fill("hola");
+  await expect(edicion.getByRole("alert")).toContainText("no se entiende como coordenada");
+  await edicion.getByRole("button", { name: "Guardar" }).click();
+  await expect(edicion.getByRole("alert").last()).toContainText("no se entiende");
+  await edicion.getByLabel(/^Punto en el mapa/).fill("-5.9003, -76.0947");
   await edicion.getByRole("button", { name: "Guardar" }).click();
   await expect(edicion).toHaveCount(0);
   await expect(fila(page, mina)).toContainText("Abastecimiento");
   await expect(fila(page, mina)).not.toContainText("Hualgayoc");
+  await expect(fila(page, mina)).toContainText("en el mapa");
+  await expect(fila(page, mina)).not.toContainText("sin ubicar");
+  // Al volver a abrirlo, el punto sigue ahí.
+  await page.getByRole("button", { name: `Editar ${mina}` }).click();
+  await expect(edicion.getByLabel(/^Punto en el mapa/)).toHaveValue("-5.90030, -76.09470");
+  await edicion.getByRole("button", { name: "Cerrar" }).click();
 
   // Buscar por la marca deja solo este lugar; algo que no existe, el aviso.
   const buscador = page.getByLabel("Buscar lugar");

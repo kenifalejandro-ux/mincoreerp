@@ -4,6 +4,8 @@
 import { Building2, Fuel, MapPin, Mountain, Pencil, Plus, Power, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { aGrados, parsearCoordenadas, textoDePunto, type Punto } from "./coordenadasLogica";
+import { SelectorPunto } from "./SelectorPunto";
 import { apiFetch } from "../../services/apiClient";
 import VentanaFlotante from "../comunes/VentanaFlotante";
 
@@ -14,6 +16,9 @@ export interface Lugar {
   nombre: string;
   tipo: TipoLugar | null;
   ubicacion: string | null;
+  /** El punto en el mapa; null si todavía no se puso. */
+  latitud?: number | null;
+  longitud?: number | null;
   activo: boolean;
 }
 
@@ -46,9 +51,13 @@ type Formulario = {
   nombre: string;
   tipo: TipoLugar | "";
   ubicacion: string;
-  original?: { nombre: string; tipo: TipoLugar | ""; ubicacion: string };
+  /** Lo que se pegó o tocó para el punto del mapa (texto «lat, lon»); vacío = sin punto. */
+  punto: string;
+  original?: { nombre: string; tipo: TipoLugar | ""; ubicacion: string; punto: string };
 };
-const FORM_VACIO: Formulario = { id: null, nombre: "", tipo: "", ubicacion: "" };
+const FORM_VACIO: Formulario = { id: null, nombre: "", tipo: "", ubicacion: "", punto: "" };
+const puntoDe = (l: Lugar): Punto | null =>
+  l.latitud != null && l.longitud != null ? { lat: l.latitud, lon: l.longitud } : null;
 
 interface Props {
   lugares: Lugar[];
@@ -121,6 +130,24 @@ export function LugaresPanel({
       if (!o || nombre !== o.nombre.trim()) cuerpo.nombre = nombre;
       if (!o || ubicacion !== o.ubicacion.trim()) cuerpo.ubicacion = ubicacion;
       if (form.tipo && (!o || form.tipo !== o.tipo)) cuerpo.tipo = form.tipo;
+      // El punto del mapa: lo que se escribió se lee como «lat, lon»; vacío lo borra.
+      const textoPunto = form.punto.trim();
+      if (textoPunto !== (o?.punto ?? "").trim()) {
+        if (textoPunto === "") {
+          cuerpo.latitud = null;
+          cuerpo.longitud = null;
+        } else {
+          const p = parsearCoordenadas(textoPunto);
+          if (!p) {
+            setGuardando(false);
+            return setError(
+              "La coordenada no se entiende. Pega dos números separados por coma, por ejemplo -5.9003, -76.0947."
+            );
+          }
+          cuerpo.latitud = aGrados(p.lat);
+          cuerpo.longitud = aGrados(p.lon);
+        }
+      }
       if (o && Object.keys(cuerpo).length === 0) {
         setForm(null); // no cambió nada: no hay nada que mandar
         return;
@@ -278,6 +305,18 @@ export function LugaresPanel({
                     </td>
                     <td className="p-3 text-[#cbd5e1]">
                       {l.ubicacion || <span className="text-[#64748b]">—</span>}
+                      {puntoDe(l) ? (
+                        <span
+                          className="ml-2 inline-flex items-center gap-1 text-xs text-[#BADC1E]"
+                          title={textoDePunto(puntoDe(l))}
+                        >
+                          <MapPin className="w-3 h-3" aria-hidden /> en el mapa
+                        </span>
+                      ) : (
+                        <span className="ml-2 text-xs text-amber-400/80">
+                          sin ubicar en el mapa
+                        </span>
+                      )}
                     </td>
                     <td className="p-3">
                       <span
@@ -303,10 +342,12 @@ export function LugaresPanel({
                                 nombre: l.nombre,
                                 tipo: l.tipo ?? "",
                                 ubicacion: l.ubicacion ?? "",
+                                punto: textoDePunto(puntoDe(l)),
                                 original: {
                                   nombre: l.nombre,
                                   tipo: l.tipo ?? "",
                                   ubicacion: l.ubicacion ?? "",
+                                  punto: textoDePunto(puntoDe(l)),
                                 },
                               })
                             }
@@ -417,6 +458,41 @@ export function LugaresPanel({
                     value={form.ubicacion}
                     onChange={(e) => setForm({ ...form, ubicacion: e.target.value })}
                   />
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="lugar-punto" className={LABEL}>
+                    Punto en el mapa <span className="normal-case font-normal">(opcional)</span>
+                  </label>
+                  <input
+                    id="lugar-punto"
+                    inputMode="decimal"
+                    placeholder="Pega la coordenada: -5.9003, -76.0947"
+                    className={INPUT}
+                    value={form.punto}
+                    onChange={(e) => setForm({ ...form, punto: e.target.value })}
+                  />
+                  <p className="text-xs text-[#94a3b8]">
+                    En Google Maps: clic derecho sobre el sitio y toca los números para copiarlos. O
+                    toca el mapa de abajo, que es aproximado.
+                  </p>
+                  <SelectorPunto
+                    punto={parsearCoordenadas(form.punto)}
+                    onElegir={(p) => setForm({ ...form, punto: textoDePunto(p) })}
+                  />
+                  {form.punto.trim() !== "" && !parsearCoordenadas(form.punto) && (
+                    <p role="alert" className="text-xs text-amber-300">
+                      Todavía no se entiende como coordenada.
+                    </p>
+                  )}
+                  {form.punto.trim() !== "" && (
+                    <button
+                      type="button"
+                      onClick={() => setForm({ ...form, punto: "" })}
+                      className="text-xs text-[#94a3b8] underline hover:text-white"
+                    >
+                      Quitar el punto
+                    </button>
+                  )}
                 </div>
                 {error && (
                   <p role="alert" className="text-sm text-red-400">

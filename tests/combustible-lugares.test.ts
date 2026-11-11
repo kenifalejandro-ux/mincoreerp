@@ -340,4 +340,126 @@ describe("combustible: lugares con tipo, ubicación y estado (0159)", () => {
       .send({ origen_id: origen, destino_id: otro, motivo: "cambio de destino" });
     expect(mudado.status).toBe(400);
   });
+
+  // ── Coordenadas del lugar en el mapa (0183) ──────────────────────────────
+
+  it("un lugar sin punto sale con latitud y longitud en null; con punto, como números", async () => {
+    const sin = await crear(idUnico("SinPunto"), { tipo: "ciudad" });
+    expect(sin.status, JSON.stringify(sin.body)).toBe(201);
+    expect(sin.body).toMatchObject({ latitud: null, longitud: null });
+
+    const con = await crear(idUnico("ConPunto"), {
+      tipo: "ciudad",
+      latitud: -5.900312,
+      longitud: -76.094712,
+    });
+    expect(con.status, JSON.stringify(con.body)).toBe(201);
+    expect(con.body.latitud).toBeCloseTo(-5.900312, 6);
+    expect(typeof con.body.longitud).toBe("number");
+    const lista = (await admin.get(LUGARES)).body.data as {
+      id: number;
+      latitud: number | null;
+    }[];
+    expect(lista.find((l) => l.id === con.body.id)?.latitud).toBeCloseTo(-5.900312, 6);
+    expect(lista.find((l) => l.id === sin.body.id)?.latitud).toBeNull();
+  });
+
+  it("el punto va completo y dentro del rango: si no, 400 y nunca 500", async () => {
+    const nombre = () => idUnico("Rango");
+    for (const cuerpo of [
+      { latitud: -5.9 }, // falta la longitud
+      { longitud: -76.1 }, // falta la latitud
+      { latitud: -5.9, longitud: null }, // una sí y otra no
+      { latitud: 91, longitud: -76 },
+      { latitud: -91, longitud: -76 },
+      { latitud: -5, longitud: 181 },
+      { latitud: -5, longitud: -181 },
+      { latitud: "abc", longitud: -76 },
+      { latitud: Number.MAX_SAFE_INTEGER, longitud: 0 },
+    ]) {
+      const r = await crear(nombre(), cuerpo);
+      expect(r.status, JSON.stringify(cuerpo)).toBe(400);
+    }
+    // Los bordes exactos sí valen.
+    expect((await crear(nombre(), { latitud: 90, longitud: 180 })).status).toBe(201);
+    expect((await crear(nombre(), { latitud: -90, longitud: -180 })).status).toBe(201);
+  });
+
+  it("PATCH pone, cambia y borra el punto sin tocar lo demás, y uno incompleto da 400", async () => {
+    const nombre = idUnico("Mover");
+    const lugar = (await crear(nombre, { tipo: "mina", ubicacion: "Cajamarca" })).body.id;
+    const url = `${LUGARES}/${lugar}`;
+
+    const puesto = await admin.patch(url).send({ latitud: -7.1637, longitud: -78.5003 });
+    expect(puesto.status, JSON.stringify(puesto.body)).toBe(200);
+    expect(puesto.body).toMatchObject({ nombre, tipo: "mina", ubicacion: "Cajamarca" });
+    expect(puesto.body.latitud).toBeCloseTo(-7.1637, 4);
+
+    // Cambiar solo el nombre no pisa el punto.
+    const renombrado = await admin.patch(url).send({ nombre: idUnico("Mover2") });
+    expect(renombrado.body.latitud).toBeCloseTo(-7.1637, 4);
+    expect(renombrado.body.longitud).toBeCloseTo(-78.5003, 4);
+
+    // Una sola de las dos: 400 y el punto de antes queda intacto.
+    expect((await admin.patch(url).send({ latitud: -8 })).status).toBe(400);
+    expect((await admin.patch(url).send({ longitud: -79 })).status).toBe(400);
+    expect((await admin.patch(url).send({ latitud: null })).status).toBe(400);
+    const intacto = (await admin.get(LUGARES)).body.data as { id: number; latitud: number }[];
+    expect(intacto.find((l) => l.id === lugar)?.latitud).toBeCloseTo(-7.1637, 4);
+
+    // Las dos en null lo borran.
+    const borrado = await admin.patch(url).send({ latitud: null, longitud: null });
+    expect(borrado.status, JSON.stringify(borrado.body)).toBe(200);
+    expect(borrado.body).toMatchObject({ latitud: null, longitud: null });
+  });
+
+  it("la base misma rechaza un punto incompleto o fuera de rango, aunque se salte la API", async () => {
+    const lugar = (await crear(idUnico("Base"), { tipo: "ciudad" })).body.id;
+    const intentar = (sql: string) =>
+      withTenant(tenantId, (c) => c.query(sql, [tenantId, lugar])).then(
+        () => "ok",
+        (e: { code?: string }) => e.code
+      );
+    expect(
+      await intentar("UPDATE combustible_lugares SET latitud = -5 WHERE tenant_id = $1 AND id = $2")
+    ).toBe("23514");
+    expect(
+      await intentar(
+        "UPDATE combustible_lugares SET latitud = 95, longitud = 0 WHERE tenant_id = $1 AND id = $2"
+      )
+    ).toBe("23514");
+  });
+
+  it("el punto de un lugar no se ve ni se cambia desde otra empresa", async () => {
+    const lugar = (await crear(idUnico("Punto"), { latitud: -8.1, longitud: -79 })).body.id;
+    const otro = await crearTenantDePrueba(password);
+    tenants.push(otro.tenant.id);
+    const ajeno = request.agent(app);
+    await ajeno
+      .post("/api/auth/login")
+      .send({ tenantSlug: otro.tenant.slug, email: otro.usuario.email, password });
+    expect((await ajeno.get(LUGARES)).body.data).toHaveLength(0);
+    expect(
+      (await ajeno.patch(`${LUGARES}/${lugar}`).send({ latitud: 1, longitud: 1 })).status
+    ).toBe(404);
+    const mio = (await admin.get(LUGARES)).body.data as { id: number; latitud: number }[];
+    expect(mio.find((l) => l.id === lugar)?.latitud).toBeCloseTo(-8.1, 5);
+  });
+
+  it("Lectura no puede poner un punto, ni al crear un lugar ni al editarlo", async () => {
+    const lugar = (await crear(idUnico("Bitacora"), { tipo: "mina" })).body.id;
+    const dni = String(86400000 + Math.floor(Math.random() * 90000) + seq++);
+    const alta = await admin
+      .post("/api/erp/usuarios")
+      .send({ nombre: "Lector", dni, password, rol: "lectura" });
+    expect(alta.status, JSON.stringify(alta.body)).toBe(201);
+    const lector = request.agent(app);
+    await lector.post("/api/auth/login").send({ tenantSlug: slug, identificador: dni, password });
+    expect(
+      (await lector.patch(`${LUGARES}/${lugar}`).send({ latitud: -5, longitud: -76 })).status
+    ).toBe(403);
+    expect(
+      (await lector.post(LUGARES).send({ nombre: idUnico("L"), latitud: -5, longitud: -76 })).status
+    ).toBe(403);
+  });
 });
