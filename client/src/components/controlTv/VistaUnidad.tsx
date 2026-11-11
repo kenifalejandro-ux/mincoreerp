@@ -376,6 +376,7 @@ export function VistaUnidad({
             onElegir={() => undefined}
             titulo="Dónde está"
             sinLeyenda
+            unidad
             pie={
               <span className="flex flex-wrap items-center gap-x-2">
                 <MapPin className="inline h-3.5 w-3.5 text-emerald-400" aria-hidden />
