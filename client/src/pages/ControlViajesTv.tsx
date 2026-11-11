@@ -23,14 +23,8 @@ import {
   type ReactNode,
 } from "react";
 
-import { estadoDelViaje, paradasDelViaje } from "../components/combustible/paradasViaje";
-import { unidadLabel, type FilaViaje } from "../components/combustible/viajesFormato";
-import {
-  CATS,
-  categoriaDe,
-  porcentajeOperativas,
-  posicionEnRuta,
-} from "../components/controlTv/controlTvLogica";
+import { type FilaViaje } from "../components/combustible/viajesFormato";
+import { CATS, porcentajeOperativas } from "../components/controlTv/controlTvLogica";
 import { DetalleTv, type DetalleDatos } from "../components/controlTv/DetalleTv";
 import { IconoTipo } from "../components/controlTv/iconosUnidad";
 import { MapaDigital } from "../components/controlTv/MapaDigital";
@@ -50,7 +44,6 @@ import {
   PanelUrea,
 } from "../components/controlTv/PanelesTv";
 import { ResumenCorporativo, UnidadesDetenidas } from "../components/controlTv/ResumenCorporativo";
-import { anchoDeIcono } from "../components/controlTv/tiposUnidad";
 import { useEsMovil } from "../components/controlTv/useEsMovil";
 import { VistaUnidad } from "../components/controlTv/VistaUnidad";
 import { apiFetch } from "../services/apiClient";
@@ -103,9 +96,6 @@ interface Consumo {
   entrada?: { recepciones: number; recibido_gal: number; diferencia_gal: number; costo: number };
   niveles?: NivelTanque[];
 }
-
-/** Alto del ícono dentro de la ficha de la vista en vivo. */
-const ALTO_FICHA = 16;
 
 type TabMovil = "resumen" | "flota" | "combustible" | "urea" | "eventos";
 
@@ -164,146 +154,15 @@ function Dona({ f }: { f: Resumen["flota"] }) {
   );
 }
 
-/** La vista en vivo: cada unidad como el ícono de su tipo, de «Salida» a «Regreso» según sus marcas.
- *  Sin GPS es una estimación; con GPS será el mapa real. */
-function VistaEnVivo({
-  viajes,
-  lugares,
-  onElegir,
-  anchoPanel = 900,
-}: {
-  viajes: FilaViaje[];
-  /** Los lugares con su punto en el mapa (para la vista «Mapa»). */
-  lugares: LugarMapa[];
-  onElegir: (id: string) => void;
-  /** Ancho aproximado del panel en píxeles (unos 360 en el celular): sirve para separar las fichas. */
-  anchoPanel?: number;
-}) {
-  const filas = 12;
-  const orden = [6, 5, 7, 4, 8, 3, 9, 2, 10, 1, 11, 0];
-  const ultimo = orden.map(() => -99);
-  const anchoDe = orden.map(() => 4.6);
-  // Lo que ocupa cada ficha, en % del ancho (se estima sobre el ancho del panel): un tráiler es más largo
-  // que una camioneta, y las fichas de una misma fila no se montan.
-  const ancho = (v: FilaViaje) =>
-    ((anchoDeIcono(v.equipo_tipo, ALTO_FICHA) + 14) * 100) / anchoPanel;
-  const puestas = viajes
-    .map((v) => ({ v, x: 4 + posicionEnRuta(v) * 92 }))
-    .sort((a, b) => a.x - b.x)
-    .map(({ v, x }) => {
-      // Si no cabe en ninguna fila de su punto, se corre a la derecha hasta que haya lugar: las
-      // unidades que están en el mismo punto quedan juntas, sin montarse.
-      let px = x;
-      let fila = -1;
-      for (let intento = 0; intento < 40 && fila < 0; intento++) {
-        fila = orden.find((o) => px - ultimo[o] >= (ancho(v) + anchoDe[o]) / 2 + 0.6) ?? -1;
-        if (fila < 0) px += 1.2;
-      }
-      if (fila < 0) fila = orden[0];
-      ultimo[fila] = px;
-      anchoDe[fila] = ancho(v);
-      return { v, x: Math.min(px, 97), fila };
-    });
-  const color = Object.fromEntries(CATS.map((c) => [c.k, c.c]));
-  // Marcas (los carriles de salida a regreso) o Mapa; se recuerda lo que eligió cada persona.
-  const [vista, setVista] = useState<"marcas" | "mapa">(() => {
-    try {
-      return localStorage.getItem("controlTv.vistaEnVivo") === "mapa" ? "mapa" : "marcas";
-    } catch {
-      return "marcas";
-    }
-  });
-  const cambiarVista = (v: "marcas" | "mapa") => {
-    setVista(v);
-    try {
-      localStorage.setItem("controlTv.vistaEnVivo", v);
-    } catch {
-      // Sin almacenamiento: la elección vale solo mientras esté abierta la pantalla.
-    }
-  };
-  return (
-    <section className="flex min-h-[300px] flex-col gap-2 rounded-2xl sm:min-h-[420px] border border-white/10 bg-white/[0.04] p-3">
-      <div className="flex items-baseline justify-between gap-2">
-        <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.16em] text-slate-400">
-          <span className="h-2 w-2 rounded-full bg-emerald-400" aria-hidden />
-          Vista en vivo
-        </h2>
-        <div className="inline-flex gap-0.5 rounded-lg border border-white/10 bg-white/5 p-0.5">
-          {(["marcas", "mapa"] as const).map((k) => (
-            <button
-              key={k}
-              aria-pressed={vista === k}
-              onClick={() => cambiarVista(k)}
-              className={`min-h-7 rounded-md px-2.5 text-xs font-bold ${
-                vista === k ? "bg-[#BADC1E] text-[#0D1719]" : "text-slate-400 hover:text-white"
-              }`}
-            >
-              {k === "marcas" ? "Marcas" : "Mapa"}
-            </button>
-          ))}
-        </div>
-        <span className="hidden text-xs text-slate-400 min-[1500px]:inline">
-          Posición estimada por las marcas · con GPS será la real
-        </span>
-      </div>
-      {vista === "mapa" ? (
-        <MapaDigital viajes={viajes} lugares={lugares} onElegir={onElegir} />
-      ) : (
-        <div
-          className="relative flex-1 min-h-[260px] overflow-hidden sm:min-h-[360px] rounded-xl border border-[#BADC1E]/20"
-          style={{
-            background:
-              "radial-gradient(ellipse at 50% 50%, #1c3a2a55, transparent 70%), repeating-linear-gradient(0deg, #BADC1E12 0 1px, transparent 1px 34px), repeating-linear-gradient(90deg, #BADC1E12 0 1px, transparent 1px 34px), #081210",
-          }}
-        >
-          {[
-            ["Salida", "4%"],
-            ["Destino", "50%"],
-            ["Regreso", "96%"],
-          ].map(([t, l]) => (
-            <span
-              key={t}
-              className="absolute top-1.5 -translate-x-1/2 text-[10px] uppercase tracking-[.14em] text-slate-400"
-              style={{ left: l }}
-            >
-              {t}
-            </span>
-          ))}
-          {puestas.map(({ v, x, fila }) => {
-            const cat = categoriaDe(v);
-            const estado = estadoDelViaje(paradasDelViaje(v), v.descansos)?.texto ?? "";
-            return (
-              <button
-                key={v.id}
-                onClick={() => onElegir(v.id)}
-                aria-label={`Ver ${unidadLabel(v)} en su Control TV`}
-                title={`${unidadLabel(v)} · ${v.conductor_nombre ?? "sin conductor"} · ${v.equipo_tipo ?? "Otro"} · ${estado}`}
-                className={`absolute grid h-[24px] -translate-x-1/2 -translate-y-1/2 place-items-center rounded-lg px-1.5 cursor-pointer hover:bg-white/15 hover:z-10 ${
-                  cat === "detenida" ? "animate-pulse motion-reduce:animate-none" : ""
-                }`}
-                style={{
-                  left: `${x.toFixed(2)}%`,
-                  top: `${(9 + ((fila + 0.5) / filas) * 88).toFixed(2)}%`,
-                  color: color[cat],
-                }}
-              >
-                <IconoTipo tipo={v.equipo_tipo} alto={ALTO_FICHA} />
-              </button>
-            );
-          })}
-        </div>
-      )}
-      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
-        {CATS.map((c) => (
-          <li key={c.k} className="flex items-center gap-1.5">
-            <i className="h-[3px] w-3.5 rounded" style={{ background: c.c }} />
-            {c.t}
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
+/** En un monitor o una laptop alta, el Resumen cabe en la pantalla sin bajar: el mapa recibe más alto que
+ *  los paneles de abajo. En pantallas chicas se baja con scroll, como siempre. */
+const ESTILO_AJUSTADO = `
+@media (min-width: 1280px) and (min-height: 820px) {
+  .tv-cabe { display: grid; flex: 1 1 auto; min-height: 0;
+    grid-template-rows: auto minmax(0, 1.7fr) minmax(0, .85fr) auto; }
+  .tv-cabe > * { min-height: 0; }
+  .tv-fila-mapa > *, .tv-fila-abajo > * { min-height: 0; overflow: hidden; }
+}`;
 
 export default function ControlViajesTv() {
   const [periodo, setPeriodo] = useState<Periodo>("24h");
@@ -486,7 +345,8 @@ export default function ControlViajesTv() {
           "radial-gradient(1200px 700px at 78% -10%, #12363a 0%, transparent 60%), radial-gradient(900px 600px at -10% 110%, #10282a 0%, transparent 55%), #070d0e",
       }}
     >
-      <div className="mx-auto flex max-w-[1900px] flex-col gap-3">
+      <style>{ESTILO_AJUSTADO}</style>
+      <div className="mx-auto flex min-h-full max-w-[1900px] flex-col gap-3">
         {movil && (
           <>
             <header className="flex items-center gap-2">
@@ -680,7 +540,7 @@ export default function ControlViajesTv() {
             {tab === "flota" && (
               <>
                 {seccionFlota}
-                <VistaEnVivo viajes={viajes} lugares={lugares} onElegir={elegir} anchoPanel={340} />
+                <MapaDigital viajes={viajes} lugares={lugares} onElegir={elegir} />
               </>
             )}
             {tab === "combustible" && comb && (
@@ -729,7 +589,7 @@ export default function ControlViajesTv() {
             </p>
           )
         ) : (
-          <>
+          <div className="tv-cabe flex flex-col gap-3">
             {f && (
               <ResumenCorporativo
                 movil={false}
@@ -745,14 +605,14 @@ export default function ControlViajesTv() {
               />
             )}
 
-            <div className="grid gap-2.5 lg:grid-cols-[minmax(280px,.8fr)_minmax(0,2fr)_minmax(300px,.95fr)]">
+            <div className="tv-fila-mapa grid gap-2.5 lg:grid-cols-[minmax(280px,.8fr)_minmax(0,2fr)_minmax(300px,.95fr)]">
               {seccionFlota}
-              <VistaEnVivo viajes={viajes} lugares={lugares} onElegir={elegir} />
+              <MapaDigital viajes={viajes} lugares={lugares} onElegir={elegir} />
               {comb && <PanelTanquetas tanquetas={comb.tanquetas} cisternas={comb.cisternas} />}
             </div>
 
             {comb && (
-              <div className="grid gap-2.5 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+              <div className="tv-fila-abajo grid gap-2.5 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
                 {consumo?.niveles && consumo.niveles.length > 0 && (
                   <PanelTanque
                     niveles={consumo.niveles}
@@ -764,7 +624,7 @@ export default function ControlViajesTv() {
               </div>
             )}
             <FranjaEventos eventos={resumen?.eventos ?? []} />
-          </>
+          </div>
         )}
       </div>
       {verTabs && (
