@@ -174,3 +174,12 @@ export function separar(
     return { dx: Math.cos(ang) * radio * anillo, dy: Math.sin(ang) * radio * anillo };
   });
 }
+
+/** El texto de un tooltip del mapa satélite entra como HTML: se escapa lo que viene de los datos
+ *  (placa, conductor, nombre de un lugar), para que un nombre con «<» no meta código en la pantalla. */
+export function escaparHtml(texto: string): string {
+  return texto.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string
+  );
+}

@@ -66,6 +66,9 @@ const requestLogger = pinoHttp({
 //   carga del script y el login nunca genera el token -- el servidor
 //   responde 400 "Token de reCAPTCHA faltante" sin que se vea nada raro en
 //   Network más que un script bloqueado.
+// - server.arcgisonline.com en imgSrc: las imágenes del mapa satélite del Control TV (Leaflet, capa
+//   World_Imagery de Esri). Sin esta entrada el navegador bloquea los cuadros del mapa y queda gris
+//   sin avisar. Solo imágenes: no se permite ningún script ni conexión a ese host.
 const cspDirectives = {
   defaultSrc: ["'self'"],
   scriptSrc: [
@@ -81,7 +84,7 @@ const cspDirectives = {
     "https://accounts.google.com",
   ],
   fontSrc: ["'self'", "https://fonts.gstatic.com"],
-  imgSrc: ["'self'", "data:"],
+  imgSrc: ["'self'", "data:", "https://server.arcgisonline.com"],
   connectSrc: ["'self'", "https://o4511866017480704.ingest.us.sentry.io"],
   frameSrc: ["https://accounts.google.com", "https://www.google.com/recaptcha/"],
 };

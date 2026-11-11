@@ -141,6 +141,17 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   if (process.env.CAPTURAS_TV) {
     await tv.screenshot({ path: `${process.env.CAPTURAS_TV}/mapa-completa.png` });
   }
+  // El satélite es la segunda opción: se pide y se carga solo entonces (necesita internet para las
+  // imágenes, así que aquí solo se comprueba que el mapa se arma y que se puede volver a Digital).
+  await tv.getByRole("button", { name: "Satélite", exact: true }).click();
+  await expect(tv.locator(".leaflet-container")).toBeVisible();
+  if (process.env.CAPTURAS_TV) {
+    await tv.waitForTimeout(2500);
+    await tv.screenshot({ path: `${process.env.CAPTURAS_TV}/mapa-satelite.png` });
+  }
+  await tv.getByRole("button", { name: "Digital", exact: true }).click();
+  await expect(tv.locator(".leaflet-container")).toHaveCount(0);
+  await expect(tv.getByRole("img", { name: /Mapa de las unidades en ruta/ })).toBeVisible();
   await tv.keyboard.press("Escape");
   await expect(tv.getByRole("button", { name: "Mapa en pantalla completa" })).toBeVisible();
   await tv.getByRole("button", { name: "Marcas", exact: true }).click();
