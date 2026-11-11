@@ -8,6 +8,7 @@ import {
   Droplets,
   Fuel,
   Inbox,
+  LayoutDashboard,
   LogOut,
   Maximize,
   Minimize,
@@ -49,7 +50,9 @@ import {
   PanelTanquetas,
   PanelUrea,
 } from "../components/controlTv/PanelesTv";
+import { ResumenCorporativo, UnidadesDetenidas } from "../components/controlTv/ResumenCorporativo";
 import { anchoDeIcono } from "../components/controlTv/tiposUnidad";
+import { useEsMovil } from "../components/controlTv/useEsMovil";
 import { VistaUnidad } from "../components/controlTv/VistaUnidad";
 import { apiFetch } from "../services/apiClient";
 
@@ -106,6 +109,8 @@ const soles = (n: number) => `S/ ${fmt(n, 0)}`;
 /** Alto del ícono dentro de la ficha de la vista en vivo. */
 const ALTO_FICHA = 16;
 
+type TabMovil = "resumen" | "flota" | "combustible" | "urea" | "eventos";
+
 const PERIODOS: { id: Periodo; t: string }[] = [
   { id: "24h", t: "24 h" },
   { id: "7d", t: "7 días" },
@@ -120,6 +125,7 @@ function Tarjeta({
   pie,
   tono,
   tendencia,
+  compacta = false,
 }: {
   icono: ReactNode;
   titulo: string;
@@ -128,12 +134,31 @@ function Tarjeta({
   pie: string;
   tono: string;
   tendencia?: number[];
+  /** En el celular: más baja, con el ícono junto al título y sin la tendencia. */
+  compacta?: boolean;
 }) {
   const estilo: CSSProperties = {
     background: `linear-gradient(135deg, ${tono}55, #0a1315)`,
     borderColor: `${tono}aa`,
   };
   const puntos = tendencia ? puntosTendencia(tendencia, 114, 38) : "";
+  if (compacta) {
+    return (
+      <div className="min-w-0 overflow-hidden rounded-xl border p-2.5" style={estilo}>
+        <p className="flex items-center gap-1.5 text-[11px] text-slate-300">
+          <span style={{ color: tono }} className="shrink-0 [&>svg]:h-4 [&>svg]:w-4">
+            {icono}
+          </span>
+          <span className="truncate">{titulo}</span>
+        </p>
+        <p className="mt-0.5 text-2xl font-extrabold leading-tight tabular-nums">
+          {valor}
+          {unidad && <span className="ml-1 text-xs font-semibold text-slate-300">{unidad}</span>}
+        </p>
+        <p className="truncate text-[10px] text-slate-300">{pie}</p>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-3 rounded-2xl border p-3 overflow-hidden" style={estilo}>
       <span style={{ color: tono }} className="shrink-0">
@@ -217,17 +242,21 @@ function Dona({ f }: { f: Resumen["flota"] }) {
 function VistaEnVivo({
   viajes,
   onElegir,
+  anchoPanel = 900,
 }: {
   viajes: FilaViaje[];
   onElegir: (id: string) => void;
+  /** Ancho aproximado del panel en píxeles (unos 360 en el celular): sirve para separar las fichas. */
+  anchoPanel?: number;
 }) {
   const filas = 12;
   const orden = [6, 5, 7, 4, 8, 3, 9, 2, 10, 1, 11, 0];
   const ultimo = orden.map(() => -99);
   const anchoDe = orden.map(() => 4.6);
-  // Lo que ocupa cada ficha, en % del ancho (se estima sobre unos 900 px): un tráiler es más largo
+  // Lo que ocupa cada ficha, en % del ancho (se estima sobre el ancho del panel): un tráiler es más largo
   // que una camioneta, y las fichas de una misma fila no se montan.
-  const ancho = (v: FilaViaje) => (anchoDeIcono(v.equipo_tipo, ALTO_FICHA) + 14) / 9;
+  const ancho = (v: FilaViaje) =>
+    ((anchoDeIcono(v.equipo_tipo, ALTO_FICHA) + 14) * 100) / anchoPanel;
   const puestas = viajes
     .map((v) => ({ v, x: 4 + posicionEnRuta(v) * 92 }))
     .sort((a, b) => a.x - b.x)
@@ -247,7 +276,7 @@ function VistaEnVivo({
     });
   const color = Object.fromEntries(CATS.map((c) => [c.k, c.c]));
   return (
-    <section className="flex min-h-[420px] flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
+    <section className="flex min-h-[300px] flex-col gap-2 rounded-2xl sm:min-h-[420px] border border-white/10 bg-white/[0.04] p-3">
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.16em] text-slate-400">
           <span className="h-2 w-2 rounded-full bg-emerald-400" aria-hidden />
@@ -258,7 +287,7 @@ function VistaEnVivo({
         </span>
       </div>
       <div
-        className="relative flex-1 min-h-[360px] overflow-hidden rounded-xl border border-[#BADC1E]/20"
+        className="relative flex-1 min-h-[260px] overflow-hidden sm:min-h-[360px] rounded-xl border border-[#BADC1E]/20"
         style={{
           background:
             "radial-gradient(ellipse at 50% 50%, #1c3a2a55, transparent 70%), repeating-linear-gradient(0deg, #BADC1E12 0 1px, transparent 1px 34px), repeating-linear-gradient(90deg, #BADC1E12 0 1px, transparent 1px 34px), #081210",
@@ -322,6 +351,8 @@ export default function ControlViajesTv() {
   const [ahora, setAhora] = useState(() => Date.now());
   const [pantallaCompleta, setPantallaCompleta] = useState(false);
   const [pagina, setPagina] = useState<"resumen" | "detalle">("resumen");
+  const movil = useEsMovil();
+  const [tab, setTab] = useState<TabMovil>("resumen");
   const [detalle, setDetalle] = useState<DetalleDatos | null>(null);
   // La unidad que se está mirando (null = el TV central); sale también del enlace del ícono de la fila.
   const [unidad, setUnidad] = useState<string | null>(() =>
@@ -335,6 +366,9 @@ export default function ControlViajesTv() {
   };
   // Una respuesta lenta no pisa a una más nueva.
   const pedido = useRef(0);
+  // Los gráficos del Resumen del celular usan el detalle (desvíos, duración de viajes, consumo anterior);
+  // es pesado, así que fuera de su pestaña se pide al abrir, al cambiar de período y cada 5 minutos.
+  const ultimoDetalle = useRef({ t: 0, periodo: "" });
 
   const cargar = useCallback(async () => {
     const mio = ++pedido.current;
@@ -350,7 +384,10 @@ export default function ControlViajesTv() {
       pedir<Resumen>("/api/erp/viajes/control-tv/resumen"),
       pedir<Consumo>(`/api/erp/viajes/control-tv/consumo?periodo=${periodo}`),
       pedir<{ data: FilaViaje[] }>("/api/erp/viajes?estado=en_curso"),
-      pagina === "detalle"
+      pagina === "detalle" ||
+      (movil &&
+        (ultimoDetalle.current.periodo !== periodo ||
+          Date.now() - ultimoDetalle.current.t > 5 * 60_000))
         ? pedir<DetalleDatos>(`/api/erp/viajes/control-tv/detalle?periodo=${periodo}`)
         : Promise.resolve(null),
     ]);
@@ -359,16 +396,18 @@ export default function ControlViajesTv() {
     if (r) setResumen(r);
     if (c) setConsumo(c);
     if (v && Array.isArray(v.data)) setViajes(v.data);
-    if (d) setDetalle(d);
+    if (d) {
+      setDetalle(d);
+      ultimoDetalle.current = { t: Date.now(), periodo };
+    }
     setSinConexion(!r);
     if (r) {
       setUltimaCarga(Date.now());
       setVersion((n) => n + 1);
     }
-  }, [periodo, pagina]);
+  }, [periodo, pagina, movil]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void cargar();
     const es = new EventSource("/api/eventos/stream", { withCredentials: true });
     const refrescar = () => void cargar();
@@ -418,16 +457,195 @@ export default function ControlViajesTv() {
   const periodoTxt = PERIODOS.find((p) => p.id === periodo)?.t ?? "";
   const hace = ultimaCarga ? Math.max(0, Math.round((ahora - ultimaCarga) / 1000)) : null;
 
+  const tarjetas = (compacta: boolean) =>
+    f && (
+      <>
+        <Tarjeta
+          compacta={compacta}
+          icono={<Truck className="w-7 h-7" />}
+          titulo="Viajes activos"
+          valor={fmt(f.activos, 0)}
+          pie={`${f.programados} programados`}
+          tono="#3b82f6"
+        />
+        {comb && (
+          <>
+            <Tarjeta
+              compacta={compacta}
+              icono={<Fuel className="w-7 h-7" />}
+              titulo="Combustible en la empresa"
+              valor={fmt(comb.total_en_tanques_gal, 0)}
+              unidad="gal"
+              pie={soles(valorEnTanques(comb.tanques))}
+              tono="#7fa21a"
+            />
+            <Tarjeta
+              compacta={compacta}
+              icono={<Inbox className="w-7 h-7" />}
+              titulo={`Recepcionado · ${periodoTxt}`}
+              valor={fmt(consumo?.entrada?.recibido_gal ?? 0, 0)}
+              unidad="gal"
+              pie={`${consumo?.entrada?.recepciones ?? 0} recepciones · ${fmt(consumo?.entrada?.diferencia_gal ?? 0, 0)} gal vs. factura`}
+              tono="#22d3ee"
+            />
+            <Tarjeta
+              compacta={compacta}
+              icono={<Droplets className="w-7 h-7" />}
+              titulo={`Consumo · ${periodoTxt}`}
+              valor={fmt(gal, 0)}
+              unidad="gal"
+              pie={soles(consumo?.consumo?.total.costo ?? 0)}
+              tono="#fb923c"
+              tendencia={consumo?.consumo?.serie.map((s) => s.gal)}
+            />
+            <Tarjeta
+              compacta={compacta}
+              icono={<Clock className="w-7 h-7" />}
+              titulo="Autonomía"
+              valor={auto === null ? "—" : fmt(auto, 1)}
+              unidad={auto === null ? undefined : "días"}
+              pie={`combustible${resumen?.urea?.autonomia_dias != null ? ` · urea ${fmt(resumen.urea.autonomia_dias, 0)} días` : ""}`}
+              tono="#a78bfa"
+            />
+            <Tarjeta
+              compacta={compacta}
+              icono={<Bell className="w-7 h-7" />}
+              titulo="Alertas críticas"
+              valor={fmt(comb.alertas.criticas, 0)}
+              pie={`${comb.alertas.por_revisar} por revisar`}
+              tono="#f87171"
+            />
+          </>
+        )}
+      </>
+    );
+
+  const seccionFlota = f && (
+    <section className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
+      <div className="flex items-baseline justify-between">
+        <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.16em] text-slate-400">
+          <Truck className="w-4 h-4 text-[#BADC1E]" /> Flota en operación
+        </h2>
+        <span className="text-xs text-slate-400">
+          {f.activos} {f.activos === 1 ? "viaje" : "viajes"}
+        </span>
+      </div>
+      <div className="flex items-center gap-4">
+        <Dona f={f} />
+        <ul className="flex flex-1 flex-col gap-1.5 text-sm">
+          {CATS.map((c) => {
+            const n = {
+              ruta: f.en_ruta,
+              retorno: f.retornando,
+              parada: f.en_parada,
+              descansa: f.descansando,
+              detenida: f.detenidas,
+            }[c.k];
+            return (
+              <li key={c.k} className="flex items-center gap-2">
+                <i className="h-2.5 w-2.5 rounded-[3px]" style={{ background: c.c }} />
+                <span className="flex-1 text-slate-400">{c.t}</span>
+                <b className="tabular-nums">{n}</b>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+      <ul className="grid grid-cols-2 gap-x-3 gap-y-1 border-t border-white/10 pt-2 text-xs">
+        {f.por_tipo
+          .slice()
+          .sort((a, b) => b.cantidad - a.cantidad)
+          .map((t) => (
+            <li key={t.tipo} className="flex min-w-0 items-center gap-1.5 text-slate-300">
+              <IconoTipo tipo={t.tipo} alto={20} className="shrink-0 text-[#BADC1E]" />
+              <em className="min-w-0 flex-1 truncate not-italic text-slate-400">{t.tipo}</em>
+              <b className="tabular-nums">{t.cantidad}</b>
+            </li>
+          ))}
+      </ul>
+    </section>
+  );
+
+  const verTabs = movil && !unidad && pagina === "resumen" && !!f;
+
   return (
     <div
-      className="fixed inset-0 overflow-y-auto p-3 text-slate-100 sm:p-4"
+      className={`fixed inset-0 overflow-y-auto p-3 text-slate-100 sm:p-4 ${verTabs ? "pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))]" : ""}`}
       style={{
         background:
           "radial-gradient(1200px 700px at 78% -10%, #12363a 0%, transparent 60%), radial-gradient(900px 600px at -10% 110%, #10282a 0%, transparent 55%), #070d0e",
       }}
     >
       <div className="mx-auto flex max-w-[1900px] flex-col gap-3">
-        <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        {movil && (
+          <>
+            <header className="flex items-center gap-2">
+              <img
+                src="/logos/mincore-logo-256-sin-fondo.png"
+                alt=""
+                className="h-7 w-7 shrink-0"
+              />
+              <div className="min-w-0 flex-1">
+                <h1 className="truncate text-base font-bold leading-tight">
+                  {resumen?.empresa || "Control de viajes"}
+                </h1>
+                <p className="truncate text-[11px] text-slate-400">
+                  Control de viajes ·{" "}
+                  {resumen?.sedes === undefined || resumen?.sedes === null
+                    ? "Todas las sedes"
+                    : resumen.sedes.join(", ") || "Sin sede"}
+                </p>
+              </div>
+              <span className="flex items-center gap-1.5 text-[11px] text-slate-400" role="status">
+                <span
+                  className={`h-2 w-2 rounded-full ${sinConexion ? "bg-amber-400" : "bg-emerald-400"}`}
+                  aria-hidden
+                />
+                {sinConexion ? "Sin conexión" : hace !== null ? `${hace} s` : "En vivo"}
+              </span>
+              <button
+                onClick={salir}
+                aria-label="Salir"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/15 bg-white/5"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </header>
+            {!unidad && (
+              <div className="flex items-center gap-2">
+                {pagina === "resumen" && (
+                  <div className="inline-flex gap-0.5 rounded-xl border border-white/10 bg-white/5 p-0.5">
+                    {PERIODOS.map((p) => (
+                      <button
+                        key={p.id}
+                        aria-pressed={periodo === p.id}
+                        onClick={() => setPeriodo(p.id)}
+                        className={`min-h-9 rounded-lg px-3 text-sm font-bold ${
+                          periodo === p.id ? "bg-[#BADC1E] text-[#0D1719]" : "text-slate-400"
+                        }`}
+                      >
+                        {p.t}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="flex-1" />
+                <button
+                  aria-pressed={pagina === "detalle"}
+                  onClick={() => setPagina(pagina === "detalle" ? "resumen" : "detalle")}
+                  className={`min-h-9 rounded-xl border px-3.5 text-sm font-bold ${
+                    pagina === "detalle"
+                      ? "border-[#BADC1E] bg-[#BADC1E] text-[#0D1719]"
+                      : "border-white/15 bg-white/5 text-slate-200"
+                  }`}
+                >
+                  {pagina === "detalle" ? "Volver al resumen" : "Detalle"}
+                </button>
+              </div>
+            )}
+          </>
+        )}
+        <header className={`flex-wrap items-center gap-x-4 gap-y-2 ${movil ? "hidden" : "flex"}`}>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 border-r border-white/10 pr-3 text-slate-400">
               <img src="/logos/mincore-logo-256-sin-fondo.png" alt="" className="h-7 w-7" />
@@ -518,6 +736,63 @@ export default function ControlViajesTv() {
             onCambiar={elegir}
             onVolver={() => elegir(null)}
           />
+        ) : movil && pagina === "resumen" ? (
+          <>
+            {tab === "resumen" && f && (
+              <ResumenCorporativo
+                movil
+                intro={
+                  <>
+                    {seccionFlota}
+                    <UnidadesDetenidas viajes={viajes} onElegir={elegir} />
+                    {consumo?.niveles && consumo.niveles.length > 0 && (
+                      <PanelTanque
+                        niveles={consumo.niveles}
+                        ahora={ahora}
+                        periodoMs={{ "24h": 24, "7d": 168, "30d": 720 }[periodo] * 3_600_000}
+                      />
+                    )}
+                  </>
+                }
+                d={{
+                  flota: f,
+                  combustible: comb,
+                  urea: resumen?.urea ?? null,
+                  consumo: consumo?.consumo,
+                  niveles: consumo?.niveles,
+                  detalle,
+                  periodo,
+                }}
+              />
+            )}
+            {tab === "flota" && (
+              <>
+                {seccionFlota}
+                <VistaEnVivo viajes={viajes} onElegir={elegir} anchoPanel={340} />
+              </>
+            )}
+            {tab === "combustible" && comb && (
+              <>
+                <PanelTanquetas tanquetas={comb.tanquetas} cisternas={comb.cisternas} />
+                {consumo?.consumo && (
+                  <PanelConsumo
+                    serie={consumo.consumo.serie}
+                    porHora={consumo.consumo.agrupado_por === "hora"}
+                    total={gal}
+                  />
+                )}
+                {consumo?.niveles && consumo.niveles.length > 0 && (
+                  <PanelTanque
+                    niveles={consumo.niveles}
+                    ahora={ahora}
+                    periodoMs={{ "24h": 24, "7d": 168, "30d": 720 }[periodo] * 3_600_000}
+                  />
+                )}
+              </>
+            )}
+            {tab === "urea" && resumen?.urea && <PanelUrea urea={resumen.urea} ahora={ahora} />}
+            {tab === "eventos" && <FranjaEventos eventos={resumen?.eventos ?? []} />}
+          </>
         ) : pagina === "detalle" ? (
           comb ? (
             <DetalleTv
@@ -544,105 +819,11 @@ export default function ControlViajesTv() {
         ) : (
           <>
             <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fit,minmax(215px,1fr))]">
-              <Tarjeta
-                icono={<Truck className="w-7 h-7" />}
-                titulo="Viajes activos"
-                valor={fmt(f.activos, 0)}
-                pie={`${f.programados} programados`}
-                tono="#3b82f6"
-              />
-              {comb && (
-                <>
-                  <Tarjeta
-                    icono={<Fuel className="w-7 h-7" />}
-                    titulo="Combustible en la empresa"
-                    valor={fmt(comb.total_en_tanques_gal, 0)}
-                    unidad="gal"
-                    pie={soles(valorEnTanques(comb.tanques))}
-                    tono="#7fa21a"
-                  />
-                  <Tarjeta
-                    icono={<Inbox className="w-7 h-7" />}
-                    titulo={`Recepcionado · ${periodoTxt}`}
-                    valor={fmt(consumo?.entrada?.recibido_gal ?? 0, 0)}
-                    unidad="gal"
-                    pie={`${consumo?.entrada?.recepciones ?? 0} recepciones · ${fmt(consumo?.entrada?.diferencia_gal ?? 0, 0)} gal vs. factura`}
-                    tono="#22d3ee"
-                  />
-                  <Tarjeta
-                    icono={<Droplets className="w-7 h-7" />}
-                    titulo={`Consumo · ${periodoTxt}`}
-                    valor={fmt(gal, 0)}
-                    unidad="gal"
-                    pie={soles(consumo?.consumo?.total.costo ?? 0)}
-                    tono="#fb923c"
-                    tendencia={consumo?.consumo?.serie.map((s) => s.gal)}
-                  />
-                  <Tarjeta
-                    icono={<Clock className="w-7 h-7" />}
-                    titulo="Autonomía"
-                    valor={auto === null ? "—" : fmt(auto, 1)}
-                    unidad={auto === null ? undefined : "días"}
-                    pie={`combustible${resumen?.urea?.autonomia_dias != null ? ` · urea ${fmt(resumen.urea.autonomia_dias, 0)} días` : ""}`}
-                    tono="#a78bfa"
-                  />
-                  <Tarjeta
-                    icono={<Bell className="w-7 h-7" />}
-                    titulo="Alertas críticas"
-                    valor={fmt(comb.alertas.criticas, 0)}
-                    pie={`${comb.alertas.por_revisar} por revisar`}
-                    tono="#f87171"
-                  />
-                </>
-              )}
+              {tarjetas(false)}
             </div>
 
             <div className="grid gap-2.5 lg:grid-cols-[minmax(280px,.8fr)_minmax(0,2fr)_minmax(300px,.95fr)]">
-              <section className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
-                <div className="flex items-baseline justify-between">
-                  <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.16em] text-slate-400">
-                    <Truck className="w-4 h-4 text-[#BADC1E]" /> Flota en operación
-                  </h2>
-                  <span className="text-xs text-slate-400">
-                    {f.activos} {f.activos === 1 ? "viaje" : "viajes"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-4">
-                  <Dona f={f} />
-                  <ul className="flex flex-1 flex-col gap-1.5 text-sm">
-                    {CATS.map((c) => {
-                      const n = {
-                        ruta: f.en_ruta,
-                        retorno: f.retornando,
-                        parada: f.en_parada,
-                        descansa: f.descansando,
-                        detenida: f.detenidas,
-                      }[c.k];
-                      return (
-                        <li key={c.k} className="flex items-center gap-2">
-                          <i className="h-2.5 w-2.5 rounded-[3px]" style={{ background: c.c }} />
-                          <span className="flex-1 text-slate-400">{c.t}</span>
-                          <b className="tabular-nums">{n}</b>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-                <ul className="grid grid-cols-2 gap-x-3 gap-y-1 border-t border-white/10 pt-2 text-xs">
-                  {f.por_tipo
-                    .slice()
-                    .sort((a, b) => b.cantidad - a.cantidad)
-                    .map((t) => (
-                      <li key={t.tipo} className="flex min-w-0 items-center gap-1.5 text-slate-300">
-                        <IconoTipo tipo={t.tipo} alto={20} className="shrink-0 text-[#BADC1E]" />
-                        <em className="min-w-0 flex-1 truncate not-italic text-slate-400">
-                          {t.tipo}
-                        </em>
-                        <b className="tabular-nums">{t.cantidad}</b>
-                      </li>
-                    ))}
-                </ul>
-              </section>
+              {seccionFlota}
               <VistaEnVivo viajes={viajes} onElegir={elegir} />
               {comb && <PanelTanquetas tanquetas={comb.tanquetas} cisternas={comb.cisternas} />}
             </div>
@@ -670,6 +851,37 @@ export default function ControlViajesTv() {
           </>
         )}
       </div>
+      {verTabs && (
+        <nav
+          aria-label="Secciones del Control TV"
+          className="fixed inset-x-0 bottom-0 z-20 flex border-t border-white/10 bg-[#070d0e]/95 backdrop-blur"
+          style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+        >
+          {(
+            [
+              ["resumen", "Resumen", <LayoutDashboard key="r" className="w-5 h-5" />, true],
+              ["flota", "Flota", <Truck key="f" className="w-5 h-5" />, true],
+              ["combustible", "Combustible", <Fuel key="c" className="w-5 h-5" />, !!comb],
+              ["urea", "Urea", <Droplets key="u" className="w-5 h-5" />, !!resumen?.urea],
+              ["eventos", "Eventos", <Bell key="e" className="w-5 h-5" />, true],
+            ] as [TabMovil, string, ReactNode, boolean][]
+          )
+            .filter(([, , , visible]) => visible)
+            .map(([id, texto, icono]) => (
+              <button
+                key={id}
+                aria-current={tab === id ? "page" : undefined}
+                onClick={() => setTab(id)}
+                className={`flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-semibold ${
+                  tab === id ? "text-[#BADC1E]" : "text-slate-400"
+                }`}
+              >
+                {icono}
+                {texto}
+              </button>
+            ))}
+        </nav>
+      )}
     </div>
   );
 }

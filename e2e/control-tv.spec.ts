@@ -139,6 +139,68 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   expect(fila.url()).toContain(`unidad=${viaje.id}`);
   await expect(fila.getByRole("heading", { name: `Conductor ${marca}` })).toBeVisible();
 
+  // En un celular (393×852) el tablero se reparte en pestañas abajo, sin desborde lateral.
+  await tv.setViewportSize({ width: 393, height: 852 });
+  const nav = tv.getByRole("navigation", { name: "Secciones del Control TV" });
+  await expect(nav).toBeVisible();
+  for (const t of ["Resumen", "Flota", "Combustible", "Eventos"]) {
+    await expect(nav.getByRole("button", { name: t })).toBeVisible();
+  }
+  await expect(tv.getByRole("button", { name: "Pantalla completa" })).toBeHidden();
+  // En el celular, el Resumen son gráficos (no las tarjetas de escritorio), de a dos por fila.
+  await expect(tv.getByRole("heading", { name: "Duración de los viajes" })).toBeVisible();
+  // Lo primero que ve la gerencia: la flota (y, si hay, las unidades detenidas y el tanque).
+  await expect(tv.getByRole("heading", { name: "Flota en operación" })).toBeVisible();
+  // Los gráficos van en dos columnas: entre los que haya (según los datos), unos quedan a la izquierda
+  // y otros a la derecha, y los de una misma fila están a la misma altura.
+  const cajas = [];
+  for (const nombre of [
+    "Autonomía y urea",
+    "De dónde llegó el combustible",
+    /^Consumo por (hora|día)$/,
+    "Duración de los viajes",
+    "Unidades que más se desvían",
+  ]) {
+    const encabezado = tv.getByRole("heading", { name: nombre });
+    if ((await encabezado.count()) === 0) continue;
+    const c = await encabezado.boundingBox();
+    if (c) cajas.push(c);
+  }
+  expect(cajas.length).toBeGreaterThanOrEqual(3);
+  expect(Math.max(...cajas.map((c) => c.x)) - Math.min(...cajas.map((c) => c.x))).toBeGreaterThan(
+    100
+  );
+  const lateral = await tv
+    .locator("div.fixed.inset-0")
+    .first()
+    .evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(lateral).toBeLessThanOrEqual(0);
+  await nav.getByRole("button", { name: "Flota" }).click();
+  await expect(tv.getByText("Flota en operación")).toBeVisible();
+  await expect(tv.getByText("Vista en vivo")).toBeVisible();
+  await nav.getByRole("button", { name: "Eventos" }).click();
+  await expect(tv.getByRole("heading", { name: "Últimos eventos" })).toBeVisible();
+  // La unidad también cabe: sus secciones se pliegan con un toque en el título.
+  await tv.goto(`/control-tv?unidad=${viaje.id}`);
+  await expect(tv.getByRole("heading", { name: `Conductor ${marca}` })).toBeVisible();
+  await expect(nav).toBeHidden();
+  const resumenUnidad = tv.getByText("Cómo se fue el tiempo");
+  await expect(resumenUnidad).toBeVisible();
+  await expect(tv.locator("details", { hasText: "Cómo se fue el tiempo" })).not.toHaveAttribute(
+    "open",
+    ""
+  );
+  await resumenUnidad.click();
+  await expect(tv.locator("details", { hasText: "Cómo se fue el tiempo" })).toHaveAttribute(
+    "open",
+    ""
+  );
+  const lateralUnidad = await tv
+    .locator("div.fixed.inset-0")
+    .first()
+    .evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(lateralUnidad).toBeLessThanOrEqual(0);
+
   // «Salir» vuelve al ERP.
   await tv.getByRole("button", { name: "Salir" }).click();
   await expect(tv).toHaveURL(/\/$/);

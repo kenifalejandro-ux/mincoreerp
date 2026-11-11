@@ -13,6 +13,12 @@ import {
   valorEnTanques,
 } from "../client/src/components/controlTv/controlTvLogica";
 import { anchoDeIcono, claseDeTipo, FORMAS } from "../client/src/components/controlTv/tiposUnidad";
+import {
+  colorDesvio,
+  histograma,
+  tendenciaMovil,
+  topDesvios,
+} from "../client/src/components/controlTv/resumenCorporativoLogica";
 import { puedeVerControlTv } from "../client/src/components/flota/flotaAcceso";
 import type { FilaViaje } from "../client/src/components/combustible/viajesFormato";
 
@@ -165,5 +171,41 @@ describe("puedeVerControlTv", () => {
     expect(puedeVerControlTv(u("lectura", { "combustible:viajes:control_tv": false }))).toBe(false);
     expect(puedeVerControlTv(u("admin", {}, ["combustible"]))).toBe(false);
     expect(puedeVerControlTv(null)).toBe(false);
+  });
+});
+
+describe("Resumen corporativo: cuentas de los gráficos", () => {
+  it("la tendencia es una media móvil del mismo largo", () => {
+    expect(tendenciaMovil([10, 20, 30, 40, 50])).toEqual([15, 20, 30, 40, 45]);
+    expect(tendenciaMovil([])).toEqual([]);
+  });
+
+  it("el histograma reparte las duraciones en rangos iguales y calcula el promedio", () => {
+    expect(histograma([])).toBeNull();
+    const h = histograma([10, 11, 12, 14, 14, 20, 30])!;
+    expect(h.bins.reduce((s, b) => s + b.n, 0)).toBe(7);
+    expect(h.promedio).toBeCloseTo((10 + 11 + 12 + 14 + 14 + 20 + 30) / 7, 5);
+    // Los rangos son contiguos y del mismo ancho.
+    const ancho = h.bins[0].hasta - h.bins[0].desde;
+    h.bins.forEach((b, i) => {
+      expect(b.hasta - b.desde).toBe(ancho);
+      if (i > 0) expect(b.desde).toBe(h.bins[i - 1].hasta);
+    });
+    // Un solo viaje cae en un solo rango.
+    expect(histograma([8])!.bins.filter((b) => b.n > 0)).toHaveLength(1);
+  });
+
+  it("los desvíos salen del mayor al menor, con el mayor entre pares y pasado", () => {
+    const r = topDesvios([
+      { placa: "A", vs_pares_pct: 10, vs_pasado_pct: 40 },
+      { placa: "B", vs_pares_pct: -50, vs_pasado_pct: null },
+      { placa: "C", vs_pares_pct: null, vs_pasado_pct: 5 },
+    ]);
+    expect(r.map((x) => x.placa)).toEqual(["B", "A", "C"]);
+    expect(r[0].pct).toBe(-50);
+    expect(r[1].pct).toBe(40);
+    expect(topDesvios([], 5)).toEqual([]);
+    expect(colorDesvio(40)).toBe("#f87171");
+    expect(colorDesvio(-20)).toBe("#a3c93a");
   });
 });
