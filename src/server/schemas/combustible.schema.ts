@@ -2525,9 +2525,6 @@ const fechaHoraNoMuyAntigua = fechaHora.refine(
 const medidor = z.number().min(0).max(99999999).nullable().optional();
 const motivo = z.string().trim().min(3).max(500);
 
-export const TIPOS_DE_LUGAR = ["mina", "ciudad", "abastecimiento"] as const;
-const tipoDeLugar = z.enum(TIPOS_DE_LUGAR);
-
 // Los caracteres de ancho cero (y el guion blando) no se ven pero cuentan para el índice único de
 // nombres: "Lima" y "Lima\u200B" serían dos lugares que nadie distingue. Se quitan antes de
 // validar; el texto se normaliza (NFC) para que "é" sea siempre la misma "é".
@@ -2542,6 +2539,18 @@ const textoDeLugar = (min: number, max: number) =>
     .transform(sinInvisibles)
     .pipe(z.string().trim().min(min).max(max).refine(sinControl, "Caracteres no permitidos"));
 const nombreDeLugar = textoDeLugar(1, 80);
+// Los tipos de siempre; el tipo es libre: uno de estos o el que escriba la persona (hasta 30 caracteres,
+// de 2 en adelante). Se guarda sin espacios de más y en minúsculas: «Mina» y «mina » son el mismo tipo.
+export const TIPOS_DE_LUGAR = ["mina", "ciudad", "abastecimiento"] as const;
+const tipoDeLugar = z
+  .string()
+  .transform(sinInvisibles)
+  .pipe(
+    z
+      .string()
+      .transform((v) => v.replace(/\s+/g, " ").trim().toLowerCase())
+      .pipe(z.string().min(2).max(30).refine(sinControl, "Caracteres no permitidos"))
+  );
 // Vacío = sin ubicación (el formulario manda "" cuando se borra el campo).
 const ubicacionDeLugar = textoDeLugar(0, 120)
   .transform((v) => (v === "" ? null : v))
@@ -2559,8 +2568,8 @@ const puntoCompleto = (d: { latitud?: number | null; longitud?: number | null })
 export const crearLugarSchema = z
   .object({
     nombre: nombreDeLugar,
-    // Opcional en la API (los tests y scripts crean lugares solo con nombre); la pantalla lo exige.
-    tipo: tipoDeLugar.optional(),
+    // Opcional (sin tipo = null): la API y la pantalla permiten crear un lugar solo con nombre.
+    tipo: tipoDeLugar.nullable().optional(),
     ubicacion: ubicacionDeLugar,
     latitud: latitudDeLugar,
     longitud: longitudDeLugar,
@@ -2571,7 +2580,7 @@ export type CrearLugarInput = z.infer<typeof crearLugarSchema>;
 export const editarLugarSchema = z
   .object({
     nombre: nombreDeLugar.optional(),
-    tipo: tipoDeLugar.optional(),
+    tipo: tipoDeLugar.nullable().optional(),
     ubicacion: ubicacionDeLugar,
     latitud: latitudDeLugar,
     longitud: longitudDeLugar,
