@@ -111,7 +111,7 @@ function Anillo({
     <figure className="m-0 flex flex-col items-center gap-0.5">
       <svg
         viewBox="0 0 80 80"
-        className="w-full max-w-[96px]"
+        className="w-full max-w-[84px]"
         role="img"
         aria-label={`${etiqueta}: ${valor} ${unidad}`}
       >
@@ -156,7 +156,7 @@ function Barras({
     .map((v, i) => `${(i * bw + bw / 2).toFixed(1)},${(H - (v / mx) * (H - 14)).toFixed(1)}`)
     .join(" ");
   return (
-    <svg viewBox={`0 0 ${W} ${H + 14}`} className="w-full" aria-hidden>
+    <svg viewBox={`0 0 ${W} ${H + 14}`} className="w-full max-h-[92px]" aria-hidden>
       {[1, 2, 3].map((i) => (
         <line
           key={i}
@@ -217,7 +217,7 @@ function Dona({
   return (
     <svg
       viewBox="0 0 120 120"
-      className="mx-auto w-full max-w-[150px]"
+      className="mx-auto w-full max-w-[108px]"
       role="img"
       aria-label={`${centro} ${pie}`}
     >
@@ -256,7 +256,7 @@ function Histograma({ bins }: { bins: { desde: number; hasta: number; n: number 
   const mx = Math.max(...bins.map((b) => b.n), 1);
   const mayor = bins.reduce((m, b, i) => (b.n > bins[m].n ? i : m), 0);
   return (
-    <svg viewBox={`0 0 ${W} ${H + 14}`} className="w-full" aria-hidden>
+    <svg viewBox={`0 0 ${W} ${H + 14}`} className="w-full max-h-[92px]" aria-hidden>
       {bins.map((b, i) => {
         const h = (b.n / mx) * (H - 16);
         return (
@@ -286,7 +286,7 @@ function Histograma({ bins }: { bins: { desde: number; hasta: number; n: number 
 function BarrasHorizontales({ items }: { items: { placa: string; pct: number }[] }) {
   const mx = Math.max(...items.map((i) => Math.abs(i.pct)), 1);
   return (
-    <svg viewBox={`0 0 220 ${items.length * 17}`} className="w-full" aria-hidden>
+    <svg viewBox={`0 0 220 ${items.length * 17}`} className="w-full max-h-[92px]" aria-hidden>
       {items.map((it, i) => {
         const w = (Math.abs(it.pct) / mx) * 118;
         return (
@@ -357,7 +357,9 @@ export function ResumenCorporativo({
         {comb && <Chip t="Por revisar" n={comb.alertas.por_revisar} />}
       </ul>
       {intro}
-      <div className={`grid gap-2.5 ${movil ? "grid-cols-2" : "sm:grid-cols-2 xl:grid-cols-4"}`}>
+      <div
+        className={`grid gap-2.5 ${movil ? "grid-cols-2" : "[grid-template-columns:repeat(auto-fit,minmax(215px,1fr))]"}`}
+      >
         {comb && (
           <Celda titulo="Autonomía y urea">
             <div className="grid grid-cols-2 gap-1">

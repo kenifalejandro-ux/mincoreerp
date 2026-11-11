@@ -1,3 +1,5 @@
+import { ETIQUETA_TIPO_ALERTA } from "../combustible/alertasTexto";
+
 // Las cuentas del Resumen corporativo del Control TV (medidor, barras de progreso, histograma, desvíos).
 // Sin pantalla, para poder probarlas.
 
@@ -72,3 +74,41 @@ export const ZONAS_AUTONOMIA: [number, string][] = [
   [0.6, "#fbbf24"],
   [1, "#34d399"],
 ];
+
+/** Lo mínimo que tiene que durar la referencia para comparar contra ella: una de 12 minutos contra un
+ *  viaje de 31 horas daría «+15,568 %», que no dice nada. */
+export const MINIMO_REFERENCIA_MIN = 30;
+/** Pasado este porcentaje se dice «muy por encima» en vez de dar el número. */
+export const TOPE_PORCENTAJE = 300;
+
+export interface ComparacionConNormal {
+  /** Porcentaje sobre lo normal; null si no hay referencia o es absurdo. */
+  pct: number | null;
+  /** No hay referencia confiable (falta o es menor al mínimo). */
+  sinReferencia: boolean;
+  /** Se pasa del tope: se avisa sin dar la cifra. */
+  muyPorEncima: boolean;
+}
+
+/** Cuánto se aparta lo real de lo normal. Sin referencia confiable no se compara. */
+export function compararConNormal(
+  real: number | null,
+  normal: number | null
+): ComparacionConNormal {
+  if (
+    real === null ||
+    normal === null ||
+    !Number.isFinite(normal) ||
+    normal < MINIMO_REFERENCIA_MIN
+  ) {
+    return { pct: null, sinReferencia: true, muyPorEncima: false };
+  }
+  const pct = ((real - normal) / normal) * 100;
+  if (pct > TOPE_PORCENTAJE) return { pct: null, sinReferencia: false, muyPorEncima: true };
+  return { pct, sinReferencia: false, muyPorEncima: false };
+}
+
+/** El nombre de una alerta en español: el catálogo del módulo; si es nueva y no está, se lee el código. */
+export const nombreAlerta = (tipo: string) =>
+  (ETIQUETA_TIPO_ALERTA as Record<string, string>)[tipo] ??
+  tipo.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());

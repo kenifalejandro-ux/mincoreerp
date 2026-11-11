@@ -3,6 +3,11 @@
 // lectura; los datos vienen de /control-tv/unidad/:id.
 import type { ReactNode } from "react";
 
+import {
+  compararConNormal,
+  nombreAlerta,
+  type ComparacionConNormal,
+} from "./resumenCorporativoLogica";
 import { SeccionTv } from "./SeccionTv";
 import { haceCuanto } from "../combustible/ubicacionesLogica";
 import { duracion, fmt } from "../combustible/viajesFormato";
@@ -58,14 +63,6 @@ const DIAGNOSTICO: Record<string, string> = {
   alto: "Alto contra sus pares",
   bajo: "Por debajo de sus pares",
   sin_referencia: "Sin referencia todavía",
-};
-
-const ALERTA: Record<string, string> = {
-  viaje_demorado: "Viaje demorado",
-  viaje_detenido: "Unidad detenida",
-  vale_excede_tanque: "Vale mayor que el tanque",
-  vale_anulado: "Vale anulado",
-  hueco_detectado: "Hueco en la serie de vales",
 };
 
 const ORIGEN: Record<string, string> = {
@@ -132,14 +129,11 @@ export function ResumenDeLaUnidad({
   if (!datos) return null;
   const r = datos.rendimiento;
   const estadiaNormal = datos.estadia_normal?.minutos ?? null;
-  const pctRuta =
-    enRutaMin !== null && enRutaEsperadoMin
-      ? ((enRutaMin - enRutaEsperadoMin) / enRutaEsperadoMin) * 100
-      : null;
-  const pctEstadia =
-    estadiaMin !== null && estadiaMin > 0 && estadiaNormal
-      ? ((estadiaMin - estadiaNormal) / estadiaNormal) * 100
-      : null;
+  const ruta = compararConNormal(enRutaMin, enRutaEsperadoMin);
+  const estadia = compararConNormal(
+    estadiaMin !== null && estadiaMin > 0 ? estadiaMin : null,
+    estadiaNormal
+  );
   return (
     <Caja titulo={`Resumen de la unidad · ${datos.dias} días`} abierta={false}>
       <div className="flex flex-col gap-2 text-sm">
@@ -165,33 +159,18 @@ export function ResumenDeLaUnidad({
         <div className="border-t border-white/10 pt-2">
           <small className="block text-[11px] text-slate-400">Tiempos contra lo normal</small>
           <div className="grid grid-cols-2 gap-2 text-xs">
-            <span>
-              Ruta <b className="tabular-nums">{enRutaMin === null ? "—" : duracion(enRutaMin)}</b>
-              <span className="block text-slate-400">
-                {enRutaEsperadoMin ? `normal ${duracion(enRutaEsperadoMin)}` : "sin referencia"}
-                {pctRuta !== null && (
-                  <i className={`ml-1 not-italic ${pctRuta > 20 ? "text-red-400" : ""}`}>
-                    ({pctRuta > 0 ? "+" : ""}
-                    {fmt(pctRuta, 0)}%)
-                  </i>
-                )}
-              </span>
-            </span>
-            <span>
-              Estadía{" "}
-              <b className="tabular-nums">
-                {estadiaMin === null || estadiaMin <= 0 ? "—" : duracion(estadiaMin)}
-              </b>
-              <span className="block text-slate-400">
-                {estadiaNormal ? `normal ${duracion(estadiaNormal)}` : "sin referencia"}
-                {pctEstadia !== null && (
-                  <i className={`ml-1 not-italic ${pctEstadia > 20 ? "text-red-400" : ""}`}>
-                    ({pctEstadia > 0 ? "+" : ""}
-                    {fmt(pctEstadia, 0)}%)
-                  </i>
-                )}
-              </span>
-            </span>
+            <TiempoContraNormal
+              titulo="Ruta"
+              min={enRutaMin}
+              normal={enRutaEsperadoMin}
+              cmp={ruta}
+            />
+            <TiempoContraNormal
+              titulo="Estadía"
+              min={estadiaMin !== null && estadiaMin > 0 ? estadiaMin : null}
+              normal={estadiaNormal}
+              cmp={estadia}
+            />
           </div>
         </div>
 
@@ -230,7 +209,7 @@ export function ResumenDeLaUnidad({
               <ul className="text-xs text-slate-300">
                 {datos.alertas.ultimas.map((a) => (
                   <li key={`${a.tipo}-${a.creado_en}`} className="flex justify-between gap-2">
-                    <span>{ALERTA[a.tipo] ?? a.tipo.replace(/_/g, " ")}</span>
+                    <span>{nombreAlerta(a.tipo)}</span>
                     <span className="text-slate-400">{haceCuanto(a.creado_en, ahora)}</span>
                   </li>
                 ))}
@@ -240,5 +219,40 @@ export function ResumenDeLaUnidad({
         </div>
       </div>
     </Caja>
+  );
+}
+
+/** Un tiempo de la unidad contra lo que suele tardar: con su porcentaje, o «sin referencia». */
+function TiempoContraNormal({
+  titulo,
+  min,
+  normal,
+  cmp,
+}: {
+  titulo: string;
+  min: number | null;
+  normal: number | null;
+  cmp: ComparacionConNormal;
+}) {
+  return (
+    <span>
+      {titulo} <b className="tabular-nums">{min === null ? "—" : duracion(min)}</b>
+      <span className="block text-slate-400">
+        {cmp.sinReferencia ? (
+          "sin referencia"
+        ) : (
+          <>
+            normal {duracion(normal ?? 0)}
+            {cmp.muyPorEncima && <i className="ml-1 not-italic text-red-400">(muy por encima)</i>}
+            {cmp.pct !== null && (
+              <i className={`ml-1 not-italic ${cmp.pct > 20 ? "text-red-400" : ""}`}>
+                ({cmp.pct > 0 ? "+" : ""}
+                {fmt(cmp.pct, 0)}%)
+              </i>
+            )}
+          </>
+        )}
+      </span>
+    </span>
   );
 }

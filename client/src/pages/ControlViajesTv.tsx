@@ -24,15 +24,12 @@ import {
 } from "react";
 
 import { estadoDelViaje, paradasDelViaje } from "../components/combustible/paradasViaje";
-import { fmt, unidadLabel, type FilaViaje } from "../components/combustible/viajesFormato";
+import { unidadLabel, type FilaViaje } from "../components/combustible/viajesFormato";
 import {
-  autonomiaDias,
   CATS,
   categoriaDe,
   porcentajeOperativas,
   posicionEnRuta,
-  puntosTendencia,
-  valorEnTanques,
 } from "../components/controlTv/controlTvLogica";
 import { DetalleTv, type DetalleDatos } from "../components/controlTv/DetalleTv";
 import { IconoTipo } from "../components/controlTv/iconosUnidad";
@@ -105,7 +102,6 @@ interface Consumo {
   niveles?: NivelTanque[];
 }
 
-const soles = (n: number) => `S/ ${fmt(n, 0)}`;
 /** Alto del ícono dentro de la ficha de la vista en vivo. */
 const ALTO_FICHA = 16;
 
@@ -116,77 +112,6 @@ const PERIODOS: { id: Periodo; t: string }[] = [
   { id: "7d", t: "7 días" },
   { id: "30d", t: "30 días" },
 ];
-
-function Tarjeta({
-  icono,
-  titulo,
-  valor,
-  unidad,
-  pie,
-  tono,
-  tendencia,
-  compacta = false,
-}: {
-  icono: ReactNode;
-  titulo: string;
-  valor: string;
-  unidad?: string;
-  pie: string;
-  tono: string;
-  tendencia?: number[];
-  /** En el celular: más baja, con el ícono junto al título y sin la tendencia. */
-  compacta?: boolean;
-}) {
-  const estilo: CSSProperties = {
-    background: `linear-gradient(135deg, ${tono}55, #0a1315)`,
-    borderColor: `${tono}aa`,
-  };
-  const puntos = tendencia ? puntosTendencia(tendencia, 114, 38) : "";
-  if (compacta) {
-    return (
-      <div className="min-w-0 overflow-hidden rounded-xl border p-2.5" style={estilo}>
-        <p className="flex items-center gap-1.5 text-[11px] text-slate-300">
-          <span style={{ color: tono }} className="shrink-0 [&>svg]:h-4 [&>svg]:w-4">
-            {icono}
-          </span>
-          <span className="truncate">{titulo}</span>
-        </p>
-        <p className="mt-0.5 text-2xl font-extrabold leading-tight tabular-nums">
-          {valor}
-          {unidad && <span className="ml-1 text-xs font-semibold text-slate-300">{unidad}</span>}
-        </p>
-        <p className="truncate text-[10px] text-slate-300">{pie}</p>
-      </div>
-    );
-  }
-  return (
-    <div className="flex items-center gap-3 rounded-2xl border p-3 overflow-hidden" style={estilo}>
-      <span style={{ color: tono }} className="shrink-0">
-        {icono}
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="text-xs text-slate-300">{titulo}</p>
-        <p className="text-3xl font-extrabold leading-tight tabular-nums">
-          {valor}
-          {unidad && <span className="ml-1 text-sm font-semibold text-slate-300">{unidad}</span>}
-        </p>
-        <p className="truncate text-[11px] text-slate-300">{pie}</p>
-      </div>
-      {puntos && (
-        <svg viewBox="0 0 114 38" className="w-20 h-8 shrink-0" aria-hidden>
-          <polyline
-            points={puntos}
-            fill="none"
-            stroke={tono}
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      )}
-    </div>
-  );
-}
 
 function Dona({ f }: { f: Resumen["flota"] }) {
   const R = 40;
@@ -366,8 +291,8 @@ export default function ControlViajesTv() {
   };
   // Una respuesta lenta no pisa a una más nueva.
   const pedido = useRef(0);
-  // Los gráficos del Resumen del celular usan el detalle (desvíos, duración de viajes, consumo anterior);
-  // es pesado, así que fuera de su pestaña se pide al abrir, al cambiar de período y cada 5 minutos.
+  // Los gráficos del Resumen usan el detalle (desvíos, duración de viajes, consumo anterior); es pesado,
+  // así que fuera de su pestaña se pide al abrir, al cambiar de período y cada 5 minutos como mucho.
   const ultimoDetalle = useRef({ t: 0, periodo: "" });
 
   const cargar = useCallback(async () => {
@@ -385,9 +310,8 @@ export default function ControlViajesTv() {
       pedir<Consumo>(`/api/erp/viajes/control-tv/consumo?periodo=${periodo}`),
       pedir<{ data: FilaViaje[] }>("/api/erp/viajes?estado=en_curso"),
       pagina === "detalle" ||
-      (movil &&
-        (ultimoDetalle.current.periodo !== periodo ||
-          Date.now() - ultimoDetalle.current.t > 5 * 60_000))
+      ultimoDetalle.current.periodo !== periodo ||
+      Date.now() - ultimoDetalle.current.t > 5 * 60_000
         ? pedir<DetalleDatos>(`/api/erp/viajes/control-tv/detalle?periodo=${periodo}`)
         : Promise.resolve(null),
     ]);
@@ -405,7 +329,7 @@ export default function ControlViajesTv() {
       setUltimaCarga(Date.now());
       setVersion((n) => n + 1);
     }
-  }, [periodo, pagina, movil]);
+  }, [periodo, pagina]);
 
   useEffect(() => {
     void cargar();
@@ -453,72 +377,7 @@ export default function ControlViajesTv() {
   const f = resumen?.flota;
   const comb = resumen?.combustible;
   const gal = consumo?.consumo?.total.gal ?? 0;
-  const auto = comb ? autonomiaDias(comb.total_en_tanques_gal, gal, periodo) : null;
-  const periodoTxt = PERIODOS.find((p) => p.id === periodo)?.t ?? "";
   const hace = ultimaCarga ? Math.max(0, Math.round((ahora - ultimaCarga) / 1000)) : null;
-
-  const tarjetas = (compacta: boolean) =>
-    f && (
-      <>
-        <Tarjeta
-          compacta={compacta}
-          icono={<Truck className="w-7 h-7" />}
-          titulo="Viajes activos"
-          valor={fmt(f.activos, 0)}
-          pie={`${f.programados} programados`}
-          tono="#3b82f6"
-        />
-        {comb && (
-          <>
-            <Tarjeta
-              compacta={compacta}
-              icono={<Fuel className="w-7 h-7" />}
-              titulo="Combustible en la empresa"
-              valor={fmt(comb.total_en_tanques_gal, 0)}
-              unidad="gal"
-              pie={soles(valorEnTanques(comb.tanques))}
-              tono="#7fa21a"
-            />
-            <Tarjeta
-              compacta={compacta}
-              icono={<Inbox className="w-7 h-7" />}
-              titulo={`Recepcionado · ${periodoTxt}`}
-              valor={fmt(consumo?.entrada?.recibido_gal ?? 0, 0)}
-              unidad="gal"
-              pie={`${consumo?.entrada?.recepciones ?? 0} recepciones · ${fmt(consumo?.entrada?.diferencia_gal ?? 0, 0)} gal vs. factura`}
-              tono="#22d3ee"
-            />
-            <Tarjeta
-              compacta={compacta}
-              icono={<Droplets className="w-7 h-7" />}
-              titulo={`Consumo · ${periodoTxt}`}
-              valor={fmt(gal, 0)}
-              unidad="gal"
-              pie={soles(consumo?.consumo?.total.costo ?? 0)}
-              tono="#fb923c"
-              tendencia={consumo?.consumo?.serie.map((s) => s.gal)}
-            />
-            <Tarjeta
-              compacta={compacta}
-              icono={<Clock className="w-7 h-7" />}
-              titulo="Autonomía"
-              valor={auto === null ? "—" : fmt(auto, 1)}
-              unidad={auto === null ? undefined : "días"}
-              pie={`combustible${resumen?.urea?.autonomia_dias != null ? ` · urea ${fmt(resumen.urea.autonomia_dias, 0)} días` : ""}`}
-              tono="#a78bfa"
-            />
-            <Tarjeta
-              compacta={compacta}
-              icono={<Bell className="w-7 h-7" />}
-              titulo="Alertas críticas"
-              valor={fmt(comb.alertas.criticas, 0)}
-              pie={`${comb.alertas.por_revisar} por revisar`}
-              tono="#f87171"
-            />
-          </>
-        )}
-      </>
-    );
 
   const seccionFlota = f && (
     <section className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
@@ -555,8 +414,11 @@ export default function ControlViajesTv() {
         {f.por_tipo
           .slice()
           .sort((a, b) => b.cantidad - a.cantidad)
-          .map((t) => (
-            <li key={t.tipo} className="flex min-w-0 items-center gap-1.5 text-slate-300">
+          .map((t, i) => (
+            <li
+              key={t.tipo}
+              className={`min-w-0 items-center gap-1.5 text-slate-300 ${i >= 6 ? "hidden min-[1700px]:flex" : "flex"}`}
+            >
               <IconoTipo tipo={t.tipo} alto={20} className="shrink-0 text-[#BADC1E]" />
               <em className="min-w-0 flex-1 truncate not-italic text-slate-400">{t.tipo}</em>
               <b className="tabular-nums">{t.cantidad}</b>
@@ -649,7 +511,9 @@ export default function ControlViajesTv() {
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 border-r border-white/10 pr-3 text-slate-400">
               <img src="/logos/mincore-logo-256-sin-fondo.png" alt="" className="h-7 w-7" />
-              <span className="text-xs font-bold tracking-wider">Mincore ERP</span>
+              <span className="hidden text-xs font-bold tracking-wider min-[1500px]:inline">
+                Mincore ERP
+              </span>
             </div>
             <div>
               <h1 className="text-xl font-bold leading-tight">
@@ -818,9 +682,20 @@ export default function ControlViajesTv() {
           )
         ) : (
           <>
-            <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fit,minmax(215px,1fr))]">
-              {tarjetas(false)}
-            </div>
+            {f && (
+              <ResumenCorporativo
+                movil={false}
+                d={{
+                  flota: f,
+                  combustible: comb,
+                  urea: resumen?.urea ?? null,
+                  consumo: consumo?.consumo,
+                  niveles: consumo?.niveles,
+                  detalle,
+                  periodo,
+                }}
+              />
+            )}
 
             <div className="grid gap-2.5 lg:grid-cols-[minmax(280px,.8fr)_minmax(0,2fr)_minmax(300px,.95fr)]">
               {seccionFlota}
@@ -829,14 +704,7 @@ export default function ControlViajesTv() {
             </div>
 
             {comb && (
-              <div className="grid gap-2.5 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1.1fr)_minmax(320px,.9fr)]">
-                {consumo?.consumo && (
-                  <PanelConsumo
-                    serie={consumo.consumo.serie}
-                    porHora={consumo.consumo.agrupado_por === "hora"}
-                    total={gal}
-                  />
-                )}
+              <div className="grid gap-2.5 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
                 {consumo?.niveles && consumo.niveles.length > 0 && (
                   <PanelTanque
                     niveles={consumo.niveles}
