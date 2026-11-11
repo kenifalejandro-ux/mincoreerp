@@ -3,6 +3,7 @@
 // lectura; los datos vienen de /control-tv/unidad/:id.
 import type { ReactNode } from "react";
 
+import { SeccionTv } from "./SeccionTv";
 import { haceCuanto } from "../combustible/ubicacionesLogica";
 import { duracion, fmt } from "../combustible/viajesFormato";
 
@@ -35,14 +36,19 @@ export interface ResumenUnidad {
   alertas: { total: number; ultimas: { tipo: string; creado_en: string }[] };
 }
 
-const CARD = "rounded-xl border border-white/10 bg-white/[0.04] p-3";
-
-function Caja({ titulo, children }: { titulo: string; children: ReactNode }) {
+function Caja({
+  titulo,
+  children,
+  abierta,
+}: {
+  titulo: string;
+  children: ReactNode;
+  abierta?: boolean;
+}) {
   return (
-    <section className={`${CARD} flex flex-col gap-1.5`}>
-      <h2 className="text-[11px] font-bold uppercase tracking-[.16em] text-slate-400">{titulo}</h2>
+    <SeccionTv titulo={titulo} abierta={abierta}>
       {children}
-    </section>
+    </SeccionTv>
   );
 }
 
@@ -135,7 +141,7 @@ export function ResumenDeLaUnidad({
       ? ((estadiaMin - estadiaNormal) / estadiaNormal) * 100
       : null;
   return (
-    <Caja titulo={`Resumen de la unidad · ${datos.dias} días`}>
+    <Caja titulo={`Resumen de la unidad · ${datos.dias} días`} abierta={false}>
       <div className="flex flex-col gap-2 text-sm">
         <div>
           <small className="block text-[11px] text-slate-400">Rendimiento</small>

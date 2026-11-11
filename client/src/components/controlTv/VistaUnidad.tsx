@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CATS, categoriaDe, posicionEnRuta } from "./controlTvLogica";
 import { IconoTipo } from "./iconosUnidad";
 import { ResumenDeLaUnidad, ViajesDelConductor, type ResumenUnidad } from "./ResumenUnidadTv";
+import { SeccionTv } from "./SeccionTv";
 import { apiFetch } from "../../services/apiClient";
 import { descansoEnVentana, horasDelViaje } from "../combustible/horasViaje";
 import { estadoDelViaje, paradasDelViaje } from "../combustible/paradasViaje";
@@ -49,12 +50,19 @@ function Cifra({ titulo, min, tono }: { titulo: string; min: number | null; tono
   );
 }
 
-function Seccion({ titulo, children }: { titulo: string; children: ReactNode }) {
+function Seccion({
+  titulo,
+  children,
+  abierta,
+}: {
+  titulo: string;
+  children: ReactNode;
+  abierta?: boolean;
+}) {
   return (
-    <section className={`${CARD} flex flex-col gap-1.5`}>
-      <h2 className="text-[11px] font-bold uppercase tracking-[.16em] text-slate-400">{titulo}</h2>
+    <SeccionTv titulo={titulo} abierta={abierta}>
       {children}
-    </section>
+    </SeccionTv>
   );
 }
 
@@ -313,7 +321,7 @@ export function VistaUnidad({
             </div>
           </Seccion>
 
-          <Seccion titulo="Cómo se fue el tiempo">
+          <Seccion titulo="Cómo se fue el tiempo" abierta={false}>
             <div
               className="flex h-7 gap-[3px] overflow-hidden rounded-lg"
               role="img"
@@ -414,7 +422,7 @@ export function VistaUnidad({
 
         <div className="flex min-w-0 flex-col gap-2">
           <ViajesDelConductor datos={resumen} />
-          <Seccion titulo="Conductor y relevo">
+          <Seccion titulo="Conductor y relevo" abierta={false}>
             {[
               { n: v.conductor_nombre, dni: v.conductor_dni, rol: "Titular" },
               ...(v.relevo_nombre

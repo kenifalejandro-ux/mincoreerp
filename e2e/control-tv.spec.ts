@@ -139,6 +139,50 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   expect(fila.url()).toContain(`unidad=${viaje.id}`);
   await expect(fila.getByRole("heading", { name: `Conductor ${marca}` })).toBeVisible();
 
+  // En un celular (393×852) el tablero se reparte en pestañas abajo, sin desborde lateral.
+  await tv.setViewportSize({ width: 393, height: 852 });
+  const nav = tv.getByRole("navigation", { name: "Secciones del Control TV" });
+  await expect(nav).toBeVisible();
+  for (const t of ["Resumen", "Flota", "Combustible", "Eventos"]) {
+    await expect(nav.getByRole("button", { name: t })).toBeVisible();
+  }
+  await expect(tv.getByRole("button", { name: "Pantalla completa" })).toBeHidden();
+  // Las cifras van de a dos por fila.
+  const uno = await tv.getByText("Viajes activos").boundingBox();
+  const dos = await tv.getByText("Combustible en la empresa").boundingBox();
+  expect(Math.abs(uno!.y - dos!.y)).toBeLessThan(4);
+  expect(dos!.x).toBeGreaterThan(uno!.x + 100);
+  const lateral = await tv
+    .locator("div.fixed.inset-0")
+    .first()
+    .evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(lateral).toBeLessThanOrEqual(0);
+  await nav.getByRole("button", { name: "Flota" }).click();
+  await expect(tv.getByText("Flota en operación")).toBeVisible();
+  await expect(tv.getByText("Vista en vivo")).toBeVisible();
+  await nav.getByRole("button", { name: "Eventos" }).click();
+  await expect(tv.getByRole("heading", { name: "Últimos eventos" })).toBeVisible();
+  // La unidad también cabe: sus secciones se pliegan con un toque en el título.
+  await tv.goto(`/control-tv?unidad=${viaje.id}`);
+  await expect(tv.getByRole("heading", { name: `Conductor ${marca}` })).toBeVisible();
+  await expect(nav).toBeHidden();
+  const resumenUnidad = tv.getByText("Cómo se fue el tiempo");
+  await expect(resumenUnidad).toBeVisible();
+  await expect(tv.locator("details", { hasText: "Cómo se fue el tiempo" })).not.toHaveAttribute(
+    "open",
+    ""
+  );
+  await resumenUnidad.click();
+  await expect(tv.locator("details", { hasText: "Cómo se fue el tiempo" })).toHaveAttribute(
+    "open",
+    ""
+  );
+  const lateralUnidad = await tv
+    .locator("div.fixed.inset-0")
+    .first()
+    .evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(lateralUnidad).toBeLessThanOrEqual(0);
+
   // «Salir» vuelve al ERP.
   await tv.getByRole("button", { name: "Salir" }).click();
   await expect(tv).toHaveURL(/\/$/);
