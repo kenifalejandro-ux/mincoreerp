@@ -10,13 +10,15 @@ import type { CombustibleService } from "./combustible.service";
 import { canalDeFila, TIPOS_CRITICOS } from "./canalesAlertas";
 import { getViaje, recorridoClave, unidadVisible } from "./viajes.service";
 
-const DIAS = 30;
+/** Cuántos días mira el resumen según el período que elige quien está en la pantalla (24 h = 1 día). */
+const DIAS_DEL_PERIODO = { "24h": 1, "7d": 7, "30d": 30 } as const;
+export type PeriodoUnidadTv = keyof typeof DIAS_DEL_PERIODO;
 const num = (x: unknown) => Number(x ?? 0);
 
 /** Los viajes de un conductor: los que tiene ahora (en ruta y programados), los terminados y
- *  anulados de los últimos 30 días, y cuántos hizo en ese tiempo como titular y como relevo. Los
+ *  anulados del período elegido, y cuántos hizo en ese tiempo como titular y como relevo. Los
  *  contadores por estado cuentan solo los de titular; el relevo sale aparte, por viaje completo. */
-async function conductor(client: PoolClient, tenantId: string, dni: string) {
+async function conductor(client: PoolClient, tenantId: string, dni: string, dias: number) {
   const r = await client.query(
     `SELECT
        count(*) FILTER (WHERE v.conductor_dni = $2 AND v.estado = 'en_curso')::int AS en_ruta,
@@ -37,7 +39,7 @@ async function conductor(client: PoolClient, tenantId: string, dni: string) {
       WHERE v.tenant_id = $1 AND (v.conductor_dni = $2 OR v.relevo_dni = $2 OR EXISTS (
               SELECT 1 FROM combustible_viaje_turnos t
                WHERE t.tenant_id = v.tenant_id AND t.viaje_id = v.id AND t.conductor_dni = $2))`,
-    [tenantId, dni, DIAS]
+    [tenantId, dni, dias]
   );
   return r.rows[0] as {
     en_ruta: number;
@@ -49,19 +51,20 @@ async function conductor(client: PoolClient, tenantId: string, dni: string) {
   };
 }
 
-/** Cómo rinde la unidad en los últimos 30 días, contra sus pares (misma marca y modelo) y contra su
+/** Cómo rinde la unidad en el período elegido, contra sus pares (misma marca y modelo) y contra su
  *  propio pasado. Es el reporte de consumo por equipo que ya existe, recortado a esta unidad. */
 async function rendimiento(
   client: PoolClient,
   tenantId: string,
   equipoId: number,
-  servicio: CombustibleService
+  servicio: CombustibleService,
+  dias: number
 ) {
   const hasta = new Date();
   const reporte = await servicio.reporteConsumoEquipos(
     client,
     tenantId,
-    new Date(hasta.getTime() - DIAS * 86_400_000).toISOString(),
+    new Date(hasta.getTime() - dias * 86_400_000).toISOString(),
     hasta.toISOString()
   );
   const e = reporte.equipos.find((x) => x.equipo_id === equipoId);
@@ -171,17 +174,19 @@ export async function resumenDeUnidad(
   tenantId: string,
   viajeId: number,
   ambito: AmbitoVales,
-  servicio: CombustibleService
+  servicio: CombustibleService,
+  periodo: PeriodoUnidadTv = "30d"
 ) {
+  const dias = DIAS_DEL_PERIODO[periodo];
   const viaje = await getViaje(client, tenantId, viajeId);
   if (!viaje) return null;
   if (!(await unidadVisible(client, tenantId, viaje.equipo_id, ambito))) return null;
   const dni: string | null = viaje.conductor_dni ?? null;
   const clave: string | null = viaje.recorrido_clave ?? null;
   return {
-    dias: DIAS,
-    conductor: dni ? { dni, ...(await conductor(client, tenantId, dni)) } : null,
-    rendimiento: await rendimiento(client, tenantId, Number(viaje.equipo_id), servicio),
+    dias,
+    conductor: dni ? { dni, ...(await conductor(client, tenantId, dni, dias)) } : null,
+    rendimiento: await rendimiento(client, tenantId, Number(viaje.equipo_id), servicio, dias),
     estadia_normal: clave ? await estadiaNormal(client, tenantId, viajeId, clave) : null,
     ultimas_cargas: await ultimasCargas(client, tenantId, Number(viaje.equipo_id)),
     alertas: await alertasAbiertas(client, tenantId, Number(viaje.equipo_id)),

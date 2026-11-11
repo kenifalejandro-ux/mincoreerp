@@ -3016,6 +3016,11 @@ export const controlTvConsumoQuerySchema = z.object({
 });
 export type ControlTvConsumoQuery = z.infer<typeof controlTvConsumoQuerySchema>;
 
+/** El período del resumen de una unidad: 24 h, 7 días o 30 días (por defecto 30). */
+export const controlTvUnidadQuerySchema = z.object({
+  periodo: z.enum(["24h", "7d", "30d"]).default("30d"),
+});
+
 export const aceptarMandoSchema = entregaMandoSchema.pick({
   marcado_en: true,
   cliente_uuid: true,

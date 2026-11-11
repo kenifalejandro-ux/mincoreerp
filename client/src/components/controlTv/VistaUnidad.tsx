@@ -4,16 +4,11 @@
 import {
   ArrowLeft,
   Bell,
-  ChartColumn,
   ChevronLeft,
   ChevronRight,
   CircleCheck,
   Clock,
-  Coins,
-  Droplet,
-  Fuel,
   MapPin,
-  Route,
   Timer,
   Truck,
   Users,
@@ -22,6 +17,7 @@ import {
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { CATS, categoriaDe } from "./controlTvLogica";
+import { ConsumoAcumulado, ConsumoPorTramo, VsNormal } from "./GraficasUnidad";
 import { IconoTipo } from "./iconosUnidad";
 import { MapaDigital } from "./MapaDigital";
 import type { LugarMapa } from "./mapaLogica";
@@ -38,7 +34,7 @@ import { estadoDelViaje, paradasDelViaje } from "../combustible/paradasViaje";
 import type { CargaViaje } from "../combustible/PiezasViaje";
 import type { TramoDelViaje } from "../combustible/TramosViaje";
 import { haceCuanto, ubicacionVigente } from "../combustible/ubicacionesLogica";
-import { duracion, fmt, unidadLabel, type FilaViaje } from "../combustible/viajesFormato";
+import { duracion, unidadLabel, type FilaViaje } from "../combustible/viajesFormato";
 
 interface Detalle {
   viaje: FilaViaje;
@@ -48,7 +44,7 @@ interface Detalle {
 }
 
 const LITROS_POR_GALON = 3.785411784;
-const CARD = "rounded-xl border border-white/10 bg-white/[0.04] p-3";
+const CARD = "rounded-[10px] border border-white/10 bg-[#0e191c] p-3";
 const iniciales = (n: string | null) =>
   (n ?? "?")
     .split(/\s+/)
@@ -80,6 +76,7 @@ export function VistaUnidad({
   viajes,
   lugares,
   id,
+  periodo,
   version,
   ahora,
   onCambiar,
@@ -90,6 +87,8 @@ export function VistaUnidad({
   /** Los lugares con su punto en el mapa (para dibujar la ruta de esta unidad). */
   lugares: LugarMapa[];
   id: string;
+  /** El período de los resúmenes de la unidad (24 h, 7 días o 30 días). */
+  periodo: "24h" | "7d" | "30d";
   /** Sube cada vez que el Control TV se refresca: esta vista se actualiza con él. */
   version: number;
   ahora: number;
@@ -99,7 +98,7 @@ export function VistaUnidad({
   const [datos, setDatos] = useState<Detalle | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resumen, setResumen] = useState<ResumenUnidad | null>(null);
-  const ultimoResumen = useRef({ id: "", t: 0 });
+  const ultimoResumen = useRef({ id: "", periodo: "", t: 0 });
   // Una respuesta lenta no pisa a una más nueva, ni la de una unidad que ya se dejó.
   const pedido = useRef(0);
 
@@ -125,20 +124,21 @@ export function VistaUnidad({
   useEffect(() => {
     const u = ultimoResumen.current;
     const ahoraMs = Date.now();
-    if (u.id === id && ahoraMs - u.t < 5 * 60_000) return;
+    if (u.id === id && u.periodo === periodo && ahoraMs - u.t < 5 * 60_000) return;
     if (u.id !== id) setResumen(null);
-    ultimoResumen.current = { id, t: ahoraMs };
+    ultimoResumen.current = { id, periodo, t: ahoraMs };
     void (async () => {
       try {
-        const res = await apiFetch(`/api/erp/viajes/control-tv/unidad/${id}`);
+        const res = await apiFetch(`/api/erp/viajes/control-tv/unidad/${id}?periodo=${periodo}`);
         const body = await res.json().catch(() => null);
-        if (ultimoResumen.current.id !== id) return;
+        // Una respuesta lenta de otra unidad u otro período no pisa a la vigente.
+        if (ultimoResumen.current.id !== id || ultimoResumen.current.periodo !== periodo) return;
         if (res.ok && body?.dias) setResumen(body);
       } catch {
         // Sin conexión: se queda lo último; el detalle del viaje ya avisa del corte.
       }
     })();
-  }, [id, version]);
+  }, [id, periodo, version]);
 
   const orden = viajes.slice().sort((a, b) => a.placa_codigo.localeCompare(b.placa_codigo));
   const pos = orden.findIndex((v) => v.id === id);
@@ -193,7 +193,6 @@ export function VistaUnidad({
   const horas = horasDelViaje(paradas, ahora);
   const donde = ubicacionVigente(paradas, v.ultima_ubicacion);
   const tramos = datos.tramos ?? [];
-  const actual = tramos.find((t) => !t.llegada_en);
   const gal = datos.cargas
     .filter((c) => c.producto === "combustible")
     .reduce((s, c) => s + Number(c.cantidad) * (c.unidad === "L" ? 1 / LITROS_POR_GALON : 1), 0);
@@ -207,6 +206,8 @@ export function VistaUnidad({
     salidos.length > 0 && salidos.every((t) => t.esperado_min != null)
       ? salidos.reduce((sum, t) => sum + (t.esperado_min ?? 0), 0)
       : null;
+  const estadia = horas && horas.enParadas > 0 ? horas.enParadas : null;
+  const estadiaNormal = resumen?.estadia_normal?.minutos ?? null;
   const promedio = datos.ruta.combustible_gal;
   const vsPromedio = promedio ? ((gal - promedio) / promedio) * 100 : null;
 
@@ -385,55 +386,14 @@ export function VistaUnidad({
           />
         </div>
 
-        <div className="flex min-w-0 flex-col gap-2.5">
-          <Seccion
-            titulo="Estado operacional"
-            icono={<ChartColumn className="h-4 w-4 text-sky-400" aria-hidden />}
-          >
-            <div className="grid grid-cols-4 gap-1.5">
-              <Dato Icono={Fuel} color="#34d399" valor={`${fmt(gal, 0)} gal`} texto="consumido" />
-              <Dato Icono={Droplet} color="#38bdf8" valor={`${fmt(urea, 0)} L`} texto="de urea" />
-              <Dato
-                Icono={Coins}
-                color="#fbbf24"
-                valor={`S/ ${fmt(costo, 0)}`}
-                texto="costo acumulado"
-              />
-              <Dato
-                Icono={Timer}
-                color="#38bdf8"
-                valor={horas ? duracion(horas.total) : "—"}
-                texto="tiempo total"
-              />
-            </div>
-            {vsPromedio !== null && (
-              <p className={`text-xs ${vsPromedio > 20 ? "text-[#ff3b3b]" : "text-slate-400"}`}>
-                {vsPromedio > 0 ? "+" : ""}
-                {fmt(vsPromedio, 0)}% vs. promedio de la ruta
-              </p>
-            )}
-            {tramos.length > 0 && (
-              <ul className="text-xs tabular-nums">
-                {tramos.map((t) => (
-                  <li
-                    key={t.orden}
-                    className={`flex items-center gap-2 border-t border-white/10 py-1 ${
-                      t === actual ? "font-bold text-slate-100" : "text-slate-300"
-                    }`}
-                  >
-                    <Route className="h-3.5 w-3.5 shrink-0 text-[#BADC1E]" aria-hidden />
-                    <span className="min-w-0 flex-1 truncate">
-                      {t.de} → {t.a}
-                      {t === actual && <span className="ml-1.5 text-[#BADC1E]">en curso</span>}
-                    </span>
-                    <span className="shrink-0 text-slate-400">
-                      {fmt(t.combustible_gal, 1)} gal · {fmt(t.urea_l, 1)} L
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Seccion>
+        <div className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto_auto] gap-2.5">
+          <ConsumoAcumulado
+            cargas={datos.cargas}
+            gal={gal}
+            urea={urea}
+            costo={costo}
+            vsPromedio={vsPromedio}
+          />
 
           <Seccion
             titulo="Tiempos del viaje"
@@ -472,7 +432,15 @@ export function VistaUnidad({
                     <i className="h-2 w-2 rounded-full" style={{ background: COLOR[k] }} />
                     {t}
                   </span>
-                  <b className="ml-3.5 block text-xs text-slate-100">{duracion(min)}</b>
+                  <b className="ml-3.5 block text-[13px] text-slate-100">{duracion(min)}</b>
+                  {k !== "desc" && (
+                    <small className="ml-3.5 hidden text-[10.5px] min-[1500px]:block">
+                      <VsNormal
+                        min={k === "ruta" ? (horas?.enRuta ?? null) : estadia}
+                        normal={k === "ruta" ? esperadoRuta : estadiaNormal}
+                      />
+                    </small>
+                  )}
                 </li>
               ))}
             </ul>
@@ -482,26 +450,28 @@ export function VistaUnidad({
             titulo="Conductor y relevo"
             icono={<Users className="h-4 w-4 text-emerald-400" aria-hidden />}
           >
-            {[
-              { n: v.conductor_nombre, dni: v.conductor_dni, rol: "Titular" },
-              ...(v.relevo_nombre
-                ? [{ n: v.relevo_nombre, dni: v.relevo_dni, rol: "Relevo" }]
-                : []),
-            ].map((p) => (
-              <div key={p.rol} className="flex items-center gap-3">
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#BADC1E] text-xs font-black text-[#0D1719]">
-                  {iniciales(p.n ?? null)}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <b className="block truncate text-sm">{p.n ?? "—"}</b>
-                  <small className="text-slate-400">
-                    {p.rol}
-                    {p.dni ? ` · DNI ${p.dni}` : ""}
-                    {v.volante_dni && v.volante_dni === p.dni ? " · al volante" : ""}
-                  </small>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { n: v.conductor_nombre, dni: v.conductor_dni, rol: "Titular" },
+                ...(v.relevo_nombre
+                  ? [{ n: v.relevo_nombre, dni: v.relevo_dni, rol: "Relevo" }]
+                  : []),
+              ].map((p) => (
+                <div key={p.rol} className="flex items-center gap-3">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#BADC1E] text-xs font-black text-[#0D1719]">
+                    {iniciales(p.n ?? null)}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <b className="block truncate text-sm">{p.n ?? "—"}</b>
+                    <small className="block truncate text-slate-400">
+                      {p.rol}
+                      {p.dni ? ` · DNI ${p.dni}` : ""}
+                      {v.volante_dni && v.volante_dni === p.dni ? " · al volante" : ""}
+                    </small>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
             {!v.relevo_nombre && <p className="text-xs text-slate-400">Sin relevo en este viaje</p>}
             {(v.turnos?.length ?? 0) > 1 && (
               <ul className="border-t border-white/10 pt-1.5 text-xs">
@@ -521,16 +491,11 @@ export function VistaUnidad({
           </Seccion>
         </div>
 
-        <div className="tv-unidad-abajo grid gap-2.5 lg:col-span-2 lg:grid-cols-[minmax(0,.95fr)_minmax(0,1.15fr)_minmax(0,1fr)]">
+        <div className="tv-unidad-abajo grid gap-2.5 lg:col-span-2 lg:grid-cols-[minmax(0,.85fr)_minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1fr)]">
           <ResumenViajes datos={resumen} />
+          <ConsumoPorTramo tramos={tramos} />
+          <CargasYRendimiento datos={resumen} ahora={ahora} />
           <AlertasActivas datos={resumen} ahora={ahora} />
-          <CargasYRendimiento
-            datos={resumen}
-            ahora={ahora}
-            enRutaMin={horas?.enRuta ?? null}
-            enRutaEsperadoMin={esperadoRuta}
-            estadiaMin={horas?.enParadas ?? null}
-          />
         </div>
       </div>
     </div>
@@ -581,27 +546,6 @@ function Kpi({
           {pie}
         </span>
       </div>
-    </div>
-  );
-}
-
-/** Un dato del estado operacional: ícono arriba, valor y su nombre. */
-function Dato({
-  Icono,
-  color,
-  valor,
-  texto,
-}: {
-  Icono: LucideIcon;
-  color: string;
-  valor: string;
-  texto: string;
-}) {
-  return (
-    <div className="flex flex-col items-center gap-0.5 rounded-lg bg-white/[0.04] px-1 py-2 text-center">
-      <Icono className="h-5 w-5" style={{ color }} aria-hidden />
-      <b className="whitespace-nowrap text-[15px] tabular-nums leading-tight">{valor}</b>
-      <small className="text-[10px] text-slate-400">{texto}</small>
     </div>
   );
 }

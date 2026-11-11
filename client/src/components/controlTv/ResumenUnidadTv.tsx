@@ -17,15 +17,11 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 
-import {
-  compararConNormal,
-  nombreAlerta,
-  type ComparacionConNormal,
-  type GravedadAlerta,
-} from "./resumenCorporativoLogica";
+import { BarraPartida, Desvio } from "./GraficasUnidad";
+import { nombreAlerta, type GravedadAlerta } from "./resumenCorporativoLogica";
 import { SeccionTv } from "./SeccionTv";
 import { haceCuanto } from "../combustible/ubicacionesLogica";
-import { duracion, fmt } from "../combustible/viajesFormato";
+import { fmt } from "../combustible/viajesFormato";
 
 export interface ResumenUnidad {
   dias: number;
@@ -98,17 +94,6 @@ const GRAVEDAD: Record<
   },
 };
 
-/** «+12 %» en rojo si pasa de 20 %, gris si no. */
-function Delta({ pct, de }: { pct: number | null; de: string }) {
-  if (pct === null) return null;
-  return (
-    <span className={`text-xs ${pct > 20 ? "text-[#ff3b3b]" : "text-slate-400"}`}>
-      {pct > 0 ? "+" : ""}
-      {fmt(pct, 0)}% {de}
-    </span>
-  );
-}
-
 function Contador({
   n,
   texto,
@@ -131,12 +116,13 @@ function Contador({
   );
 }
 
-/** El resumen de los viajes de la unidad (de su conductor como titular) en los últimos 30 días. */
+/** El resumen de los viajes de la unidad (de su conductor como titular) en el período elegido. */
 export function ResumenViajes({ datos }: { datos: ResumenUnidad | null }) {
   const c = datos?.conductor;
+  const dias = datos?.dias ?? 30;
   return (
     <SeccionTv
-      titulo={`Resumen de la unidad · ${datos?.dias ?? 30} días`}
+      titulo={`Resumen de la unidad · ${dias === 1 ? "24 horas" : `${dias} días`}`}
       icono={<ChartColumn className="h-4 w-4 text-sky-400" aria-hidden />}
     >
       {!datos || !c ? (
@@ -151,10 +137,28 @@ export function ResumenViajes({ datos }: { datos: ResumenUnidad | null }) {
             <Contador n={c.terminados} texto="Terminados" Icono={Check} color="#34d399" />
             <Contador n={c.anulados} texto="Anulados" Icono={Ban} color={ROJO} />
           </div>
-          <p className="text-center text-xs text-slate-400">
-            Como titular <b className="text-slate-200">{c.como_titular}</b> · como relevo{" "}
-            <b className="text-slate-200">{c.como_relevo}</b>
-          </p>
+          <div className="flex flex-1 flex-col justify-center gap-2.5 text-[11.5px] text-slate-400">
+            <div className="flex items-center gap-2">
+              <span className="w-24 shrink-0">Estado de viajes</span>
+              <BarraPartida
+                partes={[
+                  { n: c.en_ruta, color: "#38bdf8" },
+                  { n: c.programados, color: "#a78bfa" },
+                  { n: c.terminados, color: "#34d399" },
+                  { n: c.anulados, color: ROJO },
+                ]}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="w-24 shrink-0">Titular / relevo</span>
+              <BarraPartida
+                partes={[
+                  { n: c.como_titular, color: "#BADC1E" },
+                  { n: c.como_relevo, color: "#8fa3a8" },
+                ]}
+              />
+            </div>
+          </div>
         </>
       )}
     </SeccionTv>
@@ -168,6 +172,11 @@ export function AlertasActivas({ datos, ahora }: { datos: ResumenUnidad | null; 
     <SeccionTv
       titulo="Alertas activas"
       icono={<TriangleAlert className="h-4 w-4" style={{ color: ROJO }} aria-hidden />}
+      derecha={
+        a && a.total > 0
+          ? `${a.total} abiertas${a.criticas ? ` · ${a.criticas} críticas` : ""}`
+          : undefined
+      }
     >
       {!a ? (
         <p className="text-xs text-slate-400">Cargando…</p>
@@ -225,78 +234,56 @@ function Fila({
   children: ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-2 border-t border-white/10 py-1.5 text-xs first:border-t-0">
+    <div className="flex items-center gap-2 border-t border-white/10 py-1 text-xs first:border-t-0">
       <Icono className="h-[15px] w-[15px] shrink-0" style={{ color }} aria-hidden />
-      <span className="min-w-0 flex-1 text-slate-200">{titulo}</span>
-      <span className="text-right text-slate-400">{children}</span>
+      <span className="shrink-0 whitespace-nowrap text-slate-200">{titulo}</span>
+      <span className="min-w-0 flex-1 truncate text-right text-slate-400">{children}</span>
     </div>
   );
 }
 
-/** Un tiempo de la unidad contra lo que suele tardar: con su porcentaje, o «sin referencia». */
-function ContraNormal({
-  min,
-  normal,
-  cmp,
-}: {
-  min: number | null;
-  normal: number | null;
-  cmp: ComparacionConNormal;
-}) {
-  if (min === null) return <>—</>;
-  return (
-    <>
-      <b className="text-slate-200">{duracion(min)}</b>
-      {cmp.sinReferencia ? (
-        " · sin referencia"
-      ) : (
-        <>
-          {" "}
-          · normal {duracion(normal ?? 0)}
-          {cmp.muyPorEncima && <i className="ml-1 not-italic text-[#ff3b3b]">(muy por encima)</i>}
-          {cmp.pct !== null && (
-            <i className={`ml-1 not-italic ${cmp.pct > 20 ? "text-[#ff3b3b]" : ""}`}>
-              ({cmp.pct > 0 ? "+" : ""}
-              {fmt(cmp.pct, 0)}%)
-            </i>
-          )}
-        </>
-      )}
-    </>
-  );
-}
-
-/** Las últimas cargas, el rendimiento y los tiempos de la unidad contra lo normal de su ruta. */
+/** El rendimiento de la unidad (con sus desvíos en barras) y sus últimas cargas. */
 export function CargasYRendimiento({
   datos,
   ahora,
-  enRutaMin,
-  enRutaEsperadoMin,
-  estadiaMin,
 }: {
   datos: ResumenUnidad | null;
   ahora: number;
-  /** Lo que lleva manejando el viaje, y lo que suele tardar esos tramos (null si no hay referencia). */
-  enRutaMin: number | null;
-  enRutaEsperadoMin: number | null;
-  /** Lo que lleva quieta la unidad en paradas de este viaje. */
-  estadiaMin: number | null;
 }) {
   const r = datos?.rendimiento;
-  const estadiaNormal = datos?.estadia_normal?.minutos ?? null;
-  const estadia = estadiaMin !== null && estadiaMin > 0 ? estadiaMin : null;
   const carga = (p: "combustible" | "urea") => datos?.ultimas_cargas.find((c) => c.producto === p);
   const combustible = carga("combustible");
   const urea = carga("urea");
   return (
     <SeccionTv
-      titulo="Cargas y rendimiento"
+      titulo="Rendimiento y cargas"
       icono={<Gauge className="h-4 w-4 text-[#BADC1E]" aria-hidden />}
     >
       {!datos ? (
         <p className="text-xs text-slate-400">Cargando…</p>
       ) : (
         <>
+          {r?.rendimiento ? (
+            <>
+              <p className="flex items-baseline gap-2">
+                <b className="text-2xl leading-none text-[#BADC1E]">
+                  {fmt(r.rendimiento.valor, 1)}
+                </b>
+                <span className="text-[11.5px] text-slate-400">
+                  {r.rendimiento.unidad}
+                  {DIAGNOSTICO[r.diagnostico]
+                    ? ` · ${DIAGNOSTICO[r.diagnostico].toLowerCase()}`
+                    : ""}
+                </span>
+              </p>
+              <div className="flex flex-1 flex-col justify-center gap-2">
+                <Desvio texto="vs. pares" pct={r.vs_pares_pct} />
+                <Desvio texto="vs. su pasado" pct={r.vs_pasado_pct} />
+              </div>
+            </>
+          ) : (
+            <p className="flex-1 text-xs text-slate-400">Sin cargas suficientes todavía.</p>
+          )}
           <Fila Icono={Fuel} color="#34d399" titulo="Última carga de combustible">
             {combustible ? (
               <>
@@ -321,34 +308,6 @@ export function CargasYRendimiento({
             ) : (
               "todavía no tiene"
             )}
-          </Fila>
-          <Fila Icono={Gauge} color="#BADC1E" titulo="Rendimiento">
-            {r?.rendimiento ? (
-              <>
-                <b className="text-slate-200">
-                  {fmt(r.rendimiento.valor, 1)} {r.rendimiento.unidad}
-                </b>{" "}
-                <Delta pct={r.vs_pares_pct} de="vs. pares" />{" "}
-                <Delta pct={r.vs_pasado_pct} de="vs. su pasado" />
-                {DIAGNOSTICO[r.diagnostico] ? ` · ${DIAGNOSTICO[r.diagnostico]}` : ""}
-              </>
-            ) : (
-              "sin cargas suficientes"
-            )}
-          </Fila>
-          <Fila Icono={Route} color="#38bdf8" titulo="Ruta contra lo normal">
-            <ContraNormal
-              min={enRutaMin}
-              normal={enRutaEsperadoMin}
-              cmp={compararConNormal(enRutaMin, enRutaEsperadoMin)}
-            />
-          </Fila>
-          <Fila Icono={Pause} color="#a78bfa" titulo="Estadía contra lo normal">
-            <ContraNormal
-              min={estadia}
-              normal={estadiaNormal}
-              cmp={compararConNormal(estadia, estadiaNormal)}
-            />
           </Fila>
         </>
       )}

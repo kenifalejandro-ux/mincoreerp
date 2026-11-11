@@ -23,6 +23,7 @@ import {
   cerrarViajeSchema,
   corregirMandoSchema,
   controlTvConsumoQuerySchema,
+  controlTvUnidadQuerySchema,
   corregirMarcaDeParadaSchema,
   marcaSinOrdenSchema,
   crearLugarSchema,
@@ -260,6 +261,7 @@ router.get(
 router.get(
   "/control-tv/unidad/:viajeId(\\d+)",
   requirePestana("combustible", "viajes:control_tv"),
+  validateQuery(controlTvUnidadQuerySchema),
   asyncHandler(viajesController.controlTvUnidad)
 );
 // Marcar la llegada o la salida de cualquier parada, sin orden (solo la oficina).
