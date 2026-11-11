@@ -6,10 +6,12 @@ import { useEffect, useMemo, useState } from "react";
 
 import { aGrados, parsearCoordenadas, textoDePunto, type Punto } from "./coordenadasLogica";
 import { SelectorPunto } from "./SelectorPunto";
+import { etiquetaDeTipo, normalizarTipo, opcionesDeTipo } from "./tiposLugarLogica";
 import { apiFetch } from "../../services/apiClient";
 import VentanaFlotante from "../comunes/VentanaFlotante";
 
-export type TipoLugar = "mina" | "ciudad" | "abastecimiento";
+/** El tipo es opcional y libre: uno de los tres de siempre (mina, ciudad, abastecimiento) o el que se escriba. */
+export type TipoLugar = string;
 
 export interface Lugar {
   id: string;
@@ -22,7 +24,7 @@ export interface Lugar {
   activo: boolean;
 }
 
-const TIPOS: { valor: TipoLugar; etiqueta: string; Icono: typeof Mountain }[] = [
+const TIPOS: { valor: string; etiqueta: string; Icono: typeof Mountain }[] = [
   { valor: "mina", etiqueta: "Mina", Icono: Mountain },
   { valor: "ciudad", etiqueta: "Ciudad", Icono: Building2 },
   { valor: "abastecimiento", etiqueta: "Abastecimiento", Icono: Fuel },
@@ -35,11 +37,12 @@ const LABEL = "text-xs font-bold text-[#cbd5e1] uppercase";
 const normalizar = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 function InsigniaTipo({ tipo }: { tipo: TipoLugar | null }) {
-  const t = TIPOS.find((x) => x.valor === tipo);
-  if (!t) return <span className="text-xs text-amber-400/80">Sin tipo</span>;
+  if (!normalizarTipo(tipo)) return <span className="text-xs text-amber-400/80">Sin tipo</span>;
+  // Los tres de siempre llevan su ícono; un tipo escrito a mano lleva el del mapa.
+  const Icono = TIPOS.find((x) => x.valor === normalizarTipo(tipo))?.Icono ?? MapPin;
   return (
     <span className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full text-[#e2e8f0]">
-      <t.Icono className="w-3.5 h-3.5 text-[#BADC1E]" aria-hidden /> {t.etiqueta}
+      <Icono className="w-3.5 h-3.5 text-[#BADC1E]" aria-hidden /> {etiquetaDeTipo(tipo)}
     </span>
   );
 }
@@ -49,11 +52,11 @@ function InsigniaTipo({ tipo }: { tipo: TipoLugar | null }) {
 type Formulario = {
   id: string | null;
   nombre: string;
-  tipo: TipoLugar | "";
+  tipo: string;
   ubicacion: string;
   /** Lo que se pegó o tocó para el punto del mapa (texto «lat, lon»); vacío = sin punto. */
   punto: string;
-  original?: { nombre: string; tipo: TipoLugar | ""; ubicacion: string; punto: string };
+  original?: { nombre: string; tipo: string; ubicacion: string; punto: string };
 };
 const FORM_VACIO: Formulario = { id: null, nombre: "", tipo: "", ubicacion: "", punto: "" };
 const puntoDe = (l: Lugar): Punto | null =>
@@ -84,6 +87,8 @@ export function LugaresPanel({
   const [error, setError] = useState<string | null>(null);
   // Mientras una fila se activa o desactiva su botón queda bloqueado (un doble clic la dejaría igual).
   const [cambiando, setCambiando] = useState<string | null>(null);
+  // La lista del campo Tipo (se escribe o se elige, como la placa del despacho).
+  const [tiposAbiertos, setTiposAbiertos] = useState(false);
 
   const activos = lugares.filter((l) => l.activo).length;
   const inactivos = lugares.length - activos;
@@ -91,9 +96,7 @@ export function LugaresPanel({
     const q = normalizar(busqueda.trim());
     const filtrados = q
       ? lugares.filter((l) =>
-          normalizar(
-            `${l.nombre} ${l.ubicacion ?? ""} ${TIPOS.find((t) => t.valor === l.tipo)?.etiqueta ?? ""}`
-          ).includes(q)
+          normalizar(`${l.nombre} ${l.ubicacion ?? ""} ${etiquetaDeTipo(l.tipo)}`).includes(q)
         )
       : lugares;
     // Los activos primero; el orden por nombre que trae el servidor se conserva dentro de cada grupo.
@@ -119,8 +122,10 @@ export function LugaresPanel({
     if (!form || guardando) return;
     const nombre = form.nombre.trim();
     if (!nombre) return setError("Escribe el nombre del lugar.");
-    // El tipo es obligatorio al agregar; al editar un lugar viejo sin tipo se puede dejar así.
-    if (!form.id && !form.tipo) return setError("Elige qué tipo de lugar es.");
+    // El tipo es opcional: se puede elegir uno de la lista, escribir otro o dejarlo vacío.
+    const tipo = normalizarTipo(form.tipo);
+    if (tipo && tipo.length < 2)
+      return setError("El tipo necesita al menos 2 letras (o déjalo vacío).");
     setGuardando(true);
     setError(null);
     try {
@@ -129,7 +134,8 @@ export function LugaresPanel({
       const cuerpo: Record<string, unknown> = {};
       if (!o || nombre !== o.nombre.trim()) cuerpo.nombre = nombre;
       if (!o || ubicacion !== o.ubicacion.trim()) cuerpo.ubicacion = ubicacion;
-      if (form.tipo && (!o || form.tipo !== o.tipo)) cuerpo.tipo = form.tipo;
+      // Al agregar solo se manda si hay tipo; al editar, un tipo vacío lo quita (vuelve a «Sin tipo»).
+      if (o ? tipo !== normalizarTipo(o.tipo) : tipo) cuerpo.tipo = tipo || null;
       // El punto del mapa: lo que se escribió se lee como «lat, lon»; vacío lo borra.
       const textoPunto = form.punto.trim();
       if (textoPunto !== (o?.punto ?? "").trim()) {
@@ -340,12 +346,12 @@ export function LugaresPanel({
                               abrirForm({
                                 id: l.id,
                                 nombre: l.nombre,
-                                tipo: l.tipo ?? "",
+                                tipo: etiquetaDeTipo(l.tipo),
                                 ubicacion: l.ubicacion ?? "",
                                 punto: textoDePunto(puntoDe(l)),
                                 original: {
                                   nombre: l.nombre,
-                                  tipo: l.tipo ?? "",
+                                  tipo: etiquetaDeTipo(l.tipo),
                                   ubicacion: l.ubicacion ?? "",
                                   punto: textoDePunto(puntoDe(l)),
                                 },
@@ -425,26 +431,63 @@ export function LugaresPanel({
                     onChange={(e) => setForm({ ...form, nombre: e.target.value })}
                   />
                 </div>
-                <div className="space-y-1">
+                <div className="relative space-y-1">
                   <label htmlFor="lugar-tipo" className={LABEL}>
-                    Tipo
+                    Tipo <span className="normal-case font-normal">(opcional)</span>
                   </label>
-                  <select
+                  <input
                     id="lugar-tipo"
+                    type="text"
+                    role="combobox"
+                    aria-expanded={tiposAbiertos}
+                    aria-controls="lugar-tipos"
+                    autoComplete="off"
+                    maxLength={30}
+                    placeholder="Opcional: escribe o elige"
                     className={INPUT}
                     value={form.tipo}
-                    onChange={(e) => setForm({ ...form, tipo: e.target.value as TipoLugar | "" })}
-                  >
-                    {/* Un lugar que ya tiene tipo no puede volver a "sin tipo": solo se ofrece a los viejos. */}
-                    {(!form.id || !form.original?.tipo) && (
-                      <option value="">{form.id ? "Sin tipo" : "Elegir…"}</option>
-                    )}
-                    {TIPOS.map((t) => (
-                      <option key={t.valor} value={t.valor}>
-                        {t.etiqueta}
-                      </option>
-                    ))}
-                  </select>
+                    onFocus={() => setTiposAbiertos(true)}
+                    onBlur={() => setTiposAbiertos(false)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape" && tiposAbiertos) {
+                        // El primer Escape cierra la lista; el siguiente cierra el formulario.
+                        e.stopPropagation();
+                        setTiposAbiertos(false);
+                      }
+                    }}
+                    onChange={(e) => {
+                      setTiposAbiertos(true);
+                      setForm({ ...form, tipo: e.target.value });
+                    }}
+                  />
+                  {tiposAbiertos && (
+                    <ul
+                      id="lugar-tipos"
+                      role="listbox"
+                      className="absolute left-0 right-0 z-20 mt-1 max-h-48 overflow-y-auto rounded-xl border border-[#334155] bg-[#0D1719] text-sm shadow-lg"
+                    >
+                      {opcionesDeTipo(lugares, form.tipo).map((o) => (
+                        <li
+                          key={o.valor}
+                          role="option"
+                          aria-selected={normalizarTipo(form.tipo) === o.valor}
+                          className="cursor-pointer px-3 py-2 text-white hover:bg-white/10"
+                          // mouseDown y no click: el click llega tarde, el campo ya perdió el foco y la
+                          // lista se cerró antes de elegir.
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setForm({ ...form, tipo: o.etiqueta });
+                            setTiposAbiertos(false);
+                          }}
+                        >
+                          {o.etiqueta}
+                        </li>
+                      ))}
+                      <li className="px-3 py-2 text-xs text-slate-400">
+                        Escribe otro tipo si no está (por ejemplo «Planta»). Vacío = sin tipo.
+                      </li>
+                    </ul>
+                  )}
                 </div>
                 <div className="space-y-1">
                   <label htmlFor="lugar-ubicacion" className={LABEL}>

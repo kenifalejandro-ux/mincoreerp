@@ -104,7 +104,8 @@ export async function editarLugar(
   if (!antes) throw new AppError(404, "El lugar no existe");
   const despues = {
     nombre: data.nombre?.trim() ?? antes.nombre,
-    tipo: data.tipo ?? antes.tipo,
+    // null quita el tipo (vuelve a «sin tipo»); sin el campo se conserva.
+    tipo: data.tipo === undefined ? antes.tipo : data.tipo,
     ubicacion: data.ubicacion === undefined ? antes.ubicacion : data.ubicacion,
     latitud: data.latitud === undefined ? antes.latitud : data.latitud,
     longitud: data.longitud === undefined ? antes.longitud : data.longitud,

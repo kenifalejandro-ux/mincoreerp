@@ -58,8 +58,43 @@ describe("combustible: lugares con tipo, ubicación y estado (0159)", () => {
     expect(r.body.ubicacion).toBeNull();
   });
 
-  it("rechaza tipo fuera de la lista, ubicación larga y cuerpos mal formados con 400", async () => {
-    expect((await crear(idUnico("X"), { tipo: "base_logistica" })).status).toBe(400);
+  it("el tipo es libre: acepta uno propio y lo guarda sin espacios de más y en minúsculas", async () => {
+    const r = await crear(idUnico("Libre"), { tipo: "  Planta   Piloto " });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    expect(r.body.tipo).toBe("planta piloto");
+    // «Mina», «mina» y « MINA » son el mismo tipo de siempre.
+    expect((await crear(idUnico("M1"), { tipo: "Mina" })).body.tipo).toBe("mina");
+    expect((await crear(idUnico("M2"), { tipo: " MINA " })).body.tipo).toBe("mina");
+    // Con tilde y de 30 caracteres exactos entra.
+    expect((await crear(idUnico("Tilde"), { tipo: "Estación" })).body.tipo).toBe("estación");
+    expect((await crear(idUnico("Largo"), { tipo: "a".repeat(30) })).status).toBe(201);
+  });
+
+  it("el tipo puede quedar vacío: sin campo o con null se guarda sin tipo", async () => {
+    expect((await crear(idUnico("SinCampo"))).body.tipo).toBeNull();
+    const conNull = await crear(idUnico("ConNull"), { tipo: null });
+    expect(conNull.status, JSON.stringify(conNull.body)).toBe(201);
+    expect(conNull.body.tipo).toBeNull();
+  });
+
+  it("PATCH con tipo null quita el tipo y sin el campo lo conserva", async () => {
+    const { id } = (await crear(idUnico("Quita"), { tipo: "puerto" })).body;
+    const conserva = await admin.patch(`${LUGARES}/${id}`).send({ ubicacion: "Callao" });
+    expect(conserva.body.tipo).toBe("puerto");
+    const quita = await admin.patch(`${LUGARES}/${id}`).send({ tipo: null });
+    expect(quita.status, JSON.stringify(quita.body)).toBe(200);
+    expect(quita.body.tipo).toBeNull();
+    // Repetirlo (ya sin tipo) no falla ni cambia nada.
+    const otra = await admin.patch(`${LUGARES}/${id}`).send({ tipo: null });
+    expect(otra.status).toBe(200);
+    expect(otra.body.tipo).toBeNull();
+  });
+
+  it("rechaza un tipo de 1 letra, de más de 30, en blanco o con caracteres de control, ubicación larga y cuerpos mal formados con 400", async () => {
+    expect((await crear(idUnico("X"), { tipo: "a" })).status).toBe(400);
+    expect((await crear(idUnico("X"), { tipo: "a".repeat(31) })).status).toBe(400);
+    expect((await crear(idUnico("X"), { tipo: "   " })).status).toBe(400);
+    expect((await crear(idUnico("X"), { tipo: "ab\u0000c" })).status).toBe(400);
     expect((await crear(idUnico("X"), { ubicacion: "a".repeat(121) })).status).toBe(400);
     expect((await crear(idUnico("X"), { tipo: 5 })).status).toBe(400);
     expect((await crear("   ")).status).toBe(400);
@@ -96,7 +131,7 @@ describe("combustible: lugares con tipo, ubicación y estado (0159)", () => {
   it("PATCH sin cambios, con tipo inválido o con campos de más da 400", async () => {
     const { id } = (await crear(idUnico("Val"))).body;
     expect((await admin.patch(`${LUGARES}/${id}`).send({})).status).toBe(400);
-    expect((await admin.patch(`${LUGARES}/${id}`).send({ tipo: "mina2" })).status).toBe(400);
+    expect((await admin.patch(`${LUGARES}/${id}`).send({ tipo: "m" })).status).toBe(400);
     expect((await admin.patch(`${LUGARES}/${id}`).send({ activo: "no" })).status).toBe(400);
     expect((await admin.patch(`${LUGARES}/${id}`).send({ nombre: "" })).status).toBe(400);
   });

@@ -39,14 +39,21 @@ test("agregar, editar, buscar, desactivar y reactivar un lugar", async ({ page }
   await page.getByRole("button", { name: "Lugares", exact: true }).click();
   await expect(page.getByText("Lugares registrados")).toBeVisible();
 
-  // El tipo es obligatorio al agregar.
+  // El tipo es opcional: un lugar solo con nombre se guarda y dice «Sin tipo».
+  const sinTipo = `Sin tipo ${marca}`;
   await page.getByRole("button", { name: "Agregar lugar" }).click();
   const dialogo = page.getByRole("dialog", { name: "Agregar lugar" });
-  await dialogo.getByLabel("Nombre", { exact: true }).fill(mina);
+  await dialogo.getByLabel("Nombre", { exact: true }).fill(sinTipo);
   await dialogo.getByRole("button", { name: "Guardar" }).click();
-  await expect(dialogo.getByRole("alert")).toContainText("Elige qué tipo");
+  await expect(dialogo).toHaveCount(0);
+  await expect(fila(page, sinTipo).getByRole("cell").nth(1)).toHaveText("Sin tipo");
 
-  await dialogo.getByLabel("Tipo", { exact: true }).selectOption({ label: "Mina" });
+  // El tipo se elige de la lista (como la placa del despacho).
+  await page.getByRole("button", { name: "Agregar lugar" }).click();
+  await dialogo.getByLabel("Nombre", { exact: true }).fill(mina);
+  await dialogo.getByRole("combobox", { name: /^Tipo/ }).click();
+  await dialogo.getByRole("option", { name: "Mina", exact: true }).click();
+  await expect(dialogo.getByRole("combobox", { name: /^Tipo/ })).toHaveValue("Mina");
   await dialogo.getByLabel(/^Ubicación/).fill("Hualgayoc, Cajamarca");
   await dialogo.getByRole("button", { name: "Guardar" }).click();
   await expect(dialogo).toHaveCount(0);
@@ -60,7 +67,7 @@ test("agregar, editar, buscar, desactivar y reactivar un lugar", async ({ page }
   // Un nombre repetido (aunque cambien las mayúsculas) no se guarda y avisa en el formulario.
   await page.getByRole("button", { name: "Agregar lugar" }).click();
   await dialogo.getByLabel("Nombre", { exact: true }).fill(mina.toUpperCase());
-  await dialogo.getByLabel("Tipo", { exact: true }).selectOption({ label: "Ciudad" });
+  await dialogo.getByRole("combobox", { name: /^Tipo/ }).fill("ciudad");
   await dialogo.getByRole("button", { name: "Guardar" }).click();
   await expect(dialogo.getByRole("alert")).toContainText("ya existe");
   await dialogo.getByRole("button", { name: "Cerrar" }).click();
@@ -70,11 +77,10 @@ test("agregar, editar, buscar, desactivar y reactivar un lugar", async ({ page }
   await page.getByRole("button", { name: `Editar ${mina}` }).click();
   const edicion = page.getByRole("dialog", { name: "Editar lugar" });
   await expect(edicion.getByLabel("Nombre", { exact: true })).toHaveValue(mina);
-  // Un lugar que ya tiene tipo no puede volver a "sin tipo".
-  await expect(
-    edicion.getByLabel("Tipo", { exact: true }).locator("option", { hasText: "Sin tipo" })
-  ).toHaveCount(0);
-  await edicion.getByLabel("Tipo", { exact: true }).selectOption({ label: "Abastecimiento" });
+  // Al editar, el tipo se escribe y la lista se filtra: «abast» ofrece Abastecimiento.
+  await expect(edicion.getByRole("combobox", { name: /^Tipo/ })).toHaveValue("Mina");
+  await edicion.getByRole("combobox", { name: /^Tipo/ }).fill("abast");
+  await edicion.getByRole("option", { name: "Abastecimiento", exact: true }).click();
   await edicion.getByLabel(/^Ubicación/).fill("");
   // El punto en el mapa: una coordenada que no se entiende avisa y no guarda; una buena se pega.
   await edicion.getByLabel(/^Punto en el mapa/).fill("hola");
@@ -93,10 +99,29 @@ test("agregar, editar, buscar, desactivar y reactivar un lugar", async ({ page }
   await expect(edicion.getByLabel(/^Punto en el mapa/)).toHaveValue("-5.90030, -76.09470");
   await edicion.getByRole("button", { name: "Cerrar" }).click();
 
-  // Buscar por la marca deja solo este lugar; algo que no existe, el aviso.
+  // Un tipo que no está en la lista se escribe y se guarda; después la lista lo ofrece.
+  const planta = `Planta ${marca}`;
+  await page.getByRole("button", { name: "Agregar lugar" }).click();
+  await dialogo.getByLabel("Nombre", { exact: true }).fill(planta);
+  await dialogo.getByRole("combobox", { name: /^Tipo/ }).fill("  Planta Piloto ");
+  await dialogo.getByRole("button", { name: "Guardar" }).click();
+  await expect(dialogo).toHaveCount(0);
+  await expect(fila(page, planta).getByRole("cell").nth(1)).toHaveText("Planta piloto");
+  await page.getByRole("button", { name: "Agregar lugar" }).click();
+  await dialogo.getByRole("combobox", { name: /^Tipo/ }).click();
+  await expect(dialogo.getByRole("option", { name: "Planta piloto", exact: true })).toBeVisible();
+  await dialogo.getByRole("button", { name: "Cerrar" }).click();
+  // Y se puede quitar: vacío vuelve a «Sin tipo».
+  await page.getByRole("button", { name: `Editar ${planta}` }).click();
+  await edicion.getByRole("combobox", { name: /^Tipo/ }).fill("");
+  await edicion.getByRole("button", { name: "Guardar" }).click();
+  await expect(edicion).toHaveCount(0);
+  await expect(fila(page, planta).getByRole("cell").nth(1)).toHaveText("Sin tipo");
+
+  // Buscar por la marca deja solo los lugares de esta prueba; algo que no existe, el aviso.
   const buscador = page.getByLabel("Buscar lugar");
   await buscador.fill(marca);
-  await expect(tabla(page).getByRole("row")).toHaveCount(2); // encabezado + el lugar
+  await expect(tabla(page).getByRole("row")).toHaveCount(4); // encabezado + los tres lugares de la marca
   await buscador.fill(`zzz-${marca}`);
   await expect(page.getByText("Ningún lugar coincide con la búsqueda.")).toBeVisible();
   await buscador.fill("");
