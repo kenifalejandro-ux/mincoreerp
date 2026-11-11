@@ -33,6 +33,7 @@ import { ambitoDe } from "./alcance";
 import { CombustibleService } from "./combustible.service";
 import { consumoControlTv, resumenControlTv, type PeriodoTv } from "./controlTv.service";
 import { detalleControlTv } from "./controlTvDetalle.service";
+import { resumenDeUnidad } from "./controlTvUnidad.service";
 import * as viajes from "./viajes.service";
 import {
   catalogoParaCrear,
@@ -684,6 +685,20 @@ export const viajesController = {
         )
       )
     );
+  },
+
+  /** El resumen de una unidad en el Control TV: viajes de su conductor, rendimiento, estadía normal
+   *  de la ruta, últimas cargas y alertas abiertas. Fuera del alcance es un 404. Sin Combustible
+   *  responde vacío, no 403. */
+  async controlTvUnidad(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    if (!req.usuario!.modulosPermitidos.includes("combustible")) return res.json({});
+    const id = Number(req.params.viajeId);
+    const r = await withTenant(tenantId, (c) =>
+      resumenDeUnidad(c, tenantId, id, ambitoDe(req), combustible)
+    );
+    if (!r) return res.status(404).json({ error: "El viaje no existe" });
+    res.json(r);
   },
 
   /** La oficina marca cualquier parada sin orden; cambiar una marca puesta queda auditado con su

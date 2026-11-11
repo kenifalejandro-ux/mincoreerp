@@ -202,10 +202,10 @@ function Dona({ f }: { f: Resumen["flota"] }) {
             transform="rotate(-90 60 60)"
           />
         ))}
-      <text x={60} y={58} textAnchor="middle" fill="#f1f5f9" fontSize={22} fontWeight={800}>
+      <text x={60} y={61} textAnchor="middle" fill="#f1f5f9" fontSize={16} fontWeight={800}>
         {pct}%
       </text>
-      <text x={60} y={74} textAnchor="middle" fill="#94a3b8" fontSize={8} letterSpacing=".08em">
+      <text x={60} y={74} textAnchor="middle" fill="#94a3b8" fontSize={7} letterSpacing=".08em">
         OPERATIVAS
       </text>
     </svg>
@@ -286,14 +286,13 @@ function VistaEnVivo({
               onClick={() => onElegir(v.id)}
               aria-label={`Ver ${unidadLabel(v)} en su Control TV`}
               title={`${unidadLabel(v)} · ${v.conductor_nombre ?? "sin conductor"} · ${v.equipo_tipo ?? "Otro"} · ${estado}`}
-              className={`absolute grid h-[24px] -translate-x-1/2 -translate-y-1/2 place-items-center rounded-lg border bg-[#0b1719]/80 px-1.5 cursor-pointer hover:bg-white/15 hover:z-10 ${
+              className={`absolute grid h-[24px] -translate-x-1/2 -translate-y-1/2 place-items-center rounded-lg px-1.5 cursor-pointer hover:bg-white/15 hover:z-10 ${
                 cat === "detenida" ? "animate-pulse motion-reduce:animate-none" : ""
               }`}
               style={{
                 left: `${x.toFixed(2)}%`,
                 top: `${(9 + ((fila + 0.5) / filas) * 88).toFixed(2)}%`,
                 color: color[cat],
-                borderColor: color[cat],
               }}
             >
               <IconoTipo tipo={v.equipo_tipo} alto={ALTO_FICHA} />
