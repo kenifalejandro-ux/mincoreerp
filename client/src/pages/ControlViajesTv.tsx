@@ -104,7 +104,7 @@ interface Consumo {
 
 const soles = (n: number) => `S/ ${fmt(n, 0)}`;
 /** Alto del ícono dentro de la ficha de la vista en vivo. */
-const ALTO_FICHA = 26;
+const ALTO_FICHA = 16;
 
 const PERIODOS: { id: Periodo; t: string }[] = [
   { id: "24h", t: "24 h" },
@@ -221,13 +221,13 @@ function VistaEnVivo({
   viajes: FilaViaje[];
   onElegir: (id: string) => void;
 }) {
-  const filas = 9;
-  const orden = [4, 3, 5, 2, 6, 1, 7, 0, 8];
+  const filas = 12;
+  const orden = [6, 5, 7, 4, 8, 3, 9, 2, 10, 1, 11, 0];
   const ultimo = orden.map(() => -99);
   const anchoDe = orden.map(() => 4.6);
   // Lo que ocupa cada ficha, en % del ancho (se estima sobre unos 900 px): un tráiler es más largo
   // que una camioneta, y las fichas de una misma fila no se montan.
-  const ancho = (v: FilaViaje) => (anchoDeIcono(v.equipo_tipo, ALTO_FICHA) + 16) / 9;
+  const ancho = (v: FilaViaje) => (anchoDeIcono(v.equipo_tipo, ALTO_FICHA) + 14) / 9;
   const puestas = viajes
     .map((v) => ({ v, x: 4 + posicionEnRuta(v) * 92 }))
     .sort((a, b) => a.x - b.x)
@@ -247,7 +247,7 @@ function VistaEnVivo({
     });
   const color = Object.fromEntries(CATS.map((c) => [c.k, c.c]));
   return (
-    <section className="flex min-h-[380px] flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
+    <section className="flex min-h-[420px] flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.04] p-3">
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="flex items-center gap-2 text-xs font-bold uppercase tracking-[.16em] text-slate-400">
           <span className="h-2 w-2 rounded-full bg-emerald-400" aria-hidden />
@@ -258,7 +258,7 @@ function VistaEnVivo({
         </span>
       </div>
       <div
-        className="relative flex-1 min-h-[320px] overflow-hidden rounded-xl border border-[#BADC1E]/20"
+        className="relative flex-1 min-h-[360px] overflow-hidden rounded-xl border border-[#BADC1E]/20"
         style={{
           background:
             "radial-gradient(ellipse at 50% 50%, #1c3a2a55, transparent 70%), repeating-linear-gradient(0deg, #BADC1E12 0 1px, transparent 1px 34px), repeating-linear-gradient(90deg, #BADC1E12 0 1px, transparent 1px 34px), #081210",
@@ -286,7 +286,7 @@ function VistaEnVivo({
               onClick={() => onElegir(v.id)}
               aria-label={`Ver ${unidadLabel(v)} en su Control TV`}
               title={`${unidadLabel(v)} · ${v.conductor_nombre ?? "sin conductor"} · ${v.equipo_tipo ?? "Otro"} · ${estado}`}
-              className={`absolute grid h-[34px] -translate-x-1/2 -translate-y-1/2 place-items-center rounded-lg border bg-[#0b1719]/80 px-2 cursor-pointer hover:bg-white/15 hover:z-10 ${
+              className={`absolute grid h-[24px] -translate-x-1/2 -translate-y-1/2 place-items-center rounded-lg border bg-[#0b1719]/80 px-1.5 cursor-pointer hover:bg-white/15 hover:z-10 ${
                 cat === "detenida" ? "animate-pulse motion-reduce:animate-none" : ""
               }`}
               style={{

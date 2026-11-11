@@ -81,6 +81,17 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   await expect(tv.getByText("Consumo del recorrido actual")).toBeVisible();
   await expect(tv.getByText("Dónde está")).toBeVisible();
   expect(tv.url()).toContain(`unidad=${viaje.id}`);
+  // En una pantalla de TV (1920×1080) la unidad cabe sin bajar y se reparte en columnas: el consumo
+  // queda a la derecha del recorrido, no debajo.
+  await tv.setViewportSize({ width: 1920, height: 1080 });
+  const desborde = await tv
+    .locator("div.fixed.inset-0")
+    .first()
+    .evaluate((el) => el.scrollHeight - el.clientHeight);
+  expect(desborde).toBeLessThanOrEqual(0);
+  const tiempo = await tv.getByText("Cómo se fue el tiempo").boundingBox();
+  const consumo = await tv.getByText("Consumo del recorrido actual").boundingBox();
+  expect(consumo!.x).toBeGreaterThan(tiempo!.x + 200);
   // «TV central» vuelve al tablero de todas las unidades.
   await tv.getByRole("button", { name: "TV central" }).click();
   await expect(tv.getByText("Flota en operación")).toBeVisible();

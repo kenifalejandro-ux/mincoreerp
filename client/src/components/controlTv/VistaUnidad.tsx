@@ -22,7 +22,7 @@ interface Detalle {
 }
 
 const LITROS_POR_GALON = 3.785411784;
-const CARD = "rounded-2xl border border-white/10 bg-white/[0.04] p-4";
+const CARD = "rounded-xl border border-white/10 bg-white/[0.04] p-3";
 const iniciales = (n: string | null) =>
   (n ?? "?")
     .split(/\s+/)
@@ -34,10 +34,12 @@ const iniciales = (n: string | null) =>
 
 function Cifra({ titulo, min, tono }: { titulo: string; min: number | null; tono: string }) {
   return (
-    <div className={`${CARD} ${titulo === "Total" ? "border-[#BADC1E]/50" : ""}`}>
-      <small className="block text-xs uppercase tracking-[.14em] text-slate-400">{titulo}</small>
+    <div className={`${CARD} !py-2 ${titulo === "Total" ? "border-[#BADC1E]/50" : ""}`}>
+      <small className="block text-[11px] uppercase tracking-[.14em] text-slate-400">
+        {titulo}
+      </small>
       <b
-        className="mt-1 block whitespace-nowrap text-3xl font-extrabold leading-tight"
+        className="block whitespace-nowrap text-xl font-extrabold leading-tight"
         style={{ color: tono }}
       >
         {min === null ? "—" : duracion(min)}
@@ -48,8 +50,8 @@ function Cifra({ titulo, min, tono }: { titulo: string; min: number | null; tono
 
 function Seccion({ titulo, children }: { titulo: string; children: ReactNode }) {
   return (
-    <section className={`${CARD} flex flex-col gap-2`}>
-      <h2 className="text-xs font-bold uppercase tracking-[.16em] text-slate-400">{titulo}</h2>
+    <section className={`${CARD} flex flex-col gap-1.5`}>
+      <h2 className="text-[11px] font-bold uppercase tracking-[.16em] text-slate-400">{titulo}</h2>
       {children}
     </section>
   );
@@ -192,35 +194,35 @@ export function VistaUnidad({
   const abierto = v.descansos?.find((d) => !d.fin_en && d.detiene !== false);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-2">
       {barra}
       {error && <p className="text-xs text-amber-300">{error}</p>}
 
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#BADC1E] text-lg font-black text-[#0D1719]">
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#BADC1E] text-sm font-black text-[#0D1719]">
           {iniciales(v.conductor_nombre)}
         </span>
-        <h1 className="text-3xl font-bold">{v.conductor_nombre ?? "Sin conductor"}</h1>
-        <span className="rounded-lg border border-white/20 bg-white/10 px-3 py-1 text-lg font-extrabold tracking-wider">
+        <h1 className="text-xl font-bold">{v.conductor_nombre ?? "Sin conductor"}</h1>
+        <span className="rounded-md border border-white/20 bg-white/10 px-2 py-0.5 text-sm font-extrabold tracking-wider">
           {unidadLabel(v)}
         </span>
-        <span className="flex items-center gap-1.5 text-slate-300">
-          <IconoTipo tipo={v.equipo_tipo} alto={30} />
+        <span className="flex items-center gap-1.5 text-sm text-slate-300">
+          <IconoTipo tipo={v.equipo_tipo} alto={20} />
           {v.equipo_tipo ?? "Otro"}
         </span>
         <span
-          className="rounded-full px-3 py-1 text-sm font-bold"
+          className="rounded-full px-2.5 py-0.5 text-xs font-bold"
           style={{ background: `${cat.c}26`, color: cat.c }}
         >
           {estado?.texto ?? "En curso"}
         </span>
         {v.relevo_nombre && (
-          <span className="text-sm text-slate-400">Relevo: {v.relevo_nombre}</span>
+          <span className="text-xs text-slate-400">Relevo: {v.relevo_nombre}</span>
         )}
       </header>
 
       {abierto && (
-        <p className="rounded-2xl border border-red-400/40 bg-red-400/10 px-4 py-3 text-lg font-bold text-red-100">
+        <p className="rounded-xl border border-red-400/40 bg-red-400/10 px-3 py-2 text-base font-bold text-red-100">
           {estado?.texto} desde las{" "}
           {new Date(abierto.inicio_en).toLocaleTimeString("es-PE", {
             hour: "2-digit",
@@ -229,7 +231,7 @@ export function VistaUnidad({
         </p>
       )}
 
-      <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fit,minmax(190px,1fr))]">
+      <div className="grid gap-2 [grid-template-columns:repeat(auto-fit,minmax(150px,1fr))]">
         {horas?.idaYVuelta ? (
           <>
             <Cifra titulo="Ida" min={horas.ida} tono="#38bdf8" />
@@ -245,10 +247,10 @@ export function VistaUnidad({
         <Cifra titulo="Total" min={horas?.total ?? null} tono="#f1f5f9" />
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-        <div className="flex min-w-0 flex-col gap-3">
+      <div className="grid gap-2 lg:grid-cols-2 xl:grid-cols-3">
+        <div className="flex min-w-0 flex-col gap-2">
           <Seccion titulo="Recorrido">
-            <div className="relative mx-10 my-2 h-20">
+            <div className="relative mx-8 mb-1 mt-0.5 h-[62px]">
               <div className="absolute inset-x-0 top-6 h-1.5 rounded bg-white/10" />
               <div
                 className="absolute left-0 top-6 h-1.5 rounded bg-gradient-to-r from-emerald-400 to-sky-400"
@@ -260,31 +262,31 @@ export function VistaUnidad({
                 return (
                   <div key={p.orden} className="absolute top-0" style={{ left: `${x}%` }}>
                     <i
-                      className={`absolute left-0 top-[21px] block h-4 w-4 -translate-x-1/2 rounded-full border-[3px] ${
+                      className={`absolute left-0 top-[20px] block h-3.5 w-3.5 -translate-x-1/2 rounded-full border-[3px] ${
                         hecho
                           ? "border-emerald-400 bg-emerald-400"
                           : "border-slate-600 bg-[#0b1719]"
                       }`}
                     />
-                    <span className="absolute left-0 top-12 w-28 -translate-x-1/2 text-center text-xs leading-tight text-slate-400">
-                      <b className="block text-sm text-slate-100">{p.lugar}</b>
+                    <span className="absolute left-0 top-[40px] w-28 -translate-x-1/2 text-center text-xs leading-tight text-slate-400">
+                      <b className="block text-xs text-slate-100">{p.lugar}</b>
                     </span>
                   </div>
                 );
               })}
               <span
-                className="absolute top-2 grid h-10 -translate-x-1/2 place-items-center rounded-full bg-[#BADC1E] px-3 text-[#0D1719] shadow-[0_0_0_6px_#BADC1E33]"
+                className="absolute top-[13px] grid h-7 -translate-x-1/2 place-items-center rounded-full bg-[#BADC1E] px-2 text-[#0D1719] shadow-[0_0_0_4px_#BADC1E33]"
                 style={{ left: `${frac * 100}%` }}
                 title={unidadLabel(v)}
               >
-                <IconoTipo tipo={v.equipo_tipo} alto={26} />
+                <IconoTipo tipo={v.equipo_tipo} alto={18} />
               </span>
             </div>
           </Seccion>
 
           <Seccion titulo="Cómo se fue el tiempo">
             <div
-              className="flex h-9 gap-[3px] overflow-hidden rounded-xl"
+              className="flex h-7 gap-[3px] overflow-hidden rounded-lg"
               role="img"
               aria-label="Tiempo manejando, en paradas y descansando"
             >
@@ -292,7 +294,7 @@ export function VistaUnidad({
                 <div
                   key={`${s.t}-${i}`}
                   title={`${s.tip}: ${duracion(s.min)}`}
-                  className="grid min-w-[6px] place-items-center overflow-hidden whitespace-nowrap text-xs font-bold text-[#04121a]"
+                  className="grid min-w-[6px] place-items-center overflow-hidden whitespace-nowrap text-[11px] font-bold text-[#04121a]"
                   style={{ flex: `${s.min / totalSeg} 1 0`, background: COLOR[s.t] }}
                 >
                   {s.min / totalSeg > 0.12 ? duracion(s.min) : ""}
@@ -315,12 +317,14 @@ export function VistaUnidad({
               ))}
             </ul>
           </Seccion>
+        </div>
 
+        <div className="flex min-w-0 flex-col gap-2">
           <Seccion titulo="Consumo del recorrido actual">
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-3 gap-2">
               <div>
-                <small className="block text-xs text-slate-400">Combustible</small>
-                <b className="text-2xl tabular-nums">{fmt(gal, 1)}</b>{" "}
+                <small className="block text-[11px] text-slate-400">Combustible</small>
+                <b className="text-xl tabular-nums">{fmt(gal, 1)}</b>{" "}
                 <em className="text-xs not-italic text-slate-400">gal</em>
                 {vsPromedio !== null && (
                   <i
@@ -332,22 +336,22 @@ export function VistaUnidad({
                 )}
               </div>
               <div>
-                <small className="block text-xs text-slate-400">Urea</small>
-                <b className="text-2xl tabular-nums">{fmt(urea, 1)}</b>{" "}
+                <small className="block text-[11px] text-slate-400">Urea</small>
+                <b className="text-xl tabular-nums">{fmt(urea, 1)}</b>{" "}
                 <em className="text-xs not-italic text-slate-400">L</em>
               </div>
               <div>
-                <small className="block text-xs text-slate-400">Costo</small>
-                <b className="text-2xl tabular-nums">S/ {fmt(costo, 0)}</b>
+                <small className="block text-[11px] text-slate-400">Costo</small>
+                <b className="text-xl tabular-nums">S/ {fmt(costo, 0)}</b>
               </div>
             </div>
             {tramos.length > 0 && (
-              <table className="w-full text-sm tabular-nums">
+              <table className="w-full text-xs tabular-nums">
                 <thead className="text-xs uppercase text-slate-400">
                   <tr className="text-left">
-                    <th className="py-1 font-semibold">Tramo</th>
-                    <th className="py-1 text-right font-semibold">Combustible</th>
-                    <th className="py-1 text-right font-semibold">Urea</th>
+                    <th className="py-0.5 font-semibold">Tramo</th>
+                    <th className="py-0.5 text-right font-semibold">Combustible</th>
+                    <th className="py-0.5 text-right font-semibold">Urea</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -356,14 +360,14 @@ export function VistaUnidad({
                       key={t.orden}
                       className={`border-t border-white/10 ${t === actual ? "bg-[#BADC1E]/10 font-bold" : ""}`}
                     >
-                      <td className="py-1.5">
+                      <td className="py-1">
                         {t.de} → {t.a}
                         {t === actual && (
                           <span className="ml-2 text-xs text-[#BADC1E]">en curso</span>
                         )}
                       </td>
-                      <td className="py-1.5 text-right">{fmt(t.combustible_gal, 1)} gal</td>
-                      <td className="py-1.5 text-right">{fmt(t.urea_l, 1)} L</td>
+                      <td className="py-1 text-right">{fmt(t.combustible_gal, 1)} gal</td>
+                      <td className="py-1 text-right">{fmt(t.urea_l, 1)} L</td>
                     </tr>
                   ))}
                 </tbody>
@@ -372,7 +376,7 @@ export function VistaUnidad({
           </Seccion>
         </div>
 
-        <div className="flex min-w-0 flex-col gap-3">
+        <div className="flex min-w-0 flex-col gap-2">
           <Seccion titulo="Conductor y relevo">
             {[
               { n: v.conductor_nombre, dni: v.conductor_dni, rol: "Titular" },
@@ -381,11 +385,11 @@ export function VistaUnidad({
                 : []),
             ].map((p) => (
               <div key={p.rol} className="flex items-center gap-3">
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#BADC1E] font-black text-[#0D1719]">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[#BADC1E] text-xs font-black text-[#0D1719]">
                   {iniciales(p.n ?? null)}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <b className="block truncate text-base">{p.n ?? "—"}</b>
+                  <b className="block truncate text-sm">{p.n ?? "—"}</b>
                   <small className="text-slate-400">
                     {p.rol}
                     {p.dni ? ` · DNI ${p.dni}` : ""}
@@ -412,8 +416,8 @@ export function VistaUnidad({
           </Seccion>
 
           <Seccion titulo="Dónde está">
-            <p className="flex items-center gap-2 text-2xl font-extrabold leading-tight">
-              <MapPin className="w-6 h-6 shrink-0 text-[#BADC1E]" aria-hidden />
+            <p className="flex items-center gap-2 text-lg font-extrabold leading-tight">
+              <MapPin className="h-5 w-5 shrink-0 text-[#BADC1E]" aria-hidden />
               {donde?.texto ?? "Sin ubicación todavía"}
             </p>
             {donde && <small className="text-slate-400">{haceCuanto(donde.en, ahora)}</small>}
@@ -427,9 +431,9 @@ export function VistaUnidad({
                 ))}
               </ul>
             )}
-            <div className="mt-1 grid min-h-[130px] place-items-center rounded-2xl border-2 border-dashed border-white/15 p-4 text-center text-sm text-slate-400">
+            <div className="mt-1 grid min-h-[96px] place-items-center rounded-xl border-2 border-dashed border-white/15 p-3 text-center text-xs text-slate-400">
               <span>
-                <b className="block text-base text-slate-100">Mapa</b>
+                <b className="block text-sm text-slate-100">Mapa</b>
                 Con GPS aquí se verá la unidad en el mapa real.
               </span>
             </div>
