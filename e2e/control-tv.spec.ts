@@ -97,14 +97,33 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   await expect(tv.getByText("Flota en operación")).toBeVisible();
   expect(tv.url()).not.toContain("unidad=");
 
-  // Los paneles de abajo: tanquetas, consumo y la franja de últimos eventos (la salida del viaje
-  // recién preparado no es un evento, pero la franja siempre está).
+  // El Resumen de escritorio son gráficos (no las seis tarjetas de colores); el consumo sale una sola
+  // vez, arriba, y el panel de abajo ya no lo repite.
+  await expect(tv.getByRole("heading", { name: "Autonomía y urea" })).toBeVisible();
+  await expect(tv.getByRole("heading", { name: /^Consumo por (hora|día)$/ })).toHaveCount(1);
+  await expect(tv.getByText("Combustible en la empresa")).toHaveCount(0);
+  // En un monitor grande y en una laptop no hay desborde lateral ni vertical-lateral raro.
+  for (const [ancho, alto] of [
+    [1920, 1080],
+    [1366, 768],
+  ]) {
+    await tv.setViewportSize({ width: ancho, height: alto });
+    await expect(tv.getByText("Flota en operación")).toBeVisible();
+    const lat = await tv
+      .locator("div.fixed.inset-0")
+      .first()
+      .evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(lat, `${ancho}×${alto}`).toBeLessThanOrEqual(0);
+    if (process.env.CAPTURAS_TV) {
+      await tv.screenshot({ path: `${process.env.CAPTURAS_TV}/escritorio-${ancho}.png` });
+    }
+  }
+  await tv.setViewportSize({ width: 1920, height: 1080 });
+
+  // Los paneles de abajo: tanquetas y la franja de últimos eventos (la salida del viaje recién
+  // preparado no es un evento, pero la franja siempre está).
   await expect(tv.getByRole("heading", { name: "Tanquetas" })).toBeVisible();
-  await expect(tv.getByRole("heading", { name: "Consumo por hora" })).toBeVisible();
   await expect(tv.getByRole("heading", { name: "Últimos eventos" })).toBeVisible();
-  // El consumo se puede ver también como tabla, con los mismos números.
-  await tv.getByRole("button", { name: "Tabla" }).first().click();
-  await expect(tv.getByRole("columnheader", { name: "Grifo interno" })).toBeVisible();
   // Cambiar de período no vacía la pantalla, y el consumo pasa a ser por día.
   await tv.getByRole("button", { name: "7 días" }).click();
   await expect(tv.getByText("Flota en operación")).toBeVisible();

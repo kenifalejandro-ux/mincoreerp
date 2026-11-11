@@ -13,9 +13,14 @@ import {
   valorEnTanques,
 } from "../client/src/components/controlTv/controlTvLogica";
 import { anchoDeIcono, claseDeTipo, FORMAS } from "../client/src/components/controlTv/tiposUnidad";
+import { ETIQUETA_TIPO_ALERTA } from "../client/src/components/combustible/alertasTexto";
 import {
   colorDesvio,
+  compararConNormal,
   histograma,
+  MINIMO_REFERENCIA_MIN,
+  nombreAlerta,
+  TOPE_PORCENTAJE,
   tendenciaMovil,
   topDesvios,
 } from "../client/src/components/controlTv/resumenCorporativoLogica";
@@ -207,5 +212,42 @@ describe("Resumen corporativo: cuentas de los gráficos", () => {
     expect(topDesvios([], 5)).toEqual([]);
     expect(colorDesvio(40)).toBe("#f87171");
     expect(colorDesvio(-20)).toBe("#a3c93a");
+  });
+});
+
+describe("Vista de la unidad: comparación con lo normal y nombres de alerta", () => {
+  it("sin referencia confiable no se compara: nada de «+15,568 %»", () => {
+    // 31 h de ruta contra una referencia de 12 minutos: el caso real que salía absurdo.
+    expect(compararConNormal(31 * 60 + 20, 12)).toEqual({
+      pct: null,
+      sinReferencia: true,
+      muyPorEncima: false,
+    });
+    expect(compararConNormal(100, null).sinReferencia).toBe(true);
+    expect(compararConNormal(null, 120).sinReferencia).toBe(true);
+    expect(compararConNormal(100, Number.NaN).sinReferencia).toBe(true);
+    // Justo en el mínimo ya se compara; un minuto menos, no.
+    expect(compararConNormal(60, MINIMO_REFERENCIA_MIN).sinReferencia).toBe(false);
+    expect(compararConNormal(60, MINIMO_REFERENCIA_MIN - 1).sinReferencia).toBe(true);
+  });
+
+  it("con referencia buena da el porcentaje, también negativo, y avisa si se pasa del tope", () => {
+    expect(compararConNormal(150, 100).pct).toBeCloseTo(50, 5);
+    expect(compararConNormal(80, 100).pct).toBeCloseTo(-20, 5);
+    expect(compararConNormal(100, 100).pct).toBe(0);
+    const tope = compararConNormal(100 * (1 + (TOPE_PORCENTAJE + 50) / 100), 100);
+    expect(tope).toEqual({ pct: null, sinReferencia: false, muyPorEncima: true });
+    // Justo en el tope todavía da el número.
+    expect(compararConNormal(100 * (1 + TOPE_PORCENTAJE / 100), 100).muyPorEncima).toBe(false);
+  });
+
+  it("cada tipo de alerta del catálogo tiene su nombre en español, y uno nuevo no sale vacío", () => {
+    for (const [tipo, etiqueta] of Object.entries(ETIQUETA_TIPO_ALERTA)) {
+      expect(nombreAlerta(tipo), tipo).toBe(etiqueta);
+      expect(etiqueta.trim().length, tipo).toBeGreaterThan(0);
+    }
+    expect(nombreAlerta("comprobante_sin_foto")).toBe("Comprobante sin foto");
+    // Un tipo que todavía no está en el catálogo se lee igual, sin guiones bajos.
+    expect(nombreAlerta("alerta_nueva_de_prueba")).toBe("Alerta nueva de prueba");
   });
 });
