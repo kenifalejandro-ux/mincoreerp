@@ -175,6 +175,36 @@ export default function ControlViajesTv() {
   const [periodo, setPeriodo] = useState<Periodo>("24h");
   // El período de los resúmenes de la vista de una unidad (30 días era lo único que mostraba).
   const [periodoUnidad, setPeriodoUnidad] = useState<Periodo>("30d");
+  // Barra de desplazamiento propia, de 3 px. Ojo: quien se desplaza es el div interno (styles/responsive.css
+  // le pone max-height y overflow-y a todo hijo directo de un .fixed.inset-0, pensado para modales), no la
+  // raíz. Su barra nativa va oculta (inline) y esta aparece en lima solo mientras se mueve la página,
+  // ~0,8 s, como la del ERP (Layout.tsx), pero más fina.
+  const raiz = useRef<HTMLDivElement>(null);
+  const pulgar = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = raiz.current;
+    const barra = pulgar.current;
+    if (!el || !barra) return;
+    let quitar = 0;
+    const alMover = () => {
+      const { scrollHeight, clientHeight, scrollTop } = el;
+      if (scrollHeight <= clientHeight + 1) return;
+      const alto = Math.max(28, (clientHeight * clientHeight) / scrollHeight);
+      const arriba =
+        el.getBoundingClientRect().top +
+        (scrollTop / (scrollHeight - clientHeight)) * (clientHeight - alto);
+      barra.style.height = `${alto}px`;
+      barra.style.transform = `translateY(${arriba}px)`;
+      barra.style.opacity = "1";
+      window.clearTimeout(quitar);
+      quitar = window.setTimeout(() => (barra.style.opacity = "0"), 800);
+    };
+    el.addEventListener("scroll", alMover, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", alMover);
+      window.clearTimeout(quitar);
+    };
+  }, []);
   const [resumen, setResumen] = useState<Resumen | null>(null);
   const [consumo, setConsumo] = useState<Consumo | null>(null);
   const [viajes, setViajes] = useState<FilaViaje[]>([]);
@@ -355,7 +385,16 @@ export default function ControlViajesTv() {
       }}
     >
       <style>{ESTILO_AJUSTADO}</style>
-      <div className="mx-auto flex min-h-full max-w-[1900px] flex-col gap-3">
+      <div
+        ref={pulgar}
+        aria-hidden
+        className="pointer-events-none fixed right-[2px] top-0 z-50 w-[3px] rounded-full bg-[#badc1e] opacity-0 transition-opacity duration-300"
+      />
+      <div
+        ref={raiz}
+        style={{ scrollbarWidth: "none" }}
+        className="mx-auto flex min-h-full max-w-[1900px] flex-col gap-3 [&::-webkit-scrollbar]:hidden"
+      >
         {movil && (
           <>
             <header className="flex items-center gap-2">
