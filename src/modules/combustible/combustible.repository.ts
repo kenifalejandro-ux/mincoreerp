@@ -2404,7 +2404,14 @@ export class CombustibleRepository {
     const MAX_SERIES = 50;
     // SOLO_TALONARIO_REAL usa columnas sin alias: se filtra primero en una
     // subconsulta y recién después se une al tanque.
-    const condiciones = ["tenant_id = $1", "producto = 'combustible'", SOLO_TALONARIO_REAL];
+    // Un despacho sin vale (serie y número vacíos) no pertenece a ningún talonario.
+    const condiciones = [
+      "tenant_id = $1",
+      "producto = 'combustible'",
+      SOLO_TALONARIO_REAL,
+      "serie_talonario IS NOT NULL",
+      "n_vale IS NOT NULL",
+    ];
     const valores: unknown[] = [tenantId];
     agregarPeriodo(condiciones, valores, "despachado_en", periodo);
 

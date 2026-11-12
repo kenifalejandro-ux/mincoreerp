@@ -4496,7 +4496,8 @@ export class CombustibleController {
         service.talonariosDelPeriodo(client, tenantId, { desde, hasta })
       );
       res.json({ series });
-    } catch {
+    } catch (err) {
+      logger.error({ err }, "No se pudo armar el reporte de talonarios");
       res.status(500).json({ error: "Error al armar el reporte de talonarios" });
     }
   }
@@ -4535,7 +4536,8 @@ export class CombustibleController {
         contexto: contextoAuditoriaModulo(req),
       });
       res.status(201).json({ id: resultado.id });
-    } catch {
+    } catch (err) {
+      logger.error({ err }, "No se pudo dar de baja el tramo de vales");
       res.status(500).json({ error: "Error al dar de baja los vales" });
     }
   }
