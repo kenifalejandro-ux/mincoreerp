@@ -43,6 +43,8 @@ import TanquetaDelConductor from "./TanquetaDelConductor";
 import UnidadDeLaTanqueta from "./UnidadDeLaTanqueta";
 import UnidadYValeDeLinea from "./UnidadYValeDeLinea";
 import { despachoSinVale } from "./valeDelDespachoDatos";
+import { BotonValesFaltantes, PanelValesFaltantes } from "./AvisoValesFaltantes";
+import type { SerieTalonario } from "./valesFaltantesLogica";
 import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from "./Precintos";
 import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
 import VentanaSurtidores from "./Surtidores";
@@ -1164,7 +1166,14 @@ const RADIO_INT = "rounded-t-[60px] rounded-b-3xl";
  *  cambiar de tanque. Muestra el saldo teórico y conserva la fecha de la última varilla.
  *  Rojo = en o bajo el umbral mínimo del tanque (la misma regla que la tabla);
  *  ámbar = bajo 40 %; sin base para calcular saldo no se pinta líquido. */
-function TanqueVisual({ tanques }: { tanques: Tanque[] }) {
+function TanqueVisual({
+  tanques,
+  onVerKardex,
+}: {
+  tanques: Tanque[];
+  /** Con esto la tarjeta entera abre el kardex del tanque que se está viendo. */
+  onVerKardex?: (tanqueId: number) => void;
+}) {
   const [elegidoId, setElegidoId] = useState<number | null>(null);
   const t = tanques.find((x) => x.id === elegidoId) ?? tanques[0];
   if (!t) return null;
@@ -1184,7 +1193,32 @@ function TanqueVisual({ tanques }: { tanques: Tanque[] }) {
       ? ["#f59e0b", "#fde68a", "#78350f", "rgba(245,158,11,0.4)"]
       : ["#a3e635", "#ecfccb", "#3f6212", "rgba(163,230,53,0.45)"];
   return (
-    <div className="bg-[#192526] border border-[#2a2e37] rounded-lg p-6 flex flex-col items-center shadow-lg relative overflow-hidden">
+    <div
+      className={`group bg-[#192526] border border-[#2a2e37] rounded-lg p-6 flex flex-col items-center shadow-lg relative overflow-hidden ${
+        onVerKardex
+          ? "cursor-pointer transition-colors hover:border-[#a3e635] focus-visible:border-[#a3e635] focus-visible:outline-none"
+          : ""
+      }`}
+      {...(onVerKardex && {
+        role: "button",
+        tabIndex: 0,
+        "aria-label": `Ver kardex de ${t.codigo}`,
+        onClick: () => onVerKardex(t.id),
+        onKeyDown: (e: React.KeyboardEvent) => {
+          // Enter o espacio solo si el foco está en la tarjeta: dentro del
+          // selector de tanque esas teclas son del selector.
+          if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            onVerKardex(t.id);
+          }
+        },
+      })}
+    >
+      {onVerKardex && (
+        <span className="pointer-events-none absolute right-3 top-3 z-40 flex items-center gap-1 rounded-full bg-[#a3e635] px-2.5 py-1 text-[11px] font-bold text-[#0f1115] opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+          <BookOpen className="h-3 w-3" /> Ver kardex
+        </span>
+      )}
       <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[#2a2e37] to-transparent" />
       <h2 className="text-sm font-bold uppercase tracking-widest text-[#94a3b8] mb-6 w-full text-center border-b border-[#2a2e37] pb-4">
         Nivel de tanque
@@ -1193,6 +1227,7 @@ function TanqueVisual({ tanques }: { tanques: Tanque[] }) {
         <select
           value={t.id}
           onChange={(e) => setElegidoId(Number(e.target.value))}
+          onClick={(e) => e.stopPropagation()}
           className="mb-1 w-full bg-[#0D1719] border border-[#334155] rounded px-3 py-2 text-sm font-semibold text-white"
         >
           {tanques.map((x) => (
@@ -1880,6 +1915,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const [descargandoCalibracion, setDescargandoCalibracion] = useState(false);
   const [kardex, setKardex] = useState<Kardex | null>(null);
   const [errorKardex, setErrorKardex] = useState<string | null>(null);
+  // Vales faltantes del mismo período (null = sin dato: sin señal o sin permiso).
+  const [valesKardex, setValesKardex] = useState<SerieTalonario[] | null>(null);
+  const [valesKardexAbierto, setValesKardexAbierto] = useState(false);
   const [kardexTanqueId, setKardexTanqueId] = useState<number | null>(null);
   const [kardexDesde, setKardexDesde] = useState(() =>
     new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10)
@@ -2091,9 +2129,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         // 17:00 del último día no quede afuera del informe.
         const desde = new Date(`${kardexDesde}T00:00:00`).toISOString();
         const hasta = new Date(`${kardexHasta}T23:59:59`).toISOString();
-        const res = await apiFetch(
-          `/api/erp/combustible/${tanqueId}/kardex?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`
-        );
+        const periodo = `desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`;
+        // El aviso de vales es un extra: si falla (sin señal, sin permiso) el
+        // kardex sale igual y el aviso simplemente no aparece.
+        apiFetch(`/api/erp/combustible/despachos/talonarios?${periodo}`)
+          .then(async (r) => (r.ok ? ((await r.json()).series as SerieTalonario[]) : null))
+          .catch(() => null)
+          .then(setValesKardex);
+        const res = await apiFetch(`/api/erp/combustible/${tanqueId}/kardex?${periodo}`);
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
           setErrorKardex(mensajeDeError(body, "No se pudo armar el kardex."));
@@ -2256,6 +2299,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   const abrirModalKardex = async (tanqueId: number) => {
     setKardexTanqueId(tanqueId);
     setModalKardexAbierto(true);
+    setValesKardex(null);
+    setValesKardexAbierto(false);
     await cargarKardex(tanqueId);
   };
 
@@ -3982,7 +4027,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
               </div>
             )}
             <div className="grid grid-cols-1 xl:grid-cols-[minmax(320px,380px)_1fr] gap-6 items-start">
-              <TanqueVisual tanques={tanquesVisibles.filter((t) => t.activo)} />
+              <TanqueVisual
+                tanques={tanquesVisibles.filter((t) => t.activo)}
+                onVerKardex={permiteAccionTanque("kardex") ? abrirModalKardex : undefined}
+              />
               <div className="min-w-0">
                 <div
                   className="bg-[#192526] 
@@ -4039,7 +4087,24 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                             ? "text-red-500"
                             : "text-[#a3e635]";
                         return (
-                          <tr key={t.id} className=" transition-colors">
+                          <tr
+                            key={t.id}
+                            className={`transition-colors ${
+                              permiteAccionTanque("kardex")
+                                ? "cursor-pointer hover:bg-white/5 focus-visible:bg-white/5 focus-visible:outline-none"
+                                : ""
+                            }`}
+                            {...(permiteAccionTanque("kardex") && {
+                              tabIndex: 0,
+                              title: "Clic para ver el kardex",
+                              onClick: () => abrirModalKardex(t.id),
+                              onKeyDown: (e: React.KeyboardEvent) => {
+                                if (e.target === e.currentTarget && e.key === "Enter") {
+                                  abrirModalKardex(t.id);
+                                }
+                              },
+                            })}
+                          >
                             <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm text-[#94a3b8]">
                               {t.codigo}
                             </td>
@@ -4117,7 +4182,8 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                                 );
                               })()}
                             </td>
-                            <td className="p-4">
+                            {/* Los íconos hacen lo suyo: un clic acá no abre el kardex de la fila. */}
+                            <td className="p-4" onClick={(e) => e.stopPropagation()}>
                               <div className="flex flex-nowrap items-center justify-end gap-1 min-w-max">
                                 {permiteAccionTanque("ver_tanque") && (
                                   <button
@@ -6410,9 +6476,17 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                     ? "Sin varilla en el período"
                     : `Descuadre ${kardex.resumen.descuadre_final} ${kardex.tanque.unidad}`}
                 </span>
+                {valesKardex && (
+                  <BotonValesFaltantes
+                    series={valesKardex}
+                    abierto={valesKardexAbierto}
+                    onAlternar={() => setValesKardexAbierto((a) => !a)}
+                  />
+                )}
               </div>
             )}
           </div>
+          {valesKardex && valesKardexAbierto && <PanelValesFaltantes series={valesKardex} />}
 
           {/* `px-6 pb-6` y no `p-6`: el padding SUPERIOR scrollea junto
               con el contenido, así que dejaba una franja de 24px por encima

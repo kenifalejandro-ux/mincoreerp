@@ -4484,6 +4484,22 @@ export class CombustibleController {
     }
   }
 
+  /** GET /despachos/talonarios -- el reporte de vales por serie del período:
+   *  rango, usados, litros y los tramos que faltan con el vale de antes y de
+   *  después. Solo lectura; la misma gente que ve /despachos/huecos. */
+  async getTalonarios(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const { desde, hasta } = req.validatedQuery as PeriodoHistorialCombustibleQuery;
+      const series = await withTenant(tenantId, (client) =>
+        service.talonariosDelPeriodo(client, tenantId, { desde, hasta })
+      );
+      res.json({ series });
+    } catch {
+      res.status(500).json({ error: "Error al armar el reporte de talonarios" });
+    }
+  }
+
   // ── Alertas (migrations/0068) ─────────────────────────────────────────
 
   /** GET /alertas -- la campanita, la Bandeja y el panel de Tanques

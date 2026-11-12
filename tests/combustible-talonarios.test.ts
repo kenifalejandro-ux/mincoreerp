@@ -1,0 +1,139 @@
+/** tests/combustible-talonarios.test.ts
+ *
+ * GET /despachos/talonarios: el reporte de vales por serie del período (rango,
+ * usados, litros, tramos que faltan con el vale de antes y de después). Usa la
+ * misma consulta de huecos que /despachos/huecos, así que acá se prueba lo que
+ * agrega: los tramos, los vecinos, el período y el aislamiento entre empresas.
+ */
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import request from "supertest";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { closeDatabase, withTenant } from "../src/server/config/database";
+import { agruparEnTramos } from "../src/modules/combustible/talonariosPeriodo";
+
+function serieUnica(): string {
+  return `T${Math.floor(Math.random() * 1e8).toString(36)}`.toUpperCase();
+}
+
+describe("agruparEnTramos (cálculo puro)", () => {
+  it("junta consecutivos, ordena y quita repetidos", () => {
+    expect(agruparEnTramos([1304, 1289, 1302, 1303, 1302])).toEqual([
+      { desde: 1289, hasta: 1289 },
+      { desde: 1302, hasta: 1304 },
+    ]);
+  });
+  it("sin huecos no hay tramos", () => {
+    expect(agruparEnTramos([])).toEqual([]);
+  });
+});
+
+describe("combustible: reporte de talonarios", () => {
+  const password = "ClaveDePrueba123";
+  const agente = request.agent(app);
+  const agenteOtro = request.agent(app);
+  let tenantId: string;
+  let otroTenantId: string;
+  let tanqueId: number;
+  let equipoId: number;
+
+  beforeAll(async () => {
+    const creado = await crearTenantDePrueba(password);
+    tenantId = creado.tenant.id;
+    await agente
+      .post("/api/auth/login")
+      .send({ tenantSlug: creado.tenant.slug, email: creado.usuario.email, password });
+    const otro = await crearTenantDePrueba(password);
+    otroTenantId = otro.tenant.id;
+    await agenteOtro
+      .post("/api/auth/login")
+      .send({ tenantSlug: otro.tenant.slug, email: otro.usuario.email, password });
+
+    tanqueId = await withTenant(tenantId, async (client) => {
+      const fila = await client.query(
+        `INSERT INTO combustible (tenant_id, codigo, tanque_nombre, tipo_combustible, unidad, tipo_punto, capacidad_total)
+         VALUES ($1, $2, 'Tanque talonarios', 'diesel_b5', 'gal', 'fijo', 5000) RETURNING id`,
+        [tenantId, idUnico("TQ")]
+      );
+      return fila.rows[0].id;
+    });
+    const equipo = await agente
+      .post("/api/erp/equipos")
+      .send({ placa_codigo: idUnico("VQ"), tipo: "VOLQUETE", tipo_medidor: "horometro" });
+    equipoId = equipo.body.id;
+  });
+
+  afterAll(async () => {
+    await borrarTenantDePrueba(tenantId);
+    await borrarTenantDePrueba(otroTenantId);
+    await closeDatabase();
+  });
+
+  async function despachar(serie: string, nVale: number, cantidad = 35) {
+    const res = await agente.post("/api/erp/combustible/despachos").send({
+      origen: "tanque_propio",
+      combustible_id: tanqueId,
+      tipo_combustible: "diesel_b5",
+      tipo_destino: "equipo",
+      equipo_id: equipoId,
+      serie_talonario: serie,
+      n_vale: nVale,
+      cantidad,
+      lectura_contometro: cantidad,
+      costo_unitario: 16.8,
+      despachado_en: new Date().toISOString(),
+    });
+    expect(res.status).toBe(201);
+  }
+
+  it("arma tramos, cuenta usados y suma galones, con el vale de antes y de después", async () => {
+    const serie = serieUnica();
+    for (const n of [1, 2, 4, 5, 9]) await despachar(serie, n);
+
+    const res = await agente.get("/api/erp/combustible/despachos/talonarios");
+    expect(res.status).toBe(200);
+    const fila = res.body.series.find((s: { serie: string }) => s.serie === serie);
+    expect(fila).toBeDefined();
+    expect(fila.minimo).toBe(1);
+    expect(fila.maximo).toBe(9);
+    expect(fila.usados).toBe(5);
+    expect(fila.faltan).toBe(4);
+    expect(fila.galones).toBeCloseTo(175, 3);
+    expect(fila.tramos).toHaveLength(2);
+    expect(fila.tramos[0]).toMatchObject({ desde: 3, hasta: 3, cantidad: 1 });
+    expect(fila.tramos[0].anterior.n).toBe(2);
+    expect(fila.tramos[0].siguiente.n).toBe(4);
+    expect(fila.tramos[1]).toMatchObject({ desde: 6, hasta: 8, cantidad: 3 });
+    expect(fila.tramos[1].anterior.n).toBe(5);
+    expect(fila.tramos[1].siguiente.n).toBe(9);
+  });
+
+  it("una serie sin huecos sale completa", async () => {
+    const serie = serieUnica();
+    for (const n of [10, 11, 12]) await despachar(serie, n);
+    const res = await agente.get("/api/erp/combustible/despachos/talonarios");
+    const fila = res.body.series.find((s: { serie: string }) => s.serie === serie);
+    expect(fila.faltan).toBe(0);
+    expect(fila.tramos).toEqual([]);
+  });
+
+  it("un período sin despachos devuelve la lista vacía", async () => {
+    const res = await agente.get(
+      "/api/erp/combustible/despachos/talonarios?desde=2001-01-01T00:00:00Z&hasta=2001-01-31T00:00:00Z"
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.series).toEqual([]);
+  });
+
+  it("400 si el inicio del período es posterior al fin", async () => {
+    const res = await agente.get(
+      "/api/erp/combustible/despachos/talonarios?desde=2026-02-01T00:00:00Z&hasta=2026-01-01T00:00:00Z"
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("otra empresa no ve las series de esta", async () => {
+    const res = await agenteOtro.get("/api/erp/combustible/despachos/talonarios");
+    expect(res.status).toBe(200);
+    expect(res.body.series).toEqual([]);
+  });
+});

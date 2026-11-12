@@ -21,6 +21,7 @@ import {
   type AmbitoVales,
 } from "./alcance";
 import { TIPOS_CRITICOS } from "./canalesAlertas";
+import { armarTramos, numerosVecinos, type ValeVecino } from "./talonariosPeriodo";
 
 /** El período con el que se acota un historial. Las dos puntas son
  *  opcionales y se pueden usar sueltas: "de marzo en adelante" y "hasta
@@ -2382,6 +2383,100 @@ export class CombustibleRepository {
   // Gerencia (rol admin) se entera al momento de un hueco o una anulación,
   // sin esperar a que alguien note el hueco ni al cierre de período (Fase D
   // entrega 2, que sigue aparte). Ver el encabezado de la migración.
+
+  /** Reporte de talonarios del período: una fila por serie de combustible con
+   *  despachos en el período. El rango de cada serie va del menor al mayor vale
+   *  DESPACHADO en el período; los huecos se buscan dentro de ese rango contra las
+   *  tres fuentes del talonario (despachos, excedentes y asignaciones), igual que
+   *  findHuecosTalonario. Un vale anulado cuenta como rendido, pero sus litros no
+   *  se suman. Una serie que en el período solo usó asignaciones o excedentes no
+   *  aparece: el período se mide por la fecha del despacho. */
+  async findTalonariosDelPeriodo(client: PoolClient, tenantId: string, periodo: PeriodoHistorial) {
+    // Tope al rango de una serie: un vale tipeado con un dígito de más no debe
+    // armar millones de números (mismo criterio que MAX_HUECOS_POR_VALE).
+    const MAX_RANGO = 5000;
+    const MAX_SERIES = 50;
+    // SOLO_TALONARIO_REAL usa columnas sin alias: se filtra primero en una
+    // subconsulta y recién después se une al tanque.
+    const condiciones = ["tenant_id = $1", "producto = 'combustible'", SOLO_TALONARIO_REAL];
+    const valores: unknown[] = [tenantId];
+    agregarPeriodo(condiciones, valores, "despachado_en", periodo);
+
+    const series = await client.query<{
+      serie: string;
+      minimo: number;
+      maximo: number;
+      litros: string;
+      ultima_fecha: Date;
+    }>(
+      `SELECT d.serie_talonario AS serie, MIN(d.n_vale) AS minimo, MAX(d.n_vale) AS maximo,
+              COALESCE(SUM(${litrosSql("c", "d")}) FILTER (WHERE d.anulada_en IS NULL), 0) AS litros,
+              MAX(d.despachado_en) AS ultima_fecha
+         FROM (SELECT * FROM combustible_despachos WHERE ${condiciones.join(" AND ")}) d
+         LEFT JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = d.tenant_id
+        GROUP BY d.serie_talonario
+        ORDER BY d.serie_talonario
+        LIMIT ${MAX_SERIES}`,
+      valores
+    );
+
+    const resultado = [];
+    for (const s of series.rows) {
+      const base = [tenantId, "combustible", s.serie];
+      const huecos = await client.query<{ n_vale: number }>(
+        `SELECT gs AS n_vale
+           FROM generate_series($4::int, LEAST($5::int, $4::int + ${MAX_RANGO})) AS gs
+          WHERE NOT EXISTS (SELECT 1 FROM ${VALES_DEL_TALONARIO} WHERE vales.n_vale = gs)
+          ORDER BY gs`,
+        [...base, s.minimo, s.maximo]
+      );
+      const usados = await client.query<{ usados: number }>(
+        `SELECT COUNT(DISTINCT n_vale)::int AS usados
+           FROM ${VALES_DEL_TALONARIO} WHERE n_vale BETWEEN $4::int AND $5::int`,
+        [...base, s.minimo, s.maximo]
+      );
+      const numeros = huecos.rows.map((f) => f.n_vale);
+      const buscar = numerosVecinos(numeros);
+      const vecinos = new Map<number, ValeVecino>();
+      if (buscar.length > 0) {
+        // DISTINCT ON: un vale anulado y su corrección comparten número.
+        const filas = await client.query<{
+          n_vale: number;
+          registrado_por: string | null;
+          despachado_en: Date;
+        }>(
+          `SELECT DISTINCT ON (d.n_vale) d.n_vale, u.nombre AS registrado_por, d.despachado_en
+             FROM combustible_despachos d
+             LEFT JOIN usuarios u ON u.id = d.usuario_id
+            WHERE d.tenant_id = $1 AND d.producto = 'combustible' AND d.serie_talonario = $2
+              AND d.n_vale = ANY($3::int[])
+            ORDER BY d.n_vale, d.despachado_en DESC`,
+          [tenantId, s.serie, buscar]
+        );
+        for (const f of filas.rows) {
+          vecinos.set(f.n_vale, {
+            n: f.n_vale,
+            registrado_por: f.registrado_por,
+            despachado_en: f.despachado_en.toISOString(),
+          });
+        }
+      }
+      const litros = Number(s.litros);
+      resultado.push({
+        serie: s.serie,
+        minimo: s.minimo,
+        maximo: s.maximo,
+        usados: usados.rows[0].usados,
+        faltan: numeros.length,
+        litros,
+        galones: litros / LITROS_POR_GALON,
+        ultimo_vale: s.maximo,
+        ultima_fecha: s.ultima_fecha.toISOString(),
+        tramos: armarTramos(numeros, vecinos),
+      });
+    }
+    return resultado;
+  }
 
   /** El momento exacto en que un hueco se puede probar: cuando aparece un
    *  vale más allá de él -- antes de eso el número todavía podría estar
