@@ -2,6 +2,7 @@
 // encuadra el mapa en la zona de trabajo y cómo se separan las unidades que están juntas. Sin pantalla.
 import type { CatTv } from "./controlTvLogica";
 import { paradasDelViaje, posicion } from "../combustible/paradasViaje";
+import { ubicacionVigente } from "../combustible/ubicacionesLogica";
 import type { FilaViaje } from "../combustible/viajesFormato";
 
 export interface LugarMapa {
@@ -36,38 +37,6 @@ export function puntosDelViaje(v: FilaViaje, lugares: Map<string, LugarMapa>): (
   return paradasDelViaje(v).map((p) => puntoDeLugar(lugares.get(String(p.lugar_id))));
 }
 
-/** El recorrido dibujado: cada tramo entre dos paradas con punto es un arco suave; el tramo con un
- *  extremo sin punto no se dibuja. Devuelve las muestras del arco de cada tramo (null si no hay). */
-export function arcosDelViaje(puntos: (Punto | null)[], muestras = 24): (Punto[] | null)[] {
-  const tramos: (Punto[] | null)[] = [];
-  for (let i = 0; i < puntos.length - 1; i++) {
-    const a = puntos[i];
-    const b = puntos[i + 1];
-    if (!a || !b) {
-      tramos.push(null);
-      continue;
-    }
-    const dx = b.lon - a.lon;
-    const dy = b.lat - a.lat;
-    const L = Math.hypot(dx, dy);
-    // El arco se curva siempre hacia el mismo lado del sentido de la marcha: así la vuelta (que va al
-    // revés) queda del lado opuesto de la ida y las dos no se superponen.
-    const h = L * 0.12;
-    const cx = (a.lon + b.lon) / 2 - (L ? (dy / L) * h : 0);
-    const cy = (a.lat + b.lat) / 2 + (L ? (dx / L) * h : 0);
-    const pts: Punto[] = [];
-    for (let k = 0; k <= muestras; k++) {
-      const t = k / muestras;
-      pts.push({
-        lon: (1 - t) * (1 - t) * a.lon + 2 * (1 - t) * t * cx + t * t * b.lon,
-        lat: (1 - t) * (1 - t) * a.lat + 2 * (1 - t) * t * cy + t * t * b.lat,
-      });
-    }
-    tramos.push(pts);
-  }
-  return tramos;
-}
-
 export interface PosicionMapa {
   punto: Punto;
   /** El tramo en el que va (0 = de la primera a la segunda parada) y qué fracción de él lleva. */
@@ -75,12 +44,19 @@ export interface PosicionMapa {
   fraccion: number;
 }
 
-/** Dónde se dibuja la unidad: en su parada si está detenida en una, a mitad del tramo si va en camino.
- *  Sin el punto de lo que necesita, null (la unidad queda «sin ubicar»). Es una estimación por las
- *  marcas, no GPS. */
+/** Dónde se dibuja la unidad. Si la oficina anotó un punto en un lugar que tiene coordenadas y ese punto
+ *  es lo último que se sabe del viaje (ubicacionVigente: ni una llegada ni una salida más nueva lo pisan),
+ *  va exactamente ahí. Si no: en su parada si está detenida en una, y a mitad del tramo (en línea recta
+ *  entre las dos paradas) si va en camino. Sin el punto de lo que necesita, null (la unidad queda «sin
+ *  ubicar»). Es una estimación por las marcas, no GPS. */
 export function posicionEnMapa(v: FilaViaje, lugares: Map<string, LugarMapa>): PosicionMapa | null {
   const paradas = paradasDelViaje(v);
   const puntos = puntosDelViaje(v, lugares);
+  const vigente = ubicacionVigente(paradas, v.ultima_ubicacion);
+  if (vigente?.origen === "punto" && vigente.lugar_id != null) {
+    const exacto = puntoDeLugar(lugares.get(String(vigente.lugar_id)));
+    if (exacto) return { punto: exacto, tramo: null, fraccion: 0 };
+  }
   const pos = posicion(paradas);
   if (pos.tipo === "en_parada") {
     const p = puntos[pos.en];
@@ -90,9 +66,11 @@ export function posicionEnMapa(v: FilaViaje, lugares: Map<string, LugarMapa>): P
     const a = puntos[pos.hacia - 1];
     const b = puntos[pos.hacia];
     if (!a || !b) return null;
-    const arco = arcosDelViaje(puntos)[pos.hacia - 1];
-    if (!arco) return null;
-    return { punto: arco[Math.floor(arco.length / 2)], tramo: pos.hacia - 1, fraccion: 0.5 };
+    return {
+      punto: { lat: (a.lat + b.lat) / 2, lon: (a.lon + b.lon) / 2 },
+      tramo: pos.hacia - 1,
+      fraccion: 0.5,
+    };
   }
   if (pos.tipo === "sin_salir") {
     const p = puntos[0];

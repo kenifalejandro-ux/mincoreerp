@@ -59,14 +59,11 @@ function avatarDe(u: UnidadSatelite, elegida: boolean): L.DivIcon {
 export default function MapaSatelite({
   unidades,
   lugares,
-  rutas,
   elegida,
   onElegir,
 }: {
   unidades: UnidadSatelite[];
   lugares: LugarSatelite[];
-  /** Cada tramo de cada viaje como una lista de puntos. */
-  rutas: Punto[][];
   elegida: string | null;
   onElegir: (id: string) => void;
 }) {
@@ -107,24 +104,12 @@ export default function MapaSatelite({
     };
   }, []);
 
-  // Las rutas, los lugares y las unidades se redibujan cuando cambian los datos.
+  // Los lugares y las unidades se redibujan cuando cambian los datos.
   useEffect(() => {
     const m = mapa.current;
     const g = capa.current;
     if (!m || !g) return;
     g.clearLayers();
-    for (const r of rutas) {
-      const puntos = r.map((p) => [p.lat, p.lon] as L.LatLngTuple);
-      L.polyline(puntos, { color: "#BADC1E", weight: 7, opacity: 0.18, interactive: false }).addTo(
-        g
-      );
-      L.polyline(puntos, {
-        color: "#d4f25a",
-        weight: 2.4,
-        opacity: 0.95,
-        interactive: false,
-      }).addTo(g);
-    }
     for (const l of lugares) {
       const marca =
         l.papel === "parada"
@@ -177,7 +162,7 @@ export default function MapaSatelite({
         encuadrado.current = true;
       }
     }
-  }, [unidades, lugares, rutas, elegida, onElegir]);
+  }, [unidades, lugares, elegida, onElegir]);
 
   // Al elegir una unidad en la lista, el mapa se centra en ella.
   useEffect(() => {
