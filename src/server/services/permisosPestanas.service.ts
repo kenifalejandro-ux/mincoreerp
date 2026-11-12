@@ -20,6 +20,8 @@ const pestañasTanques: DefinicionPestana[] = [
   // Las compras en ruta tienen su propia vista, autónoma de la de despachos:
   // el conductor sube desde ahí el comprobante que no pudo subir al comprar.
   ["historial_compras", "Historial de compras"],
+  // El reporte de vales por serie: lo ven el grifero y Lectura, solo para mirar.
+  ["talonarios", "Talonarios"],
   ["alertas", "Alertas"],
   ["proveedores", "Proveedores"],
   ["surtidores", "Surtidores"],
@@ -322,6 +324,7 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
     "tanques:importar_excel",
     "tanques:historial_despacho",
     "tanques:historial_compras",
+    "tanques:talonarios",
     "tanques:acciones:kardex",
     "tanques:acciones:historial_varilla",
     "tanques:acciones:ver_tanque",
@@ -368,6 +371,7 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
     "tanques",
     "cisternas:registrar_recepcion",
     "tanques:registrar_despacho",
+    "tanques:talonarios",
     "tanques:acciones:registrar_lectura_varilla",
     "tanques:acciones:anular_lectura_varilla",
     "tanques:acciones:historial_varilla",
