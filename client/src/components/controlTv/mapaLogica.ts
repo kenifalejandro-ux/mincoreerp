@@ -39,6 +39,8 @@ export function puntosDelViaje(v: FilaViaje, lugares: Map<string, LugarMapa>): (
 
 export interface PosicionMapa {
   punto: Punto;
+  /** true cuando la unidad va en un lugar anotado con coordenadas (no estimada por las marcas). */
+  exacta?: boolean;
   /** El tramo en el que va (0 = de la primera a la segunda parada) y qué fracción de él lleva. */
   tramo: number | null;
   fraccion: number;
@@ -55,7 +57,7 @@ export function posicionEnMapa(v: FilaViaje, lugares: Map<string, LugarMapa>): P
   const vigente = ubicacionVigente(paradas, v.ultima_ubicacion);
   if (vigente?.origen === "punto" && vigente.lugar_id != null) {
     const exacto = puntoDeLugar(lugares.get(String(vigente.lugar_id)));
-    if (exacto) return { punto: exacto, tramo: null, fraccion: 0 };
+    if (exacto) return { punto: exacto, tramo: null, fraccion: 0, exacta: true };
   }
   const pos = posicion(paradas);
   if (pos.tipo === "en_parada") {
@@ -78,6 +80,19 @@ export function posicionEnMapa(v: FilaViaje, lugares: Map<string, LugarMapa>): P
   }
   const ultimo = puntos[puntos.length - 1];
   return ultimo ? { punto: ultimo, tramo: null, fraccion: 1 } : null;
+}
+
+/** Los puntos que el mapa tiene que mostrar: los lugares de cada ruta y también donde está cada unidad,
+ *  para que una ubicación anotada lejos de la ruta no quede fuera de la vista. */
+export function puntosDeEncuadre(
+  filas: { puntos: (Punto | null)[]; pos: PosicionMapa | null }[]
+): Punto[] {
+  const out: Punto[] = [];
+  for (const f of filas) {
+    for (const p of f.puntos) if (p) out.push(p);
+    if (f.pos) out.push(f.pos.punto);
+  }
+  return out;
 }
 
 /** El recuadro que encuadra todos los puntos con un margen, y con la proporción del lienzo para que el
