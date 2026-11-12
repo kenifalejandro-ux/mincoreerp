@@ -120,7 +120,10 @@ describe("ubicacionVigente", () => {
       texto: "Tupac Amarú",
       en: iso(5),
       origen: "punto",
+      // El lugar elegido al anotar el punto (null si se escribió texto libre): el mapa lo usa para ubicar la unidad.
+      lugar_id: null,
     });
+    expect(ubicacionVigente(sale, { ...punto(5), lugar_id: 7 })?.lugar_id).toBe(7);
     expect(ubicacionVigente(sale, null)?.texto).toBe("Salió de L1");
     // Un punto anotado en el mismo instante de la salida (la hora se ajusta a ella) cuenta.
     expect(ubicacionVigente(sale, punto(0))?.origen).toBe("punto");

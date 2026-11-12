@@ -1,5 +1,5 @@
 // El mapa digital del Control TV: el Perú dibujado (tierra en puntitos, departamentos en dorado) con
-// las rutas de los viajes y cada unidad como una luz del color de su estado. No usa internet. Sin GPS,
+// los lugares de los viajes y cada unidad como una luz del color de su estado. No usa internet. Sin GPS,
 // la posición es una estimación por las marcas; con pantalla completa y una lista lateral con filtros.
 import { LocateFixed, Maximize2, Minimize2 } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -9,7 +9,6 @@ import { imagenDeTipo } from "./iconosCanvas";
 import {
   acercar,
   aPixel,
-  arcosDelViaje,
   contarPorEstado,
   desplazar,
   encuadre,
@@ -121,7 +120,6 @@ export function MapaDigital({
     });
     const vistos = new Set<string>();
     const lugaresConPunto: LugarSatelite[] = [];
-    const rutas: Punto[][] = [];
     for (const f of filas) {
       const paradas = paradasDelViaje(f.v);
       paradas.forEach((p, i) => {
@@ -133,9 +131,8 @@ export function MapaDigital({
           lugaresConPunto.push({ id, nombre: p.lugar, punto: pt, papel });
         }
       });
-      for (const arco of arcosDelViaje(f.puntos)) if (arco) rutas.push(arco);
     }
-    return { unidades, lugaresConPunto, rutas };
+    return { unidades, lugaresConPunto };
     // `visibles` se recalcula con `filas` y `filtro`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filas, filtro]);
@@ -183,7 +180,7 @@ export function MapaDigital({
     return () => window.removeEventListener("keydown", alTeclear);
   }, [completa]);
 
-  // Capa fija: cuadrícula, tierra, departamentos, rutas y lugares. Se redibuja solo si cambia algo de eso.
+  // Capa fija: cuadrícula, tierra, departamentos y lugares. Se redibuja solo si cambia algo de eso.
   useEffect(() => {
     const c = base.current;
     const { w: W, h: H } = tamano;
@@ -251,25 +248,6 @@ export function MapaDigital({
       );
       x.stroke();
     });
-    // rutas de los viajes
-    x.lineCap = "round";
-    for (const f of filas) {
-      for (const arco of arcosDelViaje(f.puntos)) {
-        if (!arco) continue;
-        x.beginPath();
-        arco.forEach((p, i) => {
-          const q = pix(p.lat, p.lon);
-          if (i) x.lineTo(q.x, q.y);
-          else x.moveTo(q.x, q.y);
-        });
-        x.strokeStyle = `rgba(${LIMA},.10)`;
-        x.lineWidth = 6;
-        x.stroke();
-        x.strokeStyle = "rgba(212,242,90,.55)";
-        x.lineWidth = 1.1;
-        x.stroke();
-      }
-    }
     // lugares con su punto: un pin en el origen y en el destino, un punto en las paradas
     const lugaresVistos = new Map<string, { nombre: string; pt: Punto; papel: number }>();
     for (const f of filas) {
@@ -619,7 +597,6 @@ export function MapaDigital({
               <MapaSatelite
                 unidades={datosSatelite.unidades}
                 lugares={datosSatelite.lugaresConPunto}
-                rutas={datosSatelite.rutas}
                 elegida={elegida}
                 onElegir={onElegir}
               />
@@ -627,8 +604,8 @@ export function MapaDigital({
           )}
           {capa !== "marcas" && lugares.filter((l) => puntoDeLugar(l)).length === 0 && (
             <p className="absolute inset-x-4 top-3 rounded-lg border border-amber-400/30 bg-amber-400/10 p-2 text-xs text-amber-200">
-              Todavía no hay lugares con punto en el mapa. Ponlos en Viajes → Lugares y las rutas
-              aparecerán aquí.
+              Todavía no hay lugares con punto en el mapa. Ponlos en Viajes → Lugares y aparecerán
+              aquí.
             </p>
           )}
           <ul className="sr-only">

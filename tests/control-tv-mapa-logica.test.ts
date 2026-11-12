@@ -7,7 +7,6 @@ import { describe, it, expect } from "vitest";
 import type { FilaViaje } from "../client/src/components/combustible/viajesFormato";
 import {
   aPixel,
-  arcosDelViaje,
   contarPorEstado,
   encuadre,
   escaparHtml,
@@ -65,14 +64,55 @@ describe("posicionEnMapa: dónde se dibuja la unidad", () => {
     expect(p?.tramo).toBeNull();
   });
 
-  it("en camino va sobre el arco del tramo, entre las dos paradas", () => {
+  it("en camino va a mitad del tramo, en línea recta entre las dos paradas", () => {
     const p = posicionEnMapa(sale, L);
     expect(p).not.toBeNull();
     expect(p!.tramo).toBe(0);
     expect(p!.fraccion).toBe(0.5);
-    // Cae entre Trujillo y Tocache, no fuera del recuadro que forman.
-    expect(p!.punto.lon).toBeGreaterThan(TRUJILLO.longitud);
-    expect(p!.punto.lon).toBeLessThan(TOCACHE.longitud);
+    // El punto medio recto: justo entre Trujillo y Tocache.
+    expect(p!.punto.lat).toBeCloseTo((TRUJILLO.latitud + TOCACHE.latitud) / 2, 9);
+    expect(p!.punto.lon).toBeCloseTo((TRUJILLO.longitud + TOCACHE.longitud) / 2, 9);
+  });
+
+  describe("con un punto anotado en un lugar con coordenadas", () => {
+    const ubic = (lugar_id: number | null, horas: number) => ({
+      id: 1,
+      lugar_id,
+      texto: "Tupac amaru",
+      nota: null,
+      registrado_en: h(horas),
+      origen: "oficina" as const,
+    });
+    const conPunto = (v: FilaViaje, u: ReturnType<typeof ubic> | null) =>
+      ({ ...v, ultima_ubicacion: u }) as unknown as FilaViaje;
+    const AMARU = { id: 7, nombre: "Tupac amaru", latitud: -8.12, longitud: -78.0 };
+    const L3 = lugares(TRUJILLO, TOCACHE, AMARU);
+
+    it("la unidad va exactamente ahí, no a mitad del tramo", () => {
+      const p = posicionEnMapa(conPunto(sale, ubic(7, 2)), L3);
+      expect(p?.punto).toEqual({ lat: AMARU.latitud, lon: AMARU.longitud });
+    });
+
+    it("si el lugar no tiene punto, o se escribió texto libre, se estima por las marcas", () => {
+      const sinPunto = lugares(TRUJILLO, TOCACHE, { id: 7, nombre: "Tupac amaru" });
+      const medio = posicionEnMapa(sale, L3)?.punto;
+      expect(posicionEnMapa(conPunto(sale, ubic(7, 2)), sinPunto)?.punto).toEqual(medio);
+      expect(posicionEnMapa(conPunto(sale, ubic(null, 2)), L3)?.punto).toEqual(medio);
+      expect(posicionEnMapa(conPunto(sale, ubic(99, 2)), L3)?.punto).toEqual(medio);
+    });
+
+    it("un punto anterior a la salida, o una llegada a una parada, mandan sobre él", () => {
+      // El punto es de antes de que saliera (hora -3, salida en la 0): vale «Salió de…».
+      const viejo = posicionEnMapa(conPunto(sale, ubic(7, -3)), L3)?.punto;
+      expect(viejo).toEqual(posicionEnMapa(sale, L3)?.punto);
+      // Ya llegó a Tocache: la llegada manda aunque haya un punto anotado después.
+      const llego = posicionEnMapa(conPunto(enB, ubic(7, 6)), L3)?.punto;
+      expect(llego).toEqual({ lat: TOCACHE.latitud, lon: TOCACHE.longitud });
+    });
+
+    it("sin ubicación anotada todo sigue como antes", () => {
+      expect(posicionEnMapa(conPunto(sale, null), L3)).toEqual(posicionEnMapa(sale, L3));
+    });
   });
 
   it("sin salir se muestra en el origen, y terminado en la última parada", () => {
@@ -96,38 +136,7 @@ describe("posicionEnMapa: dónde se dibuja la unidad", () => {
   });
 });
 
-describe("arcosDelViaje: el recorrido dibujado", () => {
-  const P = (lat: number, lon: number) => ({ lat, lon });
-
-  it("cada tramo con sus dos extremos es un arco con muestras desde A hasta B", () => {
-    const arcos = arcosDelViaje([P(0, 0), P(0, 10)], 24);
-    expect(arcos).toHaveLength(1);
-    const a = arcos[0]!;
-    expect(a).toHaveLength(25);
-    expect(a[0]).toEqual(P(0, 0));
-    expect(a[24].lon).toBeCloseTo(10, 9);
-    expect(a[24].lat).toBeCloseTo(0, 9);
-    // Se curva: el punto del medio no queda sobre la recta.
-    expect(Math.abs(a[12].lat)).toBeGreaterThan(0.1);
-  });
-
-  it("el tramo con un extremo sin punto no se dibuja y los demás sí", () => {
-    const arcos = arcosDelViaje([P(0, 0), null, P(0, 10), P(5, 10)]);
-    expect(arcos.map((x) => x !== null)).toEqual([false, false, true]);
-  });
-
-  it("ida y vuelta se curvan a lados opuestos, para que no se pisen", () => {
-    const arcos = arcosDelViaje([P(0, 0), P(0, 10), P(0, 0)]);
-    const ida = arcos[0]![12].lat;
-    const vuelta = arcos[1]![12].lat;
-    expect(Math.sign(ida)).toBe(-Math.sign(vuelta));
-  });
-
-  it("dos paradas en el mismo punto no dan NaN", () => {
-    const arco = arcosDelViaje([P(1, 1), P(1, 1)])[0]!;
-    expect(arco.every((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon))).toBe(true);
-  });
-
+describe("puntosDelViaje: los puntos del recorrido", () => {
   it("puntosDelViaje respeta el orden de las paradas y deja null donde falta el punto", () => {
     const v = viaje([parada(0, 1, null, 0), parada(1, 9, null, null), parada(2, 2, null, null)]);
     const pts = puntosDelViaje(v, lugares(TRUJILLO, TOCACHE));

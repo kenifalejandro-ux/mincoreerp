@@ -84,6 +84,8 @@ export interface UbicacionVigente {
   en: string;
   /** De dónde sale: la llegada a una parada, la salida de una parada o un punto anotado. */
   origen: "llegada" | "salida" | "punto";
+  /** El lugar elegido al anotar el punto (solo cuando el origen es «punto»); null si se escribió texto libre. */
+  lugar_id?: number | null;
 }
 
 /** Dónde está el viaje. Si la última marca del recorrido es una llegada, la unidad está en esa
@@ -108,7 +110,7 @@ export function ubicacionVigente(
   }
   if (marca?.origen === "llegada") return { texto: marca.texto, en: marca.en, origen: "llegada" };
   const punto: UbicacionVigente | null = ultima
-    ? { texto: ultima.texto, en: ultima.registrado_en, origen: "punto" }
+    ? { texto: ultima.texto, en: ultima.registrado_en, origen: "punto", lugar_id: ultima.lugar_id }
     : null;
   if (marca && (!punto || marca.t > Date.parse(punto.en))) {
     return { texto: marca.texto, en: marca.en, origen: "salida" };

@@ -44,10 +44,10 @@ const viaje = {
   ],
 };
 
-async function prepararRespuestas(page: Page) {
+async function prepararRespuestas(page: Page, v: object = viaje, extra: object[] = []) {
   await page.route(new RegExp(`/api/erp/viajes/${ID}(\\?.*)?$`), (r) =>
     r.fulfill({
-      json: { viaje, cargas: [], ruta: { combustible_gal: null, urea_l: null }, tramos: [] },
+      json: { viaje: v, cargas: [], ruta: { combustible_gal: null, urea_l: null }, tramos: [] },
     })
   );
   await page.route(new RegExp(`/api/erp/viajes/control-tv/unidad/${ID}\\?`), (r) =>
@@ -69,6 +69,7 @@ async function prepararRespuestas(page: Page) {
         data: [
           { id: 1, nombre: "Huamachuco", latitud: -7.8133, longitud: -78.0484 },
           { id: 2, nombre: "Trujillo", latitud: -8.1116, longitud: -79.0288 },
+          ...extra,
         ],
       },
     })
@@ -258,4 +259,89 @@ test("la etiqueta «Nuevo» del ícono de TV sale, dura 24 horas desde el primer
   await page.reload();
   await expect(icono).toBeVisible();
   await expect(nuevo).toHaveCount(0);
+});
+
+// Un lugar cercano al origen, lejos del punto medio recto entre Huamachuco y Trujillo.
+const AMARU = { id: 3, nombre: "Tupac Amaru", latitud: -7.9, longitud: -78.2 };
+const conUbicacion = {
+  ...viaje,
+  ultima_ubicacion: {
+    id: 1,
+    lugar_id: 3,
+    texto: "Tupac Amaru",
+    nota: null,
+    registrado_en: hace(1),
+    origen: "oficina",
+  },
+};
+
+test("sin líneas en el satélite y la unidad va en el lugar donde se anotó su ubicación", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  await page.setViewportSize({ width: 1920, height: 990 });
+  const avatar = page.locator(".leaflet-marker-icon:has(div svg)");
+  const abrir = async () => {
+    await page.goto(`/control-tv?unidad=${ID}`);
+    await expect(page.getByRole("heading", { name: "Pia Prueba" })).toBeVisible();
+    await page.getByRole("button", { name: "Satélite", exact: true }).click();
+    await expect(avatar).toHaveCount(1);
+    await page.waitForTimeout(700); // el mapa termina de encuadrar
+    return (await avatar.boundingBox())!;
+  };
+
+  // Sin ubicación anotada: a mitad del tramo, y sin ninguna línea dibujada.
+  await prepararRespuestas(page, viaje, [AMARU]);
+  const medio = await abrir();
+  await expect(page.locator(".leaflet-overlay-pane path")).toHaveCount(0);
+  // Los dos pines (origen y destino) y el avatar siguen: solo se quitaron las líneas.
+  await expect(page.locator(".leaflet-marker-icon")).toHaveCount(3);
+
+  // Con la ubicación anotada en un lugar con punto: la unidad cambia de sitio (va al lugar).
+  await page.unroute(/\/api\/erp\/viajes\/lugares(\?.*)?$/);
+  await page.unroute(new RegExp(`/api/erp/viajes/${ID}(\\?.*)?$`));
+  await prepararRespuestas(page, conUbicacion, [AMARU]);
+  const exacta = await abrir();
+  expect(Math.hypot(exacta.x - medio.x, exacta.y - medio.y)).toBeGreaterThan(60);
+  if (process.env.CAPTURAS_TV) {
+    await page.screenshot({ path: `${process.env.CAPTURAS_TV}/sin-lineas-satelite-exacta.png` });
+  }
+});
+
+test("sin líneas en el digital: ninguna ruta dibujada y el aviso del mapa sigue siendo legible", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  await prepararRespuestas(page, conUbicacion, [AMARU]);
+  await page.setViewportSize({ width: 1920, height: 990 });
+  await page.goto(`/control-tv?unidad=${ID}`);
+  await expect(page.getByRole("heading", { name: "Pia Prueba" })).toBeVisible();
+  const mapa = page.getByRole("img", { name: /Mapa de las unidades en ruta/ });
+  await expect(mapa).toBeVisible();
+  await page.waitForTimeout(800);
+  // La capa fija (la que dibujaba las rutas) no tiene píxeles del color de la ruta (lima #d4f25a).
+  const pixelesDeRuta = await page.evaluate(() => {
+    const c = document.querySelectorAll("canvas")[0] as HTMLCanvasElement;
+    const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4)
+      if (
+        d[i + 3] > 40 &&
+        d[i] > 190 &&
+        d[i] < 235 &&
+        d[i + 1] > 225 &&
+        d[i + 2] > 60 &&
+        d[i + 2] < 130
+      )
+        n++;
+    return n;
+  });
+  expect(pixelesDeRuta).toBe(0);
+  if (process.env.CAPTURAS_TV) {
+    await page.screenshot({ path: `${process.env.CAPTURAS_TV}/sin-lineas-digital-exacta.png` });
+  }
 });
