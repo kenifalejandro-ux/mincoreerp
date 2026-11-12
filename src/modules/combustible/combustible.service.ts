@@ -58,6 +58,7 @@ import {
   moverDeGrifo,
 } from "../../server/services/sedes.service";
 import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
+import { rangosSolapados } from "./talonariosPeriodo";
 
 /** Lo que la pantalla necesita para mostrar (o registrar) la decisión sobre
  *  un excedente de recepción, sin volver a calcular nada (0102, rediseñado en
@@ -3339,6 +3340,29 @@ export class CombustibleService {
     periodo: { desde?: string; hasta?: string }
   ) {
     return this.repository.findTalonariosDelPeriodo(client, tenantId, periodo);
+  }
+
+  /** Da de baja un tramo de vales (0185). Rechaza lo que ya tiene un vale registrado y lo que ya
+   *  estaba dado de baja: la baja explica números SIN movimiento, nunca los esconde. */
+  async darDeBajaVales(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    input: { serie: string; desde: number; hasta: number; motivo: string; detalle?: string }
+  ) {
+    await this.repository.bloquearBajasDeSerie(client, tenantId, input.serie);
+    const registrados = await this.repository.valesRegistradosEnRango(
+      client,
+      tenantId,
+      input.serie,
+      input.desde,
+      input.hasta
+    );
+    if (registrados.length > 0) return { estado: "con_vales" as const, registrados };
+    const previas = await this.repository.bajasDeSerie(client, tenantId, input.serie);
+    if (rangosSolapados(input, previas).length > 0) return { estado: "ya_dada_de_baja" as const };
+    const id = await this.repository.crearBajaDeVales(client, tenantId, usuarioId, input);
+    return { estado: "ok" as const, id };
   }
 
   // ── Alertas (migrations/0068) ─────────────────────────────────────────

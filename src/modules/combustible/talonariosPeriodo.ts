@@ -21,6 +21,38 @@ export interface TramoFaltante {
   siguiente: ValeVecino | null;
 }
 
+/** Una baja ya guardada, con quién la dio. */
+export interface BajaDeVale {
+  desde: number;
+  hasta: number;
+  motivo: string;
+  detalle: string | null;
+  /** Nombre de quien la dio; null si el usuario ya no existe. */
+  dado_por: string | null;
+  fecha: string;
+}
+
+/** Un tramo con su baja, si alguna baja lo cubre entero. */
+export type TramoConBaja = TramoFaltante & { baja: BajaDeVale | null };
+
+/** Marca cada tramo con la baja que lo cubre. Si el mismo tramo está cubierto por dos
+ *  bajas, queda la más reciente. Un tramo que la baja cubre solo en parte no cuenta. */
+export function anotarBajas(tramos: TramoFaltante[], bajas: BajaDeVale[]): TramoConBaja[] {
+  const recientes = [...bajas].sort((a, b) => b.fecha.localeCompare(a.fecha));
+  return tramos.map((t) => ({
+    ...t,
+    baja: recientes.find((b) => b.desde <= t.desde && b.hasta >= t.hasta) ?? null,
+  }));
+}
+
+/** Números de la baja que SÍ tienen un vale registrado (no se pueden dar de baja). */
+export function rangosSolapados(
+  nuevo: { desde: number; hasta: number },
+  bajas: { desde: number; hasta: number }[]
+) {
+  return bajas.filter((b) => b.desde <= nuevo.hasta && b.hasta >= nuevo.desde);
+}
+
 /** Números consecutivos juntos: [1289, 1302, 1303, 1304] -> 1289 y 1302-1304.
  *  No exige que vengan ordenados ni sin repetir. */
 export function agruparEnTramos(huecos: number[]): { desde: number; hasta: number }[] {

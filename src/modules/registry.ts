@@ -461,6 +461,12 @@ export const MODULOS: ModuloDefinicion[] = [
           creado_por: "usuarios",
         },
       },
+      // Tramos de vales dados de baja (0185): solo apuntan al usuario que los dio.
+      {
+        nombre: "combustible_vales_baja",
+        pk: "serial",
+        fks: { creado_por: "usuarios" },
+      },
       // Entregas del mando entre titular y relevo (0153): cascadean desde el viaje.
       {
         nombre: "combustible_viaje_entregas",

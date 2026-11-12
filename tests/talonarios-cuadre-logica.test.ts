@@ -24,6 +24,8 @@ const serie = (usados: number, faltan: number, galones: number, litros = 0): Ser
   maximo: usados + faltan,
   usados,
   faltan,
+  explicados: 0,
+  sin_explicar: faltan,
   litros,
   galones,
   ultimo_vale: usados + faltan,
@@ -76,6 +78,14 @@ describe("calcularCuadre", () => {
     expect(c.sinExplicar).toBe(0);
   });
 
+  it("los vales dados de baja no cuentan en la estimación", () => {
+    const explicada: SerieTalonario = { ...serie(20, 12, 1400), explicados: 12, sin_explicar: 0 };
+    const c = calcularCuadre([explicada], varilla, "gal");
+    expect(c.faltan).toBe(0);
+    expect(c.estimadoFaltantes).toBe(0);
+    expect(c.sinExplicar).toBeCloseTo(2260.2, 5);
+  });
+
   it("sin vales usados no hay promedio ni equivalencia", () => {
     const c = calcularCuadre([serie(0, 5, 0)], varilla, "gal");
     expect(c.promedioPorVale).toBe(0);
@@ -94,6 +104,7 @@ describe("hojasDelExcel", () => {
           cantidad: 2,
           anterior: { n: 2, registrado_por: "sigma", despachado_en: "2026-11-03T19:00:00.000Z" },
           siguiente: null,
+          baja: null,
         },
       ],
     };
@@ -110,6 +121,7 @@ describe("hojasDelExcel", () => {
         "Registrado el anterior": "sigma, 03/11",
         "Vale siguiente": 5,
         "Registrado el siguiente": "",
+        Baja: "",
       },
     ]);
   });

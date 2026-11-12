@@ -62,6 +62,8 @@ const accionesTanque: DefinicionPestana[] = [
   ["historial_varilla", "Historial de varilla"],
   ["ver_tanque", "Ver tanque"],
   ["anular_lectura_varilla", "Anular lectura de varilla"],
+  // Dar de baja un tramo de vales que faltan (reporte de Talonarios): solo la oficina.
+  ["baja_vales", "Dar de baja vales"],
 ].map(([id, nombre]) => ({
   modulo: "combustible",
   pestana: `tanques:acciones:${id}`,

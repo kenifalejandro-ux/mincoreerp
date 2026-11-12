@@ -173,6 +173,26 @@ test("Talonarios: el botón abre el reporte con la serie, su tramo que falta y e
   await expect(page.getByText("00003 – 00004")).toBeVisible();
   await expect(page.getByText(`Entre el V${marca}-00002`)).toBeVisible();
 
+  // Dar de baja el tramo: pide motivo, y «Otro» pide además el detalle.
+  await page.getByRole("button", { name: "Dar de baja" }).click();
+  await page.getByRole("button", { name: /Confirmar baja/ }).click();
+  await expect(page.getByText("Elige un motivo.")).toBeVisible();
+  await page.getByLabel("Motivo").selectOption("otro");
+  await page.getByRole("button", { name: /Confirmar baja/ }).click();
+  await expect(page.getByText("Con «Otro» el detalle es obligatorio.")).toBeVisible();
+  await page.getByLabel("Motivo").selectOption("roto");
+  await page.getByRole("button", { name: /Confirmar baja/ }).click();
+  await expect(page.getByText(/Dado de baja: Vale roto · por /)).toBeVisible(CARGA);
+  // El tramo queda explicado: en la serie ya no hay vales sin explicar.
+  await expect(
+    page
+      .getByRole("row")
+      .filter({ hasText: `V${marca}` })
+      .first()
+      .getByRole("cell")
+      .nth(6)
+  ).toHaveText("0");
+
   // El cuadre contra el tanque lo ve el administrador.
   await expect(page.getByText("Cuadre contra el tanque")).toBeVisible();
 

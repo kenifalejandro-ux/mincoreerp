@@ -76,6 +76,7 @@ import type {
   AnularRecepcionCombustibleInput,
   ValidarRecepcionCombustibleInput,
   AnularDespachoCombustibleInput,
+  BajaValesCombustibleInput,
   SubirComprobanteCompraInput,
   MarcarAlertasLeidasCombustibleInput,
   BajaTanqueCombustibleInput,
@@ -4497,6 +4498,45 @@ export class CombustibleController {
       res.json({ series });
     } catch {
       res.status(500).json({ error: "Error al armar el reporte de talonarios" });
+    }
+  }
+
+  /** POST /despachos/talonarios/bajas -- da de baja un tramo de vales que faltan (0185), con su
+   *  motivo. Queda en la Bitácora con quién, cuándo y por qué. Solo admin y operador. */
+  async postBajaVales(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const input = req.validatedBody as BajaValesCombustibleInput;
+      const resultado = await withTenant(tenantId, (client) =>
+        service.darDeBajaVales(client, tenantId, req.usuario!.id, input)
+      );
+      if (resultado.estado === "con_vales") {
+        res.status(409).json({
+          error: `Estos vales ya tienen movimiento: ${resultado.registrados.join(", ")}. No se pueden dar de baja.`,
+        });
+        return;
+      }
+      if (resultado.estado === "ya_dada_de_baja") {
+        res.status(409).json({ error: "Una parte de este tramo ya está dada de baja." });
+        return;
+      }
+      await registrarAuditoria({
+        accion: "combustible.vales_baja",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          serie: input.serie,
+          desde: input.desde,
+          hasta: input.hasta,
+          cantidad: input.hasta - input.desde + 1,
+          motivo: input.motivo,
+          detalle: input.detalle ?? null,
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      res.status(201).json({ id: resultado.id });
+    } catch {
+      res.status(500).json({ error: "Error al dar de baja los vales" });
     }
   }
 

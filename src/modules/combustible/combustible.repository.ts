@@ -21,7 +21,13 @@ import {
   type AmbitoVales,
 } from "./alcance";
 import { TIPOS_CRITICOS } from "./canalesAlertas";
-import { armarTramos, numerosVecinos, type ValeVecino } from "./talonariosPeriodo";
+import {
+  anotarBajas,
+  armarTramos,
+  numerosVecinos,
+  type BajaDeVale,
+  type ValeVecino,
+} from "./talonariosPeriodo";
 
 /** El período con el que se acota un historial. Las dos puntas son
  *  opcionales y se pueden usar sueltas: "de marzo en adelante" y "hasta
@@ -2462,6 +2468,11 @@ export class CombustibleRepository {
         }
       }
       const litros = Number(s.litros);
+      const tramos = anotarBajas(
+        armarTramos(numeros, vecinos),
+        await this.bajasDeSerie(client, tenantId, s.serie)
+      );
+      const explicados = tramos.reduce((suma, t) => suma + (t.baja ? t.cantidad : 0), 0);
       resultado.push({
         serie: s.serie,
         minimo: s.minimo,
@@ -2472,10 +2483,77 @@ export class CombustibleRepository {
         galones: litros / LITROS_POR_GALON,
         ultimo_vale: s.maximo,
         ultima_fecha: s.ultima_fecha.toISOString(),
-        tramos: armarTramos(numeros, vecinos),
+        explicados,
+        sin_explicar: numeros.length - explicados,
+        tramos,
       });
     }
     return resultado;
+  }
+
+  /** Las bajas de una serie (0185), con el nombre de quien las dio. */
+  async bajasDeSerie(client: PoolClient, tenantId: string, serie: string): Promise<BajaDeVale[]> {
+    const r = await client.query<{
+      desde: number;
+      hasta: number;
+      motivo: string;
+      detalle: string | null;
+      dado_por: string | null;
+      creado_en: Date;
+    }>(
+      `SELECT b.desde, b.hasta, b.motivo, b.detalle, u.nombre AS dado_por, b.creado_en
+         FROM combustible_vales_baja b
+         LEFT JOIN usuarios u ON u.id = b.creado_por
+        WHERE b.tenant_id = $1 AND b.serie = $2
+        ORDER BY b.creado_en DESC`,
+      [tenantId, serie]
+    );
+    return r.rows.map((f) => ({
+      desde: f.desde,
+      hasta: f.hasta,
+      motivo: f.motivo,
+      detalle: f.detalle,
+      dado_por: f.dado_por,
+      fecha: f.creado_en.toISOString(),
+    }));
+  }
+
+  /** Cuáles de los números de un rango YA tienen un vale (despacho, excedente o asignación). */
+  async valesRegistradosEnRango(
+    client: PoolClient,
+    tenantId: string,
+    serie: string,
+    desde: number,
+    hasta: number
+  ): Promise<number[]> {
+    const r = await client.query<{ n_vale: number }>(
+      `SELECT DISTINCT n_vale FROM ${VALES_DEL_TALONARIO}
+        WHERE n_vale BETWEEN $4::int AND $5::int ORDER BY n_vale`,
+      [tenantId, "combustible", serie, desde, hasta]
+    );
+    return r.rows.map((f) => f.n_vale);
+  }
+
+  /** Serializa las bajas de una misma serie: dos personas dando de baja a la vez el mismo tramo
+   *  no deben dejar dos filas. Se suelta sola al terminar la transacción. */
+  async bloquearBajasDeSerie(client: PoolClient, tenantId: string, serie: string) {
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+      `vales_baja:${tenantId}:${serie}`,
+    ]);
+  }
+
+  async crearBajaDeVales(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    b: { serie: string; desde: number; hasta: number; motivo: string; detalle?: string }
+  ) {
+    const r = await client.query<{ id: string }>(
+      `INSERT INTO combustible_vales_baja (tenant_id, serie, desde, hasta, motivo, detalle, creado_por)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [tenantId, b.serie, b.desde, b.hasta, b.motivo, b.detalle ?? null, usuarioId]
+    );
+    return r.rows[0].id;
   }
 
   /** El momento exacto en que un hueco se puede probar: cuando aparece un

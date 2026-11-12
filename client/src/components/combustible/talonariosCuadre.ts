@@ -1,7 +1,7 @@
 // Cuadre del reporte de talonarios: lo que se despachó con vale contra lo que le falta al tanque
 // en su última varilla. Sin React, para probarlo solo. Todo lo de los vales que faltan es una
 // ESTIMACIÓN (promedio por vale × cantidad), nunca un dato registrado.
-import type { SerieTalonario } from "./valesFaltantesLogica";
+import { textoBaja, type SerieTalonario } from "./valesFaltantesLogica";
 
 export interface FilaDeKardex {
   tipo: string;
@@ -53,7 +53,8 @@ export function calcularCuadre(
 ): Cuadre {
   const despachado = series.reduce((s, x) => s + (unidad === "gal" ? x.galones : x.litros), 0);
   const usados = series.reduce((s, x) => s + x.usados, 0);
-  const faltan = series.reduce((s, x) => s + x.faltan, 0);
+  // Un vale dado de baja no despachó nada: solo los que siguen sin explicar entran en la estimación.
+  const faltan = series.reduce((s, x) => s + x.sin_explicar, 0);
   const promedioPorVale = usados > 0 ? despachado / usados : 0;
   const estimadoFaltantes = faltan * promedioPorVale;
   const faltanteTanque = varilla.teorico - varilla.medido;
@@ -78,6 +79,8 @@ export function hojasDelExcel(series: SerieTalonario[], formatearFecha: (iso: st
     Hasta: s.maximo,
     Usados: s.usados,
     Faltan: s.faltan,
+    "Dados de baja": s.explicados,
+    "Sin explicar": s.sin_explicar,
     Litros: s.litros,
     Galones: s.galones,
     "Último vale": s.ultimo_vale,
@@ -95,6 +98,7 @@ export function hojasDelExcel(series: SerieTalonario[], formatearFecha: (iso: st
       "Registrado el anterior": vecino(t.anterior),
       "Vale siguiente": t.hasta + 1,
       "Registrado el siguiente": vecino(t.siguiente),
+      Baja: t.baja ? textoBaja(t.baja, formatearFecha) : "",
     }))
   );
   return { filasSeries, filasTramos };

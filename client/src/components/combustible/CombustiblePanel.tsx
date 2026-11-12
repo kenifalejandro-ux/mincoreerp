@@ -619,6 +619,7 @@ const ETIQUETA_ACCION: Record<string, string> = {
   // Llevarse datos del módulo es una acción de auditoría, no una consulta:
   // si el archivo aparece circulando, la bitácora dice quién lo sacó.
   "combustible.kardex_exportar": "Kardex exportado",
+  "combustible.vales_baja": "Vales dados de baja",
   "combustible.calibracion_exportar": "Detalle de calibración exportado",
 };
 
@@ -6387,6 +6388,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         <TalonariosModal
           tanques={tanques.filter((t) => t.tipo_punto === "fijo")}
           puedeCuadre={(esAdmin || usuario?.rol === "operador") && permiteAccionTanque("kardex")}
+          puedeDarBaja={
+            (esAdmin || usuario?.rol === "operador") && permiteAccionTanque("baja_vales")
+          }
           onCerrar={() => setTalonariosAbierto(false)}
         />
       )}
