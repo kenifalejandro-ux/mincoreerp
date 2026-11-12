@@ -56,3 +56,12 @@ export function textoVecinos(
       : valeTexto(serie, n);
   return `Entre el ${parte(t.desde - 1, t.anterior)} y el ${parte(t.hasta + 1, t.siguiente)}`;
 }
+
+/** «12/11 8:59 a. m.», sin año: el período ya dice cuál es. */
+export const fechaCorta = (iso: string) =>
+  new Date(iso).toLocaleString("es-PE", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "numeric",
+    minute: "2-digit",
+  });

@@ -32,6 +32,7 @@ describe("combustible: reporte de talonarios", () => {
   const agente = request.agent(app);
   const agenteOtro = request.agent(app);
   let tenantId: string;
+  let tenantSlug: string;
   let otroTenantId: string;
   let tanqueId: number;
   let equipoId: number;
@@ -39,6 +40,7 @@ describe("combustible: reporte de talonarios", () => {
   beforeAll(async () => {
     const creado = await crearTenantDePrueba(password);
     tenantId = creado.tenant.id;
+    tenantSlug = creado.tenant.slug;
     await agente
       .post("/api/auth/login")
       .send({ tenantSlug: creado.tenant.slug, email: creado.usuario.email, password });
@@ -129,6 +131,28 @@ describe("combustible: reporte de talonarios", () => {
       "/api/erp/combustible/despachos/talonarios?desde=2026-02-01T00:00:00Z&hasta=2026-01-01T00:00:00Z"
     );
     expect(res.status).toBe(400);
+  });
+
+  // El grifero no tiene el historial de despachos, pero sí ve sus talonarios (solo mirar).
+  async function entrarComo(rol: string) {
+    const dni = String(86300000 + Math.floor(Math.random() * 900000));
+    const alta = await agente
+      .post("/api/erp/usuarios")
+      .send({ nombre: `Talonarios ${rol}`, dni, password, rol });
+    expect(alta.status, JSON.stringify(alta.body)).toBe(201);
+    const persona = request.agent(app);
+    const entrar = await persona
+      .post("/api/auth/login")
+      .send({ tenantSlug, identificador: dni, password });
+    expect(entrar.status).toBe(200);
+    return persona;
+  }
+
+  it("el grifero y Lectura lo ven; el conductor no", async () => {
+    const ruta = "/api/erp/combustible/despachos/talonarios";
+    expect((await (await entrarComo("grifero")).get(ruta)).status).toBe(200);
+    expect((await (await entrarComo("lectura")).get(ruta)).status).toBe(200);
+    expect((await (await entrarComo("conductor_ruta")).get(ruta)).status).toBe(403);
   });
 
   it("otra empresa no ve las series de esta", async () => {

@@ -205,10 +205,11 @@ router.get(
   requireRole("admin", "operador", "lectura", "grifero", "encargado_urea"),
   asyncHandler(controller.getHuecosTalonario.bind(controller))
 );
-// El reporte de talonarios: mismos permisos que /despachos/huecos (el grifero lo ve).
+// El reporte de talonarios, con su propia pestaña: el grifero no tiene el historial de despachos
+// pero sí ve sus talonarios (solo mirar).
 router.get(
   "/despachos/talonarios",
-  requirePestana("combustible", "tanques:historial_despacho"),
+  requirePestana("combustible", "tanques:talonarios"),
   requireRole("admin", "operador", "lectura", "grifero", "encargado_urea"),
   validateQuery(periodoHistorialCombustibleSchema),
   asyncHandler(controller.getTalonarios.bind(controller))

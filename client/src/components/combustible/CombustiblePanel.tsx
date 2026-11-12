@@ -45,6 +45,7 @@ import UnidadYValeDeLinea from "./UnidadYValeDeLinea";
 import { despachoSinVale } from "./valeDelDespachoDatos";
 import { BotonValesFaltantes, PanelValesFaltantes } from "./AvisoValesFaltantes";
 import type { SerieTalonario } from "./valesFaltantesLogica";
+import TalonariosModal from "./TalonariosModal";
 import { VentanaPrecintos, CamposPrecintoVarilla, CamposPrecintoRecepcion } from "./Precintos";
 import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./precintosDatos";
 import VentanaSurtidores from "./Surtidores";
@@ -1621,7 +1622,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     const override = usuario?.permisosPestanas?.[`combustible:tanques:${id}`];
     if (override !== undefined) return override;
     if (esAdmin) return true;
-    if (esGrifero) return id === "registrar_despacho";
+    if (esGrifero) return id === "registrar_despacho" || id === "talonarios";
     // Sus compras (solo las suyas, el servidor las filtra) para subir el
     // comprobante después. El historial de despachos es del grifero.
     if (esConductor) return id === "registrar_despacho" || id === "historial_compras";
@@ -1629,7 +1630,12 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     // Lectura: solo lo informativo. Ni "Registrar X", ni Alertas/Proveedores/
     // Surtidores/Precios/Nuevo tanque.
     if (esLectura)
-      return id === "importar_excel" || id === "historial_despacho" || id === "historial_compras";
+      return (
+        id === "importar_excel" ||
+        id === "historial_despacho" ||
+        id === "historial_compras" ||
+        id === "talonarios"
+      );
     return true;
   };
   /** Los permisos de la recepción, que viven en Cisternas (0175): registrarla, validarla y anularla,
@@ -1918,6 +1924,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
   // Vales faltantes del mismo período (null = sin dato: sin señal o sin permiso).
   const [valesKardex, setValesKardex] = useState<SerieTalonario[] | null>(null);
   const [valesKardexAbierto, setValesKardexAbierto] = useState(false);
+  const [talonariosAbierto, setTalonariosAbierto] = useState(false);
   const [kardexTanqueId, setKardexTanqueId] = useState<number | null>(null);
   const [kardexDesde, setKardexDesde] = useState(() =>
     new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10)
@@ -3845,6 +3852,14 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                 className={`${BTN_BASE} ${BTN_ESTILO.lime}`}
               >
                 <FileText className="w-4 h-4 shrink-0" /> Historial de despachos
+              </button>
+            )}
+            {permiteTanque("talonarios") && (
+              <button
+                onClick={() => setTalonariosAbierto(true)}
+                className={`${BTN_BASE} ${BTN_ESTILO.lime}`}
+              >
+                <FileText className="w-4 h-4 shrink-0" /> Talonarios
               </button>
             )}
             {/* Vista propia (autónoma del historial de despachos): el conductor
@@ -6367,6 +6382,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             )}
           </div>
         </VentanaFlotante>
+      )}
+      {talonariosAbierto && (
+        <TalonariosModal
+          tanques={tanques.filter((t) => t.tipo_punto === "fijo")}
+          puedeCuadre={(esAdmin || usuario?.rol === "operador") && permiteAccionTanque("kardex")}
+          onCerrar={() => setTalonariosAbierto(false)}
+        />
       )}
       {pestanaCombustible === "proveedores" && (
         <Proveedores grifos={grifos} onRecargar={cargarGrifos} />

@@ -5,20 +5,13 @@
 import { ChevronDown } from "lucide-react";
 
 import {
+  fechaCorta,
   rangoTexto,
   seriesConFaltantes,
   textoVecinos,
   totalFaltantes,
   type SerieTalonario,
 } from "./valesFaltantesLogica";
-
-const fechaCorta = (iso: string) =>
-  new Date(iso).toLocaleString("es-PE", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "numeric",
-    minute: "2-digit",
-  });
 
 export function BotonValesFaltantes({
   series,

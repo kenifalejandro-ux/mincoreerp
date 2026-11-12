@@ -151,3 +151,37 @@ test("Kardex: si la consulta de talonarios falla, el kardex sale igual y sin avi
   await expect(page.getByText(/Vales faltantes|Vales completos/)).toHaveCount(0);
   await expect(page.getByText(/No se pudo armar el kardex/)).toHaveCount(0);
 });
+
+test("Talonarios: el botón abre el reporte con la serie, su tramo que falta y el Excel", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const marca = randomBytes(3).toString("hex").toUpperCase();
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  await prepararTanqueConVales(page, marca);
+  await irATanques(page);
+
+  await page.getByRole("button", { name: "Talonarios", exact: true }).click(CARGA);
+  await expect(page.getByText("Talonarios de vales")).toBeVisible(CARGA);
+
+  // La serie de esta corrida: vales 1, 2 y 5 → usados 3 de 5, faltan 2.
+  const fila = page.getByRole("row").filter({ hasText: `V${marca}` });
+  await expect(fila).toBeVisible(CARGA);
+  await expect(fila).toContainText("3 de 5");
+  await fila.getByRole("button", { name: "Ver tramos" }).click();
+  await expect(page.getByText("00003 – 00004")).toBeVisible();
+  await expect(page.getByText(`Entre el V${marca}-00002`)).toBeVisible();
+
+  // El cuadre contra el tanque lo ve el administrador.
+  await expect(page.getByText("Cuadre contra el tanque")).toBeVisible();
+
+  // El Excel baja con las series del período.
+  const [descarga] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("button", { name: /Excel \(\.xlsx\)/ }).click(),
+  ]);
+  expect(descarga.suggestedFilename()).toMatch(
+    /^talonarios-\d{4}-\d{2}-\d{2}-a-\d{4}-\d{2}-\d{2}\.xlsx$/
+  );
+});
