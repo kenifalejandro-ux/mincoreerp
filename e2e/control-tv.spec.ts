@@ -69,7 +69,14 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   ]);
   await tv.waitForLoadState();
   expect(tv.url()).toContain("/control-tv");
-  await expect(tv.getByRole("heading", { name: "Control de viajes" })).toBeVisible();
+  // El título (h1) es el nombre de la empresa cuando llega el resumen y «Control de viajes» antes:
+  // buscarlo por ese nombre era una carrera. La línea de abajo del título es fija.
+  await expect(
+    tv
+      .getByText(/Control de viajes ·/)
+      .locator("visible=true")
+      .first()
+  ).toBeVisible();
   await expect(tv.getByText("Flota en operación")).toBeVisible();
   await expect(tv.getByText("Vista en vivo")).toBeVisible();
   await expect(tv.getByText("Viajes activos")).toBeVisible();
