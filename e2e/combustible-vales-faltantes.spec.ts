@@ -59,19 +59,32 @@ async function prepararTanqueConVales(page: Page, marca: string) {
 // `expect` de cada pantalla esperan más que los 5 s de siempre.
 const CARGA = { timeout: 30_000 };
 
+// Un solo login para todo el archivo. El login por pantalla compite con la instalación del service
+// worker de la PWA, que en un contexto nuevo precachea toda la app justo cuando el test rellena el
+// formulario: un clic en «Ingresar» que cae en medio no envía nada. Con cuatro logins seguidos esa
+// carrera salía una de cada tres corridas; con uno solo, casi nunca.
+test.describe.configure({ mode: "serial" });
+let page: Page;
+
+test.beforeAll(async ({ browser }) => {
+  page = await browser.newPage();
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+});
+
+test.afterAll(async () => {
+  await page.close();
+});
+
 async function irATanques(page: Page) {
   await page.reload();
   await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
   await page.getByRole("button", { name: "Tanques", exact: true }).click();
 }
 
-test("Tanques: el clic en la fila abre el kardex, los íconos no, y el aviso lista los tramos que faltan", async ({
-  page,
-}) => {
+test("Tanques: el clic en la fila abre el kardex, los íconos no, y el aviso lista los tramos que faltan", async () => {
   test.setTimeout(120_000);
   const marca = randomBytes(3).toString("hex").toUpperCase();
-  const admin = adminA();
-  await loginPorUI(page, admin.email, admin.password);
   const tanque = await prepararTanqueConVales(page, marca);
   await irATanques(page);
 
@@ -105,11 +118,9 @@ test("Tanques: el clic en la fila abre el kardex, los íconos no, y el aviso lis
   await expect(serie).toContainText(/registrado por/);
 });
 
-test("Tanques: el clic en la tarjeta del tanque abre su kardex", async ({ page }) => {
+test("Tanques: el clic en la tarjeta del tanque abre su kardex", async () => {
   test.setTimeout(120_000);
   const marca = randomBytes(3).toString("hex").toUpperCase();
-  const admin = adminA();
-  await loginPorUI(page, admin.email, admin.password);
   const tanque = await prepararTanqueConVales(page, marca);
   await irATanques(page);
 
@@ -134,13 +145,9 @@ test("Tanques: el clic en la tarjeta del tanque abre su kardex", async ({ page }
   await expect(page.getByText(`Kardex — ${tanque.codigo}`)).toBeVisible(CARGA);
 });
 
-test("Kardex: si la consulta de talonarios falla, el kardex sale igual y sin aviso", async ({
-  page,
-}) => {
+test("Kardex: si la consulta de talonarios falla, el kardex sale igual y sin aviso", async () => {
   test.setTimeout(120_000);
   const marca = randomBytes(3).toString("hex").toUpperCase();
-  const admin = adminA();
-  await loginPorUI(page, admin.email, admin.password);
   const tanque = await prepararTanqueConVales(page, marca);
   await page.route("**/despachos/talonarios**", (ruta) => ruta.abort());
   await irATanques(page);
@@ -150,15 +157,13 @@ test("Kardex: si la consulta de talonarios falla, el kardex sale igual y sin avi
   await expect(page.getByText(/Entradas/).first()).toBeVisible();
   await expect(page.getByText(/Vales faltantes|Vales completos/)).toHaveCount(0);
   await expect(page.getByText(/No se pudo armar el kardex/)).toHaveCount(0);
+  // Los tests que siguen sí necesitan la consulta de talonarios.
+  await page.unroute("**/despachos/talonarios**");
 });
 
-test("Talonarios: el botón abre el reporte con la serie, su tramo que falta y el Excel", async ({
-  page,
-}) => {
+test("Talonarios: el botón abre el reporte con la serie, su tramo que falta y el Excel", async () => {
   test.setTimeout(120_000);
   const marca = randomBytes(3).toString("hex").toUpperCase();
-  const admin = adminA();
-  await loginPorUI(page, admin.email, admin.password);
   await prepararTanqueConVales(page, marca);
   await irATanques(page);
 

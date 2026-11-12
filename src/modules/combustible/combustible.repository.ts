@@ -2421,7 +2421,7 @@ export class CombustibleRepository {
          FROM (SELECT * FROM combustible_despachos WHERE ${condiciones.join(" AND ")}) d
          LEFT JOIN combustible c ON c.id = d.combustible_id AND c.tenant_id = d.tenant_id
         GROUP BY d.serie_talonario
-        ORDER BY d.serie_talonario
+        ORDER BY MAX(d.despachado_en) DESC, d.serie_talonario
         LIMIT ${MAX_SERIES}`,
       valores
     );
@@ -2488,7 +2488,8 @@ export class CombustibleRepository {
         tramos,
       });
     }
-    return resultado;
+    // El corte de arriba se queda con las series más recientes; la lista sale por nombre.
+    return resultado.sort((x, y) => x.serie.localeCompare(y.serie));
   }
 
   /** Las bajas de una serie (0185), con el nombre de quien las dio. */

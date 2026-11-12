@@ -109,6 +109,32 @@ describe("combustible: reporte de talonarios", () => {
     expect(fila.tramos[1].siguiente.n).toBe(9);
   });
 
+  it("con más de 50 series, el corte deja las más recientes y la lista sale por nombre", async () => {
+    // 51 series viejas con nombre que ordena ANTES que la nueva y una nueva que ordena DESPUÉS.
+    const pasado = new Date(Date.now() - 20 * 24 * 3600 * 1000).toISOString();
+    await withTenant(tenantId, async (client) => {
+      for (let i = 0; i < 51; i++) {
+        await client.query(
+          `INSERT INTO combustible_despachos
+             (tenant_id, producto, origen, combustible_id, tipo_combustible, tipo_destino, equipo_id,
+              serie_talonario, n_vale, cantidad, lectura_contometro, costo_unitario, despachado_en)
+           VALUES ($1, 'combustible', 'tanque_propio', $2, 'diesel_b5', 'equipo', $3,
+                   $4, 1, 10, 10, 16, $5)`,
+          [tenantId, tanqueId, equipoId, `AA${String(i).padStart(3, "0")}`, pasado]
+        );
+      }
+    });
+    const reciente = `ZZ${Math.floor(Math.random() * 1e6)}`;
+    await despachar(reciente, 1);
+
+    const res = await agente.get("/api/erp/combustible/despachos/talonarios");
+    expect(res.status).toBe(200);
+    const nombres = res.body.series.map((x: { serie: string }) => x.serie);
+    expect(nombres).toContain(reciente);
+    expect(nombres.length).toBeLessThanOrEqual(50);
+    expect(nombres).toEqual([...nombres].sort((a: string, b: string) => a.localeCompare(b)));
+  });
+
   it("una serie sin huecos sale completa", async () => {
     const serie = serieUnica();
     for (const n of [10, 11, 12]) await despachar(serie, n);
