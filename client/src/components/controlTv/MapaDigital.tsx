@@ -15,6 +15,7 @@ import {
   filtrarPorEstado,
   masCercana,
   posicionEnMapa,
+  puntosDeEncuadre,
   puntoDeLugar,
   puntosDelViaje,
   separar,
@@ -139,11 +140,7 @@ export function MapaDigital({
   const sinUbicar = visibles.filter((f) => !f.pos);
 
   // Se encuadra en lo que hay: los lugares con punto y las unidades.
-  const todosLosPuntos = useMemo(() => {
-    const out: Punto[] = [];
-    for (const f of filas) f.puntos.forEach((p) => p && out.push(p));
-    return out;
-  }, [filas]);
+  const todosLosPuntos = useMemo(() => puntosDeEncuadre(filas), [filas]);
   const marcoAuto = useMemo(
     () => encuadre(todosLosPuntos, tamano.w || 1, tamano.h || 1, 0.18, unidad ? 0.5 : 3),
     [todosLosPuntos, tamano, unidad]
