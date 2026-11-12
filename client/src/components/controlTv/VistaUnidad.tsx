@@ -4,6 +4,7 @@
 import {
   ArrowLeft,
   Bell,
+  ChartColumn,
   ChevronLeft,
   ChevronRight,
   CircleCheck,
@@ -28,6 +29,7 @@ import {
   type ResumenUnidad,
 } from "./ResumenUnidadTv";
 import { SeccionTv } from "./SeccionTv";
+import { useEsPantallaChica } from "./useEsMovil";
 import { apiFetch } from "../../services/apiClient";
 import { descansoEnVentana, horasDelViaje } from "../combustible/horasViaje";
 import { estadoDelViaje, paradasDelViaje } from "../combustible/paradasViaje";
@@ -44,6 +46,7 @@ interface Detalle {
 }
 
 const LITROS_POR_GALON = 3.785411784;
+type TabUnidad = "mapa" | "viaje" | "conductor" | "consumo" | "alertas";
 const CARD = "rounded-[10px] border border-white/10 bg-[#0e191c] p-3";
 const iniciales = (n: string | null) =>
   (n ?? "?")
@@ -95,6 +98,9 @@ export function VistaUnidad({
   onCambiar: (id: string) => void;
   onVolver: () => void;
 }) {
+  // Celular y tablet: la unidad se reparte en pestañas con una barra abajo, como la TV central en el celular.
+  const chica = useEsPantallaChica();
+  const [tab, setTab] = useState<TabUnidad>("mapa");
   const [datos, setDatos] = useState<Detalle | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resumen, setResumen] = useState<ResumenUnidad | null>(null);
@@ -263,12 +269,135 @@ export function VistaUnidad({
   const hayCriticas = (resumen?.alertas.criticas ?? 0) > 0;
   const enMarcha = horas?.enRuta ?? null;
 
+  const bloqueMapa = (
+    <div className="tv-unidad-mapa flex min-h-[320px] min-w-0 flex-col">
+      <MapaDigital
+        viajes={[v]}
+        lugares={lugares}
+        onElegir={() => undefined}
+        titulo="Dónde está"
+        sinLeyenda
+        unidad
+        pie={
+          <span className="flex flex-wrap items-center gap-x-2">
+            <MapPin className="inline h-3.5 w-3.5 text-emerald-400" aria-hidden />
+            <b className="text-slate-100">{donde?.texto ?? "Sin ubicación todavía"}</b>
+            {donde && <span>· {haceCuanto(donde.en, ahora)} · estimada por las marcas</span>}
+          </span>
+        }
+      />
+    </div>
+  );
+  const bloqueConsumo = (
+    <ConsumoAcumulado
+      cargas={datos.cargas}
+      gal={gal}
+      urea={urea}
+      costo={costo}
+      vsPromedio={vsPromedio}
+    />
+  );
+  const bloqueTiempos = (
+    <Seccion
+      titulo="Tiempos del viaje"
+      icono={<Clock className="h-4 w-4 text-sky-400" aria-hidden />}
+    >
+      <div
+        className="flex h-5 gap-[3px] overflow-hidden rounded-md"
+        role="img"
+        aria-label="Tiempo manejando, en paradas y descansando"
+      >
+        {segmentos.map((s, i) => (
+          <div
+            key={`${s.t}-${i}`}
+            title={`${s.tip}: ${duracion(s.min)}`}
+            className="grid min-w-[6px] place-items-center overflow-hidden whitespace-nowrap text-[10px] font-bold text-[#04121a]"
+            style={{ flex: `${s.min / totalSeg} 1 0`, background: COLOR[s.t] }}
+          >
+            {s.min / totalSeg > 0.14 ? duracion(s.min) : ""}
+          </div>
+        ))}
+      </div>
+      <ul className="grid grid-cols-3 gap-1 text-[11px] text-slate-400">
+        {(
+          [
+            ["ruta", "Manejando", horas?.enRuta ?? 0],
+            ["est", "En paradas", horas?.enParadas ?? 0],
+            [
+              "desc",
+              "Descanso",
+              segmentos.filter((x) => x.t === "desc").reduce((a, x) => a + x.min, 0),
+            ],
+          ] as const
+        ).map(([k, t, min]) => (
+          <li key={k}>
+            <span className="flex items-center gap-1.5">
+              <i className="h-2 w-2 rounded-full" style={{ background: COLOR[k] }} />
+              {t}
+            </span>
+            <b className="ml-3.5 block text-[13px] text-slate-100">{duracion(min)}</b>
+            {k !== "desc" && (
+              <small className="ml-3.5 hidden text-[10.5px] min-[1500px]:block">
+                <VsNormal
+                  min={k === "ruta" ? (horas?.enRuta ?? null) : estadia}
+                  normal={k === "ruta" ? esperadoRuta : estadiaNormal}
+                />
+              </small>
+            )}
+          </li>
+        ))}
+      </ul>
+    </Seccion>
+  );
+  const bloqueConductor = (
+    <Seccion
+      titulo="Conductor y relevo"
+      icono={<Users className="h-4 w-4 text-emerald-400" aria-hidden />}
+    >
+      <div className="grid grid-cols-2 gap-3">
+        {[
+          { n: v.conductor_nombre, dni: v.conductor_dni, rol: "Titular" },
+          ...(v.relevo_nombre ? [{ n: v.relevo_nombre, dni: v.relevo_dni, rol: "Relevo" }] : []),
+        ].map((p) => (
+          <div key={p.rol} className="flex items-center gap-3">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#BADC1E] text-xs font-black text-[#0D1719]">
+              {iniciales(p.n ?? null)}
+            </span>
+            <div className="min-w-0 flex-1">
+              <b className="block truncate text-sm">{p.n ?? "—"}</b>
+              <small className="block truncate text-slate-400">
+                {p.rol}
+                {p.dni ? ` · DNI ${p.dni}` : ""}
+                {v.volante_dni && v.volante_dni === p.dni ? " · al volante" : ""}
+              </small>
+            </div>
+          </div>
+        ))}
+      </div>
+      {!v.relevo_nombre && <p className="text-xs text-slate-400">Sin relevo en este viaje</p>}
+      {(v.turnos?.length ?? 0) > 1 && (
+        <ul className="border-t border-white/10 pt-1.5 text-xs">
+          {v.turnos?.map((t) => (
+            <li key={t.inicio_en} className="flex justify-between gap-2 py-0.5">
+              <span>{t.conductor_nombre ?? t.conductor_dni}</span>
+              <span className="text-slate-400">
+                {duracion(
+                  ((t.fin_en ? Date.parse(t.fin_en) : ahora) - Date.parse(t.inicio_en)) / 60_000
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Seccion>
+  );
+
   return (
     <div className="tv-unidad flex flex-col gap-2.5">
       {error && <p className="text-xs text-amber-300">{error}</p>}
 
-      <div className="grid gap-2.5 min-[1200px]:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] min-[1700px]:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-        <header className={`${CARD} flex flex-wrap items-center gap-x-3 gap-y-2 !py-2`}>
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-2.5 min-[1200px]:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] min-[1700px]:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+        <header className={`${CARD} flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 !py-2`}>
           <button
             onClick={onVolver}
             className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl border border-[#BADC1E]/60 bg-[#BADC1E]/10 px-3 py-1.5 text-xs font-bold text-[#BADC1E] hover:bg-[#BADC1E]/20"
@@ -316,7 +445,7 @@ export function VistaUnidad({
             <IconoTipo tipo={v.equipo_tipo} alto={20} />
             {v.equipo_tipo ?? "Otro"}
           </span>
-          <span className="flex items-center gap-1.5 text-[13px] text-slate-200">
+          <span className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-[13px] text-slate-200">
             <MapPin className="h-4 w-4 text-amber-400" aria-hidden />
             <b>{paradas[0].lugar}</b> →
             <MapPin className="h-4 w-4 text-emerald-400" aria-hidden />
@@ -368,137 +497,97 @@ export function VistaUnidad({
         </div>
       </div>
 
-      <div className="tv-unidad-cuerpo grid gap-2.5 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
-        <div className="tv-unidad-mapa flex min-h-[320px] min-w-0 flex-col">
-          <MapaDigital
-            viajes={[v]}
-            lugares={lugares}
-            onElegir={() => undefined}
-            titulo="Dónde está"
-            sinLeyenda
-            unidad
-            pie={
-              <span className="flex flex-wrap items-center gap-x-2">
-                <MapPin className="inline h-3.5 w-3.5 text-emerald-400" aria-hidden />
-                <b className="text-slate-100">{donde?.texto ?? "Sin ubicación todavía"}</b>
-                {donde && <span>· {haceCuanto(donde.en, ahora)} · estimada por las marcas</span>}
-              </span>
-            }
-          />
+      {chica ? (
+        <div className="flex min-w-0 flex-col gap-2.5">
+          {tab === "mapa" && (
+            <div className="flex h-[62vh] min-h-[340px] flex-col [&>div]:min-h-0 [&>div]:flex-1 [&>div>section]:flex-1">
+              {bloqueMapa}
+            </div>
+          )}
+          {tab === "viaje" && (
+            <>
+              {bloqueConsumo}
+              {bloqueTiempos}
+            </>
+          )}
+          {tab === "conductor" && (
+            <>
+              {bloqueConductor}
+              <ResumenViajes datos={resumen} />
+            </>
+          )}
+          {tab === "consumo" && (
+            <>
+              <ConsumoPorTramo tramos={tramos} />
+              <CargasYRendimiento datos={resumen} ahora={ahora} />
+            </>
+          )}
+          {tab === "alertas" && <AlertasActivas datos={resumen} ahora={ahora} />}
         </div>
+      ) : (
+        <div className="tv-unidad-cuerpo grid gap-2.5 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
+          {bloqueMapa}
 
-        <div className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto_auto] gap-2.5">
-          <ConsumoAcumulado
-            cargas={datos.cargas}
-            gal={gal}
-            urea={urea}
-            costo={costo}
-            vsPromedio={vsPromedio}
-          />
+          <div className="grid min-h-0 min-w-0 grid-rows-[minmax(0,1fr)_auto_auto] gap-2.5">
+            {bloqueConsumo}
 
-          <Seccion
-            titulo="Tiempos del viaje"
-            icono={<Clock className="h-4 w-4 text-sky-400" aria-hidden />}
-          >
-            <div
-              className="flex h-5 gap-[3px] overflow-hidden rounded-md"
-              role="img"
-              aria-label="Tiempo manejando, en paradas y descansando"
+            {bloqueTiempos}
+
+            {bloqueConductor}
+          </div>
+
+          <div className="tv-unidad-abajo grid gap-2.5 lg:col-span-2 lg:grid-cols-[minmax(0,.85fr)_minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1fr)]">
+            <ResumenViajes datos={resumen} />
+            <ConsumoPorTramo tramos={tramos} />
+            <CargasYRendimiento datos={resumen} ahora={ahora} />
+            <AlertasActivas datos={resumen} ahora={ahora} />
+          </div>
+        </div>
+      )}
+
+      {chica && (
+        <nav
+          aria-label="Secciones de la unidad"
+          className="fixed inset-x-0 bottom-0 z-20 flex border-t border-white/10 bg-[#070d0e]/95 backdrop-blur"
+          style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+        >
+          {(
+            [
+              ["mapa", "Mapa", <MapPin key="m" className="h-5 w-5" aria-hidden />],
+              ["viaje", "Viaje", <Clock key="v" className="h-5 w-5" aria-hidden />],
+              ["conductor", "Conductor", <Users key="c" className="h-5 w-5" aria-hidden />],
+              ["consumo", "Consumo", <ChartColumn key="n" className="h-5 w-5" aria-hidden />],
+              [
+                "alertas",
+                "Alertas",
+                <span key="a" className="relative">
+                  <Bell className="h-5 w-5" aria-hidden />
+                  {nAlertas ? (
+                    <i
+                      className="absolute -right-2 -top-1.5 grid min-w-[15px] place-items-center rounded-full px-1 text-[9px] font-extrabold not-italic leading-[15px] text-white"
+                      style={{ background: hayCriticas ? ROJO : "#d97706" }}
+                    >
+                      {nAlertas > 99 ? "99+" : nAlertas}
+                    </i>
+                  ) : null}
+                </span>,
+              ],
+            ] as [TabUnidad, string, ReactNode][]
+          ).map(([id, texto, icono]) => (
+            <button
+              key={id}
+              aria-current={tab === id ? "page" : undefined}
+              onClick={() => setTab(id)}
+              className={`flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-semibold ${
+                tab === id ? "text-[#BADC1E]" : "text-slate-400"
+              }`}
             >
-              {segmentos.map((s, i) => (
-                <div
-                  key={`${s.t}-${i}`}
-                  title={`${s.tip}: ${duracion(s.min)}`}
-                  className="grid min-w-[6px] place-items-center overflow-hidden whitespace-nowrap text-[10px] font-bold text-[#04121a]"
-                  style={{ flex: `${s.min / totalSeg} 1 0`, background: COLOR[s.t] }}
-                >
-                  {s.min / totalSeg > 0.14 ? duracion(s.min) : ""}
-                </div>
-              ))}
-            </div>
-            <ul className="grid grid-cols-3 gap-1 text-[11px] text-slate-400">
-              {(
-                [
-                  ["ruta", "Manejando", horas?.enRuta ?? 0],
-                  ["est", "En paradas", horas?.enParadas ?? 0],
-                  [
-                    "desc",
-                    "Descanso",
-                    segmentos.filter((x) => x.t === "desc").reduce((a, x) => a + x.min, 0),
-                  ],
-                ] as const
-              ).map(([k, t, min]) => (
-                <li key={k}>
-                  <span className="flex items-center gap-1.5">
-                    <i className="h-2 w-2 rounded-full" style={{ background: COLOR[k] }} />
-                    {t}
-                  </span>
-                  <b className="ml-3.5 block text-[13px] text-slate-100">{duracion(min)}</b>
-                  {k !== "desc" && (
-                    <small className="ml-3.5 hidden text-[10.5px] min-[1500px]:block">
-                      <VsNormal
-                        min={k === "ruta" ? (horas?.enRuta ?? null) : estadia}
-                        normal={k === "ruta" ? esperadoRuta : estadiaNormal}
-                      />
-                    </small>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </Seccion>
-
-          <Seccion
-            titulo="Conductor y relevo"
-            icono={<Users className="h-4 w-4 text-emerald-400" aria-hidden />}
-          >
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { n: v.conductor_nombre, dni: v.conductor_dni, rol: "Titular" },
-                ...(v.relevo_nombre
-                  ? [{ n: v.relevo_nombre, dni: v.relevo_dni, rol: "Relevo" }]
-                  : []),
-              ].map((p) => (
-                <div key={p.rol} className="flex items-center gap-3">
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#BADC1E] text-xs font-black text-[#0D1719]">
-                    {iniciales(p.n ?? null)}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <b className="block truncate text-sm">{p.n ?? "—"}</b>
-                    <small className="block truncate text-slate-400">
-                      {p.rol}
-                      {p.dni ? ` · DNI ${p.dni}` : ""}
-                      {v.volante_dni && v.volante_dni === p.dni ? " · al volante" : ""}
-                    </small>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {!v.relevo_nombre && <p className="text-xs text-slate-400">Sin relevo en este viaje</p>}
-            {(v.turnos?.length ?? 0) > 1 && (
-              <ul className="border-t border-white/10 pt-1.5 text-xs">
-                {v.turnos?.map((t) => (
-                  <li key={t.inicio_en} className="flex justify-between gap-2 py-0.5">
-                    <span>{t.conductor_nombre ?? t.conductor_dni}</span>
-                    <span className="text-slate-400">
-                      {duracion(
-                        ((t.fin_en ? Date.parse(t.fin_en) : ahora) - Date.parse(t.inicio_en)) /
-                          60_000
-                      )}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Seccion>
-        </div>
-
-        <div className="tv-unidad-abajo grid gap-2.5 lg:col-span-2 lg:grid-cols-[minmax(0,.85fr)_minmax(0,1.15fr)_minmax(0,1fr)_minmax(0,1fr)]">
-          <ResumenViajes datos={resumen} />
-          <ConsumoPorTramo tramos={tramos} />
-          <CargasYRendimiento datos={resumen} ahora={ahora} />
-          <AlertasActivas datos={resumen} ahora={ahora} />
-        </div>
-      </div>
+              {icono}
+              {texto}
+            </button>
+          ))}
+        </nav>
+      )}
     </div>
   );
 }

@@ -280,10 +280,14 @@ test("el Control TV muestra la flota en vivo y se abre desde Viajes", async ({ p
   await expect(tv.getByText("Vista en vivo")).toBeVisible();
   await nav.getByRole("button", { name: "Eventos" }).click();
   await expect(tv.getByRole("heading", { name: "Últimos eventos" })).toBeVisible();
-  // La unidad también cabe: sus secciones se pliegan con un toque en el título.
+  // La unidad también cabe: tiene su propia barra abajo (Mapa, Viaje, Conductor, Consumo y Alertas) y sus
+  // secciones se pliegan con un toque en el título.
   await tv.goto(`/control-tv?unidad=${viaje.id}`);
   await expect(tv.getByRole("heading", { name: `Conductor ${marca}` })).toBeVisible();
   await expect(nav).toBeHidden();
+  const barraUnidad = tv.getByRole("navigation", { name: "Secciones de la unidad" });
+  await expect(barraUnidad).toBeVisible();
+  await barraUnidad.getByRole("button", { name: /^Viaje/ }).click();
   const tiempos = tv.locator("details", { hasText: "Tiempos del viaje" });
   await expect(tiempos).toHaveAttribute("open", "");
   await tiempos.locator("summary").click();
