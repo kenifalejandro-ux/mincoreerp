@@ -289,7 +289,16 @@ test("sin líneas en el satélite y la unidad va en el lugar donde se anotó su 
     await page.getByRole("button", { name: "Satélite", exact: true }).click();
     await expect(avatar).toHaveCount(1);
     await page.waitForTimeout(700); // el mapa termina de encuadrar
-    return (await avatar.boundingBox())!;
+    // El satélite vuelve a dibujar sus marcadores con cada actualización de la pantalla: se reintenta
+    // hasta medirlo con el marcador puesto.
+    let caja: { x: number; y: number } | null = null;
+    await expect
+      .poll(async () => {
+        caja = await avatar.boundingBox().catch(() => null);
+        return caja !== null;
+      })
+      .toBe(true);
+    return caja as unknown as { x: number; y: number };
   };
 
   // Sin ubicación anotada: a mitad del tramo, y sin ninguna línea dibujada.
@@ -323,6 +332,9 @@ test("sin líneas en el digital: ninguna ruta dibujada y el aviso del mapa sigue
   const mapa = page.getByRole("img", { name: /Mapa de las unidades en ruta/ });
   await expect(mapa).toBeVisible();
   await page.waitForTimeout(800);
+  // Con la ubicación anotada en un lugar con punto, el texto dice que la posición es la anotada, no estimada.
+  await expect(page.getByText("en el punto anotado")).toBeVisible();
+  await expect(page.getByText("estimada por las marcas")).toHaveCount(0);
   // La capa fija (la que dibujaba las rutas) no tiene píxeles del color de la ruta (lima #d4f25a).
   const pixelesDeRuta = await page.evaluate(() => {
     const c = document.querySelectorAll("canvas")[0] as HTMLCanvasElement;

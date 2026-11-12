@@ -12,6 +12,7 @@ import {
   escaparHtml,
   filtrarPorEstado,
   posicionEnMapa,
+  puntosDeEncuadre,
   puntoDeLugar,
   puntosDelViaje,
   separar,
@@ -108,6 +109,12 @@ describe("posicionEnMapa: dónde se dibuja la unidad", () => {
       // Ya llegó a Tocache: la llegada manda aunque haya un punto anotado después.
       const llego = posicionEnMapa(conPunto(enB, ubic(7, 6)), L3)?.punto;
       expect(llego).toEqual({ lat: TOCACHE.latitud, lon: TOCACHE.longitud });
+    });
+
+    it("la posición se marca como exacta solo cuando va en el lugar anotado", () => {
+      expect(posicionEnMapa(conPunto(sale, ubic(7, 2)), L3)?.exacta).toBe(true);
+      expect(posicionEnMapa(sale, L3)?.exacta).toBeUndefined();
+      expect(posicionEnMapa(conPunto(sale, ubic(null, 2)), L3)?.exacta).toBeUndefined();
     });
 
     it("sin ubicación anotada todo sigue como antes", () => {
@@ -294,5 +301,34 @@ describe("la leyenda del mapa es el filtro: cuenta y filtra por estado", () => {
   it("sin unidades, todo es cero y no falla", () => {
     expect(contarPorEstado([], "todas")).toBe(0);
     expect(filtrarPorEstado([], "ruta")).toEqual([]);
+  });
+});
+
+describe("puntosDeEncuadre: lo que el mapa tiene que mostrar", () => {
+  const P = (lat: number, lon: number) => ({ lat, lon });
+  const pos = (lat: number, lon: number) => ({ punto: P(lat, lon), tramo: null, fraccion: 0 });
+
+  it("incluye los lugares de la ruta y la posición de la unidad, sin los lugares sin punto", () => {
+    const pts = puntosDeEncuadre([{ puntos: [P(1, 1), null, P(2, 2)], pos: pos(9, 9) }]);
+    expect(pts).toEqual([P(1, 1), P(2, 2), P(9, 9)]);
+  });
+
+  it("una ubicación anotada lejos de la ruta entra en el encuadre", () => {
+    const ruta = [P(-8.1, -79.0), P(-8.2, -76.5)];
+    const lejos = pos(-12.6, -69.2);
+    const solo = encuadre(puntosDeEncuadre([{ puntos: ruta, pos: null }]), 800, 400);
+    const con = encuadre(puntosDeEncuadre([{ puntos: ruta, pos: lejos }]), 800, 400);
+    const dentro = (c: typeof solo) =>
+      lejos.punto.lon >= c.lon0 &&
+      lejos.punto.lon <= c.lon1 &&
+      lejos.punto.lat >= c.lat0 &&
+      lejos.punto.lat <= c.lat1;
+    expect(dentro(solo)).toBe(false);
+    expect(dentro(con)).toBe(true);
+  });
+
+  it("sin unidades ni puntos da una lista vacía", () => {
+    expect(puntosDeEncuadre([])).toEqual([]);
+    expect(puntosDeEncuadre([{ puntos: [null], pos: null }])).toEqual([]);
   });
 });

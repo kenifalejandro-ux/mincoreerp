@@ -21,7 +21,7 @@ import { CATS, categoriaDe } from "./controlTvLogica";
 import { ConsumoAcumulado, ConsumoPorTramo, VsNormal } from "./GraficasUnidad";
 import { IconoTipo } from "./iconosUnidad";
 import { MapaDigital } from "./MapaDigital";
-import type { LugarMapa } from "./mapaLogica";
+import { posicionEnMapa, type LugarMapa } from "./mapaLogica";
 import {
   AlertasActivas,
   CargasYRendimiento,
@@ -198,6 +198,9 @@ export function VistaUnidad({
   const cat = CATS.find((c) => c.k === categoriaDe(v)) ?? CATS[0];
   const horas = horasDelViaje(paradas, ahora);
   const donde = ubicacionVigente(paradas, v.ultima_ubicacion);
+  // La posición del mapa es exacta cuando la última ubicación anotada es un lugar con coordenadas.
+  const posicionExacta =
+    posicionEnMapa(v, new Map(lugares.map((l) => [String(l.id), l])))?.exacta === true;
   const tramos = datos.tramos ?? [];
   const gal = datos.cargas
     .filter((c) => c.producto === "combustible")
@@ -282,7 +285,12 @@ export function VistaUnidad({
           <span className="flex flex-wrap items-center gap-x-2">
             <MapPin className="inline h-3.5 w-3.5 text-emerald-400" aria-hidden />
             <b className="text-slate-100">{donde?.texto ?? "Sin ubicación todavía"}</b>
-            {donde && <span>· {haceCuanto(donde.en, ahora)} · estimada por las marcas</span>}
+            {donde && (
+              <span>
+                · {haceCuanto(donde.en, ahora)} ·{" "}
+                {posicionExacta ? "en el punto anotado" : "estimada por las marcas"}
+              </span>
+            )}
           </span>
         }
       />
