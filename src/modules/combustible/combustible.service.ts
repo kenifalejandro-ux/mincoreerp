@@ -3332,6 +3332,15 @@ export class CombustibleService {
     return this.repository.findHuecosTalonario(client, tenantId, producto, serieTalonario);
   }
 
+  /** Reporte de talonarios del período (una fila por serie, con sus tramos faltantes). */
+  talonariosDelPeriodo(
+    client: PoolClient,
+    tenantId: string,
+    periodo: { desde?: string; hasta?: string }
+  ) {
+    return this.repository.findTalonariosDelPeriodo(client, tenantId, periodo);
+  }
+
   // ── Alertas (migrations/0068) ─────────────────────────────────────────
 
   detectarHuecosRevelados(
