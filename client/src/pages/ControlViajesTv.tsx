@@ -44,7 +44,7 @@ import {
   PanelUrea,
 } from "../components/controlTv/PanelesTv";
 import { ResumenCorporativo, UnidadesDetenidas } from "../components/controlTv/ResumenCorporativo";
-import { useEsMovil } from "../components/controlTv/useEsMovil";
+import { useEsMovil, useEsPantallaChica } from "../components/controlTv/useEsMovil";
 import { VistaUnidad } from "../components/controlTv/VistaUnidad";
 import { apiFetch } from "../services/apiClient";
 
@@ -214,6 +214,7 @@ export default function ControlViajesTv() {
   const [pantallaCompleta, setPantallaCompleta] = useState(false);
   const [pagina, setPagina] = useState<"resumen" | "detalle">("resumen");
   const movil = useEsMovil();
+  const chica = useEsPantallaChica();
   const [tab, setTab] = useState<TabMovil>("resumen");
   const [detalle, setDetalle] = useState<DetalleDatos | null>(null);
   const [lugares, setLugares] = useState<LugarMapa[]>([]);
@@ -375,10 +376,12 @@ export default function ControlViajesTv() {
   );
 
   const verTabs = movil && !unidad && pagina === "resumen" && !!f;
+  // La vista de una unidad en celular o tablet lleva su propia barra abajo (la dibuja VistaUnidad).
+  const conBarraDeUnidad = chica && !!unidad;
 
   return (
     <div
-      className={`fixed inset-0 overflow-y-auto p-3 text-slate-100 sm:p-4 ${verTabs ? "pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))]" : ""}`}
+      className={`fixed inset-0 overflow-y-auto p-3 text-slate-100 sm:p-4 ${verTabs || conBarraDeUnidad ? "pb-[calc(4.5rem+env(safe-area-inset-bottom,0px))]" : ""}`}
       style={{
         background:
           "radial-gradient(1200px 700px at 78% -10%, #12363a 0%, transparent 60%), radial-gradient(900px 600px at -10% 110%, #10282a 0%, transparent 55%), #070d0e",
