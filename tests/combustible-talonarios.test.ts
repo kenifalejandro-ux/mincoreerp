@@ -109,6 +109,32 @@ describe("combustible: reporte de talonarios", () => {
     expect(fila.tramos[1].siguiente.n).toBe(9);
   });
 
+  it("con más de 50 series, el corte deja las más recientes y la lista sale por nombre", async () => {
+    // 51 series viejas con nombre que ordena ANTES que la nueva y una nueva que ordena DESPUÉS.
+    const pasado = new Date(Date.now() - 20 * 24 * 3600 * 1000).toISOString();
+    await withTenant(tenantId, async (client) => {
+      for (let i = 0; i < 51; i++) {
+        await client.query(
+          `INSERT INTO combustible_despachos
+             (tenant_id, producto, origen, combustible_id, tipo_combustible, tipo_destino, equipo_id,
+              serie_talonario, n_vale, cantidad, lectura_contometro, costo_unitario, despachado_en)
+           VALUES ($1, 'combustible', 'tanque_propio', $2, 'diesel_b5', 'equipo', $3,
+                   $4, 1, 10, 10, 16, $5)`,
+          [tenantId, tanqueId, equipoId, `AA${String(i).padStart(3, "0")}`, pasado]
+        );
+      }
+    });
+    const reciente = `ZZ${Math.floor(Math.random() * 1e6)}`;
+    await despachar(reciente, 1);
+
+    const res = await agente.get("/api/erp/combustible/despachos/talonarios");
+    expect(res.status).toBe(200);
+    const nombres = res.body.series.map((x: { serie: string }) => x.serie);
+    expect(nombres).toContain(reciente);
+    expect(nombres.length).toBeLessThanOrEqual(50);
+    expect(nombres).toEqual([...nombres].sort((a: string, b: string) => a.localeCompare(b)));
+  });
+
   it("una serie sin huecos sale completa", async () => {
     const serie = serieUnica();
     for (const n of [10, 11, 12]) await despachar(serie, n);
@@ -153,6 +179,87 @@ describe("combustible: reporte de talonarios", () => {
     expect((await (await entrarComo("grifero")).get(ruta)).status).toBe(200);
     expect((await (await entrarComo("lectura")).get(ruta)).status).toBe(200);
     expect((await (await entrarComo("conductor_ruta")).get(ruta)).status).toBe(403);
+  });
+
+  describe("dar de baja un tramo", () => {
+    const ruta = "/api/erp/combustible/despachos/talonarios/bajas";
+    const serieDe = async (serie: string) => {
+      const r = await agente.get("/api/erp/combustible/despachos/talonarios");
+      return r.body.series.find((x: { serie: string }) => x.serie === serie);
+    };
+
+    it("deja el tramo explicado, con motivo, quién y cuándo", async () => {
+      const serie = serieUnica();
+      for (const n of [1, 2, 5, 6, 9]) await despachar(serie, n);
+      const res = await agente
+        .post(ruta)
+        .send({ serie, desde: 3, hasta: 4, motivo: "roto", detalle: "se mojó" });
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+
+      const fila = await serieDe(serie);
+      expect(fila.faltan).toBe(4);
+      expect(fila.explicados).toBe(2);
+      expect(fila.sin_explicar).toBe(2);
+      expect(fila.tramos[0].baja).toMatchObject({ desde: 3, hasta: 4, motivo: "roto" });
+      expect(fila.tramos[0].baja.detalle).toBe("se mojó");
+      expect(fila.tramos[0].baja.dado_por).toBeTruthy();
+      expect(fila.tramos[1].baja).toBeNull();
+    });
+
+    it("con «Otro» el detalle es obligatorio", async () => {
+      const res = await agente.post(ruta).send({ serie: "X", desde: 3, hasta: 3, motivo: "otro" });
+      expect(res.status).toBe(400);
+    });
+
+    it("rechaza un rango al revés o un motivo que no existe", async () => {
+      expect(
+        (await agente.post(ruta).send({ serie: "X", desde: 5, hasta: 3, motivo: "roto" })).status
+      ).toBe(400);
+      expect(
+        (await agente.post(ruta).send({ serie: "X", desde: 3, hasta: 3, motivo: "me dio pereza" }))
+          .status
+      ).toBe(400);
+    });
+
+    it("no se puede dar de baja un número que ya tiene vale", async () => {
+      const serie = serieUnica();
+      for (const n of [1, 2, 4]) await despachar(serie, n);
+      const res = await agente.post(ruta).send({ serie, desde: 2, hasta: 3, motivo: "perdido" });
+      expect(res.status).toBe(409);
+      expect((await serieDe(serie)).explicados).toBe(0);
+    });
+
+    it("no se da de baja dos veces lo mismo", async () => {
+      const serie = serieUnica();
+      for (const n of [1, 5]) await despachar(serie, n);
+      const una = { serie, desde: 2, hasta: 4, motivo: "perdido" };
+      expect((await agente.post(ruta).send(una)).status).toBe(201);
+      expect((await agente.post(ruta).send({ ...una, desde: 3, hasta: 3 })).status).toBe(409);
+    });
+
+    it("si después aparece uno de esos vales, deja de contar como faltante", async () => {
+      const serie = serieUnica();
+      for (const n of [1, 4]) await despachar(serie, n);
+      await agente.post(ruta).send({ serie, desde: 2, hasta: 3, motivo: "roto" });
+      await despachar(serie, 3);
+      const fila = await serieDe(serie);
+      expect(fila.faltan).toBe(1);
+      // El tramo que queda (el 2) ya no está cubierto entero por una baja de 2-3: sí lo está.
+      expect(fila.tramos[0]).toMatchObject({ desde: 2, hasta: 2 });
+      expect(fila.tramos[0].baja).not.toBeNull();
+      expect(fila.sin_explicar).toBe(0);
+    });
+
+    it("el grifero y Lectura no pueden darlas de baja", async () => {
+      const serie = serieUnica();
+      for (const n of [1, 5]) await despachar(serie, n);
+      const cuerpo = { serie, desde: 2, hasta: 4, motivo: "roto" };
+      expect((await (await entrarComo("grifero")).post(ruta).send(cuerpo)).status).toBe(403);
+      expect((await (await entrarComo("lectura")).post(ruta).send(cuerpo)).status).toBe(403);
+      expect((await entrarComo("operador").then((p) => p.post(ruta).send(cuerpo))).status).toBe(
+        201
+      );
+    });
   });
 
   it("otra empresa no ve las series de esta", async () => {

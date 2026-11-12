@@ -7,12 +7,24 @@ export interface ValeVecino {
   despachado_en: string;
 }
 
+/** Una baja ya dada (0185): por qué esos vales no tienen movimiento, quién lo dijo y cuándo. */
+export interface BajaDeVale {
+  desde: number;
+  hasta: number;
+  motivo: string;
+  detalle: string | null;
+  dado_por: string | null;
+  fecha: string;
+}
+
 export interface TramoFaltante {
   desde: number;
   hasta: number;
   cantidad: number;
   anterior: ValeVecino | null;
   siguiente: ValeVecino | null;
+  /** La baja que cubre el tramo; null si sigue sin explicar. */
+  baja: BajaDeVale | null;
 }
 
 export interface SerieTalonario {
@@ -21,6 +33,9 @@ export interface SerieTalonario {
   maximo: number;
   usados: number;
   faltan: number;
+  /** De los que faltan, cuántos tienen baja y cuántos siguen sin explicar. */
+  explicados: number;
+  sin_explicar: number;
   litros: number;
   galones: number;
   ultimo_vale: number;
@@ -39,6 +54,25 @@ export const rangoTexto = (t: { desde: number; hasta: number }) =>
 
 export const totalFaltantes = (series: SerieTalonario[]) =>
   series.reduce((suma, s) => suma + s.faltan, 0);
+
+/** Los que siguen sin explicación: lo que de verdad preocupa. */
+export const totalSinExplicar = (series: SerieTalonario[]) =>
+  series.reduce((suma, s) => suma + s.sin_explicar, 0);
+
+/** Los motivos de una baja, en el orden en que se ofrecen. */
+export const MOTIVOS_BAJA = [
+  { valor: "roto", texto: "Vale roto" },
+  { valor: "perdido", texto: "Vale perdido" },
+  { valor: "mal_llenado", texto: "Mal llenado, se anuló" },
+  { valor: "otro", texto: "Otro" },
+] as const;
+
+/** «Vale roto · se mojó · por Sigma, 11/11 9:52 a. m.» */
+export function textoBaja(b: BajaDeVale, formatearFecha: (iso: string) => string) {
+  const motivo = MOTIVOS_BAJA.find((m) => m.valor === b.motivo)?.texto ?? b.motivo;
+  const detalle = b.detalle ? ` · ${b.detalle}` : "";
+  return `${motivo}${detalle} · por ${b.dado_por ?? "un usuario ya borrado"}, ${formatearFecha(b.fecha)}`;
+}
 
 /** Solo las series con algo que mostrar. */
 export const seriesConFaltantes = (series: SerieTalonario[]) => series.filter((s) => s.faltan > 0);

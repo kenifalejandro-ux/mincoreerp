@@ -1673,6 +1673,31 @@ export const periodoHistorialCombustibleSchema = z
 
 export type PeriodoHistorialCombustibleQuery = z.infer<typeof periodoHistorialCombustibleSchema>;
 
+/** Dar de baja un tramo de vales del talonario (0185): la serie, el rango y por qué no se usaron.
+ *  Con «otro» el detalle es obligatorio: sin él la baja no explica nada. */
+export const bajaValesCombustibleSchema = z
+  .object({
+    serie: z.string().trim().min(1, "Falta la serie").max(20),
+    desde: z.number().int().min(1),
+    hasta: z.number().int().min(1),
+    motivo: z.enum(["roto", "perdido", "mal_llenado", "otro"]),
+    detalle: z.string().trim().max(300).optional(),
+  })
+  .refine((v) => v.hasta >= v.desde, {
+    message: "El último vale no puede ser menor que el primero",
+    path: ["hasta"],
+  })
+  .refine((v) => v.hasta - v.desde < 500, {
+    message: "Un tramo de más de 500 vales no se da de baja de una vez",
+    path: ["hasta"],
+  })
+  .refine((v) => v.motivo !== "otro" || (v.detalle ?? "").length > 0, {
+    message: "Con «Otro» hay que escribir el detalle",
+    path: ["detalle"],
+  });
+
+export type BajaValesCombustibleInput = z.infer<typeof bajaValesCombustibleSchema>;
+
 // GET /equipos/:equipoId/ultimo-medidor -- la lectura de la carga anterior de
 // una unidad, para que el formulario calcule las horas abastecidas. `antes_de`
 // es la fecha del despacho que se está cargando: con una fecha retroactiva, la

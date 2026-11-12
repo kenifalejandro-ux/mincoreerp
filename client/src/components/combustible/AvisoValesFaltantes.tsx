@@ -9,7 +9,9 @@ import {
   rangoTexto,
   seriesConFaltantes,
   textoVecinos,
+  textoBaja,
   totalFaltantes,
+  totalSinExplicar,
   type SerieTalonario,
 } from "./valesFaltantesLogica";
 
@@ -23,6 +25,7 @@ export function BotonValesFaltantes({
   onAlternar: () => void;
 }) {
   const faltan = totalFaltantes(series);
+  const sinExplicar = totalSinExplicar(series);
   if (faltan === 0) {
     return (
       <span className="rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
@@ -30,15 +33,21 @@ export function BotonValesFaltantes({
       </span>
     );
   }
+  // Todo lo que falta tiene su baja: ya no es una alarma, pero se puede abrir para ver por qué.
+  const explicado = sinExplicar === 0;
   return (
     <button
       type="button"
       onClick={onAlternar}
       aria-expanded={abierto}
       aria-controls="kardex-vales-faltantes"
-      className="inline-flex items-center gap-1.5 rounded-full border border-red-300 bg-red-50 px-3 py-1 text-xs font-bold text-red-700 hover:bg-red-100"
+      className={
+        explicado
+          ? "inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700 hover:bg-amber-100"
+          : "inline-flex items-center gap-1.5 rounded-full border border-red-300 bg-red-50 px-3 py-1 text-xs font-bold text-red-700 hover:bg-red-100"
+      }
     >
-      ⚠ Vales faltantes: {faltan}
+      {explicado ? `✔ ${faltan} vales explicados` : `⚠ Vales faltantes: ${sinExplicar}`}
       <ChevronDown className={`h-3.5 w-3.5 transition-transform ${abierto ? "rotate-180" : ""}`} />
     </button>
   );
@@ -55,7 +64,9 @@ export function PanelValesFaltantes({ series }: { series: SerieTalonario[] }) {
               Serie {s.serie} · del {String(s.minimo).padStart(5, "0")} al{" "}
               {String(s.maximo).padStart(5, "0")} · usados {s.usados} de {s.usados + s.faltan}
             </span>
-            <span className="text-red-600">faltan {s.faltan}</span>
+            <span className={s.sin_explicar > 0 ? "text-red-600" : "text-amber-700"}>
+              {s.sin_explicar > 0 ? `faltan ${s.sin_explicar}` : "todos explicados"}
+            </span>
           </h3>
           <ul className="divide-y divide-slate-100">
             {s.tramos.map((t) => (
@@ -64,6 +75,11 @@ export function PanelValesFaltantes({ series }: { series: SerieTalonario[] }) {
                 <span className="text-slate-500">
                   ({t.cantidad === 1 ? "1 vale" : `${t.cantidad} vales`})
                 </span>
+                {t.baja && (
+                  <p className="text-xs font-semibold text-amber-700">
+                    Dado de baja: {textoBaja(t.baja, fechaCorta)}
+                  </p>
+                )}
                 <p className="text-xs text-slate-500">{textoVecinos(s.serie, t, fechaCorta)}</p>
               </li>
             ))}

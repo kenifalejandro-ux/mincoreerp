@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { apiFetch } from "../../services/apiClient";
 import VentanaFlotante from "../comunes/VentanaFlotante";
+import BajaDeTramo from "./BajaDeTramo";
 import { exportarTalonariosExcel } from "./exportarTalonarios";
 import {
   calcularCuadre,
@@ -19,8 +20,9 @@ import {
 import {
   fechaCorta,
   rangoTexto,
+  textoBaja,
   textoVecinos,
-  totalFaltantes,
+  totalSinExplicar,
   valeTexto,
   type SerieTalonario,
 } from "./valesFaltantesLogica";
@@ -38,10 +40,12 @@ const num = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 1 
 export default function TalonariosModal({
   tanques,
   puedeCuadre,
+  puedeDarBaja,
   onCerrar,
 }: {
   tanques: TanqueParaCuadre[];
   puedeCuadre: boolean;
+  puedeDarBaja: boolean;
   onCerrar: () => void;
 }) {
   const [desde, setDesde] = useState(() => aDia(new Date(Date.now() - 30 * 24 * 3600 * 1000)));
@@ -96,7 +100,8 @@ export default function TalonariosModal({
   }, [tanqueId]);
 
   const tanque = tanques.find((t) => t.id === tanqueId) ?? null;
-  const faltan = series ? totalFaltantes(series) : 0;
+  const faltan = series ? totalSinExplicar(series) : 0;
+  const hayFaltantes = series ? series.some((s) => s.faltan > 0) : false;
   const cuadre =
     series && tanque && varilla && varilla !== "error"
       ? calcularCuadre(series, varilla, tanque.unidad)
@@ -172,7 +177,11 @@ export default function TalonariosModal({
           <span
             className={`ml-auto text-sm font-semibold ${faltan > 0 ? "text-red-600" : "text-emerald-700"}`}
           >
-            {faltan > 0 ? `Vales que faltan: ${faltan}` : "✔ Vales completos"}
+            {faltan > 0
+              ? `Vales sin explicar: ${faltan}`
+              : hayFaltantes
+                ? "✔ Todo lo que falta está explicado"
+                : "✔ Vales completos"}
           </span>
         )}
       </div>
@@ -193,6 +202,7 @@ export default function TalonariosModal({
                   <th className="py-2 pr-3 text-right">Litros</th>
                   <th className="py-2 pr-3 text-right">Galones</th>
                   <th className="py-2 pr-3">Faltan</th>
+                  <th className="py-2 pr-3">Sin explicar</th>
                   <th className="py-2 pr-3">Último vale</th>
                   <th className="py-2 pr-3">Fecha</th>
                   <th className="py-2" />
@@ -204,6 +214,8 @@ export default function TalonariosModal({
                     key={s.serie}
                     s={s}
                     abierta={abierta === s.serie}
+                    puedeDarBaja={puedeDarBaja}
+                    onCambio={cargar}
                     onAlternar={() => setAbierta(abierta === s.serie ? null : s.serie)}
                   />
                 ))}
@@ -307,10 +319,14 @@ function Dato({
 function FilaSerie({
   s,
   abierta,
+  puedeDarBaja,
+  onCambio,
   onAlternar,
 }: {
   s: SerieTalonario;
   abierta: boolean;
+  puedeDarBaja: boolean;
+  onCambio: () => void;
   onAlternar: () => void;
 }) {
   return (
@@ -330,6 +346,11 @@ function FilaSerie({
         >
           {s.faltan}
         </td>
+        <td
+          className={`py-2 pr-3 font-semibold ${s.sin_explicar > 0 ? "text-red-600" : "text-slate-500"}`}
+        >
+          {s.sin_explicar}
+        </td>
         <td className="py-2 pr-3 font-mono">{valeTexto(s.serie, s.ultimo_vale)}</td>
         <td className="py-2 pr-3">{fechaCorta(s.ultima_fecha)}</td>
         <td className="py-2 text-right">
@@ -346,7 +367,7 @@ function FilaSerie({
       </tr>
       {abierta && (
         <tr>
-          <td colSpan={9} className="pb-3">
+          <td colSpan={10} className="pb-3">
             <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
               {s.tramos.map((t) => (
                 <li key={t.desde} className="px-3 py-2">
@@ -354,6 +375,17 @@ function FilaSerie({
                   <span className="text-slate-500">
                     ({t.cantidad === 1 ? "1 vale" : `${t.cantidad} vales`})
                   </span>
+                  {t.baja ? (
+                    <p className="text-xs font-semibold text-amber-700">
+                      Dado de baja: {textoBaja(t.baja, fechaCorta)}
+                    </p>
+                  ) : (
+                    puedeDarBaja && (
+                      <div className="mt-1">
+                        <BajaDeTramo serie={s.serie} tramo={t} onHecha={onCambio} />
+                      </div>
+                    )
+                  )}
                   <p className="text-xs text-slate-500">{textoVecinos(s.serie, t, fechaCorta)}</p>
                 </li>
               ))}
