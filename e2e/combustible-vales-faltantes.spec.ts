@@ -167,7 +167,10 @@ test("Talonarios: el botón abre el reporte con la serie, su tramo que falta y e
   await prepararTanqueConVales(page, marca);
   await irATanques(page);
 
-  await page.getByRole("button", { name: "Talonarios", exact: true }).click(CARGA);
+  // Botón nuevo: lleva la etiqueta «Nuevo» (hasta 24 h después del primer clic de cada persona).
+  const boton = page.getByRole("button", { name: "Talonarios", exact: true });
+  await expect(boton.getByText("Nuevo")).toBeVisible(CARGA);
+  await boton.click();
   await expect(page.getByText("Talonarios de vales")).toBeVisible(CARGA);
 
   // La serie de esta corrida: vales 1, 2 y 5 → usados 3 de 5, faltan 2.
@@ -178,25 +181,36 @@ test("Talonarios: el botón abre el reporte con la serie, su tramo que falta y e
   await expect(page.getByText("00003 – 00004")).toBeVisible();
   await expect(page.getByText(`Entre el V${marca}-00002`)).toBeVisible();
 
-  // Dar de baja el tramo: pide motivo, y «Otro» pide además el detalle.
-  await page.getByRole("button", { name: "Dar de baja" }).click();
-  await page.getByRole("button", { name: /Confirmar baja/ }).click();
+  // Cada vale que falta tiene su fila. Regularizar uno: pide motivo, y «Otro» pide además el detalle.
+  const vale3 = page.getByRole("listitem").filter({ hasText: `V${marca}-00003` });
+  const vale4 = page.getByRole("listitem").filter({ hasText: `V${marca}-00004` });
+  await expect(vale3).toContainText("Sin explicar");
+  await vale3.getByRole("button", { name: "Regularizar" }).click();
+  await page.getByRole("button", { name: "Confirmar", exact: true }).click();
   await expect(page.getByText("Elige un motivo.")).toBeVisible();
-  await page.getByLabel("Motivo").selectOption("otro");
-  await page.getByRole("button", { name: /Confirmar baja/ }).click();
+  await page.locator("#reg-3-motivo").selectOption("otro");
+  await page.getByRole("button", { name: "Confirmar", exact: true }).click();
   await expect(page.getByText("Con «Otro» el detalle es obligatorio.")).toBeVisible();
-  await page.getByLabel("Motivo").selectOption("roto");
-  await page.getByRole("button", { name: /Confirmar baja/ }).click();
-  await expect(page.getByText(/Dado de baja: Vale roto · por /)).toBeVisible(CARGA);
-  // El tramo queda explicado: en la serie ya no hay vales sin explicar.
-  await expect(
-    page
-      .getByRole("row")
-      .filter({ hasText: `V${marca}` })
-      .first()
-      .getByRole("cell")
-      .nth(6)
-  ).toHaveText("0");
+  await page.locator("#reg-3-motivo").selectOption("roto");
+  await page.getByRole("button", { name: "Confirmar", exact: true }).click();
+  await expect(vale3).toContainText("Regularizado", CARGA);
+  await expect(vale3).toContainText("Vale roto");
+  await expect(vale4).toContainText("Sin explicar");
+
+  // Regularizar en masa: se marca el vale que queda y la barra de abajo lo regulariza.
+  await vale4.getByRole("checkbox").check();
+  await expect(page.getByText("1 vale seleccionado")).toBeVisible();
+  await page.locator("#reg-masiva-motivo").selectOption("perdido");
+  await page.getByRole("button", { name: "Regularizar seleccionados" }).click();
+  await expect(vale4).toContainText("Regularizado", CARGA);
+  await expect(vale4).toContainText("Vale perdido");
+  // La serie ya no tiene vales sin explicar: Regularizados 2, Sin explicar 0.
+  const filaSerie = page
+    .getByRole("row")
+    .filter({ hasText: `V${marca}` })
+    .first();
+  await expect(filaSerie.getByRole("cell").nth(6)).toHaveText("2");
+  await expect(filaSerie.getByRole("cell").nth(7)).toHaveText("0");
 
   // El cuadre contra el tanque lo ve el administrador.
   await expect(page.getByText("Cuadre contra el tanque")).toBeVisible();

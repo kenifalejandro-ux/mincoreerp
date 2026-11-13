@@ -104,25 +104,45 @@ describe("hojasDelExcel", () => {
           cantidad: 2,
           anterior: { n: 2, registrado_por: "sigma", despachado_en: "2026-11-03T19:00:00.000Z" },
           siguiente: null,
-          baja: null,
+          vales: [
+            { n: 3, baja: null },
+            {
+              n: 4,
+              baja: {
+                desde: 4,
+                hasta: 4,
+                motivo: "mal_llenado",
+                detalle: null,
+                dado_por: "Admin",
+                fecha: "2026-11-12T14:00:00.000Z",
+              },
+            },
+          ],
+          explicados: 1,
+          sin_explicar: 1,
         },
       ],
     };
     const { filasSeries, filasTramos } = hojasDelExcel([s], () => "03/11");
     expect(filasSeries).toHaveLength(1);
     expect(filasSeries[0]).toMatchObject({ Serie: "001", Usados: 5, Faltan: 2, Galones: 100 });
-    expect(filasTramos).toEqual([
-      {
-        Serie: "001",
-        Desde: 3,
-        Hasta: 4,
-        Cantidad: 2,
-        "Vale anterior": 2,
-        "Registrado el anterior": "sigma, 03/11",
-        "Vale siguiente": 5,
-        "Registrado el siguiente": "",
-        Baja: "",
-      },
-    ]);
+    // Una fila por vale que falta, con su estado y quién lo regularizó.
+    expect(filasTramos).toHaveLength(2);
+    expect(filasTramos[0]).toMatchObject({
+      Serie: "001",
+      Vale: 3,
+      Estado: "Sin explicar",
+      Motivo: "",
+      "Vale anterior": 2,
+      "Registrado el anterior": "sigma, 03/11",
+      "Vale siguiente": 5,
+      "Registrado el siguiente": "",
+    });
+    expect(filasTramos[1]).toMatchObject({
+      Vale: 4,
+      Estado: "Regularizado",
+      Motivo: "Mal llenado, se anuló",
+      "Regularizado por": "Admin",
+    });
   });
 });

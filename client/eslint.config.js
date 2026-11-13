@@ -135,7 +135,7 @@ export default defineConfig([
       "src/components/combustible/CombustiblePanel.tsx",
       "src/components/combustible/Bandeja.tsx",
       "src/components/combustible/TalonariosModal.tsx",
-      "src/components/combustible/BajaDeTramo.tsx",
+      "src/components/combustible/RegularizarVales.tsx",
       "src/components/combustible/useAlertasCombustibleStream.ts",
       "src/components/bandeja/BandejaView.tsx",
       "src/pages/LoginPage.tsx",

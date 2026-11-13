@@ -58,7 +58,7 @@ import {
   moverDeGrifo,
 } from "../../server/services/sedes.service";
 import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
-import { rangosSolapados } from "./talonariosPeriodo";
+import { agruparEnTramos, yaRegularizados } from "./talonariosPeriodo";
 
 /** Lo que la pantalla necesita para mostrar (o registrar) la decisión sobre
  *  un excedente de recepción, sin volver a calcular nada (0102, rediseñado en
@@ -3342,27 +3342,38 @@ export class CombustibleService {
     return this.repository.findTalonariosDelPeriodo(client, tenantId, periodo);
   }
 
-  /** Da de baja un tramo de vales (0185). Rechaza lo que ya tiene un vale registrado y lo que ya
-   *  estaba dado de baja: la baja explica números SIN movimiento, nunca los esconde. */
+  /** Regulariza vales que faltan (0185). Rechaza los que ya tienen un vale registrado y los que ya
+   *  estaban regularizados: la regularización explica números SIN movimiento, nunca los esconde.
+   *  Los números seguidos se guardan como un solo rango; todo o nada en una transacción. */
   async darDeBajaVales(
     client: PoolClient,
     tenantId: string,
     usuarioId: string,
-    input: { serie: string; desde: number; hasta: number; motivo: string; detalle?: string }
+    input: { serie: string; numeros: number[]; motivo: string; detalle?: string }
   ) {
     await this.repository.bloquearBajasDeSerie(client, tenantId, input.serie);
-    const registrados = await this.repository.valesRegistradosEnRango(
-      client,
-      tenantId,
-      input.serie,
-      input.desde,
-      input.hasta
-    );
+    const rangos = agruparEnTramos(input.numeros);
+    const minimo = rangos[0].desde;
+    const maximo = rangos[rangos.length - 1].hasta;
+    const pedidos = new Set(input.numeros);
+    const registrados = (
+      await this.repository.valesRegistradosEnRango(client, tenantId, input.serie, minimo, maximo)
+    ).filter((n) => pedidos.has(n));
     if (registrados.length > 0) return { estado: "con_vales" as const, registrados };
     const previas = await this.repository.bajasDeSerie(client, tenantId, input.serie);
-    if (rangosSolapados(input, previas).length > 0) return { estado: "ya_dada_de_baja" as const };
-    const id = await this.repository.crearBajaDeVales(client, tenantId, usuarioId, input);
-    return { estado: "ok" as const, id };
+    if (yaRegularizados(input.numeros, previas).length > 0) {
+      return { estado: "ya_dada_de_baja" as const };
+    }
+    for (const r of rangos) {
+      await this.repository.crearBajaDeVales(client, tenantId, usuarioId, {
+        serie: input.serie,
+        desde: r.desde,
+        hasta: r.hasta,
+        motivo: input.motivo,
+        detalle: input.detalle,
+      });
+    }
+    return { estado: "ok" as const, cantidad: input.numeros.length };
   }
 
   // ── Alertas (migrations/0068) ─────────────────────────────────────────

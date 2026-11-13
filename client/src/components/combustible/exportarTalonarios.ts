@@ -1,7 +1,7 @@
 import { hojasDelExcel } from "./talonariosCuadre";
 import { fechaCorta, type SerieTalonario } from "./valesFaltantesLogica";
 
-/** Baja un .xlsx con las series del período y, en otra hoja, los tramos que faltan. La librería
+/** Baja un .xlsx con las series del período y, en otra hoja, cada vale que falta. La librería
  *  se carga recién al exportar: no pesa en el resto de la pantalla. */
 export async function exportarTalonariosExcel(series: SerieTalonario[], nombreArchivo: string) {
   if (series.length === 0) return;

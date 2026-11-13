@@ -9,7 +9,6 @@ import {
   rangoTexto,
   seriesConFaltantes,
   textoVecinos,
-  textoBaja,
   totalFaltantes,
   totalSinExplicar,
   type SerieTalonario,
@@ -33,7 +32,7 @@ export function BotonValesFaltantes({
       </span>
     );
   }
-  // Todo lo que falta tiene su baja: ya no es una alarma, pero se puede abrir para ver por qué.
+  // Todo lo que falta está regularizado: ya no es una alarma, pero se puede abrir para ver por qué.
   const explicado = sinExplicar === 0;
   return (
     <button
@@ -47,7 +46,7 @@ export function BotonValesFaltantes({
           : "inline-flex items-center gap-1.5 rounded-full border border-red-300 bg-red-50 px-3 py-1 text-xs font-bold text-red-700 hover:bg-red-100"
       }
     >
-      {explicado ? `✔ ${faltan} vales explicados` : `⚠ Vales faltantes: ${sinExplicar}`}
+      {explicado ? `✔ ${faltan} vales regularizados` : `⚠ Vales faltantes: ${sinExplicar}`}
       <ChevronDown className={`h-3.5 w-3.5 transition-transform ${abierto ? "rotate-180" : ""}`} />
     </button>
   );
@@ -65,7 +64,7 @@ export function PanelValesFaltantes({ series }: { series: SerieTalonario[] }) {
               {String(s.maximo).padStart(5, "0")} · usados {s.usados} de {s.usados + s.faltan}
             </span>
             <span className={s.sin_explicar > 0 ? "text-red-600" : "text-amber-700"}>
-              {s.sin_explicar > 0 ? `faltan ${s.sin_explicar}` : "todos explicados"}
+              {s.sin_explicar > 0 ? `faltan ${s.sin_explicar}` : "todos regularizados"}
             </span>
           </h3>
           <ul className="divide-y divide-slate-100">
@@ -75,9 +74,9 @@ export function PanelValesFaltantes({ series }: { series: SerieTalonario[] }) {
                 <span className="text-slate-500">
                   ({t.cantidad === 1 ? "1 vale" : `${t.cantidad} vales`})
                 </span>
-                {t.baja && (
+                {t.explicados > 0 && (
                   <p className="text-xs font-semibold text-amber-700">
-                    Dado de baja: {textoBaja(t.baja, fechaCorta)}
+                    {t.explicados} de {t.cantidad} regularizados
                   </p>
                 )}
                 <p className="text-xs text-slate-500">{textoVecinos(s.serie, t, fechaCorta)}</p>
