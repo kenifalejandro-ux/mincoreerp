@@ -2499,6 +2499,82 @@ export class CombustibleRepository {
     return resultado.sort((x, y) => x.serie.localeCompare(y.serie));
   }
 
+  /** Las regularizaciones vigentes que tocan algún número entre `desde` y `hasta`, bloqueadas
+   *  para que dos personas no deshagan lo mismo a la vez. */
+  async bajasVigentesQueTocan(
+    client: PoolClient,
+    tenantId: string,
+    serie: string,
+    desde: number,
+    hasta: number
+  ) {
+    const r = await client.query<{
+      id: string;
+      desde: number;
+      hasta: number;
+      motivo: string;
+      detalle: string | null;
+      creado_por: string | null;
+      creado_en: Date;
+    }>(
+      `SELECT id, desde, hasta, motivo, detalle, creado_por, creado_en
+         FROM combustible_vales_baja
+        WHERE tenant_id = $1 AND serie = $2 AND anulada_en IS NULL
+          AND desde <= $4::int AND hasta >= $3::int
+        FOR UPDATE`,
+      [tenantId, serie, desde, hasta]
+    );
+    return r.rows;
+  }
+
+  /** Marca una regularización como anulada: no se borra, queda con quién, cuándo y por qué. */
+  async anularBaja(
+    client: PoolClient,
+    tenantId: string,
+    id: string,
+    usuarioId: string,
+    motivo: string
+  ) {
+    await client.query(
+      `UPDATE combustible_vales_baja
+          SET anulada_en = now(), anulada_por = $3, motivo_anulacion = $4
+        WHERE tenant_id = $1 AND id = $2 AND anulada_en IS NULL`,
+      [tenantId, id, usuarioId, motivo]
+    );
+  }
+
+  /** Lo que sobra de una regularización a la que se le deshizo solo una parte: una fila nueva con el
+   *  mismo motivo, detalle, autor y fecha que la original. */
+  async crearBajaRestante(
+    client: PoolClient,
+    tenantId: string,
+    serie: string,
+    original: {
+      motivo: string;
+      detalle: string | null;
+      creado_por: string | null;
+      creado_en: Date;
+    },
+    desde: number,
+    hasta: number
+  ) {
+    await client.query(
+      `INSERT INTO combustible_vales_baja
+         (tenant_id, serie, desde, hasta, motivo, detalle, creado_por, creado_en)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        tenantId,
+        serie,
+        desde,
+        hasta,
+        original.motivo,
+        original.detalle,
+        original.creado_por,
+        original.creado_en,
+      ]
+    );
+  }
+
   /** Las bajas de una serie (0185), con el nombre de quien las dio. */
   async bajasDeSerie(client: PoolClient, tenantId: string, serie: string): Promise<BajaDeVale[]> {
     const r = await client.query<{
@@ -2512,7 +2588,7 @@ export class CombustibleRepository {
       `SELECT b.desde, b.hasta, b.motivo, b.detalle, u.nombre AS dado_por, b.creado_en
          FROM combustible_vales_baja b
          LEFT JOIN usuarios u ON u.id = b.creado_por
-        WHERE b.tenant_id = $1 AND b.serie = $2
+        WHERE b.tenant_id = $1 AND b.serie = $2 AND b.anulada_en IS NULL
         ORDER BY b.creado_en DESC`,
       [tenantId, serie]
     );

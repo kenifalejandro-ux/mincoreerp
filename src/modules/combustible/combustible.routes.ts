@@ -29,6 +29,7 @@ import {
   validarRecepcionCombustibleSchema,
   anularDespachoCombustibleSchema,
   bajaValesCombustibleSchema,
+  deshacerBajaValesCombustibleSchema,
   subirComprobanteCompraSchema,
   marcarAlertasLeidasCombustibleSchema,
   configCombustibleSchema,
@@ -223,6 +224,14 @@ router.post(
   requireRole("admin", "operador"),
   validate(bajaValesCombustibleSchema),
   asyncHandler(controller.postBajaVales.bind(controller))
+);
+// Deshacer una regularización: mismos permisos que regularizar.
+router.post(
+  "/despachos/talonarios/bajas/deshacer",
+  requirePestana("combustible", "tanques:acciones:baja_vales"),
+  requireRole("admin", "operador"),
+  validate(deshacerBajaValesCombustibleSchema),
+  asyncHandler(controller.postDeshacerRegularizacion.bind(controller))
 );
 
 // Histórico del cliente: cada vista del selector tiene su propio permiso

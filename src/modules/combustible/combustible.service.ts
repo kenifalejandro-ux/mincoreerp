@@ -58,7 +58,7 @@ import {
   moverDeGrifo,
 } from "../../server/services/sedes.service";
 import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
-import { agruparEnTramos, yaRegularizados } from "./talonariosPeriodo";
+import { agruparEnTramos, rangosQueQuedan, yaRegularizados } from "./talonariosPeriodo";
 
 /** Lo que la pantalla necesita para mostrar (o registrar) la decisión sobre
  *  un excedente de recepción, sin volver a calcular nada (0102, rediseñado en
@@ -3372,6 +3372,43 @@ export class CombustibleService {
         motivo: input.motivo,
         detalle: input.detalle,
       });
+    }
+    return { estado: "ok" as const, cantidad: input.numeros.length };
+  }
+
+  /** Deshace la regularización de vales (0186). No borra: anula la fila con quién, cuándo y por qué.
+   *  Si la regularización cubría más números que los que se deshacen, el resto se vuelve a guardar. */
+  async deshacerRegularizacion(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    input: { serie: string; numeros: number[]; motivo: string }
+  ) {
+    await this.repository.bloquearBajasDeSerie(client, tenantId, input.serie);
+    const rangos = agruparEnTramos(input.numeros);
+    const filas = await this.repository.bajasVigentesQueTocan(
+      client,
+      tenantId,
+      input.serie,
+      rangos[0].desde,
+      rangos[rangos.length - 1].hasta
+    );
+    const cubierto = (n: number) => filas.some((f) => f.desde <= n && f.hasta >= n);
+    const noRegularizados = input.numeros.filter((n) => !cubierto(n));
+    if (noRegularizados.length > 0) return { estado: "no_regularizados" as const, noRegularizados };
+    const quitar = new Set(input.numeros);
+    for (const fila of filas) {
+      await this.repository.anularBaja(client, tenantId, fila.id, usuarioId, input.motivo);
+      for (const resto of rangosQueQuedan(fila.desde, fila.hasta, quitar)) {
+        await this.repository.crearBajaRestante(
+          client,
+          tenantId,
+          input.serie,
+          fila,
+          resto.desde,
+          resto.hasta
+        );
+      }
     }
     return { estado: "ok" as const, cantidad: input.numeros.length };
   }

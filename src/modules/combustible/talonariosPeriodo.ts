@@ -59,6 +59,17 @@ export function detallarVales(tramos: TramoFaltante[], bajas: BajaDeVale[]): Tra
   });
 }
 
+/** Lo que queda de un rango al quitarle algunos números, como rangos de números seguidos. */
+export function rangosQueQuedan(
+  desde: number,
+  hasta: number,
+  quitar: Set<number>
+): { desde: number; hasta: number }[] {
+  const quedan: number[] = [];
+  for (let n = desde; n <= hasta; n++) if (!quitar.has(n)) quedan.push(n);
+  return agruparEnTramos(quedan);
+}
+
 /** Los números de la lista que ya están dentro de una regularización anterior. */
 export function yaRegularizados(numeros: number[], bajas: { desde: number; hasta: number }[]) {
   return numeros.filter((n) => bajas.some((b) => b.desde <= n && b.hasta >= n));

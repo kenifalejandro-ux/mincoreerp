@@ -12,6 +12,7 @@ import { closeDatabase, withTenant } from "../src/server/config/database";
 import {
   agruparEnTramos,
   detallarVales,
+  rangosQueQuedan,
   yaRegularizados,
 } from "../src/modules/combustible/talonariosPeriodo";
 
@@ -71,6 +72,20 @@ describe("detallarVales y yaRegularizados (cálculo puro)", () => {
   it("yaRegularizados dice cuáles de la lista ya tienen regularización", () => {
     expect(yaRegularizados([1, 5, 9], [{ desde: 4, hasta: 6 }])).toEqual([5]);
     expect(yaRegularizados([1, 2], [])).toEqual([]);
+  });
+});
+
+describe("rangosQueQuedan (cálculo puro)", () => {
+  it("parte un rango al quitarle números del medio", () => {
+    expect(rangosQueQuedan(10, 20, new Set([13, 14, 18]))).toEqual([
+      { desde: 10, hasta: 12 },
+      { desde: 15, hasta: 17 },
+      { desde: 19, hasta: 20 },
+    ]);
+  });
+  it("si se quita todo, no queda nada; si no se quita nada, queda igual", () => {
+    expect(rangosQueQuedan(5, 6, new Set([5, 6]))).toEqual([]);
+    expect(rangosQueQuedan(5, 8, new Set())).toEqual([{ desde: 5, hasta: 8 }]);
   });
 });
 
@@ -320,6 +335,110 @@ describe("combustible: reporte de talonarios", () => {
       expect((await (await entrarComo("grifero")).post(ruta).send(cuerpo)).status).toBe(403);
       expect((await (await entrarComo("lectura")).post(ruta).send(cuerpo)).status).toBe(403);
       expect((await entrarComo("operador").then((p) => p.post(ruta).send(cuerpo))).status).toBe(
+        201
+      );
+    });
+  });
+
+  describe("deshacer una regularización", () => {
+    const ruta = "/api/erp/combustible/despachos/talonarios/bajas";
+    const deshacer = `${ruta}/deshacer`;
+    const serieDe = async (serie: string) => {
+      const r = await agente.get("/api/erp/combustible/despachos/talonarios");
+      return r.body.series.find((x: { serie: string }) => x.serie === serie);
+    };
+    const preparar = async (huecos: number[]) => {
+      const serie = serieUnica();
+      await despachar(serie, 1);
+      await despachar(serie, Math.max(...huecos) + 1);
+      expect(
+        (await agente.post(ruta).send({ serie, numeros: huecos, motivo: "perdido", detalle: "d" }))
+          .status
+      ).toBe(201);
+      return serie;
+    };
+
+    it("devuelve un vale a «sin explicar» y deja el resto regularizado", async () => {
+      const serie = await preparar([2, 3, 4, 5]);
+      const res = await agente.post(deshacer).send({ serie, numeros: [3], motivo: "me equivoqué" });
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      expect(res.body.cantidad).toBe(1);
+
+      const fila = await serieDe(serie);
+      expect(fila.explicados).toBe(3);
+      expect(fila.sin_explicar).toBe(1);
+      const vales = fila.tramos[0].vales;
+      expect(vales.map((v: { n: number; baja: unknown }) => [v.n, v.baja !== null])).toEqual([
+        [2, true],
+        [3, false],
+        [4, true],
+        [5, true],
+      ]);
+      // Los que siguen regularizados conservan su motivo y su detalle.
+      expect(vales[0].baja).toMatchObject({ motivo: "perdido", detalle: "d" });
+    });
+
+    it("no borra: la fila original queda anulada con quién, cuándo y por qué", async () => {
+      const serie = await preparar([2, 3]);
+      await agente.post(deshacer).send({ serie, numeros: [2, 3], motivo: "apareció el papel" });
+      const filas = await withTenant(tenantId, (client) =>
+        client.query(
+          `SELECT desde, hasta, motivo_anulacion, anulada_en, anulada_por
+             FROM combustible_vales_baja WHERE tenant_id = $1 AND serie = $2`,
+          [tenantId, serie]
+        )
+      );
+      expect(filas.rows).toHaveLength(1);
+      expect(filas.rows[0].motivo_anulacion).toBe("apareció el papel");
+      expect(filas.rows[0].anulada_en).not.toBeNull();
+      expect(filas.rows[0].anulada_por).not.toBeNull();
+      expect((await serieDe(serie)).explicados).toBe(0);
+    });
+
+    it("se puede volver a regularizar un vale que se deshizo", async () => {
+      const serie = await preparar([2, 3]);
+      await agente.post(deshacer).send({ serie, numeros: [2], motivo: "error" });
+      expect((await agente.post(ruta).send({ serie, numeros: [2], motivo: "roto" })).status).toBe(
+        201
+      );
+      const fila = await serieDe(serie);
+      expect(fila.explicados).toBe(2);
+      expect(fila.tramos[0].vales[0].baja.motivo).toBe("roto");
+    });
+
+    it("deshacer varios vales a la vez, de dos tramos distintos", async () => {
+      const serie = await preparar([2, 3]);
+      await despachar(serie, 8);
+      await agente.post(ruta).send({ serie, numeros: [5, 6], motivo: "roto" });
+      const res = await agente.post(deshacer).send({ serie, numeros: [3, 5], motivo: "revisión" });
+      expect(res.status).toBe(201);
+      expect((await serieDe(serie)).explicados).toBe(2);
+    });
+
+    it("el motivo es obligatorio y no se aceptan listas vacías ni repetidas", async () => {
+      const serie = await preparar([2, 3]);
+      const mal = [
+        { serie, numeros: [2] },
+        { serie, numeros: [2], motivo: "   " },
+        { serie, numeros: [], motivo: "x" },
+        { serie, numeros: [2, 2], motivo: "x" },
+      ];
+      for (const cuerpo of mal) expect((await agente.post(deshacer).send(cuerpo)).status).toBe(400);
+    });
+
+    it("rechaza un vale que no está regularizado y no cambia nada", async () => {
+      const serie = await preparar([2, 3]);
+      const res = await agente.post(deshacer).send({ serie, numeros: [3, 9], motivo: "x" });
+      expect(res.status).toBe(409);
+      expect((await serieDe(serie)).explicados).toBe(2);
+    });
+
+    it("el grifero y Lectura no pueden deshacer; el operador sí", async () => {
+      const serie = await preparar([2, 3]);
+      const cuerpo = { serie, numeros: [2], motivo: "x" };
+      expect((await (await entrarComo("grifero")).post(deshacer).send(cuerpo)).status).toBe(403);
+      expect((await (await entrarComo("lectura")).post(deshacer).send(cuerpo)).status).toBe(403);
+      expect((await entrarComo("operador").then((p) => p.post(deshacer).send(cuerpo))).status).toBe(
         201
       );
     });

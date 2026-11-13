@@ -77,6 +77,7 @@ import type {
   ValidarRecepcionCombustibleInput,
   AnularDespachoCombustibleInput,
   BajaValesCombustibleInput,
+  DeshacerBajaValesCombustibleInput,
   SubirComprobanteCompraInput,
   MarcarAlertasLeidasCombustibleInput,
   BajaTanqueCombustibleInput,
@@ -4539,6 +4540,41 @@ export class CombustibleController {
     } catch (err) {
       logger.error({ err }, "No se pudo regularizar los vales");
       res.status(500).json({ error: "Error al regularizar los vales" });
+    }
+  }
+
+  /** POST /despachos/talonarios/bajas/deshacer -- deshace la regularización de vales (0186), con el
+   *  motivo. No borra nada: queda anulada con quién, cuándo y por qué, y en la Bitácora. Solo admin
+   *  y operador. */
+  async postDeshacerRegularizacion(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const input = req.validatedBody as DeshacerBajaValesCombustibleInput;
+      const resultado = await withTenant(tenantId, (client) =>
+        service.deshacerRegularizacion(client, tenantId, req.usuario!.id, input)
+      );
+      if (resultado.estado === "no_regularizados") {
+        res.status(409).json({
+          error: `Estos vales no están regularizados: ${resultado.noRegularizados.join(", ")}.`,
+        });
+        return;
+      }
+      await registrarAuditoria({
+        accion: "combustible.vales_baja_deshecha",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          serie: input.serie,
+          cantidad: resultado.cantidad,
+          numeros: input.numeros,
+          motivo: input.motivo,
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      res.status(201).json({ cantidad: resultado.cantidad });
+    } catch (err) {
+      logger.error({ err }, "No se pudo deshacer la regularización de vales");
+      res.status(500).json({ error: "Error al deshacer la regularización" });
     }
   }
 
