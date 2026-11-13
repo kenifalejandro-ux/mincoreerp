@@ -16,6 +16,7 @@ import {
   valeTexto,
   type SerieTalonario,
   type TramoFaltante,
+  type ValeFaltante,
 } from "./valesFaltantesLogica";
 
 /** Manda la regularización. Devuelve el texto del error, o null si salió bien. */
@@ -190,11 +191,108 @@ export function TramosRegularizables({
     onCambio();
   };
 
+  const formularioUno = (v: ValeFaltante) => (
+    <div className="flex flex-wrap items-end gap-2 bg-slate-50 px-3 py-2.5 pl-12">
+      {v.baja ? (
+        <CampoMotivoDeshacer
+          id={`des-${v.n}`}
+          valor={motivoDeshacer}
+          onCambio={setMotivoDeshacer}
+        />
+      ) : (
+        <CamposDeMotivo
+          id={`reg-${v.n}`}
+          motivo={motivo}
+          detalle={detalle}
+          onMotivo={setMotivo}
+          onDetalle={setDetalle}
+        />
+      )}
+      <button
+        onClick={() => confirmarUno(!!v.baja)}
+        disabled={enviando}
+        className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+      >
+        {enviando ? "Guardando..." : v.baja ? "Deshacer regularización" : "Confirmar"}
+      </button>
+      <button
+        onClick={() => setUno(null)}
+        disabled={enviando}
+        className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-white"
+      >
+        Cancelar
+      </button>
+      {error && <p className="basis-full text-xs text-red-600">{error}</p>}
+    </div>
+  );
+
+  /** El botón de la fila: «Regularizar» en lima (la acción principal) o «Deshacer», neutro. */
+  const botonUno = (v: ValeFaltante) =>
+    puedeRegularizar ? (
+      <button
+        onClick={() => abrirUno(v.n)}
+        className={
+          v.baja
+            ? "rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+            : "rounded-lg bg-lime-400 px-3 py-1 text-xs font-semibold text-slate-900 hover:bg-lime-300"
+        }
+      >
+        {v.baja ? "Deshacer" : "Regularizar"}
+      </button>
+    ) : (
+      !v.baja && <span className="text-xs text-slate-400">Solo lectura</span>
+    );
+
   return (
     <div className="space-y-3">
       {serie.tramos.map((t) => {
         const pendientes = t.vales.filter((v) => !v.baja);
         const todos = pendientes.length > 0 && pendientes.every((v) => marcados.has(v.n));
+        if (t.vales.length === 1) {
+          // Un solo vale: una sola fila, sin encabezado de tramo que repita lo mismo.
+          const v = t.vales[0];
+          return (
+            <section key={t.desde} className="overflow-hidden rounded-lg border border-slate-200">
+              <div className="grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-start gap-3 px-3 py-2.5">
+                {puedeRegularizar ? (
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4"
+                    checked={marcados.has(v.n)}
+                    onChange={() => alternar(v.n)}
+                    aria-label={`Marcar el vale ${valeTexto(serie.serie, v.n)}`}
+                  />
+                ) : (
+                  <span />
+                )}
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <span className="font-mono font-semibold text-slate-800">
+                      {valeTexto(serie.serie, v.n)}
+                    </span>
+                    {v.baja ? (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                        Regularizado
+                      </span>
+                    ) : (
+                      <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">
+                        Sin explicar
+                      </span>
+                    )}
+                  </div>
+                  {v.baja && (
+                    <p className="text-xs text-slate-500">{textoBaja(v.baja, fechaCorta)}</p>
+                  )}
+                  <p className="text-xs text-slate-500">
+                    {textoVecinos(serie.serie, t, fechaCorta)}
+                  </p>
+                </div>
+                {botonUno(v)}
+              </div>
+              {uno === v.n && formularioUno(v)}
+            </section>
+          );
+        }
         return (
           <section key={t.desde} className="overflow-hidden rounded-lg border border-slate-200">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 bg-slate-50 px-3 py-2">
@@ -256,55 +354,9 @@ export function TramosRegularizables({
                         </span>
                       </span>
                     )}
-                    {puedeRegularizar ? (
-                      <button
-                        onClick={() => abrirUno(v.n)}
-                        className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        {v.baja ? "Deshacer" : "Regularizar"}
-                      </button>
-                    ) : (
-                      !v.baja && <span className="text-xs text-slate-400">Solo lectura</span>
-                    )}
+                    {botonUno(v)}
                   </div>
-                  {uno === v.n && (
-                    <div className="flex flex-wrap items-end gap-2 bg-slate-50 px-3 py-2.5 pl-12">
-                      {v.baja ? (
-                        <CampoMotivoDeshacer
-                          id={`des-${v.n}`}
-                          valor={motivoDeshacer}
-                          onCambio={setMotivoDeshacer}
-                        />
-                      ) : (
-                        <CamposDeMotivo
-                          id={`reg-${v.n}`}
-                          motivo={motivo}
-                          detalle={detalle}
-                          onMotivo={setMotivo}
-                          onDetalle={setDetalle}
-                        />
-                      )}
-                      <button
-                        onClick={() => confirmarUno(!!v.baja)}
-                        disabled={enviando}
-                        className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-                      >
-                        {enviando
-                          ? "Guardando..."
-                          : v.baja
-                            ? "Deshacer regularización"
-                            : "Confirmar"}
-                      </button>
-                      <button
-                        onClick={() => setUno(null)}
-                        disabled={enviando}
-                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-white"
-                      >
-                        Cancelar
-                      </button>
-                      {error && <p className="basis-full text-xs text-red-600">{error}</p>}
-                    </div>
-                  )}
+                  {uno === v.n && formularioUno(v)}
                 </li>
               ))}
             </ul>

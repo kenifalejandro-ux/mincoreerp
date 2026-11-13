@@ -14,7 +14,7 @@ import { loginPorUI } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
 import { primerGrifoActivo } from "./fixtures/grifos";
 
-async function prepararTanqueConVales(page: Page, marca: string) {
+async function prepararTanqueConVales(page: Page, marca: string, vales = [1, 2, 5]) {
   const grifoInternoId = await primerGrifoActivo(page);
   const crear = async (ruta: string, data: object) => {
     const r = await page.request.post(ruta, { data });
@@ -36,8 +36,8 @@ async function prepararTanqueConVales(page: Page, marca: string) {
     grifo_interno_id: grifoInternoId,
     codigo: `TV-${marca}`,
   });
-  // Vales 1, 2 y 5: faltan el 3 y el 4, en un solo tramo.
-  for (const nVale of [1, 2, 5]) {
+  // Por defecto, vales 1, 2 y 5: faltan el 3 y el 4, en un solo tramo.
+  for (const nVale of vales) {
     await crear("/api/erp/combustible/despachos", {
       origen: "tanque_propio",
       combustible_id: tanque.id,
@@ -164,7 +164,8 @@ test("Kardex: si la consulta de talonarios falla, el kardex sale igual y sin avi
 test("Talonarios: el botón abre el reporte con la serie, su tramo que falta y el Excel", async () => {
   test.setTimeout(120_000);
   const marca = randomBytes(3).toString("hex").toUpperCase();
-  await prepararTanqueConVales(page, marca);
+  // Vales 1, 2, 5 y 7: faltan el 3 y el 4 (un tramo de dos) y el 6 (un tramo de un solo vale).
+  await prepararTanqueConVales(page, marca, [1, 2, 5, 7]);
   await irATanques(page);
 
   // Botón nuevo: lleva la etiqueta «Nuevo» (hasta 24 h después del primer clic de cada persona).
@@ -184,13 +185,21 @@ test("Talonarios: el botón abre el reporte con la serie, su tramo que falta y e
     await expect(page.getByText(titulo, { exact: true }).first()).toBeVisible();
   }
 
-  // La serie de esta corrida: vales 1, 2 y 5 → usados 3 de 5, faltan 2.
+  // La serie de esta corrida: usados 4 de 7, faltan 3.
   const fila = page.getByRole("row").filter({ hasText: `V${marca}` });
   await expect(fila).toBeVisible(CARGA);
-  await expect(fila).toContainText("3 de 5");
+  await expect(fila).toContainText("4 de 7");
   await fila.getByRole("button", { name: "Ver tramos" }).click();
   await expect(page.getByText("00003 – 00004")).toBeVisible();
   await expect(page.getByText(`Entre el V${marca}-00002`)).toBeVisible();
+
+  // Un tramo de un solo vale (el 6) ocupa una sola fila, con el botón «Regularizar» en lima.
+  const unico = page.getByRole("checkbox", { name: /Marcar el vale V.*-00006/ });
+  await expect(unico).toBeVisible();
+  await expect(
+    page.locator("section").filter({ has: unico }).getByRole("button", { name: "Regularizar" })
+  ).toHaveClass(/bg-lime-400/);
+  await expect(page.locator("section").filter({ has: unico })).not.toContainText("1 vale ·");
 
   // Cada vale que falta tiene su fila. Regularizar uno: pide motivo, y «Otro» pide además el detalle.
   const vale3 = page.getByRole("listitem").filter({ hasText: `V${marca}-00003` });
@@ -215,13 +224,13 @@ test("Talonarios: el botón abre el reporte con la serie, su tramo que falta y e
   await page.getByRole("button", { name: "Regularizar seleccionados" }).click();
   await expect(vale4).toContainText("Regularizado", CARGA);
   await expect(vale4).toContainText("Vale perdido");
-  // La serie ya no tiene vales sin explicar: Regularizados 2, Sin explicar 0.
+  // Quedan regularizados el 3 y el 4, y sin explicar el 6.
   const filaSerie = page
     .getByRole("row")
     .filter({ hasText: `V${marca}` })
     .first();
-  await expect(filaSerie.getByRole("cell").nth(6)).toHaveText("2");
-  await expect(filaSerie.getByRole("cell").nth(7)).toHaveText("0");
+  await expect(filaSerie.getByRole("cell").nth(5)).toHaveText("2");
+  await expect(filaSerie.getByRole("cell").nth(6)).toHaveText("1");
 
   // Deshacer una regularización: el motivo es obligatorio y el vale vuelve a «Sin explicar».
   await vale3.getByRole("button", { name: "Deshacer" }).click();
@@ -236,8 +245,8 @@ test("Talonarios: el botón abre el reporte con la serie, su tramo que falta y e
   await page.locator("#des-masiva").fill("revisión");
   await page.getByRole("button", { name: "Deshacer regularización" }).click();
   await expect(vale4).toContainText("Sin explicar", CARGA);
-  await expect(filaSerie.getByRole("cell").nth(6)).toHaveText("0");
-  await expect(filaSerie.getByRole("cell").nth(7)).toHaveText("2");
+  await expect(filaSerie.getByRole("cell").nth(5)).toHaveText("0");
+  await expect(filaSerie.getByRole("cell").nth(6)).toHaveText("3");
 
   // El cuadre contra el tanque lo ve el administrador.
   await expect(page.getByText("Cuadre contra el tanque")).toBeVisible();

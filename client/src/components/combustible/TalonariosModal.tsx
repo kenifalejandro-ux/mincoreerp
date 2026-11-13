@@ -99,6 +99,10 @@ export default function TalonariosModal({
   }, [tanqueId]);
 
   const tanque = tanques.find((t) => t.id === tanqueId) ?? null;
+  // El reporte habla en la unidad en que se dieron de alta los tanques (galones salvo que todos
+  // estén en litros): mezclar las dos confunde.
+  const unidad: "gal" | "L" =
+    tanques.length > 0 && tanques.every((t) => t.unidad === "L") ? "L" : "gal";
   const faltan = series ? totalSinExplicar(series) : 0;
   const hayFaltantes = series ? series.some((s) => s.faltan > 0) : false;
   const cuadre =
@@ -190,7 +194,7 @@ export default function TalonariosModal({
         {!error && series && series.length === 0 && (
           <p className="text-sm text-slate-500">No hay vales de talonario en este período.</p>
         )}
-        {series && series.length > 0 && <FranjaTalonarios series={series} />}
+        {series && series.length > 0 && <FranjaTalonarios series={series} unidad={unidad} />}
         {series && series.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -199,8 +203,9 @@ export default function TalonariosModal({
                   <th className="py-2 pr-3">Serie</th>
                   <th className="py-2 pr-3">Rango</th>
                   <th className="py-2 pr-3">Usados</th>
-                  <th className="py-2 pr-3 text-right">Litros</th>
-                  <th className="py-2 pr-3 text-right">Galones</th>
+                  <th className="py-2 pr-3 text-right">
+                    {unidad === "gal" ? "Galones" : "Litros"}
+                  </th>
                   <th className="py-2 pr-3">Faltan</th>
                   <th className="py-2 pr-3">Regularizados</th>
                   <th className="py-2 pr-3">Sin explicar</th>
@@ -216,6 +221,7 @@ export default function TalonariosModal({
                     s={s}
                     abierta={abierta === s.serie}
                     puedeRegularizar={puedeRegularizar}
+                    unidad={unidad}
                     seleccion={seleccion}
                     onSeleccion={setSeleccion}
                     onCambio={() => {
@@ -347,6 +353,7 @@ function FilaSerie({
   s,
   abierta,
   puedeRegularizar,
+  unidad,
   seleccion,
   onSeleccion,
   onCambio,
@@ -355,6 +362,7 @@ function FilaSerie({
   s: SerieTalonario;
   abierta: boolean;
   puedeRegularizar: boolean;
+  unidad: "gal" | "L";
   seleccion: number[];
   onSeleccion: (numeros: number[]) => void;
   onCambio: () => void;
@@ -370,8 +378,9 @@ function FilaSerie({
         <td className="py-2 pr-3">
           {s.usados} de {s.usados + s.faltan}
         </td>
-        <td className="py-2 pr-3 text-right font-mono">{num(s.litros)}</td>
-        <td className="py-2 pr-3 text-right font-mono">{num(s.galones)}</td>
+        <td className="py-2 pr-3 text-right font-mono">
+          {num(unidad === "gal" ? s.galones : s.litros)}
+        </td>
         <td
           className={`py-2 pr-3 font-semibold ${s.faltan > 0 ? "text-red-600" : "text-slate-500"}`}
         >
@@ -399,7 +408,7 @@ function FilaSerie({
       </tr>
       {abierta && (
         <tr>
-          <td colSpan={11} className="pb-3">
+          <td colSpan={10} className="pb-3">
             <TramosRegularizables
               serie={s}
               puedeRegularizar={puedeRegularizar}
