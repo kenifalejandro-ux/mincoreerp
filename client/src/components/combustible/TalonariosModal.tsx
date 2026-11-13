@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../../services/apiClient";
 import VentanaFlotante from "../comunes/VentanaFlotante";
 import { exportarTalonariosExcel } from "./exportarTalonarios";
+import FranjaTalonarios from "./FranjaTalonarios";
 import { BarraRegularizar, TramosRegularizables } from "./RegularizarVales";
 import {
   calcularCuadre,
@@ -189,6 +190,7 @@ export default function TalonariosModal({
         {!error && series && series.length === 0 && (
           <p className="text-sm text-slate-500">No hay vales de talonario en este período.</p>
         )}
+        {series && series.length > 0 && <FranjaTalonarios series={series} />}
         {series && series.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
