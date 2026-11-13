@@ -173,6 +173,17 @@ test("Talonarios: el botón abre el reporte con la serie, su tramo que falta y e
   await boton.click();
   await expect(page.getByText("Talonarios de vales")).toBeVisible(CARGA);
 
+  // La franja de arriba: la dona y las tarjetas con lo que falta, lo regularizado y lo despachado.
+  await expect(page.getByRole("img", { name: /de los vales tienen respaldo/ })).toBeVisible(CARGA);
+  for (const titulo of [
+    "Vales que faltan",
+    "Regularizados",
+    "Sin explicar",
+    "Despachado con vale",
+  ]) {
+    await expect(page.getByText(titulo, { exact: true }).first()).toBeVisible();
+  }
+
   // La serie de esta corrida: vales 1, 2 y 5 → usados 3 de 5, faltan 2.
   const fila = page.getByRole("row").filter({ hasText: `V${marca}` });
   await expect(fila).toBeVisible(CARGA);
