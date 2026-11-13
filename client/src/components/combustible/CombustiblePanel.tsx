@@ -625,6 +625,7 @@ const ETIQUETA_ACCION: Record<string, string> = {
   // si el archivo aparece circulando, la bitácora dice quién lo sacó.
   "combustible.kardex_exportar": "Kardex exportado",
   "combustible.vales_baja": "Vales regularizados",
+  "combustible.vales_baja_deshecha": "Regularización deshecha",
   "combustible.calibracion_exportar": "Detalle de calibración exportado",
 };
 

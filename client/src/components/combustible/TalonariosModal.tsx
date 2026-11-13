@@ -304,6 +304,13 @@ export default function TalonariosModal({
           <BarraRegularizar
             serie={abierta}
             numeros={seleccion}
+            regularizados={
+              new Set(
+                (series?.find((s) => s.serie === abierta)?.tramos ?? []).flatMap((t) =>
+                  t.vales.filter((v) => v.baja).map((v) => v.n)
+                )
+              )
+            }
             onQuitar={() => setSeleccion([])}
             onHecha={() => {
               setSeleccion([]);

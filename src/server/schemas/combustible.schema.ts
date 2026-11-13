@@ -1693,6 +1693,20 @@ export const bajaValesCombustibleSchema = z
 
 export type BajaValesCombustibleInput = z.infer<typeof bajaValesCombustibleSchema>;
 
+/** Deshacer la regularización de vales (0186): la serie, los números y por qué se deshace. */
+export const deshacerBajaValesCombustibleSchema = z
+  .object({
+    serie: z.string().trim().min(1, "Falta la serie").max(20),
+    numeros: z.array(z.number().int().min(1)).min(1, "Elige al menos un vale").max(500),
+    motivo: z.string().trim().min(1, "Escribe por qué se deshace").max(300),
+  })
+  .refine((v) => new Set(v.numeros).size === v.numeros.length, {
+    message: "Hay vales repetidos en la lista",
+    path: ["numeros"],
+  });
+
+export type DeshacerBajaValesCombustibleInput = z.infer<typeof deshacerBajaValesCombustibleSchema>;
+
 // GET /equipos/:equipoId/ultimo-medidor -- la lectura de la carga anterior de
 // una unidad, para que el formulario calcule las horas abastecidas. `antes_de`
 // es la fecha del despacho que se está cargando: con una fecha retroactiva, la

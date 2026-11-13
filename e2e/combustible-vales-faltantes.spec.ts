@@ -223,6 +223,22 @@ test("Talonarios: el botón abre el reporte con la serie, su tramo que falta y e
   await expect(filaSerie.getByRole("cell").nth(6)).toHaveText("2");
   await expect(filaSerie.getByRole("cell").nth(7)).toHaveText("0");
 
+  // Deshacer una regularización: el motivo es obligatorio y el vale vuelve a «Sin explicar».
+  await vale3.getByRole("button", { name: "Deshacer" }).click();
+  await page.getByRole("button", { name: "Deshacer regularización" }).click();
+  await expect(page.getByText("Escribe por qué se deshace.")).toBeVisible();
+  await page.locator("#des-3").fill("me equivoqué de vale");
+  await page.getByRole("button", { name: "Deshacer regularización" }).click();
+  await expect(vale3).toContainText("Sin explicar", CARGA);
+  await expect(vale4).toContainText("Regularizado");
+  // En masa: se marca el vale que sigue regularizado y la barra lo deshace.
+  await vale4.getByRole("checkbox").check();
+  await page.locator("#des-masiva").fill("revisión");
+  await page.getByRole("button", { name: "Deshacer regularización" }).click();
+  await expect(vale4).toContainText("Sin explicar", CARGA);
+  await expect(filaSerie.getByRole("cell").nth(6)).toHaveText("0");
+  await expect(filaSerie.getByRole("cell").nth(7)).toHaveText("2");
+
   // El cuadre contra el tanque lo ve el administrador.
   await expect(page.getByText("Cuadre contra el tanque")).toBeVisible();
 

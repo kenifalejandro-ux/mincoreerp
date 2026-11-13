@@ -465,7 +465,7 @@ export const MODULOS: ModuloDefinicion[] = [
       {
         nombre: "combustible_vales_baja",
         pk: "serial",
-        fks: { creado_por: "usuarios" },
+        fks: { creado_por: "usuarios", anulada_por: "usuarios" },
       },
       // Entregas del mando entre titular y relevo (0153): cascadean desde el viaje.
       {
