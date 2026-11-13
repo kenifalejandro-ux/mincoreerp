@@ -58,7 +58,13 @@ function Tarjeta({
   );
 }
 
-export default function FranjaTalonarios({ series }: { series: SerieTalonario[] }) {
+export default function FranjaTalonarios({
+  series,
+  unidad,
+}: {
+  series: SerieTalonario[];
+  unidad: "gal" | "L";
+}) {
   const r = resumirTalonarios(series);
   const arcos = arcosDeLaDona(r, CIRCUNFERENCIA);
   const progreso = r.faltan > 0 ? (100 * r.regularizados) / r.faltan : 0;
@@ -176,8 +182,10 @@ export default function FranjaTalonarios({ series }: { series: SerieTalonario[] 
           icono={<Fuel className="h-5 w-5" />}
           tono="bg-sky-50 text-sky-700"
           titulo="Despachado con vale"
-          valor={num(r.litros)}
-          nota={`litros · ${num(r.galones)} galones`}
+          valor={num(unidad === "gal" ? r.galones : r.litros)}
+          nota={
+            unidad === "gal" ? `galones · ${num(r.litros)} LT` : `litros · ${num(r.galones)} GAL`
+          }
         />
       </div>
     </section>
