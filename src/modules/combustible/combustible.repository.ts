@@ -22,7 +22,7 @@ import {
 } from "./alcance";
 import { TIPOS_CRITICOS } from "./canalesAlertas";
 import {
-  anotarBajas,
+  detallarVales,
   armarTramos,
   numerosVecinos,
   type BajaDeVale,
@@ -2475,11 +2475,11 @@ export class CombustibleRepository {
         }
       }
       const litros = Number(s.litros);
-      const tramos = anotarBajas(
+      const tramos = detallarVales(
         armarTramos(numeros, vecinos),
         await this.bajasDeSerie(client, tenantId, s.serie)
       );
-      const explicados = tramos.reduce((suma, t) => suma + (t.baja ? t.cantidad : 0), 0);
+      const explicados = tramos.reduce((suma, t) => suma + t.explicados, 0);
       resultado.push({
         serie: s.serie,
         minimo: s.minimo,

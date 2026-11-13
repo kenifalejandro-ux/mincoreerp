@@ -7,7 +7,7 @@ export interface ValeVecino {
   despachado_en: string;
 }
 
-/** Una baja ya dada (0185): por qué esos vales no tienen movimiento, quién lo dijo y cuándo. */
+/** Una regularización ya dada (0185): por qué esos vales no tienen movimiento, quién lo dijo y cuándo. */
 export interface BajaDeVale {
   desde: number;
   hasta: number;
@@ -23,7 +23,14 @@ export interface TramoFaltante {
   cantidad: number;
   anterior: ValeVecino | null;
   siguiente: ValeVecino | null;
-  /** La baja que cubre el tramo; null si sigue sin explicar. */
+  /** Cada vale que falta en el tramo, con su regularización si ya la tiene. */
+  vales: ValeFaltante[];
+  explicados: number;
+  sin_explicar: number;
+}
+
+export interface ValeFaltante {
+  n: number;
   baja: BajaDeVale | null;
 }
 

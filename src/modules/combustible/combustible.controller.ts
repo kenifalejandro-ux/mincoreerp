@@ -4502,8 +4502,9 @@ export class CombustibleController {
     }
   }
 
-  /** POST /despachos/talonarios/bajas -- da de baja un tramo de vales que faltan (0185), con su
-   *  motivo. Queda en la Bitácora con quién, cuándo y por qué. Solo admin y operador. */
+  /** POST /despachos/talonarios/bajas -- regulariza vales que faltan (0185), con su motivo: uno,
+   *  varios o todo un tramo. Queda en la Bitácora con quién, cuándo y por qué. Solo admin y
+   *  operador. */
   async postBajaVales(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
@@ -4513,12 +4514,12 @@ export class CombustibleController {
       );
       if (resultado.estado === "con_vales") {
         res.status(409).json({
-          error: `Estos vales ya tienen movimiento: ${resultado.registrados.join(", ")}. No se pueden dar de baja.`,
+          error: `Estos vales ya tienen movimiento: ${resultado.registrados.join(", ")}. No se pueden regularizar.`,
         });
         return;
       }
       if (resultado.estado === "ya_dada_de_baja") {
-        res.status(409).json({ error: "Una parte de este tramo ya está dada de baja." });
+        res.status(409).json({ error: "Alguno de estos vales ya está regularizado." });
         return;
       }
       await registrarAuditoria({
@@ -4527,18 +4528,17 @@ export class CombustibleController {
         usuarioId: req.usuario!.id,
         detalle: {
           serie: input.serie,
-          desde: input.desde,
-          hasta: input.hasta,
-          cantidad: input.hasta - input.desde + 1,
+          cantidad: resultado.cantidad,
+          numeros: input.numeros,
           motivo: input.motivo,
           detalle: input.detalle ?? null,
         },
         contexto: contextoAuditoriaModulo(req),
       });
-      res.status(201).json({ id: resultado.id });
+      res.status(201).json({ cantidad: resultado.cantidad });
     } catch (err) {
-      logger.error({ err }, "No se pudo dar de baja el tramo de vales");
-      res.status(500).json({ error: "Error al dar de baja los vales" });
+      logger.error({ err }, "No se pudo regularizar los vales");
+      res.status(500).json({ error: "Error al regularizar los vales" });
     }
   }
 

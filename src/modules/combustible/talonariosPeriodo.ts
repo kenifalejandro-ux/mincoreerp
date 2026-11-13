@@ -21,7 +21,7 @@ export interface TramoFaltante {
   siguiente: ValeVecino | null;
 }
 
-/** Una baja ya guardada, con quién la dio. */
+/** Una regularización ya guardada (tabla de bajas), con quién la dio. */
 export interface BajaDeVale {
   desde: number;
   hasta: number;
@@ -32,25 +32,36 @@ export interface BajaDeVale {
   fecha: string;
 }
 
-/** Un tramo con su baja, si alguna baja lo cubre entero. */
-export type TramoConBaja = TramoFaltante & { baja: BajaDeVale | null };
-
-/** Marca cada tramo con la baja que lo cubre. Si el mismo tramo está cubierto por dos
- *  bajas, queda la más reciente. Un tramo que la baja cubre solo en parte no cuenta. */
-export function anotarBajas(tramos: TramoFaltante[], bajas: BajaDeVale[]): TramoConBaja[] {
-  const recientes = [...bajas].sort((a, b) => b.fecha.localeCompare(a.fecha));
-  return tramos.map((t) => ({
-    ...t,
-    baja: recientes.find((b) => b.desde <= t.desde && b.hasta >= t.hasta) ?? null,
-  }));
+/** Un vale que falta, con su regularización si ya la tiene. */
+export interface ValeFaltante {
+  n: number;
+  baja: BajaDeVale | null;
 }
 
-/** Números de la baja que SÍ tienen un vale registrado (no se pueden dar de baja). */
-export function rangosSolapados(
-  nuevo: { desde: number; hasta: number },
-  bajas: { desde: number; hasta: number }[]
-) {
-  return bajas.filter((b) => b.desde <= nuevo.hasta && b.hasta >= nuevo.desde);
+/** Un tramo con cada uno de sus vales y cuántos están regularizados. */
+export type TramoConVales = TramoFaltante & {
+  vales: ValeFaltante[];
+  explicados: number;
+  sin_explicar: number;
+};
+
+/** Abre cada tramo en sus vales y marca los que tienen regularización. Si un vale tiene dos,
+ *  queda la más reciente. */
+export function detallarVales(tramos: TramoFaltante[], bajas: BajaDeVale[]): TramoConVales[] {
+  const recientes = [...bajas].sort((a, b) => b.fecha.localeCompare(a.fecha));
+  return tramos.map((t) => {
+    const vales: ValeFaltante[] = [];
+    for (let n = t.desde; n <= t.hasta; n++) {
+      vales.push({ n, baja: recientes.find((b) => b.desde <= n && b.hasta >= n) ?? null });
+    }
+    const explicados = vales.filter((v) => v.baja).length;
+    return { ...t, vales, explicados, sin_explicar: vales.length - explicados };
+  });
+}
+
+/** Los números de la lista que ya están dentro de una regularización anterior. */
+export function yaRegularizados(numeros: number[], bajas: { desde: number; hasta: number }[]) {
+  return numeros.filter((n) => bajas.some((b) => b.desde <= n && b.hasta >= n));
 }
 
 /** Números consecutivos juntos: [1289, 1302, 1303, 1304] -> 1289 y 1302-1304.

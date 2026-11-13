@@ -52,7 +52,9 @@ describe("aviso de vales faltantes", () => {
       cantidad: 3,
       anterior: { n: 1301, registrado_por: "joel", despachado_en: "a" },
       siguiente: { n: 1305, registrado_por: null, despachado_en: "b" },
-      baja: null,
+      vales: [],
+      explicados: 0,
+      sin_explicar: 3,
     };
     expect(textoVecinos("001", tramo, (iso) => iso)).toBe(
       "Entre el 001-01301 (registrado por joel, a) y el 001-01305 (registrado por un usuario ya borrado, b)"
@@ -66,7 +68,9 @@ describe("aviso de vales faltantes", () => {
       cantidad: 1,
       anterior: null,
       siguiente: null,
-      baja: null,
+      vales: [],
+      explicados: 0,
+      sin_explicar: 1,
     };
     expect(textoVecinos("001", tramo, (iso) => iso)).toBe("Entre el 001-00004 y el 001-00006");
   });

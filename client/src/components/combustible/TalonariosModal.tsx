@@ -9,8 +9,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { apiFetch } from "../../services/apiClient";
 import VentanaFlotante from "../comunes/VentanaFlotante";
-import BajaDeTramo from "./BajaDeTramo";
 import { exportarTalonariosExcel } from "./exportarTalonarios";
+import { BarraRegularizar, TramosRegularizables } from "./RegularizarVales";
 import {
   calcularCuadre,
   ultimaVarilla,
@@ -19,9 +19,6 @@ import {
 } from "./talonariosCuadre";
 import {
   fechaCorta,
-  rangoTexto,
-  textoBaja,
-  textoVecinos,
   totalSinExplicar,
   valeTexto,
   type SerieTalonario,
@@ -40,12 +37,12 @@ const num = (n: number) => n.toLocaleString("es-PE", { maximumFractionDigits: 1 
 export default function TalonariosModal({
   tanques,
   puedeCuadre,
-  puedeDarBaja,
+  puedeRegularizar,
   onCerrar,
 }: {
   tanques: TanqueParaCuadre[];
   puedeCuadre: boolean;
-  puedeDarBaja: boolean;
+  puedeRegularizar: boolean;
   onCerrar: () => void;
 }) {
   const [desde, setDesde] = useState(() => aDia(new Date(Date.now() - 30 * 24 * 3600 * 1000)));
@@ -54,6 +51,7 @@ export default function TalonariosModal({
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [abierta, setAbierta] = useState<string | null>(null);
+  const [seleccion, setSeleccion] = useState<number[]>([]);
   const [exportando, setExportando] = useState(false);
   const [tanqueId, setTanqueId] = useState<number | null>(tanques[0]?.id ?? null);
   const [varilla, setVarilla] = useState<UltimaVarilla | null | "error">(null);
@@ -180,7 +178,7 @@ export default function TalonariosModal({
             {faltan > 0
               ? `Vales sin explicar: ${faltan}`
               : hayFaltantes
-                ? "✔ Todo lo que falta está explicado"
+                ? "✔ Todo lo que falta está regularizado"
                 : "✔ Vales completos"}
           </span>
         )}
@@ -202,6 +200,7 @@ export default function TalonariosModal({
                   <th className="py-2 pr-3 text-right">Litros</th>
                   <th className="py-2 pr-3 text-right">Galones</th>
                   <th className="py-2 pr-3">Faltan</th>
+                  <th className="py-2 pr-3">Regularizados</th>
                   <th className="py-2 pr-3">Sin explicar</th>
                   <th className="py-2 pr-3">Último vale</th>
                   <th className="py-2 pr-3">Fecha</th>
@@ -214,9 +213,17 @@ export default function TalonariosModal({
                     key={s.serie}
                     s={s}
                     abierta={abierta === s.serie}
-                    puedeDarBaja={puedeDarBaja}
-                    onCambio={cargar}
-                    onAlternar={() => setAbierta(abierta === s.serie ? null : s.serie)}
+                    puedeRegularizar={puedeRegularizar}
+                    seleccion={seleccion}
+                    onSeleccion={setSeleccion}
+                    onCambio={() => {
+                      setSeleccion([]);
+                      cargar();
+                    }}
+                    onAlternar={() => {
+                      setSeleccion([]);
+                      setAbierta(abierta === s.serie ? null : s.serie);
+                    }}
                   />
                 ))}
               </tbody>
@@ -291,6 +298,17 @@ export default function TalonariosModal({
             )}
           </section>
         )}
+        {puedeRegularizar && abierta && seleccion.length > 0 && (
+          <BarraRegularizar
+            serie={abierta}
+            numeros={seleccion}
+            onQuitar={() => setSeleccion([])}
+            onHecha={() => {
+              setSeleccion([]);
+              cargar();
+            }}
+          />
+        )}
       </div>
     </VentanaFlotante>
   );
@@ -319,13 +337,17 @@ function Dato({
 function FilaSerie({
   s,
   abierta,
-  puedeDarBaja,
+  puedeRegularizar,
+  seleccion,
+  onSeleccion,
   onCambio,
   onAlternar,
 }: {
   s: SerieTalonario;
   abierta: boolean;
-  puedeDarBaja: boolean;
+  puedeRegularizar: boolean;
+  seleccion: number[];
+  onSeleccion: (numeros: number[]) => void;
   onCambio: () => void;
   onAlternar: () => void;
 }) {
@@ -346,6 +368,7 @@ function FilaSerie({
         >
           {s.faltan}
         </td>
+        <td className="py-2 pr-3 font-semibold text-amber-700">{s.explicados}</td>
         <td
           className={`py-2 pr-3 font-semibold ${s.sin_explicar > 0 ? "text-red-600" : "text-slate-500"}`}
         >
@@ -367,33 +390,14 @@ function FilaSerie({
       </tr>
       {abierta && (
         <tr>
-          <td colSpan={10} className="pb-3">
-            <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
-              {s.tramos.map((t) => (
-                <li key={t.desde} className="px-3 py-2">
-                  <span className="font-mono font-semibold text-slate-800">{rangoTexto(t)}</span>{" "}
-                  <span className="text-slate-500">
-                    ({t.cantidad === 1 ? "1 vale" : `${t.cantidad} vales`})
-                  </span>
-                  {t.baja ? (
-                    <p className="text-xs font-semibold text-amber-700">
-                      Dado de baja: {textoBaja(t.baja, fechaCorta)}
-                    </p>
-                  ) : (
-                    puedeDarBaja && (
-                      <div className="mt-1">
-                        <BajaDeTramo serie={s.serie} tramo={t} onHecha={onCambio} />
-                      </div>
-                    )
-                  )}
-                  <p className="text-xs text-slate-500">{textoVecinos(s.serie, t, fechaCorta)}</p>
-                </li>
-              ))}
-            </ul>
-            <p className="mt-1 text-xs text-slate-500">
-              «Registrado por» es quien guardó el vale de al lado. No prueba quién tenía el que
-              falta.
-            </p>
+          <td colSpan={11} className="pb-3">
+            <TramosRegularizables
+              serie={s}
+              puedeRegularizar={puedeRegularizar}
+              seleccion={seleccion}
+              onSeleccion={onSeleccion}
+              onCambio={onCambio}
+            />
           </td>
         </tr>
       )}

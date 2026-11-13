@@ -9,7 +9,11 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
-import { agruparEnTramos } from "../src/modules/combustible/talonariosPeriodo";
+import {
+  agruparEnTramos,
+  detallarVales,
+  yaRegularizados,
+} from "../src/modules/combustible/talonariosPeriodo";
 
 function serieUnica(): string {
   return `T${Math.floor(Math.random() * 1e8).toString(36)}`.toUpperCase();
@@ -24,6 +28,49 @@ describe("agruparEnTramos (cálculo puro)", () => {
   });
   it("sin huecos no hay tramos", () => {
     expect(agruparEnTramos([])).toEqual([]);
+  });
+});
+
+describe("detallarVales y yaRegularizados (cálculo puro)", () => {
+  const tramo = (desde: number, hasta: number) => ({
+    desde,
+    hasta,
+    cantidad: hasta - desde + 1,
+    anterior: null,
+    siguiente: null,
+  });
+  const baja = (desde: number, hasta: number, fecha: string) => ({
+    desde,
+    hasta,
+    motivo: "roto",
+    detalle: null,
+    dado_por: "Admin",
+    fecha,
+  });
+
+  it("abre el tramo en cada vale y marca los regularizados, aunque la baja cubra solo una parte", () => {
+    const [t] = detallarVales([tramo(10, 13)], [baja(11, 12, "2026-11-12T10:00:00.000Z")]);
+    expect(t.vales.map((v) => [v.n, v.baja !== null])).toEqual([
+      [10, false],
+      [11, true],
+      [12, true],
+      [13, false],
+    ]);
+    expect(t.explicados).toBe(2);
+    expect(t.sin_explicar).toBe(2);
+  });
+
+  it("si un vale tiene dos regularizaciones, queda la más reciente", () => {
+    const [t] = detallarVales(
+      [tramo(5, 5)],
+      [baja(5, 5, "2026-11-01T10:00:00.000Z"), baja(1, 9, "2026-11-12T10:00:00.000Z")]
+    );
+    expect(t.vales[0].baja?.fecha).toBe("2026-11-12T10:00:00.000Z");
+  });
+
+  it("yaRegularizados dice cuáles de la lista ya tienen regularización", () => {
+    expect(yaRegularizados([1, 5, 9], [{ desde: 4, hasta: 6 }])).toEqual([5]);
+    expect(yaRegularizados([1, 2], [])).toEqual([]);
   });
 });
 
@@ -181,79 +228,95 @@ describe("combustible: reporte de talonarios", () => {
     expect((await (await entrarComo("conductor_ruta")).get(ruta)).status).toBe(403);
   });
 
-  describe("dar de baja un tramo", () => {
+  describe("regularizar vales", () => {
     const ruta = "/api/erp/combustible/despachos/talonarios/bajas";
     const serieDe = async (serie: string) => {
       const r = await agente.get("/api/erp/combustible/despachos/talonarios");
       return r.body.series.find((x: { serie: string }) => x.serie === serie);
     };
 
-    it("deja el tramo explicado, con motivo, quién y cuándo", async () => {
+    it("regulariza solo los vales elegidos y cuenta por vale", async () => {
       const serie = serieUnica();
-      for (const n of [1, 2, 5, 6, 9]) await despachar(serie, n);
+      for (const n of [1, 2, 7]) await despachar(serie, n);
+      // Faltan 3, 4, 5 y 6. Se regularizan el 3 y el 5, sueltos.
       const res = await agente
         .post(ruta)
-        .send({ serie, desde: 3, hasta: 4, motivo: "roto", detalle: "se mojó" });
+        .send({ serie, numeros: [3, 5], motivo: "roto", detalle: "se mojó" });
       expect(res.status, JSON.stringify(res.body)).toBe(201);
+      expect(res.body.cantidad).toBe(2);
 
       const fila = await serieDe(serie);
       expect(fila.faltan).toBe(4);
       expect(fila.explicados).toBe(2);
       expect(fila.sin_explicar).toBe(2);
-      expect(fila.tramos[0].baja).toMatchObject({ desde: 3, hasta: 4, motivo: "roto" });
-      expect(fila.tramos[0].baja.detalle).toBe("se mojó");
-      expect(fila.tramos[0].baja.dado_por).toBeTruthy();
-      expect(fila.tramos[1].baja).toBeNull();
+      const vales = fila.tramos[0].vales;
+      expect(vales.map((v: { n: number }) => v.n)).toEqual([3, 4, 5, 6]);
+      expect(vales[0].baja).toMatchObject({ motivo: "roto", detalle: "se mojó" });
+      expect(vales[0].baja.dado_por).toBeTruthy();
+      expect(vales[1].baja).toBeNull();
+      expect(vales[2].baja).not.toBeNull();
+      expect(fila.tramos[0].explicados).toBe(2);
+    });
+
+    it("varios números seguidos y uno suelto en una sola petición", async () => {
+      const serie = serieUnica();
+      for (const n of [1, 9]) await despachar(serie, n);
+      const res = await agente.post(ruta).send({ serie, numeros: [2, 3, 4, 6], motivo: "perdido" });
+      expect(res.status).toBe(201);
+      const fila = await serieDe(serie);
+      expect(fila.explicados).toBe(4);
+      expect(fila.sin_explicar).toBe(3);
     });
 
     it("con «Otro» el detalle es obligatorio", async () => {
-      const res = await agente.post(ruta).send({ serie: "X", desde: 3, hasta: 3, motivo: "otro" });
+      const res = await agente.post(ruta).send({ serie: "X", numeros: [3], motivo: "otro" });
       expect(res.status).toBe(400);
     });
 
-    it("rechaza un rango al revés o un motivo que no existe", async () => {
-      expect(
-        (await agente.post(ruta).send({ serie: "X", desde: 5, hasta: 3, motivo: "roto" })).status
-      ).toBe(400);
-      expect(
-        (await agente.post(ruta).send({ serie: "X", desde: 3, hasta: 3, motivo: "me dio pereza" }))
-          .status
-      ).toBe(400);
+    it("rechaza una lista vacía, repetida o un motivo que no existe", async () => {
+      const mal = [
+        { serie: "X", numeros: [], motivo: "roto" },
+        { serie: "X", numeros: [3, 3], motivo: "roto" },
+        { serie: "X", numeros: [3], motivo: "me dio pereza" },
+      ];
+      for (const cuerpo of mal) expect((await agente.post(ruta).send(cuerpo)).status).toBe(400);
     });
 
-    it("no se puede dar de baja un número que ya tiene vale", async () => {
+    it("no se puede regularizar un número que ya tiene vale, y no se guarda nada", async () => {
       const serie = serieUnica();
-      for (const n of [1, 2, 4]) await despachar(serie, n);
-      const res = await agente.post(ruta).send({ serie, desde: 2, hasta: 3, motivo: "perdido" });
+      for (const n of [1, 2, 5]) await despachar(serie, n);
+      const res = await agente.post(ruta).send({ serie, numeros: [3, 2], motivo: "perdido" });
       expect(res.status).toBe(409);
       expect((await serieDe(serie)).explicados).toBe(0);
     });
 
-    it("no se da de baja dos veces lo mismo", async () => {
+    it("no se regulariza dos veces el mismo vale", async () => {
       const serie = serieUnica();
-      for (const n of [1, 5]) await despachar(serie, n);
-      const una = { serie, desde: 2, hasta: 4, motivo: "perdido" };
-      expect((await agente.post(ruta).send(una)).status).toBe(201);
-      expect((await agente.post(ruta).send({ ...una, desde: 3, hasta: 3 })).status).toBe(409);
+      for (const n of [1, 6]) await despachar(serie, n);
+      expect(
+        (await agente.post(ruta).send({ serie, numeros: [2, 3], motivo: "perdido" })).status
+      ).toBe(201);
+      expect(
+        (await agente.post(ruta).send({ serie, numeros: [3, 4], motivo: "perdido" })).status
+      ).toBe(409);
+      expect((await serieDe(serie)).explicados).toBe(2);
     });
 
     it("si después aparece uno de esos vales, deja de contar como faltante", async () => {
       const serie = serieUnica();
       for (const n of [1, 4]) await despachar(serie, n);
-      await agente.post(ruta).send({ serie, desde: 2, hasta: 3, motivo: "roto" });
+      await agente.post(ruta).send({ serie, numeros: [2, 3], motivo: "roto" });
       await despachar(serie, 3);
       const fila = await serieDe(serie);
       expect(fila.faltan).toBe(1);
-      // El tramo que queda (el 2) ya no está cubierto entero por una baja de 2-3: sí lo está.
-      expect(fila.tramos[0]).toMatchObject({ desde: 2, hasta: 2 });
-      expect(fila.tramos[0].baja).not.toBeNull();
+      expect(fila.explicados).toBe(1);
       expect(fila.sin_explicar).toBe(0);
     });
 
-    it("el grifero y Lectura no pueden darlas de baja", async () => {
+    it("el grifero y Lectura no pueden regularizar; el operador sí", async () => {
       const serie = serieUnica();
       for (const n of [1, 5]) await despachar(serie, n);
-      const cuerpo = { serie, desde: 2, hasta: 4, motivo: "roto" };
+      const cuerpo = { serie, numeros: [2, 3], motivo: "roto" };
       expect((await (await entrarComo("grifero")).post(ruta).send(cuerpo)).status).toBe(403);
       expect((await (await entrarComo("lectura")).post(ruta).send(cuerpo)).status).toBe(403);
       expect((await entrarComo("operador").then((p) => p.post(ruta).send(cuerpo))).status).toBe(

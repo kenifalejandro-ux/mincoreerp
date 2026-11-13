@@ -215,7 +215,7 @@ router.get(
   validateQuery(periodoHistorialCombustibleSchema),
   asyncHandler(controller.getTalonarios.bind(controller))
 );
-// Dar de baja un tramo de vales que faltan. Solo admin y operador (la oficina); el grifero y
+// Regularizar vales que faltan (uno, varios o un tramo). Solo admin y operador (la oficina); el grifero y
 // Lectura ven el reporte pero no lo cambian. Además de la pestaña, para poder apagarlo por usuario.
 router.post(
   "/despachos/talonarios/bajas",

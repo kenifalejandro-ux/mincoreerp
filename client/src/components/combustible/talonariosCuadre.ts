@@ -1,7 +1,7 @@
 // Cuadre del reporte de talonarios: lo que se despachó con vale contra lo que le falta al tanque
 // en su última varilla. Sin React, para probarlo solo. Todo lo de los vales que faltan es una
 // ESTIMACIÓN (promedio por vale × cantidad), nunca un dato registrado.
-import { textoBaja, type SerieTalonario } from "./valesFaltantesLogica";
+import { MOTIVOS_BAJA, type SerieTalonario } from "./valesFaltantesLogica";
 
 export interface FilaDeKardex {
   tipo: string;
@@ -79,7 +79,7 @@ export function hojasDelExcel(series: SerieTalonario[], formatearFecha: (iso: st
     Hasta: s.maximo,
     Usados: s.usados,
     Faltan: s.faltan,
-    "Dados de baja": s.explicados,
+    Regularizados: s.explicados,
     "Sin explicar": s.sin_explicar,
     Litros: s.litros,
     Galones: s.galones,
@@ -88,18 +88,25 @@ export function hojasDelExcel(series: SerieTalonario[], formatearFecha: (iso: st
   }));
   const vecino = (v: { registrado_por: string | null; despachado_en: string } | null) =>
     v ? `${v.registrado_por ?? "usuario borrado"}, ${formatearFecha(v.despachado_en)}` : "";
+  // Una fila por vale que falta: así se filtra por estado, motivo o persona.
   const filasTramos = series.flatMap((s) =>
-    s.tramos.map((t) => ({
-      Serie: s.serie,
-      Desde: t.desde,
-      Hasta: t.hasta,
-      Cantidad: t.cantidad,
-      "Vale anterior": t.desde - 1,
-      "Registrado el anterior": vecino(t.anterior),
-      "Vale siguiente": t.hasta + 1,
-      "Registrado el siguiente": vecino(t.siguiente),
-      Baja: t.baja ? textoBaja(t.baja, formatearFecha) : "",
-    }))
+    s.tramos.flatMap((t) =>
+      t.vales.map((v) => ({
+        Serie: s.serie,
+        Vale: v.n,
+        Estado: v.baja ? "Regularizado" : "Sin explicar",
+        Motivo: v.baja
+          ? (MOTIVOS_BAJA.find((m) => m.valor === v.baja!.motivo)?.texto ?? v.baja.motivo)
+          : "",
+        Detalle: v.baja?.detalle ?? "",
+        "Regularizado por": v.baja ? (v.baja.dado_por ?? "usuario borrado") : "",
+        "Fecha de regularización": v.baja ? formatearFecha(v.baja.fecha) : "",
+        "Vale anterior": t.desde - 1,
+        "Registrado el anterior": vecino(t.anterior),
+        "Vale siguiente": t.hasta + 1,
+        "Registrado el siguiente": vecino(t.siguiente),
+      }))
+    )
   );
   return { filasSeries, filasTramos };
 }

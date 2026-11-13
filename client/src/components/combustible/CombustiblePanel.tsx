@@ -33,6 +33,7 @@ import {
 import MoverDeGrifo from "../comunes/MoverDeGrifo";
 import { useImportacionExcel } from "../comunes/useImportacionExcel";
 import { useSedes } from "../comunes/useSedes";
+import { marcarNovedadVista, novedadVigente } from "../controlTv/novedad";
 import VentanaFlotante from "../comunes/VentanaFlotante";
 import { enfocarPaginaPrincipal } from "../comunes/ventanasFlotantesEstado";
 import HistoricoCliente from "../HistoricoCliente";
@@ -594,6 +595,10 @@ interface EventoBitacora {
 /** Las acciones auditadas, en castellano. Las que REDUCEN la vigilancia se
  *  marcan aparte: son las que un auditor busca primero, y perderlas entre
  *  cincuenta "tanque actualizado" es como no tenerlas. */
+/** La etiqueta «Nuevo» del botón Talonarios (ver controlTv/novedad.ts): sale hasta 24 horas después
+ *  del primer clic de cada persona. */
+const NOVEDAD_TALONARIOS = "talonarios-2026-11";
+
 const ETIQUETA_ACCION: Record<string, string> = {
   "combustible.tanque_crear": "Tanque creado",
   "combustible.tanque_actualizar": "Tanque editado",
@@ -619,7 +624,7 @@ const ETIQUETA_ACCION: Record<string, string> = {
   // Llevarse datos del módulo es una acción de auditoría, no una consulta:
   // si el archivo aparece circulando, la bitácora dice quién lo sacó.
   "combustible.kardex_exportar": "Kardex exportado",
-  "combustible.vales_baja": "Vales dados de baja",
+  "combustible.vales_baja": "Vales regularizados",
   "combustible.calibracion_exportar": "Detalle de calibración exportado",
 };
 
@@ -3857,10 +3862,21 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             )}
             {permiteTanque("talonarios") && (
               <button
-                onClick={() => setTalonariosAbierto(true)}
-                className={`${BTN_BASE} ${BTN_ESTILO.lime}`}
+                onClick={() => {
+                  marcarNovedadVista(Date.now(), undefined, NOVEDAD_TALONARIOS);
+                  setTalonariosAbierto(true);
+                }}
+                className={`${BTN_BASE} ${BTN_ESTILO.lime} relative`}
               >
                 <FileText className="w-4 h-4 shrink-0" /> Talonarios
+                {novedadVigente(undefined, undefined, NOVEDAD_TALONARIOS) && (
+                  <span
+                    aria-hidden
+                    className="absolute -top-2 -right-3 rounded-full bg-sky-500 px-1.5 text-[9px] font-extrabold uppercase leading-4 tracking-wide text-white shadow"
+                  >
+                    Nuevo
+                  </span>
+                )}
               </button>
             )}
             {/* Vista propia (autónoma del historial de despachos): el conductor
@@ -6388,7 +6404,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
         <TalonariosModal
           tanques={tanques.filter((t) => t.tipo_punto === "fijo")}
           puedeCuadre={(esAdmin || usuario?.rol === "operador") && permiteAccionTanque("kardex")}
-          puedeDarBaja={
+          puedeRegularizar={
             (esAdmin || usuario?.rol === "operador") && permiteAccionTanque("baja_vales")
           }
           onCerrar={() => setTalonariosAbierto(false)}

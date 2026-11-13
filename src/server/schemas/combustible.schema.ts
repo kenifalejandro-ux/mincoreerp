@@ -1673,23 +1673,18 @@ export const periodoHistorialCombustibleSchema = z
 
 export type PeriodoHistorialCombustibleQuery = z.infer<typeof periodoHistorialCombustibleSchema>;
 
-/** Dar de baja un tramo de vales del talonario (0185): la serie, el rango y por qué no se usaron.
- *  Con «otro» el detalle es obligatorio: sin él la baja no explica nada. */
+/** Regularizar vales del talonario que faltan (0185): la serie, los números elegidos y por qué.
+ *  Con «otro» el detalle es obligatorio: sin él la regularización no explica nada. */
 export const bajaValesCombustibleSchema = z
   .object({
     serie: z.string().trim().min(1, "Falta la serie").max(20),
-    desde: z.number().int().min(1),
-    hasta: z.number().int().min(1),
+    numeros: z.array(z.number().int().min(1)).min(1, "Elige al menos un vale").max(500),
     motivo: z.enum(["roto", "perdido", "mal_llenado", "otro"]),
     detalle: z.string().trim().max(300).optional(),
   })
-  .refine((v) => v.hasta >= v.desde, {
-    message: "El último vale no puede ser menor que el primero",
-    path: ["hasta"],
-  })
-  .refine((v) => v.hasta - v.desde < 500, {
-    message: "Un tramo de más de 500 vales no se da de baja de una vez",
-    path: ["hasta"],
+  .refine((v) => new Set(v.numeros).size === v.numeros.length, {
+    message: "Hay vales repetidos en la lista",
+    path: ["numeros"],
   })
   .refine((v) => v.motivo !== "otro" || (v.detalle ?? "").length > 0, {
     message: "Con «Otro» hay que escribir el detalle",
