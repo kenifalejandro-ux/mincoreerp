@@ -59,6 +59,9 @@ export const MODULOS: ModuloDefinicion[] = [
     // un porcentaje parcial alguien vería Viajes sin Flota (y al revés), y la
     // pantalla de Viajes no podría elegir la unidad.
     bucketDe: "combustible",
+    // Las rutas de la unidad usan los lugares de Viajes; la sugerencia de consumo y el correo de
+    // topes son de Combustible. Sin ellos, Registro de unidades funciona igual.
+    opcionales: ["viajes", "combustible"],
     // La URL NO cambia: Combustible, Checklists, Órdenes de Trabajo y la cola
     // offline de los celulares ya llaman a /api/erp/equipos. El id gobierna
     // el acceso (requireModulo, cuotas, enum); la ruta, solo dónde se monta.
@@ -97,6 +100,8 @@ export const MODULOS: ModuloDefinicion[] = [
     version: "v1",
     router: viajesRoutes,
     requiere: ["flota"],
+    // Las cargas y el consumo de cada viaje salen de Combustible: enriquecen, no se necesitan.
+    opcionales: ["combustible"],
     bucketDe: "combustible",
     tablas: [],
     raices: [],
@@ -137,6 +142,8 @@ export const MODULOS: ModuloDefinicion[] = [
     icono: "⛽",
     version: "v1",
     router: combustibleRoutes,
+    // Lee del viaje activo la unidad (Compra en ruta) y el último medidor del viaje.
+    opcionales: ["viajes"],
     tablas: [
       {
         nombre: "combustible",
@@ -780,7 +787,9 @@ export const MODULOS: ModuloDefinicion[] = [
     icono: "📊",
     version: "v1",
     router: dashboardRoutes,
-    // Solo lee/agrega datos de otros módulos, no tiene tablas propias.
+    // Solo lee/agrega datos de otros módulos, no tiene tablas propias: cada
+    // tarjeta es enriquecimiento de un módulo que la empresa puede no tener.
+    opcionales: ["repuestos", "combustible", "documentos"],
     tablas: [],
     raices: [],
   },
@@ -827,6 +836,8 @@ export const MODULOS: ModuloDefinicion[] = [
     icono: "⚠️",
     version: "v1",
     router: ipercRoutes,
+    // La unidad del IPERC es opcional (`equipo_id` admite NULL).
+    opcionales: ["flota"],
     tablas: [
       {
         nombre: "iperc_lineas_base",
@@ -872,6 +883,10 @@ export const MODULOS: ModuloDefinicion[] = [
     icono: "🛠️",
     version: "v1",
     router: ordenesTrabajoRoutes,
+    // La orden puede asociar una evaluación de riesgo (sin FK real, se valida en la app).
+    // La unidad (`equipo_id`) hoy es obligatoria: sigue como excepción conocida del test
+    // hasta decidir si pasa a ser opcional.
+    opcionales: ["iperc"],
     tablas: [
       {
         nombre: "ordenes_trabajo",
@@ -902,6 +917,8 @@ export const MODULOS: ModuloDefinicion[] = [
     icono: "🔧",
     version: "v1",
     router: repuestosRoutes,
+    // Un movimiento de stock puede asociarse a una orden de trabajo.
+    opcionales: ["ordenes_trabajo"],
     tablas: [
       { nombre: "repuestos", pk: "serial" },
       {
@@ -958,6 +975,8 @@ export const MODULOS: ModuloDefinicion[] = [
     icono: "📄",
     version: "v1",
     router: documentosRoutes,
+    // Una orden de trabajo puede quedar como evidencia del documento.
+    opcionales: ["ordenes_trabajo"],
     tablas: [
       {
         nombre: "documentos",

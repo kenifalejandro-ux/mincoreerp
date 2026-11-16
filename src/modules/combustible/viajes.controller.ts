@@ -6,6 +6,7 @@ import { withTenant } from "../../server/config/database";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { getTenantId } from "../../server/shared/utils/request";
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
+import { tieneModulo } from "../../server/shared/utils/modulos";
 import { registrarAuditoria } from "../../server/services/platformAudit.service";
 import { publicarEventoTenant } from "../../server/services/realtimeEvents.service";
 import { pestanaPermitida } from "../../server/services/permisosPestanas.service";
@@ -633,7 +634,7 @@ export const viajesController = {
   async controlTvResumen(req: Request, res: Response) {
     const tenantId = getTenantId(req);
     const u = req.usuario!;
-    const tieneCombustible = u.modulosPermitidos.includes("combustible");
+    const tieneCombustible = tieneModulo(u, "combustible");
     const alcance = ambitoDe(req).alcance;
     res.json(
       await withTenant(tenantId, (c) =>
@@ -656,7 +657,7 @@ export const viajesController = {
    *  el módulo Combustible no hay nada que calcular: responde vacío, no 403. */
   async controlTvConsumo(req: Request, res: Response) {
     const tenantId = getTenantId(req);
-    if (!req.usuario!.modulosPermitidos.includes("combustible")) return res.json({});
+    if (!tieneModulo(req.usuario, "combustible")) return res.json({});
     const periodo = req.validatedQuery as { periodo: PeriodoTv };
     res.json(
       await withTenant(tenantId, (c) =>
@@ -671,7 +672,7 @@ export const viajesController = {
   async controlTvDetalle(req: Request, res: Response) {
     const tenantId = getTenantId(req);
     const u = req.usuario!;
-    if (!u.modulosPermitidos.includes("combustible")) return res.json({});
+    if (!tieneModulo(u, "combustible")) return res.json({});
     const q = req.validatedQuery as { periodo: PeriodoTv };
     res.json(
       await withTenant(tenantId, (c) =>
@@ -692,7 +693,7 @@ export const viajesController = {
    *  responde vacío, no 403. */
   async controlTvUnidad(req: Request, res: Response) {
     const tenantId = getTenantId(req);
-    if (!req.usuario!.modulosPermitidos.includes("combustible")) return res.json({});
+    if (!tieneModulo(req.usuario, "combustible")) return res.json({});
     const id = Number(req.params.viajeId);
     const { periodo } = req.validatedQuery as { periodo: PeriodoUnidadTv };
     const r = await withTenant(tenantId, (c) =>
