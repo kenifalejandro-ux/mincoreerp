@@ -77,6 +77,12 @@ export const MODULOS: ModuloDefinicion[] = [
         pk: "serial",
         fks: { equipo_id: "equipos", usuario_id: "usuarios", cerrado_por: "usuarios" },
       },
+      // Lecturas del medidor de la unidad (0187): cascadea desde el equipo, no necesita raíz.
+      {
+        nombre: "equipo_lecturas",
+        pk: "serial",
+        fks: { equipo_id: "equipos", usuario_id: "usuarios", anulada_por: "usuarios" },
+      },
     ],
     raices: ["equipos"],
     cuota: { tabla: "equipos", porDefecto: 2_000 },
@@ -84,8 +90,15 @@ export const MODULOS: ModuloDefinicion[] = [
     // alta un equipo nuevo en cancha, sin señal, es un caso de campo real
     // (mismo criterio que checklists/iperc/ordenes_trabajo). `PUT`/`DELETE`
     // NO están acá a propósito: editar sobreescribe campos existentes y
-    // borrar no debe reintentarse a ciegas.
-    offline: { escrituras: [{ metodo: "POST", ruta: "/" }] },
+    // borrar no debe reintentarse a ciegas. Registrar una lectura del medidor (0187) también: se
+    // anota en la unidad, a veces sin señal, y el servicio es idempotente por `cliente_uuid`.
+    // Anular NO: es una corrección que se hace con red y con motivo.
+    offline: {
+      escrituras: [
+        { metodo: "POST", ruta: "/" },
+        { metodo: "POST", ruta: "/:id/lecturas" },
+      ],
+    },
   },
   {
     // Viajes: programar viajes, seguir el recorrido de la unidad y medir cuánto

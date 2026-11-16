@@ -12,6 +12,9 @@ import type {
   ActualizarEquipoInput,
   CargaMasivaEquiposInput,
   EliminarMasivoEquiposInput,
+  AnularLecturaInput,
+  ListarLecturasQuery,
+  RegistrarLecturaInput,
 } from "../../server/schemas/equipos.schema";
 import type { MoverDeGrifoInput } from "../../server/schemas/sedes.schema";
 // El correo de estos dos cambios es de los destinatarios de COMBUSTIBLE (el
@@ -23,6 +26,7 @@ import { armarXlsx, CONTENT_TYPE_XLSX } from "../../server/shared/utils/xlsx.uti
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { estadoDeUnidad } from "./equipos.estado";
 import { EquiposService, type CambiosHistorial } from "./equipos.service";
+import { anularLectura, listarLecturas, registrarLectura, ultimaLectura } from "./equipos.lecturas";
 import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
 
 /** Un AppError (p. ej. "falta el motivo") sale con su código y su mensaje; lo
@@ -194,6 +198,84 @@ export const EquiposController = {
       EquiposService.listarMovimientosDeGrifo(client, tenantId, Number(req.params.id))
     );
     res.json(filas);
+  },
+
+  /** GET /:id/lecturas -- el historial del medidor de la unidad, con las anuladas y su motivo. */
+  async listarLecturas(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const { limite } = req.validatedQuery as ListarLecturasQuery;
+    const filas = await withTenant(tenantId, (client) =>
+      listarLecturas(client, tenantId, Number(req.params.id), limite)
+    );
+    res.json({ data: filas });
+  },
+
+  /** GET /:id/lecturas/ultima -- la última lectura vigente (null si todavía no hay). */
+  async ultimaLectura(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    res.json(
+      await withTenant(tenantId, (client) => ultimaLectura(client, tenantId, Number(req.params.id)))
+    );
+  },
+
+  /** POST /:id/lecturas -- registra una lectura manual del medidor. */
+  async registrarLectura(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const equipoId = Number(req.params.id);
+    const data = req.validatedBody as RegistrarLecturaInput;
+    const { fila, creado } = await withTenant(tenantId, (client) =>
+      registrarLectura(client, tenantId, req.usuario!.id, equipoId, data)
+    );
+    if (creado && fila) {
+      await registrarAuditoria({
+        accion: "equipos.lectura_registrar",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          equipoId,
+          lecturaId: fila.id,
+          tipo: fila.tipo,
+          valor: fila.valor,
+          leidoEn: fila.leido_en,
+          origen: fila.origen,
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      await publicarEventoTenant(tenantId, "equipos.actualizado", { equipoId });
+    }
+    res.status(creado ? 201 : 200).json(fila);
+  },
+
+  /** POST /:id/lecturas/:lecturaId/anular -- corregir es anular (con motivo) y registrar otra. */
+  async anularLectura(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const equipoId = Number(req.params.id);
+    const { motivo } = req.validatedBody as AnularLecturaInput;
+    const fila = await withTenant(tenantId, (client) =>
+      anularLectura(
+        client,
+        tenantId,
+        req.usuario!.id,
+        equipoId,
+        Number(req.params.lecturaId),
+        motivo
+      )
+    );
+    await registrarAuditoria({
+      accion: "equipos.lectura_anular",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: {
+        equipoId,
+        lecturaId: fila.id,
+        tipo: fila.tipo,
+        valor: fila.valor,
+        motivo,
+      },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "equipos.actualizado", { equipoId });
+    res.json(fila);
   },
 
   async update(req: Request, res: Response) {

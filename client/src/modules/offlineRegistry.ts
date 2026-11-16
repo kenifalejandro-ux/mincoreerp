@@ -136,7 +136,11 @@ export const ESCRITURAS_OFFLINE: Record<string, EscrituraOffline[]> = {
   // señal, es un caso de campo real -- mismo criterio que checklists/iperc/
   // ordenes_trabajo. Editar (`PUT`) y eliminar (`DELETE`) NO están acá a
   // propósito: editar sobreescribe campos existentes -- ver ADR-0002 §8.
-  flota: [{ metodo: "POST", ruta: "/" }],
+  // Registrar una lectura del medidor de la unidad (0187), sin señal en la cancha. Anular no.
+  flota: [
+    { metodo: "POST", ruta: "/" },
+    { metodo: "POST", ruta: "/:id/lecturas" },
+  ],
 };
 
 /** Módulos cuya URL no es su id: `flota` sigue en /api/erp/equipos. Espejo del

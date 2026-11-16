@@ -163,3 +163,33 @@ export const eliminarMasivoEquiposSchema = z.object({
 });
 
 export type EliminarMasivoEquiposInput = z.infer<typeof eliminarMasivoEquiposSchema>;
+
+// ── Lecturas del medidor de la unidad (0187) ────────────────────────────
+// Lo que marcaba el horómetro u odómetro. `leido_en` omitido = ahora; puede ser pasado (se anota
+// después) pero no futuro: 5 minutos de margen por el reloj de un celular desfasado.
+const MARGEN_RELOJ_MS = 5 * 60 * 1000;
+
+export const registrarLecturaSchema = z.object({
+  valor: z.number().min(0, "La lectura no puede ser negativa").max(9_999_999),
+  leido_en: z
+    .string()
+    .datetime({ offset: true })
+    .refine((v) => new Date(v).getTime() <= Date.now() + MARGEN_RELOJ_MS, "La fecha es futura")
+    .optional(),
+  // Identifica este registro desde el dispositivo: el reintento de la cola sin señal no lo duplica.
+  cliente_uuid: z.string().uuid().optional(),
+});
+
+export type RegistrarLecturaInput = z.infer<typeof registrarLecturaSchema>;
+
+export const anularLecturaSchema = z.object({
+  motivo: z.string().trim().min(3, "Indica el motivo: queda en el historial").max(300),
+});
+
+export type AnularLecturaInput = z.infer<typeof anularLecturaSchema>;
+
+export const listarLecturasQuerySchema = z.object({
+  limite: z.coerce.number().int().min(1).max(200).default(50),
+});
+
+export type ListarLecturasQuery = z.infer<typeof listarLecturasQuerySchema>;
