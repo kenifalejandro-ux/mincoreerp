@@ -1,7 +1,7 @@
 /** src/modules/equipos/equipos.routes.ts */
 
 import { Router } from "express";
-import { validate } from "../../server/middleware/validate";
+import { validate, validateQuery } from "../../server/middleware/validate";
 import { requireRole } from "../../server/shared/middlewares/roles.middleware";
 import { asyncHandler } from "../../server/shared/utils/asyncHandler";
 import {
@@ -9,6 +9,9 @@ import {
   actualizarEquipoSchema,
   cargaMasivaEquiposSchema,
   eliminarMasivoEquiposSchema,
+  anularLecturaSchema,
+  listarLecturasQuerySchema,
+  registrarLecturaSchema,
 } from "../../server/schemas/equipos.schema";
 import { moverDeGrifoSchema } from "../../server/schemas/sedes.schema";
 import { EquiposController } from "./equipos.controller";
@@ -69,5 +72,26 @@ router.post(
 // Historial de conductor y rutas de la unidad (0126): lo ve cualquiera que vea Equipos.
 router.get("/:id/historial", asyncHandler(EquiposController.historial));
 router.get("/:id/movimientos-grifo", asyncHandler(EquiposController.listarMovimientosDeGrifo));
+
+// Lecturas del medidor de la unidad (0187). Leerlas, cualquiera que vea Flota; registrar y anular,
+// admin y operador. Segmentos literales (`ultima`) antes de `/:lecturaId`.
+router.get(
+  "/:id(\\d+)/lecturas",
+  validateQuery(listarLecturasQuerySchema),
+  asyncHandler(EquiposController.listarLecturas)
+);
+router.get("/:id(\\d+)/lecturas/ultima", asyncHandler(EquiposController.ultimaLectura));
+router.post(
+  "/:id(\\d+)/lecturas",
+  requireRole("admin", "operador"),
+  validate(registrarLecturaSchema),
+  asyncHandler(EquiposController.registrarLectura)
+);
+router.post(
+  "/:id(\\d+)/lecturas/:lecturaId(\\d+)/anular",
+  requireRole("admin", "operador"),
+  validate(anularLecturaSchema),
+  asyncHandler(EquiposController.anularLectura)
+);
 
 export default router;
