@@ -54,6 +54,16 @@ export interface ModuloDefinicion {
    *  (ej. `viajes` exige `flota`). Se decide por empresa, no por usuario: a
    *  un usuario no se le pide el módulo del que depende. */
   requiere?: string[];
+  /** Módulos de los que este PUEDE leer datos para mostrar más, pero que no
+   *  necesita: con el otro módulo muestra esa parte, sin él funciona igual y la
+   *  omite (sin 403 ni pantalla rota). Es solo declarativo: plataforma, login y
+   *  el interruptor global no lo leen, a diferencia de `requiere`.
+   *
+   *  Lo vigila tests/modulos-autonomos.test.ts: un módulo que lee tablas o
+   *  importa código de otro sin declararlo acá falla el test. En el código, la
+   *  lectura se condiciona con `tieneModulo()` (server/shared/utils/modulos.ts
+   *  y client/src/modules/tieneModulo.ts) y se omite, no se filtra. */
+  opcionales?: string[];
   /** Con qué id se reparte a los usuarios en un rollout por porcentaje. Omitido
    *  = el propio id. `viajes` salió de Combustible: si repartiera con su propio
    *  id, con un porcentaje parcial un conductor podría quedar dentro de
