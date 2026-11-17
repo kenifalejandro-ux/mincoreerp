@@ -86,16 +86,28 @@ function borrarAlertaPendiente() {
   }
 }
 
-export default function BandejaAlertas() {
-  const puedeEscribir = usePuedeEscribir("combustible");
+/** De dónde sale la lista: las alertas de Combustible (y Urea) o las de Viajes (0188). Las dos
+ *  responden con la misma forma, así que la misma pantalla sirve a las dos. */
+export type FuenteDeAlertas = "combustible" | "viajes";
+
+const BASE_DE_FUENTE: Record<FuenteDeAlertas, string> = {
+  combustible: "/api/erp/combustible/alertas",
+  viajes: "/api/erp/viajes/alertas",
+};
+
+export default function BandejaAlertas({ fuente = "combustible" }: { fuente?: FuenteDeAlertas }) {
+  const base = BASE_DE_FUENTE[fuente];
+  const esViajes = fuente === "viajes";
+  const puedeEscribir = usePuedeEscribir(esViajes ? "viajes" : "combustible");
   const { grifosActivos } = useSedes();
   // El stream es la misma fuente de tiempo real que la campanita: cuando
   // nace o se resuelve una alerta, cambia `noLeidas` y la Bandeja se recarga.
-  const { noLeidas } = useAlertasCombustibleStream(true);
+  const { noLeidas } = useAlertasCombustibleStream(true, base);
 
   // Llegar desde la campanita: la alerta clickeada queda abierta. Se busca en
-  // "Todas" porque abrirla ya la marcó leída y puede estar resuelta.
-  const [alertaInicial] = useState(leerAlertaPendiente);
+  // "Todas" porque abrirla ya la marcó leída y puede estar resuelta. La campanita es de Combustible:
+  // en la Bandeja de Viajes no se usa (el id podría ser de la otra tabla).
+  const [alertaInicial] = useState(() => (esViajes ? null : leerAlertaPendiente()));
   const [estado, setEstado] = useState<Estado>(alertaInicial !== null ? "todas" : "pendientes");
   const [modulo, setModulo] = useState<"" | GrupoDeAlerta>("");
   const [tipo, setTipo] = useState("");
@@ -164,8 +176,8 @@ export default function BandejaAlertas() {
       lista.set("page", String(pagina));
       lista.set("pageSize", String(TAMANO_PAGINA));
       const [resLista, resResumen] = await Promise.all([
-        apiFetch(`/api/erp/combustible/alertas?${lista.toString()}`),
-        apiFetch(`/api/erp/combustible/alertas/resumen?${filtrosQuery.toString()}`),
+        apiFetch(`${base}?${lista.toString()}`),
+        apiFetch(`${base}/resumen?${filtrosQuery.toString()}`),
       ]);
       if (!vigente()) return;
       if (!resLista.ok || !resResumen.ok) {
@@ -187,7 +199,7 @@ export default function BandejaAlertas() {
     } finally {
       if (vigente()) setCargando(false);
     }
-  }, [filtrosQuery, estado, pagina]);
+  }, [base, filtrosQuery, estado, pagina]);
 
   useEffect(() => {
     // Carga de datos al cambiar los filtros o al llegar una alerta por el
@@ -196,18 +208,21 @@ export default function BandejaAlertas() {
     void cargar();
   }, [cargar, noLeidas]);
 
-  const traerAlerta = useCallback(async (id: number) => {
-    try {
-      const res = await apiFetch(`/api/erp/combustible/alertas?id=${id}&estado=todas&pageSize=1`);
-      if (!res.ok) return;
-      const cuerpo = await res.json();
-      const fila = (cuerpo.data as AlertaBandeja[])[0];
-      // Fuera de su alcance el servidor no la devuelve: queda sin detalle.
-      setAlertaDirecta(fila ? { ...fila, id: Number(fila.id) } : null);
-    } catch {
-      setAlertaDirecta(null);
-    }
-  }, []);
+  const traerAlerta = useCallback(
+    async (id: number) => {
+      try {
+        const res = await apiFetch(`${base}?id=${id}&estado=todas&pageSize=1`);
+        if (!res.ok) return;
+        const cuerpo = await res.json();
+        const fila = (cuerpo.data as AlertaBandeja[])[0];
+        // Fuera de su alcance el servidor no la devuelve: queda sin detalle.
+        setAlertaDirecta(fila ? { ...fila, id: Number(fila.id) } : null);
+      } catch {
+        setAlertaDirecta(null);
+      }
+    },
+    [base]
+  );
 
   // Si la Bandeja ya estaba abierta cuando se clickeó la campanita, el aviso
   // llega por `window`. El id guardado se borra para no reabrirla después.
@@ -218,6 +233,8 @@ export default function BandejaAlertas() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (alertaInicial !== null) void traerAlerta(alertaInicial);
     const alAviso = (evento: Event) => {
+      // La campanita es de Combustible: sus avisos no abren nada en la Bandeja de Viajes.
+      if (esViajes) return;
       // El id viene como texto (el servidor devuelve el BIGINT así) o como
       // número según quién lo mande: se normaliza, no se descarta.
       const id = Number((evento as CustomEvent<{ alertaId: number | string }>).detail?.alertaId);
@@ -234,7 +251,7 @@ export default function BandejaAlertas() {
     window.addEventListener("combustible:abrir-alerta", alAviso);
     return () => window.removeEventListener("combustible:abrir-alerta", alAviso);
     // alertaInicial no cambia nunca (nace con el estado) y traerAlerta es estable.
-  }, [alertaInicial, traerAlerta]);
+  }, [alertaInicial, esViajes, traerAlerta]);
 
   const seleccionada =
     alertas.find((a) => a.id === seleccionadaId) ??
@@ -248,7 +265,7 @@ export default function BandejaAlertas() {
     // Abrirla es leerla, como en un correo. Quien solo consulta el módulo no
     // marca: el servidor se lo rechaza, y su lectura no cuenta como revisión.
     if (a.leida_en === null && puedeEscribir) {
-      const res = await apiFetch("/api/erp/combustible/alertas/leidas", {
+      const res = await apiFetch(`${base}/leidas`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: [a.id] }),
@@ -271,7 +288,7 @@ export default function BandejaAlertas() {
     setResolviendo(true);
     setErrorResolver(null);
     try {
-      const res = await apiFetch(`/api/erp/combustible/alertas/${seleccionada.id}/resolver`, {
+      const res = await apiFetch(`${base}/${seleccionada.id}/resolver`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ motivo: texto }),
@@ -305,17 +322,21 @@ export default function BandejaAlertas() {
 
   const totalPaginas = Math.max(1, Math.ceil(total / TAMANO_PAGINA));
   // Los tipos que se ofrecen son los del módulo elegido (sin módulo, todos).
+  // La Bandeja de Viajes ofrece solo los tipos de viaje; la de Combustible, los suyos (sin los de viaje,
+  // que tienen su propia Bandeja desde la 0188).
   const tiposOrdenados = useMemo(
     () =>
       (Object.entries(ETIQUETA_TIPO_ALERTA) as [string, string][])
-        .filter(([valor]) => !modulo || grupoDeAlerta(valor) === modulo)
+        .filter(([valor]) =>
+          esViajes
+            ? grupoDeAlerta(valor) === "flota"
+            : grupoDeAlerta(valor) !== "flota" && (!modulo || grupoDeAlerta(valor) === modulo)
+        )
         .sort((x, y) => x[1].localeCompare(y[1], "es")),
-    [modulo]
+    [esViajes, modulo]
   );
-  // Flota solo se ofrece a quien tiene Viajes: el servidor tampoco le entrega esas alertas.
-  const modulosDelFiltro = GRUPOS_DE_ALERTA.filter(
-    (g) => g !== "flota" || (usuario?.modulosPermitidos ?? []).includes("viajes")
-  );
+  // Combustible y Urea comparten Bandeja; Flota (viajes) tiene la suya, así que no se ofrece acá.
+  const modulosDelFiltro = GRUPOS_DE_ALERTA.filter((g) => g !== "flota");
 
   return (
     <div className="space-y-4">
@@ -349,31 +370,35 @@ export default function BandejaAlertas() {
             type="search"
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
-            placeholder="Buscar por vale, tanque o detalle"
+            placeholder={
+              esViajes ? "Buscar por viaje, unidad o detalle" : "Buscar por vale, tanque o detalle"
+            }
             className="w-full border border-slate-200 rounded-lg pl-9 pr-3 py-2 text-sm"
           />
         </label>
-        <label className="w-full sm:w-44">
-          <span className="sr-only">Módulo</span>
-          <select
-            value={modulo}
-            onChange={(e) =>
-              cambiarFiltro(() => {
-                setModulo(e.target.value as "" | GrupoDeAlerta);
-                // Un tipo de otro módulo ya no aplica.
-                setTipo("");
-              })
-            }
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
-          >
-            <option value="">Todos los módulos</option>
-            {modulosDelFiltro.map((g) => (
-              <option key={g} value={g}>
-                {ETIQUETA_GRUPO_ALERTA[g]}
-              </option>
-            ))}
-          </select>
-        </label>
+        {!esViajes && (
+          <label className="w-full sm:w-44">
+            <span className="sr-only">Módulo</span>
+            <select
+              value={modulo}
+              onChange={(e) =>
+                cambiarFiltro(() => {
+                  setModulo(e.target.value as "" | GrupoDeAlerta);
+                  // Un tipo de otro módulo ya no aplica.
+                  setTipo("");
+                })
+              }
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm"
+            >
+              <option value="">Todos los módulos</option>
+              {modulosDelFiltro.map((g) => (
+                <option key={g} value={g}>
+                  {ETIQUETA_GRUPO_ALERTA[g]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="w-full sm:w-56">
           <span className="sr-only">Tipo de alerta</span>
           <select

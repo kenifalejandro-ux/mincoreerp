@@ -1,12 +1,10 @@
 /** src/modules/combustible/alertasPorModulo.ts
  *
- * A qué módulo "pertenece" cada alerta. Todas viven en `combustible_alertas`, pero no
- * todas son de Combustible: las de urea salen del almacén de Urea y las de viaje demorado
- * o detenido son de Gestión operacional de flota (módulo `viajes`).
- *
- * Las de viaje solo las ve quien tiene el módulo `viajes`: sin esto, un operador de una
- * empresa que no contrató Viajes recibiría avisos de un módulo que no tiene. Urea sigue
- * dentro de Combustible (su inventario y su permiso son los de Combustible).
+ * A qué módulo "pertenece" cada alerta. Las de urea salen del almacén de Urea y viven en
+ * `combustible_alertas`; las de viaje (demorado, detenido, creado por el conductor) son de
+ * Gestión operacional de flota (módulo `viajes`) y desde la migración 0188 viven en su propia
+ * tabla, `viaje_alertas`. Urea sigue dentro de Combustible (su inventario y su permiso son los de
+ * Combustible).
  */
 
 /** Los tipos de alerta de Gestión operacional de flota (migración 0156). */
@@ -25,9 +23,11 @@ export function grupoDeAlerta(tipo: string): GrupoDeAlerta {
   return "combustible";
 }
 
-/** Los tipos de alerta que este usuario NO debe ver por no tener el módulo dueño. */
-export function tiposSinModulo(modulosPermitidos: string[] | undefined): string[] | undefined {
-  // Sin la lista de módulos (el resumen por correo no la trae) no se recorta nada.
-  if (!modulosPermitidos) return undefined;
-  return modulosPermitidos.includes("viajes") ? undefined : [...TIPOS_DE_ALERTA_DE_FLOTA];
+/** Los tipos de alerta que la Bandeja de COMBUSTIBLE no muestra: las de viaje tienen su propia tabla y
+ *  su propia Bandeja (`viaje_alertas`, migración 0188), y se leen por `/viajes/alertas`. Se excluyen
+ *  siempre, tenga o no la persona el módulo Viajes: las filas viejas de esos tipos que quedan en
+ *  `combustible_alertas` (la migración las copia, no las borra) no deben aparecer duplicadas.
+ *  El parámetro se conserva por compatibilidad con quien lo llama. */
+export function tiposSinModulo(_modulosPermitidos: string[] | undefined): string[] {
+  return [...TIPOS_DE_ALERTA_DE_FLOTA];
 }

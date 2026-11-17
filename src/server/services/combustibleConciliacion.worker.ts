@@ -48,6 +48,10 @@ import {
   enviarCorreoVarillaSinControl,
   enviarCorreoDiferenciaRecepcion,
 } from "../../modules/combustible/combustibleAlertas.mailer";
+import {
+  EVENTO_ALERTA_DE_VIAJE_CREADA,
+  evaluarViajesEnRuta,
+} from "../../modules/combustible/viajesAlertas";
 import { publicarEventoTenant } from "./realtimeEvents.service";
 import type { DestinatarioDeAlerta } from "../shared/utils/destinatariosAlertas";
 
@@ -237,14 +241,10 @@ async function conciliarTenant(
   // Viajes en curso demorados o detenidos (0156). Va en el worker y no event-driven porque la
   // demora es lo que pasa cuando NO llega la marca de llegada. Corre cada hora: la alerta puede
   // salir hasta una hora después de pasado el margen.
-  const viajesEnRuta = await paso(
-    "viajes_en_ruta",
-    () => service.evaluarViajesEnRuta(client, tenantId),
-    {
-      demorados: [] as Awaited<ReturnType<CombustibleService["evaluarViajesEnRuta"]>>["demorados"],
-      detenidos: [] as Awaited<ReturnType<CombustibleService["evaluarViajesEnRuta"]>>["detenidos"],
-    }
-  );
+  const viajesEnRuta = await paso("viajes_en_ruta", () => evaluarViajesEnRuta(client, tenantId), {
+    demorados: [] as Awaited<ReturnType<typeof evaluarViajesEnRuta>>["demorados"],
+    detenidos: [] as Awaited<ReturnType<typeof evaluarViajesEnRuta>>["detenidos"],
+  });
   const congelado = await paso(
     "congelar_vencidas",
     () => service.congelarAlertasVencidas(client, tenantId),
@@ -313,7 +313,7 @@ async function avisarResultado(tenantId: string, r: ResultadoTenant): Promise<vo
     ...(r.viajesEnRuta.demorados.length > 0 ? ["viaje_demorado"] : []),
     ...(r.viajesEnRuta.detenidos.length > 0 ? ["viaje_detenido"] : []),
   ]) {
-    await publicarEventoTenant(tenantId, "combustible.alerta_creada", { tipo }).catch((err) =>
+    await publicarEventoTenant(tenantId, EVENTO_ALERTA_DE_VIAJE_CREADA, { tipo }).catch((err) =>
       logger.warn({ err, tenantId }, "No se pudo publicar el evento")
     );
   }

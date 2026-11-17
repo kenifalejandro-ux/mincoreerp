@@ -67,6 +67,7 @@ const DUENO_DE_TABLA_POR_EXCEPCION: Record<string, string> = {
   combustible_viaje_descansos: "viajes",
   combustible_viaje_entregas: "viajes",
   combustible_viaje_manejo: "viajes",
+  viaje_alertas: "viajes",
   combustible_viaje_ubicaciones: "viajes",
   equipo_rutas: "flota",
 };

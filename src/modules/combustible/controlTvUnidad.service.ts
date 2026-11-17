@@ -140,15 +140,22 @@ export function gravedadDeAlerta(tipo: string): GravedadAlerta {
 
 /** Las alertas abiertas (sin resolver) sobre la unidad: las de sus viajes y las de sus vales. */
 async function alertasAbiertas(client: PoolClient, tenantId: string, equipoId: number) {
+  // Las de viaje salen de su propia tabla (0188) y las de los vales, de la de Combustible.
   const r = await client.query(
-    `SELECT a.tipo, a.creado_en
-       FROM combustible_alertas a
-      WHERE a.tenant_id = $1 AND a.resuelta_en IS NULL
-        AND (a.viaje_id IN (SELECT v.id FROM combustible_viajes v
-                             WHERE v.tenant_id = $1 AND v.equipo_id = $2)
-             OR a.despacho_id IN (SELECT d.id FROM combustible_despachos d
-                                   WHERE d.tenant_id = $1 AND d.equipo_id = $2))
-      ORDER BY a.creado_en DESC`,
+    `SELECT t.tipo, t.creado_en FROM (
+       SELECT a.tipo, a.creado_en
+         FROM viaje_alertas a
+        WHERE a.tenant_id = $1 AND a.resuelta_en IS NULL
+          AND a.viaje_id IN (SELECT v.id FROM combustible_viajes v
+                              WHERE v.tenant_id = $1 AND v.equipo_id = $2)
+       UNION ALL
+       SELECT a.tipo, a.creado_en
+         FROM combustible_alertas a
+        WHERE a.tenant_id = $1 AND a.resuelta_en IS NULL
+          AND a.despacho_id IN (SELECT d.id FROM combustible_despachos d
+                                 WHERE d.tenant_id = $1 AND d.equipo_id = $2)
+     ) t
+     ORDER BY t.creado_en DESC`,
     [tenantId, equipoId]
   );
   const todas = r.rows.map((x) => ({

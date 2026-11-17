@@ -5,6 +5,7 @@ import { capturarError } from "../../server/config/sentry";
 import { withTenant } from "../../server/config/database";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { getTenantId } from "../../server/shared/utils/request";
+import { armarRespuestaPaginada, parsePaginacion } from "../../server/shared/utils/pagination";
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
 import { tieneModulo } from "../../server/shared/utils/modulos";
 import { registrarAuditoria } from "../../server/services/platformAudit.service";
@@ -30,12 +31,23 @@ import type {
   PonerAlDiaInput,
   RegistrarUbicacionInput,
 } from "../../server/schemas/combustible.schema";
-import { ambitoDe } from "./alcance";
+import { alcanceDe, ambitoDe } from "./alcance";
 import { CombustibleService } from "./combustible.service";
 import { consumoControlTv, resumenControlTv, type PeriodoTv } from "./controlTv.service";
 import { detalleControlTv } from "./controlTvDetalle.service";
 import { resumenDeUnidad, type PeriodoUnidadTv } from "./controlTvUnidad.service";
 import * as viajes from "./viajes.service";
+import {
+  abrirAlertaViajeCreadoPorConductor,
+  cerrarAlertasDeUnViaje,
+  contarAlertasDeViaje,
+  EVENTO_ALERTA_DE_VIAJE_CREADA,
+  EVENTO_ALERTAS_DE_VIAJE_ACTUALIZADAS,
+  evaluarDetencionDeUnViaje,
+  filtrosAlertasDeViajeDe,
+  listarAlertasDeViaje,
+  marcarAlertasDeViajeLeidas,
+} from "./viajesAlertas";
 import {
   catalogoParaCrear,
   conductorPuedeCrearViaje,
@@ -72,7 +84,7 @@ type CuerpoDescanso = {
  *  señal) y el worker la crea en su siguiente pasada. */
 async function alertaDeDetencion(c: PoolClient, tenantId: string, viajeId: number) {
   return enSavepoint(c, tenantId, viajeId, async () => {
-    const { cambio } = await combustible.evaluarDetencionDeUnViaje(c, tenantId, viajeId);
+    const { cambio } = await evaluarDetencionDeUnViaje(c, tenantId, viajeId);
     return cambio;
   });
 }
@@ -80,9 +92,7 @@ async function alertaDeDetencion(c: PoolClient, tenantId: string, viajeId: numbe
 /** Al cerrar o anular un viaje se cierran sus alertas (demorado y detenido) al instante, con el
  *  mismo cuidado: si falla, el cierre del viaje no se pierde y el worker las cierra después. */
 function cerrarAlertasDelViaje(c: PoolClient, tenantId: string, viajeId: number) {
-  return enSavepoint(c, tenantId, viajeId, () =>
-    combustible.cerrarAlertasDeUnViaje(c, tenantId, viajeId)
-  );
+  return enSavepoint(c, tenantId, viajeId, () => cerrarAlertasDeUnViaje(c, tenantId, viajeId));
 }
 
 async function enSavepoint(
@@ -104,9 +114,9 @@ async function enSavepoint(
   }
 }
 
-/** La campanita se entera al instante de una alerta de viaje que se abrió o se cerró. */
+/** La Bandeja se entera al instante de una alerta de viaje que se abrió o se cerró. */
 async function avisarCampanita(tenantId: string) {
-  await publicarEventoTenant(tenantId, "combustible.alerta_creada", {
+  await publicarEventoTenant(tenantId, EVENTO_ALERTA_DE_VIAJE_CREADA, {
     tipo: "viaje_detenido",
   }).catch((err) => logger.warn({ err, tenantId }, "No se pudo publicar el evento"));
 }
@@ -237,6 +247,49 @@ async function auditar(req: Request, accion: string, detalle: Record<string, unk
 }
 
 export const viajesController = {
+  // ── Alertas de viaje (0188) ──────────────────────────────────────────────
+  // Misma forma que /combustible/alertas, para que la misma pantalla de la Bandeja sirva a las dos.
+
+  /** GET /viajes/alertas: la Bandeja de Viajes y su campanita (con ?solo_no_leidas=true). */
+  async listarAlertas(req: Request, res: Response) {
+    const filtros = filtrosAlertasDeViajeDe(req.query);
+    if ("error" in filtros) {
+      res.status(400).json({ error: filtros.error });
+      return;
+    }
+    const tenantId = getTenantId(req);
+    const paginacion = parsePaginacion(req.query);
+    const filas = await withTenant(tenantId, (c) =>
+      listarAlertasDeViaje(c, tenantId, filtros, paginacion, alcanceDe(req))
+    );
+    res.json(armarRespuestaPaginada(filas, paginacion));
+  },
+
+  /** GET /viajes/alertas/resumen: los contadores de la Bandeja. */
+  async resumenAlertas(req: Request, res: Response) {
+    const filtros = filtrosAlertasDeViajeDe(req.query);
+    if ("error" in filtros) {
+      res.status(400).json({ error: filtros.error });
+      return;
+    }
+    const tenantId = getTenantId(req);
+    res.json(
+      await withTenant(tenantId, (c) => contarAlertasDeViaje(c, tenantId, filtros, alcanceDe(req)))
+    );
+  },
+
+  /** PATCH /viajes/alertas/leidas: sin `ids` marca las no leídas QUE ESTÁN EN EL ALCANCE de quien
+   *  aprieta; con `ids`, solo esas. */
+  async marcarAlertasLeidas(req: Request, res: Response) {
+    const tenantId = getTenantId(req);
+    const { ids } = req.validatedBody as { ids?: number[] };
+    await withTenant(tenantId, (c) => marcarAlertasDeViajeLeidas(c, tenantId, alcanceDe(req), ids));
+    await publicarEventoTenant(tenantId, EVENTO_ALERTAS_DE_VIAJE_ACTUALIZADAS, {
+      ids: ids ?? null,
+    }).catch((err) => logger.warn({ err, tenantId }, "No se pudo publicar el evento"));
+    res.status(204).send();
+  },
+
   async listarLugares(req: Request, res: Response) {
     const tenantId = getTenantId(req);
     res.json({ data: await withTenant(tenantId, (c) => viajes.listarLugares(c, tenantId)) });
@@ -515,7 +568,7 @@ export const viajesController = {
       if (r.repetido) return { r, alertaCambio: false };
       const v = r.viaje;
       const alertaCambio = await enSavepoint(c, tenantId, Number(v.id), () =>
-        combustible.abrirAlertaViajeCreadoPorConductor(
+        abrirAlertaViajeCreadoPorConductor(
           c,
           tenantId,
           {

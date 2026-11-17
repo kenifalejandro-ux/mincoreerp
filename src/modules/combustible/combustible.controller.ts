@@ -877,7 +877,8 @@ function filtrosAlertasDe(q: Request["query"]): FiltrosAlertas | { error: string
   }
   const modulo = texto(q.modulo);
   if (modulo !== undefined) {
-    if (!["combustible", "urea", "flota"].includes(modulo)) return { error: "modulo inválido" };
+    // Las de viaje ya no están acá: tienen su propia Bandeja (/api/erp/viajes/alertas).
+    if (!["combustible", "urea"].includes(modulo)) return { error: "modulo inválido" };
     filtros.grupo = modulo as GrupoDeAlerta;
   }
   const grifo = texto(q.grifo_interno_id);

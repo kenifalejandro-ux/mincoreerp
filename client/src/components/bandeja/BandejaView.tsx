@@ -1,20 +1,23 @@
 // client/src/components/bandeja/BandejaView.tsx
 //
 // La Bandeja de alertas del ERP: un solo lugar para leer y resolver las
-// alertas, con una pestaña por módulo. Hoy solo Combustible genera alertas,
-// así que es la única pestaña; cuando otro módulo las tenga, se agrega una
-// entrada a MODULOS_CON_BANDEJA (bandejaAcceso.ts) y su pantalla acá.
+// alertas, con una pestaña por módulo (Combustible y Viajes); cuando otro módulo las tenga, se
+// agrega una entrada a MODULOS_CON_BANDEJA (bandejaAcceso.ts) y su pantalla acá.
 
 import { Inbox } from "lucide-react";
 import { useState, type ComponentType } from "react";
 
 import { useAuth } from "../../context/AuthContext";
-import BandejaCombustible from "../combustible/Bandeja";
+import BandejaAlertas from "../combustible/Bandeja";
 import { MODULOS_CON_BANDEJA } from "./bandejaAcceso";
 
-/** La pantalla de cada módulo; las etiquetas y quién la ve, en bandejaAcceso. */
+/** La pantalla de cada módulo (la misma Bandeja, con su propia fuente de alertas); las etiquetas y
+ *  quién la ve, en bandejaAcceso. */
+const BandejaCombustible = () => <BandejaAlertas fuente="combustible" />;
+const BandejaViajes = () => <BandejaAlertas fuente="viajes" />;
 const PANTALLAS: Record<string, ComponentType> = {
   combustible: BandejaCombustible,
+  viajes: BandejaViajes,
 };
 
 export default function BandejaView() {

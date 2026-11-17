@@ -38,6 +38,7 @@ import {
   iniciarMiViajeSchema,
   iniciarViajeSchema,
   listarViajesQuerySchema,
+  marcarAlertasLeidasCombustibleSchema,
   llegadaMiaSchema,
   llegadaViajeSchema,
   manejaMioSchema,
@@ -80,6 +81,28 @@ router.patch(
   requireRole("admin", "operador"),
   validate(editarLugarSchema),
   asyncHandler(viajesController.editarLugar)
+);
+// Las alertas de un viaje (0188): demorado, detenido y creado por el conductor. Misma forma y mismo
+// permiso que la Bandeja de Combustible (`combustible:tanques:alertas`, la clave de siempre). Literales,
+// ANTES de /:viajeId.
+router.get(
+  "/alertas",
+  requirePestana("combustible", "tanques:alertas"),
+  requireRole("admin", "operador"),
+  asyncHandler(viajesController.listarAlertas)
+);
+router.get(
+  "/alertas/resumen",
+  requirePestana("combustible", "tanques:alertas"),
+  requireRole("admin", "operador"),
+  asyncHandler(viajesController.resumenAlertas)
+);
+router.patch(
+  "/alertas/leidas",
+  requirePestana("combustible", "tanques:alertas"),
+  requireRole("admin", "operador"),
+  validate(marcarAlertasLeidasCombustibleSchema),
+  asyncHandler(viajesController.marcarAlertasLeidas)
 );
 // Las unidades que el panel de Viajes ofrece para programar un viaje y para filtrar la lista. Es el
 // registro de Flota (Viajes lo exige): así el panel no las pide a Combustible, que puede no estar.
