@@ -31,12 +31,12 @@ export interface CambiosHistorial {
 }
 
 export const EquiposService = {
-  getAll(client: PoolClient, tenantId: string, paginacion: Paginacion) {
-    return EquiposRepository.findAll(client, tenantId, paginacion);
+  getAll(client: PoolClient, tenantId: string, paginacion: Paginacion, conRutas = true) {
+    return EquiposRepository.findAll(client, tenantId, paginacion, conRutas);
   },
 
-  getAllParaExportar(client: PoolClient, tenantId: string, ids?: number[]) {
-    return EquiposRepository.findAllParaExportar(client, tenantId, ids);
+  getAllParaExportar(client: PoolClient, tenantId: string, ids?: number[], conRutas = true) {
+    return EquiposRepository.findAllParaExportar(client, tenantId, ids, conRutas);
   },
 
   /** Devuelve `creado: false` cuando el equipo ya se había creado con este
@@ -44,7 +44,13 @@ export const EquiposService = {
    *  cuya respuesta se perdió. El controller usa ese flag para no auditar
    *  ni publicar el evento dos veces. Sin `cliente_uuid` en el body, se
    *  comporta igual que antes: siempre crea. */
-  create(client: PoolClient, tenantId: string, usuarioId: string, data: CrearEquipoInput) {
+  create(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: CrearEquipoInput,
+    conRutas = true
+  ) {
     return idempotentInsert({
       client,
       tenantId,
@@ -69,10 +75,10 @@ export const EquiposService = {
           true
         );
         await aplicarRutas(client, tenantId, creada.id, usuarioId, data.rutas, undefined, true);
-        const fila = await EquiposRepository.findById(client, tenantId, creada.id);
+        const fila = await EquiposRepository.findById(client, tenantId, creada.id, conRutas);
         return { id: creada.id as number, fila };
       },
-      recuperar: (filaId) => EquiposRepository.findById(client, tenantId, filaId),
+      recuperar: (filaId) => EquiposRepository.findById(client, tenantId, filaId, conRutas),
     });
   },
 
@@ -95,7 +101,8 @@ export const EquiposService = {
     tenantId: string,
     usuarioId: string,
     id: number,
-    data: EquipoPayload & { rutas?: RutaAsignada[]; motivo_cambio?: string }
+    data: EquipoPayload & { rutas?: RutaAsignada[]; motivo_cambio?: string },
+    conRutas = true
   ): Promise<{ fila: Record<string, unknown>; cambios: CambiosHistorial } | null> {
     const previo = await client.query<{
       conductor_nombre: string | null;
@@ -128,16 +135,16 @@ export const EquiposService = {
       data.motivo_cambio,
       false
     );
-    const fila = await EquiposRepository.findById(client, tenantId, id);
+    const fila = await EquiposRepository.findById(client, tenantId, id, conRutas);
     return { fila, cambios: { conductor, rutas, motivo: data.motivo_cambio } };
   },
 
-  historial(client: PoolClient, tenantId: string, id: number) {
-    return listarHistorial(client, tenantId, id);
+  historial(client: PoolClient, tenantId: string, id: number, conRutas = true) {
+    return listarHistorial(client, tenantId, id, conRutas);
   },
 
-  lugares(client: PoolClient, tenantId: string) {
-    return listarLugaresActivos(client, tenantId);
+  lugares(client: PoolClient, tenantId: string, conViajes = true) {
+    return listarLugaresActivos(client, tenantId, conViajes);
   },
 
   unidadesDeConductor(client: PoolClient, tenantId: string, dni: string) {
