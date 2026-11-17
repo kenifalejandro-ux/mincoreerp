@@ -27,7 +27,7 @@ import {
   type DestinatarioDeAlerta,
 } from "../../server/shared/utils/destinatariosAlertas";
 import { getTenantId } from "../../server/shared/utils/request";
-import { tiposSinModulo } from "./alertasPorModulo";
+import { TIPOS_DE_ALERTA_DE_FLOTA, tiposSinModulo } from "./alertasPorModulo";
 
 export type AlcanceCombustible = (
   | { todo: true }
@@ -173,8 +173,11 @@ export function filtroAlertaVisible(a: AlcanceCombustible, col: string, desde: n
 
 /** Las alertas de un módulo que quien mira no tiene (alertasPorModulo.ts). */
 export function filtroModuloDeAlerta(a: AlcanceCombustible, col: string, desde: number): Filtro {
-  if (!a.sinTipos?.length) return { sql: "TRUE", valores: [] };
-  return { sql: `${col}.tipo <> ALL($${desde}::text[])`, valores: [a.sinTipos] };
+  // Las de viaje tienen su propia tabla y su propia Bandeja (0188): esta nunca las lista, tenga o no
+  // la persona el módulo. Las filas viejas de esos tipos que quedan en `combustible_alertas` (la
+  // migración las copia, no las borra) no deben aparecer duplicadas.
+  const excluidos = [...new Set([...TIPOS_DE_ALERTA_DE_FLOTA, ...(a.sinTipos ?? [])])];
+  return { sql: `${col}.tipo <> ALL($${desde}::text[])`, valores: [excluidos] };
 }
 
 /** El grifo de un lote de alertas RECIÉN CREADAS, para enrutar su aviso.
@@ -513,5 +516,7 @@ export function requiereTanqueCompleto(req: Request, res: Response, next: NextFu
 /** Un evento de Combustible, sin contenido: el tipo alcanza para que la
  *  pantalla recargue, y los ids o niveles podrían ser de otra planta. */
 export function vaciarEventoDeCombustible<T extends { tipo: string; payload: unknown }>(e: T): T {
-  return e.tipo.startsWith("combustible.") ? { ...e, payload: {} } : e;
+  return e.tipo.startsWith("combustible.") || e.tipo.startsWith("viajes.")
+    ? { ...e, payload: {} }
+    : e;
 }

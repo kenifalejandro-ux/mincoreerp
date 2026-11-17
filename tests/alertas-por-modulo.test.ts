@@ -18,6 +18,7 @@ import request from "supertest";
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
 import { withTenant, closeDatabase } from "../src/server/config/database";
 import { env } from "../src/server/config/env";
+import { filtroModuloDeAlerta } from "../src/modules/combustible/alcance";
 import { grupoDeAlerta, tiposSinModulo } from "../src/modules/combustible/alertasPorModulo";
 import { TIPOS_ALERTA } from "../src/modules/combustible/combustible.repository";
 import { MODULOS } from "../src/modules/registry";
@@ -122,11 +123,23 @@ describe("alertas por módulo", () => {
     expect(grupoDeAlerta("hueco_detectado")).toBe("combustible");
   });
 
-  it("la Bandeja de Combustible siempre excluye los tipos de viaje, tenga o no la persona `viajes`", () => {
+  it("solo se recortan alertas a quien tiene la lista de módulos y no tiene `viajes`", () => {
+    expect(tiposSinModulo(["combustible", "viajes"])).toBeUndefined();
+    expect(tiposSinModulo(undefined)).toBeUndefined(); // el correo no la trae: no se recorta por módulo
+    expect(tiposSinModulo(["combustible"])).toEqual([
+      "viaje_demorado",
+      "viaje_detenido",
+      "viaje_creado_por_conductor",
+    ]);
+  });
+
+  it("la Bandeja de Combustible excluye SIEMPRE los tipos de viaje, tenga o no la persona `viajes`", () => {
     const flota = ["viaje_demorado", "viaje_detenido", "viaje_creado_por_conductor"];
-    expect(tiposSinModulo(["combustible", "viajes"])).toEqual(flota);
-    expect(tiposSinModulo(["combustible"])).toEqual(flota);
-    expect(tiposSinModulo(undefined)).toEqual(flota); // el correo tampoco los cuenta
+    for (const sinTipos of [undefined, [], flota]) {
+      const f = filtroModuloDeAlerta({ todo: true, sinTipos }, "a", 1);
+      expect(f.sql).toBe("a.tipo <> ALL($1::text[])");
+      expect(f.valores[0]).toEqual(expect.arrayContaining(flota));
+    }
   });
 
   it("Combustible no muestra ni cuenta las alertas de viaje (tampoco las filas viejas) y rechaza modulo=flota", async () => {

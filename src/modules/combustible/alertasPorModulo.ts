@@ -23,11 +23,12 @@ export function grupoDeAlerta(tipo: string): GrupoDeAlerta {
   return "combustible";
 }
 
-/** Los tipos de alerta que la Bandeja de COMBUSTIBLE no muestra: las de viaje tienen su propia tabla y
- *  su propia Bandeja (`viaje_alertas`, migración 0188), y se leen por `/viajes/alertas`. Se excluyen
- *  siempre, tenga o no la persona el módulo Viajes: las filas viejas de esos tipos que quedan en
- *  `combustible_alertas` (la migración las copia, no las borra) no deben aparecer duplicadas.
- *  El parámetro se conserva por compatibilidad con quien lo llama. */
-export function tiposSinModulo(_modulosPermitidos: string[] | undefined): string[] {
-  return [...TIPOS_DE_ALERTA_DE_FLOTA];
+/** Los tipos de alerta que este usuario NO debe ver por no tener el módulo dueño: los de viaje, si no
+ *  tiene `viajes`. Sirve para dos cosas: recortar lo que se lista y vaciar el contenido de los eventos de
+ *  tiempo real (ver events.ts). Aparte de esto, la Bandeja de Combustible NUNCA lista los de viaje, tenga
+ *  o no la persona `viajes` (tienen su propia tabla desde la 0188): eso lo hace `filtroModuloDeAlerta`. */
+export function tiposSinModulo(modulosPermitidos: string[] | undefined): string[] | undefined {
+  // Sin la lista de módulos (el resumen por correo no la trae) no se recorta nada.
+  if (!modulosPermitidos) return undefined;
+  return modulosPermitidos.includes("viajes") ? undefined : [...TIPOS_DE_ALERTA_DE_FLOTA];
 }
