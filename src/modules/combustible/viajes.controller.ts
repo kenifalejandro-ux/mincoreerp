@@ -277,7 +277,7 @@ export const viajesController = {
     const tenantId = getTenantId(req);
     const q = req.validatedQuery as ListarViajesQuery;
     const filas = await withTenant(tenantId, (c) =>
-      viajes.listarViajes(c, tenantId, q, ambitoDe(req))
+      viajes.listarViajes(c, tenantId, q, ambitoDe(req), tieneModulo(req.usuario, "combustible"))
     );
     res.json({ data: filas });
   },
@@ -287,7 +287,13 @@ export const viajesController = {
     const tenantId = getTenantId(req);
     const q = req.validatedQuery as ListarViajesQuery;
     const filas = await withTenant(tenantId, (c) =>
-      viajes.resumenPorConductor(c, tenantId, q, ambitoDe(req))
+      viajes.resumenPorConductor(
+        c,
+        tenantId,
+        q,
+        ambitoDe(req),
+        tieneModulo(req.usuario, "combustible")
+      )
     );
     res.json({ data: filas });
   },
@@ -315,7 +321,14 @@ export const viajesController = {
     const tenantId = getTenantId(req);
     const id = Number(req.params.viajeId);
     const r = await withTenant(tenantId, (c) =>
-      viajes.cargasDelViaje(c, tenantId, id, ambitoDe(req), true)
+      viajes.cargasDelViaje(
+        c,
+        tenantId,
+        id,
+        ambitoDe(req),
+        true,
+        tieneModulo(req.usuario, "combustible")
+      )
     );
     if (!r) {
       res.status(404).json({ error: "El viaje no existe" });
@@ -339,7 +352,15 @@ export const viajesController = {
     const id = Number(req.params.viajeId);
     const r = await withTenant(tenantId, async (c) => {
       const v = await viajes.getViaje(c, tenantId, id);
-      return v ? viajes.medidorPrevio(c, tenantId, v.equipo_id) : null;
+      return v
+        ? viajes.medidorPrevio(
+            c,
+            tenantId,
+            v.equipo_id,
+            undefined,
+            tieneModulo(req.usuario, "combustible")
+          )
+        : null;
     });
     if (!r) {
       res.status(404).json({ error: "El viaje no existe" });
@@ -360,7 +381,8 @@ export const viajesController = {
         id,
         data,
         undefined,
-        req.usuario!.rol === "admin"
+        req.usuario!.rol === "admin",
+        tieneModulo(req.usuario, "combustible")
       )
     );
     await auditar(req, "viaje_iniciar", {
@@ -377,7 +399,9 @@ export const viajesController = {
   async mios(req: Request, res: Response) {
     const tenantId = getTenantId(req);
     const dni = req.usuario!.dni ?? "";
-    const data = await withTenant(tenantId, (c) => viajes.viajesDelConductor(c, tenantId, dni));
+    const data = await withTenant(tenantId, (c) =>
+      viajes.viajesDelConductor(c, tenantId, dni, tieneModulo(req.usuario, "combustible"))
+    );
     res.json({ data, sinDni: !dni.trim() });
   },
 
@@ -411,7 +435,16 @@ export const viajesController = {
     const id = Number(req.params.viajeId);
     const data = req.validatedBody as IniciarMiViajeInput;
     const r = await withTenant(tenantId, (c) =>
-      viajes.iniciarViaje(c, tenantId, req.usuario!.id, id, data, req.usuario!.dni ?? "")
+      viajes.iniciarViaje(
+        c,
+        tenantId,
+        req.usuario!.id,
+        id,
+        data,
+        req.usuario!.dni ?? "",
+        false,
+        tieneModulo(req.usuario, "combustible")
+      )
     );
     if (!r.repetido) {
       await auditar(req, "viaje_iniciar", {
@@ -476,7 +509,8 @@ export const viajesController = {
         c,
         tenantId,
         { usuarioId: req.usuario!.id, dni: req.usuario!.dni ?? "", nombre: req.usuario!.nombre },
-        data
+        data,
+        tieneModulo(req.usuario, "combustible")
       );
       if (r.repetido) return { r, alertaCambio: false };
       const v = r.viaje;

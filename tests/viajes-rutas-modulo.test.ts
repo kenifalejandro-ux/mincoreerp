@@ -148,46 +148,44 @@ describe("rutas de Viajes: las dos puertas", () => {
     expect((await admin.get("/api/erp/combustible/viajes/mi-unidad")).status).toBe(200);
   });
 
-  it("sin el módulo Combustible, la puerta nueva NO deja leer las cargas (lista, detalle, consumo, Mi viaje) pero sí programar y ver lugares", async () => {
+  it("sin el módulo Combustible, Viajes sigue funcionando: la lista, el consumo, Mi viaje y el alta responden", async () => {
     const e = await nueva();
     expect((await ponerModulos(e, { combustible: "deshabilitado" })).status).toBe(200);
     const admin = await sesion(e);
 
-    // `pestanaPermitida` no comprueba el módulo: lo exige la propia puerta.
+    // Viajes funciona solo (ver `opcionales` en el registry): sin Combustible las cargas se omiten,
+    // no se bloquea la ruta. Un viaje que no existe da 404 del servicio, no 403 de módulo.
     for (const ruta of [
       "/api/erp/viajes",
       "/api/erp/viajes/resumen-conductores",
       "/api/erp/viajes/consumo",
-      "/api/erp/viajes/1",
       "/api/erp/viajes/mios",
       "/api/erp/viajes/mios/historial",
+      "/api/erp/viajes/lugares",
+      "/api/erp/viajes/conductores",
     ]) {
       const res = await admin.get(ruta);
-      expect(res.status, ruta).toBe(403);
-      expect(res.body.message, ruta).toMatch(/Módulo no disponible/);
+      expect(res.status, ruta).toBe(200);
     }
-    // Lo que no lee cargas sigue disponible: el catálogo de lugares y el alta.
-    expect((await admin.get("/api/erp/viajes/lugares")).status).toBe(200);
-    expect((await admin.get("/api/erp/viajes/conductores")).status).toBe(200);
+    expect((await admin.get("/api/erp/viajes/999999")).status).toBe(404);
   });
 
-  it("sin el módulo Combustible, el último medidor y el inicio del viaje (que lo comparan con la última carga) dan 403", async () => {
+  it("sin el módulo Combustible, el último medidor y el inicio del viaje llegan al servicio (viaje inexistente: 404)", async () => {
     const e = await nueva();
     expect((await ponerModulos(e, { combustible: "deshabilitado" })).status).toBe(200);
     const admin = await sesion(e);
 
-    // `medidorPrevio` lee combustible_despachos: lo usan estas tres rutas y ninguna otra.
-    const lecturas = [
+    // Antes exigían Combustible (comparaban con la última carga); ahora sin él se omite esa parte.
+    const rutas = [
       admin.get("/api/erp/viajes/999999/medidor-previo"),
       admin.post("/api/erp/viajes/999999/iniciar").send({}),
       admin.post("/api/erp/viajes/999999/iniciar-mio").send({}),
     ];
-    for (const res of await Promise.all(lecturas)) {
-      expect(res.status).toBe(403);
-      expect(res.body.message).toMatch(/Módulo no disponible/);
+    for (const res of await Promise.all(rutas)) {
+      expect(res.body.message ?? res.body.error ?? "").not.toMatch(/Módulo no disponible/);
     }
 
-    // Las marcas que NO leen cargas no exigen Combustible: llegan al servicio (viaje inexistente).
+    // Las marcas que no leen cargas tampoco exigen Combustible: llegan al servicio (viaje inexistente).
     for (const sufijo of ["cerrar-mio", "cerrar", "llegada-mia", "salida", "descanso-mio"]) {
       const res = await admin.post(`/api/erp/viajes/999999/${sufijo}`).send({});
       expect(res.body.message ?? "", sufijo).not.toMatch(/Módulo no disponible/);
