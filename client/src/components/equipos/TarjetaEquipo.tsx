@@ -59,6 +59,8 @@ export default function TarjetaEquipo({
   onConductor,
   onHistorial,
   onLecturas,
+  conCombustible,
+  conViajes,
   onEditar,
   onEliminar,
 }: {
@@ -70,6 +72,10 @@ export default function TarjetaEquipo({
   onConductor: (e: Equipo) => void;
   onHistorial: (e: Equipo) => void;
   onLecturas: (e: Equipo) => void;
+  /** Sin Combustible no se muestra el tanque (es un dato de ese módulo). */
+  conCombustible: boolean;
+  /** Sin Viajes no se muestran las rutas (son de ese módulo). */
+  conViajes: boolean;
   onEditar: (e: Equipo) => void;
   onEliminar: (e: Equipo) => void;
 }) {
@@ -145,7 +151,7 @@ export default function TarjetaEquipo({
       <button
         type="button"
         onClick={() => onHistorial(e)}
-        title="Historial de conductor y rutas"
+        title={conViajes ? "Historial de conductor y rutas" : "Historial de conductor"}
         aria-label={`Historial de ${e.placa_codigo}`}
         className="w-8 h-8 grid place-items-center rounded-lg border border-[#334155] text-[#94a3b8] hover:text-[#BADC1E] hover:border-[#BADC1E] transition-colors"
       >
@@ -241,22 +247,26 @@ export default function TarjetaEquipo({
         {conductor}
       </div>
 
-      <div className="space-y-1.5 border-t border-[#223033] pt-3 min-w-0">
-        {!compacta && <div className={etiqueta}>{rutas.length > 1 ? "Rutas" : "Ruta"}</div>}
-        {rutasHtml}
-      </div>
+      {conViajes && (
+        <div className="space-y-1.5 border-t border-[#223033] pt-3 min-w-0">
+          {!compacta && <div className={etiqueta}>{rutas.length > 1 ? "Rutas" : "Ruta"}</div>}
+          {rutasHtml}
+        </div>
+      )}
 
       <div
         className={`grid gap-3 border-t border-[#223033] pt-3 ${compacta ? "grid-cols-1" : "grid-cols-2"}`}
       >
-        <div className="min-w-0">
-          <div className={etiqueta}>Tanque</div>
-          {tanque ? (
-            <div className="font-mono font-bold text-[15px] text-white">{tanque}</div>
-          ) : (
-            <div className="text-[13px] text-[#94a3b8]">Sin dato</div>
-          )}
-        </div>
+        {conCombustible && (
+          <div className="min-w-0">
+            <div className={etiqueta}>Tanque</div>
+            {tanque ? (
+              <div className="font-mono font-bold text-[15px] text-white">{tanque}</div>
+            ) : (
+              <div className="text-[13px] text-[#94a3b8]">Sin dato</div>
+            )}
+          </div>
+        )}
         {!compacta && (
           <div className="min-w-0">
             <div className={etiqueta}>Medidor</div>

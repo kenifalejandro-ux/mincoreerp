@@ -93,10 +93,13 @@ function Fila({
 export default function HistorialEquipo({
   equipoId,
   placa,
+  conViajes,
   onCerrar,
 }: {
   equipoId: number;
   placa: string;
+  /** Sin Viajes no hay rutas que mostrar (son de ese módulo). */
+  conViajes: boolean;
   onCerrar: () => void;
 }) {
   const [datos, setDatos] = useState<Historial | null>(null);
@@ -123,7 +126,11 @@ export default function HistorialEquipo({
     <VentanaFlotante
       id={`equipo-historial-${equipoId}`}
       titulo={`Historial — ${placa}`}
-      subtitulo="Conductores y rutas de la unidad, del más reciente al más antiguo"
+      subtitulo={
+        conViajes
+          ? "Conductores y rutas de la unidad, del más reciente al más antiguo"
+          : "Conductores de la unidad, del más reciente al más antiguo"
+      }
       onCerrar={onCerrar}
       anchoInicial={640}
       altoInicial={560}
@@ -160,29 +167,33 @@ export default function HistorialEquipo({
                 </ul>
               )}
             </section>
-            <section>
-              <h4 className="text-xs font-bold uppercase tracking-wide text-[#94a3b8] mb-2">
-                Rutas
-              </h4>
-              {datos.rutas.length === 0 ? (
-                <p className="text-[#94a3b8]">Esta unidad nunca tuvo una ruta habitual asignada.</p>
-              ) : (
-                <ul className="space-y-2">
-                  {datos.rutas.map((r) => (
-                    <Fila
-                      key={r.id}
-                      titulo={`${r.origen} → ${r.destino}`}
-                      desde={r.desde}
-                      hasta={r.hasta}
-                      motivo={r.motivo}
-                      usuario={r.usuario}
-                      motivoCierre={r.motivo_cierre}
-                      cerradoPor={r.cerrado_por}
-                    />
-                  ))}
-                </ul>
-              )}
-            </section>
+            {conViajes && (
+              <section>
+                <h4 className="text-xs font-bold uppercase tracking-wide text-[#94a3b8] mb-2">
+                  Rutas
+                </h4>
+                {datos.rutas.length === 0 ? (
+                  <p className="text-[#94a3b8]">
+                    Esta unidad nunca tuvo una ruta habitual asignada.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {datos.rutas.map((r) => (
+                      <Fila
+                        key={r.id}
+                        titulo={`${r.origen} → ${r.destino}`}
+                        desde={r.desde}
+                        hasta={r.hasta}
+                        motivo={r.motivo}
+                        usuario={r.usuario}
+                        motivoCierre={r.motivo_cierre}
+                        cerradoPor={r.cerrado_por}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </section>
+            )}
           </>
         )}
       </div>
