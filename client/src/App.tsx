@@ -8,7 +8,12 @@ import {
   puedeVerDespachoGrifo,
 } from "./components/combustible/compraEnRutaAcceso";
 import { puedeVerPrecios } from "./components/combustible/preciosAcceso";
-import { puedeVerMiViaje, puedeVerUnidades, puedeVerViajes } from "./components/flota/flotaAcceso";
+import {
+  miViajeVaEnFlota,
+  puedeVerMiViaje,
+  puedeVerUnidades,
+  puedeVerViajes,
+} from "./components/flota/flotaAcceso";
 import Layout from "./components/layout/Layout";
 import { useAuth } from "./context/AuthContext";
 import { MODULOS_CLIENTE } from "./modules/registry";
@@ -60,6 +65,7 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
   // Gestión operacional de flota: "flota" es Registro de unidades y
   // "flota:viajes" la lista de viajes (mismas reglas que el menú).
   if (moduloId === "flota") {
+    if (tab === "flota:mi_viaje") return miViajeVaEnFlota(usuario);
     return tab === "flota:viajes" ? puedeVerViajes(usuario) : puedeVerUnidades(usuario);
   }
   if (moduloId === "combustible") {
@@ -97,7 +103,8 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
  *  que sí, en el orden del menú. */
 function primeraPestania(usuario: UsuarioDeSesion): string {
   const override = (pestana: string) => usuario?.permisosPestanas?.[`combustible:${pestana}`];
-  if (usuario?.rol === "conductor_ruta" && puedeVerMiViaje(usuario)) return "combustible:mi_viaje";
+  if (usuario?.rol === "conductor_ruta" && puedeVerMiViaje(usuario))
+    return miViajeVaEnFlota(usuario) ? "flota:mi_viaje" : "combustible:mi_viaje";
   if (usuario?.rol === "conductor_ruta" && override("tanques") !== false) return "combustible";
   // Sin Mi viaje ni Tanquetas, la pantalla que le queda es Compra en ruta.
   if (usuario?.rol === "conductor_ruta" && puedeCompraEnRuta(usuario))
@@ -210,7 +217,14 @@ function App() {
                                   : "tanques",
         }
       : moduloIdActivo === "flota"
-        ? { pestanaInicial: tabActiva === "flota:viajes" ? "viajes" : "unidades" }
+        ? {
+            pestanaInicial:
+              tabActiva === "flota:viajes"
+                ? "viajes"
+                : tabActiva === "flota:mi_viaje"
+                  ? "mi_viaje"
+                  : "unidades",
+          }
         : {};
 
   // El registry tipa cada componente sin props (ComponentType<{}>) porque la

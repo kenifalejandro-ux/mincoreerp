@@ -24,6 +24,8 @@ import {
   type FilaViaje,
   type Producto,
 } from "./viajesFormato";
+import { useAuth } from "../../context/AuthContext";
+import { tieneModulo } from "../../modules/tieneModulo";
 import { apiFetch } from "../../services/apiClient";
 import VentanaFlotante from "../comunes/VentanaFlotante";
 
@@ -70,6 +72,9 @@ export function DetalleViajeVentana({
   enfocarAcciones?: boolean;
 }) {
   const [datos, setDatos] = useState<Detalle | null>(null);
+  const { usuario } = useAuth();
+  // Las cargas y el consumo son de Combustible: sin ese módulo no se muestran sus tarjetas.
+  const conCombustible = tieneModulo(usuario, "combustible");
   const [error, setError] = useState<string | null>(null);
   const [ahora, setAhora] = useState(() => Date.now());
   const [panel, setPanel] = useState<PanelAbierto>(null);
@@ -208,35 +213,43 @@ export function DetalleViajeVentana({
           />
 
           {/* ── Los números del viaje ── */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div
+            className={`grid grid-cols-2 gap-3 ${conCombustible ? "lg:grid-cols-4" : "lg:grid-cols-2"}`}
+          >
             <Tile
               icono={<Timer className="w-4 h-4" />}
               titulo={enCurso ? "En ruta" : "Duración"}
               valor={minutos !== null ? duracion(minutos) : "—"}
               pie={esperado ? <span>promedio {duracion(esperado)}</span> : undefined}
             />
-            <Tile
-              icono={<Fuel className="w-4 h-4" />}
-              titulo="Combustible"
-              valor={`${fmt(combustibleGal, 1)} gal`}
-              pie={
-                <>
-                  {datos.ruta.combustible_gal !== null && (
-                    <span>prom. {fmt(datos.ruta.combustible_gal, 1)}</span>
-                  )}
-                  {v.estado === "cerrado" && (
-                    <Comparacion valor={combustibleGal} promedio={datos.ruta.combustible_gal} />
-                  )}
-                </>
-              }
-            />
-            <Tile
-              icono={<Droplets className="w-4 h-4" />}
-              titulo="Urea"
-              valor={`${fmt(ureaL, 1)} L`}
-              acento="text-sky-400"
-              pie={datos.ruta.urea_l ? <span>prom. {fmt(datos.ruta.urea_l, 1)} L</span> : undefined}
-            />
+            {conCombustible && (
+              <Tile
+                icono={<Fuel className="w-4 h-4" />}
+                titulo="Combustible"
+                valor={`${fmt(combustibleGal, 1)} gal`}
+                pie={
+                  <>
+                    {datos.ruta.combustible_gal !== null && (
+                      <span>prom. {fmt(datos.ruta.combustible_gal, 1)}</span>
+                    )}
+                    {v.estado === "cerrado" && (
+                      <Comparacion valor={combustibleGal} promedio={datos.ruta.combustible_gal} />
+                    )}
+                  </>
+                }
+              />
+            )}
+            {conCombustible && (
+              <Tile
+                icono={<Droplets className="w-4 h-4" />}
+                titulo="Urea"
+                valor={`${fmt(ureaL, 1)} L`}
+                acento="text-sky-400"
+                pie={
+                  datos.ruta.urea_l ? <span>prom. {fmt(datos.ruta.urea_l, 1)} L</span> : undefined
+                }
+              />
+            )}
             <Tile
               icono={<Gauge className="w-4 h-4" />}
               titulo={`${etiquetaMedidor} ${v.estado === "cerrado" ? "final" : "actual"}`}

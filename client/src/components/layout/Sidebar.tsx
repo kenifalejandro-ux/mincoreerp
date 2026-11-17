@@ -30,6 +30,7 @@ import { puedeVerPrecios } from "../combustible/preciosAcceso";
 import { SubmenuDesplegable } from "../comunes/SubmenuDesplegable";
 import {
   destinoDeFlota,
+  miViajeVaEnFlota,
   puedeVerFlota,
   puedeVerMiViaje,
   puedeVerUnidades,
@@ -355,6 +356,29 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
             </Fragment>
           );
         })}
+
+        {/* «Mi viaje» vive dentro de Combustible; sin ese módulo va suelto (ver miViajeVaEnFlota). */}
+        {miViajeVaEnFlota(usuario) && (
+          <button
+            onClick={() => setActiveTab("flota:mi_viaje")}
+            aria-current={activeTab === "flota:mi_viaje" ? "page" : undefined}
+            className={`group w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all relative ${
+              activeTab === "flota:mi_viaje"
+                ? "bg-[#BADC1E] text-[#0A1014] font-semibold"
+                : "text-slate-500 hover:bg-[#BADC1E] hover:text-[#0A1014] font-medium"
+            }`}
+          >
+            {activeTab === "flota:mi_viaje" && (
+              <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-[#BADC1E]" />
+            )}
+            <Navigation
+              size={18}
+              strokeWidth={2}
+              className={`shrink-0 ${activeTab === "flota:mi_viaje" ? "text-[#0A1014]" : "text-slate-400 group-hover:text-[#0A1014]"}`}
+            />
+            <span className="tracking-tight">Mi viaje</span>
+          </button>
+        )}
 
         <div className="my-2 mx-6 h-px bg-slate-100" />
 

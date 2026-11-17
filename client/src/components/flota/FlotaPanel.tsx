@@ -14,9 +14,10 @@ import { useAuth } from "../../context/AuthContext";
 const EquiposTable = lazy(() => import("../equipos/EquiposTable"));
 const ViajesPanel = lazy(() => import("../combustible/ViajesPanel"));
 const ConsumoViajeVista = lazy(() => import("../combustible/ConsumoViajeVista"));
+const MiViaje = lazy(() => import("../combustible/MiViaje"));
 
 interface FlotaPanelProps {
-  pestanaInicial?: "unidades" | "viajes";
+  pestanaInicial?: "unidades" | "viajes" | "mi_viaje";
 }
 
 const TITULO_VISTA = { lista: "Viajes", consumo: "Consumo por viaje" } as const;
@@ -66,7 +67,15 @@ function ViajesConPestanas() {
 export default function FlotaPanel({ pestanaInicial = "unidades" }: FlotaPanelProps) {
   return (
     <Suspense fallback={<div className="p-20 text-center text-slate-500">Cargando...</div>}>
-      {pestanaInicial === "viajes" ? <ViajesConPestanas /> : <EquiposTable />}
+      {pestanaInicial === "viajes" ? (
+        <ViajesConPestanas />
+      ) : pestanaInicial === "mi_viaje" ? (
+        <div className="p-2 sm:p-4 lg:p-8">
+          <MiViaje />
+        </div>
+      ) : (
+        <EquiposTable />
+      )}
     </Suspense>
   );
 }

@@ -138,6 +138,16 @@ describe("Viajes: autonomía (sin Combustible)", () => {
     expect(previo2.body).toMatchObject({ valor: 1200, fuente: "viaje" });
   });
 
+  it("el panel pide las unidades a Viajes (Flota), no a Combustible, que no está", async () => {
+    const eq = await unidad();
+    const r = await admin.get("/api/erp/viajes/unidades").query({ pageSize: 200 });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.data.some((u: { id: number }) => u.id === eq)).toBe(true);
+    expect(Number(r.body.pagination.total)).toBeGreaterThan(0);
+    // La puerta vieja de Combustible no existe para esta empresa.
+    expect((await admin.get("/api/erp/combustible/equipos-destino")).status).toBe(403);
+  });
+
   it("el consumo, el resumen de conductores y el histórico responden vacíos de cargas, no con 403", async () => {
     for (const ruta of ["/api/erp/viajes/consumo", "/api/erp/viajes/resumen-conductores"]) {
       const r = await admin.get(ruta).query({ producto: "combustible" });
