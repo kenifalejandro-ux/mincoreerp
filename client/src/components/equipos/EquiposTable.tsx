@@ -4,6 +4,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   Download,
+  Gauge,
   History,
   LayoutGrid,
   List,
@@ -26,6 +27,7 @@ import {
   sinRuta,
   textoBuscable,
   textoMedidor,
+  textoUltimaLectura,
   textoTanque,
   type ColumnaOrden,
   type Equipo,
@@ -34,6 +36,8 @@ import {
   type VistaEquipos,
 } from "./equiposVista";
 import HistorialEquipo from "./HistorialEquipo";
+import LecturasEquipo from "./LecturasEquipo";
+import { lecturasEsNuevo, marcarLecturasVistas } from "./novedadLecturas";
 import RutasEditor, { type LugarOpcion, type RutaForm } from "./RutasEditor";
 import TarjetaEquipo, { EstadoUnidadBadge, PorCompletarChip } from "./TarjetaEquipo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
@@ -255,6 +259,11 @@ export default function EquiposTable() {
   const [equipoAMover, setEquipoAMover] = useState<Equipo | null>(null);
   // Conductor y rutas con historial (0126).
   const [equipoHistorial, setEquipoHistorial] = useState<Equipo | null>(null);
+  const [equipoLecturas, setEquipoLecturas] = useState<Equipo | null>(null);
+  const verLecturas = (e: Equipo) => {
+    marcarLecturasVistas();
+    setEquipoLecturas(e);
+  };
   const [lugares, setLugares] = useState<LugarOpcion[]>([]);
   const [formRutas, setFormRutas] = useState<RutaForm[]>([]);
   const [motivoCambio, setMotivoCambio] = useState("");
@@ -1002,6 +1011,7 @@ export default function EquiposTable() {
               onToggleSeleccion={() => toggleSeleccion(e.id)}
               onConductor={verConductor}
               onHistorial={setEquipoHistorial}
+              onLecturas={verLecturas}
               onEditar={openEditModal}
               onEliminar={(x) => handleDelete(x.id)}
             />
@@ -1135,6 +1145,11 @@ export default function EquiposTable() {
                     </td>
                     <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors text-xs sm:text-sm text-[#94a3b8]">
                       {textoMedidor(e) ?? "---"}
+                      {textoUltimaLectura(e) && (
+                        <div className="font-mono text-[11px] text-[#e2e8f0]">
+                          {textoUltimaLectura(e)}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors text-xs sm:text-sm">
                       <div className="text-[#e2e8f0]">{e.marca || "---"}</div>
@@ -1154,6 +1169,23 @@ export default function EquiposTable() {
                         aria-label={`Historial de ${e.placa_codigo}`}
                       >
                         <History className="w-4 h-4" />
+                      </button>
+                      {/* Las lecturas del medidor son una consulta: Lectura también las ve. */}
+                      <button
+                        onClick={() => verLecturas(e)}
+                        className="relative p-2 text-slate-400 hover:text-[#BADC1E] rounded-lg transition-all"
+                        title="Lecturas del medidor"
+                        aria-label={`Lecturas de ${e.placa_codigo}`}
+                      >
+                        <Gauge className="w-4 h-4" />
+                        {lecturasEsNuevo() && (
+                          <span
+                            aria-hidden
+                            className="absolute -top-1 -right-2 rounded-full bg-sky-500 px-1 text-[8px] font-extrabold uppercase leading-3 text-white"
+                          >
+                            Nuevo
+                          </span>
+                        )}
                       </button>
                       {puedeEscribir && (
                         <>
@@ -1536,6 +1568,16 @@ export default function EquiposTable() {
           equipoId={equipoHistorial.id}
           placa={equipoHistorial.placa_codigo}
           onCerrar={() => setEquipoHistorial(null)}
+        />
+      )}
+      {equipoLecturas && (
+        <LecturasEquipo
+          equipoId={equipoLecturas.id}
+          placa={equipoLecturas.placa_codigo}
+          tipoMedidor={equipoLecturas.tipo_medidor}
+          puedeEscribir={puedeEscribir}
+          onCerrar={() => setEquipoLecturas(null)}
+          onCambio={() => void fetchEquipos()}
         />
       )}
       {conductorVer && (

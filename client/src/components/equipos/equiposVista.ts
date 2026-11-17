@@ -30,6 +30,8 @@ export interface Equipo {
   conductor_dni: string | null;
   /** Rutas habituales vigentes (0126): cero, una o varias. */
   rutas: { origen_id: number; destino_id: number; origen: string; destino: string }[];
+  /** La última lectura vigente del medidor (0187); null = todavía no tiene. */
+  ultima_lectura?: { valor: number; tipo: "horometro" | "odometro"; leido_en: string } | null;
   activo: boolean;
   creado_en: string;
   /** La registró el conductor con solo la placa, su nombre y la ruta: falta completarla (0179). */
@@ -81,6 +83,13 @@ export function textoMedidor(e: Equipo): string | null {
     : e.tipo_medidor === "odometro"
       ? "Odómetro"
       : null;
+}
+
+/** «1.234,5 h» / «87.000 km»: la última lectura del medidor, o null si no hay. */
+export function textoUltimaLectura(e: Equipo): string | null {
+  const l = e.ultima_lectura;
+  if (!l) return null;
+  return `${l.valor.toLocaleString("es-PE", { maximumFractionDigits: 2 })} ${l.tipo === "horometro" ? "h" : "km"}`;
 }
 
 export type ClaveIcono =

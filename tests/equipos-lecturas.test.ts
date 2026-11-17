@@ -110,6 +110,24 @@ describe("lecturas del medidor de la unidad (Flota)", () => {
     expect((await admin.get(`/api/erp/equipos/${id}/lecturas`)).body.data).toHaveLength(1);
   });
 
+  it("la lista de unidades trae la última lectura vigente de cada una (null si no tiene; la anulada no cuenta)", async () => {
+    const e = await nueva();
+    const admin = await sesion(e);
+    const id = await unidad(admin);
+    const fila = async () =>
+      (await admin.get("/api/erp/equipos")).body.data.find((x: { id: number }) => x.id === id);
+    expect((await fila()).ultima_lectura).toBeNull();
+
+    await registrar(admin, id, { valor: 100, leido_en: haceHoras(5) });
+    const segunda = await registrar(admin, id, { valor: 150, leido_en: haceHoras(2) });
+    expect((await fila()).ultima_lectura).toMatchObject({ valor: 150, tipo: "horometro" });
+
+    await admin
+      .post(`/api/erp/equipos/${id}/lecturas/${segunda.body.id}/anular`)
+      .send({ motivo: "Me equivoqué al digitar" });
+    expect((await fila()).ultima_lectura).toMatchObject({ valor: 100 });
+  });
+
   it("sin leido_en toma la hora del servidor, y una unidad inexistente da 404", async () => {
     const e = await nueva();
     const admin = await sesion(e);

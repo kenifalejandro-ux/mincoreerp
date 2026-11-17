@@ -2,7 +2,7 @@
 //
 // La unidad en una tarjeta: quién la maneja y por dónde va, de un vistazo.
 // Tres tamaños; la compacta deja lo esencial para ver muchas a la vez.
-import { History, Pencil, Trash2, TriangleAlert } from "lucide-react";
+import { Gauge, History, Pencil, Trash2, TriangleAlert } from "lucide-react";
 
 import EquipoIcono from "./EquipoIcono";
 import {
@@ -10,11 +10,13 @@ import {
   sinConductor,
   sinRuta,
   textoMedidor,
+  textoUltimaLectura,
   textoTanque,
   tipoLlevaConductor,
   type Equipo,
   type TamTarjeta,
 } from "./equiposVista";
+import { lecturasEsNuevo } from "./novedadLecturas";
 
 export function EstadoUnidadBadge({ equipo, soloPunto }: { equipo: Equipo; soloPunto?: boolean }) {
   const estado = estadoDeUnidad(equipo);
@@ -56,6 +58,7 @@ export default function TarjetaEquipo({
   onToggleSeleccion,
   onConductor,
   onHistorial,
+  onLecturas,
   onEditar,
   onEliminar,
 }: {
@@ -66,6 +69,7 @@ export default function TarjetaEquipo({
   onToggleSeleccion: () => void;
   onConductor: (e: Equipo) => void;
   onHistorial: (e: Equipo) => void;
+  onLecturas: (e: Equipo) => void;
   onEditar: (e: Equipo) => void;
   onEliminar: (e: Equipo) => void;
 }) {
@@ -146,6 +150,24 @@ export default function TarjetaEquipo({
         className="w-8 h-8 grid place-items-center rounded-lg border border-[#334155] text-[#94a3b8] hover:text-[#BADC1E] hover:border-[#BADC1E] transition-colors"
       >
         <History className="w-4 h-4" />
+      </button>
+      {/* Las lecturas del medidor son una consulta: Lectura también las ve. */}
+      <button
+        type="button"
+        onClick={() => onLecturas(e)}
+        title="Lecturas del medidor"
+        aria-label={`Lecturas de ${e.placa_codigo}`}
+        className="relative w-8 h-8 grid place-items-center rounded-lg border border-[#334155] text-[#94a3b8] hover:text-[#BADC1E] hover:border-[#BADC1E] transition-colors"
+      >
+        <Gauge className="w-4 h-4" />
+        {lecturasEsNuevo() && (
+          <span
+            aria-hidden
+            className="absolute -top-2 -right-2 rounded-full bg-sky-500 px-1 text-[8px] font-extrabold uppercase leading-3 text-white"
+          >
+            Nuevo
+          </span>
+        )}
       </button>
       {puedeEscribir && (
         <>
@@ -239,7 +261,14 @@ export default function TarjetaEquipo({
           <div className="min-w-0">
             <div className={etiqueta}>Medidor</div>
             {medidor ? (
-              <div className="font-semibold text-sm text-white">{medidor}</div>
+              <div className="font-semibold text-sm text-white">
+                {medidor}
+                {textoUltimaLectura(e) && (
+                  <span className="ml-1.5 font-mono font-normal text-[#BADC1E]">
+                    {textoUltimaLectura(e)}
+                  </span>
+                )}
+              </div>
             ) : (
               <div className="text-[13px] text-[#94a3b8]">Sin medidor</div>
             )}
