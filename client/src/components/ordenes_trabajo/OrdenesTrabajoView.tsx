@@ -2,6 +2,8 @@
 import { ChevronLeft, ChevronRight, Trash2, X } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 
+import { useAuth } from "../../context/AuthContext";
+import { tieneModulo } from "../../modules/tieneModulo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
@@ -10,8 +12,10 @@ type Estado = "abierta" | "en_progreso" | "completada" | "cancelada";
 
 interface OrdenTrabajo {
   id: number;
-  equipo_id: number;
-  placa_codigo: string;
+  // La unidad es opcional (de Flota); si no hay, la orden se identifica por `activo_texto`.
+  equipo_id: number | null;
+  placa_codigo: string | null;
+  activo_texto: string | null;
   titulo: string;
   descripcion: string | null;
   tipo: "correctivo" | "preventivo";
@@ -59,6 +63,7 @@ const ESTADO_COLOR: Record<Estado, string> = {
 
 const FORM_VACIO = {
   equipo_id: "",
+  activo_texto: "",
   titulo: "",
   descripcion: "",
   tipo: "correctivo" as "correctivo" | "preventivo",
@@ -70,6 +75,9 @@ const FORM_VACIO = {
 
 export default function OrdenesTrabajoView() {
   const puedeEscribir = usePuedeEscribir("ordenes_trabajo");
+  // Registro de unidades es de OTRO módulo: sin él no se piden ni se ofrecen unidades y la orden
+  // se identifica por el texto «Activo o lugar» (ver `opcionales` en registry.ts).
+  const conFlota = tieneModulo(useAuth().usuario, "flota");
   const [ordenes, setOrdenes] = useState<OrdenTrabajo[]>([]);
   const [equipos, setEquipos] = useState<Equipo[]>([]);
   const [ipercs, setIpercs] = useState<IpercResumen[]>([]);
@@ -96,7 +104,7 @@ export default function OrdenesTrabajoView() {
     async (paginaAConsultar: number) => {
       const params = new URLSearchParams({ page: String(paginaAConsultar), pageSize: "50" });
       if (filtroEstado) params.set("estado", filtroEstado);
-      if (filtroEquipo) params.set("equipo_id", filtroEquipo);
+      if (conFlota && filtroEquipo) params.set("equipo_id", filtroEquipo);
       if (filtroAsignado) params.set("asignado_a", filtroAsignado);
       try {
         const res = await apiFetch(`/api/erp/ordenes_trabajo?${params}`);
@@ -109,7 +117,7 @@ export default function OrdenesTrabajoView() {
         setLoading(false);
       }
     },
-    [filtroEstado, filtroEquipo, filtroAsignado]
+    [filtroEstado, filtroEquipo, filtroAsignado, conFlota]
   );
 
   const cargarEquipos = useCallback(async () => {
@@ -156,11 +164,12 @@ export default function OrdenesTrabajoView() {
   useEffect(() => {
     // Patrón estándar de carga de catálogos al montar (mismo criterio que
     // el efecto de arriba).
+    // Sin Flota no se pide la lista de unidades (el servidor la negaría).
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    cargarEquipos();
+    if (conFlota) cargarEquipos();
     cargarIpercs();
     cargarUsuariosAsignables();
-  }, [cargarEquipos, cargarIpercs, cargarUsuariosAsignables]);
+  }, [conFlota, cargarEquipos, cargarIpercs, cargarUsuariosAsignables]);
 
   // Cuando la cola offline termina de drenar, las OT que se crearon sin
   // señal ya existen del lado del servidor -- recargar es lo que hace que
@@ -180,8 +189,18 @@ export default function OrdenesTrabajoView() {
   const handleCrear = async (e: React.FormEvent) => {
     e.preventDefault();
     if (guardando) return;
-    if (!formData.equipo_id || !formData.titulo.trim()) {
-      alert("Completá el equipo y el título antes de guardar.");
+    // Sobre qué es la orden: la unidad o el texto (el servidor también lo exige).
+    const activoTexto = formData.activo_texto.trim();
+    if (!formData.titulo.trim()) {
+      alert("Completá el título antes de guardar.");
+      return;
+    }
+    if (!formData.equipo_id && !activoTexto) {
+      alert(
+        conFlota
+          ? "Elegí la unidad o escribí el activo o lugar de la orden."
+          : "Escribí el activo o lugar de la orden."
+      );
       return;
     }
 
@@ -194,7 +213,8 @@ export default function OrdenesTrabajoView() {
           // Viene del estado (se fijó al abrir el modal), NO de un
           // crypto.randomUUID() acá adentro.
           cliente_uuid: clienteUuid,
-          equipo_id: Number(formData.equipo_id),
+          equipo_id: formData.equipo_id ? Number(formData.equipo_id) : undefined,
+          activo_texto: activoTexto || undefined,
           titulo: formData.titulo,
           descripcion: formData.descripcion || undefined,
           tipo: formData.tipo,
@@ -260,12 +280,14 @@ export default function OrdenesTrabajoView() {
   // Reasignar desde el select inline de la tabla -- el PUT reemplaza la
   // fila entera (mismo criterio que actualizarOrdenTrabajoSchema), así que
   // manda los valores ACTUALES de los campos no-estado junto con el nuevo
-  // asignado_a. equipo_id no viaja: es inmutable, el PUT no lo acepta.
+  // asignado_a. equipo_id no viaja: es inmutable, el PUT no lo acepta. activo_texto SÍ viaja:
+  // una orden sin unidad no puede quedarse sin él (el servidor responde 400).
   const handleReasignar = async (ot: OrdenTrabajo, nuevoAsignadoA: string) => {
     const res = await apiFetch(`/api/erp/ordenes_trabajo/${ot.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        activo_texto: ot.activo_texto || undefined,
         titulo: ot.titulo,
         descripcion: ot.descripcion || undefined,
         tipo: ot.tipo,
@@ -338,27 +360,32 @@ export default function OrdenesTrabajoView() {
             ))}
           </select>
         </div>
-        <div className="space-y-1 flex-1">
-          <label htmlFor="ot-filtro-equipo" className="text-xs font-bold text-slate-500 uppercase">
-            Filtrar por equipo
-          </label>
-          <select
-            id="ot-filtro-equipo"
-            className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-            value={filtroEquipo}
-            onChange={(e) => {
-              setPage(1);
-              setFiltroEquipo(e.target.value);
-            }}
-          >
-            <option value="">Todos</option>
-            {equipos.map((eq) => (
-              <option key={eq.id} value={eq.id}>
-                {eq.placa_codigo}
-              </option>
-            ))}
-          </select>
-        </div>
+        {conFlota && (
+          <div className="space-y-1 flex-1">
+            <label
+              htmlFor="ot-filtro-equipo"
+              className="text-xs font-bold text-slate-500 uppercase"
+            >
+              Filtrar por equipo
+            </label>
+            <select
+              id="ot-filtro-equipo"
+              className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
+              value={filtroEquipo}
+              onChange={(e) => {
+                setPage(1);
+                setFiltroEquipo(e.target.value);
+              }}
+            >
+              <option value="">Todos</option>
+              {equipos.map((eq) => (
+                <option key={eq.id} value={eq.id}>
+                  {eq.placa_codigo}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="space-y-1 flex-1">
           <label
             htmlFor="ot-filtro-asignado"
@@ -391,7 +418,7 @@ export default function OrdenesTrabajoView() {
             <thead className="bg-slate-50">
               <tr>
                 <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  equipo
+                  equipo / activo
                 </th>
                 <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
                   título
@@ -417,7 +444,14 @@ export default function OrdenesTrabajoView() {
               {ordenes.map((ot) => (
                 <tr key={ot.id} className="hover:bg-slate-50/50 transition-colors">
                   <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm font-semibold text-slate-800">
-                    {ot.placa_codigo}
+                    {ot.placa_codigo ??
+                      ot.activo_texto ??
+                      (ot.equipo_id ? `Unidad ${ot.equipo_id}` : "---")}
+                    {ot.placa_codigo && ot.activo_texto && (
+                      <span className="block font-sans text-[10px] sm:text-xs font-normal text-slate-500">
+                        {ot.activo_texto}
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-600">
                     {ot.titulo}
@@ -539,26 +573,41 @@ export default function OrdenesTrabajoView() {
               </button>
             </div>
             <form onSubmit={handleCrear} className="p-6 space-y-4">
+              {conFlota && (
+                <div className="space-y-1">
+                  <label htmlFor="ot-equipo" className="text-xs font-bold text-slate-500 uppercase">
+                    Equipo (opcional)
+                  </label>
+                  <select
+                    id="ot-equipo"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                    value={formData.equipo_id}
+                    onChange={(e) => setFormData({ ...formData, equipo_id: e.target.value })}
+                  >
+                    <option value="">Sin unidad</option>
+                    {equipos.map((eq) => (
+                      <option key={eq.id} value={eq.id}>
+                        {eq.placa_codigo}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div className="space-y-1">
-                <label htmlFor="ot-equipo" className="text-xs font-bold text-slate-500 uppercase">
-                  Equipo
+                <label htmlFor="ot-activo" className="text-xs font-bold text-slate-500 uppercase">
+                  {conFlota ? "Activo o lugar (si no es una unidad)" : "Activo o lugar"}
                 </label>
-                <select
-                  id="ot-equipo"
-                  required
-                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-                  value={formData.equipo_id}
-                  onChange={(e) => setFormData({ ...formData, equipo_id: e.target.value })}
-                >
-                  <option value="" disabled>
-                    Seleccioná un equipo
-                  </option>
-                  {equipos.map((eq) => (
-                    <option key={eq.id} value={eq.id}>
-                      {eq.placa_codigo}
-                    </option>
-                  ))}
-                </select>
+                <input
+                  id="ot-activo"
+                  type="text"
+                  maxLength={150}
+                  placeholder="Ej. Horno 4, faja transportadora"
+                  required={!formData.equipo_id}
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                  value={formData.activo_texto}
+                  onChange={(e) => setFormData({ ...formData, activo_texto: e.target.value })}
+                />
               </div>
 
               <div className="space-y-1">

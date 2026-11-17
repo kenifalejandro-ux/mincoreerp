@@ -14,13 +14,15 @@ export const OrdenesTrabajoService = {
     client: PoolClient,
     tenantId: string,
     paginacion: Paginacion,
-    filtros: { estado?: string; equipoId?: number; asignadoA?: string }
+    filtros: { estado?: string; equipoId?: number; asignadoA?: string },
+    conUnidades = true
   ) {
-    return OrdenesTrabajoRepository.findAll(client, tenantId, paginacion, filtros);
+    return OrdenesTrabajoRepository.findAll(client, tenantId, paginacion, filtros, conUnidades);
   },
 
-  getById(client: PoolClient, tenantId: string, id: number) {
-    return OrdenesTrabajoRepository.findById(client, tenantId, id);
+  /** `conUnidades`: la empresa tiene Flota. Sin ella no se lee `equipos` (ver `opcionales`). */
+  getById(client: PoolClient, tenantId: string, id: number, conUnidades = true) {
+    return OrdenesTrabajoRepository.findById(client, tenantId, id, conUnidades);
   },
 
   /** Devuelve `creado: false` cuando esta OT ya se había creado con el
@@ -28,7 +30,13 @@ export const OrdenesTrabajoService = {
    *  perdió (online u offline: la creación de OT participa de la cola
    *  offline, ver src/modules/registry.ts). El controller usa ese flag
    *  para no auditar ni publicar el evento dos veces. */
-  crear(client: PoolClient, tenantId: string, usuarioId: string, data: CrearOrdenTrabajoInput) {
+  crear(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: CrearOrdenTrabajoInput,
+    conUnidades = true
+  ) {
     return idempotentInsert({
       client,
       tenantId,
@@ -38,7 +46,8 @@ export const OrdenesTrabajoService = {
         const fila = await OrdenesTrabajoRepository.crear(client, tenantId, usuarioId, data);
         return { id: fila.id as number, fila };
       },
-      recuperar: (filaId) => OrdenesTrabajoRepository.findById(client, tenantId, filaId),
+      recuperar: (filaId) =>
+        OrdenesTrabajoRepository.findById(client, tenantId, filaId, conUnidades),
     });
   },
 

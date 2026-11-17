@@ -907,9 +907,9 @@ export const MODULOS: ModuloDefinicion[] = [
     version: "v1",
     router: ordenesTrabajoRoutes,
     // La orden puede asociar una evaluación de riesgo (sin FK real, se valida en la app).
-    // La unidad (`equipo_id`) hoy es obligatoria: sigue como excepción conocida del test
-    // hasta decidir si pasa a ser opcional.
-    opcionales: ["iperc"],
+    // La unidad (`equipo_id`) es opcional (admite NULL, migración 0190): sin Flota la orden se
+    // identifica por `activo_texto` y no se lee `equipos`.
+    opcionales: ["iperc", "flota"],
     tablas: [
       {
         nombre: "ordenes_trabajo",

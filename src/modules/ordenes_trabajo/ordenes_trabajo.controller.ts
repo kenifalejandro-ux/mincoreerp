@@ -2,6 +2,7 @@
 
 import { Request, Response } from "express";
 import { withTenant } from "../../server/config/database";
+import { tieneModulo } from "../../server/shared/utils/modulos";
 import { getTenantId } from "../../server/shared/utils/request";
 import { parsePaginacion, armarRespuestaPaginada } from "../../server/shared/utils/pagination";
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
@@ -12,6 +13,7 @@ import type {
   ActualizarOrdenTrabajoInput,
   CambiarEstadoOrdenTrabajoInput,
 } from "../../server/schemas/ordenes_trabajo.schema";
+import { OrdenSinActivoError } from "./ordenes_trabajo.repository";
 import { OrdenesTrabajoService } from "./ordenes_trabajo.service";
 
 export const OrdenesTrabajoController = {
@@ -39,7 +41,13 @@ export const OrdenesTrabajoController = {
           : undefined;
       const asignadoA = typeof req.query.asignado_a === "string" ? req.query.asignado_a : undefined;
       const filas = await withTenant(tenantId, (client) =>
-        OrdenesTrabajoService.getAll(client, tenantId, paginacion, { estado, equipoId, asignadoA })
+        OrdenesTrabajoService.getAll(
+          client,
+          tenantId,
+          paginacion,
+          { estado, equipoId, asignadoA },
+          tieneModulo(req.usuario, "flota")
+        )
       );
       res.json(armarRespuestaPaginada(filas, paginacion));
     } catch {
@@ -51,7 +59,12 @@ export const OrdenesTrabajoController = {
     try {
       const tenantId = getTenantId(req);
       const ordenTrabajo = await withTenant(tenantId, (client) =>
-        OrdenesTrabajoService.getById(client, tenantId, Number(req.params.id))
+        OrdenesTrabajoService.getById(
+          client,
+          tenantId,
+          Number(req.params.id),
+          tieneModulo(req.usuario, "flota")
+        )
       );
       if (!ordenTrabajo) {
         res.status(404).json({ message: "Orden de trabajo no encontrada" });
@@ -67,8 +80,17 @@ export const OrdenesTrabajoController = {
     try {
       const tenantId = getTenantId(req);
       const data = req.validatedBody as CrearOrdenTrabajoInput;
+      // La unidad viene de Flota: sin ese módulo la orden se identifica por el texto
+      // (`opcionales` en registry.ts). Se rechaza en vez de ignorarla, para que el cliente se entere.
+      const conUnidades = tieneModulo(req.usuario, "flota");
+      if (data.equipo_id !== undefined && !conUnidades) {
+        res.status(400).json({
+          message: "Esta empresa no tiene Registro de unidades: escribe el activo o lugar en texto",
+        });
+        return;
+      }
       const { fila, creado } = await withTenant(tenantId, (client) =>
-        OrdenesTrabajoService.crear(client, tenantId, req.usuario!.id, data)
+        OrdenesTrabajoService.crear(client, tenantId, req.usuario!.id, data, conUnidades)
       );
 
       // Reintento de un envío que ya se había guardado (la respuesta
@@ -89,12 +111,17 @@ export const OrdenesTrabajoController = {
         accion: "ordenes_trabajo.crear",
         tenantId,
         usuarioId: req.usuario!.id,
-        detalle: { ordenTrabajoId: fila!.id, equipoId: data.equipo_id, asignadoA: data.asignado_a },
+        detalle: {
+          ordenTrabajoId: fila!.id,
+          equipoId: data.equipo_id ?? null,
+          activo: data.activo_texto ?? null,
+          asignadoA: data.asignado_a,
+        },
         contexto: contextoAuditoriaModulo(req),
       });
       await publicarEventoTenant(tenantId, "ordenes_trabajo.creada", {
         ordenTrabajoId: fila!.id,
-        equipoId: data.equipo_id,
+        equipoId: data.equipo_id ?? null,
       });
       res.status(201).json(fila);
     } catch (err) {
@@ -128,8 +155,11 @@ export const OrdenesTrabajoController = {
       await publicarEventoTenant(tenantId, "ordenes_trabajo.actualizada", { ordenTrabajoId: id });
       res.json(ordenTrabajo);
     } catch (err) {
-      if (err instanceof Error && err.message.includes("no existe en este tenant")) {
-        res.status(400).json({ message: err.message });
+      if (
+        err instanceof OrdenSinActivoError ||
+        (err instanceof Error && err.message.includes("no existe en este tenant"))
+      ) {
+        res.status(400).json({ message: (err as Error).message });
         return;
       }
       res.status(500).json({ message: "Error al actualizar la orden de trabajo" });

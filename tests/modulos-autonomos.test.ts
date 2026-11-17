@@ -161,10 +161,6 @@ const clave = (c: { lector: string; otro: string }) => `${c.lector} -> ${c.otro}
 /** Dependencias que hoy NO son opcionales y no están declaradas. Cada una dice por
  *  qué existe y qué la elimina. Esta lista solo se achica. */
 const EXCEPCIONES_CONOCIDAS: Record<string, string> = {
-  "ordenes_trabajo -> flota":
-    "ordenes_trabajo.equipo_id es NOT NULL (migración 0049). Kenif decidió (2026-11-17) que la unidad " +
-    "es opcional, con un texto libre del activo: lo quita 'Órdenes de Trabajo: unidad opcional + " +
-    'texto libre\'; entonces pasa a `opcionales: ["flota"]`.',
   "combustible -> flota":
     "El vale, las tanquetas y la compra en ruta se despachan a una unidad (equipos, registro de Flota), " +
     "y Combustible lee sus datos y su conductor. Se resuelve al hacer autónomo a Combustible, que viene " +
