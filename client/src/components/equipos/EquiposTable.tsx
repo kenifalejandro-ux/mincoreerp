@@ -40,6 +40,8 @@ import LecturasEquipo from "./LecturasEquipo";
 import { lecturasEsNuevo, marcarLecturasVistas } from "./novedadLecturas";
 import RutasEditor, { type LugarOpcion, type RutaForm } from "./RutasEditor";
 import TarjetaEquipo, { EstadoUnidadBadge, PorCompletarChip } from "./TarjetaEquipo";
+import { useAuth } from "../../context/AuthContext";
+import { tieneModulo } from "../../modules/tieneModulo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import {
@@ -254,6 +256,13 @@ export default function EquiposTable() {
   // del alta va APARTE del formulario: el PUT manda el formulario entero y el
   // servidor rechaza un grifo ahí (cambiarlo es "Mover de grifo").
   const grifosInternos = useSedes();
+  // Lo que viene de otro módulo (ver `opcionales` de flota): sin Combustible no se piden ni se
+  // muestran el tanque, el consumo máximo ni el grifo; si la empresa lo contrata después, aparecen.
+  const { usuario } = useAuth();
+  const conCombustible = tieneModulo(usuario, "combustible");
+  // Las rutas habituales y el catálogo de lugares son de Viajes: sin ese módulo no se piden ni se muestran.
+  const conViajes = tieneModulo(usuario, "viajes");
+  const verGrifos = conCombustible && grifosInternos.hayVarios;
   const [grifoAlta, setGrifoAlta] = useState("");
   const [filtroGrifo, setFiltroGrifo] = useState("");
   const [equipoAMover, setEquipoAMover] = useState<Equipo | null>(null);
@@ -308,6 +317,7 @@ export default function EquiposTable() {
   // El catálogo de lugares (el de Viajes) para el selector de ruta. Si falla, el
   // formulario sigue funcionando sin rutas: no bloquea cargar un equipo.
   useEffect(() => {
+    if (!conViajes) return;
     (async () => {
       try {
         const res = await apiFetch("/api/erp/equipos/lugares");
@@ -316,7 +326,7 @@ export default function EquiposTable() {
         /* sin lugares no hay selector de ruta, nada más */
       }
     })();
-  }, []);
+  }, [conViajes]);
 
   useEffect(() => {
     // Patrón estándar de carga al montar (setLoading(true) -> fetch ->
@@ -435,9 +445,7 @@ export default function EquiposTable() {
         (foco === "todos" || (foco === "sinConductor" ? sinConductor(e) : sinRuta(e))) &&
         (termino === "" || textoBuscable(e).includes(termino)) &&
         // El filtro por grifo (0097) solo existe con más de un grifo.
-        (!grifosInternos.hayVarios ||
-          filtroGrifo === "" ||
-          e.grifo_interno_id === Number(filtroGrifo))
+        (!verGrifos || filtroGrifo === "" || e.grifo_interno_id === Number(filtroGrifo))
     ),
     orden.col,
     orden.dir
@@ -676,8 +684,7 @@ export default function EquiposTable() {
           ...datosFormulario,
           cliente_uuid: clienteUuid,
           // Con un solo grifo lo asigna el servidor (0097).
-          grifo_interno_id:
-            grifosInternos.hayVarios && grifoAlta !== "" ? Number(grifoAlta) : undefined,
+          grifo_interno_id: verGrifos && grifoAlta !== "" ? Number(grifoAlta) : undefined,
         };
     setEnviando(true);
     try {
@@ -742,7 +749,9 @@ export default function EquiposTable() {
             Registro de unidades
           </h1>
           <p className="text-xs sm:text-sm text-[#94a3b8]">
-            Maestro de la flota: datos de cada unidad, su conductor y sus rutas, con historial
+            {conViajes
+              ? "Maestro de la flota: datos de cada unidad, su conductor y sus rutas, con historial"
+              : "Maestro de la flota: datos de cada unidad y su conductor, con historial"}
           </p>
         </div>
         <div className="flex  flex-wrap items-center gap-3">
@@ -820,7 +829,7 @@ export default function EquiposTable() {
       {/* Resumen de la flota: cada celda con faltantes filtra la lista. */}
       <section
         aria-label="Resumen de la flota"
-        className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5"
+        className={`grid grid-cols-2 gap-3 mb-5 ${conViajes ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}
       >
         <CeldaResumen etiqueta="Unidades" valor={equipos.length} detalle="en la flota" />
         <CeldaResumen etiqueta="Activas" valor={totalActivas} detalle="con conductor vigente" />
@@ -832,14 +841,16 @@ export default function EquiposTable() {
           activa={foco === "sinConductor"}
           onClick={() => setFoco(foco === "sinConductor" ? "todos" : "sinConductor")}
         />
-        <CeldaResumen
-          etiqueta="Sin ruta"
-          valor={totalSinRuta}
-          detalle={totalSinRuta > 0 ? "unidades por asignar" : "todas asignadas"}
-          alerta={totalSinRuta > 0}
-          activa={foco === "sinRuta"}
-          onClick={() => setFoco(foco === "sinRuta" ? "todos" : "sinRuta")}
-        />
+        {conViajes && (
+          <CeldaResumen
+            etiqueta="Sin ruta"
+            valor={totalSinRuta}
+            detalle={totalSinRuta > 0 ? "unidades por asignar" : "todas asignadas"}
+            alerta={totalSinRuta > 0}
+            activa={foco === "sinRuta"}
+            onClick={() => setFoco(foco === "sinRuta" ? "todos" : "sinRuta")}
+          />
+        )}
       </section>
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -865,7 +876,9 @@ export default function EquiposTable() {
           <input
             type="text"
             aria-label="Buscar equipos"
-            placeholder="Buscar placa, conductor, ruta..."
+            placeholder={
+              conViajes ? "Buscar placa, conductor, ruta..." : "Buscar placa, conductor..."
+            }
             className="w-56 max-w-full bg-[#0D1719] border border-[#334155] text-white rounded-xl px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E] transition-all"
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -921,7 +934,7 @@ export default function EquiposTable() {
           )}
         </div>
       </div>
-      {grifosInternos.hayVarios && (
+      {verGrifos && (
         <div className="mb-4 flex items-center gap-2">
           <label
             htmlFor="filtro-grifo-equipos"
@@ -1012,6 +1025,8 @@ export default function EquiposTable() {
               onConductor={verConductor}
               onHistorial={setEquipoHistorial}
               onLecturas={verLecturas}
+              conCombustible={conCombustible}
+              conViajes={conViajes}
               onEditar={openEditModal}
               onEliminar={(x) => handleDelete(x.id)}
             />
@@ -1043,13 +1058,15 @@ export default function EquiposTable() {
                   <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest sticky top-0 z-10 bg-[#192526] border-b border-[#2a2e37] whitespace-nowrap">
                     dni
                   </th>
-                  <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest sticky top-0 z-10 bg-[#192526] border-b border-[#2a2e37] whitespace-nowrap">
-                    ruta
-                  </th>
-                  {encabezadoOrden("tanque", "tanque")}
+                  {conViajes && (
+                    <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest sticky top-0 z-10 bg-[#192526] border-b border-[#2a2e37] whitespace-nowrap">
+                      ruta
+                    </th>
+                  )}
+                  {conCombustible && encabezadoOrden("tanque", "tanque")}
                   {encabezadoOrden("medidor", "medidor")}
                   {encabezadoOrden("marca", "marca / modelo")}
-                  {grifosInternos.hayVarios && (
+                  {verGrifos && (
                     <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-[#94a3b8] uppercase tracking-widest sticky top-0 z-10 bg-[#192526] border-b border-[#2a2e37] whitespace-nowrap">
                       grifo
                     </th>
@@ -1119,30 +1136,36 @@ export default function EquiposTable() {
                     <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors font-mono text-xs sm:text-sm text-[#94a3b8]">
                       {e.conductor_dni || "---"}
                     </td>
-                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors text-xs sm:text-sm text-[#e2e8f0]">
-                      {(e.rutas ?? []).length > 0 ? (
-                        <ul className="space-y-0.5">
-                          {e.rutas.map((r) => (
-                            <li
-                              key={`${r.origen_id}>${r.destino_id}`}
-                              className="whitespace-nowrap"
-                            >
-                              {r.origen} → {r.destino}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : sinRuta(e) ? (
-                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#f0b429]">
-                          <TriangleAlert className="w-3.5 h-3.5" aria-hidden="true" />
-                          Sin ruta
-                        </span>
-                      ) : (
-                        "---"
-                      )}
-                    </td>
-                    <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors font-mono text-xs sm:text-sm text-[#e2e8f0]">
-                      {textoTanque(e) ?? <span className="font-sans text-[#64748b]">Sin dato</span>}
-                    </td>
+                    {conViajes && (
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors text-xs sm:text-sm text-[#e2e8f0]">
+                        {(e.rutas ?? []).length > 0 ? (
+                          <ul className="space-y-0.5">
+                            {e.rutas.map((r) => (
+                              <li
+                                key={`${r.origen_id}>${r.destino_id}`}
+                                className="whitespace-nowrap"
+                              >
+                                {r.origen} → {r.destino}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : sinRuta(e) ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#f0b429]">
+                            <TriangleAlert className="w-3.5 h-3.5" aria-hidden="true" />
+                            Sin ruta
+                          </span>
+                        ) : (
+                          "---"
+                        )}
+                      </td>
+                    )}
+                    {conCombustible && (
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors font-mono text-xs sm:text-sm text-[#e2e8f0]">
+                        {textoTanque(e) ?? (
+                          <span className="font-sans text-[#64748b]">Sin dato</span>
+                        )}
+                      </td>
+                    )}
                     <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors text-xs sm:text-sm text-[#94a3b8]">
                       {textoMedidor(e) ?? "---"}
                       {textoUltimaLectura(e) && (
@@ -1155,7 +1178,7 @@ export default function EquiposTable() {
                       <div className="text-[#e2e8f0]">{e.marca || "---"}</div>
                       {e.modelo && <div className="text-[11px] text-[#94a3b8]">{e.modelo}</div>}
                     </td>
-                    {grifosInternos.hayVarios && (
+                    {verGrifos && (
                       <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 border-b border-[#2a2e37] group-hover:bg-[#1f2e2b] transition-colors text-xs sm:text-sm text-[#94a3b8]">
                         {grifosInternos.nombreDeGrifo(e.grifo_interno_id)}
                       </td>
@@ -1165,7 +1188,9 @@ export default function EquiposTable() {
                       <button
                         onClick={() => setEquipoHistorial(e)}
                         className="p-2 text-slate-400 hover:text-[#BADC1E] rounded-lg transition-all"
-                        title="Historial de conductor y rutas"
+                        title={
+                          conViajes ? "Historial de conductor y rutas" : "Historial de conductor"
+                        }
                         aria-label={`Historial de ${e.placa_codigo}`}
                       >
                         <History className="w-4 h-4" />
@@ -1292,91 +1317,100 @@ export default function EquiposTable() {
                   ))}
                 </select>
               </div>
-              {/* Fase D de combustible (migrations/0069). Vacío = sin
+              {conCombustible && (
+                <>
+                  {/* Fase D de combustible (migrations/0069). Vacío = sin
                   configurar, y entonces no se valida sobredespacho para esta
                   unidad -- que es mejor que un número inventado. */}
-              <div className="space-y-1">
-                <label
-                  htmlFor="equipo-capacidad-tanque"
-                  className="text-xs font-bold text-[#94a3b8] uppercase"
-                >
-                  Capacidad de tanque
-                </label>
-                <div className="flex gap-2">
-                  <input
-                    id="equipo-capacidad-tanque"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    placeholder="Dejar vacío si no se conoce"
-                    className="flex-1 bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
-                    value={formData.capacidad_tanque}
-                    onChange={(e) => setFormData({ ...formData, capacidad_tanque: e.target.value })}
-                  />
-                  <select
-                    aria-label="Unidad de la capacidad de tanque"
-                    className="bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
-                    value={formData.capacidad_tanque_unidad}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        capacidad_tanque_unidad: e.target.value as "gal" | "L",
-                      })
-                    }
-                  >
-                    <option value="L">L</option>
-                    <option value="gal">gal</option>
-                  </select>
-                </div>
-                <p className="text-[11px] text-[#94a3b8]">
-                  Sirve para avisar cuando un vale despacha más de lo que entra en el tanque.{" "}
-                  <strong>Cargalo de la ficha técnica de la unidad</strong>. Si todavía no se
-                  conoce, dejalo vacío: es mejor que un número aproximado.
-                </p>
-              </div>
-              <div className="space-y-1">
-                <label
-                  htmlFor="equipo-consumo-maximo"
-                  className="text-xs font-bold text-[#94a3b8] uppercase"
-                >
-                  Consumo máximo
-                </label>
-                <div className="flex gap-2 items-center">
-                  <input
-                    id="equipo-consumo-maximo"
-                    type="number"
-                    min={0}
-                    step="0.01"
-                    placeholder="Dejar vacío si todavía no se sabe"
-                    className="flex-1 bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
-                    value={formData.consumo_maximo_l}
-                    onChange={(e) => setFormData({ ...formData, consumo_maximo_l: e.target.value })}
-                  />
-                  <span className="text-sm text-[#94a3b8]">
-                    L / {formData.tipo_medidor === "odometro" ? "km" : "hora"}
-                  </span>
-                  {editingId !== null && (
-                    <button
-                      type="button"
-                      onClick={() => sugerirConsumo(editingId)}
-                      className="text-xs font-semibold text-[#BADC1E] underline"
-                      title="Calculado con las cargas anteriores de ESTA unidad"
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="equipo-capacidad-tanque"
+                      className="text-xs font-bold text-[#94a3b8] uppercase"
                     >
-                      Sugerir
-                    </button>
-                  )}
-                </div>
-                {sugerenciaConsumo && (
-                  <p className="text-[11px] text-[#94a3b8]">{sugerenciaConsumo}</p>
-                )}
-                <p className="text-[11px] text-[#94a3b8]">
-                  Compara los litros cargados contra el trabajo que hizo la unidad. Es el único
-                  control que ve el combustible que sale <strong>con vale</strong> y no llega a la
-                  máquina: el tanque cuadra igual. Sin dato no alerta; el número se puede sugerir
-                  desde el historial, pero <strong>mirá la muestra antes de aceptarlo</strong>: si
-                  ya venían robando, el promedio incluye ese robo.
-                </p>
-              </div>
+                      Capacidad de tanque
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        id="equipo-capacidad-tanque"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder="Dejar vacío si no se conoce"
+                        className="flex-1 bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
+                        value={formData.capacidad_tanque}
+                        onChange={(e) =>
+                          setFormData({ ...formData, capacidad_tanque: e.target.value })
+                        }
+                      />
+                      <select
+                        aria-label="Unidad de la capacidad de tanque"
+                        className="bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
+                        value={formData.capacidad_tanque_unidad}
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            capacidad_tanque_unidad: e.target.value as "gal" | "L",
+                          })
+                        }
+                      >
+                        <option value="L">L</option>
+                        <option value="gal">gal</option>
+                      </select>
+                    </div>
+                    <p className="text-[11px] text-[#94a3b8]">
+                      Sirve para avisar cuando un vale despacha más de lo que entra en el tanque.{" "}
+                      <strong>Cargalo de la ficha técnica de la unidad</strong>. Si todavía no se
+                      conoce, dejalo vacío: es mejor que un número aproximado.
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="equipo-consumo-maximo"
+                      className="text-xs font-bold text-[#94a3b8] uppercase"
+                    >
+                      Consumo máximo
+                    </label>
+                    <div className="flex gap-2 items-center">
+                      <input
+                        id="equipo-consumo-maximo"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        placeholder="Dejar vacío si todavía no se sabe"
+                        className="flex-1 bg-[#0D1719] border border-[#334155] text-white rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-[#BADC1E]"
+                        value={formData.consumo_maximo_l}
+                        onChange={(e) =>
+                          setFormData({ ...formData, consumo_maximo_l: e.target.value })
+                        }
+                      />
+                      <span className="text-sm text-[#94a3b8]">
+                        L / {formData.tipo_medidor === "odometro" ? "km" : "hora"}
+                      </span>
+                      {editingId !== null && (
+                        <button
+                          type="button"
+                          onClick={() => sugerirConsumo(editingId)}
+                          className="text-xs font-semibold text-[#BADC1E] underline"
+                          title="Calculado con las cargas anteriores de ESTA unidad"
+                        >
+                          Sugerir
+                        </button>
+                      )}
+                    </div>
+                    {sugerenciaConsumo && (
+                      <p className="text-[11px] text-[#94a3b8]">{sugerenciaConsumo}</p>
+                    )}
+                    <p className="text-[11px] text-[#94a3b8]">
+                      Compara los litros cargados contra el trabajo que hizo la unidad. Es el único
+                      control que ve el combustible que sale <strong>con vale</strong> y no llega a
+                      la máquina: el tanque cuadra igual. Sin dato no alerta; el número se puede
+                      sugerir desde el historial, pero{" "}
+                      <strong>mirá la muestra antes de aceptarlo</strong>: si ya venían robando, el
+                      promedio incluye ese robo.
+                    </p>
+                  </div>
+                </>
+              )}
               <div className="space-y-1">
                 <label
                   htmlFor="equipo-tipo-medidor"
@@ -1402,8 +1436,9 @@ export default function EquiposTable() {
                   ))}
                 </select>
                 <p className="text-xs text-[#94a3b8]">
-                  Solo hace falta para despachar combustible de compra externa a este equipo (ruta
-                  Bambamarca). Un volquete se mide por horómetro, un tráiler por odómetro.
+                  {conCombustible
+                    ? "Solo hace falta para despachar combustible de compra externa a este equipo (ruta Bambamarca). Un volquete se mide por horómetro, un tráiler por odómetro."
+                    : "Es el instrumento con el que se mide la unidad, y con el que se registran sus lecturas. Un volquete se mide por horómetro, un tráiler por odómetro."}
                 </p>
               </div>
               {/* El conductor asignado (0083). Se copia al vale en el momento
@@ -1443,11 +1478,15 @@ export default function EquiposTable() {
                   />
                 </div>
               </div>
-              <p className="text-xs text-[#94a3b8] -mt-2">
-                Queda copiado en cada vale que se despache a esta unidad, así el consumo por
-                conductor sigue siendo correcto aunque después cambie de chofer.
-              </p>
-              <RutasEditor lugares={lugares} value={formRutas} onChange={setFormRutas} />
+              {conCombustible && (
+                <p className="text-xs text-[#94a3b8] -mt-2">
+                  Queda copiado en cada vale que se despache a esta unidad, así el consumo por
+                  conductor sigue siendo correcto aunque después cambie de chofer.
+                </p>
+              )}
+              {conViajes && (
+                <RutasEditor lugares={lugares} value={formRutas} onChange={setFormRutas} />
+              )}
               {editingId !== null && exigeMotivo && (
                 <div className="space-y-1 border border-[#BADC1E]/40 rounded-xl p-3 bg-[#BADC1E]/5">
                   <label
@@ -1467,8 +1506,10 @@ export default function EquiposTable() {
                     onChange={(e) => setMotivoCambio(e.target.value)}
                   />
                   <p className="text-[11px] text-[#94a3b8]">
-                    Cambiar el conductor o las rutas deja registro: quién, cuándo y por qué. Lo
-                    anterior se conserva en el historial.
+                    {conViajes
+                      ? "Cambiar el conductor o las rutas deja registro: quién, cuándo y por qué."
+                      : "Cambiar el conductor deja registro: quién, cuándo y por qué."}{" "}
+                    Lo anterior se conserva en el historial.
                   </p>
                 </div>
               )}
@@ -1507,7 +1548,7 @@ export default function EquiposTable() {
               </div>
               {/* Grifo interno (0097): solo con más de uno. En el alta se
                   elige; después se cambia con "Mover de grifo", con motivo. */}
-              {grifosInternos.hayVarios &&
+              {verGrifos &&
                 (editingId === null ? (
                   <div className="space-y-1">
                     <label
@@ -1567,6 +1608,7 @@ export default function EquiposTable() {
         <HistorialEquipo
           equipoId={equipoHistorial.id}
           placa={equipoHistorial.placa_codigo}
+          conViajes={conViajes}
           onCerrar={() => setEquipoHistorial(null)}
         />
       )}
