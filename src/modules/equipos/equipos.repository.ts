@@ -52,6 +52,16 @@ const COLUMNAS_EQUIPO = `id, placa_codigo, codigo_interno, tipo, marca, modelo, 
   capacidad_tanque, capacidad_tanque_unidad, consumo_maximo_l,
   conductor_nombre, conductor_dni, usa_urea, activo, creado_en, grifo_interno_id, por_completar`;
 
+// La última lectura vigente del medidor (0187), para que la lista la muestre sin una consulta por
+// fila. Es de Flota (equipo_lecturas es suya): no depende de Combustible ni de Viajes. null = sin lecturas.
+const ULTIMA_LECTURA = `(
+    SELECT json_build_object('valor', l.valor::float8, 'tipo', l.tipo, 'leido_en', l.leido_en)
+      FROM equipo_lecturas l
+     WHERE l.tenant_id = equipos.tenant_id AND l.equipo_id = equipos.id AND l.anulada_en IS NULL
+     ORDER BY l.leido_en DESC, l.id DESC
+     LIMIT 1
+  ) AS ultima_lectura`;
+
 const COLUMNAS_EQUIPO_CON_RUTAS = `${COLUMNAS_EQUIPO}, ${RUTAS_VIGENTES}`;
 
 export const EquiposRepository = {
@@ -59,6 +69,7 @@ export const EquiposRepository = {
     const result = await client.query(
       `
       SELECT ${COLUMNAS_EQUIPO_CON_RUTAS},
+        ${ULTIMA_LECTURA},
         COUNT(*) OVER() AS total_count
       FROM equipos
       WHERE tenant_id = $1
