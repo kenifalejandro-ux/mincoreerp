@@ -603,7 +603,9 @@ export async function medidorPrevio(
   client: PoolClient,
   tenantId: string,
   equipoId: number,
-  hasta?: string
+  hasta?: string,
+  /** Sin Combustible no hay vales de donde sacar la lectura: se omite la consulta a sus cargas. */
+  conCargas = true
 ) {
   const eq = await client.query(
     `SELECT tipo_medidor FROM equipos WHERE tenant_id = $1 AND id = $2`,
@@ -621,13 +623,15 @@ export async function medidorPrevio(
       ORDER BY fin_en DESC LIMIT 1`,
     [tenantId, equipoId, limite]
   );
-  const carga = await client.query(
-    `SELECT ${col} AS m, despachado_en AS t FROM combustible_despachos
+  const carga = conCargas
+    ? await client.query(
+        `SELECT ${col} AS m, despachado_en AS t FROM combustible_despachos
       WHERE tenant_id = $1 AND equipo_id = $2 AND anulada_en IS NULL
         AND ${col} IS NOT NULL AND despachado_en <= $3
       ORDER BY despachado_en DESC, id DESC LIMIT 1`,
-    [tenantId, equipoId, limite]
-  );
+        [tenantId, equipoId, limite]
+      )
+    : { rows: [] };
   const a = viaje.rows[0];
   const b = carga.rows[0];
   const gana = a && (!b || new Date(a.t) >= new Date(b.t)) ? a : b;
@@ -677,7 +681,9 @@ export async function iniciarViaje(
   /** Presente cuando marca el propio conductor: solo su viaje. */
   dniConductor?: string,
   /** El administrador puede iniciar el viaje sin la lectura del medidor. */
-  medidorOpcional = false
+  medidorOpcional = false,
+  /** Con Combustible, el medidor previo también mira la última carga. */
+  conCargas = true
 ) {
   const v = await viajeParaCambiar(client, tenantId, id);
   // Reintento de la cola: la marca ya entró, se devuelve como quedó. Primero que sea del viaje (un
@@ -694,7 +700,7 @@ export async function iniciarViaje(
     data.marcado_en,
     data.cliente_uuid
   );
-  const previo = await medidorPrevio(client, tenantId, v.equipo_id, inicio);
+  const previo = await medidorPrevio(client, tenantId, v.equipo_id, inicio, conCargas);
   if (previo.tipo_medidor && data.medidor_inicio == null && !medidorOpcional) {
     throw new AppError(
       400,
@@ -2661,7 +2667,9 @@ export async function listarViajes(
   client: PoolClient,
   tenantId: string,
   q: ListarViajesQuery,
-  ambito?: AmbitoVales
+  ambito?: AmbitoVales,
+  /** Sin Combustible no hay cargas: cantidad 0 y sin promedios de referencia, sin consultar sus vales. */
+  conCargas = true
 ) {
   const margen = await margenPrevioHoras(client, tenantId);
   const valores: unknown[] = [tenantId, margen, q.producto];
@@ -2700,17 +2708,23 @@ export async function listarViajes(
     "d.despachado_en > v.ventana_desde",
     "d.despachado_en <= v.ventana_hasta",
   ];
-  agregarAmbitoVales(condCargas, valores, "d", ambito);
+  // Sin Combustible la consulta a las cargas no se arma: tampoco se suman sus parámetros.
+  if (conCargas) agregarAmbitoVales(condCargas, valores, "d", ambito);
   const divisor = q.producto === "combustible" ? LITROS_POR_GALON : 1;
 
   // El lugar de las cargas de un viaje, igual para la lista y para el promedio de referencia.
-  const cargasDelViaje = `
+  const cargasDelViaje = conCargas
+    ? `
         LEFT JOIN LATERAL (
           SELECT count(*) AS cargas, SUM(${LITROS_DE_D}) AS litros
             FROM combustible_despachos d
             LEFT JOIN combustible c
               ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = d.tenant_id
            WHERE ${condCargas.join(" AND ")}
+        ) cg ON true`
+    : `
+        LEFT JOIN LATERAL (
+          SELECT 0::bigint AS cargas, 0::numeric AS litros WHERE COALESCE($3::text, '') IS NOT NULL
         ) cg ON true`;
 
   const r = await client.query(
@@ -2730,6 +2744,7 @@ export async function listarViajes(
              COALESCE(cg.litros, 0) / ${divisor} AS cantidad
         FROM v${cargasDelViaje}
        WHERE v.tenant_id = $1 AND v.estado = 'cerrado' AND NOT v.ruta_por_confirmar
+         AND ${conCargas ? "TRUE" : "FALSE"}
     ),
     por_unidad AS (
       SELECT recorrido_clave, equipo_id, AVG(cantidad) AS promedio, COUNT(*) AS viajes
@@ -2779,13 +2794,15 @@ export async function resumenPorConductor(
   client: PoolClient,
   tenantId: string,
   q: Pick<ListarViajesQuery, "desde" | "hasta">,
-  ambito?: AmbitoVales
+  ambito?: AmbitoVales,
+  conCargas = true
 ): Promise<ResumenConductor[]> {
   const viajes = await listarViajes(
     client,
     tenantId,
     { desde: q.desde, hasta: q.hasta, estado: "cerrado", producto: "combustible" },
-    ambito
+    ambito,
+    conCargas
   );
   if (viajes.length === 0) return [];
   const turnos = await client.query(
@@ -3188,13 +3205,21 @@ export async function cargasDelViaje(
   id: number,
   ambito?: AmbitoVales,
   /** La estimación por tramo solo la usa el detalle de un viaje en curso. */
-  conEsperado = false
+  conEsperado = false,
+  /** Sin Combustible no hay cargas que listar: se omite la consulta a sus vales. */
+  conCargas = true
 ) {
   const viaje = await getViaje(client, tenantId, id);
   if (!viaje) return null;
   // Fuera del alcance es un 404, igual que algo que no existe: no se revela que existe.
   if (ambito && !(await unidadVisible(client, tenantId, viaje.equipo_id, ambito))) return null;
-  const ruta = await estadisticasRuta(client, tenantId, viaje.recorrido_clave, Number(viaje.id));
+  const ruta = await estadisticasRuta(
+    client,
+    tenantId,
+    viaje.recorrido_clave,
+    Number(viaje.id),
+    conCargas
+  );
   if (!viaje.inicio_en) return { viaje, cargas: [], ruta, tramos: [] };
   const valores: unknown[] = [tenantId, viaje.equipo_id, viaje.ventana_desde, viaje.ventana_hasta];
   const cond = [
@@ -3205,8 +3230,9 @@ export async function cargasDelViaje(
     "d.despachado_en <= $4",
   ];
   agregarAmbitoVales(cond, valores, "d", ambito);
-  const r = await client.query(
-    `SELECT d.id, d.producto, d.origen, d.despachado_en, d.cantidad,
+  const r = conCargas
+    ? await client.query(
+        `SELECT d.id, d.producto, d.origen, d.despachado_en, d.cantidad,
             CASE WHEN ${ES_GALON_D} THEN 'gal'
                  WHEN d.producto = 'urea' THEN 'L' ELSE COALESCE(c.unidad, 'L') END AS unidad,
             ${LITROS_DE_D} AS litros, d.cantidad * d.costo_unitario AS costo,
@@ -3219,8 +3245,9 @@ export async function cargasDelViaje(
        LEFT JOIN combustible_grifos g ON g.id = d.grifo_id AND g.tenant_id = d.tenant_id
       WHERE ${cond.join(" AND ")}
       ORDER BY d.despachado_en`,
-    valores
-  );
+        valores
+      )
+    : { rows: [] };
   const esperado =
     conEsperado && viaje.estado === "en_curso"
       ? await esperadoPorTramo(
@@ -3245,9 +3272,22 @@ export async function estadisticasRuta(
   client: PoolClient,
   tenantId: string,
   recorrido: string,
-  excluirId: number
+  excluirId: number,
+  /** Sin Combustible no hay consumo de referencia (queda null), solo la duración de la ruta. */
+  conCargas = true
 ) {
   const margen = await margenPrevioHoras(client, tenantId);
+  const cargasDeLaRuta = conCargas
+    ? `LEFT JOIN LATERAL (
+         SELECT SUM(${LITROS_DE_D}) FILTER (WHERE d.producto = 'combustible') AS combustible_l,
+                SUM(${LITROS_DE_D}) FILTER (WHERE d.producto = 'urea') AS urea_l
+           FROM combustible_despachos d
+           LEFT JOIN combustible c
+             ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = d.tenant_id
+          WHERE d.tenant_id = v.tenant_id AND d.equipo_id = v.equipo_id AND d.anulada_en IS NULL
+            AND d.despachado_en > v.ventana_desde AND d.despachado_en <= v.ventana_hasta
+       ) cg ON true`
+    : `LEFT JOIN LATERAL (SELECT 0::numeric AS combustible_l, 0::numeric AS urea_l) cg ON true`;
   const r = await client.query(
     `WITH v AS (${VENTANAS_SQL}
        WHERE v.tenant_id = $1 AND ${recorridoClave("v")} = $3 AND v.id <> $4
@@ -3258,15 +3298,7 @@ export async function estadisticasRuta(
             avg(COALESCE(cg.combustible_l, 0) / ${LITROS_POR_GALON}) AS combustible_gal,
             avg(COALESCE(cg.urea_l, 0)) AS urea_l
        FROM v
-       LEFT JOIN LATERAL (
-         SELECT SUM(${LITROS_DE_D}) FILTER (WHERE d.producto = 'combustible') AS combustible_l,
-                SUM(${LITROS_DE_D}) FILTER (WHERE d.producto = 'urea') AS urea_l
-           FROM combustible_despachos d
-           LEFT JOIN combustible c
-             ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = d.tenant_id
-          WHERE d.tenant_id = v.tenant_id AND d.equipo_id = v.equipo_id AND d.anulada_en IS NULL
-            AND d.despachado_en > v.ventana_desde AND d.despachado_en <= v.ventana_hasta
-       ) cg ON true`,
+       ${cargasDeLaRuta}`,
     [tenantId, margen, recorrido, excluirId]
   );
   const f = r.rows[0];
@@ -3274,8 +3306,8 @@ export async function estadisticasRuta(
   return {
     viajes: Number(f?.viajes ?? 0),
     duracion_min: num(f?.duracion_min),
-    combustible_gal: num(f?.combustible_gal),
-    urea_l: num(f?.urea_l),
+    combustible_gal: conCargas ? num(f?.combustible_gal) : null,
+    urea_l: conCargas ? num(f?.urea_l) : null,
   };
 }
 
@@ -3284,7 +3316,13 @@ export async function estadisticasRuta(
 /** Lo que ve el conductor: sus viajes programados y en curso, y el último que
  *  cerró, con lo cargado de cada producto. Los programados traen el medidor
  *  previo para mostrarlo bloqueado. */
-export async function viajesDelConductor(client: PoolClient, tenantId: string, dni: string) {
+export async function viajesDelConductor(
+  client: PoolClient,
+  tenantId: string,
+  dni: string,
+  /** Sin Combustible no hay cargas que mostrar: se omiten sus vales. */
+  conCargas = true
+) {
   const d = normalizarDni(dni);
   if (!d) return [];
   const margen = await margenPrevioHoras(client, tenantId);
@@ -3302,7 +3340,9 @@ export async function viajesDelConductor(client: PoolClient, tenantId: string, d
             COALESCE(cg.combustible_l, 0) / ${LITROS_POR_GALON} AS combustible_gal,
             COALESCE(cg.urea_l, 0) AS urea_l
        FROM v ${JOINS_VIAJE}
-       LEFT JOIN LATERAL (
+       ${
+         conCargas
+           ? `LEFT JOIN LATERAL (
          SELECT count(*) AS cargas,
                 SUM(${LITROS_DE_D}) FILTER (WHERE d.producto = 'combustible') AS combustible_l,
                 SUM(${LITROS_DE_D}) FILTER (WHERE d.producto = 'urea') AS urea_l
@@ -3311,7 +3351,9 @@ export async function viajesDelConductor(client: PoolClient, tenantId: string, d
              ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = d.tenant_id
           WHERE d.tenant_id = v.tenant_id AND d.equipo_id = v.equipo_id AND d.anulada_en IS NULL
             AND d.despachado_en > v.ventana_desde AND d.despachado_en <= v.ventana_hasta
-       ) cg ON true
+       ) cg ON true`
+           : `LEFT JOIN LATERAL (SELECT 0::bigint AS cargas, 0::numeric AS combustible_l, 0::numeric AS urea_l) cg ON true`
+       }
       ORDER BY CASE WHEN v.estado = 'en_curso' AND ${volanteDni("v")} = $3 THEN 0
                     WHEN v.estado = 'en_curso' THEN 1
                     WHEN v.estado = 'programado' AND ${volanteDni("v")} = $3 THEN 2
@@ -3326,11 +3368,11 @@ export async function viajesDelConductor(client: PoolClient, tenantId: string, d
     // nada de promedios de consumo ni comparaciones con otros conductores.
     const detalle =
       fila.inicio_en && fila.estado !== "programado"
-        ? await cargasDelViaje(client, tenantId, Number(fila.id))
+        ? await cargasDelViaje(client, tenantId, Number(fila.id), undefined, false, conCargas)
         : null;
     const ruta =
       fila.estado === "programado" || fila.estado === "en_curso"
-        ? await estadisticasRuta(client, tenantId, fila.recorrido_clave, Number(fila.id))
+        ? await estadisticasRuta(client, tenantId, fila.recorrido_clave, Number(fila.id), conCargas)
         : null;
     const enMiCola = fila.estado === "programado" && fila.volante_dni === d;
     if (enMiCola) posicionEnCola += 1;
@@ -3339,7 +3381,9 @@ export async function viajesDelConductor(client: PoolClient, tenantId: string, d
       // 1 = el que puede iniciar; null si no es de su cola (por ejemplo, donde solo es relevo).
       cola_posicion: enMiCola ? posicionEnCola : null,
       previo:
-        fila.estado === "programado" ? await medidorPrevio(client, tenantId, fila.equipo_id) : null,
+        fila.estado === "programado"
+          ? await medidorPrevio(client, tenantId, fila.equipo_id, undefined, conCargas)
+          : null,
       cargas_detalle: detalle?.cargas ?? [],
       duracion_ruta_min: ruta?.duracion_min ?? null,
     });

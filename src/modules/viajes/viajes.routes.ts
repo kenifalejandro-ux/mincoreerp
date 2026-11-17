@@ -13,9 +13,9 @@
 import { Router } from "express";
 import { validate, validateQuery } from "../../server/middleware/validate";
 import { requireRole } from "../../server/shared/middlewares/roles.middleware";
-import { requireModulo } from "../../server/shared/middlewares/modulo.middleware";
 import { requirePestana } from "../../server/shared/middlewares/pestana.middleware";
 import { asyncHandler } from "../../server/shared/utils/asyncHandler";
+import { tieneModulo } from "../../server/shared/utils/modulos";
 import {
   aceptarMandoSchema,
   anularViajeSchema,
@@ -52,16 +52,12 @@ import { cargarAlcance } from "../combustible/alcance";
 import { viajesController } from "../combustible/viajes.controller";
 
 const router = Router();
-// Viajes lee las cargas de Combustible y aplica el mismo alcance (qué grifos y
-// surtidores ve cada usuario): hay que cargarlo igual que en ese módulo.
-router.use(cargarAlcance);
-
-// Lo que LEE las cargas (vales: serie, número, litros, tanque, grifo) exige también el
-// módulo Combustible: `pestanaPermitida` solo mira el perfil y no comprueba que el
-// usuario tenga ese módulo, así que sin esto alguien con solo Viajes leería datos de
-// Combustible que nadie le dio. También el último medidor (`medidor-previo` y el inicio
-// del viaje, que lo compara con la última carga); las demás marcas no leen cargas.
-const lecturaDeCargas = requireModulo("combustible");
+// Con Combustible, Viajes aplica el mismo alcance (qué grifos y surtidores ve cada usuario) y lee
+// sus cargas. Sin ese módulo no hay alcance que cargar ni cargas que leer: Viajes funciona solo
+// (ver `opcionales` en el registry y tieneModulo()).
+router.use((req, res, next) =>
+  tieneModulo(req.usuario, "combustible") ? cargarAlcance(req, res, next) : next()
+);
 
 // Viajes (0123) -- segmentos literales, ANTES de /:id. Lectura ve el panel;
 // crear y corregir son acciones aparte.
@@ -86,7 +82,6 @@ router.patch(
 );
 router.get(
   "/",
-  lecturaDeCargas,
   requirePestana("combustible", "viajes"),
   validateQuery(listarViajesQuerySchema),
   asyncHandler(viajesController.listar)
@@ -94,7 +89,6 @@ router.get(
 // El resumen de cada conductor en un período: lo ve quien ve la lista de viajes.
 router.get(
   "/resumen-conductores",
-  lecturaDeCargas,
   requirePestana("combustible", "viajes"),
   validateQuery(listarViajesQuerySchema),
   asyncHandler(viajesController.resumenConductores)
@@ -102,21 +96,14 @@ router.get(
 // El permiso depende del producto: lo resuelve el controller.
 router.get(
   "/consumo",
-  lecturaDeCargas,
   validateQuery(listarViajesQuerySchema),
   asyncHandler(viajesController.listarConsumo)
 );
 // "Mi viaje" (0124): el conductor ve y marca SOLO sus viajes (cruce por DNI en
 // el service). Sin requireRole: alcanza con la pestaña, el dueño lo decide el DNI.
-router.get(
-  "/mios",
-  lecturaDeCargas,
-  requirePestana("combustible", "mi_viaje"),
-  asyncHandler(viajesController.mios)
-);
+router.get("/mios", requirePestana("combustible", "mi_viaje"), asyncHandler(viajesController.mios));
 router.get(
   "/mios/historial",
-  lecturaDeCargas,
   requirePestana("combustible", "mi_viaje"),
   validateQuery(historialMioQuerySchema),
   asyncHandler(viajesController.historialMio)
@@ -135,7 +122,6 @@ router.get(
 );
 router.post(
   "/crear-mio",
-  lecturaDeCargas,
   requirePestana("combustible", "mi_viaje"),
   validate(crearMiViajeSchema),
   asyncHandler(viajesController.crearMio)
@@ -147,7 +133,6 @@ router.get(
 );
 router.post(
   "/:viajeId(\\d+)/iniciar-mio",
-  lecturaDeCargas,
   requirePestana("combustible", "mi_viaje"),
   validate(iniciarMiViajeSchema),
   asyncHandler(viajesController.iniciarMio)
@@ -274,7 +259,6 @@ router.post(
 );
 router.get(
   "/:viajeId(\\d+)",
-  lecturaDeCargas,
   requirePestana("combustible", "viajes"),
   asyncHandler(viajesController.detalle)
 );
@@ -287,13 +271,11 @@ router.post(
 );
 router.get(
   "/:viajeId(\\d+)/medidor-previo",
-  lecturaDeCargas,
   requirePestana("combustible", "viajes"),
   asyncHandler(viajesController.medidorPrevio)
 );
 router.post(
   "/:viajeId(\\d+)/iniciar",
-  lecturaDeCargas,
   requirePestana("combustible", "viajes:editar"),
   requireRole("admin", "operador"),
   validate(iniciarViajeSchema),

@@ -226,7 +226,9 @@ export async function crearMiViaje(
   client: PoolClient,
   tenantId: string,
   c: ConductorQueCrea,
-  data: CrearMiViajeInput
+  data: CrearMiViajeInput,
+  /** Con Combustible, el medidor previo del viaje también mira la última carga. */
+  conCargas = true
 ): Promise<ResultadoCrearMiViaje> {
   if (!(await conductorPuedeCrearViaje(client, tenantId))) {
     throw new AppError(403, "Tu empresa no tiene activada la creación de viajes por el conductor");
@@ -324,7 +326,9 @@ export async function crearMiViaje(
       marcado_en: data.marcado_en,
       cliente_uuid: data.id_cliente,
     },
-    dni
+    dni,
+    false,
+    conCargas
   );
   await client.query(
     `UPDATE combustible_viajes SET creado_por_conductor = true, id_cliente = $3,
