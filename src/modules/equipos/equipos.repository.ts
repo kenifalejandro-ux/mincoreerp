@@ -62,13 +62,24 @@ const ULTIMA_LECTURA = `(
      LIMIT 1
   ) AS ultima_lectura`;
 
-const COLUMNAS_EQUIPO_CON_RUTAS = `${COLUMNAS_EQUIPO}, ${RUTAS_VIGENTES}`;
+// Las rutas habituales son un cruce con Viajes (combustible_lugares). Una empresa sin ese módulo
+// recibe `rutas: []` y la consulta NO se ejecuta; las filas de equipo_rutas se conservan para si
+// el módulo vuelve (ver `opcionales` de flota y tieneModulo()).
+const RUTAS_OMITIDAS = `'[]'::json AS rutas`;
+
+const columnasConRutas = (conRutas: boolean) =>
+  `${COLUMNAS_EQUIPO}, ${conRutas ? RUTAS_VIGENTES : RUTAS_OMITIDAS}`;
 
 export const EquiposRepository = {
-  async findAll(client: PoolClient, tenantId: string, { pageSize, offset }: Paginacion) {
+  async findAll(
+    client: PoolClient,
+    tenantId: string,
+    { pageSize, offset }: Paginacion,
+    conRutas = true
+  ) {
     const result = await client.query(
       `
-      SELECT ${COLUMNAS_EQUIPO_CON_RUTAS},
+      SELECT ${columnasConRutas(conRutas)},
         ${ULTIMA_LECTURA},
         COUNT(*) OVER() AS total_count
       FROM equipos
@@ -85,9 +96,9 @@ export const EquiposRepository = {
   /** Toda la flota, sin paginar -- para el export a Excel. La lista visible
    *  en pantalla pagina de a 50 porque el operario la recorre a ojo; el
    *  archivo lo abre en una planilla, así que tiene que traer todo de una. */
-  async findAllParaExportar(client: PoolClient, tenantId: string, ids?: number[]) {
+  async findAllParaExportar(client: PoolClient, tenantId: string, ids?: number[], conRutas = true) {
     const result = await client.query(
-      `SELECT ${COLUMNAS_EQUIPO_CON_RUTAS} FROM equipos
+      `SELECT ${columnasConRutas(conRutas)} FROM equipos
         WHERE tenant_id = $1 AND ($2::int[] IS NULL OR id = ANY($2::int[]))
         ORDER BY tipo, placa_codigo`,
       [tenantId, ids ?? null]
@@ -95,9 +106,9 @@ export const EquiposRepository = {
     return result.rows;
   },
 
-  async findById(client: PoolClient, tenantId: string, id: number) {
+  async findById(client: PoolClient, tenantId: string, id: number, conRutas = true) {
     const result = await client.query(
-      `SELECT ${COLUMNAS_EQUIPO_CON_RUTAS}
+      `SELECT ${columnasConRutas(conRutas)}
        FROM equipos WHERE id = $1 AND tenant_id = $2`,
       [id, tenantId]
     );

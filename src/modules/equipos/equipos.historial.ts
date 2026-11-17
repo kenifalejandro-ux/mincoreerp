@@ -177,7 +177,9 @@ export async function aplicarRutas(
 /** Lugares activos, para el selector de ruta. Equipos los LEE del catálogo de
  *  Viajes; no hay un segundo catálogo. Vive acá (y no detrás del permiso de la
  *  pestaña Viajes) porque quien edita equipos puede no tener Viajes. */
-export async function listarLugaresActivos(client: PoolClient, tenantId: string) {
+export async function listarLugaresActivos(client: PoolClient, tenantId: string, conViajes = true) {
+  // Sin Viajes no hay catálogo de lugares: no se consulta (ver tieneModulo()).
+  if (!conViajes) return [];
   const r = await client.query(
     `SELECT id::int AS id, nombre FROM combustible_lugares
       WHERE tenant_id = $1 AND activo ORDER BY lower(nombre)`,
@@ -188,7 +190,12 @@ export async function listarLugaresActivos(client: PoolClient, tenantId: string)
 
 /** El historial completo de una unidad, del más nuevo al más viejo. null si el
  *  equipo no existe en esta empresa. */
-export async function listarHistorial(client: PoolClient, tenantId: string, equipoId: number) {
+export async function listarHistorial(
+  client: PoolClient,
+  tenantId: string,
+  equipoId: number,
+  conRutas = true
+) {
   const equipo = await client.query(`SELECT id FROM equipos WHERE tenant_id = $1 AND id = $2`, [
     tenantId,
     equipoId,
@@ -205,8 +212,10 @@ export async function listarHistorial(client: PoolClient, tenantId: string, equi
       ORDER BY c.desde DESC, c.id DESC`,
     [tenantId, equipoId]
   );
-  const rutas = await client.query(
-    `SELECT r.id, r.origen_id, lo.nombre AS origen, r.destino_id, ld.nombre AS destino,
+  // El historial de rutas es un cruce con Viajes: sin el módulo se omite (las filas se conservan).
+  const rutas = conRutas
+    ? await client.query(
+        `SELECT r.id, r.origen_id, lo.nombre AS origen, r.destino_id, ld.nombre AS destino,
             r.desde, r.hasta, r.motivo, u.nombre AS usuario,
             r.motivo_cierre, uc.nombre AS cerrado_por
        FROM equipo_rutas r
@@ -216,8 +225,9 @@ export async function listarHistorial(client: PoolClient, tenantId: string, equi
        LEFT JOIN usuarios uc ON uc.id = r.cerrado_por AND uc.tenant_id = $1
       WHERE r.tenant_id = $1 AND r.equipo_id = $2
       ORDER BY r.desde DESC, r.id DESC`,
-    [tenantId, equipoId]
-  );
+        [tenantId, equipoId]
+      )
+    : { rows: [] };
   return { conductores: conductores.rows, rutas: rutas.rows };
 }
 

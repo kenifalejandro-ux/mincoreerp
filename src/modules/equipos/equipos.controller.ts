@@ -3,6 +3,7 @@
 import { Request, Response } from "express";
 import { withTenant } from "../../server/config/database";
 import { getTenantId } from "../../server/shared/utils/request";
+import { tieneModulo } from "../../server/shared/utils/modulos";
 import { parsePaginacion, armarRespuestaPaginada } from "../../server/shared/utils/pagination";
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
 import { registrarAuditoria } from "../../server/services/platformAudit.service";
@@ -111,7 +112,7 @@ export const EquiposController = {
       const tenantId = getTenantId(req);
       const paginacion = parsePaginacion(req.query);
       const filas = await withTenant(tenantId, (client) =>
-        EquiposService.getAll(client, tenantId, paginacion)
+        EquiposService.getAll(client, tenantId, paginacion, tieneModulo(req.usuario, "viajes"))
       );
       res.json(armarRespuestaPaginada(filas, paginacion));
     } catch {
@@ -124,7 +125,13 @@ export const EquiposController = {
       const tenantId = getTenantId(req);
       const data = req.validatedBody as CrearEquipoInput;
       const { fila: nuevo, creado } = await withTenant(tenantId, (client) =>
-        EquiposService.create(client, tenantId, req.usuario!.id, data)
+        EquiposService.create(
+          client,
+          tenantId,
+          req.usuario!.id,
+          data,
+          tieneModulo(req.usuario, "viajes")
+        )
       );
 
       // Reintento de un envío que ya se había guardado (la respuesta
@@ -302,7 +309,8 @@ export const EquiposController = {
           tenantId,
           req.usuario!.id,
           id,
-          data
+          data,
+          tieneModulo(req.usuario, "viajes")
         );
         return { actualizado, antes };
       });
@@ -374,7 +382,9 @@ export const EquiposController = {
         });
       }
 
-      if (consumoAflojado) {
+      // El correo es de los destinatarios de Combustible: sin ese módulo no se envía (se omite, no falla).
+      const conCombustible = tieneModulo(req.usuario, "combustible");
+      if (consumoAflojado && conCombustible) {
         try {
           const admins = await withTenant(tenantId, (client) =>
             destinatariosDeAlertasEnGrifo(client, tenantId, actualizado.grifo_interno_id ?? null)
@@ -400,7 +410,7 @@ export const EquiposController = {
         }
       }
 
-      if (ampliacion) {
+      if (ampliacion && conCombustible) {
         // Nunca bloquea: el cambio ya está guardado y auditado. Y se avisa a
         // los destinatarios de COMBUSTIBLE, no a los de equipos: el control
         // que se acaba de ensanchar es de ellos.
@@ -439,7 +449,12 @@ export const EquiposController = {
   async historial(req: Request, res: Response) {
     const tenantId = getTenantId(req);
     const h = await withTenant(tenantId, (client) =>
-      EquiposService.historial(client, tenantId, Number(req.params.id))
+      EquiposService.historial(
+        client,
+        tenantId,
+        Number(req.params.id),
+        tieneModulo(req.usuario, "viajes")
+      )
     );
     if (!h) {
       res.status(404).json({ message: "Equipo no encontrado", error: "Equipo no encontrado" });
@@ -466,7 +481,9 @@ export const EquiposController = {
    *  de ruta de la unidad. */
   async lugares(req: Request, res: Response) {
     const tenantId = getTenantId(req);
-    const filas = await withTenant(tenantId, (client) => EquiposService.lugares(client, tenantId));
+    const filas = await withTenant(tenantId, (client) =>
+      EquiposService.lugares(client, tenantId, tieneModulo(req.usuario, "viajes"))
+    );
     res.json(filas);
   },
 
@@ -566,7 +583,7 @@ export const EquiposController = {
         ids = partes.map(Number);
       }
       const filas = await withTenant(tenantId, (client) =>
-        EquiposService.getAllParaExportar(client, tenantId, ids)
+        EquiposService.getAllParaExportar(client, tenantId, ids, tieneModulo(req.usuario, "viajes"))
       );
 
       const libro = armarXlsx([
