@@ -2,6 +2,7 @@
 
 import { Request, Response } from "express";
 import { withTenant } from "../../server/config/database";
+import { tieneModulo } from "../../server/shared/utils/modulos";
 import { getTenantId } from "../../server/shared/utils/request";
 import {
   parsePaginacion,
@@ -101,7 +102,7 @@ export const ChecklistsController = {
       const tenantId = getTenantId(req);
       const paginacion = parseCursorPaginacion(req.query);
       const filas = await withTenant(tenantId, (client) =>
-        ChecklistsService.getAll(client, tenantId, paginacion)
+        ChecklistsService.getAll(client, tenantId, paginacion, tieneModulo(req.usuario, "flota"))
       );
       res.json(armarRespuestaCursor(filas, paginacion.pageSize));
     } catch {
@@ -113,7 +114,12 @@ export const ChecklistsController = {
     try {
       const tenantId = getTenantId(req);
       const checklist = await withTenant(tenantId, (client) =>
-        ChecklistsService.getById(client, tenantId, Number(req.params.id))
+        ChecklistsService.getById(
+          client,
+          tenantId,
+          Number(req.params.id),
+          tieneModulo(req.usuario, "flota")
+        )
       );
       if (!checklist) {
         res.status(404).json({ message: "Checklist no encontrado" });
@@ -129,8 +135,17 @@ export const ChecklistsController = {
     try {
       const tenantId = getTenantId(req);
       const data = req.validatedBody as CrearChecklistInput;
+      // La unidad viene de Flota: sin ese módulo el checklist se identifica por el texto
+      // (`opcionales` en registry.ts). Se rechaza en vez de ignorarla, para que el cliente se entere.
+      const conUnidades = tieneModulo(req.usuario, "flota");
+      if (data.equipo_id !== undefined && !conUnidades) {
+        res.status(400).json({
+          message: "Esta empresa no tiene Registro de unidades: escribe el activo o lugar en texto",
+        });
+        return;
+      }
       const { fila: checklist, creado } = await withTenant(tenantId, (client) =>
-        ChecklistsService.crear(client, tenantId, req.usuario!.id, data)
+        ChecklistsService.crear(client, tenantId, req.usuario!.id, data, conUnidades)
       );
 
       // Reintento de un envío que ya se había guardado (la respuesta
@@ -152,12 +167,16 @@ export const ChecklistsController = {
         accion: "checklists.crear",
         tenantId,
         usuarioId: req.usuario!.id,
-        detalle: { checklistId: checklist!.id, equipoId: data.equipo_id },
+        detalle: {
+          checklistId: checklist!.id,
+          equipoId: data.equipo_id ?? null,
+          activo: data.activo_texto ?? null,
+        },
         contexto: contextoAuditoriaModulo(req),
       });
       await publicarEventoTenant(tenantId, "checklists.creado", {
         checklistId: checklist!.id,
-        equipoId: data.equipo_id,
+        equipoId: data.equipo_id ?? null,
       });
       res.status(201).json(checklist);
     } catch {

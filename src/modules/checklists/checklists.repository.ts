@@ -3,6 +3,16 @@
 import type { PoolClient } from "pg";
 import type { Paginacion, CursorPaginacion } from "../../server/shared/utils/pagination";
 
+/** De dónde sale la placa/código de la unidad. Sin Flota (`conUnidades` falso) no se toca la tabla
+ *  `equipos`: la columna va vacía y el checklist se identifica por `activo_texto` (ver
+ *  `opcionales` del módulo en registry.ts). Con Flota es LEFT JOIN: el checklist puede no tener
+ *  unidad (migración 0189). */
+function unidadDelChecklist(conUnidades: boolean) {
+  return conUnidades
+    ? { columna: "e.placa_codigo", join: "LEFT JOIN equipos e ON e.id = c.equipo_id" }
+    : { columna: "NULL::text AS placa_codigo", join: "" };
+}
+
 export const ChecklistsRepository = {
   // ── Plantillas ───────────────────────────────────────────────────────
   async findPlantillas(client: PoolClient, tenantId: string, { pageSize, offset }: Paginacion) {
@@ -76,14 +86,20 @@ export const ChecklistsRepository = {
   // Paginación por cursor (ver src/server/shared/utils/pagination.ts): esta
   // es una de las dos tablas particionadas (migrations/0037), la única con
   // volumen que puede crecer sin techo natural por tenant.
-  async findAll(client: PoolClient, tenantId: string, { pageSize, cursor }: CursorPaginacion) {
+  async findAll(
+    client: PoolClient,
+    tenantId: string,
+    { pageSize, cursor }: CursorPaginacion,
+    conUnidades = true
+  ) {
+    const unidad = unidadDelChecklist(conUnidades);
     const result = await client.query(
       `
-      SELECT c.id, c.equipo_id, e.placa_codigo, c.plantilla_id, c.usuario_id,
+      SELECT c.id, c.equipo_id, ${unidad.columna}, c.activo_texto, c.plantilla_id, c.usuario_id,
         u.nombre AS usuario_nombre, c.fecha, c.turno, c.resultado,
         c.observaciones_generales, c.creado_en
       FROM checklists c
-      JOIN equipos e ON e.id = c.equipo_id
+      ${unidad.join}
       JOIN usuarios u ON u.id = c.usuario_id
       WHERE c.tenant_id = $1 AND ($2::int IS NULL OR c.id < $2)
       ORDER BY c.id DESC
@@ -94,13 +110,14 @@ export const ChecklistsRepository = {
     return result.rows;
   },
 
-  async findById(client: PoolClient, tenantId: string, id: number) {
+  async findById(client: PoolClient, tenantId: string, id: number, conUnidades = true) {
+    const unidad = unidadDelChecklist(conUnidades);
     const checklist = await client.query(
-      `SELECT c.id, c.equipo_id, e.placa_codigo, c.plantilla_id, c.usuario_id,
+      `SELECT c.id, c.equipo_id, ${unidad.columna}, c.activo_texto, c.plantilla_id, c.usuario_id,
          u.nombre AS usuario_nombre, c.fecha, c.turno, c.resultado,
          c.observaciones_generales, c.creado_en
        FROM checklists c
-       JOIN equipos e ON e.id = c.equipo_id
+       ${unidad.join}
        JOIN usuarios u ON u.id = c.usuario_id
        WHERE c.id = $1 AND c.tenant_id = $2`,
       [id, tenantId]
@@ -122,7 +139,8 @@ export const ChecklistsRepository = {
     tenantId: string,
     usuarioId: string,
     data: {
-      equipo_id: number;
+      equipo_id?: number;
+      activo_texto?: string;
       plantilla_id: number;
       turno?: string;
       observaciones_generales?: string;
@@ -134,12 +152,13 @@ export const ChecklistsRepository = {
     const resultado = data.items.some((i) => i.estado === "malo") ? "observado" : "bien";
 
     const checklist = await client.query(
-      `INSERT INTO checklists (tenant_id, equipo_id, plantilla_id, usuario_id, turno, resultado, observaciones_generales)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, equipo_id, plantilla_id, usuario_id, fecha, turno, resultado, observaciones_generales, creado_en`,
+      `INSERT INTO checklists (tenant_id, equipo_id, activo_texto, plantilla_id, usuario_id, turno, resultado, observaciones_generales)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id, equipo_id, activo_texto, plantilla_id, usuario_id, fecha, turno, resultado, observaciones_generales, creado_en`,
       [
         tenantId,
-        data.equipo_id,
+        data.equipo_id ?? null,
+        data.activo_texto || null,
         data.plantilla_id,
         usuarioId,
         data.turno ?? null,

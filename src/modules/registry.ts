@@ -819,6 +819,9 @@ export const MODULOS: ModuloDefinicion[] = [
     icono: "✅",
     version: "v1",
     router: checklistsRoutes,
+    // La unidad del checklist es opcional (`equipo_id` admite NULL, migración 0189): sin Flota se
+    // identifica por `activo_texto` y no se lee `equipos`.
+    opcionales: ["flota"],
     tablas: [
       { nombre: "checklist_plantillas", pk: "serial" },
       {
