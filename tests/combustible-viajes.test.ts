@@ -1670,7 +1670,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
   it("una avería marcada sin señal (hora de hace rato) también abre su alerta en el acto", async () => {
     const detenidoDe = async (viajeId: number) =>
       (
-        (await admin.get("/api/erp/combustible/alertas").query({ pageSize: 200 })).body.data as {
+        (await admin.get("/api/erp/viajes/alertas").query({ pageSize: 200 })).body.data as {
           tipo: string;
           viaje_id: number | null;
         }[]
@@ -2868,7 +2868,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
     ).toBe(200);
     const detenidoDe = async () =>
       (
-        (await admin.get("/api/erp/combustible/alertas").query({ pageSize: 200 })).body.data as {
+        (await admin.get("/api/erp/viajes/alertas").query({ pageSize: 200 })).body.data as {
           tipo: string;
           viaje_id: number | null;
           resuelta_en: string | null;

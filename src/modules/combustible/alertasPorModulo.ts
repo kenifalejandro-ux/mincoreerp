@@ -1,12 +1,10 @@
 /** src/modules/combustible/alertasPorModulo.ts
  *
- * A qué módulo "pertenece" cada alerta. Todas viven en `combustible_alertas`, pero no
- * todas son de Combustible: las de urea salen del almacén de Urea y las de viaje demorado
- * o detenido son de Gestión operacional de flota (módulo `viajes`).
- *
- * Las de viaje solo las ve quien tiene el módulo `viajes`: sin esto, un operador de una
- * empresa que no contrató Viajes recibiría avisos de un módulo que no tiene. Urea sigue
- * dentro de Combustible (su inventario y su permiso son los de Combustible).
+ * A qué módulo "pertenece" cada alerta. Las de urea salen del almacén de Urea y viven en
+ * `combustible_alertas`; las de viaje (demorado, detenido, creado por el conductor) son de
+ * Gestión operacional de flota (módulo `viajes`) y desde la migración 0188 viven en su propia
+ * tabla, `viaje_alertas`. Urea sigue dentro de Combustible (su inventario y su permiso son los de
+ * Combustible).
  */
 
 /** Los tipos de alerta de Gestión operacional de flota (migración 0156). */
@@ -25,7 +23,10 @@ export function grupoDeAlerta(tipo: string): GrupoDeAlerta {
   return "combustible";
 }
 
-/** Los tipos de alerta que este usuario NO debe ver por no tener el módulo dueño. */
+/** Los tipos de alerta que este usuario NO debe ver por no tener el módulo dueño: los de viaje, si no
+ *  tiene `viajes`. Sirve para dos cosas: recortar lo que se lista y vaciar el contenido de los eventos de
+ *  tiempo real (ver events.ts). Aparte de esto, la Bandeja de Combustible NUNCA lista los de viaje, tenga
+ *  o no la persona `viajes` (tienen su propia tabla desde la 0188): eso lo hace `filtroModuloDeAlerta`. */
 export function tiposSinModulo(modulosPermitidos: string[] | undefined): string[] | undefined {
   // Sin la lista de módulos (el resumen por correo no la trae) no se recorta nada.
   if (!modulosPermitidos) return undefined;

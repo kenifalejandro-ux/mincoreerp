@@ -20,6 +20,9 @@ export const EVENTOS_DE_ALERTAS = [
   "combustible.alerta_creada",
   "combustible.alerta_resuelta",
   "combustible.alertas_actualizadas",
+  // Las alertas de viaje (0188) tienen sus propios eventos: la misma conexión y los mismos oyentes.
+  "viajes.alerta_creada",
+  "viajes.alertas_actualizadas",
 ] as const;
 
 // Cada suscripción elige qué eventos le interesan; la conexión es una sola.

@@ -63,13 +63,16 @@ interface RespuestaAlertas {
   pagination: { total: number };
 }
 
-export function useAlertasCombustibleStream(activo: boolean) {
+/** De dónde se leen las alertas: la Bandeja de Combustible o la de Viajes (misma forma de respuesta). */
+const BASE_COMBUSTIBLE = "/api/erp/combustible/alertas";
+
+export function useAlertasCombustibleStream(activo: boolean, base: string = BASE_COMBUSTIBLE) {
   const [alertas, setAlertas] = useState<AlertaCombustible[]>([]);
   const [noLeidas, setNoLeidas] = useState(0);
 
   const cargar = useCallback(async () => {
     try {
-      const res = await apiFetch("/api/erp/combustible/alertas?solo_no_leidas=true&pageSize=10");
+      const res = await apiFetch(`${base}?solo_no_leidas=true&pageSize=10`);
       if (!res.ok) return;
       const body: RespuestaAlertas = await res.json();
       setAlertas(body.data);
@@ -78,7 +81,7 @@ export function useAlertasCombustibleStream(activo: boolean) {
       // Sin red o el endpoint falló -- la campanita simplemente se queda
       // con el último valor conocido, no rompe nada mostrar un número viejo.
     }
-  }, []);
+  }, [base]);
 
   useEffect(() => {
     if (!activo) return;
@@ -143,27 +146,27 @@ export function useAlertasCombustibleStream(activo: boolean) {
     const ids = alertas.map((a) => a.id);
     if (ids.length === 0) return;
 
-    await apiFetch("/api/erp/combustible/alertas/leidas", {
+    await apiFetch(`${base}/leidas`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids }),
     });
     await cargar();
-  }, [alertas, cargar]);
+  }, [alertas, base, cargar]);
 
   /** Marca leída UNA alerta: la que el usuario acaba de abrir. Abrir es
    *  verla, y eso sí justifica marcarla -- a diferencia del botón masivo,
    *  que marcaba cosas que nunca se mostraron. */
   const marcarUnaLeida = useCallback(
     async (id: number) => {
-      await apiFetch("/api/erp/combustible/alertas/leidas", {
+      await apiFetch(`${base}/leidas`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: [id] }),
       });
       await cargar();
     },
-    [cargar]
+    [base, cargar]
   );
 
   return { alertas, noLeidas, marcarTodasLeidas, marcarUnaLeida, recargar: cargar };

@@ -493,6 +493,13 @@ export const MODULOS: ModuloDefinicion[] = [
         pk: "serial",
         fks: { viaje_id: "combustible_viajes" },
       },
+      // Las alertas de un viaje (0188): demorado, detenido y creado por el conductor. Cascadean desde el
+      // viaje. Son de Viajes aunque esta tabla se registre acá, con las demás de viaje.
+      {
+        nombre: "viaje_alertas",
+        pk: "serial",
+        fks: { viaje_id: "combustible_viajes", grifo_interno_id: "grifos_internos" },
+      },
       // Rutas habituales de cada unidad (0126): referencian equipos Y lugares
       // (sin ON DELETE sobre lugares), así que van después de los dos y
       // necesitan su propia raíz para borrarse antes que los lugares.

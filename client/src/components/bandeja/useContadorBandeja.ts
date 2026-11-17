@@ -13,24 +13,44 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
+import { MODULOS_CON_BANDEJA } from "../bandeja/bandejaAcceso";
 import { suscribirseAlStreamDeAlertas } from "../combustible/streamDeAlertas";
 
+/** El resumen de cada Bandeja: la de Combustible y la de Viajes (0188), una por tabla. */
+const RESUMEN_DE_FUENTE: Record<string, string> = {
+  combustible: "/api/erp/combustible/alertas/resumen",
+  viajes: "/api/erp/viajes/alertas/resumen",
+};
+
 export function useContadorBandeja(activo: boolean) {
+  const { usuario } = useAuth();
   const [pendientes, setPendientes] = useState(0);
   const [criticas, setCriticas] = useState(0);
+  // Solo las fuentes que esta persona ve: sumar la de un módulo que no tiene daría 403.
+  const fuentes = usuario
+    ? MODULOS_CON_BANDEJA.filter((m) => m.visiblePara(usuario)).map((m) => m.id)
+    : [];
+  const claveDeFuentes = fuentes.join(",");
 
   const cargar = useCallback(async () => {
     try {
-      const res = await apiFetch("/api/erp/combustible/alertas/resumen");
-      if (!res.ok) return;
-      const r: { pendientes: number; criticasPendientes: number } = await res.json();
-      setPendientes(r.pendientes);
-      setCriticas(r.criticasPendientes);
+      let p = 0;
+      let c = 0;
+      for (const id of claveDeFuentes.split(",").filter(Boolean)) {
+        const res = await apiFetch(RESUMEN_DE_FUENTE[id]);
+        if (!res.ok) continue;
+        const r: { pendientes: number; criticasPendientes: number } = await res.json();
+        p += r.pendientes;
+        c += r.criticasPendientes;
+      }
+      setPendientes(p);
+      setCriticas(c);
     } catch {
       // Sin red se queda el último número: no rompe el menú.
     }
-  }, []);
+  }, [claveDeFuentes]);
 
   useEffect(() => {
     if (!activo) return;

@@ -12,8 +12,7 @@ import request from "supertest";
 
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
-import { CombustibleRepository } from "../src/modules/combustible/combustible.repository";
-import { CombustibleService } from "../src/modules/combustible/combustible.service";
+import * as alertasDeViaje from "../src/modules/combustible/viajesAlertas";
 import { MODULOS } from "../src/modules/registry";
 import { correrConciliacion } from "../src/server/services/combustibleConciliacion.worker";
 
@@ -81,7 +80,7 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
   const alertas = (viajeId: number, tipo: string) =>
     withTenant(tenantId, async (c) => {
       const r = await c.query(
-        `SELECT resuelta_en, detalle FROM combustible_alertas
+        `SELECT resuelta_en, detalle FROM viaje_alertas
           WHERE tenant_id = $1 AND viaje_id = $2 AND tipo = $3 ORDER BY id`,
         [tenantId, viajeId, tipo]
       );
@@ -132,7 +131,7 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
       const b = await lugar("Jaen Sur");
       const v = await viaje(a, b, hace(2));
       const espia = vi
-        .spyOn(CombustibleService.prototype, "evaluarDetencionDeUnViaje")
+        .spyOn(alertasDeViaje, "evaluarDetencionDeUnViaje")
         .mockRejectedValueOnce(new Error("falla de prueba"));
       try {
         const r = await marcar(v.id, "Huaico");
@@ -247,10 +246,11 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
         .post(`/api/erp/viajes/${anulado.id}/anular`)
         .send({ motivo: "Prueba" });
       expect(an.status, JSON.stringify(an.body)).toBe(200);
-      const vigentes = await withTenant(tenantId, (c) =>
-        new CombustibleRepository().viajesEnCurso(c, tenantId, [enCurso.id, anulado.id])
-      );
-      expect([...vigentes]).toEqual([enCurso.id]);
+      // El worker abre alertas solo de lo que sigue en curso: el viaje anulado no abre ninguna.
+      await withTenant(tenantId, (c) => alertasDeViaje.evaluarViajesEnRuta(c, tenantId));
+      expect(await alertas(anulado.id, "viaje_demorado")).toHaveLength(0);
+      expect(await alertas(anulado.id, "viaje_detenido")).toHaveLength(0);
+      expect(enCurso.id).toBeGreaterThan(0);
     });
 
     it("la base no admite dos alertas abiertas del mismo viaje y tipo", async () => {
@@ -259,7 +259,7 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
       const v = await viaje(a, b, hace(2));
       const insertar = (c: PoolClient) =>
         c.query(
-          `INSERT INTO combustible_alertas (tenant_id, tipo, viaje_id, detalle)
+          `INSERT INTO viaje_alertas (tenant_id, tipo, viaje_id, detalle)
            VALUES ($1, 'viaje_detenido', $2, '{}')`,
           [tenantId, v.id]
         );
@@ -267,7 +267,7 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
       await expect(withTenant(tenantId, insertar)).rejects.toMatchObject({ code: "23505" });
       // Y el flujo normal, que usa ON CONFLICT DO NOTHING, no falla ni duplica.
       await withTenant(tenantId, (c) =>
-        new CombustibleService().evaluarDetencionDeUnViaje(c, tenantId, v.id)
+        alertasDeViaje.evaluarDetencionDeUnViaje(c, tenantId, v.id)
       );
       expect(await alertas(v.id, "viaje_detenido")).toHaveLength(1);
     });
@@ -278,11 +278,11 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
       nombre: string;
       fks?: Record<string, string>;
     }[];
-    const alertas = tablas.find((t) => t.nombre === "combustible_alertas");
+    const alertas = tablas.find((t) => t.nombre === "viaje_alertas");
     expect(alertas?.fks?.viaje_id).toBe("combustible_viajes");
     // Y el viaje va antes que la alerta: el restore necesita padres antes que hijos.
     const orden = tablas.map((t) => t.nombre);
-    expect(orden.indexOf("combustible_viajes")).toBeLessThan(orden.indexOf("combustible_alertas"));
+    expect(orden.indexOf("combustible_viajes")).toBeLessThan(orden.indexOf("viaje_alertas"));
   });
 
   it("la Bandeja devuelve el viaje de la alerta y la marca como crítica (urgente) sin correo", async () => {
@@ -293,7 +293,7 @@ describe("combustible: alertas de un viaje en curso (0156)", () => {
     await descanso(v.id, v.dni, "Accidente", hace(1));
     await correrConciliacion(tenantId);
 
-    const r = await admin.get("/api/erp/combustible/alertas?pageSize=100&estado=pendientes");
+    const r = await admin.get("/api/erp/viajes/alertas?pageSize=100&estado=pendientes");
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const filas = r.body.data as {
       tipo: string;

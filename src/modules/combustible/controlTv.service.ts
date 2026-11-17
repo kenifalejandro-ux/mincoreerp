@@ -18,6 +18,7 @@ import type { CombustibleService } from "./combustible.service";
 import { detencionDe } from "./motivosDetencion";
 import { listarTanquetas } from "./tanquetas.service";
 import { posicion, type FilaParada } from "./viajes.service";
+import { contarAlertasDeViaje } from "./viajesAlertas";
 
 export interface ContextoControlTv {
   alcance: AlcanceCombustible;
@@ -110,6 +111,9 @@ async function combustible(
   const cisternas = await servicio.listarCisternasConSaldo(client, tenantId, grifos);
   const compras = await listarCompras(client, tenantId, alcance, true);
   const alertas = await servicio.contarAlertas(client, tenantId, {}, alcance);
+  // Las alertas de viaje (unidad detenida, viaje demorado) tienen su propia tabla desde la 0188: la
+  // pantalla de la gerencia las suma a las de Combustible.
+  const alertasDeViaje = await contarAlertasDeViaje(client, tenantId, {}, alcance);
   const activos = tanques.filter((t: { activo: boolean }) => t.activo);
   const porLlegar = compras.filter((c: { estado: string }) => c.estado === "por_llegar");
   return {
@@ -150,8 +154,8 @@ async function combustible(
       ),
     },
     alertas: {
-      criticas: num(alertas.criticasPendientes),
-      por_revisar: num(alertas.porRevisar),
+      criticas: num(alertas.criticasPendientes) + num(alertasDeViaje.criticasPendientes),
+      por_revisar: num(alertas.porRevisar) + num(alertasDeViaje.porRevisar),
     },
   };
 }

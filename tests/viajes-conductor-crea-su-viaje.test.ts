@@ -74,7 +74,7 @@ describe("viajes: el conductor crea su propio viaje (0179)", () => {
   const alertas = (viajeId: number) =>
     withTenant(tenantId, async (c) => {
       const r = await c.query(
-        `SELECT resuelta_en FROM combustible_alertas
+        `SELECT resuelta_en FROM viaje_alertas
           WHERE tenant_id = $1 AND viaje_id = $2 AND tipo = 'viaje_creado_por_conductor'`,
         [tenantId, viajeId]
       );
