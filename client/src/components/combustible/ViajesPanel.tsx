@@ -32,6 +32,7 @@ import {
   type NivelSemaforo,
 } from "./viajesFormato";
 import { useAuth } from "../../context/AuthContext";
+import { tieneModulo } from "../../modules/tieneModulo";
 import { apiFetch } from "../../services/apiClient";
 import { ahoraParaInputLocal, paraInputLocal } from "../../utils/fechaLocal";
 import { puedeVerControlTv } from "../flota/flotaAcceso";
@@ -153,6 +154,8 @@ function MarcaHora({ origen }: { origen: FilaViaje["inicio_origen_hora"] }) {
 
 export default function ViajesPanel() {
   const { usuario } = useAuth();
+  // Las cargas y el consumo de cada viaje son de Combustible: sin ese módulo no se piden ni se muestran.
+  const conCombustible = tieneModulo(usuario, "combustible");
   const [viajes, setViajes] = useState<FilaViaje[]>([]);
   // Para el «hace 2 h» de la última ubicación: se refresca cada minuto.
   const [ahoraMs, setAhoraMs] = useState(() => Date.now());
@@ -275,7 +278,7 @@ export default function ViajesPanel() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void cargarLugares();
     void (async () => {
-      const res = await apiFetch("/api/erp/combustible/equipos-destino?pageSize=200");
+      const res = await apiFetch("/api/erp/viajes/unidades?pageSize=200");
       const body = await res.json().catch(() => null);
       if (res.ok) {
         setEquipos(Array.isArray(body?.data) ? body.data : []);
@@ -589,9 +592,9 @@ export default function ViajesPanel() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-sm text-[#94a3b8]">
-              Cada viaje es el recorrido de una unidad de un lugar a otro. Sus cargas de combustible
-              y urea se toman solas: las de esa unidad entre la salida (incluida la tanqueada
-              previa) y la llegada.
+              Cada viaje es el recorrido de una unidad de un lugar a otro.
+              {conCombustible &&
+                " Sus cargas de combustible y urea se toman solas: las de esa unidad entre la salida (incluida la tanqueada previa) y la llegada."}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -726,9 +729,13 @@ export default function ViajesPanel() {
                 <th className="p-3">Salida</th>
                 <th className="p-3">Llegada</th>
                 <th className="p-3">Estado</th>
-                <th className="p-3 text-right">Cargas</th>
-                <th className="p-3 text-right">Combustible (gal)</th>
-                <th className="p-3 text-right">vs. ruta</th>
+                {conCombustible && (
+                  <>
+                    <th className="p-3 text-right">Cargas</th>
+                    <th className="p-3 text-right">Combustible (gal)</th>
+                    <th className="p-3 text-right">vs. ruta</th>
+                  </>
+                )}
                 <th className="p-3" />
               </tr>
             </thead>
@@ -826,17 +833,21 @@ export default function ViajesPanel() {
                     </span>
                     <PuntoSemaforo v={v} />
                   </td>
-                  <td className="p-3 text-right font-mono">{v.cargas}</td>
-                  <td className="p-3 text-right font-mono">{fmt(Number(v.cantidad))}</td>
-                  <td className="p-3 text-right">
-                    <CeldaDesvio v={v} />
-                  </td>
+                  {conCombustible && (
+                    <>
+                      <td className="p-3 text-right font-mono">{v.cargas}</td>
+                      <td className="p-3 text-right font-mono">{fmt(Number(v.cantidad))}</td>
+                      <td className="p-3 text-right">
+                        <CeldaDesvio v={v} />
+                      </td>
+                    </>
+                  )}
                   <td className="p-3">
                     <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={() => setVerId(v.id)}
                         aria-label={`Ver viaje V-${v.numero}`}
-                        title="Ver cargas"
+                        title={conCombustible ? "Ver cargas" : "Ver el viaje"}
                         className="p-1.5 rounded border border-[#334155] text-[#94a3b8] hover:text-white"
                       >
                         <Eye className="w-4 h-4" />

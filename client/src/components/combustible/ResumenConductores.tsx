@@ -4,6 +4,8 @@
 import { useEffect, useState } from "react";
 
 import { duracion, fmt } from "./viajesFormato";
+import { useAuth } from "../../context/AuthContext";
+import { tieneModulo } from "../../modules/tieneModulo";
 import { apiFetch } from "../../services/apiClient";
 
 interface Fila {
@@ -20,6 +22,8 @@ interface Fila {
 
 export function ResumenConductores({ desde, hasta }: { desde: string; hasta: string }) {
   const [abierto, setAbierto] = useState(false);
+  // El consumo frente a la ruta sale de las cargas de Combustible: sin ese módulo no se muestra.
+  const conCombustible = tieneModulo(useAuth().usuario, "combustible");
   const [filas, setFilas] = useState<Fila[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,7 +82,7 @@ export function ResumenConductores({ desde, hasta }: { desde: string; hasta: str
                 <th className="py-2 pr-3 text-right">Km</th>
                 <th className="py-2 pr-3 text-right">Al volante</th>
                 <th className="py-2 pr-3 text-right">Salió a tiempo</th>
-                <th className="py-2 text-right">Consumo vs. ruta</th>
+                {conCombustible && <th className="py-2 text-right">Consumo vs. ruta</th>}
               </tr>
             </thead>
             <tbody>
@@ -95,25 +99,27 @@ export function ResumenConductores({ desde, hasta }: { desde: string; hasta: str
                       ? `${f.salidas_puntuales} de ${f.salidas_medidas} (${fmt((f.salidas_puntuales / f.salidas_medidas) * 100, 0)} %)`
                       : "—"}
                   </td>
-                  <td className="py-2 text-right font-mono">
-                    {f.consumo_desvio_pct === null ? (
-                      <span className="text-slate-400">—</span>
-                    ) : (
-                      <span
-                        title={`Promedio de ${f.consumo_viajes} viaje${f.consumo_viajes === 1 ? "" : "s"} que inició, frente al promedio de su ruta en este período`}
-                        className={
-                          f.consumo_desvio_pct > 20
-                            ? "text-red-400 font-bold"
-                            : f.consumo_desvio_pct < 0
-                              ? "text-emerald-400"
-                              : ""
-                        }
-                      >
-                        {f.consumo_desvio_pct > 0 ? "+" : ""}
-                        {fmt(f.consumo_desvio_pct, 0)} %
-                      </span>
-                    )}
-                  </td>
+                  {conCombustible && (
+                    <td className="py-2 text-right font-mono">
+                      {f.consumo_desvio_pct === null ? (
+                        <span className="text-slate-400">—</span>
+                      ) : (
+                        <span
+                          title={`Promedio de ${f.consumo_viajes} viaje${f.consumo_viajes === 1 ? "" : "s"} que inició, frente al promedio de su ruta en este período`}
+                          className={
+                            f.consumo_desvio_pct > 20
+                              ? "text-red-400 font-bold"
+                              : f.consumo_desvio_pct < 0
+                                ? "text-emerald-400"
+                                : ""
+                          }
+                        >
+                          {f.consumo_desvio_pct > 0 ? "+" : ""}
+                          {fmt(f.consumo_desvio_pct, 0)} %
+                        </span>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

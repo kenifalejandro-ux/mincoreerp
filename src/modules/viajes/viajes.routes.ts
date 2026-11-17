@@ -50,6 +50,7 @@ import {
 } from "../../server/schemas/combustible.schema";
 import { cargarAlcance } from "../combustible/alcance";
 import { viajesController } from "../combustible/viajes.controller";
+import { EquiposController } from "../equipos/equipos.controller";
 
 const router = Router();
 // Con Combustible, Viajes aplica el mismo alcance (qué grifos y surtidores ve cada usuario) y lee
@@ -79,6 +80,13 @@ router.patch(
   requireRole("admin", "operador"),
   validate(editarLugarSchema),
   asyncHandler(viajesController.editarLugar)
+);
+// Las unidades que el panel de Viajes ofrece para programar un viaje y para filtrar la lista. Es el
+// registro de Flota (Viajes lo exige): así el panel no las pide a Combustible, que puede no estar.
+router.get(
+  "/unidades",
+  requirePestana("combustible", "viajes"),
+  asyncHandler(EquiposController.getAll)
 );
 router.get(
   "/",

@@ -55,6 +55,7 @@ import {
   type FilaViaje,
 } from "./viajesFormato";
 import { useAuth } from "../../context/AuthContext";
+import { tieneModulo } from "../../modules/tieneModulo";
 import { listarPendientes, suscribirseACola } from "../../offline/offlineQueue";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
@@ -157,6 +158,8 @@ function duracion(desde: string, ahora: number) {
 
 export default function MiViaje() {
   const { usuario } = useAuth();
+  // Las cargas de combustible y urea son de Combustible: sin ese módulo no se muestran.
+  const conCombustible = tieneModulo(usuario, "combustible");
   const usuarioId = usuario?.id ?? "anonimo";
   const [filas, setFilas] = useState<MiFila[]>([]);
   const filasRef = useRef<MiFila[]>([]);
@@ -568,23 +571,27 @@ export default function MiViaje() {
       )}
 
       {actual && actual.estado === "en_curso" && actual.inicio_en && (
-        <div className="grid grid-cols-3 gap-3">
+        <div className={`grid gap-3 ${conCombustible ? "grid-cols-3" : "grid-cols-1"}`}>
           <Tile
             icono={<Timer className="w-4 h-4" />}
             titulo="En ruta"
             valor={duracionMin(minutosEnRuta)}
           />
-          <Tile
-            icono={<Fuel className="w-4 h-4" />}
-            titulo="Combustible"
-            valor={`${fmt(Number(actual.combustible_gal ?? 0), 1)} gal`}
-          />
-          <Tile
-            icono={<Droplets className="w-4 h-4" />}
-            titulo="Urea"
-            valor={`${fmt(Number(actual.urea_l ?? 0), 1)} L`}
-            acento="text-sky-400"
-          />
+          {conCombustible && (
+            <>
+              <Tile
+                icono={<Fuel className="w-4 h-4" />}
+                titulo="Combustible"
+                valor={`${fmt(Number(actual.combustible_gal ?? 0), 1)} gal`}
+              />
+              <Tile
+                icono={<Droplets className="w-4 h-4" />}
+                titulo="Urea"
+                valor={`${fmt(Number(actual.urea_l ?? 0), 1)} L`}
+                acento="text-sky-400"
+              />
+            </>
+          )}
         </div>
       )}
 
@@ -834,17 +841,21 @@ export default function MiViaje() {
                 pie={<span>{duracionMin(parteMia.minutos)} al volante</span>}
               />
             )}
-            <Tile
-              icono={<Fuel className="w-4 h-4" />}
-              titulo="Combustible"
-              valor={`${fmt(Number(ultimo.combustible_gal ?? 0), 1)} gal`}
-            />
-            <Tile
-              icono={<Droplets className="w-4 h-4" />}
-              titulo="Urea"
-              valor={`${fmt(Number(ultimo.urea_l ?? 0), 1)} L`}
-              acento="text-sky-400"
-            />
+            {conCombustible && (
+              <>
+                <Tile
+                  icono={<Fuel className="w-4 h-4" />}
+                  titulo="Combustible"
+                  valor={`${fmt(Number(ultimo.combustible_gal ?? 0), 1)} gal`}
+                />
+                <Tile
+                  icono={<Droplets className="w-4 h-4" />}
+                  titulo="Urea"
+                  valor={`${fmt(Number(ultimo.urea_l ?? 0), 1)} L`}
+                  acento="text-sky-400"
+                />
+              </>
+            )}
           </div>
         </>
       )}

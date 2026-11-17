@@ -27,19 +27,13 @@ export function puedeVerUnidades(usuario: UsuarioDeFlota | undefined): boolean {
  *  abre el submenú (el servidor lo hace igual, ver `pestanaPermitida`). */
 const ACCIONES_DE_VIAJES = ["nuevo", "editar", "lugares", "consumo"];
 
-/** La lista de viajes de la oficina: hace falta el módulo `viajes` Y el módulo
- *  Combustible (el servidor exige los dos: la lista trae las cargas de cada
- *  viaje, que son datos de Combustible), y que el perfil no la tenga apagada.
+/** La lista de viajes de la oficina: hace falta el módulo `viajes` y que el perfil no la tenga
+ *  apagada. Las cargas y el consumo de cada viaje vienen de Combustible: sin ese módulo la lista se
+ *  ve igual, solo que sin esas columnas (ver `opcionales` de Viajes).
  *  Sin permiso puesto a mano, la ven todos menos los perfiles de cancha, salvo que
  *  a alguno se le haya dado a mano una acción de Viajes (p. ej. "Consumo por viaje"). */
 export function puedeVerViajes(usuario: UsuarioDeFlota | undefined): boolean {
-  if (
-    !usuario ||
-    !usuario.modulosPermitidos.includes("viajes") ||
-    !usuario.modulosPermitidos.includes("combustible")
-  ) {
-    return false;
-  }
+  if (!usuario || !usuario.modulosPermitidos.includes("viajes")) return false;
   const override = usuario.permisosPestanas?.["combustible:viajes"];
   if (override !== undefined) return override;
   if (
@@ -53,23 +47,19 @@ export function puedeVerViajes(usuario: UsuarioDeFlota | undefined): boolean {
  *  además, su permiso propio (`viajes:consumo`). Sin permiso puesto a mano, la ven
  *  todos los que ven la lista (admin, operador y Lectura). */
 export function puedeVerConsumoDeViajes(usuario: UsuarioDeFlota | undefined): boolean {
-  if (!usuario || !puedeVerViajes(usuario)) return false;
+  // El consumo por viaje sale de las cargas de Combustible: sin ese módulo no hay qué mostrar.
+  if (!usuario || !puedeVerViajes(usuario) || !usuario.modulosPermitidos.includes("combustible"))
+    return false;
   const override = usuario.permisosPestanas?.["combustible:viajes:consumo"];
   if (override !== undefined) return override;
   return !PERFILES_DE_CANCHA.includes(usuario.rol);
 }
 
-/** "Mi viaje" del conductor: la pantalla llama al módulo Viajes (y lee las
- *  cargas de Combustible), así que sin esos dos módulos el servidor da 403 y el
- *  conductor vería una pantalla rota. Sin permiso puesto a mano, es del conductor. */
+/** "Mi viaje" del conductor: la pantalla llama al módulo Viajes, así que sin él el servidor da 403.
+ *  Las cargas de Combustible las muestra solo si la empresa lo tiene. Sin permiso puesto a mano, es
+ *  del conductor. */
 export function puedeVerMiViaje(usuario: UsuarioDeFlota | undefined): boolean {
-  if (
-    !usuario ||
-    !usuario.modulosPermitidos.includes("viajes") ||
-    !usuario.modulosPermitidos.includes("combustible")
-  ) {
-    return false;
-  }
+  if (!usuario || !usuario.modulosPermitidos.includes("viajes")) return false;
   const override = usuario.permisosPestanas?.["combustible:mi_viaje"];
   if (override !== undefined) return override;
   return usuario.rol === "conductor_ruta";
@@ -92,4 +82,12 @@ export function puedeVerControlTv(usuario: UsuarioDeFlota | undefined): boolean 
   const override = usuario.permisosPestanas?.["combustible:viajes:control_tv"];
   if (override !== undefined) return override;
   return usuario.rol === "admin" || usuario.rol === "lectura";
+}
+
+/** Dónde vive «Mi viaje» en el menú: dentro de Combustible si la empresa lo tiene (como siempre) y,
+ *  si no, suelto, bajo Gestión operacional de flota. */
+export function miViajeVaEnFlota(usuario: UsuarioDeFlota | undefined): boolean {
+  return (
+    puedeVerMiViaje(usuario) && !!usuario && !usuario.modulosPermitidos.includes("combustible")
+  );
 }

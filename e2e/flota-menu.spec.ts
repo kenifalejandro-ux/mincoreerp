@@ -141,7 +141,7 @@ test("quien tiene Viajes y Combustible pero no Flota ve el grupo con un único �
   }
 });
 
-test("quien tiene Viajes pero NO Combustible no ve el grupo de Flota (el servidor le daría 403 en la lista)", async ({
+test("quien tiene Viajes pero NO Combustible ve el grupo con un único ítem, su lista de viajes CARGA y sin las columnas de cargas", async ({
   page,
   browser,
 }) => {
@@ -152,8 +152,18 @@ test("quien tiene Viajes pero NO Combustible no ve el grupo de Flota (el servido
     const { contexto, pagina } = await entrarConClaveTemporal(browser, u.email, u.temporal);
     try {
       await expect(pagina.getByRole("button", { name: "Dashboard" })).toBeVisible();
-      await expect(grupoFlota(pagina)).toHaveCount(0);
-      await expect(pagina.getByRole("button", { name: "Viajes", exact: true })).toHaveCount(0);
+      // Viajes funciona solo: la lista responde 200 aunque la empresa no tenga Combustible.
+      const lista = pagina.waitForResponse(
+        (r) => /\/api\/erp\/viajes(\?|$)/.test(r.url()) && r.request().method() === "GET"
+      );
+      await grupoFlota(pagina).click();
+      expect((await lista).status()).toBe(200);
+      await expect(pagina.getByRole("heading", { name: "Viajes" })).toBeVisible();
+      await expect(pagina.getByRole("button", { name: "Viajes", exact: true })).toBeVisible();
+      await expect(pagina.getByRole("button", { name: "Registro de unidades" })).toHaveCount(0);
+      // Las cargas y el consumo son de Combustible: sin ese módulo no hay esas columnas.
+      await expect(pagina.getByRole("columnheader", { name: "Combustible (gal)" })).toHaveCount(0);
+      await expect(pagina.getByRole("tab", { name: "Consumo por viaje" })).toHaveCount(0);
     } finally {
       await contexto.close();
     }
