@@ -2,6 +2,8 @@
 import { ChevronLeft, ChevronRight, Plus, Trash2, X } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 
+import { useAuth } from "../../context/AuthContext";
+import { tieneModulo } from "../../modules/tieneModulo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
@@ -19,8 +21,10 @@ interface PlantillaConItems extends Plantilla {
 
 interface Checklist {
   id: number;
-  equipo_id: number;
-  placa_codigo: string;
+  // La unidad es opcional (de Flota); si no hay, el checklist se identifica por `activo_texto`.
+  equipo_id: number | null;
+  placa_codigo: string | null;
+  activo_texto: string | null;
   plantilla_id: number;
   usuario_nombre: string;
   fecha: string;
@@ -39,6 +43,9 @@ type ItemEstado = "bien" | "malo" | "na";
 
 export default function ChecklistsView() {
   const puedeEscribir = usePuedeEscribir("checklists");
+  // Registro de unidades es de OTRO módulo: sin él no se piden ni se ofrecen unidades y el
+  // checklist se identifica por el texto «Activo o lugar» (ver `opcionales` en registry.ts).
+  const conFlota = tieneModulo(useAuth().usuario, "flota");
   const [subTab, setSubTab] = useState<"checklists" | "plantillas">("checklists");
 
   const [checklists, setChecklists] = useState<Checklist[]>([]);
@@ -63,6 +70,7 @@ export default function ChecklistsView() {
 
   const [formChecklist, setFormChecklist] = useState({
     equipo_id: "",
+    activo_texto: "",
     plantilla_id: "",
     turno: "",
     observaciones_generales: "",
@@ -139,9 +147,13 @@ export default function ChecklistsView() {
     // para siempre. Acá cada carga falla por su cuenta y las que el
     // service worker sí tenga cacheadas (equipos, plantillas — ver
     // vite.config.js) igual llenan el formulario para poder trabajar.
-    await Promise.allSettled([cargarChecklists(), cargarPlantillas(), cargarEquipos()]);
+    await Promise.allSettled([
+      cargarChecklists(),
+      cargarPlantillas(),
+      conFlota ? cargarEquipos() : Promise.resolve(),
+    ]);
     setLoading(false);
-  }, []);
+  }, [conFlota]);
 
   useEffect(() => {
     // Patrón estándar de carga al montar (setCargando(true) -> fetch ->
@@ -236,7 +248,17 @@ export default function ChecklistsView() {
   const handleCrearChecklist = async (e: React.FormEvent) => {
     e.preventDefault();
     if (guardando) return;
-    if (!plantillaSeleccionada || !formChecklist.equipo_id) return;
+    if (!plantillaSeleccionada) return;
+    // De qué es el checklist: la unidad o el texto (el servidor también lo exige).
+    const activoTexto = formChecklist.activo_texto.trim();
+    if (!formChecklist.equipo_id && !activoTexto) {
+      alert(
+        conFlota
+          ? "Elige la unidad o escribe el activo o lugar."
+          : "Escribe el activo o lugar del checklist."
+      );
+      return;
+    }
 
     const items = plantillaSeleccionada.items.map((it) => ({
       descripcion: it.descripcion,
@@ -255,7 +277,8 @@ export default function ChecklistsView() {
           // llevara una clave nueva y un doble tap creara dos checklists.
           // Ver el comentario donde se declara clienteUuid.
           cliente_uuid: clienteUuid,
-          equipo_id: Number(formChecklist.equipo_id),
+          equipo_id: formChecklist.equipo_id ? Number(formChecklist.equipo_id) : undefined,
+          activo_texto: activoTexto || undefined,
           plantilla_id: Number(formChecklist.plantilla_id),
           turno: formChecklist.turno || undefined,
           observaciones_generales: formChecklist.observaciones_generales || undefined,
@@ -266,6 +289,7 @@ export default function ChecklistsView() {
         setModalChecklistAbierto(false);
         setFormChecklist({
           equipo_id: "",
+          activo_texto: "",
           plantilla_id: "",
           turno: "",
           observaciones_generales: "",
@@ -358,7 +382,7 @@ export default function ChecklistsView() {
                 <thead className="bg-slate-50">
                   <tr>
                     <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
-                      equipo
+                      equipo / activo
                     </th>
                     <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest">
                       fecha
@@ -381,7 +405,14 @@ export default function ChecklistsView() {
                   {checklists.map((c) => (
                     <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm font-semibold text-slate-800">
-                        {c.placa_codigo}
+                        {c.placa_codigo ??
+                          c.activo_texto ??
+                          (c.equipo_id ? `Unidad ${c.equipo_id}` : "---")}
+                        {c.placa_codigo && c.activo_texto && (
+                          <span className="block font-sans text-[10px] sm:text-xs font-normal text-slate-500">
+                            {c.activo_texto}
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-600">
                         {c.fecha}
@@ -616,34 +647,35 @@ export default function ChecklistsView() {
               </button>
             </div>
             <form onSubmit={handleCrearChecklist} className="p-6 space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  {/* htmlFor + id, no un <label> suelto al lado: sin la
+              <div className={`grid grid-cols-1 gap-4 ${conFlota ? "sm:grid-cols-2" : ""}`}>
+                {conFlota && (
+                  <div className="space-y-1">
+                    {/* htmlFor + id, no un <label> suelto al lado: sin la
                       asociación explícita un lector de pantalla anuncia el
                       select sin nombre. Mismo patrón que LoginPage.tsx. */}
-                  <label
-                    htmlFor="checklist-equipo"
-                    className="text-xs font-bold text-slate-500 uppercase"
-                  >
-                    Equipo
-                  </label>
-                  <select
-                    id="checklist-equipo"
-                    required
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-                    value={formChecklist.equipo_id}
-                    onChange={(e) =>
-                      setFormChecklist({ ...formChecklist, equipo_id: e.target.value })
-                    }
-                  >
-                    <option value="">Selecciona...</option>
-                    {equipos.map((eq) => (
-                      <option key={eq.id} value={eq.id}>
-                        {eq.placa_codigo}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                    <label
+                      htmlFor="checklist-equipo"
+                      className="text-xs font-bold text-slate-500 uppercase"
+                    >
+                      Equipo (opcional)
+                    </label>
+                    <select
+                      id="checklist-equipo"
+                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                      value={formChecklist.equipo_id}
+                      onChange={(e) =>
+                        setFormChecklist({ ...formChecklist, equipo_id: e.target.value })
+                      }
+                    >
+                      <option value="">Sin unidad</option>
+                      {equipos.map((eq) => (
+                        <option key={eq.id} value={eq.id}>
+                          {eq.placa_codigo}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <div className="space-y-1">
                   <label
                     htmlFor="checklist-plantilla"
@@ -666,6 +698,26 @@ export default function ChecklistsView() {
                     ))}
                   </select>
                 </div>
+              </div>
+              <div className="space-y-1">
+                <label
+                  htmlFor="checklist-activo"
+                  className="text-xs font-bold text-slate-500 uppercase"
+                >
+                  {conFlota ? "Activo o lugar (si no es una unidad)" : "Activo o lugar"}
+                </label>
+                <input
+                  id="checklist-activo"
+                  type="text"
+                  maxLength={150}
+                  placeholder="Ej. Horno 4, Andamio torre 3"
+                  required={!formChecklist.equipo_id}
+                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                  value={formChecklist.activo_texto}
+                  onChange={(e) =>
+                    setFormChecklist({ ...formChecklist, activo_texto: e.target.value })
+                  }
+                />
               </div>
               <div className="space-y-1">
                 <label

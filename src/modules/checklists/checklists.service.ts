@@ -26,12 +26,13 @@ export const ChecklistsService = {
     return ChecklistsRepository.eliminarPlantilla(client, tenantId, id);
   },
 
-  getAll(client: PoolClient, tenantId: string, paginacion: CursorPaginacion) {
-    return ChecklistsRepository.findAll(client, tenantId, paginacion);
+  /** `conUnidades`: la empresa tiene Flota. Sin ella no se lee `equipos` (ver `opcionales`). */
+  getAll(client: PoolClient, tenantId: string, paginacion: CursorPaginacion, conUnidades = true) {
+    return ChecklistsRepository.findAll(client, tenantId, paginacion, conUnidades);
   },
 
-  getById(client: PoolClient, tenantId: string, id: number) {
-    return ChecklistsRepository.findById(client, tenantId, id);
+  getById(client: PoolClient, tenantId: string, id: number, conUnidades = true) {
+    return ChecklistsRepository.findById(client, tenantId, id, conUnidades);
   },
 
   /** Devuelve `creado: false` cuando el checklist ya se había creado con
@@ -39,7 +40,13 @@ export const ChecklistsService = {
    *  envío cuya respuesta se perdió. El controller usa ese flag para no
    *  auditar ni publicar el evento dos veces. Sin `cliente_uuid` en el
    *  body, se comporta igual que antes: siempre crea. */
-  crear(client: PoolClient, tenantId: string, usuarioId: string, data: CrearChecklistInput) {
+  crear(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: CrearChecklistInput,
+    conUnidades = true
+  ) {
     return idempotentInsert({
       client,
       tenantId,
@@ -52,7 +59,7 @@ export const ChecklistsService = {
       // findById devuelve un superset de lo que devuelve crear() (suma
       // placa_codigo y usuario_nombre por los JOIN) — así el reintento
       // nunca responde con MENOS datos que el intento original.
-      recuperar: (filaId) => ChecklistsRepository.findById(client, tenantId, filaId),
+      recuperar: (filaId) => ChecklistsRepository.findById(client, tenantId, filaId, conUnidades),
     });
   },
 
