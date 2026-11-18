@@ -86,6 +86,20 @@ export const MODULOS: ModuloDefinicion[] = [
     ],
     raices: ["equipos"],
     cuota: { tabla: "equipos", porDefecto: 2_000 },
+    // Las lecturas del medidor (0187) crecen con el trabajo de campo, no con el catálogo de unidades:
+    // recurso propio (migración 0191). Sin esto, `POST /:id/lecturas` caía en la base `equipos` y se
+    // medía contra el conteo de UNIDADES: una empresa al tope de equipos no podía registrar lecturas,
+    // y las lecturas no tenían tope propio. (`mover-grifo` y `anular` siguen en la base: no crean nada,
+    // pero el middleware mide todo POST que no matchea una ruta de acá.)
+    cuotasPorRuta: [
+      {
+        ruta: "/:id/lecturas",
+        metodo: "POST",
+        recurso: "equipo_lecturas",
+        tabla: "equipo_lecturas",
+        porDefecto: 1_500_000,
+      },
+    ],
     // Solo crear el equipo califica para offline -- ver ADR-0002 §8. Dar de
     // alta un equipo nuevo en cancha, sin señal, es un caso de campo real
     // (mismo criterio que checklists/iperc/ordenes_trabajo). `PUT`/`DELETE`
@@ -118,6 +132,28 @@ export const MODULOS: ModuloDefinicion[] = [
     bucketDe: "combustible",
     tablas: [],
     raices: [],
+    // Cuota propia por empresa (recurso `viajes`, migración 0191): cuenta los VIAJES creados, por las
+    // dos rutas que crean uno: la de oficina (`POST /`) y la del conductor (`POST /crear-mio`). Va por
+    // `cuotasPorRuta` y NO por `cuota` base a propósito: la base mediría los ~25 POST del módulo
+    // (iniciar, cerrar, paradas, descansos, relevo...) y, con el tope lleno, bloquearía hasta cerrar un
+    // viaje en curso. Sin `cuota` base, el resto de los POST pasa sin medir. Las tablas del viaje están
+    // registradas en Combustible (respaldo), pero el conteo es por tabla, no por módulo.
+    cuotasPorRuta: [
+      {
+        ruta: "/",
+        metodo: "POST",
+        recurso: "viajes",
+        tabla: "combustible_viajes",
+        porDefecto: 240_000,
+      },
+      {
+        ruta: "/crear-mio",
+        metodo: "POST",
+        recurso: "viajes",
+        tabla: "combustible_viajes",
+        porDefecto: 240_000,
+      },
+    ],
     // "Mi viaje" (0124): el conductor marca salida y llegada en ruta, donde puede
     // no haber señal. Solo se declara acá: Combustible ya no tiene estas rutas
     // (los alias se retiraron). El reintento no duplica porque el service

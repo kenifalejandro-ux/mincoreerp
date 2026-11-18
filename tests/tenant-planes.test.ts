@@ -44,6 +44,51 @@ afterAll(async () => {
   await closeDatabase();
 });
 
+describe("topes de Viajes y de lecturas del medidor por plan (0191)", () => {
+  const ESPERADOS: Record<string, { viajes: number | null; equipo_lecturas: number | null }> = {
+    mype: { viajes: 10_000, equipo_lecturas: 60_000 },
+    pequena: { viajes: 50_000, equipo_lecturas: 300_000 },
+    mediana: { viajes: 240_000, equipo_lecturas: 1_500_000 },
+    corporativo: { viajes: null, equipo_lecturas: null },
+  };
+
+  it("cada plan trae sus topes, y Corporativo los trae ILIMITADOS (null), no ausentes", async () => {
+    for (const [codigo, esperado] of Object.entries(ESPERADOS)) {
+      const res = await request(app)
+        .get(`/api/platform/planes/${codigo}`)
+        .set("Authorization", BEARER);
+      expect(res.status, codigo).toBe(200);
+      const limites = res.body.plan.limites;
+      // `null` es un valor (ilimitado): la clave tiene que estar, no faltar.
+      expect("viajes" in limites, `${codigo} viajes`).toBe(true);
+      expect("equipo_lecturas" in limites, `${codigo} equipo_lecturas`).toBe(true);
+      expect(limites.viajes, `${codigo} viajes`).toBe(esperado.viajes);
+      expect(limites.equipo_lecturas, `${codigo} equipo_lecturas`).toBe(esperado.equipo_lecturas);
+    }
+  });
+
+  it("una empresa con plan Pequeña resuelve los topes del plan; sin plan, los del registry (= Mediana)", async () => {
+    const { tenant } = await nuevoTenant();
+    await asignarPlanATenantService(tenant.id, "pequena", contexto);
+    const conPlan = { viajes: await resolverLimite(tenant.id, "viajes") };
+    expect(conPlan.viajes).toMatchObject({ origen: "plan", limite: 50_000 });
+    expect(await resolverLimite(tenant.id, "equipo_lecturas")).toMatchObject({
+      origen: "plan",
+      limite: 300_000,
+    });
+
+    await asignarPlanATenantService(tenant.id, null, contexto);
+    expect(await resolverLimite(tenant.id, "viajes")).toMatchObject({
+      origen: "registry",
+      limite: 240_000,
+    });
+    expect(await resolverLimite(tenant.id, "equipo_lecturas")).toMatchObject({
+      origen: "registry",
+      limite: 1_500_000,
+    });
+  });
+});
+
 describe("seed de planes", () => {
   it("los 4 planes existen con su código estable", async () => {
     const res = await request(app).get("/api/platform/planes").set("Authorization", BEARER);

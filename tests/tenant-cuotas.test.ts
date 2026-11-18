@@ -11,7 +11,7 @@
  */
 import { describe, it, expect, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { env } from "../src/server/config/env";
 import { pool, closeDatabase, withTenant } from "../src/server/config/database";
 import {
@@ -318,6 +318,127 @@ describe("cuota independiente por ruta (Repuestos: catálogo vs. movimientos)", 
     const recursos = (await resumenCuotasTenant(tenant.id)).map((c) => c.recurso);
     expect(recursos).toContain("repuestos");
     expect(recursos).toContain("repuestos_movimientos");
+  });
+});
+
+describe("cuota de Viajes y de lecturas del medidor (0191)", () => {
+  const H = 3_600_000;
+  const hora = (h: number) => new Date(Date.now() - 100 * H + h * H).toISOString();
+
+  /** Una empresa con Flota y Viajes (todos los módulos, como nace), con su origen y destino. */
+  async function conViajes() {
+    const { tenant, usuario } = await nuevoTenant();
+    const agente = await agenteDe(tenant, usuario.email);
+    const lugar = async () =>
+      Number((await agente.post("/api/erp/viajes/lugares").send({ nombre: idUnico("L") })).body.id);
+    const origen = await lugar();
+    const destino = await lugar();
+    const unidad = async () => {
+      const r = await agente.post("/api/erp/equipos").send({
+        placa_codigo: idUnico("CV"),
+        tipo: "VOLQUETE",
+        tipo_medidor: "odometro",
+        conductor_nombre: "Juan Pérez",
+        conductor_dni: dniUnico(),
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(201);
+      return Number(r.body.id);
+    };
+    // Una unidad distinta por viaje: así no se pisan los horarios de la misma unidad.
+    // OJO: la unidad se crea ANTES de armar la petición. Un `await` dentro del `.send()` de otra
+    // petición del mismo agente de supertest rompe con «reading 'address'».
+    const programar = async (h: number) => {
+      const equipoId = await unidad();
+      return agente.post("/api/erp/viajes").send({
+        equipo_id: equipoId,
+        origen_id: origen,
+        destino_id: destino,
+        salida_programada_en: hora(h),
+      });
+    };
+    return { tenant, agente, programar, unidad };
+  }
+
+  it("deja crear viajes hasta su propio límite y rechaza el siguiente sobre el recurso 'viajes'", async () => {
+    const { tenant, programar } = await conViajes();
+    await fijarCuotaTenant(tenant.id, "viajes", 1);
+
+    const primero = await programar(90);
+    expect(primero.status, JSON.stringify(primero.body)).toBe(201);
+
+    const rechazado = await programar(92);
+    expect(rechazado.status).toBe(403);
+    expect(rechazado.body.error).toBe("cuota_excedida");
+    expect(rechazado.body.recurso).toBe("viajes");
+  });
+
+  it("la cuota de viajes AGOTADA no bloquea iniciar ni cerrar un viaje que ya existe", async () => {
+    const { tenant, agente, programar } = await conViajes();
+    const viaje = await programar(90);
+    expect(viaje.status, JSON.stringify(viaje.body)).toBe(201);
+    await fijarCuotaTenant(tenant.id, "viajes", 0);
+
+    // Iniciar y cerrar no crean un viaje: el tope lleno no los toca (la base `cuota` los mediría).
+    const inicio = await agente
+      .post(`/api/erp/viajes/${viaje.body.id}/iniciar`)
+      .send({ inicio_en: hora(91), medidor_inicio: 1000, motivo: "Marca de oficina" });
+    expect(inicio.status, JSON.stringify(inicio.body)).toBe(200);
+    const cierre = await agente
+      .post(`/api/erp/viajes/${viaje.body.id}/cerrar`)
+      .send({ fin_en: hora(95), medidor_fin: 1200, motivo: "Marca de oficina" });
+    expect(cierre.status, JSON.stringify(cierre.body)).toBe(200);
+
+    // Y crear uno nuevo sí está bloqueado.
+    const nuevo = await programar(100);
+    expect(nuevo.status).toBe(403);
+    expect(nuevo.body.recurso).toBe("viajes");
+  });
+
+  it("la ruta del conductor (POST /crear-mio) también cuenta para el tope de viajes", async () => {
+    const { tenant, agente } = await conViajes();
+
+    // Con cupo, esta petición (cuerpo vacío) no llega a la cuota: falla por otra cosa.
+    const conCupo = await agente.post("/api/erp/viajes/crear-mio").send({});
+    expect(conCupo.body.error).not.toBe("cuota_excedida");
+
+    await fijarCuotaTenant(tenant.id, "viajes", 0);
+    const sinCupo = await agente.post("/api/erp/viajes/crear-mio").send({});
+    expect(sinCupo.status).toBe(403);
+    expect(sinCupo.body.error).toBe("cuota_excedida");
+    expect(sinCupo.body.recurso).toBe("viajes");
+  });
+
+  it("las lecturas del medidor tienen su propio tope y ya no se miden contra el de equipos", async () => {
+    const { tenant, agente, unidad } = await conViajes();
+    const id = await unidad();
+    const lectura = (valor: number, h: number) =>
+      agente.post(`/api/erp/equipos/${id}/lecturas`).send({ valor, leido_en: hora(h) });
+
+    // Con el tope de EQUIPOS agotado, crear una unidad se rechaza, pero registrar una lectura pasa.
+    await fijarCuotaTenant(tenant.id, "flota", 0);
+    const equipoNuevo = await agente
+      .post("/api/erp/equipos")
+      .send({ placa_codigo: idUnico("NUEVO"), tipo: "VOLQUETE" });
+    expect(equipoNuevo.status).toBe(403);
+    expect(equipoNuevo.body.recurso).toBe("flota");
+    const primera = await lectura(1000, 10);
+    expect(primera.status, JSON.stringify(primera.body)).toBe(201);
+
+    // Con el de LECTURAS en 1 (ya hay una), la siguiente se rechaza sobre su propio recurso.
+    await fijarCuotaTenant(tenant.id, "equipo_lecturas", 1);
+    const segunda = await lectura(1100, 20);
+    expect(segunda.status).toBe(403);
+    expect(segunda.body.error).toBe("cuota_excedida");
+    expect(segunda.body.recurso).toBe("equipo_lecturas");
+  });
+
+  it("resumenCuotasTenant() lista 'viajes' UNA vez (tiene dos rutas) y 'equipo_lecturas' aparte", async () => {
+    const { tenant } = await nuevoTenant();
+    const recursos = (await resumenCuotasTenant(tenant.id)).map((c) => c.recurso);
+    expect(recursos.filter((r) => r === "viajes")).toHaveLength(1);
+    expect(recursos).toContain("equipo_lecturas");
+    // El catálogo de equipos sigue aparte del histórico de lecturas.
+    expect(recursos).toContain("flota");
   });
 });
 

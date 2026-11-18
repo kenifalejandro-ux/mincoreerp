@@ -115,6 +115,9 @@ export interface ModuloDefinicion {
    *  BASE (`cuota`, si existe) sigue aplicando a cualquier POST del
    *  módulo que no matchee ninguna entrada de acá.
    *
+   *  Varias entradas pueden compartir `recurso` (distintas rutas que crecen la MISMA tabla, ej. Viajes:
+   *  la de oficina y la del conductor): cuentan como un solo recurso en el panel y en los límites.
+   *
    *  `recurso` es un id nuevo, NO el id del módulo -- así
    *  `recursosConCuota()`/`tenant_cuotas`/`plan_limites` lo tratan como un
    *  recurso aparte, con su propio override y su propio límite por plan. */

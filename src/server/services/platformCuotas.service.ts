@@ -86,7 +86,13 @@ export function recursosConCuota(): DefinicionRecurso[] {
       unidad: "cantidad" as const,
       limitePorDefecto: m.cuota!.porDefecto,
     })),
-    ...MODULOS.flatMap((m) => m.cuotasPorRuta ?? []).map((c) => ({
+    // Varias rutas pueden crecer el mismo recurso (Viajes: «/» y «/crear-mio»): una sola definición
+    // por recurso, o el panel lo mostraría repetido.
+    ...[
+      ...new Map(
+        MODULOS.flatMap((m) => m.cuotasPorRuta ?? []).map((c) => [c.recurso, c] as const)
+      ).values(),
+    ].map((c) => ({
       recurso: c.recurso,
       unidad: "cantidad" as const,
       limitePorDefecto: c.porDefecto,
