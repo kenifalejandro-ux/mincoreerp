@@ -101,7 +101,7 @@ describe("Dashboard: autonomía de módulos", () => {
     const soloRepuestos = await sesion(await nueva(["repuestos"]));
     expect(clavesPresentes(await dashboard(soloRepuestos))).toEqual([...CLAVES_REPUESTOS].sort());
 
-    const soloCombustible = await sesion(await nueva(["combustible"]));
+    const soloCombustible = await sesion(await nueva(["flota", "combustible"]));
     expect(clavesPresentes(await dashboard(soloCombustible))).toEqual(CLAVES_COMBUSTIBLE);
 
     const soloDocumentos = await sesion(await nueva(["documentos"]));
@@ -109,7 +109,7 @@ describe("Dashboard: autonomía de módulos", () => {
   });
 
   it("con los tres módulos la respuesta trae todas las claves de siempre", async () => {
-    const e = await nueva(["repuestos", "combustible", "documentos"]);
+    const e = await nueva(["repuestos", "flota", "combustible", "documentos"]);
     const admin = await sesion(e);
     const cuerpo = await dashboard(admin);
     expect(clavesPresentes(cuerpo)).toEqual([...TODAS].sort());

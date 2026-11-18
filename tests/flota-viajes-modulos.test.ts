@@ -282,11 +282,12 @@ describe("módulos flota y viajes", () => {
       expect(conFlota.status).toBe(200);
     });
 
-    it("apagar los dos a la vez es válido", async () => {
+    it("apagar Flota, Viajes y Combustible a la vez es válido", async () => {
       const e = await nueva();
       const res = await ponerModulos(e.tenant.id, {
         flota: "deshabilitado",
         viajes: "deshabilitado",
+        combustible: "deshabilitado",
       });
       expect(res.status).toBe(200);
     });
@@ -303,7 +304,8 @@ describe("módulos flota y viajes", () => {
       const ve = await modulosQueVe(e);
       expect(ve).not.toContain("viajes");
       expect(ve).not.toContain("flota");
-      expect(ve).toContain("combustible");
+      // Combustible también exige Flota (despacha a unidades): sin ella, tampoco se ve.
+      expect(ve).not.toContain("combustible");
     });
   });
 
@@ -379,14 +381,16 @@ describe("módulos flota y viajes", () => {
 
     it("el interruptor global rechaza encender Viajes si alguna empresa no tiene Flota, y apagar Flota si alguna tiene Viajes", async () => {
       const e = await nueva();
-      // Esta empresa no tiene ni Flota ni Viajes; el resto de las de la base sí tienen ambos.
+      // Esta empresa no tiene ni Flota ni Viajes ni Combustible; el resto de las de la base sí tienen ambos.
       await request(app)
         .put(`/api/platform/tenants/${e.tenant.id}/modulos`)
         .set("Authorization", BEARER)
         .send({
           configuraciones: MODULOS.map((m) => ({
             modulo: m.id,
-            estado: m.id === "flota" || m.id === "viajes" ? "deshabilitado" : "habilitado",
+            estado: ["flota", "viajes", "combustible"].includes(m.id)
+              ? "deshabilitado"
+              : "habilitado",
           })),
         })
         .expect(200);

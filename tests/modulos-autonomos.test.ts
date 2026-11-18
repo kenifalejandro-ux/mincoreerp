@@ -159,13 +159,9 @@ const clave = (c: { lector: string; otro: string }) => `${c.lector} -> ${c.otro}
 // ── Excepciones conocidas ──────────────────────────────────────────────────
 
 /** Dependencias que hoy NO son opcionales y no están declaradas. Cada una dice por
- *  qué existe y qué la elimina. Esta lista solo se achica. */
-const EXCEPCIONES_CONOCIDAS: Record<string, string> = {
-  "combustible -> flota":
-    "El vale, las tanquetas y la compra en ruta se despachan a una unidad (equipos, registro de Flota), " +
-    "y Combustible lee sus datos y su conductor. Se resuelve al hacer autónomo a Combustible, que viene " +
-    "después de Flota; sin `requiere`, por decisión de Kenif.",
-};
+ *  qué existe y qué la elimina. Esta lista solo se achica. Hoy está vacía: la serie de
+ *  autonomía terminó (2026-11-18) con Combustible exigiendo `flota` (`requiere`). */
+const EXCEPCIONES_CONOCIDAS: Record<string, string> = {};
 
 describe("autonomía de módulos: lecturas cruzadas declaradas", () => {
   it("cada módulo declara en `opcionales`/`requiere` solo módulos que existen, sin repetirse ni citarse a sí mismo", () => {

@@ -191,6 +191,11 @@ export const MODULOS: ModuloDefinicion[] = [
     icono: "⛽",
     version: "v1",
     router: combustibleRoutes,
+    // Exige `flota`: el vale, las tanquetas, la urea y la compra en ruta se despachan a una
+    // unidad (equipos). Un grifo sin unidades a las que despachar no tiene sentido, así que
+    // plataforma no deja encender Combustible sin Flota y el login lo oculta si la empresa
+    // pierde Flota. Flota, en cambio, funciona sola.
+    requiere: ["flota"],
     // Lee del viaje activo la unidad (Compra en ruta) y el último medidor del viaje.
     opcionales: ["viajes"],
     tablas: [
