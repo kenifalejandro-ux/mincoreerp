@@ -2,6 +2,7 @@ import { LogOut, Tv, User as UserIcon } from "lucide-react";
 
 import SelectorEmpresa from "./SelectorEmpresa";
 import { useAuth } from "../../context/AuthContext";
+import { puedeVerBandeja } from "../bandeja/bandejaAcceso";
 import CampanitaAlertas from "../combustible/CampanitaAlertas";
 import { marcarNovedadVista, novedadVigente } from "../controlTv/novedad";
 import { puedeVerControlTv } from "../flota/flotaAcceso";
@@ -12,8 +13,8 @@ interface HeaderProps {
 
 export default function Header({ onIrACombustible }: HeaderProps) {
   const { usuario, logout } = useAuth();
-  const puedeVerAlertasCombustible =
-    usuario?.rol === "admin" && (usuario?.modulosPermitidos.includes("combustible") ?? false);
+  // La campanita es de la gerencia (admin) y lee de cada Bandeja que ve: Combustible, Viajes...
+  const puedeVerAlertas = usuario?.rol === "admin" && puedeVerBandeja(usuario);
 
   return (
     <header className="sticky top-0 z-50 bg-[#0D1719] border-b border-[#DDF500]">
@@ -80,10 +81,7 @@ export default function Header({ onIrACombustible }: HeaderProps) {
             {/* Solo aparece para quien trabaja en más de una empresa. */}
             <SelectorEmpresa />
 
-            <CampanitaAlertas
-              activo={puedeVerAlertasCombustible}
-              onIrACombustible={onIrACombustible}
-            />
+            <CampanitaAlertas activo={puedeVerAlertas} onIrACombustible={onIrACombustible} />
 
             <div className="flex items-center gap-3" title={usuario?.nombre}>
               <div className="w-9 h-9 bg-slate-800 border border-slate-700 rounded-md flex items-center justify-center text-[#DDF500] shrink-0">

@@ -5,10 +5,15 @@
 // agrega una entrada a MODULOS_CON_BANDEJA (bandejaAcceso.ts) y su pantalla acá.
 
 import { Inbox } from "lucide-react";
-import { useState, type ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 
 import { useAuth } from "../../context/AuthContext";
 import BandejaAlertas from "../combustible/Bandeja";
+import {
+  CLAVE_PENDIENTE_DE_FUENTE,
+  EVENTO_ABRIR_ALERTA,
+  type FuenteDeAlertas,
+} from "../combustible/useAlertasCombustibleStream";
 import { MODULOS_CON_BANDEJA } from "./bandejaAcceso";
 
 /** La pantalla de cada módulo (la misma Bandeja, con su propia fuente de alertas); las etiquetas y
@@ -20,10 +25,34 @@ const PANTALLAS: Record<string, ComponentType> = {
   viajes: BandejaViajes,
 };
 
+const FUENTES: FuenteDeAlertas[] = ["combustible", "viajes"];
+
+/** La fuente de la alerta que la campanita dejó para abrir, si hay una: sin esto, llegar desde una
+ *  alerta de Viajes abriría la pestaña de Combustible. Sin efectos secundarios (se usa al crear el
+ *  estado); la Bandeja de esa fuente borra la clave al montarse. */
+function fuentePendiente(): FuenteDeAlertas | undefined {
+  try {
+    return FUENTES.find((f) => sessionStorage.getItem(CLAVE_PENDIENTE_DE_FUENTE[f]) !== null);
+  } catch {
+    return undefined;
+  }
+}
+
 export default function BandejaView() {
   const { usuario } = useAuth();
   const modulos = usuario ? MODULOS_CON_BANDEJA.filter((m) => m.visiblePara(usuario)) : [];
-  const [activoId, setActivoId] = useState(modulos[0]?.id ?? "");
+  const [activoId, setActivoId] = useState<string>(fuentePendiente() ?? modulos[0]?.id ?? "");
+
+  // Si la Bandeja ya estaba abierta cuando se clickeó una alerta en la campanita, el aviso llega
+  // por `window`: se pasa a la pestaña de esa fuente (la Bandeja de la fuente abre la alerta).
+  useEffect(() => {
+    const manejadores = FUENTES.map((f) => {
+      const alAviso = () => setActivoId(f);
+      window.addEventListener(EVENTO_ABRIR_ALERTA[f], alAviso);
+      return () => window.removeEventListener(EVENTO_ABRIR_ALERTA[f], alAviso);
+    });
+    return () => manejadores.forEach((quitar) => quitar());
+  }, []);
   const activo = modulos.find((m) => m.id === activoId) ?? modulos[0];
 
   if (!activo || !PANTALLAS[activo.id]) return null;

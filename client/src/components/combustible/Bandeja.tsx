@@ -30,7 +30,13 @@ import {
   type GrupoDeAlerta,
 } from "./alertasTexto";
 import { DetalleViajeVentana } from "./DetalleViaje";
-import { CLAVE_ALERTA_PENDIENTE, useAlertasCombustibleStream } from "./useAlertasCombustibleStream";
+import {
+  BASE_DE_FUENTE,
+  CLAVE_PENDIENTE_DE_FUENTE,
+  EVENTO_ABRIR_ALERTA,
+  useAlertasCombustibleStream,
+  type FuenteDeAlertas,
+} from "./useAlertasCombustibleStream";
 
 type Estado = "sin_leer" | "pendientes" | "resueltas" | "congeladas" | "todas";
 
@@ -68,9 +74,9 @@ const fechaHora = (iso: string) => new Date(iso).toLocaleString("es-PE");
 
 /** Sin efectos secundarios: se usa al crear el estado, y React puede llamarlo
  *  dos veces. El borrado va aparte, en un efecto (borrarAlertaPendiente). */
-function leerAlertaPendiente(): number | null {
+function leerAlertaPendiente(clave: string): number | null {
   try {
-    const valor = sessionStorage.getItem(CLAVE_ALERTA_PENDIENTE);
+    const valor = sessionStorage.getItem(clave);
     const id = Number(valor);
     return valor !== null && Number.isInteger(id) && id > 0 ? id : null;
   } catch {
@@ -78,25 +84,19 @@ function leerAlertaPendiente(): number | null {
   }
 }
 
-function borrarAlertaPendiente() {
+function borrarAlertaPendiente(clave: string) {
   try {
-    sessionStorage.removeItem(CLAVE_ALERTA_PENDIENTE);
+    sessionStorage.removeItem(clave);
   } catch {
     // Sin sessionStorage no hay nada que borrar.
   }
 }
 
-/** De dónde sale la lista: las alertas de Combustible (y Urea) o las de Viajes (0188). Las dos
- *  responden con la misma forma, así que la misma pantalla sirve a las dos. */
-export type FuenteDeAlertas = "combustible" | "viajes";
-
-const BASE_DE_FUENTE: Record<FuenteDeAlertas, string> = {
-  combustible: "/api/erp/combustible/alertas",
-  viajes: "/api/erp/viajes/alertas",
-};
-
 export default function BandejaAlertas({ fuente = "combustible" }: { fuente?: FuenteDeAlertas }) {
   const base = BASE_DE_FUENTE[fuente];
+  // La alerta que dejó la campanita para esta fuente (cada tabla tiene sus propios ids).
+  const clavePendiente = CLAVE_PENDIENTE_DE_FUENTE[fuente];
+  const eventoAbrir = EVENTO_ABRIR_ALERTA[fuente];
   const esViajes = fuente === "viajes";
   const puedeEscribir = usePuedeEscribir(esViajes ? "viajes" : "combustible");
   const { grifosActivos } = useSedes();
@@ -105,9 +105,9 @@ export default function BandejaAlertas({ fuente = "combustible" }: { fuente?: Fu
   const { noLeidas } = useAlertasCombustibleStream(true, base);
 
   // Llegar desde la campanita: la alerta clickeada queda abierta. Se busca en
-  // "Todas" porque abrirla ya la marcó leída y puede estar resuelta. La campanita es de Combustible:
-  // en la Bandeja de Viajes no se usa (el id podría ser de la otra tabla).
-  const [alertaInicial] = useState(() => (esViajes ? null : leerAlertaPendiente()));
+  // "Todas" porque abrirla ya la marcó leída y puede estar resuelta. Cada Bandeja solo abre las
+  // alertas de SU fuente: el id de Combustible y el de Viajes pueden coincidir.
+  const [alertaInicial] = useState(() => leerAlertaPendiente(clavePendiente));
   const [estado, setEstado] = useState<Estado>(alertaInicial !== null ? "todas" : "pendientes");
   const [modulo, setModulo] = useState<"" | GrupoDeAlerta>("");
   const [tipo, setTipo] = useState("");
@@ -227,19 +227,17 @@ export default function BandejaAlertas({ fuente = "combustible" }: { fuente?: Fu
   // Si la Bandeja ya estaba abierta cuando se clickeó la campanita, el aviso
   // llega por `window`. El id guardado se borra para no reabrirla después.
   useEffect(() => {
-    borrarAlertaPendiente();
+    borrarAlertaPendiente(clavePendiente);
     // Pedir la alerta de la campanita al montar: es carga de datos, el caso
     // para el que existe el efecto (el setState ocurre después del await).
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (alertaInicial !== null) void traerAlerta(alertaInicial);
     const alAviso = (evento: Event) => {
-      // La campanita es de Combustible: sus avisos no abren nada en la Bandeja de Viajes.
-      if (esViajes) return;
       // El id viene como texto (el servidor devuelve el BIGINT así) o como
       // número según quién lo mande: se normaliza, no se descarta.
       const id = Number((evento as CustomEvent<{ alertaId: number | string }>).detail?.alertaId);
       if (!Number.isInteger(id) || id <= 0) return;
-      borrarAlertaPendiente();
+      borrarAlertaPendiente(clavePendiente);
       setEstado("todas");
       setPagina(1);
       setSeleccionadaId(id);
@@ -248,10 +246,10 @@ export default function BandejaAlertas({ fuente = "combustible" }: { fuente?: Fu
       setAvisoResolver(null);
       void traerAlerta(id);
     };
-    window.addEventListener("combustible:abrir-alerta", alAviso);
-    return () => window.removeEventListener("combustible:abrir-alerta", alAviso);
+    window.addEventListener(eventoAbrir, alAviso);
+    return () => window.removeEventListener(eventoAbrir, alAviso);
     // alertaInicial no cambia nunca (nace con el estado) y traerAlerta es estable.
-  }, [alertaInicial, esViajes, traerAlerta]);
+  }, [alertaInicial, clavePendiente, eventoAbrir, traerAlerta]);
 
   const seleccionada =
     alertas.find((a) => a.id === seleccionadaId) ??
