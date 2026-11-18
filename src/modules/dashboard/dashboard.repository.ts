@@ -2,11 +2,13 @@
 
 import type { PoolClient } from "pg";
 
+// Cada grupo de KPIs es de UN módulo y se consulta por separado: el Dashboard solo enriquece con
+// lo que la empresa tiene, así que sin el módulo NO se ejecuta su consulta (ver el servicio).
 export const DashboardRepository = {
   // ============================================================
-  // 📊 KPI GENERAL (CARDS)
+  // 📊 KPIs DE REPUESTOS (CARDS)
   // ============================================================
-  async getKPIs(client: PoolClient, tenantId: string) {
+  async getKPIsRepuestos(client: PoolClient, tenantId: string) {
     const result = await client.query(
       `
       SELECT
@@ -36,8 +38,21 @@ export const DashboardRepository = {
       SELECT ROUND(SUM(stock * precio), 2)
       FROM repuestos
       WHERE tenant_id = $1 AND stock <= stock_minimo
-    ),0) AS valor_stock_bajo,
+    ),0) AS valor_stock_bajo
+    `,
+      [tenantId]
+    );
 
+    return result.rows[0];
+  },
+
+  // ============================================================
+  // 📊 KPI DE COMBUSTIBLE (CARD)
+  // ============================================================
+  async getKPICombustible(client: PoolClient, tenantId: string) {
+    const result = await client.query(
+      `
+      SELECT
 
         -- ⛽ COMBUSTIBLE
         -- Antes: LIMIT 1 sobre un tenant con más de un tanque devolvía el
@@ -56,7 +71,21 @@ export const DashboardRepository = {
            WHERE l.combustible_id = c.id AND l.anulada_en IS NULL
            ORDER BY l.leido_en DESC, l.id DESC LIMIT 1
          ) ultima ON true
-         WHERE c.tenant_id = $1 AND c.activo) AS combustible_porcentaje,
+         WHERE c.tenant_id = $1 AND c.activo) AS combustible_porcentaje
+    `,
+      [tenantId]
+    );
+
+    return result.rows[0];
+  },
+
+  // ============================================================
+  // 📊 KPIs DE DOCUMENTOS (CARDS)
+  // ============================================================
+  async getKPIsDocumentos(client: PoolClient, tenantId: string) {
+    const result = await client.query(
+      `
+      SELECT
 
         -- 📄 DOCUMENTOS
         (SELECT COUNT(*) FROM documentos

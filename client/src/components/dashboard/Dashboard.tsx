@@ -7,6 +7,8 @@ import InventarioCategoria from "./charts/InventarioCategoria";
 import StockMinimoChart from "./charts/StockMinimoChart";
 import ValorCategoria from "./charts/ValorCategoria";
 import CountUp from "./CountUp";
+import { useAuth } from "../../context/AuthContext";
+import { tieneModulo } from "../../modules/tieneModulo";
 import { apiFetch } from "../../services/apiClient";
 
 interface Kpis {
@@ -25,6 +27,12 @@ interface Kpis {
 }
 
 export default function Dashboard() {
+  // El Dashboard no tiene datos propios: cada tarjeta y gráfico es de OTRO módulo y solo se muestra
+  // si la empresa lo tiene (el servidor tampoco manda sus datos; ver `opcionales` en registry.ts).
+  const { usuario } = useAuth();
+  const conRepuestos = tieneModulo(usuario, "repuestos");
+  const conCombustible = tieneModulo(usuario, "combustible");
+  const conDocumentos = tieneModulo(usuario, "documentos");
   const [kpis, setKpis] = useState<Kpis | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -132,242 +140,262 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {!conRepuestos && !conCombustible && !conDocumentos && (
+        <div className="bg-white border border-slate-200 rounded-xl p-6 text-sm text-slate-500 font-light">
+          Aún no hay indicadores para los módulos de tu empresa.
+        </div>
+      )}
+
       {/* KPI Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
-        {/* --------------------------------REPUESTOS OPERATIVOS --------------------------------*/}
-        {/* Total Inventario Card */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-sm transition-all duration-300">
-          <div className="flex items-start justify-between mb-8">
-            <div className="space-y-0.5">
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-                Inventario
-              </p>
-              <p className="text-3xl font-light text-slate-900 tracking-tight">
-                <CountUp end={kpis?.total_repuestos || 0} />
-              </p>
-            </div>
-            <div className="w-8 h-8 bg-indigo-50 rounded-lg flex items-center justify-center">
-              <div className="w-3 h-3 bg-indigo-500 rounded-sm"></div>
-            </div>
-          </div>
-          <p className="text-xs text-slate-400 font-light">Total de SKUs activos</p>
-        </div>
+      {(conRepuestos || conCombustible) && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-8">
+          {conRepuestos && (
+            <>
+              {/* --------------------------------REPUESTOS OPERATIVOS --------------------------------*/}
+              {/* Total Inventario Card */}
+              <div className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-sm transition-all duration-300">
+                <div className="flex items-start justify-between mb-8">
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                      Inventario
+                    </p>
+                    <p className="text-3xl font-light text-slate-900 tracking-tight">
+                      <CountUp end={kpis?.total_repuestos || 0} />
+                    </p>
+                  </div>
+                  <div className="w-8 h-8 bg-indigo-50 rounded-lg flex items-center justify-center">
+                    <div className="w-3 h-3 bg-indigo-500 rounded-sm"></div>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400 font-light">Total de SKUs activos</p>
+              </div>
 
-        {/* Stock Crítico Card */}
-        <div
-          className={`border rounded-xl p-6 hover:shadow-sm transition-all duration-300 ${
-            kpis && kpis.stock_bajo > 0
-              ? "bg-amber-50 border-amber-200"
-              : "bg-white border-slate-200"
-          }`}
-        >
-          <div className="flex items-start justify-between mb-8">
-            <div className="space-y-0.5">
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-                Stock Crítico
-              </p>
-              <p
-                className={`text-3xl font-light tracking-tight ${
-                  kpis && kpis.stock_bajo > 0 ? "text-amber-900" : "text-slate-900"
+              {/* Stock Crítico Card */}
+              <div
+                className={`border rounded-xl p-6 hover:shadow-sm transition-all duration-300 ${
+                  kpis && kpis.stock_bajo > 0
+                    ? "bg-amber-50 border-amber-200"
+                    : "bg-white border-slate-200"
                 }`}
               >
-                <CountUp end={kpis?.stock_bajo || 0} />
-              </p>
-            </div>
-            <div
-              className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                kpis && kpis.stock_bajo > 0 ? "bg-amber-100" : "bg-emerald-50"
-              }`}
-            >
+                <div className="flex items-start justify-between mb-8">
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                      Stock Crítico
+                    </p>
+                    <p
+                      className={`text-3xl font-light tracking-tight ${
+                        kpis && kpis.stock_bajo > 0 ? "text-amber-900" : "text-slate-900"
+                      }`}
+                    >
+                      <CountUp end={kpis?.stock_bajo || 0} />
+                    </p>
+                  </div>
+                  <div
+                    className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                      kpis && kpis.stock_bajo > 0 ? "bg-amber-100" : "bg-emerald-50"
+                    }`}
+                  >
+                    <div
+                      className={`w-3 h-3 rounded-sm ${
+                        kpis && kpis.stock_bajo > 0 ? "bg-amber-500" : "bg-emerald-500"
+                      }`}
+                    ></div>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400 font-light">
+                  {kpis && kpis.stock_bajo > 0 ? "Requieren reabastecimiento" : "Nivel óptimo"}
+                </p>
+              </div>
+
+              {/* Valor Inventario Card */}
+              <div className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-sm transition-all duration-300">
+                <div className="flex items-start justify-between mb-8">
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                      Valor Total
+                    </p>
+                    <p className="text-3xl font-light text-slate-900 tracking-tight">
+                      <CountUp end={kpis?.valor_inventario || 0} prefix="S/ " decimals={0} />
+                    </p>
+                  </div>
+                  <div className="w-8 h-8 bg-emerald-50 rounded-lg flex items-center justify-center">
+                    <div className="w-3 h-3 bg-emerald-500 rounded-sm"></div>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400 font-light">Patrimonio en inventario</p>
+              </div>
+              {/* --------------------------------REPUESTOS ESTRÁTEGICOS --------------------------------*/}
+
+              {/* KPI — % Inventario en Riesgo */}
               <div
-                className={`w-3 h-3 rounded-sm ${
-                  kpis && kpis.stock_bajo > 0 ? "bg-amber-500" : "bg-emerald-500"
-                }`}
-              ></div>
-            </div>
-          </div>
-          <p className="text-xs text-slate-400 font-light">
-            {kpis && kpis.stock_bajo > 0 ? "Requieren reabastecimiento" : "Nivel óptimo"}
-          </p>
-        </div>
-
-        {/* Valor Inventario Card */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-sm transition-all duration-300">
-          <div className="flex items-start justify-between mb-8">
-            <div className="space-y-0.5">
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-                Valor Total
-              </p>
-              <p className="text-3xl font-light text-slate-900 tracking-tight">
-                <CountUp end={kpis?.valor_inventario || 0} prefix="S/ " decimals={0} />
-              </p>
-            </div>
-            <div className="w-8 h-8 bg-emerald-50 rounded-lg flex items-center justify-center">
-              <div className="w-3 h-3 bg-emerald-500 rounded-sm"></div>
-            </div>
-          </div>
-          <p className="text-xs text-slate-400 font-light">Patrimonio en inventario</p>
-        </div>
-        {/* --------------------------------REPUESTOS ESTRÁTEGICOS --------------------------------*/}
-
-        {/* KPI — % Inventario en Riesgo */}
-        <div
-          className={`border rounded-xl p-6 transition-all duration-300 ${
-            (kpis?.porcentaje_riesgo || 0) > 20
-              ? "bg-red-50 border-red-200"
-              : "bg-white border-slate-200"
-          }`}
-        >
-          <div className="flex items-start justify-between mb-8">
-            <div>
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-                Inventario en Riesgo
-              </p>
-              <p
-                className={`text-3xl font-light tracking-tight ${
-                  (kpis?.porcentaje_riesgo || 0) > 20 ? "text-red-700" : "text-slate-900"
+                className={`border rounded-xl p-6 transition-all duration-300 ${
+                  (kpis?.porcentaje_riesgo || 0) > 20
+                    ? "bg-red-50 border-red-200"
+                    : "bg-white border-slate-200"
                 }`}
               >
-                <CountUp end={kpis?.porcentaje_riesgo || 0} />%
-              </p>
-            </div>
-            <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center">
-              <div className="w-3 h-3 bg-red-500 rounded-sm"></div>
-            </div>
-          </div>
-          <p className="text-xs text-slate-400 font-light">Salud general del inventario</p>
-        </div>
+                <div className="flex items-start justify-between mb-8">
+                  <div>
+                    <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                      Inventario en Riesgo
+                    </p>
+                    <p
+                      className={`text-3xl font-light tracking-tight ${
+                        (kpis?.porcentaje_riesgo || 0) > 20 ? "text-red-700" : "text-slate-900"
+                      }`}
+                    >
+                      <CountUp end={kpis?.porcentaje_riesgo || 0} />%
+                    </p>
+                  </div>
+                  <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center">
+                    <div className="w-3 h-3 bg-red-500 rounded-sm"></div>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400 font-light">Salud general del inventario</p>
+              </div>
 
-        {/* KPI — Sobre Stock */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6 transition-all duration-300">
-          <div className="flex items-start justify-between mb-8">
-            <div>
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-                Sobre Stock
-              </p>
-              <p className="text-3xl font-light text-slate-900 tracking-tight">
-                <CountUp end={kpis?.sobre_stock || 0} />
-              </p>
-            </div>
-            <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
-              <div className="w-3 h-3 bg-blue-500 rounded-sm"></div>
-            </div>
-          </div>
-          <p className="text-xs text-slate-400 font-light">Productos con exceso de inventario</p>
-        </div>
+              {/* KPI — Sobre Stock */}
+              <div className="bg-white border border-slate-200 rounded-xl p-6 transition-all duration-300">
+                <div className="flex items-start justify-between mb-8">
+                  <div>
+                    <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                      Sobre Stock
+                    </p>
+                    <p className="text-3xl font-light text-slate-900 tracking-tight">
+                      <CountUp end={kpis?.sobre_stock || 0} />
+                    </p>
+                  </div>
+                  <div className="w-8 h-8 bg-blue-50 rounded-lg flex items-center justify-center">
+                    <div className="w-3 h-3 bg-blue-500 rounded-sm"></div>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400 font-light">
+                  Productos con exceso de inventario
+                </p>
+              </div>
 
-        {/* KPI — Valor en Riesgo */}
-        <div
-          className={`border rounded-xl p-6 transition-all duration-300 ${
-            (kpis?.valor_stock_bajo || 0) > 0
-              ? "bg-rose-50 border-rose-200"
-              : "bg-white border-slate-200"
-          }`}
-        >
-          <div className="flex items-start justify-between mb-8">
-            <div>
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-                Valor en Riesgo
-              </p>
-              <p
-                className={`text-3xl font-light tracking-tight ${
-                  (kpis?.valor_stock_bajo || 0) > 0 ? "text-rose-700" : "text-slate-900"
+              {/* KPI — Valor en Riesgo */}
+              <div
+                className={`border rounded-xl p-6 transition-all duration-300 ${
+                  (kpis?.valor_stock_bajo || 0) > 0
+                    ? "bg-rose-50 border-rose-200"
+                    : "bg-white border-slate-200"
                 }`}
               >
-                <CountUp end={kpis?.valor_stock_bajo || 0} prefix="S/ " decimals={0} />
-              </p>
-            </div>
-            <div className="w-8 h-8 bg-rose-100 rounded-lg flex items-center justify-center">
-              <div className="w-3 h-3 bg-rose-500 rounded-sm"></div>
-            </div>
-          </div>
-          <p className="text-xs text-slate-400 font-light">Capital comprometido en stock crítico</p>
-        </div>
+                <div className="flex items-start justify-between mb-8">
+                  <div>
+                    <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                      Valor en Riesgo
+                    </p>
+                    <p
+                      className={`text-3xl font-light tracking-tight ${
+                        (kpis?.valor_stock_bajo || 0) > 0 ? "text-rose-700" : "text-slate-900"
+                      }`}
+                    >
+                      <CountUp end={kpis?.valor_stock_bajo || 0} prefix="S/ " decimals={0} />
+                    </p>
+                  </div>
+                  <div className="w-8 h-8 bg-rose-100 rounded-lg flex items-center justify-center">
+                    <div className="w-3 h-3 bg-rose-500 rounded-sm"></div>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400 font-light">
+                  Capital comprometido en stock crítico
+                </p>
+              </div>
+            </>
+          )}
 
-        {/* Combustible Card */}
-        <div className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-sm transition-all duration-300">
-          <div className="flex items-start justify-between mb-8">
-            <div className="space-y-0.5">
-              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-                Combustible
-              </p>
-              <p className="text-3xl font-light text-slate-900 tracking-tight">
-                <CountUp end={kpis?.combustible_porcentaje || 0} />%
-              </p>
+          {/* Combustible Card */}
+          {conCombustible && (
+            <div className="bg-white border border-slate-200 rounded-xl p-6 hover:shadow-sm transition-all duration-300">
+              <div className="flex items-start justify-between mb-8">
+                <div className="space-y-0.5">
+                  <p className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                    Combustible
+                  </p>
+                  <p className="text-3xl font-light text-slate-900 tracking-tight">
+                    <CountUp end={kpis?.combustible_porcentaje || 0} />%
+                  </p>
+                </div>
+                <div
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                    Number(kpis?.combustible_porcentaje) < 30 ? "bg-red-50" : "bg-blue-50"
+                  }`}
+                >
+                  <div
+                    className={`w-3 h-3 rounded-sm ${
+                      Number(kpis?.combustible_porcentaje) < 30 ? "bg-red-500" : "bg-blue-500"
+                    }`}
+                  ></div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-1000 ease-out ${
+                      Number(kpis?.combustible_porcentaje) < 30 ? "bg-red-500" : "bg-blue-500"
+                    }`}
+                    style={{ width: `${barWidth}%` }}
+                  ></div>
+                </div>
+                <p className="text-xs text-slate-400 font-light">Nivel del tanque principal</p>
+              </div>
             </div>
-            <div
-              className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                Number(kpis?.combustible_porcentaje) < 30 ? "bg-red-50" : "bg-blue-50"
-              }`}
-            >
-              <div
-                className={`w-3 h-3 rounded-sm ${
-                  Number(kpis?.combustible_porcentaje) < 30 ? "bg-red-500" : "bg-blue-500"
-                }`}
-              ></div>
-            </div>
-          </div>
-          <div className="space-y-2">
-            <div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden">
-              <div
-                className={`h-full transition-all duration-1000 ease-out ${
-                  Number(kpis?.combustible_porcentaje) < 30 ? "bg-red-500" : "bg-blue-500"
-                }`}
-                style={{ width: `${barWidth}%` }}
-              ></div>
-            </div>
-            <p className="text-xs text-slate-400 font-light">Nivel del tanque principal</p>
-          </div>
+          )}
         </div>
-      </div>
+      )}
 
       {/* Charts Section */}
-      {charts && (
+      {charts && (conRepuestos || conDocumentos) && (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-8">
-          <InventarioCategoria data={charts.inventario_categoria} />
-          <ValorCategoria data={charts.valor_categoria} />
-          <DocumentosEstado data={charts.documentos_estado} />
-          <StockMinimoChart data={charts.stock_vs_minimo} />
+          {conRepuestos && <InventarioCategoria data={charts.inventario_categoria} />}
+          {conRepuestos && <ValorCategoria data={charts.valor_categoria} />}
+          {conDocumentos && <DocumentosEstado data={charts.documentos_estado} />}
+          {conRepuestos && <StockMinimoChart data={charts.stock_vs_minimo} />}
         </div>
       )}
 
       {/* Documentos Section */}
-      <div className="bg-white border border-slate-200 rounded-xl p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-sm font-medium text-slate-400 uppercase tracking-wide">
-            Documentación Legal
-          </h2>
-          <div className="w-6 h-6 bg-violet-50 rounded-md flex items-center justify-center">
-            <div className="w-2 h-2 bg-violet-500 rounded-sm"></div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {/* Vencidos */}
-          <div className="space-y-1">
-            <p className="text-xs text-slate-400 font-light">Documentos vencidos</p>
-            <p
-              className={`text-4xl font-light tracking-tight ${
-                (kpis?.docs_vencidos || 0) > 0 ? "text-red-600" : "text-slate-900"
-              }`}
-            >
-              <CountUp end={kpis?.docs_vencidos || 0} />
-            </p>
+      {conDocumentos && (
+        <div className="bg-white border border-slate-200 rounded-xl p-6">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-sm font-medium text-slate-400 uppercase tracking-wide">
+              Documentación Legal
+            </h2>
+            <div className="w-6 h-6 bg-violet-50 rounded-md flex items-center justify-center">
+              <div className="w-2 h-2 bg-violet-500 rounded-sm"></div>
+            </div>
           </div>
 
-          {/* Por Vencer */}
-          <div className="space-y-1">
-            <p className="text-xs text-slate-400 font-light">Próximos a vencer</p>
-            <p
-              className={`text-4xl font-light tracking-tight ${
-                (kpis?.docs_por_vencer || 0) > 0 ? "text-amber-600" : "text-slate-900"
-              }`}
-            >
-              <CountUp end={kpis?.docs_por_vencer || 0} />
-            </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Vencidos */}
+            <div className="space-y-1">
+              <p className="text-xs text-slate-400 font-light">Documentos vencidos</p>
+              <p
+                className={`text-4xl font-light tracking-tight ${
+                  (kpis?.docs_vencidos || 0) > 0 ? "text-red-600" : "text-slate-900"
+                }`}
+              >
+                <CountUp end={kpis?.docs_vencidos || 0} />
+              </p>
+            </div>
+
+            {/* Por Vencer */}
+            <div className="space-y-1">
+              <p className="text-xs text-slate-400 font-light">Próximos a vencer</p>
+              <p
+                className={`text-4xl font-light tracking-tight ${
+                  (kpis?.docs_por_vencer || 0) > 0 ? "text-amber-600" : "text-slate-900"
+                }`}
+              >
+                <CountUp end={kpis?.docs_por_vencer || 0} />
+              </p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
