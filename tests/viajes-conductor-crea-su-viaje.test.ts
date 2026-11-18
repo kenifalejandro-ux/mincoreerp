@@ -10,7 +10,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, pool, withTenant } from "../src/server/config/database";
 
 type Agente = ReturnType<typeof request.agent>;
@@ -50,7 +50,7 @@ describe("viajes: el conductor crea su propio viaje (0179)", () => {
 
   async function conductor(): Promise<{ agente: Agente; dni: string }> {
     const agente = request.agent(app);
-    const dni = String(86300000 + Math.floor(Math.random() * 90000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `Conductor Prueba ${dni}`, dni, password, rol: "conductor_ruta" });

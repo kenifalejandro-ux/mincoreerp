@@ -16,7 +16,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import request from "supertest";
 import { randomUUID } from "node:crypto";
 
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { pool, withTenant, closeDatabase } from "../src/server/config/database";
 import { env } from "../src/server/config/env";
 import { MODULOS } from "../src/modules/registry";
@@ -77,7 +77,7 @@ describe("lecturas del medidor de la unidad (Flota)", () => {
       email,
       password: PASSWORD,
       rol,
-      dni: String(Math.floor(10_000_000 + Math.random() * 89_999_999)),
+      dni: dniUnico(),
     });
     expect(alta.status, JSON.stringify(alta.body)).toBe(201);
     return email;

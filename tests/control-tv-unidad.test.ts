@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
 import { env } from "../src/server/config/env";
 import { MODULOS } from "../src/modules/registry";
@@ -23,7 +23,6 @@ describe("control TV: resumen de una unidad", () => {
   const tenants: string[] = [];
   let empresa: Empresa;
   let admin: Agente;
-  let seq = 0;
   let a: number;
   let b: number;
   let grifoA: number;
@@ -48,7 +47,7 @@ describe("control TV: resumen de una unidad", () => {
   }
 
   async function persona(rol: string, nombre: string) {
-    const dni = String(86200000 + Math.floor(Math.random() * 90000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre, dni, password: PASSWORD, rol });

@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { env } from "../src/server/config/env";
 import { closeDatabase, pool, withTenant } from "../src/server/config/database";
 import { guardarBackup, leerBackup } from "../src/server/services/platformBackupStorage";
@@ -53,7 +53,7 @@ async function empresa() {
 
 async function conRol(admin: Agente, slug: string, rol: string) {
   const agente = request.agent(app);
-  const dni = String(86100000 + Math.floor(Math.random() * 800000) + seq++);
+  const dni = dniUnico();
   const alta = await admin
     .post("/api/erp/usuarios")
     .send({ nombre: `Persona ${rol}`, dni, password, rol });

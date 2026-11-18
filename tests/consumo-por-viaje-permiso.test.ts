@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { describe, it, expect, afterAll } from "vitest";
 import request from "supertest";
 
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { pool, closeDatabase } from "../src/server/config/database";
 import { PESTANAS_CONFIGURABLES } from "../src/server/services/permisosPestanas.service";
 
@@ -154,7 +154,7 @@ describe("Consumo por viaje dentro de Viajes", () => {
         email,
         password: PASSWORD,
         rol,
-        dni: String(Math.floor(10000000 + Math.random() * 89999999)),
+        dni: dniUnico(),
       });
       expect(alta.status, JSON.stringify(alta.body)).toBe(201);
       if (permiso) {
@@ -221,7 +221,7 @@ describe("Consumo por viaje dentro de Viajes", () => {
         email,
         password: PASSWORD,
         rol,
-        dni: String(Math.floor(10000000 + Math.random() * 89999999)),
+        dni: dniUnico(),
       });
       expect(creado.status).toBe(201);
       const actuales = (await admin.get(`/api/erp/usuarios/${creado.body.id}/permisos`)).body;

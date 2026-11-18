@@ -11,7 +11,7 @@
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 import { CombustibleRepository } from "../src/modules/combustible/combustible.repository";
 
@@ -33,12 +33,11 @@ describe("combustible: de la cisterna al tanque es una entrada del tanque (0169)
   let proveedor: number;
   let principal: number;
   let unidad: number;
-  let seq = 0;
   let nVale = 3000;
 
   async function conRol(rol: string): Promise<Agente> {
     const agente = request.agent(app);
-    const dni = String(88400000 + Math.floor(Math.random() * 800000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `Persona ${rol}`, dni, password, rol });

@@ -11,7 +11,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import request from "supertest";
 
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { env } from "../src/server/config/env";
 import { closeDatabase, pool, withTenant } from "../src/server/config/database";
 import { guardarBackup, leerBackup } from "../src/server/services/platformBackupStorage";
@@ -391,7 +391,7 @@ describe("aflojar y permisos", () => {
     // Matriz robusta de perfiles (profile_user.xlsx, confirmado por Kenif
     // 2026-10-01): Surtidores es Visible para Operador, no exclusivo de admin.
     const operador = request.agent(app);
-    const dni = String(87100000 + Math.floor(Math.random() * 800000));
+    const dni = dniUnico();
     await admin.post("/api/erp/usuarios").send({ nombre: "Op", dni, password, rol: "operador" });
     await operador.post("/api/auth/login").send({ tenantSlug: slug, identificador: dni, password });
     expect(
@@ -455,7 +455,7 @@ describe("calibración del contómetro (0108)", () => {
 
     const s = await surtidor(admin, grifo);
     const operador = request.agent(app);
-    const dni = String(87100000 + Math.floor(Math.random() * 800000));
+    const dni = dniUnico();
     await admin.post("/api/erp/usuarios").send({ nombre: "Op2", dni, password, rol: "operador" });
     await operador.post("/api/auth/login").send({ tenantSlug: slug, identificador: dni, password });
     const r = await operador

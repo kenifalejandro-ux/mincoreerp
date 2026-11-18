@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
 import { vaciarEventoDeCombustible } from "../src/modules/combustible/alcance";
 
@@ -39,7 +39,7 @@ describe("combustible: alcance por usuario", () => {
 
   async function persona(rol: string) {
     const agente = request.agent(app);
-    const dni = String(88100000 + Math.floor(Math.random() * 800000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `P ${rol}`, dni, password, rol });

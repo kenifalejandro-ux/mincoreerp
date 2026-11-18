@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, pool, withTenant } from "../src/server/config/database";
 import { estadoDeUnidad, tipoLlevaConductor } from "../src/modules/equipos/equipos.estado";
 import { EquiposRepository } from "../src/modules/equipos/equipos.repository";
@@ -271,7 +271,7 @@ describe("equipos: conductor y rutas con historial (0126)", () => {
     // Atribuirle el cambio a OTRA persona de la empresa.
     const altaOtro = await admin.post("/api/erp/usuarios").send({
       nombre: "Otra persona",
-      dni: String(86300000 + Math.floor(Math.random() * 800000)),
+      dni: dniUnico(),
       password,
       rol: "operador",
     });
@@ -382,7 +382,7 @@ describe("equipos: conductor y rutas con historial (0126)", () => {
 
   it("Lectura no puede cambiar conductor ni rutas (403), pero sí consultar el historial", async () => {
     const e = await crear({ conductor_nombre: "Juan Pérez", conductor_dni: "40000001" });
-    const dni = String(86200000 + Math.floor(Math.random() * 800000));
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: "Persona lectura", dni, password, rol: "lectura" });
@@ -402,7 +402,7 @@ describe("equipos: conductor y rutas con historial (0126)", () => {
   });
 
   it("las unidades de un conductor, por DNI: las actuales primero y las pasadas con su cierre", async () => {
-    const dni = String(70000000 + Math.floor(Math.random() * 999999));
+    const dni = dniUnico();
     const a = await crear({ conductor_nombre: "Luis Quispe", conductor_dni: dni });
     const b = await crear({ conductor_nombre: "Luis Quispe", conductor_dni: dni });
     // El conductor deja la unidad A y pasa Marco.
@@ -428,7 +428,7 @@ describe("equipos: conductor y rutas con historial (0126)", () => {
   });
 
   it("las unidades de un conductor: un DNI raro da 400 y otra empresa no ve nada", async () => {
-    const dni = String(71000000 + Math.floor(Math.random() * 999999));
+    const dni = dniUnico();
     await crear({ conductor_nombre: "Solo Mío", conductor_dni: dni });
     expect((await admin.get("/api/erp/equipos/conductor/12'%3B--")).status).toBe(400);
     expect((await admin.get(`/api/erp/equipos/conductor/${"9".repeat(16)}`)).status).toBe(400);

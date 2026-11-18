@@ -22,7 +22,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, pool, withTenant } from "../src/server/config/database";
 
 const password = "ClaveDePrueba123";
@@ -88,7 +88,7 @@ describe("combustible: comprobante de la compra en ruta -- ronda adversaria", ()
 
   async function persona(rol: string) {
     const agente = request.agent(app);
-    const dni = String(87100000 + Math.floor(Math.random() * 800000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `P ${rol}`, dni, password, rol });

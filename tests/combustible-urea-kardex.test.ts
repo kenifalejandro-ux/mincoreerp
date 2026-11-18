@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
 describe("combustible: kardex de urea", () => {
@@ -186,7 +186,7 @@ describe("combustible: kardex de urea", () => {
     const emailL = `lec-${idUnico("x")}@test.local`;
     await crear("lectura", { email: emailL });
     await crear("grifero", {
-      dni: `8${Math.floor(Math.random() * 1e7)}`.padEnd(8, "1").slice(0, 8),
+      dni: dniUnico(),
     });
 
     const lector = request.agent(app);

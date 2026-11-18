@@ -12,7 +12,7 @@ import path from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 import { env } from "../src/server/config/env";
 
@@ -66,7 +66,7 @@ describe("combustible: historial de compras del conductor", () => {
 
   async function persona(rol: string, overrides: Record<string, boolean> = {}) {
     const agente = request.agent(app);
-    const dni = String(86100000 + Math.floor(Math.random() * 800000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `H ${rol}`, dni, password, rol });

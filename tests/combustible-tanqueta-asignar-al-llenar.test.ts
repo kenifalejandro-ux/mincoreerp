@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
 
 describe("combustible: asignar la tanqueta al llenarla desde el tanque (0139)", () => {
@@ -27,7 +27,7 @@ describe("combustible: asignar la tanqueta al llenarla desde el tanque (0139)", 
       .post("/api/auth/login")
       .send({ tenantSlug: slug, email: creado.usuario.email, password });
     principal = (await admin.get("/api/erp/sedes")).body.sedes[0].grifos[0].id;
-    const dni = String(88400000 + Math.floor(Math.random() * 400000));
+    const dni = dniUnico();
     await admin
       .post("/api/erp/usuarios")
       .send({ nombre: "Grifero", dni, password, rol: "grifero" });

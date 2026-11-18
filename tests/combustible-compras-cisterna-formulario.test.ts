@@ -12,6 +12,7 @@ import {
   crearTenantDePrueba,
   borrarTenantDePrueba,
   idUnico,
+  dniUnico,
 } from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
 
@@ -37,12 +38,11 @@ describe("combustible: formulario de compras de cisterna", () => {
   let nombreProveedor: string;
   let grifoA: number;
   let grifoB: number;
-  let seq = 0;
   let documento = 0;
 
   async function persona(rol: string) {
     const agente = request.agent(app);
-    const dni = String(88800000 + Math.floor(Math.random() * 800000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `Persona ${rol}`, dni, password, rol });

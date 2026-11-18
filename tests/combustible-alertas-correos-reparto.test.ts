@@ -22,6 +22,7 @@ import {
   borrarTenantDePrueba,
   idUnico,
   recibirTanqueta,
+  dniUnico,
 } from "./helpers";
 import { withTenant, closeDatabase } from "../src/server/config/database";
 import { correrConciliacion } from "../src/server/services/combustibleConciliacion.worker";
@@ -295,7 +296,7 @@ describe("combustible: los correos nuevos van a quien tiene ese grifo", () => {
       });
 
     beforeAll(async () => {
-      const dni = String(87600000 + Math.floor(Math.random() * 300000) + seq++);
+      const dni = dniUnico();
       const alta = await admin
         .post("/api/erp/usuarios")
         .send({ nombre: "Conductor", dni, password: PASSWORD, rol: "conductor_ruta" });

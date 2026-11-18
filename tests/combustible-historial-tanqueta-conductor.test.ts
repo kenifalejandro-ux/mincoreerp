@@ -11,12 +11,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
 const password = "ClaveDePrueba123";
 const base = "/api/erp/combustible";
-let seq = 0;
 
 describe("combustible: historial de cargas desde tanqueta del conductor", () => {
   let tenantId: string;
@@ -25,7 +24,7 @@ describe("combustible: historial de cargas desde tanqueta del conductor", () => 
 
   async function persona(rol: string, overrides: Record<string, boolean> = {}, dniFijo?: string) {
     const agente = request.agent(app);
-    const dni = dniFijo ?? String(86700000 + Math.floor(Math.random() * 800000) + seq++);
+    const dni = dniFijo ?? dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `T ${rol}`, dni, password, rol });
@@ -93,7 +92,7 @@ describe("combustible: historial de cargas desde tanqueta del conductor", () => 
 
   it("la carga que sacó llega sin el costo interno ni quién anuló, con la placa; otro conductor no la ve", async () => {
     const grifo = (await admin.get("/api/erp/sedes")).body.sedes[0].grifos[0].id;
-    const dniA = String(86800000 + Math.floor(Math.random() * 90000) + seq++);
+    const dniA = dniUnico();
     const a = await persona("conductor_ruta", {}, dniA);
     const b = await persona("conductor_ruta");
     const placa = idUnico("VQ");

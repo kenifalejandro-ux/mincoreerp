@@ -24,7 +24,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
 const NOMBRE_OCULTO = "Otros (grifo no frecuente)";
@@ -350,7 +350,7 @@ describe("combustible: compra en ruta con grifo Otros (migraciones 0163-0164)", 
   // ── 7. El conductor ───────────────────────────────────────────────────
 
   it("un conductor de ruta puede comprar en Otros aunque no pueda dar de alta proveedores", async () => {
-    const dni = String(87300000 + Math.floor(Math.random() * 600000));
+    const dni = dniUnico();
     const alta = await agente
       .post("/api/erp/usuarios")
       .send({ nombre: "Conductor Otros", dni, password, rol: "conductor_ruta" });

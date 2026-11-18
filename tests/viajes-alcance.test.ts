@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
 
 type Agente = ReturnType<typeof request.agent>;
@@ -61,7 +61,7 @@ describe("viajes: alcance por grifo", () => {
     viaje.a = (await nuevo(grifoA)).viaje;
     viaje.b = (await nuevo(grifoB)).viaje;
 
-    const dni = String(86900000 + Math.floor(Math.random() * 90000));
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: "Lector", dni, password: PASSWORD, rol: "lectura" });

@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
 const RUTA = "/api/erp/combustible/precios/masivo";
@@ -46,11 +46,10 @@ describe("combustible: precios masivos", () => {
   let otroTenantId: string;
   let tanqueAjeno: number;
   let proveedorAjeno: number;
-  let seq = 0;
 
   async function persona(rol: string) {
     const agente = request.agent(app);
-    const dni = String(87300000 + Math.floor(Math.random() * 600000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `P ${rol}`, dni, password, rol });

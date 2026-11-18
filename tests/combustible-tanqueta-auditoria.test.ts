@@ -22,6 +22,7 @@ import {
   borrarTenantDePrueba,
   idUnico,
   recibirTanqueta,
+  dniUnico,
 } from "./helpers";
 import { closeDatabase, pool, withTenant } from "../src/server/config/database";
 
@@ -201,9 +202,8 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
   };
 
   /** Un conductor con su propia unidad (el DNI del usuario = conductor_dni del equipo). */
-  let seqDni = 0;
   const conductorNuevo = async () => {
-    const dni = String(89400000 + Math.floor(Math.random() * 300000) + seqDni++);
+    const dni = dniUnico();
     const unidad = await unidadNueva(admin, principal, dni);
     const agente = await altaPorDni("conductor_ruta", dni);
     return { agente, unidad, dni };
@@ -232,7 +232,7 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
     tanque = await tanqueNuevo(admin, principal);
 
     operador = await altaUsuario("operador");
-    grifero = await altaPorDni("grifero", String(88600000 + Math.floor(Math.random() * 400000)));
+    grifero = await altaPorDni("grifero", dniUnico());
     encargado = await altaUsuario("encargado_urea");
     lectura = await altaUsuario("lectura");
     conductor = conductorSinUnidad = await altaPorDni(
@@ -707,7 +707,7 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
   describe("E. regla de la tanqueta activa", () => {
     it("E1: no se puede cargar la segunda, ni la de otra unidad (403), ni una sin asignar", async () => {
       // Se aísla en una unidad propia del conductor para no heredar tanquetas de otros tests.
-      const dni = String(88800000 + Math.floor(Math.random() * 400000));
+      const dni = dniUnico();
       const u = await unidadNueva(admin, principal, dni);
       const c = await altaPorDni("conductor_ruta", dni);
       const primera = await tanquetaLlenaYAsignada(tanque, u, 100);
@@ -722,7 +722,7 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
     });
 
     it("E2: un conductor con dos unidades carga la activa de cada una y no cruza tanquetas", async () => {
-      const dni = String(88900000 + Math.floor(Math.random() * 400000));
+      const dni = dniUnico();
       const u1 = await unidadNueva(admin, principal, dni);
       const u2 = await unidadNueva(admin, principal, dni);
       const c = await altaPorDni("conductor_ruta", dni);
@@ -737,7 +737,7 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
     });
 
     it("E3: un DNI con espacios en Equipos igual coincide", async () => {
-      const dni = String(89100000 + Math.floor(Math.random() * 400000));
+      const dni = dniUnico();
       const u = await unidadNueva(admin, principal, `  ${dni} `);
       const c = await altaPorDni("conductor_ruta", dni);
       const t = await tanquetaLlenaYAsignada(tanque, u, 100);
@@ -745,7 +745,7 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
     });
 
     it("E4: un equipo dado de baja deja de ser 'a cargo' del conductor", async () => {
-      const dni = String(89200000 + Math.floor(Math.random() * 400000));
+      const dni = dniUnico();
       const u = await unidadNueva(admin, principal, dni);
       const c = await altaPorDni("conductor_ruta", dni);
       const t = await tanquetaLlenaYAsignada(tanque, u, 100);
@@ -767,7 +767,7 @@ describe("auditoría adversaria: tanquetas asignadas a unidad (0139/0140)", () =
     });
 
     it("E5: una tanqueta ya vaciada pero aún asignada no sirve para cargar de más una y otra vez sin alerta propia", async () => {
-      const dni = String(89300000 + Math.floor(Math.random() * 400000));
+      const dni = dniUnico();
       const u = await unidadNueva(admin, principal, dni);
       const c = await altaPorDni("conductor_ruta", dni);
       const t = await tanquetaLlenaYAsignada(tanque, u, 20);

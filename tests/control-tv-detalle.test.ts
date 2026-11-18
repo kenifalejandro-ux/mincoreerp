@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
 import { env } from "../src/server/config/env";
 import { MODULOS } from "../src/modules/registry";
@@ -165,7 +165,7 @@ describe("control TV: detalle", () => {
   it("lectura lo ve; el operador no; y sin Combustible responde vacío, sin 403", async () => {
     const persona = async (rol: string) => {
       const agente = request.agent(app);
-      const dni = String(88700000 + Math.floor(Math.random() * 90000));
+      const dni = dniUnico();
       await admin
         .post("/api/erp/usuarios")
         .send({ nombre: `P ${rol}`, dni, password: PASSWORD, rol })

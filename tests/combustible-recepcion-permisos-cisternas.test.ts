@@ -9,7 +9,7 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, pool, withTenant } from "../src/server/config/database";
 
 const BASE = "/api/erp/combustible";
@@ -23,7 +23,6 @@ describe("combustible: permisos de la recepción en Cisternas", () => {
   const admin = request.agent(app);
   let proveedor: number;
   let sede: number;
-  let seq = 0;
 
   beforeAll(async () => {
     const c = await crearTenantDePrueba(password);
@@ -45,7 +44,7 @@ describe("combustible: permisos de la recepción en Cisternas", () => {
    *  en la sesión, y se lee al ingresar). */
   async function persona(rol: string, overrides: Record<string, boolean> = {}) {
     const agente = request.agent(app);
-    const dni = String(88900000 + Math.floor(Math.random() * 800000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `Persona ${rol}`, dni, password, rol });

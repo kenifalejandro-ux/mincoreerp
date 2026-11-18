@@ -18,7 +18,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
 let seq = 0;
@@ -46,7 +46,7 @@ describe("combustible: los tres sueltos de la 3ª auditoría", () => {
       .send({ placa_codigo: idUnico("VQ"), tipo: "Volquete" });
     equipoId = e.body.id;
 
-    const dni = String(86000000 + Math.floor(Math.random() * 900000));
+    const dni = dniUnico();
     const alta = await ag
       .post("/api/erp/usuarios")
       .send({ nombre: "Otra persona", dni, password, rol: "admin" });

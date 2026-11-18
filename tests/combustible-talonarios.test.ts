@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 import {
   agruparEnTramos,
@@ -223,7 +223,7 @@ describe("combustible: reporte de talonarios", () => {
 
   // El grifero no tiene el historial de despachos, pero sí ve sus talonarios (solo mirar).
   async function entrarComo(rol: string) {
-    const dni = String(86300000 + Math.floor(Math.random() * 900000));
+    const dni = dniUnico();
     const alta = await agente
       .post("/api/erp/usuarios")
       .send({ nombre: `Talonarios ${rol}`, dni, password, rol });

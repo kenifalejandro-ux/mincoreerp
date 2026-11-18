@@ -11,7 +11,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
 const DIA = 24 * 3600 * 1000;
@@ -50,7 +50,7 @@ describe("combustible: reporte de consumo por equipo", () => {
       .post("/api/auth/login")
       .send({ tenantSlug: slug, email: creado.usuario.email, password });
 
-    const dni = String(84900000 + Math.floor(Math.random() * 90000));
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: "Operador", dni, password, rol: "operador" });

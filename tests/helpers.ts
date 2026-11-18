@@ -39,6 +39,10 @@ export function idUnico(prefijo: string) {
   return `${prefijo}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 }
 
+// DNI de prueba que no se repite (ver el comentario de ese archivo). NUNCA armar un DNI al
+// azar a mano: el test guardián de DNI lo hace fallar.
+export { dniUnico } from "./dniUnico";
+
 /** ioredis usa lazyConnect — getRedis() puede devolver null todavía un
  *  instante después de que el proceso arrancó, aunque termine habiendo
  *  Redis, mientras la conexión inicial no terminó. Se espera un toque.
