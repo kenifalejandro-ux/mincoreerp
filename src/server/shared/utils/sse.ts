@@ -20,8 +20,9 @@ export interface OpcionesStreamSSE {
   suscribir: (canal: string, onMensaje: (mensajeCrudo: string) => void) => Promise<() => void>;
   /** Ajusta cada evento antes de mandarlo a ESTA conexión (el alcance de
    *  Combustible, 0100, vacía el contenido para quien ve solo algunas
-   *  plantas). Sin él, el evento sale tal cual. */
-  adaptar?: (evento: EventoTiempoReal) => EventoTiempoReal;
+   *  plantas). `null` = NO mandarlo a esta conexión (quien no tiene el módulo dueño del evento).
+   *  Sin él, el evento sale tal cual. */
+  adaptar?: (evento: EventoTiempoReal) => EventoTiempoReal | null;
 }
 
 function parsearUltimoEventId(req: Request): number | undefined {
@@ -35,6 +36,17 @@ function enviarEventoSSE(res: Response, evento: EventoTiempoReal): void {
   res.write(`id: ${evento.id}\n`);
   res.write(`event: ${evento.tipo}\n`);
   res.write(`data: ${JSON.stringify(evento.payload)}\n\n`);
+}
+
+/** Manda el evento tras `adaptar`; si `adaptar` lo descarta (`null`), no manda nada. OJO: no usar
+ *  `adaptar?.(e) ?? e`: ese `??` mandaría igual el evento que se quiso descartar. */
+function enviarAdaptado(
+  res: Response,
+  evento: EventoTiempoReal,
+  adaptar: OpcionesStreamSSE["adaptar"]
+): void {
+  const aEnviar = adaptar ? adaptar(evento) : evento;
+  if (aEnviar) enviarEventoSSE(res, aEnviar);
 }
 
 export async function manejarConexionSSE(
@@ -61,7 +73,7 @@ export async function manejarConexionSSE(
   if (desdeId !== undefined) {
     try {
       const pendientes = await opciones.reponer(desdeId);
-      pendientes.forEach((evento) => enviarEventoSSE(res, opciones.adaptar?.(evento) ?? evento));
+      pendientes.forEach((evento) => enviarAdaptado(res, evento, opciones.adaptar));
     } catch (err) {
       // No cortar la conexión por esto -- el cliente sigue recibiendo lo
       // que llegue en vivo de acá en más, aunque se haya perdido el tramo
@@ -73,7 +85,7 @@ export async function manejarConexionSSE(
   const desuscribir = await opciones.suscribir(opciones.canal, (mensajeCrudo) => {
     try {
       const evento = JSON.parse(mensajeCrudo) as EventoTiempoReal;
-      enviarEventoSSE(res, opciones.adaptar?.(evento) ?? evento);
+      enviarAdaptado(res, evento, opciones.adaptar);
     } catch (err) {
       logger.warn(
         { err, canal: opciones.canal },

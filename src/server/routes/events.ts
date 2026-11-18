@@ -11,6 +11,7 @@ import { tenantMiddleware } from "../shared/middlewares/tenant.middleware";
 import erpRateLimiter from "../middleware/erpRateLimiter";
 import { asyncHandler } from "../shared/utils/asyncHandler";
 import { getTenantId } from "../shared/utils/request";
+import { debeRecibirEvento } from "../shared/utils/eventosPorModulo";
 import { manejarConexionSSE } from "../shared/utils/sse";
 import { withTenant } from "../config/database";
 import { resolverAlcance, vaciarEventoDeCombustible } from "../../modules/combustible/alcance";
@@ -38,12 +39,20 @@ eventosRouter.get(
     const alcance = await withTenant(tenantId, (client) =>
       resolverAlcance(client, tenantId, req.usuario!)
     );
+    // Quien no tiene el módulo dueño de un evento NO lo recibe (ni en vivo ni en la reposición por
+    // Last-Event-ID): ver eventosPorModulo.ts. Los módulos se resuelven al conectar, como el alcance.
+    const modulos = req.usuario!.modulosPermitidos;
+    const vaciarContenido = !(alcance.todo && !alcance.sinTipos);
     await manejarConexionSSE(req, res, {
       canal: canalDeTenant(tenantId),
       reponer: (desdeId) => reponerEventosTenant(tenantId, desdeId),
       suscribir: suscribirCanal,
-      // Sin contenido también a quien no ve algún tipo de alerta por no tener su módulo.
-      adaptar: alcance.todo && !alcance.sinTipos ? undefined : vaciarEventoDeCombustible,
+      adaptar: (evento) => {
+        if (!debeRecibirEvento(evento.tipo, modulos)) return null;
+        // Sin contenido a quien ve solo algunas plantas o no ve algún tipo de alerta por no tener
+        // su módulo (alcance de Combustible).
+        return vaciarContenido ? vaciarEventoDeCombustible(evento) : evento;
+      },
     });
   })
 );
