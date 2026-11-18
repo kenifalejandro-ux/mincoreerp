@@ -43,7 +43,11 @@ export interface AlertaCombustible {
     | "descuadre_ventana"
     | "despacho_retroactivo"
     | "vale_recargado"
-    | "tanque_sin_vigilancia";
+    | "tanque_sin_vigilancia"
+    // Las de viaje viven en su propia tabla (0188) y llegan por la fuente "viajes".
+    | "viaje_demorado"
+    | "viaje_detenido"
+    | "viaje_creado_por_conductor";
   // Nullable desde la migración 0073: las alertas de recepción y de nivel
   // no son sobre un vale, así que se anclan al tanque o a la recepción.
   serie_talonario: string | null;
@@ -63,8 +67,31 @@ interface RespuestaAlertas {
   pagination: { total: number };
 }
 
-/** De dónde se leen las alertas: la Bandeja de Combustible o la de Viajes (misma forma de respuesta). */
-const BASE_COMBUSTIBLE = "/api/erp/combustible/alertas";
+/** De dónde sale la lista: las alertas de Combustible (y Urea) o las de Viajes (0188). Las dos
+ *  responden con la misma forma, así que la misma pantalla y la misma campanita sirven a las dos.
+ *  Va acá (no en Bandeja.tsx) para que la campanita, que se carga con el Header, no arrastre la
+ *  Bandeja entera, que es perezosa. */
+export type FuenteDeAlertas = "combustible" | "viajes";
+
+export const BASE_DE_FUENTE: Record<FuenteDeAlertas, string> = {
+  combustible: "/api/erp/combustible/alertas",
+  viajes: "/api/erp/viajes/alertas",
+};
+
+/** Los ids de las dos tablas se pisan (hay una alerta 7 en cada una): la alerta que la campanita
+ *  deja para abrir en la Bandeja lleva SU fuente, con su propia clave y su propio aviso. */
+export const CLAVE_PENDIENTE_DE_FUENTE: Record<FuenteDeAlertas, string> = {
+  combustible: CLAVE_ALERTA_PENDIENTE,
+  viajes: "viajes:bandeja:abrir",
+};
+
+export const EVENTO_ABRIR_ALERTA: Record<FuenteDeAlertas, string> = {
+  combustible: "combustible:abrir-alerta",
+  viajes: "viajes:abrir-alerta",
+};
+
+/** De dónde se leen las alertas por omisión: la Bandeja de Combustible. */
+const BASE_COMBUSTIBLE = BASE_DE_FUENTE.combustible;
 
 export function useAlertasCombustibleStream(activo: boolean, base: string = BASE_COMBUSTIBLE) {
   const [alertas, setAlertas] = useState<AlertaCombustible[]>([]);

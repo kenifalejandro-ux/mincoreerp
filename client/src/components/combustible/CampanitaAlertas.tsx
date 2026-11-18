@@ -14,7 +14,16 @@ import {
   grupoDeAlerta,
   type GrupoDeAlerta,
 } from "./alertasTexto";
-import { CLAVE_ALERTA_PENDIENTE, useAlertasCombustibleStream } from "./useAlertasCombustibleStream";
+import {
+  BASE_DE_FUENTE,
+  CLAVE_PENDIENTE_DE_FUENTE,
+  EVENTO_ABRIR_ALERTA,
+  useAlertasCombustibleStream,
+  type AlertaCombustible,
+  type FuenteDeAlertas,
+} from "./useAlertasCombustibleStream";
+import { useAuth } from "../../context/AuthContext";
+import { MODULOS_CON_BANDEJA } from "../bandeja/bandejaAcceso";
 
 const ETIQUETA_TIPO: Record<string, string> = {
   hueco_detectado: "Hueco de talonario",
@@ -99,10 +108,29 @@ interface CampanitaAlertasProps {
   onIrACombustible?: () => void;
 }
 
+/** Una alerta de la campanita: de qué fuente viene, porque los ids de cada tabla se pisan. */
+type AlertaDeCampanita = AlertaCombustible & { fuente: FuenteDeAlertas };
+
 export default function CampanitaAlertas({ activo, onIrACombustible }: CampanitaAlertasProps) {
+  const { usuario } = useAuth();
   const [abierta, setAbierta] = useState(false);
-  const { alertas, noLeidas, marcarTodasLeidas, marcarUnaLeida } =
-    useAlertasCombustibleStream(activo);
+  // Lee de cada Bandeja que esta persona ve (Combustible, Viajes), con su propia petición: sin el
+  // módulo no se pide nada (sería un 403) y solo se omite esa parte. Los dos hooks se llaman
+  // siempre; el que no aplica queda apagado.
+  const ve = (id: FuenteDeAlertas) =>
+    !!usuario && (MODULOS_CON_BANDEJA.find((m) => m.id === id)?.visiblePara(usuario) ?? false);
+  const deCombustible = useAlertasCombustibleStream(
+    activo && ve("combustible"),
+    BASE_DE_FUENTE.combustible
+  );
+  const deViajes = useAlertasCombustibleStream(activo && ve("viajes"), BASE_DE_FUENTE.viajes);
+  const alertas: AlertaDeCampanita[] = [
+    ...deCombustible.alertas.map((a) => ({ ...a, fuente: "combustible" as const })),
+    ...deViajes.alertas.map((a) => ({ ...a, fuente: "viajes" as const })),
+  ];
+  const noLeidas = deCombustible.noLeidas + deViajes.noLeidas;
+  const marcarTodasLeidas = () =>
+    Promise.all([deCombustible.marcarTodasLeidas(), deViajes.marcarTodasLeidas()]);
 
   /** La notificación es un PUNTERO al hallazgo, no el lugar donde se
    *  trabaja: lleva a la bandeja de alertas y deja al usuario parado sobre
@@ -116,20 +144,22 @@ export default function CampanitaAlertas({ activo, onIrACombustible }: Campanita
    *  despachar.
    *
    *  Marca leída SOLO esta: abrirla es verla. */
-  const abrirAlerta = (alertaId: number) => {
+  const abrirAlerta = (alerta: AlertaDeCampanita) => {
     setAbierta(false);
-    void marcarUnaLeida(alertaId);
+    void (alerta.fuente === "viajes" ? deViajes : deCombustible).marcarUnaLeida(alerta.id);
     // Lleva a la Bandeja con esa alerta abierta. Va por las dos vías: el
     // sessionStorage la encuentra si la Bandeja recién se monta, el aviso por
     // `window` si ya estaba abierta.
     try {
-      sessionStorage.setItem(CLAVE_ALERTA_PENDIENTE, String(alertaId));
+      sessionStorage.setItem(CLAVE_PENDIENTE_DE_FUENTE[alerta.fuente], String(alerta.id));
     } catch {
       // Sin sessionStorage (modo privado estricto): la Bandeja abre sin selección.
     }
     onIrACombustible?.();
     window.dispatchEvent(
-      new CustomEvent("combustible:abrir-alerta", { detail: { alertaId: Number(alertaId) } })
+      new CustomEvent(EVENTO_ABRIR_ALERTA[alerta.fuente], {
+        detail: { alertaId: Number(alerta.id) },
+      })
     );
   };
   // Por módulo, y dentro de cada uno lo crítico primero (el orden entre iguales se conserva).
@@ -196,9 +226,9 @@ export default function CampanitaAlertas({ activo, onIrACombustible }: Campanita
                     </h3>
                     {porGrupo[g].map((a) => (
                       <button
-                        key={a.id}
+                        key={`${a.fuente}-${a.id}`}
                         type="button"
-                        onClick={() => abrirAlerta(a.id)}
+                        onClick={() => abrirAlerta(a)}
                         title="Ver en la bandeja de alertas"
                         className={
                           "w-full text-left cursor-pointer hover:bg-slate-100/70 transition-colors " +
