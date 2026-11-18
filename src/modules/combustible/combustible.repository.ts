@@ -8,6 +8,7 @@ import type {
 import type { Paginacion } from "../../server/shared/utils/pagination";
 import { esViolacionUnicidad, esViolacionForeignKey } from "../../server/shared/utils/pgError";
 import { LITROS_POR_GALON, litrosSql } from "../../server/shared/utils/unidades";
+import { SQL_EMPRESA_TIENE_FLOTA } from "../../server/shared/utils/modulosEmpresa";
 import { TIPOS_DE_ALERTA_DE_FLOTA, type GrupoDeAlerta } from "./alertasPorModulo";
 import {
   agregarAmbitoVales,
@@ -1334,7 +1335,7 @@ export class CombustibleRepository {
                $23::numeric, $24::int, $25, $26, $27::uuid,
                $28::bigint, $29::int, $30::bigint, $31::bigint, $32, $33, $34, $35, $36, $37
           FROM (SELECT 1) dummy
-          LEFT JOIN equipos e ON e.id = $8::int AND e.tenant_id = $1
+          LEFT JOIN equipos e ON e.id = $8::int AND e.tenant_id = $1 AND ${SQL_EMPRESA_TIENE_FLOTA}
           LEFT JOIN LATERAL (
             SELECT ec.id, ec.conductor_nombre, ec.conductor_dni
               FROM equipo_conductores ec
@@ -1735,7 +1736,7 @@ export class CombustibleRepository {
               ), '[]'::json) AS lineas
          FROM combustible_despachos d
          LEFT JOIN combustible_grifos g ON g.id = d.grifo_id AND g.tenant_id = d.tenant_id
-         LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
+         LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
          LEFT JOIN usuarios u ON u.id = d.usuario_id
          LEFT JOIN combustible_compras_ruta c
                 ON c.tenant_id = d.tenant_id
@@ -1916,7 +1917,8 @@ export class CombustibleRepository {
         -- de unidades no la traiga (tope de 200).
         (SELECT e.placa_codigo FROM equipos e
           WHERE e.id = combustible_despachos.equipo_id
-            AND e.tenant_id = combustible_despachos.tenant_id) AS placa_codigo
+            AND e.tenant_id = combustible_despachos.tenant_id
+            AND ${SQL_EMPRESA_TIENE_FLOTA}) AS placa_codigo
       FROM combustible_despachos
       WHERE ${condiciones.join(" AND ")}
       ORDER BY despachado_en DESC, id DESC
@@ -2017,6 +2019,8 @@ export class CombustibleRepository {
       "d.producto = $2",
       "d.anulada_en IS NULL",
       "d.equipo_id IS NOT NULL",
+      // El reporte es POR unidad: sin Flota no hay unidades de las que informar.
+      SQL_EMPRESA_TIENE_FLOTA,
     ];
     const valores: unknown[] = [tenantId, producto];
     agregarPeriodo(condiciones, valores, "d.despachado_en", periodo);
@@ -2042,7 +2046,7 @@ export class CombustibleRepository {
         MIN(d.despachado_en) AS primer_despacho,
         MAX(d.despachado_en) AS ultimo_despacho
       FROM combustible_despachos d
-      LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
+      LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
       LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = d.tenant_id
       WHERE ${condiciones.join(" AND ")}
       GROUP BY d.equipo_id, e.placa_codigo, e.tipo${groupByPeriodo}
@@ -3237,14 +3241,14 @@ export class CombustibleRepository {
          UNION ALL
          SELECT v.medidor_inicio, v.inicio_en, 'viaje', v.id
            FROM combustible_viajes v
-           JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+           JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
           WHERE v.tenant_id = $1 AND v.equipo_id = $2 AND v.estado <> 'anulado'
             AND e.tipo_medidor = $5 AND v.medidor_inicio IS NOT NULL
             AND v.inicio_en IS NOT NULL AND v.inicio_en < $4::timestamptz
          UNION ALL
          SELECT v.medidor_fin, v.fin_en, 'viaje', v.id
            FROM combustible_viajes v
-           JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+           JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
           WHERE v.tenant_id = $1 AND v.equipo_id = $2 AND v.estado <> 'anulado'
             AND e.tipo_medidor = $5 AND v.medidor_fin IS NOT NULL
             AND v.fin_en IS NOT NULL AND v.fin_en < $4::timestamptz
@@ -3252,7 +3256,7 @@ export class CombustibleRepository {
          SELECT p.llegada_medidor, p.llegada_en, 'viaje', v.id
            FROM combustible_viaje_paradas p
            JOIN combustible_viajes v ON v.id = p.viaje_id AND v.tenant_id = p.tenant_id
-           JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+           JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
           WHERE v.tenant_id = $1 AND v.equipo_id = $2 AND v.estado <> 'anulado'
             AND e.tipo_medidor = $5 AND p.llegada_medidor IS NOT NULL
             AND p.llegada_en IS NOT NULL AND p.llegada_en < $4::timestamptz
@@ -3260,7 +3264,7 @@ export class CombustibleRepository {
          SELECT p.salida_medidor, p.salida_en, 'viaje', v.id
            FROM combustible_viaje_paradas p
            JOIN combustible_viajes v ON v.id = p.viaje_id AND v.tenant_id = p.tenant_id
-           JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+           JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
           WHERE v.tenant_id = $1 AND v.equipo_id = $2 AND v.estado <> 'anulado'
             AND e.tipo_medidor = $5 AND p.salida_medidor IS NOT NULL
             AND p.salida_en IS NOT NULL AND p.salida_en < $4::timestamptz
@@ -4033,7 +4037,7 @@ export class CombustibleRepository {
               ), '[]'::json) AS lineas
          FROM combustible_despachos d
          LEFT JOIN combustible_grifos g ON g.id = d.grifo_id AND g.tenant_id = d.tenant_id
-         LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
+         LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
          LEFT JOIN usuarios u ON u.id = d.usuario_id
         WHERE ${condiciones.join(" AND ")}
         ORDER BY d.despachado_en DESC, d.id DESC
@@ -4196,7 +4200,7 @@ export class CombustibleRepository {
              (SELECT c.unidad FROM combustible c
                WHERE c.id = $3 AND c.tenant_id = $1) AS unidad_tanque
       FROM equipos e
-      WHERE e.id = $2 AND e.tenant_id = $1
+      WHERE e.id = $2 AND e.tenant_id = $1 AND ${SQL_EMPRESA_TIENE_FLOTA}
       `,
       [tenantId, equipoId, combustibleId]
     );
@@ -5489,7 +5493,7 @@ export class CombustibleRepository {
                    WHERE l.despacho_id = d.id AND l.tenant_id = $1),
                  u.nombre, d.anulada_en, d.motivo_anulacion
             FROM combustible_despachos d
-            LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1
+            LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1 AND ${SQL_EMPRESA_TIENE_FLOTA}
             LEFT JOIN usuarios u ON u.id = d.usuario_id
            WHERE d.tenant_id = $1 AND d.producto = 'urea' AND d.origen = 'almacen'
              AND d.despachado_en >= $2::timestamptz AND d.despachado_en <= $3::timestamptz
@@ -5709,7 +5713,7 @@ export class CombustibleRepository {
                d.usuario_id, d.anulada_en, d.motivo_anulacion,
                d.totalizador_lectura, NULL::text
           FROM combustible_despachos d
-          LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1
+          LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1 AND ${SQL_EMPRESA_TIENE_FLOTA}
           LEFT JOIN combustible_tanquetas tq
             ON tq.id = d.tanqueta_destino_id AND tq.tenant_id = $1
          WHERE d.tenant_id = $1 AND d.combustible_id = $2
@@ -6865,7 +6869,7 @@ export class CombustibleRepository {
   async findEquipoIdPorPlaca(client: PoolClient, tenantId: string, placa: string) {
     const r = await client.query<{ id: number }>(
       `SELECT id FROM equipos
-        WHERE tenant_id = $1
+        WHERE tenant_id = $1 AND ${SQL_EMPRESA_TIENE_FLOTA}
           AND upper(regexp_replace(placa_codigo, '[^A-Za-z0-9]', '', 'g')) = $2
         ORDER BY activo DESC, id
         LIMIT 1`,
@@ -7775,7 +7779,7 @@ export class CombustibleRepository {
              SUM(${litrosSql("c")}) AS litros
         FROM combustible_despachos d
         LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1
-        LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1
+        LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1 AND ${SQL_EMPRESA_TIENE_FLOTA}
        WHERE d.tenant_id = $1 AND d.anulada_en IS NULL
          AND d.producto = 'combustible'
          AND d.despachado_en > now() - make_interval(days => $2)
@@ -7835,7 +7839,7 @@ export class CombustibleRepository {
         FROM combustible_despachos d
         LEFT JOIN combustible c
                ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = $1
-        LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1
+        LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = $1 AND ${SQL_EMPRESA_TIENE_FLOTA}
        WHERE d.tenant_id = $1 AND d.anulada_en IS NULL
          AND d.despachado_en > now() - make_interval(days => $2)
        GROUP BY 1, 2, 3
@@ -7922,7 +7926,7 @@ export class CombustibleRepository {
       placa_codigo: string;
     }>(
       `SELECT consumo_maximo_l, tipo_medidor, placa_codigo
-         FROM equipos WHERE id = $1 AND tenant_id = $2`,
+         FROM equipos WHERE id = $1 AND tenant_id = $2 AND ${SQL_EMPRESA_TIENE_FLOTA}`,
       [equipoId, tenantId]
     );
     const f = r.rows[0];
@@ -7994,7 +7998,7 @@ export class CombustibleRepository {
     }>(
       `SELECT id, placa_codigo, tipo, marca, modelo, tipo_medidor, consumo_maximo_l, activo
          FROM equipos
-        WHERE tenant_id = $1 AND id = ANY($2::int[])`,
+        WHERE tenant_id = $1 AND id = ANY($2::int[]) AND ${SQL_EMPRESA_TIENE_FLOTA}`,
       [tenantId, ids]
     );
     return r.rows;
@@ -8320,7 +8324,7 @@ export class CombustibleRepository {
          FROM combustible_recepcion_excedentes x
          JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
          JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
-         LEFT JOIN equipos e ON e.id = x.equipo_id AND e.tenant_id = x.tenant_id
+         LEFT JOIN equipos e ON e.id = x.equipo_id AND e.tenant_id = x.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
          LEFT JOIN combustible_grifos g ON g.id = r.grifo_id AND g.tenant_id = r.tenant_id
         WHERE x.tenant_id = $1 AND x.destino = 'equipo' AND r.anulada_en IS NULL
           AND NOT EXISTS (
@@ -8432,7 +8436,7 @@ export class CombustibleRepository {
                       LEFT JOIN combustible_tanquetas tq2
                              ON tq2.tenant_id = x2.tenant_id AND tq2.id = x2.tanqueta_id
                       LEFT JOIN equipos eq2
-                             ON $5::boolean AND eq2.id = x2.equipo_id AND eq2.tenant_id = x2.tenant_id
+                             ON $5::boolean AND ${SQL_EMPRESA_TIENE_FLOTA} AND eq2.id = x2.equipo_id AND eq2.tenant_id = x2.tenant_id
                      WHERE x2.tenant_id = $1 AND x2.recepcion_id = s.recepcion_id
                   ) rp
               ), '[]'::json) AS reparto,
@@ -8454,7 +8458,7 @@ export class CombustibleRepository {
                                 ELSE concat_ws('-', d.serie_talonario, d.n_vale::text) END AS vale
                       FROM combustible_despachos d
                       LEFT JOIN usuarios ud ON ud.id = d.usuario_id
-                      LEFT JOIN equipos eq ON $5::boolean AND eq.id = d.equipo_id AND eq.tenant_id = d.tenant_id
+                      LEFT JOIN equipos eq ON $5::boolean AND ${SQL_EMPRESA_TIENE_FLOTA} AND eq.id = d.equipo_id AND eq.tenant_id = d.tenant_id
                       LEFT JOIN combustible_tanquetas t
                              ON t.tenant_id = d.tenant_id AND t.id = d.tanqueta_destino_id
                      WHERE d.tenant_id = $1 AND d.excedente_linea_id = s.id AND d.anulada_en IS NULL
@@ -8612,7 +8616,8 @@ export class CombustibleRepository {
    *  tenant_id es el cinturón). */
   async contarEquiposDelTenant(client: PoolClient, tenantId: string, ids: number[]) {
     const r = await client.query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM equipos WHERE tenant_id = $1 AND id = ANY($2::int[])`,
+      `SELECT count(*)::text AS n FROM equipos
+        WHERE tenant_id = $1 AND id = ANY($2::int[]) AND ${SQL_EMPRESA_TIENE_FLOTA}`,
       [tenantId, ids]
     );
     return Number(r.rows[0].n);
@@ -8665,7 +8670,7 @@ export class CombustibleRepository {
       `SELECT x.id, x.destino, x.cantidad, x.equipo_id, e.placa_codigo AS equipo,
               x.tanqueta_id, tq.codigo AS tanqueta, x.observaciones, x.creado_en
          FROM combustible_recepcion_excedentes x
-         LEFT JOIN equipos e ON e.id = x.equipo_id
+         LEFT JOIN equipos e ON e.id = x.equipo_id AND ${SQL_EMPRESA_TIENE_FLOTA}
          LEFT JOIN combustible_tanquetas tq ON tq.id = x.tanqueta_id AND tq.tenant_id = x.tenant_id
         WHERE x.tenant_id = $1 AND x.recepcion_id = $2
         ORDER BY x.id`,
