@@ -3,6 +3,7 @@
 import { pestanaPermitida } from "../../server/services/permisosPestanas.service";
 import { Request, Response } from "express";
 import { withTenant } from "../../server/config/database";
+import { SQL_EMPRESA_TIENE_FLOTA } from "../../server/shared/utils/modulosEmpresa";
 import { getTenantId } from "../../server/shared/utils/request";
 import { parsePaginacion, armarRespuestaPaginada } from "../../server/shared/utils/pagination";
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
@@ -958,6 +959,7 @@ export class CombustibleController {
           `SELECT id::int AS equipo_id, COALESCE(placa_codigo, codigo_interno) AS placa_codigo
              FROM equipos
             WHERE tenant_id = $1 AND activo AND btrim(conductor_dni) = $2
+              AND ${SQL_EMPRESA_TIENE_FLOTA}
             ORDER BY id LIMIT 1`,
           [tenantId, dni]
         )

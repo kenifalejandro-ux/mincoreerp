@@ -49,6 +49,10 @@ import { huellaDeRegistro, idempotentInsert } from "../../server/shared/utils/id
 import { MAX_SALTO_TALONARIO, mensajeDeSalto } from "./valesDeTalonario";
 import type { AlertaNueva, FiltrosAlertas, PeriodoHistorial } from "./combustible.repository";
 import { EquiposRepository } from "../equipos/equipos.repository";
+import {
+  empresaTieneModulo,
+  SQL_EMPRESA_TIENE_FLOTA,
+} from "../../server/shared/utils/modulosEmpresa";
 import { tanqueEnAlcance, valeEnAlcance } from "./alcance";
 import type { AlcanceCombustible, AmbitoVales } from "./alcance";
 import {
@@ -1212,12 +1216,25 @@ export class CombustibleService {
           }
         }
 
+        // Elegir una unidad registrada pide que la empresa tenga Flota (el registro de unidades).
+        // Sin ella la unidad se escribe a mano (`unidad_sin_alta`, placa libre): el módulo trabaja
+        // con lo que la empresa tiene contratado, no se bloquea.
+        if (
+          data.equipo_id !== undefined &&
+          !(await empresaTieneModulo(client, tenantId, "flota"))
+        ) {
+          throw new AppError(
+            400,
+            "La empresa no tiene el módulo Flota: escribe la placa de la unidad en lugar de elegirla de la lista"
+          );
+        }
+
         // La unidad es de ESTA empresa. La FK de la tabla no lo impide (apunta a
         // equipos(id) sin tenant): sin esto, un vale podía guardarse apuntando a la
         // unidad de otra empresa.
         if (
           data.equipo_id !== undefined &&
-          !(await EquiposRepository.findTipoMedidor(client, tenantId, data.equipo_id))
+          !(await this.buscarUnidad(client, tenantId, data.equipo_id))
         ) {
           throw new Error(`equipo_id ${data.equipo_id} no existe en este tenant`);
         }
@@ -2544,7 +2561,7 @@ export class CombustibleService {
         data.origen === "compra_externa" ? "urea_externa" : "urea_interna"
       );
       const equipoId = data.equipo_id!;
-      const equipo = await EquiposRepository.findTipoMedidor(client, tenantId, equipoId);
+      const equipo = await this.buscarUnidad(client, tenantId, equipoId);
       if (!equipo) {
         throw new Error(`equipo_id ${equipoId} no existe en este tenant`);
       }
@@ -2632,7 +2649,7 @@ export class CombustibleService {
     // compra_externa: el schema ya garantiza equipo_id presente (exige
     // tipo_destino='equipo' en este origen).
     const equipoId = data.equipo_id!;
-    const equipo = await EquiposRepository.findTipoMedidor(client, tenantId, equipoId);
+    const equipo = await this.buscarUnidad(client, tenantId, equipoId);
     if (!equipo) {
       throw new Error(`equipo_id ${equipoId} no existe en este tenant`);
     }
@@ -2711,7 +2728,7 @@ export class CombustibleService {
     }
     // El medidor que llegue tiene que ser el de ESA unidad (mismo cruce que la
     // compra externa); que falte no bloquea, igual que en el vale del tanque.
-    const equipo = await EquiposRepository.findTipoMedidor(client, tenantId, data.equipo_id!);
+    const equipo = await this.buscarUnidad(client, tenantId, data.equipo_id!);
     if (equipo?.tipo_medidor === "horometro" && data.lectura_odometro !== undefined) {
       throw new Error(`el equipo ${data.equipo_id} se mide por horómetro, no por odómetro`);
     }
@@ -2771,7 +2788,7 @@ export class CombustibleService {
         data.cantidad!
       );
     } else {
-      const equipo = await EquiposRepository.findTipoMedidor(client, tenantId, data.equipo_id!);
+      const equipo = await this.buscarUnidad(client, tenantId, data.equipo_id!);
       if (equipo?.tipo_medidor === "horometro" && data.lectura_odometro !== undefined) {
         throw new Error(`el equipo ${data.equipo_id} se mide por horómetro, no por odómetro`);
       }
@@ -2918,7 +2935,7 @@ export class CombustibleService {
       throw new Error("la tanqueta elegida no existe en este tenant");
     }
     if (!t.activa) throw new Error(`la tanqueta ${t.codigo} está dada de baja`);
-    const equipo = await EquiposRepository.findTipoMedidor(client, tenantId, data.equipo_id!);
+    const equipo = await this.buscarUnidad(client, tenantId, data.equipo_id!);
     if (!equipo) throw new Error(`equipo_id ${data.equipo_id} no existe en este tenant`);
     if (conductorDni !== undefined) {
       await tanquetas.exigirTanquetaDelConductor(
@@ -5284,6 +5301,7 @@ export class CombustibleService {
          JOIN grifos_internos gv ON gv.id = d.grifo_interno_id AND gv.tenant_id = d.tenant_id
          JOIN grifos_internos ge ON ge.id = d.equipo_grifo_interno_id AND ge.tenant_id = d.tenant_id
          JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
+          AND ${SQL_EMPRESA_TIENE_FLOTA}
         WHERE d.id = $1 AND d.tenant_id = $2 AND d.origen = 'tanque_propio'
           AND d.grifo_interno_id <> d.equipo_grifo_interno_id`,
       [despachoId, tenantId]
@@ -5672,6 +5690,13 @@ export class CombustibleService {
   // ── Urea (migración 0092) -- los controles que la urea permite y el
   // combustible no ────────────────────────────────────────────────────────
 
+  /** Los datos de la unidad (medidor, capacidad, placa), o null si no está. Sin el módulo Flota
+   *  de la empresa la unidad no se lee aunque la fila siga en la base: se trata como «no hay». */
+  private async buscarUnidad(client: PoolClient, tenantId: string, equipoId: number) {
+    if (!(await empresaTieneModulo(client, tenantId, "flota"))) return null;
+    return EquiposRepository.findTipoMedidor(client, tenantId, equipoId);
+  }
+
   /** El vale de urea fue a un equipo marcado con `usa_urea = false`
    *  (respuesta 15 del cliente: camionetas y maquinaria amarilla no usan
    *  urea). No es autocontradictorio -- por eso ALERTA, no bloquea (mismo
@@ -5680,7 +5705,7 @@ export class CombustibleService {
    *  "no usa urea" es sospechoso por definición, y el dato es gratis: ya
    *  se consultó el equipo en validarFormaDespacho. */
   async evaluarUreaEquipoNoHabilitado(client: PoolClient, tenantId: string, equipoId: number) {
-    const equipo = await EquiposRepository.findTipoMedidor(client, tenantId, equipoId);
+    const equipo = await this.buscarUnidad(client, tenantId, equipoId);
     if (!equipo || equipo.usa_urea) return null;
     return { equipoId, placaCodigo: equipo.placa_codigo };
   }

@@ -66,6 +66,10 @@ import { CombustibleController } from "./combustible.controller";
 import { viajesController } from "./viajes.controller";
 import { subirArchivoComprobante } from "./combustible.upload";
 import { EquiposController } from "../equipos/equipos.controller";
+import { withTenant } from "../../server/config/database";
+import { getTenantId } from "../../server/shared/utils/request";
+import { parsePaginacion, armarRespuestaPaginada } from "../../server/shared/utils/pagination";
+import { empresaTieneModulo } from "../../server/shared/utils/modulosEmpresa";
 // Se activa solo con importarse (setInterval + .unref()) -- mismo mecanismo
 // que events.ts con el worker de retención de eventos.
 import "../../server/services/combustibleConciliacion.worker";
@@ -168,10 +172,19 @@ router.get(
 // El formulario de despacho necesita elegir una unidad, pero el personal de
 // cancha no debe recibir acceso al módulo Equipos completo. Esta consulta
 // acotada queda dentro de Combustible y solo expone el listado paginado.
+// Es la lista de unidades de Flota: sin el módulo en la empresa no hay unidades que ofrecer (lista
+// vacía, no un 403) y el formulario pide la placa escrita.
 router.get(
   "/equipos-destino",
   requireRole("admin", "operador", "grifero", "conductor_ruta", "encargado_urea"),
-  asyncHandler(EquiposController.getAll)
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    if (!(await withTenant(tenantId, (client) => empresaTieneModulo(client, tenantId, "flota")))) {
+      res.json(armarRespuestaPaginada([], parsePaginacion(req.query)));
+      return;
+    }
+    await EquiposController.getAll(req, res);
+  })
 );
 
 // La unidad que Equipos le asignó al conductor: precarga la placa de «Despacho grifo».
