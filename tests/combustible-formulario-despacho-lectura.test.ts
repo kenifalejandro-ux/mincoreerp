@@ -10,6 +10,7 @@ import {
   borrarTenantDePrueba,
   idUnico,
   cargarPrecioCombustible,
+  dniUnico,
 } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
@@ -26,11 +27,10 @@ describe("lectura del formulario de despacho", () => {
   let grifoSoloTanque: number;
   let grifoInactivo: number;
   let grifoOtroTenant: number;
-  let seq = 0;
 
   async function persona(rol: string) {
     const agente = request.agent(app);
-    const dni = String(86900000 + Math.floor(Math.random() * 90000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `F ${rol}`, dni, password, rol });

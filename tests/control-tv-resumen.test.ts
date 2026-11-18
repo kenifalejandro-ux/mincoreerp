@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
 import { env } from "../src/server/config/env";
 import { MODULOS } from "../src/modules/registry";
@@ -37,7 +37,7 @@ describe("control TV: resumen", () => {
 
   async function conRol(rol: string): Promise<Agente> {
     const a = request.agent(app);
-    const dni = String(87100000 + Math.floor(Math.random() * 800000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `Persona ${rol}`, dni, password: PASSWORD, rol });
@@ -233,7 +233,7 @@ describe("control TV: resumen", () => {
     await viaje(grifoA);
     await viaje(grifoB);
 
-    const dni = String(87900000 + Math.floor(Math.random() * 90000));
+    const dni = dniUnico();
     const alta = await adm
       .post("/api/erp/usuarios")
       .send({ nombre: "Lectura", dni, password: PASSWORD, rol: "lectura" });

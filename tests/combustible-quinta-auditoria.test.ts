@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, withTenant, pool } from "../src/server/config/database";
 import { correrConciliacion } from "../src/server/services/combustibleConciliacion.worker";
 import { TIPOS_ALERTA, TIPOS_CONGELABLES } from "../src/modules/combustible/combustible.repository";
@@ -29,10 +29,9 @@ describe("combustible: los diez huecos de la 5ª auditoría", () => {
   const admin = request.agent(app);
   const operador = request.agent(app);
   const grifero = request.agent(app);
-  let seq = 0;
 
   async function altaYLogin(agente: ReturnType<typeof request.agent>, rol: string) {
-    const dni = String(84100000 + Math.floor(Math.random() * 800000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `Persona ${rol}`, dni, password, rol });

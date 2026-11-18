@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
 const BASE = "/api/erp/combustible";
@@ -23,7 +23,6 @@ describe("red team: precios de combustible", () => {
   let proveedorInactivo: number;
   let proveedorSoloUrea: number;
   let proveedorAjeno: number;
-  let seq = 0;
 
   async function crearTanque(tid: string): Promise<number> {
     return withTenant(tid, async (c) => {
@@ -43,7 +42,7 @@ describe("red team: precios de combustible", () => {
 
   async function persona(rol: string, overrides: Record<string, boolean> = {}) {
     const agente = request.agent(app);
-    const dni = String(86100000 + Math.floor(Math.random() * 90000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `RT ${rol}`, dni, password, rol });

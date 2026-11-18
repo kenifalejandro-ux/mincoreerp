@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
 const LUGARES = "/api/erp/viajes/lugares";
@@ -226,7 +226,7 @@ describe("combustible: lugares con tipo, ubicación y estado (0159)", () => {
     const { id } = (await crear(idUnico("Perm"))).body;
     const entrar = async (rol: string) => {
       const agente = request.agent(app);
-      const dni = String(87100000 + Math.floor(Math.random() * 800000) + seq++);
+      const dni = dniUnico();
       const alta = await admin
         .post("/api/erp/usuarios")
         .send({ nombre: `Persona ${rol}`, dni, password, rol });
@@ -483,7 +483,7 @@ describe("combustible: lugares con tipo, ubicación y estado (0159)", () => {
 
   it("Lectura no puede poner un punto, ni al crear un lugar ni al editarlo", async () => {
     const lugar = (await crear(idUnico("Bitacora"), { tipo: "mina" })).body.id;
-    const dni = String(86400000 + Math.floor(Math.random() * 90000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: "Lector", dni, password, rol: "lectura" });

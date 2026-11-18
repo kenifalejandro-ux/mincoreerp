@@ -18,6 +18,7 @@ import {
   borrarTenantDePrueba,
   idUnico,
   recibirTanqueta,
+  dniUnico,
 } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 import {
@@ -262,7 +263,6 @@ describe("kardex de la tanqueta del conductor: la API", () => {
   let tanque: number;
   let nVale = 1;
   let medidor = 1000;
-  let seq = 0;
 
   interface Persona {
     agente: ReturnType<typeof request.agent>;
@@ -273,7 +273,7 @@ describe("kardex de la tanqueta del conductor: la API", () => {
 
   async function usuario(rol: string, overrides: Record<string, boolean> = {}) {
     const agente = request.agent(app);
-    const dni = String(87100000 + Math.floor(Math.random() * 700000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `T ${rol}`, dni, password, rol });
@@ -589,7 +589,7 @@ describe("kardex de la tanqueta del conductor: la API", () => {
       expect(ajena.body).toEqual(inexistente.body);
 
       // Una empresa ajena: su conductor, con sesión propia, pide la tanqueta de esta.
-      const dni = String(87900000 + Math.floor(Math.random() * 90000));
+      const dni = dniUnico();
       const otroAdmin = request.agent(app);
       await otroAdmin
         .post("/api/auth/login")

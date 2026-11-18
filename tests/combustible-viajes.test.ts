@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
 import { fijarCuotaTenant, RECURSO_USUARIOS } from "../src/server/services/platformCuotas.service";
 
@@ -31,7 +31,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
 
   async function conRol(rol: string): Promise<Agente> {
     const agente = request.agent(app);
-    const dni = String(86100000 + Math.floor(Math.random() * 800000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `Persona ${rol}`, dni, password, rol });
@@ -43,7 +43,7 @@ describe("combustible: viajes y consumo por viaje (0123)", () => {
   /** Un conductor de ruta con su DNI: el viaje le aparece por ese DNI. */
   async function conductor(): Promise<{ agente: Agente; dni: string }> {
     const agente = request.agent(app);
-    const dni = String(85100000 + Math.floor(Math.random() * 800000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `Conductor ${dni}`, dni, password, rol: "conductor_ruta" });

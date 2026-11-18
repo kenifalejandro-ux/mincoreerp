@@ -7,7 +7,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
 
 describe("combustible: horómetro opcional en el despacho del tanque (0113)", () => {
@@ -124,7 +124,7 @@ describe("combustible: horómetro opcional en el despacho del tanque (0113)", ()
 
   it("el grifero lee la opción por su endpoint, no la config completa", async () => {
     const grifero = request.agent(app);
-    const dni = String(89100000 + Math.floor(Math.random() * 800000));
+    const dni = dniUnico();
     expect(
       (
         await admin

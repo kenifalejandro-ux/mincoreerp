@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
 
 const haceMin = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
@@ -25,10 +25,9 @@ describe("combustible: precintos numerados", () => {
   const admin = request.agent(app);
   const operador = request.agent(app);
   const grifero = request.agent(app);
-  let seq = 0;
 
   async function altaYLogin(agente: ReturnType<typeof request.agent>, rol: string) {
-    const dni = String(85100000 + Math.floor(Math.random() * 800000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `Persona ${rol}`, dni, password, rol });

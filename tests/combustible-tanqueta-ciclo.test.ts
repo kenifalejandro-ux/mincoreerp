@@ -14,6 +14,7 @@ import {
   borrarTenantDePrueba,
   idUnico,
   recibirTanqueta,
+  dniUnico,
 } from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
 
@@ -35,7 +36,7 @@ describe("combustible: tanqueta llenada desde el tanque y descargada en ruta (01
 
   async function conRol(rol: string): Promise<Agente> {
     const agente = request.agent(app);
-    const dni = String(87500000 + Math.floor(Math.random() * 400000) + seq++);
+    const dni = dniUnico();
     if (rol === "conductor_ruta") dniConductor = dni;
     const alta = await admin
       .post("/api/erp/usuarios")

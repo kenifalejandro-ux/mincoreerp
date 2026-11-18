@@ -12,7 +12,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
 import { randomUUID } from "node:crypto";
 
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { pool, closeDatabase } from "../src/server/config/database";
 import { env } from "../src/server/config/env";
 import { MODULOS } from "../src/modules/registry";
@@ -158,7 +158,7 @@ describe("Viajes: autonomía (sin Combustible)", () => {
 
   it("el conductor ve «Mi viaje» y crea e inicia su propio viaje, sin Combustible", async () => {
     const agente = request.agent(app);
-    const dni = String(86400000 + Math.floor(Math.random() * 90000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `Conductor ${dni}`, dni, password, rol: "conductor_ruta" });

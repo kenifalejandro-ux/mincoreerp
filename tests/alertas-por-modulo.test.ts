@@ -15,7 +15,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import request from "supertest";
 
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { withTenant, closeDatabase } from "../src/server/config/database";
 import { env } from "../src/server/config/env";
 import { filtroModuloDeAlerta } from "../src/modules/combustible/alcance";
@@ -72,7 +72,7 @@ describe("alertas por módulo", () => {
       placa_codigo: idUnico("AL"),
       tipo: "VOLQUETE",
       conductor_nombre: "Juan Pérez",
-      conductor_dni: String(40200000 + Math.floor(Math.random() * 90000)),
+      conductor_dni: dniUnico(),
     });
     expect(eq.status, JSON.stringify(eq.body)).toBe(201);
     // Los lugares se piden ANTES: una petición dentro del .send() de otra del mismo agente se pisa.

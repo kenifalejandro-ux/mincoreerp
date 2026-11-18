@@ -12,6 +12,7 @@ import {
   borrarTenantDePrueba,
   idUnico,
   recibirTanqueta,
+  dniUnico,
 } from "./helpers";
 import { closeDatabase } from "../src/server/config/database";
 
@@ -35,7 +36,7 @@ describe("combustible: el conductor carga la tanqueta asignada a su unidad (0139
       .post("/api/auth/login")
       .send({ tenantSlug: slug, email: creado.usuario.email, password });
     principal = (await admin.get("/api/erp/sedes")).body.sedes[0].grifos[0].id;
-    const dni = String(88300000 + Math.floor(Math.random() * 400000));
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: "Conductor", dni, password, rol: "conductor_ruta" });

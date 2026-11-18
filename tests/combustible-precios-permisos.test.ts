@@ -7,7 +7,7 @@
  *  leen ni escriben los precios de combustible. */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 
 describe("permisos de precios", () => {
@@ -16,11 +16,10 @@ describe("permisos de precios", () => {
   let tenantId: string;
   let slug: string;
   let tanque: number;
-  let seq = 0;
 
   async function persona(rol: string, overrides: Record<string, boolean> = {}) {
     const agente = request.agent(app);
-    const dni = String(87900000 + Math.floor(Math.random() * 90000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `A ${rol}`, dni, password, rol });

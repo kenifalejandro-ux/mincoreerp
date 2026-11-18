@@ -18,7 +18,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, pool, withTenant } from "../src/server/config/database";
 
 const FOTO = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]); // JPEG mínimo
@@ -89,12 +89,11 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
     return a;
   };
 
-  let seqDni = 0;
   /** Un conductor al que el admin le recortó permisos de pestaña (override por
    *  usuario, la tabla que escribe Configuración). Entra con DNI, como el
    *  personal de cancha real. */
   const conductorConPermisos = async (overrides: Record<string, boolean>) => {
-    const dni = String(87200000 + Math.floor(Math.random() * 700000) + seqDni++);
+    const dni = dniUnico();
     const alta = await agente
       .post("/api/erp/usuarios")
       .send({ nombre: "Conductor recortado", dni, password, rol: "conductor_ruta" });
@@ -613,7 +612,7 @@ describe("combustible: compra en ruta unificada (migración 0135)", () => {
 
     /** Un conductor con DNI y una unidad cuyo viaje (programado o en curso) es suyo. */
     const conductorConViaje = async (enCurso: boolean) => {
-      const dni = String(88100000 + Math.floor(Math.random() * 800000));
+      const dni = dniUnico();
       const alta = await agente
         .post("/api/erp/usuarios")
         .send({ nombre: "Conductor con viaje", dni, password, rol: "conductor_ruta" });

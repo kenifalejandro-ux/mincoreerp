@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import request from "supertest";
-import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
+import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico, dniUnico } from "./helpers";
 import { closeDatabase, withTenant } from "../src/server/config/database";
 import { diferenciaEnGalones } from "../src/modules/combustible/comprasCisterna.service";
 
@@ -62,12 +62,11 @@ describe("combustible: recepción con la compra de su cisterna", () => {
   let otroProveedor: number;
   let grifoA: number;
   let grifoB: number;
-  let seq = 0;
   let documento = 0;
 
   async function persona(rol: string) {
     const agente = request.agent(app);
-    const dni = String(88700000 + Math.floor(Math.random() * 800000) + seq++);
+    const dni = dniUnico();
     const alta = await admin
       .post("/api/erp/usuarios")
       .send({ nombre: `Persona ${rol}`, dni, password, rol });
