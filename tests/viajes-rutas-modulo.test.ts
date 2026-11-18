@@ -192,14 +192,21 @@ describe("rutas de Viajes: las dos puertas", () => {
     }
   });
 
-  it("sin Flota (y por lo tanto sin Viajes) las rutas de Viajes dan 403, y `mi-unidad` sigue", async () => {
+  it("sin Flota (y por lo tanto sin Viajes ni Combustible, que la exigen) las rutas de los tres dan 403", async () => {
     const e = await nueva();
     expect(
-      (await ponerModulos(e, { flota: "deshabilitado", viajes: "deshabilitado" })).status
+      (
+        await ponerModulos(e, {
+          flota: "deshabilitado",
+          viajes: "deshabilitado",
+          combustible: "deshabilitado",
+        })
+      ).status
     ).toBe(200);
     const admin = await sesion(e);
     expect((await admin.get("/api/erp/viajes")).status).toBe(403);
-    expect((await admin.get("/api/erp/combustible/viajes/mi-unidad")).status).toBe(200);
+    // `mi-unidad` vive en el router de Combustible, que exige Flota: sin ella tampoco responde.
+    expect((await admin.get("/api/erp/combustible/viajes/mi-unidad")).status).toBe(403);
   });
 
   it("en nivel `consultas` de Viajes lee y NO escribe", async () => {
