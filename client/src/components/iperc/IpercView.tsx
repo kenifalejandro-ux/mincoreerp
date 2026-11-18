@@ -491,8 +491,7 @@ export default function IpercView() {
                         <EstadoBadge estado={i.estado} />
                       </td>
                       <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-1">
-                        puedeEscribir &&{" "}
-                        {i.estado === "borrador" && (
+                        {puedeEscribir && i.estado === "borrador" && (
                           <>
                             <button
                               onClick={() => handleCambiarEstadoIperc(i.id, "aprobado")}
@@ -593,8 +592,7 @@ export default function IpercView() {
                         <EstadoBadge estado={lb.estado} />
                       </td>
                       <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right space-x-1">
-                        puedeEscribir &&{" "}
-                        {lb.estado === "borrador" && (
+                        {puedeEscribir && lb.estado === "borrador" && (
                           <>
                             <button
                               onClick={() => handleCambiarEstadoLineaBase(lb.id, "aprobado")}
