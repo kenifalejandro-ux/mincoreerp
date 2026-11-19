@@ -304,8 +304,8 @@ describe("módulos flota y viajes", () => {
       const ve = await modulosQueVe(e);
       expect(ve).not.toContain("viajes");
       expect(ve).not.toContain("flota");
-      // Combustible también exige Flota (despacha a unidades): sin ella, tampoco se ve.
-      expect(ve).not.toContain("combustible");
+      // Combustible NO exige Flota (es autónomo): sin ella sigue visible, con la unidad escrita.
+      expect(ve).toContain("combustible");
     });
   });
 

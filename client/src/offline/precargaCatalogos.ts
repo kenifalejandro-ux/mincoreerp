@@ -86,9 +86,13 @@ async function esperarServiceWorker(): Promise<void> {
 
 /** Mejor esfuerzo: un fallo no se reporta ni interrumpe, es solo precarga. */
 export async function precargarCatalogos(usuario: UsuarioPayload): Promise<void> {
-  const urls = POR_ROL[usuario.rol];
-  if (!urls || enCurso || !estaOnline()) return;
+  const porRol = POR_ROL[usuario.rol];
+  if (!porRol || enCurso || !estaOnline()) return;
   if (usuario.modulosPermitidos && !usuario.modulosPermitidos.includes("combustible")) return;
+  // Sin Flota la lista de Equipos no existe para esta persona (daría 403): no se precarga. La
+  // lista de unidades de Combustible (`equipos-destino`) sí, que decide la empresa y sale vacía.
+  const sinFlota = !!usuario.modulosPermitidos && !usuario.modulosPermitidos.includes("flota");
+  const urls = sinFlota ? porRol.filter((u) => !EQUIPOS.includes(u)) : porRol;
   enCurso = true;
   try {
     await esperarServiceWorker();
