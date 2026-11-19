@@ -8303,7 +8303,8 @@ export class CombustibleRepository {
     const r = await client.query<{
       id: string;
       cantidad: string;
-      equipo_id: number;
+      equipo_id: number | null;
+      placa_sin_alta: string | null;
       equipo: string | null;
       tipo_medidor: "horometro" | "odometro" | null;
       recepcion_id: string;
@@ -8317,7 +8318,8 @@ export class CombustibleRepository {
       grifo_interno_id: number | null;
       proveedor: string | null;
     }>(
-      `SELECT x.id, x.cantidad, x.equipo_id, e.placa_codigo AS equipo, e.tipo_medidor,
+      `SELECT x.id, x.cantidad, x.equipo_id, x.placa_sin_alta,
+              COALESCE(e.placa_codigo, x.placa_sin_alta) AS equipo, e.tipo_medidor,
               r.id AS recepcion_id, r.recibido_en, r.costo_unitario,
               c.id AS combustible_id, c.codigo AS tanque_codigo, c.tanque_nombre,
               c.tipo_combustible, c.unidad, r.grifo_interno_id, g.nombre AS proveedor
@@ -8431,7 +8433,8 @@ export class CombustibleRepository {
                   FROM (
                     SELECT x2.id::text AS id, x2.destino, x2.cantidad,
                            CASE WHEN x2.destino = 'cubeta' THEN tq2.codigo
-                                WHEN x2.destino = 'equipo' THEN eq2.placa_codigo END AS destino_nombre
+                                WHEN x2.destino = 'equipo' THEN COALESCE(eq2.placa_codigo,
+                                  CASE WHEN $5::boolean THEN x2.placa_sin_alta END) END AS destino_nombre
                       FROM combustible_recepcion_excedentes x2
                       LEFT JOIN combustible_tanquetas tq2
                              ON tq2.tenant_id = x2.tenant_id AND tq2.id = x2.tanqueta_id
@@ -8448,9 +8451,13 @@ export class CombustibleRepository {
                 SELECT json_agg(o ORDER BY o.fecha, o.id)
                   FROM (
                     SELECT d.id::text AS id,
-                           CASE WHEN d.tipo_destino = 'equipo' THEN 'unidad' ELSE 'tanqueta' END AS tipo,
+                           CASE WHEN d.tipo_destino IN ('equipo', 'unidad_sin_alta') THEN 'unidad'
+                                ELSE 'tanqueta' END AS tipo,
                            d.cantidad, d.despachado_en AS fecha,
-                           CASE WHEN d.tipo_destino = 'equipo' THEN eq.placa_codigo ELSE t.codigo END AS destino,
+                           CASE WHEN d.tipo_destino = 'equipo' THEN eq.placa_codigo
+                                WHEN d.tipo_destino = 'unidad_sin_alta'
+                                  THEN CASE WHEN $5::boolean THEN d.placa_sin_alta END
+                                ELSE t.codigo END AS destino,
                            -- Quién la registró y su vale del talonario (la salida a una tanqueta no
                            -- lleva vale).
                            ud.nombre AS por,
@@ -8635,6 +8642,8 @@ export class CombustibleRepository {
       destino: string;
       cantidad: number;
       equipo_id?: number;
+      /** La unidad escrita a mano (0195), en lugar de equipo_id. */
+      placa_sin_alta?: string;
       tanqueta_id?: number;
       tanqueta_equipo_id?: number;
       serie_talonario?: string;
@@ -8646,8 +8655,8 @@ export class CombustibleRepository {
       await client.query(
         `INSERT INTO combustible_recepcion_excedentes
            (tenant_id, recepcion_id, destino, cantidad, equipo_id, tanqueta_id, observaciones, decidido_por,
-            tanqueta_equipo_id, serie_talonario, n_vale)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+            tanqueta_equipo_id, serie_talonario, n_vale, placa_sin_alta)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [
           tenantId,
           recepcionId,
@@ -8660,6 +8669,7 @@ export class CombustibleRepository {
           l.tanqueta_equipo_id ?? null,
           l.serie_talonario ?? null,
           l.n_vale ?? null,
+          l.placa_sin_alta ?? null,
         ]
       );
     }
@@ -8667,7 +8677,8 @@ export class CombustibleRepository {
 
   async findLineasExcedente(client: PoolClient, tenantId: string, recepcionId: number) {
     const r = await client.query(
-      `SELECT x.id, x.destino, x.cantidad, x.equipo_id, e.placa_codigo AS equipo,
+      `SELECT x.id, x.destino, x.cantidad, x.equipo_id, x.placa_sin_alta,
+              COALESCE(e.placa_codigo, x.placa_sin_alta) AS equipo,
               x.tanqueta_id, tq.codigo AS tanqueta, x.observaciones, x.creado_en
          FROM combustible_recepcion_excedentes x
          LEFT JOIN equipos e ON e.id = x.equipo_id AND ${SQL_EMPRESA_TIENE_FLOTA}

@@ -876,20 +876,21 @@ export const crearDespachoCombustibleSchema = z
         });
       }
       // Los vales de combustible que admiten una unidad escrita a mano: el del tanque propio
-      // (0176) y la carga desde tanqueta EN PLANTA (0192); la urea lo dice en su propia rama. La
-      // carga en ruta va por la unidad del conductor y el excedente de cisterna, por su línea de
-      // reparto: esos siguen pidiendo una unidad registrada.
+      // (0176), la carga desde tanqueta EN PLANTA (0192) y el excedente de la recepción (0195); la
+      // urea lo dice en su propia rama. La carga en ruta va por la unidad del conductor (dato de
+      // Flota): esa sigue pidiendo una unidad registrada.
       const admiteUnidadEscrita =
         (data.producto === "combustible" && data.origen === "tanque_propio") ||
         (data.producto === "combustible" &&
           data.origen === "tanqueta" &&
-          data.tanqueta_lugar === "planta");
+          data.tanqueta_lugar === "planta") ||
+        (data.producto === "combustible" && data.origen === "excedente_recepcion");
       if (!admiteUnidadEscrita) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["tipo_destino"],
           message:
-            "La unidad escrita a mano solo aplica a un vale del tanque propio o a una carga desde tanqueta en planta",
+            "La unidad escrita a mano solo aplica a un vale del tanque propio, a un excedente o a una carga desde tanqueta en planta",
         });
       }
     } else if (data.placa_sin_alta !== undefined) {
@@ -1067,7 +1068,7 @@ export const crearDespachoCombustibleSchema = z
           message: "excedente_linea_id es obligatorio: qué excedente pendiente se despacha",
         });
       }
-      if (data.tipo_destino !== "equipo" && !aTanqueta) {
+      if (data.tipo_destino !== "equipo" && data.tipo_destino !== "unidad_sin_alta" && !aTanqueta) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["tipo_destino"],
@@ -2001,6 +2002,15 @@ export const crearRecepcionCombustibleSchema = z
             // Mínimo una milésima, igual que en el despacho (ver allá).
             cantidad: z.number().min(0.001).refine(hastaTresDecimales, MSG_TRES_DECIMALES),
             equipo_id: z.number().int().positive().optional(),
+            // La unidad escrita a mano (0195), en lugar de una registrada: solo con destino 'equipo'.
+            placa_sin_alta: z
+              .string()
+              .trim()
+              .transform(normalizarPlaca)
+              .pipe(
+                z.string().min(3, "La placa tiene que tener al menos 3 letras o números").max(20)
+              )
+              .optional(),
             // A cuál tanqueta va una línea de 'cubeta' (0111).
             tanqueta_id: z.number().int().positive().optional(),
             // 0140: para qué unidad va esa tanqueta, con su vale. Van los tres
@@ -2011,11 +2021,22 @@ export const crearRecepcionCombustibleSchema = z
             observaciones: z.string().trim().max(300).optional(),
           })
           .superRefine((l, ctx) => {
-            if ((l.destino === "equipo") !== (l.equipo_id !== undefined)) {
+            if (
+              (l.destino === "equipo") !==
+              (l.equipo_id !== undefined || l.placa_sin_alta !== undefined)
+            ) {
               ctx.addIssue({
                 code: z.ZodIssueCode.custom,
                 path: ["equipo_id"],
-                message: "equipo_id va si y solo si el destino es 'equipo'",
+                message:
+                  "la unidad (equipo_id o placa_sin_alta) va si y solo si el destino es 'equipo'",
+              });
+            }
+            if (l.equipo_id !== undefined && l.placa_sin_alta !== undefined) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["placa_sin_alta"],
+                message: "Elige la unidad de la lista o escribe su placa, no las dos",
               });
             }
             if ((l.destino === "cubeta") !== (l.tanqueta_id !== undefined)) {

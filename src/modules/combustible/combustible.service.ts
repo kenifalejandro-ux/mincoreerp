@@ -2699,7 +2699,7 @@ export class CombustibleService {
     if (destino === "cisterna") {
       return this.validarSalidaDeCisterna(client, tenantId, data, alcance);
     }
-    if (data.tipo_destino !== "equipo") {
+    if (data.tipo_destino !== "equipo" && data.tipo_destino !== "unidad_sin_alta") {
       throw new Error("el excedente indicado no está en una cisterna: no se pasa a una tanqueta");
     }
     const [linea] = await this.repository.findExcedentesPendientes(
@@ -2713,9 +2713,15 @@ export class CombustibleService {
         "el excedente indicado no está pendiente: no existe, ya se despachó, o su recepción se anuló"
       );
     }
-    if (Number(linea.equipo_id) !== data.equipo_id) {
+    // La unidad del vale es la de la línea: la misma registrada o, si la línea la escribió, la misma
+    // placa escrita (0195).
+    const mismaUnidad =
+      linea.equipo_id !== null
+        ? Number(linea.equipo_id) === data.equipo_id
+        : linea.placa_sin_alta === data.placa_sin_alta;
+    if (!mismaUnidad) {
       throw new Error(
-        `el excedente es para la unidad ${linea.equipo ?? linea.equipo_id}, no para la del vale`
+        `el excedente es para la unidad ${linea.equipo ?? linea.placa_sin_alta}, no para la del vale`
       );
     }
     if (Math.abs(Number(linea.cantidad) - data.cantidad!) > 0.001) {
@@ -2729,8 +2735,12 @@ export class CombustibleService {
       );
     }
     // El medidor que llegue tiene que ser el de ESA unidad (mismo cruce que la
-    // compra externa); que falte no bloquea, igual que en el vale del tanque.
-    const equipo = await this.buscarUnidad(client, tenantId, data.equipo_id!);
+    // compra externa); que falte no bloquea, igual que en el vale del tanque. Una unidad escrita
+    // no tiene medidor registrado.
+    const equipo =
+      data.equipo_id === undefined
+        ? null
+        : await this.buscarUnidad(client, tenantId, data.equipo_id);
     if (equipo?.tipo_medidor === "horometro" && data.lectura_odometro !== undefined) {
       throw new Error(`el equipo ${data.equipo_id} se mide por horómetro, no por odómetro`);
     }
@@ -2790,7 +2800,11 @@ export class CombustibleService {
         data.cantidad!
       );
     } else {
-      const equipo = await this.buscarUnidad(client, tenantId, data.equipo_id!);
+      // Una unidad escrita (0195) no tiene fila ni medidor que contrastar.
+      const equipo =
+        data.equipo_id === undefined
+          ? null
+          : await this.buscarUnidad(client, tenantId, data.equipo_id);
       if (equipo?.tipo_medidor === "horometro" && data.lectura_odometro !== undefined) {
         throw new Error(`el equipo ${data.equipo_id} se mide por horómetro, no por odómetro`);
       }
@@ -8420,6 +8434,29 @@ export class CombustibleService {
       throw new Error(
         `el reparto del excedente suma ${sumaReparto} y el excedente es ${excedenteLitros}: tienen que coincidir`
       );
+    }
+    // La unidad de una línea puede ser una placa escrita (0195). Con Flota, la placa de una unidad
+    // registrada la toma (una sola regla, igual que el vale); sin Flota, elegir una unidad
+    // registrada pide escribir la placa.
+    const conFlota = await empresaTieneModulo(client, tenantId, "flota");
+    for (const l of reparto) {
+      if (l.equipo_id !== undefined && !conFlota) {
+        throw new AppError(
+          400,
+          "La empresa no tiene el módulo Flota: escribe la placa de la unidad en lugar de elegirla de la lista"
+        );
+      }
+      if (l.placa_sin_alta !== undefined && conFlota) {
+        const registrada = await this.repository.findEquipoIdPorPlaca(
+          client,
+          tenantId,
+          l.placa_sin_alta
+        );
+        if (registrada !== null) {
+          l.equipo_id = registrada;
+          l.placa_sin_alta = undefined;
+        }
+      }
     }
     const equipoIds = [
       ...new Set(
