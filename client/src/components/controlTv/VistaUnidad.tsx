@@ -146,7 +146,9 @@ export function VistaUnidad({
     })();
   }, [id, periodo, version]);
 
-  const orden = viajes.slice().sort((a, b) => a.placa_codigo.localeCompare(b.placa_codigo));
+  const orden = viajes
+    .slice()
+    .sort((a, b) => (a.placa_codigo ?? "").localeCompare(b.placa_codigo ?? ""));
   const pos = orden.findIndex((v) => v.id === id);
   const ir = (d: number) =>
     orden.length > 1 && onCambiar(orden[(pos + d + orden.length) % orden.length].id);

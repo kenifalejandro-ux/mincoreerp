@@ -9,8 +9,11 @@ export interface FilaViaje {
   numero: number;
   /** Lo creó el propio conductor desde su celular (0179). */
   creado_por_conductor?: boolean;
-  equipo_id: number;
+  /** Null en el viaje de una unidad escrita a mano (0193): solo tiene la placa. */
+  equipo_id: number | null;
+  /** La placa de la unidad registrada o, si no la hay, la escrita. */
   placa_codigo: string;
+  placa_sin_alta?: string | null;
   codigo_interno: string | null;
   equipo_tipo: string | null;
   tipo_medidor: "horometro" | "odometro" | null;

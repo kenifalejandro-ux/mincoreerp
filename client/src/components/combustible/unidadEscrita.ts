@@ -14,7 +14,7 @@ export const normalizarPlaca = (texto: string) => texto.toUpperCase().replace(/[
 export interface UnidadRegistrada {
   id: number;
   placa_codigo: string;
-  tipo?: string;
+  tipo?: string | null;
 }
 
 export type UnidadDelVale<T extends UnidadRegistrada> =

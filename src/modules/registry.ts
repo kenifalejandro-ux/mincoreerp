@@ -117,7 +117,8 @@ export const MODULOS: ModuloDefinicion[] = [
   {
     // Viajes: programar viajes, seguir el recorrido de la unidad y medir cuánto
     // combustible y urea cargó (lee las cargas de Combustible, no depende de
-    // él). Exige `flota` (ver `requiere`). Sus rutas viven en
+    // él). Es autónomo: NO exige `flota`; sin el registro de unidades la unidad del viaje se
+    // escribe a mano (0193). Sus rutas viven en
     // `src/modules/viajes/viajes.routes.ts`; sus tablas (`combustible_viajes`,
     // `combustible_lugares`, ...) siguen registradas en Combustible, para el
     // respaldo y la restauración.
@@ -126,9 +127,9 @@ export const MODULOS: ModuloDefinicion[] = [
     icono: "🧭",
     version: "v1",
     router: viajesRoutes,
-    requiere: ["flota"],
-    // Las cargas y el consumo de cada viaje salen de Combustible: enriquecen, no se necesitan.
-    opcionales: ["combustible"],
+    // Las cargas y el consumo de cada viaje salen de Combustible, y la unidad (tipo, medidor,
+    // conductor asignado) de Flota: enriquecen, no se necesitan.
+    opcionales: ["combustible", "flota"],
     bucketDe: "combustible",
     tablas: [],
     raices: [],

@@ -159,9 +159,21 @@ const clave = (c: { lector: string; otro: string }) => `${c.lector} -> ${c.otro}
 // ── Excepciones conocidas ──────────────────────────────────────────────────
 
 /** Dependencias que hoy NO son opcionales y no están declaradas. Cada una dice por
- *  qué existe y qué la elimina. Esta lista solo se achica. Hoy está vacía: la serie de
- *  autonomía terminó (2026-11-18) con Combustible exigiendo `flota` (`requiere`). */
+ *  qué existe y qué la elimina. Esta lista solo se achica. Hoy está vacía y ningún módulo declara
+ *  `requiere`: la serie de autonomía terminó (2026-11-19) con Combustible y Viajes autónomos de Flota. */
 const EXCEPCIONES_CONOCIDAS: Record<string, string> = {};
+
+describe("autonomía de módulos: ninguno exige a otro", () => {
+  it("ningún módulo declara `requiere`: cada uno se enciende y se apaga solo, sin arrastrar a otro", () => {
+    const conRequiere = MODULOS.filter((m) => (m.requiere ?? []).length > 0).map(
+      (m) => `${m.id} -> ${(m.requiere ?? []).join(", ")}`
+    );
+    expect(
+      conRequiere,
+      "Un módulo no puede exigir a otro (regla de Kenif, 2026-11-03): lo que lee de otro es opcional y se omite sin él (`opcionales`)."
+    ).toEqual([]);
+  });
+});
 
 describe("autonomía de módulos: lecturas cruzadas declaradas", () => {
   it("cada módulo declara en `opcionales`/`requiere` solo módulos que existen, sin repetirse ni citarse a sí mismo", () => {

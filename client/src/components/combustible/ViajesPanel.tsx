@@ -3,6 +3,7 @@
 import { Ban, Download, Eye, Flag, Lock, MapPin, Pencil, Play, Plus, Tv, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { CampoUnidadPlaca } from "./CampoUnidadPlaca";
 import { CeldaDesvio } from "./ConsumoPorViaje";
 import { DetalleViajeVentana } from "./DetalleViaje";
 import { exportarViajesExcel } from "./exportarViajes";
@@ -21,6 +22,7 @@ import { ResumenConductores } from "./ResumenConductores";
 import { SelectorConductor, type OpcionConductor } from "./SelectorConductor";
 import { SelectorRelevo } from "./SelectorRelevo";
 import { haceCuanto, ubicacionVigente } from "./ubicacionesLogica";
+import { resolverUnidad } from "./unidadEscrita";
 import {
   desfaseSalida,
   fechaHora,
@@ -64,6 +66,8 @@ type Modal =
 
 const FORM_VACIO = {
   equipo_id: "",
+  // La unidad escrita a mano (0193), cuando la empresa no tiene unidades registradas que elegir.
+  placa_texto: "",
   conductor_nombre: "",
   conductor_dni: "",
   relevo_dni: "",
@@ -166,6 +170,10 @@ export default function ViajesPanel() {
   const [lugares, setLugares] = useState<Lugar[]>([]);
   const [equipos, setEquipos] = useState<Equipo[]>([]);
   const [totalEquipos, setTotalEquipos] = useState(0);
+  const [equiposListos, setEquiposListos] = useState(false);
+  // Sin unidades que elegir (la empresa no tiene Flota, o todavía no cargó ninguna) la unidad del
+  // viaje y su conductor se escriben: no hay de dónde copiarlos.
+  const modoEscrito = equiposListos && equipos.length === 0;
   const [error, setError] = useState<string | null>(null);
   const [cargando, setCargando] = useState(true);
   const [filtroEstado, setFiltroEstado] = useState("");
@@ -283,6 +291,7 @@ export default function ViajesPanel() {
       if (res.ok) {
         setEquipos(Array.isArray(body?.data) ? body.data : []);
         setTotalEquipos(Number(body?.pagination?.total ?? 0));
+        setEquiposListos(true);
       }
     })();
   }, [cargarLugares]);
@@ -326,7 +335,8 @@ export default function ViajesPanel() {
       setRutaDudosa(v.ruta_por_confirmar);
       setForm({
         ...FORM_VACIO,
-        equipo_id: String(v.equipo_id),
+        equipo_id: v.equipo_id === null ? "" : String(v.equipo_id),
+        placa_texto: v.placa_sin_alta ?? "",
         conductor_nombre: v.conductor_nombre ?? "",
         conductor_dni: v.conductor_dni ?? "",
         origen_id: String(v.origen_id),
@@ -420,17 +430,33 @@ export default function ViajesPanel() {
     let ok = false;
     const base = "/api/erp/viajes";
     if (modal.tipo === "nuevo") {
-      if (!form.equipo_id) {
+      const escrita = modoEscrito ? resolverUnidad(form.placa_texto, equipos) : null;
+      if (modoEscrito) {
+        if (escrita?.tipo === "vacia") {
+          alert("Escribe la placa de la unidad.");
+          return;
+        }
+        if (!form.conductor_dni.trim()) {
+          alert("Escribe el DNI del conductor: con él ve el viaje en “Mi viaje”.");
+          return;
+        }
+      } else if (!form.equipo_id) {
         alert("Elige el conductor: de ahí salen la unidad y la ruta.");
         return;
       }
       const errorRecorrido = errorDelRecorrido(recorrido);
       if (errorRecorrido) {
-        alert(`${errorRecorrido} Elígelo, o cárgalo a la unidad en Equipos.`);
+        alert(
+          modoEscrito
+            ? `${errorRecorrido} Elígelo.`
+            : `${errorRecorrido} Elígelo, o cárgalo a la unidad en Equipos.`
+        );
         return;
       }
       ok = await enviar(base, "POST", {
-        equipo_id: Number(form.equipo_id),
+        ...(modoEscrito
+          ? { placa_sin_alta: form.placa_texto.trim() }
+          : { equipo_id: Number(form.equipo_id) }),
         conductor_nombre: form.conductor_nombre.trim() || null,
         conductor_dni: form.conductor_dni.trim() || null,
         ...(form.relevo_dni ? { relevo_dni: form.relevo_dni, sale: form.sale } : {}),
@@ -460,7 +486,10 @@ export default function ViajesPanel() {
       const v = modal.v;
       const programado = v.estado === "programado";
       ok = await enviar(`${base}/${v.id}`, "PUT", {
-        ...(Number(form.equipo_id) !== v.equipo_id ? { equipo_id: Number(form.equipo_id) } : {}),
+        // La placa escrita no se cambia: solo una unidad registrada se mueve a otra.
+        ...(v.equipo_id !== null && Number(form.equipo_id) !== v.equipo_id
+          ? { equipo_id: Number(form.equipo_id) }
+          : {}),
         conductor_nombre: form.conductor_nombre.trim() || null,
         conductor_dni: form.conductor_dni.trim() || null,
         origen_id: Number(form.origen_id),
@@ -570,6 +599,49 @@ export default function ViajesPanel() {
         {...props}
       />
     </div>
+  );
+
+  // El conductor escrito: de la lista de usuarios con DNI o a mano. Lo usa el viaje que se corrige y
+  // el viaje nuevo de una empresa sin unidades que elegir (el conductor no viene de Equipos).
+  const bloqueConductor = (
+    <>
+      {conductores.length > 0 && (
+        <div className="space-y-1">
+          <label htmlFor="viaje-conductor-lista" className={LABEL}>
+            Conductor
+          </label>
+          <select
+            id="viaje-conductor-lista"
+            className={INPUT}
+            value={conductores.find((c) => c.dni === form.conductor_dni.trim())?.id ?? ""}
+            onChange={(e) => {
+              const c = conductores.find((x) => x.id === e.target.value);
+              setForm({
+                ...form,
+                conductor_nombre: c?.nombre ?? "",
+                conductor_dni: c?.dni ?? "",
+              });
+            }}
+          >
+            <option value="">Otro (escribir abajo)</option>
+            {conductores.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.nombre} · DNI {c.dni}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-slate-600">
+            El viaje le aparece en “Mi viaje” al conductor con este DNI.
+          </p>
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        {campo("conductor_nombre", conductores.length > 0 ? "Nombre" : "Conductor", {
+          maxLength: 150,
+        })}
+        {campo("conductor_dni", "DNI", { maxLength: 15 })}
+      </div>
+    </>
   );
 
   const tituloModal =
@@ -938,7 +1010,25 @@ export default function ViajesPanel() {
 
             {
               <form onSubmit={guardar} className="p-6 space-y-4">
-                {modal.tipo === "nuevo" && (
+                {modal.tipo === "nuevo" && modoEscrito && (
+                  <>
+                    <div className="space-y-1">
+                      <label htmlFor="viaje-placa" className={LABEL}>
+                        Unidad (placa)
+                      </label>
+                      <CampoUnidadPlaca
+                        id="viaje-placa"
+                        equipos={equipos}
+                        texto={form.placa_texto}
+                        onTexto={(placa_texto) => setForm((f) => ({ ...f, placa_texto }))}
+                        className={INPUT}
+                      />
+                    </div>
+                    {bloqueConductor}
+                  </>
+                )}
+
+                {modal.tipo === "nuevo" && !modoEscrito && (
                   <div className="space-y-1">
                     <label htmlFor="viaje-conductor" className={LABEL}>
                       Conductor
@@ -990,17 +1080,31 @@ export default function ViajesPanel() {
                   </div>
                 )}
 
-                {modal.tipo === "nuevo" && equipoDelForm && (
-                  <SelectorRelevo
-                    conductores={conductores}
-                    titularDni={form.conductor_dni}
-                    relevoDni={form.relevo_dni}
-                    sale={form.sale}
-                    onCambiar={(relevo_dni, sale) => setForm((f) => ({ ...f, relevo_dni, sale }))}
-                  />
+                {modal.tipo === "nuevo" &&
+                  (equipoDelForm || (modoEscrito && form.conductor_dni.trim())) && (
+                    <SelectorRelevo
+                      conductores={conductores}
+                      titularDni={form.conductor_dni}
+                      relevoDni={form.relevo_dni}
+                      sale={form.sale}
+                      onCambiar={(relevo_dni, sale) => setForm((f) => ({ ...f, relevo_dni, sale }))}
+                    />
+                  )}
+
+                {modal.tipo === "editar" && modal.v.equipo_id === null && (
+                  <div className="space-y-1">
+                    <span className={LABEL}>Unidad</span>
+                    <p className="rounded-xl bg-slate-100 p-3 text-sm">
+                      {modal.v.placa_codigo}{" "}
+                      <span className="text-slate-500">(escrita a mano)</span>
+                    </p>
+                    <p className="text-xs text-slate-600">
+                      La placa escrita no se cambia: si es otra, anula el viaje y crea uno nuevo.
+                    </p>
+                  </div>
                 )}
 
-                {modal.tipo === "editar" && (
+                {modal.tipo === "editar" && modal.v.equipo_id !== null && (
                   <div className="space-y-1">
                     <label htmlFor="viaje-equipo" className={LABEL}>
                       Unidad
@@ -1020,7 +1124,7 @@ export default function ViajesPanel() {
                         </option>
                       ))}
                     </select>
-                    {modal.tipo === "editar" && Number(form.equipo_id) !== modal.v.equipo_id && (
+                    {Number(form.equipo_id) !== modal.v.equipo_id && (
                       <p className="text-xs text-amber-700">
                         Cambiar la unidad mueve sus cargas al otro vehículo.
                       </p>
@@ -1087,49 +1191,7 @@ export default function ViajesPanel() {
                           {selectLugar("origen_id", "Origen")}
                           {selectLugar("destino_id", "Destino")}
                         </div>
-                        {conductores.length > 0 && (
-                          <div className="space-y-1">
-                            <label htmlFor="viaje-conductor-lista" className={LABEL}>
-                              Conductor
-                            </label>
-                            <select
-                              id="viaje-conductor-lista"
-                              className={INPUT}
-                              value={
-                                conductores.find((c) => c.dni === form.conductor_dni.trim())?.id ??
-                                ""
-                              }
-                              onChange={(e) => {
-                                const c = conductores.find((x) => x.id === e.target.value);
-                                setForm({
-                                  ...form,
-                                  conductor_nombre: c?.nombre ?? "",
-                                  conductor_dni: c?.dni ?? "",
-                                });
-                              }}
-                            >
-                              <option value="">Otro (escribir abajo)</option>
-                              {conductores.map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  {c.nombre} · DNI {c.dni}
-                                </option>
-                              ))}
-                            </select>
-                            <p className="text-xs text-slate-600">
-                              El viaje le aparece en “Mi viaje” al conductor con este DNI.
-                            </p>
-                          </div>
-                        )}
-                        <div className="grid grid-cols-2 gap-3">
-                          {campo(
-                            "conductor_nombre",
-                            conductores.length > 0 ? "Nombre" : "Conductor",
-                            {
-                              maxLength: 150,
-                            }
-                          )}
-                          {campo("conductor_dni", "DNI", { maxLength: 15 })}
-                        </div>
+                        {bloqueConductor}
                       </>
                     )}
                     {modal.tipo === "nuevo" && (

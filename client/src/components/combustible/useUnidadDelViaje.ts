@@ -60,9 +60,11 @@ export function useUnidadDelViaje(activo: boolean, usuarioId: string | undefined
       if (!res.ok) return;
       const body = await res.json().catch(() => null);
       const d = body?.data;
-      const nueva: UnidadDelViaje | null = d
-        ? { equipo_id: Number(d.equipo_id), placa_codigo: String(d.placa_codigo) }
-        : null;
+      // Un viaje de una unidad escrita a mano (0193) no tiene unidad registrada que preseleccionar.
+      const nueva: UnidadDelViaje | null =
+        d && d.equipo_id != null
+          ? { equipo_id: Number(d.equipo_id), placa_codigo: String(d.placa_codigo) }
+          : null;
       const antes = anterior.current;
       anterior.current = nueva?.equipo_id ?? null;
       guardarCache(usuarioId, nueva);

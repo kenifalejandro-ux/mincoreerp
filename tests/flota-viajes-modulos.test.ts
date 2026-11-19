@@ -251,7 +251,7 @@ describe("módulos flota y viajes", () => {
     });
   });
 
-  describe("`viajes` exige `flota`", () => {
+  describe("`viajes` NO exige `flota` (cada módulo se enciende y se apaga solo)", () => {
     const configuracion = (estados: Record<string, "habilitado" | "deshabilitado">) =>
       MODULOS.map((m) => ({ modulo: m.id, estado: estados[m.id] ?? "habilitado" }));
 
@@ -272,11 +272,11 @@ describe("módulos flota y viajes", () => {
       return res.body.usuario.modulosPermitidos as string[];
     };
 
-    it("plataforma rechaza encender Viajes si la empresa no tiene Flota, y lo acepta con Flota", async () => {
+    it("plataforma acepta encender Viajes sin Flota, y con Flota", async () => {
       const e = await nueva();
       const sinFlota = await ponerModulos(e.tenant.id, { flota: "deshabilitado" });
-      expect(sinFlota.status).toBe(400);
-      expect(JSON.stringify(sinFlota.body)).toMatch(/requiere/i);
+      expect(sinFlota.status, JSON.stringify(sinFlota.body)).toBe(200);
+      expect(await modulosQueVe(e)).toContain("viajes");
 
       const conFlota = await ponerModulos(e.tenant.id, {});
       expect(conFlota.status).toBe(200);
@@ -292,17 +292,17 @@ describe("módulos flota y viajes", () => {
       expect(res.status).toBe(200);
     });
 
-    it("un usuario con `viajes` asignado NO lo ve si su empresa no tiene Flota (aunque la fila exista)", async () => {
+    it("un usuario con `viajes` asignado lo sigue viendo si su empresa pierde Flota", async () => {
       const e = await nueva();
       expect(await modulosQueVe(e)).toContain("viajes");
 
-      // Por fuera de la API, que ya lo impediría: la empresa pierde Flota y el usuario conserva su fila.
+      // La empresa pierde Flota y el usuario conserva su fila de Viajes: Viajes sigue, con la unidad escrita.
       await pool.query(
         `UPDATE tenant_modulos SET estado = 'deshabilitado' WHERE tenant_id = $1 AND modulo = 'flota'`,
         [e.tenant.id]
       );
       const ve = await modulosQueVe(e);
-      expect(ve).not.toContain("viajes");
+      expect(ve).toContain("viajes");
       expect(ve).not.toContain("flota");
       // Combustible NO exige Flota (es autónomo): sin ella sigue visible, con la unidad escrita.
       expect(ve).toContain("combustible");
@@ -377,44 +377,6 @@ describe("módulos flota y viajes", () => {
         { modulo: "flota", estado: "habilitado" },
         { modulo: "viajes", estado: "habilitado" },
       ]);
-    });
-
-    it("el interruptor global rechaza encender Viajes si alguna empresa no tiene Flota, y apagar Flota si alguna tiene Viajes", async () => {
-      const e = await nueva();
-      // Esta empresa no tiene ni Flota ni Viajes ni Combustible; el resto de las de la base sí tienen ambos.
-      await request(app)
-        .put(`/api/platform/tenants/${e.tenant.id}/modulos`)
-        .set("Authorization", BEARER)
-        .send({
-          configuraciones: MODULOS.map((m) => ({
-            modulo: m.id,
-            estado: ["flota", "viajes", "combustible"].includes(m.id)
-              ? "deshabilitado"
-              : "habilitado",
-          })),
-        })
-        .expect(200);
-
-      const encender = await request(app)
-        .put(`/api/platform/modulos/viajes/global`)
-        .set("Authorization", BEARER)
-        .send({ estado: "habilitado" });
-      expect(encender.status).toBe(400);
-      expect(JSON.stringify(encender.body)).toMatch(/requiere/i);
-
-      // Otra empresa con Viajes encendido: apagar Flota para todas dejaría Viajes sin su base.
-      const otra = await nueva();
-      const apagar = await request(app)
-        .put(`/api/platform/modulos/flota/global`)
-        .set("Authorization", BEARER)
-        .send({ estado: "deshabilitado" });
-      expect(apagar.status).toBe(400);
-      expect(JSON.stringify(apagar.body)).toMatch(/apágalo primero/i);
-      const intacta = await pool.query(
-        `SELECT estado FROM tenant_modulos WHERE tenant_id = $1 AND modulo = 'flota'`,
-        [otra.tenant.id]
-      );
-      expect(intacta.rows[0].estado).toBe("habilitado");
     });
 
     it("el acceso a Flota se decide por el id `flota`: un nivel `consultas` no escribe y un token con el nombre viejo `equipos` ya no abre nada", () => {
