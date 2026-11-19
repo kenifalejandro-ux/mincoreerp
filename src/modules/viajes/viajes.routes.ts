@@ -10,12 +10,16 @@
  * Los permisos de pestaña siguen siendo `combustible:viajes`,
  * `combustible:mi_viaje`, etc. (el cliente las lee con esas claves).
  */
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { validate, validateQuery } from "../../server/middleware/validate";
 import { requireRole } from "../../server/shared/middlewares/roles.middleware";
 import { requirePestana } from "../../server/shared/middlewares/pestana.middleware";
 import { asyncHandler } from "../../server/shared/utils/asyncHandler";
 import { tieneModulo } from "../../server/shared/utils/modulos";
+import { empresaTieneModulo } from "../../server/shared/utils/modulosEmpresa";
+import { parsePaginacion, armarRespuestaPaginada } from "../../server/shared/utils/pagination";
+import { withTenant } from "../../server/config/database";
+import { getTenantId } from "../../server/shared/utils/request";
 import {
   aceptarMandoSchema,
   anularViajeSchema,
@@ -105,11 +109,19 @@ router.patch(
   asyncHandler(viajesController.marcarAlertasLeidas)
 );
 // Las unidades que el panel de Viajes ofrece para programar un viaje y para filtrar la lista. Es el
-// registro de Flota (Viajes lo exige): así el panel no las pide a Combustible, que puede no estar.
+// registro de Flota: así el panel no las pide a Combustible, que puede no estar. Sin Flota en la
+// empresa la lista sale vacía (no un 403) y el formulario pide la placa escrita (0193).
 router.get(
   "/unidades",
   requirePestana("combustible", "viajes"),
-  asyncHandler(EquiposController.getAll)
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    if (!(await withTenant(tenantId, (client) => empresaTieneModulo(client, tenantId, "flota")))) {
+      res.json(armarRespuestaPaginada([], parsePaginacion(req.query)));
+      return;
+    }
+    await EquiposController.getAll(req, res);
+  })
 );
 router.get(
   "/",
