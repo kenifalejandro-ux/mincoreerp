@@ -2,6 +2,10 @@
 // despachos de esa unidad dentro de su ventana; ver la migración.
 import type { PoolClient } from "pg";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
+import {
+  SQL_EMPRESA_TIENE_FLOTA,
+  empresaTieneModulo,
+} from "../../server/shared/utils/modulosEmpresa";
 import { esViolacionUnicidad } from "../../server/shared/utils/pgError";
 import type {
   CorregirMandoInput,
@@ -147,9 +151,22 @@ export async function editarLugar(
 
 /** Serializa todo lo que toca los viajes de una unidad: sin esto, dos altas
  *  simultáneas pasan las dos el chequeo de traslape. */
-async function bloquearUnidad(client: PoolClient, tenantId: string, equipoId: number) {
+/** La unidad de un viaje: la registrada en Flota o, sin ella, la placa escrita a mano (0193). Una
+ *  de las dos, nunca las dos. Todo lo que cuelga de la unidad (candado, traslape, medidor previo)
+ *  se resuelve por la registrada y, si no hay, por la placa. */
+export interface UnidadViaje {
+  equipoId: number | null;
+  placa: string | null;
+}
+
+const unidadDelViaje = (v: { equipo_id: unknown; placa_sin_alta?: unknown }): UnidadViaje => ({
+  equipoId: v.equipo_id == null ? null : Number(v.equipo_id),
+  placa: v.placa_sin_alta == null ? null : String(v.placa_sin_alta),
+});
+
+async function bloquearUnidad(client: PoolClient, tenantId: string, u: UnidadViaje) {
   await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-    `viaje:${tenantId}:${equipoId}`,
+    u.equipoId !== null ? `viaje:${tenantId}:${u.equipoId}` : `viaje:${tenantId}:placa:${u.placa}`,
   ]);
 }
 
@@ -224,20 +241,21 @@ async function sincronizarExtremos(client: PoolClient, tenantId: string, viajeId
 async function validarSinTraslape(
   client: PoolClient,
   tenantId: string,
-  equipoId: number,
+  unidad: UnidadViaje,
   inicio: string,
   fin: string | null,
   excluirId: number | null
 ) {
   const r = await client.query(
     `SELECT numero FROM combustible_viajes
-      WHERE tenant_id = $1 AND equipo_id = $2 AND estado <> 'anulado'
+      WHERE tenant_id = $1 AND estado <> 'anulado'
+        AND (($2::int IS NOT NULL AND equipo_id = $2) OR ($6::text IS NOT NULL AND placa_sin_alta = $6))
         AND inicio_en IS NOT NULL
         AND ($5::bigint IS NULL OR id <> $5)
         AND tstzrange(inicio_en, COALESCE(fin_en, 'infinity')) &&
             tstzrange($3::timestamptz, COALESCE($4::timestamptz, 'infinity'))
       LIMIT 1`,
-    [tenantId, equipoId, inicio, fin, excluirId]
+    [tenantId, unidad.equipoId, inicio, fin, excluirId, unidad.placa]
   );
   if (r.rows[0]) {
     throw new AppError(409, `La unidad ya está en el viaje V-${r.rows[0].numero} en esas fechas`);
@@ -312,11 +330,39 @@ export async function crearViaje(
   data: CrearViajeInput
 ) {
   validarMedidores(data.medidor_inicio, data.medidor_fin);
-  const equipo = await client.query(
-    `SELECT id, conductor_nombre, conductor_dni FROM equipos WHERE tenant_id = $1 AND id = $2`,
-    [tenantId, data.equipo_id]
-  );
-  if (!equipo.rows[0]) throw new AppError(404, "La unidad no existe");
+  // La unidad: la registrada o la placa escrita (0193). Elegir una registrada pide que la empresa
+  // tenga Flota; una placa que SÍ es de una unidad registrada se toma como esa unidad (una sola
+  // regla, igual que en el vale); si no, el viaje queda con la placa escrita.
+  let equipoId: number | null = data.equipo_id ?? null;
+  let placa: string | null = data.placa_sin_alta ?? null;
+  const conFlota = await empresaTieneModulo(client, tenantId, "flota");
+  if (equipoId !== null && !conFlota) {
+    throw new AppError(
+      400,
+      "La empresa no tiene el módulo Flota: escribe la placa de la unidad en lugar de elegirla de la lista"
+    );
+  }
+  if (placa !== null && conFlota) {
+    const registrada = await client.query(
+      `SELECT id FROM equipos
+        WHERE tenant_id = $1 AND upper(regexp_replace(placa_codigo, '[^A-Za-z0-9]', '', 'g')) = $2
+        ORDER BY activo DESC, id LIMIT 1`,
+      [tenantId, placa]
+    );
+    if (registrada.rows[0]) {
+      equipoId = Number(registrada.rows[0].id);
+      placa = null;
+    }
+  }
+  const equipo =
+    equipoId === null
+      ? null
+      : await client.query(
+          `SELECT id, conductor_nombre, conductor_dni FROM equipos WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, equipoId]
+        );
+  if (equipo && !equipo.rows[0]) throw new AppError(404, "La unidad no existe");
+  const unidad: UnidadViaje = { equipoId, placa };
   // Sin `paradas`, el viaje es origen → destino. Con ellas, la "ida" son las dos primeras.
   const paradas = data.paradas ?? [data.origen_id!, data.destino_id!];
   if (paradas.length > 2 && data.fin_en) {
@@ -327,16 +373,9 @@ export async function crearViaje(
   }
   await validarLugares(client, tenantId, paradas);
 
-  await bloquearUnidad(client, tenantId, data.equipo_id);
+  await bloquearUnidad(client, tenantId, unidad);
   if (data.inicio_en) {
-    await validarSinTraslape(
-      client,
-      tenantId,
-      data.equipo_id,
-      data.inicio_en,
-      data.fin_en ?? null,
-      null
-    );
+    await validarSinTraslape(client, tenantId, unidad, data.inicio_en, data.fin_en ?? null, null);
   }
 
   await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`viaje-numero:${tenantId}`]);
@@ -345,18 +384,24 @@ export async function crearViaje(
     [tenantId]
   );
 
-  // Sin conductor en el formulario, se copia el asignado a la unidad hoy.
+  // Sin conductor en el formulario, se copia el asignado a la unidad hoy. Una unidad escrita a mano
+  // no tiene de dónde copiarlo: el conductor se escribe.
+  const delEquipo = equipo?.rows[0];
   const conductorNombre =
-    data.conductor_nombre !== undefined ? data.conductor_nombre : equipo.rows[0].conductor_nombre;
+    data.conductor_nombre !== undefined
+      ? data.conductor_nombre
+      : (delEquipo?.conductor_nombre ?? null);
   const conductorDni =
-    data.conductor_dni !== undefined ? data.conductor_dni : equipo.rows[0].conductor_dni;
+    data.conductor_dni !== undefined ? data.conductor_dni : (delEquipo?.conductor_dni ?? null);
   // El conductor se identifica por su DNI ("Mi viaje" lo busca por ahí): un
   // viaje sin él no lo ve nadie y no se puede iniciar. Mejor frenarlo al
   // programarlo que descubrirlo cuando el conductor no encuentra su viaje.
   if (!String(conductorDni ?? "").trim()) {
     throw new AppError(
       400,
-      "La unidad no tiene conductor asignado: asígnalo en Equipos antes de programar el viaje"
+      equipoId === null
+        ? "Escribe el DNI del conductor: sin él nadie ve este viaje ni se puede iniciar"
+        : "La unidad no tiene conductor asignado: asígnalo en Equipos antes de programar el viaje"
     );
   }
   const estado = !data.inicio_en ? "programado" : data.fin_en ? "cerrado" : "en_curso";
@@ -390,13 +435,13 @@ export async function crearViaje(
        tenant_id, numero, equipo_id, conductor_nombre, conductor_dni, origen_id, destino_id,
        inicio_en, fin_en, medidor_inicio, medidor_fin, estado, observaciones,
        creado_por, cerrado_por, relevo_dni, relevo_nombre, sale_primero,
-       salida_programada_en, desfase_tolerancia_min)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+       salida_programada_en, desfase_tolerancia_min, placa_sin_alta)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
      RETURNING id`,
     [
       tenantId,
       sig.rows[0].n,
-      data.equipo_id,
+      equipoId,
       conductorNombre || null,
       conductorDni || null,
       paradas[0],
@@ -415,6 +460,7 @@ export async function crearViaje(
       // En UTC: Postgres rechaza algunos desfases de zona que el formato ISO sí admite.
       data.salida_programada_en ? new Date(data.salida_programada_en).toISOString() : null,
       data.desfase_tolerancia_min ?? 10,
+      placa,
     ]
   );
   await client.query(
@@ -445,17 +491,18 @@ async function viajeParaCambiar(client: PoolClient, tenantId: string, id: number
   // unidad mientras se esperaba, se toma también el candado de la nueva y se vuelve a mirar hasta
   // que la unidad ya no cambie (con el candado de la unidad actual nadie más puede moverlo). Tomar
   // la fila primero y pedir el candado después se cruza con otra acción sobre el mismo viaje.
-  let bloqueada: number | null = null;
+  let bloqueada: string | null = null;
   for (;;) {
     const r = await client.query(
-      `SELECT equipo_id FROM combustible_viajes WHERE tenant_id = $1 AND id = $2`,
+      `SELECT equipo_id, placa_sin_alta FROM combustible_viajes WHERE tenant_id = $1 AND id = $2`,
       [tenantId, id]
     );
     if (!r.rows[0]) throw new AppError(404, "El viaje no existe");
-    const equipo = Number(r.rows[0].equipo_id);
-    if (equipo === bloqueada) break;
-    await bloquearUnidad(client, tenantId, equipo);
-    bloqueada = equipo;
+    const unidad = unidadDelViaje(r.rows[0]);
+    const clave = unidad.equipoId !== null ? `e${unidad.equipoId}` : `p${unidad.placa}`;
+    if (clave === bloqueada) break;
+    await bloquearUnidad(client, tenantId, unidad);
+    bloqueada = clave;
   }
   const fresco = await client.query(`SELECT * FROM combustible_viajes WHERE id = $1 FOR UPDATE`, [
     id,
@@ -602,11 +649,13 @@ export interface MarcaFin {
 export async function medidorPrevio(
   client: PoolClient,
   tenantId: string,
-  equipoId: number,
+  equipoId: number | null,
   hasta?: string,
   /** Sin Combustible no hay vales de donde sacar la lectura: se omite la consulta a sus cargas. */
   conCargas = true
 ) {
+  // Una unidad escrita a mano (0193) no tiene medidor registrado de donde partir.
+  if (equipoId === null) return { tipo_medidor: null, valor: null, fuente: null };
   const eq = await client.query(
     `SELECT tipo_medidor FROM equipos WHERE tenant_id = $1 AND id = $2`,
     [tenantId, equipoId]
@@ -700,7 +749,13 @@ export async function iniciarViaje(
     data.marcado_en,
     data.cliente_uuid
   );
-  const previo = await medidorPrevio(client, tenantId, v.equipo_id, inicio, conCargas);
+  const previo = await medidorPrevio(
+    client,
+    tenantId,
+    v.equipo_id === null ? null : Number(v.equipo_id),
+    inicio,
+    conCargas
+  );
   if (previo.tipo_medidor && data.medidor_inicio == null && !medidorOpcional) {
     throw new AppError(
       400,
@@ -713,7 +768,7 @@ export async function iniciarViaje(
       `El medidor de salida (${data.medidor_inicio}) es menor que el último registrado (${previo.valor})`
     );
   }
-  await validarSinTraslape(client, tenantId, v.equipo_id, inicio, null, id);
+  await validarSinTraslape(client, tenantId, unidadDelViaje(v), inicio, null, id);
   const sale = quienSale(v);
   await exigirLibreParaManejar(client, tenantId, sale, id);
   // Una marca que estuvo en la cola sin señal (hora del celular) es un hecho ya ocurrido en la
@@ -822,7 +877,7 @@ export async function cerrarViaje(
       `El medidor de llegada (${data.medidor_fin}) es menor que el último del viaje (${lectura})`
     );
   }
-  await validarSinTraslape(client, tenantId, v.equipo_id, v.inicio_en, fin, id);
+  await validarSinTraslape(client, tenantId, unidadDelViaje(v), v.inicio_en, fin, id);
   await client.query(
     `UPDATE combustible_viaje_descansos
         SET fin_en = $3, fin_por = 'oficina', fin_origen_hora = $4, cerrado_por = $5
@@ -1285,7 +1340,7 @@ export async function marcarParadaSinOrden(
   if (orden === 0) {
     // La salida del origen es el inicio del propio viaje.
     await validarVentanaConMarcas(client, tenantId, id, hora, fin, null, null);
-    await validarSinTraslape(client, tenantId, v.equipo_id, hora, fin, id);
+    await validarSinTraslape(client, tenantId, unidadDelViaje(v), hora, fin, id);
     await client.query(
       `UPDATE combustible_viajes SET inicio_en = $2, inicio_origen_hora = 'manual' WHERE id = $1`,
       [id, hora]
@@ -1296,7 +1351,7 @@ export async function marcarParadaSinOrden(
   if (orden === n - 1 && actual) {
     // Cambiar la hora de la llegada final (el viaje ya cerró).
     await validarVentanaConMarcas(client, tenantId, id, inicio, hora, null, null);
-    await validarSinTraslape(client, tenantId, v.equipo_id, inicio, hora, id);
+    await validarSinTraslape(client, tenantId, unidadDelViaje(v), inicio, hora, id);
     await client.query(
       `UPDATE combustible_viajes SET fin_en = $2, fin_origen_hora = 'manual' WHERE id = $1`,
       [id, hora]
@@ -2330,18 +2385,36 @@ export async function editarViaje(
   // unidad que se lee no cambia mientras se toman.
   await bloquearViaje(client, tenantId, id);
   const previo = await client.query(
-    `SELECT equipo_id FROM combustible_viajes WHERE tenant_id = $1 AND id = $2`,
+    `SELECT equipo_id, placa_sin_alta FROM combustible_viajes WHERE tenant_id = $1 AND id = $2`,
     [tenantId, id]
   );
   if (!previo.rows[0]) throw new AppError(404, "El viaje no existe");
-  const unidades = [previo.rows[0].equipo_id as number];
-  if (data.equipo_id !== undefined && data.equipo_id !== unidades[0]) unidades.push(data.equipo_id);
-  for (const u of unidades.sort((a, b) => a - b)) await bloquearUnidad(client, tenantId, u);
+  const unidadPrevia = unidadDelViaje(previo.rows[0]);
+  if (unidadPrevia.equipoId === null) {
+    // La placa escrita es la clave del viaje (candado, traslape): no se cambia. Para otra, se
+    // anula el viaje y se crea de nuevo con la placa correcta.
+    if (data.equipo_id !== undefined) {
+      throw new AppError(
+        400,
+        "La unidad escrita a mano no se cambia: anula el viaje y crea otro con la placa correcta"
+      );
+    }
+    await bloquearUnidad(client, tenantId, unidadPrevia);
+  } else {
+    const unidades = [unidadPrevia.equipoId];
+    if (data.equipo_id !== undefined && data.equipo_id !== unidades[0]) {
+      unidades.push(data.equipo_id);
+    }
+    for (const u of unidades.sort((a, b) => a - b)) {
+      await bloquearUnidad(client, tenantId, { equipoId: u, placa: null });
+    }
+  }
 
   const v = await viajeParaCambiar(client, tenantId, id);
   const def = <T>(nuevo: T | undefined, actual: T) => (nuevo === undefined ? actual : nuevo);
   const iso = (x: unknown) => (x ? new Date(x as string).toISOString() : null);
-  const equipo = def(data.equipo_id, Number(v.equipo_id));
+  const equipoActual = v.equipo_id == null ? null : Number(v.equipo_id);
+  const equipo: number | null = def(data.equipo_id, equipoActual);
   const inicio = def(data.inicio_en, iso(v.inicio_en));
   const fin = def(data.fin_en, iso(v.fin_en));
   // Una hora no puede irse a más de un año atrás. Solo se mira lo que CAMBIA: el formulario
@@ -2420,7 +2493,13 @@ export async function editarViaje(
     (l) => l !== Number(v.origen_id) && l !== Number(v.destino_id)
   );
   if (lugaresNuevos.length) await validarLugares(client, tenantId, lugaresNuevos);
-  if (equipo !== Number(v.equipo_id)) {
+  if (equipo !== equipoActual && equipo !== null) {
+    if (!(await empresaTieneModulo(client, tenantId, "flota"))) {
+      throw new AppError(
+        400,
+        "La empresa no tiene el módulo Flota: no se puede elegir una unidad registrada"
+      );
+    }
     const e = await client.query(`SELECT 1 FROM equipos WHERE tenant_id = $1 AND id = $2`, [
       tenantId,
       equipo,
@@ -2429,14 +2508,19 @@ export async function editarViaje(
   }
   if (v.estado !== "programado") {
     await validarVentanaConMarcas(client, tenantId, id, inicio!, fin, medIni, medFin);
-    await validarSinTraslape(client, tenantId, equipo, inicio!, fin, id);
+    await validarSinTraslape(
+      client,
+      tenantId,
+      equipo === null ? unidadPrevia : { equipoId: equipo, placa: null },
+      inicio!,
+      fin,
+      id
+    );
   }
   // Cambiar la ruta o la unidad es justamente confirmarla, salvo que se diga
   // lo contrario.
   const cambioRuta =
-    origen !== Number(v.origen_id) ||
-    destino !== Number(v.destino_id) ||
-    equipo !== Number(v.equipo_id);
+    origen !== Number(v.origen_id) || destino !== Number(v.destino_id) || equipo !== equipoActual;
   const rutaPorConfirmar = def(data.ruta_por_confirmar, cambioRuta ? false : v.ruta_por_confirmar);
   // Si cambia el titular, sus turnos pasan a él; y no puede ser a la vez el relevo.
   const titularAntes = normalizarDni(v.conductor_dni);
@@ -2577,7 +2661,8 @@ const MARGEN_RELOJ_MS = 5 * 60 * 1000;
 const MAXIMO_UBICACIONES_EN_VIAJE = 50;
 
 const COLUMNAS_VIAJE = `
-  v.id, v.numero, v.equipo_id, e.placa_codigo, e.codigo_interno, e.tipo AS equipo_tipo,
+  v.id, v.numero, v.equipo_id, COALESCE(e.placa_codigo, v.placa_sin_alta) AS placa_codigo,
+  v.placa_sin_alta, e.codigo_interno, e.tipo AS equipo_tipo,
   e.tipo_medidor, v.conductor_nombre, v.conductor_dni,
   v.creado_por_conductor, e.por_completar AS equipo_por_completar,
   v.origen_id, lo.nombre AS origen, v.destino_id, ld.nombre AS destino,
@@ -2655,8 +2740,11 @@ const COLUMNAS_VIAJE = `
     WHERE m.tenant_id = v.tenant_id AND m.viaje_id = v.id) AS manejo,
   ${recorridoClave("v")} AS recorrido_clave`;
 
+// LEFT JOIN: el viaje de una unidad escrita a mano (0193) o de una empresa sin Flota no tiene fila
+// en `equipos`. Los datos de la unidad (tipo, medidor, conductor asignado) salen nulos; la placa
+// sale de la escrita.
 const JOINS_VIAJE = `
-  JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+  LEFT JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
   JOIN combustible_lugares lo ON lo.id = v.origen_id AND lo.tenant_id = v.tenant_id
   JOIN combustible_lugares ld ON ld.id = v.destino_id AND ld.tenant_id = v.tenant_id`;
 

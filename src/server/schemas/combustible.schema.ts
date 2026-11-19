@@ -2672,7 +2672,14 @@ const toleranciaDesfase = z.number().int().min(0).max(240);
 
 export const crearViajeSchema = z
   .object({
-    equipo_id: z.number().int().positive(),
+    // La unidad registrada (Flota) o, sin ella, la placa escrita a mano (0193): una de las dos.
+    equipo_id: z.number().int().positive().optional(),
+    placa_sin_alta: z
+      .string()
+      .trim()
+      .transform(normalizarPlaca)
+      .pipe(z.string().min(3, "La placa tiene que tener al menos 3 letras o números").max(20))
+      .optional(),
     conductor_nombre: z.string().trim().max(150).nullable().optional(),
     conductor_dni: z.string().trim().max(15).nullable().optional(),
     // El relevo se elige al programar (no es fijo por unidad) y `sale` dice quién sale manejando.
@@ -2698,6 +2705,10 @@ export const crearViajeSchema = z
     salida_programada_en: fechaHora.nullable().optional(),
     desfase_tolerancia_min: toleranciaDesfase.optional(),
     observaciones: z.string().trim().max(1000).nullable().optional(),
+  })
+  .refine((v) => (v.equipo_id === undefined) !== (v.placa_sin_alta === undefined), {
+    message: "Elige la unidad de la lista o escribe su placa, no las dos",
+    path: ["equipo_id"],
   })
   .refine((v) => v.sale !== "relevo" || Boolean(v.relevo_dni), {
     message: "Para que salga el relevo hay que elegir al relevo",
