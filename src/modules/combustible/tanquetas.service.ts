@@ -14,6 +14,10 @@
 import type { PoolClient } from "pg";
 
 import { AppError } from "../../server/shared/middlewares/error.middleware";
+import {
+  SQL_EMPRESA_TIENE_FLOTA,
+  empresaTieneModulo,
+} from "../../server/shared/utils/modulosEmpresa";
 import { esViolacionUnicidad } from "../../server/shared/utils/pgError";
 import { motivoGrifoNoAsignable } from "../../server/services/sedes.service";
 import { LITROS_POR_GALON } from "../../server/shared/utils/unidades";
@@ -133,7 +137,7 @@ export async function listarTanquetas(
     `SELECT ${COLUMNAS}, g.nombre AS grifo_nombre, e.placa_codigo AS equipo_asignado
        FROM combustible_tanquetas t
        JOIN grifos_internos g ON g.id = t.grifo_interno_id AND g.tenant_id = t.tenant_id
-       LEFT JOIN equipos e ON e.id = t.equipo_asignado_id AND e.tenant_id = t.tenant_id
+       LEFT JOIN equipos e ON e.id = t.equipo_asignado_id AND e.tenant_id = t.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
       WHERE ${condiciones.join(" AND ")}
       ORDER BY t.activa DESC, lower(t.codigo)`,
     valores
@@ -249,6 +253,14 @@ export async function asignarTanqueta(
   if (!t.activa) throw new AppError(400, `La tanqueta ${t.codigo} está dada de baja`);
   if (Number(t.saldo) <= 0) {
     throw new AppError(400, `La tanqueta ${t.codigo} está vacía: no hay nada que asignar`);
+  }
+  // Asignar es entregarle la tanqueta a una unidad REGISTRADA (y la unidad del conductor es dato de
+  // Flota): sin Flota la tanqueta sigue siendo del grifo y las cargas se hacen con vale en planta.
+  if (!(await empresaTieneModulo(client, tenantId, "flota"))) {
+    throw new AppError(
+      400,
+      "La empresa no tiene el módulo Flota: no se puede asignar una tanqueta a una unidad registrada"
+    );
   }
   const eq = await client.query<{
     activo: boolean;
@@ -727,7 +739,7 @@ export async function registrarRetornoTanqueta(
   );
   if (retornoPideAlerta(saldo, datos.saldoValidado) || pideAcumulado) {
     const unidad = await client.query<{ placa_codigo: string }>(
-      `SELECT placa_codigo FROM equipos WHERE tenant_id = $1 AND id = $2`,
+      `SELECT placa_codigo FROM equipos WHERE tenant_id = $1 AND id = $2 AND ${SQL_EMPRESA_TIENE_FLOTA}`,
       [tenantId, t.equipo_asignado_id]
     );
     [alerta] = await new CombustibleRepository().crearAlertas(client, tenantId, [
@@ -1006,7 +1018,7 @@ export async function cuadreDeTanqueta(client: PoolClient, tenantId: string, id:
     `SELECT 'asignacion' AS fuente, a.creado_en AS inicio, e.placa_codigo AS placa,
             a.serie_talonario AS serie, a.n_vale, a.cantidad
        FROM combustible_tanqueta_asignaciones a
-       LEFT JOIN equipos e ON e.id = a.equipo_id AND e.tenant_id = a.tenant_id
+       LEFT JOIN equipos e ON e.id = a.equipo_id AND e.tenant_id = a.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
       WHERE a.tenant_id = $1 AND a.tanqueta_id = $2
      UNION ALL
      -- Llenar la tanqueta eligiendo la unidad lleva vale; sin unidad no (0161). La unidad no queda
@@ -1019,7 +1031,7 @@ export async function cuadreDeTanqueta(client: PoolClient, tenantId: string, id:
      SELECT 'excedente', r.recibido_en, e.placa_codigo, x.serie_talonario, x.n_vale, x.cantidad
        FROM combustible_recepcion_excedentes x
        JOIN combustible_recepciones r ON r.id = x.recepcion_id AND r.tenant_id = x.tenant_id
-       LEFT JOIN equipos e ON e.id = x.tanqueta_equipo_id AND e.tenant_id = x.tenant_id
+       LEFT JOIN equipos e ON e.id = x.tanqueta_equipo_id AND e.tenant_id = x.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
       WHERE x.tenant_id = $1 AND x.tanqueta_id = $2 AND x.tanqueta_equipo_id IS NOT NULL
         AND r.anulada_en IS NULL`,
     [tenantId, id]
@@ -1028,7 +1040,7 @@ export async function cuadreDeTanqueta(client: PoolClient, tenantId: string, id:
     `SELECT r.creado_en, e.placa_codigo AS placa, r.saldo_calculado, r.saldo_validado,
             r.diferencia, r.motivo, r.destino
        FROM combustible_tanqueta_retornos r
-       LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id
+       LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
       -- Lo que el grifero devolvió al pozo sin unidad (0178) no cierra ninguna salida.
       WHERE r.tenant_id = $1 AND r.tanqueta_id = $2 AND r.equipo_id IS NOT NULL`,
     [tenantId, id]
@@ -1041,7 +1053,7 @@ export async function cuadreDeTanqueta(client: PoolClient, tenantId: string, id:
   const unidad = t.asignada_vigente
     ? ((
         await client.query<{ placa_codigo: string }>(
-          `SELECT placa_codigo FROM equipos WHERE tenant_id = $1 AND id = $2`,
+          `SELECT placa_codigo FROM equipos WHERE tenant_id = $1 AND id = $2 AND ${SQL_EMPRESA_TIENE_FLOTA}`,
           [tenantId, t.equipo_asignado_id]
         )
       ).rows[0]?.placa_codigo ?? null)
@@ -1097,18 +1109,18 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
         WHERE d.tenant_id = $1 AND d.tanqueta_destino_id = $2
        UNION ALL
        SELECT 'carga_' || d.tanqueta_lugar, d.id::text, d.cantidad, d.despachado_en,
-              d.anulada_en, NULL, NULL, e.placa_codigo, d.lectura_horometro,
+              d.anulada_en, NULL, NULL, COALESCE(e.placa_codigo, d.placa_sin_alta), d.lectura_horometro,
               d.lectura_odometro, d.serie_talonario, d.n_vale, u.nombre,
               d.conductor_nombre, d.conductor_dni, NULL
          FROM combustible_despachos d
-         LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
+         LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
          LEFT JOIN usuarios u ON u.id = d.usuario_id
         WHERE d.tenant_id = $1 AND d.tanqueta_origen_id = $2
        UNION ALL
        SELECT 'retorno', r.id::text, r.diferencia, r.creado_en, NULL, NULL, NULL, e.placa_codigo,
               NULL, NULL, NULL, NULL, u.nombre, NULL, NULL, r.motivo
          FROM combustible_tanqueta_retornos r
-         LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id
+         LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
          LEFT JOIN usuarios u ON u.id = r.usuario_id
         WHERE r.tenant_id = $1 AND r.tanqueta_id = $2 AND r.equipo_id IS NOT NULL
        UNION ALL
@@ -1116,7 +1128,7 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
               e.placa_codigo, NULL, NULL, NULL, NULL, u.nombre, NULL, NULL, NULL
          FROM combustible_tanqueta_retornos r
          JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
-         LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id
+         LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
          LEFT JOIN usuarios u ON u.id = r.usuario_id
         WHERE r.tenant_id = $1 AND r.tanqueta_id = $2 AND r.destino = 'pozo'
        UNION ALL
@@ -1124,7 +1136,7 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
               e.placa_codigo, NULL, NULL, NULL, NULL, u.nombre, NULL, NULL, NULL
          FROM combustible_tanqueta_retornos r
          JOIN combustible_tanquetas q ON q.id = r.tanqueta_destino_id AND q.tenant_id = r.tenant_id
-         LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id
+         LEFT JOIN equipos e ON e.id = r.equipo_id AND e.tenant_id = r.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
          LEFT JOIN usuarios u ON u.id = r.usuario_id
         WHERE r.tenant_id = $1 AND r.tanqueta_id = $2 AND r.destino = 'tanqueta'
        UNION ALL
@@ -1140,7 +1152,7 @@ export async function historialTanqueta(client: PoolClient, tenantId: string, id
        SELECT 'asignacion', a.id::text, a.cantidad, a.creado_en, NULL, NULL, NULL, e.placa_codigo,
               NULL, NULL, a.serie_talonario, a.n_vale, u.nombre, NULL, NULL, NULL
          FROM combustible_tanqueta_asignaciones a
-         LEFT JOIN equipos e ON e.id = a.equipo_id AND e.tenant_id = a.tenant_id
+         LEFT JOIN equipos e ON e.id = a.equipo_id AND e.tenant_id = a.tenant_id AND ${SQL_EMPRESA_TIENE_FLOTA}
          LEFT JOIN usuarios u ON u.id = a.usuario_id
         WHERE a.tenant_id = $1 AND a.tanqueta_id = $2
      ) m
@@ -1184,7 +1196,7 @@ async function unidadesDelConductor(client: PoolClient, tenantId: string, dni: s
   const d = dni.trim();
   if (!d) return new Set<number>();
   const r = await client.query<{ id: number }>(
-    `SELECT id FROM equipos WHERE tenant_id = $1 AND activo AND trim(conductor_dni) = $2`,
+    `SELECT id FROM equipos WHERE tenant_id = $1 AND activo AND trim(conductor_dni) = $2 AND ${SQL_EMPRESA_TIENE_FLOTA}`,
     [tenantId, d]
   );
   return new Set(r.rows.map((u) => Number(u.id)));
@@ -1303,7 +1315,7 @@ async function placasDelConductor(client: PoolClient, tenantId: string, dni: str
   const unidades = await unidadesDelConductor(client, tenantId, dni);
   if (unidades.size === 0) return { unidades, placas: new Set<string>() };
   const r = await client.query<{ placa_codigo: string }>(
-    `SELECT placa_codigo FROM equipos WHERE tenant_id = $1 AND id = ANY($2::int[])`,
+    `SELECT placa_codigo FROM equipos WHERE tenant_id = $1 AND id = ANY($2::int[]) AND ${SQL_EMPRESA_TIENE_FLOTA}`,
     [tenantId, [...unidades]]
   );
   return { unidades, placas: new Set(r.rows.map((u) => u.placa_codigo)) };

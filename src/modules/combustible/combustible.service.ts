@@ -2560,10 +2560,12 @@ export class CombustibleService {
         data.grifo_id!,
         data.origen === "compra_externa" ? "urea_externa" : "urea_interna"
       );
-      const equipoId = data.equipo_id!;
-      const equipo = await this.buscarUnidad(client, tenantId, equipoId);
-      if (!equipo) {
-        throw new Error(`equipo_id ${equipoId} no existe en este tenant`);
+      // Una unidad escrita a mano (0192) no tiene fila que consultar.
+      if (data.equipo_id !== undefined) {
+        const equipo = await this.buscarUnidad(client, tenantId, data.equipo_id);
+        if (!equipo) {
+          throw new Error(`equipo_id ${data.equipo_id} no existe en este tenant`);
+        }
       }
       return;
     }
@@ -2935,24 +2937,27 @@ export class CombustibleService {
       throw new Error("la tanqueta elegida no existe en este tenant");
     }
     if (!t.activa) throw new Error(`la tanqueta ${t.codigo} está dada de baja`);
-    const equipo = await this.buscarUnidad(client, tenantId, data.equipo_id!);
-    if (!equipo) throw new Error(`equipo_id ${data.equipo_id} no existe en este tenant`);
-    if (conductorDni !== undefined) {
-      await tanquetas.exigirTanquetaDelConductor(
-        client,
-        tenantId,
-        conductorDni,
-        Number(t.id),
-        data.equipo_id!
-      );
-    }
-    // El medidor que llegue tiene que ser el de ESA unidad. En ruta es
-    // obligatorio (el schema exige uno); en planta puede faltar (0113).
-    if (equipo.tipo_medidor === "horometro" && data.lectura_odometro !== undefined) {
-      throw new Error(`el equipo ${data.equipo_id} se mide por horómetro, no por odómetro`);
-    }
-    if (equipo.tipo_medidor === "odometro" && data.lectura_horometro !== undefined) {
-      throw new Error(`el equipo ${data.equipo_id} se mide por odómetro, no por horómetro`);
+    // Una unidad escrita a mano (0192, solo en planta) no tiene fila ni medidor que contrastar.
+    if (data.equipo_id !== undefined) {
+      const equipo = await this.buscarUnidad(client, tenantId, data.equipo_id);
+      if (!equipo) throw new Error(`equipo_id ${data.equipo_id} no existe en este tenant`);
+      if (conductorDni !== undefined) {
+        await tanquetas.exigirTanquetaDelConductor(
+          client,
+          tenantId,
+          conductorDni,
+          Number(t.id),
+          data.equipo_id
+        );
+      }
+      // El medidor que llegue tiene que ser el de ESA unidad. En ruta es
+      // obligatorio (el schema exige uno); en planta puede faltar (0113).
+      if (equipo.tipo_medidor === "horometro" && data.lectura_odometro !== undefined) {
+        throw new Error(`el equipo ${data.equipo_id} se mide por horómetro, no por odómetro`);
+      }
+      if (equipo.tipo_medidor === "odometro" && data.lectura_horometro !== undefined) {
+        throw new Error(`el equipo ${data.equipo_id} se mide por odómetro, no por horómetro`);
+      }
     }
     return {
       costoUnitario: await tanquetas.costoPromedioTanqueta(client, tenantId, Number(t.id)),

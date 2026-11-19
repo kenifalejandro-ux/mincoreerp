@@ -3163,7 +3163,9 @@ export class CombustibleController {
     const esAlmacen = data.origen === "almacen";
     const serieTalonario = data.serie_talonario ?? null;
     const nVale = data.n_vale ?? null;
-    const equipoId = data.equipo_id!;
+    // Sin unidad registrada (escrita a mano, 0192) no hay umbrales de la unidad que contrastar:
+    // los tres controles del equipo (no habilitado, ratio, tope diario) no aplican.
+    const equipoId = data.equipo_id ?? null;
     try {
       const {
         huecos,
@@ -3228,25 +3230,25 @@ export class CombustibleController {
             )
           : null;
 
-        const noHabilitado = await service.evaluarUreaEquipoNoHabilitado(
-          client,
-          tenantId,
-          equipoId
-        );
+        const noHabilitado =
+          equipoId === null
+            ? null
+            : await service.evaluarUreaEquipoNoHabilitado(client, tenantId, equipoId);
 
         const despachadoEn = data.despachado_en ?? new Date().toISOString();
-        const ratio = await service.evaluarUreaRatioExcedido(
-          client,
-          tenantId,
-          equipoId,
-          despachadoEn
-        );
+        const ratio =
+          equipoId === null
+            ? null
+            : await service.evaluarUreaRatioExcedido(client, tenantId, equipoId, despachadoEn);
 
-        const tope = await service.evaluarTopeDiarioUrea(client, tenantId, {
-          despachoId,
-          equipoId,
-          despachadoEn,
-        });
+        const tope =
+          equipoId === null
+            ? null
+            : await service.evaluarTopeDiarioUrea(client, tenantId, {
+                despachoId,
+                equipoId,
+                despachadoEn,
+              });
 
         // El vale es lo que BAJA el stock, así que acá es donde se mira si
         // cruzó el mínimo (0117). Se ancla a este despacho: es la única
