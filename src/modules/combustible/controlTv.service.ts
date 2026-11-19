@@ -19,6 +19,7 @@ import { detencionDe } from "./motivosDetencion";
 import { listarTanquetas } from "./tanquetas.service";
 import { posicion, type FilaParada } from "./viajes.service";
 import { contarAlertasDeViaje } from "./viajesAlertas";
+import { SQL_EMPRESA_TIENE_FLOTA } from "../../server/shared/utils/modulosEmpresa";
 
 export interface ContextoControlTv {
   alcance: AlcanceCombustible;
@@ -54,7 +55,8 @@ async function flota(client: PoolClient, tenantId: string, alcance: AlcanceCombu
               WHERE p.tenant_id = v.tenant_id AND p.viaje_id = v.id) AS paradas,
             d.motivo AS descanso_motivo, d.id IS NOT NULL AS descansando
        FROM combustible_viajes v
-       JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+       LEFT JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+                          AND ${SQL_EMPRESA_TIENE_FLOTA}
        LEFT JOIN LATERAL (
          SELECT d.id, d.motivo FROM combustible_viaje_descansos d
           WHERE d.tenant_id = v.tenant_id AND d.viaje_id = v.id AND d.fin_en IS NULL AND d.detiene
@@ -212,10 +214,11 @@ async function eventos(client: PoolClient, tenantId: string, ctx: ContextoContro
       grifos: null,
     });
     const cargas = await client.query(
-      `SELECT d.despachado_en AS t, d.origen, e.placa_codigo AS placa,
+      `SELECT d.despachado_en AS t, d.origen, COALESCE(e.placa_codigo, d.placa_sin_alta) AS placa,
               ${litrosSql("t")} / ${LITROS_POR_GALON} AS gal
          FROM combustible_despachos d
          LEFT JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
+                            AND ${SQL_EMPRESA_TIENE_FLOTA}
          LEFT JOIN combustible t ON t.id = COALESCE(d.combustible_id, d.tanque_excedente_id)
                                 AND t.tenant_id = d.tenant_id
         WHERE ${condiciones.join(" AND ")}
@@ -261,10 +264,12 @@ async function eventos(client: PoolClient, tenantId: string, ctx: ContextoContro
 
   const fLl = unidadEnAlcance(ctx.alcance, "e", 2);
   const llegadas = await client.query(
-    `SELECT p.llegada_en AS t, e.placa_codigo AS placa, v.conductor_nombre AS conductor, l.nombre AS lugar
+    `SELECT p.llegada_en AS t, COALESCE(e.placa_codigo, v.placa_sin_alta) AS placa,
+            v.conductor_nombre AS conductor, l.nombre AS lugar
        FROM combustible_viaje_paradas p
        JOIN combustible_viajes v ON v.id = p.viaje_id AND v.tenant_id = p.tenant_id
-       JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+       LEFT JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+                          AND ${SQL_EMPRESA_TIENE_FLOTA}
        JOIN combustible_lugares l ON l.id = p.lugar_id AND l.tenant_id = p.tenant_id
       WHERE p.tenant_id = $1 AND p.orden > 0 AND p.llegada_en IS NOT NULL AND v.estado <> 'anulado'
         AND ${fLl.sql}
@@ -280,10 +285,12 @@ async function eventos(client: PoolClient, tenantId: string, ctx: ContextoContro
     );
   }
   const detenidas = await client.query(
-    `SELECT d.inicio_en AS t, e.placa_codigo AS placa, d.conductor_nombre AS conductor, d.motivo
+    `SELECT d.inicio_en AS t, COALESCE(e.placa_codigo, v.placa_sin_alta) AS placa,
+            d.conductor_nombre AS conductor, d.motivo
        FROM combustible_viaje_descansos d
        JOIN combustible_viajes v ON v.id = d.viaje_id AND v.tenant_id = d.tenant_id
-       JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+       LEFT JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+                          AND ${SQL_EMPRESA_TIENE_FLOTA}
       WHERE d.tenant_id = $1 AND d.detiene AND v.estado <> 'anulado'
         AND ${fLl.sql}
       ORDER BY d.inicio_en DESC LIMIT 10`,

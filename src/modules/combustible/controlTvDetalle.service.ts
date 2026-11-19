@@ -14,6 +14,7 @@ import {
 } from "./alcance";
 import type { CombustibleService } from "./combustible.service";
 import { INICIO_SQL, PERIODO, type PeriodoTv } from "./controlTv.service";
+import { SQL_EMPRESA_TIENE_FLOTA } from "../../server/shared/utils/modulosEmpresa";
 
 const num = (x: unknown) => Number(x ?? 0);
 
@@ -278,7 +279,8 @@ async function duracionesDeViajes(
   const r = await client.query<{ horas: string }>(
     `SELECT ROUND((EXTRACT(EPOCH FROM (v.fin_en - v.inicio_en)) / 3600)::numeric, 1) AS horas
        FROM combustible_viajes v
-       JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+       LEFT JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+                          AND ${SQL_EMPRESA_TIENE_FLOTA}
       WHERE v.tenant_id = $1 AND v.estado = 'cerrado' AND v.inicio_en IS NOT NULL
         AND v.fin_en > v.inicio_en AND v.fin_en >= now() - interval '30 days' AND ${f.sql}
       ORDER BY v.fin_en DESC LIMIT 500`,
