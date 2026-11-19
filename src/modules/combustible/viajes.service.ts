@@ -37,7 +37,8 @@ const VENTANAS_SQL = `
            v.inicio_en - make_interval(hours => $2::int),
            COALESCE((
              SELECT max(p.fin_en) FROM combustible_viajes p
-              WHERE p.tenant_id = v.tenant_id AND p.equipo_id = v.equipo_id
+              WHERE p.tenant_id = v.tenant_id
+                AND (p.equipo_id = v.equipo_id OR p.placa_sin_alta = v.placa_sin_alta)
                 AND p.estado <> 'anulado' AND p.id <> v.id AND p.inicio_en < v.inicio_en
            ), '1900-01-01'::timestamptz)
          ) END AS ventana_desde,
@@ -2790,7 +2791,7 @@ export async function listarViajes(
   }
   const condCargas: string[] = [
     "d.tenant_id = v.tenant_id",
-    "d.equipo_id = v.equipo_id",
+    "(d.equipo_id = v.equipo_id OR d.placa_sin_alta = v.placa_sin_alta)",
     "d.producto = $3",
     "d.anulada_en IS NULL",
     "d.despachado_en > v.ventana_desde",
@@ -3036,7 +3037,8 @@ async function medianaDelTramo(
          JOIN combustible_viaje_paradas p ON p.tenant_id = v.tenant_id AND p.viaje_id = v.id
          JOIN combustible_viaje_paradas q
            ON q.tenant_id = v.tenant_id AND q.viaje_id = v.id AND q.orden = p.orden + 1
-         JOIN equipos e ON e.tenant_id = v.tenant_id AND e.id = v.equipo_id
+         LEFT JOIN equipos e ON e.tenant_id = v.tenant_id AND e.id = v.equipo_id
+                            AND ${SQL_EMPRESA_TIENE_FLOTA}
         WHERE v.tenant_id = $1 AND v.estado = 'cerrado' AND NOT v.ruta_por_confirmar AND v.id <> $5
           AND p.lugar_id = $2 AND q.lugar_id = $3
           AND p.salida_en IS NOT NULL AND q.llegada_en > p.salida_en
@@ -3118,7 +3120,8 @@ export const MARGEN_DEMORA = { porcentaje: 0.15, minimoMin: 30 };
 export interface ViajeDemorado {
   viaje_id: number;
   numero: number;
-  equipo_id: number;
+  /** Null en el viaje de una unidad escrita a mano (0193): solo tiene placa. */
+  equipo_id: number | null;
   placa_codigo: string | null;
   codigo_interno: string | null;
   conductor_nombre: string | null;
@@ -3144,8 +3147,8 @@ export async function viajesDemorados(
 ): Promise<ViajeDemorado[]> {
   const r = await client.query(
     `SELECT DISTINCT ON (v.id)
-            v.id AS viaje_id, v.numero, v.equipo_id, e.tipo AS equipo_tipo, e.placa_codigo,
-            e.codigo_interno, v.conductor_nombre, p.lugar_id AS de_id, q.lugar_id AS a_id,
+            v.id AS viaje_id, v.numero, v.equipo_id, e.tipo AS equipo_tipo,
+            COALESCE(e.placa_codigo, v.placa_sin_alta) AS placa_codigo, e.codigo_interno, v.conductor_nombre, p.lugar_id AS de_id, q.lugar_id AS a_id,
             lp.nombre AS de, lq.nombre AS a, p.salida_en,
             extract(epoch FROM now() - p.salida_en) / 60 - COALESCE((
               SELECT sum(extract(epoch FROM
@@ -3155,7 +3158,8 @@ export async function viajesDemorados(
                WHERE d.tenant_id = v.tenant_id AND d.viaje_id = v.id AND d.detiene
                  AND d.inicio_en < now() AND COALESCE(d.fin_en, now()) > p.salida_en), 0) AS marcha_min
        FROM combustible_viajes v
-       JOIN equipos e ON e.tenant_id = v.tenant_id AND e.id = v.equipo_id
+       LEFT JOIN equipos e ON e.tenant_id = v.tenant_id AND e.id = v.equipo_id
+                          AND ${SQL_EMPRESA_TIENE_FLOTA}
        JOIN combustible_viaje_paradas p ON p.tenant_id = v.tenant_id AND p.viaje_id = v.id
        JOIN combustible_viaje_paradas q
          ON q.tenant_id = v.tenant_id AND q.viaje_id = v.id AND q.orden = p.orden + 1
@@ -3197,7 +3201,7 @@ export async function viajesDemorados(
     demorados.push({
       viaje_id: Number(f.viaje_id),
       numero: Number(f.numero),
-      equipo_id: Number(f.equipo_id),
+      equipo_id: f.equipo_id == null ? null : Number(f.equipo_id),
       placa_codigo: f.placa_codigo,
       codigo_interno: f.codigo_interno,
       conductor_nombre: f.conductor_nombre,
@@ -3217,7 +3221,7 @@ export async function viajesDemorados(
 export interface ViajeDetenido {
   viaje_id: number;
   numero: number;
-  equipo_id: number;
+  equipo_id: number | null;
   placa_codigo: string | null;
   codigo_interno: string | null;
   conductor_nombre: string | null;
@@ -3239,10 +3243,12 @@ export async function viajesDetenidos(
   soloViajeId?: number
 ): Promise<ViajeDetenido[]> {
   const r = await client.query(
-    `SELECT v.id AS viaje_id, v.numero, v.equipo_id, e.placa_codigo, e.codigo_interno,
+    `SELECT v.id AS viaje_id, v.numero, v.equipo_id,
+            COALESCE(e.placa_codigo, v.placa_sin_alta) AS placa_codigo, e.codigo_interno,
             v.conductor_nombre, d.motivo, d.donde, d.inicio_en, d.conductor_nombre AS marcado_por
        FROM combustible_viajes v
-       JOIN equipos e ON e.tenant_id = v.tenant_id AND e.id = v.equipo_id
+       LEFT JOIN equipos e ON e.tenant_id = v.tenant_id AND e.id = v.equipo_id
+                          AND ${SQL_EMPRESA_TIENE_FLOTA}
        JOIN combustible_viaje_descansos d ON d.tenant_id = v.tenant_id AND d.viaje_id = v.id
       WHERE v.tenant_id = $1 AND v.estado = 'en_curso' AND d.fin_en IS NULL AND d.detiene
         AND ($2::bigint IS NULL OR v.id = $2)
@@ -3256,7 +3262,7 @@ export async function viajesDetenidos(
     por.set(Number(f.viaje_id), {
       viaje_id: Number(f.viaje_id),
       numero: Number(f.numero),
-      equipo_id: Number(f.equipo_id),
+      equipo_id: f.equipo_id == null ? null : Number(f.equipo_id),
       placa_codigo: f.placa_codigo,
       codigo_interno: f.codigo_interno,
       conductor_nombre: f.conductor_nombre,
@@ -3274,11 +3280,13 @@ export async function viajesDetenidos(
 export async function unidadVisible(
   client: PoolClient,
   tenantId: string,
-  equipoId: number,
+  equipoId: number | null,
   ambito: AmbitoVales
 ) {
   const f = unidadEnAlcance(ambito.alcance, "e", 3);
   if (f.sql === "TRUE") return true;
+  // Una unidad escrita a mano (0193) no tiene grifo: la ve solo quien ve todo.
+  if (equipoId === null) return false;
   const r = await client.query(
     `SELECT 1 FROM equipos e WHERE e.tenant_id = $1 AND e.id = $2 AND ${f.sql}`,
     [tenantId, equipoId, ...f.valores]
@@ -3309,10 +3317,17 @@ export async function cargasDelViaje(
     conCargas
   );
   if (!viaje.inicio_en) return { viaje, cargas: [], ruta, tramos: [] };
-  const valores: unknown[] = [tenantId, viaje.equipo_id, viaje.ventana_desde, viaje.ventana_hasta];
+  const valores: unknown[] = [
+    tenantId,
+    viaje.equipo_id,
+    viaje.ventana_desde,
+    viaje.ventana_hasta,
+    viaje.placa_sin_alta,
+  ];
   const cond = [
     "d.tenant_id = $1",
-    "d.equipo_id = $2",
+    // La unidad registrada o, en el viaje de una unidad escrita, la misma placa escrita (0193).
+    "(d.equipo_id = $2::int OR d.placa_sin_alta = $5::text)",
     "d.anulada_en IS NULL",
     "d.despachado_en > $3",
     "d.despachado_en <= $4",
@@ -3372,7 +3387,7 @@ export async function estadisticasRuta(
            FROM combustible_despachos d
            LEFT JOIN combustible c
              ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = d.tenant_id
-          WHERE d.tenant_id = v.tenant_id AND d.equipo_id = v.equipo_id AND d.anulada_en IS NULL
+          WHERE d.tenant_id = v.tenant_id AND (d.equipo_id = v.equipo_id OR d.placa_sin_alta = v.placa_sin_alta) AND d.anulada_en IS NULL
             AND d.despachado_en > v.ventana_desde AND d.despachado_en <= v.ventana_hasta
        ) cg ON true`
     : `LEFT JOIN LATERAL (SELECT 0::numeric AS combustible_l, 0::numeric AS urea_l) cg ON true`;
@@ -3437,7 +3452,7 @@ export async function viajesDelConductor(
            FROM combustible_despachos d
            LEFT JOIN combustible c
              ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id) AND c.tenant_id = d.tenant_id
-          WHERE d.tenant_id = v.tenant_id AND d.equipo_id = v.equipo_id AND d.anulada_en IS NULL
+          WHERE d.tenant_id = v.tenant_id AND (d.equipo_id = v.equipo_id OR d.placa_sin_alta = v.placa_sin_alta) AND d.anulada_en IS NULL
             AND d.despachado_en > v.ventana_desde AND d.despachado_en <= v.ventana_hasta
        ) cg ON true`
            : `LEFT JOIN LATERAL (SELECT 0::bigint AS cargas, 0::numeric AS combustible_l, 0::numeric AS urea_l) cg ON true`
@@ -3489,15 +3504,17 @@ export async function unidadDelViajeActivo(
 ): Promise<{
   viaje_id: number;
   estado: string;
-  equipo_id: number;
-  placa_codigo: string;
+  equipo_id: number | null;
+  placa_codigo: string | null;
 } | null> {
   const d = normalizarDni(dni);
   if (!d) return null;
   const r = await client.query(
-    `SELECT v.id::int AS viaje_id, v.estado, v.equipo_id, e.placa_codigo
+    `SELECT v.id::int AS viaje_id, v.estado, v.equipo_id,
+            COALESCE(e.placa_codigo, v.placa_sin_alta) AS placa_codigo
        FROM combustible_viajes v
-       JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+       LEFT JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+                          AND ${SQL_EMPRESA_TIENE_FLOTA}
       WHERE v.tenant_id = $1 AND ${volanteDni("v")} = $2
         AND v.estado IN ('programado', 'en_curso')
       ORDER BY CASE v.estado WHEN 'en_curso' THEN 0 ELSE 1 END, ${ORDEN_COLA("v")}
@@ -3520,7 +3537,8 @@ export async function historialDelConductor(
   const d = normalizarDni(dni);
   if (!d) return { data: [], siguiente: null };
   const r = await client.query(
-    `SELECT v.id, v.numero, v.inicio_en, v.fin_en, e.placa_codigo, e.tipo_medidor,
+    `SELECT v.id, v.numero, v.inicio_en, v.fin_en,
+            COALESCE(e.placa_codigo, v.placa_sin_alta) AS placa_codigo, e.tipo_medidor,
             (SELECT sum(t.medidor_fin - t.medidor_inicio) FROM combustible_viaje_turnos t
               WHERE t.tenant_id = v.tenant_id AND t.viaje_id = v.id AND t.conductor_dni = $2
                 AND t.medidor_inicio IS NOT NULL AND t.medidor_fin IS NOT NULL) AS recorrido,
@@ -3537,7 +3555,8 @@ export async function historialDelConductor(
                        WHERE d.tenant_id = v.tenant_id AND d.viaje_id = v.id
                          AND d.conductor_dni = $2 AND d.fin_en IS NOT NULL AND d.detiene), 0) AS descanso_min
        FROM combustible_viajes v
-       JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+       LEFT JOIN equipos e ON e.id = v.equipo_id AND e.tenant_id = v.tenant_id
+                          AND ${SQL_EMPRESA_TIENE_FLOTA}
       WHERE v.tenant_id = $1 AND v.estado = 'cerrado'
         AND EXISTS (SELECT 1 FROM combustible_viaje_turnos t
                      WHERE t.tenant_id = v.tenant_id AND t.viaje_id = v.id AND t.conductor_dni = $2)

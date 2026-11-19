@@ -56,10 +56,12 @@ async function conductor(client: PoolClient, tenantId: string, dni: string, dias
 async function rendimiento(
   client: PoolClient,
   tenantId: string,
-  equipoId: number,
+  equipoId: number | null,
   servicio: CombustibleService,
   dias: number
 ) {
+  // Una unidad escrita a mano (0193) no tiene pares ni pasado contra los que compararse.
+  if (equipoId === null) return null;
   const hasta = new Date();
   const reporte = await servicio.reporteConsumoEquipos(
     client,
@@ -107,17 +109,22 @@ async function estadiaNormal(client: PoolClient, tenantId: string, viajeId: numb
 }
 
 /** La última carga de combustible y la última de urea de la unidad. */
-async function ultimasCargas(client: PoolClient, tenantId: string, equipoId: number) {
+async function ultimasCargas(
+  client: PoolClient,
+  tenantId: string,
+  equipoId: number | null,
+  placa: string | null
+) {
   const r = await client.query(
     `SELECT DISTINCT ON (d.producto) d.producto, d.despachado_en, d.cantidad, d.origen,
             CASE WHEN d.producto = 'urea' THEN 'L' ELSE COALESCE(c.unidad, 'L') END AS unidad
        FROM combustible_despachos d
        LEFT JOIN combustible c ON c.id = COALESCE(d.combustible_id, d.tanque_excedente_id)
                               AND c.tenant_id = d.tenant_id
-      WHERE d.tenant_id = $1 AND d.equipo_id = $2 AND d.anulada_en IS NULL
-        AND d.tipo_destino IS DISTINCT FROM 'reserva_cubeta'
+      WHERE d.tenant_id = $1 AND (d.equipo_id = $2::int OR d.placa_sin_alta = $3::text)
+        AND d.anulada_en IS NULL AND d.tipo_destino IS DISTINCT FROM 'reserva_cubeta'
       ORDER BY d.producto, d.despachado_en DESC`,
-    [tenantId, equipoId]
+    [tenantId, equipoId, placa]
   );
   return r.rows.map((x) => ({
     producto: x.producto as "combustible" | "urea",
@@ -139,7 +146,12 @@ export function gravedadDeAlerta(tipo: string): GravedadAlerta {
 }
 
 /** Las alertas abiertas (sin resolver) sobre la unidad: las de sus viajes y las de sus vales. */
-async function alertasAbiertas(client: PoolClient, tenantId: string, equipoId: number) {
+async function alertasAbiertas(
+  client: PoolClient,
+  tenantId: string,
+  equipoId: number | null,
+  placa: string | null
+) {
   // Las de viaje salen de su propia tabla (0188) y las de los vales, de la de Combustible.
   const r = await client.query(
     `SELECT t.tipo, t.creado_en FROM (
@@ -147,16 +159,18 @@ async function alertasAbiertas(client: PoolClient, tenantId: string, equipoId: n
          FROM viaje_alertas a
         WHERE a.tenant_id = $1 AND a.resuelta_en IS NULL
           AND a.viaje_id IN (SELECT v.id FROM combustible_viajes v
-                              WHERE v.tenant_id = $1 AND v.equipo_id = $2)
+                              WHERE v.tenant_id = $1
+                                AND (v.equipo_id = $2::int OR v.placa_sin_alta = $3::text))
        UNION ALL
        SELECT a.tipo, a.creado_en
          FROM combustible_alertas a
         WHERE a.tenant_id = $1 AND a.resuelta_en IS NULL
           AND a.despacho_id IN (SELECT d.id FROM combustible_despachos d
-                                 WHERE d.tenant_id = $1 AND d.equipo_id = $2)
+                                 WHERE d.tenant_id = $1
+                                   AND (d.equipo_id = $2::int OR d.placa_sin_alta = $3::text))
      ) t
      ORDER BY t.creado_en DESC`,
-    [tenantId, equipoId]
+    [tenantId, equipoId, placa]
   );
   const todas = r.rows.map((x) => ({
     tipo: x.tipo as string,
@@ -193,9 +207,25 @@ export async function resumenDeUnidad(
   return {
     dias,
     conductor: dni ? { dni, ...(await conductor(client, tenantId, dni, dias)) } : null,
-    rendimiento: await rendimiento(client, tenantId, Number(viaje.equipo_id), servicio, dias),
+    rendimiento: await rendimiento(
+      client,
+      tenantId,
+      viaje.equipo_id == null ? null : Number(viaje.equipo_id),
+      servicio,
+      dias
+    ),
     estadia_normal: clave ? await estadiaNormal(client, tenantId, viajeId, clave) : null,
-    ultimas_cargas: await ultimasCargas(client, tenantId, Number(viaje.equipo_id)),
-    alertas: await alertasAbiertas(client, tenantId, Number(viaje.equipo_id)),
+    ultimas_cargas: await ultimasCargas(
+      client,
+      tenantId,
+      viaje.equipo_id == null ? null : Number(viaje.equipo_id),
+      viaje.placa_sin_alta ?? null
+    ),
+    alertas: await alertasAbiertas(
+      client,
+      tenantId,
+      viaje.equipo_id == null ? null : Number(viaje.equipo_id),
+      viaje.placa_sin_alta ?? null
+    ),
   };
 }
