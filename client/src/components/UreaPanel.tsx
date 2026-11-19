@@ -40,7 +40,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { comprimirImagen } from "./combustible/comprimirImagen";
 import { EVENTO_UREA_EN_WINDOW, planDeRefresco } from "./combustible/eventosUrea";
+import { CampoUnidadPlaca } from "./combustible/CampoUnidadPlaca";
 import PendientesDeEnvio from "./combustible/PendientesDeEnvio";
+import { camposDeUnidad, resolverUnidad } from "./combustible/unidadEscrita";
 import VentanaFlotante from "./comunes/VentanaFlotante";
 import { AlmacenUrea, ModalCorregirLitros, ResumenUrea, type EstadoStockUrea } from "./UreaAlmacen";
 import { apiFetch } from "../services/apiClient";
@@ -280,6 +282,9 @@ interface ValeFila {
   comprobante_numero: string | null;
   comprobante_subido_en: string | null;
   equipo_id: number | null;
+  // La placa de la unidad registrada (null sin Flota) o la que se escribió a mano (0192).
+  placa_codigo?: string | null;
+  placa_sin_alta?: string | null;
   // De qué está hecho el vale (0131), con los litros por bulto VIGENTES
   // cuando se cargó. La pantalla muestra estos, no los del catálogo de hoy.
   renglones: RenglonApi[];
@@ -1874,8 +1879,10 @@ function TablaVales({
   if (filas.length === 0) {
     return <div className="p-6 text-sm text-slate-500">Todavía no hay vales de urea cargados.</div>;
   }
-  const placaDe = (equipoId: number | null) =>
-    equipos.find((e) => e.id === equipoId)?.placa_codigo ?? "—";
+  const placaDe = (f: ValeFila) =>
+    f.placa_codigo ??
+    equipos.find((e) => e.id === f.equipo_id)?.placa_codigo ??
+    (f.placa_sin_alta ? `${f.placa_sin_alta} (sin alta)` : "—");
   return (
     <div className="overflow-x-auto">
       <table className="min-w-full text-sm">
@@ -1930,7 +1937,7 @@ function TablaVales({
                 )}
               </td>
               <td className="px-4 py-2">{formatearFecha(f.despachado_en)}</td>
-              <td className="px-4 py-2">{placaDe(f.equipo_id)}</td>
+              <td className="px-4 py-2">{placaDe(f)}</td>
               <td className="px-4 py-2">{etiquetaRenglones(f.renglones)}</td>
               <td className="px-4 py-2 text-right">{formatearNumero(f.cantidad)} L</td>
               <td className="px-4 py-2 text-right">S/ {formatearNumero(f.costo_total, 2)}</td>
@@ -3075,7 +3082,8 @@ function ModalVale({
   const [clienteUuid] = useState(() => crypto.randomUUID());
   const [serie, setSerie] = useState("");
   const [nVale, setNVale] = useState("");
-  const [equipoId, setEquipoId] = useState("");
+  // La unidad se escribe o se elige (placa): sin Flota la lista viene vacía y solo se escribe.
+  const [unidadTexto, setUnidadTexto] = useState("");
   const [grifoId, setGrifoId] = useState("");
   const activas = presentacionesActivas(presentaciones);
   // "1 caja + 2 bolsas" en un mismo vale (0131). Sin precio: el vale del
@@ -3089,7 +3097,8 @@ function ModalVale({
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const equipoElegido = equipos.find((e) => String(e.id) === equipoId);
+  const unidad = resolverUnidad(unidadTexto, equipos);
+  const equipoElegido = unidad.tipo === "registrada" ? unidad.equipo : undefined;
 
   const enviar = async () => {
     setEnviando(true);
@@ -3105,8 +3114,7 @@ function ModalVale({
           // y tiene su propio formulario (ModalCompraUrea).
           origen: "almacen",
           grifo_id: Number(grifoId),
-          tipo_destino: "equipo",
-          equipo_id: Number(equipoId),
+          ...camposDeUnidad(unidad),
           serie_talonario: serie.trim(),
           n_vale: Number(nVale),
           lineas: renglones.map((r) => ({
@@ -3160,18 +3168,12 @@ function ModalVale({
         </div>
         <label className="flex flex-col text-sm gap-1">
           <span className="text-gray-600">Unidad</span>
-          <select
-            value={equipoId}
-            onChange={(e) => setEquipoId(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2"
-          >
-            <option value="">Elegir unidad…</option>
-            {equipos.map((eq) => (
-              <option key={eq.id} value={eq.id}>
-                {eq.placa_codigo} ({eq.tipo}){eq.usa_urea ? "" : " -- NO usa urea"}
-              </option>
-            ))}
-          </select>
+          <CampoUnidadPlaca
+            id="urea-unidad"
+            equipos={equipos}
+            texto={unidadTexto}
+            onTexto={setUnidadTexto}
+          />
           <ConductorDeLaUnidad equipo={equipoElegido} />
           {equipoElegido && !equipoElegido.usa_urea && (
             <span className="text-xs text-amber-600">
@@ -3231,7 +3233,12 @@ function ModalVale({
           <button
             type="button"
             disabled={
-              !renglonesListos || !serie.trim() || !nVale || !equipoId || !grifoId || enviando
+              !renglonesListos ||
+              !serie.trim() ||
+              !nVale ||
+              unidad.tipo === "vacia" ||
+              !grifoId ||
+              enviando
             }
             onClick={enviar}
             className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed"
@@ -3461,7 +3468,8 @@ function ModalCompraUrea({
   onCreado: (mensaje: string) => void;
 }) {
   const [clienteUuid] = useState(() => crypto.randomUUID());
-  const [equipoId, setEquipoId] = useState("");
+  // La unidad se escribe o se elige (placa): sin Flota la lista viene vacía y solo se escribe.
+  const [unidadTexto, setUnidadTexto] = useState("");
   const [grifoId, setGrifoId] = useState("");
   const activas = presentacionesActivas(presentaciones);
   const [renglones, setRenglones] = useState<RenglonCompra[]>(() => [
@@ -3482,7 +3490,8 @@ function ModalCompraUrea({
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const equipoElegido = equipos.find((e) => String(e.id) === equipoId);
+  const unidad = resolverUnidad(unidadTexto, equipos);
+  const equipoElegido = unidad.tipo === "registrada" ? unidad.equipo : undefined;
   const { listos: renglonesListos } = estadoRenglones(renglones, true);
 
   /** El precio de catálogo para un renglón, con el proveedor y la fecha que
@@ -3533,8 +3542,7 @@ function ModalCompraUrea({
           producto: "urea",
           origen: "compra_externa",
           grifo_id: Number(grifoId),
-          tipo_destino: "equipo",
-          equipo_id: Number(equipoId),
+          ...camposDeUnidad(unidad),
           comprobante_tipo: comprobanteTipo,
           comprobante_numero: comprobanteNumero.trim(),
           // POR BULTO cada uno: el servidor resuelve el factor de cada
@@ -3603,18 +3611,12 @@ function ModalCompraUrea({
 
         <label className="flex flex-col text-sm gap-1">
           <span className="text-gray-600">Unidad</span>
-          <select
-            value={equipoId}
-            onChange={(e) => setEquipoId(e.target.value)}
-            className="rounded border border-gray-300 px-3 py-2"
-          >
-            <option value="">Elegir unidad…</option>
-            {equipos.map((eq) => (
-              <option key={eq.id} value={eq.id}>
-                {eq.placa_codigo} ({eq.tipo}){eq.usa_urea ? "" : " -- NO usa urea"}
-              </option>
-            ))}
-          </select>
+          <CampoUnidadPlaca
+            id="urea-compra-unidad"
+            equipos={equipos}
+            texto={unidadTexto}
+            onTexto={setUnidadTexto}
+          />
           <ConductorDeLaUnidad equipo={equipoElegido} />
           {equipoElegido && !equipoElegido.usa_urea && (
             <span className="text-xs text-amber-600">
@@ -3717,7 +3719,11 @@ function ModalCompraUrea({
           <button
             type="button"
             disabled={
-              !equipoId || !grifoId || !renglonesListos || !comprobanteNumero.trim() || enviando
+              unidad.tipo === "vacia" ||
+              !grifoId ||
+              !renglonesListos ||
+              !comprobanteNumero.trim() ||
+              enviando
             }
             onClick={enviar}
             className="px-4 py-2 bg-[#a3e635] text-black hover:bg-[#bef264] border border-[#65a30d] rounded-xl text-sm font-semibold disabled:cursor-not-allowed"

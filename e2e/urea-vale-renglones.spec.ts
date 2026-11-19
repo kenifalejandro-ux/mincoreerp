@@ -73,7 +73,8 @@ test("un vale con 1 caja + 2 bolsas baja cada envase en lo suyo @inestable", asy
 
     await page.getByLabel("Serie del talonario").fill(serie);
     await page.getByLabel("N° de vale").fill("1");
-    await page.getByLabel("Unidad").selectOption({ label: `${placa} (VOLQUETE)` });
+    // La unidad es un campo de placa con su lista: se escribe (o se elige) la placa.
+    await page.getByLabel("Unidad").fill(placa);
     await page.getByLabel("Proveedor").selectOption({ label: proveedorNombre });
 
     await page.getByLabel("Presentación").first().selectOption("caja");

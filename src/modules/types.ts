@@ -51,7 +51,7 @@ export interface ModuloDefinicion {
    *  RUTA_DE_MODULO (client/src/modules/offlineRegistry.ts). */
   ruta?: string;
   /** Módulos que la EMPRESA tiene que tener habilitados para que este se vea
-   *  (ej. `viajes` y `combustible` exigen `flota`). Se decide por empresa, no por usuario: a
+   *  (ej. `viajes` exige `flota`). Se decide por empresa, no por usuario: a
    *  un usuario no se le pide el módulo del que depende. */
   requiere?: string[];
   /** Módulos de los que este PUEDE leer datos para mostrar más, pero que no

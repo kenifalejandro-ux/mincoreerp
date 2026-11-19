@@ -1,15 +1,13 @@
-/** tests/combustible-requiere-flota.test.ts
+/** tests/combustible-autonomo-de-flota.test.ts
  *
- * Combustible EXIGE Flota (`requiere: ["flota"]`, como Viajes): el vale, las tanquetas, la urea y
- * la compra en ruta se despachan a una unidad, y un grifo sin unidades no tiene sentido. Flota, en
- * cambio, funciona sola. Cada empresa ve solo lo que contrató; lo que se fija:
+ * Combustible NO exige Flota: una empresa puede tener solo el grifo (una gasolinera) y cada
+ * módulo se enciende y se apaga solo, sin arrastrar a otro. Lo que se fija:
  *
- * 1. El registry declara la dependencia y Flota no depende de Combustible.
- * 2. Plataforma rechaza encender Combustible si la empresa no tiene Flota (400, «requiere»), y lo
- *    acepta con Flota.
- * 3. Una empresa solo con Flota funciona (sin Combustible), y una con Flota + Combustible, también.
- * 4. Si la empresa pierde Flota con Combustible encendido, el login lo oculta y su ruta responde 403
- *    (la fila del módulo sigue ahí).
+ * 1. El registry no declara `requiere` en Combustible: declara Flota como opcional.
+ * 2. Plataforma acepta encender Combustible sin Flota, y con Flota.
+ * 3. Una empresa solo con Combustible trabaja: lo ve, su ruta responde 200, la unidad de un
+ *    vale se escribe a mano y no ve Flota (sus rutas dan 403).
+ * 4. Si la empresa pierde Flota con Combustible encendido, Combustible sigue ahí.
  * 5. Apagar Combustible no borra sus datos: al volver a encenderlo reaparecen.
  */
 import { describe, it, expect, afterAll } from "vitest";
@@ -25,7 +23,7 @@ const PASSWORD = "ClaveDePrueba123";
 
 type Empresa = Awaited<ReturnType<typeof crearTenantDePrueba>>;
 
-describe("Combustible exige Flota", () => {
+describe("Combustible es autónomo de Flota", () => {
   const empresas: Empresa[] = [];
   const nueva = async () => {
     const e = await crearTenantDePrueba(PASSWORD);
@@ -60,23 +58,35 @@ describe("Combustible exige Flota", () => {
     await closeDatabase();
   });
 
-  it("el registry declara que Combustible exige Flota, y Flota no exige nada", () => {
-    expect(MODULOS.find((m) => m.id === "combustible")?.requiere).toEqual(["flota"]);
+  it("el registry no le exige nada a Combustible: Flota es opcional", () => {
+    const combustible = MODULOS.find((m) => m.id === "combustible");
+    expect(combustible?.requiere ?? []).toEqual([]);
+    expect(combustible?.opcionales).toContain("flota");
     expect(MODULOS.find((m) => m.id === "flota")?.requiere ?? []).toEqual([]);
   });
 
-  it("plataforma rechaza encender Combustible sin Flota y lo acepta con Flota", async () => {
+  it("plataforma acepta encender Combustible sin Flota, y con Flota", async () => {
     const e = await nueva();
     const sinFlota = await ponerModulos(e, ["combustible"]);
-    expect(sinFlota.status, JSON.stringify(sinFlota.body)).toBe(400);
-    expect(JSON.stringify(sinFlota.body)).toMatch(/Combustible.*requiere.*flota/i);
+    expect(sinFlota.status, JSON.stringify(sinFlota.body)).toBe(200);
 
     const conFlota = await ponerModulos(e, ["flota", "combustible"]);
     expect(conFlota.status, JSON.stringify(conFlota.body)).toBe(200);
   });
 
-  it("una empresa solo con Flota no ve Combustible, y con Flota + Combustible ve los dos", async () => {
+  it("una empresa solo con Combustible lo ve y trabaja con la unidad escrita; una solo con Flota no ve Combustible", async () => {
     const e = await nueva();
+    expect((await ponerModulos(e, ["combustible"])).status).toBe(200);
+    const soloGrifo = await sesion(e);
+    expect(soloGrifo.modulos).toContain("combustible");
+    expect(soloGrifo.modulos).not.toContain("flota");
+    expect((await soloGrifo.agente.get("/api/erp/combustible")).status).toBe(200);
+    expect((await soloGrifo.agente.get("/api/erp/equipos")).status).toBe(403);
+    // La lista de unidades sale vacía, no con un error.
+    const unidades = await soloGrifo.agente.get("/api/erp/combustible/equipos-destino");
+    expect(unidades.status).toBe(200);
+    expect(unidades.body.data).toEqual([]);
+
     expect((await ponerModulos(e, ["flota"])).status).toBe(200);
     const soloFlota = await sesion(e);
     expect(soloFlota.modulos).toContain("flota");
@@ -89,19 +99,18 @@ describe("Combustible exige Flota", () => {
     expect((await ambos.agente.get("/api/erp/combustible")).status).toBe(200);
   });
 
-  it("si la empresa pierde Flota con Combustible encendido, el login oculta Combustible y su ruta da 403", async () => {
+  it("si la empresa pierde Flota con Combustible encendido, Combustible sigue y su fila no cambia", async () => {
     const e = await nueva();
     expect(await sesion(e).then((s) => s.modulos)).toContain("combustible");
 
-    // Por fuera de la API, que ya lo impediría: la fila de Combustible sigue habilitada.
     await pool.query(
       `UPDATE tenant_modulos SET estado = 'deshabilitado' WHERE tenant_id = $1 AND modulo = 'flota'`,
       [e.tenant.id]
     );
     const { agente, modulos } = await sesion(e);
     expect(modulos).not.toContain("flota");
-    expect(modulos).not.toContain("combustible");
-    expect((await agente.get("/api/erp/combustible")).status).toBe(403);
+    expect(modulos).toContain("combustible");
+    expect((await agente.get("/api/erp/combustible")).status).toBe(200);
     const fila = await pool.query(
       `SELECT estado FROM tenant_modulos WHERE tenant_id = $1 AND modulo = 'combustible'`,
       [e.tenant.id]

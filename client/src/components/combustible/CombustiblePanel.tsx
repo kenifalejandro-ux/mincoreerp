@@ -315,6 +315,12 @@ const UNIDAD_SIN_ALTA = "sin_alta";
 /** La placa para comparar: mayúsculas, sin espacios ni guiones ("t8m 821" = "T8M-821"). */
 const normalizarPlaca = (texto: string) => texto.toUpperCase().replace(/[^A-Z0-9]/g, "");
 
+/** ¿La unidad de este vale se ESCRIBE (placa a mano, con su lista) en vez de elegirse de la lista?
+ *  Sí en el vale del tanque propio (0176) y en la carga desde tanqueta en planta (0192); la carga
+ *  en ruta va por la unidad del conductor y se elige. */
+const unidadSeEscribe = (f: { origen: string; tanqueta_lugar?: string | null }) =>
+  f.origen === "tanque_propio" || (f.origen === "tanqueta" && f.tanqueta_lugar === "planta");
+
 const ETIQUETA_TIPO_DESTINO: Record<TipoDestinoDespacho, string> = {
   equipo: "Unidad",
   planta: "Planta (sin placa)",
@@ -3191,7 +3197,7 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     const sinVale = despachoSinVale(despachoForm);
     // 0176: solo el vale del tanque propio a una unidad, con la opción "Otra unidad".
     const sinAlta =
-      despachoForm.origen === "tanque_propio" &&
+      unidadSeEscribe(despachoForm) &&
       despachoForm.tipo_destino === "equipo" &&
       despachoForm.equipo_id === UNIDAD_SIN_ALTA;
     const body =
@@ -3207,8 +3213,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
             n_vale:
               despachoForm.tanqueta_lugar === "planta" ? Number(despachoForm.n_vale) : undefined,
             tipo_combustible: despachoForm.tipo_combustible,
-            tipo_destino: "equipo",
-            equipo_id: Number(despachoForm.equipo_id),
+            tipo_destino: sinAlta ? "unidad_sin_alta" : "equipo",
+            equipo_id: sinAlta ? undefined : Number(despachoForm.equipo_id),
+            placa_sin_alta: sinAlta ? despachoForm.placa_sin_alta : undefined,
             cantidad: Number(despachoForm.cantidad),
             lectura_horometro:
               equipoSeleccionado?.tipo_medidor === "horometro" &&
@@ -5472,6 +5479,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                                 tanqueta_lugar: e.target.value as "ruta" | "planta",
                                 serie_talonario: "",
                                 n_vale: "",
+                                equipo_id: "",
+                                unidad_texto: "",
+                                placa_sin_alta: "",
                               })
                             }
                           >
@@ -5812,123 +5822,121 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                         ))}
                     </select>
                   </div>
-                  {despachoForm.tipo_destino === "equipo" &&
-                    despachoForm.origen !== "tanque_propio" && (
-                      <div className="space-y-1">
-                        <label
-                          htmlFor="despacho-equipo"
-                          className="text-xs font-bold text-slate-700 uppercase"
-                        >
-                          Unidad
-                        </label>
-                        <select
-                          id="despacho-equipo"
-                          required
-                          className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-                          value={despachoForm.equipo_id}
-                          onChange={(e) =>
-                            setDespachoForm({ ...despachoForm, equipo_id: e.target.value })
-                          }
-                        >
-                          <option value="" disabled>
-                            Elegir unidad
+                  {despachoForm.tipo_destino === "equipo" && !unidadSeEscribe(despachoForm) && (
+                    <div className="space-y-1">
+                      <label
+                        htmlFor="despacho-equipo"
+                        className="text-xs font-bold text-slate-700 uppercase"
+                      >
+                        Unidad
+                      </label>
+                      <select
+                        id="despacho-equipo"
+                        required
+                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
+                        value={despachoForm.equipo_id}
+                        onChange={(e) =>
+                          setDespachoForm({ ...despachoForm, equipo_id: e.target.value })
+                        }
+                      >
+                        <option value="" disabled>
+                          Elegir unidad
+                        </option>
+                        {equipos.map((eq) => (
+                          <option key={eq.id} value={eq.id}>
+                            {eq.placa_codigo} — {eq.tipo}
                           </option>
-                          {equipos.map((eq) => (
-                            <option key={eq.id} value={eq.id}>
-                              {eq.placa_codigo} — {eq.tipo}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   {/* Vale del tanque propio (0176): un solo campo con su lista. Se escribe la placa y
                       la lista se filtra; si coincide con una unidad dada de alta se toma esa, y si
                       no, queda como placa de una unidad sin alta -- el grifero no espera a la
                       oficina. */}
-                  {despachoForm.tipo_destino === "equipo" &&
-                    despachoForm.origen === "tanque_propio" && (
-                      <div className="relative space-y-1">
-                        <label
-                          htmlFor="despacho-equipo"
-                          className="text-xs font-bold text-slate-700 uppercase"
-                        >
-                          Unidad (placa)
-                        </label>
-                        <input
-                          id="despacho-equipo"
-                          type="text"
-                          role="combobox"
-                          aria-expanded={unidadesAbiertas}
-                          aria-controls="despacho-unidades"
-                          required
-                          minLength={3}
-                          maxLength={30}
-                          autoComplete="off"
-                          autoCapitalize="characters"
-                          placeholder="Escribí o elegí la placa"
-                          className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white uppercase focus:ring-2 focus:ring-slate-900"
-                          value={despachoForm.unidad_texto}
-                          onFocus={() => setUnidadesAbiertas(true)}
-                          onBlur={() => setUnidadesAbiertas(false)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Escape") setUnidadesAbiertas(false);
-                          }}
-                          onChange={(e) => {
-                            setUnidadesAbiertas(true);
-                            escribirUnidad(e.target.value);
-                          }}
-                        />
-                        {unidadesAbiertas &&
-                          (() => {
-                            const clave = normalizarPlaca(despachoForm.unidad_texto);
-                            const visibles = equipos.filter(
-                              (eq) =>
-                                !clave ||
-                                normalizarPlaca(`${eq.placa_codigo}${eq.tipo}`).includes(clave)
-                            );
-                            return (
-                              <ul
-                                id="despacho-unidades"
-                                role="listbox"
-                                className="absolute left-0 right-0 z-20 mt-1 max-h-60 overflow-y-auto rounded-xl border border-slate-200 bg-white text-sm shadow-lg"
-                              >
-                                {visibles.length === 0 && (
-                                  <li className="px-3 py-2 text-xs text-slate-500">
-                                    Ninguna unidad coincide: se usa la placa que escribiste.
-                                  </li>
-                                )}
-                                {visibles.map((eq) => (
-                                  <li
-                                    key={eq.id}
-                                    role="option"
-                                    aria-selected={String(eq.id) === despachoForm.equipo_id}
-                                    className="cursor-pointer px-3 py-2 hover:bg-slate-100"
-                                    // mouseDown y no click: el click llega tarde, el campo ya perdió el
-                                    // foco y la lista se cerró antes de elegir.
-                                    onMouseDown={(e) => {
-                                      e.preventDefault();
-                                      escribirUnidad(eq.placa_codigo);
-                                      setUnidadesAbiertas(false);
-                                    }}
-                                  >
-                                    {eq.placa_codigo} — {eq.tipo}
-                                  </li>
-                                ))}
-                              </ul>
-                            );
-                          })()}
-                        {despachoForm.equipo_id === UNIDAD_SIN_ALTA ? (
-                          <p className="text-xs text-amber-600">
-                            Esa placa no está dada de alta: el vale queda con la placa que
-                            escribiste y la oficina la vincula después. Sin horómetro ni odómetro.
-                          </p>
-                        ) : equipoSeleccionado ? (
-                          <p className="text-xs text-slate-500">
-                            {equipoSeleccionado.placa_codigo} — {equipoSeleccionado.tipo}
-                          </p>
-                        ) : null}
-                      </div>
-                    )}
+                  {despachoForm.tipo_destino === "equipo" && unidadSeEscribe(despachoForm) && (
+                    <div className="relative space-y-1">
+                      <label
+                        htmlFor="despacho-equipo"
+                        className="text-xs font-bold text-slate-700 uppercase"
+                      >
+                        Unidad (placa)
+                      </label>
+                      <input
+                        id="despacho-equipo"
+                        type="text"
+                        role="combobox"
+                        aria-expanded={unidadesAbiertas}
+                        aria-controls="despacho-unidades"
+                        required
+                        minLength={3}
+                        maxLength={30}
+                        autoComplete="off"
+                        autoCapitalize="characters"
+                        placeholder="Escribí o elegí la placa"
+                        className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white uppercase focus:ring-2 focus:ring-slate-900"
+                        value={despachoForm.unidad_texto}
+                        onFocus={() => setUnidadesAbiertas(true)}
+                        onBlur={() => setUnidadesAbiertas(false)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Escape") setUnidadesAbiertas(false);
+                        }}
+                        onChange={(e) => {
+                          setUnidadesAbiertas(true);
+                          escribirUnidad(e.target.value);
+                        }}
+                      />
+                      {unidadesAbiertas &&
+                        (() => {
+                          const clave = normalizarPlaca(despachoForm.unidad_texto);
+                          const visibles = equipos.filter(
+                            (eq) =>
+                              !clave ||
+                              normalizarPlaca(`${eq.placa_codigo}${eq.tipo}`).includes(clave)
+                          );
+                          return (
+                            <ul
+                              id="despacho-unidades"
+                              role="listbox"
+                              className="absolute left-0 right-0 z-20 mt-1 max-h-60 overflow-y-auto rounded-xl border border-slate-200 bg-white text-sm shadow-lg"
+                            >
+                              {visibles.length === 0 && (
+                                <li className="px-3 py-2 text-xs text-slate-500">
+                                  Ninguna unidad coincide: se usa la placa que escribiste.
+                                </li>
+                              )}
+                              {visibles.map((eq) => (
+                                <li
+                                  key={eq.id}
+                                  role="option"
+                                  aria-selected={String(eq.id) === despachoForm.equipo_id}
+                                  className="cursor-pointer px-3 py-2 hover:bg-slate-100"
+                                  // mouseDown y no click: el click llega tarde, el campo ya perdió el
+                                  // foco y la lista se cerró antes de elegir.
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    escribirUnidad(eq.placa_codigo);
+                                    setUnidadesAbiertas(false);
+                                  }}
+                                >
+                                  {eq.placa_codigo} — {eq.tipo}
+                                </li>
+                              ))}
+                            </ul>
+                          );
+                        })()}
+                      {despachoForm.equipo_id === UNIDAD_SIN_ALTA ? (
+                        <p className="text-xs text-amber-600">
+                          Esa placa no está dada de alta: el vale queda con la placa que escribiste
+                          y la oficina la vincula después. Sin horómetro ni odómetro.
+                        </p>
+                      ) : equipoSeleccionado ? (
+                        <p className="text-xs text-slate-500">
+                          {equipoSeleccionado.placa_codigo} — {equipoSeleccionado.tipo}
+                        </p>
+                      ) : null}
+                    </div>
+                  )}
                   {despachoForm.tipo_destino === "otro" && (
                     <div className="space-y-1">
                       <label
