@@ -1719,7 +1719,7 @@ export class CombustibleRepository {
                    THEN 'Otros: ' || d.proveedor_otro ELSE g.nombre END AS proveedor,
               COALESCE(g.es_otros, false) AS proveedor_no_registrado,
               d.proveedor_otro,
-              e.placa_codigo, u.nombre AS registrado_por,
+              e.placa_codigo, d.placa_sin_alta, u.nombre AS registrado_por,
               c.total_boleta, c.total_sistema, c.diferencia, c.motivo_descuadre,
               COALESCE((
                 SELECT json_agg(json_build_object(
@@ -4019,7 +4019,7 @@ export class CombustibleRepository {
               CASE WHEN g.es_otros AND d.proveedor_otro IS NOT NULL
                    THEN 'Otros: ' || d.proveedor_otro ELSE g.nombre END AS proveedor,
               COALESCE(g.es_otros, false) AS proveedor_no_registrado,
-              e.placa_codigo, e.tipo AS equipo_tipo,
+              e.placa_codigo, d.placa_sin_alta, e.tipo AS equipo_tipo,
               u.nombre AS registrado_por,
               COALESCE((
                 SELECT json_agg(json_build_object(

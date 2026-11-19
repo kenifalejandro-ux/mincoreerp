@@ -622,12 +622,40 @@ export const crearDespachoCombustibleSchema = z
             "la urea sale del almacén ('almacen') o se compra en ruta ('compra_externa') -- no hay tanque de urea",
         });
       }
-      if (data.tipo_destino !== "equipo" || data.equipo_id === undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["tipo_destino"],
-          message: "un vale de urea siempre va a un equipo -- tipo_destino='equipo' y equipo_id",
-        });
+      // A una unidad registrada (tipo_destino='equipo' + equipo_id) o escrita a mano
+      // ('unidad_sin_alta' + placa_sin_alta, 0192). Esta rama retorna antes de las reglas comunes
+      // de más abajo, así que la regla de la placa se dice acá.
+      if (data.tipo_destino === "unidad_sin_alta") {
+        if (data.placa_sin_alta === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["placa_sin_alta"],
+            message: "La placa es obligatoria cuando la unidad no está dada de alta",
+          });
+        }
+        if (data.equipo_id !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["equipo_id"],
+            message: "equipo_id solo aplica cuando tipo_destino es 'equipo'",
+          });
+        }
+      } else {
+        if (data.tipo_destino !== "equipo" || data.equipo_id === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["tipo_destino"],
+            message:
+              "un vale de urea siempre va a una unidad -- tipo_destino='equipo' y equipo_id, o 'unidad_sin_alta' y la placa",
+          });
+        }
+        if (data.placa_sin_alta !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["placa_sin_alta"],
+            message: "placa_sin_alta solo aplica cuando tipo_destino es 'unidad_sin_alta'",
+          });
+        }
       }
       if (data.grifo_id === undefined) {
         ctx.addIssue({
@@ -847,11 +875,21 @@ export const crearDespachoCombustibleSchema = z
           message: "La placa es obligatoria cuando la unidad no está dada de alta",
         });
       }
-      if (data.origen !== "tanque_propio" || data.producto !== "combustible") {
+      // Los vales de combustible que admiten una unidad escrita a mano: el del tanque propio
+      // (0176) y la carga desde tanqueta EN PLANTA (0192); la urea lo dice en su propia rama. La
+      // carga en ruta va por la unidad del conductor y el excedente de cisterna, por su línea de
+      // reparto: esos siguen pidiendo una unidad registrada.
+      const admiteUnidadEscrita =
+        (data.producto === "combustible" && data.origen === "tanque_propio") ||
+        (data.producto === "combustible" &&
+          data.origen === "tanqueta" &&
+          data.tanqueta_lugar === "planta");
+      if (!admiteUnidadEscrita) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["tipo_destino"],
-          message: "La unidad sin alta solo aplica a un vale de combustible del tanque propio",
+          message:
+            "La unidad escrita a mano solo aplica a un vale del tanque propio o a una carga desde tanqueta en planta",
         });
       }
     } else if (data.placa_sin_alta !== undefined) {
@@ -932,7 +970,11 @@ export const crearDespachoCombustibleSchema = z
           message: "tanqueta_origen_id es obligatorio: de qué tanqueta se cargó",
         });
       }
-      if (data.tipo_destino !== "equipo") {
+      // En planta también puede ir a una unidad escrita a mano (0192); en ruta, solo a una registrada.
+      if (
+        data.tipo_destino !== "equipo" &&
+        !(enPlanta && data.tipo_destino === "unidad_sin_alta")
+      ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["tipo_destino"],
