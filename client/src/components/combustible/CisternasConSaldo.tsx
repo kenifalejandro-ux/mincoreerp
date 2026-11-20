@@ -1,7 +1,9 @@
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { CampoUnidadPlaca } from "./CampoUnidadPlaca";
 import type { CisternaConSaldo } from "./cisternasTipos";
+import { resolverUnidad } from "./unidadEscrita";
 import UnidadYValeDeLinea, { type UnidadYVale } from "./UnidadYValeDeLinea";
 import { apiFetch } from "../../services/apiClient";
 import { mensajeDeError } from "../../utils/mensajeDeError";
@@ -45,6 +47,8 @@ const FORM_INICIAL = {
   destino: "equipo" as SalidaA,
   cantidad: "",
   equipo_id: "",
+  // La unidad escrita a mano (0195), cuando no hay unidades registradas que elegir.
+  placa_texto: "",
   serie_talonario: "",
   n_vale: "",
   medidor: "",
@@ -73,6 +77,8 @@ export default function RepartirCisterna({
   const [form, setForm] = useState({ ...FORM_INICIAL, cantidad: String(Number(elegida.saldo)) });
   const [tanquetas, setTanquetas] = useState<TanquetaOpcion[]>([]);
   const [clienteUuid] = useState(() => crypto.randomUUID());
+  // Sin unidades que elegir (la empresa no tiene Flota, o no cargó ninguna) la unidad se escribe.
+  const modoEscrito = equipos.length === 0;
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -138,6 +144,7 @@ export default function RepartirCisterna({
     const unidadDeLaTanqueta = form.unidadTanqueta.tanqueta_equipo_id ?? "";
     const conVale = aUnidad || unidadDeLaTanqueta !== "";
     const equipo = equipos.find((e) => String(e.id) === form.equipo_id);
+    const placaEscrita = aUnidad && modoEscrito ? form.placa_texto.trim() : null;
     const medidor = form.medidor !== "" ? Number(form.medidor) : undefined;
     const vale = aUnidad
       ? { serie_talonario: form.serie_talonario.trim(), n_vale: Number(form.n_vale) }
@@ -159,8 +166,9 @@ export default function RepartirCisterna({
           origen: "excedente_recepcion",
           excedente_linea_id: Number(c.id),
           tipo_combustible: c.tipo_combustible,
-          tipo_destino: aUnidad ? "equipo" : "reserva_cubeta",
-          equipo_id: aUnidad ? Number(form.equipo_id) : undefined,
+          tipo_destino: placaEscrita ? "unidad_sin_alta" : aUnidad ? "equipo" : "reserva_cubeta",
+          equipo_id: aUnidad && !placaEscrita ? Number(form.equipo_id) : undefined,
+          placa_sin_alta: placaEscrita ?? undefined,
           tanqueta_destino_id: aUnidad ? undefined : Number(form.tanqueta_id),
           tanqueta_equipo_id: !aUnidad && conVale ? Number(unidadDeLaTanqueta) : undefined,
           ...(vale ?? {}),
@@ -177,7 +185,7 @@ export default function RepartirCisterna({
         return;
       }
       const destino = aUnidad
-        ? (equipo?.placa_codigo ?? "la unidad")
+        ? (equipo?.placa_codigo ?? placaEscrita ?? "la unidad")
         : (tanquetas.find((t) => String(t.id) === form.tanqueta_id)?.codigo ?? "la tanqueta");
       onCerrar();
       await onRegistrado(
@@ -211,7 +219,11 @@ export default function RepartirCisterna({
   const cantidadValida = cantidad > 0 && cantidad <= saldo + 0.001;
   const destinoCompleto =
     form.destino === "equipo"
-      ? form.equipo_id !== "" && form.serie_talonario.trim() !== "" && Number(form.n_vale) > 0
+      ? (modoEscrito
+          ? resolverUnidad(form.placa_texto, equipos).tipo !== "vacia"
+          : form.equipo_id !== "") &&
+        form.serie_talonario.trim() !== "" &&
+        Number(form.n_vale) > 0
       : form.destino === "tanque"
         ? form.tanque_id !== "" && libreDelTanque !== null && cantidad <= libreDelTanque + 0.001
         : form.tanqueta_id !== "" &&
@@ -292,19 +304,29 @@ export default function RepartirCisterna({
                 <label htmlFor="cis-unidad" className={etiqueta}>
                   Unidad
                 </label>
-                <select
-                  id="cis-unidad"
-                  className={campo}
-                  value={form.equipo_id}
-                  onChange={(e) => cambiar({ equipo_id: e.target.value, medidor: "" })}
-                >
-                  <option value="">Elegir...</option>
-                  {equipos.map((eq) => (
-                    <option key={eq.id} value={eq.id}>
-                      {eq.placa_codigo}
-                    </option>
-                  ))}
-                </select>
+                {modoEscrito ? (
+                  <CampoUnidadPlaca
+                    id="cis-unidad"
+                    equipos={equipos}
+                    texto={form.placa_texto}
+                    onTexto={(placa_texto) => cambiar({ placa_texto })}
+                    className={campo}
+                  />
+                ) : (
+                  <select
+                    id="cis-unidad"
+                    className={campo}
+                    value={form.equipo_id}
+                    onChange={(e) => cambiar({ equipo_id: e.target.value, medidor: "" })}
+                  >
+                    <option value="">Elegir...</option>
+                    {equipos.map((eq) => (
+                      <option key={eq.id} value={eq.id}>
+                        {eq.placa_codigo}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
               {/* El vale va en una sola fila, con etiquetas cortas que no se parten: antes la serie
                   ("Serie del talonario") ocupaba dos líneas y su campo quedaba más abajo que el del
