@@ -40,10 +40,12 @@ import {
   leerBorrador,
   type BorradorCompraRuta,
 } from "./borradorCompraRuta";
+import { CampoUnidadPlaca } from "./CampoUnidadPlaca";
 import { seccionesCompraEnRuta } from "./compraEnRutaAcceso";
 import { prepararFotoComprobante } from "./fotoComprobante";
 import HistorialComprasRuta from "./HistorialComprasRuta";
 import { SelectorBuscable } from "./SelectorBuscable";
+import { resolverUnidad } from "./unidadEscrita";
 import { useUnidadDelViaje } from "./useUnidadDelViaje";
 
 type TipoCombustible = "diesel_b5" | "gasolina_90" | "glp";
@@ -150,6 +152,8 @@ function FormularioCompra({
   const [presentaciones, setPresentaciones] = useState<PresentacionFila[]>([]);
   const [preciosUrea, setPreciosUrea] = useState<PrecioUrea[]>([]);
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
+  // La lista de unidades ya llegó (aunque venga vacía): sin ella no se sabe si hay unidades que elegir.
+  const [equiposListos, setEquiposListos] = useState(false);
 
   const cargar = useCallback(async () => {
     try {
@@ -167,6 +171,7 @@ function FormularioCompra({
       const json = async (r: Response | null) => (r?.ok ? await r.json().catch(() => null) : null);
       const equiposBody = await json(rEq);
       setEquipos(Array.isArray(equiposBody?.data) ? equiposBody.data : []);
+      if (rEq.ok) setEquiposListos(true);
       const comb = await json(rComb);
       setProvCombustible(Array.isArray(comb) ? comb : []);
       const urea = await json(rUreaProv);
@@ -205,14 +210,25 @@ function FormularioCompra({
     aviso: avisoViaje,
     cerrarAviso: cerrarAvisoViaje,
   } = useUnidadDelViaje(usuario?.rol === "conductor_ruta", usuario?.id);
-  const equipoId = unidadDelViaje ? String(unidadDelViaje.equipo_id) : equipoElegido;
+  // El viaje de una unidad escrita a mano (0193) trae solo la placa: la compra sale con ella.
+  const placaDelViaje =
+    unidadDelViaje && unidadDelViaje.equipo_id === null ? unidadDelViaje.placa_codigo : "";
+  const equipoId =
+    unidadDelViaje && unidadDelViaje.equipo_id !== null
+      ? String(unidadDelViaje.equipo_id)
+      : equipoElegido;
+  // La unidad escrita a mano (0196): sin unidades que elegir (la empresa no tiene Flota, o no cargó
+  // ninguna) o con el viaje de una placa escrita. No hay medidor registrado: el paso se salta.
+  const [placaTexto, setPlacaTexto] = useState("");
   // Para qué unidad se escribieron las lecturas del medidor: si la unidad
   // cambia (viaje corregido, borrador viejo), esas lecturas ya no aplican.
   const lecturasDe = useRef("");
   useEffect(() => {
     // Si el viaje se cierra o se anula, la unidad queda elegida y se desbloquea.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (unidadDelViaje) setEquipoId(String(unidadDelViaje.equipo_id));
+    if (unidadDelViaje && unidadDelViaje.equipo_id !== null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setEquipoId(String(unidadDelViaje.equipo_id));
+    }
   }, [unidadDelViaje]);
   const [grifoId, setGrifoId] = useState("");
   const [proveedorOtro, setProveedorOtro] = useState("");
@@ -305,6 +321,7 @@ function FormularioCompra({
       setClienteUuid(d.clienteUuid as ReturnType<typeof crypto.randomUUID>);
       huellaEnvio.current = d.huellaEnvio ?? null;
       setEquipoId(d.equipoId);
+      setPlacaTexto(d.placaTexto ?? "");
       lecturasDe.current = d.equipoId;
       setGrifoId(d.grifoId);
       setProveedorOtro(d.proveedorOtro ?? "");
@@ -371,6 +388,7 @@ function FormularioCompra({
     const datos: BorradorCompraRuta = {
       clienteUuid,
       equipoId,
+      placaTexto,
       grifoId,
       proveedorOtro,
       comprobanteTipo,
@@ -407,6 +425,7 @@ function FormularioCompra({
     borradorListo,
     clienteUuid,
     equipoId,
+    placaTexto,
     grifoId,
     proveedorOtro,
     comprobanteTipo,
@@ -430,6 +449,12 @@ function FormularioCompra({
   ]);
 
   const equipo = equipos.find((e) => String(e.id) === equipoId);
+  // La unidad escrita a mano (0196): con el viaje de una placa escrita, o sin unidades que elegir
+  // (la empresa no tiene Flota, o no cargó ninguna). Sin unidad registrada no hay medidor: ni se
+  // pide ni se contrasta, y el servidor tampoco lo pide.
+  const escrita =
+    placaDelViaje !== "" || (!unidadDelViaje && equiposListos && equipos.length === 0);
+  const placaEfectiva = (placaDelViaje || placaTexto).trim();
   // Solo el administrador puede registrar la compra sin medidor ni horas.
   const medidorOpcional = usuario?.rol === "admin";
   const midePorHorometro = equipo?.tipo_medidor === "horometro";
@@ -562,7 +587,9 @@ function FormularioCompra({
     comprobante: [],
     resumen: [],
   };
-  if (equipoId === "") faltantesPaso.unidad.push("la unidad");
+  if (escrita ? resolverUnidad(placaEfectiva, equipos).tipo === "vacia" : equipoId === "") {
+    faltantesPaso.unidad.push(escrita ? "la placa de la unidad" : "la unidad");
+  }
   if (grifoVigente === "") faltantesPaso.unidad.push("el proveedor");
   else if (esOtros && nombreOtro.length < 3) faltantesPaso.unidad.push("el nombre del grifo");
   if (!incluyeCombustible && !incluyeUrea) faltantesPaso.queCompro.push("combustible o urea");
@@ -571,12 +598,17 @@ function FormularioCompra({
       faltantesPaso.combustible.push(unidad === "L" ? "los litros" : "los galones");
     }
     if (!(Number(costoUnitario) > 0)) faltantesPaso.combustible.push("el C.U. del combustible");
-    if (equipo && !equipo.tipo_medidor) {
+    if (!escrita && equipo && !equipo.tipo_medidor) {
       faltantesPaso.medidor.push("el tipo de medidor de la unidad (se configura en Equipos)");
-    } else if (!medidorOpcional && (midePorOdometro ? odometro : horometro) === "" && equipo) {
+    } else if (
+      !escrita &&
+      !medidorOpcional &&
+      (midePorOdometro ? odometro : horometro) === "" &&
+      equipo
+    ) {
       faltantesPaso.medidor.push("la lectura del medidor");
     }
-    if (!medidorOpcional && horasMostradas === "") {
+    if (!escrita && !medidorOpcional && horasMostradas === "") {
       faltantesPaso.medidor.push("las horas abastecidas");
     }
   }
@@ -590,7 +622,11 @@ function FormularioCompra({
   const pasos: Paso[] = [
     "unidad",
     ...(soloUna ? [] : (["queCompro"] as const)),
-    ...(incluyeCombustible ? (["combustible", "medidor"] as const) : []),
+    ...(incluyeCombustible
+      ? escrita
+        ? (["combustible"] as const)
+        : (["combustible", "medidor"] as const)
+      : []),
     ...(incluyeUrea ? (["urea"] as const) : []),
     "comprobante",
     "resumen",
@@ -654,6 +690,7 @@ function FormularioCompra({
     setPaso("unidad");
     setClienteUuid(crypto.randomUUID());
     setEquipoId("");
+    setPlacaTexto("");
     setGrifoId("");
     setProveedorOtro("");
     setComprobanteTipo("factura");
@@ -699,7 +736,9 @@ function FormularioCompra({
         ...(esOtros ? { proveedor_otro: nombreOtro } : { grifo_id: Number(grifoVigente) }),
         comprobante_tipo: comprobanteTipo,
         comprobante_numero: comprobanteNumero.trim(),
-        equipo_id: Number(equipoId),
+        // La unidad registrada o, si se escribió (0196), la placa: el servidor decide si es una
+        // unidad que conoce.
+        ...(escrita ? { placa_sin_alta: placaEfectiva } : { equipo_id: Number(equipoId) }),
         despachado_en: fechaIso(),
         total_boleta: totalSistemaC / 100,
         observaciones: observaciones.trim() || undefined,
@@ -710,9 +749,11 @@ function FormularioCompra({
               unidad,
               costo_unitario: Number(costoUnitario),
               lectura_horometro:
-                midePorHorometro && horometro !== "" ? Number(horometro) : undefined,
-              lectura_odometro: midePorOdometro && odometro !== "" ? Number(odometro) : undefined,
-              horas_abastecidas: horasMostradas !== "" ? Number(horasMostradas) : undefined,
+                !escrita && midePorHorometro && horometro !== "" ? Number(horometro) : undefined,
+              lectura_odometro:
+                !escrita && midePorOdometro && odometro !== "" ? Number(odometro) : undefined,
+              horas_abastecidas:
+                !escrita && horasMostradas !== "" ? Number(horasMostradas) : undefined,
             }
           : undefined,
         urea: incluyeUrea
@@ -877,6 +918,19 @@ function FormularioCompra({
                     />
                     <span className="text-xs text-gray-500">
                       Es la unidad de tu viaje. Si no es la correcta, avisa al encargado.
+                    </span>
+                  </>
+                ) : escrita ? (
+                  <>
+                    <CampoUnidadPlaca
+                      id="compra-unidad"
+                      equipos={equipos}
+                      texto={placaTexto}
+                      onTexto={setPlacaTexto}
+                      className={CLASE_CAMPO}
+                    />
+                    <span className="text-xs text-gray-500">
+                      Escribe la placa. Esta compra no pide medidor ni horas.
                     </span>
                   </>
                 ) : (
@@ -1211,7 +1265,10 @@ function FormularioCompra({
         {pasoActual === "resumen" && (
           <Seccion titulo="Resumen de tu compra" textoInterruptor="">
             <div className="flex flex-col gap-2 rounded-xl border border-slate-200 p-3 text-sm text-slate-800">
-              <ResumenLinea nombre="Unidad" valor={equipo ? equipo.placa_codigo : "—"} />
+              <ResumenLinea
+                nombre="Unidad"
+                valor={escrita ? placaEfectiva || "—" : equipo ? equipo.placa_codigo : "—"}
+              />
               <ResumenLinea nombre="Proveedor" valor={nombreProveedor} />
               <ResumenLinea
                 nombre={comprobanteTipo === "factura" ? "Factura" : "Boleta"}

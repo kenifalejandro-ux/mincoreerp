@@ -173,6 +173,23 @@ describe("borrador de compra en ruta", () => {
     expect(leerBorrador("u1", null, T0)).toBeNull();
   });
 
+  it("la placa escrita a mano (0196) cuenta como contenido, se guarda y se recupera", () => {
+    const soloPlaca: BorradorCompraRuta = { ...vacio(), placaTexto: "ZR1234" };
+    expect(borradorTieneContenido(soloPlaca)).toBe(true);
+    const a = almacenFalso();
+    guardarBorrador("u1", soloPlaca, a, T0);
+    expect(leerBorrador("u1", a, T0 + 1000)?.datos.placaTexto).toBe("ZR1234");
+  });
+
+  it("un borrador viejo, guardado antes de la placa escrita, se sigue leyendo sin ella", () => {
+    const a = almacenFalso();
+    guardarBorrador("u1", conAlgo(), a, T0);
+    const leido = leerBorrador("u1", a, T0 + 1000);
+    expect(leido).not.toBeNull();
+    // El campo es opcional: leerlo ausente no rompe y el formulario lo toma como vacío.
+    expect(leido?.datos.placaTexto ?? "").toBe("");
+  });
+
   it("la foto no es parte del borrador: ni un campo para ella", () => {
     const campos = Object.keys(conAlgo());
     expect(campos.some((c) => /foto|archivo|file/i.test(c))).toBe(false);
