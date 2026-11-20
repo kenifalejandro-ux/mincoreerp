@@ -78,7 +78,7 @@ const ENV_E2E: Record<string, string> = {
   // los specs entran con el mismo usuario y los navegadores corren en
   // paralelo, así que los contadores de producción los estorban en vez de
   // proteger nada. Ver el comentario largo en ci.yml.
-  RATE_LIMIT_MAX_REQUESTS: "100",
+  RATE_LIMIT_MAX_REQUESTS: "1000",
   LOGIN_EMAIL_RATE_LIMIT_MAX_REQUESTS: "100",
   ERP_RATE_LIMIT_USUARIO_MAX: "5000",
 };
