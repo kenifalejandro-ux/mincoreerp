@@ -14,9 +14,14 @@ import { suscribirseAEventos } from "./streamDeAlertas";
 import { apiFetch } from "../../services/apiClient";
 
 export interface UnidadDelViaje {
-  equipo_id: number;
+  /** Null en el viaje de una unidad escrita a mano (0193): solo tiene la placa. */
+  equipo_id: number | null;
   placa_codigo: string;
 }
+
+/** Qué unidad es, para saber si cambió: la registrada o, si no la hay, la placa. */
+const claveDe = (u: UnidadDelViaje | null): string | null =>
+  u === null ? null : u.equipo_id !== null ? `e${u.equipo_id}` : `p${u.placa_codigo}`;
 
 const claveCache = (usuarioId: string) => `unidad-viaje:${usuarioId}`;
 
@@ -47,8 +52,8 @@ export function useUnidadDelViaje(activo: boolean, usuarioId: string | undefined
   // Qué unidad había antes de la última respuesta del servidor (undefined = no
   // se sabe: primera vez en este dispositivo). Sirve para avisar solo cuando
   // algo CAMBIÓ, no al abrir.
-  const anterior = useRef<number | null | undefined>(
-    activo ? (leerCache(usuarioId)?.equipo_id ?? undefined) : undefined
+  const anterior = useRef<string | null | undefined>(
+    activo ? (claveDe(leerCache(usuarioId)) ?? undefined) : undefined
   );
 
   const cargar = useCallback(async () => {
@@ -60,16 +65,20 @@ export function useUnidadDelViaje(activo: boolean, usuarioId: string | undefined
       if (!res.ok) return;
       const body = await res.json().catch(() => null);
       const d = body?.data;
-      // Un viaje de una unidad escrita a mano (0193) no tiene unidad registrada que preseleccionar.
+      // La unidad registrada o, en un viaje de unidad escrita a mano (0193), solo su placa: el
+      // formulario la precarga y la bloquea igual.
       const nueva: UnidadDelViaje | null =
-        d && d.equipo_id != null
-          ? { equipo_id: Number(d.equipo_id), placa_codigo: String(d.placa_codigo) }
+        d && (d.equipo_id != null || d.placa_codigo)
+          ? {
+              equipo_id: d.equipo_id == null ? null : Number(d.equipo_id),
+              placa_codigo: String(d.placa_codigo ?? ""),
+            }
           : null;
       const antes = anterior.current;
-      anterior.current = nueva?.equipo_id ?? null;
+      anterior.current = claveDe(nueva);
       guardarCache(usuarioId, nueva);
       setUnidad(nueva);
-      if (antes !== undefined && antes !== (nueva?.equipo_id ?? null)) {
+      if (antes !== undefined && antes !== claveDe(nueva)) {
         setAviso(
           nueva
             ? `Tu viaje cambió: la unidad ahora es ${nueva.placa_codigo}.`

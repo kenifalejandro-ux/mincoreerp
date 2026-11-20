@@ -37,6 +37,9 @@ export interface RenglonBorrador {
 export interface BorradorCompraRuta {
   clienteUuid: string;
   equipoId: string;
+  /** La unidad escrita a mano (0196), cuando no hay unidades que elegir; un borrador viejo no la
+   *  trae. */
+  placaTexto?: string;
   grifoId: string;
   /** El nombre del grifo cuando el proveedor es "Otros" (0163); un borrador
    *  viejo no lo trae. */
@@ -90,6 +93,7 @@ function almacenDelNavegador(): Almacen | null {
 export function borradorTieneContenido(b: BorradorCompraRuta): boolean {
   return (
     b.equipoId !== "" ||
+    (b.placaTexto ?? "") !== "" ||
     b.grifoId !== "" ||
     b.comprobanteNumero.trim() !== "" ||
     b.galones !== "" ||
