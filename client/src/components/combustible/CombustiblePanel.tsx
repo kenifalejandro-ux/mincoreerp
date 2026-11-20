@@ -63,6 +63,8 @@ import type { CompraDeCisterna } from "./comprasCisternaTipos";
 import RepartirCisterna from "./CisternasConSaldo";
 import CisternasPestana, { AvisoCisternas } from "./CisternasPestana";
 import type { CisternaConSaldo, CisternaDeLista } from "./cisternasTipos";
+import { CampoUnidadPlaca } from "./CampoUnidadPlaca";
+import { resolverUnidad } from "./unidadEscrita";
 
 interface SurtidorDelTanque {
   id: number;
@@ -241,6 +243,8 @@ interface LineaReparto {
   destino: DestinoExcedente;
   cantidad: string;
   equipo_id: string;
+  /** La unidad escrita a mano (0195), cuando no hay unidades registradas que elegir. */
+  placa_texto?: string;
   tanqueta_id: string;
   /** 0140: para qué unidad va la tanqueta, con su vale (los tres o ninguno). */
   tanqueta_equipo_id?: string;
@@ -3746,7 +3750,13 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           reparto_excedente: reparto?.map((l) => ({
             destino: l.destino,
             cantidad: Number(l.cantidad),
-            equipo_id: l.destino === "equipo" ? Number(l.equipo_id) : undefined,
+            // La unidad: la elegida de la lista o, sin unidades que elegir, la placa escrita.
+            equipo_id:
+              l.destino === "equipo" && equipos.length > 0 ? Number(l.equipo_id) : undefined,
+            placa_sin_alta:
+              l.destino === "equipo" && equipos.length === 0
+                ? (l.placa_texto ?? "").trim()
+                : undefined,
             tanqueta_id: l.destino === "cubeta" ? Number(l.tanqueta_id) : undefined,
             ...(l.destino === "cubeta" && l.tanqueta_equipo_id
               ? {
@@ -8243,7 +8253,10 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
           const lineasCompletas = lineasReparto.every(
             (l) =>
               Number(l.cantidad) > 0 &&
-              (l.destino !== "equipo" || l.equipo_id !== "") &&
+              (l.destino !== "equipo" ||
+                (equipos.length === 0
+                  ? resolverUnidad(l.placa_texto ?? "", equipos).tipo !== "vacia"
+                  : l.equipo_id !== "")) &&
               (l.destino !== "cubeta" || l.tanqueta_id !== "") &&
               (!l.tanqueta_equipo_id ||
                 ((l.serie_talonario ?? "").trim() !== "" && Number(l.n_vale) > 0))
@@ -8352,19 +8365,29 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                             >
                               Unidad
                             </label>
-                            <select
-                              id={`exc-equipo-${i}`}
-                              className="w-full border border-slate-200 rounded-xl p-3 text-sm"
-                              value={l.equipo_id}
-                              onChange={(e) => actualizar(i, { equipo_id: e.target.value })}
-                            >
-                              <option value="">Elegir...</option>
-                              {equipos.map((eq) => (
-                                <option key={eq.id} value={eq.id}>
-                                  {eq.placa_codigo}
-                                </option>
-                              ))}
-                            </select>
+                            {equipos.length === 0 ? (
+                              <CampoUnidadPlaca
+                                id={`exc-equipo-${i}`}
+                                equipos={equipos}
+                                texto={l.placa_texto ?? ""}
+                                onTexto={(placa_texto) => actualizar(i, { placa_texto })}
+                                className="w-full border border-slate-200 rounded-xl p-3 text-sm uppercase"
+                              />
+                            ) : (
+                              <select
+                                id={`exc-equipo-${i}`}
+                                className="w-full border border-slate-200 rounded-xl p-3 text-sm"
+                                value={l.equipo_id}
+                                onChange={(e) => actualizar(i, { equipo_id: e.target.value })}
+                              >
+                                <option value="">Elegir...</option>
+                                {equipos.map((eq) => (
+                                  <option key={eq.id} value={eq.id}>
+                                    {eq.placa_codigo}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
                           </>
                         )}
                       </div>
