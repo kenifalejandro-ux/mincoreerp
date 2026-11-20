@@ -2,6 +2,8 @@
 import { Check, ChevronLeft, ChevronRight, Plus, Trash2, X } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 
+import { useAuth } from "../../context/AuthContext";
+import { tieneModulo } from "../../modules/tieneModulo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
@@ -174,6 +176,7 @@ function ItemsEditor({
 }
 
 export default function IpercView() {
+  const conFlota = tieneModulo(useAuth().usuario, "flota");
   const puedeEscribir = usePuedeEscribir("iperc");
   const [subTab, setSubTab] = useState<"iperc" | "lineasBase">("iperc");
   const [ipercs, setIpercs] = useState<Iperc[]>([]);
@@ -249,17 +252,22 @@ export default function IpercView() {
     setLineasBase(Array.isArray(body.data) ? body.data : []);
   };
 
-  const cargarEquipos = async () => {
+  const cargarEquipos = useCallback(async () => {
+    // Las unidades son de Flota: sin el módulo ni se piden (daría un 403 en cada apertura).
+    if (!conFlota) {
+      setEquipos([]);
+      return;
+    }
     const res = await apiFetch("/api/erp/equipos?page=1&pageSize=200");
     const body = await res.json();
     setEquipos(Array.isArray(body.data) ? body.data : []);
-  };
+  }, [conFlota]);
 
   const cargarTodo = useCallback(async () => {
     setLoading(true);
     await Promise.all([cargarIpercs(), cargarLineasBase(), cargarEquipos()]);
     setLoading(false);
-  }, []);
+  }, [cargarEquipos]);
 
   useEffect(() => {
     // Patrón estándar de carga al montar (setCargando(true) -> fetch ->

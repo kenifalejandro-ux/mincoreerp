@@ -78,6 +78,7 @@ export default function OrdenesTrabajoView() {
   // Registro de unidades es de OTRO módulo: sin él no se piden ni se ofrecen unidades y la orden
   // se identifica por el texto «Activo o lugar» (ver `opcionales` en registry.ts).
   const conFlota = tieneModulo(useAuth().usuario, "flota");
+  const conIperc = tieneModulo(useAuth().usuario, "iperc");
   const [ordenes, setOrdenes] = useState<OrdenTrabajo[]>([]);
   const [equipos, setEquipos] = useState<Equipo[]>([]);
   const [ipercs, setIpercs] = useState<IpercResumen[]>([]);
@@ -130,8 +131,12 @@ export default function OrdenesTrabajoView() {
   // ("esta OT tiene tal evaluación de riesgo asociada"), sin gating real
   // (ver ADR-0002, decisión de v1). Best-effort: si el módulo IPERC no
   // está habilitado para este tenant, el select queda vacío sin romper el
-  // resto del formulario.
+  // resto del formulario. Sin el módulo ni se pide (daría un 403 en cada apertura).
   const cargarIpercs = useCallback(async () => {
+    if (!conIperc) {
+      setIpercs([]);
+      return;
+    }
     try {
       const res = await apiFetch("/api/erp/iperc?pageSize=200");
       const body = await res.json();
@@ -139,7 +144,7 @@ export default function OrdenesTrabajoView() {
     } catch {
       setIpercs([]);
     }
-  }, []);
+  }, [conIperc]);
 
   useEffect(() => {
     // Patrón estándar de carga al montar/cambiar filtros o página.
