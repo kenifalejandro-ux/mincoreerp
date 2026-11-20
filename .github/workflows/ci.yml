@@ -332,7 +332,18 @@ jobs:
       # Subirlo acá no debilita nada: el rate limiter tiene su propia
       # cobertura en tests/erp-rate-limit.test.ts, donde SÍ es el sujeto del
       # test. Acá solo estorba.
-      RATE_LIMIT_MAX_REQUESTS: 100
+      #
+      # 2026-11-20: 100 tampoco alcanza, y esta vez no son los logins. El
+      # mismo contador (por ruta e IP, ventana de 60 s) protege GET
+      # /api/auth/me, que el cliente llama ~2 veces en CADA carga de página, y
+      # el job corre ~134 tests con 2 workers, cada uno con su login por UI y
+      # varias páginas (el spec de control-tv abre 3). En los minutos con
+      # muchas pruebas rápidas /me pasa de 100, responde 429 y el cliente lo
+      # toma por «sin sesión»: la pestaña cae al login y el spec falla por algo
+      # que no es lo que prueba (pasó en #538, #547 y #555; se vio en el trace
+      # del reporte: `GET /api/auth/me 429`). Crece con cada spec que se suma,
+      # así que se sube al mismo valor que ya usa el job de backend.
+      RATE_LIMIT_MAX_REQUESTS: 1000
       # Mismo problema, otra causa: LOGIN_EMAIL_RATE_LIMIT_MAX_REQUESTS es
       # por tenantSlug+email, no por IP -- los 9 logins de arriba son casi
       # todos contra el mismo E2E_ADMIN_EMAIL, muy cerca del default de
