@@ -3,6 +3,8 @@
 import { ChevronLeft, ChevronRight, FileSpreadsheet, Plus, X } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 
+import { useAuth } from "../../context/AuthContext";
+import { tieneModulo } from "../../modules/tieneModulo";
 import { apiFetch } from "../../services/apiClient";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 
@@ -198,6 +200,7 @@ export default function DocumentosTable() {
   // migrations/0049). Catálogo cargado una sola vez al montar, igual que
   // el selector de equipos en Checklists/IPERC.
   const [ordenesDeTrabajo, setOrdenesDeTrabajo] = useState<{ id: number; titulo: string }[]>([]);
+  const conOrdenesDeTrabajo = tieneModulo(useAuth().usuario, "ordenes_trabajo");
 
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -235,12 +238,14 @@ export default function DocumentosTable() {
     load(page);
   }, [page, load]);
 
+  // Sin el módulo de Órdenes de Trabajo ni se pide la lista (daría un 403 en cada apertura).
   useEffect(() => {
+    if (!conOrdenesDeTrabajo) return;
     apiFetch("/api/erp/ordenes_trabajo?page=1&pageSize=200")
       .then((r) => r.json())
       .then((body) => setOrdenesDeTrabajo(Array.isArray(body.data) ? body.data : []))
       .catch(() => setOrdenesDeTrabajo([]));
-  }, []);
+  }, [conOrdenesDeTrabajo]);
 
   const getStatusStyle = (estado: string) => {
     switch (estado) {

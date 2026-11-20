@@ -4,6 +4,8 @@ import { ArrowLeftRight, ChevronLeft, ChevronRight, Pencil, Plus, Trash2, X } fr
 import { useState, useEffect, useCallback } from "react";
 import type { WorkBook } from "xlsx";
 
+import { useAuth } from "../../context/AuthContext";
+import { tieneModulo } from "../../modules/tieneModulo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { ahoraParaInputLocal } from "../../utils/fechaLocal";
@@ -111,6 +113,7 @@ export default function RepuestosTable() {
   // OT en este PR.
   const [movOrdenTrabajoId, setMovOrdenTrabajoId] = useState("");
   const [ordenesDeTrabajo, setOrdenesDeTrabajo] = useState<OrdenTrabajoResumen[]>([]);
+  const conOrdenesDeTrabajo = tieneModulo(useAuth().usuario, "ordenes_trabajo");
   const [movEnviando, setMovEnviando] = useState(false);
   // El cliente_uuid se fija al ABRIR el modal, no al apretar el botón --
   // mismo motivo que en CombustiblePanel/ChecklistsView: si los dos taps
@@ -143,13 +146,14 @@ export default function RepuestosTable() {
 
   // Catálogo para el selector opcional de Orden de Trabajo -- best-effort:
   // si el módulo OT no está habilitado para este tenant, el select queda
-  // vacío sin romper el resto del formulario.
+  // vacío sin romper el resto del formulario. Sin el módulo ni se pide (daría un 403 en cada apertura).
   useEffect(() => {
+    if (!conOrdenesDeTrabajo) return;
     apiFetch("/api/erp/ordenes_trabajo?page=1&pageSize=200")
       .then((r) => r.json())
       .then((body) => setOrdenesDeTrabajo(Array.isArray(body.data) ? body.data : []))
       .catch(() => setOrdenesDeTrabajo([]));
-  }, []);
+  }, [conOrdenesDeTrabajo]);
 
   // Cuando la cola offline termina de drenar, recargar pone el stock al
   // día sin que el operario tenga que refrescar a mano -- tanto si el
