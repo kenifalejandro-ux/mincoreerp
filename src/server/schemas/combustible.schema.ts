@@ -884,7 +884,8 @@ export const crearDespachoCombustibleSchema = z
         (data.producto === "combustible" &&
           data.origen === "tanqueta" &&
           data.tanqueta_lugar === "planta") ||
-        (data.producto === "combustible" && data.origen === "excedente_recepcion");
+        (data.producto === "combustible" && data.origen === "excedente_recepcion") ||
+        (data.producto === "combustible" && data.origen === "compra_externa");
       if (!admiteUnidadEscrita) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -1226,7 +1227,8 @@ export const crearDespachoCombustibleSchema = z
       // correspondería a ningún medidor real. No estaba en el prompt
       // cerrado palabra por palabra, pero se deduce directo de esa misma
       // decisión: no tiene sentido pedir horómetro/odómetro sin equipo.
-      if (data.tipo_destino !== "equipo") {
+      // La unidad registrada o, sin Flota, una escrita a mano (0196): el medidor lo omite el servicio.
+      if (data.tipo_destino !== "equipo" && data.tipo_destino !== "unidad_sin_alta") {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["tipo_destino"],
@@ -1405,7 +1407,14 @@ export const crearCompraRutaSchema = z
       .trim()
       .min(1, "El número del comprobante es obligatorio")
       .max(40),
-    equipo_id: z.number().int().positive(),
+    // La unidad registrada o, sin Flota, la placa escrita a mano (0196): una de las dos.
+    equipo_id: z.number().int().positive().optional(),
+    placa_sin_alta: z
+      .string()
+      .trim()
+      .transform(normalizarPlaca)
+      .pipe(z.string().min(3, "La placa tiene que tener al menos 3 letras o números").max(20))
+      .optional(),
     // Mismo tope de futuro que el despacho (0077): el reloj del celular puede
     // estar corrido una hora, no un mes.
     despachado_en: fechaDeUnHecho("La fecha de la compra no puede estar en el futuro").optional(),
@@ -1458,6 +1467,13 @@ export const crearCompraRutaSchema = z
         code: z.ZodIssueCode.custom,
         path: ["grifo_id"],
         message: "elige un proveedor o escribe el nombre del grifo en Otros, no los dos",
+      });
+    }
+    if ((data.equipo_id === undefined) === (data.placa_sin_alta === undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["equipo_id"],
+        message: "Elige la unidad de la lista o escribe su placa, no las dos",
       });
     }
   });

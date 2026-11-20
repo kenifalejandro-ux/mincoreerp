@@ -1443,6 +1443,10 @@ export class CombustibleService {
       (data.combustible.horas_abastecidas === undefined ||
         (data.combustible.lectura_horometro === undefined &&
           data.combustible.lectura_odometro === undefined));
+    // Una unidad escrita a mano (0196) no tiene medidor registrado de donde partir ni contra el que
+    // contrastar: el medidor y las horas no se piden. No es la excepción del administrador de arriba,
+    // así que no deja su marca en las observaciones.
+    const unidadEscrita = data.placa_sin_alta !== undefined;
     // Lo que entró en cada despacho, para que el controlador dispare sus
     // alertas. Queda vacío en un reintento: no se creó nada nuevo.
     const entradas: {
@@ -1460,6 +1464,7 @@ export class CombustibleService {
         comprobante_tipo: data.comprobante_tipo,
         comprobante_numero: data.comprobante_numero,
         equipo_id: data.equipo_id,
+        placa_sin_alta: data.placa_sin_alta,
         // Lo que dice la boleta: el mismo código con otras cantidades es otro registro.
         total_boleta: data.total_boleta,
         combustible: data.combustible
@@ -1496,10 +1501,13 @@ export class CombustibleService {
         const soles = (c: number) => (c / 100).toFixed(2);
         const comunes = {
           origen: "compra_externa" as const,
-          tipo_destino: "equipo" as const,
+          // La unidad registrada o, sin Flota, la placa escrita (0196). Con Flota, una placa que es
+          // de una unidad registrada la toma al crear el vale.
+          ...(unidadEscrita
+            ? { tipo_destino: "unidad_sin_alta" as const, placa_sin_alta: data.placa_sin_alta }
+            : { tipo_destino: "equipo" as const, equipo_id: data.equipo_id }),
           grifo_id: grifoId,
           proveedor_otro: data.proveedor_otro,
-          equipo_id: data.equipo_id,
           comprobante_tipo: data.comprobante_tipo,
           comprobante_numero: data.comprobante_numero,
           despachado_en: despachadoEn,
@@ -1532,7 +1540,7 @@ export class CombustibleService {
             lectura_horometro: data.combustible.lectura_horometro,
             lectura_odometro: data.combustible.lectura_odometro,
             horas_abastecidas: data.combustible.horas_abastecidas,
-            medidor_omitido: medidorOmitido ? true : undefined,
+            medidor_omitido: medidorOmitido || unidadEscrita ? true : undefined,
           });
           const r = await this.crearDespacho(client, tenantId, usuarioId, entrada, alcance);
           if (!r.creado || !r.fila) {
@@ -1563,7 +1571,13 @@ export class CombustibleService {
           grifoId,
           comprobanteTipo: data.comprobante_tipo,
           comprobanteNumero: data.comprobante_numero,
-          equipoId: data.equipo_id,
+          // La unidad que quedó en el vale (la placa escrita de una unidad registrada, con Flota, ya
+          // se tomó como esa unidad): así la cabecera y los vales dicen lo mismo.
+          equipoId:
+            (despachoCombustible ?? despachoUrea)!.equipo_id == null
+              ? null
+              : Number((despachoCombustible ?? despachoUrea)!.equipo_id),
+          placaSinAlta: (despachoCombustible ?? despachoUrea)!.placa_sin_alta ?? null,
           despachadoEn,
           totalBoleta: soles(totalBoletaC),
           totalSistema: soles(totalSistemaC),
@@ -1663,7 +1677,8 @@ export class CombustibleService {
           despachado_en: new Date(f.despachado_en).toISOString(),
           proveedor: f.proveedor,
           proveedor_no_registrado: Boolean(f.proveedor_no_registrado),
-          placa_codigo: f.placa_codigo,
+          // La placa de la unidad registrada o, si se escribió a mano (0196), la escrita.
+          placa_codigo: f.placa_codigo ?? f.placa_sin_alta ?? null,
           registrado_por: f.registrado_por,
           comprobante_tipo: f.comprobante_tipo,
           comprobante_numero: f.comprobante_numero,
@@ -2648,9 +2663,11 @@ export class CombustibleService {
     // carga camino a Bambamarca.
     await this.validarRolGrifo(client, tenantId, data.grifo_id!, "ruta");
 
-    // compra_externa: el schema ya garantiza equipo_id presente (exige
-    // tipo_destino='equipo' en este origen).
-    const equipoId = data.equipo_id!;
+    // Una unidad escrita a mano (0196) no tiene fila ni tipo de medidor que contrastar.
+    if (data.equipo_id === undefined) return;
+
+    // compra_externa: el schema ya garantiza una unidad (registrada o escrita) en este origen.
+    const equipoId = data.equipo_id;
     const equipo = await this.buscarUnidad(client, tenantId, equipoId);
     if (!equipo) {
       throw new Error(`equipo_id ${equipoId} no existe en este tenant`);

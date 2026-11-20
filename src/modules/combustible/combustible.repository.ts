@@ -43,7 +43,9 @@ export interface CompraRutaFila {
   grifo_id: number;
   comprobante_tipo: string;
   comprobante_numero: string;
-  unidad_equipo_id: number;
+  /** Null en la compra a una unidad escrita a mano (0196): solo tiene la placa. */
+  unidad_equipo_id: number | null;
+  placa_sin_alta: string | null;
   despachado_en: Date;
   total_boleta: string;
   total_sistema: string;
@@ -1624,7 +1626,9 @@ export class CombustibleRepository {
       grifoId: number;
       comprobanteTipo: string;
       comprobanteNumero: string;
-      equipoId: number;
+      equipoId: number | null;
+      /** La unidad escrita a mano (0196), en lugar de equipoId. */
+      placaSinAlta: string | null;
       despachadoEn: string;
       totalBoleta: string;
       totalSistema: string;
@@ -1638,8 +1642,8 @@ export class CombustibleRepository {
       `INSERT INTO combustible_compras_ruta
          (tenant_id, cliente_uuid, grifo_id, comprobante_tipo, comprobante_numero,
           unidad_equipo_id, despachado_en, total_boleta, total_sistema, diferencia,
-          motivo_descuadre, despacho_combustible_id, despacho_urea_id, usuario_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          motivo_descuadre, despacho_combustible_id, despacho_urea_id, usuario_id, placa_sin_alta)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING *`,
       [
         tenantId,
@@ -1656,6 +1660,7 @@ export class CombustibleRepository {
         p.despachoCombustibleId,
         p.despachoUreaId,
         usuarioId,
+        p.placaSinAlta,
       ]
     );
     return result.rows[0];

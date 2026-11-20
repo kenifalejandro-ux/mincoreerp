@@ -2199,7 +2199,14 @@ export class CombustibleController {
           const viaje = await withTenant(tenantId, (client) =>
             viajes.unidadDelViajeActivo(client, tenantId, usuario.dni ?? "")
           );
-          if (viaje && Number(viaje.equipo_id) !== data.equipo_id) {
+          // La unidad de la compra es la que quedó en su cabecera: la registrada o, si se escribió, la
+          // placa (que en un viaje de unidad escrita sale como `placa_codigo`).
+          const mismaUnidad =
+            viaje?.equipo_id == null
+              ? compra.placa_sin_alta !== null && compra.placa_sin_alta === viaje?.placa_codigo
+              : compra.unidad_equipo_id !== null &&
+                Number(viaje.equipo_id) === Number(compra.unidad_equipo_id);
+          if (viaje && !mismaUnidad) {
             await registrarAuditoria({
               accion: "combustible.compra_ruta_unidad_distinta_viaje",
               tenantId,
@@ -2208,7 +2215,8 @@ export class CombustibleController {
                 compraId: compra.id,
                 viajeId: viaje.viaje_id,
                 equipoDelViaje: viaje.equipo_id,
-                equipoEnviado: data.equipo_id,
+                equipoEnviado: data.equipo_id ?? null,
+                placaEnviada: data.placa_sin_alta ?? null,
               },
               contexto: contextoAuditoriaModulo(req),
             });
