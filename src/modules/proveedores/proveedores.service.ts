@@ -8,7 +8,15 @@
 import type { PoolClient } from "pg";
 
 import { AppError } from "../../server/shared/middlewares/error.middleware";
-import { ProveedoresRepository, type FilaProveedor } from "./proveedores.repository";
+import type {
+  ActualizarProveedorInput,
+  CrearProveedorInput,
+} from "../../server/schemas/proveedores.schema";
+import {
+  ProveedorDuplicadoError,
+  ProveedoresRepository,
+  type FilaProveedor,
+} from "./proveedores.repository";
 
 export type TipoProveedor = "Combustible" | "Urea";
 
@@ -84,4 +92,36 @@ export class ProveedoresService {
     if (!fila) throw new AppError(404, "Proveedor no encontrado");
     return aDto(fila);
   }
+
+  async crear(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: CrearProveedorInput
+  ): Promise<ProveedorDto> {
+    try {
+      return aDto(await this.repository.crear(client, tenantId, usuarioId, data));
+    } catch (err) {
+      throw comoErrorDeNegocio(err);
+    }
+  }
+
+  async actualizar(
+    client: PoolClient,
+    tenantId: string,
+    id: number,
+    data: ActualizarProveedorInput
+  ): Promise<ProveedorDto> {
+    try {
+      const fila = await this.repository.actualizar(client, tenantId, id, data);
+      if (!fila) throw new AppError(404, "Proveedor no encontrado");
+      return aDto(fila);
+    } catch (err) {
+      throw comoErrorDeNegocio(err);
+    }
+  }
+}
+
+function comoErrorDeNegocio(err: unknown): unknown {
+  return err instanceof ProveedorDuplicadoError ? new AppError(409, err.message) : err;
 }
