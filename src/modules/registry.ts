@@ -42,6 +42,7 @@ import viajesRoutes from "./viajes/viajes.routes";
 import checklistsRoutes from "./checklists/checklists.routes";
 import ipercRoutes from "./iperc/iperc.routes";
 import ordenesTrabajoRoutes from "./ordenes_trabajo/ordenes_trabajo.routes";
+import proveedoresRoutes from "./proveedores/proveedores.routes";
 import type { ModuloDefinicion } from "./types";
 
 export const MODULOS: ModuloDefinicion[] = [
@@ -1086,6 +1087,20 @@ export const MODULOS: ModuloDefinicion[] = [
         { metodo: "POST", ruta: "/:id/versiones" },
       ],
     },
+  },
+  {
+    // Ecosistema «Gestión de proveedores» (PR1: solo lectura). Es autónomo: no exige ningún otro
+    // módulo. Hoy LEE `combustible_grifos` (la tabla de proveedores, que sigue siendo de
+    // Combustible y se declara en sus `tablas`), por eso lo declara en `opcionales`; la tabla
+    // cambia de dueño en un PR posterior. Sin cuota ni tablas propias todavía.
+    id: "proveedores",
+    label: "Gestión de proveedores",
+    icono: "🏢",
+    version: "v1",
+    router: proveedoresRoutes,
+    opcionales: ["combustible"],
+    tablas: [],
+    raices: [],
   },
 ];
 
