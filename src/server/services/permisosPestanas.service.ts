@@ -3,6 +3,11 @@ import type { PoolClient } from "pg";
 import { pool, withTenant } from "../config/database";
 import { AppError } from "../shared/middlewares/error.middleware";
 import type { UsuarioPayload } from "./auth.service";
+import {
+  getCachedPermisosPestana,
+  invalidateCachedPermisosPestana,
+  setCachedPermisosPestana,
+} from "../shared/utils/permisos-pestana-cache";
 
 export type NivelNavegacion = "submenu" | "pestana" | "accion";
 
@@ -432,6 +437,21 @@ export async function mapaPermisosPestanas(
   );
 }
 
+/** Los permisos de pestaña puestos a mano de una persona, para armar `req.usuario` en cada request: del
+ *  cache de 60 s o, si falta, de la base (y se vuelve a guardar). */
+export async function permisosPestanasDe(
+  usuarioId: string,
+  tenantId: string
+): Promise<MapaPermisosPestanas> {
+  const guardado = await getCachedPermisosPestana(usuarioId);
+  if (guardado) return guardado;
+  const mapa = await withTenant(tenantId, (client) =>
+    mapaPermisosPestanas(usuarioId, tenantId, client)
+  );
+  await setCachedPermisosPestana(usuarioId, mapa);
+  return mapa;
+}
+
 export async function listarPermisosPestanasService(
   tenantId: string,
   usuarioId: string
@@ -533,6 +553,8 @@ export async function actualizarPermisosPestanasTenantService(
   await withTenant(tenantId, async (client) => {
     await guardarPermisosPestanas(client, tenantId, usuarioId, permisos);
   });
+  // Ya confirmado el cambio: el siguiente request de esa persona lee lo nuevo, no el cache.
+  await invalidateCachedPermisosPestana(usuarioId);
   const despues = await listarPermisosPestanasService(tenantId, usuarioId);
   const antesPorClave = new Map(
     antes.map((p) => [claveDePestana(p.modulo, p.pestana), p.permitido])

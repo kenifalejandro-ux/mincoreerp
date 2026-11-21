@@ -7,6 +7,7 @@ import { withTenant } from "../../config/database";
 import { getRedis } from "../../config/redis";
 import { logger } from "../../config/logger";
 import type { UsuarioPayload } from "../../services/auth.service";
+import { permisosPestanasDe } from "../../services/permisosPestanas.service";
 import { requerirJwtSecret } from "../utils/jwt-secret";
 import { getCachedTokenVersion, setCachedTokenVersion } from "../utils/token-version-cache";
 import { asyncHandler } from "../utils/asyncHandler";
@@ -86,7 +87,14 @@ export const authMiddleware = asyncHandler(async function authMiddleware(
       }
     }
 
-    req.usuario = payload;
+    // Los permisos de pestaña ya NO viajan en el JWT (ver permisos-pestana-cache.ts): se cargan acá, de un
+    // cache de 60 s o de la base. Si un JWT viejo todavía los trae, se ignoran y mandan los de ahora. Si no
+    // se pueden leer, el request falla (500): usar solo los predeterminados del perfil abriría una pestaña
+    // que el administrador le quitó a mano.
+    req.usuario = {
+      ...payload,
+      permisosPestanas: await permisosPestanasDe(payload.id, payload.tenantId),
+    };
     next();
   } catch (err) {
     if (err instanceof Error && err.name === "TokenExpiredError") {
