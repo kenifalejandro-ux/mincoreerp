@@ -50,11 +50,15 @@ export interface DatosProveedor {
   abastece_urea_ruta: boolean;
 }
 
-async function enviar(ruta: string, metodo: "POST" | "PUT", cuerpo: object): Promise<Proveedor> {
+async function enviar<T>(
+  ruta: string,
+  metodo: "POST" | "PUT" | "PATCH",
+  cuerpo?: object
+): Promise<T> {
   const res = await apiFetch(`/api/erp/proveedores${ruta}`, {
     method: metodo,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(cuerpo),
+    body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -65,12 +69,12 @@ async function enviar(ruta: string, metodo: "POST" | "PUT", cuerpo: object): Pro
         `No se pudo guardar (HTTP ${res.status})`
     );
   }
-  return data as Proveedor;
+  return data as T;
 }
 
-export const crearProveedor = (datos: DatosProveedor) => enviar("", "POST", datos);
+export const crearProveedor = (datos: DatosProveedor) => enviar<Proveedor>("", "POST", datos);
 export const actualizarProveedor = (id: number, datos: DatosProveedor & { activo: boolean }) =>
-  enviar(`/${id}`, "PUT", datos);
+  enviar<Proveedor>(`/${id}`, "PUT", datos);
 
 // ── Gestión comercial: precios de proveedores (solo lectura) ─────────────────────────────────────
 
@@ -114,6 +118,8 @@ export const listarPrecios = () => leer<RespuestaPrecios>("/precios");
 
 // ── Compras y recepciones (solo lectura): las compras de cisterna de Combustible ───────────────────
 
+export type TipoCombustibleCompra = "diesel_b5" | "gasolina_90" | "glp";
+
 export type EstadoCompra = "registrada" | "por_llegar" | "recibida" | "anulada";
 
 export interface RecepcionDeCompra {
@@ -134,6 +140,8 @@ export interface CompraDeCisterna {
   proveedorId: number;
   proveedorCodigo: string;
   proveedorNombre: string;
+  /** `diesel_b5`, `gasolina_90` o `glp`. */
+  tipoCombustible: TipoCombustibleCompra;
   combustible: string;
   unidad: string;
   tipoDocumento: string;
@@ -146,6 +154,7 @@ export interface CompraDeCisterna {
   placa: string | null;
   chofer: string | null;
   transportista: string | null;
+  transportistaRuc: string | null;
   habilitada: boolean;
   motivoAnulacion: string | null;
   recepcion: RecepcionDeCompra | null;
@@ -160,3 +169,38 @@ export interface RespuestaCompras {
 }
 
 export const listarCompras = () => leer<RespuestaCompras>("/compras");
+
+// ── Registrar, habilitar y anular compras (PR5b) ────────────────────────────────────────────────────
+
+/** Lo que trae el formulario: proveedores de tanque activos, las sedes que puede elegir esta persona y el
+ *  precio de compra que rige hoy por proveedor y combustible. */
+export interface DatosFormularioCompra {
+  proveedores: { id: number; nombre: string }[];
+  sedes: { id: number; nombre: string; sede: string }[];
+  precios: { grifo_id: number; tipo_combustible: TipoCombustibleCompra; precio_unitario: string }[];
+}
+
+export interface CuerpoCompra {
+  /** Se fija al abrir el formulario: un reintento no crea una segunda compra. */
+  cliente_uuid: string;
+  grifo_interno_id: number;
+  grifo_id: number;
+  tipo_combustible: TipoCombustibleCompra;
+  unidad: "gal" | "L";
+  tipo_documento: "factura" | "guia_remision";
+  numero_documento: string;
+  fecha_compra: string;
+  llegada_estimada: string;
+  cantidad_facturada: number;
+  costo_unitario: number;
+  transportista?: string;
+  transportista_ruc?: string;
+}
+
+export const datosFormularioCompra = () => leer<DatosFormularioCompra>("/compras/formulario");
+export const registrarCompra = (cuerpo: CuerpoCompra) =>
+  enviar<CompraDeCisterna>("/compras", "POST", cuerpo);
+export const habilitarCompra = (id: number) =>
+  enviar<CompraDeCisterna>(`/compras/${id}/habilitar`, "PATCH");
+export const anularCompra = (id: number, motivo: string) =>
+  enviar<CompraDeCisterna>(`/compras/${id}/anular`, "PATCH", { motivo });
