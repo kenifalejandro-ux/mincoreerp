@@ -62,16 +62,26 @@ function Recepcion({ compra }: { compra: CompraDeCisterna }) {
   );
 }
 
+/** Las acciones que se ofrecen en cada fila (solo a quien gestiona compras). */
+export interface AccionesDeCompra {
+  onHabilitar: (compra: CompraDeCisterna) => void;
+  onAnular: (compra: CompraDeCisterna) => void;
+  /** La compra sobre la que ya hay una acción en curso: sus botones quedan bloqueados. */
+  ocupada: number | null;
+}
+
 export default function TablaDeCompras({
   compras,
   conProveedor,
   onAbrirProveedor,
+  acciones,
 }: {
   compras: CompraDeCisterna[];
   conProveedor: boolean;
   onAbrirProveedor?: (proveedorId: number) => void;
+  acciones?: AccionesDeCompra;
 }) {
-  const columnas = conProveedor ? 7 : 6;
+  const columnas = (conProveedor ? 7 : 6) + (acciones ? 1 : 0);
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[900px] text-sm">
@@ -84,6 +94,7 @@ export default function TablaDeCompras({
             <th className="px-4 py-3">Llegada estimada</th>
             <th className="px-4 py-3">Estado</th>
             <th className="px-4 py-3">Recepción</th>
+            {acciones && <th className="px-4 py-3">Acciones</th>}
           </tr>
         </thead>
         <tbody>
@@ -136,6 +147,32 @@ export default function TablaDeCompras({
               <td className="px-4 py-3">
                 <Recepcion compra={c} />
               </td>
+              {acciones && (
+                <td className="px-4 py-3">
+                  <span className="flex flex-wrap gap-2">
+                    {c.estado === "registrada" && (
+                      <button
+                        onClick={() => acciones.onHabilitar(c)}
+                        disabled={acciones.ocupada === c.id}
+                        aria-label={`Habilitar compra ${c.numeroDocumento}`}
+                        className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                      >
+                        Habilitar
+                      </button>
+                    )}
+                    {(c.estado === "registrada" || c.estado === "por_llegar") && (
+                      <button
+                        onClick={() => acciones.onAnular(c)}
+                        disabled={acciones.ocupada === c.id}
+                        aria-label={`Anular compra ${c.numeroDocumento}`}
+                        className="h-8 px-3 rounded-lg border border-red-200 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"
+                      >
+                        Anular
+                      </button>
+                    )}
+                  </span>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

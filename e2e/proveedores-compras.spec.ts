@@ -6,7 +6,9 @@
  * 1. Con el tenant sembrado (todos los módulos): las compras de cisterna que se registran en Combustible
  *    aparecen en «Compras y recepciones» con su estado (registrada, por llegar, anulada), se filtran y de la
  *    tabla se abre la ficha del proveedor en su pestaña «Compras».
- * 2. Una empresa con SOLO el módulo Proveedores (sin Combustible) recorre el ecosistema sin errores: el
+ * 2. PR5b: desde el ecosistema se registra una compra (con su validación en pantalla), se habilita y se anula.
+ *    Lo registrado acá lo ve Combustible → Cisternas como «por llegar» (misma tabla).
+ * 3. Una empresa con SOLO el módulo Proveedores (sin Combustible) recorre el ecosistema sin errores: el
  *    ERP no le muestra Combustible, puede registrar un proveedor, y «Gestión comercial» y «Compras y
  *    recepciones» salen vacías con su aviso, sin 403 ni pantalla rota.
  */
@@ -27,6 +29,33 @@ async function entrarAlEcosistema(page: Page) {
   const menu = page.getByRole("complementary", { name: "Menú de Gestión de proveedores" });
   await expect(menu).toBeVisible({ timeout: 15_000 });
   return menu;
+}
+
+/** Registra una compra por el formulario del ecosistema. */
+async function registrarPorFormulario(
+  page: Page,
+  datos: { proveedor: string; documento: string; cantidad: string; costo: string }
+) {
+  await page.getByRole("button", { name: "Registrar compra" }).click();
+  const dialogo = page.getByRole("dialog", { name: "Registrar compra" });
+  await expect(dialogo).toBeVisible();
+  // Enviar vacío: avisa lo que falta, en pantalla.
+  await dialogo.getByRole("button", { name: "Registrar compra" }).click();
+  await expect(dialogo.getByRole("alert")).toContainText("Elige el proveedor.");
+  await expect(dialogo.getByRole("alert")).toContainText("Escribe el número del documento.");
+  await dialogo.getByLabel("Proveedor").selectOption({ label: datos.proveedor });
+  await dialogo.getByLabel("Número del documento").fill(datos.documento);
+  // Con la llegada de hoy (lo que propone el formulario) la compra ya nace «por llegar»; con una llegada
+  // futura nace «registrada» y hay que habilitarla para que la vea la cancha.
+  await dialogo.getByLabel("Llegada a planta (estimada)").fill(enDias(5));
+  await dialogo.getByLabel("Cantidad facturada").fill(datos.cantidad);
+  await dialogo.getByLabel(/^Costo por/).fill(datos.costo);
+  // Con más de una sede hay que elegirla; con una sola ya viene elegida.
+  const sede = dialogo.getByLabel("Sede de llegada");
+  if ((await sede.inputValue()) === "") await sede.selectOption({ index: 1 });
+  await dialogo.getByRole("button", { name: "Registrar compra" }).click();
+  await expect(dialogo).toHaveCount(0);
+  await expect(page.getByRole("status")).toContainText(`Compra ${datos.documento} registrada`);
 }
 
 test("compras y recepciones: estados, filtro y ficha del proveedor", async ({ page }) => {
@@ -119,6 +148,75 @@ test("compras y recepciones: estados, filtro y ficha del proveedor", async ({ pa
   await expect(page.getByRole("heading", { name: "Qué abastece" })).toBeVisible();
 });
 
+test("registrar, habilitar y anular una compra desde el ecosistema; Combustible la ve por llegar", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const marca = randomBytes(3).toString("hex").toUpperCase();
+  const proveedor = `GRIFO ESCRIBE ${marca}`;
+  const documento = `ESC-${marca}`;
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  const alta = await page.request.post("/api/erp/proveedores", {
+    data: {
+      nombre: proveedor,
+      ruc: "",
+      abastece_tanque: true,
+      abastece_ruta: false,
+      abastece_urea: false,
+      abastece_urea_ruta: false,
+    },
+  });
+  expect(alta.ok(), await alta.text()).toBeTruthy();
+
+  const menu = await entrarAlEcosistema(page);
+  await menu.getByRole("button", { name: "Compras y recepciones" }).click();
+  await registrarPorFormulario(page, { proveedor, documento, cantidad: "750", costo: "15.9" });
+
+  await page.getByPlaceholder("Buscar por documento o proveedor").fill(documento);
+  const fila = page.getByRole("row", { name: new RegExp(documento) });
+  await expect(fila).toContainText("Registrada", { timeout: 20_000 });
+  await expect(fila).toContainText("S/ 11,925.00");
+
+  // Habilitar: pasa a «por llegar» y Combustible → Cisternas la ve igual (misma tabla).
+  await page.getByRole("button", { name: `Habilitar compra ${documento}` }).click();
+  await expect(fila).toContainText("Por llegar", { timeout: 20_000 });
+  await expect(page.getByRole("button", { name: `Habilitar compra ${documento}` })).toHaveCount(0);
+  const enCombustible = await page.request.get("/api/erp/combustible/compras-cisterna");
+  expect(enCombustible.ok(), await enCombustible.text()).toBeTruthy();
+  const vista = (
+    (await enCombustible.json()) as { numero_documento: string; estado: string }[]
+  ).find((c) => c.numero_documento === documento);
+  expect(vista?.estado).toBe("por_llegar");
+
+  // Registrar el mismo documento mientras la compra sigue vigente: el aviso del servidor, sin duplicar.
+  // (Una compra anulada no cuenta: ese documento se puede volver a registrar.)
+  await page.getByRole("button", { name: "Registrar compra" }).click();
+  const dialogo = page.getByRole("dialog", { name: "Registrar compra" });
+  await dialogo.getByLabel("Proveedor").selectOption({ label: proveedor });
+  await dialogo.getByLabel("Número del documento").fill(documento);
+  await dialogo.getByLabel("Cantidad facturada").fill("100");
+  await dialogo.getByLabel(/^Costo por/).fill("15");
+  const sede = dialogo.getByLabel("Sede de llegada");
+  if ((await sede.inputValue()) === "") await sede.selectOption({ index: 1 });
+  await dialogo.getByRole("button", { name: "Registrar compra" }).click();
+  await expect(dialogo.getByRole("alert")).toContainText("Ya hay una compra con el documento");
+  await dialogo.getByRole("button", { name: "Cancelar" }).click();
+  await expect(dialogo).toHaveCount(0);
+
+  // Anular: pide motivo y queda anulada, con su motivo a la vista.
+  await page.getByRole("button", { name: `Anular compra ${documento}` }).click();
+  const anular = page.getByRole("dialog", { name: "Anular compra" });
+  await anular.getByRole("button", { name: "Anular compra" }).click();
+  await expect(anular.getByRole("alert")).toContainText("Escribe el motivo");
+  await anular.getByLabel("Motivo").fill("factura duplicada");
+  await anular.getByRole("button", { name: "Anular compra" }).click();
+  await expect(anular).toHaveCount(0);
+  await expect(fila).toContainText("Anulada", { timeout: 20_000 });
+  await expect(fila).toContainText("factura duplicada");
+  await expect(page.getByRole("button", { name: `Anular compra ${documento}` })).toHaveCount(0);
+});
+
 test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", async ({
   page,
   request,
@@ -183,7 +281,7 @@ test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", a
     await page.getByRole("button", { name: "Registrar proveedor" }).click();
     const dialogo = page.getByRole("dialog", { name: "Registrar proveedor" });
     await dialogo.getByLabel("Razón social").fill(`SOLO PROVEEDOR ${marca}`);
-    await dialogo.getByLabel("Combustible · Externo").check();
+    await dialogo.getByLabel("Combustible · Interno").check();
     await dialogo.getByRole("button", { name: "Guardar" }).click();
     await expect(dialogo).toHaveCount(0);
     await expect(
@@ -209,6 +307,26 @@ test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", a
     await expect(page.getByText(/Todavía no hay compras de cisterna/)).toBeVisible({
       timeout: 15_000,
     });
+
+    // Y puede hacer su trabajo de punta a punta: registrar, habilitar y anular una compra. Sin Combustible
+    // llega hasta «por llegar» (la descarga en cancha es de Combustible) y la pantalla lo dice.
+    const documento = `SOLO-${marca.toUpperCase()}`;
+    await registrarPorFormulario(page, {
+      proveedor: `SOLO PROVEEDOR ${marca}`,
+      documento,
+      cantidad: "500",
+      costo: "15.5",
+    });
+    const fila = page.getByRole("row", { name: new RegExp(documento) });
+    await expect(fila).toContainText("Registrada", { timeout: 20_000 });
+    await page.getByRole("button", { name: `Habilitar compra ${documento}` }).click();
+    await expect(fila).toContainText("Por llegar", { timeout: 20_000 });
+    await expect(page.getByText(/Esta empresa no usa Combustible/)).toBeVisible();
+    await page.getByRole("button", { name: `Anular compra ${documento}` }).click();
+    const anular = page.getByRole("dialog", { name: "Anular compra" });
+    await anular.getByLabel("Motivo").fill("prueba");
+    await anular.getByRole("button", { name: "Anular compra" }).click();
+    await expect(fila).toContainText("Anulada", { timeout: 20_000 });
   } finally {
     // No hay API para borrar empresas: la de este test queda en la base de los e2e, que es efímera en CI.
   }

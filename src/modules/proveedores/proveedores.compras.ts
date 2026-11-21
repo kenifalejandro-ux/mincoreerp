@@ -30,6 +30,7 @@ export interface CompraDb {
   placa: string | null;
   chofer: string | null;
   transportista: string | null;
+  transportista_ruc?: string | null;
   habilitada_en: Date | string | null;
   anulada_en: Date | string | null;
   motivo_anulacion: string | null;
@@ -78,6 +79,7 @@ export interface CompraDto {
   placa: string | null;
   chofer: string | null;
   transportista: string | null;
+  transportistaRuc: string | null;
   habilitada: boolean;
   motivoAnulacion: string | null;
   recepcion: RecepcionDeCompraDto | null;
@@ -132,6 +134,7 @@ export function armarCompras(
       placa: f.placa,
       chofer: f.chofer,
       transportista: f.transportista,
+      transportistaRuc: f.transportista_ruc ?? null,
       habilitada: f.habilitada_en !== null,
       motivoAnulacion: f.motivo_anulacion,
       recepcion,

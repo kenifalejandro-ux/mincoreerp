@@ -10,8 +10,19 @@ import type { PoolClient } from "pg";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { armarFilasDePrecios, type FilaPrecioDto } from "./proveedores.precios";
 import { armarCompras, type CompraDto } from "./proveedores.compras";
-import { listarCompras, obtenerTolerancia } from "../combustible/comprasCisterna.service";
+import {
+  anularCompra,
+  crearCompra,
+  datosParaElFormulario,
+  habilitarCompra,
+  listarCompras,
+  obtenerTolerancia,
+} from "../combustible/comprasCisterna.service";
 import type { AlcanceCombustible } from "../combustible/alcance";
+import type {
+  AnularCompraCisternaInput,
+  CrearCompraCisternaInput,
+} from "../../server/schemas/combustible.schema";
 import type {
   ActualizarProveedorInput,
   CrearProveedorInput,
@@ -140,6 +151,50 @@ export class ProveedoresService {
       tolerancia,
       compras: armarCompras(filas, new Map(recepciones.map((r) => [Number(r.id), r])), tolerancia),
     };
+  }
+
+  // ── Escribir compras (PR5b): las reglas son las de Combustible, que ya valida proveedor de tanque,
+  // documento repetido, sede, estados y la idempotencia por `cliente_uuid`. Se reutilizan las mismas
+  // funciones: no se duplica ninguna regla. Lo que devuelven es una compra recién escrita: nunca está
+  // recibida (anular o habilitar una recibida se rechaza), así que no lleva recepción.
+
+  /** Lo que necesita el formulario: proveedores de tanque activos, sedes del alcance y precios vigentes. */
+  datosParaElFormulario(client: PoolClient, tenantId: string, alcance: AlcanceCombustible) {
+    return datosParaElFormulario(client, tenantId, alcance);
+  }
+
+  async registrarCompra(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: CrearCompraCisternaInput,
+    alcance: AlcanceCombustible
+  ): Promise<{ compra: CompraDto; creado: boolean }> {
+    const { fila, creado } = await crearCompra(client, tenantId, usuarioId, data, alcance);
+    return { compra: armarCompras([fila], new Map(), 0)[0], creado };
+  }
+
+  async habilitarCompra(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    id: number,
+    alcance: AlcanceCombustible
+  ): Promise<CompraDto> {
+    const fila = await habilitarCompra(client, tenantId, usuarioId, id, alcance);
+    return armarCompras([fila], new Map(), 0)[0];
+  }
+
+  async anularCompra(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    id: number,
+    data: AnularCompraCisternaInput,
+    alcance: AlcanceCombustible
+  ): Promise<CompraDto> {
+    const fila = await anularCompra(client, tenantId, usuarioId, id, data.motivo, alcance);
+    return armarCompras([fila], new Map(), 0)[0];
   }
 
   async crear(
