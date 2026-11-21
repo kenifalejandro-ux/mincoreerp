@@ -71,3 +71,43 @@ async function enviar(ruta: string, metodo: "POST" | "PUT", cuerpo: object): Pro
 export const crearProveedor = (datos: DatosProveedor) => enviar("", "POST", datos);
 export const actualizarProveedor = (id: number, datos: DatosProveedor & { activo: boolean }) =>
   enviar(`/${id}`, "PUT", datos);
+
+// ── Gestión comercial: precios de proveedores (solo lectura) ─────────────────────────────────────
+
+export interface EntradaPrecio {
+  id: number;
+  precio: number;
+  /** ISO 8601. */
+  desde: string;
+  por: string | null;
+  marca: string | null;
+  anulado: boolean;
+  motivo: string | null;
+}
+
+export interface FilaPrecio {
+  clave: string;
+  proveedorId: number;
+  proveedorCodigo: string;
+  proveedorNombre: string;
+  proveedorActivo: boolean;
+  producto: "combustible" | "urea";
+  codigo: string;
+  /** «Diésel B5» o «Caja (20 L)». */
+  detalle: string;
+  /** «galón» o «envase». */
+  unidad: string;
+  vigente: EntradaPrecio | null;
+  anterior: EntradaPrecio | null;
+  programado: EntradaPrecio | null;
+  historial: EntradaPrecio[];
+}
+
+export interface RespuestaPrecios {
+  /** Qué productos puede ver esta persona. */
+  combustible: boolean;
+  urea: boolean;
+  filas: FilaPrecio[];
+}
+
+export const listarPrecios = () => leer<RespuestaPrecios>("/precios");

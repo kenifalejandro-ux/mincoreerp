@@ -6,8 +6,11 @@
 import { ArrowLeft, Pencil, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import ComercialDeProveedor from "./ComercialDeProveedor";
 import FormularioProveedor from "./FormularioProveedor";
+import { puedeVerPreciosDeProveedores } from "./proveedoresAcceso";
 import { listarProveedores, type Proveedor, type TipoProveedor } from "./proveedoresApi";
+import { useAuth } from "../../context/AuthContext";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 
 type FiltroUso = "todos" | "interno" | "externo";
@@ -53,16 +56,24 @@ function Estado({ activo }: { activo: boolean }) {
   );
 }
 
+type PestanaFicha = "resumen" | "comercial";
+
 function Ficha({
   proveedor,
   onVolver,
   onEditar,
+  verPrecios,
+  pestanaInicial,
 }: {
   proveedor: Proveedor;
   onVolver: () => void;
   /** Sin función = el perfil no puede editar. */
   onEditar?: () => void;
+  /** Muestra la pestaña «Comercial» (precios): solo quien ve los precios. */
+  verPrecios: boolean;
+  pestanaInicial: PestanaFicha;
 }) {
+  const [pestana, setPestana] = useState<PestanaFicha>(verPrecios ? pestanaInicial : "resumen");
   const filas: { producto: string; interno: boolean; externo: boolean }[] = [
     { producto: "Combustible", ...proveedor.combustible },
     { producto: "Urea", ...proveedor.urea },
@@ -97,44 +108,78 @@ function Ficha({
         )}
       </header>
 
-      <section className="bg-white border border-slate-200 rounded-xl shadow-sm">
-        <h2 className="px-5 pt-4 text-base font-semibold text-slate-900">Qué abastece</h2>
-        <table className="w-full text-sm mt-2">
-          <thead>
-            <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
-              <th className="px-5 py-2">Producto</th>
-              <th className="px-5 py-2">Interno (planta)</th>
-              <th className="px-5 py-2">Externo (ruta)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filas.map((f) => (
-              <tr key={f.producto} className="border-b border-slate-100 last:border-0">
-                <td className="px-5 py-3 font-medium text-slate-800">{f.producto}</td>
-                <td className="px-5 py-3">{f.interno ? "Sí" : "No"}</td>
-                <td className="px-5 py-3">{f.externo ? "Sí" : "No"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
+      <div
+        role="tablist"
+        aria-label="Secciones de la ficha"
+        className="flex gap-1 border-b border-slate-200"
+      >
+        {(["resumen", ...(verPrecios ? ["comercial"] : [])] as PestanaFicha[]).map((p) => (
+          <button
+            key={p}
+            role="tab"
+            aria-selected={pestana === p}
+            onClick={() => setPestana(p)}
+            className={`px-4 py-2.5 text-sm -mb-px border-b-2 ${
+              pestana === p
+                ? "border-[#84cc16] font-semibold text-[#3f6212]"
+                : "border-transparent text-slate-500 hover:text-slate-900"
+            }`}
+          >
+            {p === "resumen" ? "Resumen" : "Comercial"}
+          </button>
+        ))}
+      </div>
 
-      <p className="text-sm text-slate-500 bg-white border border-dashed border-slate-300 rounded-xl p-4">
-        Contactos, condiciones comerciales, precios, documentos y compras se irán sumando a esta
-        ficha.
-      </p>
+      {pestana === "comercial" && <ComercialDeProveedor proveedorId={proveedor.id} />}
+
+      {pestana === "resumen" && (
+        <>
+          <section className="bg-white border border-slate-200 rounded-xl shadow-sm">
+            <h2 className="px-5 pt-4 text-base font-semibold text-slate-900">Qué abastece</h2>
+            <table className="w-full text-sm mt-2">
+              <thead>
+                <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
+                  <th className="px-5 py-2">Producto</th>
+                  <th className="px-5 py-2">Interno (planta)</th>
+                  <th className="px-5 py-2">Externo (ruta)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filas.map((f) => (
+                  <tr key={f.producto} className="border-b border-slate-100 last:border-0">
+                    <td className="px-5 py-3 font-medium text-slate-800">{f.producto}</td>
+                    <td className="px-5 py-3">{f.interno ? "Sí" : "No"}</td>
+                    <td className="px-5 py-3">{f.externo ? "Sí" : "No"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+
+          <p className="text-sm text-slate-500 bg-white border border-dashed border-slate-300 rounded-xl p-4">
+            Contactos, condiciones comerciales, documentos y compras se irán sumando a esta ficha.
+          </p>
+        </>
+      )}
     </div>
   );
 }
 
-export default function DirectorioProveedores() {
+export default function DirectorioProveedores({
+  apertura,
+}: {
+  /** Abrir directo la ficha de un proveedor (p. ej. desde Gestión comercial). */
+  apertura?: { id: number; pestana: PestanaFicha };
+}) {
+  const { usuario } = useAuth();
+  const verPrecios = puedeVerPreciosDeProveedores(usuario);
   const [lista, setLista] = useState<Proveedor[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
   const [tipo, setTipo] = useState<"todos" | TipoProveedor>("todos");
   const [uso, setUso] = useState<FiltroUso>("todos");
   const [estado, setEstado] = useState<FiltroEstado>("todos");
-  const [abierto, setAbierto] = useState<number | null>(null);
+  const [abierto, setAbierto] = useState<number | null>(apertura?.id ?? null);
   const puedeEscribir = usePuedeEscribir("proveedores");
   // `null` = cerrado; `"nuevo"` = registrar; un proveedor = editarlo.
   const [formulario, setFormulario] = useState<null | "nuevo" | Proveedor>(null);
@@ -185,6 +230,8 @@ export default function DirectorioProveedores() {
           proveedor={seleccionado}
           onVolver={() => setAbierto(null)}
           onEditar={puedeEscribir ? () => setFormulario(seleccionado) : undefined}
+          verPrecios={verPrecios}
+          pestanaInicial={apertura?.id === seleccionado.id ? apertura.pestana : "resumen"}
         />
         {modal}
       </>

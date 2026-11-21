@@ -8,6 +8,7 @@
 import type { PoolClient } from "pg";
 
 import { AppError } from "../../server/shared/middlewares/error.middleware";
+import { armarFilasDePrecios, type FilaPrecioDto } from "./proveedores.precios";
 import type {
   ActualizarProveedorInput,
   CrearProveedorInput,
@@ -91,6 +92,29 @@ export class ProveedoresService {
     const fila = await this.repository.buscarPorId(client, tenantId, id);
     if (!fila) throw new AppError(404, "Proveedor no encontrado");
     return aDto(fila);
+  }
+
+  /** Gestión comercial: solo lo que este perfil puede ver (combustible y/o urea). */
+  async precios(
+    client: PoolClient,
+    tenantId: string,
+    ver: { combustible: boolean; urea: boolean },
+    ahora: Date = new Date()
+  ): Promise<FilaPrecioDto[]> {
+    const proveedores = await this.listar(client, tenantId);
+    const [preciosCombustible, preciosUrea, tiposEnTanques, presentaciones] = await Promise.all([
+      ver.combustible
+        ? this.repository.listarPreciosCombustibleDeProveedores(client, tenantId)
+        : [],
+      ver.urea ? this.repository.listarPreciosUrea(client, tenantId) : [],
+      ver.combustible ? this.repository.tiposDeCombustibleEnTanques(client, tenantId) : [],
+      ver.urea ? this.repository.presentacionesDeUreaActivas(client, tenantId) : [],
+    ]);
+    return armarFilasDePrecios(
+      { proveedores, preciosCombustible, preciosUrea, tiposEnTanques, presentaciones },
+      ver,
+      ahora
+    );
   }
 
   async crear(
