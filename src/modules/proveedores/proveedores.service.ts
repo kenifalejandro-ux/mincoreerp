@@ -28,12 +28,16 @@ import type {
 } from "../../server/schemas/combustible.schema";
 import type {
   ActualizarProveedorInput,
+  ContactoProveedorInput,
   CrearPreciosProveedoresInput,
   CrearProveedorInput,
+  GuardarDatosProveedorInput,
 } from "../../server/schemas/proveedores.schema";
 import {
   ProveedorDuplicadoError,
   ProveedoresRepository,
+  type FilaContacto,
+  type FilaDatosProveedor,
   type FilaProveedor,
 } from "./proveedores.repository";
 
@@ -109,6 +113,68 @@ function comoErrorDeNegocioDePrecio(err: unknown): unknown {
   return err;
 }
 
+export interface DatosProveedorDto {
+  direccion: string | null;
+  telefono: string | null;
+  correo: string | null;
+  formaPago: "contado" | "credito" | null;
+  plazoPagoDias: number | null;
+  moneda: "PEN" | "USD" | null;
+}
+
+export interface ContactoDto {
+  id: number;
+  nombre: string;
+  cargo: string | null;
+  telefono: string | null;
+  correo: string | null;
+  principal: boolean;
+}
+
+export interface FichaProveedorDto {
+  datos: DatosProveedorDto;
+  contactos: ContactoDto[];
+}
+
+const DATOS_VACIOS: DatosProveedorDto = {
+  direccion: null,
+  telefono: null,
+  correo: null,
+  formaPago: null,
+  plazoPagoDias: null,
+  moneda: null,
+};
+
+export function datosADto(fila: FilaDatosProveedor | undefined): DatosProveedorDto {
+  if (!fila) return { ...DATOS_VACIOS };
+  return {
+    direccion: fila.direccion,
+    telefono: fila.telefono,
+    correo: fila.correo,
+    formaPago: fila.forma_pago,
+    plazoPagoDias: fila.plazo_pago_dias,
+    moneda: fila.moneda,
+  };
+}
+
+export function contactoADto(fila: FilaContacto): ContactoDto {
+  return {
+    id: Number(fila.id),
+    nombre: fila.nombre,
+    cargo: fila.cargo,
+    telefono: fila.telefono,
+    correo: fila.correo,
+    principal: fila.principal,
+  };
+}
+
+/** Los campos de la ficha que cambiaron (para la auditoría: dice cuáles, no sus valores). */
+export function camposCambiados(antes: DatosProveedorDto, despues: DatosProveedorDto): string[] {
+  return (Object.keys(despues) as (keyof DatosProveedorDto)[]).filter(
+    (k) => antes[k] !== despues[k]
+  );
+}
+
 export interface FormularioDePrecios {
   /** Proveedores de ruta activos (combustible); vacío si esta persona no carga precios de combustible. */
   proveedoresCombustible: { id: number; nombre: string }[];
@@ -138,6 +204,122 @@ export class ProveedoresService {
     const fila = await this.repository.buscarPorId(client, tenantId, id);
     if (!fila) throw new AppError(404, "Proveedor no encontrado");
     return aDto(fila);
+  }
+
+  // ── Ficha (PR3a): datos de contacto, condiciones de pago y personas de contacto ───────────────────
+
+  private async exigirProveedor(client: PoolClient, tenantId: string, id: number) {
+    const fila = await this.repository.buscarPorId(client, tenantId, id);
+    if (!fila) throw new AppError(404, "Proveedor no encontrado");
+    return fila;
+  }
+
+  async ficha(client: PoolClient, tenantId: string, id: number): Promise<FichaProveedorDto> {
+    await this.exigirProveedor(client, tenantId, id);
+    const [datos, contactos] = await Promise.all([
+      this.repository.datosDe(client, tenantId, id),
+      this.repository.contactosActivos(client, tenantId, id),
+    ]);
+    return { datos: datosADto(datos), contactos: contactos.map(contactoADto) };
+  }
+
+  async guardarDatos(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    id: number,
+    data: GuardarDatosProveedorInput
+  ): Promise<{ datos: DatosProveedorDto; campos: string[] }> {
+    await this.exigirProveedor(client, tenantId, id);
+    const antes = datosADto(await this.repository.datosDe(client, tenantId, id));
+    const fila = await this.repository.guardarDatos(client, tenantId, usuarioId, id, data);
+    const datos = datosADto(fila);
+    return { datos, campos: camposCambiados(antes, datos) };
+  }
+
+  /** `creado: false` = un reintento de uno ya guardado (mismo `cliente_uuid`). */
+  async crearContacto(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    id: number,
+    data: ContactoProveedorInput
+  ): Promise<{ contacto: ContactoDto; creado: boolean }> {
+    await this.exigirProveedor(client, tenantId, id);
+    if (data.cliente_uuid) {
+      const previo = await this.repository.contactoPorClienteUuid(
+        client,
+        tenantId,
+        id,
+        data.cliente_uuid
+      );
+      if (previo) return { contacto: contactoADto(previo), creado: false };
+    }
+    // El primer contacto del proveedor es el principal aunque no se marque.
+    const hayContactos = (await this.repository.contactosActivos(client, tenantId, id)).length > 0;
+    const principal = data.principal || !hayContactos;
+    if (principal) await this.repository.quitarPrincipal(client, tenantId, id, usuarioId);
+    const fila = await this.repository.crearContacto(client, tenantId, usuarioId, id, {
+      ...data,
+      principal,
+    });
+    if (!fila) {
+      // El mismo `cliente_uuid` llegó en paralelo: se devuelve el que ganó.
+      const ganador = await this.repository.contactoPorClienteUuid(
+        client,
+        tenantId,
+        id,
+        data.cliente_uuid ?? ""
+      );
+      if (ganador) return { contacto: contactoADto(ganador), creado: false };
+      throw new AppError(409, "No se pudo guardar el contacto");
+    }
+    return { contacto: contactoADto(fila), creado: true };
+  }
+
+  async actualizarContacto(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    id: number,
+    contactoId: number,
+    data: ContactoProveedorInput
+  ): Promise<ContactoDto> {
+    await this.exigirProveedor(client, tenantId, id);
+    const actual = await this.repository.contactoPorId(client, tenantId, id, contactoId);
+    if (!actual || !actual.activo) throw new AppError(404, "Contacto no encontrado");
+    if (data.principal) await this.repository.quitarPrincipal(client, tenantId, id, usuarioId);
+    // Quitarle la marca al único principal deja al proveedor sin principal: se conserva.
+    const principal = data.principal || actual.principal;
+    const fila = await this.repository.actualizarContacto(
+      client,
+      tenantId,
+      usuarioId,
+      id,
+      contactoId,
+      { ...data, principal }
+    );
+    if (!fila) throw new AppError(404, "Contacto no encontrado");
+    return contactoADto(fila);
+  }
+
+  async quitarContacto(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    id: number,
+    contactoId: number
+  ): Promise<void> {
+    await this.exigirProveedor(client, tenantId, id);
+    const fila = await this.repository.desactivarContacto(
+      client,
+      tenantId,
+      usuarioId,
+      id,
+      contactoId
+    );
+    if (!fila) throw new AppError(404, "Contacto no encontrado");
+    await this.repository.ascenderPrimerContacto(client, tenantId, id);
   }
 
   /** Gestión comercial: solo lo que este perfil puede ver (combustible y/o urea). */

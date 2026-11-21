@@ -242,3 +242,61 @@ export const cargarPrecioUrea = (cuerpo: CuerpoPrecioUrea) =>
   enviar<unknown>("/precios/urea", "POST", cuerpo);
 export const anularPrecio = (producto: "combustible" | "urea", id: number, motivo: string) =>
   enviar<unknown>(`/precios/${producto}/${id}/anular`, "PATCH", { motivo });
+
+// ── Ficha del proveedor (PR3a): datos de contacto, condiciones de pago y personas de contacto ─────
+
+export type FormaDePago = "contado" | "credito";
+export type MonedaDePago = "PEN" | "USD";
+
+export interface DatosFicha {
+  direccion: string | null;
+  telefono: string | null;
+  correo: string | null;
+  formaPago: FormaDePago | null;
+  plazoPagoDias: number | null;
+  moneda: MonedaDePago | null;
+}
+
+export interface Contacto {
+  id: number;
+  nombre: string;
+  cargo: string | null;
+  telefono: string | null;
+  correo: string | null;
+  principal: boolean;
+}
+
+export interface FichaProveedor {
+  datos: DatosFicha;
+  contactos: Contacto[];
+}
+
+/** Lo que se envía al guardar los datos: todo opcional (vacío = sin dato). */
+export interface CuerpoDatosFicha {
+  direccion: string | null;
+  telefono: string | null;
+  correo: string | null;
+  forma_pago: FormaDePago | null;
+  plazo_pago_dias: number | null;
+  moneda: MonedaDePago | null;
+}
+
+export interface CuerpoContacto {
+  nombre: string;
+  cargo: string | null;
+  telefono: string | null;
+  correo: string | null;
+  principal: boolean;
+  /** Solo al crear: un reintento con el mismo valor no duplica el contacto. */
+  cliente_uuid?: string;
+}
+
+export const fichaDeProveedor = (id: number) => leer<FichaProveedor>(`/${id}/ficha`);
+export const guardarDatosFicha = (id: number, cuerpo: CuerpoDatosFicha) =>
+  enviar<DatosFicha>(`/${id}/ficha`, "PUT", cuerpo);
+export const crearContacto = (id: number, cuerpo: CuerpoContacto) =>
+  enviar<Contacto>(`/${id}/contactos`, "POST", cuerpo);
+export const actualizarContacto = (id: number, contactoId: number, cuerpo: CuerpoContacto) =>
+  enviar<Contacto>(`/${id}/contactos/${contactoId}`, "PUT", cuerpo);
+export const quitarContacto = (id: number, contactoId: number) =>
+  enviar<{ ok: true }>(`/${id}/contactos/${contactoId}/quitar`, "PATCH");

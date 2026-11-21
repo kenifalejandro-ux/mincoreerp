@@ -2,7 +2,8 @@
  *
  * Ecosistema «Gestión de proveedores» (PR1, solo lectura): resumen del Centro de gestión, listado del
  * Directorio y ficha; el PR2 suma el alta y la edición (POST y PUT); el PR5b, registrar, habilitar y
- * anular compras de cisterna; el PR4b, cargar y anular precios de proveedores.
+ * anular compras de cisterna; el PR4b, cargar y anular precios de proveedores; el PR3a, la ficha del
+ * proveedor (datos de contacto, condiciones de pago y contactos).
  *
  * Sin permiso de pestaña a propósito: el acceso lo da el MÓDULO asignado a cada persona (los perfiles
  * de cancha no lo reciben por su rol, ver MODULOS_POR_ROL) y el perfil Lectura mira pero no escribe
@@ -25,11 +26,15 @@ import {
 } from "../../server/schemas/combustible.schema";
 import {
   actualizarProveedorSchema,
+  contactoProveedorSchema,
   crearPreciosProveedoresSchema,
   crearProveedorSchema,
+  guardarDatosProveedorSchema,
   type ActualizarProveedorInput,
+  type ContactoProveedorInput,
   type CrearPreciosProveedoresInput,
   type CrearProveedorInput,
+  type GuardarDatosProveedorInput,
 } from "../../server/schemas/proveedores.schema";
 import { registrarAuditoria } from "../../server/services/platformAudit.service";
 import { publicarEventoTenant } from "../../server/services/realtimeEvents.service";
@@ -359,6 +364,125 @@ router.patch(
     });
     await avisarCambioDeCompras(tenantId);
     res.json(compra);
+  })
+);
+
+// PR3a: la ficha del proveedor (datos de contacto, condiciones de pago y personas de contacto). Se ve con
+// el módulo; escribir es de admin y operador (Lectura y «Consultas» los corta requireNivelParaEscribir). La
+// auditoría dice qué campos cambiaron y los ids, no los valores. Las cuentas bancarias, que sí son
+// sensibles, no están acá: van en su propio PR con permiso aparte.
+const idDeProveedor = (req: Request): number => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0 || id > 2147483647) {
+    throw new AppError(400, "Proveedor inválido");
+  }
+  return id;
+};
+const idDeContacto = (req: Request): number => {
+  const id = Number(req.params.contactoId);
+  if (!Number.isSafeInteger(id) || id <= 0) throw new AppError(400, "Contacto inválido");
+  return id;
+};
+
+router.get(
+  "/:id(\\d+)/ficha",
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = idDeProveedor(req);
+    res.json(await withTenant(tenantId, (client) => service.ficha(client, tenantId, id)));
+  })
+);
+
+router.put(
+  "/:id(\\d+)/ficha",
+  requireRole("admin", "operador"),
+  validate(guardarDatosProveedorSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = idDeProveedor(req);
+    const data = req.validatedBody as GuardarDatosProveedorInput;
+    const { datos, campos } = await withTenant(tenantId, (client) =>
+      service.guardarDatos(client, tenantId, req.usuario!.id, id, data)
+    );
+    await registrarAuditoria({
+      accion: "proveedores.datos_editar",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { proveedorId: id, campos },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    res.json(datos);
+  })
+);
+
+router.post(
+  "/:id(\\d+)/contactos",
+  requireRole("admin", "operador"),
+  validate(contactoProveedorSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = idDeProveedor(req);
+    const data = req.validatedBody as ContactoProveedorInput;
+    const { contacto, creado } = await withTenant(tenantId, (client) =>
+      service.crearContacto(client, tenantId, req.usuario!.id, id, data)
+    );
+    // Un reintento ya guardado: 200, sin duplicar la auditoría.
+    if (!creado) {
+      res.status(200).json(contacto);
+      return;
+    }
+    await registrarAuditoria({
+      accion: "proveedores.contacto_crear",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { proveedorId: id, contactoId: contacto.id, principal: contacto.principal },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    res.status(201).json(contacto);
+  })
+);
+
+router.put(
+  "/:id(\\d+)/contactos/:contactoId(\\d+)",
+  requireRole("admin", "operador"),
+  validate(contactoProveedorSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = idDeProveedor(req);
+    const contactoId = idDeContacto(req);
+    const data = req.validatedBody as ContactoProveedorInput;
+    const contacto = await withTenant(tenantId, (client) =>
+      service.actualizarContacto(client, tenantId, req.usuario!.id, id, contactoId, data)
+    );
+    await registrarAuditoria({
+      accion: "proveedores.contacto_editar",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { proveedorId: id, contactoId, principal: contacto.principal },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    res.json(contacto);
+  })
+);
+
+router.patch(
+  "/:id(\\d+)/contactos/:contactoId(\\d+)/quitar",
+  requireRole("admin", "operador"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = idDeProveedor(req);
+    const contactoId = idDeContacto(req);
+    await withTenant(tenantId, (client) =>
+      service.quitarContacto(client, tenantId, req.usuario!.id, id, contactoId)
+    );
+    await registrarAuditoria({
+      accion: "proveedores.contacto_quitar",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { proveedorId: id, contactoId },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    res.json({ ok: true });
   })
 );
 

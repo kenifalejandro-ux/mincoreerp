@@ -8,6 +8,8 @@ import { useEffect, useMemo, useState } from "react";
 
 import ComercialDeProveedor from "./ComercialDeProveedor";
 import ComprasDeProveedor from "./ComprasDeProveedor";
+import ContactosDeProveedor from "./ContactosDeProveedor";
+import DatosDeProveedor from "./DatosDeProveedor";
 import FormularioProveedor from "./FormularioProveedor";
 import { puedeVerComprasDeProveedores, puedeVerPreciosDeProveedores } from "./proveedoresAcceso";
 import { listarProveedores, type Proveedor, type TipoProveedor } from "./proveedoresApi";
@@ -57,10 +59,11 @@ function Estado({ activo }: { activo: boolean }) {
   );
 }
 
-export type PestanaFicha = "resumen" | "comercial" | "compras";
+export type PestanaFicha = "resumen" | "contactos" | "comercial" | "compras";
 
 const ETIQUETA_PESTANA: Record<PestanaFicha, string> = {
   resumen: "Resumen",
+  contactos: "Contactos",
   comercial: "Comercial",
   compras: "Compras",
 };
@@ -85,6 +88,7 @@ function Ficha({
 }) {
   const pestanas: PestanaFicha[] = [
     "resumen",
+    "contactos",
     ...(verPrecios ? (["comercial"] as const) : []),
     ...(verCompras ? (["compras"] as const) : []),
   ];
@@ -147,6 +151,7 @@ function Ficha({
         ))}
       </div>
 
+      {pestana === "contactos" && <ContactosDeProveedor proveedorId={proveedor.id} />}
       {pestana === "comercial" && <ComercialDeProveedor proveedorId={proveedor.id} />}
       {pestana === "compras" && <ComprasDeProveedor proveedorId={proveedor.id} />}
 
@@ -174,9 +179,7 @@ function Ficha({
             </table>
           </section>
 
-          <p className="text-sm text-slate-500 bg-white border border-dashed border-slate-300 rounded-xl p-4">
-            Contactos, condiciones comerciales, documentos y compras se irán sumando a esta ficha.
-          </p>
+          <DatosDeProveedor proveedorId={proveedor.id} />
         </>
       )}
     </div>
