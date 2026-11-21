@@ -25,6 +25,10 @@ import { mapaPermisosPestanas } from "./permisosPestanas.service";
 import { moduloPorDefectoDeRol } from "./perfilesDefaults";
 import { obtenerModulo } from "../../modules/registry";
 import {
+  invalidateCachedPermisosPestana,
+  setCachedPermisosPestana,
+} from "../shared/utils/permisos-pestana-cache";
+import {
   setCachedTokenVersion,
   invalidateCachedTokenVersion,
 } from "../shared/utils/token-version-cache";
@@ -236,8 +240,12 @@ export function aPublico(usuario: UsuarioPayload): UsuarioPublico {
   return publico;
 }
 
+/** El JWT NO lleva `permisosPestanas`: cada permiso puesto a mano suma ~40 bytes a la cookie y el navegador
+ *  descarta las de más de ~4096 (ver permisos-pestana-cache.ts). authMiddleware los carga en cada request
+ *  y el cliente los recibe en el cuerpo de la respuesta, no en la cookie. */
 function firmarAccessToken(usuario: UsuarioPayload): string {
-  return jwt.sign(usuario, JWT_SECRET, {
+  const { permisosPestanas: _enElCuerpoNoEnLaCookie, ...firmable } = usuario;
+  return jwt.sign(firmable, JWT_SECRET, {
     expiresIn: env.jwtExpires as jwt.SignOptions["expiresIn"],
   });
 }
@@ -306,6 +314,10 @@ export async function emitirSesionCompleta(
   // Cachea la versión vigente para que el primer request autenticado tras
   // el login no tenga que ir a Postgres a buscarla (ver authMiddleware).
   await setCachedTokenVersion(usuario.id, usuario.tokenVersion);
+  // Y los permisos de pestaña recién leídos, por lo mismo.
+  if (usuario.permisosPestanas) {
+    await setCachedPermisosPestana(usuario.id, usuario.permisosPestanas);
+  }
 
   // Sesión en Redis: permite invalidar el token activamente en logout (de
   // ESTA sesión puntual, ver logoutService) sin depender solo de que el JWT
@@ -975,6 +987,7 @@ export async function revocarSesionesService(usuarioId: string, tenantId: string
   }
 
   await invalidateCachedTokenVersion(usuarioId);
+  await invalidateCachedPermisosPestana(usuarioId);
   await borrarTodasLasSesionesRedis(usuarioId);
 }
 

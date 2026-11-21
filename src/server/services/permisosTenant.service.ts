@@ -35,6 +35,7 @@ import {
 } from "../shared/utils/destinatariosAlertas";
 import { grifosSinDestinatariosDeAlertas } from "../../modules/combustible/alcance";
 import { revocarSesionesService, type UsuarioPayload } from "./auth.service";
+import { invalidateCachedPermisosPestana } from "../shared/utils/permisos-pestana-cache";
 import {
   guardarPermisosPestanas,
   listarPermisosPestanasEnTransaccion,
@@ -372,6 +373,9 @@ export async function guardarPermisosUsuarioService(
     // el estado final.
     await guardarAlertasCorreo(client, tenantId, usuarioId, cambio.alertasCorreo);
   });
+
+  // Ya confirmado el cambio (de pestañas, de módulos o de perfil): el siguiente request lee lo nuevo.
+  await invalidateCachedPermisosPestana(usuarioId);
 
   const despues = await listarPermisosUsuarioService(tenantId, usuarioId);
   const recorta = calcularRecorte(antes, despues);
