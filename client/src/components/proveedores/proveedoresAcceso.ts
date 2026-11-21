@@ -31,3 +31,22 @@ export function puedeVerPreciosDeProveedores(
   const urea = usuario.permisosPestanas?.["combustible:urea:precios"] ?? porDefecto;
   return combustible || urea;
 }
+
+/** «Compras y recepciones» muestra las compras de cisterna de Combustible, con la misma regla que la
+ *  pestaña Cisternas: un permiso guardado manda; sin él, la ven admin, operador y Lectura. Hace falta el
+ *  módulo `proveedores` (no el de Combustible: las compras se leen igual). El servidor exige lo mismo. */
+export function puedeVerComprasDeProveedores(
+  usuario:
+    | {
+        rol: string;
+        modulosPermitidos: string[];
+        permisosPestanas?: Record<string, boolean>;
+      }
+    | null
+    | undefined
+): boolean {
+  if (!usuario || !usuario.modulosPermitidos.includes("proveedores")) return false;
+  const override = usuario.permisosPestanas?.["combustible:cisternas"];
+  if (override !== undefined) return override;
+  return ["admin", "operador", "grifero", "lectura"].includes(usuario.rol);
+}
