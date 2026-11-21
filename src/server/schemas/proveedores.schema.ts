@@ -6,6 +6,8 @@
  */
 import { z } from "zod";
 
+import { crearPreciosCombustibleMasivoSchema } from "./combustible.schema";
+
 const nombre = z.string().trim().min(1, "El nombre del proveedor es obligatorio").max(150);
 
 /** "" o ausente = sin RUC (null). */
@@ -37,5 +39,14 @@ export const actualizarProveedorSchema = z.object({
   ...banderas,
 });
 
+/** Un mismo precio de combustible para varios proveedores de ruta, todo o nada. Es el cambio masivo de
+ *  Combustible → Precios pero solo para PROVEEDORES: los precios de tanque (la venta interna) son de
+ *  Combustible y no se cargan desde acá. */
+export const crearPreciosProveedoresSchema = crearPreciosCombustibleMasivoSchema.refine(
+  (d) => d.combustible_ids === undefined && d.grifo_ids !== undefined,
+  { message: "El precio va a proveedores de ruta, no a tanques", path: ["grifo_ids"] }
+);
+
 export type CrearProveedorInput = z.infer<typeof crearProveedorSchema>;
 export type ActualizarProveedorInput = z.infer<typeof actualizarProveedorSchema>;
+export type CrearPreciosProveedoresInput = z.infer<typeof crearPreciosProveedoresSchema>;
