@@ -29,9 +29,10 @@ import {
 import { useState } from "react";
 
 import CentroDeGestion from "./CentroDeGestion";
-import DirectorioProveedores from "./DirectorioProveedores";
+import ComprasYRecepciones from "./ComprasYRecepciones";
+import DirectorioProveedores, { type PestanaFicha } from "./DirectorioProveedores";
 import GestionComercial from "./GestionComercial";
-import { puedeVerPreciosDeProveedores } from "./proveedoresAcceso";
+import { puedeVerComprasDeProveedores, puedeVerPreciosDeProveedores } from "./proveedoresAcceso";
 import SeccionPronto from "./SeccionPronto";
 import { useAuth } from "../../context/AuthContext";
 
@@ -104,7 +105,7 @@ const GRUPOS: { etiqueta: string; items: ItemDeMenu[] }[] = [
         id: "compras",
         label: "Compras y recepciones",
         Icono: Truck,
-        pronto: { descripcion: "Registrar la compra y seguirla hasta la recepción en cancha." },
+        visible: puedeVerComprasDeProveedores,
       },
       {
         id: "pagos",
@@ -143,13 +144,13 @@ export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => voi
   // que el directorio se vuelva a montar aunque sea el mismo proveedor.
   const [apertura, setApertura] = useState<{
     id: number;
-    pestana: "resumen" | "comercial";
+    pestana: PestanaFicha;
     n: number;
   } | null>(null);
 
   const actual = TODOS.find((i) => i.id === seccion) ?? TODOS[0];
-  const abrirProveedor = (id: number) => {
-    setApertura((a) => ({ id, pestana: "comercial", n: (a?.n ?? 0) + 1 }));
+  const abrirProveedor = (id: number, pestana: PestanaFicha) => {
+    setApertura((a) => ({ id, pestana, n: (a?.n ?? 0) + 1 }));
     setSeccion("directorio");
     setMenuAbierto(false);
   };
@@ -220,12 +221,16 @@ export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => voi
       >
         <div className="p-4 border-b border-white/10">
           <div className="flex items-center justify-between">
-            <button
-              onClick={onSalir}
-              className="flex items-center gap-2 text-xs text-slate-400 hover:text-[#BADC1E]"
-            >
-              <span aria-hidden>←</span> Volver al ERP
-            </button>
+            {onSalir ? (
+              <button
+                onClick={onSalir}
+                className="flex items-center gap-2 text-xs text-slate-400 hover:text-[#BADC1E]"
+              >
+                <span aria-hidden>←</span> Volver al ERP
+              </button>
+            ) : (
+              <span />
+            )}
             <button
               onClick={() => setMenuAbierto(false)}
               aria-label="Cerrar el menú"
@@ -300,7 +305,12 @@ export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => voi
           {actual.id === "directorio" && (
             <DirectorioProveedores key={apertura?.n ?? 0} apertura={apertura ?? undefined} />
           )}
-          {actual.id === "comercial" && <GestionComercial onAbrirProveedor={abrirProveedor} />}
+          {actual.id === "comercial" && (
+            <GestionComercial onAbrirProveedor={(id) => abrirProveedor(id, "comercial")} />
+          )}
+          {actual.id === "compras" && (
+            <ComprasYRecepciones onAbrirProveedor={(id) => abrirProveedor(id, "compras")} />
+          )}
           {actual.pronto && (
             <SeccionPronto
               titulo={actual.label}

@@ -33,6 +33,7 @@ export interface FilaProveedor {
 const COLUMNAS = `id, nombre, ruc, activo, abastece_tanque, abastece_ruta, abastece_urea,
                   abastece_urea_ruta, creado_en`;
 
+import type { RecepcionDb } from "./proveedores.compras";
 import type {
   FilaPrecioCombustibleDb,
   FilaPrecioUreaDb,
@@ -113,6 +114,25 @@ export class ProveedoresRepository {
       `SELECT codigo, nombre, litros FROM combustible_urea_presentaciones
         WHERE tenant_id = $1 AND activa ORDER BY es_referencia DESC, litros DESC, id`,
       [tenantId]
+    );
+    return r.rows;
+  }
+
+  // ── Compras y recepciones (solo lectura, PR5): las tablas son de Combustible (0171 y 0173) ───────
+
+  /** Las recepciones vigentes de esas compras, con la unidad del tanque que recibió. */
+  async recepcionesDeCompras(
+    client: PoolClient,
+    tenantId: string,
+    recepcionIds: number[]
+  ): Promise<RecepcionDb[]> {
+    if (recepcionIds.length === 0) return [];
+    const r = await client.query<RecepcionDb>(
+      `SELECT r.id, r.cantidad, r.cantidad_derivada, r.recibido_en, c.unidad
+         FROM combustible_recepciones r
+         JOIN combustible c ON c.id = r.combustible_id AND c.tenant_id = r.tenant_id
+        WHERE r.tenant_id = $1 AND r.id = ANY($2::bigint[])`,
+      [tenantId, recepcionIds]
     );
     return r.rows;
   }

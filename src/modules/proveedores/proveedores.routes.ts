@@ -25,6 +25,8 @@ import { requireRole } from "../../server/shared/middlewares/roles.middleware";
 import { asyncHandler } from "../../server/shared/utils/asyncHandler";
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
 import { getTenantId } from "../../server/shared/utils/request";
+import { cargarAlcance, alcanceDe } from "../combustible/alcance";
+import { tieneModulo } from "../../server/shared/utils/modulos";
 import { ProveedoresService } from "./proveedores.service";
 
 const router = Router();
@@ -63,6 +65,29 @@ router.get(
     }
     const filas = await withTenant(tenantId, (client) => service.precios(client, tenantId, ver));
     res.json({ ...ver, filas });
+  })
+);
+
+// Compras y recepciones (PR5): las compras de cisterna de Combustible, solo lectura. Mismas reglas que
+// allá: ve quien tiene la pestaña `cisternas`; quien no gestiona compras (`cisternas:registrar_compra`)
+// solo recibe las ya por llegar; y con Combustible en la empresa rige el alcance por sede (sin él no hay
+// alcance que cargar). Registrar, habilitar y anular siguen en Combustible → Cisternas.
+router.get(
+  "/compras",
+  (req, res, next) =>
+    tieneModulo(req.usuario, "combustible") ? cargarAlcance(req, res, next) : next(),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const usuario = req.usuario!;
+    if (!pestanaPermitida(usuario, "combustible", "cisternas")) {
+      throw new AppError(403, "Pestaña no disponible para este perfil");
+    }
+    const gestiona = pestanaPermitida(usuario, "combustible", "cisternas:registrar_compra");
+    res.json(
+      await withTenant(tenantId, (client) =>
+        service.compras(client, tenantId, alcanceDe(req), gestiona)
+      )
+    );
   })
 );
 

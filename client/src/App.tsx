@@ -278,7 +278,15 @@ function App() {
         // El ecosistema va fuera del Layout: tiene su propia cabecera y su propio menú.
         <Suspense fallback={<div className="p-20 text-center text-slate-500">Cargando...</div>}>
           {ComponenteConProps && (
-            <ComponenteConProps onSalir={() => irA(primeraPestania(usuario))} />
+            <ComponenteConProps
+              // Una empresa cuyo único módulo es un ecosistema no tiene un ERP al que volver: sin
+              // botón, en vez de uno que no lleva a ningún lado.
+              onSalir={
+                moduloIdDe(primeraPestania(usuario)) === "proveedores"
+                  ? undefined
+                  : () => irA(primeraPestania(usuario))
+              }
+            />
           )}
         </Suspense>
       ) : (

@@ -111,3 +111,52 @@ export interface RespuestaPrecios {
 }
 
 export const listarPrecios = () => leer<RespuestaPrecios>("/precios");
+
+// ── Compras y recepciones (solo lectura): las compras de cisterna de Combustible ───────────────────
+
+export type EstadoCompra = "registrada" | "por_llegar" | "recibida" | "anulada";
+
+export interface RecepcionDeCompra {
+  id: number;
+  /** ISO 8601. */
+  recibidoEn: string;
+  /** Lo que entró al tanque más lo repartido. */
+  descargado: number;
+  unidad: string;
+  /** Descargado menos lo que dice el documento, en galones (negativo: llegó menos). */
+  diferenciaGalones: number;
+  fueraDeTolerancia: boolean;
+}
+
+export interface CompraDeCisterna {
+  id: number;
+  estado: EstadoCompra;
+  proveedorId: number;
+  proveedorCodigo: string;
+  proveedorNombre: string;
+  combustible: string;
+  unidad: string;
+  tipoDocumento: string;
+  numeroDocumento: string;
+  fechaCompra: string;
+  llegadaEstimada: string;
+  cantidadFacturada: number;
+  costoUnitario: number;
+  total: number;
+  placa: string | null;
+  chofer: string | null;
+  transportista: string | null;
+  habilitada: boolean;
+  motivoAnulacion: string | null;
+  recepcion: RecepcionDeCompra | null;
+}
+
+export interface RespuestaCompras {
+  /** Si gestiona compras ve todas; si no, solo las ya por llegar (como en Cisternas). */
+  gestiona: boolean;
+  /** Galones de diferencia que la empresa tolera. */
+  tolerancia: number;
+  compras: CompraDeCisterna[];
+}
+
+export const listarCompras = () => leer<RespuestaCompras>("/compras");

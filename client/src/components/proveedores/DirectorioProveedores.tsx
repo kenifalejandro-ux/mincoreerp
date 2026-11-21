@@ -7,8 +7,9 @@ import { ArrowLeft, Pencil, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import ComercialDeProveedor from "./ComercialDeProveedor";
+import ComprasDeProveedor from "./ComprasDeProveedor";
 import FormularioProveedor from "./FormularioProveedor";
-import { puedeVerPreciosDeProveedores } from "./proveedoresAcceso";
+import { puedeVerComprasDeProveedores, puedeVerPreciosDeProveedores } from "./proveedoresAcceso";
 import { listarProveedores, type Proveedor, type TipoProveedor } from "./proveedoresApi";
 import { useAuth } from "../../context/AuthContext";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
@@ -56,13 +57,20 @@ function Estado({ activo }: { activo: boolean }) {
   );
 }
 
-type PestanaFicha = "resumen" | "comercial";
+export type PestanaFicha = "resumen" | "comercial" | "compras";
+
+const ETIQUETA_PESTANA: Record<PestanaFicha, string> = {
+  resumen: "Resumen",
+  comercial: "Comercial",
+  compras: "Compras",
+};
 
 function Ficha({
   proveedor,
   onVolver,
   onEditar,
   verPrecios,
+  verCompras,
   pestanaInicial,
 }: {
   proveedor: Proveedor;
@@ -71,9 +79,18 @@ function Ficha({
   onEditar?: () => void;
   /** Muestra la pestaña «Comercial» (precios): solo quien ve los precios. */
   verPrecios: boolean;
+  /** Muestra la pestaña «Compras»: solo quien ve las compras de cisterna. */
+  verCompras: boolean;
   pestanaInicial: PestanaFicha;
 }) {
-  const [pestana, setPestana] = useState<PestanaFicha>(verPrecios ? pestanaInicial : "resumen");
+  const pestanas: PestanaFicha[] = [
+    "resumen",
+    ...(verPrecios ? (["comercial"] as const) : []),
+    ...(verCompras ? (["compras"] as const) : []),
+  ];
+  const [pestana, setPestana] = useState<PestanaFicha>(
+    pestanas.includes(pestanaInicial) ? pestanaInicial : "resumen"
+  );
   const filas: { producto: string; interno: boolean; externo: boolean }[] = [
     { producto: "Combustible", ...proveedor.combustible },
     { producto: "Urea", ...proveedor.urea },
@@ -113,7 +130,7 @@ function Ficha({
         aria-label="Secciones de la ficha"
         className="flex gap-1 border-b border-slate-200"
       >
-        {(["resumen", ...(verPrecios ? ["comercial"] : [])] as PestanaFicha[]).map((p) => (
+        {pestanas.map((p) => (
           <button
             key={p}
             role="tab"
@@ -125,12 +142,13 @@ function Ficha({
                 : "border-transparent text-slate-500 hover:text-slate-900"
             }`}
           >
-            {p === "resumen" ? "Resumen" : "Comercial"}
+            {ETIQUETA_PESTANA[p]}
           </button>
         ))}
       </div>
 
       {pestana === "comercial" && <ComercialDeProveedor proveedorId={proveedor.id} />}
+      {pestana === "compras" && <ComprasDeProveedor proveedorId={proveedor.id} />}
 
       {pestana === "resumen" && (
         <>
@@ -173,6 +191,7 @@ export default function DirectorioProveedores({
 }) {
   const { usuario } = useAuth();
   const verPrecios = puedeVerPreciosDeProveedores(usuario);
+  const verCompras = puedeVerComprasDeProveedores(usuario);
   const [lista, setLista] = useState<Proveedor[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
@@ -231,6 +250,7 @@ export default function DirectorioProveedores({
           onVolver={() => setAbierto(null)}
           onEditar={puedeEscribir ? () => setFormulario(seleccionado) : undefined}
           verPrecios={verPrecios}
+          verCompras={verCompras}
           pestanaInicial={apertura?.id === seleccionado.id ? apertura.pestana : "resumen"}
         />
         {modal}

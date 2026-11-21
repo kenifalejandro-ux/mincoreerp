@@ -9,6 +9,9 @@ import type { PoolClient } from "pg";
 
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { armarFilasDePrecios, type FilaPrecioDto } from "./proveedores.precios";
+import { armarCompras, type CompraDto } from "./proveedores.compras";
+import { listarCompras, obtenerTolerancia } from "../combustible/comprasCisterna.service";
+import type { AlcanceCombustible } from "../combustible/alcance";
 import type {
   ActualizarProveedorInput,
   CrearProveedorInput,
@@ -115,6 +118,28 @@ export class ProveedoresService {
       ver,
       ahora
     );
+  }
+
+  /** Compras y recepciones: las compras de cisterna de Combustible que este perfil puede ver (las mismas
+   *  reglas de allá: alcance por sede y, si no gestiona compras, solo las ya por llegar), con lo que se
+   *  descargó contra el documento. */
+  async compras(
+    client: PoolClient,
+    tenantId: string,
+    alcance: AlcanceCombustible,
+    gestiona: boolean
+  ): Promise<{ gestiona: boolean; tolerancia: number; compras: CompraDto[] }> {
+    const filas = await listarCompras(client, tenantId, alcance, gestiona);
+    const ids = filas.filter((f) => f.recepcion_id !== null).map((f) => Number(f.recepcion_id));
+    const [recepciones, tolerancia] = await Promise.all([
+      this.repository.recepcionesDeCompras(client, tenantId, ids),
+      obtenerTolerancia(client, tenantId),
+    ]);
+    return {
+      gestiona,
+      tolerancia,
+      compras: armarCompras(filas, new Map(recepciones.map((r) => [Number(r.id), r])), tolerancia),
+    };
   }
 
   async crear(
