@@ -20,6 +20,7 @@ import {
 } from "../../server/schemas/proveedores.schema";
 import { registrarAuditoria } from "../../server/services/platformAudit.service";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
+import { pestanaPermitida } from "../../server/services/permisosPestanas.service";
 import { requireRole } from "../../server/shared/middlewares/roles.middleware";
 import { asyncHandler } from "../../server/shared/utils/asyncHandler";
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
@@ -42,6 +43,26 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const tenantId = getTenantId(req);
     res.json(await withTenant(tenantId, (client) => service.listar(client, tenantId)));
+  })
+);
+
+// Gestión comercial (PR4): precios de proveedores, solo lectura. Reutiliza los permisos de Precios de
+// Combustible (`tanques:precios` y `urea:precios`): quien tiene uno ve ese producto; sin ninguno, 403.
+// Sin pestaña propia a propósito (cada pestaña agranda la cookie de sesión).
+router.get(
+  "/precios",
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const usuario = req.usuario!;
+    const ver = {
+      combustible: pestanaPermitida(usuario, "combustible", "tanques:precios"),
+      urea: pestanaPermitida(usuario, "combustible", "urea:precios"),
+    };
+    if (!ver.combustible && !ver.urea) {
+      throw new AppError(403, "Pestaña no disponible para este perfil");
+    }
+    const filas = await withTenant(tenantId, (client) => service.precios(client, tenantId, ver));
+    res.json({ ...ver, filas });
   })
 );
 

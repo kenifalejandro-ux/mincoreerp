@@ -30,6 +30,8 @@ import { useState } from "react";
 
 import CentroDeGestion from "./CentroDeGestion";
 import DirectorioProveedores from "./DirectorioProveedores";
+import GestionComercial from "./GestionComercial";
+import { puedeVerPreciosDeProveedores } from "./proveedoresAcceso";
 import SeccionPronto from "./SeccionPronto";
 import { useAuth } from "../../context/AuthContext";
 
@@ -39,6 +41,8 @@ interface ItemDeMenu {
   Icono: LucideIcon;
   /** Sin pantalla todavía. */
   pronto?: { descripcion: string };
+  /** Si el perfil no lo puede ver, no se dibuja. */
+  visible?: (usuario: ReturnType<typeof useAuth>["usuario"]) => boolean;
 }
 
 const GRUPOS: { etiqueta: string; items: ItemDeMenu[] }[] = [
@@ -94,7 +98,7 @@ const GRUPOS: { etiqueta: string; items: ItemDeMenu[] }[] = [
         id: "comercial",
         label: "Gestión comercial",
         Icono: Star,
-        pronto: { descripcion: "Los precios negociados con cada proveedor, para compararlos." },
+        visible: puedeVerPreciosDeProveedores,
       },
       {
         id: "compras",
@@ -135,9 +139,22 @@ export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => voi
   const { usuario, logout } = useAuth();
   const [seccion, setSeccion] = useState("centro");
   const [menuAbierto, setMenuAbierto] = useState(false);
+  // Abrir directo la ficha de un proveedor (desde Gestión comercial). `n` cambia en cada apertura para
+  // que el directorio se vuelva a montar aunque sea el mismo proveedor.
+  const [apertura, setApertura] = useState<{
+    id: number;
+    pestana: "resumen" | "comercial";
+    n: number;
+  } | null>(null);
 
   const actual = TODOS.find((i) => i.id === seccion) ?? TODOS[0];
+  const abrirProveedor = (id: number) => {
+    setApertura((a) => ({ id, pestana: "comercial", n: (a?.n ?? 0) + 1 }));
+    setSeccion("directorio");
+    setMenuAbierto(false);
+  };
   const irA = (id: string) => {
+    if (id === "directorio") setApertura(null);
     setSeccion(id);
     setMenuAbierto(false);
   };
@@ -231,42 +248,46 @@ export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => voi
         </div>
 
         <nav className="flex-1 py-3 flex flex-col gap-0.5">
-          {GRUPOS.map((g, i) => (
-            <div key={g.etiqueta || i} className="mb-2">
-              {g.etiqueta && (
-                <p className="px-6 pt-3 pb-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-slate-500">
-                  {g.etiqueta}
-                </p>
-              )}
-              {g.items.map(({ id, label, Icono, pronto }) => {
-                const activo = seccion === id;
-                return (
-                  <button
-                    key={id}
-                    onClick={() => irA(id)}
-                    aria-current={activo ? "page" : undefined}
-                    className={`group w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all ${
-                      activo
-                        ? "bg-[#BADC1E] text-[#0A1014] font-semibold"
-                        : `${pronto ? "text-slate-500" : "text-slate-400"} hover:bg-[#BADC1E] hover:text-[#0A1014] font-medium`
-                    }`}
-                  >
-                    <Icono
-                      size={18}
-                      strokeWidth={2}
-                      className={`shrink-0 ${activo ? "text-[#0A1014]" : "text-slate-500 group-hover:text-[#0A1014]"}`}
-                    />
-                    <span className="tracking-tight flex-1">{label}</span>
-                    {pronto && (
-                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-dashed border-slate-600 text-slate-500 group-hover:border-[#0A1014]/40 group-hover:text-[#0A1014]">
-                        Pronto
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          ))}
+          {GRUPOS.map((g, i) => {
+            const items = g.items.filter((it) => !it.visible || it.visible(usuario));
+            if (items.length === 0) return null;
+            return (
+              <div key={g.etiqueta || i} className="mb-2">
+                {g.etiqueta && (
+                  <p className="px-6 pt-3 pb-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-slate-500">
+                    {g.etiqueta}
+                  </p>
+                )}
+                {items.map(({ id, label, Icono, pronto }) => {
+                  const activo = seccion === id;
+                  return (
+                    <button
+                      key={id}
+                      onClick={() => irA(id)}
+                      aria-current={activo ? "page" : undefined}
+                      className={`group w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all ${
+                        activo
+                          ? "bg-[#BADC1E] text-[#0A1014] font-semibold"
+                          : `${pronto ? "text-slate-500" : "text-slate-400"} hover:bg-[#BADC1E] hover:text-[#0A1014] font-medium`
+                      }`}
+                    >
+                      <Icono
+                        size={18}
+                        strokeWidth={2}
+                        className={`shrink-0 ${activo ? "text-[#0A1014]" : "text-slate-500 group-hover:text-[#0A1014]"}`}
+                      />
+                      <span className="tracking-tight flex-1">{label}</span>
+                      {pronto && (
+                        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full border border-dashed border-slate-600 text-slate-500 group-hover:border-[#0A1014]/40 group-hover:text-[#0A1014]">
+                          Pronto
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
         </nav>
         <p className="px-6 py-4 text-[11px] text-slate-500 border-t border-white/10 flex items-center gap-2">
           <Sparkles size={14} /> Cada empresa usa solo lo que contrató.
@@ -276,7 +297,10 @@ export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => voi
       <main className="pt-16 lg:pl-64">
         <div className="p-4 sm:p-6 lg:p-8 max-w-[1500px]">
           {actual.id === "centro" && <CentroDeGestion onIrAlDirectorio={() => irA("directorio")} />}
-          {actual.id === "directorio" && <DirectorioProveedores />}
+          {actual.id === "directorio" && (
+            <DirectorioProveedores key={apertura?.n ?? 0} apertura={apertura ?? undefined} />
+          )}
+          {actual.id === "comercial" && <GestionComercial onAbrirProveedor={abrirProveedor} />}
           {actual.pronto && (
             <SeccionPronto
               titulo={actual.label}

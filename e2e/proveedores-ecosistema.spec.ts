@@ -47,8 +47,10 @@ test("entrar al ecosistema, ver el directorio y volver al ERP", async ({ page })
   await expect(page.getByRole("button", { name: "Dashboard" })).toHaveCount(0);
 
   // Lo que todavía no existe se dice «Pronto», sin pantalla de ejemplo.
-  await menu.getByRole("button", { name: /Gestión comercial/ }).click();
-  await expect(page.getByRole("heading", { name: "Gestión comercial", level: 2 })).toBeVisible();
+  await menu.getByRole("button", { name: /Compras y recepciones/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Compras y recepciones", level: 2 })
+  ).toBeVisible();
 
   // 3. El directorio lista el proveedor sembrado y abre su ficha.
   await menu.getByRole("button", { name: "Directorio de proveedores" }).click();

@@ -33,6 +33,12 @@ export interface FilaProveedor {
 const COLUMNAS = `id, nombre, ruc, activo, abastece_tanque, abastece_ruta, abastece_urea,
                   abastece_urea_ruta, creado_en`;
 
+import type {
+  FilaPrecioCombustibleDb,
+  FilaPrecioUreaDb,
+  PresentacionDb,
+} from "./proveedores.precios";
+
 export class ProveedoresRepository {
   async listar(client: PoolClient, tenantId: string): Promise<FilaProveedor[]> {
     const result = await client.query<FilaProveedor>(
@@ -55,6 +61,60 @@ export class ProveedoresRepository {
       [tenantId, id]
     );
     return result.rows[0];
+  }
+
+  // ── Precios (solo lectura, PR4): las tablas son de Combustible (0063 y 0121) ─────────────────────
+
+  /** Los precios de combustible de PROVEEDORES (los de ruta); los de tanque son la venta interna. */
+  async listarPreciosCombustibleDeProveedores(
+    client: PoolClient,
+    tenantId: string
+  ): Promise<FilaPrecioCombustibleDb[]> {
+    const r = await client.query<FilaPrecioCombustibleDb>(
+      `SELECT p.id, p.tipo_combustible, p.grifo_id, p.precio_unitario, p.vigente_desde,
+              u.nombre AS registrado_por, p.anulada_en, p.motivo_anulacion
+         FROM combustible_precios p
+         LEFT JOIN usuarios u ON u.id = p.usuario_id
+        WHERE p.tenant_id = $1 AND p.grifo_id IS NOT NULL
+        ORDER BY p.vigente_desde DESC, p.id DESC`,
+      [tenantId]
+    );
+    return r.rows;
+  }
+
+  async listarPreciosUrea(client: PoolClient, tenantId: string): Promise<FilaPrecioUreaDb[]> {
+    const r = await client.query<FilaPrecioUreaDb>(
+      `SELECT p.id, p.grifo_id, p.presentacion, p.marca, p.precio_por_bulto, p.vigente_desde,
+              u.nombre AS registrado_por, p.anulada_en, p.motivo_anulacion
+         FROM combustible_urea_precios p
+         LEFT JOIN usuarios u ON u.id = p.usuario_id
+        WHERE p.tenant_id = $1
+        ORDER BY p.vigente_desde DESC, p.id DESC`,
+      [tenantId]
+    );
+    return r.rows;
+  }
+
+  /** Los tipos de combustible que la empresa maneja en sus tanques activos. */
+  async tiposDeCombustibleEnTanques(client: PoolClient, tenantId: string): Promise<string[]> {
+    const r = await client.query<{ tipo_combustible: string }>(
+      `SELECT DISTINCT tipo_combustible FROM combustible
+        WHERE tenant_id = $1 AND activo AND tipo_combustible IS NOT NULL`,
+      [tenantId]
+    );
+    return r.rows.map((x) => x.tipo_combustible);
+  }
+
+  async presentacionesDeUreaActivas(
+    client: PoolClient,
+    tenantId: string
+  ): Promise<PresentacionDb[]> {
+    const r = await client.query<PresentacionDb>(
+      `SELECT codigo, nombre, litros FROM combustible_urea_presentaciones
+        WHERE tenant_id = $1 AND activa ORDER BY es_referencia DESC, litros DESC, id`,
+      [tenantId]
+    );
+    return r.rows;
   }
 
   /** Crea un proveedor. Los índices únicos de nombre (0063) y de RUC (0160) los hace cumplir la base:
