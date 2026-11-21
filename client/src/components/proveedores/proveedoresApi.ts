@@ -37,3 +37,37 @@ async function leer<T>(ruta: string): Promise<T> {
 
 export const listarProveedores = () => leer<Proveedor[]>("");
 export const resumenProveedores = () => leer<ResumenProveedores>("/resumen");
+
+/** Lo que se carga al registrar o editar un proveedor. INTERNO es la compra para despachar desde la
+ *  planta (`tanque`, y `urea` para la del almacén) y EXTERNO la que se hace en ruta. */
+export interface DatosProveedor {
+  nombre: string;
+  /** "" = sin RUC. */
+  ruc: string;
+  abastece_tanque: boolean;
+  abastece_ruta: boolean;
+  abastece_urea: boolean;
+  abastece_urea_ruta: boolean;
+}
+
+async function enviar(ruta: string, metodo: "POST" | "PUT", cuerpo: object): Promise<Proveedor> {
+  const res = await apiFetch(`/api/erp/proveedores${ruta}`, {
+    method: metodo,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(cuerpo),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      data.errors?.[0]?.message ||
+        data.message ||
+        data.error ||
+        `No se pudo guardar (HTTP ${res.status})`
+    );
+  }
+  return data as Proveedor;
+}
+
+export const crearProveedor = (datos: DatosProveedor) => enviar("", "POST", datos);
+export const actualizarProveedor = (id: number, datos: DatosProveedor & { activo: boolean }) =>
+  enviar(`/${id}`, "PUT", datos);

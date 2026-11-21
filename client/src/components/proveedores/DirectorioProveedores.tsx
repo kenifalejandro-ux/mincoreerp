@@ -3,10 +3,12 @@
 // Directorio y ficha de los proveedores (solo lectura). INTERNO es la compra para despachar desde
 // la planta y EXTERNO la que se hace en el recorrido de ruta: las mismas palabras que la pestaña
 // Proveedores de Combustible.
-import { ArrowLeft, Search } from "lucide-react";
+import { ArrowLeft, Pencil, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import FormularioProveedor from "./FormularioProveedor";
 import { listarProveedores, type Proveedor, type TipoProveedor } from "./proveedoresApi";
+import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 
 type FiltroUso = "todos" | "interno" | "externo";
 type FiltroEstado = "todos" | "activos" | "inactivos";
@@ -51,7 +53,16 @@ function Estado({ activo }: { activo: boolean }) {
   );
 }
 
-function Ficha({ proveedor, onVolver }: { proveedor: Proveedor; onVolver: () => void }) {
+function Ficha({
+  proveedor,
+  onVolver,
+  onEditar,
+}: {
+  proveedor: Proveedor;
+  onVolver: () => void;
+  /** Sin función = el perfil no puede editar. */
+  onEditar?: () => void;
+}) {
   const filas: { producto: string; interno: boolean; externo: boolean }[] = [
     { producto: "Combustible", ...proveedor.combustible },
     { producto: "Urea", ...proveedor.urea },
@@ -76,6 +87,14 @@ function Ficha({ proveedor, onVolver }: { proveedor: Proveedor; onVolver: () => 
             {proveedor.codigo} · {proveedor.ruc ? `RUC ${proveedor.ruc}` : "Sin RUC"}
           </p>
         </div>
+        {onEditar && (
+          <button
+            onClick={onEditar}
+            className="ml-auto flex items-center gap-2 h-10 px-4 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            <Pencil size={16} /> Editar
+          </button>
+        )}
       </header>
 
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm">
@@ -116,6 +135,9 @@ export default function DirectorioProveedores() {
   const [uso, setUso] = useState<FiltroUso>("todos");
   const [estado, setEstado] = useState<FiltroEstado>("todos");
   const [abierto, setAbierto] = useState<number | null>(null);
+  const puedeEscribir = usePuedeEscribir("proveedores");
+  // `null` = cerrado; `"nuevo"` = registrar; un proveedor = editarlo.
+  const [formulario, setFormulario] = useState<null | "nuevo" | Proveedor>(null);
 
   useEffect(() => {
     let vigente = true;
@@ -140,22 +162,58 @@ export default function DirectorioProveedores() {
     });
   }, [lista, busqueda, tipo, uso, estado]);
 
+  const alGuardar = (guardado: Proveedor) => {
+    setLista((prev) => {
+      const sin = (prev ?? []).filter((p) => p.id !== guardado.id);
+      return [...sin, guardado].sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+    });
+    setFormulario(null);
+  };
+  const modal = formulario && (
+    <FormularioProveedor
+      proveedor={formulario === "nuevo" ? undefined : formulario}
+      onGuardado={alGuardar}
+      onCerrar={() => setFormulario(null)}
+    />
+  );
+
   const seleccionado = lista?.find((p) => p.id === abierto);
-  if (seleccionado) return <Ficha proveedor={seleccionado} onVolver={() => setAbierto(null)} />;
+  if (seleccionado)
+    return (
+      <>
+        <Ficha
+          proveedor={seleccionado}
+          onVolver={() => setAbierto(null)}
+          onEditar={puedeEscribir ? () => setFormulario(seleccionado) : undefined}
+        />
+        {modal}
+      </>
+    );
 
   const control =
     "h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#84cc16]";
   return (
     <div className="space-y-5">
-      <header>
-        <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-slate-500">
-          Empresas / Directorio
-        </p>
-        <h1 className="text-3xl font-semibold text-slate-900 mt-1">Directorio de proveedores</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          <b>Interno:</b> compra para despachar desde la planta. <b>Externo:</b> se compra en el
-          recorrido de ruta.
-        </p>
+      {modal}
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-slate-500">
+            Empresas / Directorio
+          </p>
+          <h1 className="text-3xl font-semibold text-slate-900 mt-1">Directorio de proveedores</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            <b>Interno:</b> compra para despachar desde la planta. <b>Externo:</b> se compra en el
+            recorrido de ruta.
+          </p>
+        </div>
+        {puedeEscribir && (
+          <button
+            onClick={() => setFormulario("nuevo")}
+            className="flex items-center gap-2 h-10 px-4 rounded-lg bg-[#BADC1E] text-[#0A1014] text-sm font-semibold hover:brightness-95"
+          >
+            <Plus size={16} /> Registrar proveedor
+          </button>
+        )}
       </header>
 
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
