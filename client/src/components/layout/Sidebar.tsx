@@ -6,6 +6,7 @@ import {
   Fuel,
   History,
   Inbox,
+  LayoutDashboard,
   Navigation,
   Receipt,
   Route,
@@ -28,6 +29,7 @@ import { puedeVerCisternas } from "../combustible/cisternasAcceso";
 import { puedeCompraEnRuta, puedeVerDespachoGrifo } from "../combustible/compraEnRutaAcceso";
 import { puedeVerPrecios } from "../combustible/preciosAcceso";
 import { SubmenuDesplegable } from "../comunes/SubmenuDesplegable";
+import { marcarNovedadVista, novedadVigente } from "../controlTv/novedad";
 import {
   destinoDeFlota,
   miViajeVaEnFlota,
@@ -36,6 +38,7 @@ import {
   puedeVerUnidades,
   puedeVerViajes,
 } from "../flota/flotaAcceso";
+import { puedeVerProveedores } from "../proveedores/proveedoresAcceso";
 
 // Submenú de Combustible. Los íconos son de trazo (lucide), los mismos que
 // usan las acciones de la tabla de tanques. El orden sigue el flujo: primero el alta (proveedores
@@ -80,6 +83,14 @@ const SUBMENU_FLOTA: { tab: string; label: string; Icono: LucideIcon }[] = [
   { tab: "flota:viajes", label: "Viajes", Icono: Route },
 ];
 
+// Gestión de proveedores es un ECOSISTEMA: un espacio aparte con su propio menú (ver
+// EcosistemaProveedores). Acá solo está la puerta: la entrada del ERP y un submenú con el acceso.
+const SUBMENU_PROVEEDORES: { tab: string; label: string; Icono: LucideIcon }[] = [
+  { tab: "proveedores:centro", label: "Centro de administración", Icono: LayoutDashboard },
+];
+/** La etiqueta «Nuevo» de la entrada, con su propia clave (ver controlTv/novedad.ts). */
+const NOVEDAD_PROVEEDORES = "gestion-proveedores-2026-11";
+
 interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: any) => void;
@@ -93,7 +104,11 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
   // Flota aparece si hay algo adentro: quien solo tiene Viajes (sin Registro de
   // unidades) también ve el grupo.
   const tabs = MODULOS_CLIENTE.filter((modulo) =>
-    modulo.id === "flota" ? puedeVerFlota(usuario) : usuario?.modulosPermitidos.includes(modulo.id)
+    modulo.id === "flota"
+      ? puedeVerFlota(usuario)
+      : modulo.id === "proveedores"
+        ? puedeVerProveedores(usuario)
+        : usuario?.modulosPermitidos.includes(modulo.id)
   );
   const submenusFlota = SUBMENU_FLOTA.filter(({ tab }) =>
     tab === "flota" ? puedeVerUnidades(usuario) : puedeVerViajes(usuario)
@@ -197,6 +212,8 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
   const [combustibleDesplegado, setCombustibleDesplegado] = useState(false);
   // Igual el de Gestión operacional de flota.
   const [flotaDesplegada, setFlotaDesplegada] = useState(false);
+  // Y el de Gestión de proveedores: la entrada solo despliega, el submenú abre el ecosistema.
+  const [proveedoresDesplegado, setProveedoresDesplegado] = useState(false);
 
   return (
     <aside
@@ -282,20 +299,36 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
               </Fragment>
             );
           }
-          const tieneSubmenu = esCombustible || esFlota;
+          const esProveedores = tab.id === "proveedores";
+          const tieneSubmenu = esCombustible || esFlota || esProveedores;
           const isActive = esCombustible
             ? activeTab === "combustible" || activeTab.startsWith("combustible:")
             : esFlota
               ? activeTab === "flota" || activeTab.startsWith("flota:")
-              : activeTab === tab.id;
-          const desplegado = esCombustible ? combustibleDesplegado : flotaDesplegada;
+              : esProveedores
+                ? activeTab.startsWith("proveedores")
+                : activeTab === tab.id;
+          const desplegado = esCombustible
+            ? combustibleDesplegado
+            : esProveedores
+              ? proveedoresDesplegado
+              : flotaDesplegada;
           const alternarDespliegue = () =>
-            esCombustible ? setCombustibleDesplegado((v) => !v) : setFlotaDesplegada((v) => !v);
+            esCombustible
+              ? setCombustibleDesplegado((v) => !v)
+              : esProveedores
+                ? setProveedoresDesplegado((v) => !v)
+                : setFlotaDesplegada((v) => !v);
           return (
             <Fragment key={tab.id}>
               <div>
                 <button
                   onClick={() => {
+                    // La entrada de un ecosistema solo despliega su submenú; se entra por él.
+                    if (esProveedores) {
+                      setProveedoresDesplegado((v) => !v);
+                      return;
+                    }
                     if (esCombustible) setCombustibleDesplegado(true);
                     if (esFlota) setFlotaDesplegada(true);
                     setActiveTab(
@@ -324,6 +357,11 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
                     className={`shrink-0 ${isActive ? "text-[#0A1014]" : "text-slate-400 group-hover:text-[#0A1014]"}`}
                   />
                   <span className="tracking-tight flex-1">{tab.label}</span>
+                  {esProveedores && novedadVigente(undefined, undefined, NOVEDAD_PROVEEDORES) && (
+                    <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-[#BADC1E] text-[#0A1014] group-hover:bg-[#0A1014] group-hover:text-[#BADC1E]">
+                      Nuevo
+                    </span>
+                  )}
                   {tieneSubmenu && (
                     <span
                       role="button"
@@ -345,10 +383,20 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
                 </button>
                 {tieneSubmenu && (
                   <SubmenuDesplegable
-                    items={esCombustible ? submenusVisibles : submenusFlota}
+                    items={
+                      esCombustible
+                        ? submenusVisibles
+                        : esProveedores
+                          ? SUBMENU_PROVEEDORES
+                          : submenusFlota
+                    }
                     desplegado={desplegado}
                     activeTab={activeTab}
-                    setActiveTab={setActiveTab}
+                    setActiveTab={(destino) => {
+                      if (esProveedores)
+                        marcarNovedadVista(undefined, undefined, NOVEDAD_PROVEEDORES);
+                      setActiveTab(destino);
+                    }}
                   />
                 )}
               </div>

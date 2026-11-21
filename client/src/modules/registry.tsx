@@ -16,6 +16,7 @@
 // módulo solo viaja al navegador si ese usuario realmente lo tiene
 // habilitado y lo abre — ver App.tsx (<Suspense>).
 import {
+  Building2,
   ClipboardCheck,
   FileText,
   Fuel,
@@ -93,6 +94,14 @@ export const MODULOS_CLIENTE: ModuloCliente[] = [
     label: "Órdenes de Trabajo",
     icono: Hammer,
     componente: lazy(() => import("../components/ordenes_trabajo/OrdenesTrabajoView")),
+  },
+  {
+    // Ecosistema «Gestión de proveedores»: un espacio aparte con su propio menú. App.tsx lo dibuja
+    // FUERA del Layout del ERP (ver EcosistemaProveedores).
+    id: "proveedores",
+    label: "Gestión de proveedores",
+    icono: Building2,
+    componente: lazy(() => import("../components/proveedores/EcosistemaProveedores")),
   },
 ];
 

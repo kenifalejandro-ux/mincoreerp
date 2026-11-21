@@ -1,5 +1,13 @@
 // client/src/App.tsx
-import { Suspense, lazy, useEffect, useState, type ComponentType } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+} from "react";
 
 import { puedeVerBandeja } from "./components/bandeja/bandejaAcceso";
 import { puedeVerCisternas } from "./components/combustible/cisternasAcceso";
@@ -15,6 +23,12 @@ import {
   puedeVerViajes,
 } from "./components/flota/flotaAcceso";
 import Layout from "./components/layout/Layout";
+import PantallaDeCarga from "./components/proveedores/PantallaDeCarga";
+import { puedeVerProveedores } from "./components/proveedores/proveedoresAcceso";
+import {
+  duracionDeTransicion,
+  type TransicionDeEcosistema,
+} from "./components/proveedores/transicionDeEcosistema";
 import { useAuth } from "./context/AuthContext";
 import { MODULOS_CLIENTE } from "./modules/registry";
 import CambiarPasswordObligatoria from "./pages/CambiarPasswordObligatoria";
@@ -60,6 +74,8 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
     return false;
   }
   if (moduloId === "administracion") return usuario?.rol === "admin";
+  // Gestión de proveedores: ecosistema aparte, con su propio permiso (ver proveedoresAcceso.ts).
+  if (moduloId === "proveedores") return puedeVerProveedores(usuario);
   // La Bandeja no es un módulo: junta las alertas de los que sí lo son.
   if (moduloId === "bandeja") return puedeVerBandeja(usuario);
   // Gestión operacional de flota: "flota" es Registro de unidades y
@@ -126,6 +142,30 @@ function primeraPestania(usuario: UsuarioDeSesion): string {
 function App() {
   const { usuario, cargando, estaAutenticado, login } = useAuth();
   const [activeTab, setActiveTab] = useState("dashboard");
+  // Entrar a un ecosistema (o volver al ERP) cambia de menú, de colores y de cabecera: una pantalla
+  // de carga cubre el salto y el cambio se hace por debajo.
+  const [transicion, setTransicion] = useState<TransicionDeEcosistema | null>(null);
+  const temporizador = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(temporizador.current), []);
+  const irA = useCallback(
+    (destino: string) => {
+      const enEcosistema = (tab: string) => moduloIdDe(tab) === "proveedores";
+      const entra = enEcosistema(destino) && !enEcosistema(activeTab);
+      const vuelve = !enEcosistema(destino) && enEcosistema(activeTab);
+      if (!entra && !vuelve) {
+        setActiveTab(destino);
+        return;
+      }
+      if (temporizador.current !== undefined) return; // ya hay una transición en curso
+      setTransicion(entra ? "entrar" : "volver");
+      temporizador.current = window.setTimeout(() => {
+        setActiveTab(destino);
+        setTransicion(null);
+        temporizador.current = undefined;
+      }, duracionDeTransicion());
+    },
+    [activeTab]
+  );
 
   // "dashboard" fijo dejaba la pantalla EN BLANCO a cualquiera que no tuviera
   // ese módulo: el Sidebar no le dibuja el botón, activeTab queda apuntando a
@@ -233,11 +273,23 @@ function App() {
   const ComponenteConProps = ComponenteActivo as ComponentType<Record<string, unknown>> | undefined;
 
   return (
-    <Layout activeTab={tabActiva} setActiveTab={setActiveTab}>
-      <Suspense fallback={<div className="p-20 text-center text-slate-500">Cargando...</div>}>
-        {ComponenteConProps && <ComponenteConProps {...propsExtra} />}
-      </Suspense>
-    </Layout>
+    <>
+      {moduloIdActivo === "proveedores" ? (
+        // El ecosistema va fuera del Layout: tiene su propia cabecera y su propio menú.
+        <Suspense fallback={<div className="p-20 text-center text-slate-500">Cargando...</div>}>
+          {ComponenteConProps && (
+            <ComponenteConProps onSalir={() => irA(primeraPestania(usuario))} />
+          )}
+        </Suspense>
+      ) : (
+        <Layout activeTab={tabActiva} setActiveTab={irA}>
+          <Suspense fallback={<div className="p-20 text-center text-slate-500">Cargando...</div>}>
+            {ComponenteConProps && <ComponenteConProps {...propsExtra} />}
+          </Suspense>
+        </Layout>
+      )}
+      {transicion && <PantallaDeCarga tipo={transicion} />}
+    </>
   );
 }
 

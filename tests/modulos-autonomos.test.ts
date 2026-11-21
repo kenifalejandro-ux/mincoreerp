@@ -46,6 +46,7 @@ const MODULO_DE_CARPETA: Record<string, string> = {
   repuestos: "repuestos",
   documentos: "documentos",
   dashboard: "dashboard",
+  proveedores: "proveedores",
 };
 
 function moduloDeArchivo(rutaAbsoluta: string): string | null {
