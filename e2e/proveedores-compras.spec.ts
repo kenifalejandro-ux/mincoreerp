@@ -296,7 +296,8 @@ test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", a
       page.getByRole("heading", { name: "Precios de proveedores", level: 1 })
     ).toBeVisible();
     await expect(page.getByRole("alert")).toHaveCount(0);
-    await expect(page.getByText(/Se cargan en Combustible → Precios/)).toBeVisible({
+    // Sin Combustible, esta empresa carga sus propios precios desde acá (no hay a dónde mandarla).
+    await expect(page.getByText(/Carga el primero con «Nuevo precio»/)).toBeVisible({
       timeout: 15_000,
     });
     await menu.getByRole("button", { name: "Compras y recepciones" }).click();
@@ -307,6 +308,32 @@ test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", a
     await expect(page.getByText(/Todavía no hay compras de cisterna/)).toBeVisible({
       timeout: 15_000,
     });
+
+    // Carga un precio de ruta desde el ecosistema, sin pasar por Combustible, y lo anula con motivo.
+    const ruta = `SOLO RUTA ${marca}`;
+    const alta = await page.request.post("/api/erp/proveedores", {
+      data: {
+        nombre: ruta,
+        ruc: "",
+        abastece_tanque: false,
+        abastece_ruta: true,
+        abastece_urea: false,
+        abastece_urea_ruta: false,
+      },
+    });
+    expect(alta.ok(), await alta.text()).toBeTruthy();
+    await menu.getByRole("button", { name: "Gestión comercial" }).click();
+    await page.getByRole("button", { name: "Nuevo precio" }).first().click();
+    const nuevoPrecio = page.getByRole("dialog", { name: "Nuevo precio" });
+    await nuevoPrecio.getByLabel(ruta).check();
+    await nuevoPrecio.getByLabel(/^Precio por/).fill("16.2");
+    await nuevoPrecio.getByRole("button", { name: "Cargar precio" }).click();
+    await expect(nuevoPrecio).toHaveCount(0);
+    await expect(page.getByRole("row", { name: new RegExp(ruta) }).first()).toContainText(
+      "S/ 16.20",
+      { timeout: 20_000 }
+    );
+    await menu.getByRole("button", { name: "Compras y recepciones" }).click();
 
     // Y puede hacer su trabajo de punta a punta: registrar, habilitar y anular una compra. Sin Combustible
     // llega hasta «por llegar» (la descarga en cancha es de Combustible) y la pantalla lo dice.

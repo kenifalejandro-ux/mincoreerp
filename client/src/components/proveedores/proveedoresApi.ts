@@ -204,3 +204,41 @@ export const habilitarCompra = (id: number) =>
   enviar<CompraDeCisterna>(`/compras/${id}/habilitar`, "PATCH");
 export const anularCompra = (id: number, motivo: string) =>
   enviar<CompraDeCisterna>(`/compras/${id}/anular`, "PATCH", { motivo });
+
+// ── Cargar y anular precios de proveedores (PR4b) ───────────────────────────────────────────────
+
+export type TipoCombustibleDePrecio = TipoCombustibleCompra;
+
+/** Lo que trae el formulario: a qué proveedores y presentaciones se les puede poner precio, según los
+ *  permisos de esta persona (`combustible` / `urea` dicen qué productos puede cargar). */
+export interface DatosFormularioPrecio {
+  combustible: boolean;
+  urea: boolean;
+  proveedoresCombustible: { id: number; nombre: string }[];
+  proveedoresUrea: { id: number; nombre: string }[];
+  presentaciones: { codigo: string; nombre: string; litros: string | null }[];
+}
+
+export interface CuerpoPreciosCombustible {
+  tipo_combustible: TipoCombustibleDePrecio;
+  grifo_ids: number[];
+  precio_unitario: number;
+  /** ISO 8601; ausente = rige desde ahora. */
+  vigente_desde?: string;
+}
+
+export interface CuerpoPrecioUrea {
+  grifo_id: number;
+  presentacion: string;
+  marca?: string;
+  precio_por_bulto: number;
+  vigente_desde?: string;
+}
+
+export const datosFormularioPrecio = () => leer<DatosFormularioPrecio>("/precios/formulario");
+export const cargarPreciosCombustible = (cuerpo: CuerpoPreciosCombustible) =>
+  enviar<unknown>("/precios/combustible", "POST", cuerpo);
+export const cargarPrecioUrea = (cuerpo: CuerpoPrecioUrea) =>
+  enviar<unknown>("/precios/urea", "POST", cuerpo);
+export const anularPrecio = (producto: "combustible" | "urea", id: number, motivo: string) =>
+  enviar<unknown>(`/precios/${producto}/${id}/anular`, "PATCH", { motivo });

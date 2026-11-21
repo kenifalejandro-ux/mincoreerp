@@ -10,6 +10,7 @@ import type { PoolClient } from "pg";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { armarFilasDePrecios, type FilaPrecioDto } from "./proveedores.precios";
 import { armarCompras, type CompraDto } from "./proveedores.compras";
+import { CombustibleService } from "../combustible/combustible.service";
 import {
   anularCompra,
   crearCompra,
@@ -21,10 +22,13 @@ import {
 import type { AlcanceCombustible } from "../combustible/alcance";
 import type {
   AnularCompraCisternaInput,
+  AnularPrecioCombustibleInput,
   CrearCompraCisternaInput,
+  CrearPrecioUreaInput,
 } from "../../server/schemas/combustible.schema";
 import type {
   ActualizarProveedorInput,
+  CrearPreciosProveedoresInput,
   CrearProveedorInput,
 } from "../../server/schemas/proveedores.schema";
 import {
@@ -91,8 +95,36 @@ export function resumir(lista: ProveedorDto[]): ResumenProveedores {
   };
 }
 
+/** Las reglas de precios (proveedor de ruta y activo, urea y presentación activa) viven en
+ *  CombustibleService y lanzan `Error` con un mensaje claro: acá pasan a 400, como allá. */
+function comoErrorDeNegocioDePrecio(err: unknown): unknown {
+  if (
+    err instanceof Error &&
+    !(err instanceof AppError) &&
+    (err.message.includes("no existe en este tenant") ||
+      err.message.includes("no está marcado como"))
+  ) {
+    return new AppError(400, err.message);
+  }
+  return err;
+}
+
+export interface FormularioDePrecios {
+  /** Proveedores de ruta activos (combustible); vacío si esta persona no carga precios de combustible. */
+  proveedoresCombustible: { id: number; nombre: string }[];
+  /** Proveedores de urea activos; vacío si no carga precios de urea. */
+  proveedoresUrea: { id: number; nombre: string }[];
+  /** Presentaciones de urea activas. */
+  presentaciones: { codigo: string; nombre: string; litros: string | null }[];
+  combustible: boolean;
+  urea: boolean;
+}
+
 export class ProveedoresService {
-  constructor(private readonly repository = new ProveedoresRepository()) {}
+  constructor(
+    private readonly repository = new ProveedoresRepository(),
+    private readonly combustible = new CombustibleService()
+  ) {}
 
   async listar(client: PoolClient, tenantId: string): Promise<ProveedorDto[]> {
     return (await this.repository.listar(client, tenantId)).map(aDto);
@@ -151,6 +183,104 @@ export class ProveedoresService {
       tolerancia,
       compras: armarCompras(filas, new Map(recepciones.map((r) => [Number(r.id), r])), tolerancia),
     };
+  }
+
+  // ── Escribir precios (PR4b): las reglas son las de Combustible (CombustibleService), que valida
+  // proveedor de ruta activo, proveedor y presentación de urea, y apila el precio sin pisar nada. Acá solo
+  // se cargan precios de PROVEEDORES; los de tanque (venta interna) son de Combustible.
+
+  async datosParaFormularioDePrecios(
+    client: PoolClient,
+    tenantId: string,
+    ver: { combustible: boolean; urea: boolean }
+  ): Promise<FormularioDePrecios> {
+    const proveedores = await this.listar(client, tenantId);
+    const presentaciones = ver.urea
+      ? await this.repository.presentacionesDeUreaActivas(client, tenantId)
+      : [];
+    return {
+      combustible: ver.combustible,
+      urea: ver.urea,
+      proveedoresCombustible: ver.combustible
+        ? proveedores
+            .filter((p) => p.activo && p.combustible.externo)
+            .map((p) => ({ id: p.id, nombre: p.nombre }))
+        : [],
+      proveedoresUrea: ver.urea
+        ? proveedores
+            .filter((p) => p.activo && (p.urea.interno || p.urea.externo))
+            .map((p) => ({ id: p.id, nombre: p.nombre }))
+        : [],
+      presentaciones,
+    };
+  }
+
+  async crearPreciosCombustible(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: CrearPreciosProveedoresInput
+  ) {
+    try {
+      return await this.combustible.crearPreciosMasivo(client, tenantId, usuarioId, data);
+    } catch (err) {
+      throw comoErrorDeNegocioDePrecio(err);
+    }
+  }
+
+  async crearPrecioUrea(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: CrearPrecioUreaInput
+  ) {
+    try {
+      return await this.combustible.crearPrecioUrea(client, tenantId, usuarioId, data);
+    } catch (err) {
+      throw comoErrorDeNegocioDePrecio(err);
+    }
+  }
+
+  /** Anula un precio de combustible DE UN PROVEEDOR con motivo; nunca se borra. 404 si no existe o es de un
+   *  tanque, 409 si ya estaba anulado. */
+  async anularPrecioCombustible(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    id: number,
+    data: AnularPrecioCombustibleInput
+  ) {
+    const existente = await this.combustible.getPrecioPorId(client, tenantId, id);
+    if (!existente || existente.grifo_id === null) throw new AppError(404, "Precio no encontrado");
+    const anulado = await this.combustible.anularPrecio(
+      client,
+      tenantId,
+      id,
+      usuarioId,
+      data.motivo
+    );
+    if (!anulado) throw new AppError(409, "Este precio ya estaba anulado");
+    return anulado;
+  }
+
+  async anularPrecioUrea(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    id: number,
+    data: AnularPrecioCombustibleInput
+  ) {
+    const anulado = await this.combustible.anularPrecioUrea(
+      client,
+      tenantId,
+      id,
+      usuarioId,
+      data.motivo
+    );
+    if (anulado) return anulado;
+    throw (await this.combustible.existePrecioUrea(client, tenantId, id))
+      ? new AppError(409, "Este precio ya estaba anulado")
+      : new AppError(404, "Precio no encontrado");
   }
 
   // ── Escribir compras (PR5b): las reglas son las de Combustible, que ya valida proveedor de tanque,

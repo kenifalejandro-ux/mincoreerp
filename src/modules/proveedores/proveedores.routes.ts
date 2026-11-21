@@ -2,7 +2,7 @@
  *
  * Ecosistema «Gestión de proveedores» (PR1, solo lectura): resumen del Centro de gestión, listado del
  * Directorio y ficha; el PR2 suma el alta y la edición (POST y PUT); el PR5b, registrar, habilitar y
- * anular compras de cisterna.
+ * anular compras de cisterna; el PR4b, cargar y anular precios de proveedores.
  *
  * Sin permiso de pestaña a propósito: el acceso lo da el MÓDULO asignado a cada persona (los perfiles
  * de cancha no lo reciben por su rol, ver MODULOS_POR_ROL) y el perfil Lectura mira pero no escribe
@@ -15,14 +15,20 @@ import { withTenant } from "../../server/config/database";
 import { validate } from "../../server/middleware/validate";
 import {
   anularCompraCisternaSchema,
+  anularPrecioCombustibleSchema,
   crearCompraCisternaSchema,
+  crearPrecioUreaSchema,
   type AnularCompraCisternaInput,
+  type AnularPrecioCombustibleInput,
   type CrearCompraCisternaInput,
+  type CrearPrecioUreaInput,
 } from "../../server/schemas/combustible.schema";
 import {
   actualizarProveedorSchema,
+  crearPreciosProveedoresSchema,
   crearProveedorSchema,
   type ActualizarProveedorInput,
+  type CrearPreciosProveedoresInput,
   type CrearProveedorInput,
 } from "../../server/schemas/proveedores.schema";
 import { registrarAuditoria } from "../../server/services/platformAudit.service";
@@ -99,6 +105,157 @@ router.get(
         service.compras(client, tenantId, alcanceDe(req), gestiona)
       )
     );
+  })
+);
+
+// PR4b: cargar y anular precios de PROVEEDORES desde el ecosistema (combustible de ruta y urea). Mismas
+// reglas y mismos permisos que Combustible → Precios: `tanques:precios` (combustible) o `urea:precios`
+// (urea) y rol admin u operador; Lectura y los módulos en «Consultas» los corta requireNivelParaEscribir.
+// El precio se apila con su `vigente_desde`, nunca se edita; uno mal cargado se anula con motivo. Los
+// precios de tanque (venta interna) siguen siendo de Combustible.
+const preciosDeCombustible = [
+  requirePestana("combustible", "tanques:precios"),
+  requireRole("admin", "operador"),
+];
+const preciosDeUrea = [
+  requirePestana("combustible", "urea:precios"),
+  requireRole("admin", "operador"),
+];
+const idDePrecio = (req: Request): number => {
+  const id = Number(req.params.precioId);
+  if (!Number.isSafeInteger(id) || id <= 0 || id > 2147483647) {
+    throw new AppError(400, "El identificador del precio no es válido");
+  }
+  return id;
+};
+
+router.get(
+  "/precios/formulario",
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const usuario = req.usuario!;
+    const puedeCargar = usuario.rol === "admin" || usuario.rol === "operador";
+    const ver = {
+      combustible: puedeCargar && pestanaPermitida(usuario, "combustible", "tanques:precios"),
+      urea: puedeCargar && pestanaPermitida(usuario, "combustible", "urea:precios"),
+    };
+    if (!ver.combustible && !ver.urea) {
+      throw new AppError(403, "Pestaña no disponible para este perfil");
+    }
+    res.json(
+      await withTenant(tenantId, (client) =>
+        service.datosParaFormularioDePrecios(client, tenantId, ver)
+      )
+    );
+  })
+);
+
+router.post(
+  "/precios/combustible",
+  ...preciosDeCombustible,
+  validate(crearPreciosProveedoresSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const data = req.validatedBody as CrearPreciosProveedoresInput;
+    const creados = await withTenant(tenantId, (client) =>
+      service.crearPreciosCombustible(client, tenantId, req.usuario!.id, data)
+    );
+    // Mover un precio es mover el control: queda quién y qué (el valor del precio es el hecho auditado).
+    for (const precio of creados) {
+      await registrarAuditoria({
+        accion: "proveedores.precio_crear",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: {
+          precioId: precio.id,
+          proveedorId: precio.grifo_id,
+          producto: "combustible",
+          tipoCombustible: data.tipo_combustible,
+          precioUnitario: data.precio_unitario,
+          masivo: creados.length > 1,
+        },
+        contexto: contextoAuditoriaModulo(req),
+      });
+    }
+    res.status(201).json(creados);
+  })
+);
+
+router.post(
+  "/precios/urea",
+  ...preciosDeUrea,
+  validate(crearPrecioUreaSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const data = req.validatedBody as CrearPrecioUreaInput;
+    const fila = await withTenant(tenantId, (client) =>
+      service.crearPrecioUrea(client, tenantId, req.usuario!.id, data)
+    );
+    await registrarAuditoria({
+      accion: "proveedores.precio_crear",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: {
+        precioId: fila.id,
+        proveedorId: data.grifo_id,
+        producto: "urea",
+        presentacion: data.presentacion,
+        precioPorBulto: data.precio_por_bulto,
+        vigenteDesde: fila.vigente_desde,
+      },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.urea_precios_cambiaron", {
+      precioId: fila.id,
+    });
+    res.status(201).json(fila);
+  })
+);
+
+router.patch(
+  "/precios/combustible/:precioId(\\d+)/anular",
+  ...preciosDeCombustible,
+  validate(anularPrecioCombustibleSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = idDePrecio(req);
+    const data = req.validatedBody as AnularPrecioCombustibleInput;
+    const precio = await withTenant(tenantId, (client) =>
+      service.anularPrecioCombustible(client, tenantId, req.usuario!.id, id, data)
+    );
+    await registrarAuditoria({
+      accion: "proveedores.precio_anular",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { precioId: id, producto: "combustible", motivo: data.motivo },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    res.json(precio);
+  })
+);
+
+router.patch(
+  "/precios/urea/:precioId(\\d+)/anular",
+  ...preciosDeUrea,
+  validate(anularPrecioCombustibleSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = idDePrecio(req);
+    const data = req.validatedBody as AnularPrecioCombustibleInput;
+    const fila = await withTenant(tenantId, (client) =>
+      service.anularPrecioUrea(client, tenantId, req.usuario!.id, id, data)
+    );
+    await registrarAuditoria({
+      accion: "proveedores.precio_anular",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { precioId: id, producto: "urea", motivo: data.motivo },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    await publicarEventoTenant(tenantId, "combustible.urea_precios_cambiaron", {
+      precioId: id,
+    });
+    res.json(fila);
   })
 );
 

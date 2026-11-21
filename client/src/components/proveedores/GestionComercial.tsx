@@ -6,10 +6,12 @@
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import BotonNuevoPrecio from "./BotonNuevoPrecio";
 import { clavesConMejorPrecio, totales } from "./preciosProveedores";
 import { type FilaPrecio } from "./proveedoresApi";
 import { PrecioVigente, Programado, RigeDesde, Variacion } from "./TablaDePrecios";
 import { usePrecios } from "./usePrecios";
+import { usePuedeCargarPrecios } from "./usePuedeCargarPrecios";
 
 type FiltroProducto = "todos" | "combustible" | "urea";
 type FiltroEstado = "todos" | "con" | "sin";
@@ -29,7 +31,9 @@ export default function GestionComercial({
 }: {
   onAbrirProveedor: (proveedorId: number) => void;
 }) {
-  const { datos, error } = usePrecios();
+  const { datos, error, recargar } = usePrecios();
+  const puedeCargar = usePuedeCargarPrecios(datos);
+  const [aviso, setAviso] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
   const [producto, setProducto] = useState<FiltroProducto>("todos");
   const [estado, setEstado] = useState<FiltroEstado>("todos");
@@ -55,15 +59,35 @@ export default function GestionComercial({
     "h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#84cc16]";
   return (
     <div className="space-y-5">
-      <header>
-        <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-slate-500">
-          Abastecimiento / Gestión comercial
-        </p>
-        <h1 className="text-3xl font-semibold text-slate-900 mt-1">Precios de proveedores</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Lo que cobra cada proveedor de ruta (combustible) y de urea, con su precio vigente.
-        </p>
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-slate-500">
+            Abastecimiento / Gestión comercial
+          </p>
+          <h1 className="text-3xl font-semibold text-slate-900 mt-1">Precios de proveedores</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Lo que cobra cada proveedor de ruta (combustible) y de urea, con su precio vigente.
+          </p>
+        </div>
+        {puedeCargar && (
+          <BotonNuevoPrecio
+            filas={filas}
+            onCargado={(mensaje) => {
+              setAviso(mensaje);
+              recargar();
+            }}
+          />
+        )}
       </header>
+
+      {aviso && (
+        <p
+          role="status"
+          className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg p-3"
+        >
+          {aviso}
+        </p>
+      )}
 
       <section aria-label="Resumen" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Total
@@ -151,7 +175,7 @@ export default function GestionComercial({
                 <tr>
                   <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
                     {filas.length === 0
-                      ? "Todavía no hay precios de proveedores. Se cargan en Combustible → Precios."
+                      ? `Todavía no hay precios de proveedores.${puedeCargar ? " Carga el primero con «Nuevo precio»." : " Se cargan en Combustible → Precios."}`
                       : "Ningún precio coincide con los filtros."}
                   </td>
                 </tr>
@@ -202,7 +226,9 @@ export default function GestionComercial({
           </table>
         </div>
         <p className="px-4 py-3 text-xs text-slate-500">
-          Aquí solo se consultan. Los precios se cargan y se anulan en Combustible → Precios.
+          {puedeCargar
+            ? "Un precio nuevo rige desde su fecha y el anterior queda en la historia; uno mal cargado se anula desde la ficha del proveedor. Los precios de tanque (venta interna) se cargan en Combustible → Precios."
+            : "Aquí solo se consultan. Los precios se cargan y se anulan en Combustible → Precios."}
         </p>
       </section>
     </div>

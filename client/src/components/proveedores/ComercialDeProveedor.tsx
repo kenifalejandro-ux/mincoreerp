@@ -1,16 +1,27 @@
 // client/src/components/proveedores/ComercialDeProveedor.tsx
 //
 // La pestaña «Comercial» de la ficha: los precios de UN proveedor, cada uno con su historia (los
-// anulados se ven tachados con su motivo). Solo lectura.
+// anulados se ven tachados con su motivo). Quien carga precios puede poner uno nuevo y anular uno mal
+// cargado (con motivo); el resto solo lo consulta.
 import { useState } from "react";
 
+import AnularPrecio from "./AnularPrecio";
+import BotonNuevoPrecio from "./BotonNuevoPrecio";
 import { formatoFecha, formatoPrecio } from "./preciosProveedores";
 import { PrecioVigente, Programado, RigeDesde, Variacion } from "./TablaDePrecios";
 import { usePrecios } from "./usePrecios";
+import { usePuedeCargarPrecios } from "./usePuedeCargarPrecios";
 
 export default function ComercialDeProveedor({ proveedorId }: { proveedorId: number }) {
-  const { datos, error } = usePrecios();
+  const { datos, error, recargar } = usePrecios();
+  const puedeCargar = usePuedeCargarPrecios(datos);
   const [ahora] = useState(() => Date.now());
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [anulando, setAnulando] = useState<{
+    producto: "combustible" | "urea";
+    id: number;
+    descripcion: string;
+  } | null>(null);
   const filas = (datos?.filas ?? []).filter((f) => f.proveedorId === proveedorId);
 
   if (error)
@@ -23,16 +34,43 @@ export default function ComercialDeProveedor({ proveedorId }: { proveedorId: num
       </p>
     );
   if (datos === null) return <p className="text-sm text-slate-500">Cargando…</p>;
+  const boton = puedeCargar && (
+    <BotonNuevoPrecio
+      filas={datos.filas}
+      proveedorInicial={proveedorId}
+      onCargado={(mensaje) => {
+        setAviso(mensaje);
+        recargar();
+      }}
+    />
+  );
+  const mensaje = aviso && (
+    <p
+      role="status"
+      className="text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg p-3"
+    >
+      {aviso}
+    </p>
+  );
   if (filas.length === 0)
     return (
-      <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 text-sm text-slate-600">
-        <h2 className="text-base font-semibold text-slate-900 mb-1">Sin precios</h2>
-        Este proveedor todavía no tiene precios cargados. Se cargan en Combustible → Precios.
-      </section>
+      <div className="space-y-4">
+        {mensaje}
+        <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 text-sm text-slate-600 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900 mb-1">Sin precios</h2>
+            Este proveedor todavía no tiene precios cargados.
+            {puedeCargar ? "" : " Se cargan en Combustible → Precios."}
+          </div>
+          {boton}
+        </section>
+      </div>
     );
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-end gap-3">{boton}</div>
+      {mensaje}
       {filas.map((f) => (
         <article key={f.clave} className="bg-white border border-slate-200 rounded-xl shadow-sm">
           <header className="flex flex-wrap items-start justify-between gap-4 p-5">
@@ -93,6 +131,21 @@ export default function ComercialDeProveedor({ proveedorId }: { proveedorId: num
                     {h.anulado && (
                       <span className="text-xs">(anulado: {h.motivo ?? "sin motivo"})</span>
                     )}
+                    {puedeCargar && !h.anulado && (
+                      <button
+                        onClick={() =>
+                          setAnulando({
+                            producto: f.producto,
+                            id: h.id,
+                            descripcion: `${f.detalle} · ${formatoPrecio(h.precio)} desde ${formatoFecha(h.desde)}`,
+                          })
+                        }
+                        aria-label={`Anular precio ${f.detalle} ${formatoPrecio(h.precio)}`}
+                        className="ml-auto h-7 px-2.5 rounded-lg border border-red-200 text-xs font-semibold text-red-700 hover:bg-red-50"
+                      >
+                        Anular
+                      </button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -100,6 +153,19 @@ export default function ComercialDeProveedor({ proveedorId }: { proveedorId: num
           </details>
         </article>
       ))}
+      {anulando && (
+        <AnularPrecio
+          producto={anulando.producto}
+          precioId={anulando.id}
+          descripcion={anulando.descripcion}
+          onCerrar={() => setAnulando(null)}
+          onAnulado={() => {
+            setAnulando(null);
+            setAviso("Precio anulado.");
+            recargar();
+          }}
+        />
+      )}
     </div>
   );
 }
