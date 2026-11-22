@@ -46,7 +46,7 @@ test("con ambos módulos «Proveedores» sale del menú de Combustible y el alta
 
   // El proveedor existe y se maneja en el ecosistema, con su dirección.
   await page.goto("/proveedores/directorio");
-  await page.getByPlaceholder("Buscar por nombre, código o RUC").fill(marca);
+  await page.getByPlaceholder("Buscar por razón social, RUC, código o ciudad...").fill(marca);
   await expect(page.getByRole("row", { name: new RegExp(nombre) })).toBeVisible({
     timeout: 20_000,
   });

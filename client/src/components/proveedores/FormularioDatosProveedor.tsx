@@ -93,12 +93,25 @@ export default function FormularioDatosProveedor({
 
         <div className="p-5 space-y-4">
           <div>
+            <label htmlFor="datos-ciudad" className={ETIQUETA}>
+              Ciudad
+            </label>
+            <input
+              id="datos-ciudad"
+              ref={primero}
+              value={form.ciudad}
+              onChange={(e) => cambiar("ciudad", e.target.value)}
+              maxLength={80}
+              placeholder="Ej. Arequipa"
+              className={`${CAMPO} mt-1`}
+            />
+          </div>
+          <div>
             <label htmlFor="datos-direccion" className={ETIQUETA}>
               Dirección
             </label>
             <input
               id="datos-direccion"
-              ref={primero}
               value={form.direccion}
               onChange={(e) => cambiar("direccion", e.target.value)}
               maxLength={250}

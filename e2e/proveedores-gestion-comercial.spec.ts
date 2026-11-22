@@ -197,7 +197,7 @@ test("gestión comercial: precio vigente, variación, ficha y Lectura sin acceso
     ).toBeVisible();
     await expect(menuLectura.getByRole("button", { name: "Gestión comercial" })).toHaveCount(0);
     await menuLectura.getByRole("button", { name: "Directorio de proveedores" }).click();
-    await lectura.getByPlaceholder("Buscar por nombre, código o RUC").fill(marca);
+    await lectura.getByPlaceholder("Buscar por razón social, RUC, código o ciudad...").fill(marca);
     await lectura
       .getByRole("row", { name: new RegExp(conPrecio) })
       .getByRole("button", { name: new RegExp(conPrecio) })

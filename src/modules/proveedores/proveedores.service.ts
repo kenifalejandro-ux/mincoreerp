@@ -9,6 +9,12 @@ import type { PoolClient } from "pg";
 
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { cifrar, descifrar, huellaDe } from "../../server/shared/utils/platformCrypto";
+import {
+  calcularFichaCompleta,
+  precioDelDirectorio,
+  type FichaCompleta,
+  type PrecioDelDirectorio,
+} from "./proveedores.directorio";
 import { armarFilasDePrecios, type FilaPrecioDto } from "./proveedores.precios";
 import { armarCompras, type CompraDto } from "./proveedores.compras";
 import {
@@ -66,6 +72,13 @@ export interface ProveedorDto {
   tipos: TipoProveedor[];
   combustible: { interno: boolean; externo: boolean };
   urea: { interno: boolean; externo: boolean };
+}
+
+export interface ProveedorEnDirectorioDto extends ProveedorDto {
+  ciudad: string | null;
+  fichaCompleta: FichaCompleta;
+  /** El primer precio vigente. Ausente si esta persona no ve precios; `null` si no tiene ninguno. */
+  precioVigente?: PrecioDelDirectorio | null;
 }
 
 export interface ResumenProveedores {
@@ -128,6 +141,7 @@ function comoErrorDeNegocioDePrecio(err: unknown): unknown {
 
 export interface DatosProveedorDto {
   direccion: string | null;
+  ciudad: string | null;
   telefono: string | null;
   correo: string | null;
   formaPago: "contado" | "credito" | null;
@@ -219,6 +233,7 @@ export interface FichaProveedorDto {
 
 const DATOS_VACIOS: DatosProveedorDto = {
   direccion: null,
+  ciudad: null,
   telefono: null,
   correo: null,
   formaPago: null,
@@ -230,6 +245,7 @@ export function datosADto(fila: FilaDatosProveedor | undefined): DatosProveedorD
   if (!fila) return { ...DATOS_VACIOS };
   return {
     direccion: fila.direccion,
+    ciudad: fila.ciudad,
     telefono: fila.telefono,
     correo: fila.correo,
     formaPago: fila.forma_pago,
@@ -272,6 +288,43 @@ export class ProveedoresService {
     private readonly repository = new ProveedoresRepository(),
     private readonly combustible = new CombustibleService()
   ) {}
+
+  /** El Directorio: cada proveedor con su ciudad, qué tan completa está su ficha y, para quien ve precios, su
+   *  precio vigente (`precioVigente` ausente = esta persona no ve precios; `null` = no tiene ninguno). */
+  async listarParaElDirectorio(
+    client: PoolClient,
+    tenantId: string,
+    ver: { combustible: boolean; urea: boolean }
+  ): Promise<ProveedorEnDirectorioDto[]> {
+    const [proveedores, fichas, filasDePrecios] = await Promise.all([
+      this.listar(client, tenantId),
+      this.repository.fichasParaElDirectorio(client, tenantId),
+      ver.combustible || ver.urea ? this.precios(client, tenantId, ver) : Promise.resolve(null),
+    ]);
+    const fichaDe = new Map(fichas.map((f) => [f.grifo_id, f]));
+    const preciosDe = new Map<number, FilaPrecioDto[]>();
+    for (const f of filasDePrecios ?? []) {
+      preciosDe.set(f.proveedorId, [...(preciosDe.get(f.proveedorId) ?? []), f]);
+    }
+    return proveedores.map((p): ProveedorEnDirectorioDto => {
+      const f = fichaDe.get(p.id);
+      return {
+        ...p,
+        ciudad: f?.ciudad ?? null,
+        fichaCompleta: calcularFichaCompleta({
+          ruc: p.ruc,
+          direccion: f?.direccion ?? null,
+          telefono: f?.telefono ?? null,
+          formaPago: f?.forma_pago ?? null,
+          tieneContacto: f?.tiene_contacto ?? false,
+          contactoConTelefono: f?.contacto_con_telefono ?? false,
+        }),
+        ...(filasDePrecios
+          ? { precioVigente: precioDelDirectorio(preciosDe.get(p.id) ?? []) }
+          : {}),
+      };
+    });
+  }
 
   async listar(client: PoolClient, tenantId: string): Promise<ProveedorDto[]> {
     return (await this.repository.listar(client, tenantId)).map(aDto);

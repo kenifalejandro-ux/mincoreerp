@@ -11,18 +11,29 @@ import ComprasDeProveedor from "./ComprasDeProveedor";
 import ContactosDeProveedor from "./ContactosDeProveedor";
 import CuentasDeProveedor from "./CuentasDeProveedor";
 import DatosDeProveedor from "./DatosDeProveedor";
+import {
+  abasteceA,
+  dineroDelDirectorio,
+  fichaIncompleta,
+  filtrarDirectorio,
+  resumenDelDirectorio,
+  type FiltroAbastece,
+  type FiltroEstado,
+} from "./directorioProveedores";
 import FormularioProveedor from "./FormularioProveedor";
 import {
   puedeVerComprasDeProveedores,
   puedeVerCuentasDeProveedores,
   puedeVerPreciosDeProveedores,
 } from "./proveedoresAcceso";
-import { listarProveedores, type Proveedor, type TipoProveedor } from "./proveedoresApi";
+import {
+  listarProveedores,
+  type Proveedor,
+  type ProveedorEnDirectorio,
+  type TipoProveedor,
+} from "./proveedoresApi";
 import { useAuth } from "../../context/AuthContext";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
-
-type FiltroUso = "todos" | "interno" | "externo";
-type FiltroEstado = "todos" | "activos" | "inactivos";
 
 const iniciales = (nombre: string) =>
   nombre
@@ -36,7 +47,7 @@ const iniciales = (nombre: string) =>
 function Uso({ interno, externo }: { interno: boolean; externo: boolean }) {
   if (!interno && !externo) return <span className="text-slate-400">—</span>;
   return (
-    <span className="flex gap-1.5">
+    <span className="flex flex-wrap gap-1.5">
       {interno && (
         <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 text-xs font-semibold">
           Interno
@@ -84,7 +95,7 @@ function Ficha({
   pestanaInicial,
   onPestana,
 }: {
-  proveedor: Proveedor;
+  proveedor: ProveedorEnDirectorio;
   onVolver: () => void;
   /** Sin función = el perfil no puede editar. */
   onEditar?: () => void;
@@ -222,11 +233,11 @@ export default function DirectorioProveedores({
   const verPrecios = puedeVerPreciosDeProveedores(usuario);
   const verCompras = puedeVerComprasDeProveedores(usuario);
   const verCuentas = puedeVerCuentasDeProveedores(usuario);
-  const [lista, setLista] = useState<Proveedor[] | null>(null);
+  const [lista, setLista] = useState<ProveedorEnDirectorio[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
   const [tipo, setTipo] = useState<"todos" | TipoProveedor>("todos");
-  const [uso, setUso] = useState<FiltroUso>("todos");
+  const [abastece, setAbastece] = useState<FiltroAbastece>("todos");
   const [estado, setEstado] = useState<FiltroEstado>("todos");
   const [abierto, setAbierto] = useState<number | null>(apertura?.id ?? null);
   const puedeEscribir = usePuedeEscribir("proveedores");
@@ -243,25 +254,18 @@ export default function DirectorioProveedores({
     };
   }, []);
 
-  const filtrados = useMemo(() => {
-    const q = busqueda.trim().toLowerCase();
-    return (lista ?? []).filter((p) => {
-      if (q && !`${p.nombre} ${p.codigo} ${p.ruc ?? ""}`.toLowerCase().includes(q)) return false;
-      if (tipo !== "todos" && !p.tipos.includes(tipo)) return false;
-      if (uso === "interno" && !(p.combustible.interno || p.urea.interno)) return false;
-      if (uso === "externo" && !(p.combustible.externo || p.urea.externo)) return false;
-      if (estado === "activos" && !p.activo) return false;
-      if (estado === "inactivos" && p.activo) return false;
-      return true;
-    });
-  }, [lista, busqueda, tipo, uso, estado]);
+  const filtrados = useMemo(
+    () => filtrarDirectorio(lista ?? [], { busqueda, tipo, abastece, estado }),
+    [lista, busqueda, tipo, abastece, estado]
+  );
+  const resumen = useMemo(() => resumenDelDirectorio(lista ?? []), [lista]);
 
-  const alGuardar = (guardado: Proveedor) => {
-    setLista((prev) => {
-      const sin = (prev ?? []).filter((p) => p.id !== guardado.id);
-      return [...sin, guardado].sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
-    });
+  // Al guardar se vuelve a pedir la lista: el servidor es quien calcula la ciudad, la ficha completa y el precio.
+  const alGuardar = () => {
     setFormulario(null);
+    listarProveedores()
+      .then(setLista)
+      .catch((e: Error) => setError(e.message));
   };
   const modal = formulario && (
     <FormularioProveedor
@@ -300,6 +304,14 @@ export default function DirectorioProveedores({
 
   const control =
     "h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#84cc16]";
+  const tarjetas: { etiqueta: string; valor: number; nota: string }[] = [
+    { etiqueta: "Total registrados", valor: resumen.total, nota: "En el directorio" },
+    { etiqueta: "Activos", valor: resumen.activos, nota: "Reciben pedidos" },
+    { etiqueta: "Combustible", valor: resumen.combustible, nota: "Proveedores" },
+    { etiqueta: "Urea", valor: resumen.urea, nota: "Proveedores" },
+  ];
+  // Los precios solo se piden (y se muestran) si esta persona los ve.
+  const columnas = verPrecios ? 7 : 6;
   return (
     <div className="space-y-5">
       {modal}
@@ -310,8 +322,7 @@ export default function DirectorioProveedores({
           </p>
           <h1 className="text-3xl font-semibold text-slate-900 mt-1">Directorio de proveedores</h1>
           <p className="text-sm text-slate-500 mt-1">
-            <b>Interno:</b> compra para despachar desde la planta. <b>Externo:</b> se compra en el
-            recorrido de ruta.
+            Todos los proveedores que nos abastecen de combustible y urea.
           </p>
         </div>
         {puedeEscribir && (
@@ -324,6 +335,24 @@ export default function DirectorioProveedores({
         )}
       </header>
 
+      <section
+        aria-label="Resumen del directorio"
+        className="grid grid-cols-2 lg:grid-cols-4 bg-white border border-slate-200 rounded-xl shadow-sm"
+      >
+        {tarjetas.map((t) => (
+          <div
+            key={t.etiqueta}
+            className="grid grid-cols-[1fr_auto] px-5 py-4 border-slate-200 border-r last:border-r-0 [&:nth-child(2)]:border-r-0 lg:[&:nth-child(2)]:border-r"
+          >
+            <span className="text-[11px] font-semibold text-slate-500">{t.etiqueta}</span>
+            <b className="row-span-2 col-start-2 text-[22px] font-extrabold text-slate-900">
+              {lista === null ? "—" : t.valor}
+            </b>
+            <small className="text-[10px] text-slate-500 mt-1">{t.nota}</small>
+          </div>
+        ))}
+      </section>
+
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
         <div className="flex flex-wrap items-center gap-3 p-4 border-b border-slate-200">
           <label className="relative flex-1 min-w-56 max-w-md">
@@ -332,7 +361,7 @@ export default function DirectorioProveedores({
             <input
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar por nombre, código o RUC"
+              placeholder="Buscar por razón social, RUC, código o ciudad..."
               className={`${control} w-full pl-9`}
             />
           </label>
@@ -347,12 +376,12 @@ export default function DirectorioProveedores({
             <option value="Urea">Urea</option>
           </select>
           <select
-            aria-label="Uso"
+            aria-label="Abastece a"
             className={control}
-            value={uso}
-            onChange={(e) => setUso(e.target.value as FiltroUso)}
+            value={abastece}
+            onChange={(e) => setAbastece(e.target.value as FiltroAbastece)}
           >
-            <option value="todos">Interno y externo</option>
+            <option value="todos">Abastece a: todos</option>
             <option value="interno">Interno</option>
             <option value="externo">Externo</option>
           </select>
@@ -363,8 +392,8 @@ export default function DirectorioProveedores({
             onChange={(e) => setEstado(e.target.value as FiltroEstado)}
           >
             <option value="todos">Todos los estados</option>
-            <option value="activos">Activos</option>
-            <option value="inactivos">Desactivados</option>
+            <option value="activos">Activo</option>
+            <option value="inactivos">Inactivo</option>
           </select>
         </div>
 
@@ -378,30 +407,32 @@ export default function DirectorioProveedores({
         )}
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-sm">
+          <table className="w-full min-w-[900px] text-sm">
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 bg-slate-50 border-b border-slate-200">
                 <th className="px-4 py-3">Proveedor</th>
                 <th className="px-4 py-3">Tipo</th>
-                <th className="px-4 py-3">Combustible</th>
-                <th className="px-4 py-3">Urea</th>
+                <th className="px-4 py-3">Abastece a</th>
+                <th className="px-4 py-3">Lugar</th>
+                {verPrecios && <th className="px-4 py-3">Precio vigente</th>}
                 <th className="px-4 py-3">Estado</th>
+                <th className="px-4 py-3">Ficha completa</th>
               </tr>
             </thead>
             <tbody>
               {lista === null && !error && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={columnas} className="px-4 py-8 text-center text-slate-500">
                     Cargando…
                   </td>
                 </tr>
               )}
               {lista !== null && filtrados.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={columnas} className="px-4 py-8 text-center text-slate-500">
                     {lista.length === 0
                       ? "Todavía no hay proveedores registrados."
-                      : "Ningún proveedor coincide con los filtros."}
+                      : "Sin resultados"}
                   </td>
                 </tr>
               )}
@@ -428,13 +459,56 @@ export default function DirectorioProveedores({
                   </td>
                   <td className="px-4 py-3 text-slate-700">{p.tipos.join(", ") || "—"}</td>
                   <td className="px-4 py-3">
-                    <Uso {...p.combustible} />
+                    <Uso {...abasteceA(p)} />
                   </td>
-                  <td className="px-4 py-3">
-                    <Uso {...p.urea} />
+                  <td className="px-4 py-3 text-slate-700">
+                    {p.ciudad ?? <span className="text-slate-400">—</span>}
                   </td>
+                  {verPrecios && (
+                    <td className="px-4 py-3">
+                      {p.precioVigente ? (
+                        <>
+                          <b className="block text-slate-900">
+                            {dineroDelDirectorio(p.precioVigente.precio)}
+                          </b>
+                          <small className="block text-xs text-slate-500">
+                            {p.precioVigente.producto}
+                          </small>
+                        </>
+                      ) : (
+                        <span className="font-semibold text-amber-600">Sin precio</span>
+                      )}
+                    </td>
+                  )}
                   <td className="px-4 py-3">
                     <Estado activo={p.activo} />
+                  </td>
+                  <td className="px-4 py-3 w-36">
+                    <span
+                      role="progressbar"
+                      aria-label={`Ficha completa de ${p.nombre}`}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={p.fichaCompleta.porcentaje}
+                      title={
+                        p.fichaCompleta.faltan.length
+                          ? `Falta: ${p.fichaCompleta.faltan.join(", ")}`
+                          : "Ficha completa"
+                      }
+                      className="block h-1.5 rounded-full bg-slate-100 overflow-hidden"
+                    >
+                      <em
+                        className={`block h-full rounded-full ${
+                          fichaIncompleta(p.fichaCompleta.porcentaje)
+                            ? "bg-amber-500"
+                            : "bg-[#84cc16]"
+                        }`}
+                        style={{ width: `${p.fichaCompleta.porcentaje}%` }}
+                      />
+                    </span>
+                    <small className="block text-xs text-slate-500 mt-1">
+                      {p.fichaCompleta.porcentaje} % completa
+                    </small>
                   </td>
                 </tr>
               ))}

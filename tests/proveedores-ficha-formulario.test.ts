@@ -20,6 +20,7 @@ import {
 import type { DatosFicha } from "../client/src/components/proveedores/proveedoresApi";
 
 const vacios: DatosFicha = {
+  ciudad: null,
   direccion: null,
   telefono: null,
   correo: null,
@@ -42,6 +43,7 @@ describe("datos y condiciones de pago", () => {
   it("una ficha vacía arranca con todo en blanco y sin problemas", () => {
     const f = datos();
     expect(f).toEqual({
+      ciudad: "",
       direccion: "",
       telefono: "",
       correo: "",
@@ -51,6 +53,7 @@ describe("datos y condiciones de pago", () => {
     });
     expect(problemasDeDatos(f)).toEqual([]);
     expect(cuerpoDeDatos(f)).toEqual({
+      ciudad: null,
       direccion: null,
       telefono: null,
       correo: null,
@@ -62,6 +65,7 @@ describe("datos y condiciones de pago", () => {
 
   it("parte de lo guardado y lo devuelve igual", () => {
     const guardado: DatosFicha = {
+      ciudad: "Huancayo",
       direccion: "Av. Los Pinos 123",
       telefono: "064-123456",
       correo: "a@b.pe",
@@ -72,6 +76,7 @@ describe("datos y condiciones de pago", () => {
     const f = formularioDeDatos(guardado);
     expect(f.plazo_pago_dias).toBe("30");
     expect(cuerpoDeDatos(f)).toEqual({
+      ciudad: "Huancayo",
       direccion: "Av. Los Pinos 123",
       telefono: "064-123456",
       correo: "a@b.pe",
@@ -104,6 +109,9 @@ describe("datos y condiciones de pago", () => {
       []
     );
     expect(cuerpoDeDatos(datos({ direccion: "  Jr. Lima 1  " })).direccion).toBe("Jr. Lima 1");
+    expect(problemasDeDatos(datos({ ciudad: "x".repeat(81) }))).toEqual([
+      "La ciudad no puede pasar de 80 letras.",
+    ]);
     expect(problemasDeDatos(datos({ direccion: "x".repeat(251) }))).toEqual([
       "La dirección no puede pasar de 250 letras.",
     ]);

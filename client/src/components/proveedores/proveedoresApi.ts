@@ -16,6 +16,20 @@ export interface Proveedor {
   urea: { interno: boolean; externo: boolean };
 }
 
+export interface PrecioDelDirectorio {
+  producto: string;
+  precio: number;
+  unidad: string;
+}
+
+/** Una fila del Directorio: el proveedor más lo que pide la maqueta (ciudad, ficha completa y precio). */
+export interface ProveedorEnDirectorio extends Proveedor {
+  ciudad: string | null;
+  fichaCompleta: { porcentaje: number; faltan: string[] };
+  /** Ausente si esta persona no ve precios; `null` si el proveedor no tiene ninguno vigente. */
+  precioVigente?: PrecioDelDirectorio | null;
+}
+
 export interface ResumenProveedores {
   total: number;
   activos: number;
@@ -35,7 +49,7 @@ async function leer<T>(ruta: string): Promise<T> {
   return data as T;
 }
 
-export const listarProveedores = () => leer<Proveedor[]>("");
+export const listarProveedores = () => leer<ProveedorEnDirectorio[]>("");
 export const resumenProveedores = () => leer<ResumenProveedores>("/resumen");
 
 /** Lo que se carga al registrar o editar un proveedor. INTERNO es la compra para despachar desde la
@@ -261,6 +275,7 @@ export type FormaDePago = "contado" | "credito";
 export type MonedaDePago = "PEN" | "USD";
 
 export interface DatosFicha {
+  ciudad: string | null;
   direccion: string | null;
   telefono: string | null;
   correo: string | null;
@@ -285,6 +300,7 @@ export interface FichaProveedor {
 
 /** Lo que se envía al guardar los datos: todo opcional (vacío = sin dato). */
 export interface CuerpoDatosFicha {
+  ciudad: string | null;
   direccion: string | null;
   telefono: string | null;
   correo: string | null;

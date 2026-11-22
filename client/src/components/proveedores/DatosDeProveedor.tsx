@@ -61,6 +61,7 @@ export default function DatosDeProveedor({ proveedorId }: { proveedorId: number 
         </p>
       )}
       <dl className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-3">
+        <Dato etiqueta="Ciudad" valor={datos.ciudad} />
         <Dato etiqueta="Dirección" valor={datos.direccion} />
         <Dato etiqueta="Teléfono" valor={datos.telefono} />
         <Dato etiqueta="Correo" valor={datos.correo} />

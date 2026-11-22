@@ -17,6 +17,7 @@ const TELEFONO = /^[0-9+()\-\s.]{6,40}$/;
 
 /** Lo que escribe la persona (todo texto, como sale de los campos). */
 export interface FormularioDeDatos {
+  ciudad: string;
   direccion: string;
   telefono: string;
   correo: string;
@@ -39,6 +40,7 @@ const vacioANull = (texto: string) => (texto.trim() === "" ? null : texto.trim()
 
 export function formularioDeDatos(datos: DatosFicha): FormularioDeDatos {
   return {
+    ciudad: datos.ciudad ?? "",
     direccion: datos.direccion ?? "",
     telefono: datos.telefono ?? "",
     correo: datos.correo ?? "",
@@ -55,6 +57,7 @@ export function problemasDeDatos(f: FormularioDeDatos): string[] {
     problemas.push("El teléfono no es válido.");
   if (f.correo.trim() !== "" && !CORREO.test(f.correo.trim()))
     problemas.push("El correo no es válido.");
+  if (f.ciudad.trim().length > 80) problemas.push("La ciudad no puede pasar de 80 letras.");
   if (f.direccion.trim().length > 250) problemas.push("La dirección no puede pasar de 250 letras.");
   if (f.forma_pago === "credito") {
     const plazo = Number(f.plazo_pago_dias);
@@ -66,6 +69,7 @@ export function problemasDeDatos(f: FormularioDeDatos): string[] {
 
 export function cuerpoDeDatos(f: FormularioDeDatos): CuerpoDatosFicha {
   return {
+    ciudad: vacioANull(f.ciudad),
     direccion: vacioANull(f.direccion),
     telefono: vacioANull(f.telefono),
     correo: vacioANull(f.correo),

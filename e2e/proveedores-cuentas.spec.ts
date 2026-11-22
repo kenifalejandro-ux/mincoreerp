@@ -29,7 +29,7 @@ async function abrirFicha(page: Page, nombre: string, marca: string) {
   }
   await expect(menu).toBeVisible({ timeout: 15_000 });
   await menu.getByRole("button", { name: "Directorio de proveedores" }).click();
-  await page.getByPlaceholder("Buscar por nombre, código o RUC").fill(marca);
+  await page.getByPlaceholder("Buscar por razón social, RUC, código o ciudad...").fill(marca);
   await page
     .getByRole("row", { name: new RegExp(nombre) })
     .getByRole("button", { name: new RegExp(nombre) })
