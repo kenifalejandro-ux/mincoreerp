@@ -22,7 +22,8 @@ export async function loginPorUI(page: Page, email: string, password: string): P
   await page.goto("/");
   await page.getByLabel("Correo").fill(email);
   await page.getByLabel("Contraseña").fill(password);
-  await page.getByRole("button", { name: "Ingresar" }).click();
+  // Con reintento si el clic no envió el login (ver `pulsarIngresar`).
+  await pulsarIngresar(page);
   // El primer pintado del panel inicial puede tardar más de los 5 s por defecto cuando la
   // máquina está cargada (varios specs seguidos): el login ya funcionó, solo falta esperar.
   await expect(page.getByRole("button", { name: "Dashboard" })).toBeVisible({ timeout: 20_000 });
