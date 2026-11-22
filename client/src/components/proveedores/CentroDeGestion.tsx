@@ -10,10 +10,10 @@ import { resumenProveedores, type ResumenProveedores } from "./proveedoresApi";
 import { useAuth } from "../../context/AuthContext";
 
 const PROXIMAMENTE = [
-  "Gestión comercial: precios negociados por proveedor",
-  "Compras y recepciones: registrar la compra y seguirla hasta la cancha",
-  "Gestión documental y homologación (se encienden por empresa)",
-  "Contratos, facturación y pagos",
+  "Homologación y gestión documental (se encienden por empresa)",
+  "Contratos con proveedores",
+  "Facturación y pagos",
+  "Evaluación y desempeño, y riesgos y cumplimiento",
 ];
 
 function saludo(): string {
