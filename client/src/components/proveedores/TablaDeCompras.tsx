@@ -81,7 +81,7 @@ export default function TablaDeCompras({
   onAbrirProveedor?: (proveedorId: number) => void;
   acciones?: AccionesDeCompra;
 }) {
-  const columnas = (conProveedor ? 7 : 6) + (acciones ? 1 : 0);
+  const columnas = (conProveedor ? 8 : 7) + (acciones ? 1 : 0);
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[900px] text-sm">
@@ -89,8 +89,9 @@ export default function TablaDeCompras({
           <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 bg-slate-50 border-b border-slate-200">
             <th className="px-4 py-3">Documento</th>
             {conProveedor && <th className="px-4 py-3">Proveedor</th>}
-            <th className="px-4 py-3">Combustible</th>
-            <th className="px-4 py-3">Costo</th>
+            <th className="px-4 py-3">Producto</th>
+            <th className="px-4 py-3">Precio</th>
+            <th className="px-4 py-3">Total</th>
             <th className="px-4 py-3">Llegada estimada</th>
             <th className="px-4 py-3">Estado</th>
             <th className="px-4 py-3">Recepción</th>
@@ -135,10 +136,13 @@ export default function TablaDeCompras({
                 </span>
               </td>
               <td className="px-4 py-3">
-                <b className="tabular-nums text-slate-900">{formatoSoles(c.total)}</b>
+                <b className="tabular-nums text-slate-900">{formatoSoles(c.costoUnitario)}</b>
                 <span className="block text-xs text-slate-500">
-                  {formatoSoles(c.costoUnitario)} por {c.unidad === "L" ? "litro" : "galón"}
+                  por {c.unidad === "L" ? "litro" : "galón"}
                 </span>
+              </td>
+              <td className="px-4 py-3">
+                <b className="tabular-nums text-slate-900">{formatoSoles(c.total)}</b>
               </td>
               <td className="px-4 py-3 tabular-nums">{formatoDia(c.llegadaEstimada)}</td>
               <td className="px-4 py-3">

@@ -6762,6 +6762,7 @@ export class CombustibleService {
       marca: data.marca?.trim() || null,
       precioPorBulto: data.precio_por_bulto,
       vigenteDesde: data.vigente_desde ?? new Date().toISOString(),
+      vigenteHasta: data.vigente_hasta ?? null,
     });
   }
 
@@ -7978,6 +7979,7 @@ export class CombustibleService {
           grifoId: null,
           precioUnitario: data.precio_unitario,
           vigenteDesde,
+          vigenteHasta: data.vigente_hasta ?? null,
         })
       );
     }
@@ -7999,6 +8001,7 @@ export class CombustibleService {
           grifoId,
           precioUnitario: data.precio_unitario,
           vigenteDesde,
+          vigenteHasta: data.vigente_hasta ?? null,
         })
       );
     }

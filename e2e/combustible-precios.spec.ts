@@ -240,9 +240,9 @@ test.describe("Precios unificados", () => {
     // El aviso lo dice y el botón lleva a Gestión comercial, donde sí están.
     await expect(page.getByRole("status").filter({ hasText: "Gestión comercial" })).toBeVisible();
     await page.getByRole("button", { name: "Ir a Gestión comercial" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Precios de proveedores", level: 1 })
-    ).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("heading", { name: "Precios negociados", level: 1 })).toBeVisible({
+      timeout: 20_000,
+    });
     await expect.poll(() => new URL(page.url()).pathname).toBe("/proveedores/precios");
     await page.getByPlaceholder("Buscar por proveedor o producto").fill(marca);
     for (const nombre of proveedores) {
