@@ -72,7 +72,7 @@ test("registrar y editar un proveedor desde el directorio", async ({ page, brows
 
   // 3. Editar desde la ficha: nuevo nombre y desactivado.
   await fila.getByRole("button", { name: new RegExp(nombre) }).click();
-  await page.getByRole("button", { name: "Editar" }).click();
+  await page.getByRole("button", { name: "Editar", exact: true }).click();
   const edicion = page.getByRole("dialog", { name: "Editar proveedor" });
   await edicion.getByLabel("Razón social").fill(editado);
   await edicion.getByLabel("Activo (recibe pedidos)").uncheck();
@@ -118,7 +118,7 @@ test("registrar y editar un proveedor desde el directorio", async ({ page, brows
     await expect(
       lectura.getByRole("heading", { name: new RegExp(editado), level: 1 })
     ).toBeVisible();
-    await expect(lectura.getByRole("button", { name: "Editar" })).toHaveCount(0);
+    await expect(lectura.getByRole("button", { name: "Editar", exact: true })).toHaveCount(0);
   } finally {
     await contexto.close();
   }
