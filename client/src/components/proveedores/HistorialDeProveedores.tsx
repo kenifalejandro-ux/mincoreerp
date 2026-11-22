@@ -20,9 +20,12 @@ const CONTROL =
 
 export default function HistorialDeProveedores({
   onAbrirProveedor,
+  proveedorId,
 }: {
   /** Abre la ficha del proveedor del evento. */
   onAbrirProveedor?: (id: number) => void;
+  /** Solo lo de este proveedor (la pestaña Historial de su ficha): sin título de página ni filtro de proveedor. */
+  proveedorId?: number;
 }) {
   const [eventos, setEventos] = useState<EventoDeHistorial[]>([]);
   const [siguiente, setSiguiente] = useState<string | null>(null);
@@ -32,26 +35,29 @@ export default function HistorialDeProveedores({
   const [campos, setCampos] = useState<FiltroDeHistorial>({});
   const [aplicado, setAplicado] = useState<FiltroDeHistorial>({});
 
-  const cargar = useCallback(async (filtro: FiltroDeHistorial, antesDe?: string) => {
-    setCargando(true);
-    setError(null);
-    try {
-      const pagina = await leerHistorialDeProveedores({ ...filtro, antesDe });
-      // Con cursor se agrega; sin cursor es una búsqueda nueva y reemplaza.
-      setEventos((previos) => (antesDe ? [...previos, ...pagina.eventos] : pagina.eventos));
-      setSiguiente(pagina.siguiente);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "No se pudo cargar el historial.");
-    } finally {
-      setCargando(false);
-    }
-  }, []);
+  const cargar = useCallback(
+    async (filtro: FiltroDeHistorial, antesDe?: string) => {
+      setCargando(true);
+      setError(null);
+      try {
+        const pagina = await leerHistorialDeProveedores({ ...filtro, proveedorId, antesDe });
+        // Con cursor se agrega; sin cursor es una búsqueda nueva y reemplaza.
+        setEventos((previos) => (antesDe ? [...previos, ...pagina.eventos] : pagina.eventos));
+        setSiguiente(pagina.siguiente);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "No se pudo cargar el historial.");
+      } finally {
+        setCargando(false);
+      }
+    },
+    [proveedorId]
+  );
 
   // La primera carga no pasa por `cargar()` a propósito: esa función arranca poniendo `cargando` en true, y
   // hacerlo dentro de un efecto de montaje es una cascada de renders para nada (ya arranca en true).
   useEffect(() => {
     let vigente = true;
-    leerHistorialDeProveedores({})
+    leerHistorialDeProveedores({ proveedorId })
       .then((pagina) => {
         if (!vigente) return;
         setEventos(pagina.eventos);
@@ -62,7 +68,7 @@ export default function HistorialDeProveedores({
     return () => {
       vigente = false;
     };
-  }, []);
+  }, [proveedorId]);
 
   const buscar = (e: FormEvent) => {
     e.preventDefault();
@@ -77,18 +83,28 @@ export default function HistorialDeProveedores({
 
   return (
     <div className="space-y-5">
-      <header>
-        <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-slate-500">
-          Seguimiento / Historial y auditoría
-        </p>
-        <h1 className="text-3xl font-semibold text-slate-900 mt-1">Historial y auditoría</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Quién hizo qué con los proveedores y cuándo. Aquí no aparecen números de cuenta ni datos
-          de contacto: solo qué se hizo y sobre qué proveedor.
-        </p>
-      </header>
+      {proveedorId === undefined && (
+        <header>
+          <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-slate-500">
+            Seguimiento / Historial y auditoría
+          </p>
+          <h1 className="text-3xl font-semibold text-slate-900 mt-1">Historial y auditoría</h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Quién hizo qué con los proveedores y cuándo. Aquí no aparecen números de cuenta ni datos
+            de contacto: solo qué se hizo y sobre qué proveedor.
+          </p>
+        </header>
+      )}
 
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+        {proveedorId !== undefined && (
+          <div className="px-5 pt-4">
+            <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-slate-500">
+              Auditoría
+            </p>
+            <h2 className="text-base font-semibold text-slate-900">Historial de cambios</h2>
+          </div>
+        )}
         <form
           onSubmit={buscar}
           className="flex flex-wrap items-end gap-3 p-4 border-b border-slate-200"
@@ -130,16 +146,18 @@ export default function HistorialDeProveedores({
               onChange={(e) => setCampos({ ...campos, hasta: e.target.value })}
             />
           </label>
-          <label className="relative flex-1 min-w-56 max-w-sm text-xs font-semibold text-slate-600">
-            Proveedor
-            <Search size={16} className="absolute left-3 bottom-3 text-slate-400" />
-            <input
-              className={`${CONTROL} mt-1 block w-full pl-9`}
-              value={campos.proveedor ?? ""}
-              onChange={(e) => setCampos({ ...campos, proveedor: e.target.value })}
-              placeholder="Buscar por nombre del proveedor"
-            />
-          </label>
+          {proveedorId === undefined && (
+            <label className="relative flex-1 min-w-56 max-w-sm text-xs font-semibold text-slate-600">
+              Proveedor
+              <Search size={16} className="absolute left-3 bottom-3 text-slate-400" />
+              <input
+                className={`${CONTROL} mt-1 block w-full pl-9`}
+                value={campos.proveedor ?? ""}
+                onChange={(e) => setCampos({ ...campos, proveedor: e.target.value })}
+                placeholder="Buscar por nombre del proveedor"
+              />
+            </label>
+          )}
           <button
             type="submit"
             disabled={cargando}
@@ -179,7 +197,7 @@ export default function HistorialDeProveedores({
                   <th className="px-5 py-2">Fecha</th>
                   <th className="px-5 py-2">Quién</th>
                   <th className="px-5 py-2">Qué hizo</th>
-                  <th className="px-5 py-2">Proveedor</th>
+                  {proveedorId === undefined && <th className="px-5 py-2">Proveedor</th>}
                 </tr>
               </thead>
               <tbody>
@@ -197,22 +215,24 @@ export default function HistorialDeProveedores({
                         </p>
                       ))}
                     </td>
-                    <td className="px-5 py-3">
-                      {e.proveedorId !== null && e.proveedorNombre ? (
-                        onAbrirProveedor ? (
-                          <button
-                            onClick={() => onAbrirProveedor(e.proveedorId!)}
-                            className="text-left font-medium text-[#3f6212] hover:underline"
-                          >
-                            {e.proveedorNombre}
-                          </button>
+                    {proveedorId === undefined && (
+                      <td className="px-5 py-3">
+                        {e.proveedorId !== null && e.proveedorNombre ? (
+                          onAbrirProveedor ? (
+                            <button
+                              onClick={() => onAbrirProveedor(e.proveedorId!)}
+                              className="text-left font-medium text-[#3f6212] hover:underline"
+                            >
+                              {e.proveedorNombre}
+                            </button>
+                          ) : (
+                            e.proveedorNombre
+                          )
                         ) : (
-                          e.proveedorNombre
-                        )
-                      ) : (
-                        <span className="text-slate-400">—</span>
-                      )}
-                    </td>
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

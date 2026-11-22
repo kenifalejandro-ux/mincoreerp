@@ -6,7 +6,8 @@
 //   /proveedores                              Centro de gestión
 //   /proveedores/directorio                   Directorio
 //   /proveedores/directorio/123               ficha del proveedor 123 (Resumen)
-//   /proveedores/directorio/123/comercial     su pestaña (contactos, cuentas, comercial o compras)
+//   /proveedores/directorio/123/comercial     su pestaña (datos, contactos, cuentas, comercial, contratos,
+//                                             documentos, compras o historial)
 //   /proveedores/precios                      Gestión comercial
 //   /proveedores/compras                      Compras y recepciones
 //   /proveedores/historial                    Historial y auditoría
@@ -30,8 +31,17 @@ export type SeccionDeRuta =
   | "pagos"
   | "evaluacion";
 
-/** Las pestañas de la ficha (las mismas de DirectorioProveedores). */
-export type PestanaDeRuta = "resumen" | "contactos" | "cuentas" | "comercial" | "compras";
+/** Las pestañas de la ficha. «datos» es «Datos generales». */
+export type PestanaDeRuta =
+  | "resumen"
+  | "datos"
+  | "contactos"
+  | "cuentas"
+  | "comercial"
+  | "contratos"
+  | "documentos"
+  | "compras"
+  | "historial";
 
 export interface EstadoDeRuta {
   seccion: SeccionDeRuta;
@@ -72,7 +82,16 @@ const ETIQUETA_DE_SECCION: Record<SeccionDeRuta, string> = {
   evaluacion: "Evaluación y desempeño",
 };
 
-const PESTANAS_CON_SLUG: PestanaDeRuta[] = ["contactos", "cuentas", "comercial", "compras"];
+const PESTANAS_CON_SLUG: PestanaDeRuta[] = [
+  "datos",
+  "contactos",
+  "cuentas",
+  "comercial",
+  "contratos",
+  "documentos",
+  "compras",
+  "historial",
+];
 
 const SECCION_DE_SLUG = new Map<string, SeccionDeRuta>(
   (Object.entries(SLUG_DE_SECCION) as [SeccionDeRuta, string][])

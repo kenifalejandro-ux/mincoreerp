@@ -53,7 +53,16 @@ describe("leerRuta", () => {
       proveedorId: 123,
       pestana: "comercial",
     });
-    for (const p of ["contactos", "cuentas", "comercial", "compras"]) {
+    for (const p of [
+      "datos",
+      "contactos",
+      "cuentas",
+      "comercial",
+      "contratos",
+      "documentos",
+      "compras",
+      "historial",
+    ]) {
       expect(leerRuta(`/proveedores/directorio/7/${p}`)?.pestana, p).toBe(p);
     }
   });
@@ -116,6 +125,8 @@ describe("rutaDe", () => {
       { seccion: "directorio", proveedorId: 1 },
       { seccion: "directorio", proveedorId: 42, pestana: "contactos" },
       { seccion: "directorio", proveedorId: 42, pestana: "compras" },
+      { seccion: "directorio", proveedorId: 42, pestana: "datos" },
+      { seccion: "directorio", proveedorId: 42, pestana: "historial" },
       { seccion: "comercial" },
       { seccion: "compras" },
       { seccion: "historial" },

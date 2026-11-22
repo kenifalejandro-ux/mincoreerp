@@ -152,7 +152,7 @@ test("compras y recepciones: estados, filtro y ficha del proveedor", async ({ pa
   await expect(page.getByRole("tab", { name: "Compras" })).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("row", { name: new RegExp(`PLL-${marca}`) })).toBeVisible();
   await page.getByRole("tab", { name: "Resumen" }).click();
-  await expect(page.getByRole("heading", { name: "Qué abastece" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Resumen del proveedor" })).toBeVisible();
 });
 
 test("registrar, habilitar y anular una compra desde el ecosistema; Combustible la ve por llegar", async ({
@@ -313,13 +313,15 @@ test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", a
       "Principal",
       { timeout: 20_000 }
     );
-    await page.getByRole("tab", { name: "Resumen" }).click();
+    await page.getByRole("tab", { name: "Datos generales" }).click();
     await page.getByRole("button", { name: "Editar datos" }).click();
     const datos = page.getByRole("dialog", { name: "Datos y condiciones de pago" });
     await datos.getByLabel("Forma de pago").selectOption("contado");
     await datos.getByRole("button", { name: "Guardar" }).click();
     await expect(datos).toHaveCount(0);
-    await expect(page.getByText("Contado", { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Contado", { exact: true }).first()).toBeVisible({
+      timeout: 20_000,
+    });
 
     // Y sus cuentas bancarias (el admin las tiene siempre): se guardan cifradas y se muestran enmascaradas.
     await page.getByRole("tab", { name: "Cuentas" }).click();

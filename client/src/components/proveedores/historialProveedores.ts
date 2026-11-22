@@ -44,6 +44,8 @@ export interface FiltroDeHistorial {
   hasta?: string;
   /** Texto del nombre del proveedor. */
   proveedor?: string;
+  /** Un proveedor exacto: el historial de su ficha. */
+  proveedorId?: number;
   antesDe?: string;
 }
 
@@ -59,6 +61,7 @@ export function consultaDeHistorial(filtro: FiltroDeHistorial): string {
   const params = new URLSearchParams();
   for (const [clave, valor] of Object.entries(filtro)) {
     if (typeof valor === "string" && valor.trim() !== "") params.set(clave, valor.trim());
+    else if (typeof valor === "number" && Number.isFinite(valor)) params.set(clave, String(valor));
   }
   const consulta = params.toString();
   return consulta ? `?${consulta}` : "";

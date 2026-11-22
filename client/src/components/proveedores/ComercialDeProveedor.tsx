@@ -11,11 +11,18 @@ import { textoDeFormaDePago, textoDeMoneda } from "./fichaFormulario";
 import { ETIQUETA_DE_USO, formatoDia, formatoFecha, formatoPrecio } from "./preciosProveedores";
 import { PrecioVigente, Programado, RigeDesde, VigenciaHasta, Variacion } from "./TablaDePrecios";
 import { useFicha } from "./useFicha";
-import { usePrecios } from "./usePrecios";
+import type { usePrecios } from "./usePrecios";
 import { usePuedeCargarPrecios } from "./usePuedeCargarPrecios";
 
-export default function ComercialDeProveedor({ proveedorId }: { proveedorId: number }) {
-  const { datos, error, recargar } = usePrecios();
+export default function ComercialDeProveedor({
+  proveedorId,
+  precios,
+}: {
+  proveedorId: number;
+  /** Los precios, cargados una sola vez por la ficha (también los usa «Nuevo precio» de su cabecera). */
+  precios: ReturnType<typeof usePrecios>;
+}) {
+  const { datos, error, recargar } = precios;
   const { ficha } = useFicha(proveedorId);
   const puedeCargar = usePuedeCargarPrecios(datos);
   const [ahora] = useState(() => Date.now());

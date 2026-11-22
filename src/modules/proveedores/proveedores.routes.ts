@@ -679,10 +679,18 @@ router.get(
       typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined;
     const antesDe =
       typeof q.antesDe === "string" && /^\d{1,18}$/.test(q.antesDe) ? q.antesDe : undefined;
+    const proveedorId =
+      typeof q.proveedorId === "string" && /^\d{1,9}$/.test(q.proveedorId)
+        ? Number(q.proveedorId)
+        : undefined;
+    if (q.proveedorId !== undefined && (proveedorId === undefined || proveedorId <= 0)) {
+      throw new AppError(400, "Proveedor inválido");
+    }
     res.setHeader("Cache-Control", "no-store");
     res.json(
       await withTenant(tenantId, (client) =>
         service.historial(client, tenantId, {
+          proveedorId,
           categoria: categoria as CategoriaDeHistorial | undefined,
           desde: fecha(q.desde),
           hasta: fecha(q.hasta),

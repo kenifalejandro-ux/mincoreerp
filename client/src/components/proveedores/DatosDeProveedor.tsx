@@ -1,13 +1,13 @@
 // client/src/components/proveedores/DatosDeProveedor.tsx
 //
-// «Datos y condiciones de pago» de la ficha (pestaña Resumen): dirección, teléfono, correo, forma de
-// pago y moneda. Quien puede editar la ficha ve el botón «Editar datos».
+// «Datos y condiciones de pago» de la ficha (pestaña Datos generales): dirección, teléfono, correo, forma de
+// pago y moneda (la ciudad se ve en «Identificación», pero se edita aquí). Quien puede editar la ficha ve el botón «Editar datos».
 import { Pencil } from "lucide-react";
 import { useState } from "react";
 
 import { textoDeFormaDePago, textoDeMoneda } from "./fichaFormulario";
 import FormularioDatosProveedor from "./FormularioDatosProveedor";
-import { useFicha } from "./useFicha";
+import type { DatosFicha } from "./proveedoresApi";
 import { usePuedeEditarProveedor } from "./usePuedeEditarProveedor";
 
 function Dato({ etiqueta, valor }: { etiqueta: string; valor: string | null }) {
@@ -21,23 +21,19 @@ function Dato({ etiqueta, valor }: { etiqueta: string; valor: string | null }) {
   );
 }
 
-export default function DatosDeProveedor({ proveedorId }: { proveedorId: number }) {
-  const { ficha, error, recargar } = useFicha(proveedorId);
+export default function DatosDeProveedor({
+  proveedorId,
+  datos,
+  onGuardado,
+}: {
+  proveedorId: number;
+  datos: DatosFicha;
+  /** Se guardaron los datos: quien la dibuja vuelve a leer la ficha. */
+  onGuardado: () => void;
+}) {
   const puedeEditar = usePuedeEditarProveedor();
   const [editando, setEditando] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
-
-  if (error)
-    return (
-      <p
-        role="alert"
-        className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3"
-      >
-        {error}
-      </p>
-    );
-  if (!ficha) return <p className="text-sm text-slate-500">Cargando…</p>;
-  const { datos } = ficha;
 
   return (
     <section className="bg-white border border-slate-200 rounded-xl shadow-sm">
@@ -61,7 +57,6 @@ export default function DatosDeProveedor({ proveedorId }: { proveedorId: number 
         </p>
       )}
       <dl className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-3">
-        <Dato etiqueta="Ciudad" valor={datos.ciudad} />
         <Dato etiqueta="Dirección" valor={datos.direccion} />
         <Dato etiqueta="Teléfono" valor={datos.telefono} />
         <Dato etiqueta="Correo" valor={datos.correo} />
@@ -76,7 +71,7 @@ export default function DatosDeProveedor({ proveedorId }: { proveedorId: number 
           onGuardado={() => {
             setEditando(false);
             setAviso("Datos guardados.");
-            recargar();
+            onGuardado();
           }}
         />
       )}

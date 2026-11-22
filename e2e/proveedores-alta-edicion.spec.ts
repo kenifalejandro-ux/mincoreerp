@@ -13,7 +13,7 @@ import { randomBytes } from "node:crypto";
 
 import { test, expect, type Page } from "@playwright/test";
 
-import { loginPorUI } from "./fixtures/auth";
+import { loginPorUI, pulsarIngresar } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
 
 async function entrarAlEcosistema(page: Page) {
@@ -72,7 +72,8 @@ test("registrar y editar un proveedor desde el directorio", async ({ page, brows
 
   // 3. Editar desde la ficha: nuevo nombre y desactivado.
   await fila.getByRole("button", { name: new RegExp(nombre) }).click();
-  await page.getByRole("button", { name: "Editar", exact: true }).click();
+  await page.getByRole("button", { name: "Más acciones" }).click();
+  await page.getByRole("menuitem", { name: "Editar proveedor" }).click();
   const edicion = page.getByRole("dialog", { name: "Editar proveedor" });
   await edicion.getByLabel("Razón social").fill(editado);
   await edicion.getByLabel("Activo (recibe pedidos)").uncheck();
@@ -100,7 +101,7 @@ test("registrar y editar un proveedor desde el directorio", async ({ page, brows
     await lectura.goto("/");
     await lectura.getByLabel("Correo").fill(email);
     await lectura.getByLabel("Contraseña").fill(temporal);
-    await lectura.getByRole("button", { name: "Ingresar" }).click();
+    await pulsarIngresar(lectura);
     await lectura.locator("#passwordActual").fill(temporal);
     await lectura.locator("#passwordNueva").fill(`${temporal}Nueva`);
     await lectura.locator("#confirmacion").fill(`${temporal}Nueva`);
@@ -118,7 +119,7 @@ test("registrar y editar un proveedor desde el directorio", async ({ page, brows
     await expect(
       lectura.getByRole("heading", { name: new RegExp(editado), level: 1 })
     ).toBeVisible();
-    await expect(lectura.getByRole("button", { name: "Editar", exact: true })).toHaveCount(0);
+    await expect(lectura.getByRole("button", { name: "Más acciones" })).toHaveCount(0);
   } finally {
     await contexto.close();
   }

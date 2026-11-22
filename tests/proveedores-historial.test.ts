@@ -285,6 +285,29 @@ describe("GET /api/erp/proveedores/historial", () => {
     expect((await historial(admin, "?limite=999999")).status).toBe(200);
   });
 
+  it("filtra por un proveedor exacto (la pestaña Historial de su ficha)", async () => {
+    const r = await historial(admin, `?proveedorId=${proveedorA}`);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.eventos).toHaveLength(5);
+    expect(r.body.eventos.every((e: { proveedorId: number }) => e.proveedorId === proveedorA)).toBe(
+      true
+    );
+    // Con otra categoría se combinan los dos filtros.
+    const fichas = await historial(admin, `?proveedorId=${proveedorA}&categoria=ficha`);
+    expect(fichas.body.eventos).toHaveLength(2);
+    // Uno que no existe (o de otra empresa) no trae nada.
+    expect((await historial(admin, "?proveedorId=99999999")).body.eventos).toEqual([]);
+    // Si hay id y nombre, manda el id.
+    const mandaId = await historial(admin, `?proveedorId=${proveedorA}&proveedor=NADA`);
+    expect(mandaId.body.eventos).toHaveLength(5);
+  });
+
+  it("un proveedorId que no es un entero positivo es 400", async () => {
+    for (const malo of ["abc", "0", "-3", "1.5"]) {
+      expect((await historial(admin, `?proveedorId=${malo}`)).status, malo).toBe(400);
+    }
+  });
+
   it("una categoría inválida es 400", async () => {
     expect((await historial(admin, "?categoria=otra")).status).toBe(400);
   });

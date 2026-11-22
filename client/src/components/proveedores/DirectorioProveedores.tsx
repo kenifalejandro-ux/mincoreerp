@@ -1,16 +1,11 @@
 // client/src/components/proveedores/DirectorioProveedores.tsx
 //
-// Directorio y ficha de los proveedores (solo lectura). INTERNO es la compra para despachar desde
-// la planta y EXTERNO la que se hace en el recorrido de ruta: las mismas palabras que la pestaña
-// Proveedores de Combustible.
-import { ArrowLeft, Pencil, Plus, Search } from "lucide-react";
+// Directorio de los proveedores (la lista) y la ficha que se abre desde ella (FichaDeProveedor). INTERNO es la
+// compra para despachar desde la planta y EXTERNO la que se hace en el recorrido de ruta: las mismas palabras
+// que la pestaña Proveedores de Combustible.
+import { Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import ComercialDeProveedor from "./ComercialDeProveedor";
-import ComprasDeProveedor from "./ComprasDeProveedor";
-import ContactosDeProveedor from "./ContactosDeProveedor";
-import CuentasDeProveedor from "./CuentasDeProveedor";
-import DatosDeProveedor from "./DatosDeProveedor";
 import {
   abasteceA,
   dineroDelDirectorio,
@@ -20,7 +15,11 @@ import {
   type FiltroAbastece,
   type FiltroEstado,
 } from "./directorioProveedores";
+import EstadoDeProveedor from "./EstadoDeProveedor";
+import FichaDeProveedor from "./FichaDeProveedor";
+import { inicialesDeProveedor, type PestanaFicha } from "./fichaProveedor";
 import FormularioProveedor from "./FormularioProveedor";
+import { puedeVerHistorialDeProveedores } from "./historialProveedores";
 import {
   puedeVerComprasDeProveedores,
   puedeVerCuentasDeProveedores,
@@ -34,15 +33,6 @@ import {
 } from "./proveedoresApi";
 import { useAuth } from "../../context/AuthContext";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
-
-const iniciales = (nombre: string) =>
-  nombre
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((p) => p[0])
-    .join("")
-    .toUpperCase();
 
 function Uso({ interno, externo }: { interno: boolean; externo: boolean }) {
   if (!interno && !externo) return <span className="text-slate-400">—</span>;
@@ -62,157 +52,7 @@ function Uso({ interno, externo }: { interno: boolean; externo: boolean }) {
   );
 }
 
-function Estado({ activo }: { activo: boolean }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold ${
-        activo ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
-      }`}
-    >
-      <span className="w-1.5 h-1.5 rounded-full bg-current" />
-      {activo ? "Activo" : "Desactivado"}
-    </span>
-  );
-}
-
-export type PestanaFicha = "resumen" | "contactos" | "cuentas" | "comercial" | "compras";
-
-const ETIQUETA_PESTANA: Record<PestanaFicha, string> = {
-  resumen: "Resumen",
-  contactos: "Contactos",
-  cuentas: "Cuentas",
-  comercial: "Comercial",
-  compras: "Compras",
-};
-
-function Ficha({
-  proveedor,
-  onVolver,
-  onEditar,
-  verPrecios,
-  verCompras,
-  verCuentas,
-  pestanaInicial,
-  onPestana,
-}: {
-  proveedor: ProveedorEnDirectorio;
-  onVolver: () => void;
-  /** Sin función = el perfil no puede editar. */
-  onEditar?: () => void;
-  /** Muestra la pestaña «Comercial» (precios): solo quien ve los precios. */
-  verPrecios: boolean;
-  /** Muestra la pestaña «Compras»: solo quien ve las compras de cisterna. */
-  verCompras: boolean;
-  /** Muestra la pestaña «Cuentas»: solo quien tiene ese permiso (nace solo para el admin). */
-  verCuentas: boolean;
-  pestanaInicial: PestanaFicha;
-  /** Avisa cuando la persona cambia de pestaña (para reflejarlo en la dirección). */
-  onPestana?: (pestana: PestanaFicha) => void;
-}) {
-  const pestanas: PestanaFicha[] = [
-    "resumen",
-    "contactos",
-    ...(verCuentas ? (["cuentas"] as const) : []),
-    ...(verPrecios ? (["comercial"] as const) : []),
-    ...(verCompras ? (["compras"] as const) : []),
-  ];
-  const [pestana, setPestana] = useState<PestanaFicha>(
-    pestanas.includes(pestanaInicial) ? pestanaInicial : "resumen"
-  );
-  const filas: { producto: string; interno: boolean; externo: boolean }[] = [
-    { producto: "Combustible", ...proveedor.combustible },
-    { producto: "Urea", ...proveedor.urea },
-  ];
-  return (
-    <div className="space-y-5">
-      <button
-        onClick={onVolver}
-        className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-900"
-      >
-        <ArrowLeft size={16} /> Volver al directorio
-      </button>
-      <header className="flex items-center gap-4">
-        <div className="w-14 h-14 rounded-xl bg-[#0A1014] text-[#BADC1E] grid place-items-center font-semibold text-lg">
-          {iniciales(proveedor.nombre)}
-        </div>
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold text-slate-900 flex flex-wrap items-center gap-3">
-            {proveedor.nombre} <Estado activo={proveedor.activo} />
-          </h1>
-          <p className="text-sm text-slate-500">
-            {proveedor.codigo} · {proveedor.ruc ? `RUC ${proveedor.ruc}` : "Sin RUC"}
-          </p>
-        </div>
-        {onEditar && (
-          <button
-            onClick={onEditar}
-            className="ml-auto flex items-center gap-2 h-10 px-4 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            <Pencil size={16} /> Editar
-          </button>
-        )}
-      </header>
-
-      <div
-        role="tablist"
-        aria-label="Secciones de la ficha"
-        className="flex gap-1 border-b border-slate-200"
-      >
-        {pestanas.map((p) => (
-          <button
-            key={p}
-            role="tab"
-            aria-selected={pestana === p}
-            onClick={() => {
-              setPestana(p);
-              onPestana?.(p);
-            }}
-            className={`px-4 py-2.5 text-sm -mb-px border-b-2 ${
-              pestana === p
-                ? "border-[#84cc16] font-semibold text-[#3f6212]"
-                : "border-transparent text-slate-500 hover:text-slate-900"
-            }`}
-          >
-            {ETIQUETA_PESTANA[p]}
-          </button>
-        ))}
-      </div>
-
-      {pestana === "contactos" && <ContactosDeProveedor proveedorId={proveedor.id} />}
-      {pestana === "cuentas" && <CuentasDeProveedor proveedorId={proveedor.id} />}
-      {pestana === "comercial" && <ComercialDeProveedor proveedorId={proveedor.id} />}
-      {pestana === "compras" && <ComprasDeProveedor proveedorId={proveedor.id} />}
-
-      {pestana === "resumen" && (
-        <>
-          <section className="bg-white border border-slate-200 rounded-xl shadow-sm">
-            <h2 className="px-5 pt-4 text-base font-semibold text-slate-900">Qué abastece</h2>
-            <table className="w-full text-sm mt-2">
-              <thead>
-                <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-200">
-                  <th className="px-5 py-2">Producto</th>
-                  <th className="px-5 py-2">Interno (planta)</th>
-                  <th className="px-5 py-2">Externo (ruta)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filas.map((f) => (
-                  <tr key={f.producto} className="border-b border-slate-100 last:border-0">
-                    <td className="px-5 py-3 font-medium text-slate-800">{f.producto}</td>
-                    <td className="px-5 py-3">{f.interno ? "Sí" : "No"}</td>
-                    <td className="px-5 py-3">{f.externo ? "Sí" : "No"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-
-          <DatosDeProveedor proveedorId={proveedor.id} />
-        </>
-      )}
-    </div>
-  );
-}
+export type { PestanaFicha };
 
 export default function DirectorioProveedores({
   apertura,
@@ -233,6 +73,7 @@ export default function DirectorioProveedores({
   const verPrecios = puedeVerPreciosDeProveedores(usuario);
   const verCompras = puedeVerComprasDeProveedores(usuario);
   const verCuentas = puedeVerCuentasDeProveedores(usuario);
+  const verHistorial = puedeVerHistorialDeProveedores(usuario);
   const [lista, setLista] = useState<ProveedorEnDirectorio[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
@@ -261,11 +102,13 @@ export default function DirectorioProveedores({
   const resumen = useMemo(() => resumenDelDirectorio(lista ?? []), [lista]);
 
   // Al guardar se vuelve a pedir la lista: el servidor es quien calcula la ciudad, la ficha completa y el precio.
-  const alGuardar = () => {
-    setFormulario(null);
+  const recargarLista = () =>
     listarProveedores()
       .then(setLista)
       .catch((e: Error) => setError(e.message));
+  const alGuardar = () => {
+    setFormulario(null);
+    void recargarLista();
   };
   const modal = formulario && (
     <FormularioProveedor
@@ -285,18 +128,18 @@ export default function DirectorioProveedores({
   if (seleccionado)
     return (
       <>
-        <Ficha
+        <FichaDeProveedor
           proveedor={seleccionado}
+          acceso={{ verPrecios, verCompras, verCuentas, verHistorial }}
+          pestanaInicial={apertura?.id === seleccionado.id ? apertura.pestana : "resumen"}
           onVolver={() => {
             setAbierto(null);
             onFicha?.(null);
+            // Lo que se editó en la ficha (ciudad, datos, contactos) cambia el % de la lista.
+            void recargarLista();
           }}
           onPestana={(pestana) => onFicha?.({ id: seleccionado.id, pestana })}
           onEditar={puedeEscribir ? () => setFormulario(seleccionado) : undefined}
-          verPrecios={verPrecios}
-          verCompras={verCompras}
-          verCuentas={verCuentas}
-          pestanaInicial={apertura?.id === seleccionado.id ? apertura.pestana : "resumen"}
         />
         {modal}
       </>
@@ -447,7 +290,7 @@ export default function DirectorioProveedores({
                       className="flex items-center gap-3 text-left"
                     >
                       <span className="w-9 h-9 rounded-lg bg-slate-100 text-[#4d7c0f] grid place-items-center text-xs font-bold shrink-0">
-                        {iniciales(p.nombre)}
+                        {inicialesDeProveedor(p.nombre)}
                       </span>
                       <span>
                         <span className="block font-semibold text-slate-900">{p.nombre}</span>
@@ -481,7 +324,7 @@ export default function DirectorioProveedores({
                     </td>
                   )}
                   <td className="px-4 py-3">
-                    <Estado activo={p.activo} />
+                    <EstadoDeProveedor activo={p.activo} />
                   </td>
                   <td className="px-4 py-3 w-36">
                     <span
