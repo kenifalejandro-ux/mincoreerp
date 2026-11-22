@@ -11,6 +11,13 @@ import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { cifrar, descifrar, huellaDe } from "../../server/shared/utils/platformCrypto";
 import { armarFilasDePrecios, type FilaPrecioDto } from "./proveedores.precios";
 import { armarCompras, type CompraDto } from "./proveedores.compras";
+import {
+  PATRON_DE_CATEGORIA,
+  PATRON_DE_TODO,
+  describirEvento,
+  proveedorDelEvento,
+  type CategoriaDeHistorial,
+} from "./proveedores.historial";
 import { CombustibleService } from "../combustible/combustible.service";
 import {
   anularCompra,
@@ -176,6 +183,35 @@ function comoErrorDeCuenta(err: unknown): unknown {
   return err instanceof CuentaDuplicadaError ? new AppError(409, err.message) : err;
 }
 
+export interface EventoDeHistorialDto {
+  id: string;
+  accion: string;
+  titulo: string;
+  categoria: CategoriaDeHistorial | null;
+  creadoEn: string;
+  /** Quién lo hizo (nombre), o la etiqueta del actor si ya no existe la persona. */
+  actor: string | null;
+  proveedorId: number | null;
+  proveedorNombre: string | null;
+  lineas: string[];
+}
+
+export interface PaginaDeHistorial {
+  eventos: EventoDeHistorialDto[];
+  /** El cursor para la página siguiente, o null si no hay más. */
+  siguiente: string | null;
+}
+
+export interface FiltroDeHistorial {
+  categoria?: CategoriaDeHistorial;
+  desde?: string;
+  hasta?: string;
+  /** Texto del nombre del proveedor. */
+  proveedor?: string;
+  antesDe?: string;
+  limite: number;
+}
+
 export interface FichaProveedorDto {
   datos: DatosProveedorDto;
   contactos: ContactoDto[];
@@ -249,6 +285,57 @@ export class ProveedoresService {
     const fila = await this.repository.buscarPorId(client, tenantId, id);
     if (!fila) throw new AppError(404, "Proveedor no encontrado");
     return aDto(fila);
+  }
+
+  // ── Historial y auditoría: lo que se hizo con los proveedores, de la bitácora de la empresa ───────
+
+  async historial(
+    client: PoolClient,
+    tenantId: string,
+    filtro: FiltroDeHistorial
+  ): Promise<PaginaDeHistorial> {
+    let proveedorIds: number[] | undefined;
+    if (filtro.proveedor && filtro.proveedor.trim() !== "") {
+      proveedorIds = await this.repository.idsDeProveedoresPorNombre(
+        client,
+        tenantId,
+        filtro.proveedor.trim()
+      );
+      if (proveedorIds.length === 0) return { eventos: [], siguiente: null };
+    }
+    // Se pide uno de más para saber si hay página siguiente sin contar el total.
+    const filas = await this.repository.eventosDeHistorial(client, tenantId, {
+      patron: filtro.categoria ? PATRON_DE_CATEGORIA[filtro.categoria] : PATRON_DE_TODO,
+      desde: filtro.desde,
+      hasta: filtro.hasta,
+      antesDe: filtro.antesDe,
+      proveedorIds,
+      limite: filtro.limite + 1,
+    });
+    const hayMas = filas.length > filtro.limite;
+    const pagina = hayMas ? filas.slice(0, filtro.limite) : filas;
+    const ids = [
+      ...new Set(
+        pagina.map((f) => proveedorDelEvento(f.detalle)).filter((id): id is number => id !== null)
+      ),
+    ];
+    const nombres = await this.repository.nombresDeProveedores(client, tenantId, ids);
+    const eventos = pagina.map((f): EventoDeHistorialDto => {
+      const proveedorId = proveedorDelEvento(f.detalle);
+      const { titulo, categoria, lineas } = describirEvento(f.accion, f.detalle);
+      return {
+        id: String(f.id),
+        accion: f.accion,
+        titulo,
+        categoria,
+        creadoEn: new Date(f.creadoEn).toISOString(),
+        actor: f.actor,
+        proveedorId,
+        proveedorNombre: proveedorId === null ? null : (nombres.get(proveedorId) ?? null),
+        lineas,
+      };
+    });
+    return { eventos, siguiente: hayMas ? eventos[eventos.length - 1].id : null };
   }
 
   // ── Ficha (PR3a): datos de contacto, condiciones de pago y personas de contacto ───────────────────
