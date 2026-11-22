@@ -5,6 +5,19 @@
 /* CSS legacy DESPUÉS */
 @import "./section.css";
 
+/* Tailwind 4 dejó los botones con la flecha: lo que se puede pulsar muestra la mano. Es lo que hacía Tailwind 3
+   (y lo que espera la gente en cualquier botón: abrir un panel, una pestaña, un menú). Un botón desactivado
+   conserva la flecha. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="tab"]:not([aria-disabled="true"]),
+  [role="menuitem"]:not([aria-disabled="true"]),
+  summary {
+    cursor: pointer;
+  }
+}
+
 html,
 body {
   max-width: 100%;
