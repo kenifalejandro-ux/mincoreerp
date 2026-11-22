@@ -290,6 +290,30 @@ test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", a
       timeout: 20_000,
     });
 
+    // La ficha del proveedor se completa sin Combustible: agrega un contacto y datos de pago.
+    await page
+      .getByRole("row", { name: new RegExp(`SOLO PROVEEDOR ${marca}`) })
+      .getByRole("button", { name: new RegExp(`SOLO PROVEEDOR ${marca}`) })
+      .click();
+    await page.getByRole("tab", { name: "Contactos" }).click();
+    await page.getByRole("button", { name: "Agregar contacto" }).click();
+    const contacto = page.getByRole("dialog", { name: "Agregar contacto" });
+    await contacto.getByLabel("Nombre", { exact: true }).fill("Contacto Solo");
+    await contacto.getByLabel("Teléfono").fill("987654321");
+    await contacto.getByRole("button", { name: "Guardar" }).click();
+    await expect(contacto).toHaveCount(0);
+    await expect(page.getByRole("listitem").filter({ hasText: "Contacto Solo" })).toContainText(
+      "Principal",
+      { timeout: 20_000 }
+    );
+    await page.getByRole("tab", { name: "Resumen" }).click();
+    await page.getByRole("button", { name: "Editar datos" }).click();
+    const datos = page.getByRole("dialog", { name: "Datos y condiciones de pago" });
+    await datos.getByLabel("Forma de pago").selectOption("contado");
+    await datos.getByRole("button", { name: "Guardar" }).click();
+    await expect(datos).toHaveCount(0);
+    await expect(page.getByText("Contado", { exact: true })).toBeVisible({ timeout: 20_000 });
+
     // Gestión comercial y Compras y recepciones: vacías, con su aviso y sin error.
     await menu.getByRole("button", { name: "Gestión comercial" }).click();
     await expect(

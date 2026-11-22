@@ -1092,14 +1092,31 @@ export const MODULOS: ModuloDefinicion[] = [
     // Ecosistema «Gestión de proveedores» (PR1: solo lectura). Es autónomo: no exige ningún otro
     // módulo. Hoy LEE `combustible_grifos` (la tabla de proveedores, que sigue siendo de
     // Combustible y se declara en sus `tablas`), por eso lo declara en `opcionales`; la tabla
-    // cambia de dueño en un PR posterior. Sin cuota ni tablas propias todavía.
+    // cambia de dueño en un PR posterior. Sin cuota. Tablas propias desde el PR3a: la ficha del
+    // proveedor y sus contactos (0198), que cuelgan de `combustible_grifos` sin modificarla.
     id: "proveedores",
     label: "Gestión de proveedores",
     icono: "🏢",
     version: "v1",
     router: proveedoresRoutes,
     opcionales: ["combustible"],
-    tablas: [],
+    tablas: [
+      {
+        nombre: "proveedores_ficha",
+        pk: "serial",
+        fks: { grifo_id: "combustible_grifos", actualizado_por: "usuarios" },
+      },
+      {
+        nombre: "proveedores_contactos",
+        pk: "serial",
+        fks: {
+          grifo_id: "combustible_grifos",
+          creado_por: "usuarios",
+          actualizado_por: "usuarios",
+          quitado_por: "usuarios",
+        },
+      },
+    ],
     raices: [],
   },
 ];

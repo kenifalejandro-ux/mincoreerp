@@ -15,7 +15,9 @@ import type { PoolClient } from "pg";
 import { esViolacionUnicidad } from "../../server/shared/utils/pgError";
 import type {
   ActualizarProveedorInput,
+  ContactoProveedorInput,
   CrearProveedorInput,
+  GuardarDatosProveedorInput,
 } from "../../server/schemas/proveedores.schema";
 
 export interface FilaProveedor {
@@ -29,6 +31,31 @@ export interface FilaProveedor {
   abastece_urea_ruta: boolean;
   creado_en: Date;
 }
+
+export interface FilaDatosProveedor {
+  direccion: string | null;
+  telefono: string | null;
+  correo: string | null;
+  forma_pago: "contado" | "credito" | null;
+  plazo_pago_dias: number | null;
+  moneda: "PEN" | "USD" | null;
+  actualizado_en: Date;
+  actualizado_por: string | null;
+}
+
+export interface FilaContacto {
+  id: string;
+  grifo_id: number;
+  nombre: string;
+  cargo: string | null;
+  telefono: string | null;
+  correo: string | null;
+  principal: boolean;
+  activo: boolean;
+  creado_en: Date;
+}
+
+const COLUMNAS_CONTACTO = `id, grifo_id, nombre, cargo, telefono, correo, principal, activo, creado_en`;
 
 const COLUMNAS = `id, nombre, ruc, activo, abastece_tanque, abastece_ruta, abastece_urea,
                   abastece_urea_ruta, creado_en`;
@@ -62,6 +89,204 @@ export class ProveedoresRepository {
       [tenantId, id]
     );
     return result.rows[0];
+  }
+
+  // ── Ficha (PR3a): tablas propias del módulo, 0198 ───────────────────────────────────────────────
+
+  async datosDe(
+    client: PoolClient,
+    tenantId: string,
+    grifoId: number
+  ): Promise<FilaDatosProveedor | undefined> {
+    const r = await client.query<FilaDatosProveedor>(
+      `SELECT direccion, telefono, correo, forma_pago, plazo_pago_dias, moneda, actualizado_en,
+              actualizado_por
+         FROM proveedores_ficha WHERE tenant_id = $1 AND grifo_id = $2`,
+      [tenantId, grifoId]
+    );
+    return r.rows[0];
+  }
+
+  /** Guarda la ficha completa (una fila por proveedor): lo que no viene queda vacío. */
+  async guardarDatos(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    grifoId: number,
+    data: GuardarDatosProveedorInput
+  ): Promise<FilaDatosProveedor> {
+    const r = await client.query<FilaDatosProveedor>(
+      `INSERT INTO proveedores_ficha
+         (tenant_id, grifo_id, direccion, telefono, correo, forma_pago, plazo_pago_dias, moneda,
+          actualizado_por)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (tenant_id, grifo_id) DO UPDATE
+          SET direccion = EXCLUDED.direccion, telefono = EXCLUDED.telefono,
+              correo = EXCLUDED.correo, forma_pago = EXCLUDED.forma_pago,
+              plazo_pago_dias = EXCLUDED.plazo_pago_dias, moneda = EXCLUDED.moneda,
+              actualizado_en = now(), actualizado_por = EXCLUDED.actualizado_por
+       RETURNING direccion, telefono, correo, forma_pago, plazo_pago_dias, moneda, actualizado_en,
+                 actualizado_por`,
+      [
+        tenantId,
+        grifoId,
+        data.direccion,
+        data.telefono,
+        data.correo,
+        data.forma_pago,
+        data.plazo_pago_dias,
+        data.moneda,
+        usuarioId,
+      ]
+    );
+    return r.rows[0];
+  }
+
+  /** Los contactos activos: el principal primero, luego por nombre. */
+  async contactosActivos(
+    client: PoolClient,
+    tenantId: string,
+    grifoId: number
+  ): Promise<FilaContacto[]> {
+    const r = await client.query<FilaContacto>(
+      `SELECT ${COLUMNAS_CONTACTO} FROM proveedores_contactos
+        WHERE tenant_id = $1 AND grifo_id = $2 AND activo
+        ORDER BY principal DESC, lower(nombre), id`,
+      [tenantId, grifoId]
+    );
+    return r.rows;
+  }
+
+  async contactoPorId(
+    client: PoolClient,
+    tenantId: string,
+    grifoId: number,
+    id: number
+  ): Promise<FilaContacto | undefined> {
+    const r = await client.query<FilaContacto>(
+      `SELECT ${COLUMNAS_CONTACTO} FROM proveedores_contactos
+        WHERE tenant_id = $1 AND grifo_id = $2 AND id = $3`,
+      [tenantId, grifoId, id]
+    );
+    return r.rows[0];
+  }
+
+  /** El principal activo deja de serlo (se va a nombrar a otro). */
+  async quitarPrincipal(client: PoolClient, tenantId: string, grifoId: number, usuarioId: string) {
+    await client.query(
+      `UPDATE proveedores_contactos
+          SET principal = false, actualizado_en = now(), actualizado_por = $3
+        WHERE tenant_id = $1 AND grifo_id = $2 AND principal AND activo`,
+      [tenantId, grifoId, usuarioId]
+    );
+  }
+
+  /** `undefined` si ya existía uno con ese `cliente_uuid` (un reintento). */
+  async crearContacto(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    grifoId: number,
+    data: ContactoProveedorInput
+  ): Promise<FilaContacto | undefined> {
+    const r = await client.query<FilaContacto>(
+      `INSERT INTO proveedores_contactos
+         (tenant_id, grifo_id, cliente_uuid, nombre, cargo, telefono, correo, principal,
+          creado_por, actualizado_por)
+       VALUES ($1,$2,COALESCE($3::uuid, gen_random_uuid()),$4,$5,$6,$7,$8,$9,$9)
+       ON CONFLICT (tenant_id, cliente_uuid) DO NOTHING
+       RETURNING ${COLUMNAS_CONTACTO}`,
+      [
+        tenantId,
+        grifoId,
+        data.cliente_uuid ?? null,
+        data.nombre,
+        data.cargo,
+        data.telefono,
+        data.correo,
+        data.principal,
+        usuarioId,
+      ]
+    );
+    return r.rows[0];
+  }
+
+  async contactoPorClienteUuid(
+    client: PoolClient,
+    tenantId: string,
+    grifoId: number,
+    clienteUuid: string
+  ): Promise<FilaContacto | undefined> {
+    const r = await client.query<FilaContacto>(
+      `SELECT ${COLUMNAS_CONTACTO} FROM proveedores_contactos
+        WHERE tenant_id = $1 AND grifo_id = $2 AND cliente_uuid = $3`,
+      [tenantId, grifoId, clienteUuid]
+    );
+    return r.rows[0];
+  }
+
+  async actualizarContacto(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    grifoId: number,
+    id: number,
+    data: ContactoProveedorInput
+  ): Promise<FilaContacto | undefined> {
+    const r = await client.query<FilaContacto>(
+      `UPDATE proveedores_contactos
+          SET nombre = $1, cargo = $2, telefono = $3, correo = $4, principal = $5,
+              actualizado_en = now(), actualizado_por = $6
+        WHERE tenant_id = $7 AND grifo_id = $8 AND id = $9 AND activo
+        RETURNING ${COLUMNAS_CONTACTO}`,
+      [
+        data.nombre,
+        data.cargo,
+        data.telefono,
+        data.correo,
+        data.principal,
+        usuarioId,
+        tenantId,
+        grifoId,
+        id,
+      ]
+    );
+    return r.rows[0];
+  }
+
+  async desactivarContacto(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    grifoId: number,
+    id: number
+  ): Promise<FilaContacto | undefined> {
+    const r = await client.query<FilaContacto>(
+      `UPDATE proveedores_contactos
+          SET activo = false, principal = false, quitado_en = now(), quitado_por = $1,
+              actualizado_en = now(), actualizado_por = $1
+        WHERE tenant_id = $2 AND grifo_id = $3 AND id = $4 AND activo
+        RETURNING ${COLUMNAS_CONTACTO}`,
+      [usuarioId, tenantId, grifoId, id]
+    );
+    return r.rows[0];
+  }
+
+  /** Tras quitar al principal, el contacto más antiguo pasa a serlo (si queda alguno). */
+  async ascenderPrimerContacto(
+    client: PoolClient,
+    tenantId: string,
+    grifoId: number
+  ): Promise<void> {
+    await client.query(
+      `UPDATE proveedores_contactos SET principal = true
+        WHERE id = (SELECT id FROM proveedores_contactos
+                     WHERE tenant_id = $1 AND grifo_id = $2 AND activo
+                     ORDER BY creado_en, id LIMIT 1)
+          AND NOT EXISTS (SELECT 1 FROM proveedores_contactos
+                           WHERE tenant_id = $1 AND grifo_id = $2 AND activo AND principal)`,
+      [tenantId, grifoId]
+    );
   }
 
   // ── Precios (solo lectura, PR4): las tablas son de Combustible (0063 y 0121) ─────────────────────
