@@ -25,7 +25,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import CentroDeGestion from "./CentroDeGestion";
 import ComprasYRecepciones from "./ComprasYRecepciones";
@@ -34,6 +34,14 @@ import GestionComercial from "./GestionComercial";
 import HistorialDeProveedores from "./HistorialDeProveedores";
 import { puedeVerHistorialDeProveedores } from "./historialProveedores";
 import { puedeVerComprasDeProveedores, puedeVerPreciosDeProveedores } from "./proveedoresAcceso";
+import {
+  esRutaDeProveedores,
+  leerRuta,
+  rutaDe,
+  tituloDeRuta,
+  type EstadoDeRuta,
+  type SeccionDeRuta,
+} from "./rutaProveedores";
 import SeccionPronto from "./SeccionPronto";
 import { useAuth } from "../../context/AuthContext";
 
@@ -131,26 +139,97 @@ const TODOS = GRUPOS.flatMap((g) => g.items);
 
 export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => void }) {
   const { usuario, logout } = useAuth();
-  const [seccion, setSeccion] = useState("centro");
+  // La dirección manda al abrir: `/proveedores/directorio/123/cuentas` abre esa ficha en esa pestaña.
+  const [rutaInicial] = useState(() => leerRuta(window.location.pathname));
+  const puedeVer = useCallback(
+    (id: string) => {
+      const item = TODOS.find((i) => i.id === id);
+      return !!item && (!item.visible || item.visible(usuario));
+    },
+    [usuario]
+  );
+  const [seccion, setSeccion] = useState<string>(() =>
+    rutaInicial && puedeVer(rutaInicial.seccion) ? rutaInicial.seccion : "centro"
+  );
   const [menuAbierto, setMenuAbierto] = useState(false);
-  // Abrir directo la ficha de un proveedor (desde Gestión comercial). `n` cambia en cada apertura para
-  // que el directorio se vuelva a montar aunque sea el mismo proveedor.
+  // Abrir directo la ficha de un proveedor (desde Gestión comercial o desde una dirección). `n` cambia en
+  // cada apertura para que el directorio se vuelva a montar aunque sea el mismo proveedor; `id: null` es
+  // la lista.
   const [apertura, setApertura] = useState<{
-    id: number;
+    id: number | null;
     pestana: PestanaFicha;
     n: number;
-  } | null>(null);
+  } | null>(() =>
+    rutaInicial?.seccion === "directorio" && rutaInicial.proveedorId !== undefined
+      ? { id: rutaInicial.proveedorId, pestana: rutaInicial.pestana ?? "resumen", n: 1 }
+      : null
+  );
+
+  /** Refleja la pantalla en la dirección y el título del navegador. Con `reemplazar` no suma un paso al
+   *  historial. */
+  const publicar = (estado: EstadoDeRuta, reemplazar = false) => {
+    const ruta = rutaDe(estado);
+    if (window.location.pathname !== ruta) {
+      if (reemplazar) window.history.replaceState(null, "", ruta);
+      else window.history.pushState(null, "", ruta);
+    }
+    document.title = tituloDeRuta(estado);
+  };
+
+  // Al abrir, la dirección queda bien escrita (entrando por el menú pasa de `/` a `/proveedores`, con un
+  // paso en el historial; entrando por una dirección mal escrita se corrige sin sumar otro) y al salir se
+  // devuelve el título del ERP.
+  useEffect(() => {
+    const tituloDelErp = document.title;
+    const estado: EstadoDeRuta = {
+      seccion: (rutaInicial && puedeVer(rutaInicial.seccion)
+        ? rutaInicial.seccion
+        : "centro") as SeccionDeRuta,
+      ...(rutaInicial?.seccion === "directorio" && rutaInicial.proveedorId !== undefined
+        ? { proveedorId: rutaInicial.proveedorId, pestana: rutaInicial.pestana }
+        : {}),
+    };
+    publicar(estado, esRutaDeProveedores(window.location.pathname));
+    return () => {
+      document.title = tituloDelErp;
+    };
+    // Solo al montar: de ahí en adelante lo mueven las acciones y el botón «atrás».
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // «Atrás» y «adelante» dentro del ecosistema. Si la dirección ya no es del ecosistema, lo atiende App.
+  useEffect(() => {
+    const alVolver = () => {
+      const estado = leerRuta(window.location.pathname);
+      if (!estado) return;
+      const destino = puedeVer(estado.seccion) ? estado.seccion : "centro";
+      setSeccion(destino);
+      setApertura((a) => ({
+        id: destino === "directorio" ? (estado.proveedorId ?? null) : null,
+        pestana: estado.pestana ?? "resumen",
+        n: (a?.n ?? 0) + 1,
+      }));
+      setMenuAbierto(false);
+      document.title = tituloDeRuta({ seccion: destino as SeccionDeRuta });
+    };
+    window.addEventListener("popstate", alVolver);
+    return () => window.removeEventListener("popstate", alVolver);
+  }, [puedeVer]);
 
   const actual = TODOS.find((i) => i.id === seccion) ?? TODOS[0];
   const abrirProveedor = (id: number, pestana: PestanaFicha) => {
     setApertura((a) => ({ id, pestana, n: (a?.n ?? 0) + 1 }));
     setSeccion("directorio");
     setMenuAbierto(false);
+    publicar({ seccion: "directorio", proveedorId: id, pestana });
   };
   const irA = (id: string) => {
-    if (id === "directorio") setApertura(null);
+    // «Directorio» siempre vuelve a la lista, aunque ya hubiera una ficha abierta.
+    if (id === "directorio")
+      setApertura((a) => ({ id: null, pestana: "resumen", n: (a?.n ?? 0) + 1 }));
     setSeccion(id);
     setMenuAbierto(false);
+    publicar({ seccion: id as SeccionDeRuta });
   };
 
   return (
@@ -296,7 +375,18 @@ export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => voi
         <div className="p-4 sm:p-6 lg:p-8 max-w-[1500px]">
           {actual.id === "centro" && <CentroDeGestion onIrAlDirectorio={() => irA("directorio")} />}
           {actual.id === "directorio" && (
-            <DirectorioProveedores key={apertura?.n ?? 0} apertura={apertura ?? undefined} />
+            <DirectorioProveedores
+              key={apertura?.n ?? 0}
+              apertura={apertura ?? undefined}
+              onFicha={(ficha, opciones) =>
+                publicar(
+                  ficha
+                    ? { seccion: "directorio", proveedorId: ficha.id, pestana: ficha.pestana }
+                    : { seccion: "directorio" },
+                  opciones?.reemplazar
+                )
+              }
+            />
           )}
           {actual.id === "comercial" && (
             <GestionComercial onAbrirProveedor={(id) => abrirProveedor(id, "comercial")} />

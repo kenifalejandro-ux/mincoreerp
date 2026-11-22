@@ -82,6 +82,7 @@ function Ficha({
   verCompras,
   verCuentas,
   pestanaInicial,
+  onPestana,
 }: {
   proveedor: Proveedor;
   onVolver: () => void;
@@ -94,6 +95,8 @@ function Ficha({
   /** Muestra la pestaña «Cuentas»: solo quien tiene ese permiso (nace solo para el admin). */
   verCuentas: boolean;
   pestanaInicial: PestanaFicha;
+  /** Avisa cuando la persona cambia de pestaña (para reflejarlo en la dirección). */
+  onPestana?: (pestana: PestanaFicha) => void;
 }) {
   const pestanas: PestanaFicha[] = [
     "resumen",
@@ -149,7 +152,10 @@ function Ficha({
             key={p}
             role="tab"
             aria-selected={pestana === p}
-            onClick={() => setPestana(p)}
+            onClick={() => {
+              setPestana(p);
+              onPestana?.(p);
+            }}
             className={`px-4 py-2.5 text-sm -mb-px border-b-2 ${
               pestana === p
                 ? "border-[#84cc16] font-semibold text-[#3f6212]"
@@ -199,9 +205,18 @@ function Ficha({
 
 export default function DirectorioProveedores({
   apertura,
+  onFicha,
 }: {
-  /** Abrir directo la ficha de un proveedor (p. ej. desde Gestión comercial). */
-  apertura?: { id: number; pestana: PestanaFicha };
+  /** Abrir directo la ficha de un proveedor (p. ej. desde Gestión comercial o desde una dirección).
+   *  `id: null` = la lista. */
+  apertura?: { id: number | null; pestana: PestanaFicha };
+  /** Avisa qué ficha y pestaña hay abiertas (o `null` = la lista), para reflejarlo en la dirección. Con
+   *  `reemplazar` la dirección se corrige sin sumar un paso al historial (un enlace a un proveedor que no
+   *  existe). */
+  onFicha?: (
+    ficha: { id: number; pestana: PestanaFicha } | null,
+    opciones?: { reemplazar?: boolean }
+  ) => void;
 }) {
   const { usuario } = useAuth();
   const verPrecios = puedeVerPreciosDeProveedores(usuario);
@@ -257,12 +272,22 @@ export default function DirectorioProveedores({
   );
 
   const seleccionado = lista?.find((p) => p.id === abierto);
+  // Un enlace a un proveedor que no existe (o ya no): se muestra la lista y la dirección se corrige.
+  useEffect(() => {
+    if (lista && abierto !== null && !lista.some((p) => p.id === abierto)) {
+      onFicha?.(null, { reemplazar: true });
+    }
+  }, [lista, abierto, onFicha]);
   if (seleccionado)
     return (
       <>
         <Ficha
           proveedor={seleccionado}
-          onVolver={() => setAbierto(null)}
+          onVolver={() => {
+            setAbierto(null);
+            onFicha?.(null);
+          }}
+          onPestana={(pestana) => onFicha?.({ id: seleccionado.id, pestana })}
           onEditar={puedeEscribir ? () => setFormulario(seleccionado) : undefined}
           verPrecios={verPrecios}
           verCompras={verCompras}
@@ -384,7 +409,10 @@ export default function DirectorioProveedores({
                 <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-3">
                     <button
-                      onClick={() => setAbierto(p.id)}
+                      onClick={() => {
+                        setAbierto(p.id);
+                        onFicha?.({ id: p.id, pestana: "resumen" });
+                      }}
                       className="flex items-center gap-3 text-left"
                     >
                       <span className="w-9 h-9 rounded-lg bg-slate-100 text-[#4d7c0f] grid place-items-center text-xs font-bold shrink-0">
