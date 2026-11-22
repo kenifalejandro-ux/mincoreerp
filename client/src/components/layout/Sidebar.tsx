@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { Fragment, useState } from "react";
 
+import { conProveedoresBajoBandeja } from "./ordenDelMenu";
 import { useAuth } from "../../context/AuthContext";
 import { MODULOS_CLIENTE } from "../../modules/registry";
 import { puedeVerBandeja } from "../bandeja/bandejaAcceso";
@@ -104,12 +105,15 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
 
   // Flota aparece si hay algo adentro: quien solo tiene Viajes (sin Registro de
   // unidades) también ve el grupo.
-  const tabs = MODULOS_CLIENTE.filter((modulo) =>
-    modulo.id === "flota"
-      ? puedeVerFlota(usuario)
-      : modulo.id === "proveedores"
-        ? puedeVerProveedores(usuario)
-        : usuario?.modulosPermitidos.includes(modulo.id)
+  // «Gestión de proveedores» va justo debajo de «Bandeja» (ver ordenDelMenu.ts).
+  const tabs = conProveedoresBajoBandeja(
+    MODULOS_CLIENTE.filter((modulo) =>
+      modulo.id === "flota"
+        ? puedeVerFlota(usuario)
+        : modulo.id === "proveedores"
+          ? puedeVerProveedores(usuario)
+          : usuario?.modulosPermitidos.includes(modulo.id)
+    )
   );
   const submenusFlota = SUBMENU_FLOTA.filter(({ tab }) =>
     tab === "flota" ? puedeVerUnidades(usuario) : puedeVerViajes(usuario)

@@ -563,21 +563,21 @@ body.tema-oscuro
 }
 
 /* Barra de scroll "overlay": fina, invisible en reposo y lima solo mientras
-   se hace scroll. La clase `scrolling-activo` la pone y quita Layout (un
-   listener de scroll en captura, para que valga también en los modales y en
-   cualquier contenedor con scroll). */
+   se hace scroll. La clase `barra-lima` de <body> y la `scrolling-activo` las pone y quita
+   useBarraLima (un listener de scroll en captura, para que valga también en los modales y en
+   cualquier contenedor con scroll); lo usan el Layout del ERP y el ecosistema «Gestión de proveedores». */
 /* En Chrome la barra es de 3 px y solo valen las reglas ::-webkit-scrollbar: si el elemento tiene
    scrollbar-width o scrollbar-color, Chrome las ignora y dibuja su barra clásica. Las reglas estándar
    (thin) quedan solo para los navegadores que no tienen las de Chrome (Firefox). */
 @supports not selector(::-webkit-scrollbar) {
-  html:has(body.tema-oscuro),
-  body.tema-oscuro,
-  body.tema-oscuro * {
+  html:has(body.barra-lima),
+  body.barra-lima,
+  body.barra-lima * {
     scrollbar-width: thin;
     scrollbar-color: transparent transparent;
   }
-  html:has(body.tema-oscuro).scrolling-activo,
-  body.tema-oscuro .scrolling-activo {
+  html:has(body.barra-lima).scrolling-activo,
+  body.barra-lima .scrolling-activo {
     scrollbar-color: #badc1e transparent;
   }
 }
@@ -585,22 +585,22 @@ body.tema-oscuro
   /* Igual que la barra del Control TV: un trazo lima de 3 px, de puntas redondas, separado 2 px del borde
      (la barra mide 5 px y el trazo lleva 2 px transparentes a la derecha), de al menos 28 px de largo, que se
      enciende y se apaga con suavidad. Solo se ve mientras se hace scroll. */
-  html:has(body.tema-oscuro)::-webkit-scrollbar,
-  body.tema-oscuro::-webkit-scrollbar,
-  body.tema-oscuro *::-webkit-scrollbar {
+  html:has(body.barra-lima)::-webkit-scrollbar,
+  body.barra-lima::-webkit-scrollbar,
+  body.barra-lima *::-webkit-scrollbar {
     width: 5px;
     height: 5px;
   }
-  html:has(body.tema-oscuro)::-webkit-scrollbar-track,
-  body.tema-oscuro::-webkit-scrollbar-track,
-  body.tema-oscuro *::-webkit-scrollbar-track,
-  html:has(body.tema-oscuro)::-webkit-scrollbar-corner,
-  body.tema-oscuro *::-webkit-scrollbar-corner {
+  html:has(body.barra-lima)::-webkit-scrollbar-track,
+  body.barra-lima::-webkit-scrollbar-track,
+  body.barra-lima *::-webkit-scrollbar-track,
+  html:has(body.barra-lima)::-webkit-scrollbar-corner,
+  body.barra-lima *::-webkit-scrollbar-corner {
     background: transparent;
   }
-  html:has(body.tema-oscuro)::-webkit-scrollbar-thumb,
-  body.tema-oscuro::-webkit-scrollbar-thumb,
-  body.tema-oscuro *::-webkit-scrollbar-thumb {
+  html:has(body.barra-lima)::-webkit-scrollbar-thumb,
+  body.barra-lima::-webkit-scrollbar-thumb,
+  body.barra-lima *::-webkit-scrollbar-thumb {
     background-color: transparent;
     background-clip: padding-box;
     border-right: 2px solid transparent;
@@ -610,8 +610,8 @@ body.tema-oscuro
     min-width: 28px;
     transition: background-color 0.3s;
   }
-  html:has(body.tema-oscuro).scrolling-activo::-webkit-scrollbar-thumb,
-  body.tema-oscuro .scrolling-activo::-webkit-scrollbar-thumb {
+  html:has(body.barra-lima).scrolling-activo::-webkit-scrollbar-thumb,
+  body.barra-lima .scrolling-activo::-webkit-scrollbar-thumb {
     background-color: #badc1e;
   }
 }

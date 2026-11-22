@@ -44,6 +44,7 @@ import {
 } from "./rutaProveedores";
 import SeccionPronto from "./SeccionPronto";
 import { useAuth } from "../../context/AuthContext";
+import { useBarraLima } from "../comunes/useBarraLima";
 
 interface ItemDeMenu {
   id: string;
@@ -139,6 +140,8 @@ const TODOS = GRUPOS.flatMap((g) => g.items);
 
 export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => void }) {
   const { usuario, logout } = useAuth();
+  // La barra de scroll lima del ERP también vale aquí (el ecosistema va fuera del Layout).
+  useBarraLima();
   // La dirección manda al abrir: `/proveedores/directorio/123/cuentas` abre esa ficha en esa pestaña.
   const [rutaInicial] = useState(() => leerRuta(window.location.pathname));
   const puedeVer = useCallback(
