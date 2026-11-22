@@ -15,7 +15,7 @@
  * auth tag de GCM viajan concatenados en el mismo string cifrado — no hace
  * falta guardarlos aparte.
  */
-import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from "crypto";
 import { env } from "../../config/env";
 import { AppError } from "../middlewares/error.middleware";
 
@@ -52,4 +52,11 @@ export function descifrar(valorCifrado: string): string {
   const decipher = createDecipheriv(ALGORITMO, claveAplicacion(), iv);
   decipher.setAuthTag(authTag);
   return Buffer.concat([decipher.update(cifrado), decipher.final()]).toString("utf8");
+}
+
+/** Huella NO reversible de un valor (HMAC-SHA256 con la clave de aplicación, en hexadecimal): sirve para
+ *  saber si dos valores son iguales (p. ej. impedir la misma cuenta bancaria dos veces) sin guardar el
+ *  valor. Con otra clave da otra huella; no se usa para nada que deba sobrevivir a una rotación. */
+export function huellaDe(textoPlano: string): string {
+  return createHmac("sha256", claveAplicacion()).update(`huella:${textoPlano}`).digest("hex");
 }

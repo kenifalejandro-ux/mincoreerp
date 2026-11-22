@@ -130,6 +130,45 @@ export const contactoProveedorSchema = z
     path: ["telefono"],
   });
 
+// ── Cuentas bancarias del proveedor (PR3b) ───────────────────────────────────────────────────────────
+
+/** Número de cuenta o CCI: solo dígitos (se aceptan guiones y espacios al escribirlo), de 8 a 20. */
+const numeroDeCuenta = z
+  .string()
+  .trim()
+  .transform((v) => v.replace(/[\s-]/g, ""))
+  .refine((v) => /^\d{8,20}$/.test(v), "El número de cuenta debe tener de 8 a 20 dígitos");
+
+const cuentaBase = {
+  banco: z.string().trim().min(1, "El banco es obligatorio").max(80),
+  tipo_cuenta: z.enum(["corriente", "ahorros", "detraccion"]),
+  moneda: z.enum(["PEN", "USD"]),
+  titular: textoOpcional(150),
+  principal: z.boolean(),
+};
+
+export const crearCuentaProveedorSchema = z.object({
+  ...cuentaBase,
+  numero: numeroDeCuenta,
+  /** Lo manda la pantalla al abrir el formulario: un reintento no crea una segunda cuenta. */
+  cliente_uuid: z.string().uuid().optional(),
+});
+
+/** Al editar, `numero` es opcional: ausente = se conserva el que está (el número nunca vuelve a la
+ *  pantalla, así que no se puede «dejar igual» reenviándolo). */
+export const actualizarCuentaProveedorSchema = z.object({
+  ...cuentaBase,
+  numero: numeroDeCuenta.optional(),
+});
+
+export const quitarCuentaProveedorSchema = z.object({
+  motivo: z.string().trim().min(3, "Escribe el motivo (mínimo 3 letras)").max(300),
+});
+
+export type CrearCuentaProveedorInput = z.infer<typeof crearCuentaProveedorSchema>;
+export type ActualizarCuentaProveedorInput = z.infer<typeof actualizarCuentaProveedorSchema>;
+export type QuitarCuentaProveedorInput = z.infer<typeof quitarCuentaProveedorSchema>;
+
 export type GuardarDatosProveedorInput = z.infer<typeof guardarDatosProveedorSchema>;
 export type ContactoProveedorInput = z.infer<typeof contactoProveedorSchema>;
 

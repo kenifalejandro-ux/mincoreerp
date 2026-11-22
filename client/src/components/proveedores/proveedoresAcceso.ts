@@ -50,3 +50,20 @@ export function puedeVerComprasDeProveedores(
   if (override !== undefined) return override;
   return ["admin", "operador", "grifero", "lectura"].includes(usuario.rol);
 }
+
+type UsuarioConPermisos =
+  | { rol: string; modulosPermitidos: string[]; permisosPestanas?: Record<string, boolean> }
+  | null
+  | undefined;
+
+/** Cuentas bancarias de proveedores: el admin las tiene siempre; el resto SOLO si se las dieron a mano (no
+ *  nacen para ningún otro perfil). Hace falta el módulo `proveedores`. El servidor exige lo mismo. */
+function permisoDeCuentas(usuario: UsuarioConPermisos, pestana: string): boolean {
+  if (!usuario || !usuario.modulosPermitidos.includes("proveedores")) return false;
+  if (usuario.rol === "admin") return true;
+  return usuario.permisosPestanas?.[`proveedores:${pestana}`] === true;
+}
+
+/** Ve la pestaña «Cuentas» de la ficha (con el número enmascarado). */
+export const puedeVerCuentasDeProveedores = (usuario: UsuarioConPermisos) =>
+  permisoDeCuentas(usuario, "cuentas");

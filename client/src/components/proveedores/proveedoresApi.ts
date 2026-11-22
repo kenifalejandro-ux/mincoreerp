@@ -300,3 +300,50 @@ export const actualizarContacto = (id: number, contactoId: number, cuerpo: Cuerp
   enviar<Contacto>(`/${id}/contactos/${contactoId}`, "PUT", cuerpo);
 export const quitarContacto = (id: number, contactoId: number) =>
   enviar<{ ok: true }>(`/${id}/contactos/${contactoId}/quitar`, "PATCH");
+
+// ── Cuentas bancarias (PR3b) ─────────────────────────────────────────────────────────────────────
+// El número completo NUNCA viene en la lista: solo `verNumeroCompleto` lo trae, con permiso aparte, y deja
+// constancia en la bitácora cada vez.
+
+export type TipoDeCuenta = "corriente" | "ahorros" | "detraccion";
+
+export interface CuentaBancaria {
+  id: number;
+  banco: string;
+  tipoCuenta: TipoDeCuenta;
+  moneda: MonedaDePago;
+  titular: string | null;
+  /** «•••• 1234». */
+  numeroEnmascarado: string;
+  principal: boolean;
+}
+
+export interface RespuestaCuentas {
+  /** Puede ver el número entero (permiso `cuentas:ver_completa`). */
+  verCompleta: boolean;
+  /** Puede agregar, editar y quitar (permiso `cuentas:editar`). */
+  puedeEditar: boolean;
+  cuentas: CuentaBancaria[];
+}
+
+export interface CuerpoCuenta {
+  banco: string;
+  tipo_cuenta: TipoDeCuenta;
+  moneda: MonedaDePago;
+  titular: string | null;
+  principal: boolean;
+  /** Al crear es obligatorio; al editar, ausente = se conserva el que está. */
+  numero?: string;
+  /** Solo al crear: un reintento con el mismo valor no duplica la cuenta. */
+  cliente_uuid?: string;
+}
+
+export const cuentasDeProveedor = (id: number) => leer<RespuestaCuentas>(`/${id}/cuentas`);
+export const crearCuenta = (id: number, cuerpo: CuerpoCuenta) =>
+  enviar<CuentaBancaria>(`/${id}/cuentas`, "POST", cuerpo);
+export const actualizarCuenta = (id: number, cuentaId: number, cuerpo: CuerpoCuenta) =>
+  enviar<CuentaBancaria>(`/${id}/cuentas/${cuentaId}`, "PUT", cuerpo);
+export const quitarCuenta = (id: number, cuentaId: number, motivo: string) =>
+  enviar<{ ok: true }>(`/${id}/cuentas/${cuentaId}/quitar`, "PATCH", { motivo });
+export const verNumeroCompleto = (id: number, cuentaId: number) =>
+  enviar<{ numero: string }>(`/${id}/cuentas/${cuentaId}/ver-completa`, "POST");

@@ -314,6 +314,18 @@ test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", a
     await expect(datos).toHaveCount(0);
     await expect(page.getByText("Contado", { exact: true })).toBeVisible({ timeout: 20_000 });
 
+    // Y sus cuentas bancarias (el admin las tiene siempre): se guardan cifradas y se muestran enmascaradas.
+    await page.getByRole("tab", { name: "Cuentas" }).click();
+    await page.getByRole("button", { name: "Agregar cuenta" }).click();
+    const cuenta = page.getByRole("dialog", { name: "Agregar cuenta bancaria" });
+    await cuenta.getByLabel("Banco").fill("BCP");
+    await cuenta.getByLabel("Número de cuenta o CCI").fill("19412345678901234567");
+    await cuenta.getByRole("button", { name: "Guardar" }).click();
+    await expect(cuenta).toHaveCount(0);
+    await expect(page.getByRole("listitem").filter({ hasText: "BCP" })).toContainText("•••• 4567", {
+      timeout: 20_000,
+    });
+
     // Gestión comercial y Compras y recepciones: vacías, con su aviso y sin error.
     await menu.getByRole("button", { name: "Gestión comercial" }).click();
     await expect(
