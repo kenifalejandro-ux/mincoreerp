@@ -16,6 +16,7 @@ import {
   puedeVerDespachoGrifo,
 } from "./components/combustible/compraEnRutaAcceso";
 import { puedeVerPrecios } from "./components/combustible/preciosAcceso";
+import { edicionDeProveedoresEnElEcosistema } from "./components/combustible/proveedoresEnEcosistema";
 import {
   miViajeVaEnFlota,
   puedeVerMiViaje,
@@ -95,6 +96,10 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
     // Mi viaje llama al módulo Viajes: sin él no se abre (el servidor daría 403).
     if (tab === "combustible:mi_viaje") return puedeVerMiViaje(usuario);
     if (tab === "combustible:despacho_grifo") return puedeVerDespachoGrifo(usuario);
+    // Con Gestión de proveedores (y permiso para escribir en él) los proveedores se manejan allá: la
+    // pestaña de Combustible se oculta, aunque tuviera un permiso puesto a mano.
+    if (tab === "combustible:proveedores" && edicionDeProveedoresEnElEcosistema(usuario))
+      return false;
     const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
     const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
     if (override !== undefined) return override;

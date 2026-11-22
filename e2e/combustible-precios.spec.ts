@@ -14,6 +14,7 @@ import { randomBytes } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
 import { loginPorUI } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
+import { crearEmpresaSola, entrarPorPrimeraVez } from "./fixtures/empresaSola";
 import { primerGrifoActivo } from "./fixtures/grifos";
 
 const unico = () => randomBytes(3).toString("hex").toUpperCase();
@@ -58,12 +59,20 @@ const fila = (page: Page, nombre: string) =>
   page.locator("tbody tr").filter({ hasText: nombre }).first();
 
 test.describe("Precios unificados", () => {
+  // Corre en una empresa SOLO con Combustible: con el módulo Gestión de proveedores, Combustible → Precios
+  // queda con la venta interna y los precios de proveedor se cargan en el ecosistema (ver el último test).
   test("sin precio se avisa, el cambio masivo llega a todos, el programado no rige y anular pide motivo", async ({
     page,
+    request,
   }) => {
+    test.setTimeout(150_000);
     const marca = `E2E${unico()}`;
-    const admin = adminA();
-    await loginPorUI(page, admin.email, admin.password);
+    const empresa = await crearEmpresaSola(request, "combustible", "precios");
+    await entrarPorPrimeraVez(
+      page,
+      empresa,
+      page.getByRole("button", { name: /^Combustible Abrir submenú$/ })
+    );
     const { tanqueNombre, proveedores } = await sembrar(page, marca);
     await abrirPrecios(page);
 
@@ -207,6 +216,39 @@ test.describe("Precios unificados", () => {
       }
     } finally {
       await contexto.close();
+    }
+  });
+
+  test("con Gestión de proveedores, Precios queda con la venta interna y lleva al ecosistema para los proveedores", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    const marca = `E2E${unico()}`;
+    const admin = adminA();
+    await loginPorUI(page, admin.email, admin.password);
+    const { tanqueNombre, proveedores } = await sembrar(page, marca);
+    await abrirPrecios(page);
+
+    // El tanque (venta interna) sigue acá, con su botón; los proveedores de ruta ya no.
+    await expect(fila(page, tanqueNombre)).toContainText("Sin precio");
+    await expect(
+      fila(page, tanqueNombre).getByRole("button", { name: "Cargar precio" })
+    ).toBeVisible();
+    for (const nombre of proveedores) {
+      await expect(page.locator("tbody tr").filter({ hasText: nombre })).toHaveCount(0);
+    }
+    // El aviso lo dice y el botón lleva a Gestión comercial, donde sí están.
+    await expect(page.getByRole("status").filter({ hasText: "Gestión comercial" })).toBeVisible();
+    await page.getByRole("button", { name: "Ir a Gestión comercial" }).click();
+    await expect(
+      page.getByRole("heading", { name: "Precios de proveedores", level: 1 })
+    ).toBeVisible({ timeout: 20_000 });
+    await expect.poll(() => new URL(page.url()).pathname).toBe("/proveedores/precios");
+    await page.getByPlaceholder("Buscar por proveedor o producto").fill(marca);
+    for (const nombre of proveedores) {
+      await expect(page.getByRole("row", { name: new RegExp(nombre) })).toBeVisible({
+        timeout: 20_000,
+      });
     }
   });
 });

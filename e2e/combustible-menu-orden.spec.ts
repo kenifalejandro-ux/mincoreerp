@@ -36,10 +36,12 @@ test("el submenú de Combustible sigue el flujo: alta, recepción, reparto y con
   const textos = (await submenu.allTextContents()).map((t) => t.trim());
   const vistos = textos.filter((t) => ORDEN.includes(t));
 
-  // El admin ve al menos el alta, la cisterna, el tanque y la tanqueta.
-  for (const base of ["Proveedores", "Cisternas", "Tanques", "Tanquetas"]) {
+  // El admin ve al menos la cisterna, el tanque y la tanqueta. «Proveedores» NO: el tenant e2e tiene el
+  // módulo Gestión de proveedores y, con él, los proveedores se manejan allá (ver proveedoresEnEcosistema.ts).
+  for (const base of ["Precios", "Cisternas", "Tanques", "Tanquetas"]) {
     expect(vistos, `falta ${base} en ${textos.join(" | ")}`).toContain(base);
   }
+  expect(vistos, `sobra Proveedores en ${textos.join(" | ")}`).not.toContain("Proveedores");
   const posiciones = vistos.map((t) => ORDEN.indexOf(t));
   expect(posiciones, `orden real: ${vistos.join(" > ")}`).toEqual(
     [...posiciones].sort((a, b) => a - b)

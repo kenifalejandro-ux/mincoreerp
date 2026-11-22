@@ -44,6 +44,7 @@ import type {
   TipoCombustible,
   TipoPrecio,
 } from "./preciosUnificados";
+import { irAGestionDeProveedores } from "./proveedoresEnEcosistema";
 import { apiFetch } from "../../services/apiClient";
 import { mensajeDeError } from "../../utils/mensajeDeError";
 
@@ -199,6 +200,9 @@ interface Props {
   puedeUrea: boolean;
   /** Solo admin y operador escriben (el servidor lo exige igual). */
   puedeEscribir: boolean;
+  /** Con Gestión de proveedores, los precios de proveedor y de urea se cargan allá: acá queda solo la venta
+   *  interna del tanque, con un aviso que lleva a Gestión comercial. */
+  soloVentaInterna?: boolean;
 }
 
 export default function PreciosPagina({
@@ -208,6 +212,7 @@ export default function PreciosPagina({
   puedeCombustible,
   puedeUrea,
   puedeEscribir,
+  soloVentaInterna = false,
 }: Props) {
   const [datos, setDatos] = useState<Datos>(DATOS_VACIOS);
   const [cargado, setCargado] = useState(false);
@@ -292,8 +297,8 @@ export default function PreciosPagina({
         // Si la lista de precios de un producto no cargó, no se muestra: sus
         // filas saldrían todas "sin precio" y sería mentira.
         { combustible: puedeCombustible && !fallaComb, urea: puedeUrea && !fallaUrea }
-      ),
-    [datos, tanques, grifos, puedeCombustible, puedeUrea, fallaComb, fallaUrea]
+      ).filter((f) => !soloVentaInterna || f.tipo === "interna"),
+    [datos, tanques, grifos, puedeCombustible, puedeUrea, fallaComb, fallaUrea, soloVentaInterna]
   );
   const porClave = useMemo(() => new Map(filas.map((f) => [f.clave, f])), [filas]);
   const ultimoGriferoDe = useMemo(
@@ -554,13 +559,17 @@ export default function PreciosPagina({
           <p className="text-sm text-[#94a3b8]">
             <strong className="text-white">Venta interna:</strong> precio al que se despacha desde
             cada tanque hacia las flotas.
-            <br />
-            <strong className="text-white">Compra a un proveedor de ruta:</strong> precio pactado
-            con cada proveedor para las compras en ruta; el conductor puede corregirlo según su
-            boleta.
-            <br />
-            <strong className="text-white">Urea:</strong> precio por envase de cada proveedor, para
-            la entrada al almacén y la compra en ruta.
+            {!soloVentaInterna && (
+              <>
+                <br />
+                <strong className="text-white">Compra a un proveedor de ruta:</strong> precio
+                pactado con cada proveedor para las compras en ruta; el conductor puede corregirlo
+                según su boleta.
+                <br />
+                <strong className="text-white">Urea:</strong> precio por envase de cada proveedor,
+                para la entrada al almacén y la compra en ruta.
+              </>
+            )}
           </p>
         </div>
         {hayEscritura && (
@@ -573,6 +582,26 @@ export default function PreciosPagina({
           </button>
         )}
       </div>
+
+      {soloVentaInterna && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#BADC1E]/40 bg-[#BADC1E]/10 px-4 py-3"
+        >
+          <p className="text-sm text-white">
+            Los precios de <strong>proveedores</strong> (combustible de ruta y urea) se cargan en{" "}
+            <strong>Gestión de proveedores → Gestión comercial</strong>. Aquí solo queda la venta
+            interna de cada tanque.
+          </p>
+          <button
+            type="button"
+            onClick={() => irAGestionDeProveedores("comercial")}
+            className="rounded-lg bg-[#BADC1E] px-4 py-2 text-sm font-bold text-[#0D1719] hover:brightness-110"
+          >
+            Ir a Gestión comercial
+          </button>
+        </div>
+      )}
 
       {fallos.length > 0 && (
         <div
@@ -612,20 +641,22 @@ export default function PreciosPagina({
                   <IconoSurtidor className="h-4 w-4" /> {ETIQUETA_COMBUSTIBLE[tc]}
                 </p>
                 <div className="mt-2 grid grid-cols-2 gap-4">
-                  {(["interna", "externa"] as const).map((t) => (
-                    <div key={t}>
-                      <p className="text-xs text-[#94a3b8]">{ETIQUETA_TIPO[t]}</p>
-                      <p className="font-mono text-xl font-bold text-white">
-                        {textoRango(valoresVigentes(fs.filter((f) => f.tipo === t)))}
-                      </p>
-                    </div>
-                  ))}
+                  {(["interna", "externa"] as const)
+                    .filter((t) => !soloVentaInterna || t === "interna")
+                    .map((t) => (
+                      <div key={t}>
+                        <p className="text-xs text-[#94a3b8]">{ETIQUETA_TIPO[t]}</p>
+                        <p className="font-mono text-xl font-bold text-white">
+                          {textoRango(valoresVigentes(fs.filter((f) => f.tipo === t)))}
+                        </p>
+                      </div>
+                    ))}
                 </div>
                 <p className="mt-2 text-xs text-[#64748b]">{textoUltimo(fs)}</p>
               </div>
             );
           })}
-          {presentacionesUrea.length > 0 && (
+          {presentacionesUrea.length > 0 && !soloVentaInterna && (
             <div className="rounded-lg border border-[#2a2e37] bg-[#192526] px-4 py-3">
               <p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-[#BADC1E]">
                 <IconoEstacion className="h-4 w-4" /> Urea
@@ -649,8 +680,10 @@ export default function PreciosPagina({
       {sinPrecio.length > 0 && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-300">
           <span>
-            <strong>{sinPrecio.length} sin precio.</strong> En compras en ruta el conductor tendrá
-            que tipear el costo sin referencia y no habrá con qué compararlo.
+            <strong>{sinPrecio.length} sin precio.</strong>{" "}
+            {soloVentaInterna
+              ? "Estos tanques no tienen precio de venta interna vigente."
+              : "En compras en ruta el conductor tendrá que tipear el costo sin referencia y no habrá con qué compararlo."}
           </span>
           <button
             type="button"
@@ -663,58 +696,62 @@ export default function PreciosPagina({
       )}
 
       <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[10px] font-bold uppercase tracking-widest text-[#64748b]">
-            Producto
-          </span>
-          <Chip
-            activo={producto === "todos"}
-            onClick={() => setProducto("todos")}
-            texto="Todos"
-            cuenta={filas.filter((f) => coincide(f, "todos", tipo)).length}
-          />
-          {puedeCombustible && (
+        {!soloVentaInterna && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-[#64748b]">
+              Producto
+            </span>
             <Chip
-              activo={producto === "combustible"}
-              onClick={() => setProducto("combustible")}
-              icono={<IconoSurtidor className="h-3.5 w-auto" />}
-              texto="Combustible"
-              cuenta={filas.filter((f) => coincide(f, "combustible", tipo)).length}
+              activo={producto === "todos"}
+              onClick={() => setProducto("todos")}
+              texto="Todos"
+              cuenta={filas.filter((f) => coincide(f, "todos", tipo)).length}
             />
-          )}
-          {puedeUrea && (
+            {puedeCombustible && (
+              <Chip
+                activo={producto === "combustible"}
+                onClick={() => setProducto("combustible")}
+                icono={<IconoSurtidor className="h-3.5 w-auto" />}
+                texto="Combustible"
+                cuenta={filas.filter((f) => coincide(f, "combustible", tipo)).length}
+              />
+            )}
+            {puedeUrea && (
+              <Chip
+                activo={producto === "urea"}
+                onClick={() => setProducto("urea")}
+                icono={<IconoEstacion className="h-3.5 w-auto" />}
+                texto="Urea"
+                cuenta={filas.filter((f) => coincide(f, "urea", tipo)).length}
+              />
+            )}
+          </div>
+        )}
+        {!soloVentaInterna && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-[#64748b]">
+              Tipo
+            </span>
             <Chip
-              activo={producto === "urea"}
-              onClick={() => setProducto("urea")}
-              icono={<IconoEstacion className="h-3.5 w-auto" />}
-              texto="Urea"
-              cuenta={filas.filter((f) => coincide(f, "urea", tipo)).length}
+              activo={tipo === "todos"}
+              onClick={() => setTipo("todos")}
+              texto="Todos"
+              cuenta={filas.filter((f) => coincide(f, producto, "todos")).length}
             />
-          )}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[10px] font-bold uppercase tracking-widest text-[#64748b]">
-            Tipo
-          </span>
-          <Chip
-            activo={tipo === "todos"}
-            onClick={() => setTipo("todos")}
-            texto="Todos"
-            cuenta={filas.filter((f) => coincide(f, producto, "todos")).length}
-          />
-          <Chip
-            activo={tipo === "interna"}
-            onClick={() => setTipo("interna")}
-            texto={ETIQUETA_TIPO.interna}
-            cuenta={filas.filter((f) => coincide(f, producto, "interna")).length}
-          />
-          <Chip
-            activo={tipo === "externa"}
-            onClick={() => setTipo("externa")}
-            texto={ETIQUETA_TIPO.externa}
-            cuenta={filas.filter((f) => coincide(f, producto, "externa")).length}
-          />
-        </div>
+            <Chip
+              activo={tipo === "interna"}
+              onClick={() => setTipo("interna")}
+              texto={ETIQUETA_TIPO.interna}
+              cuenta={filas.filter((f) => coincide(f, producto, "interna")).length}
+            />
+            <Chip
+              activo={tipo === "externa"}
+              onClick={() => setTipo("externa")}
+              texto={ETIQUETA_TIPO.externa}
+              cuenta={filas.filter((f) => coincide(f, producto, "externa")).length}
+            />
+          </div>
+        )}
         <input
           type="text"
           value={busca}
@@ -1013,7 +1050,9 @@ export default function PreciosPagina({
                         className={claseInput}
                       >
                         <option value="interna">Venta interna (tanque → flotas)</option>
-                        <option value="externa">Compra a un proveedor de ruta</option>
+                        {!soloVentaInterna && (
+                          <option value="externa">Compra a un proveedor de ruta</option>
+                        )}
                       </select>
                     </div>
                     <div>

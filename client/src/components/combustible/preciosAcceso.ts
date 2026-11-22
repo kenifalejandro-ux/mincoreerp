@@ -10,9 +10,12 @@
 // sigue el reparto de siempre: admin y operador. El servidor exige lo mismo
 // ruta por ruta, así que esto solo decide si se dibuja la entrada.
 
+import { edicionDeProveedoresEnElEcosistema } from "./proveedoresEnEcosistema";
+
 export interface UsuarioParaPrecios {
   rol: string;
   modulosPermitidos: string[];
+  modulosConsulta?: string[];
   permisosPestanas?: Record<string, boolean>;
 }
 
@@ -21,5 +24,8 @@ export function puedeVerPrecios(usuario: UsuarioParaPrecios | null | undefined):
   const porDefecto = usuario.rol === "admin" || usuario.rol === "operador";
   const combustible = usuario.permisosPestanas?.["combustible:tanques:precios"] ?? porDefecto;
   const urea = usuario.permisosPestanas?.["combustible:urea:precios"] ?? porDefecto;
+  // Con Gestión de proveedores, los precios de proveedor y de urea se cargan allá: acá solo queda la venta
+  // interna del tanque, que es del permiso de combustible.
+  if (edicionDeProveedoresEnElEcosistema(usuario)) return combustible;
   return combustible || urea;
 }

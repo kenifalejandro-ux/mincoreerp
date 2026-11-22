@@ -52,6 +52,10 @@ import { usePuntosPrecinto, puntosAVerificar, type PrecintoVisto } from "./preci
 import VentanaSurtidores from "./Surtidores";
 import PreciosPagina from "./PreciosPagina";
 import Proveedores from "./Proveedores";
+import {
+  edicionDeProveedoresEnElEcosistema,
+  irAGestionDeProveedores,
+} from "./proveedoresEnEcosistema";
 import TanquetasPanel from "./Tanquetas";
 import CompraEnRuta from "./CompraEnRuta";
 import MiTanqueta from "./MiTanqueta";
@@ -3815,6 +3819,9 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
     return <div className="p-10">Cargando combustible...</div>;
   }
 
+  // Con Gestión de proveedores (y permiso para escribir en él) los proveedores y sus precios se manejan allá:
+  // acá Precios queda solo con la venta interna del tanque (ver proveedoresEnEcosistema.ts).
+  const proveedoresEnElEcosistema = edicionDeProveedoresEnElEcosistema(usuario);
   const puedePreciosCombustible = permiteTanque("precios");
   // Mismo reparto que tenía el botón "Precios" dentro de Urea: admin y
   // operador, salvo override por usuario.
@@ -3939,16 +3946,18 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
       </div>
       {pestanaCombustible === "historico" && <HistoricoCliente />}
       {pestanaCombustible === "urea" && <UreaPanel />}
-      {pestanaCombustible === "precios" && (puedePreciosCombustible || puedePreciosUrea) && (
-        <PreciosPagina
-          tanques={tanques}
-          grifos={grifos}
-          onRecargarGrifos={cargarGrifos}
-          puedeCombustible={puedePreciosCombustible}
-          puedeUrea={!!puedePreciosUrea}
-          puedeEscribir={esAdmin || usuario?.rol === "operador"}
-        />
-      )}
+      {pestanaCombustible === "precios" &&
+        (puedePreciosCombustible || (puedePreciosUrea && !proveedoresEnElEcosistema)) && (
+          <PreciosPagina
+            tanques={tanques}
+            grifos={grifos}
+            onRecargarGrifos={cargarGrifos}
+            puedeCombustible={puedePreciosCombustible}
+            puedeUrea={!!puedePreciosUrea && !proveedoresEnElEcosistema}
+            puedeEscribir={esAdmin || usuario?.rol === "operador"}
+            soloVentaInterna={proveedoresEnElEcosistema}
+          />
+        )}
       {pestanaCombustible === "tanquetas" && <TanquetasPanel />}
       {pestanaCombustible === "mi_viaje" && <MiViaje />}
       {pestanaCombustible === "compra_ruta" && <CompraEnRuta />}
@@ -8025,6 +8034,11 @@ export default function CombustiblePanel({ pestanaInicial }: CombustiblePanelPro
                       type="button"
                       onClick={() => {
                         setModalRecepcionAbierto(false);
+                        // Con Gestión de proveedores el alta se hace allá; si no, en la pestaña de acá.
+                        if (proveedoresEnElEcosistema) {
+                          irAGestionDeProveedores("directorio");
+                          return;
+                        }
                         window.dispatchEvent(
                           new CustomEvent("mincore:ir-a-pestana", {
                             detail: "combustible:proveedores",

@@ -1,10 +1,10 @@
 /** e2e/proveedores-tabla-dueno.spec.ts
  *
  * PR6: el catálogo de proveedores es del módulo Proveedores; la pestaña «Proveedores» de Combustible se
- * concentra en el ecosistema SOLO cuando hay a dónde ir. Tres casos en el navegador:
+ * oculta SOLO cuando hay a dónde ir. Tres casos en el navegador:
  *
- * 1. Empresa con ambos módulos (admin): la pestaña de Combustible es de consulta, con aviso y enlace; el
- *    enlace lleva a «Gestión de proveedores», donde el proveedor está en el Directorio.
+ * 1. Empresa con ambos módulos (admin): el submenú de Combustible ya no trae «Proveedores»; el proveedor se
+ *    ve y se registra en el Directorio de «Gestión de proveedores».
  * 2. Empresa SOLO con Combustible (sin el módulo Proveedores): la pestaña sigue igual y se registra un
  *    proveedor desde ahí. Es la autonomía de Combustible.
  * 3. Una persona sin el módulo Proveedores asignado, en una empresa que sí lo tiene: sigue editando en
@@ -27,7 +27,9 @@ async function abrirProveedoresDeCombustible(page: Page) {
   });
 }
 
-test("con ambos módulos la pestaña es de consulta y lleva al ecosistema", async ({ page }) => {
+test("con ambos módulos «Proveedores» sale del menú de Combustible y el alta se hace en el ecosistema", async ({
+  page,
+}) => {
   test.setTimeout(120_000);
   const marca = randomBytes(3).toString("hex").toUpperCase();
   const nombre = `GRIFO DUENO ${marca}`;
@@ -36,25 +38,19 @@ test("con ambos módulos la pestaña es de consulta y lleva al ecosistema", asyn
   const alta = await page.request.post("/api/erp/combustible/grifos", { data: { nombre } });
   expect(alta.ok(), await alta.text()).toBeTruthy();
 
-  await abrirProveedoresDeCombustible(page);
-  await page.getByLabel("Buscar proveedor").fill(marca);
-  const fila = page.getByRole("row", { name: new RegExp(nombre) });
-  await expect(fila).toBeVisible({ timeout: 20_000 });
-  // Solo consulta: sin «Nuevo proveedor», sin «Desactivar» y con los interruptores bloqueados.
-  await expect(page.getByRole("button", { name: "Nuevo proveedor" })).toHaveCount(0);
-  await expect(fila.getByRole("button", { name: /^Desactivar$/ })).toHaveCount(0);
-  await expect(fila.getByRole("switch").first()).toBeDisabled();
-  await expect(page.getByRole("status")).toContainText("Gestión de proveedores");
+  // El submenú de Combustible ya no trae «Proveedores» (sí «Precios», con la venta interna).
+  await page.getByRole("button", { name: /^Combustible Abrir submenú$/ }).click();
+  const submenu = page.locator('div[aria-hidden="false"] button');
+  await expect(submenu.filter({ hasText: /^Precios$/ })).toBeVisible();
+  await expect(submenu.filter({ hasText: /^Proveedores$/ })).toHaveCount(0);
 
-  // El enlace lleva al ecosistema, donde el proveedor está en el Directorio.
-  await page.getByRole("button", { name: "Ir a Gestión de proveedores" }).click();
-  const menu = page.getByRole("complementary", { name: "Menú de Gestión de proveedores" });
-  await expect(menu).toBeVisible({ timeout: 20_000 });
-  await menu.getByRole("button", { name: "Directorio de proveedores" }).click();
+  // El proveedor existe y se maneja en el ecosistema, con su dirección.
+  await page.goto("/proveedores/directorio");
   await page.getByPlaceholder("Buscar por nombre, código o RUC").fill(marca);
   await expect(page.getByRole("row", { name: new RegExp(nombre) })).toBeVisible({
     timeout: 20_000,
   });
+  await expect(page.getByRole("button", { name: "Registrar proveedor" })).toBeVisible();
 });
 
 test("una empresa solo con Combustible sigue registrando proveedores desde su pestaña", async ({
