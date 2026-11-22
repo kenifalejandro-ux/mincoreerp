@@ -106,6 +106,18 @@ test("la dirección sigue a la pantalla: menú, F5, atrás y enlaces directos", 
     "aria-selected",
     "true"
   );
+  await page.goto(`/proveedores/directorio/${id}/datos`);
+  await expect(page.getByRole("tab", { name: "Datos generales" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+    { timeout: 20_000 }
+  );
+  await page.goto(`/proveedores/directorio/${id}/historial`);
+  await expect(page.getByRole("tab", { name: "Historial" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+    { timeout: 20_000 }
+  );
   await page.goto("/proveedores/directorio/99999999");
   await expect(
     page.getByRole("heading", { name: "Directorio de proveedores", level: 1 })

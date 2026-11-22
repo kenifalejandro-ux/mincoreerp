@@ -222,6 +222,8 @@ export interface FiltroDeHistorial {
   hasta?: string;
   /** Texto del nombre del proveedor. */
   proveedor?: string;
+  /** Un proveedor exacto (la pestaña Historial de su ficha). Manda sobre el texto. */
+  proveedorId?: number;
   antesDe?: string;
   limite: number;
 }
@@ -348,7 +350,9 @@ export class ProveedoresService {
     filtro: FiltroDeHistorial
   ): Promise<PaginaDeHistorial> {
     let proveedorIds: number[] | undefined;
-    if (filtro.proveedor && filtro.proveedor.trim() !== "") {
+    if (filtro.proveedorId !== undefined) {
+      proveedorIds = [filtro.proveedorId];
+    } else if (filtro.proveedor && filtro.proveedor.trim() !== "") {
       proveedorIds = await this.repository.idsDeProveedoresPorNombre(
         client,
         tenantId,

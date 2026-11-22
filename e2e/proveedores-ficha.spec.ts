@@ -12,7 +12,7 @@ import { randomBytes } from "node:crypto";
 
 import { test, expect, type Page } from "@playwright/test";
 
-import { loginPorUI } from "./fixtures/auth";
+import { loginPorUI, pulsarIngresar } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
 
 async function abrirFicha(page: Page, nombre: string, marca: string) {
@@ -51,7 +51,30 @@ test("ficha del proveedor: datos y condiciones de pago, contactos y Lectura sin 
   expect(alta.ok(), await alta.text()).toBeTruthy();
   await abrirFicha(page, nombre, marca);
 
-  // 1. Datos y condiciones de pago.
+  // 0. Cabecera como la maqueta: lo que se sabe del proveedor y las pestañas, con Contratos y Documentos «Pronto».
+  await expect(page.getByText("Sin ciudad")).toBeVisible();
+  await expect(page.getByText("Abastece a: Externo").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Más acciones" })).toBeVisible();
+  for (const pestana of [
+    "Resumen",
+    "Datos generales",
+    "Contactos",
+    "Comercial",
+    "Contratos",
+    "Documentos",
+    "Compras y recepciones",
+    "Historial",
+  ]) {
+    await expect(page.getByRole("tab", { name: pestana })).toBeVisible();
+  }
+  await page.getByRole("tab", { name: "Contratos" }).click();
+  await expect(page.getByText("Sin contratos registrados.")).toBeVisible();
+  await expect(page.getByRole("main").getByText("Pronto", { exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "Documentos" }).click();
+  await expect(page.getByText("Sin documentos cargados.")).toBeVisible();
+
+  // 1. Datos generales: la identificación y los datos y condiciones de pago.
+  await page.getByRole("tab", { name: "Datos generales" }).click();
   await expect(page.getByRole("heading", { name: "Datos y condiciones de pago" })).toBeVisible();
   await expect(page.getByText("Sin definir")).toHaveCount(6);
   await page.getByRole("button", { name: "Editar datos" }).click();
@@ -70,8 +93,17 @@ test("ficha del proveedor: datos y condiciones de pago, contactos y Lectura sin 
   await expect(page.getByRole("status")).toContainText("Datos guardados");
   await expect(page.getByText("Arequipa", { exact: true })).toBeVisible();
   await expect(page.getByText("Av. Los Pinos 123, Huancayo")).toBeVisible();
-  await expect(page.getByText("Crédito a 30 días")).toBeVisible();
+  await expect(page.getByText("Crédito a 30 días").first()).toBeVisible();
   await expect(page.getByText("Soles (S/)")).toBeVisible();
+  await expect(page.getByText("Arequipa, Perú")).toBeVisible();
+
+  // Resumen: 3 de los 5 datos que cuenta «Ficha completa» (faltan el RUC y el contacto).
+  await page.getByRole("tab", { name: "Resumen" }).click();
+  await expect(page.getByLabel("Indicadores del proveedor").getByText("60%")).toBeVisible();
+  await expect(
+    page.getByLabel("Indicadores del proveedor").getByText("Faltan datos")
+  ).toBeVisible();
+  await expect(page.getByText("Sin contacto").first()).toBeVisible();
 
   // 2. Contactos.
   await page.getByRole("tab", { name: "Contactos" }).click();
@@ -128,7 +160,7 @@ test("ficha del proveedor: datos y condiciones de pago, contactos y Lectura sin 
     await lectura.goto("/");
     await lectura.getByLabel("Correo").fill(email);
     await lectura.getByLabel("Contraseña").fill(temporal);
-    await lectura.getByRole("button", { name: "Ingresar" }).click();
+    await pulsarIngresar(lectura);
     await lectura.locator("#passwordActual").fill(temporal);
     await lectura.locator("#passwordNueva").fill(`${temporal}Nueva`);
     await lectura.locator("#confirmacion").fill(`${temporal}Nueva`);
@@ -138,6 +170,9 @@ test("ficha del proveedor: datos y condiciones de pago, contactos y Lectura sin 
     });
     await abrirFicha(lectura, nombre, marca);
     await expect(lectura.getByText("Crédito a 30 días")).toBeVisible({ timeout: 20_000 });
+    await expect(lectura.getByRole("button", { name: "Más acciones" })).toHaveCount(0);
+    await expect(lectura.getByRole("tab", { name: "Historial" })).toHaveCount(0);
+    await lectura.getByRole("tab", { name: "Datos generales" }).click();
     await expect(lectura.getByRole("button", { name: "Editar datos" })).toHaveCount(0);
     await lectura.getByRole("tab", { name: "Contactos" }).click();
     await expect(lectura.getByText("Juan Pérez")).toBeVisible({ timeout: 20_000 });

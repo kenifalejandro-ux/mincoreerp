@@ -12,7 +12,7 @@ import { randomBytes } from "node:crypto";
 
 import { test, expect, type Page } from "@playwright/test";
 
-import { loginPorUI } from "./fixtures/auth";
+import { loginPorUI, pulsarIngresar } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
 import { primerGrifoActivo } from "./fixtures/grifos";
 
@@ -20,25 +20,6 @@ const dias = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString();
 /** AAAA-MM-DD de un instante en Lima (la «vigencia hasta» es un día de Lima). */
 const diaDeLima = (instante: number) =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(instante);
-
-/** Pulsa «Ingresar» y comprueba que el formulario SÍ envió el login; si no, vuelve a pulsar (hasta 3 veces).
- *  En la base limpia del hook de pre-push se vio, de forma intermitente, un clic que no mandaba ninguna
- *  petición (en el trace: el clic se ejecuta y no hay `POST /api/auth/login`), y la prueba esperaba la
- *  pantalla de cambio de clave hasta agotar su tiempo. Esto no esconde un fallo del login: si tras tres clics
- *  no hay petición, la prueba falla con ese mensaje y no con un tiempo agotado. */
-async function pulsarIngresar(pagina: Page) {
-  for (let intento = 1; intento <= 3; intento++) {
-    const envio = pagina
-      .waitForResponse(
-        (r) => r.url().includes("/api/auth/login") && r.request().method() === "POST",
-        { timeout: 10_000 }
-      )
-      .catch(() => null);
-    await pagina.getByRole("button", { name: "Ingresar" }).click();
-    if (await envio) return;
-  }
-  throw new Error("El formulario de ingreso no envió el login tras tres clics");
-}
 
 test("gestión comercial: precio vigente, variación, ficha y Lectura sin acceso", async ({
   page,
@@ -163,7 +144,7 @@ test("gestión comercial: precio vigente, variación, ficha y Lectura sin acceso
   await page.getByText(/^Historial \(2\)/).click();
   await expect(page.getByText("S/ 10.00")).toBeVisible();
   await page.getByRole("tab", { name: "Resumen" }).click();
-  await expect(page.getByRole("heading", { name: "Qué abastece" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Resumen del proveedor" })).toBeVisible();
 
   // 3. Lectura no ve «Gestión comercial» (ni la pestaña «Comercial»).
   const email = `lectura-com-${marca.toLowerCase()}@mincoreerp.test`;

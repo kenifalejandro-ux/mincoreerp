@@ -22,8 +22,28 @@ export async function loginPorUI(page: Page, email: string, password: string): P
   await page.goto("/");
   await page.getByLabel("Correo").fill(email);
   await page.getByLabel("Contraseña").fill(password);
-  await page.getByRole("button", { name: "Ingresar" }).click();
+  // Con reintento si el clic no envió el login (ver `pulsarIngresar`).
+  await pulsarIngresar(page);
   // El primer pintado del panel inicial puede tardar más de los 5 s por defecto cuando la
   // máquina está cargada (varios specs seguidos): el login ya funcionó, solo falta esperar.
   await expect(page.getByRole("button", { name: "Dashboard" })).toBeVisible({ timeout: 20_000 });
+}
+
+/** Pulsa «Ingresar» y comprueba que el formulario SÍ envió el login; si no, vuelve a pulsar (hasta 3 veces).
+ *  En la base limpia del hook de pre-push se vio, de forma intermitente, un clic que no mandaba ninguna
+ *  petición (en el trace: el clic se ejecuta y no hay `POST /api/auth/login`), y la prueba esperaba la
+ *  pantalla de cambio de clave hasta agotar su tiempo. Esto no esconde un fallo del login: si tras tres clics
+ *  no hay petición, la prueba falla con ese mensaje y no con un tiempo agotado. */
+export async function pulsarIngresar(pagina: Page) {
+  for (let intento = 1; intento <= 3; intento++) {
+    const envio = pagina
+      .waitForResponse(
+        (r) => r.url().includes("/api/auth/login") && r.request().method() === "POST",
+        { timeout: 10_000 }
+      )
+      .catch(() => null);
+    await pagina.getByRole("button", { name: "Ingresar" }).click();
+    if (await envio) return;
+  }
+  throw new Error("El formulario de ingreso no envió el login tras tres clics");
 }
