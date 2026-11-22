@@ -130,7 +130,9 @@ export const MODULOS: ModuloDefinicion[] = [
     router: viajesRoutes,
     // Las cargas y el consumo de cada viaje salen de Combustible, y la unidad (tipo, medidor,
     // conductor asignado) de Flota: enriquecen, no se necesitan.
-    opcionales: ["combustible", "flota"],
+    // `proveedores`: el nombre del proveedor de cada compra en ruta sale de `combustible_grifos` (del módulo
+    // Proveedores desde el PR6) con un LEFT JOIN: sin proveedor, la fila igual se muestra.
+    opcionales: ["combustible", "flota", "proveedores"],
     bucketDe: "combustible",
     tablas: [],
     raices: [],
@@ -188,6 +190,62 @@ export const MODULOS: ModuloDefinicion[] = [
     },
   },
   {
+    // Ecosistema «Gestión de proveedores». Es autónomo: no exige ningún otro módulo. Es DUEÑO de
+    // `combustible_grifos` (el catálogo de proveedores, 0063) desde el PR6: va ANTES de Combustible en este
+    // array porque Combustible la referencia por FK (el respaldo restaura padres antes que hijos y el
+    // vaciado, que invierte el orden, la borra después de todo lo que la usa). La tabla conserva su nombre y
+    // existe siempre, tenga o no la empresa este módulo; Combustible la sigue usando (`opcionales`). Lee
+    // además tablas de Combustible (precios, compras, recepciones), por eso también lo declara en
+    // `opcionales`. Sin cuota. Tablas propias desde el PR3a: la ficha, los contactos (0198) y las cuentas
+    // bancarias (0199), que cuelgan de `combustible_grifos`.
+    id: "proveedores",
+    label: "Gestión de proveedores",
+    icono: "🏢",
+    version: "v1",
+    router: proveedoresRoutes,
+    opcionales: ["combustible"],
+    tablas: [
+      // El catálogo de proveedores (migrations/0063): grifos externos (PRIMAX, VELASQUEZ...) y, desde
+      // 0133/0163, también proveedores de urea y el comodín «Otros». Padre de todo lo de abajo y de las
+      // tablas de Combustible que lo referencian.
+      {
+        nombre: "combustible_grifos",
+        pk: "serial",
+        fks: { usuario_id: "usuarios" },
+      },
+      {
+        nombre: "proveedores_ficha",
+        pk: "serial",
+        fks: { grifo_id: "combustible_grifos", actualizado_por: "usuarios" },
+      },
+      {
+        nombre: "proveedores_contactos",
+        pk: "serial",
+        fks: {
+          grifo_id: "combustible_grifos",
+          creado_por: "usuarios",
+          actualizado_por: "usuarios",
+          quitado_por: "usuarios",
+        },
+      },
+      // Cuentas bancarias (0199): el número va CIFRADO (`numero_cifrado`); el respaldo lleva el texto
+      // cifrado tal cual, no el número.
+      {
+        nombre: "proveedores_cuentas_bancarias",
+        pk: "serial",
+        fks: {
+          grifo_id: "combustible_grifos",
+          creado_por: "usuarios",
+          actualizado_por: "usuarios",
+          quitado_por: "usuarios",
+        },
+      },
+    ],
+    // Sin ON DELETE desde `tenants` (0063): el vaciado de una empresa la borra explícitamente. La ficha, los
+    // contactos y las cuentas cascadean desde ella.
+    raices: ["combustible_grifos"],
+  },
+  {
     id: "combustible",
     label: "Combustible",
     icono: "⛽",
@@ -198,7 +256,10 @@ export const MODULOS: ModuloDefinicion[] = [
     // Con Flota lee de ella la placa, el medidor y el conductor asignado; sin ella omite esa parte
     // (la lectura mira los módulos de la EMPRESA, no los de la persona: ver modulosEmpresa.ts).
     // Del viaje activo lee la unidad (Compra en ruta) y el último medidor del viaje.
-    opcionales: ["flota", "viajes"],
+    // `proveedores`: el catálogo de proveedores (`combustible_grifos`) es de ese módulo desde el PR6, pero
+    // la tabla existe siempre y Combustible sigue pudiendo leerla y editarla (su pestaña «Proveedores»,
+    // las compras en ruta y las recepciones); con el módulo Proveedores solo se concentra la edición allí.
+    opcionales: ["flota", "viajes", "proveedores"],
     tablas: [
       {
         nombre: "combustible",
@@ -283,15 +344,9 @@ export const MODULOS: ModuloDefinicion[] = [
         pk: "serial",
         fks: { lectura_id: "combustible_lecturas", surtidor_id: "surtidores" },
       },
-      // Fase B, precios (migrations/0063) -- catálogo chico de grifos
-      // externos (PRIMAX, VELASQUEZ...). Va ANTES de combustible_despachos
-      // y combustible_precios en este array: las dos lo referencian por FK,
-      // y el restore necesita padres antes que hijos.
-      {
-        nombre: "combustible_grifos",
-        pk: "serial",
-        fks: { usuario_id: "usuarios" },
-      },
+      // `combustible_grifos` (el catálogo de proveedores, migrations/0063) ya NO se declara acá: es del
+      // módulo `proveedores` (PR6), que va ANTES de Combustible en este array. Las tablas de abajo lo
+      // referencian por FK, y el restore necesita padres antes que hijos.
       // Presentaciones de urea (0116) -- cuántos litros trae cada envase.
       // Va ANTES de combustible_recepciones y combustible_despachos: los dos
       // la referencian con una FK COMPUESTA (tenant_id, presentacion) y el
@@ -710,15 +765,15 @@ export const MODULOS: ModuloDefinicion[] = [
       },
     ],
     // combustible_lecturas cascadea desde su padre (ON DELETE CASCADE, ver
-    // migrations/0045) -- no necesita DELETE propio. combustible_grifos,
-    // combustible_despachos, combustible_precios y combustible_recepciones
-    // sí lo necesitan (ver el comentario de sus entradas en `tablas`).
+    // migrations/0045) -- no necesita DELETE propio. combustible_despachos,
+    // combustible_precios y combustible_recepciones sí lo necesitan (ver el comentario de sus entradas
+    // en `tablas`). `combustible_grifos` es raíz del módulo `proveedores`: como ese módulo va ANTES, el
+    // vaciado (que invierte el orden) lo borra DESPUÉS de todo lo que lo referencia.
     raices: [
       "combustible",
       // 0098: los vales lo referencian sin ON DELETE, así que se borra después
       // de ellos (este orden se invierte al vaciar).
       "surtidores",
-      "combustible_grifos",
       // 0116: cascadea desde `tenants`, no desde ninguna tabla de este
       // módulo, así que el wipe necesita borrarla explícitamente. Va antes de
       // los vales y las recepciones -- la referencian, y RAICES_WIPE invierte
@@ -1087,49 +1142,6 @@ export const MODULOS: ModuloDefinicion[] = [
         { metodo: "POST", ruta: "/:id/versiones" },
       ],
     },
-  },
-  {
-    // Ecosistema «Gestión de proveedores» (PR1: solo lectura). Es autónomo: no exige ningún otro
-    // módulo. Hoy LEE `combustible_grifos` (la tabla de proveedores, que sigue siendo de
-    // Combustible y se declara en sus `tablas`), por eso lo declara en `opcionales`; la tabla
-    // cambia de dueño en un PR posterior. Sin cuota. Tablas propias desde el PR3a: la ficha del
-    // proveedor y sus contactos (0198), que cuelgan de `combustible_grifos` sin modificarla.
-    id: "proveedores",
-    label: "Gestión de proveedores",
-    icono: "🏢",
-    version: "v1",
-    router: proveedoresRoutes,
-    opcionales: ["combustible"],
-    tablas: [
-      {
-        nombre: "proveedores_ficha",
-        pk: "serial",
-        fks: { grifo_id: "combustible_grifos", actualizado_por: "usuarios" },
-      },
-      {
-        nombre: "proveedores_contactos",
-        pk: "serial",
-        fks: {
-          grifo_id: "combustible_grifos",
-          creado_por: "usuarios",
-          actualizado_por: "usuarios",
-          quitado_por: "usuarios",
-        },
-      },
-      // Cuentas bancarias (0199): el número va CIFRADO (`numero_cifrado`); el respaldo lleva el texto
-      // cifrado tal cual, no el número.
-      {
-        nombre: "proveedores_cuentas_bancarias",
-        pk: "serial",
-        fks: {
-          grifo_id: "combustible_grifos",
-          creado_por: "usuarios",
-          actualizado_por: "usuarios",
-          quitado_por: "usuarios",
-        },
-      },
-    ],
-    raices: [],
   },
 ];
 
