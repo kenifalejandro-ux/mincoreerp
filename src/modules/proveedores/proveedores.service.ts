@@ -8,6 +8,7 @@
 import type { PoolClient } from "pg";
 
 import { AppError } from "../../server/shared/middlewares/error.middleware";
+import { cifrar, descifrar, huellaDe } from "../../server/shared/utils/platformCrypto";
 import { armarFilasDePrecios, type FilaPrecioDto } from "./proveedores.precios";
 import { armarCompras, type CompraDto } from "./proveedores.compras";
 import { CombustibleService } from "../combustible/combustible.service";
@@ -27,16 +28,21 @@ import type {
   CrearPrecioUreaInput,
 } from "../../server/schemas/combustible.schema";
 import type {
+  ActualizarCuentaProveedorInput,
   ActualizarProveedorInput,
   ContactoProveedorInput,
+  CrearCuentaProveedorInput,
   CrearPreciosProveedoresInput,
   CrearProveedorInput,
   GuardarDatosProveedorInput,
+  QuitarCuentaProveedorInput,
 } from "../../server/schemas/proveedores.schema";
 import {
+  CuentaDuplicadaError,
   ProveedorDuplicadoError,
   ProveedoresRepository,
   type FilaContacto,
+  type FilaCuenta,
   type FilaDatosProveedor,
   type FilaProveedor,
 } from "./proveedores.repository";
@@ -129,6 +135,45 @@ export interface ContactoDto {
   telefono: string | null;
   correo: string | null;
   principal: boolean;
+}
+
+/** Una cuenta bancaria como sale a la pantalla: el número NUNCA viaja, solo sus últimos 4 dígitos. */
+export interface CuentaDto {
+  id: number;
+  banco: string;
+  tipoCuenta: "corriente" | "ahorros" | "detraccion";
+  moneda: "PEN" | "USD";
+  titular: string | null;
+  /** «•••• 1234». */
+  numeroEnmascarado: string;
+  principal: boolean;
+}
+
+export const enmascarar = (ultimos4: string) => `•••• ${ultimos4}`;
+
+export function cuentaADto(fila: FilaCuenta): CuentaDto {
+  return {
+    id: Number(fila.id),
+    banco: fila.banco,
+    tipoCuenta: fila.tipo_cuenta,
+    moneda: fila.moneda,
+    titular: fila.titular,
+    numeroEnmascarado: enmascarar(fila.numero_ultimos4),
+    principal: fila.principal,
+  };
+}
+
+/** Lo que se guarda del número: cifrado, sus últimos 4 y su huella (para no repetir la cuenta). */
+function protegerNumero(numero: string) {
+  return {
+    numero_cifrado: cifrar(numero),
+    numero_ultimos4: numero.slice(-4),
+    numero_huella: huellaDe(numero),
+  };
+}
+
+function comoErrorDeCuenta(err: unknown): unknown {
+  return err instanceof CuentaDuplicadaError ? new AppError(409, err.message) : err;
 }
 
 export interface FichaProveedorDto {
@@ -320,6 +365,142 @@ export class ProveedoresService {
     );
     if (!fila) throw new AppError(404, "Contacto no encontrado");
     await this.repository.ascenderPrimerContacto(client, tenantId, id);
+  }
+
+  // ── Cuentas bancarias (PR3b) ──────────────────────────────────────────────────────────────────────
+  // El número se guarda cifrado y solo se descifra para «ver completo» (que el llamador audita). Nunca
+  // sale en una lista, ni en una respuesta de alta o edición, ni en la auditoría.
+
+  async cuentas(client: PoolClient, tenantId: string, id: number): Promise<CuentaDto[]> {
+    await this.exigirProveedor(client, tenantId, id);
+    return (await this.repository.cuentasActivas(client, tenantId, id)).map(cuentaADto);
+  }
+
+  /** `creado: false` = un reintento de una ya guardada (mismo `cliente_uuid`). */
+  async crearCuenta(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    id: number,
+    data: CrearCuentaProveedorInput
+  ): Promise<{ cuenta: CuentaDto; creado: boolean }> {
+    await this.exigirProveedor(client, tenantId, id);
+    if (data.cliente_uuid) {
+      const previa = await this.repository.cuentaPorClienteUuid(
+        client,
+        tenantId,
+        id,
+        data.cliente_uuid
+      );
+      if (previa) return { cuenta: cuentaADto(previa), creado: false };
+    }
+    // La primera cuenta del proveedor es la principal aunque no se marque.
+    const hayCuentas = (await this.repository.cuentasActivas(client, tenantId, id)).length > 0;
+    const principal = data.principal || !hayCuentas;
+    if (principal) await this.repository.quitarPrincipalDeCuentas(client, tenantId, id, usuarioId);
+    try {
+      const fila = await this.repository.crearCuenta(client, tenantId, usuarioId, id, {
+        banco: data.banco,
+        tipo_cuenta: data.tipo_cuenta,
+        moneda: data.moneda,
+        titular: data.titular,
+        principal,
+        cliente_uuid: data.cliente_uuid,
+        ...protegerNumero(data.numero),
+      });
+      if (!fila) {
+        const ganadora = await this.repository.cuentaPorClienteUuid(
+          client,
+          tenantId,
+          id,
+          data.cliente_uuid ?? ""
+        );
+        if (ganadora) return { cuenta: cuentaADto(ganadora), creado: false };
+        throw new AppError(409, "No se pudo guardar la cuenta");
+      }
+      return { cuenta: cuentaADto(fila), creado: true };
+    } catch (err) {
+      throw comoErrorDeCuenta(err);
+    }
+  }
+
+  /** Devuelve la cuenta y, si cambió el número, los últimos 4 de antes (para la bitácora). */
+  async actualizarCuenta(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    id: number,
+    cuentaId: number,
+    data: ActualizarCuentaProveedorInput
+  ): Promise<{ cuenta: CuentaDto; cambioElNumero: boolean; ultimos4Anteriores: string }> {
+    await this.exigirProveedor(client, tenantId, id);
+    const actual = await this.repository.cuentaPorId(client, tenantId, id, cuentaId);
+    if (!actual || !actual.activo) throw new AppError(404, "Cuenta no encontrada");
+    if (data.principal) {
+      await this.repository.quitarPrincipalDeCuentas(client, tenantId, id, usuarioId);
+    }
+    // Quitarle la marca a la única principal dejaría al proveedor sin cuenta principal: se conserva.
+    const principal = data.principal || actual.principal;
+    try {
+      const fila = await this.repository.actualizarCuenta(
+        client,
+        tenantId,
+        usuarioId,
+        id,
+        cuentaId,
+        {
+          banco: data.banco,
+          tipo_cuenta: data.tipo_cuenta,
+          moneda: data.moneda,
+          titular: data.titular,
+          principal,
+          numero: data.numero === undefined ? undefined : protegerNumero(data.numero),
+        }
+      );
+      if (!fila) throw new AppError(404, "Cuenta no encontrada");
+      return {
+        cuenta: cuentaADto(fila),
+        cambioElNumero: data.numero !== undefined,
+        ultimos4Anteriores: actual.numero_ultimos4,
+      };
+    } catch (err) {
+      throw comoErrorDeCuenta(err);
+    }
+  }
+
+  async quitarCuenta(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    id: number,
+    cuentaId: number,
+    data: QuitarCuentaProveedorInput
+  ): Promise<void> {
+    await this.exigirProveedor(client, tenantId, id);
+    const fila = await this.repository.desactivarCuenta(
+      client,
+      tenantId,
+      usuarioId,
+      id,
+      cuentaId,
+      data.motivo
+    );
+    if (!fila) throw new AppError(404, "Cuenta no encontrada");
+    await this.repository.ascenderPrimeraCuenta(client, tenantId, id);
+  }
+
+  /** El número completo de UNA cuenta activa. Quien llama tiene que haber exigido el permiso y dejar la
+   *  bitácora: este método solo descifra. */
+  async numeroCompleto(
+    client: PoolClient,
+    tenantId: string,
+    id: number,
+    cuentaId: number
+  ): Promise<string> {
+    await this.exigirProveedor(client, tenantId, id);
+    const cifrado = await this.repository.numeroCifradoDe(client, tenantId, id, cuentaId);
+    if (!cifrado) throw new AppError(404, "Cuenta no encontrada");
+    return descifrar(cifrado);
   }
 
   /** Gestión comercial: solo lo que este perfil puede ver (combustible y/o urea). */

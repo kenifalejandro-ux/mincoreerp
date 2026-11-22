@@ -228,6 +228,31 @@ export const PESTANAS_CONFIGURABLES: DefinicionPestana[] = [
     padre: null,
   },
   { modulo: "combustible", pestana: "bitacora", nombre: "Bitácora", nivel: "submenu", padre: null },
+  // Cuentas bancarias de los proveedores (ecosistema «Gestión de proveedores», 0199). A qué cuenta se le
+  // paga es el dato que más se defrauda: nace SOLO para el admin (ni el operador la trae por defecto) y se
+  // da persona por persona. Tres niveles: ver la lista (con el número enmascarado), ver el número
+  // completo y agregar, editar o quitar cuentas. Cada uso de los dos últimos queda en la bitácora.
+  {
+    modulo: "proveedores",
+    pestana: "cuentas",
+    nombre: "Cuentas bancarias de proveedores",
+    nivel: "submenu",
+    padre: null,
+  },
+  {
+    modulo: "proveedores",
+    pestana: "cuentas:ver_completa",
+    nombre: "Ver el número completo de la cuenta",
+    nivel: "accion",
+    padre: "cuentas",
+  },
+  {
+    modulo: "proveedores",
+    pestana: "cuentas:editar",
+    nombre: "Agregar, editar y quitar cuentas",
+    nivel: "accion",
+    padre: "cuentas",
+  },
 ];
 
 export interface PermisoPestana {
@@ -320,7 +345,11 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
       item !== "principal" &&
       item !== "mi_viaje" &&
       item !== "cisternas:registrar_compra" &&
-      item !== "viajes:control_tv"
+      item !== "viajes:control_tv" &&
+      // Cuentas bancarias de proveedores: solo el admin, el resto se lo da a mano (ver arriba).
+      item !== "cuentas" &&
+      item !== "cuentas:ver_completa" &&
+      item !== "cuentas:editar"
   );
   // Lectura: solo lo informativo. Ni "Registrar X", ni Alertas/Proveedores/
   // Surtidores/Precios/Nuevo tanque, ni las acciones de escritura del panel

@@ -9,9 +9,14 @@ import { useEffect, useMemo, useState } from "react";
 import ComercialDeProveedor from "./ComercialDeProveedor";
 import ComprasDeProveedor from "./ComprasDeProveedor";
 import ContactosDeProveedor from "./ContactosDeProveedor";
+import CuentasDeProveedor from "./CuentasDeProveedor";
 import DatosDeProveedor from "./DatosDeProveedor";
 import FormularioProveedor from "./FormularioProveedor";
-import { puedeVerComprasDeProveedores, puedeVerPreciosDeProveedores } from "./proveedoresAcceso";
+import {
+  puedeVerComprasDeProveedores,
+  puedeVerCuentasDeProveedores,
+  puedeVerPreciosDeProveedores,
+} from "./proveedoresAcceso";
 import { listarProveedores, type Proveedor, type TipoProveedor } from "./proveedoresApi";
 import { useAuth } from "../../context/AuthContext";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
@@ -59,11 +64,12 @@ function Estado({ activo }: { activo: boolean }) {
   );
 }
 
-export type PestanaFicha = "resumen" | "contactos" | "comercial" | "compras";
+export type PestanaFicha = "resumen" | "contactos" | "cuentas" | "comercial" | "compras";
 
 const ETIQUETA_PESTANA: Record<PestanaFicha, string> = {
   resumen: "Resumen",
   contactos: "Contactos",
+  cuentas: "Cuentas",
   comercial: "Comercial",
   compras: "Compras",
 };
@@ -74,6 +80,7 @@ function Ficha({
   onEditar,
   verPrecios,
   verCompras,
+  verCuentas,
   pestanaInicial,
 }: {
   proveedor: Proveedor;
@@ -84,11 +91,14 @@ function Ficha({
   verPrecios: boolean;
   /** Muestra la pestaña «Compras»: solo quien ve las compras de cisterna. */
   verCompras: boolean;
+  /** Muestra la pestaña «Cuentas»: solo quien tiene ese permiso (nace solo para el admin). */
+  verCuentas: boolean;
   pestanaInicial: PestanaFicha;
 }) {
   const pestanas: PestanaFicha[] = [
     "resumen",
     "contactos",
+    ...(verCuentas ? (["cuentas"] as const) : []),
     ...(verPrecios ? (["comercial"] as const) : []),
     ...(verCompras ? (["compras"] as const) : []),
   ];
@@ -152,6 +162,7 @@ function Ficha({
       </div>
 
       {pestana === "contactos" && <ContactosDeProveedor proveedorId={proveedor.id} />}
+      {pestana === "cuentas" && <CuentasDeProveedor proveedorId={proveedor.id} />}
       {pestana === "comercial" && <ComercialDeProveedor proveedorId={proveedor.id} />}
       {pestana === "compras" && <ComprasDeProveedor proveedorId={proveedor.id} />}
 
@@ -195,6 +206,7 @@ export default function DirectorioProveedores({
   const { usuario } = useAuth();
   const verPrecios = puedeVerPreciosDeProveedores(usuario);
   const verCompras = puedeVerComprasDeProveedores(usuario);
+  const verCuentas = puedeVerCuentasDeProveedores(usuario);
   const [lista, setLista] = useState<Proveedor[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
@@ -254,6 +266,7 @@ export default function DirectorioProveedores({
           onEditar={puedeEscribir ? () => setFormulario(seleccionado) : undefined}
           verPrecios={verPrecios}
           verCompras={verCompras}
+          verCuentas={verCuentas}
           pestanaInicial={apertura?.id === seleccionado.id ? apertura.pestana : "resumen"}
         />
         {modal}

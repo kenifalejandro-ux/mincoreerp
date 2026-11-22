@@ -1116,6 +1116,18 @@ export const MODULOS: ModuloDefinicion[] = [
           quitado_por: "usuarios",
         },
       },
+      // Cuentas bancarias (0199): el número va CIFRADO (`numero_cifrado`); el respaldo lleva el texto
+      // cifrado tal cual, no el número.
+      {
+        nombre: "proveedores_cuentas_bancarias",
+        pk: "serial",
+        fks: {
+          grifo_id: "combustible_grifos",
+          creado_por: "usuarios",
+          actualizado_por: "usuarios",
+          quitado_por: "usuarios",
+        },
+      },
     ],
     raices: [],
   },

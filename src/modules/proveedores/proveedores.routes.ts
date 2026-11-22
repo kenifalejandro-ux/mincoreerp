@@ -3,7 +3,8 @@
  * Ecosistema «Gestión de proveedores» (PR1, solo lectura): resumen del Centro de gestión, listado del
  * Directorio y ficha; el PR2 suma el alta y la edición (POST y PUT); el PR5b, registrar, habilitar y
  * anular compras de cisterna; el PR4b, cargar y anular precios de proveedores; el PR3a, la ficha del
- * proveedor (datos de contacto, condiciones de pago y contactos).
+ * proveedor (datos de contacto, condiciones de pago y contactos); el PR3b, sus cuentas bancarias (con
+ * permisos aparte, número cifrado y bitácora).
  *
  * Sin permiso de pestaña a propósito: el acceso lo da el MÓDULO asignado a cada persona (los perfiles
  * de cancha no lo reciben por su rol, ver MODULOS_POR_ROL) y el perfil Lectura mira pero no escribe
@@ -25,16 +26,22 @@ import {
   type CrearPrecioUreaInput,
 } from "../../server/schemas/combustible.schema";
 import {
+  actualizarCuentaProveedorSchema,
   actualizarProveedorSchema,
   contactoProveedorSchema,
+  crearCuentaProveedorSchema,
   crearPreciosProveedoresSchema,
   crearProveedorSchema,
   guardarDatosProveedorSchema,
+  quitarCuentaProveedorSchema,
+  type ActualizarCuentaProveedorInput,
   type ActualizarProveedorInput,
   type ContactoProveedorInput,
+  type CrearCuentaProveedorInput,
   type CrearPreciosProveedoresInput,
   type CrearProveedorInput,
   type GuardarDatosProveedorInput,
+  type QuitarCuentaProveedorInput,
 } from "../../server/schemas/proveedores.schema";
 import { registrarAuditoria } from "../../server/services/platformAudit.service";
 import { publicarEventoTenant } from "../../server/services/realtimeEvents.service";
@@ -480,6 +487,159 @@ router.patch(
       tenantId,
       usuarioId: req.usuario!.id,
       detalle: { proveedorId: id, contactoId },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    res.json({ ok: true });
+  })
+);
+
+// PR3b: cuentas bancarias del proveedor. A qué cuenta se le paga es el dato que más se defrauda, así que
+// tiene permisos aparte y nacen solo para el admin: `cuentas` (ver la lista, con el número enmascarado),
+// `cuentas:ver_completa` (ver el número entero) y `cuentas:editar` (agregar, editar y quitar). El número
+// se guarda cifrado y NUNCA viaja en una lista, un alta o una edición: solo «ver completo» lo devuelve, y
+// cada vez queda en la bitácora. Toda la bitácora de este grupo lleva ids y los últimos 4 dígitos, jamás
+// el número.
+const idDeCuenta = (req: Request): number => {
+  const id = Number(req.params.cuentaId);
+  if (!Number.isSafeInteger(id) || id <= 0) throw new AppError(400, "Cuenta inválida");
+  return id;
+};
+const veCuentas = requirePestana("proveedores", "cuentas");
+const veNumeroCompleto = [
+  requirePestana("proveedores", "cuentas:ver_completa"),
+  requireRole("admin", "operador"),
+];
+const editaCuentas = [
+  requirePestana("proveedores", "cuentas:editar"),
+  requireRole("admin", "operador"),
+];
+
+router.get(
+  "/:id(\\d+)/cuentas",
+  veCuentas,
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = idDeProveedor(req);
+    const usuario = req.usuario!;
+    const cuentas = await withTenant(tenantId, (client) => service.cuentas(client, tenantId, id));
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      verCompleta: pestanaPermitida(usuario, "proveedores", "cuentas:ver_completa"),
+      puedeEditar:
+        (usuario.rol === "admin" || usuario.rol === "operador") &&
+        pestanaPermitida(usuario, "proveedores", "cuentas:editar"),
+      cuentas,
+    });
+  })
+);
+
+// POST y no GET: ver el número completo deja constancia, y un GET no debe escribir.
+router.post(
+  "/:id(\\d+)/cuentas/:cuentaId(\\d+)/ver-completa",
+  ...veNumeroCompleto,
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = idDeProveedor(req);
+    const cuentaId = idDeCuenta(req);
+    const numero = await withTenant(tenantId, (client) =>
+      service.numeroCompleto(client, tenantId, id, cuentaId)
+    );
+    await registrarAuditoria({
+      accion: "proveedores.cuenta_ver",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { proveedorId: id, cuentaId, ultimos4: numero.slice(-4) },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ numero });
+  })
+);
+
+router.post(
+  "/:id(\\d+)/cuentas",
+  ...editaCuentas,
+  validate(crearCuentaProveedorSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = idDeProveedor(req);
+    const data = req.validatedBody as CrearCuentaProveedorInput;
+    const { cuenta, creado } = await withTenant(tenantId, (client) =>
+      service.crearCuenta(client, tenantId, req.usuario!.id, id, data)
+    );
+    res.setHeader("Cache-Control", "no-store");
+    // Un reintento ya guardado: 200, sin duplicar la bitácora.
+    if (!creado) {
+      res.status(200).json(cuenta);
+      return;
+    }
+    await registrarAuditoria({
+      accion: "proveedores.cuenta_crear",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: {
+        proveedorId: id,
+        cuentaId: cuenta.id,
+        banco: cuenta.banco,
+        ultimos4: cuenta.numeroEnmascarado.slice(-4),
+        principal: cuenta.principal,
+      },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    res.status(201).json(cuenta);
+  })
+);
+
+router.put(
+  "/:id(\\d+)/cuentas/:cuentaId(\\d+)",
+  ...editaCuentas,
+  validate(actualizarCuentaProveedorSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = idDeProveedor(req);
+    const cuentaId = idDeCuenta(req);
+    const data = req.validatedBody as ActualizarCuentaProveedorInput;
+    const { cuenta, cambioElNumero, ultimos4Anteriores } = await withTenant(tenantId, (client) =>
+      service.actualizarCuenta(client, tenantId, req.usuario!.id, id, cuentaId, data)
+    );
+    // Cambiar el NÚMERO de una cuenta es redirigir un pago: queda con los últimos 4 de antes y de después.
+    await registrarAuditoria({
+      accion: cambioElNumero ? "proveedores.cuenta_cambiar_numero" : "proveedores.cuenta_editar",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: {
+        proveedorId: id,
+        cuentaId,
+        banco: cuenta.banco,
+        ...(cambioElNumero
+          ? { ultimos4Anteriores, ultimos4Nuevos: cuenta.numeroEnmascarado.slice(-4) }
+          : { ultimos4: cuenta.numeroEnmascarado.slice(-4) }),
+        principal: cuenta.principal,
+      },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json(cuenta);
+  })
+);
+
+router.patch(
+  "/:id(\\d+)/cuentas/:cuentaId(\\d+)/quitar",
+  ...editaCuentas,
+  validate(quitarCuentaProveedorSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = idDeProveedor(req);
+    const cuentaId = idDeCuenta(req);
+    const data = req.validatedBody as QuitarCuentaProveedorInput;
+    await withTenant(tenantId, (client) =>
+      service.quitarCuenta(client, tenantId, req.usuario!.id, id, cuentaId, data)
+    );
+    await registrarAuditoria({
+      accion: "proveedores.cuenta_quitar",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: { proveedorId: id, cuentaId, motivo: data.motivo },
       contexto: contextoAuditoriaModulo(req),
     });
     res.json({ ok: true });

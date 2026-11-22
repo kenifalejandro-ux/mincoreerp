@@ -44,10 +44,13 @@ function ArbolPermisosCombustible({
   items,
   onChange,
   disabled = false,
+  titulo = "Submenús de Combustible",
 }: {
   items: PermisoDePestana[];
   onChange: (modulo: string, pestana: string, permitido: boolean) => void;
   disabled?: boolean;
+  /** Encabezado del árbol; el de Gestión de proveedores reutiliza este mismo componente. */
+  titulo?: string;
 }) {
   const submenus = items.filter((item) => item.nivel === "submenu");
 
@@ -81,7 +84,7 @@ function ArbolPermisosCombustible({
 
   return (
     <div className="mt-2 border-t border-slate-200 px-3">
-      <p className="py-2 text-[11px] font-bold uppercase text-slate-400">Submenús de Combustible</p>
+      <p className="py-2 text-[11px] font-bold uppercase text-slate-400">{titulo}</p>
       <div className="divide-y divide-slate-100">
         {submenus.map((submenu) => {
           const children = items.filter((item) => item.padre === submenu.pestana);
@@ -92,7 +95,7 @@ function ArbolPermisosCombustible({
             <details
               key={submenu.pestana}
               className="group py-2"
-              open={submenu.pestana === "tanques"}
+              open={submenu.pestana === "tanques" || submenus.length === 1}
             >
               <summary className="flex cursor-pointer list-none items-center justify-between gap-4 py-1">
                 <span className="flex items-center gap-2 text-sm font-semibold text-slate-800">
@@ -304,6 +307,7 @@ export default function ConfiguracionView() {
   const persona = usuarios.find((u) => u.id === elegido);
   const pestañasCombustible = pestanas.filter((item) => item.modulo === "combustible");
   const pestañasFacturacion = pestanas.filter((item) => item.modulo === "facturacion");
+  const pestañasProveedores = pestanas.filter((item) => item.modulo === "proveedores");
   // El servidor manda solo los módulos que envían correos; acá se quedan los
   // que esta persona tiene asignados (marcar alertas de algo que no ve no existe).
   const alertasVisibles = alertas.filter((alerta) =>
@@ -370,7 +374,7 @@ export default function ConfiguracionView() {
               ) : (
                 <ul className="space-y-3">
                   {modulos.map((permiso) =>
-                    permiso.modulo === "combustible" ? (
+                    permiso.modulo === "combustible" || permiso.modulo === "proveedores" ? (
                       <li
                         key={permiso.modulo}
                         className="border border-slate-200 rounded-2xl overflow-hidden"
@@ -387,7 +391,16 @@ export default function ConfiguracionView() {
                               </span>
                             </summary>
                             <ArbolPermisosCombustible
-                              items={pestañasCombustible}
+                              items={
+                                permiso.modulo === "combustible"
+                                  ? pestañasCombustible
+                                  : pestañasProveedores
+                              }
+                              titulo={
+                                permiso.modulo === "combustible"
+                                  ? "Submenús de Combustible"
+                                  : "Datos sensibles de proveedores"
+                              }
                               onChange={cambiarPestana}
                               disabled={!permiso.asignado || esAdmin}
                             />
