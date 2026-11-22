@@ -10,11 +10,6 @@ import { Plus, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { IconoCisterna, IconoEstacion, IconoGota, IconoSurtidor } from "./IconosProveedor";
-import {
-  edicionDeProveedoresEnElEcosistema,
-  irAGestionDeProveedores,
-} from "./proveedoresEnEcosistema";
-import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
 import { mensajeDeError } from "../../utils/mensajeDeError";
 
@@ -82,13 +77,10 @@ function Interruptor({
   activo,
   etiqueta,
   onCambio,
-  soloLectura = false,
 }: {
   activo: boolean;
   etiqueta: string;
   onCambio: () => void;
-  /** Se ve el valor pero no se puede cambiar (los proveedores se editan en Gestión de proveedores). */
-  soloLectura?: boolean;
 }) {
   return (
     <button
@@ -96,12 +88,10 @@ function Interruptor({
       role="switch"
       aria-checked={activo}
       aria-label={etiqueta}
-      aria-readonly={soloLectura}
-      disabled={soloLectura}
       onClick={onCambio}
       className={`relative h-5 w-9 shrink-0 rounded-sm transition-colors ${
         activo ? "bg-[#BADC1E]" : "bg-[#475569]"
-      } ${soloLectura ? "cursor-default opacity-60" : ""}`}
+      }`}
     >
       <span
         className={`absolute top-0.5 h-4 w-4 transition-all ${
@@ -176,9 +166,6 @@ export default function Proveedores({
   grifos: ProveedorGrifo[];
   onRecargar: () => Promise<void> | void;
 }) {
-  // Con el módulo Proveedores (y permiso para escribir en él) esta pestaña solo se consulta: se edita allá.
-  const { usuario } = useAuth();
-  const soloLectura = edicionDeProveedoresEnElEcosistema(usuario);
   const [uso, setUso] = useState<Uso>("todos");
   const [producto, setProducto] = useState<Producto>("todos");
   const [busca, setBusca] = useState("");
@@ -332,35 +319,14 @@ export default function Proveedores({
             <strong className="text-white">Externo:</strong> se compra en el recorrido de ruta.
           </p>
         </div>
-        {!soloLectura && (
-          <button
-            type="button"
-            onClick={abrirModal}
-            className="flex items-center gap-2 rounded-lg bg-[#BADC1E] px-4 py-2 font-bold text-[#0D1719] hover:brightness-110"
-          >
-            <Plus className="h-4 w-4" /> Nuevo proveedor
-          </button>
-        )}
-      </div>
-
-      {soloLectura && (
-        <div
-          role="status"
-          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#BADC1E]/40 bg-[#BADC1E]/10 px-4 py-3"
+        <button
+          type="button"
+          onClick={abrirModal}
+          className="flex items-center gap-2 rounded-lg bg-[#BADC1E] px-4 py-2 font-bold text-[#0D1719] hover:brightness-110"
         >
-          <p className="text-sm text-white">
-            Los proveedores se registran y editan en <strong>Gestión de proveedores</strong>. Aquí
-            solo se consultan.
-          </p>
-          <button
-            type="button"
-            onClick={irAGestionDeProveedores}
-            className="rounded-lg bg-[#BADC1E] px-4 py-2 text-sm font-bold text-[#0D1719] hover:brightness-110"
-          >
-            Ir a Gestión de proveedores
-          </button>
-        </div>
-      )}
+          <Plus className="h-4 w-4" /> Nuevo proveedor
+        </button>
+      </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
@@ -528,7 +494,6 @@ export default function Proveedores({
                         activo={roles[c.clave]}
                         etiqueta={`${c.etiqueta} de ${g.nombre}`}
                         onCambio={() => alternarRol(g, c.clave)}
-                        soloLectura={soloLectura}
                       />
                     </td>
                   ))}
@@ -543,20 +508,16 @@ export default function Proveedores({
                     </span>
                   </td>
                   <td className="px-3 py-2 md:px-4 md:py-3 text-right">
-                    {soloLectura ? (
-                      <span className="text-xs text-[#64748b]">—</span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setErrorEstado(null);
-                          setPorConfirmar(g);
-                        }}
-                        className="rounded border border-[#334155] px-3 py-1.5 text-xs font-bold text-[#94a3b8] hover:border-[#64748b] hover:text-white"
-                      >
-                        {g.activo ? "Desactivar" : "Activar"}
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setErrorEstado(null);
+                        setPorConfirmar(g);
+                      }}
+                      className="rounded border border-[#334155] px-3 py-1.5 text-xs font-bold text-[#94a3b8] hover:border-[#64748b] hover:text-white"
+                    >
+                      {g.activo ? "Desactivar" : "Activar"}
+                    </button>
                   </td>
                 </tr>
               );

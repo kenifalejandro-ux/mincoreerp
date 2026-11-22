@@ -28,6 +28,7 @@ import { useContadorBandeja } from "../bandeja/useContadorBandeja";
 import { puedeVerCisternas } from "../combustible/cisternasAcceso";
 import { puedeCompraEnRuta, puedeVerDespachoGrifo } from "../combustible/compraEnRutaAcceso";
 import { puedeVerPrecios } from "../combustible/preciosAcceso";
+import { edicionDeProveedoresEnElEcosistema } from "../combustible/proveedoresEnEcosistema";
 import { SubmenuDesplegable } from "../comunes/SubmenuDesplegable";
 import { marcarNovedadVista, novedadVigente } from "../controlTv/novedad";
 import {
@@ -132,6 +133,10 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
     if (tab === "combustible:mi_viaje") return puedeVerMiViaje(usuario);
     // Despacho grifo es solo del conductor (habilitado por su perfil, sin casilla propia por ahora).
     if (tab === "combustible:despacho_grifo") return puedeVerDespachoGrifo(usuario);
+    // Con Gestión de proveedores (y permiso para escribir en él) los proveedores se manejan allá: la
+    // pestaña de Combustible se oculta, aunque tuviera un permiso puesto a mano.
+    if (tab === "combustible:proveedores" && edicionDeProveedoresEnElEcosistema(usuario))
+      return false;
     const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
     const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
     if (override !== undefined) return override;
