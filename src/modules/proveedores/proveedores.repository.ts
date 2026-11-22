@@ -634,6 +634,7 @@ export class ProveedoresRepository {
   ): Promise<FilaPrecioCombustibleDb[]> {
     const r = await client.query<FilaPrecioCombustibleDb>(
       `SELECT p.id, p.tipo_combustible, p.grifo_id, p.precio_unitario, p.vigente_desde,
+              p.vigente_hasta::text AS vigente_hasta,
               u.nombre AS registrado_por, p.anulada_en, p.motivo_anulacion
          FROM combustible_precios p
          LEFT JOIN usuarios u ON u.id = p.usuario_id
@@ -647,11 +648,31 @@ export class ProveedoresRepository {
   async listarPreciosUrea(client: PoolClient, tenantId: string): Promise<FilaPrecioUreaDb[]> {
     const r = await client.query<FilaPrecioUreaDb>(
       `SELECT p.id, p.grifo_id, p.presentacion, p.marca, p.precio_por_bulto, p.vigente_desde,
+              p.vigente_hasta::text AS vigente_hasta,
               u.nombre AS registrado_por, p.anulada_en, p.motivo_anulacion
          FROM combustible_urea_precios p
          LEFT JOIN usuarios u ON u.id = p.usuario_id
         WHERE p.tenant_id = $1
         ORDER BY p.vigente_desde DESC, p.id DESC`,
+      [tenantId]
+    );
+    return r.rows;
+  }
+
+  /** La condición de pago de cada proveedor, de su ficha (0198). Sin ficha, no aparece. */
+  async condicionesDePago(
+    client: PoolClient,
+    tenantId: string
+  ): Promise<
+    { grifo_id: number; forma_pago: "contado" | "credito"; plazo_pago_dias: number | null }[]
+  > {
+    const r = await client.query<{
+      grifo_id: number;
+      forma_pago: "contado" | "credito";
+      plazo_pago_dias: number | null;
+    }>(
+      `SELECT grifo_id, forma_pago, plazo_pago_dias FROM proveedores_ficha
+        WHERE tenant_id = $1 AND forma_pago IS NOT NULL`,
       [tenantId]
     );
     return r.rows;

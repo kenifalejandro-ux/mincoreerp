@@ -29,6 +29,8 @@ export interface EntradaPrecioDto {
   precio: number;
   /** ISO 8601. */
   desde: string;
+  /** «Vigencia hasta» (AAAA-MM-DD, opcional): solo una alerta de vencimiento, no cambia cuál precio rige. */
+  hasta: string | null;
   por: string | null;
   marca: string | null;
   anulado: boolean;
@@ -48,6 +50,11 @@ export interface FilaPrecioDto {
   detalle: string;
   /** «galón» o «envase». */
   unidad: string;
+  /** Para qué se le compra: planta (interno), ruta (externo) o los dos. Combustible siempre es de ruta; la
+   *  urea sale de las casillas del proveedor. */
+  uso: UsoDePrecio;
+  /** La condición de pago de la ficha del proveedor (la misma para todos sus productos). */
+  condicionDePago: { formaPago: "contado" | "credito"; plazoPagoDias: number | null } | null;
   vigente: EntradaPrecioDto | null;
   /** El precio válido inmediatamente anterior al vigente, para la variación. */
   anterior: EntradaPrecioDto | null;
@@ -57,12 +64,16 @@ export interface FilaPrecioDto {
   historial: EntradaPrecioDto[];
 }
 
+export type UsoDePrecio = "interno" | "externo" | "ambos";
+
 export interface FilaPrecioCombustibleDb {
   id: number;
   tipo_combustible: string;
   grifo_id: number;
   precio_unitario: string;
   vigente_desde: Date | string;
+  /** AAAA-MM-DD (la columna es DATE; el servidor la pide como texto para no mover el día). */
+  vigente_hasta?: string | null;
   registrado_por: string | null;
   anulada_en: Date | string | null;
   motivo_anulacion: string | null;
@@ -75,6 +86,7 @@ export interface FilaPrecioUreaDb {
   marca: string | null;
   precio_por_bulto: string;
   vigente_desde: Date | string;
+  vigente_hasta?: string | null;
   registrado_por: string | null;
   anulada_en: Date | string | null;
   motivo_anulacion: string | null;
@@ -94,9 +106,18 @@ export interface FuentesPrecios {
   tiposEnTanques: string[];
   /** Presentaciones de urea activas. */
   presentaciones: PresentacionDb[];
+  /** La condición de pago de cada proveedor (de su ficha), por id. Opcional: sin ficha, sin dato. */
+  condicionesDePago?: Map<number, NonNullable<FilaPrecioDto["condicionDePago"]>>;
 }
 
 const aIso = (f: Date | string) => new Date(f).toISOString();
+
+/** Combustible de proveedor es siempre de ruta (el precio interno es el del tanque); la urea, según sus casillas. */
+function usoDe(producto: ProductoPrecio, p: ProveedorDto): UsoDePrecio {
+  if (producto === "combustible") return "externo";
+  if (p.urea.interno && p.urea.externo) return "ambos";
+  return p.urea.interno ? "interno" : "externo";
+}
 
 const textoPresentacion = (nombre: string, litros: string | null) =>
   litros ? `${nombre} (${Number(litros)} L)` : nombre;
@@ -177,6 +198,7 @@ export function armarFilasDePrecios(
         id: r.id,
         precio: Number(r.precio_unitario),
         desde: aIso(r.vigente_desde),
+        hasta: r.vigente_hasta ?? null,
         por: r.registrado_por,
         marca: null,
         anulado: r.anulada_en !== null,
@@ -211,6 +233,7 @@ export function armarFilasDePrecios(
         id: r.id,
         precio: Number(r.precio_por_bulto),
         desde: aIso(r.vigente_desde),
+        hasta: r.vigente_hasta ?? null,
         por: r.registrado_por,
         marca: r.marca,
         anulado: r.anulada_en !== null,
@@ -232,6 +255,8 @@ export function armarFilasDePrecios(
         codigo: b.codigo,
         detalle: b.detalle,
         unidad: b.unidad,
+        uso: usoDe(b.producto, p),
+        condicionDePago: f.condicionesDePago?.get(p.id) ?? null,
         ...resolver(b.entradas, ahora),
       };
     })

@@ -97,11 +97,15 @@ export interface EntradaPrecio {
   precio: number;
   /** ISO 8601. */
   desde: string;
+  /** «Vigencia hasta» (AAAA-MM-DD, opcional): solo una alerta de vencimiento, no cambia cuál precio rige. */
+  hasta: string | null;
   por: string | null;
   marca: string | null;
   anulado: boolean;
   motivo: string | null;
 }
+
+export type UsoDePrecio = "interno" | "externo" | "ambos";
 
 export interface FilaPrecio {
   clave: string;
@@ -115,6 +119,10 @@ export interface FilaPrecio {
   detalle: string;
   /** «galón» o «envase». */
   unidad: string;
+  /** Para qué se le compra: planta, ruta o los dos. */
+  uso: UsoDePrecio;
+  /** La condición de pago de la ficha del proveedor, o null si no la tiene. */
+  condicionDePago: { formaPago: FormaDePago; plazoPagoDias: number | null } | null;
   vigente: EntradaPrecio | null;
   anterior: EntradaPrecio | null;
   programado: EntradaPrecio | null;
@@ -239,6 +247,8 @@ export interface CuerpoPreciosCombustible {
   precio_unitario: number;
   /** ISO 8601; ausente = rige desde ahora. */
   vigente_desde?: string;
+  /** AAAA-MM-DD, opcional: solo una alerta de vencimiento. */
+  vigente_hasta?: string;
 }
 
 export interface CuerpoPrecioUrea {
@@ -247,6 +257,8 @@ export interface CuerpoPrecioUrea {
   marca?: string;
   precio_por_bulto: number;
   vigente_desde?: string;
+  /** AAAA-MM-DD, opcional: solo una alerta de vencimiento. */
+  vigente_hasta?: string;
 }
 
 export const datosFormularioPrecio = () => leer<DatosFormularioPrecio>("/precios/formulario");

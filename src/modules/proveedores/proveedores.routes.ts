@@ -193,6 +193,7 @@ router.post(
           producto: "combustible",
           tipoCombustible: data.tipo_combustible,
           precioUnitario: data.precio_unitario,
+          ...(data.vigente_hasta ? { vigenteHasta: data.vigente_hasta } : {}),
           masivo: creados.length > 1,
         },
         contexto: contextoAuditoriaModulo(req),
@@ -223,6 +224,7 @@ router.post(
         presentacion: data.presentacion,
         precioPorBulto: data.precio_por_bulto,
         vigenteDesde: fila.vigente_desde,
+        ...(data.vigente_hasta ? { vigenteHasta: data.vigente_hasta } : {}),
       },
       contexto: contextoAuditoriaModulo(req),
     });

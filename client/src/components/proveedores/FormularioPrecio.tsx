@@ -301,6 +301,21 @@ export default function FormularioPrecio({
               />
               <p className="mt-1 text-xs text-slate-500">Vacío: rige desde ahora.</p>
             </div>
+            <div>
+              <label htmlFor="precio-hasta" className={ETIQUETA}>
+                Vigencia hasta (opcional)
+              </label>
+              <input
+                id="precio-hasta"
+                type="date"
+                className={`${CAMPO} mt-1`}
+                value={form.vigente_hasta}
+                onChange={(e) => cambiar("vigente_hasta", e.target.value)}
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                Solo avisa cuando vence; el precio sigue rigiendo hasta que cargues otro.
+              </p>
+            </div>
           </div>
 
           {variaciones.length > 0 && (

@@ -117,10 +117,17 @@ test("compras y recepciones: estados, filtro y ficha del proveedor", async ({ pa
     page.getByRole("heading", { name: "Compras y recepciones", level: 1 })
   ).toBeVisible();
 
-  await page.getByPlaceholder("Buscar por documento o proveedor").fill(marca);
+  await page.getByPlaceholder("Buscar por compra, guía, producto o proveedor...").fill(marca);
   const filaReg = page.getByRole("row", { name: new RegExp(`REG-${marca}`) });
   await expect(filaReg).toBeVisible({ timeout: 20_000 });
   await expect(filaReg).toContainText("Registrada");
+  // Columnas de la maqueta: Producto, Precio y Total, separados.
+  for (const columna of ["Producto", "Precio", "Total"]) {
+    await expect(page.getByRole("columnheader", { name: columna, exact: true })).toBeVisible();
+  }
+  await expect(
+    page.getByText(/La compra se registra aquí\. Al guardarla aparece en/)
+  ).toBeVisible();
   await expect(filaReg).toContainText("S/ 15,500.00");
   await expect(filaReg).toContainText("Aún no llega");
   const filaPll = page.getByRole("row", { name: new RegExp(`PLL-${marca}`) });
@@ -173,7 +180,7 @@ test("registrar, habilitar y anular una compra desde el ecosistema; Combustible 
   await menu.getByRole("button", { name: "Compras y recepciones" }).click();
   await registrarPorFormulario(page, { proveedor, documento, cantidad: "750", costo: "15.9" });
 
-  await page.getByPlaceholder("Buscar por documento o proveedor").fill(documento);
+  await page.getByPlaceholder("Buscar por compra, guía, producto o proveedor...").fill(documento);
   const fila = page.getByRole("row", { name: new RegExp(documento) });
   await expect(fila).toContainText("Registrada", { timeout: 20_000 });
   await expect(fila).toContainText("S/ 11,925.00");
@@ -328,9 +335,7 @@ test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", a
 
     // Gestión comercial y Compras y recepciones: vacías, con su aviso y sin error.
     await menu.getByRole("button", { name: "Gestión comercial" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Precios de proveedores", level: 1 })
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Precios negociados", level: 1 })).toBeVisible();
     await expect(page.getByRole("alert")).toHaveCount(0);
     // Sin Combustible, esta empresa carga sus propios precios desde acá (no hay a dónde mandarla).
     await expect(page.getByText(/Carga el primero con «Nuevo precio»/)).toBeVisible({

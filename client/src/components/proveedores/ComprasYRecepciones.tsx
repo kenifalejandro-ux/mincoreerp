@@ -60,7 +60,9 @@ export default function ComprasYRecepciones({
     return compras.filter((c) => {
       if (
         q &&
-        !`${c.numeroDocumento} ${c.proveedorNombre} ${c.proveedorCodigo}`.toLowerCase().includes(q)
+        !`${c.id} ${c.numeroDocumento} ${c.combustible} ${c.proveedorNombre} ${c.proveedorCodigo}`
+          .toLowerCase()
+          .includes(q)
       )
         return false;
       return estado === "todos" || c.estado === estado;
@@ -147,6 +149,14 @@ export default function ComprasYRecepciones({
         <Total etiqueta="Anuladas" valor={resumen.anuladas} detalle="Sin efecto" />
       </section>
 
+      {conCombustible && (
+        <p className="text-sm text-slate-700 bg-[#BADC1E]/10 border border-[#BADC1E]/40 rounded-lg p-3">
+          La compra se registra aquí. Al guardarla aparece en <b>Combustible → Cisternas</b> como
+          «Por llegar» y el grifero registra la recepción en cancha. El resultado vuelve a verse en
+          esta tabla.
+        </p>
+      )}
+
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
         <div className="flex flex-wrap items-center gap-3 p-4 border-b border-slate-200">
           <label className="relative flex-1 min-w-56 max-w-md">
@@ -155,7 +165,7 @@ export default function ComprasYRecepciones({
             <input
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar por documento o proveedor"
+              placeholder="Buscar por compra, guía, producto o proveedor..."
               className={`${control} w-full pl-9`}
             />
           </label>

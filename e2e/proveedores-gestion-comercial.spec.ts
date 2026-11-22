@@ -10,19 +10,41 @@
  */
 import { randomBytes } from "node:crypto";
 
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 import { loginPorUI } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
 import { primerGrifoActivo } from "./fixtures/grifos";
 
 const dias = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString();
+/** AAAA-MM-DD de un instante en Lima (la «vigencia hasta» es un día de Lima). */
+const diaDeLima = (instante: number) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(instante);
+
+/** Pulsa «Ingresar» y comprueba que el formulario SÍ envió el login; si no, vuelve a pulsar (hasta 3 veces).
+ *  En la base limpia del hook de pre-push se vio, de forma intermitente, un clic que no mandaba ninguna
+ *  petición (en el trace: el clic se ejecuta y no hay `POST /api/auth/login`), y la prueba esperaba la
+ *  pantalla de cambio de clave hasta agotar su tiempo. Esto no esconde un fallo del login: si tras tres clics
+ *  no hay petición, la prueba falla con ese mensaje y no con un tiempo agotado. */
+async function pulsarIngresar(pagina: Page) {
+  for (let intento = 1; intento <= 3; intento++) {
+    const envio = pagina
+      .waitForResponse(
+        (r) => r.url().includes("/api/auth/login") && r.request().method() === "POST",
+        { timeout: 10_000 }
+      )
+      .catch(() => null);
+    await pagina.getByRole("button", { name: "Ingresar" }).click();
+    if (await envio) return;
+  }
+  throw new Error("El formulario de ingreso no envió el login tras tres clics");
+}
 
 test("gestión comercial: precio vigente, variación, ficha y Lectura sin acceso", async ({
   page,
   browser,
 }) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   const marca = randomBytes(3).toString("hex").toUpperCase();
   const conPrecio = `GRIFO PRECIO ${marca}`;
   const sinPrecio = `GRIFO SIN PRECIO ${marca}`;
@@ -73,19 +95,33 @@ test("gestión comercial: precio vigente, variación, ficha y Lectura sin acceso
         grifo_ids: [idConPrecio],
         precio_unitario: precio,
         vigente_desde: desde,
+        // Solo el vigente tiene fecha de fin: dentro de 10 días.
+        ...(precio === 10.8 ? { vigente_hasta: diaDeLima(Date.now() + 10 * 86_400_000) } : {}),
       },
     });
     expect(r.ok(), await r.text()).toBeTruthy();
   }
+  // La condición de pago sale de la ficha.
+  const ficha = await page.request.put(`/api/erp/proveedores/${idConPrecio}/ficha`, {
+    data: { forma_pago: "credito", plazo_pago_dias: 30 },
+  });
+  expect(ficha.ok(), await ficha.text()).toBeTruthy();
 
   await page.getByRole("button", { name: /Gestión de proveedores/ }).click();
   await page.getByRole("button", { name: "Centro de administración" }).click();
   const menu = page.getByRole("complementary", { name: "Menú de Gestión de proveedores" });
   await expect(menu).toBeVisible({ timeout: 15_000 });
   await menu.getByRole("button", { name: "Gestión comercial" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Precios de proveedores", level: 1 })
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Precios negociados", level: 1 })).toBeVisible();
+  // Las cuatro tarjetas de la maqueta.
+  for (const etiqueta of [
+    "Precios vigentes",
+    "Vencen en 30 días",
+    "Alzas de 5 % o más",
+    "Activos sin precio",
+  ]) {
+    await expect(page.getByLabel("Resumen").getByText(etiqueta, { exact: true })).toBeVisible();
+  }
 
   // 1. Precio vigente, variación y antigüedad; el otro proveedor, sin precio.
   await page.getByPlaceholder("Buscar por proveedor o producto").fill(marca);
@@ -95,6 +131,19 @@ test("gestión comercial: precio vigente, variación, ficha y Lectura sin acceso
   await expect(fila).toContainText("por galón");
   await expect(fila).toContainText("▲ 8.0 %");
   await expect(fila).toContainText("hace 2 días");
+  // Vigencia hasta (opcional): el último precio vence en 10 días; también se ve desde cuándo rige.
+  await expect(fila).toContainText("vence en 10 días");
+  await expect(fila).toContainText("Rige desde");
+  // Condición de pago, de la ficha del proveedor; el uso, de ruta.
+  await expect(fila).toContainText("Crédito 30 días");
+  await expect(fila.getByText("Externo", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Resumen").getByText("Vencen en 30 días")).toBeVisible();
+  // El filtro de uso: los precios de combustible son de ruta (externos), así que «Internos» no deja ninguno.
+  await page.getByRole("button", { name: "Internos", exact: true }).click();
+  await expect(page.getByRole("row", { name: new RegExp(conPrecio) })).toHaveCount(0);
+  await page.getByRole("button", { name: "Externos", exact: true }).click();
+  await expect(page.getByRole("row", { name: new RegExp(conPrecio) })).toBeVisible();
+  await page.getByRole("button", { name: "Todos", exact: true }).click();
   await expect(
     page.getByRole("row", { name: new RegExp(sinPrecio) }).getByText("Sin precio", { exact: true })
   ).toBeVisible();
@@ -129,7 +178,7 @@ test("gestión comercial: precio vigente, variación, ficha y Lectura sin acceso
     await lectura.goto("/");
     await lectura.getByLabel("Correo").fill(email);
     await lectura.getByLabel("Contraseña").fill(temporal);
-    await lectura.getByRole("button", { name: "Ingresar" }).click();
+    await pulsarIngresar(lectura);
     await lectura.locator("#passwordActual").fill(temporal);
     await lectura.locator("#passwordNueva").fill(`${temporal}Nueva`);
     await lectura.locator("#confirmacion").fill(`${temporal}Nueva`);

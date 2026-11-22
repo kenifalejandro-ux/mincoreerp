@@ -193,3 +193,67 @@ describe("Gestión comercial: precio vigente, anterior y programado", () => {
     expect(armarFilasDePrecios(base, { combustible: false, urea: false }, AHORA)).toEqual([]);
   });
 });
+
+describe("Gestión comercial: vigencia hasta, uso y condición de pago (PR de la maqueta)", () => {
+  const ureaDe = (id: number, interno: boolean, externo: boolean): ProveedorDto => ({
+    ...proveedor(id),
+    urea: { interno, externo },
+  });
+  const presentacion = { codigo: "caja", nombre: "Caja", litros: "20" };
+
+  it("la vigencia hasta viaja con el precio (o es null) y no cambia cuál precio rige", () => {
+    const [fila] = armarFilasDePrecios(
+      fuentes({
+        preciosCombustible: [
+          comb(1, 1, 15, dias(-30), { vigente_hasta: "2026-11-01" }),
+          comb(2, 1, 16, dias(-60)),
+        ],
+      }),
+      VER,
+      AHORA
+    );
+    // Aunque el 15 ya «venció» (1/11 < 20/11), sigue siendo el vigente: la fecha es solo una alerta.
+    expect(fila.vigente?.precio).toBe(15);
+    expect(fila.vigente?.hasta).toBe("2026-11-01");
+    expect(fila.anterior?.precio).toBe(16);
+    expect(fila.anterior?.hasta).toBeNull();
+  });
+
+  it("el uso: combustible siempre de ruta; urea según las casillas del proveedor", () => {
+    const filas = armarFilasDePrecios(
+      fuentes({
+        proveedores: [
+          proveedor(1, { ruta: true }),
+          ureaDe(2, true, false),
+          ureaDe(3, false, true),
+          ureaDe(4, true, true),
+        ],
+        presentaciones: [presentacion],
+      }),
+      VER,
+      AHORA
+    );
+    const uso = (id: number, producto: string) =>
+      filas.find((f) => f.proveedorId === id && f.producto === producto)?.uso;
+    expect(uso(1, "combustible")).toBe("externo");
+    expect(uso(2, "urea")).toBe("interno");
+    expect(uso(3, "urea")).toBe("externo");
+    expect(uso(4, "urea")).toBe("ambos");
+  });
+
+  it("la condición de pago sale de la ficha del proveedor, igual para todos sus productos", () => {
+    const filas = armarFilasDePrecios(
+      fuentes({
+        proveedores: [proveedor(1, { ruta: true }), proveedor(2, { ruta: true })],
+        condicionesDePago: new Map([[1, { formaPago: "credito", plazoPagoDias: 30 }]]),
+      }),
+      VER,
+      AHORA
+    );
+    expect(filas.find((f) => f.proveedorId === 1)?.condicionDePago).toEqual({
+      formaPago: "credito",
+      plazoPagoDias: 30,
+    });
+    expect(filas.find((f) => f.proveedorId === 2)?.condicionDePago).toBeNull();
+  });
+});
