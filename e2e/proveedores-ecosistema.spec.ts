@@ -27,6 +27,11 @@ test("entrar al ecosistema, ver el directorio y volver al ERP", async ({ page })
     data: { nombre, abastece_tanque: true, abastece_ruta: false },
   });
   expect(alta.ok(), await alta.text()).toBeTruthy();
+  // Con su ciudad en la ficha (la columna «Lugar» del directorio).
+  const ficha = await page.request.put(`/api/erp/proveedores/${(await alta.json()).id}/ficha`, {
+    data: { ciudad: "Huancayo" },
+  });
+  expect(ficha.ok(), await ficha.text()).toBeTruthy();
 
   // 1. La puerta está en el menú del ERP: la entrada despliega, el submenú entra.
   await page.getByRole("button", { name: /Gestión de proveedores/ }).click();
@@ -55,11 +60,25 @@ test("entrar al ecosistema, ver el directorio y volver al ERP", async ({ page })
   await expect(
     page.getByRole("heading", { name: "Directorio de proveedores", level: 1 })
   ).toBeVisible();
-  await page.getByPlaceholder("Buscar por nombre, código o RUC").fill(nombre);
+  await page.getByPlaceholder("Buscar por razón social, RUC, código o ciudad...").fill(nombre);
   const fila = page.getByRole("row", { name: new RegExp(nombre) });
   await expect(fila).toBeVisible({ timeout: 20_000 });
   await expect(fila.getByText("Interno", { exact: true })).toBeVisible();
   await expect(fila.getByText("Externo", { exact: true })).toHaveCount(0);
+  // Como la maqueta: lugar, precio vigente (sin precio cargado) y qué tan completa está la ficha.
+  for (const columna of ["Abastece a", "Lugar", "Precio vigente", "Ficha completa"]) {
+    await expect(page.getByRole("columnheader", { name: columna })).toBeVisible();
+  }
+  await expect(fila.getByText("Huancayo", { exact: true })).toBeVisible();
+  await expect(fila.getByText("Sin precio", { exact: true })).toBeVisible();
+  await expect(fila.getByText("0 % completa")).toBeVisible();
+  await expect(
+    page.getByLabel("Resumen del directorio").getByText("Total registrados")
+  ).toBeVisible();
+  // Buscar por ciudad también encuentra al proveedor.
+  await page.getByPlaceholder("Buscar por razón social, RUC, código o ciudad...").fill("huancayo");
+  await expect(fila).toBeVisible();
+  await page.getByPlaceholder("Buscar por razón social, RUC, código o ciudad...").fill(nombre);
   await fila.getByRole("button", { name: new RegExp(nombre) }).click();
   await expect(page.getByRole("heading", { name: new RegExp(nombre), level: 1 })).toBeVisible();
   await page.getByRole("button", { name: "Volver al directorio" }).click();

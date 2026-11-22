@@ -55,7 +55,7 @@ test("registrar y editar un proveedor desde el directorio", async ({ page, brows
   await dialogo.getByLabel("Combustible · Interno").check();
   await dialogo.getByRole("button", { name: "Guardar" }).click();
   await expect(dialogo).toHaveCount(0);
-  await page.getByPlaceholder("Buscar por nombre, código o RUC").fill(marca);
+  await page.getByPlaceholder("Buscar por razón social, RUC, código o ciudad...").fill(marca);
   const fila = page.getByRole("row", { name: new RegExp(nombre) });
   await expect(fila).toBeVisible({ timeout: 20_000 });
   await expect(fila.getByText("Interno", { exact: true })).toBeVisible();
@@ -72,7 +72,7 @@ test("registrar y editar un proveedor desde el directorio", async ({ page, brows
 
   // 3. Editar desde la ficha: nuevo nombre y desactivado.
   await fila.getByRole("button", { name: new RegExp(nombre) }).click();
-  await page.getByRole("button", { name: "Editar" }).click();
+  await page.getByRole("button", { name: "Editar", exact: true }).click();
   const edicion = page.getByRole("dialog", { name: "Editar proveedor" });
   await edicion.getByLabel("Razón social").fill(editado);
   await edicion.getByLabel("Activo (recibe pedidos)").uncheck();
@@ -81,7 +81,7 @@ test("registrar y editar un proveedor desde el directorio", async ({ page, brows
   await expect(page.getByRole("heading", { name: new RegExp(editado), level: 1 })).toBeVisible();
   await expect(page.getByText("Desactivado")).toBeVisible();
   await page.getByRole("button", { name: "Volver al directorio" }).click();
-  await page.getByPlaceholder("Buscar por nombre, código o RUC").fill(marca);
+  await page.getByPlaceholder("Buscar por razón social, RUC, código o ciudad...").fill(marca);
   const filaEditada = page.getByRole("row", { name: new RegExp(editado) });
   await expect(filaEditada).toBeVisible();
   await expect(filaEditada.getByText("Desactivado")).toBeVisible();
@@ -110,7 +110,7 @@ test("registrar y editar un proveedor desde el directorio", async ({ page, brows
     });
 
     await entrarAlEcosistema(lectura);
-    await lectura.getByPlaceholder("Buscar por nombre, código o RUC").fill(marca);
+    await lectura.getByPlaceholder("Buscar por razón social, RUC, código o ciudad...").fill(marca);
     const filaLectura = lectura.getByRole("row", { name: new RegExp(editado) });
     await expect(filaLectura).toBeVisible({ timeout: 20_000 });
     await expect(lectura.getByRole("button", { name: "Registrar proveedor" })).toHaveCount(0);
@@ -118,7 +118,7 @@ test("registrar y editar un proveedor desde el directorio", async ({ page, brows
     await expect(
       lectura.getByRole("heading", { name: new RegExp(editado), level: 1 })
     ).toBeVisible();
-    await expect(lectura.getByRole("button", { name: "Editar" })).toHaveCount(0);
+    await expect(lectura.getByRole("button", { name: "Editar", exact: true })).toHaveCount(0);
   } finally {
     await contexto.close();
   }

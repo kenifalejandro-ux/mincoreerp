@@ -34,6 +34,7 @@ export interface FilaProveedor {
 
 export interface FilaDatosProveedor {
   direccion: string | null;
+  ciudad: string | null;
   telefono: string | null;
   correo: string | null;
   forma_pago: "contado" | "credito" | null;
@@ -202,8 +203,8 @@ export class ProveedoresRepository {
     grifoId: number
   ): Promise<FilaDatosProveedor | undefined> {
     const r = await client.query<FilaDatosProveedor>(
-      `SELECT direccion, telefono, correo, forma_pago, plazo_pago_dias, moneda, actualizado_en,
-              actualizado_por
+      `SELECT direccion, ciudad, telefono, correo, forma_pago, plazo_pago_dias, moneda,
+              actualizado_en, actualizado_por
          FROM proveedores_ficha WHERE tenant_id = $1 AND grifo_id = $2`,
       [tenantId, grifoId]
     );
@@ -220,20 +221,21 @@ export class ProveedoresRepository {
   ): Promise<FilaDatosProveedor> {
     const r = await client.query<FilaDatosProveedor>(
       `INSERT INTO proveedores_ficha
-         (tenant_id, grifo_id, direccion, telefono, correo, forma_pago, plazo_pago_dias, moneda,
-          actualizado_por)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         (tenant_id, grifo_id, direccion, ciudad, telefono, correo, forma_pago, plazo_pago_dias,
+          moneda, actualizado_por)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
        ON CONFLICT (tenant_id, grifo_id) DO UPDATE
-          SET direccion = EXCLUDED.direccion, telefono = EXCLUDED.telefono,
+          SET direccion = EXCLUDED.direccion, ciudad = EXCLUDED.ciudad, telefono = EXCLUDED.telefono,
               correo = EXCLUDED.correo, forma_pago = EXCLUDED.forma_pago,
               plazo_pago_dias = EXCLUDED.plazo_pago_dias, moneda = EXCLUDED.moneda,
               actualizado_en = now(), actualizado_por = EXCLUDED.actualizado_por
-       RETURNING direccion, telefono, correo, forma_pago, plazo_pago_dias, moneda, actualizado_en,
-                 actualizado_por`,
+       RETURNING direccion, ciudad, telefono, correo, forma_pago, plazo_pago_dias, moneda,
+                 actualizado_en, actualizado_por`,
       [
         tenantId,
         grifoId,
         data.direccion,
+        data.ciudad,
         data.telefono,
         data.correo,
         data.forma_pago,
@@ -243,6 +245,38 @@ export class ProveedoresRepository {
       ]
     );
     return r.rows[0];
+  }
+
+  /** Lo que el Directorio necesita de la ficha de cada proveedor, de una sola vez: ciudad, dirección,
+   *  teléfono, condición de pago y si tiene contactos (y alguno con teléfono). Sin ficha, todo vacío. */
+  async fichasParaElDirectorio(
+    client: PoolClient,
+    tenantId: string
+  ): Promise<
+    {
+      grifo_id: number;
+      ciudad: string | null;
+      direccion: string | null;
+      telefono: string | null;
+      forma_pago: string | null;
+      tiene_contacto: boolean;
+      contacto_con_telefono: boolean;
+    }[]
+  > {
+    const r = await client.query(
+      `SELECT g.id AS grifo_id, f.ciudad, f.direccion, f.telefono, f.forma_pago,
+              EXISTS (SELECT 1 FROM proveedores_contactos c
+                       WHERE c.tenant_id = g.tenant_id AND c.grifo_id = g.id AND c.activo)
+                AS tiene_contacto,
+              EXISTS (SELECT 1 FROM proveedores_contactos c
+                       WHERE c.tenant_id = g.tenant_id AND c.grifo_id = g.id AND c.activo
+                         AND c.telefono IS NOT NULL) AS contacto_con_telefono
+         FROM combustible_grifos g
+         LEFT JOIN proveedores_ficha f ON f.tenant_id = g.tenant_id AND f.grifo_id = g.id
+        WHERE g.tenant_id = $1 AND NOT g.es_otros`,
+      [tenantId]
+    );
+    return r.rows;
   }
 
   /** Los contactos activos: el principal primero, luego por nombre. */

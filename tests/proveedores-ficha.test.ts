@@ -105,6 +105,7 @@ describe("Ficha del proveedor: datos, condiciones de pago y contactos", () => {
     expect(vacia.status, JSON.stringify(vacia.body)).toBe(200);
     expect(vacia.body).toEqual({
       datos: {
+        ciudad: null,
         direccion: null,
         telefono: null,
         correo: null,
@@ -125,6 +126,7 @@ describe("Ficha del proveedor: datos, condiciones de pago y contactos", () => {
     });
     expect(guardado.status, JSON.stringify(guardado.body)).toBe(200);
     expect(guardado.body).toEqual({
+      ciudad: null,
       direccion: "Av. Los Pinos 123, Huancayo",
       telefono: "064-123456",
       correo: "ventas@grifo.pe",

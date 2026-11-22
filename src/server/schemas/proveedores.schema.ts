@@ -79,6 +79,7 @@ const correo = z
 export const guardarDatosProveedorSchema = z
   .object({
     direccion: textoOpcional(250),
+    ciudad: textoOpcional(80),
     telefono,
     correo,
     forma_pago: z

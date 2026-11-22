@@ -72,7 +72,15 @@ router.get(
   "/",
   asyncHandler(async (req: Request, res: Response) => {
     const tenantId = getTenantId(req);
-    res.json(await withTenant(tenantId, (client) => service.listar(client, tenantId)));
+    const usuario = req.usuario!;
+    // El precio vigente solo lo reciben quienes ven los precios (mismos permisos que Gestión comercial).
+    const ver = {
+      combustible: pestanaPermitida(usuario, "combustible", "tanques:precios"),
+      urea: pestanaPermitida(usuario, "combustible", "urea:precios"),
+    };
+    res.json(
+      await withTenant(tenantId, (client) => service.listarParaElDirectorio(client, tenantId, ver))
+    );
   })
 );
 

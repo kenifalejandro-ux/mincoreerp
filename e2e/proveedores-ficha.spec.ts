@@ -21,7 +21,7 @@ async function abrirFicha(page: Page, nombre: string, marca: string) {
   const menu = page.getByRole("complementary", { name: "Menú de Gestión de proveedores" });
   await expect(menu).toBeVisible({ timeout: 15_000 });
   await menu.getByRole("button", { name: "Directorio de proveedores" }).click();
-  await page.getByPlaceholder("Buscar por nombre, código o RUC").fill(marca);
+  await page.getByPlaceholder("Buscar por razón social, RUC, código o ciudad...").fill(marca);
   await page
     .getByRole("row", { name: new RegExp(nombre) })
     .getByRole("button", { name: new RegExp(nombre) })
@@ -53,9 +53,10 @@ test("ficha del proveedor: datos y condiciones de pago, contactos y Lectura sin 
 
   // 1. Datos y condiciones de pago.
   await expect(page.getByRole("heading", { name: "Datos y condiciones de pago" })).toBeVisible();
-  await expect(page.getByText("Sin definir")).toHaveCount(5);
+  await expect(page.getByText("Sin definir")).toHaveCount(6);
   await page.getByRole("button", { name: "Editar datos" }).click();
   const datos = page.getByRole("dialog", { name: "Datos y condiciones de pago" });
+  await datos.getByLabel("Ciudad").fill("Arequipa");
   await datos.getByLabel("Dirección").fill("Av. Los Pinos 123, Huancayo");
   await datos.getByLabel("Teléfono").fill("064-123456");
   await datos.getByLabel("Correo").fill("ventas@grifo.pe");
@@ -67,6 +68,7 @@ test("ficha del proveedor: datos y condiciones de pago, contactos y Lectura sin 
   await datos.getByRole("button", { name: "Guardar" }).click();
   await expect(datos).toHaveCount(0);
   await expect(page.getByRole("status")).toContainText("Datos guardados");
+  await expect(page.getByText("Arequipa", { exact: true })).toBeVisible();
   await expect(page.getByText("Av. Los Pinos 123, Huancayo")).toBeVisible();
   await expect(page.getByText("Crédito a 30 días")).toBeVisible();
   await expect(page.getByText("Soles (S/)")).toBeVisible();

@@ -51,7 +51,7 @@ test("la dirección sigue a la pantalla: menú, F5, atrás y enlaces directos", 
 
   await menu.getByRole("button", { name: "Directorio de proveedores" }).click();
   await expect.poll(() => ruta(page)).toBe("/proveedores/directorio");
-  await page.getByPlaceholder("Buscar por nombre, código o RUC").fill(marca);
+  await page.getByPlaceholder("Buscar por razón social, RUC, código o ciudad...").fill(marca);
   await page
     .getByRole("row", { name: new RegExp(nombre) })
     .getByRole("button", { name: new RegExp(nombre) })

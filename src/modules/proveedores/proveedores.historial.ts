@@ -47,6 +47,7 @@ const COMBUSTIBLES: Record<string, string> = {
 
 const CAMPOS_DE_LA_FICHA: Record<string, string> = {
   direccion: "dirección",
+  ciudad: "ciudad",
   telefono: "teléfono",
   correo: "correo",
   formaPago: "forma de pago",
