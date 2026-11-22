@@ -180,11 +180,13 @@ function App() {
   // ni pinta un frame en blanco antes de acomodarse.
   // Un panel interno pide cambiar de pestaña (p. ej. el aviso de "Registrar
   // recepción" que lleva a Proveedores).
+  // Pasa por `irA` (y no por `setActiveTab`) para que entrar al ecosistema de proveedores muestre la
+  // pantalla de carga, como cuando se entra por el menú.
   useEffect(() => {
-    const alPedir = (e: Event) => setActiveTab((e as CustomEvent<string>).detail);
+    const alPedir = (e: Event) => irA((e as CustomEvent<string>).detail);
     window.addEventListener("mincore:ir-a-pestana", alPedir);
     return () => window.removeEventListener("mincore:ir-a-pestana", alPedir);
-  }, []);
+  }, [irA]);
 
   const tabActiva = pestaniaDisponible(activeTab, usuario) ? activeTab : primeraPestania(usuario);
 
