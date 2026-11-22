@@ -7,9 +7,14 @@ import { describe, it, expect } from "vitest";
 
 import {
   clavesConMejorPrecio,
+  coincideConUso,
   diasDesde,
+  diasParaVencer,
+  estadoDeVigencia,
+  formatoDia,
   formatoPrecio,
   textoAntiguedad,
+  textoCondicionDePago,
   totales,
   variacionPct,
 } from "../client/src/components/proveedores/preciosProveedores";
@@ -23,6 +28,7 @@ const entrada = (precio: number, desde = "2026-11-10T00:00:00Z"): EntradaPrecio 
   id: precio,
   precio,
   desde,
+  hasta: null,
   por: null,
   marca: null,
   anulado: false,
@@ -39,6 +45,8 @@ const fila = (clave: string, extra: Partial<FilaPrecio> = {}): FilaPrecio => ({
   codigo: "diesel_b5",
   detalle: "Diésel B5",
   unidad: "galón",
+  uso: "externo",
+  condicionDePago: null,
   vigente: null,
   anterior: null,
   programado: null,
@@ -93,7 +101,15 @@ describe("Gestión comercial: lo que muestra la pantalla", () => {
       fila("c"), // sin precio, activo
       fila("d", { proveedorActivo: false }), // sin precio, inactivo: no cuenta
     ]);
-    expect(resumen).toEqual({ conPrecio: 2, sinPrecio: 1, programados: 1, subieron: 1 });
+    expect(resumen).toEqual({
+      conPrecio: 2,
+      sinPrecio: 1,
+      programados: 1,
+      subieron: 1,
+      productos: 1,
+      vencenPronto: 0,
+      vencidos: 0,
+    });
   });
 });
 
@@ -129,5 +145,84 @@ describe("Gestión comercial: quién ve la entrada del menú", () => {
         })
       )
     ).toBe(false);
+  });
+});
+
+describe("Gestión comercial: vigencia hasta, condición de pago y uso", () => {
+  // 20/11/2026 12:00 en Lima (UTC-5).
+  const AHORA = Date.parse("2026-11-20T17:00:00Z");
+
+  it("cuenta los días para vencer desde hoy en Lima, sin correrse un día por la zona horaria", () => {
+    expect(diasParaVencer("2026-11-20", AHORA)).toBe(0);
+    expect(diasParaVencer("2026-11-21", AHORA)).toBe(1);
+    expect(diasParaVencer("2026-12-20", AHORA)).toBe(30);
+    expect(diasParaVencer("2026-11-19", AHORA)).toBe(-1);
+    // A las 22:00 de Lima ya es el día siguiente en UTC: sigue siendo «hoy» en Lima.
+    expect(diasParaVencer("2026-11-20", Date.parse("2026-11-21T03:00:00Z"))).toBe(0);
+  });
+
+  it("escribe el día como DD/MM/AAAA", () => {
+    expect(formatoDia("2026-12-31")).toBe("31/12/2026");
+  });
+
+  it("dice cuánto falta y el tono: vencido, pronto (30 días o menos) o normal; sin fecha, nada", () => {
+    expect(estadoDeVigencia(null, AHORA)).toBeNull();
+    expect(estadoDeVigencia("2026-11-19", AHORA)).toEqual({
+      fecha: "19/11/2026",
+      texto: "venció ayer",
+      tono: "vencido",
+    });
+    expect(estadoDeVigencia("2026-11-10", AHORA)?.texto).toBe("venció hace 10 días");
+    expect(estadoDeVigencia("2026-11-20", AHORA)).toMatchObject({
+      texto: "vence hoy",
+      tono: "pronto",
+    });
+    expect(estadoDeVigencia("2026-11-21", AHORA)?.texto).toBe("vence mañana");
+    expect(estadoDeVigencia("2026-12-20", AHORA)).toMatchObject({
+      texto: "vence en 30 días",
+      tono: "pronto",
+    });
+    expect(estadoDeVigencia("2026-12-21", AHORA)).toMatchObject({
+      texto: "vence en 31 días",
+      tono: "normal",
+    });
+  });
+
+  it("los totales cuentan los que vencen en 30 días, los ya vencidos y los productos con precio", () => {
+    const conHasta = (clave: string, hasta: string | null, extra: Partial<FilaPrecio> = {}) =>
+      fila(clave, { vigente: { ...entrada(10), hasta }, ...extra });
+    const t = totales(
+      [
+        conHasta("a", "2026-12-01"),
+        conHasta("b", "2026-12-20"),
+        conHasta("c", "2027-03-01"),
+        conHasta("d", "2026-11-01"),
+        conHasta("e", null, { codigo: "gasolina_90" }),
+        fila("f"),
+      ],
+      AHORA
+    );
+    expect(t.vencenPronto).toBe(2);
+    expect(t.vencidos).toBe(1);
+    expect(t.conPrecio).toBe(5);
+    // diesel_b5 y gasolina_90: dos productos distintos con precio.
+    expect(t.productos).toBe(2);
+  });
+
+  it("la condición de pago sale de la ficha", () => {
+    expect(textoCondicionDePago(null)).toBe("—");
+    expect(textoCondicionDePago({ formaPago: "contado", plazoPagoDias: null })).toBe("Contado");
+    expect(textoCondicionDePago({ formaPago: "credito", plazoPagoDias: 30 })).toBe(
+      "Crédito 30 días"
+    );
+  });
+
+  it("el filtro de uso deja pasar «interno y externo» por los dos lados", () => {
+    expect(coincideConUso("externo", "todos")).toBe(true);
+    expect(coincideConUso("externo", "externo")).toBe(true);
+    expect(coincideConUso("externo", "interno")).toBe(false);
+    expect(coincideConUso("interno", "externo")).toBe(false);
+    expect(coincideConUso("ambos", "interno")).toBe(true);
+    expect(coincideConUso("ambos", "externo")).toBe(true);
   });
 });

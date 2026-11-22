@@ -47,6 +47,8 @@ const fila = (
   codigo,
   detalle: codigo,
   unidad: producto === "urea" ? "envase" : "galón",
+  uso: "externo",
+  condicionDePago: null,
   vigente:
     precio === null
       ? null
@@ -54,6 +56,7 @@ const fila = (
           id: 1,
           precio,
           desde: "2026-11-01T00:00:00.000Z",
+          hasta: null,
           por: null,
           marca: null,
           anulado: false,
@@ -224,5 +227,76 @@ describe("vigenteDesdeIso y cuerpoDelPrecio", () => {
     });
     const sinMarca = cuerpoDelPrecio({ ...f, marca: "   " });
     expect(sinMarca.producto === "urea" && sinMarca.cuerpo.marca).toBeUndefined();
+  });
+});
+
+describe("vigencia hasta del precio", () => {
+  const filas = [fila(5, "combustible", "diesel_b5", 10)];
+
+  it("es opcional: vacía no se manda y no estorba", () => {
+    const f = base({ grifo_ids: [5], precio: "10.5" });
+    expect(f.vigente_hasta).toBe("");
+    expect(problemasDelPrecio(f, filas)).toEqual([]);
+    const r = cuerpoDelPrecio(f);
+    expect(r.cuerpo.vigente_hasta).toBeUndefined();
+  });
+
+  it("se manda como AAAA-MM-DD, en combustible y en urea", () => {
+    const comb = cuerpoDelPrecio(
+      base({ grifo_ids: [5], precio: "10.5", vigente_hasta: "2026-12-31" })
+    );
+    expect(comb.cuerpo.vigente_hasta).toBe("2026-12-31");
+    const urea = cuerpoDelPrecio(
+      base({
+        producto: "urea",
+        grifo_id: "7",
+        presentacion: "caja_20l",
+        precio: "9",
+        vigente_hasta: "2027-01-15",
+      })
+    );
+    expect(urea.cuerpo.vigente_hasta).toBe("2027-01-15");
+  });
+
+  it("no puede ser anterior al día en que el precio empieza a regir", () => {
+    const ahora = Date.parse("2026-11-20T17:00:00Z");
+    const mensaje = "La vigencia hasta no puede ser anterior a la fecha desde la que rige.";
+    // Sin «rige desde»: rige desde hoy (20/11 en Lima).
+    expect(
+      problemasDelPrecio(
+        base({ grifo_ids: [5], precio: "10.5", vigente_hasta: "2026-11-19" }),
+        filas,
+        ahora
+      )
+    ).toEqual([mensaje]);
+    expect(
+      problemasDelPrecio(
+        base({ grifo_ids: [5], precio: "10.5", vigente_hasta: "2026-11-20" }),
+        filas,
+        ahora
+      )
+    ).toEqual([]);
+    // Con «rige desde» elegido, se compara con ese día.
+    expect(
+      problemasDelPrecio(
+        base({
+          grifo_ids: [5],
+          precio: "10.5",
+          vigente_desde: "2026-12-01T08:00",
+          vigente_hasta: "2026-11-30",
+        }),
+        filas,
+        ahora
+      )
+    ).toEqual([mensaje]);
+  });
+
+  it("una fecha mal escrita avisa", () => {
+    expect(
+      problemasDelPrecio(
+        base({ grifo_ids: [5], precio: "10.5", vigente_hasta: "31/12/2026" }),
+        filas
+      )
+    ).toEqual(["La vigencia hasta no es una fecha válida."]);
   });
 });

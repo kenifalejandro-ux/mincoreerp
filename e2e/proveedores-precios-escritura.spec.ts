@@ -22,9 +22,7 @@ async function entrarAComercial(page: Page) {
   const menu = page.getByRole("complementary", { name: "Menú de Gestión de proveedores" });
   await expect(menu).toBeVisible({ timeout: 15_000 });
   await menu.getByRole("button", { name: "Gestión comercial" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Precios de proveedores", level: 1 })
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Precios negociados", level: 1 })).toBeVisible();
   return menu;
 }
 
@@ -75,9 +73,23 @@ test("nuevo precio de combustible y urea, confirmación del salto y anulación c
   await dialogo.getByLabel(rutaA).check();
   await dialogo.getByLabel(rutaB).check();
   await dialogo.getByLabel(/^Precio por/).fill("15,80");
+  // Vigencia hasta (opcional): una fecha anterior a hoy avisa; una futura se guarda y se ve en la fila.
+  await dialogo.getByLabel("Vigencia hasta (opcional)").fill("2020-01-01");
+  await dialogo.getByRole("button", { name: "Cargar precio" }).click();
+  await expect(dialogo.getByRole("alert")).toContainText(
+    "La vigencia hasta no puede ser anterior a la fecha desde la que rige."
+  );
+  const dentroDe40 = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(
+    Date.now() + 40 * 86_400_000
+  );
+  await dialogo.getByLabel("Vigencia hasta (opcional)").fill(dentroDe40);
   await dialogo.getByRole("button", { name: "Cargar precio" }).click();
   await expect(dialogo).toHaveCount(0);
   await expect(page.getByRole("status")).toContainText("Precio cargado a 2 proveedores");
+  await expect(page.getByRole("row", { name: new RegExp(rutaA) }).first()).toContainText(
+    "vence en 40 días",
+    { timeout: 20_000 }
+  );
   for (const nombre of [rutaA, rutaB]) {
     const fila = page.getByRole("row", { name: new RegExp(nombre) });
     await expect(fila.first()).toContainText("S/ 15.80", { timeout: 20_000 });

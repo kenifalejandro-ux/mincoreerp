@@ -7,13 +7,16 @@ import { useState } from "react";
 
 import AnularPrecio from "./AnularPrecio";
 import BotonNuevoPrecio from "./BotonNuevoPrecio";
-import { formatoFecha, formatoPrecio } from "./preciosProveedores";
-import { PrecioVigente, Programado, RigeDesde, Variacion } from "./TablaDePrecios";
+import { textoDeFormaDePago, textoDeMoneda } from "./fichaFormulario";
+import { ETIQUETA_DE_USO, formatoDia, formatoFecha, formatoPrecio } from "./preciosProveedores";
+import { PrecioVigente, Programado, RigeDesde, VigenciaHasta, Variacion } from "./TablaDePrecios";
+import { useFicha } from "./useFicha";
 import { usePrecios } from "./usePrecios";
 import { usePuedeCargarPrecios } from "./usePuedeCargarPrecios";
 
 export default function ComercialDeProveedor({ proveedorId }: { proveedorId: number }) {
   const { datos, error, recargar } = usePrecios();
+  const { ficha } = useFicha(proveedorId);
   const puedeCargar = usePuedeCargarPrecios(datos);
   const [ahora] = useState(() => Date.now());
   const [aviso, setAviso] = useState<string | null>(null);
@@ -100,10 +103,20 @@ export default function ComercialDeProveedor({ proveedorId }: { proveedorId: num
                 </dd>
               </div>
               <div>
+                <dt className="text-xs text-slate-500">Vigencia hasta</dt>
+                <dd>
+                  <VigenciaHasta fila={f} ahora={ahora} />
+                </dd>
+              </div>
+              <div>
                 <dt className="text-xs text-slate-500">Programado</dt>
                 <dd>
                   <Programado fila={f} />
                 </dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate-500">Uso</dt>
+                <dd className="text-slate-800">{ETIQUETA_DE_USO[f.uso]}</dd>
               </div>
             </dl>
           </header>
@@ -126,6 +139,7 @@ export default function ComercialDeProveedor({ proveedorId }: { proveedorId: num
                     <b className={`tabular-nums ${h.anulado ? "line-through" : ""}`}>
                       {formatoPrecio(h.precio)}
                     </b>
+                    {h.hasta && <span className="text-xs">hasta {formatoDia(h.hasta)}</span>}
                     {h.marca && <span>{h.marca}</span>}
                     {h.por && <span className="text-xs">cargado por {h.por}</span>}
                     {h.anulado && (
@@ -153,6 +167,36 @@ export default function ComercialDeProveedor({ proveedorId }: { proveedorId: num
           </details>
         </article>
       ))}
+      <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-5">
+        <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-slate-500">
+          Condiciones
+        </p>
+        <h2 className="text-base font-semibold text-slate-900">Condiciones comerciales</h2>
+        <dl className="mt-3 grid gap-4 sm:grid-cols-3">
+          <div>
+            <dt className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              Moneda
+            </dt>
+            <dd className="text-sm text-slate-800">
+              {ficha?.datos.moneda ? textoDeMoneda(ficha.datos.moneda) : "Sin definir"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              Condición de pago habitual
+            </dt>
+            <dd className="text-sm text-slate-800">
+              {ficha?.datos.formaPago ? textoDeFormaDePago(ficha.datos) : "Sin definir"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+              Productos con precio
+            </dt>
+            <dd className="text-sm text-slate-800">{filas.filter((f) => f.vigente).length}</dd>
+          </div>
+        </dl>
+      </section>
       {anulando && (
         <AnularPrecio
           producto={anulando.producto}

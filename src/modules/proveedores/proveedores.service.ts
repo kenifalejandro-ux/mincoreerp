@@ -598,16 +598,31 @@ export class ProveedoresService {
     ahora: Date = new Date()
   ): Promise<FilaPrecioDto[]> {
     const proveedores = await this.listar(client, tenantId);
-    const [preciosCombustible, preciosUrea, tiposEnTanques, presentaciones] = await Promise.all([
-      ver.combustible
-        ? this.repository.listarPreciosCombustibleDeProveedores(client, tenantId)
-        : [],
-      ver.urea ? this.repository.listarPreciosUrea(client, tenantId) : [],
-      ver.combustible ? this.repository.tiposDeCombustibleEnTanques(client, tenantId) : [],
-      ver.urea ? this.repository.presentacionesDeUreaActivas(client, tenantId) : [],
-    ]);
+    const [preciosCombustible, preciosUrea, tiposEnTanques, presentaciones, condiciones] =
+      await Promise.all([
+        ver.combustible
+          ? this.repository.listarPreciosCombustibleDeProveedores(client, tenantId)
+          : [],
+        ver.urea ? this.repository.listarPreciosUrea(client, tenantId) : [],
+        ver.combustible ? this.repository.tiposDeCombustibleEnTanques(client, tenantId) : [],
+        ver.urea ? this.repository.presentacionesDeUreaActivas(client, tenantId) : [],
+        this.repository.condicionesDePago(client, tenantId),
+      ]);
+    const condicionesDePago = new Map(
+      condiciones.map((c) => [
+        c.grifo_id,
+        { formaPago: c.forma_pago, plazoPagoDias: c.plazo_pago_dias },
+      ])
+    );
     return armarFilasDePrecios(
-      { proveedores, preciosCombustible, preciosUrea, tiposEnTanques, presentaciones },
+      {
+        proveedores,
+        preciosCombustible,
+        preciosUrea,
+        tiposEnTanques,
+        presentaciones,
+        condicionesDePago,
+      },
       ver,
       ahora
     );

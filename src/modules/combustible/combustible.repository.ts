@@ -3851,13 +3851,17 @@ export class CombustibleRepository {
       marca: string | null;
       precioPorBulto: number;
       vigenteDesde: string;
+      /** AAAA-MM-DD o null (migración 0200): solo una alerta de vencimiento. */
+      vigenteHasta?: string | null;
     }
   ) {
     const r = await client.query(
       `INSERT INTO combustible_urea_precios
-         (tenant_id, grifo_id, presentacion, marca, precio_por_bulto, vigente_desde, usuario_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, grifo_id, presentacion, marca, precio_por_bulto, vigente_desde, creado_en`,
+         (tenant_id, grifo_id, presentacion, marca, precio_por_bulto, vigente_desde, vigente_hasta,
+          usuario_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id, grifo_id, presentacion, marca, precio_por_bulto, vigente_desde,
+                 vigente_hasta::text AS vigente_hasta, creado_en`,
       [
         tenantId,
         data.grifoId,
@@ -3865,6 +3869,7 @@ export class CombustibleRepository {
         data.marca,
         data.precioPorBulto,
         data.vigenteDesde,
+        data.vigenteHasta ?? null,
         usuarioId,
       ]
     );
@@ -6770,7 +6775,8 @@ export class CombustibleRepository {
 
   private static readonly COLUMNAS_PRECIO = `
     id, tenant_id, tipo_combustible, combustible_id, grifo_id, precio_unitario,
-    vigente_desde, usuario_id, creado_en, anulada_en, anulada_por, motivo_anulacion
+    vigente_desde, vigente_hasta::text AS vigente_hasta, usuario_id, creado_en, anulada_en,
+    anulada_por, motivo_anulacion
   `;
 
   async crearPrecio(
@@ -6783,6 +6789,8 @@ export class CombustibleRepository {
       grifoId: number | null;
       precioUnitario: number;
       vigenteDesde: string;
+      /** AAAA-MM-DD o null (migración 0200): solo una alerta de vencimiento. */
+      vigenteHasta?: string | null;
     }
   ) {
     try {
@@ -6790,9 +6798,9 @@ export class CombustibleRepository {
         `
         INSERT INTO combustible_precios (
           tenant_id, tipo_combustible, combustible_id, grifo_id, precio_unitario,
-          vigente_desde, usuario_id
+          vigente_desde, vigente_hasta, usuario_id
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
         RETURNING ${CombustibleRepository.COLUMNAS_PRECIO}
         `,
         [
@@ -6802,6 +6810,7 @@ export class CombustibleRepository {
           data.grifoId,
           data.precioUnitario,
           data.vigenteDesde,
+          data.vigenteHasta ?? null,
           usuarioId,
         ]
       );

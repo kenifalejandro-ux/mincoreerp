@@ -327,6 +327,81 @@ describe("Gestión comercial: cargar y anular precios de proveedores", () => {
     ).toBe(201);
   });
 
+  it("la vigencia hasta es opcional, se valida, se ve en la lista y no cambia cuál precio rige", async () => {
+    const post = (cuerpo: object) =>
+      admin.post("/api/erp/proveedores/precios/combustible").send(cuerpo);
+    // Formato, rango y orden: mal escrita, absurda o anterior a la fecha desde la que rige.
+    for (const mala of [
+      { vigente_hasta: "31/12/2026" },
+      { vigente_hasta: "2026-02-31" },
+      { vigente_hasta: "1999-12-31" },
+      { vigente_hasta: "2999-01-01" },
+      { vigente_desde: dia(-1), vigente_hasta: "2000-06-01" },
+    ]) {
+      expect((await post(comb({ grifo_ids: [ruta2], ...mala }))).status, JSON.stringify(mala)).toBe(
+        400
+      );
+    }
+    // Una fecha ya pasada es válida (carga de un acuerdo viejo) y sigue siendo el precio vigente.
+    const ayer = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const conFecha = await post(
+      comb({
+        grifo_ids: [ruta2],
+        precio_unitario: 19.9,
+        vigente_desde: dia(-3),
+        vigente_hasta: ayer,
+      })
+    );
+    expect(conFecha.status, JSON.stringify(conFecha.body)).toBe(201);
+    expect(conFecha.body[0].vigente_hasta).toBe(ayer);
+    const fila = (await filas(admin)).find(
+      (f) => f.proveedorId === ruta2 && f.codigo === "diesel_b5"
+    )!;
+    expect(fila.vigente?.precio).toBe(19.9);
+    expect((fila.vigente as unknown as { hasta: string | null }).hasta).toBe(ayer);
+    // Sin fecha, null.
+    const sinFecha = await post(comb({ grifo_ids: [ruta2], precio_unitario: 20.1 }));
+    expect(sinFecha.body[0].vigente_hasta).toBeNull();
+    // Urea: lo mismo.
+    const urea = await admin.post("/api/erp/proveedores/precios/urea").send({
+      grifo_id: ureaProv,
+      presentacion: "caja",
+      precio_por_bulto: 81,
+      vigente_hasta: "2030-12-31",
+    });
+    expect(urea.status, JSON.stringify(urea.body)).toBe(201);
+    expect(urea.body.vigente_hasta).toBe("2030-12-31");
+    expect(
+      (
+        await admin.post("/api/erp/proveedores/precios/urea").send({
+          grifo_id: ureaProv,
+          presentacion: "caja",
+          precio_por_bulto: 82,
+          vigente_hasta: "mañana",
+        })
+      ).status
+    ).toBe(400);
+  });
+
+  it("la lista trae el uso y la condición de pago de la ficha del proveedor", async () => {
+    const guardada = await admin
+      .put(`/api/erp/proveedores/${ruta1}/ficha`)
+      .send({ forma_pago: "credito", plazo_pago_dias: 15, moneda: "PEN" });
+    expect(guardada.status, JSON.stringify(guardada.body)).toBe(200);
+    const todas = (await filas(admin)) as unknown as {
+      proveedorId: number;
+      producto: string;
+      uso: string;
+      condicionDePago: { formaPago: string; plazoPagoDias: number | null } | null;
+    }[];
+    const deRuta1 = todas.find((f) => f.proveedorId === ruta1 && f.producto === "combustible")!;
+    expect(deRuta1.uso).toBe("externo");
+    expect(deRuta1.condicionDePago).toEqual({ formaPago: "credito", plazoPagoDias: 15 });
+    // Sin ficha, sin condición.
+    const deRuta2 = todas.find((f) => f.proveedorId === ruta2 && f.producto === "combustible")!;
+    expect(deRuta2.condicionDePago).toBeNull();
+  });
+
   it("deja auditoría con el precio y los ids", async () => {
     await admin
       .post("/api/erp/proveedores/precios/combustible")

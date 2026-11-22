@@ -31,6 +31,8 @@ export interface FormularioDePrecio {
   precio: string;
   /** Valor de un `datetime-local` («AAAA-MM-DDTHH:mm», hora local) o vacío = desde ahora. */
   vigente_desde: string;
+  /** «Vigencia hasta» (opcional): un día, «AAAA-MM-DD», o vacío = sin fecha. Solo una alerta de vencimiento. */
+  vigente_hasta: string;
   /** Marcó la confirmación del cambio grande. */
   confirmado: boolean;
 }
@@ -51,11 +53,16 @@ export function formularioInicialDePrecio(
     marca: "",
     precio: "",
     vigente_desde: "",
+    vigente_hasta: "",
     confirmado: false,
   };
 }
 
 const numero = (texto: string) => Number(texto.replace(",", "."));
+
+/** El día de hoy en Lima, AAAA-MM-DD. */
+const diaDeLima = (ahora: number) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(ahora);
 
 /** La variación del precio nuevo contra el vigente de cada proveedor elegido, en %. Solo los que ya tienen
  *  un precio vigente para ese producto. */
@@ -111,6 +118,16 @@ export function problemasDelPrecio(
   if (desde === null) problemas.push("La fecha de vigencia no es válida.");
   else if (desde !== undefined && new Date(desde).getTime() > ahora + TOPE_FUTURO_DIAS * 86_400_000)
     problemas.push("La vigencia no puede estar a más de un año.");
+  if (f.vigente_hasta !== "") {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(f.vigente_hasta) || Number.isNaN(Date.parse(f.vigente_hasta)))
+      problemas.push("La vigencia hasta no es una fecha válida.");
+    else {
+      // No puede ser anterior al día en que el precio empieza a regir (si no se eligió, hoy).
+      const desdeDia = f.vigente_desde !== "" ? f.vigente_desde.slice(0, 10) : diaDeLima(ahora);
+      if (f.vigente_hasta < desdeDia)
+        problemas.push("La vigencia hasta no puede ser anterior a la fecha desde la que rige.");
+    }
+  }
   if (necesitaConfirmacion(variacionesContraVigente(f, filas)) && !f.confirmado)
     problemas.push(`El cambio es de más de ${UMBRAL_CONFIRMACION_PCT} %: marca la confirmación.`);
   return problemas;
@@ -131,6 +148,7 @@ export function cuerpoDelPrecio(
         grifo_ids: f.grifo_ids,
         precio_unitario: numero(f.precio),
         vigente_desde: desde,
+        vigente_hasta: f.vigente_hasta === "" ? undefined : f.vigente_hasta,
       },
     };
   }
@@ -142,6 +160,7 @@ export function cuerpoDelPrecio(
       marca: f.marca.trim() === "" ? undefined : f.marca.trim(),
       precio_por_bulto: numero(f.precio),
       vigente_desde: desde,
+      vigente_hasta: f.vigente_hasta === "" ? undefined : f.vigente_hasta,
     },
   };
 }

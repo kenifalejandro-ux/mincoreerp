@@ -1856,6 +1856,38 @@ const vigenteDesdePrecio = z
     message: "La fecha de vigencia no puede estar a más de un año en el futuro",
   });
 
+/** «Vigencia hasta» (opcional): un día, AAAA-MM-DD, del año 2000 en adelante y a lo sumo 20 años adelante.
+ *  Es solo una alerta de vencimiento: no cambia cuál precio es el vigente (ver migración 0200). */
+const vigenteHastaPrecio = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "La vigencia hasta debe ser una fecha (AAAA-MM-DD)")
+  .refine((v) => !Number.isNaN(new Date(`${v}T00:00:00Z`).getTime()), {
+    message: "La vigencia hasta no es una fecha válida",
+  })
+  .refine((v) => v >= "2000-01-01" && v <= `${new Date().getUTCFullYear() + 20}-12-31`, {
+    message: "La vigencia hasta está fuera de rango",
+  });
+
+/** El día (en Lima) de un instante: lo que la persona ve como «desde» de un precio. */
+const diaEnLima = (iso: string) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "America/Lima" }).format(new Date(iso));
+
+/** La vigencia hasta no puede ser anterior al día en que el precio empieza a regir. */
+function hastaNoAntesDeDesde(
+  data: { vigente_desde?: string; vigente_hasta?: string },
+  ctx: z.RefinementCtx
+) {
+  if (!data.vigente_hasta) return;
+  const desde = diaEnLima(data.vigente_desde ?? new Date().toISOString());
+  if (data.vigente_hasta < desde) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["vigente_hasta"],
+      message: "La vigencia hasta no puede ser anterior a la fecha desde la que rige el precio",
+    });
+  }
+}
+
 export const crearPreciosCombustibleMasivoSchema = z
   .object({
     tipo_combustible: z.enum(TIPOS_COMBUSTIBLE),
@@ -1874,8 +1906,10 @@ export const crearPreciosCombustibleMasivoSchema = z
     // urea por bulto. Un precio de 0.001 ya no cabe, y no es un precio real.
     precio_unitario: z.number().min(0.01).max(100_000),
     vigente_desde: vigenteDesdePrecio.optional(),
+    vigente_hasta: vigenteHastaPrecio.optional(),
   })
   .superRefine((data, ctx) => {
+    hastaNoAntesDeDesde(data, ctx);
     if ((data.combustible_ids !== undefined) === (data.grifo_ids !== undefined)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -1911,14 +1945,17 @@ export type AnularPrecioCombustibleInput = z.infer<typeof anularPrecioCombustibl
 // Por proveedor y presentación: cada grifo cobra distinto. Se apila con su
 // vigencia, igual que los precios de combustible. El precio es POR BULTO,
 // el número que trae la boleta ("S/ 50 la caja").
-export const crearPrecioUreaSchema = z.object({
-  grifo_id: z.number().int().positive(),
-  presentacion: codigoPresentacionUrea,
-  // Referencia libre ("Green 32", "AdBlue"): no hay reportes por marca.
-  marca: z.string().trim().max(80).optional(),
-  precio_por_bulto: z.number().positive().max(100_000),
-  vigente_desde: z.string().datetime({ offset: true }).optional(),
-});
+export const crearPrecioUreaSchema = z
+  .object({
+    grifo_id: z.number().int().positive(),
+    presentacion: codigoPresentacionUrea,
+    // Referencia libre ("Green 32", "AdBlue"): no hay reportes por marca.
+    marca: z.string().trim().max(80).optional(),
+    precio_por_bulto: z.number().positive().max(100_000),
+    vigente_desde: z.string().datetime({ offset: true }).optional(),
+    vigente_hasta: vigenteHastaPrecio.optional(),
+  })
+  .superRefine(hastaNoAntesDeDesde);
 
 export type CrearPrecioUreaInput = z.infer<typeof crearPrecioUreaSchema>;
 
