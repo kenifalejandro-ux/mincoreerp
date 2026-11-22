@@ -54,6 +54,7 @@ import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
 import { getTenantId } from "../../server/shared/utils/request";
 import { cargarAlcance, alcanceDe } from "../combustible/alcance";
 import { tieneModulo } from "../../server/shared/utils/modulos";
+import { PATRON_DE_CATEGORIA, type CategoriaDeHistorial } from "./proveedores.historial";
 import { ProveedoresService } from "./proveedores.service";
 
 const router = Router();
@@ -239,7 +240,12 @@ router.patch(
       accion: "proveedores.precio_anular",
       tenantId,
       usuarioId: req.usuario!.id,
-      detalle: { precioId: id, producto: "combustible", motivo: data.motivo },
+      detalle: {
+        precioId: id,
+        proveedorId: precio.grifo_id,
+        producto: "combustible",
+        motivo: data.motivo,
+      },
       contexto: contextoAuditoriaModulo(req),
     });
     res.json(precio);
@@ -261,7 +267,7 @@ router.patch(
       accion: "proveedores.precio_anular",
       tenantId,
       usuarioId: req.usuario!.id,
-      detalle: { precioId: id, producto: "urea", motivo: data.motivo },
+      detalle: { precioId: id, proveedorId: fila.grifo_id, producto: "urea", motivo: data.motivo },
       contexto: contextoAuditoriaModulo(req),
     });
     await publicarEventoTenant(tenantId, "combustible.urea_precios_cambiaron", {
@@ -343,7 +349,7 @@ router.patch(
       accion: "proveedores.compra_habilitar",
       tenantId,
       usuarioId: req.usuario!.id,
-      detalle: { compraId: id },
+      detalle: { compraId: id, proveedorId: compra.proveedorId },
       contexto: contextoAuditoriaModulo(req),
     });
     await avisarCambioDeCompras(tenantId);
@@ -366,7 +372,7 @@ router.patch(
       accion: "proveedores.compra_anular",
       tenantId,
       usuarioId: req.usuario!.id,
-      detalle: { compraId: id },
+      detalle: { compraId: id, proveedorId: compra.proveedorId },
       contexto: contextoAuditoriaModulo(req),
     });
     await avisarCambioDeCompras(tenantId);
@@ -643,6 +649,40 @@ router.patch(
       contexto: contextoAuditoriaModulo(req),
     });
     res.json({ ok: true });
+  })
+);
+
+// Historial y auditoría: lo que se hizo con los proveedores (bitácora de la empresa, acciones
+// `proveedores.*`). Solo el admin: ahí aparece quién vio un número de cuenta o cambió un precio. La misma
+// bitácora se ve completa en Administración → Log de eventos; esto es su vista dentro del ecosistema.
+router.get(
+  "/historial",
+  requireRole("admin"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const q = req.query;
+    const categoria = typeof q.categoria === "string" ? q.categoria : undefined;
+    if (categoria !== undefined && !(categoria in PATRON_DE_CATEGORIA)) {
+      throw new AppError(400, "Categoría de historial inválida");
+    }
+    const fecha = (v: unknown) =>
+      typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined;
+    const antesDe =
+      typeof q.antesDe === "string" && /^\d{1,18}$/.test(q.antesDe) ? q.antesDe : undefined;
+    res.setHeader("Cache-Control", "no-store");
+    res.json(
+      await withTenant(tenantId, (client) =>
+        service.historial(client, tenantId, {
+          categoria: categoria as CategoriaDeHistorial | undefined,
+          desde: fecha(q.desde),
+          hasta: fecha(q.hasta),
+          proveedor: typeof q.proveedor === "string" ? q.proveedor.slice(0, 100) : undefined,
+          antesDe,
+          // Un tope duro: sin él, `?limite=999999` se trae media bitácora en una consulta.
+          limite: Math.min(Math.max(Number(q.limite) || 50, 1), 100),
+        })
+      )
+    );
   })
 );
 

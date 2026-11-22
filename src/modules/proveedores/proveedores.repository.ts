@@ -43,6 +43,14 @@ export interface FilaDatosProveedor {
   actualizado_por: string | null;
 }
 
+export interface FilaEventoDeHistorial {
+  id: string;
+  accion: string;
+  creadoEn: Date;
+  detalle: Record<string, unknown> | null;
+  actor: string | null;
+}
+
 export interface FilaContacto {
   id: string;
   grifo_id: number;
@@ -105,6 +113,85 @@ export class ProveedoresRepository {
       [tenantId, id]
     );
     return result.rows[0];
+  }
+
+  // ── Historial y auditoría: lectura de la bitácora (`platform_audit_log`, acciones `proveedores.*`) ──
+
+  async eventosDeHistorial(
+    client: PoolClient,
+    tenantId: string,
+    filtro: {
+      patron: string;
+      desde?: string;
+      hasta?: string;
+      antesDe?: string;
+      proveedorIds?: number[];
+      limite: number;
+    }
+  ): Promise<FilaEventoDeHistorial[]> {
+    const condiciones = ["a.tenant_id = $1", "a.accion ~ $2"];
+    const valores: unknown[] = [tenantId, filtro.patron];
+    const agregar = (sql: string, valor: unknown) => {
+      valores.push(valor);
+      condiciones.push(sql.replace("$N", `$${valores.length}`));
+    };
+    // Las fechas son días de Lima (mismo criterio que el Log de eventos de Administración).
+    if (filtro.desde)
+      agregar("a.creado_en >= ($N::date)::timestamp AT TIME ZONE 'America/Lima'", filtro.desde);
+    if (filtro.hasta)
+      agregar(
+        "a.creado_en < ($N::date + interval '1 day')::timestamp AT TIME ZONE 'America/Lima'",
+        filtro.hasta
+      );
+    if (filtro.antesDe) agregar("a.id < $N", filtro.antesDe);
+    if (filtro.proveedorIds) {
+      // El id del proveedor viaja dentro del detalle: solo se compara cuando es un entero.
+      agregar(
+        "(CASE WHEN (a.detalle->>'proveedorId') ~ '^[0-9]{1,9}$' THEN (a.detalle->>'proveedorId')::int END) = ANY($N::int[])",
+        filtro.proveedorIds
+      );
+    }
+    valores.push(filtro.limite);
+    const r = await client.query<FilaEventoDeHistorial>(
+      `SELECT a.id, a.accion, a.creado_en AS "creadoEn", a.detalle,
+              COALESCE(u.nombre, a.actor_label) AS actor
+         FROM platform_audit_log a
+         LEFT JOIN usuarios u ON u.id = a.usuario_id
+        WHERE ${condiciones.join(" AND ")}
+        ORDER BY a.id DESC
+        LIMIT $${valores.length}`,
+      valores
+    );
+    return r.rows;
+  }
+
+  /** Los nombres de proveedores por id (para decir sobre quién recayó cada evento). */
+  async nombresDeProveedores(
+    client: PoolClient,
+    tenantId: string,
+    ids: number[]
+  ): Promise<Map<number, string>> {
+    if (ids.length === 0) return new Map();
+    const r = await client.query<{ id: number; nombre: string }>(
+      `SELECT id, nombre FROM combustible_grifos WHERE tenant_id = $1 AND id = ANY($2::int[])`,
+      [tenantId, ids]
+    );
+    return new Map(r.rows.map((f) => [f.id, f.nombre]));
+  }
+
+  /** Los proveedores cuyo nombre contiene el texto (para filtrar el historial por proveedor). */
+  async idsDeProveedoresPorNombre(
+    client: PoolClient,
+    tenantId: string,
+    texto: string
+  ): Promise<number[]> {
+    const r = await client.query<{ id: number }>(
+      `SELECT id FROM combustible_grifos
+        WHERE tenant_id = $1 AND NOT es_otros AND position(lower($2) in lower(nombre)) > 0
+        LIMIT 200`,
+      [tenantId, texto]
+    );
+    return r.rows.map((f) => f.id);
   }
 
   // ── Ficha (PR3a): tablas propias del módulo, 0198 ───────────────────────────────────────────────

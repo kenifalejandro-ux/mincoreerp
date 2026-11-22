@@ -22,7 +22,6 @@ import {
   Sparkles,
   Star,
   Truck,
-  Users,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -32,6 +31,8 @@ import CentroDeGestion from "./CentroDeGestion";
 import ComprasYRecepciones from "./ComprasYRecepciones";
 import DirectorioProveedores, { type PestanaFicha } from "./DirectorioProveedores";
 import GestionComercial from "./GestionComercial";
+import HistorialDeProveedores from "./HistorialDeProveedores";
+import { puedeVerHistorialDeProveedores } from "./historialProveedores";
 import { puedeVerComprasDeProveedores, puedeVerPreciosDeProveedores } from "./proveedoresAcceso";
 import SeccionPronto from "./SeccionPronto";
 import { useAuth } from "../../context/AuthContext";
@@ -50,15 +51,7 @@ const GRUPOS: { etiqueta: string; items: ItemDeMenu[] }[] = [
   { etiqueta: "", items: [{ id: "centro", label: "Centro de gestión", Icono: LayoutGrid }] },
   {
     etiqueta: "Empresas",
-    items: [
-      { id: "directorio", label: "Directorio de proveedores", Icono: Building2 },
-      {
-        id: "contactos",
-        label: "Contactos",
-        Icono: Users,
-        pronto: { descripcion: "Las personas de contacto de cada proveedor." },
-      },
-    ],
+    items: [{ id: "directorio", label: "Directorio de proveedores", Icono: Building2 }],
   },
   {
     etiqueta: "Control y validación",
@@ -128,7 +121,7 @@ const GRUPOS: { etiqueta: string; items: ItemDeMenu[] }[] = [
         id: "historial",
         label: "Historial y auditoría",
         Icono: Clock,
-        pronto: { descripcion: "Quién cambió qué y cuándo en los datos de proveedores." },
+        visible: puedeVerHistorialDeProveedores,
       },
     ],
   },
@@ -310,6 +303,9 @@ export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => voi
           )}
           {actual.id === "compras" && (
             <ComprasYRecepciones onAbrirProveedor={(id) => abrirProveedor(id, "compras")} />
+          )}
+          {actual.id === "historial" && (
+            <HistorialDeProveedores onAbrirProveedor={(id) => abrirProveedor(id, "resumen")} />
           )}
           {actual.pronto && (
             <SeccionPronto
