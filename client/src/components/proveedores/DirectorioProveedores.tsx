@@ -250,7 +250,9 @@ export default function DirectorioProveedores({
           </p>
         )}
 
-        <div className="overflow-x-auto">
+        {/* `relative`: el «sr-only» de la columna de acciones es `position:absolute`; sin un ancestro posicionado
+            no lo recorta este contenedor y ensancha la PÁGINA (877 px en un celular de 393). */}
+        <div className="relative overflow-x-auto">
           <table className="w-full min-w-[900px] text-sm">
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 bg-slate-50 border-b border-slate-200">
