@@ -35,8 +35,11 @@ function Total({ etiqueta, valor, detalle }: { etiqueta: string; valor: number; 
 
 export default function ComprasYRecepciones({
   onAbrirProveedor,
+  onAbrirCompra,
 }: {
   onAbrirProveedor: (proveedorId: number) => void;
+  /** Abre el detalle de una compra (panel lateral). */
+  onAbrirCompra: (compra: CompraDeCisterna) => void;
 }) {
   const { datos, error, recargar } = useCompras();
   const { usuario } = useAuth();
@@ -207,6 +210,7 @@ export default function ComprasYRecepciones({
                 compras={visibles}
                 conProveedor
                 onAbrirProveedor={onAbrirProveedor}
+                onAbrirCompra={onAbrirCompra}
                 acciones={
                   puedeGestionar
                     ? { onHabilitar: habilitar, onAnular: setAnulando, ocupada }

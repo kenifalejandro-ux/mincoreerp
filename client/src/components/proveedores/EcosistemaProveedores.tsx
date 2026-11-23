@@ -29,11 +29,15 @@ import { useCallback, useEffect, useState } from "react";
 
 import CentroDeGestion from "./CentroDeGestion";
 import ComprasYRecepciones from "./ComprasYRecepciones";
-import DirectorioProveedores, { type PestanaFicha } from "./DirectorioProveedores";
+import DirectorioProveedores from "./DirectorioProveedores";
+import type { PestanaFicha } from "./fichaProveedor";
 import GestionComercial from "./GestionComercial";
 import HistorialDeProveedores from "./HistorialDeProveedores";
 import { puedeVerHistorialDeProveedores } from "./historialProveedores";
+import PanelDeCompra from "./PanelDeCompra";
+import PanelDeProveedor from "./PanelDeProveedor";
 import { puedeVerComprasDeProveedores, puedeVerPreciosDeProveedores } from "./proveedoresAcceso";
+import type { CompraDeCisterna } from "./proveedoresApi";
 import {
   esRutaDeProveedores,
   leerRuta,
@@ -138,6 +142,11 @@ const GRUPOS: { etiqueta: string; items: ItemDeMenu[] }[] = [
 
 const TODOS = GRUPOS.flatMap((g) => g.items);
 
+/** Lo que hay abierto en el panel de detalle. */
+type PanelAbierto =
+  | { tipo: "proveedor"; id: number; pestana: PestanaFicha; n: number }
+  | { tipo: "compra"; compra: CompraDeCisterna };
+
 export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => void }) {
   const { usuario, logout } = useAuth();
   // La barra de scroll lima del ERP también vale aquí (el ecosistema va fuera del Layout).
@@ -155,18 +164,21 @@ export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => voi
     rutaInicial && puedeVer(rutaInicial.seccion) ? rutaInicial.seccion : "centro"
   );
   const [menuAbierto, setMenuAbierto] = useState(false);
-  // Abrir directo la ficha de un proveedor (desde Gestión comercial o desde una dirección). `n` cambia en
-  // cada apertura para que el directorio se vuelva a montar aunque sea el mismo proveedor; `id: null` es
-  // la lista.
-  const [apertura, setApertura] = useState<{
-    id: number | null;
-    pestana: PestanaFicha;
-    n: number;
-  } | null>(() =>
+  // El panel de detalle abierto encima de la pantalla actual: la ficha de un proveedor o el detalle de una
+  // compra. Desde el Directorio el panel de un proveedor también está en la dirección; desde las demás
+  // pantallas no (la dirección sigue siendo la de la pantalla).
+  const [panel, setPanel] = useState<PanelAbierto | null>(() =>
     rutaInicial?.seccion === "directorio" && rutaInicial.proveedorId !== undefined
-      ? { id: rutaInicial.proveedorId, pestana: rutaInicial.pestana ?? "resumen", n: 1 }
+      ? {
+          tipo: "proveedor",
+          id: rutaInicial.proveedorId,
+          pestana: rutaInicial.pestana ?? "resumen",
+          n: 1,
+        }
       : null
   );
+  // Sube cuando se edita algo desde el panel: el Directorio de atrás vuelve a leer su lista.
+  const [refrescoDeLista, setRefrescoDeLista] = useState(0);
 
   /** Refleja la pantalla en la dirección y el título del navegador. Con `reemplazar` no suma un paso al
    *  historial. */
@@ -207,11 +219,18 @@ export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => voi
       if (!estado) return;
       const destino = puedeVer(estado.seccion) ? estado.seccion : "centro";
       setSeccion(destino);
-      setApertura((a) => ({
-        id: destino === "directorio" ? (estado.proveedorId ?? null) : null,
-        pestana: estado.pestana ?? "resumen",
-        n: (a?.n ?? 0) + 1,
-      }));
+      // `n` cambia en cada apertura para que el panel se vuelva a montar en la pestaña de la dirección (aunque
+      // sea el mismo proveedor).
+      setPanel((anterior) =>
+        destino === "directorio" && estado.proveedorId !== undefined
+          ? {
+              tipo: "proveedor",
+              id: estado.proveedorId,
+              pestana: estado.pestana ?? "resumen",
+              n: (anterior?.tipo === "proveedor" ? anterior.n : 0) + 1,
+            }
+          : null
+      );
       setMenuAbierto(false);
       document.title = tituloDeRuta({ seccion: destino as SeccionDeRuta });
     };
@@ -220,16 +239,24 @@ export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => voi
   }, [puedeVer]);
 
   const actual = TODOS.find((i) => i.id === seccion) ?? TODOS[0];
-  const abrirProveedor = (id: number, pestana: PestanaFicha) => {
-    setApertura((a) => ({ id, pestana, n: (a?.n ?? 0) + 1 }));
-    setSeccion("directorio");
-    setMenuAbierto(false);
-    publicar({ seccion: "directorio", proveedorId: id, pestana });
+  const enDirectorio = seccion === "directorio";
+  /** Abre la ficha del proveedor en el panel, sin cambiar de pantalla. */
+  const abrirProveedor = (id: number, pestana: PestanaFicha = "resumen") => {
+    setPanel((anterior) => ({
+      tipo: "proveedor",
+      id,
+      pestana,
+      n: (anterior?.tipo === "proveedor" ? anterior.n : 0) + 1,
+    }));
+    if (enDirectorio) publicar({ seccion: "directorio", proveedorId: id, pestana });
+  };
+  const cerrarPanel = () => {
+    setPanel(null);
+    setRefrescoDeLista((n) => n + 1);
+    if (enDirectorio) publicar({ seccion: "directorio" });
   };
   const irA = (id: string) => {
-    // «Directorio» siempre vuelve a la lista, aunque ya hubiera una ficha abierta.
-    if (id === "directorio")
-      setApertura((a) => ({ id: null, pestana: "resumen", n: (a?.n ?? 0) + 1 }));
+    setPanel(null);
     setSeccion(id);
     setMenuAbierto(false);
     publicar({ seccion: id as SeccionDeRuta });
@@ -379,26 +406,21 @@ export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => voi
           {actual.id === "centro" && <CentroDeGestion onIrAlDirectorio={() => irA("directorio")} />}
           {actual.id === "directorio" && (
             <DirectorioProveedores
-              key={apertura?.n ?? 0}
-              apertura={apertura ?? undefined}
-              onFicha={(ficha, opciones) =>
-                publicar(
-                  ficha
-                    ? { seccion: "directorio", proveedorId: ficha.id, pestana: ficha.pestana }
-                    : { seccion: "directorio" },
-                  opciones?.reemplazar
-                )
-              }
+              onAbrirProveedor={(id) => abrirProveedor(id)}
+              refresco={refrescoDeLista}
             />
           )}
           {actual.id === "comercial" && (
             <GestionComercial onAbrirProveedor={(id) => abrirProveedor(id, "comercial")} />
           )}
           {actual.id === "compras" && (
-            <ComprasYRecepciones onAbrirProveedor={(id) => abrirProveedor(id, "compras")} />
+            <ComprasYRecepciones
+              onAbrirProveedor={(id) => abrirProveedor(id, "compras")}
+              onAbrirCompra={(compra) => setPanel({ tipo: "compra", compra })}
+            />
           )}
           {actual.id === "historial" && (
-            <HistorialDeProveedores onAbrirProveedor={(id) => abrirProveedor(id, "resumen")} />
+            <HistorialDeProveedores onAbrirProveedor={(id) => abrirProveedor(id)} />
           )}
           {actual.pronto && (
             <SeccionPronto
@@ -409,6 +431,31 @@ export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => voi
           )}
         </div>
       </main>
+
+      {panel?.tipo === "proveedor" && (
+        <PanelDeProveedor
+          key={`${panel.id}-${panel.n}`}
+          proveedorId={panel.id}
+          pestanaInicial={panel.pestana}
+          onCerrar={cerrarPanel}
+          onPestana={(pestana) => {
+            if (enDirectorio) publicar({ seccion: "directorio", proveedorId: panel.id, pestana });
+          }}
+          onCambio={() => setRefrescoDeLista((n) => n + 1)}
+          onNoExiste={() => {
+            // Un enlace a un proveedor que no existe (o ya no): se cierra el panel y la dirección se corrige.
+            setPanel(null);
+            if (enDirectorio) publicar({ seccion: "directorio" }, true);
+          }}
+        />
+      )}
+      {panel?.tipo === "compra" && (
+        <PanelDeCompra
+          compra={panel.compra}
+          onCerrar={cerrarPanel}
+          onAbrirProveedor={(id) => abrirProveedor(id, "compras")}
+        />
+      )}
     </div>
   );
 }

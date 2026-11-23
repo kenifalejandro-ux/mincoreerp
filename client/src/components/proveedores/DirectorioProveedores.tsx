@@ -1,6 +1,6 @@
 // client/src/components/proveedores/DirectorioProveedores.tsx
 //
-// Directorio de los proveedores (la lista) y la ficha que se abre desde ella (FichaDeProveedor). INTERNO es la
+// Directorio de los proveedores (la lista). La ficha se abre en el panel lateral (PanelDeProveedor). INTERNO es la
 // compra para despachar desde la planta y EXTERNO la que se hace en el recorrido de ruta: las mismas palabras
 // que la pestaña Proveedores de Combustible.
 import { Plus, Search } from "lucide-react";
@@ -16,18 +16,11 @@ import {
   type FiltroEstado,
 } from "./directorioProveedores";
 import EstadoDeProveedor from "./EstadoDeProveedor";
-import FichaDeProveedor from "./FichaDeProveedor";
-import { inicialesDeProveedor, type PestanaFicha } from "./fichaProveedor";
+import { inicialesDeProveedor } from "./fichaProveedor";
 import FormularioProveedor from "./FormularioProveedor";
-import { puedeVerHistorialDeProveedores } from "./historialProveedores";
-import {
-  puedeVerComprasDeProveedores,
-  puedeVerCuentasDeProveedores,
-  puedeVerPreciosDeProveedores,
-} from "./proveedoresAcceso";
+import { puedeVerPreciosDeProveedores } from "./proveedoresAcceso";
 import {
   listarProveedores,
-  type Proveedor,
   type ProveedorEnDirectorio,
   type TipoProveedor,
 } from "./proveedoresApi";
@@ -52,48 +45,42 @@ function Uso({ interno, externo }: { interno: boolean; externo: boolean }) {
   );
 }
 
-export type { PestanaFicha };
-
 export default function DirectorioProveedores({
-  apertura,
-  onFicha,
+  onAbrirProveedor,
+  refresco = 0,
 }: {
-  /** Abrir directo la ficha de un proveedor (p. ej. desde Gestión comercial o desde una dirección).
-   *  `id: null` = la lista. */
-  apertura?: { id: number | null; pestana: PestanaFicha };
-  /** Avisa qué ficha y pestaña hay abiertas (o `null` = la lista), para reflejarlo en la dirección. Con
-   *  `reemplazar` la dirección se corrige sin sumar un paso al historial (un enlace a un proveedor que no
-   *  existe). */
-  onFicha?: (
-    ficha: { id: number; pestana: PestanaFicha } | null,
-    opciones?: { reemplazar?: boolean }
-  ) => void;
+  /** Abre la ficha del proveedor en el panel lateral (la lista queda donde está). */
+  onAbrirProveedor: (proveedorId: number) => void;
+  /** Cambia cada vez que algo editado afuera (la ficha del panel) obliga a volver a leer la lista. */
+  refresco?: number;
 }) {
-  const { usuario } = useAuth();
-  const verPrecios = puedeVerPreciosDeProveedores(usuario);
-  const verCompras = puedeVerComprasDeProveedores(usuario);
-  const verCuentas = puedeVerCuentasDeProveedores(usuario);
-  const verHistorial = puedeVerHistorialDeProveedores(usuario);
   const [lista, setLista] = useState<ProveedorEnDirectorio[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busqueda, setBusqueda] = useState("");
   const [tipo, setTipo] = useState<"todos" | TipoProveedor>("todos");
   const [abastece, setAbastece] = useState<FiltroAbastece>("todos");
   const [estado, setEstado] = useState<FiltroEstado>("todos");
-  const [abierto, setAbierto] = useState<number | null>(apertura?.id ?? null);
   const puedeEscribir = usePuedeEscribir("proveedores");
-  // `null` = cerrado; `"nuevo"` = registrar; un proveedor = editarlo.
-  const [formulario, setFormulario] = useState<null | "nuevo" | Proveedor>(null);
+  const { usuario } = useAuth();
+  const verPrecios = puedeVerPreciosDeProveedores(usuario);
+  const [registrando, setRegistrando] = useState(false);
+  // Se lee al abrir y cada vez que cambia `refresco` (se editó algo en el panel) o se registra uno nuevo: el
+  // servidor calcula la ciudad, la ficha completa y el precio. La lista anterior no se borra mientras tanto.
+  const [versionPropia, setVersionPropia] = useState(0);
 
   useEffect(() => {
     let vigente = true;
     listarProveedores()
-      .then((r) => vigente && setLista(r))
+      .then((r) => {
+        if (!vigente) return;
+        setLista(r);
+        setError(null);
+      })
       .catch((e: Error) => vigente && setError(e.message));
     return () => {
       vigente = false;
     };
-  }, []);
+  }, [refresco, versionPropia]);
 
   const filtrados = useMemo(
     () => filtrarDirectorio(lista ?? [], { busqueda, tipo, abastece, estado }),
@@ -101,49 +88,15 @@ export default function DirectorioProveedores({
   );
   const resumen = useMemo(() => resumenDelDirectorio(lista ?? []), [lista]);
 
-  // Al guardar se vuelve a pedir la lista: el servidor es quien calcula la ciudad, la ficha completa y el precio.
-  const recargarLista = () =>
-    listarProveedores()
-      .then(setLista)
-      .catch((e: Error) => setError(e.message));
-  const alGuardar = () => {
-    setFormulario(null);
-    void recargarLista();
-  };
-  const modal = formulario && (
+  const modal = registrando && (
     <FormularioProveedor
-      proveedor={formulario === "nuevo" ? undefined : formulario}
-      onGuardado={alGuardar}
-      onCerrar={() => setFormulario(null)}
+      onGuardado={() => {
+        setRegistrando(false);
+        setVersionPropia((v) => v + 1);
+      }}
+      onCerrar={() => setRegistrando(false)}
     />
   );
-
-  const seleccionado = lista?.find((p) => p.id === abierto);
-  // Un enlace a un proveedor que no existe (o ya no): se muestra la lista y la dirección se corrige.
-  useEffect(() => {
-    if (lista && abierto !== null && !lista.some((p) => p.id === abierto)) {
-      onFicha?.(null, { reemplazar: true });
-    }
-  }, [lista, abierto, onFicha]);
-  if (seleccionado)
-    return (
-      <>
-        <FichaDeProveedor
-          proveedor={seleccionado}
-          acceso={{ verPrecios, verCompras, verCuentas, verHistorial }}
-          pestanaInicial={apertura?.id === seleccionado.id ? apertura.pestana : "resumen"}
-          onVolver={() => {
-            setAbierto(null);
-            onFicha?.(null);
-            // Lo que se editó en la ficha (ciudad, datos, contactos) cambia el % de la lista.
-            void recargarLista();
-          }}
-          onPestana={(pestana) => onFicha?.({ id: seleccionado.id, pestana })}
-          onEditar={puedeEscribir ? () => setFormulario(seleccionado) : undefined}
-        />
-        {modal}
-      </>
-    );
 
   const control =
     "h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#84cc16]";
@@ -170,7 +123,7 @@ export default function DirectorioProveedores({
         </div>
         {puedeEscribir && (
           <button
-            onClick={() => setFormulario("nuevo")}
+            onClick={() => setRegistrando(true)}
             className="flex items-center gap-2 h-10 px-4 rounded-lg bg-[#BADC1E] text-[#0A1014] text-sm font-semibold hover:brightness-95"
           >
             <Plus size={16} /> Registrar proveedor
@@ -283,10 +236,7 @@ export default function DirectorioProveedores({
                 <tr key={p.id} className="border-b border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-3">
                     <button
-                      onClick={() => {
-                        setAbierto(p.id);
-                        onFicha?.({ id: p.id, pestana: "resumen" });
-                      }}
+                      onClick={() => onAbrirProveedor(p.id)}
                       className="flex items-center gap-3 text-left"
                     >
                       <span className="w-9 h-9 rounded-lg bg-slate-100 text-[#4d7c0f] grid place-items-center text-xs font-bold shrink-0">

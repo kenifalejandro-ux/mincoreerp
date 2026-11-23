@@ -69,7 +69,11 @@ test("ficha del proveedor: datos y condiciones de pago, contactos y Lectura sin 
   }
   await page.getByRole("tab", { name: "Contratos" }).click();
   await expect(page.getByText("Sin contratos registrados.")).toBeVisible();
-  await expect(page.getByRole("main").getByText("Pronto", { exact: true })).toBeVisible();
+  await expect(
+    page
+      .getByRole("complementary", { name: "Detalle del proveedor" })
+      .getByText("Pronto", { exact: true })
+  ).toBeVisible();
   await page.getByRole("tab", { name: "Documentos" }).click();
   await expect(page.getByText("Sin documentos cargados.")).toBeVisible();
 

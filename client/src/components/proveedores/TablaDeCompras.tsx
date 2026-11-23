@@ -74,11 +74,14 @@ export default function TablaDeCompras({
   compras,
   conProveedor,
   onAbrirProveedor,
+  onAbrirCompra,
   acciones,
 }: {
   compras: CompraDeCisterna[];
   conProveedor: boolean;
   onAbrirProveedor?: (proveedorId: number) => void;
+  /** Abre el detalle de la compra (panel lateral). Sin función, el documento es solo texto. */
+  onAbrirCompra?: (compra: CompraDeCisterna) => void;
   acciones?: AccionesDeCompra;
 }) {
   const columnas = (conProveedor ? 8 : 7) + (acciones ? 1 : 0);
@@ -109,11 +112,27 @@ export default function TablaDeCompras({
           {compras.map((c) => (
             <tr key={c.id} className="border-b border-slate-100 hover:bg-slate-50 align-top">
               <td className="px-4 py-3">
-                <b className="text-slate-900">{c.numeroDocumento}</b>
-                <span className="block text-xs text-slate-500">
-                  {ETIQUETA_DOCUMENTO[c.tipoDocumento] ?? c.tipoDocumento} ·{" "}
-                  {formatoDia(c.fechaCompra)}
-                </span>
+                {onAbrirCompra ? (
+                  <button
+                    onClick={() => onAbrirCompra(c)}
+                    className="text-left"
+                    aria-label={`Abrir compra ${c.numeroDocumento}`}
+                  >
+                    <b className="text-slate-900 hover:underline">{c.numeroDocumento}</b>
+                    <span className="block text-xs text-slate-500">
+                      {ETIQUETA_DOCUMENTO[c.tipoDocumento] ?? c.tipoDocumento} ·{" "}
+                      {formatoDia(c.fechaCompra)}
+                    </span>
+                  </button>
+                ) : (
+                  <>
+                    <b className="text-slate-900">{c.numeroDocumento}</b>
+                    <span className="block text-xs text-slate-500">
+                      {ETIQUETA_DOCUMENTO[c.tipoDocumento] ?? c.tipoDocumento} ·{" "}
+                      {formatoDia(c.fechaCompra)}
+                    </span>
+                  </>
+                )}
               </td>
               {conProveedor && (
                 <td className="px-4 py-3">

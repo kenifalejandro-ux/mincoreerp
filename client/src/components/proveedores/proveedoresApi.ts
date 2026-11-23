@@ -40,16 +40,34 @@ export interface ResumenProveedores {
   externos: number;
 }
 
+/** Un error de la API con su código HTTP (para distinguir «no existe» de un fallo). */
+export class ErrorDeApi extends Error {
+  constructor(
+    mensaje: string,
+    readonly estado: number
+  ) {
+    super(mensaje);
+  }
+}
+
 async function leer<T>(ruta: string): Promise<T> {
   const res = await apiFetch(`/api/erp/proveedores${ruta}`);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data.message || data.error || `No se pudo cargar (HTTP ${res.status})`);
+    throw new ErrorDeApi(
+      data.message || data.error || `No se pudo cargar (HTTP ${res.status})`,
+      res.status
+    );
   }
   return data as T;
 }
 
+/** Lo que la ficha necesita de un proveedor. La lista del Directorio trae además la ciudad. */
+export type ProveedorBasico = Proveedor & { ciudad?: string | null };
+
 export const listarProveedores = () => leer<ProveedorEnDirectorio[]>("");
+/** Un proveedor por su id (404 si no existe en esta empresa). */
+export const obtenerProveedor = (id: number) => leer<Proveedor>(`/${id}`);
 export const resumenProveedores = () => leer<ResumenProveedores>("/resumen");
 
 /** Lo que se carga al registrar o editar un proveedor. INTERNO es la compra para despachar desde la

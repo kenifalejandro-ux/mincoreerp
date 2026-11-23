@@ -80,8 +80,10 @@ test("registrar y editar un proveedor desde el directorio", async ({ page, brows
   await edicion.getByRole("button", { name: "Guardar" }).click();
   await expect(edicion).toHaveCount(0);
   await expect(page.getByRole("heading", { name: new RegExp(editado), level: 1 })).toBeVisible();
-  await expect(page.getByText("Desactivado")).toBeVisible();
-  await page.getByRole("button", { name: "Volver al directorio" }).click();
+  await expect(
+    page.getByRole("complementary", { name: "Detalle del proveedor" }).getByText("Desactivado")
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Cerrar el panel" }).click();
   await page.getByPlaceholder("Buscar por razón social, RUC, código o ciudad...").fill(marca);
   const filaEditada = page.getByRole("row", { name: new RegExp(editado) });
   await expect(filaEditada).toBeVisible();

@@ -81,7 +81,7 @@ test("entrar al ecosistema, ver el directorio y volver al ERP", async ({ page })
   await page.getByPlaceholder("Buscar por razón social, RUC, código o ciudad...").fill(nombre);
   await fila.getByRole("button", { name: new RegExp(nombre) }).click();
   await expect(page.getByRole("heading", { name: new RegExp(nombre), level: 1 })).toBeVisible();
-  await page.getByRole("button", { name: "Volver al directorio" }).click();
+  await page.getByRole("button", { name: "Cerrar el panel" }).click();
   await expect(
     page.getByRole("heading", { name: "Directorio de proveedores", level: 1 })
   ).toBeVisible();
