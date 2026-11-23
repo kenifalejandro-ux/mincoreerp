@@ -87,7 +87,7 @@ export interface DatosProveedor {
 
 async function enviar<T>(
   ruta: string,
-  metodo: "POST" | "PUT" | "PATCH",
+  metodo: "POST" | "PUT" | "PATCH" | "DELETE",
   cuerpo?: object
 ): Promise<T> {
   const res = await apiFetch(`/api/erp/proveedores${ruta}`, {
@@ -106,6 +106,22 @@ async function enviar<T>(
   }
   return data as T;
 }
+
+/** Desactiva o reactiva un proveedor. Desactivar exige el motivo (queda en la bitácora). */
+export const cambiarEstadoDeProveedor = (id: number, activo: boolean, motivo: string) =>
+  enviar<Proveedor>(`/${id}/estado`, "PATCH", { activo, motivo });
+
+/** ¿Se puede eliminar? Si no, por qué (lo que lo ata a su historia). Solo el admin. */
+export interface EliminableDeProveedor {
+  eliminable: boolean;
+  movimientos: { precios: number; compras: number; recepciones: number; despachos: number };
+  motivo: string | null;
+}
+export const eliminableDeProveedor = (id: number) =>
+  leer<EliminableDeProveedor>(`/${id}/eliminable`);
+
+/** Elimina un proveedor sin historia (409 si la tiene). Solo el admin. */
+export const eliminarProveedor = (id: number) => enviar<{ ok: true }>(`/${id}`, "DELETE");
 
 export const crearProveedor = (datos: DatosProveedor) => enviar<Proveedor>("", "POST", datos);
 export const actualizarProveedor = (id: number, datos: DatosProveedor & { activo: boolean }) =>

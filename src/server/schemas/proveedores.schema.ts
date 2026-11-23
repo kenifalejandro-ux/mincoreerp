@@ -48,6 +48,23 @@ export const actualizarProveedorSchema = z.object({
   ...banderas,
 });
 
+/** Desactivar o reactivar un proveedor. Desactivar exige el motivo (queda en la bitácora); reactivar lo admite
+ *  pero no lo exige. */
+export const cambiarEstadoProveedorSchema = z
+  .object({
+    activo: z.boolean(),
+    motivo: z
+      .string()
+      .trim()
+      .max(300, "El motivo no puede pasar de 300 caracteres")
+      .nullish()
+      .transform((v) => (v ? v : null)),
+  })
+  .refine((d) => d.activo || (d.motivo !== null && d.motivo.length >= 3), {
+    message: "Escribe el motivo (al menos 3 letras)",
+    path: ["motivo"],
+  });
+
 /** Un mismo precio de combustible para varios proveedores de ruta, todo o nada. Es el cambio masivo de
  *  Combustible → Precios pero solo para PROVEEDORES: los precios de tanque (la venta interna) son de
  *  Combustible y no se cargan desde acá. */
@@ -182,6 +199,7 @@ export type QuitarCuentaProveedorInput = z.infer<typeof quitarCuentaProveedorSch
 export type GuardarDatosProveedorInput = z.infer<typeof guardarDatosProveedorSchema>;
 export type ContactoProveedorInput = z.infer<typeof contactoProveedorSchema>;
 
+export type CambiarEstadoProveedorInput = z.infer<typeof cambiarEstadoProveedorSchema>;
 export type CrearProveedorInput = z.infer<typeof crearProveedorSchema>;
 export type ActualizarProveedorInput = z.infer<typeof actualizarProveedorSchema>;
 export type CrearPreciosProveedoresInput = z.infer<typeof crearPreciosProveedoresSchema>;

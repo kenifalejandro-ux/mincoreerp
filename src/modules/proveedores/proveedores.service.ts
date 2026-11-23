@@ -16,6 +16,11 @@ import {
   type PrecioDelDirectorio,
 } from "./proveedores.directorio";
 import { armarFilasDePrecios, type FilaPrecioDto } from "./proveedores.precios";
+import {
+  hayMovimientos,
+  mensajeDeNoEliminable,
+  type MovimientosDeProveedor,
+} from "./proveedores.acciones";
 import { armarCompras, type CompraDto } from "./proveedores.compras";
 import {
   PATRON_DE_CATEGORIA,
@@ -883,6 +888,56 @@ export class ProveedoresService {
       return aDto(fila);
     } catch (err) {
       throw comoErrorDeNegocio(err);
+    }
+  }
+
+  /** Desactiva o reactiva un proveedor. Si ya estaba así no cambia nada (`cambio: false`). */
+  async cambiarEstado(
+    client: PoolClient,
+    tenantId: string,
+    id: number,
+    activo: boolean
+  ): Promise<{ proveedor: ProveedorDto; cambio: boolean }> {
+    const actual = await this.exigirProveedor(client, tenantId, id);
+    if (actual.activo === activo) return { proveedor: aDto(actual), cambio: false };
+    const fila = await this.repository.cambiarEstado(client, tenantId, id, activo);
+    if (!fila) throw new AppError(404, "Proveedor no encontrado");
+    return { proveedor: aDto(fila), cambio: true };
+  }
+
+  /** ¿Se puede eliminar? Si no, por qué (lo que lo ata a su historia). */
+  async eliminable(
+    client: PoolClient,
+    tenantId: string,
+    id: number
+  ): Promise<{ eliminable: boolean; movimientos: MovimientosDeProveedor; motivo: string | null }> {
+    await this.exigirProveedor(client, tenantId, id);
+    const movimientos = await this.repository.movimientosDe(client, tenantId, id);
+    return {
+      eliminable: !hayMovimientos(movimientos),
+      movimientos,
+      motivo: hayMovimientos(movimientos) ? mensajeDeNoEliminable(movimientos) : null,
+    };
+  }
+
+  /** Elimina un proveedor sin historia. Con historia es 409 (se desactiva). Devuelve lo que se borró. */
+  async eliminar(client: PoolClient, tenantId: string, id: number): Promise<ProveedorDto> {
+    await this.exigirProveedor(client, tenantId, id);
+    const movimientos = await this.repository.movimientosDe(client, tenantId, id);
+    if (hayMovimientos(movimientos)) throw new AppError(409, mensajeDeNoEliminable(movimientos));
+    try {
+      const fila = await this.repository.eliminar(client, tenantId, id);
+      if (!fila) throw new AppError(404, "Proveedor no encontrado");
+      return aDto(fila);
+    } catch (err) {
+      // Algo nuevo lo ató justo ahora (la base lo impide con una llave foránea).
+      if ((err as { code?: string }).code === "23503") {
+        throw new AppError(
+          409,
+          "No se puede eliminar: ya tiene movimientos. Desactívalo en su lugar."
+        );
+      }
+      throw err;
     }
   }
 

@@ -150,7 +150,12 @@ test("compras y recepciones: estados, filtro y ficha del proveedor", async ({ pa
     .click();
   await expect(page.getByRole("heading", { name: new RegExp(proveedor), level: 1 })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Compras" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("row", { name: new RegExp(`PLL-${marca}`) })).toBeVisible();
+  // La compra del proveedor está en la tabla DEL PANEL (la lista de atrás también la tiene).
+  await expect(
+    page
+      .getByRole("complementary", { name: "Detalle del proveedor" })
+      .getByRole("row", { name: new RegExp(`PLL-${marca}`) })
+  ).toBeVisible();
   await page.getByRole("tab", { name: "Resumen" }).click();
   await expect(page.getByRole("heading", { name: "Resumen del proveedor" })).toBeVisible();
 });

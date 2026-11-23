@@ -116,6 +116,65 @@ export class ProveedoresRepository {
     return result.rows[0];
   }
 
+  /** Activa o desactiva un proveedor. `undefined` si no existe (el comodín «Otros» no se toca). */
+  async cambiarEstado(
+    client: PoolClient,
+    tenantId: string,
+    id: number,
+    activo: boolean
+  ): Promise<FilaProveedor | undefined> {
+    const result = await client.query<FilaProveedor>(
+      `UPDATE combustible_grifos SET activo = $3
+        WHERE tenant_id = $1 AND id = $2 AND NOT es_otros
+        RETURNING ${COLUMNAS}`,
+      [tenantId, id, activo]
+    );
+    return result.rows[0];
+  }
+
+  /** Lo que ata a un proveedor a su historia: sus precios (también los anulados), compras, recepciones y
+   *  despachos. Con cualquiera de esos no se puede eliminar: se desactiva. Los datos de la ficha, los
+   *  contactos y las cuentas bancarias NO cuentan: se van con él. */
+  async movimientosDe(
+    client: PoolClient,
+    tenantId: string,
+    id: number
+  ): Promise<{ precios: number; compras: number; recepciones: number; despachos: number }> {
+    const r = await client.query<Record<string, string>>(
+      `SELECT
+         (SELECT count(*) FROM combustible_precios WHERE tenant_id = $1 AND grifo_id = $2)
+           + (SELECT count(*) FROM combustible_urea_precios WHERE tenant_id = $1 AND grifo_id = $2) AS precios,
+         (SELECT count(*) FROM combustible_compras_cisterna WHERE tenant_id = $1 AND grifo_id = $2)
+           + (SELECT count(*) FROM combustible_compras_ruta WHERE tenant_id = $1 AND grifo_id = $2) AS compras,
+         (SELECT count(*) FROM combustible_recepciones WHERE tenant_id = $1 AND grifo_id = $2) AS recepciones,
+         (SELECT count(*) FROM combustible_despachos WHERE tenant_id = $1 AND grifo_id = $2) AS despachos`,
+      [tenantId, id]
+    );
+    const f = r.rows[0];
+    return {
+      precios: Number(f.precios),
+      compras: Number(f.compras),
+      recepciones: Number(f.recepciones),
+      despachos: Number(f.despachos),
+    };
+  }
+
+  /** Borra un proveedor sin historia (nunca el comodín «Otros») y devuelve lo que se borró. La ficha, los
+   *  contactos y las cuentas se borran con él (ON DELETE CASCADE). `undefined` si no existe. */
+  async eliminar(
+    client: PoolClient,
+    tenantId: string,
+    id: number
+  ): Promise<FilaProveedor | undefined> {
+    const previo = await this.buscarPorId(client, tenantId, id);
+    if (!previo) return undefined;
+    await client.query(
+      `DELETE FROM combustible_grifos WHERE tenant_id = $1 AND id = $2 AND NOT es_otros`,
+      [tenantId, id]
+    );
+    return previo;
+  }
+
   // ── Historial y auditoría: lectura de la bitácora (`platform_audit_log`, acciones `proveedores.*`) ──
 
   async eventosDeHistorial(

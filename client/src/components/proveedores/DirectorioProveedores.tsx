@@ -18,12 +18,14 @@ import {
 import EstadoDeProveedor from "./EstadoDeProveedor";
 import { inicialesDeProveedor } from "./fichaProveedor";
 import FormularioProveedor from "./FormularioProveedor";
+import MasAcciones from "./MasAcciones";
 import { puedeVerPreciosDeProveedores } from "./proveedoresAcceso";
 import {
   listarProveedores,
   type ProveedorEnDirectorio,
   type TipoProveedor,
 } from "./proveedoresApi";
+import { useAccionesDeProveedor } from "./useAccionesDeProveedor";
 import { useAuth } from "../../context/AuthContext";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 
@@ -88,6 +90,12 @@ export default function DirectorioProveedores({
   );
   const resumen = useMemo(() => resumenDelDirectorio(lista ?? []), [lista]);
 
+  // Las acciones de cada fila (editar, desactivar, eliminar): al terminar se vuelve a leer la lista.
+  const { acciones, dialogos } = useAccionesDeProveedor({
+    onCambio: () => setVersionPropia((v) => v + 1),
+  });
+  const hayAcciones = (lista ?? []).some((p) => acciones(p).length > 0);
+
   const modal = registrando && (
     <FormularioProveedor
       onGuardado={() => {
@@ -107,10 +115,11 @@ export default function DirectorioProveedores({
     { etiqueta: "Urea", valor: resumen.urea, nota: "Proveedores" },
   ];
   // Los precios solo se piden (y se muestran) si esta persona los ve.
-  const columnas = verPrecios ? 7 : 6;
+  const columnas = (verPrecios ? 7 : 6) + (hayAcciones ? 1 : 0);
   return (
     <div className="space-y-5">
       {modal}
+      {dialogos}
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-slate-500">
@@ -213,6 +222,11 @@ export default function DirectorioProveedores({
                 {verPrecios && <th className="px-4 py-3">Precio vigente</th>}
                 <th className="px-4 py-3">Estado</th>
                 <th className="px-4 py-3">Ficha completa</th>
+                {hayAcciones && (
+                  <th className="px-2 py-3">
+                    <span className="sr-only">Acciones</span>
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -303,6 +317,15 @@ export default function DirectorioProveedores({
                       {p.fichaCompleta.porcentaje} % completa
                     </small>
                   </td>
+                  {hayAcciones && (
+                    <td className="px-2 py-3 text-right">
+                      <MasAcciones
+                        soloIcono
+                        etiqueta="Acciones del proveedor"
+                        acciones={acciones(p)}
+                      />
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
