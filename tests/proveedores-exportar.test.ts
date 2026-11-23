@@ -245,6 +245,10 @@ describe("GET /api/erp/proveedores/exportar", () => {
     for (const mala of ["abc", "1,x", "1,,2", "-3", "1.5"]) {
       expect((await admin.get(`/api/erp/proveedores/exportar?ids=${mala}`)).status, mala).toBe(400);
     }
+    // `ids` repetido o con corchetes llega como arreglo: antes se ignoraba y exportaba TODO sin decirlo.
+    for (const rara of [`ids=${id2}&ids=${id2}`, `ids[]=${id2}`, `ids[a]=${id2}`]) {
+      expect((await admin.get(`/api/erp/proveedores/exportar?${rara}`)).status, rara).toBe(400);
+    }
   });
 
   it("el precio vigente solo viaja para quien ve precios", async () => {

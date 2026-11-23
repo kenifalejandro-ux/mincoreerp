@@ -156,6 +156,56 @@ describe("Ficha del proveedor: datos, condiciones de pago y contactos", () => {
     expect(filas.rows[0].n).toBe(1);
   });
 
+  it("la ciudad: un PUT de la ficha sin ciudad la conserva; con null o vacía, la borra", async () => {
+    const alta = await admin.post("/api/erp/proveedores").send({
+      nombre: "CIUDAD QUE NO SE PIERDE",
+      ruc: "",
+      ciudad: "Huancayo",
+      abastece_tanque: false,
+      abastece_ruta: true,
+      abastece_urea: false,
+      abastece_urea_ruta: false,
+    });
+    expect(alta.status, JSON.stringify(alta.body)).toBe(201);
+    const id = alta.body.id as number;
+    const leer = async () => (await admin.get(`/api/erp/proveedores/${id}/ficha`)).body.datos;
+    expect((await leer()).ciudad).toBe("Huancayo");
+
+    // Sin la clave `ciudad`: se guarda lo demás y la ciudad queda como estaba.
+    const sinCiudad = await admin
+      .put(`/api/erp/proveedores/${id}/ficha`)
+      .send({ telefono: "064123456", moneda: "PEN" });
+    expect(sinCiudad.status, JSON.stringify(sinCiudad.body)).toBe(200);
+    expect(sinCiudad.body.ciudad).toBe("Huancayo");
+    expect((await leer()).telefono).toBe("064123456");
+    // La bitácora tampoco dice que cambió la ciudad.
+    const campos = (
+      await pool.query<{ detalle: { campos: string[] } }>(
+        `SELECT detalle FROM platform_audit_log
+          WHERE tenant_id = $1 AND accion = 'proveedores.datos_editar' AND (detalle->>'proveedorId')::int = $2`,
+        [a.tenant.id, id]
+      )
+    ).rows[0].detalle.campos;
+    expect(campos).not.toContain("ciudad");
+
+    // La pantalla la manda siempre: con otro valor la cambia…
+    expect(
+      (await admin.put(`/api/erp/proveedores/${id}/ficha`).send({ ciudad: "Lima" })).body.ciudad
+    ).toBe("Lima");
+    // …y con null o vacía la borra, a propósito.
+    expect(
+      (await admin.put(`/api/erp/proveedores/${id}/ficha`).send({ ciudad: null })).body.ciudad
+    ).toBeNull();
+    await admin.put(`/api/erp/proveedores/${id}/ficha`).send({ ciudad: "Cusco" });
+    expect(
+      (await admin.put(`/api/erp/proveedores/${id}/ficha`).send({ ciudad: "  " })).body.ciudad
+    ).toBeNull();
+    // Ciudad demasiado larga: 400.
+    expect(
+      (await admin.put(`/api/erp/proveedores/${id}/ficha`).send({ ciudad: "x".repeat(81) })).status
+    ).toBe(400);
+  });
+
   it("validaciones: crédito exige plazo, contado no lo lleva, correo y teléfono válidos", async () => {
     const put = (cuerpo: object) =>
       admin.put(`/api/erp/proveedores/${proveedor}/ficha`).send(cuerpo);

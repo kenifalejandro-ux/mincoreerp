@@ -37,6 +37,22 @@ describe("describirEvento (lógica pura)", () => {
     ]);
   });
 
+  it("al eliminar dice quién era y cuántas cuentas bancarias se fueron, sin números", () => {
+    expect(
+      describirEvento("proveedores.eliminar", {
+        nombre: "GRIFO X",
+        codigo: "PRV-007",
+        cuentasBorradas: 2,
+      }).lineas
+    ).toEqual(["GRIFO X · PRV-007", "Se fueron con él 2 cuentas bancarias"]);
+    expect(
+      describirEvento("proveedores.eliminar", { nombre: "GRIFO X", cuentasBorradas: 1 }).lineas
+    ).toEqual(["GRIFO X", "Se fueron con él 1 cuenta bancaria"]);
+    expect(describirEvento("proveedores.eliminar", { nombre: "GRIFO X" }).lineas).toEqual([
+      "GRIFO X",
+    ]);
+  });
+
   it("dice el cambio de ciudad al editar un proveedor, por el nombre del campo", () => {
     expect(
       describirEvento("proveedores.actualizar", { activo: true, campos: ["ciudad"] }).lineas
@@ -276,6 +292,22 @@ describe("GET /api/erp/proveedores/historial", () => {
     expect((await historial(admin, "?desde=2999-01-01")).body.eventos).toHaveLength(0);
     // Valores raros no rompen: se ignoran.
     expect((await historial(admin, "?desde=ayer&antesDe=x")).status).toBe(200);
+  });
+
+  it("un día que no existe se ignora (antes: 500 de Postgres) y una categoría del prototipo es 400", async () => {
+    const sinFiltro = (await historial(admin)).body.eventos;
+    for (const consulta of [
+      "?desde=2026-02-31",
+      "?hasta=2026-13-45",
+      "?desde=2026-04-31&hasta=2026-00-10",
+    ]) {
+      const r = await historial(admin, consulta);
+      expect(r.status, consulta).toBe(200);
+      expect(r.body.eventos, consulta).toEqual(sinFiltro);
+    }
+    for (const categoria of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+      expect((await historial(admin, `?categoria=${categoria}`)).status, categoria).toBe(400);
+    }
   });
 
   it("pagina con cursor sin repetir ni saltear", async () => {

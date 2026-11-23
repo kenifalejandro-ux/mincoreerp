@@ -130,7 +130,7 @@ describe("Gestión de proveedores: alta y edición", () => {
     expect((await crear(admin, { nombre: "SIN RUC 2" })).status).toBe(201);
   });
 
-  it("edita nombre, RUC, estado y banderas; conservar el propio RUC no choca, el de otro sí", async () => {
+  it("edita nombre, RUC y banderas (el estado NO: va por PATCH /estado); conservar el propio RUC no choca, el de otro sí", async () => {
     const id = (await crear(admin, { nombre: "EDITABLE", ruc: "20000000010" })).body.id;
     const otro = (await crear(admin, { nombre: "EL OTRO", ruc: "20000000011" })).body.id;
     const r = await admin.put(`/api/erp/proveedores/${id}`).send(
@@ -143,9 +143,10 @@ describe("Gestión de proveedores: alta y edición", () => {
       })
     );
     expect(r.status, JSON.stringify(r.body)).toBe(200);
+    // `activo: false` llega en el cuerpo y se IGNORA: desactivar exige motivo y tiene su propia acción.
     expect(r.body).toMatchObject({
       nombre: "EDITADO",
-      activo: false,
+      activo: true,
       tipos: ["Urea"],
       urea: { interno: false, externo: true },
     });
@@ -158,6 +159,39 @@ describe("Gestión de proveedores: alta y edición", () => {
       .send(completo({ nombre: "EDITADO", ruc: "" }));
     expect(alLimpiar.body.ruc).toBeNull();
     expect(otro).not.toBe(id);
+  });
+
+  it("el PUT no desactiva ni reactiva: el estado solo cambia por PATCH /estado, con motivo y su propia bitácora", async () => {
+    const id = (await crear(admin, { nombre: "ESTADO SOLO POR PATCH" })).body.id;
+    const put = await admin
+      .put(`/api/erp/proveedores/${id}`)
+      .send(completo({ nombre: "ESTADO SOLO POR PATCH", activo: false }));
+    expect(put.status, JSON.stringify(put.body)).toBe(200);
+    expect(put.body.activo).toBe(true);
+    // Sin `activo` en el cuerpo también vale (un cliente nuevo ya no lo manda).
+    const { activo: _omitido, ...sinActivo } = completo({ nombre: "ESTADO SOLO POR PATCH" });
+    expect((await admin.put(`/api/erp/proveedores/${id}`).send(sinActivo)).status).toBe(200);
+    // Desactivado por la vía correcta, un PUT con `activo: true` tampoco lo reactiva.
+    const sinMotivo = await admin
+      .patch(`/api/erp/proveedores/${id}/estado`)
+      .send({ activo: false });
+    expect(sinMotivo.status).toBe(400);
+    const baja = await admin
+      .patch(`/api/erp/proveedores/${id}/estado`)
+      .send({ activo: false, motivo: "Dejó de entregar" });
+    expect(baja.body.activo).toBe(false);
+    const reactivarPorPut = await admin
+      .put(`/api/erp/proveedores/${id}`)
+      .send(completo({ nombre: "ESTADO SOLO POR PATCH", activo: true }));
+    expect(reactivarPorPut.status).toBe(200);
+    expect(reactivarPorPut.body.activo).toBe(false);
+    const acciones = await pool.query<{ accion: string }>(
+      `SELECT accion FROM platform_audit_log
+        WHERE tenant_id = $1 AND accion IN ('proveedores.desactivar','proveedores.reactivar')
+          AND (detalle->>'proveedorId')::int = $2`,
+      [a.tenant.id, id]
+    );
+    expect(acciones.rows.map((f) => f.accion)).toEqual(["proveedores.desactivar"]);
   });
 
   it("un proveedor inexistente, de otra empresa o el comodín «Otros» no se editan (404)", async () => {

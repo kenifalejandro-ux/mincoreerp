@@ -14,7 +14,7 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { describe, it, expect, afterAll, beforeAll } from "vitest";
+import { describe, it, expect, afterAll, beforeAll, vi } from "vitest";
 import request from "supertest";
 
 import { app, crearTenantDePrueba, borrarTenantDePrueba } from "./helpers";
@@ -193,6 +193,41 @@ describe("Cuentas bancarias del proveedor", () => {
     expect(
       (await admin.post(`/api/erp/proveedores/${proveedor}/cuentas/999999999/ver-completa`)).status
     ).toBe(404);
+  });
+
+  it("«ver completo» sin constancia no entrega el número: si la bitácora falla, es 503 y no sale nada", async () => {
+    const id = (await lista(admin)).body.cuentas[0].id;
+    const original = pool.query.bind(pool) as (...args: unknown[]) => unknown;
+    const espia = vi.spyOn(pool, "query").mockImplementation(((
+      texto: unknown,
+      valores?: unknown
+    ) => {
+      // Solo se rompe la escritura de ESTA constancia; todo lo demás pasa tal cual.
+      if (
+        typeof texto === "string" &&
+        texto.includes("INTO platform_audit_log") &&
+        Array.isArray(valores) &&
+        valores[0] === "proveedores.cuenta_ver"
+      ) {
+        return Promise.reject(new Error("bitácora caída"));
+      }
+      return original(texto, valores);
+    }) as never);
+    try {
+      const ver = await admin.post(`/api/erp/proveedores/${proveedor}/cuentas/${id}/ver-completa`);
+      expect(ver.status, JSON.stringify(ver.body)).toBe(503);
+      expect(JSON.stringify(ver.body)).not.toContain(NUMERO);
+      expect(ver.body.numero).toBeUndefined();
+      expect(espia).toHaveBeenCalled();
+    } finally {
+      espia.mockRestore();
+    }
+    // Y sin la falla, el mismo pedido sí entrega (la constancia de arriba sigue siendo UNA sola).
+    const auditoria = await pool.query(
+      `SELECT 1 FROM platform_audit_log WHERE tenant_id = $1 AND accion = 'proveedores.cuenta_ver'`,
+      [a.tenant.id]
+    );
+    expect(auditoria.rows).toHaveLength(1);
   });
 
   it("principal automática y única, y la misma cuenta no se repite", async () => {
