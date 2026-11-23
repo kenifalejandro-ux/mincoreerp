@@ -159,20 +159,28 @@ export class ProveedoresRepository {
     };
   }
 
-  /** Borra un proveedor sin historia (nunca el comodín «Otros») y devuelve lo que se borró. La ficha, los
-   *  contactos y las cuentas se borran con él (ON DELETE CASCADE). `undefined` si no existe. */
+  /** Borra un proveedor sin historia (nunca el comodín «Otros») y devuelve lo que se borró, con cuántas cuentas
+   *  bancarias (activas y quitadas) se fueron con él. La ficha, los contactos y las cuentas se borran con él
+   *  (ON DELETE CASCADE). `undefined` si no existe o si otra petición ya lo borró (un solo DELETE lo decide:
+   *  dos en paralelo no devuelven los dos la fila). */
   async eliminar(
     client: PoolClient,
     tenantId: string,
     id: number
-  ): Promise<FilaProveedor | undefined> {
-    const previo = await this.buscarPorId(client, tenantId, id);
-    if (!previo) return undefined;
-    await client.query(
-      `DELETE FROM combustible_grifos WHERE tenant_id = $1 AND id = $2 AND NOT es_otros`,
+  ): Promise<{ proveedor: FilaProveedor; cuentasBorradas: number } | undefined> {
+    const r = await client.query<FilaProveedor & { cuentas_borradas: number }>(
+      `WITH borrado AS (
+         DELETE FROM combustible_grifos WHERE tenant_id = $1 AND id = $2 AND NOT es_otros
+         RETURNING ${COLUMNAS}
+       )
+       SELECT borrado.*,
+              (SELECT count(*)::int FROM proveedores_cuentas_bancarias
+                WHERE tenant_id = $1 AND grifo_id = $2) AS cuentas_borradas
+         FROM borrado`,
       [tenantId, id]
     );
-    return previo;
+    const { cuentas_borradas: cuentasBorradas, ...proveedor } = r.rows[0] ?? {};
+    return r.rows[0] ? { proveedor: proveedor as FilaProveedor, cuentasBorradas } : undefined;
   }
 
   // ── Historial y auditoría: lectura de la bitácora (`platform_audit_log`, acciones `proveedores.*`) ──
@@ -270,7 +278,8 @@ export class ProveedoresRepository {
     return r.rows[0];
   }
 
-  /** Guarda la ficha completa (una fila por proveedor): lo que no viene queda vacío. */
+  /** Guarda la ficha completa (una fila por proveedor): lo que no viene queda vacío, salvo la ciudad: ausente
+   *  (`undefined`) conserva la que está. */
   async guardarDatos(
     client: PoolClient,
     tenantId: string,
@@ -284,7 +293,9 @@ export class ProveedoresRepository {
           moneda, actualizado_por)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
        ON CONFLICT (tenant_id, grifo_id) DO UPDATE
-          SET direccion = EXCLUDED.direccion, ciudad = EXCLUDED.ciudad, telefono = EXCLUDED.telefono,
+          SET direccion = EXCLUDED.direccion,
+              ciudad = CASE WHEN $11::boolean THEN EXCLUDED.ciudad ELSE proveedores_ficha.ciudad END,
+              telefono = EXCLUDED.telefono,
               correo = EXCLUDED.correo, forma_pago = EXCLUDED.forma_pago,
               plazo_pago_dias = EXCLUDED.plazo_pago_dias, moneda = EXCLUDED.moneda,
               actualizado_en = now(), actualizado_por = EXCLUDED.actualizado_por
@@ -294,13 +305,14 @@ export class ProveedoresRepository {
         tenantId,
         grifoId,
         data.direccion,
-        data.ciudad,
+        data.ciudad ?? null,
         data.telefono,
         data.correo,
         data.forma_pago,
         data.plazo_pago_dias,
         data.moneda,
         usuarioId,
+        data.ciudad !== undefined,
       ]
     );
     return r.rows[0];
@@ -874,14 +886,13 @@ export class ProveedoresRepository {
     try {
       const result = await client.query<FilaProveedor>(
         `UPDATE combustible_grifos
-            SET nombre = $1, ruc = $2, activo = $3, abastece_tanque = $4, abastece_ruta = $5,
-                abastece_urea = $6, abastece_urea_ruta = $7
-          WHERE tenant_id = $8 AND id = $9 AND NOT es_otros
+            SET nombre = $1, ruc = $2, abastece_tanque = $3, abastece_ruta = $4,
+                abastece_urea = $5, abastece_urea_ruta = $6
+          WHERE tenant_id = $7 AND id = $8 AND NOT es_otros
           RETURNING ${COLUMNAS}`,
         [
           data.nombre,
           data.ruc,
-          data.activo,
           data.abastece_tanque,
           data.abastece_ruta,
           data.abastece_urea,

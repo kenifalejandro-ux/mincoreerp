@@ -131,6 +131,12 @@ export function describirEvento(accion: string, detalle: Detalle): EventoDescrit
       // El proveedor ya no existe: la bitácora guardó su código y su nombre para poder decir cuál era.
       const quien = [texto(d.nombre), texto(d.codigo)].filter(Boolean).join(" · ");
       agregar(quien || null);
+      const cuentas = numero(d.cuentasBorradas);
+      if (cuentas !== null && cuentas > 0) {
+        agregar(
+          `Se fueron con él ${cuentas} ${cuentas === 1 ? "cuenta bancaria" : "cuentas bancarias"}`
+        );
+      }
       return { titulo: "Eliminó un proveedor", categoria: "proveedor", lineas };
     }
 

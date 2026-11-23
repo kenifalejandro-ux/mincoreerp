@@ -9,6 +9,7 @@
 import { pool, withTenant } from "../config/database";
 import { logger } from "../config/logger";
 import { getRedis } from "../config/redis";
+import { AppError } from "../shared/middlewares/error.middleware";
 
 /** IP + requestId + userAgent + sessionId + actor de quien hizo la
  *  petición — cada ruta de platform.ts los arma con contextoDe()
@@ -60,9 +61,13 @@ export interface ContextoAuditoria {
 
 export type ResultadoAuditoria = "success" | "failure";
 
-/** Nunca lanza: un fallo al auditar no debe bloquear la acción real de
- *  plataforma (mismo criterio que los fallos opcionales de Redis en
- *  auth.service.ts). */
+/** Por defecto nunca lanza: un fallo al auditar no debe bloquear la acción real
+ *  de plataforma (mismo criterio que los fallos opcionales de Redis en
+ *  auth.service.ts).
+ *
+ *  Excepción, con `estricto: true`: la constancia ES parte de la acción (p. ej.
+ *  ver el número completo de una cuenta bancaria). Si no se puede escribir, lanza
+ *  un 503 y quien llama no debe entregar nada. */
 export async function registrarAuditoria(params: {
   accion: string;
   tenantId?: string | null;
@@ -70,6 +75,7 @@ export async function registrarAuditoria(params: {
   detalle?: Record<string, unknown>;
   contexto: ContextoAuditoria;
   resultado?: ResultadoAuditoria;
+  estricto?: boolean;
 }): Promise<void> {
   try {
     await pool.query(
@@ -94,6 +100,9 @@ export async function registrarAuditoria(params: {
     );
   } catch (err) {
     logger.warn({ err }, "No se pudo registrar la auditoría de plataforma");
+    if (params.estricto) {
+      throw new AppError(503, "No se pudo dejar constancia de esta acción. Inténtalo de nuevo.");
+    }
   }
 }
 
