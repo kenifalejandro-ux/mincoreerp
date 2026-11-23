@@ -86,6 +86,12 @@ export interface ProveedorEnDirectorioDto extends ProveedorDto {
   precioVigente?: PrecioDelDirectorio | null;
 }
 
+export interface ProveedorParaExportarDto extends ProveedorEnDirectorioDto {
+  direccion: string | null;
+  telefono: string | null;
+  correo: string | null;
+}
+
 export interface ResumenProveedores {
   total: number;
   activos: number;
@@ -331,6 +337,30 @@ export class ProveedoresService {
           : {}),
       };
     });
+  }
+
+  /** El directorio para exportarlo: lo mismo que ve la persona (el precio solo si ve precios) más dirección,
+   *  teléfono y correo de la ficha. Con `ids`, solo esos proveedores (lo que filtró en pantalla). Sin cuentas
+   *  bancarias. */
+  async paraExportar(
+    client: PoolClient,
+    tenantId: string,
+    ver: { combustible: boolean; urea: boolean },
+    ids?: number[]
+  ): Promise<ProveedorParaExportarDto[]> {
+    const [lista, contacto] = await Promise.all([
+      this.listarParaElDirectorio(client, tenantId, ver),
+      this.repository.datosDeContactoParaExportar(client, tenantId),
+    ]);
+    const quedan = ids ? new Set(ids) : null;
+    return lista
+      .filter((p) => !quedan || quedan.has(p.id))
+      .map((p) => ({
+        ...p,
+        direccion: contacto.get(p.id)?.direccion ?? null,
+        telefono: contacto.get(p.id)?.telefono ?? null,
+        correo: contacto.get(p.id)?.correo ?? null,
+      }));
   }
 
   async listar(client: PoolClient, tenantId: string): Promise<ProveedorDto[]> {

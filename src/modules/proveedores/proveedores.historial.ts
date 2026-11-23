@@ -20,7 +20,7 @@ export const CATEGORIAS_DE_HISTORIAL: { id: CategoriaDeHistorial; etiqueta: stri
 
 /** Qué acciones son de cada grupo, como expresión regular sobre el nombre de la acción. */
 export const PATRON_DE_CATEGORIA: Record<CategoriaDeHistorial, string> = {
-  proveedor: "^proveedores\\.(crear|actualizar|desactivar|reactivar|eliminar)$",
+  proveedor: "^proveedores\\.(crear|actualizar|desactivar|reactivar|eliminar|exportar)$",
   precios: "^proveedores\\.precio_",
   compras: "^proveedores\\.compra_",
   ficha: "^proveedores\\.(datos_|contacto_)",
@@ -115,6 +115,12 @@ export function describirEvento(accion: string, detalle: Detalle): EventoDescrit
       }
       return { titulo: "Editó un proveedor", categoria: "proveedor", lineas };
 
+    case "proveedores.exportar": {
+      const n = numero(d.filas);
+      agregar(n !== null ? `${n} ${n === 1 ? "proveedor" : "proveedores"}` : null);
+      if (d.filtrado === true) agregar("Solo lo filtrado en pantalla");
+      return { titulo: "Exportó el directorio a Excel", categoria: "proveedor", lineas };
+    }
     case "proveedores.desactivar":
       agregar(motivo ? `Motivo: ${motivo}` : null);
       return { titulo: "Desactivó un proveedor", categoria: "proveedor", lineas };
