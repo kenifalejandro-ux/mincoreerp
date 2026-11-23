@@ -26,7 +26,7 @@ import {
 import HistorialDeProveedores from "./HistorialDeProveedores";
 import MasAcciones from "./MasAcciones";
 import PestanaPronto from "./PestanaPronto";
-import type { ProveedorEnDirectorio } from "./proveedoresApi";
+import type { ProveedorBasico } from "./proveedoresApi";
 import ResumenDeProveedor from "./ResumenDeProveedor";
 import { useFicha } from "./useFicha";
 import { usePrecios } from "./usePrecios";
@@ -40,10 +40,11 @@ export default function FichaDeProveedor({
   onEditar,
   onPestana,
 }: {
-  proveedor: ProveedorEnDirectorio;
+  proveedor: ProveedorBasico;
   acceso: AccesoDeLaFicha;
   pestanaInicial: PestanaFicha;
-  onVolver: () => void;
+  /** Con la ficha a pantalla completa, vuelve a la lista. En el panel lateral no hay: se cierra el panel. */
+  onVolver?: () => void;
   /** Sin función = el perfil no puede editar. */
   onEditar?: () => void;
   /** Avisa cuando la persona cambia de pestaña (para reflejarlo en la dirección). */
@@ -67,7 +68,7 @@ export default function FichaDeProveedor({
     onPestana?.(p);
   };
 
-  const ciudad = ficha?.datos.ciudad ?? proveedor.ciudad;
+  const ciudad = ficha?.datos.ciudad ?? proveedor.ciudad ?? null;
   const abastece = textoAbastece({
     interno: proveedor.combustible.interno || proveedor.urea.interno,
     externo: proveedor.combustible.externo || proveedor.urea.externo,
@@ -76,12 +77,14 @@ export default function FichaDeProveedor({
 
   return (
     <div className="space-y-5">
-      <button
-        onClick={onVolver}
-        className="flex items-center gap-2 text-xs text-slate-500 hover:text-[#3f6212]"
-      >
-        <ArrowLeft size={14} /> Volver al directorio
-      </button>
+      {onVolver && (
+        <button
+          onClick={onVolver}
+          className="flex items-center gap-2 text-xs text-slate-500 hover:text-[#3f6212]"
+        >
+          <ArrowLeft size={14} /> Volver al directorio
+        </button>
+      )}
 
       <header className="flex flex-wrap items-center justify-between gap-6">
         <div className="flex items-center gap-4 min-w-0">

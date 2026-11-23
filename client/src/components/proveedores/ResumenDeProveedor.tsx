@@ -13,7 +13,7 @@ import {
   textoAbastece,
 } from "./fichaProveedor";
 import { Info, Panel } from "./PanelesDeFicha";
-import type { FichaProveedor, ProveedorEnDirectorio, RespuestaPrecios } from "./proveedoresApi";
+import type { FichaProveedor, ProveedorBasico, RespuestaPrecios } from "./proveedoresApi";
 
 function Indicador({
   valor,
@@ -52,7 +52,7 @@ export default function ResumenDeProveedor({
   precios,
   onIrAComercial,
 }: {
-  proveedor: ProveedorEnDirectorio;
+  proveedor: ProveedorBasico;
   ficha: FichaProveedor;
   verPrecios: boolean;
   /** Los precios (null mientras cargan o si no se ven). */

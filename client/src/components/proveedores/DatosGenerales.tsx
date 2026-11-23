@@ -6,14 +6,14 @@
 import DatosDeProveedor from "./DatosDeProveedor";
 import { condicionDePago, textoAbastece } from "./fichaProveedor";
 import { Info, Panel } from "./PanelesDeFicha";
-import type { FichaProveedor, ProveedorEnDirectorio } from "./proveedoresApi";
+import type { FichaProveedor, ProveedorBasico } from "./proveedoresApi";
 
 export default function DatosGenerales({
   proveedor,
   ficha,
   onGuardado,
 }: {
-  proveedor: ProveedorEnDirectorio;
+  proveedor: ProveedorBasico;
   ficha: FichaProveedor;
   onGuardado: () => void;
 }) {

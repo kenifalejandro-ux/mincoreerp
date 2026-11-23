@@ -142,7 +142,10 @@ test("nuevo precio de combustible y urea, confirmación del salto y anulación c
   await anular.getByLabel("Motivo").fill("Error de tipeo");
   await anular.getByRole("button", { name: "Anular precio" }).click();
   await expect(anular).toHaveCount(0);
-  await expect(page.getByRole("status")).toContainText("Precio anulado");
+  // El aviso sale en el panel; el de «Precio cargado» de la pantalla de atrás sigue ahí.
+  await expect(
+    page.getByRole("complementary", { name: "Detalle del proveedor" }).getByRole("status")
+  ).toContainText("Precio anulado");
   await expect(page.getByText(/anulado: Error de tipeo/)).toBeVisible({ timeout: 20_000 });
 
   // 5. Combustible ve lo cargado acá (misma tabla): el vigente de A es 15.80 y el 30 figura anulado.
