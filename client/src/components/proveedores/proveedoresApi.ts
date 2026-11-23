@@ -124,7 +124,8 @@ export const eliminableDeProveedor = (id: number) =>
 export const eliminarProveedor = (id: number) => enviar<{ ok: true }>(`/${id}`, "DELETE");
 
 export const crearProveedor = (datos: DatosProveedor) => enviar<Proveedor>("", "POST", datos);
-export const actualizarProveedor = (id: number, datos: DatosProveedor & { activo: boolean }) =>
+/** Editar NO cambia el estado: desactivar y reactivar van por `cambiarEstadoDeProveedor` (con motivo). */
+export const actualizarProveedor = (id: number, datos: DatosProveedor) =>
   enviar<Proveedor>(`/${id}`, "PUT", datos);
 
 // ── Gestión comercial: precios de proveedores (solo lectura) ─────────────────────────────────────

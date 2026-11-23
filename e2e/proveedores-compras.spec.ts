@@ -16,7 +16,7 @@ import { randomBytes } from "node:crypto";
 
 import { test, expect, type Page } from "@playwright/test";
 
-import { loginPorUI } from "./fixtures/auth";
+import { loginPorUI, pulsarIngresar } from "./fixtures/auth";
 import { adminA, leerEnv } from "./fixtures/entorno";
 import { primerGrifoActivo } from "./fixtures/grifos";
 
@@ -153,7 +153,7 @@ test("compras y recepciones: estados, filtro y ficha del proveedor", async ({ pa
   // La compra del proveedor está en la tabla DEL PANEL (la lista de atrás también la tiene).
   await expect(
     page
-      .getByRole("complementary", { name: "Detalle del proveedor" })
+      .getByRole("dialog", { name: "Detalle del proveedor" })
       .getByRole("row", { name: new RegExp(`PLL-${marca}`) })
   ).toBeVisible();
   await page.getByRole("tab", { name: "Resumen" }).click();
@@ -272,7 +272,7 @@ test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", a
     await page.goto("/");
     await page.getByLabel("Correo").fill(email);
     await page.getByLabel("Contraseña").fill(password);
-    await page.getByRole("button", { name: "Ingresar" }).click();
+    await pulsarIngresar(page);
     // Tras ingresar sale una de dos pantallas: la del cambio de clave (primera vez) o la de trabajo.
     const cambio = page.locator("#passwordActual");
     const menu = page.getByRole("complementary", { name: "Menú de Gestión de proveedores" });

@@ -3,7 +3,8 @@
 // El panel de detalle del ecosistema «Gestión de proveedores»: una hoja grande anclada a la DERECHA que se abre
 // encima de la pantalla en la que está la persona (Directorio, Gestión comercial, Compras, Historial) sin
 // cambiarla: la tabla de atrás conserva su búsqueda, sus filtros y su posición. Se cierra con ✕, con Escape o
-// pulsando fuera. Queda debajo de los formularios (modales) que se abran desde adentro.
+// pulsando fuera. Queda debajo de los formularios (modales) que se abran desde adentro. Es un diálogo modal: el
+// teclado (Tab) se queda dentro y no llega a la página de atrás.
 import { X } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 
@@ -39,12 +40,44 @@ export default function PanelDeDetalle({
     };
   }, []);
 
-  // Escape cierra el panel, salvo que haya un formulario abierto encima: ese se cierra primero.
+  // ¿Hay un formulario (otro diálogo) abierto encima del panel? El panel mismo también es `role="dialog"`, así
+  // que no cuenta.
+  const hayOtroDialogo = () =>
+    Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"]')).some(
+      (el) => el !== panel.current
+    );
+
+  // Escape cierra el panel, salvo que haya un formulario abierto encima: ese se cierra primero. Tab da la vuelta
+  // dentro del panel (con un formulario encima, el foco lo maneja el formulario).
   useEffect(() => {
     const alTeclear = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented) return;
-      if (document.querySelector('[role="dialog"], [role="alertdialog"]')) return;
-      cerrar.current();
+      if (e.defaultPrevented || hayOtroDialogo()) return;
+      if (e.key === "Escape") return cerrar.current();
+      if (e.key !== "Tab") return;
+      const hoja = panel.current;
+      if (!hoja) return;
+      const enfocables = Array.from(
+        hoja.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((el) => el.offsetParent !== null);
+      const primero = enfocables[0];
+      const ultimo = enfocables[enfocables.length - 1];
+      const actual = document.activeElement;
+      if (!primero || !ultimo) {
+        e.preventDefault();
+        hoja.focus();
+      } else if (!hoja.contains(actual)) {
+        // El foco se fue a la página de atrás: vuelve.
+        e.preventDefault();
+        primero.focus();
+      } else if (e.shiftKey && (actual === primero || actual === hoja)) {
+        e.preventDefault();
+        ultimo.focus();
+      } else if (!e.shiftKey && actual === ultimo) {
+        e.preventDefault();
+        primero.focus();
+      }
     };
     document.addEventListener("keydown", alTeclear);
     return () => document.removeEventListener("keydown", alTeclear);
@@ -57,6 +90,8 @@ export default function PanelDeDetalle({
       <aside
         ref={panel}
         tabIndex={-1}
+        role="dialog"
+        aria-modal="true"
         aria-label={etiqueta}
         className="absolute inset-y-0 right-0 flex w-full flex-col border-l border-slate-200 bg-[#f4f6f9] shadow-2xl outline-none lg:w-[min(1040px,calc(100vw-16rem-1.5rem))]"
       >

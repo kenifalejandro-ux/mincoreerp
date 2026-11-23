@@ -14,7 +14,7 @@ import { randomBytes } from "node:crypto";
 
 import { test, expect, type Page } from "@playwright/test";
 
-import { loginPorUI } from "./fixtures/auth";
+import { loginPorUI, pulsarIngresar } from "./fixtures/auth";
 import { adminA, leerEnv } from "./fixtures/entorno";
 
 async function abrirProveedoresDeCombustible(page: Page) {
@@ -92,7 +92,7 @@ test("una empresa solo con Combustible sigue registrando proveedores desde su pe
   await page.goto("/");
   await page.getByLabel("Correo").fill(email);
   await page.getByLabel("Contraseña").fill(password);
-  await page.getByRole("button", { name: "Ingresar" }).click();
+  await pulsarIngresar(page);
   const cambio = page.locator("#passwordActual");
   const combustible = page.getByRole("button", { name: /^Combustible Abrir submenú$/ });
   await cambio.or(combustible).first().waitFor({ timeout: 20_000 });
@@ -154,7 +154,7 @@ test("quien no tiene el módulo Proveedores asignado sigue editando en Combustib
     await operador.goto("/");
     await operador.getByLabel("Correo").fill(email);
     await operador.getByLabel("Contraseña").fill(temporal);
-    await operador.getByRole("button", { name: "Ingresar" }).click();
+    await pulsarIngresar(operador);
     await operador.locator("#passwordActual").fill(temporal);
     await operador.locator("#passwordNueva").fill(`${temporal}Nueva`);
     await operador.locator("#confirmacion").fill(`${temporal}Nueva`);

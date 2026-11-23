@@ -102,7 +102,7 @@ test("registrar y editar un proveedor desde el directorio", async ({ page, brows
   await desactivar.getByRole("button", { name: "Desactivar proveedor" }).click();
   await expect(desactivar).toHaveCount(0);
   await expect(
-    page.getByRole("complementary", { name: "Detalle del proveedor" }).getByText("Desactivado")
+    page.getByRole("dialog", { name: "Detalle del proveedor" }).getByText("Desactivado")
   ).toBeVisible();
   await page.getByRole("button", { name: "Cerrar el panel" }).click();
   await page.getByPlaceholder("Buscar por razón social, RUC, código o ciudad...").fill(marca);

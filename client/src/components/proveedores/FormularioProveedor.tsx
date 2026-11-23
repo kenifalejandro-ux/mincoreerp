@@ -80,7 +80,7 @@ export default function FormularioProveedor({
     try {
       const cuerpo = cuerpoDelProveedor(form);
       if (proveedor) {
-        onGuardado(await actualizarProveedor(proveedor.id, { ...cuerpo, activo: form.activo }));
+        onGuardado(await actualizarProveedor(proveedor.id, cuerpo));
       } else {
         setRegistrado(await crearProveedor(cuerpo));
       }
