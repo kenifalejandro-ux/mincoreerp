@@ -18,6 +18,14 @@ const ruc = z
   .nullish()
   .transform((v) => (v ? v : null));
 
+/** La ciudad (se guarda en la ficha). Ausente = no tocarla; "" = borrarla (null). */
+const ciudad = z
+  .string()
+  .trim()
+  .max(80, "La ciudad no puede pasar de 80 caracteres")
+  .optional()
+  .transform((v) => (v === undefined ? undefined : v === "" ? null : v));
+
 const banderas = {
   abastece_tanque: z.boolean(),
   abastece_ruta: z.boolean(),
@@ -26,7 +34,7 @@ const banderas = {
 };
 
 export const crearProveedorSchema = z
-  .object({ nombre, ruc, ...banderas })
+  .object({ nombre, ruc, ciudad, ...banderas })
   .refine((p) => p.abastece_tanque || p.abastece_ruta || p.abastece_urea || p.abastece_urea_ruta, {
     message: "Elige qué abastece el proveedor",
     path: ["abastece_tanque"],
@@ -35,6 +43,7 @@ export const crearProveedorSchema = z
 export const actualizarProveedorSchema = z.object({
   nombre,
   ruc,
+  ciudad,
   activo: z.boolean(),
   ...banderas,
 });

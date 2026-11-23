@@ -47,6 +47,8 @@ export interface FiltroDeHistorial {
   /** Un proveedor exacto: el historial de su ficha. */
   proveedorId?: number;
   antesDe?: string;
+  /** Cuántos eventos traer (el servidor tope 100; sin esto, 50). */
+  limite?: number;
 }
 
 /** Quién ve el historial: solo el admin, con el módulo `proveedores`. El servidor exige lo mismo. */

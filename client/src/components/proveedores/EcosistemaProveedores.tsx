@@ -403,7 +403,7 @@ export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => voi
 
       <main className="pt-16 lg:pl-64">
         <div className="p-4 sm:p-6 lg:p-8 max-w-[1500px]">
-          {actual.id === "centro" && <CentroDeGestion onIrAlDirectorio={() => irA("directorio")} />}
+          {actual.id === "centro" && <CentroDeGestion onIr={irA} />}
           {actual.id === "directorio" && (
             <DirectorioProveedores
               onAbrirProveedor={(id) => abrirProveedor(id)}

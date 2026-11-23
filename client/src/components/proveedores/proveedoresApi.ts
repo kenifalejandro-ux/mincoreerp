@@ -67,7 +67,8 @@ export type ProveedorBasico = Proveedor & { ciudad?: string | null };
 
 export const listarProveedores = () => leer<ProveedorEnDirectorio[]>("");
 /** Un proveedor por su id (404 si no existe en esta empresa). */
-export const obtenerProveedor = (id: number) => leer<Proveedor>(`/${id}`);
+export const obtenerProveedor = (id: number) =>
+  leer<Proveedor & { ciudad: string | null }>(`/${id}`);
 export const resumenProveedores = () => leer<ResumenProveedores>("/resumen");
 
 /** Lo que se carga al registrar o editar un proveedor. INTERNO es la compra para despachar desde la
@@ -76,6 +77,8 @@ export interface DatosProveedor {
   nombre: string;
   /** "" = sin RUC. */
   ruc: string;
+  /** La ciudad (se guarda en la ficha). "" = sin ciudad; ausente = no tocarla. */
+  ciudad?: string;
   abastece_tanque: boolean;
   abastece_ruta: boolean;
   abastece_urea: boolean;

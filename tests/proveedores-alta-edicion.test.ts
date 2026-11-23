@@ -221,6 +221,77 @@ describe("Gestión de proveedores: alta y edición", () => {
     expect(texto).not.toContain("20000000030");
   });
 
+  it("la ciudad se guarda en la ficha al crear y al editar, sin tocar lo demás de la ficha", async () => {
+    const r = await crear(admin, { nombre: "CON CIUDAD", ciudad: "  Arequipa " });
+    expect(r.status, JSON.stringify(r.body)).toBe(201);
+    const id = r.body.id as number;
+    // El detalle trae la ciudad y la ficha también.
+    expect((await admin.get(`/api/erp/proveedores/${id}`)).body.ciudad).toBe("Arequipa");
+    expect((await admin.get(`/api/erp/proveedores/${id}/ficha`)).body.datos.ciudad).toBe(
+      "Arequipa"
+    );
+    const enLista = (await admin.get("/api/erp/proveedores")).body as {
+      id: number;
+      ciudad: string | null;
+    }[];
+    expect(enLista.find((p) => p.id === id)?.ciudad).toBe("Arequipa");
+
+    // Se completa la ficha por su pestaña; editar el proveedor con otra ciudad NO borra lo demás.
+    expect(
+      (
+        await admin
+          .put(`/api/erp/proveedores/${id}/ficha`)
+          .send({ ciudad: "Arequipa", direccion: "Av. Los Pinos 123", telefono: "064123456" })
+      ).status
+    ).toBe(200);
+    const cambio = await admin
+      .put(`/api/erp/proveedores/${id}`)
+      .send(completo({ nombre: "CON CIUDAD", ciudad: "Cusco" }));
+    expect(cambio.status, JSON.stringify(cambio.body)).toBe(200);
+    const ficha = (await admin.get(`/api/erp/proveedores/${id}/ficha`)).body.datos;
+    expect(ficha).toMatchObject({
+      ciudad: "Cusco",
+      direccion: "Av. Los Pinos 123",
+      telefono: "064123456",
+    });
+
+    // Sin el campo, la ciudad queda como está; con "" se borra.
+    await admin.put(`/api/erp/proveedores/${id}`).send(completo({ nombre: "CON CIUDAD" }));
+    expect((await admin.get(`/api/erp/proveedores/${id}`)).body.ciudad).toBe("Cusco");
+    await admin
+      .put(`/api/erp/proveedores/${id}`)
+      .send(completo({ nombre: "CON CIUDAD", ciudad: "" }));
+    expect((await admin.get(`/api/erp/proveedores/${id}`)).body.ciudad).toBeNull();
+  });
+
+  it("sin ciudad no crea ficha; una ciudad de más de 80 letras es 400", async () => {
+    const r = await crear(admin, { nombre: "SIN CIUDAD" });
+    expect(r.status).toBe(201);
+    expect((await admin.get(`/api/erp/proveedores/${r.body.id}`)).body.ciudad).toBeNull();
+    expect((await crear(admin, { nombre: "CIUDAD LARGA", ciudad: "x".repeat(81) })).status).toBe(
+      400
+    );
+  });
+
+  it("cambiar la ciudad deja el nombre del campo en la bitácora, no su valor", async () => {
+    const r = await crear(admin, { nombre: "BITACORA CIUDAD", ciudad: "Tacna" });
+    await admin
+      .put(`/api/erp/proveedores/${r.body.id}`)
+      .send(completo({ nombre: "BITACORA CIUDAD", ciudad: "Puno" }));
+    // El mismo valor otra vez no cuenta como cambio.
+    await admin
+      .put(`/api/erp/proveedores/${r.body.id}`)
+      .send(completo({ nombre: "BITACORA CIUDAD", ciudad: "Puno" }));
+    const filas = await pool.query<{ detalle: Record<string, unknown> }>(
+      `SELECT detalle FROM platform_audit_log
+        WHERE tenant_id = $1 AND accion = 'proveedores.actualizar'
+          AND (detalle->>'proveedorId')::int = $2 ORDER BY id`,
+      [a.tenant.id, r.body.id]
+    );
+    expect(filas.rows.map((f) => f.detalle.campos ?? null)).toEqual([["ciudad"], null]);
+    expect(JSON.stringify(filas.rows)).not.toMatch(/Puno|Tacna/);
+  });
+
   it("lo que se crea aquí lo ve la pestaña Proveedores de Combustible (misma tabla)", async () => {
     const r = await crear(admin, { nombre: "VISIBLE EN COMBUSTIBLE", abastece_ruta: true });
     const grifos = await admin.get("/api/erp/combustible/grifos");

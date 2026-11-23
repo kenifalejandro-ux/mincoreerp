@@ -336,10 +336,16 @@ export class ProveedoresService {
     return resumir(await this.listar(client, tenantId));
   }
 
-  async detalle(client: PoolClient, tenantId: string, id: number): Promise<ProveedorDto> {
+  /** Un proveedor con su ciudad (que vive en la ficha): lo que necesitan la ficha y el formulario de edición. */
+  async detalle(
+    client: PoolClient,
+    tenantId: string,
+    id: number
+  ): Promise<ProveedorDto & { ciudad: string | null }> {
     const fila = await this.repository.buscarPorId(client, tenantId, id);
     if (!fila) throw new AppError(404, "Proveedor no encontrado");
-    return aDto(fila);
+    const datos = await this.repository.datosDe(client, tenantId, id);
+    return { ...aDto(fila), ciudad: datos?.ciudad ?? null };
   }
 
   // ── Historial y auditoría: lo que se hizo con los proveedores, de la bitácora de la empresa ───────
@@ -856,7 +862,12 @@ export class ProveedoresService {
     data: CrearProveedorInput
   ): Promise<ProveedorDto> {
     try {
-      return aDto(await this.repository.crear(client, tenantId, usuarioId, data));
+      const fila = await this.repository.crear(client, tenantId, usuarioId, data);
+      // La ciudad vive en la ficha: solo se crea la fila si hay ciudad.
+      if (data.ciudad) {
+        await this.repository.guardarCiudad(client, tenantId, usuarioId, fila.id, data.ciudad);
+      }
+      return aDto(fila);
     } catch (err) {
       throw comoErrorDeNegocio(err);
     }
@@ -865,13 +876,22 @@ export class ProveedoresService {
   async actualizar(
     client: PoolClient,
     tenantId: string,
+    usuarioId: string,
     id: number,
     data: ActualizarProveedorInput
-  ): Promise<ProveedorDto> {
+  ): Promise<{ proveedor: ProveedorDto; ciudadCambiada: boolean }> {
     try {
       const fila = await this.repository.actualizar(client, tenantId, id, data);
       if (!fila) throw new AppError(404, "Proveedor no encontrado");
-      return aDto(fila);
+      let ciudadCambiada = false;
+      if (data.ciudad !== undefined) {
+        const antes = (await this.repository.datosDe(client, tenantId, id))?.ciudad ?? null;
+        if (antes !== data.ciudad) {
+          await this.repository.guardarCiudad(client, tenantId, usuarioId, id, data.ciudad);
+          ciudadCambiada = true;
+        }
+      }
+      return { proveedor: aDto(fila), ciudadCambiada };
     } catch (err) {
       throw comoErrorDeNegocio(err);
     }
