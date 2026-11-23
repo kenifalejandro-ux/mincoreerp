@@ -8,11 +8,10 @@ import { useCallback, useEffect, useState } from "react";
 
 import FichaDeProveedor from "./FichaDeProveedor";
 import type { PestanaFicha } from "./fichaProveedor";
-import FormularioProveedor from "./FormularioProveedor";
 import PanelDeDetalle from "./PanelDeDetalle";
-import { ErrorDeApi, obtenerProveedor, type Proveedor } from "./proveedoresApi";
+import { ErrorDeApi, obtenerProveedor, type ProveedorBasico } from "./proveedoresApi";
 import { useAccesoDeLaFicha } from "./useAccesoDeLaFicha";
-import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
+import { useAccionesDeProveedor } from "./useAccionesDeProveedor";
 
 export default function PanelDeProveedor({
   proveedorId,
@@ -20,6 +19,7 @@ export default function PanelDeProveedor({
   onCerrar,
   onPestana,
   onCambio,
+  onEliminado,
   onNoExiste,
 }: {
   proveedorId: number;
@@ -27,16 +27,16 @@ export default function PanelDeProveedor({
   onCerrar: () => void;
   /** La persona cambió de pestaña (la pantalla puede reflejarlo en la dirección). */
   onPestana?: (pestana: PestanaFicha) => void;
-  /** Se editó el proveedor: la pantalla de atrás puede volver a leer su lista. */
+  /** Se editó, desactivó o reactivó el proveedor: la pantalla de atrás puede volver a leer su lista. */
   onCambio?: () => void;
+  /** Se eliminó el proveedor: la pantalla cierra el panel (ya no hay ficha que mostrar). */
+  onEliminado?: () => void;
   /** El proveedor no existe (un enlace viejo): la pantalla cierra el panel y corrige la dirección. */
   onNoExiste?: () => void;
 }) {
   const acceso = useAccesoDeLaFicha();
-  const puedeEscribir = usePuedeEscribir("proveedores");
-  const [proveedor, setProveedor] = useState<Proveedor | null>(null);
+  const [proveedor, setProveedor] = useState<ProveedorBasico | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [editando, setEditando] = useState(false);
 
   const leer = useCallback(
     () =>
@@ -54,6 +54,14 @@ export default function PanelDeProveedor({
   useEffect(() => {
     void leer();
   }, [leer]);
+
+  const { acciones, dialogos } = useAccionesDeProveedor({
+    onCambio: () => {
+      void leer();
+      onCambio?.();
+    },
+    onEliminado: () => onEliminado?.(),
+  });
 
   return (
     <PanelDeDetalle etiqueta="Detalle del proveedor" titulo="Proveedor" onCerrar={onCerrar}>
@@ -73,20 +81,10 @@ export default function PanelDeProveedor({
           acceso={acceso}
           pestanaInicial={pestanaInicial}
           onPestana={onPestana}
-          onEditar={puedeEscribir ? () => setEditando(true) : undefined}
+          acciones={acciones(proveedor)}
         />
       )}
-      {editando && proveedor && (
-        <FormularioProveedor
-          proveedor={proveedor}
-          onGuardado={() => {
-            setEditando(false);
-            void leer();
-            onCambio?.();
-          }}
-          onCerrar={() => setEditando(false)}
-        />
-      )}
+      {dialogos}
     </PanelDeDetalle>
   );
 }

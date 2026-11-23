@@ -24,7 +24,7 @@ import {
   type PestanaFicha,
 } from "./fichaProveedor";
 import HistorialDeProveedores from "./HistorialDeProveedores";
-import MasAcciones from "./MasAcciones";
+import MasAcciones, { type AccionDeMenu } from "./MasAcciones";
 import PestanaPronto from "./PestanaPronto";
 import type { ProveedorBasico } from "./proveedoresApi";
 import ResumenDeProveedor from "./ResumenDeProveedor";
@@ -37,7 +37,7 @@ export default function FichaDeProveedor({
   acceso,
   pestanaInicial,
   onVolver,
-  onEditar,
+  acciones = [],
   onPestana,
 }: {
   proveedor: ProveedorBasico;
@@ -45,8 +45,8 @@ export default function FichaDeProveedor({
   pestanaInicial: PestanaFicha;
   /** Con la ficha a pantalla completa, vuelve a la lista. En el panel lateral no hay: se cierra el panel. */
   onVolver?: () => void;
-  /** Sin función = el perfil no puede editar. */
-  onEditar?: () => void;
+  /** El menú de «Más acciones» (editar, desactivar, eliminar…). Vacío = no se dibuja el botón. */
+  acciones?: AccionDeMenu[];
   /** Avisa cuando la persona cambia de pestaña (para reflejarlo en la dirección). */
   onPestana?: (pestana: PestanaFicha) => void;
 }) {
@@ -112,11 +112,7 @@ export default function FichaDeProveedor({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <MasAcciones
-            acciones={
-              onEditar ? [{ id: "editar", etiqueta: "Editar proveedor", alElegir: onEditar }] : []
-            }
-          />
+          <MasAcciones acciones={acciones} />
           {puedeCargar && precios.datos && (
             <BotonNuevoPrecio
               filas={precios.datos.filas}

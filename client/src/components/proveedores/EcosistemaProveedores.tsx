@@ -442,6 +442,7 @@ export default function EcosistemaProveedores({ onSalir }: { onSalir?: () => voi
             if (enDirectorio) publicar({ seccion: "directorio", proveedorId: panel.id, pestana });
           }}
           onCambio={() => setRefrescoDeLista((n) => n + 1)}
+          onEliminado={cerrarPanel}
           onNoExiste={() => {
             // Un enlace a un proveedor que no existe (o ya no): se cierra el panel y la dirección se corrige.
             setPanel(null);

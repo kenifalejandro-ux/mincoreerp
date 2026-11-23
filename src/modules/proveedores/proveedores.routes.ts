@@ -28,6 +28,7 @@ import {
 import {
   actualizarCuentaProveedorSchema,
   actualizarProveedorSchema,
+  cambiarEstadoProveedorSchema,
   contactoProveedorSchema,
   crearCuentaProveedorSchema,
   crearPreciosProveedoresSchema,
@@ -36,6 +37,7 @@ import {
   quitarCuentaProveedorSchema,
   type ActualizarCuentaProveedorInput,
   type ActualizarProveedorInput,
+  type CambiarEstadoProveedorInput,
   type ContactoProveedorInput,
   type CrearCuentaProveedorInput,
   type CrearPreciosProveedoresInput,
@@ -768,6 +770,73 @@ router.put(
       contexto: contextoAuditoriaModulo(req),
     });
     res.json(proveedor);
+  })
+);
+
+// Desactivar, reactivar y eliminar. Desactivar y reactivar: admin y operador (como editar), con el motivo en
+// la bitácora. Eliminar: solo el admin y solo un proveedor sin historia (precios, compras, recepciones o
+// despachos); con historia se desactiva. La bitácora de eliminar guarda el código y el nombre (el proveedor
+// ya no existe para mirarlo después).
+router.patch(
+  "/:id(\\d+)/estado",
+  requireRole("admin", "operador"),
+  validate(cambiarEstadoProveedorSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new AppError(400, "Proveedor inválido");
+    const data = req.validatedBody as CambiarEstadoProveedorInput;
+    const { proveedor, cambio } = await withTenant(tenantId, (client) =>
+      service.cambiarEstado(client, tenantId, id, data.activo)
+    );
+    if (cambio) {
+      await registrarAuditoria({
+        accion: data.activo ? "proveedores.reactivar" : "proveedores.desactivar",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: { proveedorId: id, ...(data.motivo ? { motivo: data.motivo } : {}) },
+        contexto: contextoAuditoriaModulo(req),
+      });
+    }
+    res.json(proveedor);
+  })
+);
+
+router.get(
+  "/:id(\\d+)/eliminable",
+  requireRole("admin"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new AppError(400, "Proveedor inválido");
+    res.setHeader("Cache-Control", "no-store");
+    res.json(await withTenant(tenantId, (client) => service.eliminable(client, tenantId, id)));
+  })
+);
+
+router.delete(
+  "/:id(\\d+)",
+  requireRole("admin"),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new AppError(400, "Proveedor inválido");
+    const eliminado = await withTenant(tenantId, (client) =>
+      service.eliminar(client, tenantId, id)
+    );
+    await registrarAuditoria({
+      accion: "proveedores.eliminar",
+      tenantId,
+      usuarioId: req.usuario!.id,
+      detalle: {
+        proveedorId: id,
+        codigo: eliminado.codigo,
+        nombre: eliminado.nombre,
+        tipos: eliminado.tipos,
+      },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    res.json({ ok: true });
   })
 );
 

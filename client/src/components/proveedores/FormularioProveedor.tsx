@@ -251,18 +251,6 @@ export default function FormularioProveedor({
                 </>
               )}
 
-              {proveedor && (
-                <label className="flex items-center gap-2 text-sm text-slate-700 sm:col-span-2">
-                  <input
-                    type="checkbox"
-                    checked={form.activo}
-                    onChange={(e) => cambiar("activo", e.target.checked)}
-                    className="accent-[#65a30d]"
-                  />
-                  Activo (recibe pedidos)
-                </label>
-              )}
-
               {error && (
                 <p
                   role="alert"

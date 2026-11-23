@@ -20,7 +20,7 @@ export const CATEGORIAS_DE_HISTORIAL: { id: CategoriaDeHistorial; etiqueta: stri
 
 /** Qué acciones son de cada grupo, como expresión regular sobre el nombre de la acción. */
 export const PATRON_DE_CATEGORIA: Record<CategoriaDeHistorial, string> = {
-  proveedor: "^proveedores\\.(crear|actualizar)$",
+  proveedor: "^proveedores\\.(crear|actualizar|desactivar|reactivar|eliminar)$",
   precios: "^proveedores\\.precio_",
   compras: "^proveedores\\.compra_",
   ficha: "^proveedores\\.(datos_|contacto_)",
@@ -114,6 +114,19 @@ export function describirEvento(accion: string, detalle: Detalle): EventoDescrit
         );
       }
       return { titulo: "Editó un proveedor", categoria: "proveedor", lineas };
+
+    case "proveedores.desactivar":
+      agregar(motivo ? `Motivo: ${motivo}` : null);
+      return { titulo: "Desactivó un proveedor", categoria: "proveedor", lineas };
+    case "proveedores.reactivar":
+      agregar(motivo ? `Motivo: ${motivo}` : null);
+      return { titulo: "Reactivó un proveedor", categoria: "proveedor", lineas };
+    case "proveedores.eliminar": {
+      // El proveedor ya no existe: la bitácora guardó su código y su nombre para poder decir cuál era.
+      const quien = [texto(d.nombre), texto(d.codigo)].filter(Boolean).join(" · ");
+      agregar(quien || null);
+      return { titulo: "Eliminó un proveedor", categoria: "proveedor", lineas };
+    }
 
     case "proveedores.precio_crear":
       agregar(lineaDePrecio(d));

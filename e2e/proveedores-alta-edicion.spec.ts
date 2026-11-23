@@ -7,7 +7,9 @@
  *    la pantalla (nombre y RUC de 11 dígitos) y, con datos buenos, termina en «Proveedor registrado»; el
  *    proveedor aparece en el directorio con su uso Interno / Externo y su ciudad.
  * 2. Registrar el mismo nombre otra vez muestra el aviso del servidor y no duplica.
- * 3. «Editar» en la ficha cambia el nombre y lo desactiva; el directorio lo muestra «Desactivado».
+ * 3. «Editar proveedor» (en «Más acciones» de la ficha) cambia el nombre y la ciudad; «Desactivar proveedor»
+ *    pide el motivo y el directorio lo muestra «Desactivado». El formulario de edición ya no trae la casilla
+ *    «Activo»: desactivar es una acción aparte, con motivo.
  *    Un proveedor con una mezcla que las listas no dicen (combustible interno y urea externa) se edita con
  *    las cuatro casillas, sin perder lo que tiene.
  * 4. Una persona con perfil Lectura ve el directorio pero no los botones de registrar ni editar.
@@ -86,10 +88,19 @@ test("registrar y editar un proveedor desde el directorio", async ({ page, brows
   await expect(edicion.getByLabel("Ciudad")).toHaveValue("Arequipa");
   await edicion.getByLabel("Razón social").fill(editado);
   await edicion.getByLabel("Ciudad").fill("Cusco");
-  await edicion.getByLabel("Activo (recibe pedidos)").uncheck();
+  await expect(edicion.getByLabel("Activo (recibe pedidos)")).toHaveCount(0);
   await edicion.getByRole("button", { name: "Guardar" }).click();
   await expect(edicion).toHaveCount(0);
   await expect(page.getByRole("heading", { name: new RegExp(editado), level: 1 })).toBeVisible();
+  // Desactivar es otra acción y exige el motivo.
+  await page.getByRole("button", { name: "Más acciones" }).click();
+  await page.getByRole("menuitem", { name: "Desactivar proveedor" }).click();
+  const desactivar = page.getByRole("dialog", { name: "Desactivar proveedor" });
+  await desactivar.getByRole("button", { name: "Desactivar proveedor" }).click();
+  await expect(desactivar.getByRole("alert")).toContainText("Escribe el motivo");
+  await desactivar.getByLabel("Motivo").fill("Ya no nos abastece");
+  await desactivar.getByRole("button", { name: "Desactivar proveedor" }).click();
+  await expect(desactivar).toHaveCount(0);
   await expect(
     page.getByRole("complementary", { name: "Detalle del proveedor" }).getByText("Desactivado")
   ).toBeVisible();
