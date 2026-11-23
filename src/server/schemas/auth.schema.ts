@@ -53,7 +53,7 @@ export type LoginInput = z.infer<typeof loginSchema>;
 
 export const googleLoginSchema = z.object({
   tenantSlug: tenantSlugOpcionalSchema,
-  credential: z.string({ required_error: "El credential de Google es obligatorio" }).min(1),
+  credential: z.string({ error: "El credential de Google es obligatorio" }).min(1),
 });
 
 export type GoogleLoginInput = z.infer<typeof googleLoginSchema>;

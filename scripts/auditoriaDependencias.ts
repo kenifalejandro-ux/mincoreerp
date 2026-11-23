@@ -14,16 +14,7 @@ import {
 } from "./auditoriaDependenciasLogica";
 
 /** Cada excepción se quita sola al vencer: renovarla es una decisión, no un descuido. */
-const PERMITIDOS: Permitido[] = [
-  {
-    id: "GHSA-mrhx-c7xc-m3w5",
-    vence: "2026-11-22",
-    motivo:
-      "zod 3 acumula un error por cada elemento de un arreglo. Mitigado: app.ts rechaza los cuerpos de " +
-      "/bulk con más de 5000 filas antes de validar, y el resto de la API tiene un límite de 16 kb. " +
-      "El arreglo de fondo es migrar a zod 4 (cambio mayor).",
-  },
-];
+const PERMITIDOS: Permitido[] = [];
 
 const auditoria = spawnSync("npm", ["audit", "--json"], {
   encoding: "utf8",

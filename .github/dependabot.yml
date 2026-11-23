@@ -36,13 +36,6 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "@types/express"
         update-types: ["version-update:semver-major"]
-      # zod v4 sacó `required_error`/`invalid_type_error` de los schemas en
-      # favor de un `error` unificado — rompe auth.schema.ts (y
-      # probablemente otros schemas del proyecto que usan la sintaxis
-      # vieja). Migrar todos los schemas antes de subir (visto en el PR #6,
-      # cerrado 2026-08-05).
-      - dependency-name: "zod"
-        update-types: ["version-update:semver-major"]
       # TypeScript 7 -- el MISMO bloqueo que ya estaba declarado abajo para
       # client/, que acá faltaba por descuido. La raíz también usa
       # @typescript-eslint (^8.x en package.json), que declara
