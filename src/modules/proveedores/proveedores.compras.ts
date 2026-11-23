@@ -17,6 +17,8 @@ export type EstadoCompra = "registrada" | "por_llegar" | "recibida" | "anulada";
 /** Una fila de `listarCompras` de Combustible (los números llegan como texto desde Postgres). */
 export interface CompraDb {
   id: string | number;
+  /** La sede a la que llega (grifos_internos). */
+  grifo_interno_id?: string | number;
   grifo_id: number;
   proveedor: string;
   tipo_combustible: string;
@@ -72,6 +74,8 @@ export interface CompraDto {
   numeroDocumento: string;
   fechaCompra: string;
   llegadaEstimada: string;
+  /** «Sede · tanque» a la que llega, como se eligió en «Registrar compra» (null si no se pudo leer). */
+  sedeDeLlegada: string | null;
   cantidadFacturada: number;
   costoUnitario: number;
   /** cantidad facturada × costo unitario. */
@@ -91,7 +95,9 @@ const redondear2 = (n: number) => Math.round(n * 100) / 100;
 export function armarCompras(
   filas: CompraDb[],
   recepciones: Map<number, RecepcionDb>,
-  tolerancia: number
+  tolerancia: number,
+  /** La etiqueta de cada sede de llegada por su id. */
+  sedes: Map<number, string> = new Map()
 ): CompraDto[] {
   return filas.map((f): CompraDto => {
     const cantidad = Number(f.cantidad_facturada);
@@ -128,6 +134,8 @@ export function armarCompras(
       numeroDocumento: f.numero_documento,
       fechaCompra: f.fecha_compra,
       llegadaEstimada: f.llegada_estimada,
+      sedeDeLlegada:
+        f.grifo_interno_id === undefined ? null : (sedes.get(Number(f.grifo_interno_id)) ?? null),
       cantidadFacturada: cantidad,
       costoUnitario: costo,
       total: redondear2(cantidad * costo),

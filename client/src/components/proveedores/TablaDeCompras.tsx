@@ -110,7 +110,14 @@ export default function TablaDeCompras({
             </tr>
           )}
           {compras.map((c) => (
-            <tr key={c.id} className="border-b border-slate-100 hover:bg-slate-50 align-top">
+            <tr
+              key={c.id}
+              // Toda la fila abre el detalle de la compra (con el ratón); el teclado usa el botón del documento.
+              onClick={onAbrirCompra ? () => onAbrirCompra(c) : undefined}
+              className={`border-b border-slate-100 hover:bg-slate-50 align-top ${
+                onAbrirCompra ? "cursor-pointer" : ""
+              }`}
+            >
               <td className="px-4 py-3">
                 {onAbrirCompra ? (
                   <button
@@ -118,7 +125,7 @@ export default function TablaDeCompras({
                     className="text-left"
                     aria-label={`Abrir compra ${c.numeroDocumento}`}
                   >
-                    <b className="text-slate-900 hover:underline">{c.numeroDocumento}</b>
+                    <b className="text-slate-900">{c.numeroDocumento}</b>
                     <span className="block text-xs text-slate-500">
                       {ETIQUETA_DOCUMENTO[c.tipoDocumento] ?? c.tipoDocumento} ·{" "}
                       {formatoDia(c.fechaCompra)}
@@ -137,13 +144,15 @@ export default function TablaDeCompras({
               {conProveedor && (
                 <td className="px-4 py-3">
                   <button
-                    onClick={() => onAbrirProveedor?.(c.proveedorId)}
+                    onClick={(e) => {
+                      // El nombre abre la ficha del proveedor, no el detalle de la compra.
+                      e.stopPropagation();
+                      onAbrirProveedor?.(c.proveedorId);
+                    }}
                     className="text-left"
                     aria-label={`Abrir ${c.proveedorNombre}`}
                   >
-                    <span className="block font-semibold text-slate-900 hover:underline">
-                      {c.proveedorNombre}
-                    </span>
+                    <span className="block font-semibold text-slate-900">{c.proveedorNombre}</span>
                     <span className="block text-xs text-slate-500">{c.proveedorCodigo}</span>
                   </button>
                 </td>
@@ -171,7 +180,7 @@ export default function TablaDeCompras({
                 <Recepcion compra={c} />
               </td>
               {acciones && (
-                <td className="px-4 py-3">
+                <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                   <span className="flex flex-wrap gap-2">
                     {c.estado === "registrada" && (
                       <button

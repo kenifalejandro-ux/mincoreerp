@@ -40,6 +40,7 @@ const compra = (extra: Partial<CompraDeCisterna> = {}): CompraDeCisterna => ({
   numeroDocumento: "F-1",
   fechaCompra: "2026-11-10",
   llegadaEstimada: "2026-11-12",
+  sedeDeLlegada: "Planta · Tanque 1",
   cantidadFacturada: 1000,
   costoUnitario: 15.8,
   total: 15800,

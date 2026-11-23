@@ -123,3 +123,21 @@ describe("Compras y recepciones: lo que muestra cada compra", () => {
     expect(una(compra({ recepcion_id: 99, estado: "recibida" })).recepcion).toBeNull();
   });
 });
+
+describe("Compras y recepciones: la sede de llegada", () => {
+  it("sale de la etiqueta de su sede por id; sin dato o sin mapa, null", () => {
+    const sedes = new Map([[3, "Huamachuco · TQ-huamachuco"]]);
+    const con = armarCompras([compra({ grifo_interno_id: 3 })], new Map(), 3, sedes)[0];
+    expect(con.sedeDeLlegada).toBe("Huamachuco · TQ-huamachuco");
+    // El id llega como texto desde la base: igual se encuentra.
+    expect(
+      armarCompras([compra({ grifo_interno_id: "3" })], new Map(), 3, sedes)[0].sedeDeLlegada
+    ).toBe("Huamachuco · TQ-huamachuco");
+    // Una sede que no está en el mapa, o una compra sin sede, no se inventa.
+    expect(
+      armarCompras([compra({ grifo_interno_id: 9 })], new Map(), 3, sedes)[0].sedeDeLlegada
+    ).toBeNull();
+    expect(armarCompras([compra()], new Map(), 3, sedes)[0].sedeDeLlegada).toBeNull();
+    expect(una(compra({ grifo_interno_id: 3 })).sedeDeLlegada).toBeNull();
+  });
+});

@@ -221,7 +221,7 @@ export default function HistorialDeProveedores({
                           onAbrirProveedor ? (
                             <button
                               onClick={() => onAbrirProveedor(e.proveedorId!)}
-                              className="text-left font-medium text-[#3f6212] hover:underline"
+                              className="text-left font-medium text-[#3f6212]"
                             >
                               {e.proveedorNombre}
                             </button>
