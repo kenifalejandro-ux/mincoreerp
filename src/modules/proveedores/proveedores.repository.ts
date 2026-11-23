@@ -247,6 +247,24 @@ export class ProveedoresRepository {
     return r.rows[0];
   }
 
+  /** Guarda SOLO la ciudad en la ficha (crea la fila si no existe y deja lo demás como está). Es lo que usa el
+   *  alta y la edición del proveedor; los demás datos de la ficha se editan en su pestaña. */
+  async guardarCiudad(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    grifoId: number,
+    ciudad: string | null
+  ): Promise<void> {
+    await client.query(
+      `INSERT INTO proveedores_ficha (tenant_id, grifo_id, ciudad, actualizado_por)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (tenant_id, grifo_id) DO UPDATE
+          SET ciudad = EXCLUDED.ciudad, actualizado_en = now(), actualizado_por = EXCLUDED.actualizado_por`,
+      [tenantId, grifoId, ciudad, usuarioId]
+    );
+  }
+
   /** Lo que el Directorio necesita de la ficha de cada proveedor, de una sola vez: ciudad, dirección,
    *  teléfono, condición de pago y si tiene contactos (y alguno con teléfono). Sin ficha, todo vacío. */
   async fichasParaElDirectorio(

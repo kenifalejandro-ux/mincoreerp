@@ -108,6 +108,11 @@ export function describirEvento(accion: string, detalle: Detalle): EventoDescrit
     }
     case "proveedores.actualizar":
       if (typeof d.activo === "boolean") agregar(d.activo ? "Queda activo" : "Queda desactivado");
+      if (Array.isArray(d.campos) && d.campos.length) {
+        agregar(
+          `Cambió: ${d.campos.map((c) => CAMPOS_DE_LA_FICHA[String(c)] ?? String(c)).join(", ")}`
+        );
+      }
       return { titulo: "Editó un proveedor", categoria: "proveedor", lineas };
 
     case "proveedores.precio_crear":

@@ -37,6 +37,15 @@ describe("describirEvento (lógica pura)", () => {
     ]);
   });
 
+  it("dice el cambio de ciudad al editar un proveedor, por el nombre del campo", () => {
+    expect(
+      describirEvento("proveedores.actualizar", { activo: true, campos: ["ciudad"] }).lineas
+    ).toEqual(["Queda activo", "Cambió: ciudad"]);
+    expect(describirEvento("proveedores.actualizar", { activo: false }).lineas).toEqual([
+      "Queda desactivado",
+    ]);
+  });
+
   it("dice los precios con su monto y su motivo", () => {
     expect(
       describirEvento("proveedores.precio_crear", {

@@ -734,6 +734,7 @@ router.post(
         proveedorId: proveedor.id,
         conRuc: proveedor.ruc !== null,
         tipos: proveedor.tipos,
+        ...(data.ciudad ? { conCiudad: true } : {}),
       },
       contexto: contextoAuditoriaModulo(req),
     });
@@ -750,14 +751,20 @@ router.put(
     const id = Number(req.params.id);
     if (!Number.isSafeInteger(id) || id <= 0) throw new AppError(400, "Proveedor inválido");
     const data = req.validatedBody as ActualizarProveedorInput;
-    const proveedor = await withTenant(tenantId, (client) =>
-      service.actualizar(client, tenantId, id, data)
+    const { proveedor, ciudadCambiada } = await withTenant(tenantId, (client) =>
+      service.actualizar(client, tenantId, req.usuario!.id, id, data)
     );
     await registrarAuditoria({
       accion: "proveedores.actualizar",
       tenantId,
       usuarioId: req.usuario!.id,
-      detalle: { proveedorId: id, activo: proveedor.activo, tipos: proveedor.tipos },
+      detalle: {
+        proveedorId: id,
+        activo: proveedor.activo,
+        tipos: proveedor.tipos,
+        // Solo el nombre del campo, nunca su valor.
+        ...(ciudadCambiada ? { campos: ["ciudad"] } : {}),
+      },
       contexto: contextoAuditoriaModulo(req),
     });
     res.json(proveedor);

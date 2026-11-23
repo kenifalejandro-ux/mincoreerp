@@ -288,9 +288,12 @@ test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", a
     await page.getByRole("button", { name: "Registrar proveedor" }).click();
     const dialogo = page.getByRole("dialog", { name: "Registrar proveedor" });
     await dialogo.getByLabel("Razón social").fill(`SOLO PROVEEDOR ${marca}`);
-    await dialogo.getByLabel("Combustible · Interno").check();
+    await dialogo.getByLabel("Qué suministra").selectOption("combustible");
+    await dialogo.getByLabel("Abastece a").selectOption("interno");
     await dialogo.getByRole("button", { name: "Guardar" }).click();
-    await expect(dialogo).toHaveCount(0);
+    const exito = page.getByRole("dialog", { name: "Proveedor registrado" });
+    await exito.getByRole("button", { name: "Continuar" }).click();
+    await expect(exito).toHaveCount(0);
     await expect(
       page.getByRole("row", { name: new RegExp(`SOLO PROVEEDOR ${marca}`) })
     ).toBeVisible({
