@@ -3,7 +3,7 @@
 // Directorio de los proveedores (la lista). La ficha se abre en el panel lateral (PanelDeProveedor). INTERNO es la
 // compra para despachar desde la planta y EXTERNO la que se hace en el recorrido de ruta: las mismas palabras
 // que la pestaña Proveedores de Combustible.
-import { Plus, Search } from "lucide-react";
+import { Download, Plus, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import {
@@ -16,6 +16,7 @@ import {
   type FiltroEstado,
 } from "./directorioProveedores";
 import EstadoDeProveedor from "./EstadoDeProveedor";
+import { exportarProveedoresExcel, leerProveedoresParaExportar } from "./exportarProveedores";
 import { inicialesDeProveedor } from "./fichaProveedor";
 import FormularioProveedor from "./FormularioProveedor";
 import MasAcciones from "./MasAcciones";
@@ -66,6 +67,8 @@ export default function DirectorioProveedores({
   const { usuario } = useAuth();
   const verPrecios = puedeVerPreciosDeProveedores(usuario);
   const [registrando, setRegistrando] = useState(false);
+  const [exportando, setExportando] = useState(false);
+  const [falloExportar, setFalloExportar] = useState<string | null>(null);
   // Se lee al abrir y cada vez que cambia `refresco` (se editó algo en el panel) o se registra uno nuevo: el
   // servidor calcula la ciudad, la ficha completa y el precio. La lista anterior no se borra mientras tanto.
   const [versionPropia, setVersionPropia] = useState(0);
@@ -95,6 +98,24 @@ export default function DirectorioProveedores({
     onCambio: () => setVersionPropia((v) => v + 1),
   });
   const hayAcciones = (lista ?? []).some((p) => acciones(p).length > 0);
+
+  // Exporta lo que se ve en la tabla (con la búsqueda y los filtros): el servidor arma las filas y la bitácora
+  // anota quién exportó y cuántos.
+  const exportar = async () => {
+    if (exportando || filtrados.length === 0) return;
+    setExportando(true);
+    setFalloExportar(null);
+    try {
+      const hayFiltro = filtrados.length !== (lista?.length ?? 0);
+      await exportarProveedoresExcel(
+        await leerProveedoresParaExportar(hayFiltro ? filtrados.map((p) => p.id) : undefined)
+      );
+    } catch (e) {
+      setFalloExportar(e instanceof Error ? e.message : "No se pudo exportar.");
+    } finally {
+      setExportando(false);
+    }
+  };
 
   const modal = registrando && (
     <FormularioProveedor
@@ -130,15 +151,33 @@ export default function DirectorioProveedores({
             Todos los proveedores que nos abastecen de combustible y urea.
           </p>
         </div>
-        {puedeEscribir && (
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => setRegistrando(true)}
-            className="flex items-center gap-2 h-10 px-4 rounded-lg bg-[#BADC1E] text-[#0A1014] text-sm font-semibold hover:brightness-95"
+            onClick={exportar}
+            disabled={exportando || filtrados.length === 0}
+            className="flex items-center gap-2 h-10 px-4 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
           >
-            <Plus size={16} /> Registrar proveedor
+            <Download size={16} /> {exportando ? "Exportando…" : "Exportar a Excel"}
           </button>
-        )}
+          {puedeEscribir && (
+            <button
+              onClick={() => setRegistrando(true)}
+              className="flex items-center gap-2 h-10 px-4 rounded-lg bg-[#BADC1E] text-[#0A1014] text-sm font-semibold hover:brightness-95"
+            >
+              <Plus size={16} /> Registrar proveedor
+            </button>
+          )}
+        </div>
       </header>
+
+      {falloExportar && (
+        <p
+          role="alert"
+          className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3"
+        >
+          {falloExportar}
+        </p>
+      )}
 
       <section
         aria-label="Resumen del directorio"

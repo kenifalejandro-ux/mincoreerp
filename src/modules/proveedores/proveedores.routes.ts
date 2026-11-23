@@ -86,6 +86,42 @@ router.get(
   })
 );
 
+// Exportar el directorio a Excel (el archivo lo arma el navegador): lo mismo que ve la persona más dirección,
+// teléfono y correo de la ficha; NUNCA cuentas bancarias. `ids` = solo los que filtró en pantalla. Cada
+// exportación queda en la bitácora (quién y cuántos; no el contenido).
+router.get(
+  "/exportar",
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const usuario = req.usuario!;
+    const crudo = typeof req.query.ids === "string" ? req.query.ids : undefined;
+    let ids: number[] | undefined;
+    if (crudo !== undefined) {
+      const partes = crudo === "" ? [] : crudo.split(",");
+      if (partes.length > 5000 || partes.some((p) => !/^\d{1,9}$/.test(p))) {
+        throw new AppError(400, "Lista de proveedores inválida");
+      }
+      ids = partes.map(Number);
+    }
+    const ver = {
+      combustible: pestanaPermitida(usuario, "combustible", "tanques:precios"),
+      urea: pestanaPermitida(usuario, "combustible", "urea:precios"),
+    };
+    const filas = await withTenant(tenantId, (client) =>
+      service.paraExportar(client, tenantId, ver, ids)
+    );
+    await registrarAuditoria({
+      accion: "proveedores.exportar",
+      tenantId,
+      usuarioId: usuario.id,
+      detalle: { filas: filas.length, ...(ids ? { filtrado: true } : {}) },
+      contexto: contextoAuditoriaModulo(req),
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json(filas);
+  })
+);
+
 // Gestión comercial (PR4): precios de proveedores, solo lectura. Reutiliza los permisos de Precios de
 // Combustible (`tanques:precios` y `urea:precios`): quien tiene uno ve ese producto; sin ninguno, 403.
 // Sin pestaña propia a propósito (cada pestaña agranda la cookie de sesión).

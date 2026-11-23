@@ -374,6 +374,24 @@ export class ProveedoresRepository {
     return r.rows;
   }
 
+  /** Dirección, teléfono y correo de la ficha de cada proveedor (para exportar). NUNCA trae cuentas bancarias. */
+  async datosDeContactoParaExportar(
+    client: PoolClient,
+    tenantId: string
+  ): Promise<
+    Map<number, { direccion: string | null; telefono: string | null; correo: string | null }>
+  > {
+    const r = await client.query<{
+      grifo_id: number;
+      direccion: string | null;
+      telefono: string | null;
+      correo: string | null;
+    }>(`SELECT grifo_id, direccion, telefono, correo FROM proveedores_ficha WHERE tenant_id = $1`, [
+      tenantId,
+    ]);
+    return new Map(r.rows.map((f) => [Number(f.grifo_id), f]));
+  }
+
   /** Los contactos activos: el principal primero, luego por nombre. */
   async contactosActivos(
     client: PoolClient,
