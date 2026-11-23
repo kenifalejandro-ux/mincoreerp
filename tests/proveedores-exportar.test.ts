@@ -15,7 +15,7 @@ import {
   filasDelExcel,
   nombreDelArchivo,
   type ProveedorParaExportar,
-} from "../client/src/components/proveedores/exportarProveedores";
+} from "../client/src/components/proveedores/filasProveedores";
 
 const prov = (id: number, extra: Partial<ProveedorParaExportar> = {}): ProveedorParaExportar => ({
   id,
