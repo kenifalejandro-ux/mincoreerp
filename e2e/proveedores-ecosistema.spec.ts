@@ -8,6 +8,8 @@
  *    «Dashboard» ni «Combustible», hay el menú propio del ecosistema.
  * 3. El Directorio muestra un proveedor sembrado, con su uso Interno / Externo, y se puede abrir su ficha.
  * 4. «Volver al ERP» pasa otra vez por la pantalla de carga y devuelve al menú del ERP.
+ * 5. En un celular (393 px) ninguna pantalla del ecosistema ensancha la PÁGINA: las tablas se mueven por dentro,
+ *    la página no (antes el Directorio medía 877 px por el «sr-only» de la columna de acciones).
  */
 import { randomBytes } from "node:crypto";
 
@@ -91,4 +93,71 @@ test("entrar al ecosistema, ver el directorio y volver al ERP", async ({ page })
   await expect(page.getByTestId("pantalla-de-carga")).toBeVisible();
   await expect(page.getByRole("button", { name: "Dashboard" })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId("pantalla-de-carga")).toHaveCount(0);
+});
+
+test("en un celular ninguna pantalla del ecosistema ensancha la página", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 393, height: 852 });
+  const nombre = `PROVEEDOR CELULAR ${randomBytes(3).toString("hex").toUpperCase()}`;
+  const admin = adminA();
+  await loginPorUI(page, admin.email, admin.password);
+  // Con al menos un proveedor la tabla del Directorio tiene su columna de acciones (la que ensanchaba la página).
+  const alta = await page.request.post("/api/erp/proveedores", {
+    data: {
+      nombre,
+      ruc: "",
+      abastece_tanque: true,
+      abastece_ruta: false,
+      abastece_urea: false,
+      abastece_urea_ruta: false,
+    },
+  });
+  expect(alta.ok(), await alta.text()).toBeTruthy();
+  const id = (await alta.json()).id as number;
+
+  const anchos = () =>
+    page.evaluate(() => ({
+      pagina: document.documentElement.scrollWidth,
+      pantalla: document.documentElement.clientWidth,
+    }));
+  const pantallas: [string, () => Promise<void>][] = [
+    [
+      "/proveedores",
+      async () => void (await expect(page.getByRole("heading", { level: 1 })).toBeVisible()),
+    ],
+    [
+      "/proveedores/directorio",
+      async () =>
+        void (await expect(page.getByRole("row", { name: new RegExp(nombre) })).toBeVisible()),
+    ],
+    [
+      `/proveedores/directorio/${id}`,
+      async () =>
+        void (await expect(
+          page.getByRole("dialog", { name: "Detalle del proveedor" })
+        ).toBeVisible()),
+    ],
+    [
+      "/proveedores/precios",
+      async () => void (await expect(page.getByRole("heading", { level: 1 })).toBeVisible()),
+    ],
+    [
+      "/proveedores/compras",
+      async () => void (await expect(page.getByRole("heading", { level: 1 })).toBeVisible()),
+    ],
+    [
+      "/proveedores/historial",
+      async () => void (await expect(page.getByRole("heading", { level: 1 })).toBeVisible()),
+    ],
+  ];
+  for (const [ruta, listo] of pantallas) {
+    await page.goto(ruta);
+    await listo();
+    await page.waitForTimeout(500);
+    const { pagina, pantalla } = await anchos();
+    expect(
+      pagina,
+      `${ruta}: la página mide ${pagina} px en una pantalla de ${pantalla}`
+    ).toBeLessThanOrEqual(pantalla);
+  }
 });
