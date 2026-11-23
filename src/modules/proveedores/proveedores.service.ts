@@ -702,14 +702,27 @@ export class ProveedoresService {
   ): Promise<{ gestiona: boolean; tolerancia: number; compras: CompraDto[] }> {
     const filas = await listarCompras(client, tenantId, alcance, gestiona);
     const ids = filas.filter((f) => f.recepcion_id !== null).map((f) => Number(f.recepcion_id));
-    const [recepciones, tolerancia] = await Promise.all([
+    const sedeIds = [
+      ...new Set(
+        filas
+          .map((f) => Number((f as { grifo_interno_id?: number }).grifo_interno_id))
+          .filter((n) => Number.isSafeInteger(n))
+      ),
+    ];
+    const [recepciones, tolerancia, sedes] = await Promise.all([
       this.repository.recepcionesDeCompras(client, tenantId, ids),
       obtenerTolerancia(client, tenantId),
+      this.repository.etiquetasDeSedes(client, tenantId, sedeIds),
     ]);
     return {
       gestiona,
       tolerancia,
-      compras: armarCompras(filas, new Map(recepciones.map((r) => [Number(r.id), r])), tolerancia),
+      compras: armarCompras(
+        filas,
+        new Map(recepciones.map((r) => [Number(r.id), r])),
+        tolerancia,
+        sedes
+      ),
     };
   }
 

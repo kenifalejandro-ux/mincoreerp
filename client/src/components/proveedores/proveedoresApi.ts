@@ -191,6 +191,8 @@ export interface CompraDeCisterna {
   numeroDocumento: string;
   fechaCompra: string;
   llegadaEstimada: string;
+  /** «Sede · tanque» a la que llega, como se eligió en «Registrar compra». */
+  sedeDeLlegada: string | null;
   cantidadFacturada: number;
   costoUnitario: number;
   total: number;

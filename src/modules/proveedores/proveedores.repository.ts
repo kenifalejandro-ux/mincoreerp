@@ -247,6 +247,24 @@ export class ProveedoresRepository {
     return r.rows[0];
   }
 
+  /** «Sede · tanque» de cada punto de llegada de las compras, por su id (incluye los desactivados: una compra
+   *  vieja puede llegar a un tanque que ya no se usa). */
+  async etiquetasDeSedes(
+    client: PoolClient,
+    tenantId: string,
+    ids: number[]
+  ): Promise<Map<number, string>> {
+    if (ids.length === 0) return new Map();
+    const r = await client.query<{ id: number; etiqueta: string }>(
+      `SELECT g.id, s.nombre || ' · ' || g.nombre AS etiqueta
+         FROM grifos_internos g
+         JOIN sedes s ON s.id = g.sede_id AND s.tenant_id = g.tenant_id
+        WHERE g.tenant_id = $1 AND g.id = ANY($2::int[])`,
+      [tenantId, ids]
+    );
+    return new Map(r.rows.map((f) => [Number(f.id), f.etiqueta]));
+  }
+
   /** Guarda SOLO la ciudad en la ficha (crea la fila si no existe y deja lo demás como está). Es lo que usa el
    *  alta y la edición del proveedor; los demás datos de la ficha se editan en su pestaña. */
   async guardarCiudad(

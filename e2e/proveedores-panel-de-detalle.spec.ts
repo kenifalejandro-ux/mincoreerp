@@ -68,6 +68,8 @@ test("el panel de detalle abre proveedores y compras sin saltar al Directorio", 
       llegada_estimada: dia(4),
       cantidad_facturada: 1000,
       costo_unitario: 15.5,
+      transportista: "Transportes Andes SAC",
+      transportista_ruc: "20123456780",
     },
   });
   expect(compra.ok(), await compra.text()).toBeTruthy();
@@ -136,12 +138,40 @@ test("el panel de detalle abre proveedores y compras sin saltar al Directorio", 
   // 3. Compras y recepciones: la compra se abre en su panel; de ahí, a la ficha del proveedor.
   await menu.getByRole("button", { name: "Compras y recepciones" }).click();
   await page.getByPlaceholder("Buscar por compra, guía, producto o proveedor...").fill(marca);
-  await page.getByRole("button", { name: `Abrir compra PNL-${marca}` }).click();
+  // El nombre del proveedor abre SU ficha (en la pestaña Compras); no el detalle de la compra.
+  await page.getByRole("button", { name: `Abrir ${nombre}`, exact: true }).click();
+  await expect(panel.getByRole("tab", { name: "Compras y recepciones" })).toHaveAttribute(
+    "aria-selected",
+    "true"
+  );
+  await panel.getByRole("button", { name: "Cerrar el panel" }).click();
+  await expect(panel).toHaveCount(0);
+
+  // Pulsar la fila (aquí, la celda del total) abre el detalle de lo que se ingresó en la compra.
+  const filaCompra = page.getByRole("row", { name: new RegExp(`PNL-${marca}`) });
+  await filaCompra.locator("td").nth(4).click();
   const detalleCompra = page.getByRole("complementary", { name: "Detalle de la compra" });
   await expect(detalleCompra).toBeVisible();
   await expect(
     detalleCompra.getByRole("heading", { name: `Compra PNL-${marca}`, level: 1 })
   ).toBeVisible();
+  // Las mismas etiquetas y valores del formulario «Registrar compra».
+  const valorDe = (etiqueta: string) => detalleCompra.locator(`dt:text-is("${etiqueta}") + dd`);
+  for (const [etiqueta, valor] of [
+    ["Proveedor", nombre],
+    ["Combustible", "Diésel B5"],
+    ["Tipo de documento", "Factura"],
+    ["Número del documento", `PNL-${marca}`],
+    ["Cantidad facturada", "1,000"],
+    ["Unidad", "Galones"],
+    ["Costo por galón (S/)", "S/ 15.50"],
+    ["Empresa de transporte", "Transportes Andes SAC"],
+    ["RUC del transportista", "20123456780"],
+  ] as const) {
+    await expect(valorDe(etiqueta), etiqueta).toContainText(valor);
+  }
+  // La sede se dice como en el formulario: «Sede · tanque».
+  await expect(valorDe("Sede de llegada")).toContainText(" · ");
   await expect(detalleCompra.getByText("S/ 15,500.00")).toBeVisible();
   await expect(detalleCompra.getByText(/Aún no llega/)).toBeVisible();
   expect(ruta(page)).toBe("/proveedores/compras");

@@ -272,7 +272,7 @@ export default function GestionComercial({
                       className="text-left"
                       aria-label={`Abrir ${f.proveedorNombre}`}
                     >
-                      <span className="block font-semibold text-slate-900 hover:underline">
+                      <span className="block font-semibold text-slate-900">
                         {f.proveedorNombre}
                       </span>
                       <span className="block text-xs text-slate-500">

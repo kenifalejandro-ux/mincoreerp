@@ -26,6 +26,7 @@ interface Compra {
   numeroDocumento: string;
   estado: string;
   total: number;
+  sedeDeLlegada: string | null;
   motivoAnulacion: string | null;
   recepcion: { descargado: number; diferenciaGalones: number; fueraDeTolerancia: boolean } | null;
 }
@@ -171,6 +172,26 @@ describe("Compras y recepciones (solo lectura)", () => {
       diferenciaGalones: -50,
       fueraDeTolerancia: true,
     });
+  });
+
+  it("cada compra trae su sede de llegada, «Sede · tanque», como se eligió al registrarla", async () => {
+    const etiqueta = await withTenant(
+      a.tenant.id,
+      async (cl) =>
+        (
+          await cl.query<{ etiqueta: string }>(
+            `SELECT s.nombre || ' · ' || g.nombre AS etiqueta
+               FROM grifos_internos g JOIN sedes s ON s.id = g.sede_id AND s.tenant_id = g.tenant_id
+              WHERE g.tenant_id = $1 ORDER BY g.id LIMIT 1`,
+            [a.tenant.id]
+          )
+        ).rows[0].etiqueta
+    );
+    const r = await admin.get("/api/erp/proveedores/compras");
+    const cuerpo = r.body as Respuesta;
+    expect(cuerpo.compras.length).toBeGreaterThan(0);
+    for (const compra of cuerpo.compras) expect(compra.sedeDeLlegada).toBe(etiqueta);
+    expect(etiqueta).toContain(" · ");
   });
 
   it("el operador y Lectura solo ven las ya por llegar (como en Cisternas); sin la pestaña, 403", async () => {

@@ -84,42 +84,42 @@ export default function PanelDeCompra({
           </p>
         )}
 
-        <Panel kicker="Documento" titulo="Datos de la compra">
+        {/* Lo que se ingresó en «Registrar compra», con las mismas etiquetas y en el mismo orden. */}
+        <Panel kicker="Registro" titulo="Lo que se ingresó en la compra">
           <dl className="grid gap-x-8 gap-y-4 px-5 pb-5 pt-1 sm:grid-cols-2">
             <Dato
               etiqueta="Proveedor"
               valor={`${compra.proveedorNombre} · ${compra.proveedorCodigo}`}
             />
+            <Dato etiqueta="Combustible" valor={compra.combustible} />
             <Dato
-              etiqueta="Documento"
-              valor={`${ETIQUETA_DOCUMENTO[compra.tipoDocumento] ?? compra.tipoDocumento} ${compra.numeroDocumento}`}
+              etiqueta="Tipo de documento"
+              valor={ETIQUETA_DOCUMENTO[compra.tipoDocumento] ?? compra.tipoDocumento}
             />
-            <Dato etiqueta="Fecha de compra" valor={formatoDia(compra.fechaCompra)} />
-            <Dato etiqueta="Llegada estimada" valor={formatoDia(compra.llegadaEstimada)} />
-          </dl>
-        </Panel>
-
-        <Panel kicker="Producto" titulo={compra.combustible}>
-          <dl className="grid gap-x-8 gap-y-4 px-5 pb-5 pt-1 sm:grid-cols-3">
+            <Dato etiqueta="Número del documento" valor={compra.numeroDocumento} />
+            <Dato etiqueta="Fecha de emisión" valor={formatoDia(compra.fechaCompra)} />
+            <Dato
+              etiqueta="Llegada a planta (estimada)"
+              valor={formatoDia(compra.llegadaEstimada)}
+            />
             <Dato
               etiqueta="Cantidad facturada"
-              valor={formatoCantidad(compra.cantidadFacturada, compra.unidad)}
+              valor={compra.cantidadFacturada.toLocaleString("es-PE", { maximumFractionDigits: 2 })}
             />
+            <Dato etiqueta="Unidad" valor={compra.unidad === "L" ? "Litros" : "Galones"} />
+            <Dato etiqueta="Sede de llegada" valor={compra.sedeDeLlegada} />
             <Dato
-              etiqueta={`Precio por ${compra.unidad === "L" ? "litro" : "galón"}`}
+              etiqueta={`Costo por ${compra.unidad === "L" ? "litro" : "galón"} (S/)`}
               valor={formatoSoles(compra.costoUnitario)}
             />
-            <Dato etiqueta="Total" valor={formatoSoles(compra.total)} />
-          </dl>
-        </Panel>
-
-        <Panel kicker="Transporte" titulo="Quién lo trae">
-          <dl className="grid gap-x-8 gap-y-4 px-5 pb-5 pt-1 sm:grid-cols-2">
-            <Dato etiqueta="Placa" valor={compra.placa} />
-            <Dato etiqueta="Chofer" valor={compra.chofer} />
-            <Dato etiqueta="Transportista" valor={compra.transportista} />
+            <Dato etiqueta="Empresa de transporte" valor={compra.transportista} />
             <Dato etiqueta="RUC del transportista" valor={compra.transportistaRuc} />
+            {compra.placa && <Dato etiqueta="Placa" valor={compra.placa} />}
+            {compra.chofer && <Dato etiqueta="Chofer" valor={compra.chofer} />}
           </dl>
+          <p className="border-t border-slate-100 px-5 py-3 text-sm text-slate-600">
+            Total de la compra: <b className="text-slate-900">{formatoSoles(compra.total)}</b>
+          </p>
         </Panel>
 
         <Panel kicker="Recepción" titulo="Lo que llegó">
