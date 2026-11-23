@@ -14,7 +14,7 @@ import { randomBytes } from "node:crypto";
 
 import { test, expect, type Page } from "@playwright/test";
 
-import { loginPorUI } from "./fixtures/auth";
+import { loginPorUI, pulsarIngresar } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
 
 async function entrarAlEcosistema(page: Page) {
@@ -115,7 +115,7 @@ test("historial y auditoría: movimientos con quién, qué y sobre qué proveedo
     await operador.goto("/");
     await operador.getByLabel("Correo").fill(email);
     await operador.getByLabel("Contraseña").fill(temporal);
-    await operador.getByRole("button", { name: "Ingresar" }).click();
+    await pulsarIngresar(operador);
     await operador.locator("#passwordActual").fill(temporal);
     await operador.locator("#passwordNueva").fill(`${temporal}Nueva`);
     await operador.locator("#confirmacion").fill(`${temporal}Nueva`);

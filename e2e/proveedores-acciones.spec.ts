@@ -123,7 +123,7 @@ test("desactivar, reactivar y eliminar proveedores", async ({ page, browser }) =
   await fila(desdePanel)
     .getByRole("button", { name: new RegExp(desdePanel) })
     .click();
-  const panel = page.getByRole("complementary", { name: "Detalle del proveedor" });
+  const panel = page.getByRole("dialog", { name: "Detalle del proveedor" });
   await expect(
     panel.getByRole("heading", { name: new RegExp(desdePanel), level: 1 })
   ).toBeVisible();

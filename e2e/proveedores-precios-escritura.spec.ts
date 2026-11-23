@@ -144,7 +144,7 @@ test("nuevo precio de combustible y urea, confirmación del salto y anulación c
   await expect(anular).toHaveCount(0);
   // El aviso sale en el panel; el de «Precio cargado» de la pantalla de atrás sigue ahí.
   await expect(
-    page.getByRole("complementary", { name: "Detalle del proveedor" }).getByRole("status")
+    page.getByRole("dialog", { name: "Detalle del proveedor" }).getByRole("status")
   ).toContainText("Precio anulado");
   await expect(page.getByText(/anulado: Error de tipeo/)).toBeVisible({ timeout: 20_000 });
 

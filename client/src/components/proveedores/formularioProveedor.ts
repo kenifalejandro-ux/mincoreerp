@@ -34,8 +34,6 @@ export interface FormularioDeProveedor {
   ciudad: string;
   suministra: Suministra;
   uso: UsoDeProveedor;
-  /** Solo al editar. */
-  activo: boolean;
   /** Con valor = el proveedor tiene una mezcla que las listas no dicen: se edita con las cuatro casillas. */
   casillas: Banderas | null;
 }
@@ -79,7 +77,7 @@ export const hayBandera = (b: Banderas) =>
 
 /** El formulario de un proveedor nuevo (Combustible · Interno, como la maqueta) o el de uno que se edita. */
 export function formularioInicial(
-  proveedor?: Pick<Proveedor, "nombre" | "ruc" | "activo" | "combustible" | "urea"> & {
+  proveedor?: Pick<Proveedor, "nombre" | "ruc" | "combustible" | "urea"> & {
     ciudad?: string | null;
   }
 ): FormularioDeProveedor {
@@ -90,7 +88,6 @@ export function formularioInicial(
       ciudad: "",
       suministra: "combustible",
       uso: "interno",
-      activo: true,
       casillas: null,
     };
   }
@@ -107,7 +104,6 @@ export function formularioInicial(
     ciudad: proveedor.ciudad ?? "",
     suministra: seleccion?.suministra ?? "combustible",
     uso: seleccion?.uso ?? "interno",
-    activo: proveedor.activo,
     casillas: seleccion ? null : banderas,
   };
 }

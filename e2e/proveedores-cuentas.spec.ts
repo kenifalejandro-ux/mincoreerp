@@ -12,7 +12,7 @@ import { randomBytes } from "node:crypto";
 
 import { test, expect, type Browser, type Page } from "@playwright/test";
 
-import { loginPorUI } from "./fixtures/auth";
+import { loginPorUI, pulsarIngresar } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
 
 const NUMERO = "19412345678901234567";
@@ -44,7 +44,7 @@ async function entrarComoPersona(browser: Browser, email: string, clave: string,
   await pagina.goto("/");
   await pagina.getByLabel("Correo").fill(email);
   await pagina.getByLabel("Contraseña").fill(clave);
-  await pagina.getByRole("button", { name: "Ingresar" }).click();
+  await pulsarIngresar(pagina);
   if (primera) {
     await pagina.locator("#passwordActual").fill(clave);
     await pagina.locator("#passwordNueva").fill(`${clave}Nueva`);

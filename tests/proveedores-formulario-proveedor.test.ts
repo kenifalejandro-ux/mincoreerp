@@ -73,7 +73,6 @@ describe("formularioInicial", () => {
       ciudad: "",
       suministra: "combustible",
       uso: "interno",
-      activo: true,
       casillas: null,
     });
   });
@@ -93,9 +92,10 @@ describe("formularioInicial", () => {
   });
 
   it("una mezcla que las listas no dicen se edita con las cuatro casillas, sin perder nada", () => {
-    const f = formularioInicial(proveedor(uso(true, false), uso(false, true), { activo: false }));
+    const f = formularioInicial(proveedor(uso(true, false), uso(false, true)));
     expect(f.casillas).toEqual({ ...ninguna, abastece_tanque: true, abastece_urea_ruta: true });
-    expect(f.activo).toBe(false);
+    // El estado ya no es parte del formulario: se cambia con «Desactivar» / «Reactivar».
+    expect(f).not.toHaveProperty("activo");
     expect(cuerpoDelProveedor(f)).toMatchObject({
       abastece_tanque: true,
       abastece_ruta: false,

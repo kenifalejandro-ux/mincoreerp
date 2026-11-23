@@ -4,7 +4,7 @@
 // Comercial, Contratos, Documentos, Compras e Historial) dentro del panel lateral. Se abre desde el
 // Directorio, Gestión comercial, Compras e Historial sin cambiar de pantalla. Trae al proveedor por su id, así
 // que sirve desde cualquier pantalla (no depende de la lista del Directorio).
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import FichaDeProveedor from "./FichaDeProveedor";
 import type { PestanaFicha } from "./fichaProveedor";
@@ -38,21 +38,37 @@ export default function PanelDeProveedor({
   const [proveedor, setProveedor] = useState<ProveedorBasico | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const leer = useCallback(
-    () =>
-      obtenerProveedor(proveedorId)
-        .then((p) => {
-          setProveedor(p);
-          setError(null);
-        })
-        .catch((e: Error) => {
-          if (e instanceof ErrorDeApi && e.estado === 404) onNoExiste?.();
-          else setError(e.message);
-        }),
-    [proveedorId, onNoExiste]
-  );
+  // `onNoExiste` llega como una función nueva en cada vuelta del padre: si `leer` dependiera de ella, cualquier
+  // cambio de estado de arriba (editar, abrir el menú, «atrás») volvería a pedir el proveedor. Va en una ref.
+  const alNoExistir = useRef(onNoExiste);
   useEffect(() => {
+    alNoExistir.current = onNoExiste;
+  }, [onNoExiste]);
+  // Cada lectura lleva su número: solo la ÚLTIMA puede actualizar la pantalla (una respuesta lenta de antes de
+  // editar no pisa a la de después), y al cerrar el panel ninguna actualiza nada.
+  const ultimaLectura = useRef({ n: 0 });
+
+  const leer = useCallback(() => {
+    const lectura = ultimaLectura.current;
+    const numero = ++lectura.n;
+    return obtenerProveedor(proveedorId)
+      .then((p) => {
+        if (numero !== lectura.n) return;
+        setProveedor(p);
+        setError(null);
+      })
+      .catch((e: Error) => {
+        if (numero !== lectura.n) return;
+        if (e instanceof ErrorDeApi && e.estado === 404) alNoExistir.current?.();
+        else setError(e.message);
+      });
+  }, [proveedorId]);
+  useEffect(() => {
+    const lectura = ultimaLectura.current;
     void leer();
+    return () => {
+      lectura.n++;
+    };
   }, [leer]);
 
   const { acciones, dialogos } = useAccionesDeProveedor({

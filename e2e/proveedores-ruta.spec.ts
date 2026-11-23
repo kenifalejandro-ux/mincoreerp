@@ -14,7 +14,7 @@ import { randomBytes } from "node:crypto";
 
 import { test, expect, type Page } from "@playwright/test";
 
-import { loginPorUI } from "./fixtures/auth";
+import { loginPorUI, pulsarIngresar } from "./fixtures/auth";
 import { adminA, leerEnv } from "./fixtures/entorno";
 
 const ruta = (page: Page) => new URL(page.url()).pathname;
@@ -137,7 +137,7 @@ test("la dirección sigue a la pantalla: menú, F5, atrás y enlaces directos", 
   await page.goto(`/proveedores/directorio/${id}`);
   await page.getByLabel("Correo").fill(admin.email);
   await page.getByLabel("Contraseña").fill(admin.password);
-  await page.getByRole("button", { name: "Ingresar" }).click();
+  await pulsarIngresar(page);
   await expect(page.getByRole("heading", { name: new RegExp(nombre), level: 1 })).toBeVisible({
     timeout: 30_000,
   });
@@ -178,7 +178,7 @@ test("sin el módulo Proveedores, abrir /proveedores deja a la persona en su ini
     await operador.goto("/proveedores/directorio");
     await operador.getByLabel("Correo").fill(email);
     await operador.getByLabel("Contraseña").fill(temporal);
-    await operador.getByRole("button", { name: "Ingresar" }).click();
+    await pulsarIngresar(operador);
     await operador.locator("#passwordActual").fill(temporal);
     await operador.locator("#passwordNueva").fill(`${temporal}Nueva`);
     await operador.locator("#confirmacion").fill(`${temporal}Nueva`);
@@ -235,7 +235,7 @@ test("una empresa solo con Proveedores aterriza en el ecosistema, en /proveedore
   await page.goto("/");
   await page.getByLabel("Correo").fill(email);
   await page.getByLabel("Contraseña").fill(password);
-  await page.getByRole("button", { name: "Ingresar" }).click();
+  await pulsarIngresar(page);
   const cambio = page.locator("#passwordActual");
   await cambio.or(menuDe(page)).first().waitFor({ timeout: 20_000 });
   if (await cambio.isVisible()) {
@@ -254,7 +254,7 @@ test("una empresa solo con Proveedores aterriza en el ecosistema, en /proveedore
   await page.goto("/proveedores/directorio");
   await page.getByLabel("Correo").fill(email);
   await page.getByLabel("Contraseña").fill(`${password}Nueva`);
-  await page.getByRole("button", { name: "Ingresar" }).click();
+  await pulsarIngresar(page);
   await expect(
     page.getByRole("heading", { name: "Directorio de proveedores", level: 1 })
   ).toBeVisible({ timeout: 30_000 });
