@@ -36,8 +36,10 @@ describe("Gestión de proveedores: alta y edición", () => {
   const empresas: Empresa[] = [];
   let a: Empresa;
   let b: Empresa;
+  let c: Empresa; // solo Combustible
   let admin: Agente;
   let adminB: Agente;
+  let adminC: Agente;
 
   const ponerModulos = async (e: Empresa, modulos: string[]) => {
     const r = await request(app)
@@ -72,11 +74,14 @@ describe("Gestión de proveedores: alta y edición", () => {
   beforeAll(async () => {
     a = await crearTenantDePrueba(PASSWORD);
     b = await crearTenantDePrueba(PASSWORD);
-    empresas.push(a, b);
+    c = await crearTenantDePrueba(PASSWORD);
+    empresas.push(a, b, c);
     await ponerModulos(a, ["proveedores", "combustible"]);
     await ponerModulos(b, ["proveedores"]);
     admin = await entrar(a.usuario.email, a);
     adminB = await entrar(b.usuario.email, b);
+    await ponerModulos(c, ["combustible"]);
+    adminC = await entrar(c.usuario.email, c);
   });
 
   afterAll(async () => {
@@ -192,6 +197,90 @@ describe("Gestión de proveedores: alta y edición", () => {
       [a.tenant.id, id]
     );
     expect(acciones.rows.map((f) => f.accion)).toEqual(["proveedores.desactivar"]);
+  });
+
+  it("un nombre casi igual (otra capitalización, espacios de más, caracteres invisibles) es 409, al crear y al editar; el propio nombre no choca", async () => {
+    const original = await crear(admin, { nombre: "Grifo Parecido" });
+    expect(original.status, JSON.stringify(original.body)).toBe(201);
+    for (const nombre of ["GRIFO PARECIDO", "  grifo   parecido ", "Grifo\u200b Parecido"]) {
+      const r = await crear(admin, { nombre });
+      expect(r.status, JSON.stringify(nombre)).toBe(409);
+      // Dice cuál es el que ya existe, no el que se escribió.
+      expect(r.body.message).toBe('Ya existe un proveedor llamado "Grifo Parecido"');
+    }
+    // Editar otro proveedor para dejarlo con un nombre casi igual: 409.
+    const otro = (await crear(admin, { nombre: "Grifo Distinto" })).body.id;
+    const choque = await admin
+      .put(`/api/erp/proveedores/${otro}`)
+      .send(completo({ nombre: "GRIFO  PARECIDO" }));
+    expect(choque.status).toBe(409);
+    // Cambiar solo las mayúsculas del PROPIO nombre sí se puede.
+    const propio = await admin
+      .put(`/api/erp/proveedores/${original.body.id}`)
+      .send(completo({ nombre: "GRIFO PARECIDO" }));
+    expect(propio.status, JSON.stringify(propio.body)).toBe(200);
+    // Otra empresa no se entera.
+    expect((await crear(adminB, { nombre: "Grifo Parecido" })).status).toBe(201);
+    // Por la otra puerta (Combustible) rige la misma regla.
+    const porCombustible = await admin
+      .post("/api/erp/combustible/grifos")
+      .send({ nombre: "grifo parecido" });
+    expect(porCombustible.status).toBe(409);
+    expect(porCombustible.body.error).toMatch(/ya existe un proveedor llamado "GRIFO PARECIDO"/);
+    const nuevo = await admin
+      .post("/api/erp/combustible/grifos")
+      .send({ nombre: "Grifo Combustible" });
+    expect(nuevo.status, JSON.stringify(nuevo.body)).toBe(201);
+    const editarParecido = await admin.put(`/api/erp/combustible/grifos/${nuevo.body.id}`).send({
+      nombre: "GRIFO  PARECIDO",
+      activo: true,
+      abastece_ruta: true,
+      abastece_tanque: true,
+      abastece_urea: false,
+      abastece_urea_ruta: false,
+    });
+    expect(editarParecido.status).toBe(409);
+  });
+
+  it("con el módulo Proveedores, Combustible no cambia el estado (409); sin él, sigue pudiendo", async () => {
+    const cuerpo = (activo: boolean, nombre: string) => ({
+      nombre,
+      activo,
+      abastece_ruta: true,
+      abastece_tanque: true,
+      abastece_urea: false,
+      abastece_urea_ruta: false,
+    });
+    const id = (await crear(admin, { nombre: "ESTADO EN PROVEEDORES" })).body.id;
+    const desactivar = await admin
+      .put(`/api/erp/combustible/grifos/${id}`)
+      .send(cuerpo(false, "ESTADO EN PROVEEDORES"));
+    expect(desactivar.status).toBe(409);
+    expect(desactivar.body.error).toMatch(/Gestión de proveedores/);
+    expect((await admin.get(`/api/erp/proveedores/${id}`)).body.activo).toBe(true);
+    // Editar lo demás (sin cambiar el estado) sí.
+    const editar = await admin
+      .put(`/api/erp/combustible/grifos/${id}`)
+      .send(cuerpo(true, "ESTADO EN PROVEEDORES II"));
+    expect(editar.status, JSON.stringify(editar.body)).toBe(200);
+    // Una vez desactivado por la vía correcta, Combustible tampoco lo reactiva.
+    await admin
+      .patch(`/api/erp/proveedores/${id}/estado`)
+      .send({ activo: false, motivo: "Dejó de entregar" });
+    const reactivar = await admin
+      .put(`/api/erp/combustible/grifos/${id}`)
+      .send(cuerpo(true, "ESTADO EN PROVEEDORES II"));
+    expect(reactivar.status).toBe(409);
+    // Una empresa SOLO con Combustible no cambia en nada: desactiva como siempre.
+    const solo = await adminC
+      .post("/api/erp/combustible/grifos")
+      .send({ nombre: "SOLO COMBUSTIBLE" });
+    expect(solo.status, JSON.stringify(solo.body)).toBe(201);
+    const baja = await adminC
+      .put(`/api/erp/combustible/grifos/${solo.body.id}`)
+      .send(cuerpo(false, "SOLO COMBUSTIBLE"));
+    expect(baja.status, JSON.stringify(baja.body)).toBe(200);
+    expect(baja.body.activo).toBe(false);
   });
 
   it("un proveedor inexistente, de otra empresa o el comodín «Otros» no se editan (404)", async () => {

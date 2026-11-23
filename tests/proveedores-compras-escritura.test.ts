@@ -38,7 +38,7 @@ interface Compra {
 
 describe("Compras y recepciones: escribir desde el ecosistema", () => {
   const empresas: Empresa[] = [];
-  let a: Empresa; // solo Proveedores
+  let a: Empresa; // Proveedores + Combustible
   let c: Empresa; // Proveedores + Combustible
   let admin: Agente;
   let adminC: Agente;
@@ -119,7 +119,7 @@ describe("Compras y recepciones: escribir desde el ecosistema", () => {
     a = await crearTenantDePrueba(PASSWORD);
     c = await crearTenantDePrueba(PASSWORD);
     empresas.push(a, c);
-    await modulos(a, ["proveedores"]);
+    await modulos(a, ["proveedores", "combustible"]);
     await modulos(c, ["proveedores", "combustible"]);
     const p = await proveedores(a);
     sedeA = p.sede;
@@ -135,7 +135,7 @@ describe("Compras y recepciones: escribir desde el ecosistema", () => {
     await closeDatabase();
   });
 
-  it("sin Combustible: el formulario trae lo necesario y la compra va registrada → por llegar → anulada", async () => {
+  it("el formulario trae lo necesario y la compra va registrada → por llegar → anulada", async () => {
     // Un precio vigente del proveedor para sugerir el costo.
     await withTenant(a.tenant.id, (cl) =>
       cl.query(

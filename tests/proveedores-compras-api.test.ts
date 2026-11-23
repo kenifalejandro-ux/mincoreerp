@@ -38,9 +38,10 @@ interface Respuesta {
 
 describe("Compras y recepciones (solo lectura)", () => {
   const empresas: Empresa[] = [];
-  let a: Empresa; // solo Proveedores
+  let a: Empresa; // Proveedores + Combustible (las compras son de Combustible)
   let b: Empresa; // otra empresa
   let c: Empresa; // Proveedores + Combustible, para el alcance por sede
+  let d: Empresa; // solo Proveedores: sin Combustible no hay compras
   let admin: Agente;
   const docs = (r: Respuesta) => r.compras.map((x) => x.numeroDocumento).sort();
 
@@ -138,10 +139,12 @@ describe("Compras y recepciones (solo lectura)", () => {
     a = await crearTenantDePrueba(PASSWORD);
     b = await crearTenantDePrueba(PASSWORD);
     c = await crearTenantDePrueba(PASSWORD);
-    empresas.push(a, b, c);
-    await modulos(a, ["proveedores"]);
-    await modulos(b, ["proveedores"]);
+    d = await crearTenantDePrueba(PASSWORD);
+    empresas.push(a, b, c, d);
+    await modulos(a, ["proveedores", "combustible"]);
+    await modulos(b, ["proveedores", "combustible"]);
     await modulos(c, ["proveedores", "combustible"]);
+    await modulos(d, ["proveedores"]);
     await sembrar(a, "A");
     admin = await entrar(a.usuario.email, a);
   });
@@ -151,7 +154,7 @@ describe("Compras y recepciones (solo lectura)", () => {
     await closeDatabase();
   });
 
-  it("sin Combustible, el admin ve todas las compras con su estado y la recepción de la recibida", async () => {
+  it("el admin ve todas las compras con su estado y la recepción de la recibida", async () => {
     const r = await admin.get("/api/erp/proveedores/compras");
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     const cuerpo = r.body as Respuesta;
@@ -172,6 +175,22 @@ describe("Compras y recepciones (solo lectura)", () => {
       diferenciaGalones: -50,
       fueraDeTolerancia: true,
     });
+  });
+
+  it("sin el módulo Combustible la sección Compras no existe (404, no 403 ni lista vacía); los precios siguen", async () => {
+    const soloProveedores = await entrar(d.usuario.email, d);
+    for (const ruta of ["/compras", "/compras/formulario"]) {
+      const r = await soloProveedores.get(`/api/erp/proveedores${ruta}`);
+      expect(r.status, ruta).toBe(404);
+    }
+    expect((await soloProveedores.post("/api/erp/proveedores/compras").send({})).status).toBe(404);
+    expect(
+      (await soloProveedores.patch("/api/erp/proveedores/compras/1/anular").send({ motivo: "x" }))
+        .status
+    ).toBe(404);
+    // Lo demás del ecosistema no depende de Combustible.
+    expect((await soloProveedores.get("/api/erp/proveedores")).status).toBe(200);
+    expect((await soloProveedores.get("/api/erp/proveedores/precios")).status).toBe(200);
   });
 
   it("cada compra trae su sede de llegada, «Sede · tanque», como se eligió al registrarla", async () => {

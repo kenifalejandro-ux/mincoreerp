@@ -153,6 +153,12 @@ router.get(
 const alcanceSiHayCombustible: RequestHandler = (req, res, next) =>
   tieneModulo(req.usuario, "combustible") ? cargarAlcance(req, res, next) : next();
 
+// Las compras son de Combustible: sin ese módulo la sección no existe (se omite, como en el menú), no es un 403.
+router.use("/compras", (req, res, next) => {
+  if (tieneModulo(req.usuario, "combustible")) return next();
+  res.status(404).json({ ok: false, message: "No encontrado" });
+});
+
 router.get(
   "/compras",
   alcanceSiHayCombustible,

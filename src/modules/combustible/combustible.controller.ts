@@ -4,6 +4,7 @@ import { pestanaPermitida } from "../../server/services/permisosPestanas.service
 import { Request, Response } from "express";
 import { withTenant } from "../../server/config/database";
 import { SQL_EMPRESA_TIENE_FLOTA } from "../../server/shared/utils/modulosEmpresa";
+import { tieneModulo } from "../../server/shared/utils/modulos";
 import { getTenantId } from "../../server/shared/utils/request";
 import { parsePaginacion, armarRespuestaPaginada } from "../../server/shared/utils/pagination";
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
@@ -126,6 +127,7 @@ import {
 import { sanearNombreArchivo } from "../../server/services/documentStorage";
 import {
   CombustibleService,
+  EstadoSoloEnProveedoresError,
   RecepcionExcedeCapacidadError,
   uuidDerivado,
   type ExcedenteRepartido,
@@ -6883,7 +6885,9 @@ export class CombustibleController {
       const id = Number(req.params.id);
       const data = req.validatedBody as ActualizarGrifoCombustibleInput;
       const grifo = await withTenant(tenantId, (client) =>
-        service.actualizarGrifo(client, tenantId, id, data)
+        service.actualizarGrifo(client, tenantId, id, data, {
+          estadoSoloEnProveedores: tieneModulo(req.usuario, "proveedores"),
+        })
       );
       if (!grifo) {
         res.status(404).json({ error: "Proveedor no encontrado" });
@@ -6907,6 +6911,10 @@ export class CombustibleController {
       res.json(grifo);
     } catch (err) {
       if (err instanceof Error && err.message.includes("ya existe un proveedor")) {
+        res.status(409).json({ error: err.message });
+        return;
+      }
+      if (err instanceof EstadoSoloEnProveedoresError) {
         res.status(409).json({ error: err.message });
         return;
       }

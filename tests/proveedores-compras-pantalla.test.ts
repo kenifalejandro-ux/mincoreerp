@@ -99,17 +99,24 @@ describe("Compras y recepciones: quién ve la entrada del menú", () => {
   const u = (
     rol: string,
     permisosPestanas?: Record<string, boolean>,
-    modulos = ["proveedores"]
+    modulos = ["proveedores", "combustible"]
   ) => ({
     rol,
     modulosPermitidos: modulos,
     permisosPestanas,
   });
-  it("admin, operador y Lectura sí (como Cisternas); hace falta el módulo de Proveedores", () => {
+  it("admin, operador y Lectura sí (como Cisternas); hacen falta los módulos Proveedores y Combustible", () => {
     for (const rol of ["admin", "operador", "lectura"]) {
       expect(puedeVerComprasDeProveedores(u(rol))).toBe(true);
     }
     expect(puedeVerComprasDeProveedores(u("admin", undefined, ["combustible"]))).toBe(false);
+    // Las compras son de Combustible: sin ese módulo la entrada no existe, ni para el admin.
+    expect(puedeVerComprasDeProveedores(u("admin", undefined, ["proveedores"]))).toBe(false);
+    expect(
+      puedeVerComprasDeProveedores(
+        u("conductor_ruta", { "combustible:cisternas": true }, ["proveedores"])
+      )
+    ).toBe(false);
     expect(puedeVerComprasDeProveedores(null)).toBe(false);
   });
   it("un permiso guardado manda sobre el perfil", () => {

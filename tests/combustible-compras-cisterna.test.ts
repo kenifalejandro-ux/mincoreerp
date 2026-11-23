@@ -214,14 +214,11 @@ describe("combustible: compras de cisterna", () => {
     const r2 = await admin.post(`${BASE}/compras-cisterna`).send(cuerpo({ grifo_id: 99999999 }));
     expect(r2.status).toBe(400);
     const inactivo = (await admin.post(`${BASE}/grifos`).send({ nombre: idUnico("OFF") })).body.id;
-    await admin.put(`${BASE}/grifos/${inactivo}`).send({
-      nombre: idUnico("OFF"),
-      activo: false,
-      abastece_ruta: true,
-      abastece_tanque: true,
-      abastece_urea: false,
-      abastece_urea_ruta: false,
-    });
+    // El estado de un proveedor se cambia desde Gestión de proveedores (con motivo).
+    const baja = await admin
+      .patch(`/api/erp/proveedores/${inactivo}/estado`)
+      .send({ activo: false, motivo: "Prueba de compras" });
+    expect(baja.status, JSON.stringify(baja.body)).toBe(200);
     const r3 = await admin.post(`${BASE}/compras-cisterna`).send(cuerpo({ grifo_id: inactivo }));
     expect(r3.status, JSON.stringify(r3.body)).toBe(400);
   });
