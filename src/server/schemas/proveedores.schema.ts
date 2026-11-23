@@ -40,11 +40,13 @@ export const crearProveedorSchema = z
     path: ["abastece_tanque"],
   });
 
+/** `activo` ya NO se edita acá: desactivar y reactivar van por `PATCH /estado` (que exige el motivo y deja su
+ *  propia acción en la bitácora). Se acepta si llega (clientes viejos) pero se ignora. */
 export const actualizarProveedorSchema = z.object({
   nombre,
   ruc,
   ciudad,
-  activo: z.boolean(),
+  activo: z.boolean().optional(),
   ...banderas,
 });
 
@@ -105,7 +107,14 @@ const correo = z
 export const guardarDatosProveedorSchema = z
   .object({
     direccion: textoOpcional(250),
-    ciudad: textoOpcional(80),
+    /** Ausente = se conserva la que está (el alta y la edición del proveedor también la guardan); vacía o
+     *  `null` = se borra. */
+    ciudad: z
+      .string()
+      .trim()
+      .max(80, "La ciudad no puede pasar de 80 caracteres")
+      .nullish()
+      .transform((v) => (v === undefined ? undefined : v ? v : null)),
     telefono,
     correo,
     forma_pago: z

@@ -290,6 +290,60 @@ describe("Gestión de proveedores: desactivar, reactivar y eliminar", () => {
     expect(await auditoria("proveedores.eliminar", conCompra.id)).toEqual([]);
   });
 
+  it("dos eliminaciones a la vez: una borra y la otra recibe 404; la bitácora queda con UNA fila que cuenta las cuentas que se fueron (sin números)", async () => {
+    const NUMEROS = ["19412345678901234567", "00198765432109876543"];
+    for (let vuelta = 1; vuelta <= 3; vuelta++) {
+      const p = await nuevo(admin, `DOBLE ELIMINACION ${vuelta}`);
+      for (const [i, numero] of NUMEROS.entries()) {
+        const cuenta = await admin.post(`/api/erp/proveedores/${p.id}/cuentas`).send({
+          banco: i === 0 ? "BCP" : "BBVA",
+          tipo_cuenta: "corriente",
+          moneda: "PEN",
+          principal: i === 0,
+          numero,
+        });
+        expect(cuenta.status, JSON.stringify(cuenta.body)).toBe(201);
+      }
+      const [uno, otro] = await Promise.all([
+        admin.delete(`/api/erp/proveedores/${p.id}`),
+        admin.delete(`/api/erp/proveedores/${p.id}`),
+      ]);
+      expect([uno.status, otro.status].sort(), `vuelta ${vuelta}`).toEqual([200, 404]);
+      const filas = await auditoria("proveedores.eliminar", p.id);
+      expect(filas, `vuelta ${vuelta}`).toHaveLength(1);
+      expect(filas[0]).toMatchObject({ proveedorId: p.id, cuentasBorradas: 2 });
+      for (const numero of NUMEROS) expect(JSON.stringify(filas)).not.toContain(numero);
+      expect(await filasDe("proveedores_cuentas_bancarias", p.id)).toBe(0);
+    }
+  });
+
+  it("un precio que entra mientras se elimina gana la base: 409 y el proveedor sigue ahí", async () => {
+    const p = await nuevo(admin, "PRECIO EN CARRERA");
+    // Otra transacción inserta un precio y todavía no confirma: el DELETE queda esperando esa fila.
+    const otra = await pool.connect();
+    try {
+      await otra.query("BEGIN");
+      await otra.query("SELECT set_config('app.tenant_id', $1, true)", [a.tenant.id]);
+      await otra.query(
+        `INSERT INTO combustible_precios (tenant_id, tipo_combustible, grifo_id, precio_unitario, vigente_desde)
+         VALUES ($1, 'diesel_b5', $2, 15.5, now())`,
+        [a.tenant.id, p.id]
+      );
+      // `.then` dispara la petición (supertest es perezoso).
+      const borrando = admin.delete(`/api/erp/proveedores/${p.id}`).then((r) => r);
+      await new Promise((r) => setTimeout(r, 400));
+      await otra.query("COMMIT");
+      const r = await borrando;
+      expect(r.status, JSON.stringify(r.body)).toBe(409);
+      expect(r.body.message).toMatch(/Desactívalo/);
+    } finally {
+      otra.release();
+    }
+    expect((await admin.get(`/api/erp/proveedores/${p.id}`)).status).toBe(200);
+    expect(await filasDe("combustible_precios", p.id)).toBe(1);
+    expect(await auditoria("proveedores.eliminar", p.id)).toEqual([]);
+  });
+
   it("solo el admin elimina; el operador y Lectura reciben 403; otra empresa, 404", async () => {
     const p = await nuevo(admin, "SOLO ADMIN");
     for (const ag of [operador, lectura]) {

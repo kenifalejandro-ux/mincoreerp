@@ -950,15 +950,20 @@ export class ProveedoresService {
     };
   }
 
-  /** Elimina un proveedor sin historia. Con historia es 409 (se desactiva). Devuelve lo que se borró. */
-  async eliminar(client: PoolClient, tenantId: string, id: number): Promise<ProveedorDto> {
+  /** Elimina un proveedor sin historia. Con historia es 409 (se desactiva). Devuelve lo que se borró y cuántas
+   *  cuentas bancarias se fueron con él (para la bitácora). */
+  async eliminar(
+    client: PoolClient,
+    tenantId: string,
+    id: number
+  ): Promise<{ proveedor: ProveedorDto; cuentasBorradas: number }> {
     await this.exigirProveedor(client, tenantId, id);
     const movimientos = await this.repository.movimientosDe(client, tenantId, id);
     if (hayMovimientos(movimientos)) throw new AppError(409, mensajeDeNoEliminable(movimientos));
     try {
-      const fila = await this.repository.eliminar(client, tenantId, id);
-      if (!fila) throw new AppError(404, "Proveedor no encontrado");
-      return aDto(fila);
+      const borrado = await this.repository.eliminar(client, tenantId, id);
+      if (!borrado) throw new AppError(404, "Proveedor no encontrado");
+      return { proveedor: aDto(borrado.proveedor), cuentasBorradas: borrado.cuentasBorradas };
     } catch (err) {
       // Algo nuevo lo ató justo ahora (la base lo impide con una llave foránea).
       if ((err as { code?: string }).code === "23503") {

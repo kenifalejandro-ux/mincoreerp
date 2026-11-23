@@ -94,7 +94,11 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const tenantId = getTenantId(req);
     const usuario = req.usuario!;
-    const crudo = typeof req.query.ids === "string" ? req.query.ids : undefined;
+    // `ids=1&ids=2` o `ids[]=1` llegan como arreglo: antes se ignoraban y exportaban TODO sin decirlo.
+    if (req.query.ids !== undefined && typeof req.query.ids !== "string") {
+      throw new AppError(400, "Lista de proveedores inválida");
+    }
+    const crudo = req.query.ids as string | undefined;
     let ids: number[] | undefined;
     if (crudo !== undefined) {
       const partes = crudo === "" ? [] : crudo.split(",");
@@ -598,12 +602,14 @@ router.post(
     const numero = await withTenant(tenantId, (client) =>
       service.numeroCompleto(client, tenantId, id, cuentaId)
     );
+    // `estricto`: sin constancia no se entrega el número (si la bitácora falla, la respuesta es 503).
     await registrarAuditoria({
       accion: "proveedores.cuenta_ver",
       tenantId,
       usuarioId: req.usuario!.id,
       detalle: { proveedorId: id, cuentaId, ultimos4: numero.slice(-4) },
       contexto: contextoAuditoriaModulo(req),
+      estricto: true,
     });
     res.setHeader("Cache-Control", "no-store");
     res.json({ numero });
@@ -710,11 +716,16 @@ router.get(
     const tenantId = getTenantId(req);
     const q = req.query;
     const categoria = typeof q.categoria === "string" ? q.categoria : undefined;
-    if (categoria !== undefined && !(categoria in PATRON_DE_CATEGORIA)) {
+    // hasOwn y no `in`: «constructor» o «__proto__» salen del prototipo y no son categorías.
+    if (categoria !== undefined && !Object.hasOwn(PATRON_DE_CATEGORIA, categoria)) {
       throw new AppError(400, "Categoría de historial inválida");
     }
-    const fecha = (v: unknown) =>
-      typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : undefined;
+    // Un día que no existe (2026-02-31) se ignora como cualquier otro texto raro: Postgres lo rechazaría con 500.
+    const fecha = (v: unknown) => {
+      if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return undefined;
+      const d = new Date(`${v}T00:00:00Z`);
+      return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v ? v : undefined;
+    };
     const antesDe =
       typeof q.antesDe === "string" && /^\d{1,18}$/.test(q.antesDe) ? q.antesDe : undefined;
     const proveedorId =
@@ -857,7 +868,7 @@ router.delete(
     const tenantId = getTenantId(req);
     const id = Number(req.params.id);
     if (!Number.isSafeInteger(id) || id <= 0) throw new AppError(400, "Proveedor inválido");
-    const eliminado = await withTenant(tenantId, (client) =>
+    const { proveedor: eliminado, cuentasBorradas } = await withTenant(tenantId, (client) =>
       service.eliminar(client, tenantId, id)
     );
     await registrarAuditoria({
@@ -869,6 +880,8 @@ router.delete(
         codigo: eliminado.codigo,
         nombre: eliminado.nombre,
         tipos: eliminado.tipos,
+        // Las cuentas bancarias se van con el proveedor: queda cuántas (nunca sus números).
+        ...(cuentasBorradas > 0 ? { cuentasBorradas } : {}),
       },
       contexto: contextoAuditoriaModulo(req),
     });
