@@ -43,6 +43,10 @@ import {
 } from "../../server/services/documentStorage";
 import type { DriverDocumento } from "../../server/services/documentStorage";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
+import {
+  claveDeNombre,
+  nombreParecidoExistente,
+} from "../../server/shared/utils/nombreDeProveedor";
 import { esViolacionForeignKey } from "../../server/shared/utils/pgError";
 import { CombustibleRepository } from "./combustible.repository";
 import { huellaDeRegistro, idempotentInsert } from "../../server/shared/utils/idempotentInsert";
@@ -213,6 +217,15 @@ export function costoPorLitroDelTotal(
 type FilaDespachoCreada = NonNullable<
   Awaited<ReturnType<CombustibleService["crearDespacho"]>>["fila"]
 >;
+
+/** Con el módulo Proveedores, el estado de un proveedor (activo / desactivado) se cambia desde allá. */
+export class EstadoSoloEnProveedoresError extends Error {
+  constructor() {
+    super(
+      "El estado de un proveedor se cambia desde Gestión de proveedores (Desactivar o Reactivar)."
+    );
+  }
+}
 
 export class CombustibleService {
   private repository = new CombustibleRepository();
@@ -7857,12 +7870,13 @@ export class CombustibleService {
     return this.repository.findGrifosDeRutaParaFormulario(client, tenantId);
   }
 
-  crearGrifo(
+  async crearGrifo(
     client: PoolClient,
     tenantId: string,
     usuarioId: string,
     data: CrearGrifoCombustibleInput
   ) {
+    await this.exigirNombreDeGrifoLibre(client, tenantId, data.nombre);
     return this.repository.crearGrifo(client, tenantId, usuarioId, {
       nombre: data.nombre,
       ruc: data.ruc,
@@ -7873,12 +7887,24 @@ export class CombustibleService {
     });
   }
 
-  actualizarGrifo(
+  /** `estadoSoloEnProveedores`: la persona tiene el módulo Proveedores, donde se desactiva y reactiva (con motivo y su
+   *  propia bitácora): acá el estado no se cambia. Sin ese módulo, nada cambia. */
+  async actualizarGrifo(
     client: PoolClient,
     tenantId: string,
     id: number,
-    data: ActualizarGrifoCombustibleInput
+    data: ActualizarGrifoCombustibleInput,
+    opciones: { estadoSoloEnProveedores?: boolean } = {}
   ) {
+    const actual = await this.repository.findGrifoPorId(client, tenantId, id);
+    if (!actual) return null;
+    if (opciones.estadoSoloEnProveedores && actual.activo !== data.activo) {
+      throw new EstadoSoloEnProveedoresError();
+    }
+    // Solo si el nombre CAMBIA de verdad (uno casi repetido de antes se sigue pudiendo editar en lo demás).
+    if (claveDeNombre(actual.nombre) !== claveDeNombre(data.nombre)) {
+      await this.exigirNombreDeGrifoLibre(client, tenantId, data.nombre, id);
+    }
     return this.repository.actualizarGrifo(client, tenantId, id, {
       nombre: data.nombre,
       activo: data.activo,
@@ -7887,6 +7913,18 @@ export class CombustibleService {
       abasteceUrea: data.abastece_urea,
       abasteceUreaRuta: data.abastece_urea_ruta,
     });
+  }
+
+  private async exigirNombreDeGrifoLibre(
+    client: PoolClient,
+    tenantId: string,
+    nombre: string,
+    exceptoId?: number
+  ) {
+    const parecido = await nombreParecidoExistente(client, tenantId, nombre, exceptoId);
+    // El texto «ya existe un proveedor» es el que el controlador convierte en 409.
+    if (parecido !== null)
+      throw new Error(`ya existe un proveedor llamado "${parecido}" en este tenant`);
   }
 
   /** Un grifo solo sirve para el rol con el que está marcado (migrations/0065).

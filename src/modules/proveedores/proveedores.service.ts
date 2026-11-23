@@ -8,6 +8,10 @@
 import type { PoolClient } from "pg";
 
 import { AppError } from "../../server/shared/middlewares/error.middleware";
+import {
+  claveDeNombre,
+  nombreParecidoExistente,
+} from "../../server/shared/utils/nombreDeProveedor";
 import { cifrar, descifrar, huellaDe } from "../../server/shared/utils/platformCrypto";
 import {
   calcularFichaCompleta,
@@ -437,6 +441,19 @@ export class ProveedoresService {
   }
 
   // ── Ficha (PR3a): datos de contacto, condiciones de pago y personas de contacto ───────────────────
+
+  /** 409 si ya hay un proveedor con un nombre igual o casi igual (otra capitalización, espacios de más). */
+  private async exigirNombreLibre(
+    client: PoolClient,
+    tenantId: string,
+    nombre: string,
+    exceptoId?: number
+  ) {
+    const parecido = await nombreParecidoExistente(client, tenantId, nombre, exceptoId);
+    if (parecido !== null) {
+      throw new ProveedorDuplicadoError(`Ya existe un proveedor llamado "${parecido}"`);
+    }
+  }
 
   private async exigirProveedor(client: PoolClient, tenantId: string, id: number) {
     const fila = await this.repository.buscarPorId(client, tenantId, id);
@@ -910,6 +927,7 @@ export class ProveedoresService {
     data: CrearProveedorInput
   ): Promise<ProveedorDto> {
     try {
+      await this.exigirNombreLibre(client, tenantId, data.nombre);
       const fila = await this.repository.crear(client, tenantId, usuarioId, data);
       // La ciudad vive en la ficha: solo se crea la fila si hay ciudad.
       if (data.ciudad) {
@@ -984,6 +1002,12 @@ export class ProveedoresService {
     data: ActualizarProveedorInput
   ): Promise<{ proveedor: ProveedorDto; ciudadCambiada: boolean }> {
     try {
+      const actual = await this.exigirProveedor(client, tenantId, id);
+      // Solo si el nombre CAMBIA de verdad: un proveedor que ya tiene un nombre casi repetido (de antes de esta
+      // regla) se sigue pudiendo editar en lo demás.
+      if (claveDeNombre(actual.nombre) !== claveDeNombre(data.nombre)) {
+        await this.exigirNombreLibre(client, tenantId, data.nombre, id);
+      }
       const fila = await this.repository.actualizar(client, tenantId, id, data);
       if (!fila) throw new AppError(404, "Proveedor no encontrado");
       let ciudadCambiada = false;

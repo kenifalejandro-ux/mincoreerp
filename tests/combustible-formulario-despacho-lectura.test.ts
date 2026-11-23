@@ -76,14 +76,12 @@ describe("lectura del formulario de despacho", () => {
     grifoRuta = await grifo(admin, "Grifo Ruta Form", true, false);
     grifoSoloTanque = await grifo(admin, "Grifo Solo Tanque Form", false, true);
     grifoInactivo = await grifo(admin, "Grifo Inactivo Form", true, false);
-    await admin.put(`${base}/grifos/${grifoInactivo}`).send({
-      nombre: "Grifo Inactivo Form",
-      activo: false,
-      abastece_ruta: true,
-      abastece_tanque: false,
-      abastece_urea: false,
-      abastece_urea_ruta: false,
-    });
+    // El estado de un proveedor se cambia desde Gestión de proveedores (con motivo): Combustible no lo cambia
+    // cuando la persona tiene ese módulo.
+    const baja = await admin
+      .patch(`/api/erp/proveedores/${grifoInactivo}/estado`)
+      .send({ activo: false, motivo: "Prueba del formulario" });
+    expect(baja.status, JSON.stringify(baja.body)).toBe(200);
     grifoOtroTenant = await grifo(adminOtro, "Grifo De Otro Tenant", true, false);
 
     for (const body of [

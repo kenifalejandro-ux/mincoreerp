@@ -153,14 +153,11 @@ describe("combustible: formulario de compras de cisterna", () => {
           .send({ nombre: idUnico("RUTA"), abastece_tanque: false, abastece_ruta: true })
       ).body;
       const inactivo = (await admin.post(`${BASE}/grifos`).send({ nombre: idUnico("OFF") })).body;
-      await admin.put(`${BASE}/grifos/${inactivo.id}`).send({
-        nombre: inactivo.nombre,
-        activo: false,
-        abastece_ruta: true,
-        abastece_tanque: true,
-        abastece_urea: false,
-        abastece_urea_ruta: false,
-      });
+      // El estado de un proveedor se cambia desde Gestión de proveedores (con motivo).
+      const baja = await admin
+        .patch(`/api/erp/proveedores/${inactivo.id}/estado`)
+        .send({ activo: false, motivo: "Prueba del formulario" });
+      expect(baja.status, JSON.stringify(baja.body)).toBe(200);
       const d = await formulario();
       const ids = d.proveedores.map((p) => p.id);
       expect(ids).toContain(proveedor);

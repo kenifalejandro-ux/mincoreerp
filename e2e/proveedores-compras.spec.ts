@@ -343,7 +343,7 @@ test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", a
       timeout: 20_000,
     });
 
-    // Gestión comercial y Compras y recepciones: vacías, con su aviso y sin error.
+    // Gestión comercial: vacía, con su aviso y sin error.
     await menu.getByRole("button", { name: "Gestión comercial" }).click();
     await expect(page.getByRole("heading", { name: "Precios negociados", level: 1 })).toBeVisible();
     await expect(page.getByRole("alert")).toHaveCount(0);
@@ -351,14 +351,9 @@ test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", a
     await expect(page.getByText(/Carga el primero con «Nuevo precio»/)).toBeVisible({
       timeout: 15_000,
     });
-    await menu.getByRole("button", { name: "Compras y recepciones" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Compras y recepciones", level: 1 })
-    ).toBeVisible();
-    await expect(page.getByRole("alert")).toHaveCount(0);
-    await expect(page.getByText(/Todavía no hay compras de cisterna/)).toBeVisible({
-      timeout: 15_000,
-    });
+    // Compras y recepciones son de Combustible: sin ese módulo la sección no existe (ni en el menú ni en la
+    // ficha).
+    await expect(menu.getByRole("button", { name: "Compras y recepciones" })).toHaveCount(0);
 
     // Carga un precio de ruta desde el ecosistema, sin pasar por Combustible, y lo anula con motivo.
     const ruta = `SOLO RUTA ${marca}`;
@@ -384,27 +379,20 @@ test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", a
       "S/ 16.20",
       { timeout: 20_000 }
     );
-    await menu.getByRole("button", { name: "Compras y recepciones" }).click();
 
-    // Y puede hacer su trabajo de punta a punta: registrar, habilitar y anular una compra. Sin Combustible
-    // llega hasta «por llegar» (la descarga en cancha es de Combustible) y la pantalla lo dice.
-    const documento = `SOLO-${marca.toUpperCase()}`;
-    await registrarPorFormulario(page, {
-      proveedor: `SOLO PROVEEDOR ${marca}`,
-      documento,
-      cantidad: "500",
-      costo: "15.5",
-    });
-    const fila = page.getByRole("row", { name: new RegExp(documento) });
-    await expect(fila).toContainText("Registrada", { timeout: 20_000 });
-    await page.getByRole("button", { name: `Habilitar compra ${documento}` }).click();
-    await expect(fila).toContainText("Por llegar", { timeout: 20_000 });
-    await expect(page.getByText(/Esta empresa no usa Combustible/)).toBeVisible();
-    await page.getByRole("button", { name: `Anular compra ${documento}` }).click();
-    const anular = page.getByRole("dialog", { name: "Anular compra" });
-    await anular.getByLabel("Motivo").fill("prueba");
-    await anular.getByRole("button", { name: "Anular compra" }).click();
-    await expect(fila).toContainText("Anulada", { timeout: 20_000 });
+    // La ficha del proveedor tampoco ofrece la pestaña de compras.
+    await menu.getByRole("button", { name: "Directorio de proveedores" }).click();
+    await page
+      .getByRole("row", { name: new RegExp(`SOLO PROVEEDOR ${marca}`) })
+      .getByRole("button", { name: new RegExp(`SOLO PROVEEDOR ${marca}`) })
+      .click();
+    await expect(page.getByRole("tab", { name: "Cuentas" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Compras y recepciones" })).toHaveCount(0);
+    await page.getByRole("button", { name: "Cerrar el panel" }).click();
+
+    // El servidor tampoco la tiene: 404 (no 403 ni lista vacía).
+    const compras = await page.request.get("/api/erp/proveedores/compras");
+    expect(compras.status()).toBe(404);
   } finally {
     // No hay API para borrar empresas: la de este test queda en la base de los e2e, que es efímera en CI.
   }

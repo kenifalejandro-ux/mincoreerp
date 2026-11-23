@@ -57,7 +57,7 @@ describe("auditoría adversaria: proveedores de urea interno y externo", () => {
     const id = await grifo(true, false);
     const r = await agente.put(`/api/erp/combustible/grifos/${id}`).send({
       nombre: idUnico("AUD2"),
-      activo: false,
+      activo: true,
       abastece_ruta: false,
       abastece_tanque: false,
       abastece_urea: false,
@@ -73,7 +73,7 @@ describe("auditoría adversaria: proveedores de urea interno y externo", () => {
     );
     expect(rows.length).toBe(1);
     const detalle = JSON.stringify(rows[0].detalle);
-    // Pasó de interno a externo y se desactivó: la bitácora tiene que decirlo.
+    // Pasó de interno a externo (y la bitácora lleva su estado): tiene que decirlo.
     expect(detalle).toMatch(/abasteceUrea/);
     expect(detalle).toMatch(/activo/);
   });
