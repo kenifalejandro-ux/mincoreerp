@@ -1,4 +1,4 @@
-// client/src/components/proveedores/transicionDeEcosistema.ts
+// client/src/components/ecosistema/transicionDeEcosistema.ts
 //
 // Cuánto dura la pantalla de carga entre el ERP y un ecosistema (ver PantallaDeCarga.tsx).
 export type TransicionDeEcosistema = "entrar" | "volver";

@@ -21,8 +21,14 @@ import {
 } from "lucide-react";
 import { Fragment, useState } from "react";
 
-import { conProveedoresBajoBandeja } from "./ordenDelMenu";
+import { conEcosistemasBajoBandeja } from "./ordenDelMenu";
 import { useAuth } from "../../context/AuthContext";
+import {
+  ecosistemaDeLaPestana,
+  ecosistemaDeModulo,
+  modulosDeEcosistemas,
+} from "../../ecosistemas/ecosistemas";
+import { iconoDe } from "../../ecosistemas/iconos";
 import { MODULOS_CLIENTE } from "../../modules/registry";
 import { puedeVerBandeja } from "../bandeja/bandejaAcceso";
 import { useContadorBandeja } from "../bandeja/useContadorBandeja";
@@ -40,7 +46,6 @@ import {
   puedeVerUnidades,
   puedeVerViajes,
 } from "../flota/flotaAcceso";
-import { puedeVerProveedores } from "../proveedores/proveedoresAcceso";
 
 // Submenú de Combustible. Los íconos son de trazo (lucide), los mismos que
 // usan las acciones de la tabla de tanques. El orden sigue el flujo: primero el alta (proveedores
@@ -85,13 +90,8 @@ const SUBMENU_FLOTA: { tab: string; label: string; Icono: LucideIcon }[] = [
   { tab: "flota:viajes", label: "Viajes", Icono: Route },
 ];
 
-// Gestión de proveedores es un ECOSISTEMA: un espacio aparte con su propio menú (ver
-// EcosistemaProveedores). Acá solo está la puerta: la entrada del ERP y un submenú con el acceso.
-const SUBMENU_PROVEEDORES: { tab: string; label: string; Icono: LucideIcon }[] = [
-  { tab: "proveedores:centro", label: "Centro de administración", Icono: LayoutDashboard },
-];
-/** La etiqueta «Nuevo» de la entrada, con su propia clave (ver controlTv/novedad.ts). */
-const NOVEDAD_PROVEEDORES = "gestion-proveedores-2026-11";
+// Los ecosistemas (ver ecosistemas/ecosistemas.ts) son espacios aparte con su propio menú. Acá solo está la
+// puerta de cada uno: la entrada del ERP y un submenú con el acceso, que salen de su declaración.
 
 interface SidebarProps {
   activeTab: string;
@@ -105,15 +105,16 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
 
   // Flota aparece si hay algo adentro: quien solo tiene Viajes (sin Registro de
   // unidades) también ve el grupo.
-  // «Gestión de proveedores» va justo debajo de «Bandeja» (ver ordenDelMenu.ts).
-  const tabs = conProveedoresBajoBandeja(
+  // Los ecosistemas van justo debajo de «Bandeja» (ver ordenDelMenu.ts).
+  const tabs = conEcosistemasBajoBandeja(
     MODULOS_CLIENTE.filter((modulo) =>
       modulo.id === "flota"
         ? puedeVerFlota(usuario)
-        : modulo.id === "proveedores"
-          ? puedeVerProveedores(usuario)
+        : ecosistemaDeModulo(modulo.id)
+          ? ecosistemaDeModulo(modulo.id)!.puedeVer(usuario)
           : usuario?.modulosPermitidos.includes(modulo.id)
-    )
+    ),
+    modulosDeEcosistemas()
   );
   const submenusFlota = SUBMENU_FLOTA.filter(({ tab }) =>
     tab === "flota" ? puedeVerUnidades(usuario) : puedeVerViajes(usuario)
@@ -221,8 +222,10 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
   const [combustibleDesplegado, setCombustibleDesplegado] = useState(false);
   // Igual el de Gestión operacional de flota.
   const [flotaDesplegada, setFlotaDesplegada] = useState(false);
-  // Y el de Gestión de proveedores: la entrada solo despliega, el submenú abre el ecosistema.
-  const [proveedoresDesplegado, setProveedoresDesplegado] = useState(false);
+  // Y el de cada ecosistema, por su id: la entrada solo despliega, el submenú abre el ecosistema.
+  const [ecosistemasDesplegados, setEcosistemasDesplegados] = useState<Record<string, boolean>>({});
+  const alternarEcosistema = (id: string) =>
+    setEcosistemasDesplegados((actual) => ({ ...actual, [id]: !actual[id] }));
 
   return (
     <aside
@@ -308,25 +311,25 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
               </Fragment>
             );
           }
-          const esProveedores = tab.id === "proveedores";
-          const tieneSubmenu = esCombustible || esFlota || esProveedores;
+          const ecosistema = ecosistemaDeModulo(tab.id);
+          const tieneSubmenu = esCombustible || esFlota || ecosistema !== undefined;
           const isActive = esCombustible
             ? activeTab === "combustible" || activeTab.startsWith("combustible:")
             : esFlota
               ? activeTab === "flota" || activeTab.startsWith("flota:")
-              : esProveedores
-                ? activeTab.startsWith("proveedores")
+              : ecosistema
+                ? ecosistemaDeLaPestana(activeTab)?.id === ecosistema.id
                 : activeTab === tab.id;
           const desplegado = esCombustible
             ? combustibleDesplegado
-            : esProveedores
-              ? proveedoresDesplegado
+            : ecosistema
+              ? !!ecosistemasDesplegados[ecosistema.id]
               : flotaDesplegada;
           const alternarDespliegue = () =>
             esCombustible
               ? setCombustibleDesplegado((v) => !v)
-              : esProveedores
-                ? setProveedoresDesplegado((v) => !v)
+              : ecosistema
+                ? alternarEcosistema(ecosistema.id)
                 : setFlotaDesplegada((v) => !v);
           return (
             <Fragment key={tab.id}>
@@ -334,8 +337,8 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
                 <button
                   onClick={() => {
                     // La entrada de un ecosistema solo despliega su submenú; se entra por él.
-                    if (esProveedores) {
-                      setProveedoresDesplegado((v) => !v);
+                    if (ecosistema) {
+                      alternarEcosistema(ecosistema.id);
                       return;
                     }
                     if (esCombustible) setCombustibleDesplegado(true);
@@ -366,11 +369,12 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
                     className={`shrink-0 ${isActive ? "text-[#0A1014]" : "text-slate-400 group-hover:text-[#0A1014]"}`}
                   />
                   <span className="tracking-tight flex-1">{tab.label}</span>
-                  {esProveedores && novedadVigente(undefined, undefined, NOVEDAD_PROVEEDORES) && (
-                    <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-[#BADC1E] text-[#0A1014] group-hover:bg-[#0A1014] group-hover:text-[#BADC1E]">
-                      Nuevo
-                    </span>
-                  )}
+                  {ecosistema?.novedad &&
+                    novedadVigente(undefined, undefined, ecosistema.novedad) && (
+                      <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded-full bg-[#BADC1E] text-[#0A1014] group-hover:bg-[#0A1014] group-hover:text-[#BADC1E]">
+                        Nuevo
+                      </span>
+                    )}
                   {tieneSubmenu && (
                     <span
                       role="button"
@@ -395,15 +399,19 @@ export default function Sidebar({ activeTab, setActiveTab, abierto, onToggle }: 
                     items={
                       esCombustible
                         ? submenusVisibles
-                        : esProveedores
-                          ? SUBMENU_PROVEEDORES
+                        : ecosistema
+                          ? ecosistema.submenu.map((s) => ({
+                              tab: s.tab,
+                              label: s.label,
+                              Icono: iconoDe(s.icono),
+                            }))
                           : submenusFlota
                     }
                     desplegado={desplegado}
                     activeTab={activeTab}
                     setActiveTab={(destino) => {
-                      if (esProveedores)
-                        marcarNovedadVista(undefined, undefined, NOVEDAD_PROVEEDORES);
+                      if (ecosistema?.novedad)
+                        marcarNovedadVista(undefined, undefined, ecosistema.novedad);
                       setActiveTab(destino);
                     }}
                   />

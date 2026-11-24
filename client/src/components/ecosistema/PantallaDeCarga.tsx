@@ -1,34 +1,50 @@
-// client/src/components/proveedores/PantallaDeCarga.tsx
+// client/src/components/ecosistema/PantallaDeCarga.tsx
 //
 // La pantalla que cubre el salto entre el ERP y un ecosistema (y de vuelta): sin ella el cambio de
 // menú, de colores y de cabecera se siente brusco y parece que se sigue en la misma pantalla. Hoy
 // lleva un ícono; la imagen con elementos 3D se agrega al final (no es prioridad).
 //
 // Con «reducir movimiento» no hay animación: el texto queda quieto y la barra aparece llena.
-import { Building2, LayoutGrid, type LucideIcon } from "lucide-react";
+import { LayoutGrid, type LucideIcon } from "lucide-react";
 
 import type { TransicionDeEcosistema } from "./transicionDeEcosistema";
 
-const TEXTOS: Record<
-  TransicionDeEcosistema,
-  { aviso: string; titulo: string; pasos: string[]; Icono: LucideIcon }
-> = {
-  entrar: {
-    aviso: "Entrando al ecosistema",
-    titulo: "Gestión de proveedores",
-    pasos: ["Verificando tu acceso…", "Cargando tu empresa…", "Preparando tu espacio de trabajo…"],
-    Icono: Building2,
-  },
-  volver: {
-    aviso: "Volviendo al ERP",
-    titulo: "MINCORE ERP",
-    pasos: ["Guardando tu sesión…", "Volviendo al menú principal…", "Listo…"],
-    Icono: LayoutGrid,
-  },
+/** Lo que identifica al ecosistema al que se entra (viene de su declaración en `ecosistemas.ts`). */
+export interface EcosistemaEnCarga {
+  titulo: string;
+  Icono: LucideIcon;
+}
+
+const PASOS_AL_ENTRAR = [
+  "Verificando tu acceso…",
+  "Cargando tu empresa…",
+  "Preparando tu espacio de trabajo…",
+];
+
+const AL_VOLVER = {
+  aviso: "Volviendo al ERP",
+  titulo: "MINCORE ERP",
+  pasos: ["Guardando tu sesión…", "Volviendo al menú principal…", "Listo…"],
+  Icono: LayoutGrid,
 };
 
-export default function PantallaDeCarga({ tipo }: { tipo: TransicionDeEcosistema }) {
-  const { aviso, titulo, pasos, Icono } = TEXTOS[tipo];
+export default function PantallaDeCarga({
+  tipo,
+  ecosistema,
+}: {
+  tipo: TransicionDeEcosistema;
+  /** A cuál se entra. Al volver al ERP no hace falta. */
+  ecosistema?: EcosistemaEnCarga;
+}) {
+  const { aviso, titulo, pasos, Icono } =
+    tipo === "entrar" && ecosistema
+      ? {
+          aviso: "Entrando al ecosistema",
+          titulo: ecosistema.titulo,
+          pasos: PASOS_AL_ENTRAR,
+          Icono: ecosistema.Icono,
+        }
+      : AL_VOLVER;
   return (
     <div
       role="status"

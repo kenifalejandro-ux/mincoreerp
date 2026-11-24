@@ -17,6 +17,11 @@ import {
 } from "./components/combustible/compraEnRutaAcceso";
 import { puedeVerPrecios } from "./components/combustible/preciosAcceso";
 import { edicionDeProveedoresEnElEcosistema } from "./components/combustible/proveedoresEnEcosistema";
+import PantallaDeCarga from "./components/ecosistema/PantallaDeCarga";
+import {
+  duracionDeTransicion,
+  type TransicionDeEcosistema,
+} from "./components/ecosistema/transicionDeEcosistema";
 import {
   miViajeVaEnFlota,
   puedeVerMiViaje,
@@ -24,14 +29,15 @@ import {
   puedeVerViajes,
 } from "./components/flota/flotaAcceso";
 import Layout from "./components/layout/Layout";
-import PantallaDeCarga from "./components/proveedores/PantallaDeCarga";
-import { puedeVerProveedores } from "./components/proveedores/proveedoresAcceso";
-import { esRutaDeProveedores } from "./components/proveedores/rutaProveedores";
-import {
-  duracionDeTransicion,
-  type TransicionDeEcosistema,
-} from "./components/proveedores/transicionDeEcosistema";
 import { useAuth } from "./context/AuthContext";
+import {
+  ecosistemaDeLaPestana,
+  ecosistemaDeLaRuta,
+  ecosistemaDeModulo,
+  moduloDeLaPestana,
+  type DefinicionDeEcosistema,
+} from "./ecosistemas/ecosistemas";
+import { iconoDe } from "./ecosistemas/iconos";
 import { MODULOS_CLIENTE } from "./modules/registry";
 import CambiarPasswordObligatoria from "./pages/CambiarPasswordObligatoria";
 import LoginPage from "./pages/LoginPage";
@@ -60,7 +66,7 @@ type UsuarioDeSesion = {
  *  Sidebar.tsx); el permiso y el componente a cargar dependen del módulo,
  *  no de cuál de sus sub-pestañas esté abierta. */
 function moduloIdDe(tab: string): string {
-  return tab.split(":")[0];
+  return moduloDeLaPestana(tab);
 }
 
 /** Si esta pestaña existe PARA ESTE usuario. Las dos que no son módulos van
@@ -76,8 +82,9 @@ function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
     return false;
   }
   if (moduloId === "administracion") return usuario?.rol === "admin";
-  // Gestión de proveedores: ecosistema aparte, con su propio permiso (ver proveedoresAcceso.ts).
-  if (moduloId === "proveedores") return puedeVerProveedores(usuario);
+  // Los módulos de un ecosistema (ver ecosistemas/ecosistemas.ts) los ve quien ve el ecosistema.
+  const ecosistema = ecosistemaDeModulo(moduloId);
+  if (ecosistema) return ecosistema.puedeVer(usuario);
   // La Bandeja no es un módulo: junta las alertas de los que sí lo son.
   if (moduloId === "bandeja") return puedeVerBandeja(usuario);
   // Gestión operacional de flota: "flota" es Registro de unidades y
@@ -147,30 +154,38 @@ function primeraPestania(usuario: UsuarioDeSesion): string {
 
 function App() {
   const { usuario, cargando, estaAutenticado, login } = useAuth();
-  // Una dirección de Gestión de proveedores (`/proveedores/…`) abre el ecosistema: si la persona no tiene
-  // acceso, o todavía no inició sesión, la pestaña activa se calcula más abajo con lo que sí le corresponde.
-  const [activeTab, setActiveTab] = useState(() =>
-    esRutaDeProveedores(window.location.pathname) ? "proveedores:centro" : "dashboard"
+  // Una dirección de un ecosistema (p. ej. `/proveedores/…`) lo abre: si la persona no tiene acceso, o
+  // todavía no inició sesión, la pestaña activa se calcula más abajo con lo que sí le corresponde.
+  const [activeTab, setActiveTab] = useState(
+    () => ecosistemaDeLaRuta(window.location.pathname)?.pestaniaDeEntrada ?? "dashboard"
   );
   // De dónde vino la persona al entrar al ecosistema: «atrás» la devuelve ahí.
   const pestaniaAnterior = useRef<string | null>(null);
   // Entrar a un ecosistema (o volver al ERP) cambia de menú, de colores y de cabecera: una pantalla
   // de carga cubre el salto y el cambio se hace por debajo.
-  const [transicion, setTransicion] = useState<TransicionDeEcosistema | null>(null);
+  const [transicion, setTransicion] = useState<{
+    tipo: TransicionDeEcosistema;
+    /** A cuál se entra; al volver al ERP no hay. */
+    ecosistema?: DefinicionDeEcosistema;
+  } | null>(null);
   const temporizador = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(temporizador.current), []);
   const irA = useCallback(
     (destino: string) => {
-      const enEcosistema = (tab: string) => moduloIdDe(tab) === "proveedores";
-      const entra = enEcosistema(destino) && !enEcosistema(activeTab);
-      const vuelve = !enEcosistema(destino) && enEcosistema(activeTab);
-      if (!entra && !vuelve) {
+      // Entrar a un ecosistema, salir de él o pasar de uno a otro cambia de menú y de cabecera: lleva
+      // transición. Moverse dentro del mismo lado, no.
+      const alDestino = ecosistemaDeLaPestana(destino);
+      const delOrigen = ecosistemaDeLaPestana(activeTab);
+      if (alDestino?.id === delOrigen?.id) {
         setActiveTab(destino);
         return;
       }
+      const entra = alDestino !== undefined;
+      const vuelve = !entra;
       if (temporizador.current !== undefined) return; // ya hay una transición en curso
-      if (entra) pestaniaAnterior.current = activeTab;
-      setTransicion(entra ? "entrar" : "volver");
+      // «Atrás» devuelve al ERP: solo se recuerda de dónde se vino cuando se sale del ERP, no entre ecosistemas.
+      if (entra && delOrigen === undefined) pestaniaAnterior.current = activeTab;
+      setTransicion({ tipo: entra ? "entrar" : "volver", ecosistema: alDestino });
       temporizador.current = window.setTimeout(() => {
         // Al salir del ecosistema la dirección vuelve a la raíz (al entrar la escribe el propio ecosistema).
         if (vuelve) window.history.pushState(null, "", "/");
@@ -195,24 +210,24 @@ function App() {
   // ni pinta un frame en blanco antes de acomodarse.
   // Un panel interno pide cambiar de pestaña (p. ej. el aviso de "Registrar
   // recepción" que lleva a Proveedores).
-  // Pasa por `irA` (y no por `setActiveTab`) para que entrar al ecosistema de proveedores muestre la
-  // pantalla de carga, como cuando se entra por el menú.
+  // Pasa por `irA` (y no por `setActiveTab`) para que entrar a un ecosistema muestre la pantalla de carga,
+  // como cuando se entra por el menú.
   useEffect(() => {
     const alPedir = (e: Event) => irA((e as CustomEvent<string>).detail);
     window.addEventListener("mincore:ir-a-pestana", alPedir);
     return () => window.removeEventListener("mincore:ir-a-pestana", alPedir);
   }, [irA]);
 
-  // «Atrás» y «adelante» del navegador al cruzar entre el ERP y el ecosistema de proveedores (dentro del
-  // ecosistema los atiende él mismo). Al volver al ERP, la persona regresa a la pantalla de donde venía.
+  // «Atrás» y «adelante» del navegador al cruzar entre el ERP y un ecosistema (dentro del ecosistema los
+  // atiende él mismo). Al volver al ERP, la persona regresa a la pantalla de donde venía.
   useEffect(() => {
     const alVolver = () => {
       if (!usuario) return;
-      const enRuta = esRutaDeProveedores(window.location.pathname);
+      const deLaRuta = ecosistemaDeLaRuta(window.location.pathname);
       const enEcosistema =
-        moduloIdDe(activeTab) === "proveedores" && pestaniaDisponible(activeTab, usuario);
-      if (enRuta && !enEcosistema) setActiveTab("proveedores:centro");
-      else if (!enRuta && enEcosistema) {
+        ecosistemaDeLaPestana(activeTab) !== undefined && pestaniaDisponible(activeTab, usuario);
+      if (deLaRuta && !enEcosistema) setActiveTab(deLaRuta.pestaniaDeEntrada);
+      else if (!deLaRuta && enEcosistema) {
         const anterior = pestaniaAnterior.current;
         setActiveTab(
           anterior && pestaniaDisponible(anterior, usuario) ? anterior : primeraPestania(usuario)
@@ -223,13 +238,13 @@ function App() {
     return () => window.removeEventListener("popstate", alVolver);
   }, [activeTab, usuario]);
 
-  // Una dirección de proveedores sin acceso a él (el módulo no está asignado, o no hay ecosistema para esa
+  // Una dirección de un ecosistema sin acceso a él (el módulo no está asignado, o no hay ecosistema para esa
   // persona) se corrige en silencio a la raíz: la persona queda en su pantalla de inicio.
   useEffect(() => {
     if (cargando || !estaAutenticado || !usuario) return;
     const enEcosistema =
-      moduloIdDe(activeTab) === "proveedores" && pestaniaDisponible(activeTab, usuario);
-    if (!enEcosistema && esRutaDeProveedores(window.location.pathname)) {
+      ecosistemaDeLaPestana(activeTab) !== undefined && pestaniaDisponible(activeTab, usuario);
+    if (!enEcosistema && ecosistemaDeLaRuta(window.location.pathname)) {
       window.history.replaceState(null, "", "/");
     }
   }, [cargando, estaAutenticado, usuario, activeTab]);
@@ -322,15 +337,15 @@ function App() {
 
   return (
     <>
-      {moduloIdActivo === "proveedores" ? (
-        // El ecosistema va fuera del Layout: tiene su propia cabecera y su propio menú.
+      {ecosistemaDeLaPestana(tabActiva) ? (
+        // Un ecosistema va fuera del Layout: tiene su propia cabecera y su propio menú.
         <Suspense fallback={<div className="p-20 text-center text-slate-500">Cargando...</div>}>
           {ComponenteConProps && (
             <ComponenteConProps
               // Una empresa cuyo único módulo es un ecosistema no tiene un ERP al que volver: sin
               // botón, en vez de uno que no lleva a ningún lado.
               onSalir={
-                moduloIdDe(primeraPestania(usuario)) === "proveedores"
+                ecosistemaDeLaPestana(primeraPestania(usuario))
                   ? undefined
                   : () => irA(primeraPestania(usuario))
               }
@@ -344,7 +359,17 @@ function App() {
           </Suspense>
         </Layout>
       )}
-      {transicion && <PantallaDeCarga tipo={transicion} />}
+      {transicion && (
+        <PantallaDeCarga
+          tipo={transicion.tipo}
+          ecosistema={
+            transicion.ecosistema && {
+              titulo: transicion.ecosistema.titulo,
+              Icono: iconoDe(transicion.ecosistema.icono),
+            }
+          }
+        />
+      )}
     </>
   );
 }
