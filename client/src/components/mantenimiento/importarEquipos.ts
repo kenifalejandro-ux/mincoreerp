@@ -3,11 +3,9 @@
 // Leer la planilla de equipos, sin React: encabezados con nombres libres (con o sin tildes, «Placa» o «Código»),
 // filas vacías ignoradas y los valores de medidor y propiedad en palabras. Lo que no se puede entender se dice
 // con su fila ANTES de mandar nada; lo demás (placa repetida, tipo vacío…) lo valida el servidor, que también
-// dice la fila y la columna.
-import type { WorkBook } from "xlsx";
-
+// dice la fila y la columna. Sin librerías del cliente (ni xlsx ni react): los tests de la raíz lo importan y el
+// CI los compila sin las dependencias del cliente. Leer el libro de Excel está en parsearPlanillaEquipos.ts.
 import { leerLectura } from "./formularioEquipo";
-import type { UtilidadesXlsx } from "../comunes/useImportacionExcel";
 
 /** Tope de equipos por archivo: espejo del que aplica el servidor (MAX_FILAS_IMPORTACION_EQUIPOS). */
 export const MAX_FILAS_IMPORTACION = 1000;
@@ -108,18 +106,6 @@ export function leerFilasDeLaPlanilla(hoja: unknown[][]): FilaImportacionEquipo[
     });
   });
   return filas;
-}
-
-/** Para el hook de importación: lee la primera hoja del libro. */
-export function parsearPlanillaEquipos(
-  libro: WorkBook,
-  utils: UtilidadesXlsx
-): FilaImportacionEquipo[] {
-  const hoja = libro.Sheets[libro.SheetNames[0]];
-  if (!hoja) throw new Error("El archivo no tiene ninguna hoja de cálculo.");
-  return leerFilasDeLaPlanilla(
-    utils.sheet_to_json<unknown[]>(hoja, { header: 1, defval: "", blankrows: false })
-  );
 }
 
 /** El mensaje de éxito: cuántos entraron y, si se crearon áreas nuevas, cuáles (por si es un error de tipeo). */

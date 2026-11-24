@@ -495,6 +495,8 @@ export class MantenimientoService {
         f.propiedad
       );
     }
-    return { importados: filas.length, areasCreadas };
+    // El conteo sale de los equipos que quedaron en la base (un id por placa), no del largo del arreglo que
+    // llegó en la petición.
+    return { importados: idsPorPlaca.size, areasCreadas };
   }
 }

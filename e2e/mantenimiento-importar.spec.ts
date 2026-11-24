@@ -19,9 +19,17 @@ import { test, expect, type Page } from "@playwright/test";
 import { crearEmpresaSola, entrarPorPrimeraVez } from "./fixtures/empresaSola";
 
 // xlsx solo está instalado en client/ (es una carpeta, no un archivo: no se puede importar como módulo ES).
-const XLSX = createRequire(import.meta.url)(
-  "../client/node_modules/xlsx"
-) as typeof import("../client/node_modules/xlsx");
+// Solo lo que se usa de la librería: así este archivo compila aunque las dependencias del cliente no estén
+// instaladas (el job de backend del CI compila los specs sin ellas; el e2e sí las tiene, porque arma el cliente).
+interface Xlsx {
+  utils: {
+    book_new(): unknown;
+    aoa_to_sheet(filas: unknown[][]): unknown;
+    book_append_sheet(libro: unknown, hoja: unknown, nombre: string): void;
+  };
+  write(libro: unknown, opciones: { type: "buffer"; bookType: "xlsx" }): unknown;
+}
+const XLSX = createRequire(import.meta.url)("../client/node_modules/xlsx") as Xlsx;
 
 const ENCABEZADO = ["Placa", "Tipo", "Marca", "Modelo", "Medidor", "Lectura", "Propiedad", "Área"];
 

@@ -23,7 +23,6 @@ import {
   COLUMNAS_DE_LA_PLANILLA,
   MAX_FILAS_IMPORTACION,
   mensajeDeImportacion,
-  parsearPlanillaEquipos,
   type FilaImportacionEquipo,
 } from "./importarEquipos";
 import {
@@ -33,6 +32,7 @@ import {
   type EquipoMantenimiento,
   type ListaDeEquipos,
 } from "./mantenimientoApi";
+import { parsearPlanillaEquipos } from "./parsearPlanillaEquipos";
 import QuitarEquipo from "./QuitarEquipo";
 import {
   BannerImportacion,
