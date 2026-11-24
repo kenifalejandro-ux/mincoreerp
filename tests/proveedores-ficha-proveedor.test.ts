@@ -77,7 +77,7 @@ describe("pestanasDeLaFicha", () => {
   it("todas las pestañas tienen etiqueta", () => {
     for (const p of pestanasDeLaFicha(todo)) expect(ETIQUETA_PESTANA[p]).toBeTruthy();
     expect(ETIQUETA_PESTANA.datos).toBe("Datos generales");
-    expect(ETIQUETA_PESTANA.compras).toBe("Compras y recepciones");
+    expect(ETIQUETA_PESTANA.compras).toBe("Compras de combustible");
   });
 });
 

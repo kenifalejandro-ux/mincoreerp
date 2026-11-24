@@ -106,9 +106,9 @@ export default function ComprasYRecepciones({
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-slate-500">
-            Abastecimiento / Compras y recepciones
+            Abastecimiento / Compras de combustible
           </p>
-          <h1 className="text-3xl font-semibold text-slate-900 mt-1">Compras y recepciones</h1>
+          <h1 className="text-3xl font-semibold text-slate-900 mt-1">Compras de combustible</h1>
           <p className="text-sm text-slate-500 mt-1">
             Lo que se compra a cada proveedor y cómo llegó a la cancha.
           </p>

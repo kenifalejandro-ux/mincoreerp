@@ -47,7 +47,7 @@ const recepcion = (extra: Partial<RecepcionDb> = {}): RecepcionDb => ({
 const una = (c: CompraDb, r?: RecepcionDb, tolerancia = 3) =>
   armarCompras([c], new Map(r ? [[Number(r.id), r]] : []), tolerancia)[0];
 
-describe("Compras y recepciones: lo que muestra cada compra", () => {
+describe("Compras de combustible: lo que muestra cada compra", () => {
   it("sin recepción: total = cantidad × costo, código del proveedor y estado tal cual", () => {
     const c = una(compra({ habilitada_en: "2026-11-11T10:00:00Z", estado: "por_llegar" }));
     expect(c).toMatchObject({
@@ -124,7 +124,7 @@ describe("Compras y recepciones: lo que muestra cada compra", () => {
   });
 });
 
-describe("Compras y recepciones: la sede de llegada", () => {
+describe("Compras de combustible: la sede de llegada", () => {
   it("sale de la etiqueta de su sede por id; sin dato o sin mapa, null", () => {
     const sedes = new Map([[3, "Huamachuco · TQ-huamachuco"]]);
     const con = armarCompras([compra({ grifo_interno_id: 3 })], new Map(), 3, sedes)[0];

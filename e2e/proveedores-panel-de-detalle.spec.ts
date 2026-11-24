@@ -139,11 +139,11 @@ test("el panel de detalle abre proveedores y compras sin saltar al Directorio", 
   await expect(page.getByPlaceholder("Buscar por proveedor o producto")).toHaveValue(marca);
 
   // 3. Compras y recepciones: la compra se abre en su panel; de ahí, a la ficha del proveedor.
-  await menu.getByRole("button", { name: "Compras y recepciones" }).click();
+  await menu.getByRole("button", { name: "Compras de combustible" }).click();
   await page.getByPlaceholder("Buscar por compra, guía, producto o proveedor...").fill(marca);
   // El nombre del proveedor abre SU ficha (en la pestaña Compras); no el detalle de la compra.
   await page.getByRole("button", { name: `Abrir ${nombre}`, exact: true }).click();
-  await expect(panel.getByRole("tab", { name: "Compras y recepciones" })).toHaveAttribute(
+  await expect(panel.getByRole("tab", { name: "Compras de combustible" })).toHaveAttribute(
     "aria-selected",
     "true"
   );
@@ -179,7 +179,7 @@ test("el panel de detalle abre proveedores y compras sin saltar al Directorio", 
   await expect(detalleCompra.getByText(/Aún no llega/)).toBeVisible();
   expect(ruta(page)).toBe("/proveedores/compras");
   await detalleCompra.getByRole("button", { name: `Abrir ficha de ${nombre}` }).click();
-  await expect(panel.getByRole("tab", { name: "Compras y recepciones" })).toHaveAttribute(
+  await expect(panel.getByRole("tab", { name: "Compras de combustible" })).toHaveAttribute(
     "aria-selected",
     "true"
   );

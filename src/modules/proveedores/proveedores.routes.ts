@@ -146,7 +146,7 @@ router.get(
   })
 );
 
-// Compras y recepciones (PR5): las compras de cisterna de Combustible, solo lectura. Mismas reglas que
+// Compras de combustible (PR5): las compras de cisterna de Combustible, solo lectura. Mismas reglas que
 // allá: ve quien tiene la pestaña `cisternas`; quien no gestiona compras (`cisternas:registrar_compra`)
 // solo recibe las ya por llegar; y con Combustible en la empresa rige el alcance por sede (sin él no hay
 // alcance que cargar). Registrar, habilitar y anular siguen en Combustible → Cisternas.

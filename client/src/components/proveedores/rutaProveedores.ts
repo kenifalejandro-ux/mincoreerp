@@ -9,7 +9,7 @@
 //   /proveedores/directorio/123/comercial     su pestaña (datos, contactos, cuentas, comercial, contratos,
 //                                             documentos, compras o historial)
 //   /proveedores/precios                      Gestión comercial
-//   /proveedores/compras                      Compras y recepciones
+//   /proveedores/compras                      Compras de combustible
 //   /proveedores/historial                    Historial y auditoría
 //   /proveedores/homologacion …               las secciones que todavía son «Pronto» también tienen la suya
 //
@@ -72,7 +72,7 @@ const ETIQUETA_DE_SECCION: Record<SeccionDeRuta, string> = {
   centro: "Centro de gestión",
   directorio: "Directorio de proveedores",
   comercial: "Gestión comercial",
-  compras: "Compras y recepciones",
+  compras: "Compras de combustible",
   historial: "Historial y auditoría",
   homologacion: "Homologación",
   documentos: "Gestión documental",

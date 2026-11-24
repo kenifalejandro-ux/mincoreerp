@@ -36,7 +36,7 @@ interface Compra {
   motivoAnulacion: string | null;
 }
 
-describe("Compras y recepciones: escribir desde el ecosistema", () => {
+describe("Compras de combustible: escribir desde el ecosistema", () => {
   const empresas: Empresa[] = [];
   let a: Empresa; // Proveedores + Combustible
   let c: Empresa; // Proveedores + Combustible

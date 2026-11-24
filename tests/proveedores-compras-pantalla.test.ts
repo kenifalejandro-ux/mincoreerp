@@ -54,7 +54,7 @@ const compra = (extra: Partial<CompraDeCisterna> = {}): CompraDeCisterna => ({
   ...extra,
 });
 
-describe("Compras y recepciones: lo que muestra la pantalla", () => {
+describe("Compras de combustible: lo que muestra la pantalla", () => {
   it("cuenta por llegar, recibidas, con diferencia fuera de tolerancia y anuladas", () => {
     expect(
       totalesCompras([
@@ -95,7 +95,7 @@ describe("Compras y recepciones: lo que muestra la pantalla", () => {
   });
 });
 
-describe("Compras y recepciones: quién ve la entrada del menú", () => {
+describe("Compras de combustible: quién ve la entrada del menú", () => {
   const u = (
     rol: string,
     permisosPestanas?: Record<string, boolean>,
