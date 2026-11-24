@@ -1295,6 +1295,8 @@ function NuevoUsuarioForm({ tenantId, onCreado }: { tenantId: string; onCreado: 
         <option value="grifero">grifero</option>
         <option value="conductor_ruta">conductor de ruta</option>
         <option value="encargado_urea">Encargado de Urea</option>
+        <option value="mecanico">Mecánico</option>
+        <option value="operario">Operario</option>
       </select>
 
       {error && (

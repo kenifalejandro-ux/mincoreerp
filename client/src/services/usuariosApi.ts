@@ -33,7 +33,14 @@ export interface UsuarioDelTenant {
 }
 
 export type RolUsuario =
-  "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta" | "encargado_urea";
+  | "admin"
+  | "operador"
+  | "lectura"
+  | "grifero"
+  | "conductor_ruta"
+  | "encargado_urea"
+  | "mecanico"
+  | "operario";
 
 async function leerRespuesta(res: Response) {
   const data = await res.json().catch(() => ({}));

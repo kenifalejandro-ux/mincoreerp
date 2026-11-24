@@ -34,5 +34,7 @@ export function moduloPorDefectoDeRol(
   if (rol === "admin" || rol === "operador") return { asignado: true, nivel: "operar" };
   // El conductor de ruta también entra a Viajes ("Mi viaje").
   if (rol === "conductor_ruta" && modulo === "viajes") return { asignado: true, nivel: "operar" };
+  // Mecánico y operario (0202) nacen sin ningún módulo: ver MODULOS_POR_ROL en auth.service.ts.
+  if (rol === "mecanico" || rol === "operario") return { asignado: false, nivel: "operar" };
   return { asignado: modulo === "combustible", nivel: "operar" };
 }

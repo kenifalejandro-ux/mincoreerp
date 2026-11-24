@@ -80,6 +80,20 @@ const ROLES: { valor: RolUsuario; titulo: string; detalle: string; cancha?: bool
     detalle: "Acceso a Urea y sus acciones habilitadas; no ve los demás módulos de operación.",
     cancha: true,
   },
+  {
+    valor: "mecanico",
+    titulo: "Mecánico",
+    detalle:
+      "Hace las órdenes de trabajo que le asignan. Entra con su DNI; al inicio no ve ningún módulo.",
+    cancha: true,
+  },
+  {
+    valor: "operario",
+    titulo: "Operario",
+    detalle:
+      "Maneja maquinaria pesada (distinto del conductor de ruta). Entra con su DNI; al inicio no ve ningún módulo.",
+    cancha: true,
+  },
 ];
 
 /** Lo que la persona escribe en el login. Nunca los dos a la vez: el que
