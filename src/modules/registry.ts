@@ -42,6 +42,7 @@ import viajesRoutes from "./viajes/viajes.routes";
 import checklistsRoutes from "./checklists/checklists.routes";
 import ipercRoutes from "./iperc/iperc.routes";
 import ordenesTrabajoRoutes from "./ordenes_trabajo/ordenes_trabajo.routes";
+import mantenimientoRoutes from "./mantenimiento/mantenimiento.routes";
 import proveedoresRoutes from "./proveedores/proveedores.routes";
 import type { ModuloDefinicion } from "./types";
 
@@ -68,24 +69,20 @@ export const MODULOS: ModuloDefinicion[] = [
     // el acceso (requireModulo, cuotas, enum); la ruta, solo dónde se monta.
     ruta: "equipos",
     router: equiposRoutes,
-    // El grifo interno del equipo (0097) vive en platformBackup.service.ts,
-    // que se restaura antes que cualquier módulo.
+    // El MAESTRO de unidades (`equipos` y sus lecturas `equipo_lecturas`) y el grifo interno del equipo (0097) NO
+    // son de este módulo: son tablas base de la empresa y viven en platformBackup.service.ts, que se restaura
+    // antes que cualquier módulo. «Registro de unidades» es una de las puertas al maestro (la otra es «Equipos»
+    // de Mantenimiento); aquí quedan solo las tablas propias de Flota, que cuelgan del equipo.
     tablas: [
-      { nombre: "equipos", pk: "serial", fks: { grifo_interno_id: "grifos_internos" } },
       // Historial de conductor (0126): cascadea desde el equipo, no necesita raíz.
       {
         nombre: "equipo_conductores",
         pk: "serial",
         fks: { equipo_id: "equipos", usuario_id: "usuarios", cerrado_por: "usuarios" },
       },
-      // Lecturas del medidor de la unidad (0187): cascadea desde el equipo, no necesita raíz.
-      {
-        nombre: "equipo_lecturas",
-        pk: "serial",
-        fks: { equipo_id: "equipos", usuario_id: "usuarios", anulada_por: "usuarios" },
-      },
     ],
-    raices: ["equipos"],
+    // El equipo se vacía como tabla base, después de todos los módulos: el historial de conductor cascadea.
+    raices: [],
     cuota: { tabla: "equipos", porDefecto: 2_000 },
     // Las lecturas del medidor (0187) crecen con el trabajo de campo, no con el catálogo de unidades:
     // recurso propio (migración 0191). Sin esto, `POST /:id/lecturas` caía en la base `equipos` y se
@@ -244,6 +241,54 @@ export const MODULOS: ModuloDefinicion[] = [
     // Sin ON DELETE desde `tenants` (0063): el vaciado de una empresa la borra explícitamente. La ficha, los
     // contactos y las cuentas cascadean desde ella.
     raices: ["combustible_grifos"],
+  },
+  {
+    // Ecosistema «Gestión de mantenimiento». Es un módulo PROPIO y autónomo: no exige ningún otro y es
+    // DUEÑO de lo que guarda (los equipos que la empresa mantiene y sus áreas). Con solo este módulo la
+    // empresa registra, importa y ve sus equipos. Checklists, Órdenes de trabajo, Almacén, IPERC y Flota
+    // lo enriquecen cuando existen (`opcionales`); sin ellos esa parte se omite, sin 403 ni pantalla rota.
+    id: "mantenimiento",
+    label: "Gestión de mantenimiento",
+    icono: "🛠️",
+    version: "v1",
+    router: mantenimientoRoutes,
+    opcionales: ["checklists", "ordenes_trabajo", "repuestos", "iperc", "flota"],
+    tablas: [
+      { nombre: "mantenimiento_areas", pk: "serial", fks: { creado_por: "usuarios" } },
+      // Lo propio de Mantenimiento sobre cada equipo (área y propiedad). El equipo en sí es del maestro
+      // (`equipos`, tabla base): esta tabla cuelga de él y la base no se entera de ella.
+      {
+        nombre: "mantenimiento_equipo_datos",
+        pk: "serial",
+        fks: {
+          equipo_id: "equipos",
+          area_id: "mantenimiento_areas",
+          actualizado_por: "usuarios",
+        },
+      },
+    ],
+    // Los datos apuntan al área con ON DELETE SET NULL (no cascadea): las dos se vacían explícitamente.
+    raices: ["mantenimiento_areas", "mantenimiento_equipo_datos"],
+    // Los equipos que se registran desde aquí cuentan contra el tope de unidades de la empresa, igual que los
+    // de «Registro de unidades»: es la misma tabla. Recurso propio (no el de Flota) para que cada puerta mida con
+    // su límite. Sin `cuota` base a propósito: áreas y demás POST no crecen ese recurso. `/equipos/bulk` cuenta
+    // una unidad por cada fila del archivo.
+    cuotasPorRuta: [
+      {
+        ruta: "/equipos",
+        metodo: "POST",
+        recurso: "mantenimiento_equipos",
+        tabla: "equipos",
+        porDefecto: 2_000,
+      },
+      {
+        ruta: "/equipos/bulk",
+        metodo: "POST",
+        recurso: "mantenimiento_equipos",
+        tabla: "equipos",
+        porDefecto: 2_000,
+      },
+    ],
   },
   {
     id: "combustible",

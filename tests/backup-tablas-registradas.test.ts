@@ -63,6 +63,10 @@ const ALLOWLIST_FUERA_DEL_BACKUP = new Set([
   // TABLAS_TENANT antes de los módulos que las referencian.
   "sedes",
   "grifos_internos",
+  // El maestro de unidades y sus lecturas: de la empresa, no de un módulo (Flota y Mantenimiento son dos
+  // puertas al mismo registro). Van en TABLAS_TENANT antes de los módulos que las referencian.
+  "equipos",
+  "equipo_lecturas",
   // Buffers y bitácoras internas, no datos de negocio: se regeneran solos
   // o simplemente no tiene sentido restaurarlos.
   "eventos_tiempo_real",

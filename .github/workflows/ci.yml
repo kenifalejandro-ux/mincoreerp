@@ -377,6 +377,17 @@ jobs:
       # El límite por TENANT (ERP_RATE_LIMIT_TENANT_DEFAULT, 3000) no hace
       # falta tocarlo: el job entero no se acerca a ese número.
       ERP_RATE_LIMIT_USUARIO_MAX: 5000
+      # Cuarta causa del mismo problema: crear una empresa (POST
+      # /api/platform/tenants, el fixture e2e/fixtures/empresaSola.ts) tiene
+      # un tope de producción de 5 por IP cada 15 min. Cada spec de «empresa
+      # con un solo módulo» crea la suya (y el reintento crea otra), así que
+      # al pasar de 5 el servidor responde «Demasiadas empresas creadas» y
+      # fallan specs que no tocaron nada (pasó en #594 al sumar Mantenimiento:
+      # fallaron también Proveedores y Combustible). Crece con cada spec de
+      # autonomía, así que se sube igual que en el job de backend; el limitador
+      # tiene su propia cobertura en sus tests.
+      PLATFORM_TENANT_CREATION_MAX_REQUESTS: 1000
+      PLATFORM_TENANT_CREATION_WINDOW_MS: 60000
       # "true" de noche o a pedido (los 3 navegadores); "false" en cada PR y
       # en cada push a main (chromium, y webkit solo para @celular).
       CORRIDA_COMPLETA: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
