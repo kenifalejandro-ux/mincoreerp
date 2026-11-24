@@ -12,13 +12,15 @@
 // Regla de autonomía (ver feedback de módulos autónomos): un ecosistema no exige ningún otro módulo y
 // `puedeVer` mira solo los módulos propios. Las secciones de adentro declaran de qué dependen para mostrarse
 // (ver proveedoresAcceso.ts).
+import { puedeVerMantenimiento } from "../components/mantenimiento/mantenimientoAcceso";
+import { PREFIJO_DE_RUTA as PREFIJO_DE_MANTENIMIENTO } from "../components/mantenimiento/rutaMantenimiento";
 import { puedeVerProveedores } from "../components/proveedores/proveedoresAcceso";
 import { PREFIJO_DE_RUTA as PREFIJO_DE_PROVEEDORES } from "../components/proveedores/rutaProveedores";
 
 type UsuarioDeEcosistema = { modulosPermitidos: string[] } | null | undefined;
 
 /** Los íconos que un ecosistema puede pedir. Se resuelven en `iconos.ts`. */
-export type NombreDeIcono = "edificio" | "panel";
+export type NombreDeIcono = "edificio" | "panel" | "herramienta";
 
 export interface EntradaDeSubmenu {
   /** La pestaña que abre, con el formato `modulo:seccion` del menú. */
@@ -58,6 +60,19 @@ export const ECOSISTEMAS: readonly DefinicionDeEcosistema[] = [
     submenu: [{ tab: "proveedores:centro", label: "Centro de administración", icono: "panel" }],
     novedad: "gestion-proveedores-2026-11",
     puedeVer: puedeVerProveedores,
+  },
+  {
+    id: "mantenimiento",
+    titulo: "Gestión de mantenimiento",
+    icono: "herramienta",
+    // Hoy vive aquí solo su módulo propio. Checklists y Órdenes de trabajo seguirán siendo módulos aparte:
+    // se sumarán cuando se hospeden dentro, sin que tenerlos sea requisito para ver el ecosistema.
+    modulos: ["mantenimiento"],
+    prefijoDeRuta: PREFIJO_DE_MANTENIMIENTO,
+    pestaniaDeEntrada: "mantenimiento:centro",
+    submenu: [{ tab: "mantenimiento:centro", label: "Centro de control", icono: "panel" }],
+    novedad: "gestion-mantenimiento-2026-11",
+    puedeVer: puedeVerMantenimiento,
   },
 ];
 

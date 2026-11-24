@@ -19,23 +19,34 @@ import {
   type DefinicionDeEcosistema,
 } from "../client/src/ecosistemas/ecosistemas";
 
-/** Un segundo ecosistema inventado para el test: no existe en el ERP. */
-const MANTENIMIENTO: DefinicionDeEcosistema = {
-  id: "mantenimiento",
-  titulo: "Gestión de mantenimiento",
+/** Un ecosistema inventado para el test: no existe en el ERP. */
+const OTRO: DefinicionDeEcosistema = {
+  id: "logistica",
+  titulo: "Logística",
   icono: "edificio",
-  modulos: ["checklists", "ordenes_trabajo"],
-  prefijoDeRuta: "/mantenimiento",
-  pestaniaDeEntrada: "checklists",
+  modulos: ["despachos", "rutas"],
+  prefijoDeRuta: "/logistica",
+  pestaniaDeEntrada: "despachos",
   submenu: [],
-  puedeVer: (u) =>
-    !!u && u.modulosPermitidos.some((m) => ["checklists", "ordenes_trabajo"].includes(m)),
+  puedeVer: (u) => !!u && u.modulosPermitidos.some((m) => ["despachos", "rutas"].includes(m)),
 };
-const DOS = [...ECOSISTEMAS, MANTENIMIENTO];
+const CON_OTRO = [...ECOSISTEMAS, OTRO];
 
 describe("ecosistemas: el declarado hoy", () => {
-  it("Proveedores es el único y sus datos son los de siempre", () => {
-    expect(ECOSISTEMAS.map((e) => e.id)).toEqual(["proveedores"]);
+  it("Mantenimiento es el segundo ecosistema, con su módulo propio", () => {
+    const m = ECOSISTEMAS.find((e) => e.id === "mantenimiento")!;
+    expect(m.titulo).toBe("Gestión de mantenimiento");
+    expect(m.modulos).toEqual(["mantenimiento"]);
+    expect(m.prefijoDeRuta).toBe("/mantenimiento");
+    expect(m.pestaniaDeEntrada).toBe("mantenimiento:centro");
+    expect(m.puedeVer({ modulosPermitidos: ["mantenimiento"] })).toBe(true);
+    // Autónomo: tener Checklists u Órdenes de trabajo NO alcanza para verlo (son módulos aparte).
+    expect(m.puedeVer({ modulosPermitidos: ["checklists", "ordenes_trabajo"] })).toBe(false);
+    expect(m.puedeVer(null)).toBe(false);
+  });
+
+  it("Proveedores sigue con sus datos de siempre", () => {
+    expect(ECOSISTEMAS.map((e) => e.id)).toEqual(["proveedores", "mantenimiento"]);
     const [p] = ECOSISTEMAS;
     expect(p.titulo).toBe("Gestión de proveedores");
     expect(p.icono).toBe("edificio");
@@ -57,7 +68,7 @@ describe("ecosistemas: el declarado hoy", () => {
   });
 
   it("ningún módulo vive en dos ecosistemas", () => {
-    const todos = modulosDeEcosistemas(DOS);
+    const todos = modulosDeEcosistemas(CON_OTRO);
     expect(new Set(todos).size).toBe(todos.length);
   });
 
@@ -85,12 +96,12 @@ describe("ecosistemaDeLaPestana / ecosistemaDeModulo", () => {
   });
 
   it("con un segundo ecosistema, cada pestaña cae en el suyo", () => {
-    expect(ecosistemaDeLaPestana("checklists", DOS)?.id).toBe("mantenimiento");
-    expect(ecosistemaDeLaPestana("ordenes_trabajo", DOS)?.id).toBe("mantenimiento");
-    expect(ecosistemaDeLaPestana("proveedores:directorio", DOS)?.id).toBe("proveedores");
-    expect(ecosistemaDeLaPestana("iperc", DOS)).toBeUndefined();
+    expect(ecosistemaDeLaPestana("despachos", CON_OTRO)?.id).toBe("logistica");
+    expect(ecosistemaDeLaPestana("rutas", CON_OTRO)?.id).toBe("logistica");
+    expect(ecosistemaDeLaPestana("proveedores:directorio", CON_OTRO)?.id).toBe("proveedores");
+    expect(ecosistemaDeLaPestana("iperc", CON_OTRO)).toBeUndefined();
     // Sin pasarlo, solo existe el de hoy: lo ficticio no se cuela.
-    expect(ecosistemaDeLaPestana("checklists")).toBeUndefined();
+    expect(ecosistemaDeLaPestana("despachos")).toBeUndefined();
   });
 });
 
@@ -102,15 +113,15 @@ describe("ecosistemaDeLaRuta", () => {
   });
 
   it("el prefijo es un tramo completo: /proveedoresX y otras no son suyas", () => {
-    for (const ruta of ["/", "/proveedoresX", "/plataforma", "/control-tv", "/mantenimiento"]) {
+    for (const ruta of ["/", "/proveedoresX", "/plataforma", "/control-tv", "/logistica"]) {
       expect(ecosistemaDeLaRuta(ruta), ruta).toBeUndefined();
     }
   });
 
   it("con un segundo ecosistema, cada dirección va al suyo", () => {
-    expect(ecosistemaDeLaRuta("/mantenimiento/ordenes", DOS)?.id).toBe("mantenimiento");
-    expect(ecosistemaDeLaRuta("/proveedores/precios", DOS)?.id).toBe("proveedores");
-    expect(ecosistemaDeLaRuta("/mantenimientoX", DOS)).toBeUndefined();
+    expect(ecosistemaDeLaRuta("/logistica/ordenes", CON_OTRO)?.id).toBe("logistica");
+    expect(ecosistemaDeLaRuta("/proveedores/precios", CON_OTRO)?.id).toBe("proveedores");
+    expect(ecosistemaDeLaRuta("/logisticaX", CON_OTRO)).toBeUndefined();
   });
 });
 

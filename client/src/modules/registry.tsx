@@ -103,6 +103,14 @@ export const MODULOS_CLIENTE: ModuloCliente[] = [
     icono: Building2,
     componente: lazy(() => import("../components/proveedores/EcosistemaProveedores")),
   },
+  {
+    // Ecosistema «Gestión de mantenimiento»: módulo propio y autónomo, con su propio menú. App.tsx lo dibuja
+    // FUERA del Layout del ERP (ver EcosistemaMantenimiento).
+    id: "mantenimiento",
+    label: "Gestión de mantenimiento",
+    icono: Wrench,
+    componente: lazy(() => import("../components/mantenimiento/EcosistemaMantenimiento")),
+  },
 ];
 
 /** Módulos que existen en el servidor pero todavía no tienen pantalla propia

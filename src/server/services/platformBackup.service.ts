@@ -68,6 +68,17 @@ const TABLAS_TENANT: MetaTabla[] = [
     pk: "serial",
     fks: { sede_id: "sedes", creado_por: "usuarios" },
   },
+  // El MAESTRO de unidades (`equipos`) y sus lecturas son de la EMPRESA, no de un módulo: Flota («Registro de
+  // unidades»), Mantenimiento («Equipos»), Checklists, Órdenes de trabajo y Combustible apuntan a ellos, tenga la
+  // empresa el módulo que tenga. Van antes de los módulos por eso, y después de `grifos_internos`, que el equipo
+  // referencia. Lo que cuelga de un equipo y es de un módulo (historial de conductor, datos de Mantenimiento)
+  // viaja con ese módulo.
+  { nombre: "equipos", pk: "serial", fks: { grifo_interno_id: "grifos_internos" } },
+  {
+    nombre: "equipo_lecturas",
+    pk: "serial",
+    fks: { equipo_id: "equipos", usuario_id: "usuarios", anulada_por: "usuarios" },
+  },
   // Permisos de pestaña por usuario (migración 0104): sobrescribe los
   // predeterminados del rol. Va después de usuarios porque lo referencia.
   {
@@ -98,7 +109,9 @@ const RAICES_WIPE: string[] = [
   "ordenes_admin",
   ...[...MODULOS.flatMap((m) => m.raices)].reverse(),
   // Después de los módulos: tanques, equipos y todos los hechos las
-  // referencian. `grifos_internos` antes que `sedes`, por la misma razón.
+  // referencian. `equipos` (y sus lecturas, que cascadean) antes que `grifos_internos`, que referencia;
+  // `grifos_internos` antes que `sedes`, por la misma razón.
+  "equipos",
   "grifos_internos",
   "sedes",
 ];

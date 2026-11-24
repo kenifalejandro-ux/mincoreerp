@@ -15,6 +15,7 @@ const RUTAS_BULK = [
   "/api/erp/documentos/bulk",
   "/api/erp/equipos/bulk",
   "/api/erp/combustible/bulk",
+  "/api/erp/mantenimiento/equipos/bulk",
 ];
 
 describe("el tope de filas de /bulk corta antes de validar", () => {
