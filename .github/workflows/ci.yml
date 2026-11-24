@@ -249,7 +249,7 @@ jobs:
     # irse de tiempo en #332. La versión de la imagen TIENE que ser la de
     # @playwright/test (lo comprueba el paso "Comprobar la imagen de Playwright").
     container:
-      image: mcr.microsoft.com/playwright:v1.64.1-noble
+      image: mcr.microsoft.com/playwright:v1.65.1-noble
       # Recomendado por Playwright para Chromium en contenedores.
       options: --ipc=host
     # En un job con contenedor, GitHub usa `sh` (dash) para los `run` si no se le
