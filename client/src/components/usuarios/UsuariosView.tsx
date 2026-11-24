@@ -83,15 +83,14 @@ const ROLES: { valor: RolUsuario; titulo: string; detalle: string; cancha?: bool
   {
     valor: "mecanico",
     titulo: "Mecánico",
-    detalle:
-      "Hace las órdenes de trabajo que le asignan. Entra con su DNI; al inicio no ve ningún módulo.",
+    detalle: "Hace las órdenes de trabajo que le asignan. Al inicio no ve ningún módulo.",
     cancha: true,
   },
   {
     valor: "operario",
     titulo: "Operario",
     detalle:
-      "Maneja maquinaria pesada (distinto del conductor de ruta). Entra con su DNI; al inicio no ve ningún módulo.",
+      "Maneja maquinaria pesada (distinto del conductor de ruta). Al inicio no ve ningún módulo.",
     cancha: true,
   },
 ];
