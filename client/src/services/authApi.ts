@@ -10,7 +10,15 @@ export interface UsuarioPayload {
    *  Al menos uno de los dos siempre está. */
   email: string | null;
   dni?: string | null;
-  rol: "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta" | "encargado_urea";
+  rol:
+    | "admin"
+    | "operador"
+    | "lectura"
+    | "grifero"
+    | "conductor_ruta"
+    | "encargado_urea"
+    | "mecanico"
+    | "operario";
   modulosPermitidos: string[];
   /** Módulos en nivel "consultas": solo lectura, sin botones de escritura. */
   modulosConsulta?: string[];

@@ -269,7 +269,14 @@ export interface UsuarioPlataforma {
 }
 
 export type RolUsuarioTenant =
-  "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta" | "encargado_urea";
+  | "admin"
+  | "operador"
+  | "lectura"
+  | "grifero"
+  | "conductor_ruta"
+  | "encargado_urea"
+  | "mecanico"
+  | "operario";
 
 export async function listarUsuariosTenantApi(tenantId: string): Promise<UsuarioPlataforma[]> {
   const res = await platformFetch(`/tenants/${tenantId}/usuarios`);

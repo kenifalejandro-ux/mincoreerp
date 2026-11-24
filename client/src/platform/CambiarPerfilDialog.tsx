@@ -33,6 +33,16 @@ const PERFILES: { rol: RolUsuarioTenant; nombre: string; detalle: string }[] = [
     nombre: "Encargado de Urea",
     detalle: "Acceso acotado a la pestaña Urea.",
   },
+  {
+    rol: "mecanico",
+    nombre: "Mecánico",
+    detalle: "Perfil de mantenimiento. Al inicio no ve ningún módulo.",
+  },
+  {
+    rol: "operario",
+    nombre: "Operario",
+    detalle: "Maneja maquinaria pesada. Al inicio no ve ningún módulo.",
+  },
 ];
 
 export default function CambiarPerfilDialog({

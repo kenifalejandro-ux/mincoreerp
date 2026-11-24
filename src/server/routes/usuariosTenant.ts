@@ -101,7 +101,16 @@ const actualizarUsuarioSchema = z
  *  un módulo que queda asignado porque nadie mandó su baja. */
 const guardarPermisosSchema = z.object({
   rol: z
-    .enum(["admin", "operador", "lectura", "grifero", "conductor_ruta", "encargado_urea"])
+    .enum([
+      "admin",
+      "operador",
+      "lectura",
+      "grifero",
+      "conductor_ruta",
+      "encargado_urea",
+      "mecanico",
+      "operario",
+    ])
     .optional(),
   modulos: z
     .array(
@@ -328,7 +337,15 @@ export function createUsuariosTenantRouter() {
     validate(guardarPermisosSchema),
     asyncHandler(async (req, res) => {
       const cambio = req.validatedBody as {
-        rol?: "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta" | "encargado_urea";
+        rol?:
+          | "admin"
+          | "operador"
+          | "lectura"
+          | "grifero"
+          | "conductor_ruta"
+          | "encargado_urea"
+          | "mecanico"
+          | "operario";
         modulos: { modulo: string; asignado: boolean; nivel: "operar" | "consultas" }[];
         alcanceCombustible?: {
           todo: boolean;

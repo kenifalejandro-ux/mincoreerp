@@ -63,7 +63,15 @@ export interface UsuarioPayload {
    *  `conductor_ruta` (migración 0085) NO están en esa escalera -- son
    *  recortes laterales, en direcciones distintas entre sí. Por eso
    *  requireRole recibe una LISTA de roles y no un nivel mínimo. */
-  rol: "admin" | "operador" | "lectura" | "grifero" | "conductor_ruta" | "encargado_urea";
+  rol:
+    | "admin"
+    | "operador"
+    | "lectura"
+    | "grifero"
+    | "conductor_ruta"
+    | "encargado_urea"
+    | "mecanico"
+    | "operario";
   /** Intersección de tenant_modulos (habilitados para la empresa) y
    *  usuario_modulos (asignados a este usuario) al momento del login/
    *  refresh — ver obtenerModulosPermitidos(). Igual que `rol`, un cambio
@@ -141,6 +149,12 @@ const MODULOS_POR_ROL: Partial<Record<UsuarioPayload["rol"], string[]>> = {
   // Viajes: "Mi viaje" es del conductor, aunque ahora sea módulo propio.
   conductor_ruta: ["combustible", "viajes"],
   encargado_urea: ["combustible"],
+  // `mecanico` y `operario` (migración 0202): perfiles de mantenimiento. Nacen SIN módulos a propósito: las
+  // rutas de Checklists, IPERC y Órdenes de trabajo hoy solo aceptan admin/operador, y asignarles el módulo
+  // sin darles el permiso los dejaría viendo pantallas que responden 403. Cada entrega que les abra un
+  // módulo (con «solo lo suyo») les suma aquí ese módulo.
+  mecanico: [],
+  operario: [],
 };
 
 export async function obtenerModulosPermitidos(

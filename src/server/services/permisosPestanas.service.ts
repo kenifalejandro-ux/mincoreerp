@@ -447,6 +447,11 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
       return new Set(conductor);
     case "encargado_urea":
       return new Set(urea);
+    // Mantenimiento (0202): ninguno de los dos tiene pestañas de Combustible. Sus pestañas llegan con la
+    // entrega que les abra un módulo.
+    case "mecanico":
+    case "operario":
+      return new Set<string>();
   }
 }
 
