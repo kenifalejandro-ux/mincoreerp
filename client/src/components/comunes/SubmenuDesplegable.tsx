@@ -14,7 +14,7 @@ export interface ItemDeSubmenu {
 }
 
 interface SubmenuDesplegableProps {
-  items: ItemDeSubmenu[];
+  items: readonly ItemDeSubmenu[];
   desplegado: boolean;
   activeTab: string;
   setActiveTab: (tab: string) => void;
