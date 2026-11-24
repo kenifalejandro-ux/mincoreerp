@@ -16,14 +16,14 @@ export const ETIQUETA_PESTANA: Record<PestanaFicha, string> = {
   comercial: "Comercial",
   contratos: "Contratos",
   documentos: "Documentos",
-  compras: "Compras y recepciones",
+  compras: "Compras de combustible",
   historial: "Historial",
 };
 
 export interface AccesoDeLaFicha {
   /** Pestaña «Comercial» (los precios). */
   verPrecios: boolean;
-  /** Pestaña «Compras y recepciones». */
+  /** Pestaña «Compras de combustible». */
   verCompras: boolean;
   /** Pestaña «Cuentas» (cuentas bancarias; nace solo para el admin). */
   verCuentas: boolean;

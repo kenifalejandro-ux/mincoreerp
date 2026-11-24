@@ -62,7 +62,7 @@ test("ficha del proveedor: datos y condiciones de pago, contactos y Lectura sin 
     "Comercial",
     "Contratos",
     "Documentos",
-    "Compras y recepciones",
+    "Compras de combustible",
     "Historial",
   ]) {
     await expect(page.getByRole("tab", { name: pestana })).toBeVisible();

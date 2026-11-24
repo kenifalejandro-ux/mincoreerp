@@ -109,7 +109,7 @@ const GRUPOS: { etiqueta: string; items: ItemDeMenu[] }[] = [
       },
       {
         id: "compras",
-        label: "Compras y recepciones",
+        label: "Compras de combustible",
         Icono: Truck,
         visible: puedeVerComprasDeProveedores,
       },

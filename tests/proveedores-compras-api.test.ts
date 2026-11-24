@@ -36,7 +36,7 @@ interface Respuesta {
   compras: Compra[];
 }
 
-describe("Compras y recepciones (solo lectura)", () => {
+describe("Compras de combustible (solo lectura)", () => {
   const empresas: Empresa[] = [];
   let a: Empresa; // Proveedores + Combustible (las compras son de Combustible)
   let b: Empresa; // otra empresa

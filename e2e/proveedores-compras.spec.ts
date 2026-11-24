@@ -112,9 +112,9 @@ test("compras y recepciones: estados, filtro y ficha del proveedor", async ({ pa
   expect(anular.ok(), await anular.text()).toBeTruthy();
 
   const menu = await entrarAlEcosistema(page);
-  await menu.getByRole("button", { name: "Compras y recepciones" }).click();
+  await menu.getByRole("button", { name: "Compras de combustible" }).click();
   await expect(
-    page.getByRole("heading", { name: "Compras y recepciones", level: 1 })
+    page.getByRole("heading", { name: "Compras de combustible", level: 1 })
   ).toBeVisible();
 
   await page.getByPlaceholder("Buscar por compra, guía, producto o proveedor...").fill(marca);
@@ -182,7 +182,7 @@ test("registrar, habilitar y anular una compra desde el ecosistema; Combustible 
   expect(alta.ok(), await alta.text()).toBeTruthy();
 
   const menu = await entrarAlEcosistema(page);
-  await menu.getByRole("button", { name: "Compras y recepciones" }).click();
+  await menu.getByRole("button", { name: "Compras de combustible" }).click();
   await registrarPorFormulario(page, { proveedor, documento, cantidad: "750", costo: "15.9" });
 
   await page.getByPlaceholder("Buscar por compra, guía, producto o proveedor...").fill(documento);
@@ -353,7 +353,7 @@ test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", a
     });
     // Compras y recepciones son de Combustible: sin ese módulo la sección no existe (ni en el menú ni en la
     // ficha).
-    await expect(menu.getByRole("button", { name: "Compras y recepciones" })).toHaveCount(0);
+    await expect(menu.getByRole("button", { name: "Compras de combustible" })).toHaveCount(0);
 
     // Carga un precio de ruta desde el ecosistema, sin pasar por Combustible, y lo anula con motivo.
     const ruta = `SOLO RUTA ${marca}`;
@@ -387,7 +387,7 @@ test("una empresa solo con Proveedores recorre el ecosistema sin Combustible", a
       .getByRole("button", { name: new RegExp(`SOLO PROVEEDOR ${marca}`) })
       .click();
     await expect(page.getByRole("tab", { name: "Cuentas" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Compras y recepciones" })).toHaveCount(0);
+    await expect(page.getByRole("tab", { name: "Compras de combustible" })).toHaveCount(0);
     await page.getByRole("button", { name: "Cerrar el panel" }).click();
 
     // El servidor tampoco la tiene: 404 (no 403 ni lista vacía).
