@@ -3,7 +3,7 @@
  * Equipos y áreas del ecosistema «Gestión de mantenimiento» (M1, etapa 2), por navegador, con una empresa que
  * tiene SOLO el módulo `mantenimiento`.
  *
- * 1. Áreas: se agrega una, un nombre repetido se rechaza con su mensaje.
+ * 1. Áreas (en Configuración): se agrega una, un nombre repetido se rechaza con su mensaje.
  * 2. Registrar un equipo: valida lo obligatorio, se guarda con su área y aparece en la lista; una placa repetida
  *    (aunque cambien las mayúsculas) se rechaza.
  * 3. Editar un equipo cambia lo que se manda; la lectura se ve pero no se edita.
@@ -18,6 +18,14 @@ import { randomBytes } from "node:crypto";
 import { test, expect, type Page } from "@playwright/test";
 
 import { crearEmpresaSola, entrarPorPrimeraVez } from "./fixtures/empresaSola";
+
+/** Cambia de sección por el menú del ecosistema (recargar tras el cambio de clave la volvería a pedir). */
+async function irA(page: Page, seccion: "Equipos" | "Configuración") {
+  await page
+    .getByRole("complementary", { name: "Menú de Gestión de mantenimiento" })
+    .getByRole("button", { name: new RegExp(`^${seccion}`) })
+    .click();
+}
 
 async function alEquipos(page: Page, empresa: Awaited<ReturnType<typeof crearEmpresaSola>>) {
   const menu = page.getByRole("complementary", { name: "Menú de Gestión de mantenimiento" });
@@ -34,17 +42,18 @@ test("registrar, editar y quitar equipos, y manejar las áreas", async ({ page, 
   await alEquipos(page, empresa);
   const fila = (texto: string) => page.getByRole("row", { name: new RegExp(texto) });
 
-  // ── 1. Áreas ─────────────────────────────────────────────────────────
-  await page.getByRole("button", { name: "Áreas" }).click();
-  const areas = page.getByRole("dialog", { name: "Áreas" });
+  // ── 1. Áreas (en Configuración, como en la maqueta) ──────────────────
+  await expect(page.getByRole("button", { name: "Áreas" })).toHaveCount(0);
+  await irA(page, "Configuración");
+  const areas = page.getByRole("region", { name: "Áreas" });
   await expect(areas.getByText("Todavía no hay áreas")).toBeVisible();
   await areas.getByPlaceholder("Nueva área (ej. Cantera Sur)").fill("Cantera");
   await areas.getByRole("button", { name: "Agregar" }).click();
-  await expect(areas.getByText("Sin equipos")).toBeVisible();
+  await expect(areas.getByRole("listitem")).toContainText("0 equipos");
   await areas.getByPlaceholder("Nueva área (ej. Cantera Sur)").fill("cantera");
   await areas.getByRole("button", { name: "Agregar" }).click();
   await expect(areas.getByRole("alert")).toContainText("Ya hay un área llamada");
-  await areas.getByRole("button", { name: "Cerrar" }).click();
+  await irA(page, "Equipos");
 
   // ── 2. Registrar un equipo ───────────────────────────────────────────
   await page.getByRole("button", { name: "Nuevo equipo" }).click();
@@ -85,11 +94,11 @@ test("registrar, editar y quitar equipos, y manejar las áreas", async ({ page, 
   await expect(fila(placa)).toContainText("1,234.5 h");
 
   // ── 4. Un área con equipos no se quita; quitar el equipo pide motivo ─
-  await page.getByRole("button", { name: "Áreas" }).click();
-  const areas2 = page.getByRole("dialog", { name: "Áreas" });
-  await expect(areas2.getByText("1 equipo")).toBeVisible();
-  await expect(areas2.getByRole("button", { name: "Quitar el área Cantera" })).toBeDisabled();
-  await areas2.getByRole("button", { name: "Cerrar" }).click();
+  await irA(page, "Configuración");
+  await expect(areas.getByRole("listitem")).toContainText("1 equipo");
+  // Con equipos no se ofrece quitarla.
+  await expect(areas.getByRole("button", { name: "Quitar el área Cantera" })).toHaveCount(0);
+  await irA(page, "Equipos");
 
   await page.getByRole("button", { name: `Quitar el equipo ${placa}` }).click();
   const quitar = page.getByRole("dialog", { name: "Quitar equipo" });
@@ -101,10 +110,9 @@ test("registrar, editar y quitar equipos, y manejar las áreas", async ({ page, 
   await expect(page.getByText("Todavía no hay equipos registrados.")).toBeVisible();
 
   // Ahora el área sí se puede quitar.
-  await page.getByRole("button", { name: "Áreas" }).click();
-  const areas3 = page.getByRole("dialog", { name: "Áreas" });
-  await areas3.getByRole("button", { name: "Quitar el área Cantera" }).click();
-  await expect(areas3.getByText("Todavía no hay áreas")).toBeVisible();
+  await irA(page, "Configuración");
+  await areas.getByRole("button", { name: "Quitar el área Cantera" }).click();
+  await expect(areas.getByText("Todavía no hay áreas")).toBeVisible();
 });
 
 test("Lectura ve los equipos pero ningún botón para escribir", async ({ page, request }) => {
@@ -145,11 +153,12 @@ test("Lectura ve los equipos pero ningún botón para escribir", async ({ page, 
   await expect(page.getByRole("button", { name: `Editar el equipo ${placa}` })).toHaveCount(0);
   await expect(page.getByRole("button", { name: `Quitar el equipo ${placa}` })).toHaveCount(0);
 
-  // Las áreas se ven, pero no se agregan ni se quitan.
-  await page.getByRole("button", { name: "Áreas" }).click();
-  const areas = page.getByRole("dialog", { name: "Áreas" });
+  // En Configuración las áreas se ven, pero no se agregan ni se quitan; las reglas salen apagadas.
+  await irA(page, "Configuración");
+  const areas = page.getByRole("region", { name: "Áreas" });
   await expect(areas).toBeVisible();
   await expect(areas.getByRole("button", { name: "Agregar" })).toHaveCount(0);
+  await expect(page.getByRole("switch").first()).toBeDisabled();
 
   // Y el servidor tampoco la deja escribir.
   const intento = await page.request.post("/api/erp/mantenimiento/equipos", {

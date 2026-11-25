@@ -26,6 +26,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import BarraSuperiorMantenimiento from "./BarraSuperiorMantenimiento";
 import CentroDeMantenimiento from "./CentroDeMantenimiento";
+import ConfiguracionMantenimiento from "./ConfiguracionMantenimiento";
 import EquiposMantenimiento from "./EquiposMantenimiento";
 import { resumenMantenimiento, type ResumenMantenimiento } from "./mantenimientoApi";
 import {
@@ -45,6 +46,7 @@ import {
 } from "./rutaMantenimiento";
 import { useAuth } from "../../context/AuthContext";
 import { useBarraLima } from "../comunes/useBarraLima";
+import { marcarNovedadVista, novedadVigente } from "../controlTv/novedad";
 
 const ICONOS: Record<IconoDeMenu, LucideIcon> = {
   centro: LayoutGrid,
@@ -57,6 +59,12 @@ const ICONOS: Record<IconoDeMenu, LucideIcon> = {
   almacen: Package,
   iperc: ShieldCheck,
 };
+
+/** La etiqueta «Nuevo» de Configuración (24 horas desde el primer clic, ver controlTv/novedad.ts). */
+const NOVEDAD_CONFIGURACION = "mantenimiento-configuracion-2026-11";
+const configuracionEsNueva = () => novedadVigente(Date.now(), undefined, NOVEDAD_CONFIGURACION);
+const marcarConfiguracionVista = () =>
+  marcarNovedadVista(Date.now(), undefined, NOVEDAD_CONFIGURACION);
 
 export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => void }) {
   const { usuario } = useAuth();
@@ -81,10 +89,12 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
       .catch((e: unknown) => setErrorDelResumen(e instanceof Error ? e.message : "Error"));
   }, []);
 
+  // Se lee al abrir y cada vez que se cambia de sección: el Centro y la insignia no se quedan con lo de antes
+  // (por ejemplo, equipos que registró otra persona mientras el ecosistema estaba abierto).
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     cargarResumen();
-  }, [cargarResumen]);
+  }, [cargarResumen, seccion]);
 
   /** Refleja la pantalla en la dirección y el título del navegador. Con `reemplazar` no suma un paso al
    *  historial. */
@@ -248,14 +258,31 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
 
         <div className="border-t border-white/10 py-3">
           <button
-            disabled
-            className="w-full text-left px-6 py-3 flex items-center gap-3 text-sm text-slate-500 font-medium cursor-default"
+            onClick={() => {
+              marcarConfiguracionVista();
+              irA("configuracion");
+            }}
+            aria-current={seccion === "configuracion" ? "page" : undefined}
+            className={`group w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all ${
+              seccion === "configuracion"
+                ? "bg-[#BADC1E] text-[#0A1014] font-semibold"
+                : "text-slate-400 hover:bg-[#BADC1E] hover:text-[#0A1014] font-medium"
+            }`}
           >
-            <Settings size={18} className="text-slate-600 shrink-0" />
+            <Settings
+              size={18}
+              className={`shrink-0 ${
+                seccion === "configuracion"
+                  ? "text-[#0A1014]"
+                  : "text-slate-500 group-hover:text-[#0A1014]"
+              }`}
+            />
             <span className="tracking-tight flex-1">Configuración</span>
-            <span className="px-2 py-0.5 rounded-full bg-white/10 text-[10px] font-bold text-slate-300">
-              Pronto
-            </span>
+            {configuracionEsNueva() && (
+              <span className="px-2 py-0.5 rounded-full bg-[#BADC1E] text-[#0A1014] text-[10px] font-extrabold border border-[#0A1014]/20">
+                Nuevo
+              </span>
+            )}
           </button>
           {integrados > 0 && (
             <div className="mx-4 mt-2 flex items-center gap-3 rounded-xl bg-black/25 border border-white/10 p-3">
@@ -278,6 +305,7 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
           {seccion === "centro" && (
             <CentroDeMantenimiento resumen={resumen} error={errorDelResumen} onIr={irA} />
           )}
+          {seccion === "configuracion" && <ConfiguracionMantenimiento />}
           {seccion === "equipos" && (
             <EquiposMantenimiento
               key={busqueda.veces}

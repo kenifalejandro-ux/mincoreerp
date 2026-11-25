@@ -109,7 +109,7 @@ test("importar un Excel crea los equipos y el Centro los cuenta por área", asyn
   await menu.getByRole("button", { name: "Centro de mantenimiento" }).click();
   const resumen = page.getByRole("region", { name: "Resumen del mantenimiento" });
   await expect(resumen).toContainText("Equipos registrados4");
-  await expect(resumen).toContainText("3 propios · 1 alquilados");
+  await expect(resumen).toContainText("3 propios · 1 alquilado");
   await expect(page.getByText("1 equipo sin área")).toBeVisible();
   const reparto = page
     .getByRole("heading", { name: "Equipos por área" })

@@ -107,3 +107,19 @@ export const completarEquipos = (datos: {
   propiedad: "propia" | "alquilada";
   area_id: number | null;
 }) => escribir<{ completados: number; ids: number[] }>("POST", "/equipos/completar", datos);
+
+/** Las reglas y metas de la empresa. Se guardan; todavía no actúan (ver configMantenimiento.ts). */
+export interface ConfigMantenimiento {
+  ot_de_hallazgo: boolean;
+  bloquea_sin_iperc: boolean;
+  alerta_repuestos: boolean;
+  exige_conformidad: boolean;
+  meta_disponibilidad: number;
+  meta_preventivo: number;
+  meta_mttr_horas: number;
+  meta_mtbf_horas: number;
+}
+export const leerConfig = () => leer<ConfigMantenimiento>("/config");
+/** Se manda solo lo que cambia; devuelve cómo quedó. Solo el admin. */
+export const guardarConfig = (cambios: Partial<ConfigMantenimiento>) =>
+  escribir<ConfigMantenimiento>("PUT", "/config", cambios);

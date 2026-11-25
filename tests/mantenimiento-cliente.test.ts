@@ -8,6 +8,7 @@ import { describe, it, expect } from "vitest";
 import {
   avisosDelCentro,
   fechaLarga,
+  propiosYAlquilados,
   repartoPorArea,
   saludoSegunHora,
 } from "../client/src/components/mantenimiento/centroDeMantenimiento";
@@ -30,6 +31,12 @@ import {
   problemaDelMotivo,
   problemasDelEquipo,
 } from "../client/src/components/mantenimiento/formularioEquipo";
+import {
+  METAS,
+  REGLAS,
+  avisoDeRegla,
+  leerMeta,
+} from "../client/src/components/mantenimiento/configMantenimiento";
 import { puedeVerMantenimiento } from "../client/src/components/mantenimiento/mantenimientoAcceso";
 import {
   esSeccion,
@@ -408,6 +415,7 @@ describe("menú del ecosistema (como la maqueta)", () => {
   it("solo Centro y Equipos son secciones; la insignia de Equipos cuenta las unidades por completar", () => {
     expect(esSeccion("centro")).toBe(true);
     expect(esSeccion("equipos")).toBe(true);
+    expect(esSeccion("configuracion")).toBe(true);
     expect(esSeccion("checklists")).toBe(false);
     expect(insigniaDe("equipos", 3)).toBe(3);
     expect(insigniaDe("equipos", 0)).toBeNull();
@@ -438,6 +446,11 @@ describe("barra superior y Centro", () => {
     expect(fechaLarga(new Date(2026, 10, 24))).toContain("2026");
   });
 
+  it("escribe en singular o en plural los propios y los alquilados", () => {
+    expect(propiosYAlquilados(1, 0)).toBe("1 propio · 0 alquilados");
+    expect(propiosYAlquilados(3, 1)).toBe("3 propios · 1 alquilado");
+  });
+
   it("los avisos salen solo de lo que se sabe: unidades por completar y equipos sin área", () => {
     expect(avisosDelCentro({ total: 5, sin_area: 0, por_importar: 0 })).toEqual([]);
     const avisos = avisosDelCentro({ total: 5, sin_area: 1, por_importar: 2 });
@@ -445,5 +458,36 @@ describe("barra superior y Centro", () => {
     expect(avisos[0].titulo).toBe("2 unidades de Operaciones por completar");
     expect(avisos[1].titulo).toBe("1 equipo sin área");
     expect(avisos.every((a) => a.destino === "equipos")).toBe(true);
+  });
+});
+
+describe("Configuración: reglas y metas", () => {
+  it("la dirección de Configuración va y vuelve", () => {
+    expect(rutaDe({ seccion: "configuracion" })).toBe("/mantenimiento/configuracion");
+    expect(leerRuta("/mantenimiento/configuracion")).toEqual({ seccion: "configuracion" });
+  });
+
+  it("una meta es un entero entre 1 y su máximo; lo demás dice por qué no sirve", () => {
+    const disponibilidad = METAS[0];
+    expect(leerMeta(" 85 ", disponibilidad)).toEqual({ valor: 85 });
+    expect(leerMeta("100", disponibilidad)).toEqual({ valor: 100 });
+    for (const malo of ["", "0", "101", "-5", "92.5", "1e2", "abc"]) {
+      expect(leerMeta(malo, disponibilidad), malo).toHaveProperty("error");
+    }
+  });
+
+  it("cada regla avisa que aún no actúa y nombra solo los módulos que faltan", () => {
+    const hallazgo = REGLAS.find((r) => r.clave === "ot_de_hallazgo")!;
+    expect(avisoDeRegla(hallazgo, { modulosPermitidos: ["mantenimiento"] })).toBe(
+      "Aún no actúa: llega con Checklists y Órdenes de trabajo. Necesita los módulos Checklists y Órdenes de Trabajo."
+    );
+    expect(avisoDeRegla(hallazgo, { modulosPermitidos: ["checklists", "ordenes_trabajo"] })).toBe(
+      "Aún no actúa: llega con Checklists y Órdenes de trabajo."
+    );
+    expect(avisoDeRegla(hallazgo, { modulosPermitidos: ["checklists"] })).toContain(
+      "Necesita el módulo Órdenes de Trabajo."
+    );
+    expect(REGLAS).toHaveLength(4);
+    expect(METAS).toHaveLength(4);
   });
 });

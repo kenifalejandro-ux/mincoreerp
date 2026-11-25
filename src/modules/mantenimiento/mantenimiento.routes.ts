@@ -1,13 +1,13 @@
 /** src/modules/mantenimiento/mantenimiento.routes.ts
  *
  * Ecosistema «Gestión de mantenimiento». Equipos (lista, alta, edición, quitar, importar desde Excel), áreas
- * (lista, alta, quitar) y el resumen del Centro. Los equipos son del maestro de unidades (`equipos`, tabla base
- * de la empresa): ver mantenimiento.service.ts.
+ * (lista, alta, quitar), el resumen del Centro y la configuración (reglas y metas). Los equipos son del maestro
+ * de unidades (`equipos`, tabla base de la empresa): ver mantenimiento.service.ts.
  *
  * Sin permiso de pestaña a propósito (igual que Proveedores): el acceso lo da el MÓDULO asignado a cada
  * persona, y el perfil Lectura mira pero no escribe (requireNivelParaEscribir corta los métodos de
- * escritura). Escribir es de admin y operador. Una pestaña más agrandaría la cookie de sesión, que ya está
- * cerca de su tope.
+ * escritura). Escribir es de admin y operador, salvo la configuración, que solo la cambia el admin. Una pestaña
+ * más agrandaría la cookie de sesión, que ya está cerca de su tope.
  *
  * Cada cambio deja quién lo hizo y qué ids toca en la auditoría de la empresa (sin copiar los datos del
  * equipo); quitar un equipo guarda además el motivo.
@@ -22,12 +22,14 @@ import {
   crearAreaMantenimientoSchema,
   completarEquiposMantenimientoSchema,
   crearEquipoMantenimientoSchema,
+  guardarConfigMantenimientoSchema,
   importarEquiposMantenimientoSchema,
   quitarEquipoMantenimientoSchema,
   type ActualizarEquipoMantenimientoInput,
   type CompletarEquiposMantenimientoInput,
   type CrearAreaMantenimientoInput,
   type CrearEquipoMantenimientoInput,
+  type GuardarConfigMantenimientoInput,
   type ImportarEquiposMantenimientoInput,
   type QuitarEquipoMantenimientoInput,
 } from "../../server/schemas/mantenimiento.schema";
@@ -42,6 +44,8 @@ import { MantenimientoService } from "./mantenimiento.service";
 const router = Router();
 const service = new MantenimientoService();
 const escribe = requireRole("admin", "operador");
+/** Las reglas y las metas las decide el administrador; las demás personas con el módulo las miran. */
+const soloAdmin = requireRole("admin");
 
 const filtrosEquiposSchema = z.object({
   q: z.string().trim().max(80).optional(),
@@ -220,6 +224,38 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const tenantId = getTenantId(req);
     res.json(await withTenant(tenantId, (client) => service.resumen(client, tenantId)));
+  })
+);
+
+router.get(
+  "/config",
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    res.json(await withTenant(tenantId, (client) => service.obtenerConfig(client, tenantId)));
+  })
+);
+
+router.put(
+  "/config",
+  soloAdmin,
+  validate(guardarConfigMantenimientoSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const cambios = req.validatedBody as GuardarConfigMantenimientoInput;
+    const { config, campos } = await withTenant(tenantId, (client) =>
+      service.guardarConfig(client, tenantId, req.usuario!.id, cambios)
+    );
+    // Solo los NOMBRES de lo que cambió. Guardar lo mismo no deja rastro: no cambió nada.
+    if (campos.length > 0) {
+      await registrarAuditoria({
+        accion: "mantenimiento.config_actualizar",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: { campos },
+        contexto: contextoAuditoriaModulo(req),
+      });
+    }
+    res.json(config);
   })
 );
 

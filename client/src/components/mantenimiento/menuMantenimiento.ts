@@ -97,7 +97,7 @@ export function gruposDelMenu(usuario: { modulosPermitidos: string[] } | null | 
 
 /** ¿Esta entrada abre una pantalla? Solo las secciones que existen. */
 export function esSeccion(id: string): id is SeccionDeRuta {
-  return id === "centro" || id === "equipos";
+  return id === "centro" || id === "equipos" || id === "configuracion";
 }
 
 /** La insignia numérica de una entrada, o null si no lleva. Hoy solo Equipos: las unidades de Operaciones por

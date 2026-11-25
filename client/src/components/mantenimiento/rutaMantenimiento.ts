@@ -5,11 +5,12 @@
 //
 //   /mantenimiento            Centro de mantenimiento
 //   /mantenimiento/equipos    Equipos
+//   /mantenimiento/configuracion  Configuración
 //
 // Lógica pura, sin React ni `window`. Una dirección que no se entiende se lee como el Centro, nunca rompe.
 // Qué sección puede ver cada persona NO se decide acá: lo decide el ecosistema.
 
-export type SeccionDeRuta = "centro" | "equipos";
+export type SeccionDeRuta = "centro" | "equipos" | "configuracion";
 
 export interface EstadoDeRuta {
   seccion: SeccionDeRuta;
@@ -21,11 +22,13 @@ export const PREFIJO_DE_RUTA = "/mantenimiento";
 const SLUG_DE_SECCION: Record<SeccionDeRuta, string> = {
   centro: "",
   equipos: "equipos",
+  configuracion: "configuracion",
 };
 
 const ETIQUETA_DE_SECCION: Record<SeccionDeRuta, string> = {
   centro: "Centro de mantenimiento",
   equipos: "Equipos",
+  configuracion: "Configuración",
 };
 
 /** ¿Esta dirección es del ecosistema? (`/mantenimiento` o `/mantenimiento/…`; no `/mantenimientoX`). */

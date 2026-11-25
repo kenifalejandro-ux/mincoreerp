@@ -86,3 +86,27 @@ export const completarEquiposMantenimientoSchema = z.object({
 export type CompletarEquiposMantenimientoInput = z.infer<
   typeof completarEquiposMantenimientoSchema
 >;
+
+const meta = (maximo: number) =>
+  z
+    .number()
+    .int("La meta es un número entero")
+    .min(1, "La meta tiene que ser de al menos 1")
+    .max(maximo, `La meta no puede pasar de ${maximo}`);
+
+/** Reglas y metas. Se manda solo lo que cambia: lo que no viene se queda como estaba. Un campo desconocido es
+ *  un error (un nombre mal escrito no puede pasar por «guardado»). */
+export const guardarConfigMantenimientoSchema = z
+  .strictObject({
+    ot_de_hallazgo: z.boolean(),
+    bloquea_sin_iperc: z.boolean(),
+    alerta_repuestos: z.boolean(),
+    exige_conformidad: z.boolean(),
+    meta_disponibilidad: meta(100),
+    meta_preventivo: meta(100),
+    meta_mttr_horas: meta(10_000),
+    meta_mtbf_horas: meta(100_000),
+  })
+  .partial()
+  .refine((c) => Object.keys(c).length > 0, "No hay ningún cambio que guardar");
+export type GuardarConfigMantenimientoInput = z.infer<typeof guardarConfigMantenimientoSchema>;
