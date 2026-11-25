@@ -38,6 +38,7 @@ import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { requireRole } from "../../server/shared/middlewares/roles.middleware";
 import { asyncHandler } from "../../server/shared/utils/asyncHandler";
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
+import { tieneModulo } from "../../server/shared/utils/modulos";
 import { getTenantId } from "../../server/shared/utils/request";
 import { MantenimientoService } from "./mantenimiento.service";
 
@@ -75,8 +76,15 @@ router.get(
   asyncHandler(async (req: Request, res: Response) => {
     const tenantId = getTenantId(req);
     const filtros = req.validatedQuery as z.infer<typeof filtrosEquiposSchema>;
+    // El estado se calcula con lo que ESTA persona tiene: sin el módulo no se lee su tabla.
+    const fuentes = {
+      conOrdenes: tieneModulo(req.usuario, "ordenes_trabajo"),
+      conChecklists: tieneModulo(req.usuario, "checklists"),
+    };
     res.json(
-      await withTenant(tenantId, (client) => service.listarEquipos(client, tenantId, filtros))
+      await withTenant(tenantId, (client) =>
+        service.listarEquipos(client, tenantId, filtros, fuentes)
+      )
     );
   })
 );
