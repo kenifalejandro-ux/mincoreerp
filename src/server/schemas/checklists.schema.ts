@@ -1,17 +1,42 @@
 import { z } from "zod";
 
+const itemDeFormato = z.object({
+  descripcion: z.string().trim().min(1, "Descripción requerida").max(300),
+  orden: z.number().int().optional(),
+  /** Punto crítico: si falla, la unidad no debe salir. */
+  critica: z.boolean().default(false),
+});
+
+const itemsDeFormato = z
+  .array(itemDeFormato)
+  .min(1, "La plantilla necesita al menos un ítem")
+  .max(200, "La plantilla admite hasta 200 ítems");
+
 export const crearPlantillaSchema = z.object({
   nombre: z.string().trim().min(1, "Nombre requerido").max(150),
   tipo_equipo: z.string().trim().max(100).optional(),
-  items: z
-    .array(
-      z.object({
-        descripcion: z.string().trim().min(1, "Descripción requerida").max(300),
-        orden: z.number().int().optional(),
-      })
-    )
-    .min(1, "La plantilla necesita al menos un ítem"),
+  items: itemsDeFormato,
 });
+
+/** La versión sobre la que trabajó quien guarda: si ya no es la vigente, 409. */
+const versionBase = z.number().int().positive().max(2_000_000_000);
+
+export const editarPlantillaSchema = z.object({
+  version_base: versionBase,
+  cambio: z.string().trim().min(3, "Escribe qué cambió (al menos 3 letras)").max(300),
+  nombre: z.string().trim().min(1, "Nombre requerido").max(150),
+  tipo_equipo: z
+    .string()
+    .trim()
+    .max(100)
+    .optional()
+    .transform((v) => v || null),
+  items: itemsDeFormato,
+});
+export type EditarPlantillaInput = z.infer<typeof editarPlantillaSchema>;
+
+export const restaurarPlantillaSchema = z.object({ version_base: versionBase });
+export const estadoPlantillaSchema = z.object({ activa: z.boolean() });
 
 export type CrearPlantillaInput = z.infer<typeof crearPlantillaSchema>;
 
@@ -28,6 +53,9 @@ export const crearChecklistSchema = z
     equipo_id: z.number().int().positive().optional(),
     activo_texto: z.string().trim().max(150).optional(),
     plantilla_id: z.number().int().positive(),
+    // Con qué versión del formato se llenó. La manda el dispositivo (puede haber llenado sin señal con una
+    // anterior); si no viene, se anota la vigente.
+    plantilla_version: z.number().int().positive().max(2_000_000_000).optional(),
     turno: z.string().trim().max(20).optional(),
     observaciones_generales: z.string().trim().max(2000).optional(),
     items: z

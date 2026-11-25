@@ -2,22 +2,22 @@
 import { ChevronLeft, ChevronRight, Plus, Trash2, X } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 
+import EditorDeFormato from "./EditorDeFormato";
+import {
+  activarFormato,
+  eliminarFormato,
+  formatosParaLlenar,
+  leerFormato,
+  type Plantilla,
+  type PlantillaConItems,
+} from "./formatos";
+import VersionesDeFormato from "./VersionesDeFormato";
 import { useAuth } from "../../context/AuthContext";
 import { tieneUnidades } from "../../modules/tieneModulo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
-
-interface Plantilla {
-  id: number;
-  nombre: string;
-  tipo_equipo: string | null;
-  creado_en: string;
-}
-
-interface PlantillaConItems extends Plantilla {
-  items: { id: number; descripcion: string; orden: number }[];
-}
+import { marcarNovedadVista, novedadVigente } from "../controlTv/novedad";
 
 interface Checklist {
   id: number;
@@ -41,6 +41,11 @@ interface Equipo {
 
 type ItemEstado = "bien" | "malo" | "na";
 
+/** La etiqueta «Nuevo» de «Plantillas» (editar y versiones), 24 horas desde el primer clic. */
+const NOVEDAD_VERSIONES = "checklists-versiones-2026-11";
+const versionesSonNuevas = () => novedadVigente(Date.now(), undefined, NOVEDAD_VERSIONES);
+const marcarVersionesVistas = () => marcarNovedadVista(Date.now(), undefined, NOVEDAD_VERSIONES);
+
 export default function ChecklistsView() {
   const puedeEscribir = usePuedeEscribir("checklists");
   // Las unidades las mantiene OTRO módulo (Flota o Mantenimiento): sin ninguno no se piden ni se ofrecen unidades y el
@@ -63,10 +68,13 @@ export default function ChecklistsView() {
   const [siguienteCursorChecklists, setSiguienteCursorChecklists] = useState<number | null>(null);
   const [hayMasChecklists, setHayMasChecklists] = useState(false);
 
-  const [modalPlantillaAbierto, setModalPlantillaAbierto] = useState(false);
+  // La ventana de formatos abierta: crear (sin `editando`), editar o ver las versiones.
+  const [ventanaFormato, setVentanaFormato] = useState<
+    | { tipo: "editor"; editando: PlantillaConItems | null }
+    | { tipo: "versiones"; plantilla: Plantilla }
+    | null
+  >(null);
   const [modalChecklistAbierto, setModalChecklistAbierto] = useState(false);
-
-  const [formPlantilla, setFormPlantilla] = useState({ nombre: "", tipo_equipo: "", items: [""] });
 
   const [formChecklist, setFormChecklist] = useState({
     equipo_id: "",
@@ -176,48 +184,34 @@ export default function ChecklistsView() {
   }, []);
 
   // ── Plantillas ────────────────────────────────────────────────────────
-  const handleCrearPlantilla = async (e: React.FormEvent) => {
-    e.preventDefault();
+  /** Corre una acción sobre un formato; si falla dice por qué (el mensaje del servidor). */
+  const conFormato = async (accion: () => Promise<unknown>) => {
     if (guardando) return;
-    const items = formPlantilla.items
-      .map((d, i) => ({ descripcion: d, orden: i }))
-      .filter((it) => it.descripcion.trim());
-    if (items.length === 0) {
-      alert("La plantilla necesita al menos un ítem.");
-      return;
-    }
-    // Las plantillas NO pasan por idempotentInsert (no son offline: son
-    // configuración de oficina), así que acá el bloqueo del botón es la
-    // ÚNICA defensa contra el doble clic. De ahí que no alcance con
-    // considerarlo cosmético.
     setGuardando(true);
     try {
-      const res = await apiFetch("/api/erp/checklists/plantillas", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nombre: formPlantilla.nombre,
-          tipo_equipo: formPlantilla.tipo_equipo || undefined,
-          items,
-        }),
-      });
-      if (res.ok) {
-        setModalPlantillaAbierto(false);
-        setFormPlantilla({ nombre: "", tipo_equipo: "", items: [""] });
-        cargarPlantillas();
-      } else {
-        alert("Error al crear la plantilla.");
-      }
+      await accion();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "No se pudo completar la acción.");
     } finally {
       setGuardando(false);
     }
   };
 
-  const handleEliminarPlantilla = async (id: number) => {
+  const handleEditarPlantilla = (id: number) =>
+    conFormato(async () => setVentanaFormato({ tipo: "editor", editando: await leerFormato(id) }));
+
+  const handleActivarPlantilla = (p: Plantilla) =>
+    conFormato(async () => {
+      await activarFormato(p.id, p.activa === false);
+      await cargarPlantillas();
+    });
+
+  const handleEliminarPlantilla = (id: number) => {
     if (!window.confirm("¿Eliminar esta plantilla?")) return;
-    const res = await apiFetch(`/api/erp/checklists/plantillas/${id}`, { method: "DELETE" });
-    if (res.ok) cargarPlantillas();
-    else alert("No se pudo eliminar (puede estar en uso).");
+    return conFormato(async () => {
+      await eliminarFormato(id);
+      await cargarPlantillas();
+    });
   };
 
   // ── Checklists ────────────────────────────────────────────────────────
@@ -280,6 +274,8 @@ export default function ChecklistsView() {
           equipo_id: formChecklist.equipo_id ? Number(formChecklist.equipo_id) : undefined,
           activo_texto: activoTexto || undefined,
           plantilla_id: Number(formChecklist.plantilla_id),
+          // La versión que se tuvo delante: sin señal puede no ser ya la vigente.
+          plantilla_version: plantillaSeleccionada.version,
           turno: formChecklist.turno || undefined,
           observaciones_generales: formChecklist.observaciones_generales || undefined,
           items,
@@ -349,10 +345,18 @@ export default function ChecklistsView() {
             Checklists
           </button>
           <button
-            onClick={() => setSubTab("plantillas")}
+            onClick={() => {
+              marcarVersionesVistas();
+              setSubTab("plantillas");
+            }}
             className={`px-4 py-2 rounded-xl font-medium text-sm ${subTab === "plantillas" ? "bg-slate-900 text-white" : "bg-white border border-slate-200 text-slate-600"}`}
           >
             Plantillas
+            {versionesSonNuevas() && (
+              <span className="ml-2 px-1.5 py-0.5 rounded-full bg-[#BADC1E] text-[#0A1014] text-[9px] font-extrabold">
+                Nuevo
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -363,8 +367,12 @@ export default function ChecklistsView() {
             {puedeEscribir && (
               <button
                 onClick={() => {
-                  if (plantillas.length === 0) {
-                    alert("Primero crea una plantilla.");
+                  if (formatosParaLlenar(plantillas).length === 0) {
+                    alert(
+                      plantillas.length === 0
+                        ? "Primero crea una plantilla."
+                        : "Todas las plantillas están desactivadas: activa una para llenar un checklist."
+                    );
                     return;
                   }
                   abrirModalChecklist();
@@ -473,7 +481,7 @@ export default function ChecklistsView() {
           <div className="flex justify-end mb-6">
             {puedeEscribir && (
               <button
-                onClick={() => setModalPlantillaAbierto(true)}
+                onClick={() => setVentanaFormato({ tipo: "editor", editando: null })}
                 className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
               >
                 + Nueva Plantilla
@@ -492,7 +500,7 @@ export default function ChecklistsView() {
                       tipo de equipo
                     </th>
                     <th className="px-3 sm:px-4 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold text-slate-400 uppercase tracking-widest text-right">
-                      eliminar
+                      acciones
                     </th>
                   </tr>
                 </thead>
@@ -501,19 +509,47 @@ export default function ChecklistsView() {
                     <tr key={p.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm font-semibold text-slate-800">
                         {p.nombre}
+                        <span className="ml-2 text-xs font-medium text-slate-400">
+                          v{p.version ?? 1}
+                        </span>
+                        {p.activa === false && (
+                          <span className="ml-2 px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 text-xs">
+                            Desactivada
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500">
                         {p.tipo_equipo || "Uso general"}
                       </td>
-                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right">
+                      <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right whitespace-nowrap">
+                        <button
+                          onClick={() => setVentanaFormato({ tipo: "versiones", plantilla: p })}
+                          className="px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                        >
+                          Versiones
+                        </button>
                         {puedeEscribir && (
-                          <button
-                            onClick={() => handleEliminarPlantilla(p.id)}
-                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                            title="Eliminar"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          <>
+                            <button
+                              onClick={() => handleEditarPlantilla(p.id)}
+                              className="px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              onClick={() => handleActivarPlantilla(p)}
+                              className="px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg"
+                            >
+                              {p.activa === false ? "Activar" : "Desactivar"}
+                            </button>
+                            <button
+                              onClick={() => handleEliminarPlantilla(p.id)}
+                              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all align-middle"
+                              title="Eliminar"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </>
                         )}
                       </td>
                     </tr>
@@ -525,108 +561,23 @@ export default function ChecklistsView() {
         </>
       )}
 
-      {/* Modal: nueva plantilla */}
-      {modalPlantillaAbierto && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b flex justify-between items-center">
-              <h3 className="text-xl font-bold">Nueva Plantilla</h3>
-              <button
-                onClick={() => setModalPlantillaAbierto(false)}
-                className="text-slate-400 hover:text-slate-900"
-                aria-label="Cerrar"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <form onSubmit={handleCrearPlantilla} className="p-6 space-y-4">
-              <div className="space-y-1">
-                <label
-                  htmlFor="plantilla-nombre"
-                  className="text-xs font-bold text-slate-500 uppercase"
-                >
-                  Nombre
-                </label>
-                <input
-                  id="plantilla-nombre"
-                  type="text"
-                  required
-                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-                  value={formPlantilla.nombre}
-                  onChange={(e) => setFormPlantilla({ ...formPlantilla, nombre: e.target.value })}
-                />
-              </div>
-              <div className="space-y-1">
-                <label
-                  htmlFor="plantilla-tipo-equipo"
-                  className="text-xs font-bold text-slate-500 uppercase"
-                >
-                  Tipo de equipo (opcional)
-                </label>
-                <input
-                  id="plantilla-tipo-equipo"
-                  type="text"
-                  placeholder="Ej: Camioneta"
-                  className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-                  value={formPlantilla.tipo_equipo}
-                  onChange={(e) =>
-                    setFormPlantilla({ ...formPlantilla, tipo_equipo: e.target.value })
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <span className="text-xs font-bold text-slate-500 uppercase">Ítems a revisar</span>
-                {formPlantilla.items.map((valor, i) => (
-                  <div key={i} className="flex gap-2">
-                    <input
-                      type="text"
-                      required
-                      placeholder={`Ítem ${i + 1}`}
-                      className="flex-1 border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-                      value={valor}
-                      onChange={(e) => {
-                        const items = [...formPlantilla.items];
-                        items[i] = e.target.value;
-                        setFormPlantilla({ ...formPlantilla, items });
-                      }}
-                    />
-                    {formPlantilla.items.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setFormPlantilla({
-                            ...formPlantilla,
-                            items: formPlantilla.items.filter((_, idx) => idx !== i),
-                          })
-                        }
-                        className="px-3 text-slate-400 hover:text-red-600"
-                        aria-label="Quitar ítem"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={() =>
-                    setFormPlantilla({ ...formPlantilla, items: [...formPlantilla.items, ""] })
-                  }
-                  className="text-sm text-slate-600 hover:text-slate-900 font-medium"
-                >
-                  + Agregar ítem
-                </button>
-              </div>
-              <button
-                type="submit"
-                disabled={guardando}
-                className="w-full bg-slate-900 text-white font-bold py-4 rounded-2xl hover:bg-slate-800 transition-all mt-4 disabled:opacity-40"
-              >
-                {guardando ? "Creando..." : "Crear Plantilla"}
-              </button>
-            </form>
-          </div>
-        </div>
+      {ventanaFormato?.tipo === "editor" && (
+        <EditorDeFormato
+          editando={ventanaFormato.editando}
+          onGuardado={() => {
+            setVentanaFormato(null);
+            cargarPlantillas();
+          }}
+          onCerrar={() => setVentanaFormato(null)}
+        />
+      )}
+      {ventanaFormato?.tipo === "versiones" && (
+        <VersionesDeFormato
+          plantilla={ventanaFormato.plantilla}
+          puedeEscribir={puedeEscribir}
+          onCambio={cargarPlantillas}
+          onCerrar={() => setVentanaFormato(null)}
+        />
       )}
 
       {/* Modal: nuevo checklist */}
@@ -691,7 +642,7 @@ export default function ChecklistsView() {
                     onChange={(e) => handleSeleccionarPlantilla(e.target.value)}
                   >
                     <option value="">Selecciona...</option>
-                    {plantillas.map((p) => (
+                    {formatosParaLlenar(plantillas).map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.nombre}
                       </option>
@@ -743,7 +694,14 @@ export default function ChecklistsView() {
                       key={item.id}
                       className="flex items-center justify-between gap-3 bg-slate-50 rounded-xl p-3"
                     >
-                      <span className="text-sm text-slate-700">{item.descripcion}</span>
+                      <span className="text-sm text-slate-700">
+                        {item.descripcion}
+                        {item.critica && (
+                          <span className="ml-2 px-1.5 py-0.5 rounded-md bg-red-50 text-red-700 text-[10px] font-bold uppercase">
+                            Crítica
+                          </span>
+                        )}
+                      </span>
                       <select
                         className="border border-slate-200 rounded-lg p-2 text-sm outline-none bg-white"
                         value={estadosItems[item.id]?.estado ?? "bien"}
