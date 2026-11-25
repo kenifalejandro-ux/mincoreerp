@@ -7,7 +7,75 @@ import type {
   CrearChecklistInput,
 } from "../../server/schemas/checklists.schema";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
+import { AppError } from "../../server/shared/middlewares/error.middleware";
+import { CuotaExcedidaError, verificarCuota } from "../../server/services/platformCuotas.service";
+import { registrarLectura } from "../equipos/equipos.lecturas";
+import { crearOrdenDeHallazgo } from "../ordenes_trabajo/ordenDeHallazgo";
 import { ChecklistsRepository } from "./checklists.repository";
+import { preguntasCriticas } from "./checklists.criticas";
+
+/** El checklist y lo que arrastra, en la misma transacción: la lectura del medidor y, si falló un punto
+ *  crítico, la orden de trabajo. Ninguna de las dos puede hacer que se pierda el checklist: lo que no se
+ *  pueda hacer queda escrito en `aviso_registro`. */
+async function registrarChecklist(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  data: CrearChecklistInput
+) {
+  const criticas = await preguntasCriticas(
+    client,
+    tenantId,
+    data.plantilla_id,
+    data.plantilla_version
+  );
+  const items = data.items.map((i) => ({ ...i, critica: criticas.has(i.descripcion) }));
+  const fila = await ChecklistsRepository.crear(client, tenantId, usuarioId, { ...data, items });
+  let aviso: string | null = null;
+  if (data.lectura && data.equipo_id !== undefined) {
+    aviso = await dejarLectura(client, tenantId, usuarioId, data.equipo_id, data.lectura);
+    if (aviso) await ChecklistsRepository.guardarAviso(client, tenantId, fila.id, aviso);
+  }
+
+  let ordenId: number | null = null;
+  const fallas = items.filter((i) => i.critica && i.estado === "malo");
+  if (fallas.length > 0) {
+    ordenId = await crearOrdenDeHallazgo(client, tenantId, usuarioId, {
+      checklistId: fila.id,
+      equipoId: data.equipo_id ?? null,
+      activoTexto: data.activo_texto || null,
+      nombreActivo: await ChecklistsRepository.nombreDelActivo(client, tenantId, data),
+      fallas,
+    });
+  }
+
+  return { ...fila, aviso_registro: aviso, orden_trabajo_id: ordenId };
+}
+
+/** Devuelve por qué no se pudo dejar la lectura, o null si quedó registrada. */
+async function dejarLectura(
+  client: PoolClient,
+  tenantId: string,
+  usuarioId: string,
+  equipoId: number,
+  lectura: NonNullable<CrearChecklistInput["lectura"]>
+): Promise<string | null> {
+  try {
+    await verificarCuota(tenantId, "equipo_lecturas", 1, client);
+    await registrarLectura(client, tenantId, usuarioId, equipoId, lectura, "checklist");
+    return null;
+  } catch (err) {
+    if (err instanceof CuotaExcedidaError) {
+      return "No se registró la lectura: la empresa llegó a su límite de lecturas.";
+    }
+    // 400 = la regla del medidor (retrocede, o la unidad no lo tiene configurado). Se lanza antes de
+    // escribir nada, así que la transacción sigue sana.
+    if (err instanceof AppError && err.statusCode === 400) {
+      return `No se registró la lectura. ${err.message}.`.slice(0, 600);
+    }
+    throw err;
+  }
+}
 
 export const ChecklistsService = {
   getPlantillas(client: PoolClient, tenantId: string, paginacion: Paginacion) {
@@ -53,7 +121,7 @@ export const ChecklistsService = {
       modulo: "checklists",
       clienteUuid: data.cliente_uuid,
       insertar: async () => {
-        const fila = await ChecklistsRepository.crear(client, tenantId, usuarioId, data);
+        const fila = await registrarChecklist(client, tenantId, usuarioId, data);
         return { id: fila.id as number, fila };
       },
       // findById devuelve un superset de lo que devuelve crear() (suma

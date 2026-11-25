@@ -967,7 +967,9 @@ export const MODULOS: ModuloDefinicion[] = [
     router: checklistsRoutes,
     // La unidad del checklist es opcional (`equipo_id` admite NULL, migración 0189): sin un módulo que
     // mantenga unidades (Flota o Mantenimiento) se identifica por `activo_texto` y no se lee `equipos`.
-    opcionales: ["flota", "mantenimiento"],
+    // Una falla en un punto crítico abre una orden de trabajo si la empresa tiene ese módulo (la regla
+    // «OT desde hallazgo» de Mantenimiento puede apagarlo). Sin él, el checklist queda igual «no apto».
+    opcionales: ["flota", "mantenimiento", "ordenes_trabajo"],
     tablas: [
       { nombre: "checklist_plantillas", pk: "serial" },
       {
@@ -1068,6 +1070,8 @@ export const MODULOS: ModuloDefinicion[] = [
         fks: {
           equipo_id: "equipos",
           iperc_id: "ipercs",
+          // Sin FK en la base (checklists está particionada, 0207); el respaldo sí la remapea.
+          checklist_id: "checklists",
           creado_por: "usuarios",
           asignado_a: "usuarios",
         },

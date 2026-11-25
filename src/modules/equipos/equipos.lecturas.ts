@@ -27,10 +27,14 @@ const DESDE = `FROM equipo_lecturas l
 
 const ETIQUETA_TIPO = { horometro: "horómetro", odometro: "odómetro" } as const;
 
-/** Bloquea la fila de la unidad y devuelve su medidor. 404 si no existe. */
+/** Bloquea la fila de la unidad y devuelve su medidor. 404 si no existe.
+ *
+ *  `NO KEY UPDATE` y no `UPDATE`: dos registros de lecturas siguen haciendo cola entre sí, pero no choca con
+ *  el candado que toma la FK al insertar algo que apunta a la unidad. Un checklist se inserta ANTES de dejar
+ *  su lectura, en la misma transacción: con `FOR UPDATE`, dos a la vez se esperaban para siempre. */
 async function bloquearUnidad(client: PoolClient, tenantId: string, equipoId: number) {
   const r = await client.query<{ tipo_medidor: "horometro" | "odometro" | null }>(
-    `SELECT tipo_medidor FROM equipos WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+    `SELECT tipo_medidor FROM equipos WHERE tenant_id = $1 AND id = $2 FOR NO KEY UPDATE`,
     [tenantId, equipoId]
   );
   if (!r.rows[0]) throw new AppError(404, "La unidad no existe");
@@ -45,14 +49,15 @@ async function leerLectura(client: PoolClient, tenantId: string, id: number) {
   return r.rows[0] ?? null;
 }
 
-/** Registra una lectura manual. Con `cliente_uuid`, el reintento de una que estuvo en la cola sin
+/** Registra una lectura (manual, o la que deja un checklist). Con `cliente_uuid`, el reintento de una que estuvo en la cola sin
  *  señal devuelve la misma fila en vez de crear otra (`creado: false`). */
 export async function registrarLectura(
   client: PoolClient,
   tenantId: string,
   usuarioId: string,
   equipoId: number,
-  data: RegistrarLecturaInput
+  data: RegistrarLecturaInput,
+  origen: "manual" | "checklist" = "manual"
 ) {
   return idempotentInsert({
     client,
@@ -108,9 +113,18 @@ export async function registrarLectura(
       const creada = await client.query<{ id: number }>(
         `INSERT INTO equipo_lecturas
            (tenant_id, equipo_id, tipo, valor, leido_en, origen, cliente_uuid, usuario_id)
-         VALUES ($1, $2, $3, $4, $5, 'manual', $6, $7)
+         VALUES ($1, $2, $3, $4, $5, $8, $6, $7)
          RETURNING id::int AS id`,
-        [tenantId, equipoId, tipo, data.valor, leidoEn, data.cliente_uuid ?? null, usuarioId]
+        [
+          tenantId,
+          equipoId,
+          tipo,
+          data.valor,
+          leidoEn,
+          data.cliente_uuid ?? null,
+          usuarioId,
+          origen,
+        ]
       );
       const id = creada.rows[0].id;
       return { id, fila: await leerLectura(client, tenantId, id) };
