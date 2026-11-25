@@ -1076,6 +1076,12 @@ export const MODULOS: ModuloDefinicion[] = [
           asignado_a: "usuarios",
         },
       },
+      // Cascadea desde su orden (0208): no necesita raíz.
+      {
+        nombre: "orden_trabajo_tareas",
+        pk: "serial",
+        fks: { orden_trabajo_id: "ordenes_trabajo" },
+      },
     ],
     raices: ["ordenes_trabajo"],
     cuota: { tabla: "ordenes_trabajo", porDefecto: 50_000 },

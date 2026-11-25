@@ -8,6 +8,7 @@ import {
   crearOrdenTrabajoSchema,
   actualizarOrdenTrabajoSchema,
   cambiarEstadoOrdenTrabajoSchema,
+  cambiarTareasSchema,
 } from "../../server/schemas/ordenes_trabajo.schema";
 import { OrdenesTrabajoController } from "./ordenes_trabajo.controller";
 import { listarUnidadesParaElegir } from "../equipos/unidadesParaElegir";
@@ -51,6 +52,15 @@ router.patch(
   requireRole("admin", "operador"),
   validate(cambiarEstadoOrdenTrabajoSchema),
   asyncHandler(OrdenesTrabajoController.cambiarEstado)
+);
+
+// Agregar, marcar y quitar tareas (solo con señal). PATCH: no cuenta contra la cuota de órdenes.
+router.patch(
+  // Hasta 9 cifras: un id mayor no cabe en la columna y debe dar 404, no un 500 de la base.
+  "/:id(\\d{1,9})/tareas",
+  requireRole("admin", "operador"),
+  validate(cambiarTareasSchema),
+  asyncHandler(OrdenesTrabajoController.cambiarTareas)
 );
 
 router.delete("/:id", requireRole("admin"), asyncHandler(OrdenesTrabajoController.eliminar));

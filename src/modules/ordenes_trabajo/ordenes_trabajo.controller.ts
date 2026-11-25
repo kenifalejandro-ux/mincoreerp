@@ -8,13 +8,25 @@ import { parsePaginacion, armarRespuestaPaginada } from "../../server/shared/uti
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
 import { registrarAuditoria } from "../../server/services/platformAudit.service";
 import { publicarEventoTenant } from "../../server/services/realtimeEvents.service";
+import { AppError } from "../../server/shared/middlewares/error.middleware";
 import type {
   CrearOrdenTrabajoInput,
   ActualizarOrdenTrabajoInput,
   CambiarEstadoOrdenTrabajoInput,
+  CambiarTareasInput,
 } from "../../server/schemas/ordenes_trabajo.schema";
-import { OrdenSinActivoError } from "./ordenes_trabajo.repository";
+import { HorasInvalidasError, OrdenSinActivoError } from "./ordenes_trabajo.repository";
 import { OrdenesTrabajoService } from "./ordenes_trabajo.service";
+
+/** Para la auditoría: solo las horas y la marca de «no opera» que cambiaron, antes y después. */
+function horasCambiadas(antes: object, despues: object) {
+  const campos = ["inicio_en", "fecha_cierre", "unidad_no_opera"] as const;
+  const valor = (o: object, c: string) => (o as Record<string, unknown>)[c];
+  const cambios = campos
+    .filter((c) => String(valor(antes, c)) !== String(valor(despues, c)))
+    .map((c) => [c, { antes: valor(antes, c), despues: valor(despues, c) }]);
+  return cambios.length > 0 ? { cambios: Object.fromEntries(cambios) } : {};
+}
 
 export const OrdenesTrabajoController = {
   async getUsuariosAsignables(req: Request, res: Response) {
@@ -138,10 +150,10 @@ export const OrdenesTrabajoController = {
       const tenantId = getTenantId(req);
       const id = Number(req.params.id);
       const data = req.validatedBody as ActualizarOrdenTrabajoInput;
-      const ordenTrabajo = await withTenant(tenantId, (client) =>
+      const cambio = await withTenant(tenantId, (client) =>
         OrdenesTrabajoService.actualizar(client, tenantId, id, data)
       );
-      if (!ordenTrabajo) {
+      if (!cambio) {
         res.status(404).json({ message: "Orden de trabajo no encontrada" });
         return;
       }
@@ -149,14 +161,20 @@ export const OrdenesTrabajoController = {
         accion: "ordenes_trabajo.actualizar",
         tenantId,
         usuarioId: req.usuario!.id,
-        detalle: { ordenTrabajoId: id, asignadoA: data.asignado_a },
+        detalle: {
+          ordenTrabajoId: id,
+          asignadoA: data.asignado_a,
+          // Las horas se escriben a mano: queda quién las puso y cómo estaban antes.
+          ...horasCambiadas(cambio.antes, cambio.orden),
+        },
         contexto: contextoAuditoriaModulo(req),
       });
       await publicarEventoTenant(tenantId, "ordenes_trabajo.actualizada", { ordenTrabajoId: id });
-      res.json(ordenTrabajo);
+      res.json(cambio.orden);
     } catch (err) {
       if (
         err instanceof OrdenSinActivoError ||
+        err instanceof HorasInvalidasError ||
         (err instanceof Error && err.message.includes("no existe en este tenant"))
       ) {
         res.status(400).json({ message: (err as Error).message });
@@ -170,9 +188,10 @@ export const OrdenesTrabajoController = {
     try {
       const tenantId = getTenantId(req);
       const id = Number(req.params.id);
-      const { estado, observaciones_cierre } = req.validatedBody as CambiarEstadoOrdenTrabajoInput;
+      const data = req.validatedBody as CambiarEstadoOrdenTrabajoInput;
+      const { estado } = data;
       const resultado = await withTenant(tenantId, (client) =>
-        OrdenesTrabajoService.cambiarEstado(client, tenantId, id, estado, observaciones_cierre)
+        OrdenesTrabajoService.cambiarEstado(client, tenantId, id, data)
       );
       if (!resultado.ok) {
         if (resultado.motivo === "no_encontrado") {
@@ -191,7 +210,12 @@ export const OrdenesTrabajoController = {
         accion: "ordenes_trabajo.cambiar_estado",
         tenantId,
         usuarioId: req.usuario!.id,
-        detalle: { ordenTrabajoId: id, estado },
+        detalle: {
+          ordenTrabajoId: id,
+          estado,
+          inicioAnotado: data.inicio_en,
+          cierreAnotado: data.fecha_cierre,
+        },
         contexto: contextoAuditoriaModulo(req),
       });
       await publicarEventoTenant(tenantId, "ordenes_trabajo.estado_cambiado", {
@@ -199,8 +223,42 @@ export const OrdenesTrabajoController = {
         estado,
       });
       res.json(resultado.fila);
-    } catch {
+    } catch (err) {
+      if (err instanceof HorasInvalidasError) {
+        res.status(400).json({ message: err.message });
+        return;
+      }
       res.status(500).json({ message: "Error al cambiar el estado de la orden de trabajo" });
+    }
+  },
+
+  async cambiarTareas(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const id = Number(req.params.id);
+      const data = req.validatedBody as CambiarTareasInput;
+      const tareas = await withTenant(tenantId, (client) =>
+        OrdenesTrabajoService.cambiarTareas(client, tenantId, id, data)
+      );
+      if (!tareas) {
+        res.status(404).json({ message: "Orden de trabajo no encontrada" });
+        return;
+      }
+      await registrarAuditoria({
+        accion: "ordenes_trabajo.tareas",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: { ordenTrabajoId: id, ...data },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      await publicarEventoTenant(tenantId, "ordenes_trabajo.actualizada", { ordenTrabajoId: id });
+      res.json({ tareas });
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ message: err.message });
+        return;
+      }
+      res.status(500).json({ message: "Error al cambiar las tareas de la orden" });
     }
   },
 

@@ -5,9 +5,12 @@ import type { Paginacion } from "../../server/shared/utils/pagination";
 import type {
   CrearOrdenTrabajoInput,
   ActualizarOrdenTrabajoInput,
+  CambiarEstadoOrdenTrabajoInput,
+  CambiarTareasInput,
 } from "../../server/schemas/ordenes_trabajo.schema";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { OrdenesTrabajoRepository } from "./ordenes_trabajo.repository";
+import { cambiarTareas } from "./ordenes_trabajo.tareas";
 
 export const OrdenesTrabajoService = {
   getAll(
@@ -59,16 +62,13 @@ export const OrdenesTrabajoService = {
     client: PoolClient,
     tenantId: string,
     id: number,
-    estado: "en_progreso" | "completada" | "cancelada",
-    observacionesCierre?: string
+    data: CambiarEstadoOrdenTrabajoInput
   ) {
-    return OrdenesTrabajoRepository.cambiarEstado(
-      client,
-      tenantId,
-      id,
-      estado,
-      observacionesCierre
-    );
+    return OrdenesTrabajoRepository.cambiarEstado(client, tenantId, id, data);
+  },
+
+  cambiarTareas(client: PoolClient, tenantId: string, id: number, data: CambiarTareasInput) {
+    return cambiarTareas(client, tenantId, id, data);
   },
 
   eliminar(client: PoolClient, tenantId: string, id: number) {
