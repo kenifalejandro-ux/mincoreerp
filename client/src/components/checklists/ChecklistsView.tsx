@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Plus, Trash2, X } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 
 import { useAuth } from "../../context/AuthContext";
-import { tieneModulo } from "../../modules/tieneModulo";
+import { tieneUnidades } from "../../modules/tieneModulo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
@@ -43,9 +43,9 @@ type ItemEstado = "bien" | "malo" | "na";
 
 export default function ChecklistsView() {
   const puedeEscribir = usePuedeEscribir("checklists");
-  // Registro de unidades es de OTRO módulo: sin él no se piden ni se ofrecen unidades y el
+  // Las unidades las mantiene OTRO módulo (Flota o Mantenimiento): sin ninguno no se piden ni se ofrecen unidades y el
   // checklist se identifica por el texto «Activo o lugar» (ver `opcionales` en registry.ts).
-  const conFlota = tieneModulo(useAuth().usuario, "flota");
+  const conUnidades = tieneUnidades(useAuth().usuario);
   const [subTab, setSubTab] = useState<"checklists" | "plantillas">("checklists");
 
   const [checklists, setChecklists] = useState<Checklist[]>([]);
@@ -134,7 +134,7 @@ export default function ChecklistsView() {
   };
 
   const cargarEquipos = async () => {
-    const res = await apiFetch("/api/erp/equipos?page=1&pageSize=200");
+    const res = await apiFetch("/api/erp/checklists/unidades?page=1&pageSize=200");
     const body = await res.json();
     setEquipos(Array.isArray(body.data) ? body.data : []);
   };
@@ -150,10 +150,10 @@ export default function ChecklistsView() {
     await Promise.allSettled([
       cargarChecklists(),
       cargarPlantillas(),
-      conFlota ? cargarEquipos() : Promise.resolve(),
+      conUnidades ? cargarEquipos() : Promise.resolve(),
     ]);
     setLoading(false);
-  }, [conFlota]);
+  }, [conUnidades]);
 
   useEffect(() => {
     // Patrón estándar de carga al montar (setCargando(true) -> fetch ->
@@ -253,7 +253,7 @@ export default function ChecklistsView() {
     const activoTexto = formChecklist.activo_texto.trim();
     if (!formChecklist.equipo_id && !activoTexto) {
       alert(
-        conFlota
+        conUnidades
           ? "Elige la unidad o escribe el activo o lugar."
           : "Escribe el activo o lugar del checklist."
       );
@@ -647,8 +647,8 @@ export default function ChecklistsView() {
               </button>
             </div>
             <form onSubmit={handleCrearChecklist} className="p-6 space-y-4">
-              <div className={`grid grid-cols-1 gap-4 ${conFlota ? "sm:grid-cols-2" : ""}`}>
-                {conFlota && (
+              <div className={`grid grid-cols-1 gap-4 ${conUnidades ? "sm:grid-cols-2" : ""}`}>
+                {conUnidades && (
                   <div className="space-y-1">
                     {/* htmlFor + id, no un <label> suelto al lado: sin la
                       asociación explícita un lector de pantalla anuncia el
@@ -704,7 +704,7 @@ export default function ChecklistsView() {
                   htmlFor="checklist-activo"
                   className="text-xs font-bold text-slate-500 uppercase"
                 >
-                  {conFlota ? "Activo o lugar (si no es una unidad)" : "Activo o lugar"}
+                  {conUnidades ? "Activo o lugar (si no es una unidad)" : "Activo o lugar"}
                 </label>
                 <input
                   id="checklist-activo"

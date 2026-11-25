@@ -93,6 +93,21 @@ export const EquiposRepository = {
     return result.rows;
   },
 
+  /** Lo mínimo para ELEGIR una unidad en otro módulo (Checklists, Órdenes de trabajo, IPERC): id, placa
+   *  o código y tipo, solo las activas. Sin conductor, DNI ni medidores: quien elige una unidad en un
+   *  formulario no necesita eso, y esta lista la ve también quien no tiene Registro de unidades. */
+  async findParaElegir(client: PoolClient, tenantId: string, { pageSize, offset }: Paginacion) {
+    const result = await client.query(
+      `SELECT id, placa_codigo, tipo, COUNT(*) OVER() AS total_count
+         FROM equipos
+        WHERE tenant_id = $1 AND activo
+        ORDER BY lower(placa_codigo), id
+        LIMIT $2 OFFSET $3`,
+      [tenantId, pageSize, offset]
+    );
+    return result.rows;
+  },
+
   /** Toda la flota, sin paginar -- para el export a Excel. La lista visible
    *  en pantalla pagina de a 50 porque el operario la recorre a ojo; el
    *  archivo lo abre en una planilla, así que tiene que traer todo de una. */

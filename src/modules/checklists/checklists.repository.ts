@@ -3,7 +3,7 @@
 import type { PoolClient } from "pg";
 import type { Paginacion, CursorPaginacion } from "../../server/shared/utils/pagination";
 
-/** De dónde sale la placa/código de la unidad. Sin Flota (`conUnidades` falso) no se toca la tabla
+/** De dónde sale la placa/código de la unidad. Sin un módulo de unidades (`conUnidades` falso) no se toca la tabla
  *  `equipos`: la columna va vacía y el checklist se identifica por `activo_texto` (ver
  *  `opcionales` del módulo en registry.ts). Con Flota es LEFT JOIN: el checklist puede no tener
  *  unidad (migración 0189). */

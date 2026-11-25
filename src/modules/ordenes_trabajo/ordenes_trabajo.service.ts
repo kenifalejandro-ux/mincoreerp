@@ -20,7 +20,7 @@ export const OrdenesTrabajoService = {
     return OrdenesTrabajoRepository.findAll(client, tenantId, paginacion, filtros, conUnidades);
   },
 
-  /** `conUnidades`: la empresa tiene Flota. Sin ella no se lee `equipos` (ver `opcionales`). */
+  /** `conUnidades`: el usuario tiene un módulo que mantiene unidades (Flota o Mantenimiento). Sin él no se lee `equipos` (ver `opcionales`). */
   getById(client: PoolClient, tenantId: string, id: number, conUnidades = true) {
     return OrdenesTrabajoRepository.findById(client, tenantId, id, conUnidades);
   },

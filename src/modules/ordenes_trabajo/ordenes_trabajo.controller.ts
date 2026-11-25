@@ -2,7 +2,7 @@
 
 import { Request, Response } from "express";
 import { withTenant } from "../../server/config/database";
-import { tieneModulo } from "../../server/shared/utils/modulos";
+import { tieneUnidades } from "../../server/shared/utils/modulos";
 import { getTenantId } from "../../server/shared/utils/request";
 import { parsePaginacion, armarRespuestaPaginada } from "../../server/shared/utils/pagination";
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
@@ -46,7 +46,7 @@ export const OrdenesTrabajoController = {
           tenantId,
           paginacion,
           { estado, equipoId, asignadoA },
-          tieneModulo(req.usuario, "flota")
+          tieneUnidades(req.usuario)
         )
       );
       res.json(armarRespuestaPaginada(filas, paginacion));
@@ -63,7 +63,7 @@ export const OrdenesTrabajoController = {
           client,
           tenantId,
           Number(req.params.id),
-          tieneModulo(req.usuario, "flota")
+          tieneUnidades(req.usuario)
         )
       );
       if (!ordenTrabajo) {
@@ -80,9 +80,9 @@ export const OrdenesTrabajoController = {
     try {
       const tenantId = getTenantId(req);
       const data = req.validatedBody as CrearOrdenTrabajoInput;
-      // La unidad viene de Flota: sin ese módulo la orden se identifica por el texto
+      // La unidad viene del maestro (Flota o Mantenimiento): sin ninguno de los dos la orden se identifica por el texto
       // (`opcionales` en registry.ts). Se rechaza en vez de ignorarla, para que el cliente se entere.
-      const conUnidades = tieneModulo(req.usuario, "flota");
+      const conUnidades = tieneUnidades(req.usuario);
       if (data.equipo_id !== undefined && !conUnidades) {
         res.status(400).json({
           message: "Esta empresa no tiene Registro de unidades: escribe el activo o lugar en texto",

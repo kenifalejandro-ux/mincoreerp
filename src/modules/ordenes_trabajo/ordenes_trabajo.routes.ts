@@ -10,8 +10,13 @@ import {
   cambiarEstadoOrdenTrabajoSchema,
 } from "../../server/schemas/ordenes_trabajo.schema";
 import { OrdenesTrabajoController } from "./ordenes_trabajo.controller";
+import { listarUnidadesParaElegir } from "../equipos/unidadesParaElegir";
 
 const router = Router();
+
+// Las unidades para elegir en el formulario: vienen del maestro (Flota o Mantenimiento), no de
+// `/api/erp/equipos`. ANTES de "/:id" para que "unidades" no se tome por un id.
+router.get("/unidades", asyncHandler(listarUnidadesParaElegir));
 
 router.get("/", asyncHandler(OrdenesTrabajoController.getAll));
 // Va ANTES que GET /:id a propósito -- si no, Express matchea
