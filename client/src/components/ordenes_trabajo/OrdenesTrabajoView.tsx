@@ -30,6 +30,9 @@ interface OrdenTrabajo {
   fecha_programada: string | null;
   fecha_cierre: string | null;
   observaciones_cierre: string | null;
+  /** 'checklist' = la generó sola una falla crítica. */
+  origen?: "manual" | "checklist";
+  checklist_id?: number | null;
   creado_en: string;
 }
 
@@ -457,6 +460,12 @@ export default function OrdenesTrabajoView() {
                   </td>
                   <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-600">
                     {ot.titulo}
+                    {ot.origen === "checklist" && (
+                      <span className="block w-fit mt-1 px-2 py-0.5 rounded-md bg-red-50 text-red-700 text-[10px] font-bold">
+                        Generada por checklist
+                        {ot.checklist_id ? ` #${ot.checklist_id}` : ""}
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500 capitalize">
                     {ot.tipo}

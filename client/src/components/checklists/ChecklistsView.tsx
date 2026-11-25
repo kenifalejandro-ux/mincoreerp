@@ -11,6 +11,7 @@ import {
   type Plantilla,
   type PlantillaConItems,
 } from "./formatos";
+import { avisoDelRegistro, avisoSinSenal, leerLectura, resultadoDe } from "./registro";
 import VersionesDeFormato from "./VersionesDeFormato";
 import { useAuth } from "../../context/AuthContext";
 import { tieneUnidades } from "../../modules/tieneModulo";
@@ -33,6 +34,10 @@ interface Checklist {
   turno: string | null;
   resultado: string;
   observaciones_generales: string | null;
+  /** Lo que no se pudo hacer al registrarlo (p. ej. la lectura rechazada). */
+  aviso_registro?: string | null;
+  /** La orden que generó una falla crítica; solo si la empresa tiene Órdenes de trabajo. */
+  orden_trabajo_id?: number | null;
   creado_en: string;
 }
 
@@ -47,6 +52,11 @@ type ItemEstado = "bien" | "malo" | "na";
 const NOVEDAD_VERSIONES = "checklists-versiones-2026-11";
 const versionesSonNuevas = () => novedadVigente(Date.now(), undefined, NOVEDAD_VERSIONES);
 const marcarVersionesVistas = () => marcarNovedadVista(Date.now(), undefined, NOVEDAD_VERSIONES);
+
+/** La etiqueta «Nuevo» de la lectura del medidor, 24 horas desde la primera vez que se abre el formulario. */
+const NOVEDAD_LECTURA = "checklists-lectura-2026-11";
+const lecturaEsNueva = () => novedadVigente(Date.now(), undefined, NOVEDAD_LECTURA);
+const marcarLecturaVista = () => marcarNovedadVista(Date.now(), undefined, NOVEDAD_LECTURA);
 
 export default function ChecklistsView() {
   const puedeEscribir = usePuedeEscribir("checklists");
@@ -83,6 +93,7 @@ export default function ChecklistsView() {
     activo_texto: "",
     plantilla_id: "",
     turno: "",
+    lectura: "",
     observaciones_generales: "",
   });
   const [plantillaSeleccionada, setPlantillaSeleccionada] = useState<PlantillaConItems | null>(
@@ -108,6 +119,7 @@ export default function ChecklistsView() {
 
   const abrirModalChecklist = () => {
     setClienteUuid(crypto.randomUUID());
+    marcarLecturaVista();
     setModalChecklistAbierto(true);
   };
 
@@ -256,6 +268,16 @@ export default function ChecklistsView() {
       return;
     }
 
+    // La lectura es de la unidad: sin una elegida no se manda.
+    const lectura = formChecklist.equipo_id ? leerLectura(formChecklist.lectura) : {};
+    if (lectura.problema) {
+      alert(lectura.problema);
+      return;
+    }
+    const fallaCritica = plantillaSeleccionada.items.some(
+      (it) => it.critica && estadosItems[it.id]?.estado === "malo"
+    );
+
     const items = plantillaSeleccionada.items.map((it) => ({
       descripcion: it.descripcion,
       estado: estadosItems[it.id]?.estado ?? "bien",
@@ -280,6 +302,11 @@ export default function ChecklistsView() {
           plantilla_version: plantillaSeleccionada.version,
           turno: formChecklist.turno || undefined,
           observaciones_generales: formChecklist.observaciones_generales || undefined,
+          // Con la hora de ahora: sin señal se envía más tarde y la lectura es de este momento.
+          lectura:
+            lectura.valor === undefined
+              ? undefined
+              : { valor: lectura.valor, leido_en: new Date().toISOString() },
           items,
         }),
       });
@@ -290,6 +317,7 @@ export default function ChecklistsView() {
           activo_texto: "",
           plantilla_id: "",
           turno: "",
+          lectura: "",
           observaciones_generales: "",
         });
         setPlantillaSeleccionada(null);
@@ -298,16 +326,17 @@ export default function ChecklistsView() {
         // apiFetch). No se recarga el listado: sin señal el GET también
         // falla, y el checklist todavía no existe del lado del servidor.
         if (res.status === 202) {
-          alert(
-            "Sin conexión: el checklist quedó guardado en este equipo y se enviará solo cuando vuelva la señal."
-          );
+          alert(avisoSinSenal(fallaCritica));
           return;
         }
 
+        const aviso = avisoDelRegistro(await res.json().catch(() => ({})));
+        if (aviso) alert(aviso);
         setHistorialCursorChecklists([]);
         cargarChecklists();
       } else {
-        alert("Error al crear el checklist.");
+        const error = await res.json().catch(() => ({}));
+        alert(error.message || "Error al crear el checklist.");
       }
     } finally {
       // En finally y no al final del try: si apiFetch tira (sin red y con
@@ -434,11 +463,19 @@ export default function ChecklistsView() {
                         {c.usuario_nombre}
                       </td>
                       <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm">
-                        <span
-                          className={`font-bold ${c.resultado === "bien" ? "text-emerald-600" : "text-red-500"}`}
-                        >
-                          {c.resultado === "bien" ? "Bien" : "Observado"}
+                        <span className={`font-bold ${resultadoDe(c.resultado).clase}`}>
+                          {resultadoDe(c.resultado).texto}
                         </span>
+                        {c.orden_trabajo_id && (
+                          <span className="block mt-1 text-[10px] sm:text-xs text-slate-500">
+                            Orden de trabajo #{c.orden_trabajo_id}
+                          </span>
+                        )}
+                        {c.aviso_registro && (
+                          <span className="block mt-1 max-w-[190px] whitespace-normal text-[10px] sm:text-xs text-amber-700">
+                            {c.aviso_registro}
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-right">
                         {puedeEscribir && (
@@ -665,6 +702,33 @@ export default function ChecklistsView() {
                   }
                 />
               </div>
+              {conUnidades && formChecklist.equipo_id && (
+                <div className="space-y-1">
+                  <label
+                    htmlFor="checklist-lectura"
+                    className="text-xs font-bold text-slate-500 uppercase"
+                  >
+                    Horómetro o kilometraje (opcional)
+                  </label>
+                  {lecturaEsNueva() && (
+                    <span className="ml-2 px-1.5 py-0.5 rounded-full bg-[#BADC1E] text-[#0A1014] text-[9px] font-extrabold">
+                      Nuevo
+                    </span>
+                  )}
+                  <input
+                    id="checklist-lectura"
+                    type="text"
+                    inputMode="decimal"
+                    maxLength={10}
+                    placeholder="Lo que marca la unidad, sin puntos de miles"
+                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                    value={formChecklist.lectura}
+                    onChange={(e) =>
+                      setFormChecklist({ ...formChecklist, lectura: e.target.value })
+                    }
+                  />
+                </div>
+              )}
               <div className="space-y-1">
                 <label
                   htmlFor="checklist-turno"

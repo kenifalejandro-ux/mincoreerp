@@ -2,6 +2,7 @@
 
 import { Request, Response } from "express";
 import { withTenant } from "../../server/config/database";
+import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { tieneUnidades } from "../../server/shared/utils/modulos";
 import { getTenantId } from "../../server/shared/utils/request";
 import {
@@ -185,8 +186,27 @@ export const ChecklistsController = {
         checklistId: checklist!.id,
         equipoId: data.equipo_id ?? null,
       });
+      // La orden que nació de una falla crítica se audita y se avisa como cualquier otra.
+      const ordenTrabajoId = (checklist as { orden_trabajo_id?: number | null }).orden_trabajo_id;
+      if (ordenTrabajoId) {
+        await registrarAuditoria({
+          accion: "ordenes_trabajo.crear",
+          tenantId,
+          usuarioId: req.usuario!.id,
+          detalle: { ordenTrabajoId, checklistId: checklist!.id, origen: "checklist" },
+          contexto: contextoAuditoriaModulo(req),
+        });
+        await publicarEventoTenant(tenantId, "ordenes_trabajo.creada", {
+          ordenTrabajoId,
+          equipoId: data.equipo_id ?? null,
+        });
+      }
       res.status(201).json(checklist);
-    } catch {
+    } catch (error) {
+      if (error instanceof AppError) {
+        res.status(error.statusCode).json({ message: error.message });
+        return;
+      }
       res.status(500).json({ message: "Error al crear checklist" });
     }
   },

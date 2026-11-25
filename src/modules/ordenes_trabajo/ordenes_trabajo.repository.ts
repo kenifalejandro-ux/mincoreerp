@@ -83,7 +83,8 @@ export const OrdenesTrabajoRepository = {
       SELECT ot.id, ot.equipo_id, ${unidad.columna}, ot.activo_texto, ot.titulo, ot.descripcion,
         ot.tipo, ot.prioridad, ot.estado, ot.iperc_id, ot.creado_por,
         u.nombre AS creado_por_nombre, ot.asignado_a, asig.nombre AS asignado_a_nombre,
-        ot.fecha_programada, ot.fecha_cierre, ot.observaciones_cierre, ot.creado_en,
+        ot.fecha_programada, ot.fecha_cierre, ot.observaciones_cierre, ot.creado_en, ot.origen,
+        ot.checklist_id,
         COUNT(*) OVER() AS total_count
       FROM ordenes_trabajo ot
       ${unidad.join}
@@ -104,7 +105,8 @@ export const OrdenesTrabajoRepository = {
       `SELECT ot.id, ot.equipo_id, ${unidad.columna}, ot.activo_texto, ot.titulo, ot.descripcion,
          ot.tipo, ot.prioridad, ot.estado, ot.iperc_id, ot.creado_por,
          u.nombre AS creado_por_nombre, ot.asignado_a, asig.nombre AS asignado_a_nombre,
-         ot.fecha_programada, ot.fecha_cierre, ot.observaciones_cierre, ot.creado_en
+         ot.fecha_programada, ot.fecha_cierre, ot.observaciones_cierre, ot.creado_en, ot.origen,
+        ot.checklist_id
        FROM ordenes_trabajo ot
        ${unidad.join}
        JOIN usuarios u ON u.id = ot.creado_por
@@ -177,7 +179,8 @@ export const OrdenesTrabajoRepository = {
          (tenant_id, equipo_id, activo_texto, titulo, descripcion, tipo, prioridad, iperc_id, creado_por, fecha_programada, asignado_a)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING id, equipo_id, activo_texto, titulo, descripcion, tipo, prioridad, estado, iperc_id,
-         creado_por, fecha_programada, fecha_cierre, observaciones_cierre, creado_en, asignado_a`,
+         creado_por, fecha_programada, fecha_cierre, observaciones_cierre, creado_en, asignado_a, origen,
+         checklist_id`,
       [
         tenantId,
         data.equipo_id ?? null,
@@ -235,7 +238,8 @@ export const OrdenesTrabajoRepository = {
          activo_texto = $10
        WHERE id = $8 AND tenant_id = $9
        RETURNING id, equipo_id, activo_texto, titulo, descripcion, tipo, prioridad, estado, iperc_id,
-         creado_por, fecha_programada, fecha_cierre, observaciones_cierre, creado_en, asignado_a`,
+         creado_por, fecha_programada, fecha_cierre, observaciones_cierre, creado_en, asignado_a, origen,
+         checklist_id`,
       [
         data.titulo,
         data.descripcion ?? null,

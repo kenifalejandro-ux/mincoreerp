@@ -2,6 +2,8 @@
 
 import type { PoolClient } from "pg";
 import type { Paginacion, CursorPaginacion } from "../../server/shared/utils/pagination";
+import { AppError } from "../../server/shared/middlewares/error.middleware";
+import { empresaTieneModulo } from "../../server/shared/utils/modulosEmpresa";
 
 /** De dónde sale la placa/código de la unidad. Sin un módulo de unidades (`conUnidades` falso) no se toca la tabla
  *  `equipos`: la columna va vacía y el checklist se identifica por `activo_texto` (ver
@@ -102,7 +104,15 @@ export const ChecklistsRepository = {
       `
       SELECT c.id, c.equipo_id, ${unidad.columna}, c.activo_texto, c.plantilla_id, c.plantilla_version, c.usuario_id,
         u.nombre AS usuario_nombre, c.fecha, c.turno, c.resultado,
-        c.observaciones_generales, c.creado_en
+        c.observaciones_generales, c.lectura_valor::float8 AS lectura_valor, c.aviso_registro,
+        c.creado_en,
+        -- La orden que generó (también la de uno enviado desde la cola sin señal), solo si la
+        -- empresa tiene Órdenes de trabajo.
+        (SELECT ot.id FROM ordenes_trabajo ot
+          WHERE ot.tenant_id = c.tenant_id AND ot.checklist_id = c.id
+            AND EXISTS (SELECT 1 FROM tenant_modulos tm
+                         WHERE tm.tenant_id = c.tenant_id AND tm.modulo = 'ordenes_trabajo'
+                           AND tm.estado <> 'deshabilitado')) AS orden_trabajo_id
       FROM checklists c
       ${unidad.join}
       JOIN usuarios u ON u.id = c.usuario_id
@@ -120,7 +130,8 @@ export const ChecklistsRepository = {
     const checklist = await client.query(
       `SELECT c.id, c.equipo_id, ${unidad.columna}, c.activo_texto, c.plantilla_id, c.plantilla_version, c.usuario_id,
          u.nombre AS usuario_nombre, c.fecha, c.turno, c.resultado,
-         c.observaciones_generales, c.creado_en
+         c.observaciones_generales, c.lectura_valor::float8 AS lectura_valor, c.aviso_registro,
+         c.creado_en
        FROM checklists c
        ${unidad.join}
        JOIN usuarios u ON u.id = c.usuario_id
@@ -130,13 +141,17 @@ export const ChecklistsRepository = {
     if (checklist.rows.length === 0) return null;
 
     const items = await client.query(
-      `SELECT id, descripcion, estado, observacion FROM checklist_items
+      `SELECT id, descripcion, estado, observacion, critica FROM checklist_items
        WHERE checklist_id = $1 AND tenant_id = $2
        ORDER BY id ASC`,
       [id, tenantId]
     );
 
-    return { ...checklist.rows[0], items: items.rows };
+    return {
+      ...checklist.rows[0],
+      orden_trabajo_id: await this.ordenGenerada(client, tenantId, id),
+      items: items.rows,
+    };
   },
 
   async crear(
@@ -150,22 +165,33 @@ export const ChecklistsRepository = {
       plantilla_version?: number;
       turno?: string;
       observaciones_generales?: string;
-      items: { descripcion: string; estado: "bien" | "malo" | "na"; observacion?: string }[];
+      lectura?: { valor: number };
+      items: {
+        descripcion: string;
+        estado: "bien" | "malo" | "na";
+        observacion?: string;
+        critica: boolean;
+      }[];
     }
   ) {
-    // Calculado por la app antes de insertar, no declarado por el usuario:
-    // si algún ítem quedó "malo", el checklist entero queda "observado".
-    const resultado = data.items.some((i) => i.estado === "malo") ? "observado" : "bien";
+    // Calculado por la app antes de insertar, no declarado por el usuario: si falló un punto
+    // crítico la unidad es "no_apta"; si falló otro, "observado".
+    const fallas = data.items.filter((i) => i.estado === "malo");
+    const resultado = fallas.some((i) => i.critica)
+      ? "no_apta"
+      : fallas.length > 0
+        ? "observado"
+        : "bien";
 
     const checklist = await client.query(
       `INSERT INTO checklists (tenant_id, equipo_id, activo_texto, plantilla_id, usuario_id, turno, resultado,
-         observaciones_generales, plantilla_version)
+         observaciones_generales, plantilla_version, lectura_valor)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
          -- Nunca una versión que el formato todavía no tiene.
          (SELECT LEAST(COALESCE($9::int, version), version) FROM checklist_plantillas
-           WHERE tenant_id = $1 AND id = $4))
+           WHERE tenant_id = $1 AND id = $4), $10)
        RETURNING id, equipo_id, activo_texto, plantilla_id, plantilla_version, usuario_id, fecha, turno, resultado,
-         observaciones_generales, creado_en`,
+         observaciones_generales, lectura_valor::float8 AS lectura_valor, creado_en`,
       [
         tenantId,
         data.equipo_id ?? null,
@@ -176,6 +202,7 @@ export const ChecklistsRepository = {
         resultado,
         data.observaciones_generales ?? null,
         data.plantilla_version ?? null,
+        data.lectura?.valor ?? null,
       ]
     );
     const checklistId = checklist.rows[0].id;
@@ -188,9 +215,10 @@ export const ChecklistsRepository = {
     const items = [];
     for (const item of data.items) {
       const result = await client.query(
-        `INSERT INTO checklist_items (tenant_id, checklist_id, checklist_creado_en, descripcion, estado, observacion)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id, descripcion, estado, observacion`,
+        `INSERT INTO checklist_items
+           (tenant_id, checklist_id, checklist_creado_en, descripcion, estado, observacion, critica)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, descripcion, estado, observacion, critica`,
         [
           tenantId,
           checklistId,
@@ -198,6 +226,7 @@ export const ChecklistsRepository = {
           item.descripcion,
           item.estado,
           item.observacion ?? null,
+          item.critica,
         ]
       );
       items.push(result.rows[0]);
@@ -206,7 +235,47 @@ export const ChecklistsRepository = {
     return { ...checklist.rows[0], items };
   },
 
+  /** Cómo nombrar la unidad de un checklist: su placa/código, o el texto del activo. Solo se llama con
+   *  `equipo_id` cuando la empresa mantiene unidades (el controller rechaza lo contrario). */
+  async nombreDelActivo(
+    client: PoolClient,
+    tenantId: string,
+    data: { equipo_id?: number; activo_texto?: string }
+  ): Promise<string> {
+    if (data.equipo_id !== undefined) {
+      const r = await client.query<{ placa_codigo: string }>(
+        `SELECT placa_codigo FROM equipos WHERE tenant_id = $1 AND id = $2`,
+        [tenantId, data.equipo_id]
+      );
+      if (!r.rows[0]) throw new AppError(400, "La unidad no existe");
+      return r.rows[0].placa_codigo;
+    }
+    return data.activo_texto ?? "";
+  },
+
+  async guardarAviso(client: PoolClient, tenantId: string, id: number, aviso: string) {
+    await client.query(
+      `UPDATE checklists SET aviso_registro = $3 WHERE tenant_id = $1 AND id = $2`,
+      [tenantId, id, aviso]
+    );
+  },
+
+  /** La orden que generó este checklist, si la empresa tiene Órdenes de trabajo. */
+  async ordenGenerada(client: PoolClient, tenantId: string, id: number): Promise<number | null> {
+    if (!(await empresaTieneModulo(client, tenantId, "ordenes_trabajo"))) return null;
+    const r = await client.query<{ id: number }>(
+      `SELECT id FROM ordenes_trabajo WHERE tenant_id = $1 AND checklist_id = $2`,
+      [tenantId, id]
+    );
+    return r.rows[0]?.id ?? null;
+  },
+
   async eliminar(client: PoolClient, tenantId: string, id: number) {
+    // La orden que generó sigue existiendo; solo pierde el enlace (no hay FK que lo haga).
+    await client.query(
+      `UPDATE ordenes_trabajo SET checklist_id = NULL WHERE tenant_id = $1 AND checklist_id = $2`,
+      [tenantId, id]
+    );
     const result = await client.query(`DELETE FROM checklists WHERE id = $1 AND tenant_id = $2`, [
       id,
       tenantId,

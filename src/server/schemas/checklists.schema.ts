@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { registrarLecturaSchema } from "./equipos.schema";
+
 const itemDeFormato = z.object({
   descripcion: z.string().trim().min(1, "Descripción requerida").max(300),
   orden: z.number().int().optional(),
@@ -57,6 +59,16 @@ export const crearChecklistSchema = z
     // anterior); si no viene, se anota la vigente.
     plantilla_version: z.number().int().positive().max(2_000_000_000).optional(),
     turno: z.string().trim().max(20).optional(),
+    // El horómetro u odómetro de la unidad al llenarlo (queda en sus lecturas). `leido_en` lo manda el
+    // dispositivo cuando llenó sin señal; sin él vale la hora en que se guarda.
+    // Una hora inválida o futura (reloj del celular adelantado) se descarta y vale la del servidor:
+    // rechazarla haría perder el checklist entero.
+    lectura: z
+      .object({
+        valor: registrarLecturaSchema.shape.valor,
+        leido_en: registrarLecturaSchema.shape.leido_en.catch(undefined),
+      })
+      .optional(),
     observaciones_generales: z.string().trim().max(2000).optional(),
     items: z
       .array(
@@ -71,6 +83,10 @@ export const crearChecklistSchema = z
   .refine((c) => c.equipo_id !== undefined || (c.activo_texto ?? "") !== "", {
     message: "Indica la unidad o escribe el activo o lugar del checklist",
     path: ["activo_texto"],
+  })
+  .refine((c) => c.lectura === undefined || c.equipo_id !== undefined, {
+    message: "La lectura del medidor necesita una unidad",
+    path: ["lectura"],
   });
 
 export type CrearChecklistInput = z.infer<typeof crearChecklistSchema>;
