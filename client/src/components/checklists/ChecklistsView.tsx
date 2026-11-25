@@ -16,6 +16,8 @@ import { useAuth } from "../../context/AuthContext";
 import { tieneUnidades } from "../../modules/tieneModulo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
+import { opcionesDeUnidad } from "../comunes/opcionesDeUnidad";
+import { SelectorBuscable } from "../comunes/SelectorBuscable";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 import { marcarNovedadVista, novedadVigente } from "../controlTv/novedad";
 
@@ -142,7 +144,7 @@ export default function ChecklistsView() {
   };
 
   const cargarEquipos = async () => {
-    const res = await apiFetch("/api/erp/checklists/unidades?page=1&pageSize=200");
+    const res = await apiFetch("/api/erp/checklists/unidades");
     const body = await res.json();
     setEquipos(Array.isArray(body.data) ? body.data : []);
   };
@@ -610,21 +612,14 @@ export default function ChecklistsView() {
                     >
                       Equipo (opcional)
                     </label>
-                    <select
+                    <SelectorBuscable
                       id="checklist-equipo"
-                      className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-                      value={formChecklist.equipo_id}
-                      onChange={(e) =>
-                        setFormChecklist({ ...formChecklist, equipo_id: e.target.value })
-                      }
-                    >
-                      <option value="">Sin unidad</option>
-                      {equipos.map((eq) => (
-                        <option key={eq.id} value={eq.id}>
-                          {eq.placa_codigo}
-                        </option>
-                      ))}
-                    </select>
+                      opciones={opcionesDeUnidad(equipos, "Sin unidad")}
+                      valor={formChecklist.equipo_id}
+                      onElegir={(v) => setFormChecklist((f) => ({ ...f, equipo_id: v }))}
+                      placeholder="Sin unidad"
+                      etiquetaBuscador="Buscar unidad"
+                    />
                   </div>
                 )}
                 <div className="space-y-1">

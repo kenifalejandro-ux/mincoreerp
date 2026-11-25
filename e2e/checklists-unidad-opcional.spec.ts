@@ -20,6 +20,7 @@ import {
   sembrarEquipoYPlantilla,
 } from "./fixtures/checklists";
 import { adminA } from "./fixtures/entorno";
+import { elegirUnidad } from "./fixtures/selectorDeUnidad";
 
 test("un checklist solo de texto («Activo o lugar») se guarda sin unidad y se ve en el listado", async ({
   page,
@@ -36,14 +37,14 @@ test("un checklist solo de texto («Activo o lugar») se guarda sin unidad y se 
   const unidad = page.getByLabel("Equipo");
   await expect(unidad).toBeVisible();
   await expect(unidad).not.toHaveAttribute("required", "");
-  await expect(unidad.getByRole("option", { name: "Sin unidad" })).toHaveCount(1);
+  await expect(unidad).toContainText("Sin unidad");
 
   // Sin unidad, el texto es obligatorio; con unidad ya no.
   const texto = page.getByLabel(/^Activo o lugar/);
   await expect(texto).toHaveAttribute("required", "");
-  await unidad.selectOption({ label: marca });
+  await elegirUnidad(page, "checklist-equipo", marca);
   await expect(texto).not.toHaveAttribute("required", "");
-  await unidad.selectOption({ value: "" });
+  await elegirUnidad(page, "checklist-equipo", "Sin unidad");
   await expect(texto).toHaveAttribute("required", "");
 
   await page.getByLabel("Plantilla").selectOption({ label: nombrePlantilla(marca) });

@@ -1,3 +1,6 @@
+// client/src/components/comunes/SelectorBuscable.tsx
+//
+// Desplegable con buscador, compartido por los formularios con listas largas.
 import { Check, ChevronDown, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 

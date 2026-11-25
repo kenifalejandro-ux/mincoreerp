@@ -96,15 +96,16 @@ export const EquiposRepository = {
 
   /** Lo mínimo para ELEGIR una unidad en otro módulo (Checklists, Órdenes de trabajo, IPERC): id, placa
    *  o código y tipo, solo las activas. Sin conductor, DNI ni medidores: quien elige una unidad en un
-   *  formulario no necesita eso, y esta lista la ve también quien no tiene Registro de unidades. */
-  async findParaElegir(client: PoolClient, tenantId: string, { pageSize, offset }: Paginacion) {
+   *  formulario no necesita eso, y esta lista la ve también quien no tiene Registro de unidades.
+   *  Van TODAS (no por páginas): el selector tiene buscador, y una unidad que no llega no se puede elegir. */
+  async findParaElegir(client: PoolClient, tenantId: string, tope: number) {
     const result = await client.query(
       `SELECT id, placa_codigo, tipo, COUNT(*) OVER() AS total_count
          FROM equipos
         WHERE tenant_id = $1 AND activo
         ORDER BY lower(placa_codigo), id
-        LIMIT $2 OFFSET $3`,
-      [tenantId, pageSize, offset]
+        LIMIT $2`,
+      [tenantId, tope]
     );
     return result.rows;
   },
