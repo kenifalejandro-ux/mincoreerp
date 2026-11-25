@@ -980,7 +980,12 @@ export const MODULOS: ModuloDefinicion[] = [
       {
         nombre: "checklists",
         pk: "serial",
-        fks: { equipo_id: "equipos", plantilla_id: "checklist_plantillas", usuario_id: "usuarios" },
+        fks: {
+          equipo_id: "equipos",
+          plantilla_id: "checklist_plantillas",
+          usuario_id: "usuarios",
+          salida_por: "usuarios",
+        },
       },
       { nombre: "checklist_items", pk: "serial", fks: { checklist_id: "checklists" } },
       {
@@ -1081,6 +1086,12 @@ export const MODULOS: ModuloDefinicion[] = [
         nombre: "orden_trabajo_tareas",
         pk: "serial",
         fks: { orden_trabajo_id: "ordenes_trabajo" },
+      },
+      // Qué fallas de checklist cubre cada orden (0209); cascadea desde la orden.
+      {
+        nombre: "orden_trabajo_hallazgos",
+        pk: "serial",
+        fks: { orden_trabajo_id: "ordenes_trabajo", checklist_id: "checklists" },
       },
     ],
     raices: ["ordenes_trabajo"],

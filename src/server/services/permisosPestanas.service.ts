@@ -232,6 +232,22 @@ export const PESTANAS_CONFIGURABLES: DefinicionPestana[] = [
   // paga es el dato que más se defrauda: nace SOLO para el admin (ni el operador la trae por defecto) y se
   // da persona por persona. Tres niveles: ver la lista (con el número enmascarado), ver el número
   // completo y agregar, editar o quitar cuentas. Cada uso de los dos últimos queda en la bitácora.
+  // Salida de unidades según el checklist (0209). Autorizar nace solo para el admin; omitir preguntas
+  // críticas no nace para nadie (ver NACEN_APAGADAS).
+  {
+    modulo: "checklists",
+    pestana: "salida:autorizar",
+    nombre: "Autoriza la salida de unidades",
+    nivel: "submenu",
+    padre: null,
+  },
+  {
+    modulo: "checklists",
+    pestana: "salida:omitir_criticas",
+    nombre: "Puede omitir preguntas críticas",
+    nivel: "submenu",
+    padre: null,
+  },
   {
     modulo: "proveedores",
     pestana: "cuentas",
@@ -281,7 +297,14 @@ export function claveDePestana(modulo: string, pestana: string): string {
  *  persona por persona. Corregir los litros de un envase reescribe su
  *  historial entero; Kenif (2026-10-13): "la persona encargada tendría que
  *  tener habilitado el check". */
-const NACEN_APAGADAS: ReadonlySet<string> = new Set(["urea:corregir_litros"]);
+/** Para el admin no es parte de su «acceso total»: se le muestra como está y se la puede quitar. Sin esto, al
+ *  guardar sus permisos la pantalla la mandaría marcada y quedaría eximido sin que nadie lo decidiera. */
+const OPCIONAL_TAMBIEN_PARA_ADMIN = "salida:omitir_criticas";
+
+const NACEN_APAGADAS: ReadonlySet<string> = new Set([
+  "urea:corregir_litros",
+  OPCIONAL_TAMBIEN_PARA_ADMIN,
+]);
 
 export function pestanaPermitida(
   usuario: Pick<UsuarioPayload, "rol" | "permisosPestanas">,
@@ -349,7 +372,8 @@ function defaultsDeRol(rol: UsuarioPayload["rol"]): Set<string> {
       // Cuentas bancarias de proveedores: solo el admin, el resto se lo da a mano (ver arriba).
       item !== "cuentas" &&
       item !== "cuentas:ver_completa" &&
-      item !== "cuentas:editar"
+      item !== "cuentas:editar" &&
+      item !== "salida:autorizar"
   );
   // Lectura: solo lo informativo. Ni "Registrar X", ni Alertas/Proveedores/
   // Surtidores/Precios/Nuevo tanque, ni las acciones de escritura del panel
@@ -531,7 +555,10 @@ export async function listarPermisosPestanasEnTransaccion(
       modulo,
       pestana,
       nombre,
-      permitido: rol === "admin" ? true : padrePermitido && permitidoDirecto,
+      permitido:
+        rol === "admin" && pestana !== OPCIONAL_TAMBIEN_PARA_ADMIN
+          ? true
+          : padrePermitido && permitidoDirecto,
       predeterminado,
       nivel,
       padre,
@@ -555,7 +582,10 @@ export async function guardarPermisosPestanas(
   );
   if (!usuario.rowCount) throw new AppError(404, "Usuario no encontrado");
   const rol = usuario.rows[0].rol;
-  if (rol === "admin" && permisos.some((permiso) => !permiso.permitido)) {
+  if (
+    rol === "admin" &&
+    permisos.some((p) => !p.permitido && p.pestana !== OPCIONAL_TAMBIEN_PARA_ADMIN)
+  ) {
     throw new AppError(400, "El perfil Admin conserva acceso total a todos los módulos y pestañas");
   }
 

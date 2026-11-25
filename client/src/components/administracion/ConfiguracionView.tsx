@@ -308,6 +308,10 @@ export default function ConfiguracionView() {
   const pestañasCombustible = pestanas.filter((item) => item.modulo === "combustible");
   const pestañasFacturacion = pestanas.filter((item) => item.modulo === "facturacion");
   const pestañasProveedores = pestanas.filter((item) => item.modulo === "proveedores");
+  // Las casillas de salida de unidades solo tienen sentido para quien tiene Checklists.
+  const casillasDeChecklists = modulos.some((m) => m.modulo === "checklists" && m.asignado)
+    ? pestanas.filter((item) => item.modulo === "checklists")
+    : [];
   // El servidor manda solo los módulos que envían correos; acá se quedan los
   // que esta persona tiene asignados (marcar alertas de algo que no ve no existe).
   const alertasVisibles = alertas.filter((alerta) =>
@@ -527,6 +531,37 @@ export default function ConfiguracionView() {
                       no se lo va a avisar nadie por correo.
                     </p>
                   )}
+                </section>
+              )}
+
+              {casillasDeChecklists.length > 0 && (
+                <section aria-label="Salida de unidades" className="border-t border-slate-200 pt-5">
+                  <h4 className="text-sm font-bold text-slate-800">
+                    Checklists: salida de unidades
+                  </h4>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Una falla crítica no deja salir la unidad. Una menor la deja esperando a quien
+                    pueda autorizar. Los cambios rigen desde que la persona vuelve a entrar.
+                  </p>
+                  <ul className="mt-2">
+                    {casillasDeChecklists.map((item) => (
+                      <li key={item.pestana}>
+                        <label className="flex items-center gap-3 min-h-[44px] text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={item.permitido}
+                            // El admin ya autoriza; omitir preguntas sí se le puede dar o quitar.
+                            disabled={esAdmin && item.pestana !== "salida:omitir_criticas"}
+                            onChange={(event) =>
+                              cambiarPestana(item.modulo, item.pestana, event.target.checked)
+                            }
+                            className="h-5 w-5 accent-lime-500"
+                          />
+                          {item.nombre}
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
                 </section>
               )}
 

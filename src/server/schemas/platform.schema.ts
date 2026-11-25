@@ -52,7 +52,7 @@ export const actualizarPestanasUsuarioSchema = z.object({
   pestanas: z
     .array(
       z.object({
-        modulo: z.enum(["combustible", "facturacion", "proveedores"]),
+        modulo: z.enum(["combustible", "facturacion", "proveedores", "checklists"]),
         pestana: z.string().trim().min(1).max(100),
         permitido: z.boolean(),
       })

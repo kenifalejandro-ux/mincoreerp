@@ -141,9 +141,15 @@ describe("Checklists: versiones de formato y puntos críticos (E5-1)", () => {
     const viejo = await llenar(id, { plantilla_version: 1 });
     expect(viejo.status, JSON.stringify(viejo.body)).toBe(201);
     expect(viejo.body.plantilla_version).toBe(1);
-    expect((await llenar(id)).body.plantilla_version).toBe(2);
+    // La versión 2 agrega una pregunta crítica: ahora hay que responderla.
+    expect((await llenar(id)).status).toBe(400);
+    const completo = {
+      items: ["Frenos", "Bocina"].map((descripcion) => ({ descripcion, estado: "bien" })),
+    };
+    expect((await llenar(id, completo)).body.plantilla_version).toBe(2);
     // Una versión que todavía no existe no se anota.
-    expect((await llenar(id, { plantilla_version: 99 })).body.plantilla_version).toBe(2);
+    const futura = await llenar(id, { ...completo, plantilla_version: 99 });
+    expect(futura.body.plantilla_version).toBe(2);
 
     const detalle = await admin.get(`${BASE}/${antes.body.id}`);
     expect(detalle.body.plantilla_version).toBe(1);

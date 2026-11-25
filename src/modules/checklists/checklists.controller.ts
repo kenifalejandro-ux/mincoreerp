@@ -14,11 +14,14 @@ import {
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
 import { registrarAuditoria } from "../../server/services/platformAudit.service";
 import { publicarEventoTenant } from "../../server/services/realtimeEvents.service";
+import { pestanaPermitida } from "../../server/services/permisosPestanas.service";
 import type {
   CrearPlantillaInput,
   CrearChecklistInput,
+  DecidirSalidaInput,
 } from "../../server/schemas/checklists.schema";
 import { ChecklistsService } from "./checklists.service";
+import { decidirSalida } from "./checklists.salida";
 
 export const ChecklistsController = {
   async getPlantillas(req: Request, res: Response) {
@@ -110,7 +113,13 @@ export const ChecklistsController = {
       const tenantId = getTenantId(req);
       const paginacion = parseCursorPaginacion(req.query);
       const filas = await withTenant(tenantId, (client) =>
-        ChecklistsService.getAll(client, tenantId, paginacion, tieneUnidades(req.usuario))
+        ChecklistsService.getAll(
+          client,
+          tenantId,
+          paginacion,
+          tieneUnidades(req.usuario),
+          req.query.salida === "por_autorizar"
+        )
       );
       res.json(armarRespuestaCursor(filas, paginacion.pageSize));
     } catch {
@@ -153,7 +162,14 @@ export const ChecklistsController = {
         return;
       }
       const { fila: checklist, creado } = await withTenant(tenantId, (client) =>
-        ChecklistsService.crear(client, tenantId, req.usuario!.id, data, conUnidades)
+        ChecklistsService.crear(
+          client,
+          tenantId,
+          req.usuario!.id,
+          data,
+          conUnidades,
+          pestanaPermitida(req.usuario!, "checklists", "salida:omitir_criticas")
+        )
       );
 
       // Reintento de un envío que ya se había guardado (la respuesta
@@ -187,7 +203,7 @@ export const ChecklistsController = {
         equipoId: data.equipo_id ?? null,
       });
       // La orden que nació de una falla crítica se audita y se avisa como cualquier otra.
-      const ordenTrabajoId = (checklist as { orden_trabajo_id?: number | null }).orden_trabajo_id;
+      const ordenTrabajoId = (checklist as { orden_nueva_id?: number | null }).orden_nueva_id;
       if (ordenTrabajoId) {
         await registrarAuditoria({
           accion: "ordenes_trabajo.crear",
@@ -208,6 +224,50 @@ export const ChecklistsController = {
         return;
       }
       res.status(500).json({ message: "Error al crear checklist" });
+    }
+  },
+
+  async decidirSalida(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const id = Number(req.params.id);
+      const data = req.validatedBody as DecidirSalidaInput;
+      const resultado = await withTenant(tenantId, async (client) => {
+        const decidido = await decidirSalida(client, tenantId, req.usuario!.id, id, data);
+        if (!decidido) return null;
+        const checklist = await ChecklistsService.getById(
+          client,
+          tenantId,
+          id,
+          tieneUnidades(req.usuario)
+        );
+        return { ...decidido, checklist };
+      });
+      if (!resultado) {
+        res.status(404).json({ message: "Checklist no encontrado" });
+        return;
+      }
+      await registrarAuditoria({
+        accion: "checklists.decidir_salida",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: { checklistId: id, ...data, ordenTrabajoId: resultado.ordenNueva },
+        contexto: contextoAuditoriaModulo(req),
+      });
+      await publicarEventoTenant(tenantId, "checklists.salida_decidida", { checklistId: id });
+      if (resultado.ordenNueva) {
+        await publicarEventoTenant(tenantId, "ordenes_trabajo.creada", {
+          ordenTrabajoId: resultado.ordenNueva,
+          equipoId: resultado.equipoId,
+        });
+      }
+      res.json(resultado.checklist);
+    } catch (error) {
+      if (error instanceof AppError) {
+        res.status(error.statusCode).json({ message: error.message });
+        return;
+      }
+      res.status(500).json({ message: "Error al decidir la salida" });
     }
   },
 

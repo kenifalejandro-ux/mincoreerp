@@ -126,6 +126,7 @@ test("con señal: avisa la falla crítica y la orden, y una lectura que retroced
 
   // ── Una lectura menor: el checklist entra y dice por qué no quedó ─────
   await abrirYElegir(page, placa);
+  await page.getByLabel("Respuesta: Frenos").selectOption("bien");
   await campoLectura(page).fill("5");
   await botonRegistrar(page).click();
   await expect.poll(() => avisos.at(-1)).toContain("No se registró la lectura");
