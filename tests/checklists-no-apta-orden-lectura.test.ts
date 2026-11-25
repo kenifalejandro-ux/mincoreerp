@@ -243,7 +243,8 @@ describe("Checklists: no apta, orden automática y lectura (E5-2)", () => {
       ).toEqual(Array(6).fill(201));
     }
     expect(await contar("checklists")).toBe(18);
-    expect(await contar("ordenes_trabajo")).toBe(18);
+    // La misma falla de la misma unidad: una sola orden abierta.
+    expect(await contar("ordenes_trabajo")).toBe(1);
   });
 
   it("el mismo envío repetido a la vez crea un checklist, una orden y una lectura", async () => {

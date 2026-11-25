@@ -1,7 +1,8 @@
 // client/src/components/checklists/ChecklistsView.tsx
 import { ChevronLeft, ChevronRight, Plus, Trash2, X } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
+import DecidirSalida from "./DecidirSalida";
 import EditorDeFormato from "./EditorDeFormato";
 import {
   activarFormato,
@@ -11,10 +12,21 @@ import {
   type Plantilla,
   type PlantillaConItems,
 } from "./formatos";
-import { avisoDelRegistro, avisoSinSenal, leerLectura, resultadoDe } from "./registro";
+import {
+  avisoDelRegistro,
+  avisoSinSenal,
+  leerLectura,
+  puedeAutorizarSalida,
+  puedeOmitirCriticas,
+  respuestaInicial,
+  respuestasParaEnviar,
+  resultadoDe,
+  SALIDAS,
+  type Respuesta,
+} from "./registro";
 import VersionesDeFormato from "./VersionesDeFormato";
 import { useAuth } from "../../context/AuthContext";
-import { tieneUnidades } from "../../modules/tieneModulo";
+import { tieneModulo, tieneUnidades } from "../../modules/tieneModulo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { opcionesDeUnidad } from "../comunes/opcionesDeUnidad";
@@ -36,8 +48,13 @@ interface Checklist {
   observaciones_generales: string | null;
   /** Lo que no se pudo hacer al registrarlo (p. ej. la lectura rechazada). */
   aviso_registro?: string | null;
-  /** La orden que generó una falla crítica; solo si la empresa tiene Órdenes de trabajo. */
-  orden_trabajo_id?: number | null;
+  /** Las órdenes que generó o que ya cubrían sus fallas; solo si la empresa tiene Órdenes de trabajo. */
+  ordenes_trabajo?: number[];
+  usuario_id?: string;
+  /** Si la unidad sale: libre, no_sale, por_autorizar, autorizada o rechazada. */
+  salida?: string | null;
+  salida_por_nombre?: string | null;
+  salida_motivo?: string | null;
   creado_en: string;
 }
 
@@ -45,8 +62,6 @@ interface Equipo {
   id: number;
   placa_codigo: string;
 }
-
-type ItemEstado = "bien" | "malo" | "na";
 
 /** La etiqueta «Nuevo» de «Plantillas» (editar y versiones), 24 horas desde el primer clic. */
 const NOVEDAD_VERSIONES = "checklists-versiones-2026-11";
@@ -57,12 +72,25 @@ const marcarVersionesVistas = () => marcarNovedadVista(Date.now(), undefined, NO
 const NOVEDAD_LECTURA = "checklists-lectura-2026-11";
 const lecturaEsNueva = () => novedadVigente(Date.now(), undefined, NOVEDAD_LECTURA);
 const marcarLecturaVista = () => marcarNovedadVista(Date.now(), undefined, NOVEDAD_LECTURA);
+/** La etiqueta «Nuevo» del filtro «Por autorizar», 24 horas desde el primer clic. */
+const NOVEDAD_SALIDA = "checklists-salida-2026-11";
+const salidaEsNueva = () => novedadVigente(Date.now(), undefined, NOVEDAD_SALIDA);
+const marcarSalidaVista = () => marcarNovedadVista(Date.now(), undefined, NOVEDAD_SALIDA);
 
 export default function ChecklistsView() {
   const puedeEscribir = usePuedeEscribir("checklists");
   // Las unidades las mantiene OTRO módulo (Flota o Mantenimiento): sin ninguno no se piden ni se ofrecen unidades y el
   // checklist se identifica por el texto «Activo o lugar» (ver `opcionales` en registry.ts).
-  const conUnidades = tieneUnidades(useAuth().usuario);
+  const { usuario } = useAuth();
+  const conUnidades = tieneUnidades(usuario);
+  // Autorizar es escribir: Lectura y «Consultas» no ven el botón aunque tengan la casilla.
+  const autoriza = puedeEscribir && puedeAutorizarSalida(usuario);
+  const puedeOmitir = puedeOmitirCriticas(usuario);
+  const [soloPorAutorizar, setSoloPorAutorizar] = useState(false);
+  // El mismo filtro en un ref: lo leen las recargas que se registraron al montar (al sincronizar la cola).
+  const filtroPendientes = useRef(false);
+  /** El checklist cuya salida se está decidiendo. */
+  const [decidiendo, setDecidiendo] = useState<{ id: number; unidad: string } | null>(null);
   const [subTab, setSubTab] = useState<"checklists" | "plantillas">("checklists");
 
   const [checklists, setChecklists] = useState<Checklist[]>([]);
@@ -100,7 +128,7 @@ export default function ChecklistsView() {
     null
   );
   const [estadosItems, setEstadosItems] = useState<
-    Record<number, { estado: ItemEstado; observacion: string }>
+    Record<number, { estado: Respuesta; observacion: string }>
   >({});
   const [guardando, setGuardando] = useState(false);
 
@@ -125,6 +153,7 @@ export default function ChecklistsView() {
 
   const cargarChecklists = async (cursor: number | null = null) => {
     const params = new URLSearchParams({ pageSize: "50" });
+    if (filtroPendientes.current) params.set("salida", "por_autorizar");
     if (cursor !== null) params.set("cursor", String(cursor));
     const res = await apiFetch(`/api/erp/checklists?${params}`);
     const body = await res.json();
@@ -147,6 +176,14 @@ export default function ChecklistsView() {
       cargarChecklists(anterior);
       return nuevo;
     });
+  };
+
+  const filtrarPorAutorizar = () => {
+    marcarSalidaVista();
+    filtroPendientes.current = !filtroPendientes.current;
+    setSoloPorAutorizar(filtroPendientes.current);
+    setHistorialCursorChecklists([]);
+    cargarChecklists().catch(() => alert("No se pudo cargar la lista: revisa la señal."));
   };
 
   const cargarPlantillas = async () => {
@@ -239,8 +276,10 @@ export default function ChecklistsView() {
       const res = await apiFetch(`/api/erp/checklists/plantillas/${plantillaId}`);
       const plantilla = await res.json();
       setPlantillaSeleccionada(plantilla);
-      const iniciales: Record<number, { estado: ItemEstado; observacion: string }> = {};
-      for (const item of plantilla.items) iniciales[item.id] = { estado: "bien", observacion: "" };
+      const iniciales: Record<number, { estado: Respuesta; observacion: string }> = {};
+      for (const item of plantilla.items) {
+        iniciales[item.id] = { estado: respuestaInicial(item.critica), observacion: "" };
+      }
       setEstadosItems(iniciales);
     } catch {
       // Sin señal y sin esta plantilla en el caché del service worker: no
@@ -274,15 +313,12 @@ export default function ChecklistsView() {
       alert(lectura.problema);
       return;
     }
-    const fallaCritica = plantillaSeleccionada.items.some(
-      (it) => it.critica && estadosItems[it.id]?.estado === "malo"
-    );
-
-    const items = plantillaSeleccionada.items.map((it) => ({
-      descripcion: it.descripcion,
-      estado: estadosItems[it.id]?.estado ?? "bien",
-      observacion: estadosItems[it.id]?.observacion || undefined,
-    }));
+    const respuestas = respuestasParaEnviar(plantillaSeleccionada.items, estadosItems);
+    if (respuestas.faltan.length > 0 && !puedeOmitir) {
+      alert(`Falta responder: ${respuestas.faltan.join(", ")}.`);
+      return;
+    }
+    const { items, fallaCritica, fallaMenor } = respuestas;
 
     setGuardando(true);
     try {
@@ -326,7 +362,7 @@ export default function ChecklistsView() {
         // apiFetch). No se recarga el listado: sin señal el GET también
         // falla, y el checklist todavía no existe del lado del servidor.
         if (res.status === 202) {
-          alert(avisoSinSenal(fallaCritica));
+          alert(avisoSinSenal(fallaCritica, fallaMenor));
           return;
         }
 
@@ -394,7 +430,20 @@ export default function ChecklistsView() {
 
       {subTab === "checklists" && (
         <>
-          <div className="flex justify-end mb-6">
+          <div className="flex flex-col sm:flex-row sm:justify-between gap-3 mb-6">
+            <button
+              type="button"
+              aria-pressed={soloPorAutorizar}
+              onClick={filtrarPorAutorizar}
+              className={`flex items-center justify-center min-h-[44px] px-4 rounded-xl text-sm font-medium border ${soloPorAutorizar ? "bg-slate-900 text-white border-slate-900" : "bg-white border-slate-200 text-slate-600"}`}
+            >
+              Por autorizar
+              {salidaEsNueva() && (
+                <span className="ml-2 px-1.5 py-0.5 rounded-full bg-[#BADC1E] text-[#0A1014] text-[9px] font-extrabold">
+                  Nuevo
+                </span>
+              )}
+            </button>
             {puedeEscribir && (
               <button
                 onClick={() => {
@@ -408,7 +457,7 @@ export default function ChecklistsView() {
                   }
                   abrirModalChecklist();
                 }}
-                className="flex items-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
+                className="flex items-center justify-center gap-2 px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-xl transition-all"
               >
                 <Plus className="w-4 h-4 shrink-0" />
                 Nuevo Checklist
@@ -441,6 +490,13 @@ export default function ChecklistsView() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
+                  {soloPorAutorizar && checklists.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-4 py-6 text-sm text-slate-500">
+                        No hay salidas esperando autorización.
+                      </td>
+                    </tr>
+                  )}
                   {checklists.map((c) => (
                     <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 font-mono text-xs sm:text-sm font-semibold text-slate-800">
@@ -466,9 +522,42 @@ export default function ChecklistsView() {
                         <span className={`font-bold ${resultadoDe(c.resultado).clase}`}>
                           {resultadoDe(c.resultado).texto}
                         </span>
-                        {c.orden_trabajo_id && (
+                        {c.salida && SALIDAS[c.salida] && (
+                          <span
+                            className={`block mt-1 text-[10px] sm:text-xs font-bold ${SALIDAS[c.salida].clase}`}
+                          >
+                            {SALIDAS[c.salida].texto}
+                          </span>
+                        )}
+                        {c.salida_motivo && (
+                          <span className="block max-w-[190px] whitespace-normal text-[10px] sm:text-xs text-slate-500">
+                            {c.salida_por_nombre}: {c.salida_motivo}
+                          </span>
+                        )}
+                        {c.salida === "por_autorizar" &&
+                          autoriza &&
+                          (c.usuario_id === usuario?.id ? (
+                            <span className="block max-w-[190px] whitespace-normal text-[10px] sm:text-xs text-slate-500">
+                              Lo llenaste tú: lo decide otra persona.
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                marcarSalidaVista();
+                                setDecidiendo({
+                                  id: c.id,
+                                  unidad: c.placa_codigo ?? c.activo_texto ?? `Checklist ${c.id}`,
+                                });
+                              }}
+                              className="flex items-center min-h-[44px] sm:min-h-0 sm:mt-1 text-xs font-bold text-blue-600 underline underline-offset-2"
+                            >
+                              Decidir salida
+                            </button>
+                          ))}
+                        {!!c.ordenes_trabajo?.length && (
                           <span className="block mt-1 text-[10px] sm:text-xs text-slate-500">
-                            Orden de trabajo #{c.orden_trabajo_id}
+                            Orden de trabajo {c.ordenes_trabajo.map((o) => `#${o}`).join(", ")}
                           </span>
                         )}
                         {c.aviso_registro && (
@@ -598,6 +687,20 @@ export default function ChecklistsView() {
             </div>
           </div>
         </>
+      )}
+
+      {decidiendo && (
+        <DecidirSalida
+          id={decidiendo.id}
+          unidad={decidiendo.unidad}
+          conOrdenes={tieneModulo(usuario, "ordenes_trabajo")}
+          onDecidida={() => {
+            setDecidiendo(null);
+            setHistorialCursorChecklists([]);
+            cargarChecklists();
+          }}
+          onCerrar={() => setDecidiendo(null)}
+        />
       )}
 
       {ventanaFormato?.tipo === "editor" && (
@@ -763,17 +866,19 @@ export default function ChecklistsView() {
                       </span>
                       <select
                         className="border border-slate-200 rounded-lg p-2 text-sm outline-none bg-white"
-                        value={estadosItems[item.id]?.estado ?? "bien"}
+                        aria-label={`Respuesta: ${item.descripcion}`}
+                        value={estadosItems[item.id]?.estado ?? respuestaInicial(item.critica)}
                         onChange={(e) =>
                           setEstadosItems({
                             ...estadosItems,
                             [item.id]: {
                               ...estadosItems[item.id],
-                              estado: e.target.value as ItemEstado,
+                              estado: e.target.value as Respuesta,
                             },
                           })
                         }
                       >
+                        {item.critica && <option value="">Elige...</option>}
                         <option value="bien">Bien</option>
                         <option value="malo">Malo</option>
                         <option value="na">N/A</option>

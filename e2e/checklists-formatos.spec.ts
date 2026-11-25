@@ -64,6 +64,8 @@ test("un formato se crea, se edita por versiones, se restaura y se desactiva", a
   });
   expect(cambio.status(), await cambio.text()).toBe(200);
   await page.getByLabel(/^Activo o lugar/).fill("Horno 4");
+  // La pregunta crítica sale sin respuesta: hay que elegirla.
+  await page.getByLabel("Respuesta: Frenos").selectOption("bien");
   await page.getByRole("button", { name: "Registrar Checklist" }).click();
   await expect(page.getByRole("cell", { name: "Horno 4" })).toBeVisible({ timeout: 20_000 });
   const llenos = await (await page.request.get(`${API}?pageSize=10`)).json();

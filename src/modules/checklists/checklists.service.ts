@@ -10,7 +10,7 @@ import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { CuotaExcedidaError, verificarCuota } from "../../server/services/platformCuotas.service";
 import { registrarLectura } from "../equipos/equipos.lecturas";
-import { crearOrdenDeHallazgo } from "../ordenes_trabajo/ordenDeHallazgo";
+import { ordenarFallas, pideOrdenAutomatica } from "../ordenes_trabajo/ordenDeHallazgo";
 import { ChecklistsRepository } from "./checklists.repository";
 import { preguntasCriticas } from "./checklists.criticas";
 
@@ -21,7 +21,8 @@ async function registrarChecklist(
   client: PoolClient,
   tenantId: string,
   usuarioId: string,
-  data: CrearChecklistInput
+  data: CrearChecklistInput,
+  puedeOmitir: boolean
 ) {
   const criticas = await preguntasCriticas(
     client,
@@ -29,27 +30,65 @@ async function registrarChecklist(
     data.plantilla_id,
     data.plantilla_version
   );
-  const items = data.items.map((i) => ({ ...i, critica: criticas.has(i.descripcion) }));
+  // Toda pregunta crítica se responde. Quien tiene el permiso puede dejarla: queda «N/A», anotado.
+  const respondidas = new Set(data.items.map((i) => i.descripcion));
+  const sinResponder = [...criticas].filter((c) => !respondidas.has(c));
+  if (sinResponder.length > 0 && !puedeOmitir) {
+    throw new AppError(400, `Falta responder: ${sinResponder.join(", ")}`);
+  }
+  const items = [
+    ...data.items,
+    ...sinResponder.map((descripcion) => ({
+      descripcion,
+      estado: "na" as const,
+      observacion: "Sin responder",
+    })),
+  ].map((i) => ({ ...i, critica: criticas.has(i.descripcion) }));
+  if (items.length === 0) throw new AppError(400, "El checklist necesita al menos un ítem");
   const fila = await ChecklistsRepository.crear(client, tenantId, usuarioId, { ...data, items });
-  let aviso: string | null = null;
+  const avisos: string[] = [];
+  if (sinResponder.length > 0) {
+    avisos.push(`Preguntas críticas sin responder: ${sinResponder.join(", ")}.`);
+  }
   if (data.lectura && data.equipo_id !== undefined) {
-    aviso = await dejarLectura(client, tenantId, usuarioId, data.equipo_id, data.lectura);
-    if (aviso) await ChecklistsRepository.guardarAviso(client, tenantId, fila.id, aviso);
+    const deLectura = await dejarLectura(client, tenantId, usuarioId, data.equipo_id, data.lectura);
+    if (deLectura) avisos.push(deLectura);
   }
+  const aviso = avisos.length > 0 ? avisos.join(" ").slice(0, 600) : null;
+  if (aviso) await ChecklistsRepository.guardarAviso(client, tenantId, fila.id, aviso);
 
-  let ordenId: number | null = null;
+  let ordenNueva: number | null = null;
   const fallas = items.filter((i) => i.critica && i.estado === "malo");
-  if (fallas.length > 0) {
-    ordenId = await crearOrdenDeHallazgo(client, tenantId, usuarioId, {
-      checklistId: fila.id,
-      equipoId: data.equipo_id ?? null,
-      activoTexto: data.activo_texto || null,
-      nombreActivo: await ChecklistsRepository.nombreDelActivo(client, tenantId, data),
-      fallas,
-    });
+  if (fallas.length > 0 && (await pideOrdenAutomatica(client, tenantId))) {
+    ordenNueva = await ordenarFallas(
+      client,
+      tenantId,
+      usuarioId,
+      {
+        checklistId: fila.id,
+        equipoId: data.equipo_id ?? null,
+        activoTexto: data.activo_texto || null,
+        nombreActivo: await ChecklistsRepository.nombreDelActivo(client, tenantId, data),
+        fallas,
+      },
+      { titulo: "Falla crítica en checklist", prioridad: "urgente", noOpera: true }
+    );
   }
 
-  return { ...fila, aviso_registro: aviso, orden_trabajo_id: ordenId };
+  const guardado = await ChecklistsRepository.findById(
+    client,
+    tenantId,
+    fila.id,
+    data.equipo_id !== undefined
+  );
+  // `orden_nueva_id`: la que nació ahora (se audita); las demás ya existían y cubren la misma falla.
+  return {
+    ...fila,
+    aviso_registro: aviso,
+    orden_trabajo_id: guardado!.orden_trabajo_id,
+    ordenes_trabajo: guardado!.ordenes_trabajo,
+    orden_nueva_id: ordenNueva,
+  };
 }
 
 /** Devuelve por qué no se pudo dejar la lectura, o null si quedó registrada. */
@@ -95,8 +134,20 @@ export const ChecklistsService = {
   },
 
   /** `conUnidades`: el usuario tiene un módulo que mantiene unidades (Flota o Mantenimiento). Sin él no se lee `equipos` (ver `opcionales`). */
-  getAll(client: PoolClient, tenantId: string, paginacion: CursorPaginacion, conUnidades = true) {
-    return ChecklistsRepository.findAll(client, tenantId, paginacion, conUnidades);
+  getAll(
+    client: PoolClient,
+    tenantId: string,
+    paginacion: CursorPaginacion,
+    conUnidades = true,
+    soloPorAutorizar = false
+  ) {
+    return ChecklistsRepository.findAll(
+      client,
+      tenantId,
+      paginacion,
+      conUnidades,
+      soloPorAutorizar
+    );
   },
 
   getById(client: PoolClient, tenantId: string, id: number, conUnidades = true) {
@@ -113,7 +164,8 @@ export const ChecklistsService = {
     tenantId: string,
     usuarioId: string,
     data: CrearChecklistInput,
-    conUnidades = true
+    conUnidades = true,
+    puedeOmitir = false
   ) {
     return idempotentInsert({
       client,
@@ -121,7 +173,7 @@ export const ChecklistsService = {
       modulo: "checklists",
       clienteUuid: data.cliente_uuid,
       insertar: async () => {
-        const fila = await registrarChecklist(client, tenantId, usuarioId, data);
+        const fila = await registrarChecklist(client, tenantId, usuarioId, data, puedeOmitir);
         return { id: fila.id as number, fila };
       },
       // findById devuelve un superset de lo que devuelve crear() (suma

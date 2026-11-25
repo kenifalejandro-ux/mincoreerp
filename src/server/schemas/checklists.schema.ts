@@ -78,7 +78,9 @@ export const crearChecklistSchema = z
           observacion: z.string().trim().max(500).optional(),
         })
       )
-      .min(1, "El checklist necesita al menos un ítem"),
+      // Puede llegar vacía si quien puede omitir las críticas no respondió ninguna: el servicio exige que
+      // al final quede al menos un ítem.
+      .max(200, "El checklist admite hasta 200 ítems"),
   })
   .refine((c) => c.equipo_id !== undefined || (c.activo_texto ?? "") !== "", {
     message: "Indica la unidad o escribe el activo o lugar del checklist",
@@ -90,3 +92,12 @@ export const crearChecklistSchema = z
   });
 
 export type CrearChecklistInput = z.infer<typeof crearChecklistSchema>;
+
+/** Decidir la salida de una unidad con fallas menores: siempre con motivo. */
+export const decidirSalidaSchema = z.object({
+  autoriza: z.boolean(),
+  motivo: z.string().trim().min(3, "Escribe el motivo: queda en el historial").max(300),
+  /** Solo cuando autoriza: dejar una orden para atender la falla después. */
+  crear_orden: z.boolean().default(false),
+});
+export type DecidirSalidaInput = z.infer<typeof decidirSalidaSchema>;

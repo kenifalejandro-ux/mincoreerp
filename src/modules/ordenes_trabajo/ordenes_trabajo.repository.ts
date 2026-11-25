@@ -346,7 +346,10 @@ export const OrdenesTrabajoRepository = {
     if (!origenes.includes(antes.estado)) {
       return { ok: false, motivo: "transicion_invalida", estadoActual: antes.estado };
     }
-    const inicio = inicio_en ? new Date(inicio_en) : antes.inicio_en;
+    // «Iniciar» anota la hora sola si nadie la escribió; después se puede corregir.
+    const inicio = inicio_en
+      ? new Date(inicio_en)
+      : (antes.inicio_en ?? (estado === "en_progreso" ? antes.ahora : null));
     const cierre = esCierre ? (fecha_cierre ? new Date(fecha_cierre) : antes.ahora) : null;
     exigirInicioAntesDelCierre(inicio, cierre);
 

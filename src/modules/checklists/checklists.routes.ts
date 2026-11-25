@@ -4,12 +4,14 @@ import { Router } from "express";
 import { validate } from "../../server/middleware/validate";
 import { requireRole } from "../../server/shared/middlewares/roles.middleware";
 import { asyncHandler } from "../../server/shared/utils/asyncHandler";
+import { requirePestana } from "../../server/shared/middlewares/pestana.middleware";
 import {
   crearPlantillaSchema,
   crearChecklistSchema,
   editarPlantillaSchema,
   estadoPlantillaSchema,
   restaurarPlantillaSchema,
+  decidirSalidaSchema,
 } from "../../server/schemas/checklists.schema";
 import { ChecklistsController } from "./checklists.controller";
 import { FormatosController } from "./checklists.formatos.controller";
@@ -64,6 +66,14 @@ router.post(
   requireRole("admin", "operador"),
   validate(crearChecklistSchema),
   asyncHandler(ChecklistsController.crear)
+);
+// Decidir la salida de una unidad con fallas menores: manda la casilla, no el rol. PATCH: no se encola sin
+// señal. Hasta 9 cifras: un id mayor no cabe en la columna.
+router.patch(
+  "/:id(\\d{1,9})/salida",
+  requirePestana("checklists", "salida:autorizar"),
+  validate(decidirSalidaSchema),
+  asyncHandler(ChecklistsController.decidirSalida)
 );
 router.delete("/:id", requireRole("admin"), asyncHandler(ChecklistsController.eliminar));
 
