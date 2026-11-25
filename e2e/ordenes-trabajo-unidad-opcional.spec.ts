@@ -14,6 +14,7 @@ import { test, expect } from "@playwright/test";
 
 import { loginPorUI } from "./fixtures/auth";
 import { adminA } from "./fixtures/entorno";
+import { elegirUnidad } from "./fixtures/selectorDeUnidad";
 
 test("una orden solo de texto («Activo o lugar») se guarda sin unidad y se ve en el listado", async ({
   page,
@@ -36,14 +37,14 @@ test("una orden solo de texto («Activo o lugar») se guarda sin unidad y se ve 
   const unidad = page.getByLabel(/^Equipo \(opcional\)/);
   await expect(unidad).toBeVisible();
   await expect(unidad).not.toHaveAttribute("required", "");
-  await expect(unidad.getByRole("option", { name: "Sin unidad" })).toHaveCount(1);
+  await expect(unidad).toContainText("Sin unidad");
 
   // Sin unidad, el texto es obligatorio; con unidad ya no.
   const texto = page.getByLabel(/^Activo o lugar/);
   await expect(texto).toHaveAttribute("required", "");
-  await unidad.selectOption({ label: marca });
+  await elegirUnidad(page, "ot-equipo", marca);
   await expect(texto).not.toHaveAttribute("required", "");
-  await unidad.selectOption({ value: "" });
+  await elegirUnidad(page, "ot-equipo", "Sin unidad");
   await expect(texto).toHaveAttribute("required", "");
 
   await texto.fill(activo);

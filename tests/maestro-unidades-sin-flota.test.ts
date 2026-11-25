@@ -16,7 +16,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import request from "supertest";
 
 import { app, crearTenantDePrueba, borrarTenantDePrueba, idUnico } from "./helpers";
-import { closeDatabase } from "../src/server/config/database";
+import { closeDatabase, withTenant } from "../src/server/config/database";
 import { env } from "../src/server/config/env";
 import { MODULOS } from "../src/modules/registry";
 
@@ -164,6 +164,23 @@ describe("el maestro de unidades llega a Checklists, Órdenes de trabajo e IPERC
       .send({ motivo: "Vendido" });
     expect(quitar.status, JSON.stringify(quitar.body)).toBe(200);
     expect((await unidadesDe(ag, "checklists")).map((x) => x.id)).not.toContain(u.id);
+  });
+
+  it("llegan todas las unidades, también pasadas las 200 de una página", async () => {
+    const e = await nueva(["mantenimiento", "checklists", "ordenes_trabajo", "iperc"]);
+    const ag = await sesion(e);
+    await withTenant(e.tenant.id, (client) =>
+      client.query(
+        `INSERT INTO equipos (tenant_id, placa_codigo, tipo)
+         SELECT $1, 'MAS-' || lpad(n::text, 4, '0'), 'Volquete' FROM generate_series(1, 230) n`,
+        [e.tenant.id]
+      )
+    );
+    for (const modulo of ["checklists", "ordenes_trabajo", "iperc"]) {
+      const lista = await unidadesDe(ag, modulo);
+      expect(lista, modulo).toHaveLength(230);
+      expect(lista.at(-1)?.placa_codigo).toBe("MAS-0230");
+    }
   });
 
   it("otra empresa no ve las unidades de la primera", async () => {

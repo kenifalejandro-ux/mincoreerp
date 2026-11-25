@@ -11,6 +11,7 @@ import { randomBytes } from "node:crypto";
 import { test, expect } from "@playwright/test";
 
 import { crearEmpresaSola, entrarPorPrimeraVez } from "./fixtures/empresaSola";
+import { elegirUnidad } from "./fixtures/selectorDeUnidad";
 
 test("sin Flota, Checklists y Órdenes de trabajo ofrecen las unidades de Mantenimiento", async ({
   page,
@@ -58,7 +59,7 @@ test("sin Flota, Checklists y Órdenes de trabajo ofrecen las unidades de Manten
   await page.getByRole("button", { name: "Nuevo Checklist" }).click();
   const equipo = page.getByLabel("Equipo");
   await expect(equipo).toBeVisible();
-  await equipo.selectOption({ label: placa });
+  await elegirUnidad(page, "checklist-equipo", placa);
   await page.getByLabel("Plantilla").selectOption({ label: `Pre-uso ${marca}` });
   await expect(page.getByText("Frenos")).toBeVisible();
   await page.getByRole("button", { name: /Registrar Checklist|Registrando/ }).click();
@@ -73,7 +74,7 @@ test("sin Flota, Checklists y Órdenes de trabajo ofrecen las unidades de Manten
   await page.getByRole("button", { name: "+ Nueva Orden de Trabajo" }).click();
   const unidadOrden = page.getByLabel(/^Equipo \(opcional\)/);
   await expect(unidadOrden).toBeVisible();
-  await unidadOrden.selectOption({ label: placa });
+  await elegirUnidad(page, "ot-equipo", placa);
   await page.getByLabel("Título", { exact: true }).fill(`Cambiar frenos ${marca}`);
   await page.getByRole("button", { name: "Registrar Orden de Trabajo" }).click();
   await expect(page.getByRole("cell", { name: placa }).first()).toBeVisible({ timeout: 20_000 });

@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../context/AuthContext";
 import { apiFetch } from "../../services/apiClient";
 import { mensajeDeError } from "../../utils/mensajeDeError";
+import { SelectorBuscable } from "../comunes/SelectorBuscable";
 import {
   ahoraParaInputLocal,
   estadoRenglones,
@@ -44,7 +45,6 @@ import { CampoUnidadPlaca } from "./CampoUnidadPlaca";
 import { seccionesCompraEnRuta } from "./compraEnRutaAcceso";
 import { prepararFotoComprobante } from "./fotoComprobante";
 import HistorialComprasRuta from "./HistorialComprasRuta";
-import { SelectorBuscable } from "./SelectorBuscable";
 import { resolverUnidad } from "./unidadEscrita";
 import { useUnidadDelViaje } from "./useUnidadDelViaje";
 

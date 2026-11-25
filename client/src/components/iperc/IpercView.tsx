@@ -6,6 +6,8 @@ import { useAuth } from "../../context/AuthContext";
 import { tieneUnidades } from "../../modules/tieneModulo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
+import { opcionesDeUnidad } from "../comunes/opcionesDeUnidad";
+import { SelectorBuscable } from "../comunes/SelectorBuscable";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 
 interface Iperc {
@@ -258,7 +260,7 @@ export default function IpercView() {
       setEquipos([]);
       return;
     }
-    const res = await apiFetch("/api/erp/iperc/unidades?page=1&pageSize=200");
+    const res = await apiFetch("/api/erp/iperc/unidades");
     const body = await res.json();
     setEquipos(Array.isArray(body.data) ? body.data : []);
   }, [conUnidades]);
@@ -684,19 +686,14 @@ export default function IpercView() {
                   >
                     Equipo (opcional)
                   </label>
-                  <select
+                  <SelectorBuscable
                     id="iperc-equipo"
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white"
-                    value={formIperc.equipo_id}
-                    onChange={(e) => setFormIperc({ ...formIperc, equipo_id: e.target.value })}
-                  >
-                    <option value="">Ninguno</option>
-                    {equipos.map((eq) => (
-                      <option key={eq.id} value={eq.id}>
-                        {eq.placa_codigo}
-                      </option>
-                    ))}
-                  </select>
+                    opciones={opcionesDeUnidad(equipos, "Ninguno")}
+                    valor={formIperc.equipo_id}
+                    onElegir={(v) => setFormIperc((f) => ({ ...f, equipo_id: v }))}
+                    placeholder="Ninguno"
+                    etiquetaBuscador="Buscar unidad"
+                  />
                 </div>
               </div>
               <div className="space-y-1">

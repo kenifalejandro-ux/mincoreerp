@@ -27,6 +27,8 @@
  */
 import { expect, type Locator, type Page } from "@playwright/test";
 
+import { elegirUnidad } from "./selectorDeUnidad";
+
 /** Nombre de la plantilla que crea `sembrarEquipoYPlantilla`, derivado de
  *  la marca del spec para que dos specs en paralelo no se pisen. */
 export function nombrePlantilla(marca: string): string {
@@ -80,7 +82,7 @@ export async function elegirEquipoYPlantilla(
   if (opciones.reabriendo) {
     await page.getByLabel("Plantilla").selectOption({ value: "" });
   } else {
-    await page.getByLabel("Equipo").selectOption({ label: marca });
+    await elegirUnidad(page, "checklist-equipo", marca);
   }
   await page.getByLabel("Plantilla").selectOption({ label: nombrePlantilla(marca) });
   await expect(page.getByText("Frenos")).toBeVisible();

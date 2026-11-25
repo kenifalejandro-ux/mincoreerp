@@ -6,6 +6,8 @@ import { useAuth } from "../../context/AuthContext";
 import { tieneModulo, tieneUnidades } from "../../modules/tieneModulo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
+import { opcionesDeUnidad } from "../comunes/opcionesDeUnidad";
+import { SelectorBuscable } from "../comunes/SelectorBuscable";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 
 type Estado = "abierta" | "en_progreso" | "completada" | "cancelada";
@@ -122,7 +124,7 @@ export default function OrdenesTrabajoView() {
   );
 
   const cargarEquipos = useCallback(async () => {
-    const res = await apiFetch("/api/erp/ordenes_trabajo/unidades?page=1&pageSize=200");
+    const res = await apiFetch("/api/erp/ordenes_trabajo/unidades");
     const body = await res.json();
     setEquipos(Array.isArray(body.data) ? body.data : []);
   }, []);
@@ -373,22 +375,17 @@ export default function OrdenesTrabajoView() {
             >
               Filtrar por equipo
             </label>
-            <select
+            <SelectorBuscable
               id="ot-filtro-equipo"
-              className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-              value={filtroEquipo}
-              onChange={(e) => {
+              opciones={opcionesDeUnidad(equipos, "Todos")}
+              valor={filtroEquipo}
+              onElegir={(v) => {
                 setPage(1);
-                setFiltroEquipo(e.target.value);
+                setFiltroEquipo(v);
               }}
-            >
-              <option value="">Todos</option>
-              {equipos.map((eq) => (
-                <option key={eq.id} value={eq.id}>
-                  {eq.placa_codigo}
-                </option>
-              ))}
-            </select>
+              placeholder="Todos"
+              etiquetaBuscador="Buscar unidad del filtro"
+            />
           </div>
         )}
         <div className="space-y-1 flex-1">
@@ -581,19 +578,14 @@ export default function OrdenesTrabajoView() {
                   <label htmlFor="ot-equipo" className="text-xs font-bold text-slate-500 uppercase">
                     Equipo (opcional)
                   </label>
-                  <select
+                  <SelectorBuscable
                     id="ot-equipo"
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none bg-white focus:ring-2 focus:ring-slate-900"
-                    value={formData.equipo_id}
-                    onChange={(e) => setFormData({ ...formData, equipo_id: e.target.value })}
-                  >
-                    <option value="">Sin unidad</option>
-                    {equipos.map((eq) => (
-                      <option key={eq.id} value={eq.id}>
-                        {eq.placa_codigo}
-                      </option>
-                    ))}
-                  </select>
+                    opciones={opcionesDeUnidad(equipos, "Sin unidad")}
+                    valor={formData.equipo_id}
+                    onElegir={(v) => setFormData((f) => ({ ...f, equipo_id: v }))}
+                    placeholder="Sin unidad"
+                    etiquetaBuscador="Buscar unidad"
+                  />
                 </div>
               )}
 
