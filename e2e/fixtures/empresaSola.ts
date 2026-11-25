@@ -69,12 +69,14 @@ export async function entrarPorPrimeraVez(
   await page.getByLabel("Contraseña").fill(empresa.password);
   await page.getByRole("button", { name: "Ingresar" }).click();
   const cambio = page.locator("#passwordActual");
-  await cambio.or(listo).first().waitFor({ timeout: 20_000 });
+  // 40 s y no 20: el primer login de una empresa recién creada a veces tarda más de 20 s (visto en local y en el
+  // pre-push, con varios specs a la vez); una espera corta lo convertía en un fallo que no es de lo que se prueba.
+  await cambio.or(listo).first().waitFor({ timeout: 40_000 });
   if (await cambio.isVisible()) {
     await cambio.fill(empresa.password);
     await page.locator("#passwordNueva").fill(`${empresa.password}Nueva`);
     await page.locator("#confirmacion").fill(`${empresa.password}Nueva`);
     await page.getByRole("button", { name: "Guardar y continuar" }).click();
   }
-  await expect(listo).toBeVisible({ timeout: 20_000 });
+  await expect(listo).toBeVisible({ timeout: 40_000 });
 }

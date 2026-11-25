@@ -199,7 +199,14 @@ describe("Mantenimiento: importar equipos y resumen del Centro", () => {
     const ag = await entrarAdmin(e);
     const vacio = await ag.get("/api/erp/mantenimiento/resumen");
     expect(vacio.status).toBe(200);
-    expect(vacio.body).toEqual({ total: 0, propios: 0, alquilados: 0, sin_area: 0, areas: [] });
+    expect(vacio.body).toEqual({
+      total: 0,
+      propios: 0,
+      alquilados: 0,
+      sin_area: 0,
+      areas: [],
+      por_importar: 0, // sin Flota no hay unidades de Operaciones que importar
+    });
 
     await ag
       .post(RUTA)

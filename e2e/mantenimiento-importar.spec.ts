@@ -1,6 +1,6 @@
 /** e2e/mantenimiento-importar.spec.ts
  *
- * Importar equipos desde un Excel, y el Centro de control del ecosistema «Gestión de mantenimiento» (M1,
+ * Importar equipos desde un Excel, y el Centro de mantenimiento del ecosistema «Gestión de mantenimiento» (M1,
  * etapa 3), por navegador, con una empresa que tiene SOLO el módulo `mantenimiento`.
  *
  * 1. Con cero equipos el Centro invita a registrarlos; el Excel se lee, muestra la vista previa y al confirmar
@@ -44,10 +44,19 @@ function archivoExcel(filas: unknown[][], nombre = "equipos.xlsx") {
   };
 }
 
+/** «Importar» abre la ventana con sus pestañas; el archivo se elige en la zona de «Desde Excel» (sin Flota, la
+ *  única pestaña). Al elegirlo la ventana se cierra y aparece la vista previa. */
+async function subirExcel(page: Page, archivo: ReturnType<typeof archivoExcel>) {
+  await page.getByRole("button", { name: "Importar", exact: true }).click();
+  await page.getByLabel("Archivo de Excel").setInputFiles(archivo);
+}
+
 async function alCentro(page: Page, empresa: Awaited<ReturnType<typeof crearEmpresaSola>>) {
   const menu = page.getByRole("complementary", { name: "Menú de Gestión de mantenimiento" });
   await entrarPorPrimeraVez(page, empresa, menu);
-  await expect(page.getByRole("heading", { name: "Centro de control", level: 1 })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /^(Buenos días|Buenas tardes|Buenas noches)$/, level: 1 })
+  ).toBeVisible();
   return menu;
 }
 
@@ -73,7 +82,7 @@ test("importar un Excel crea los equipos y el Centro los cuenta por área", asyn
     [`CEB-${marca}`, "Camioneta", "TOYOTA", "", "Odómetro", 48300, "Alquilada", "Taller"],
     [`HRN-${marca}`, "Horno", "", "", "", 0, "Propia", ""],
   ]);
-  await page.locator('input[type="file"]').setInputFiles(archivo);
+  await subirExcel(page, archivo);
   const vista = page.getByRole("heading", { name: "Confirmar importación" });
   await expect(vista).toBeVisible();
   await expect(page.getByText("Se van a importar")).toContainText("4");
@@ -85,7 +94,7 @@ test("importar un Excel crea los equipos y el Centro los cuenta por área", asyn
   await expect(page.getByText("Todavía no hay equipos registrados.")).toBeVisible();
 
   // Esta vez se confirma.
-  await page.locator('input[type="file"]').setInputFiles(archivo);
+  await subirExcel(page, archivo);
   await page.getByRole("button", { name: "Continuar" }).click();
   await expect(page.getByText("Se importaron 4 equipos correctamente.")).toBeVisible();
   await expect(page.getByText("Se crearon las áreas Cantera, Taller")).toBeVisible();
@@ -97,12 +106,11 @@ test("importar un Excel crea los equipos y el Centro los cuenta por área", asyn
   await expect(fila("HRN")).toContainText("Sin área");
 
   // El Centro refleja lo importado.
-  await menu.getByRole("button", { name: "Centro de control" }).click();
-  const resumen = page.getByRole("region", { name: "Resumen de equipos" });
-  await expect(resumen).toContainText("Equipos4");
-  await expect(resumen).toContainText("Propios3");
-  await expect(resumen).toContainText("Alquilados1");
-  await expect(resumen).toContainText("Sin área1");
+  await menu.getByRole("button", { name: "Centro de mantenimiento" }).click();
+  const resumen = page.getByRole("region", { name: "Resumen del mantenimiento" });
+  await expect(resumen).toContainText("Equipos registrados4");
+  await expect(resumen).toContainText("3 propios · 1 alquilados");
+  await expect(page.getByText("1 equipo sin área")).toBeVisible();
   const reparto = page
     .getByRole("heading", { name: "Equipos por área" })
     .locator("xpath=ancestor::section[1]");
@@ -130,15 +138,14 @@ test("un archivo con una placa repetida se rechaza entero, con su fila y su colu
   });
 
   // La segunda fila usa una placa que la empresa ya tiene (con otras mayúsculas).
-  await page
-    .locator('input[type="file"]')
-    .setInputFiles(
-      archivoExcel([
-        ENCABEZADO,
-        [`NUEVO-${marca}`, "Volquete"],
-        [`ya-${marca}`.toLowerCase(), "Camioneta"],
-      ])
-    );
+  await subirExcel(
+    page,
+    archivoExcel([
+      ENCABEZADO,
+      [`NUEVO-${marca}`, "Volquete"],
+      [`ya-${marca}`.toLowerCase(), "Camioneta"],
+    ])
+  );
   await page.getByRole("button", { name: "Continuar" }).click();
   await expect(page.getByText(/Fila 3 \(columna "placa_codigo"\)/)).toBeVisible();
   await expect(page.getByText(/ya está registrado/)).toBeVisible();
@@ -156,7 +163,8 @@ test("un archivo sin encabezados o con una lectura inválida dice qué corregir"
   await menu.getByRole("button", { name: "Equipos" }).click();
   await expect(page.getByRole("heading", { name: "Equipos", level: 1 })).toBeVisible();
 
-  await page.locator('input[type="file"]').setInputFiles(
+  await subirExcel(
+    page,
     archivoExcel([
       ["Nombre", "Edad"],
       ["x", 1],
@@ -164,11 +172,10 @@ test("un archivo sin encabezados o con una lectura inválida dice qué corregir"
   );
   await expect(page.getByText(/Placa y Tipo son obligatorias/)).toBeVisible();
 
-  await page
-    .locator('input[type="file"]')
-    .setInputFiles(
-      archivoExcel([ENCABEZADO, ["A-1", "Volquete"], ["A-2", "Volquete", "", "", "", "abc"]])
-    );
+  await subirExcel(
+    page,
+    archivoExcel([ENCABEZADO, ["A-1", "Volquete"], ["A-2", "Volquete", "", "", "", "abc"]])
+  );
   await expect(page.getByText("Fila 3: la lectura «abc» no es un número.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Confirmar importación" })).toHaveCount(0);
 });

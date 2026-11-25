@@ -5,14 +5,36 @@
 // paneles blancos; el menú lateral conserva el diseño del ERP (fondo #192526, borde lima, ítems a todo el
 // ancho con hover lima).
 //
-// Es un módulo propio y autónomo: con solo `mantenimiento` la empresa ve sus equipos. Las demás secciones
-// (checklists, órdenes de trabajo, preventivo, indicadores…) se suman cuando existan; aquí no se dibujan
-// entradas «Pronto» para ellas.
-import { LayoutGrid, LogOut, Menu, Sparkles, Wrench, X, type LucideIcon } from "lucide-react";
+// Es un módulo propio y autónomo: con solo `mantenimiento` la empresa ve sus equipos. El menú sigue la maqueta
+// aprobada: lo que todavía no está construido sale en su sitio con «Pronto» (ver menuMantenimiento.ts), y las
+// entradas de otros módulos solo se dibujan si la persona los tiene.
+import {
+  ClipboardCheck,
+  Clock,
+  FolderClock,
+  LayoutGrid,
+  Package,
+  Settings,
+  ShieldCheck,
+  Sparkles,
+  Tractor,
+  Wrench,
+  X,
+  type LucideIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
+import BarraSuperiorMantenimiento from "./BarraSuperiorMantenimiento";
 import CentroDeMantenimiento from "./CentroDeMantenimiento";
 import EquiposMantenimiento from "./EquiposMantenimiento";
+import { resumenMantenimiento, type ResumenMantenimiento } from "./mantenimientoApi";
+import {
+  esSeccion,
+  gruposDelMenu,
+  insigniaDe,
+  modulosIntegrados,
+  type IconoDeMenu,
+} from "./menuMantenimiento";
 import {
   esRutaDeMantenimiento,
   leerRuta,
@@ -24,30 +46,45 @@ import {
 import { useAuth } from "../../context/AuthContext";
 import { useBarraLima } from "../comunes/useBarraLima";
 
-interface ItemDeMenu {
-  id: SeccionDeRuta;
-  label: string;
-  Icono: LucideIcon;
-}
-
-const GRUPOS: { etiqueta: string; items: ItemDeMenu[] }[] = [
-  {
-    etiqueta: "Operación",
-    items: [
-      { id: "centro", label: "Centro de control", Icono: LayoutGrid },
-      { id: "equipos", label: "Equipos", Icono: Wrench },
-    ],
-  },
-];
-const TODOS = GRUPOS.flatMap((g) => g.items);
+const ICONOS: Record<IconoDeMenu, LucideIcon> = {
+  centro: LayoutGrid,
+  equipos: Tractor,
+  checklists: ClipboardCheck,
+  ordenes: Wrench,
+  preventivo: Clock,
+  indicadores: Sparkles,
+  historial: FolderClock,
+  almacen: Package,
+  iperc: ShieldCheck,
+};
 
 export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => void }) {
-  const { usuario, logout } = useAuth();
+  const { usuario } = useAuth();
   useBarraLima();
   // La dirección manda al abrir: `/mantenimiento/equipos` abre Equipos.
   const [rutaInicial] = useState(() => leerRuta(window.location.pathname));
   const [seccion, setSeccion] = useState<SeccionDeRuta>(rutaInicial?.seccion ?? "centro");
   const [menuAbierto, setMenuAbierto] = useState(false);
+  // El resumen vive aquí porque lo usan el menú (la insignia de Equipos) y el Centro.
+  const [resumen, setResumen] = useState<ResumenMantenimiento | null>(null);
+  const [errorDelResumen, setErrorDelResumen] = useState<string | null>(null);
+  // Lo que se escribió en el buscador de la barra: lleva a Equipos con el texto ya puesto.
+  const [busqueda, setBusqueda] = useState<{ texto: string; veces: number }>({
+    texto: "",
+    veces: 0,
+  });
+
+  const cargarResumen = useCallback(() => {
+    setErrorDelResumen(null);
+    return resumenMantenimiento()
+      .then(setResumen)
+      .catch((e: unknown) => setErrorDelResumen(e instanceof Error ? e.message : "Error"));
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    cargarResumen();
+  }, [cargarResumen]);
 
   /** Refleja la pantalla en la dirección y el título del navegador. Con `reemplazar` no suma un paso al
    *  historial. */
@@ -88,56 +125,23 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
   }, []);
 
   const irA = (id: string) => {
-    const destino = TODOS.find((i) => i.id === id)?.id ?? "centro";
+    const destino: SeccionDeRuta = esSeccion(id) ? id : "centro";
     setSeccion(destino);
     setMenuAbierto(false);
     publicar({ seccion: destino });
   };
 
+  const buscar = (texto: string) => {
+    setBusqueda((b) => ({ texto, veces: b.veces + 1 }));
+    irA("equipos");
+  };
+
+  const grupos = gruposDelMenu(usuario);
+  const integrados = modulosIntegrados(usuario);
+
   return (
     <div className="min-h-screen bg-[#f4f6f9] text-slate-700 font-sans">
-      <header className="fixed inset-x-0 top-0 z-40 h-16 bg-white border-b border-slate-200 flex items-center gap-3 px-4 sm:px-6">
-        <button
-          onClick={() => setMenuAbierto(true)}
-          aria-label="Abrir el menú"
-          className="lg:hidden p-2 -ml-2 rounded-md text-slate-600 hover:bg-slate-100"
-        >
-          <Menu size={20} />
-        </button>
-        <div className="flex items-center gap-3 lg:w-56 shrink-0">
-          <span className="w-9 h-9 rounded-lg bg-[#0A1014] grid place-items-center">
-            <img src="/logos/mincore-logo-512-sin-fondo.png" alt="MinCore" className="w-7 h-7" />
-          </span>
-          <span className="hidden sm:block font-semibold tracking-wide text-slate-900">
-            MINCORE{" "}
-            <span className="text-[9px] font-extrabold tracking-[0.16em] text-[#4d7c0f]">ERP</span>
-          </span>
-        </div>
-        <div className="hidden md:flex flex-col leading-tight pl-5 border-l border-slate-200">
-          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">
-            Gestión empresarial
-          </span>
-          <b className="text-sm text-slate-900">Gestión de mantenimiento</b>
-        </div>
-        <div className="ml-auto flex items-center gap-3">
-          <div className="flex items-center gap-2" title={usuario?.nombre}>
-            <span className="w-8 h-8 rounded-full bg-[#BADC1E]/30 text-[#3f6212] grid place-items-center text-xs font-bold">
-              {(usuario?.nombre ?? "?").slice(0, 2).toUpperCase()}
-            </span>
-            <span className="hidden md:block text-sm font-medium text-slate-800">
-              {usuario?.nombre}
-            </span>
-          </div>
-          <button
-            onClick={() => logout()}
-            title="Cerrar sesión"
-            aria-label="Cerrar sesión"
-            className="p-2 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100"
-          >
-            <LogOut size={18} />
-          </button>
-        </div>
-      </header>
+      <BarraSuperiorMantenimiento onAbrirMenu={() => setMenuAbierto(true)} onBuscar={buscar} />
 
       {menuAbierto && (
         <button
@@ -175,7 +179,7 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
           </div>
           <div className="flex items-center gap-3 mt-4 rounded-xl bg-black/25 border border-white/10 p-3">
             <span className="w-9 h-9 rounded-lg bg-[#BADC1E]/15 text-[#BADC1E] grid place-items-center">
-              <Wrench size={18} />
+              <Settings size={18} />
             </span>
             <div>
               <small className="block text-[9px] font-bold tracking-[0.14em] text-slate-400">
@@ -187,45 +191,101 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
         </div>
 
         <nav className="flex-1 py-3 flex flex-col gap-0.5">
-          {GRUPOS.map((g) => (
+          {grupos.map((g) => (
             <div key={g.etiqueta} className="mb-2">
               <p className="px-6 pt-3 pb-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-slate-500">
                 {g.etiqueta}
               </p>
-              {g.items.map(({ id, label, Icono }) => {
-                const activo = seccion === id;
+              {g.entradas.map((e) => {
+                const Icono = ICONOS[e.icono];
+                const activo = !e.pronto && seccion === e.id;
+                const insignia = insigniaDe(e.id, resumen?.por_importar ?? 0);
                 return (
                   <button
-                    key={id}
-                    onClick={() => irA(id)}
+                    key={e.id}
+                    onClick={() => !e.pronto && irA(e.id)}
+                    disabled={e.pronto}
                     aria-current={activo ? "page" : undefined}
                     className={`group w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all ${
                       activo
                         ? "bg-[#BADC1E] text-[#0A1014] font-semibold"
-                        : "text-slate-400 hover:bg-[#BADC1E] hover:text-[#0A1014] font-medium"
+                        : e.pronto
+                          ? "text-slate-500 cursor-default font-medium"
+                          : "text-slate-400 hover:bg-[#BADC1E] hover:text-[#0A1014] font-medium"
                     }`}
                   >
                     <Icono
                       size={18}
                       strokeWidth={2}
-                      className={`shrink-0 ${activo ? "text-[#0A1014]" : "text-slate-500 group-hover:text-[#0A1014]"}`}
+                      className={`shrink-0 ${
+                        activo
+                          ? "text-[#0A1014]"
+                          : e.pronto
+                            ? "text-slate-600"
+                            : "text-slate-500 group-hover:text-[#0A1014]"
+                      }`}
                     />
-                    <span className="tracking-tight flex-1">{label}</span>
+                    <span className="tracking-tight flex-1">{e.label}</span>
+                    {e.pronto && (
+                      <span className="px-2 py-0.5 rounded-full bg-white/10 text-[10px] font-bold text-slate-300">
+                        Pronto
+                      </span>
+                    )}
+                    {insignia !== null && (
+                      <span
+                        aria-label={`${insignia} por completar`}
+                        className="min-w-5 h-5 px-1.5 rounded-full bg-[#BADC1E] text-[#0A1014] text-[11px] font-bold grid place-items-center"
+                      >
+                        {insignia}
+                      </span>
+                    )}
                   </button>
                 );
               })}
             </div>
           ))}
         </nav>
-        <p className="px-6 py-4 text-[11px] text-slate-500 border-t border-white/10 flex items-center gap-2">
-          <Sparkles size={14} /> Cada empresa usa solo lo que contrató.
-        </p>
+
+        <div className="border-t border-white/10 py-3">
+          <button
+            disabled
+            className="w-full text-left px-6 py-3 flex items-center gap-3 text-sm text-slate-500 font-medium cursor-default"
+          >
+            <Settings size={18} className="text-slate-600 shrink-0" />
+            <span className="tracking-tight flex-1">Configuración</span>
+            <span className="px-2 py-0.5 rounded-full bg-white/10 text-[10px] font-bold text-slate-300">
+              Pronto
+            </span>
+          </button>
+          {integrados > 0 && (
+            <div className="mx-4 mt-2 flex items-center gap-3 rounded-xl bg-black/25 border border-white/10 p-3">
+              <span className="text-[#BADC1E]">
+                <Sparkles size={17} />
+              </span>
+              <div>
+                <b className="block text-xs text-slate-100">Integración activa</b>
+                <small className="text-[11px] text-slate-400">
+                  {integrados === 1 ? "1 módulo conectado" : `${integrados} módulos conectados`}
+                </small>
+              </div>
+            </div>
+          )}
+        </div>
       </aside>
 
       <main className="pt-16 lg:pl-64">
         <div className="p-4 sm:p-6 lg:p-8 max-w-[1500px]">
-          {seccion === "centro" && <CentroDeMantenimiento onIr={irA} />}
-          {seccion === "equipos" && <EquiposMantenimiento />}
+          {seccion === "centro" && (
+            <CentroDeMantenimiento resumen={resumen} error={errorDelResumen} onIr={irA} />
+          )}
+          {seccion === "equipos" && (
+            <EquiposMantenimiento
+              key={busqueda.veces}
+              busquedaInicial={busqueda.texto}
+              porImportar={resumen?.por_importar ?? 0}
+              onCambio={cargarResumen}
+            />
+          )}
         </div>
       </main>
     </div>

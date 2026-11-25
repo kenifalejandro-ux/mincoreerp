@@ -5,7 +5,12 @@
  */
 import { describe, it, expect } from "vitest";
 
-import { repartoPorArea } from "../client/src/components/mantenimiento/centroDeMantenimiento";
+import {
+  avisosDelCentro,
+  fechaLarga,
+  repartoPorArea,
+  saludoSegunHora,
+} from "../client/src/components/mantenimiento/centroDeMantenimiento";
 import {
   FILTROS_VACIOS,
   SIN_AREA,
@@ -26,6 +31,16 @@ import {
   problemasDelEquipo,
 } from "../client/src/components/mantenimiento/formularioEquipo";
 import { puedeVerMantenimiento } from "../client/src/components/mantenimiento/mantenimientoAcceso";
+import {
+  esSeccion,
+  gruposDelMenu,
+  insigniaDe,
+  modulosIntegrados,
+} from "../client/src/components/mantenimiento/menuMantenimiento";
+import {
+  etiquetaDelPerfil,
+  inicialesDe,
+} from "../client/src/components/mantenimiento/perfilMantenimiento";
 import type { EquipoMantenimiento } from "../client/src/components/mantenimiento/mantenimientoApi";
 import {
   esRutaDeMantenimiento,
@@ -363,5 +378,72 @@ describe("Centro: reparto de equipos por área", () => {
     expect(
       repartoPorArea({ areas: [{ id: 1, nombre: "Taller", equipos: 2 }], sin_area: 0 })
     ).toEqual([{ nombre: "Taller", equipos: 2, porcentaje: 100 }]);
+  });
+});
+
+describe("menú del ecosistema (como la maqueta)", () => {
+  const entradas = (modulos: string[]) =>
+    gruposDelMenu({ modulosPermitidos: modulos }).flatMap((g) => g.entradas.map((e) => e.id));
+
+  it("con solo Mantenimiento: Centro y Equipos abren; el resto sale como «Pronto», sin módulos ajenos", () => {
+    const grupos = gruposDelMenu({ modulosPermitidos: ["mantenimiento"] });
+    expect(grupos.map((g) => g.etiqueta)).toEqual(["Operación", "Seguimiento"]);
+    const todas = grupos.flatMap((g) => g.entradas);
+    expect(todas.filter((e) => !e.pronto).map((e) => e.id)).toEqual(["centro", "equipos"]);
+    expect(entradas(["mantenimiento"])).toEqual(
+      expect.arrayContaining(["preventivo", "indicadores", "historial"])
+    );
+    expect(entradas(["mantenimiento"])).not.toContain("checklists");
+    expect(entradas(["mantenimiento"])).not.toContain("almacen");
+  });
+
+  it("las entradas de módulos vecinos solo salen si la persona los tiene", () => {
+    const todo = entradas(["mantenimiento", "checklists", "ordenes_trabajo", "repuestos", "iperc"]);
+    expect(todo).toEqual(expect.arrayContaining(["checklists", "ordenes", "almacen", "iperc"]));
+    expect(
+      gruposDelMenu({ modulosPermitidos: ["mantenimiento", "iperc"] }).map((g) => g.etiqueta)
+    ).toContain("Recursos conectados");
+  });
+
+  it("solo Centro y Equipos son secciones; la insignia de Equipos cuenta las unidades por completar", () => {
+    expect(esSeccion("centro")).toBe(true);
+    expect(esSeccion("equipos")).toBe(true);
+    expect(esSeccion("checklists")).toBe(false);
+    expect(insigniaDe("equipos", 3)).toBe(3);
+    expect(insigniaDe("equipos", 0)).toBeNull();
+    expect(insigniaDe("centro", 3)).toBeNull();
+  });
+
+  it("la integración solo cuenta lo que de verdad se comparte hoy: Flota", () => {
+    expect(modulosIntegrados({ modulosPermitidos: ["mantenimiento"] })).toBe(0);
+    expect(modulosIntegrados({ modulosPermitidos: ["mantenimiento", "flota"] })).toBe(1);
+  });
+});
+
+describe("barra superior y Centro", () => {
+  it("nombra el perfil y saca dos iniciales", () => {
+    expect(etiquetaDelPerfil("admin")).toBe("Administrador");
+    expect(etiquetaDelPerfil("mecanico")).toBe("Mecánico");
+    expect(etiquetaDelPerfil(undefined)).toBe("");
+    expect(inicialesDe("Jefe de mantenimiento")).toBe("JD");
+    expect(inicialesDe("Admin")).toBe("AD");
+    expect(inicialesDe("")).toBe("?");
+  });
+
+  it("el saludo sigue la hora y la fecha se escribe larga", () => {
+    expect(saludoSegunHora(6)).toBe("Buenos días");
+    expect(saludoSegunHora(12)).toBe("Buenas tardes");
+    expect(saludoSegunHora(21)).toBe("Buenas noches");
+    expect(fechaLarga(new Date(2026, 10, 24))).toContain("24");
+    expect(fechaLarga(new Date(2026, 10, 24))).toContain("2026");
+  });
+
+  it("los avisos salen solo de lo que se sabe: unidades por completar y equipos sin área", () => {
+    expect(avisosDelCentro({ total: 5, sin_area: 0, por_importar: 0 })).toEqual([]);
+    const avisos = avisosDelCentro({ total: 5, sin_area: 1, por_importar: 2 });
+    expect(avisos.map((a) => a.id)).toEqual(["por-importar", "sin-area"]);
+    expect(avisos[0].titulo).toBe("2 unidades de Operaciones por completar");
+    expect(avisos[1].titulo).toBe("1 equipo sin área");
+    expect(avisos.every((a) => a.destino === "equipos")).toBe(true);
   });
 });

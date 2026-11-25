@@ -20,7 +20,7 @@ import { PREFIJO_DE_RUTA as PREFIJO_DE_PROVEEDORES } from "../components/proveed
 type UsuarioDeEcosistema = { modulosPermitidos: string[] } | null | undefined;
 
 /** Los íconos que un ecosistema puede pedir. Se resuelven en `iconos.ts`. */
-export type NombreDeIcono = "edificio" | "panel" | "herramienta";
+export type NombreDeIcono = "edificio" | "panel" | "herramienta" | "engranaje";
 
 export interface EntradaDeSubmenu {
   /** La pestaña que abre, con el formato `modulo:seccion` del menú. */
@@ -64,13 +64,15 @@ export const ECOSISTEMAS: readonly DefinicionDeEcosistema[] = [
   {
     id: "mantenimiento",
     titulo: "Gestión de mantenimiento",
-    icono: "herramienta",
+    icono: "engranaje",
     // Hoy vive aquí solo su módulo propio. Checklists y Órdenes de trabajo seguirán siendo módulos aparte:
     // se sumarán cuando se hospeden dentro, sin que tenerlos sea requisito para ver el ecosistema.
     modulos: ["mantenimiento"],
     prefijoDeRuta: PREFIJO_DE_MANTENIMIENTO,
     pestaniaDeEntrada: "mantenimiento:centro",
-    submenu: [{ tab: "mantenimiento:centro", label: "Centro de control", icono: "panel" }],
+    submenu: [
+      { tab: "mantenimiento:centro", label: "Centro de mantenimiento", icono: "herramienta" },
+    ],
     novedad: "gestion-mantenimiento-2026-11",
     puedeVer: puedeVerMantenimiento,
   },
