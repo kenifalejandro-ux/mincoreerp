@@ -282,7 +282,7 @@ interface ValeFila {
   comprobante_numero: string | null;
   comprobante_subido_en: string | null;
   equipo_id: number | null;
-  // La placa de la unidad registrada (null sin Flota) o la que se escribió a mano (0192).
+  // La placa de la unidad registrada (null sin un módulo de unidades) o la que se escribió a mano (0192).
   placa_codigo?: string | null;
   placa_sin_alta?: string | null;
   // De qué está hecho el vale (0131), con los litros por bulto VIGENTES
@@ -3082,7 +3082,7 @@ function ModalVale({
   const [clienteUuid] = useState(() => crypto.randomUUID());
   const [serie, setSerie] = useState("");
   const [nVale, setNVale] = useState("");
-  // La unidad se escribe o se elige (placa): sin Flota la lista viene vacía y solo se escribe.
+  // La unidad se escribe o se elige (placa): sin un módulo de unidades (Flota o Mantenimiento) la lista viene vacía y solo se escribe.
   const [unidadTexto, setUnidadTexto] = useState("");
   const [grifoId, setGrifoId] = useState("");
   const activas = presentacionesActivas(presentaciones);
@@ -3468,7 +3468,7 @@ function ModalCompraUrea({
   onCreado: (mensaje: string) => void;
 }) {
   const [clienteUuid] = useState(() => crypto.randomUUID());
-  // La unidad se escribe o se elige (placa): sin Flota la lista viene vacía y solo se escribe.
+  // La unidad se escribe o se elige (placa): sin un módulo de unidades (Flota o Mantenimiento) la lista viene vacía y solo se escribe.
   const [unidadTexto, setUnidadTexto] = useState("");
   const [grifoId, setGrifoId] = useState("");
   const activas = presentacionesActivas(presentaciones);

@@ -29,11 +29,13 @@ describe("excedente de la recepción a una unidad escrita a mano", () => {
   const placaRegistrada = idUnico("EX").toUpperCase();
   let nVale = 3000;
 
+  // «Sin Flota» es sin ningún módulo que mantenga unidades: también se apaga Mantenimiento, que
+  // (como Flota) las ofrece. Con Mantenimiento solo se prueba en combustible-con-mantenimiento.test.ts.
   const flota = (estado: "habilitado" | "deshabilitado") =>
-    pool.query(`UPDATE tenant_modulos SET estado = $2 WHERE tenant_id = $1 AND modulo = 'flota'`, [
-      tenantId,
-      estado,
-    ]);
+    pool.query(
+      `UPDATE tenant_modulos SET estado = $2 WHERE tenant_id = $1 AND modulo IN ('flota', 'mantenimiento')`,
+      [tenantId, estado]
+    );
   const nuevaPlaca = () => `ZE${Math.floor(Math.random() * 1e6)}`;
 
   /** Un tanque lleno y flexible: toda la recepción es excedente. */

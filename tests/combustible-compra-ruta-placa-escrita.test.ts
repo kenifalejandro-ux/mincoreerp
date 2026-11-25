@@ -29,11 +29,13 @@ describe("compra en ruta a una unidad escrita a mano (0196)", () => {
   let grifo: number;
   const placaRegistrada = idUnico("CR").toUpperCase();
 
+  // «Sin Flota» es sin ningún módulo que mantenga unidades: también se apaga Mantenimiento, que
+  // (como Flota) las ofrece. Con Mantenimiento solo se prueba en combustible-con-mantenimiento.test.ts.
   const flota = (estado: "habilitado" | "deshabilitado") =>
-    pool.query(`UPDATE tenant_modulos SET estado = $2 WHERE tenant_id = $1 AND modulo = 'flota'`, [
-      tenantId,
-      estado,
-    ]);
+    pool.query(
+      `UPDATE tenant_modulos SET estado = $2 WHERE tenant_id = $1 AND modulo IN ('flota', 'mantenimiento')`,
+      [tenantId, estado]
+    );
   const nuevaPlaca = () => `ZR${Math.floor(Math.random() * 1e6)}`;
   const numero = () => `B001-${Math.floor(Math.random() * 1e8)}`;
 

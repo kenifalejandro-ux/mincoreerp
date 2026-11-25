@@ -288,7 +288,7 @@ describe("combustible: listado de cisternas (pestaña Cisternas)", () => {
     }
   });
 
-  it("autonomía: sin el módulo Flota responde 200 y la salida a unidad sale sin placa", async () => {
+  it("autonomía: sin Flota ni Mantenimiento (módulos de unidades) responde 200 y la salida a unidad sale sin placa", async () => {
     const { recepcionId, lineaId } = await cisterna(400);
     const unidad = await equipo();
     expect((await aUnidad(lineaId, unidad.id, 50)).status).toBe(201);
@@ -303,7 +303,8 @@ describe("combustible: listado de cisternas (pestaña Cisternas)", () => {
     const guardado = await admin.put(`/api/erp/usuarios/${id}/permisos`).send({
       modulos: modulos.map((m) => ({
         modulo: m.modulo,
-        asignado: m.modulo === "flota" ? false : m.asignado,
+        // Las unidades las mantiene Flota o Mantenimiento: «sin unidades» es sin los dos.
+        asignado: m.modulo === "flota" || m.modulo === "mantenimiento" ? false : m.asignado,
         nivel: m.nivel,
       })),
       alertasCorreo: permisos.body.alertasCorreo.map(

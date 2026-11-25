@@ -3,7 +3,7 @@
 // La unidad de un vale que se ESCRIBE (placa a mano) en vez de elegirse de la lista. Es la misma
 // regla del vale del tanque propio (0176) y de lo que el servidor hace con la placa: si coincide
 // con una unidad dada de alta se toma esa; si no, el vale queda con la placa escrita
-// (`unidad_sin_alta`). Sin Flota la lista de unidades llega vacía y todo cae en la segunda rama.
+// (`unidad_sin_alta`). Sin un módulo de unidades (Flota o Mantenimiento) la lista llega vacía y todo cae en la segunda rama.
 //
 // Lógica pura, sin React: la prueba vive en tests/unidad-escrita-cliente.test.ts.
 

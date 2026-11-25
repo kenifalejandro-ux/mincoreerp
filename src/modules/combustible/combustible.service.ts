@@ -54,8 +54,8 @@ import { MAX_SALTO_TALONARIO, mensajeDeSalto } from "./valesDeTalonario";
 import type { AlertaNueva, FiltrosAlertas, PeriodoHistorial } from "./combustible.repository";
 import { EquiposRepository } from "../equipos/equipos.repository";
 import {
-  empresaTieneModulo,
-  SQL_EMPRESA_TIENE_FLOTA,
+  empresaTieneUnidades,
+  SQL_EMPRESA_TIENE_UNIDADES,
 } from "../../server/shared/utils/modulosEmpresa";
 import { tanqueEnAlcance, valeEnAlcance } from "./alcance";
 import type { AlcanceCombustible, AmbitoVales } from "./alcance";
@@ -1232,10 +1232,7 @@ export class CombustibleService {
         // Elegir una unidad registrada pide que la empresa tenga Flota (el registro de unidades).
         // Sin ella la unidad se escribe a mano (`unidad_sin_alta`, placa libre): el módulo trabaja
         // con lo que la empresa tiene contratado, no se bloquea.
-        if (
-          data.equipo_id !== undefined &&
-          !(await empresaTieneModulo(client, tenantId, "flota"))
-        ) {
+        if (data.equipo_id !== undefined && !(await empresaTieneUnidades(client, tenantId))) {
           throw new AppError(
             400,
             "La empresa no tiene el módulo Flota: escribe la placa de la unidad en lugar de elegirla de la lista"
@@ -5350,7 +5347,7 @@ export class CombustibleService {
          JOIN grifos_internos gv ON gv.id = d.grifo_interno_id AND gv.tenant_id = d.tenant_id
          JOIN grifos_internos ge ON ge.id = d.equipo_grifo_interno_id AND ge.tenant_id = d.tenant_id
          JOIN equipos e ON e.id = d.equipo_id AND e.tenant_id = d.tenant_id
-          AND ${SQL_EMPRESA_TIENE_FLOTA}
+          AND ${SQL_EMPRESA_TIENE_UNIDADES}
         WHERE d.id = $1 AND d.tenant_id = $2 AND d.origen = 'tanque_propio'
           AND d.grifo_interno_id <> d.equipo_grifo_interno_id`,
       [despachoId, tenantId]
@@ -5742,7 +5739,7 @@ export class CombustibleService {
   /** Los datos de la unidad (medidor, capacidad, placa), o null si no está. Sin el módulo Flota
    *  de la empresa la unidad no se lee aunque la fila siga en la base: se trata como «no hay». */
   private async buscarUnidad(client: PoolClient, tenantId: string, equipoId: number) {
-    if (!(await empresaTieneModulo(client, tenantId, "flota"))) return null;
+    if (!(await empresaTieneUnidades(client, tenantId))) return null;
     return EquiposRepository.findTipoMedidor(client, tenantId, equipoId);
   }
 
@@ -8496,15 +8493,15 @@ export class CombustibleService {
     // La unidad de una línea puede ser una placa escrita (0195). Con Flota, la placa de una unidad
     // registrada la toma (una sola regla, igual que el vale); sin Flota, elegir una unidad
     // registrada pide escribir la placa.
-    const conFlota = await empresaTieneModulo(client, tenantId, "flota");
+    const conUnidades = await empresaTieneUnidades(client, tenantId);
     for (const l of reparto) {
-      if (l.equipo_id !== undefined && !conFlota) {
+      if (l.equipo_id !== undefined && !conUnidades) {
         throw new AppError(
           400,
           "La empresa no tiene el módulo Flota: escribe la placa de la unidad en lugar de elegirla de la lista"
         );
       }
-      if (l.placa_sin_alta !== undefined && conFlota) {
+      if (l.placa_sin_alta !== undefined && conUnidades) {
         const registrada = await this.repository.findEquipoIdPorPlaca(
           client,
           tenantId,
