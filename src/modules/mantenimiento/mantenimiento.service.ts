@@ -17,6 +17,7 @@ import type {
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { huellaDeRegistro, idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { empresaTieneModulo } from "../../server/shared/utils/modulosEmpresa";
+import { estadosDeUnidades, type EstadoDeUnidad, type Fuentes } from "./mantenimiento.estado";
 
 export interface FiltrosEquipos {
   /** Busca en placa o código, tipo, marca, modelo y área. */
@@ -40,6 +41,9 @@ export interface EquipoMantenimiento {
   area: string | null;
   /** Unidad creada sin ficha (por ejemplo desde Combustible): falta completar sus datos. */
   por_completar: boolean;
+  /** Solo en la lista: calculado al consultar (ver mantenimiento.estado.ts). */
+  estado?: EstadoDeUnidad;
+  motivo?: string | null;
 }
 
 /** Un equipo con su área, su propiedad y su última lectura. El medidor por defecto es el horómetro. */
@@ -137,7 +141,8 @@ export class MantenimientoService {
   async listarEquipos(
     client: PoolClient,
     tenantId: string,
-    filtros: FiltrosEquipos
+    filtros: FiltrosEquipos,
+    fuentes: Fuentes = { conOrdenes: false, conChecklists: false }
   ): Promise<{ equipos: EquipoMantenimiento[]; tipos: string[]; total: number }> {
     const where = ["e.tenant_id = $1", "e.activo"];
     const params: unknown[] = [tenantId];
@@ -175,8 +180,9 @@ export class MantenimientoService {
       "SELECT count(*)::int AS n FROM equipos WHERE tenant_id = $1 AND activo",
       [tenantId]
     );
+    const estadoDe = await estadosDeUnidades(client, tenantId, fuentes);
     return {
-      equipos: lista.rows,
+      equipos: lista.rows.map((e) => ({ ...e, ...estadoDe(e.id) })),
       tipos: tipos.rows.map((r) => r.tipo),
       total: total.rows[0].n,
     };

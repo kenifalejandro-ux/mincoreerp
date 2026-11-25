@@ -3,13 +3,17 @@
 // Equipos: lo que la empresa mantiene. Es el registro PROPIO del ecosistema (no depende de Flota): con solo
 // el módulo `mantenimiento` la empresa ve aquí sus equipos. La lista se filtra en el cliente (ver
 // equiposMantenimiento.ts). Admin y operador registran, editan y quitan equipos y manejan las áreas; Lectura
-// solo mira. El estado de cada unidad (Detenida, En mantenimiento, Operativa) llega cuando
-// existan las órdenes de trabajo y los checklists: hoy no se inventa.
+// solo mira. El estado de cada unidad (Detenida, En mantenimiento, Operativa) y «qué pasa» los calcula el
+// servidor desde las órdenes de trabajo y los checklists.
 import { ChevronRight, Pencil, Plus, Search, Trash2, Truck, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  ESTADOS,
+  FILTROS_DE_ESTADO,
   FILTROS_VACIOS,
+  contarPorEstado,
+  estadoDe,
   TODAS_LAS_AREAS,
   TODOS_LOS_TIPOS,
   areasDeLosEquipos,
@@ -41,6 +45,12 @@ import {
 } from "../comunes/ImportarExcel";
 import { useImportacionExcel } from "../comunes/useImportacionExcel";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
+import { marcarNovedadVista, novedadVigente } from "../controlTv/novedad";
+
+/** La etiqueta «Nuevo» de los filtros por estado, 24 horas desde el primer clic. */
+const NOVEDAD_ESTADO = "mantenimiento-estado-2026-11";
+const estadoEsNuevo = () => novedadVigente(Date.now(), undefined, NOVEDAD_ESTADO);
+const marcarEstadoVisto = () => marcarNovedadVista(Date.now(), undefined, NOVEDAD_ESTADO);
 
 const control =
   "h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#84cc16]";
@@ -232,6 +242,36 @@ export default function EquiposMantenimiento({
           </select>
         </div>
 
+        <div
+          role="group"
+          aria-label="Estado de las unidades"
+          className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-slate-200"
+        >
+          {FILTROS_DE_ESTADO.map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              aria-pressed={filtros.estado === f.id}
+              onClick={() => {
+                marcarEstadoVisto();
+                cambiar({ estado: f.id });
+              }}
+              className={`min-h-[44px] sm:min-h-9 px-3 rounded-lg border text-sm font-semibold ${
+                filtros.estado === f.id
+                  ? "bg-[#BADC1E] border-[#BADC1E] text-[#0A1014]"
+                  : "bg-white border-slate-300 text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              {f.texto} ({contarPorEstado(datos?.equipos ?? [], f.id)})
+            </button>
+          ))}
+          {estadoEsNuevo() && (
+            <span className="px-1.5 py-0.5 rounded-full bg-[#BADC1E] text-[#0A1014] text-[9px] font-extrabold">
+              Nuevo
+            </span>
+          )}
+        </div>
+
         {error && (
           <p
             role="alert"
@@ -243,10 +283,12 @@ export default function EquiposMantenimiento({
 
         {/* `relative`: evita que un «sr-only» absoluto ensanche la PÁGINA en el celular. */}
         <div className="relative overflow-x-auto">
-          <table className="w-full min-w-[700px] text-sm">
+          <table className="w-full min-w-[920px] text-sm">
             <thead>
               <tr className="text-left text-[10px] uppercase tracking-wider text-slate-500 bg-slate-50 border-b border-slate-200">
                 <th className="px-4 py-3">Equipo</th>
+                <th className="px-4 py-3">Estado</th>
+                <th className="px-4 py-3">Qué pasa</th>
                 <th className="px-4 py-3">Área</th>
                 <th className="px-4 py-3">Lectura</th>
                 <th className="px-4 py-3">Propiedad</th>
@@ -261,7 +303,7 @@ export default function EquiposMantenimiento({
               {datos === null && !error && (
                 <tr>
                   <td
-                    colSpan={puedeEscribir ? 5 : 4}
+                    colSpan={puedeEscribir ? 7 : 6}
                     className="px-4 py-8 text-center text-slate-500"
                   >
                     Cargando…
@@ -271,7 +313,7 @@ export default function EquiposMantenimiento({
               {datos !== null && filtrados.length === 0 && (
                 <tr>
                   <td
-                    colSpan={puedeEscribir ? 5 : 4}
+                    colSpan={puedeEscribir ? 7 : 6}
                     className="px-4 py-8 text-center text-slate-500"
                   >
                     {datos.total === 0 ? "Todavía no hay equipos registrados." : "Sin resultados"}
@@ -297,6 +339,22 @@ export default function EquiposMantenimiento({
                         )}
                       </span>
                     </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`px-2.5 py-1 rounded-full text-xs font-bold whitespace-nowrap ${ESTADOS[estadoDe(e)].clase}`}
+                    >
+                      {ESTADOS[estadoDe(e)].texto}
+                    </span>
+                    {/* En el celular «Qué pasa» queda fuera de la vista: va también aquí. */}
+                    {e.motivo && (
+                      <span className="sm:hidden block mt-1 w-40 text-xs text-slate-600">
+                        {e.motivo}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 max-w-[260px] text-xs text-slate-600">
+                    {e.motivo ?? <span className="text-slate-400">—</span>}
                   </td>
                   <td className="px-4 py-3">
                     {e.area ? (

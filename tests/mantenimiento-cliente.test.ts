@@ -153,9 +153,16 @@ describe("lista de equipos", () => {
     );
     // Los filtros se combinan.
     expect(
-      filtrarEquipos(EQUIPOS, { busqueda: "rex", tipo: "Retroexcavadora", area: "Cantera" })
+      filtrarEquipos(EQUIPOS, {
+        ...FILTROS_VACIOS,
+        busqueda: "rex",
+        tipo: "Retroexcavadora",
+        area: "Cantera",
+      })
     ).toHaveLength(1);
-    expect(filtrarEquipos(EQUIPOS, { busqueda: "", tipo: "Horno", area: "Cantera" })).toEqual([]);
+    expect(filtrarEquipos(EQUIPOS, { ...FILTROS_VACIOS, tipo: "Horno", area: "Cantera" })).toEqual(
+      []
+    );
   });
 
   it("las áreas ofrecidas son las que tienen equipos, ordenadas, y «Sin área» al final si hace falta", () => {

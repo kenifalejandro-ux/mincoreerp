@@ -16,7 +16,13 @@ export interface EquipoMantenimiento {
   area: string | null;
   /** Unidad creada sin ficha (por ejemplo desde Combustible): falta completar sus datos. */
   por_completar: boolean;
+  /** Calculado por el servidor al consultar la lista (M5). */
+  estado?: EstadoDeUnidad;
+  /** «Qué pasa»; null si está operativa. */
+  motivo?: string | null;
 }
+
+export type EstadoDeUnidad = "detenida" | "en_mantenimiento" | "operativa";
 
 export interface ListaDeEquipos {
   equipos: EquipoMantenimiento[];
