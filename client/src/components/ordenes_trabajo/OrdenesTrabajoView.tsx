@@ -2,6 +2,16 @@
 import { ChevronLeft, ChevronRight, Trash2, X } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 
+import {
+  AgregarTarea,
+  BotonQuitarTarea,
+  CampoDeHora,
+  CasillaNoOpera,
+  EtiquetaNuevo,
+} from "./CamposDeTrabajo";
+import DetalleDeOrden from "./DetalleDeOrden";
+import { conPendiente, problemaDeHoras, textoDeDuracion } from "./horasYTareas";
+import { marcarHorasYTareasVistas } from "./novedadHorasTareas";
 import { useAuth } from "../../context/AuthContext";
 import { tieneModulo, tieneUnidades } from "../../modules/tieneModulo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
@@ -34,6 +44,10 @@ interface OrdenTrabajo {
   origen?: "manual" | "checklist";
   checklist_id?: number | null;
   creado_en: string;
+  unidad_no_opera?: boolean;
+  duracion_minutos?: number | null;
+  tareas_total?: number;
+  tareas_hechas?: number;
 }
 
 interface Equipo {
@@ -76,6 +90,10 @@ const FORM_VACIO = {
   iperc_id: "",
   fecha_programada: "",
   asignado_a: "",
+  inicio_en: "",
+  unidad_no_opera: false,
+  tareas: [] as string[],
+  tarea_escrita: "",
 };
 
 export default function OrdenesTrabajoView() {
@@ -105,6 +123,8 @@ export default function OrdenesTrabajoView() {
   // servidor devolvería aquella en silencio. Ver ADR-0002 §9.
   const [clienteUuid, setClienteUuid] = useState("");
   const [formData, setFormData] = useState(FORM_VACIO);
+  /** La orden con la ventana «Horas y tareas» abierta. */
+  const [detalle, setDetalle] = useState<number | null>(null);
 
   const cargarOrdenes = useCallback(
     async (paginaAConsultar: number) => {
@@ -196,6 +216,13 @@ export default function OrdenesTrabajoView() {
     setModalAbierto(true);
   };
 
+  const agregarTareaAlAlta = () =>
+    setFormData((f) => ({
+      ...f,
+      tareas: conPendiente(f.tareas, f.tarea_escrita),
+      tarea_escrita: "",
+    }));
+
   const handleCrear = async (e: React.FormEvent) => {
     e.preventDefault();
     if (guardando) return;
@@ -213,6 +240,14 @@ export default function OrdenesTrabajoView() {
       );
       return;
     }
+
+    const problema = problemaDeHoras(formData.inicio_en, "");
+    if (problema) {
+      alert(problema);
+      return;
+    }
+    // Lo escrito en la casilla y sin «Agregar» también cuenta.
+    const tareas = conPendiente(formData.tareas, formData.tarea_escrita);
 
     setGuardando(true);
     try {
@@ -232,6 +267,9 @@ export default function OrdenesTrabajoView() {
           iperc_id: formData.iperc_id ? Number(formData.iperc_id) : undefined,
           fecha_programada: formData.fecha_programada || undefined,
           asignado_a: formData.asignado_a || undefined,
+          inicio_en: formData.inicio_en ? new Date(formData.inicio_en).toISOString() : undefined,
+          unidad_no_opera: formData.unidad_no_opera || undefined,
+          tareas: tareas.length > 0 ? tareas.map((descripcion) => ({ descripcion })) : undefined,
         }),
       });
 
@@ -466,6 +504,29 @@ export default function OrdenesTrabajoView() {
                         {ot.checklist_id ? ` #${ot.checklist_id}` : ""}
                       </span>
                     )}
+                    {ot.unidad_no_opera && (
+                      <span className="block w-fit mt-1 px-2 py-0.5 rounded-md bg-red-100 text-red-700 text-[10px] font-bold">
+                        No puede operar
+                      </span>
+                    )}
+                    {textoDeDuracion(ot.duracion_minutos) && (
+                      <span className="block mt-1 text-[10px] sm:text-xs text-slate-500">
+                        Duración: {textoDeDuracion(ot.duracion_minutos)}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        marcarHorasYTareasVistas();
+                        setDetalle(ot.id);
+                      }}
+                      aria-label={`Horas y tareas de la orden #${ot.id}`}
+                      className="flex items-center min-h-[44px] sm:min-h-0 sm:mt-1 text-xs font-bold text-blue-600 underline underline-offset-2"
+                    >
+                      Horas y tareas
+                      {ot.tareas_total ? ` (${ot.tareas_hechas}/${ot.tareas_total})` : ""}
+                      <EtiquetaNuevo />
+                    </button>
                   </td>
                   <td className="px-3 sm:px-4 py-2.5 sm:py-3.5 text-xs sm:text-sm text-slate-500 capitalize">
                     {ot.tipo}
@@ -567,6 +628,15 @@ export default function OrdenesTrabajoView() {
           <ChevronRight className="w-4 h-4" />
         </button>
       </div>
+
+      {detalle !== null && (
+        <DetalleDeOrden
+          id={detalle}
+          puedeEscribir={puedeEscribir}
+          onCambio={() => cargarOrdenes(page)}
+          onCerrar={() => setDetalle(null)}
+        />
+      )}
 
       {modalAbierto && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
@@ -742,6 +812,52 @@ export default function OrdenesTrabajoView() {
                   className="w-full border border-slate-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
                   value={formData.fecha_programada}
                   onChange={(e) => setFormData({ ...formData, fecha_programada: e.target.value })}
+                />
+              </div>
+
+              <div className="space-y-3 border-t pt-4">
+                <span className="text-xs font-bold text-slate-500 uppercase">
+                  El trabajo (opcional)
+                  <EtiquetaNuevo />
+                </span>
+                <CampoDeHora
+                  id="ot-inicio"
+                  etiqueta="Hora de inicio"
+                  valor={formData.inicio_en}
+                  onCambiar={(v) => setFormData((f) => ({ ...f, inicio_en: v }))}
+                />
+                <CasillaNoOpera
+                  marcada={formData.unidad_no_opera}
+                  onCambiar={(v) => setFormData((f) => ({ ...f, unidad_no_opera: v }))}
+                />
+                {formData.tareas.length > 0 && (
+                  <ul aria-label="Tareas por registrar" className="space-y-2">
+                    {formData.tareas.map((t, i) => (
+                      <li
+                        key={`${i}-${t}`}
+                        className="flex items-center gap-2 bg-slate-50 rounded-xl px-3"
+                      >
+                        <span className="flex-1 min-w-0 break-words text-sm text-slate-700">
+                          {t}
+                        </span>
+                        <BotonQuitarTarea
+                          nombre={t}
+                          onQuitar={() =>
+                            setFormData((f) => ({
+                              ...f,
+                              tareas: f.tareas.filter((_, j) => j !== i),
+                            }))
+                          }
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <AgregarTarea
+                  valor={formData.tarea_escrita}
+                  onCambiar={(v) => setFormData((f) => ({ ...f, tarea_escrita: v }))}
+                  onAgregar={agregarTareaAlAlta}
+                  total={formData.tareas.length}
                 />
               </div>
 

@@ -5,13 +5,17 @@ import type { Paginacion } from "../../server/shared/utils/pagination";
 import type {
   CrearOrdenTrabajoInput,
   ActualizarOrdenTrabajoInput,
+  CambiarEstadoOrdenTrabajoInput,
 } from "../../server/schemas/ordenes_trabajo.schema";
+import { agregarTareas, listarTareas } from "./ordenes_trabajo.tareas";
 
 interface FilaEstadoCambiado {
   id: number;
   estado: string;
+  inicio_en: string | null;
   fecha_cierre: string | null;
   observaciones_cierre: string | null;
+  duracion_minutos: number | null;
 }
 
 /** Transiciones válidas: destino -> orígenes permitidos. 'abierta' no
@@ -43,6 +47,20 @@ export class OrdenSinActivoError extends Error {
   }
 }
 
+/** Las horas no cuadran, o se quiso poner cierre a una orden que sigue abierta. El controller la responde
+ *  con 400. */
+export class HorasInvalidasError extends Error {}
+
+/** La duración en minutos: se calcula, no se guarda. */
+const DURACION = (t: string) =>
+  `floor(extract(epoch FROM (${t}.fecha_cierre - ${t}.inicio_en)) / 60)::int AS duracion_minutos`;
+
+function exigirInicioAntesDelCierre(inicio: Date | null, cierre: Date | null) {
+  if (inicio && cierre && inicio > cierre) {
+    throw new HorasInvalidasError("La hora de inicio no puede ser posterior a la de cierre");
+  }
+}
+
 /** De dónde sale la placa/código de la unidad. Sin un módulo de unidades (`conUnidades` falso) no se toca la tabla
  *  `equipos`: la columna va vacía y la orden se identifica por `activo_texto` (ver `opcionales` del
  *  módulo en registry.ts). Con Flota es LEFT JOIN: la orden puede no tener unidad (migración 0190). */
@@ -50,6 +68,13 @@ function unidadDeLaOrden(conUnidades: boolean) {
   return conUnidades
     ? { columna: "e.placa_codigo", join: "LEFT JOIN equipos e ON e.id = ot.equipo_id" }
     : { columna: "NULL::text AS placa_codigo", join: "" };
+}
+
+interface HorasDeLaOrden {
+  estado: string;
+  inicio_en: Date | null;
+  fecha_cierre: Date | null;
+  unidad_no_opera: boolean;
 }
 
 export const OrdenesTrabajoRepository = {
@@ -84,7 +109,11 @@ export const OrdenesTrabajoRepository = {
         ot.tipo, ot.prioridad, ot.estado, ot.iperc_id, ot.creado_por,
         u.nombre AS creado_por_nombre, ot.asignado_a, asig.nombre AS asignado_a_nombre,
         ot.fecha_programada, ot.fecha_cierre, ot.observaciones_cierre, ot.creado_en, ot.origen,
-        ot.checklist_id,
+        ot.checklist_id, ot.inicio_en, ot.unidad_no_opera, ${DURACION("ot")},
+        (SELECT count(*)::int FROM orden_trabajo_tareas t
+          WHERE t.tenant_id = ot.tenant_id AND t.orden_trabajo_id = ot.id) AS tareas_total,
+        (SELECT count(*)::int FROM orden_trabajo_tareas t
+          WHERE t.tenant_id = ot.tenant_id AND t.orden_trabajo_id = ot.id AND t.hecha) AS tareas_hechas,
         COUNT(*) OVER() AS total_count
       FROM ordenes_trabajo ot
       ${unidad.join}
@@ -106,7 +135,7 @@ export const OrdenesTrabajoRepository = {
          ot.tipo, ot.prioridad, ot.estado, ot.iperc_id, ot.creado_por,
          u.nombre AS creado_por_nombre, ot.asignado_a, asig.nombre AS asignado_a_nombre,
          ot.fecha_programada, ot.fecha_cierre, ot.observaciones_cierre, ot.creado_en, ot.origen,
-        ot.checklist_id
+        ot.checklist_id, ot.inicio_en, ot.unidad_no_opera, ${DURACION("ot")}
        FROM ordenes_trabajo ot
        ${unidad.join}
        JOIN usuarios u ON u.id = ot.creado_por
@@ -114,7 +143,9 @@ export const OrdenesTrabajoRepository = {
        WHERE ot.id = $1 AND ot.tenant_id = $2`,
       [id, tenantId]
     );
-    return result.rows[0] ?? null;
+    const orden = result.rows[0];
+    if (!orden) return null;
+    return { ...orden, tareas: await listarTareas(client, tenantId, id) };
   },
 
   /** Usuarios a los que se puede asignar una OT: activos del tenant, sin
@@ -176,11 +207,12 @@ export const OrdenesTrabajoRepository = {
 
     const result = await client.query(
       `INSERT INTO ordenes_trabajo
-         (tenant_id, equipo_id, activo_texto, titulo, descripcion, tipo, prioridad, iperc_id, creado_por, fecha_programada, asignado_a)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         (tenant_id, equipo_id, activo_texto, titulo, descripcion, tipo, prioridad, iperc_id, creado_por, fecha_programada, asignado_a,
+          inicio_en, unidad_no_opera)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING id, equipo_id, activo_texto, titulo, descripcion, tipo, prioridad, estado, iperc_id,
          creado_por, fecha_programada, fecha_cierre, observaciones_cierre, creado_en, asignado_a, origen,
-         checklist_id`,
+         checklist_id, inicio_en, unidad_no_opera`,
       [
         tenantId,
         data.equipo_id ?? null,
@@ -193,9 +225,13 @@ export const OrdenesTrabajoRepository = {
         creadoPor,
         data.fecha_programada ?? null,
         data.asignado_a ?? null,
+        data.inicio_en ?? null,
+        data.unidad_no_opera ?? false,
       ]
     );
-    return result.rows[0];
+    const orden = result.rows[0];
+    await agregarTareas(client, tenantId, orden.id, data.tareas ?? []);
+    return { ...orden, tareas: await listarTareas(client, tenantId, orden.id) };
   },
 
   async actualizar(
@@ -232,14 +268,38 @@ export const OrdenesTrabajoRepository = {
       }
     }
 
+    // Las horas se resuelven con la fila bloqueada: lo que no viene se queda como está, y dos
+    // correcciones a la vez no dejan un inicio posterior al cierre.
+    const bloqueada = await client.query<HorasDeLaOrden>(
+      `SELECT estado, inicio_en, fecha_cierre, unidad_no_opera FROM ordenes_trabajo
+        WHERE id = $1 AND tenant_id = $2 FOR NO KEY UPDATE`,
+      [id, tenantId]
+    );
+    const antes = bloqueada.rows[0];
+    if (!antes) return null;
+    if (data.fecha_cierre !== undefined && antes.fecha_cierre === null) {
+      throw new HorasInvalidasError("Solo se corrige la hora de cierre de una orden ya cerrada");
+    }
+    const horas = {
+      antes,
+      inicio:
+        data.inicio_en === undefined
+          ? antes.inicio_en
+          : data.inicio_en === null
+            ? null
+            : new Date(data.inicio_en),
+      cierre: data.fecha_cierre === undefined ? antes.fecha_cierre : new Date(data.fecha_cierre),
+    };
+    exigirInicioAntesDelCierre(horas.inicio, horas.cierre);
+
     const result = await client.query(
       `UPDATE ordenes_trabajo
        SET titulo = $1, descripcion = $2, tipo = $3, prioridad = $4, iperc_id = $5, fecha_programada = $6, asignado_a = $7,
-         activo_texto = $10
+         activo_texto = $10, inicio_en = $11, fecha_cierre = $12, unidad_no_opera = $13
        WHERE id = $8 AND tenant_id = $9
        RETURNING id, equipo_id, activo_texto, titulo, descripcion, tipo, prioridad, estado, iperc_id,
          creado_por, fecha_programada, fecha_cierre, observaciones_cierre, creado_en, asignado_a, origen,
-         checklist_id`,
+         checklist_id, inicio_en, unidad_no_opera`,
       [
         data.titulo,
         data.descripcion ?? null,
@@ -251,9 +311,13 @@ export const OrdenesTrabajoRepository = {
         id,
         tenantId,
         activoTexto,
+        horas.inicio,
+        horas.cierre,
+        data.unidad_no_opera ?? horas.antes.unidad_no_opera,
       ]
     );
-    return result.rows[0] ?? null;
+    const orden = result.rows[0];
+    return orden ? { orden, antes: horas.antes } : null;
   },
 
   // WHERE ... AND estado = ANY(orígenes permitidos) a propósito: cubre a la
@@ -265,29 +329,38 @@ export const OrdenesTrabajoRepository = {
     client: PoolClient,
     tenantId: string,
     id: number,
-    estado: "en_progreso" | "completada" | "cancelada",
-    observacionesCierre?: string
+    { estado, observaciones_cierre, inicio_en, fecha_cierre }: CambiarEstadoOrdenTrabajoInput
   ): Promise<ResultadoCambiarEstado> {
     const origenes = ORIGENES_PERMITIDOS[estado];
     const esCierre = estado === "completada" || estado === "cancelada";
 
+    // La fila bloqueada antes de comparar las horas: la segunda de dos transiciones a la vez ve el
+    // estado que dejó la primera y recibe su 409.
+    const bloqueada = await client.query<HorasDeLaOrden & { ahora: Date }>(
+      `SELECT estado, inicio_en, fecha_cierre, unidad_no_opera, now() AS ahora FROM ordenes_trabajo
+        WHERE id = $1 AND tenant_id = $2 FOR NO KEY UPDATE`,
+      [id, tenantId]
+    );
+    const antes = bloqueada.rows[0];
+    if (!antes) return { ok: false, motivo: "no_encontrado" };
+    if (!origenes.includes(antes.estado)) {
+      return { ok: false, motivo: "transicion_invalida", estadoActual: antes.estado };
+    }
+    const inicio = inicio_en ? new Date(inicio_en) : antes.inicio_en;
+    const cierre = esCierre ? (fecha_cierre ? new Date(fecha_cierre) : antes.ahora) : null;
+    exigirInicioAntesDelCierre(inicio, cierre);
+
     const result = await client.query<FilaEstadoCambiado>(
       `UPDATE ordenes_trabajo
        SET estado = $1,
-         fecha_cierre = CASE WHEN $2 THEN now() ELSE fecha_cierre END,
-         observaciones_cierre = CASE WHEN $2 THEN $3 ELSE observaciones_cierre END
-       WHERE id = $4 AND tenant_id = $5 AND estado = ANY($6::varchar[])
-       RETURNING id, estado, fecha_cierre, observaciones_cierre`,
-      [estado, esCierre, observacionesCierre ?? null, id, tenantId, origenes]
+         inicio_en = $2,
+         fecha_cierre = CASE WHEN $3 THEN $4::timestamptz ELSE fecha_cierre END,
+         observaciones_cierre = CASE WHEN $3 THEN $5 ELSE observaciones_cierre END
+       WHERE id = $6 AND tenant_id = $7
+       RETURNING id, estado, inicio_en, fecha_cierre, observaciones_cierre, ${DURACION("ordenes_trabajo")}`,
+      [estado, inicio, esCierre, cierre, observaciones_cierre ?? null, id, tenantId]
     );
-    if (result.rows[0]) return { ok: true, fila: result.rows[0] };
-
-    const actual = await client.query<{ estado: string }>(
-      `SELECT estado FROM ordenes_trabajo WHERE id = $1 AND tenant_id = $2`,
-      [id, tenantId]
-    );
-    if (actual.rows.length === 0) return { ok: false, motivo: "no_encontrado" };
-    return { ok: false, motivo: "transicion_invalida", estadoActual: actual.rows[0].estado };
+    return { ok: true, fila: result.rows[0] };
   },
 
   async eliminar(client: PoolClient, tenantId: string, id: number) {
