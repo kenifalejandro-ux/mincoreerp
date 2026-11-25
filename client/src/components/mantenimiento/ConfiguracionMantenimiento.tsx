@@ -145,9 +145,11 @@ export default function ConfiguracionMantenimiento() {
                         <span className="block text-xs leading-relaxed text-slate-500">
                           {r.descripcion}
                         </span>
-                        <span className="mt-1 block text-[11px] font-semibold text-amber-700">
-                          {avisoDeRegla(r, usuario)}
-                        </span>
+                        {avisoDeRegla(r, usuario) && (
+                          <span className="mt-1 block text-[11px] font-semibold text-amber-700">
+                            {avisoDeRegla(r, usuario)}
+                          </span>
+                        )}
                       </div>
                       <button
                         type="button"
