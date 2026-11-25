@@ -5,10 +5,9 @@
 // equiposMantenimiento.ts). Admin y operador registran, editan y quitan equipos y manejan las áreas; Lectura
 // solo mira. El estado de cada unidad (Detenida, En mantenimiento, Operativa) llega cuando
 // existan las órdenes de trabajo y los checklists: hoy no se inventa.
-import { ChevronRight, MapPin, Pencil, Plus, Search, Trash2, Truck, Upload } from "lucide-react";
+import { ChevronRight, Pencil, Plus, Search, Trash2, Truck, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import AreasDeMantenimiento from "./AreasDeMantenimiento";
 import {
   FILTROS_VACIOS,
   TODAS_LAS_AREAS,
@@ -66,11 +65,10 @@ export default function EquiposMantenimiento({
     busqueda: busquedaInicial,
   });
   const puedeEscribir = usePuedeEscribir("mantenimiento");
-  // Lo que hay abierto encima de la lista: el formulario (nuevo o de un equipo), quitar o las áreas.
+  // Lo que hay abierto encima de la lista: el formulario (nuevo o de un equipo), quitar o importar.
   const [ventana, setVentana] = useState<
     | { tipo: "formulario"; equipo?: EquipoMantenimiento }
     | { tipo: "quitar"; equipo: EquipoMantenimiento }
-    | { tipo: "areas" }
     | { tipo: "importar"; pestania: PestaniaDeImportar }
     | null
   >(null);
@@ -144,12 +142,6 @@ export default function EquiposMantenimiento({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => setVentana({ tipo: "areas" })}
-            className="flex items-center gap-2 h-10 px-4 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            <MapPin size={16} /> Áreas
-          </button>
           {puedeEscribir && (
             <button
               onClick={() => setVentana({ tipo: "importar", pestania: "excel" })}
@@ -348,7 +340,8 @@ export default function EquiposMantenimiento({
         </div>
         {datos !== null && datos.total > 0 && (
           <p className="px-4 py-3 text-xs text-slate-500 border-t border-slate-200">
-            Mostrando {filtrados.length} de {datos.total} equipos.
+            Mostrando {filtrados.length} de {datos.total} equipos. El área se elige al registrar el
+            equipo; las áreas se definen en Configuración.
           </p>
         )}
         {puedeEscribir && (
@@ -391,13 +384,6 @@ export default function EquiposMantenimiento({
         <QuitarEquipo
           equipo={ventana.equipo}
           onQuitado={cerrarYRecargar}
-          onCerrar={() => setVentana(null)}
-        />
-      )}
-      {ventana?.tipo === "areas" && (
-        <AreasDeMantenimiento
-          puedeEscribir={puedeEscribir}
-          onCambio={cargar}
           onCerrar={() => setVentana(null)}
         />
       )}

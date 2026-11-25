@@ -22,6 +22,7 @@ import {
 import {
   avisosDelCentro,
   fechaLarga,
+  propiosYAlquilados,
   repartoPorArea,
   saludoSegunHora,
 } from "./centroDeMantenimiento";
@@ -64,7 +65,7 @@ function Tarjeta({
       <div className="min-w-0">
         <span className="text-xs font-semibold text-slate-500">{etiqueta}</span>
         <b className="block text-[28px] leading-tight font-extrabold text-slate-900">{valor}</b>
-        <small className="text-[11px] text-slate-500">{nota}</small>
+        <small className="block text-[11px] leading-snug text-slate-500">{nota}</small>
       </div>
     </article>
   );
@@ -183,7 +184,7 @@ export default function CentroDeMantenimiento({
             <Tarjeta
               etiqueta="Equipos registrados"
               valor={resumen.total}
-              nota={`${resumen.propios} propios · ${resumen.alquilados} alquilados`}
+              nota={propiosYAlquilados(resumen.propios, resumen.alquilados)}
               Icono={Tractor}
               tono="green"
             />

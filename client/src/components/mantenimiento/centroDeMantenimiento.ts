@@ -82,3 +82,8 @@ export function avisosDelCentro(
   }
   return avisos;
 }
+
+/** «3 propios · 1 alquilado»: cómo se reparten los equipos entre propios y alquilados. */
+export function propiosYAlquilados(propios: number, alquilados: number): string {
+  return `${plural(propios, "propio", "propios")} · ${plural(alquilados, "alquilado", "alquilados")}`;
+}

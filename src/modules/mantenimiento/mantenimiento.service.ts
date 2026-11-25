@@ -59,7 +59,80 @@ const COLUMNAS_EQUIPO = `e.id::int AS id, e.placa_codigo, e.tipo, e.marca, e.mod
   COALESCE(d.propiedad, 'propia') AS propiedad, d.area_id::int AS area_id, a.nombre AS area,
   e.por_completar`;
 
+export interface ConfigMantenimiento {
+  ot_de_hallazgo: boolean;
+  bloquea_sin_iperc: boolean;
+  alerta_repuestos: boolean;
+  exige_conformidad: boolean;
+  meta_disponibilidad: number;
+  meta_preventivo: number;
+  meta_mttr_horas: number;
+  meta_mtbf_horas: number;
+}
+
+/** Lo que usa una empresa que nunca guardó su configuración. Son los mismos DEFAULT de la migración 0205. */
+export const CONFIG_POR_DEFECTO: ConfigMantenimiento = {
+  ot_de_hallazgo: true,
+  bloquea_sin_iperc: true,
+  alerta_repuestos: true,
+  exige_conformidad: false,
+  meta_disponibilidad: 90,
+  meta_preventivo: 90,
+  meta_mttr_horas: 24,
+  meta_mtbf_horas: 300,
+};
+
+/** Las columnas que se pueden guardar. La lista fija es la que arma el UPDATE: nunca un nombre que venga de fuera. */
+const CAMPOS_DE_CONFIG = Object.keys(CONFIG_POR_DEFECTO) as (keyof ConfigMantenimiento)[];
+
 export class MantenimientoService {
+  /** Las reglas y metas de la empresa; si nunca guardó, las de por defecto (no se crea ninguna fila). */
+  async obtenerConfig(client: PoolClient, tenantId: string): Promise<ConfigMantenimiento> {
+    const r = await client.query<ConfigMantenimiento>(
+      `SELECT ${CAMPOS_DE_CONFIG.join(", ")} FROM mantenimiento_config WHERE tenant_id = $1`,
+      [tenantId]
+    );
+    return r.rows[0] ?? { ...CONFIG_POR_DEFECTO };
+  }
+
+  /**
+   * Guarda solo los campos que vienen. La fila se asegura primero y se actualiza después, bloqueada: dos personas
+   * guardando a la vez cambios distintos no se borran entre sí, y un reenvío no crea otra fila. Devuelve cómo
+   * quedó y los nombres de lo que de verdad cambió (para la auditoría).
+   */
+  async guardarConfig(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    cambios: Partial<ConfigMantenimiento>
+  ): Promise<{ config: ConfigMantenimiento; campos: string[] }> {
+    await client.query(
+      "INSERT INTO mantenimiento_config (tenant_id) VALUES ($1) ON CONFLICT (tenant_id) DO NOTHING",
+      [tenantId]
+    );
+    // FOR UPDATE: el «antes» se lee con la fila ya tomada, así la lista de lo cambiado es la real.
+    const antes = (
+      await client.query<ConfigMantenimiento>(
+        `SELECT ${CAMPOS_DE_CONFIG.join(", ")} FROM mantenimiento_config
+          WHERE tenant_id = $1 FOR UPDATE`,
+        [tenantId]
+      )
+    ).rows[0];
+    const campos = CAMPOS_DE_CONFIG.filter(
+      (c) => cambios[c] !== undefined && cambios[c] !== antes[c]
+    );
+    if (campos.length === 0) return { config: antes, campos };
+    const asignaciones = campos.map((c, i) => `${c} = $${i + 3}`).join(", ");
+    const r = await client.query<ConfigMantenimiento>(
+      `UPDATE mantenimiento_config
+          SET ${asignaciones}, actualizado_en = now(), actualizado_por = $2
+        WHERE tenant_id = $1
+        RETURNING ${CAMPOS_DE_CONFIG.join(", ")}`,
+      [tenantId, usuarioId, ...campos.map((c) => cambios[c])]
+    );
+    return { config: r.rows[0], campos };
+  }
+
   /** Los equipos activos de la empresa, con su área, filtrados. */
   async listarEquipos(
     client: PoolClient,
