@@ -2,7 +2,7 @@
 //
 // La unidad de un vale, como un campo de placa con su lista: se escribe o se elige. Si coincide con
 // una unidad dada de alta es esa; si no, el vale queda con la placa escrita y la oficina la vincula
-// después. Sin Flota la lista viene vacía y es solo el campo de texto (ver unidadEscrita.ts).
+// después. Sin un módulo de unidades (Flota o Mantenimiento) la lista viene vacía y es solo el campo de texto (ver unidadEscrita.ts).
 import { resolverUnidad, type UnidadRegistrada } from "./unidadEscrita";
 
 interface Props {

@@ -22,7 +22,7 @@ export interface SalidaDeCisterna {
   tipo: "unidad" | "tanqueta" | "tanque";
   cantidad: string;
   fecha: string;
-  /** Placa, código de tanqueta o de tanque. Sin Flota la placa no viene. */
+  /** Placa, código de tanqueta o de tanque. Sin un módulo de unidades (Flota o Mantenimiento) la placa no viene. */
   destino: string | null;
   /** Quién la registró, y su vale del talonario ("CLS-77"; la salida a una tanqueta no lleva). */
   por?: string | null;

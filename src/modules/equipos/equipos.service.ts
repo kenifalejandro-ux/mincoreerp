@@ -31,8 +31,16 @@ export interface CambiosHistorial {
 }
 
 export const EquiposService = {
-  getAll(client: PoolClient, tenantId: string, paginacion: Paginacion, conRutas = true) {
-    return EquiposRepository.findAll(client, tenantId, paginacion, conRutas);
+  /** `soloActivas`: sin las unidades que Mantenimiento quitó. Lo piden los formularios que ofrecen
+   *  unidades para elegir; el Registro de unidades de Flota sigue mostrándolas todas. */
+  getAll(
+    client: PoolClient,
+    tenantId: string,
+    paginacion: Paginacion,
+    conRutas = true,
+    soloActivas = false
+  ) {
+    return EquiposRepository.findAll(client, tenantId, paginacion, conRutas, soloActivas);
   },
 
   getAllParaExportar(client: PoolClient, tenantId: string, ids?: number[], conRutas = true) {

@@ -16,6 +16,8 @@
  *  - empresaTieneModulo(): para decidir en código (validaciones y rutas). */
 import type { Pool, PoolClient } from "pg";
 
+import { MODULOS_DUENOS_DE_UNIDADES } from "./modulos";
+
 export const SQL_EMPRESA_TIENE_FLOTA = `EXISTS (
   SELECT 1 FROM tenant_modulos tm_flota
    WHERE tm_flota.tenant_id = current_setting('app.tenant_id')::uuid
@@ -30,6 +32,30 @@ export async function empresaTieneModulo(
     `SELECT 1 FROM tenant_modulos
       WHERE tenant_id = $1 AND modulo = $2 AND estado <> 'deshabilitado'`,
     [tenantId, modulo]
+  );
+  return r.rows.length > 0;
+}
+
+/** Lo mismo que SQL_EMPRESA_TIENE_FLOTA pero para «¿la empresa mantiene unidades?»: Flota O
+ *  Mantenimiento (los módulos dueños del maestro `equipos`, ver MODULOS_DUENOS_DE_UNIDADES). Es lo
+ *  que condiciona leer una unidad (placa, medidor) para mostrarla o validarla. Lo que es propio de
+ *  Flota (el conductor asignado, el viaje, asignar una tanqueta a una unidad) sigue con la de Flota. */
+export const SQL_EMPRESA_TIENE_UNIDADES = `EXISTS (
+  SELECT 1 FROM tenant_modulos tm_unidades
+   WHERE tm_unidades.tenant_id = current_setting('app.tenant_id')::uuid
+     AND tm_unidades.modulo IN (${MODULOS_DUENOS_DE_UNIDADES.map((m) => `'${m}'`).join(", ")})
+     AND tm_unidades.estado <> 'deshabilitado')`;
+
+/** ¿La empresa tiene algún módulo que mantiene unidades? Para decidir en código. */
+export async function empresaTieneUnidades(
+  db: Pick<Pool | PoolClient, "query">,
+  tenantId: string
+): Promise<boolean> {
+  const r = await db.query(
+    `SELECT 1 FROM tenant_modulos
+      WHERE tenant_id = $1 AND modulo::text = ANY($2::text[]) AND estado <> 'deshabilitado'
+      LIMIT 1`,
+    [tenantId, [...MODULOS_DUENOS_DE_UNIDADES]]
   );
   return r.rows.length > 0;
 }

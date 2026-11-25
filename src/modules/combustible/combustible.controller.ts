@@ -4,7 +4,7 @@ import { pestanaPermitida } from "../../server/services/permisosPestanas.service
 import { Request, Response } from "express";
 import { withTenant } from "../../server/config/database";
 import { SQL_EMPRESA_TIENE_FLOTA } from "../../server/shared/utils/modulosEmpresa";
-import { tieneModulo } from "../../server/shared/utils/modulos";
+import { tieneModulo, tieneUnidades } from "../../server/shared/utils/modulos";
 import { getTenantId } from "../../server/shared/utils/request";
 import { parsePaginacion, armarRespuestaPaginada } from "../../server/shared/utils/pagination";
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
@@ -5778,12 +5778,12 @@ export class CombustibleController {
 
   /** GET /despachos/cisternas: la pestaña "Cisternas". `estado=saldo` (por defecto) son las que
    *  aún tienen combustible; `historial`, las vaciadas y las de una recepción anulada. Solo las
-   *  sedes del alcance. La placa de las unidades solo viaja si el usuario tiene Flota. */
+   *  sedes del alcance. La placa de las unidades solo viaja si el usuario tiene Flota o Mantenimiento. */
   async listarCisternas(req: Request, res: Response) {
     const tenantId = getTenantId(req);
     const alcance = alcanceDe(req);
     const { estado, proveedor_id } = req.validatedQuery as CisternasListadoQuery;
-    const conPlaca = (req.usuario?.modulosPermitidos ?? []).includes("flota");
+    const conPlaca = tieneUnidades(req.usuario);
     res.json(
       await withTenant(tenantId, (client) =>
         service.listarCisternas(client, tenantId, alcance.todo ? null : alcance.grifos, {

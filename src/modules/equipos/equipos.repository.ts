@@ -75,7 +75,8 @@ export const EquiposRepository = {
     client: PoolClient,
     tenantId: string,
     { pageSize, offset }: Paginacion,
-    conRutas = true
+    conRutas = true,
+    soloActivas = false
   ) {
     const result = await client.query(
       `
@@ -83,7 +84,7 @@ export const EquiposRepository = {
         ${ULTIMA_LECTURA},
         COUNT(*) OVER() AS total_count
       FROM equipos
-      WHERE tenant_id = $1
+      WHERE tenant_id = $1${soloActivas ? " AND activo" : ""}
       ORDER BY id DESC
       LIMIT $2 OFFSET $3
     `,

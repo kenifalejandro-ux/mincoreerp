@@ -298,13 +298,14 @@ export const MODULOS: ModuloDefinicion[] = [
     router: combustibleRoutes,
     // Combustible es autónomo: NO exige `flota`. Una empresa puede tener solo el grifo (una
     // gasolinera) y la unidad de cada vale se escribe a mano (`unidad_sin_alta`, placa libre).
-    // Con Flota lee de ella la placa, el medidor y el conductor asignado; sin ella omite esa parte
-    // (la lectura mira los módulos de la EMPRESA, no los de la persona: ver modulosEmpresa.ts).
+    // Con Flota o Mantenimiento (los módulos que mantienen unidades) lee la placa y el medidor de la
+    // unidad; con Flota, además, el conductor asignado y los viajes. Sin ellos omite esa parte (la lectura
+    // mira los módulos de la EMPRESA, no los de la persona: ver modulosEmpresa.ts).
     // Del viaje activo lee la unidad (Compra en ruta) y el último medidor del viaje.
     // `proveedores`: el catálogo de proveedores (`combustible_grifos`) es de ese módulo desde el PR6, pero
     // la tabla existe siempre y Combustible sigue pudiendo leerla y editarla (su pestaña «Proveedores»,
     // las compras en ruta y las recepciones); con el módulo Proveedores solo se concentra la edición allí.
-    opcionales: ["flota", "viajes", "proveedores"],
+    opcionales: ["flota", "mantenimiento", "viajes", "proveedores"],
     tablas: [
       {
         nombre: "combustible",

@@ -106,18 +106,34 @@ function detectarAflojamientoDeConsumo(
   return { de: texto(viejo), a: texto(nuevo) };
 }
 
+async function listarEquipos(req: Request, res: Response, soloActivas: boolean) {
+  try {
+    const tenantId = getTenantId(req);
+    const paginacion = parsePaginacion(req.query);
+    const filas = await withTenant(tenantId, (client) =>
+      EquiposService.getAll(
+        client,
+        tenantId,
+        paginacion,
+        tieneModulo(req.usuario, "viajes"),
+        soloActivas
+      )
+    );
+    res.json(armarRespuestaPaginada(filas, paginacion));
+  } catch {
+    res.status(500).json({ message: "Error al obtener equipos" });
+  }
+}
+
 export const EquiposController = {
   async getAll(req: Request, res: Response) {
-    try {
-      const tenantId = getTenantId(req);
-      const paginacion = parsePaginacion(req.query);
-      const filas = await withTenant(tenantId, (client) =>
-        EquiposService.getAll(client, tenantId, paginacion, tieneModulo(req.usuario, "viajes"))
-      );
-      res.json(armarRespuestaPaginada(filas, paginacion));
-    } catch {
-      res.status(500).json({ message: "Error al obtener equipos" });
-    }
+    return listarEquipos(req, res, false);
+  },
+
+  /** La misma lista sin las unidades que Mantenimiento quitó: la de los formularios que ofrecen
+   *  unidades para elegir (p. ej. `/combustible/equipos-destino`). */
+  async getAllActivas(req: Request, res: Response) {
+    return listarEquipos(req, res, true);
   },
 
   async create(req: Request, res: Response) {

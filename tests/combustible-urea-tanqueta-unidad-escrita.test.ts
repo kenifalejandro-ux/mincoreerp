@@ -39,11 +39,13 @@ describe("urea y carga desde tanqueta a una unidad escrita a mano", () => {
   let nVale = 1;
   const serie = `U${Math.floor(Math.random() * 1e8).toString(36)}`.toUpperCase();
 
+  // «Sin Flota» es sin ningún módulo que mantenga unidades: también se apaga Mantenimiento, que
+  // (como Flota) las ofrece. Con Mantenimiento solo se prueba en combustible-con-mantenimiento.test.ts.
   const flota = (estado: "habilitado" | "deshabilitado") =>
-    pool.query(`UPDATE tenant_modulos SET estado = $2 WHERE tenant_id = $1 AND modulo = 'flota'`, [
-      tenantId,
-      estado,
-    ]);
+    pool.query(
+      `UPDATE tenant_modulos SET estado = $2 WHERE tenant_id = $1 AND modulo IN ('flota', 'mantenimiento')`,
+      [tenantId, estado]
+    );
 
   const stockUrea = async () => Number((await admin.get(`${BASE}/urea/estado`)).body.stock.stockL);
 
