@@ -4,8 +4,15 @@ import { Router } from "express";
 import { validate } from "../../server/middleware/validate";
 import { requireRole } from "../../server/shared/middlewares/roles.middleware";
 import { asyncHandler } from "../../server/shared/utils/asyncHandler";
-import { crearPlantillaSchema, crearChecklistSchema } from "../../server/schemas/checklists.schema";
+import {
+  crearPlantillaSchema,
+  crearChecklistSchema,
+  editarPlantillaSchema,
+  estadoPlantillaSchema,
+  restaurarPlantillaSchema,
+} from "../../server/schemas/checklists.schema";
 import { ChecklistsController } from "./checklists.controller";
+import { FormatosController } from "./checklists.formatos.controller";
 import { listarUnidadesParaElegir } from "../equipos/unidadesParaElegir";
 
 const router = Router();
@@ -18,6 +25,26 @@ router.post(
   requireRole("admin", "operador"),
   validate(crearPlantillaSchema),
   asyncHandler(ChecklistsController.crearPlantilla)
+);
+// Versiones de un formato (E5-1). Las editan quienes hoy los crean.
+router.get("/plantillas/:id(\\d+)/versiones", asyncHandler(FormatosController.versiones));
+router.put(
+  "/plantillas/:id(\\d+)",
+  requireRole("admin", "operador"),
+  validate(editarPlantillaSchema),
+  asyncHandler(FormatosController.editar)
+);
+router.post(
+  "/plantillas/:id(\\d+)/versiones/:version(\\d+)/restaurar",
+  requireRole("admin", "operador"),
+  validate(restaurarPlantillaSchema),
+  asyncHandler(FormatosController.restaurar)
+);
+router.patch(
+  "/plantillas/:id(\\d+)/estado",
+  requireRole("admin", "operador"),
+  validate(estadoPlantillaSchema),
+  asyncHandler(FormatosController.estado)
 );
 router.delete(
   "/plantillas/:id",

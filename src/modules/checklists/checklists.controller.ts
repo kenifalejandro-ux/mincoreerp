@@ -92,7 +92,14 @@ export const ChecklistsController = {
       });
       await publicarEventoTenant(tenantId, "checklists.plantilla_eliminada", { plantillaId: id });
       res.json({ message: "Eliminada" });
-    } catch {
+    } catch (error) {
+      // Con checklists ya llenados la base no deja borrarlo: se desactiva en su lugar.
+      if ((error as { code?: string }).code === "23503") {
+        res.status(409).json({
+          message: "Este formato ya tiene checklists llenados: desactívalo en lugar de borrarlo",
+        });
+        return;
+      }
       res.status(500).json({ message: "Error al eliminar plantilla" });
     }
   },

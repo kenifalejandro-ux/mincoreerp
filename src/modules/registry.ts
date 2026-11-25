@@ -981,8 +981,13 @@ export const MODULOS: ModuloDefinicion[] = [
         fks: { equipo_id: "equipos", plantilla_id: "checklist_plantillas", usuario_id: "usuarios" },
       },
       { nombre: "checklist_items", pk: "serial", fks: { checklist_id: "checklists" } },
+      {
+        nombre: "checklist_plantilla_versiones",
+        pk: "serial",
+        fks: { plantilla_id: "checklist_plantillas", creado_por: "usuarios" },
+      },
     ],
-    // checklist_plantilla_items y checklist_items cascadean desde su padre
+    // checklist_plantilla_items, checklist_plantilla_versiones y checklist_items cascadean desde su padre
     // (ON DELETE CASCADE, ver migrations/0006) — no necesitan DELETE propio.
     raices: ["checklist_plantillas", "checklists"],
     // Se cuentan los checklists LLENADOS, no las plantillas: las plantillas

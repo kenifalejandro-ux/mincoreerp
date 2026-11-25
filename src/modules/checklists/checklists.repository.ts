@@ -18,7 +18,7 @@ export const ChecklistsRepository = {
   async findPlantillas(client: PoolClient, tenantId: string, { pageSize, offset }: Paginacion) {
     const result = await client.query(
       `
-      SELECT id, nombre, tipo_equipo, creado_en, COUNT(*) OVER() AS total_count
+      SELECT id, nombre, tipo_equipo, creado_en, version, activa, COUNT(*) OVER() AS total_count
       FROM checklist_plantillas
       WHERE tenant_id = $1
       ORDER BY id DESC
@@ -31,13 +31,14 @@ export const ChecklistsRepository = {
 
   async findPlantillaConItems(client: PoolClient, tenantId: string, plantillaId: number) {
     const plantilla = await client.query(
-      `SELECT id, nombre, tipo_equipo, creado_en FROM checklist_plantillas WHERE id = $1 AND tenant_id = $2`,
+      `SELECT id, nombre, tipo_equipo, creado_en, version, activa FROM checklist_plantillas
+       WHERE id = $1 AND tenant_id = $2`,
       [plantillaId, tenantId]
     );
     if (plantilla.rows.length === 0) return null;
 
     const items = await client.query(
-      `SELECT id, descripcion, orden FROM checklist_plantilla_items
+      `SELECT id, descripcion, orden, critica FROM checklist_plantilla_items
        WHERE plantilla_id = $1 AND tenant_id = $2
        ORDER BY orden ASC, id ASC`,
       [plantillaId, tenantId]
@@ -49,12 +50,16 @@ export const ChecklistsRepository = {
   async crearPlantilla(
     client: PoolClient,
     tenantId: string,
-    data: { nombre: string; tipo_equipo?: string; items: { descripcion: string; orden?: number }[] }
+    data: {
+      nombre: string;
+      tipo_equipo?: string;
+      items: { descripcion: string; orden?: number; critica?: boolean }[];
+    }
   ) {
     const plantilla = await client.query(
       `INSERT INTO checklist_plantillas (tenant_id, nombre, tipo_equipo)
        VALUES ($1, $2, $3)
-       RETURNING id, nombre, tipo_equipo, creado_en`,
+       RETURNING id, nombre, tipo_equipo, creado_en, version, activa`,
       [tenantId, data.nombre, data.tipo_equipo ?? null]
     );
     const plantillaId = plantilla.rows[0].id;
@@ -63,10 +68,10 @@ export const ChecklistsRepository = {
     for (let i = 0; i < data.items.length; i++) {
       const item = data.items[i];
       const result = await client.query(
-        `INSERT INTO checklist_plantilla_items (tenant_id, plantilla_id, descripcion, orden)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id, descripcion, orden`,
-        [tenantId, plantillaId, item.descripcion, item.orden ?? i]
+        `INSERT INTO checklist_plantilla_items (tenant_id, plantilla_id, descripcion, orden, critica)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, descripcion, orden, critica`,
+        [tenantId, plantillaId, item.descripcion, item.orden ?? i, item.critica ?? false]
       );
       items.push(result.rows[0]);
     }
@@ -95,7 +100,7 @@ export const ChecklistsRepository = {
     const unidad = unidadDelChecklist(conUnidades);
     const result = await client.query(
       `
-      SELECT c.id, c.equipo_id, ${unidad.columna}, c.activo_texto, c.plantilla_id, c.usuario_id,
+      SELECT c.id, c.equipo_id, ${unidad.columna}, c.activo_texto, c.plantilla_id, c.plantilla_version, c.usuario_id,
         u.nombre AS usuario_nombre, c.fecha, c.turno, c.resultado,
         c.observaciones_generales, c.creado_en
       FROM checklists c
@@ -113,7 +118,7 @@ export const ChecklistsRepository = {
   async findById(client: PoolClient, tenantId: string, id: number, conUnidades = true) {
     const unidad = unidadDelChecklist(conUnidades);
     const checklist = await client.query(
-      `SELECT c.id, c.equipo_id, ${unidad.columna}, c.activo_texto, c.plantilla_id, c.usuario_id,
+      `SELECT c.id, c.equipo_id, ${unidad.columna}, c.activo_texto, c.plantilla_id, c.plantilla_version, c.usuario_id,
          u.nombre AS usuario_nombre, c.fecha, c.turno, c.resultado,
          c.observaciones_generales, c.creado_en
        FROM checklists c
@@ -142,6 +147,7 @@ export const ChecklistsRepository = {
       equipo_id?: number;
       activo_texto?: string;
       plantilla_id: number;
+      plantilla_version?: number;
       turno?: string;
       observaciones_generales?: string;
       items: { descripcion: string; estado: "bien" | "malo" | "na"; observacion?: string }[];
@@ -152,9 +158,14 @@ export const ChecklistsRepository = {
     const resultado = data.items.some((i) => i.estado === "malo") ? "observado" : "bien";
 
     const checklist = await client.query(
-      `INSERT INTO checklists (tenant_id, equipo_id, activo_texto, plantilla_id, usuario_id, turno, resultado, observaciones_generales)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id, equipo_id, activo_texto, plantilla_id, usuario_id, fecha, turno, resultado, observaciones_generales, creado_en`,
+      `INSERT INTO checklists (tenant_id, equipo_id, activo_texto, plantilla_id, usuario_id, turno, resultado,
+         observaciones_generales, plantilla_version)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+         -- Nunca una versión que el formato todavía no tiene.
+         (SELECT LEAST(COALESCE($9::int, version), version) FROM checklist_plantillas
+           WHERE tenant_id = $1 AND id = $4))
+       RETURNING id, equipo_id, activo_texto, plantilla_id, plantilla_version, usuario_id, fecha, turno, resultado,
+         observaciones_generales, creado_en`,
       [
         tenantId,
         data.equipo_id ?? null,
@@ -164,6 +175,7 @@ export const ChecklistsRepository = {
         data.turno ?? null,
         resultado,
         data.observaciones_generales ?? null,
+        data.plantilla_version ?? null,
       ]
     );
     const checklistId = checklist.rows[0].id;
