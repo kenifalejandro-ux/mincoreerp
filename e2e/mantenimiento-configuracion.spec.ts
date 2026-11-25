@@ -3,7 +3,7 @@
  * M2: la pantalla «Configuración» del ecosistema «Gestión de mantenimiento», con una empresa que tiene SOLO el
  * módulo `mantenimiento`.
  *
- * 1. Salen las reglas y las metas de la maqueta con sus valores por defecto; cada regla avisa que aún no actúa.
+ * 1. Salen las reglas y las metas de la maqueta con sus valores por defecto; las que aún no actúan lo avisan.
  * 2. Cada cambio se guarda al momento y sigue ahí al volver; una meta inválida no se guarda y dice por qué.
  * 3. Si el guardado falla, el valor vuelve atrás; si la carga falla, no hay controles hasta reintentar.
  * 4. Quien no es admin ve las reglas y metas apagadas, pero un operador sí maneja las áreas.
@@ -51,7 +51,8 @@ test("las reglas y las metas se ven, se guardan solas y aguantan los fallos", as
   await expect(meta(page, /Cumplimiento del preventivo/)).toHaveValue("90");
   await expect(meta(page, /MTTR/)).toHaveValue("24");
   await expect(meta(page, /MTBF/)).toHaveValue("300");
-  await expect(page.getByText(/Aún no actúa/)).toHaveCount(4);
+  // La de hallazgo ya actúa (E5-2); las otras tres todavía no.
+  await expect(page.getByText(/Aún no actúa/)).toHaveCount(3);
   await expect(page.getByText(/Necesita el módulo Almacén/).first()).toBeVisible();
 
   // ── 2. Se guarda al momento y sigue al volver ─────────────────────────

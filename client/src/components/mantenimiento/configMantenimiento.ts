@@ -3,8 +3,9 @@
 // La pantalla de Configuración sin React: qué reglas y metas hay (los textos de la maqueta aprobada), cómo se
 // lee lo que se escribe en una meta y qué se avisa de cada regla.
 //
-// Las reglas se guardan pero TODAVÍA NO ACTÚAN: cada una se aplica en el módulo dueño de su flujo cuando ese flujo
-// entre al ecosistema. Por eso cada regla lo dice; la pantalla no puede prometer algo que no ocurre.
+// Las reglas se guardan siempre, pero cada una ACTÚA solo cuando el módulo dueño de su flujo la aplica: hoy, la de
+// «OT desde un hallazgo crítico» (Checklists). Las demás lo dicen (`llegaCon`); la pantalla no puede prometer algo
+// que no ocurre, ni negar algo que sí.
 import { tieneModulo } from "../../modules/tieneModulo";
 
 export type ClaveDeRegla =
@@ -16,8 +17,8 @@ export interface Regla {
   clave: ClaveDeRegla;
   titulo: string;
   descripcion: string;
-  /** Cuándo empezará a actuar. */
-  llegaCon: string;
+  /** Cuándo empezará a actuar. Sin este dato, la regla ya actúa. */
+  llegaCon?: string;
   /** Los módulos sin los que la regla no tendría sobre qué actuar. */
   necesita: { id: string; nombre: string }[];
 }
@@ -30,7 +31,6 @@ export const REGLAS: Regla[] = [
     titulo: "Crear OT desde un hallazgo crítico",
     descripcion:
       "Cuando un checklist sea «NO APTA», se crea sola una OT urgente ligada a la unidad. Aplica a los checklists nuevos.",
-    llegaCon: "Checklists y Órdenes de trabajo",
     necesita: [{ id: "checklists", nombre: "Checklists" }, OT],
   },
   {
@@ -96,13 +96,18 @@ export function leerMeta(texto: string, meta: Meta): { valor: number } | { error
   return { valor };
 }
 
-/** Lo que se avisa bajo una regla: que aún no actúa y, si a la persona le faltan módulos, cuáles. */
+/** Lo que se avisa bajo una regla: que aún no actúa y, si a la persona le faltan módulos, cuáles. Vacío si
+ *  ya actúa y no falta nada. */
 export function avisoDeRegla(
   regla: Regla,
   usuario: { modulosPermitidos: string[] } | null | undefined
 ): string {
   const faltan = regla.necesita.filter((m) => !tieneModulo(usuario, m.id)).map((m) => m.nombre);
-  const base = `Aún no actúa: llega con ${regla.llegaCon}.`;
-  if (faltan.length === 0) return base;
-  return `${base} Necesita ${faltan.length === 1 ? "el módulo" : "los módulos"} ${faltan.join(" y ")}.`;
+  const partes = regla.llegaCon ? [`Aún no actúa: llega con ${regla.llegaCon}.`] : [];
+  if (faltan.length > 0) {
+    partes.push(
+      `Necesita ${faltan.length === 1 ? "el módulo" : "los módulos"} ${faltan.join(" y ")}.`
+    );
+  }
+  return partes.join(" ");
 }

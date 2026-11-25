@@ -538,7 +538,11 @@ export default function LoginPage() {
               </div>
             )}
 
-            {googleClientId && <div ref={googleBtnRef} className="flex justify-center" />}
+            {/* El alto se reserva antes de que Google dibuje su botón: si no, la tarjeta (centrada) crece al
+                cargar y «Ingresar» se mueve justo cuando alguien lo va a tocar. */}
+            {googleClientId && (
+              <div ref={googleBtnRef} className="flex justify-center min-h-[44px]" />
+            )}
 
             {ssoRealmenteDisponible && (
               <button

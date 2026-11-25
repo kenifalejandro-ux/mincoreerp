@@ -476,17 +476,22 @@ describe("Configuración: reglas y metas", () => {
     }
   });
 
-  it("cada regla avisa que aún no actúa y nombra solo los módulos que faltan", () => {
+  it("cada regla pendiente avisa que aún no actúa; la que ya actúa solo nombra lo que falta", () => {
     const hallazgo = REGLAS.find((r) => r.clave === "ot_de_hallazgo")!;
     expect(avisoDeRegla(hallazgo, { modulosPermitidos: ["mantenimiento"] })).toBe(
-      "Aún no actúa: llega con Checklists y Órdenes de trabajo. Necesita los módulos Checklists y Órdenes de Trabajo."
+      "Necesita los módulos Checklists y Órdenes de Trabajo."
     );
     expect(avisoDeRegla(hallazgo, { modulosPermitidos: ["checklists", "ordenes_trabajo"] })).toBe(
-      "Aún no actúa: llega con Checklists y Órdenes de trabajo."
+      ""
     );
-    expect(avisoDeRegla(hallazgo, { modulosPermitidos: ["checklists"] })).toContain(
+    expect(avisoDeRegla(hallazgo, { modulosPermitidos: ["checklists"] })).toBe(
       "Necesita el módulo Órdenes de Trabajo."
     );
+    for (const regla of REGLAS.filter((r) => r !== hallazgo)) {
+      expect(avisoDeRegla(regla, { modulosPermitidos: [] }), regla.clave).toMatch(
+        /^Aún no actúa: llega con .+\. Necesita /
+      );
+    }
     expect(REGLAS).toHaveLength(4);
     expect(METAS).toHaveLength(4);
   });
