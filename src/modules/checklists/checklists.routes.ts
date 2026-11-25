@@ -6,6 +6,7 @@ import { requireRole } from "../../server/shared/middlewares/roles.middleware";
 import { asyncHandler } from "../../server/shared/utils/asyncHandler";
 import { crearPlantillaSchema, crearChecklistSchema } from "../../server/schemas/checklists.schema";
 import { ChecklistsController } from "./checklists.controller";
+import { listarUnidadesParaElegir } from "../equipos/unidadesParaElegir";
 
 const router = Router();
 
@@ -23,6 +24,10 @@ router.delete(
   requireRole("admin"),
   asyncHandler(ChecklistsController.eliminarPlantilla)
 );
+
+// Las unidades para elegir en el formulario: vienen del maestro (Flota o Mantenimiento), no de
+// `/api/erp/equipos`. ANTES de "/:id" para que "unidades" no se tome por un id.
+router.get("/unidades", asyncHandler(listarUnidadesParaElegir));
 
 // Checklists llenados
 router.get("/", asyncHandler(ChecklistsController.getAll));

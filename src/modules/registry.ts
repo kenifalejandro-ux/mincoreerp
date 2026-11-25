@@ -961,9 +961,9 @@ export const MODULOS: ModuloDefinicion[] = [
     icono: "✅",
     version: "v1",
     router: checklistsRoutes,
-    // La unidad del checklist es opcional (`equipo_id` admite NULL, migración 0189): sin Flota se
-    // identifica por `activo_texto` y no se lee `equipos`.
-    opcionales: ["flota"],
+    // La unidad del checklist es opcional (`equipo_id` admite NULL, migración 0189): sin un módulo que
+    // mantenga unidades (Flota o Mantenimiento) se identifica por `activo_texto` y no se lee `equipos`.
+    opcionales: ["flota", "mantenimiento"],
     tablas: [
       { nombre: "checklist_plantillas", pk: "serial" },
       {
@@ -1001,8 +1001,8 @@ export const MODULOS: ModuloDefinicion[] = [
     icono: "⚠️",
     version: "v1",
     router: ipercRoutes,
-    // La unidad del IPERC es opcional (`equipo_id` admite NULL).
-    opcionales: ["flota"],
+    // La unidad del IPERC es opcional (`equipo_id` admite NULL). La ofrece Flota o Mantenimiento.
+    opcionales: ["flota", "mantenimiento"],
     tablas: [
       {
         nombre: "iperc_lineas_base",
@@ -1049,9 +1049,9 @@ export const MODULOS: ModuloDefinicion[] = [
     version: "v1",
     router: ordenesTrabajoRoutes,
     // La orden puede asociar una evaluación de riesgo (sin FK real, se valida en la app).
-    // La unidad (`equipo_id`) es opcional (admite NULL, migración 0190): sin Flota la orden se
-    // identifica por `activo_texto` y no se lee `equipos`.
-    opcionales: ["iperc", "flota"],
+    // La unidad (`equipo_id`) es opcional (admite NULL, migración 0190): sin un módulo que mantenga
+    // unidades (Flota o Mantenimiento) la orden se identifica por `activo_texto` y no se lee `equipos`.
+    opcionales: ["iperc", "flota", "mantenimiento"],
     tablas: [
       {
         nombre: "ordenes_trabajo",

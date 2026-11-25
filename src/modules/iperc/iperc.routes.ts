@@ -10,6 +10,7 @@ import {
   crearLineaBaseSchema,
 } from "../../server/schemas/iperc.schema";
 import { IpercController } from "./iperc.controller";
+import { listarUnidadesParaElegir } from "../equipos/unidadesParaElegir";
 
 const router = Router();
 
@@ -33,6 +34,10 @@ router.delete(
   requireRole("admin"),
   asyncHandler(IpercController.eliminarLineaBase)
 );
+
+// Las unidades para elegir en el formulario: vienen del maestro (Flota o Mantenimiento), no de
+// `/api/erp/equipos`. ANTES de "/:id" para que "unidades" no se tome por un id.
+router.get("/unidades", asyncHandler(listarUnidadesParaElegir));
 
 // Continuo / Específico (ver campo `tipo`)
 router.get("/", asyncHandler(IpercController.getAll));

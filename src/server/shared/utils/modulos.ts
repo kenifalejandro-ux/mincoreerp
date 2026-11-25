@@ -15,3 +15,17 @@ export function tieneModulo(
 ): boolean {
   return !!usuario && usuario.modulosPermitidos.includes(modulo);
 }
+
+/** Módulos que MANTIENEN unidades (el maestro `equipos`): Flota con su Registro de unidades y
+ *  Mantenimiento con sus equipos. Quien tiene uno de los dos ve y elige unidades en los módulos que
+ *  las usan para enriquecer (Checklists, Órdenes de trabajo, IPERC). Un módulo nuevo que también
+ *  mantenga unidades se agrega aquí y en ningún otro sitio. */
+export const MODULOS_DUENOS_DE_UNIDADES = ["flota", "mantenimiento"] as const;
+
+/** ¿Este usuario tiene algún módulo que mantiene unidades? Es la pregunta de «¿ofrezco unidades?»;
+ *  `tieneModulo(usuario, "flota")` ya no la responde sola, porque Mantenimiento también las tiene. */
+export function tieneUnidades(
+  usuario: { modulosPermitidos: string[] } | null | undefined
+): boolean {
+  return MODULOS_DUENOS_DE_UNIDADES.some((modulo) => tieneModulo(usuario, modulo));
+}

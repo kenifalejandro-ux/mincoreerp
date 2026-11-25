@@ -16,12 +16,14 @@ export interface EmpresaSola {
   tenantId: string;
 }
 
-/** Crea la empresa por la API de plataforma y deja habilitado solo `modulo`. */
+/** Crea la empresa por la API de plataforma y deja habilitado solo `modulo` (o solo esos módulos, si se
+ *  pasa una lista: para probar una combinación, por ejemplo Mantenimiento y Checklists sin Flota). */
 export async function crearEmpresaSola(
   request: APIRequestContext,
-  modulo: string,
+  modulo: string | string[],
   etiqueta: string
 ): Promise<EmpresaSola> {
+  const habilitados = ([] as string[]).concat(modulo);
   const marca = randomBytes(3).toString("hex").toLowerCase();
   const BEARER = { Authorization: `Bearer ${leerEnv("PLATFORM_ADMIN_TOKEN")}` };
   const password = `Solo!${marca}2026`;
@@ -29,7 +31,7 @@ export async function crearEmpresaSola(
   const creada = await request.post("/api/platform/tenants", {
     headers: BEARER,
     data: {
-      tenantNombre: `Solo ${modulo} ${etiqueta} ${marca}`,
+      tenantNombre: `Solo ${habilitados.join("+")} ${etiqueta} ${marca}`,
       tenantSlug: `solo-${etiqueta}-${marca}`,
       adminNombre: `Admin ${etiqueta}`,
       adminEmail: email,
@@ -47,7 +49,7 @@ export async function crearEmpresaSola(
     data: {
       configuraciones: modulos.map((m) => ({
         modulo: m.modulo,
-        estado: m.modulo === modulo ? "habilitado" : "deshabilitado",
+        estado: habilitados.includes(m.modulo) ? "habilitado" : "deshabilitado",
       })),
     },
   });

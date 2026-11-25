@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Trash2, X } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
 
 import { useAuth } from "../../context/AuthContext";
-import { tieneModulo } from "../../modules/tieneModulo";
+import { tieneModulo, tieneUnidades } from "../../modules/tieneModulo";
 import { suscribirseASincronizacion } from "../../offline/offlineSync";
 import { apiFetch } from "../../services/apiClient";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
@@ -75,9 +75,9 @@ const FORM_VACIO = {
 
 export default function OrdenesTrabajoView() {
   const puedeEscribir = usePuedeEscribir("ordenes_trabajo");
-  // Registro de unidades es de OTRO módulo: sin él no se piden ni se ofrecen unidades y la orden
+  // Las unidades las mantiene OTRO módulo (Flota o Mantenimiento): sin ninguno no se piden ni se ofrecen unidades y la orden
   // se identifica por el texto «Activo o lugar» (ver `opcionales` en registry.ts).
-  const conFlota = tieneModulo(useAuth().usuario, "flota");
+  const conUnidades = tieneUnidades(useAuth().usuario);
   const conIperc = tieneModulo(useAuth().usuario, "iperc");
   const [ordenes, setOrdenes] = useState<OrdenTrabajo[]>([]);
   const [equipos, setEquipos] = useState<Equipo[]>([]);
@@ -105,7 +105,7 @@ export default function OrdenesTrabajoView() {
     async (paginaAConsultar: number) => {
       const params = new URLSearchParams({ page: String(paginaAConsultar), pageSize: "50" });
       if (filtroEstado) params.set("estado", filtroEstado);
-      if (conFlota && filtroEquipo) params.set("equipo_id", filtroEquipo);
+      if (conUnidades && filtroEquipo) params.set("equipo_id", filtroEquipo);
       if (filtroAsignado) params.set("asignado_a", filtroAsignado);
       try {
         const res = await apiFetch(`/api/erp/ordenes_trabajo?${params}`);
@@ -118,11 +118,11 @@ export default function OrdenesTrabajoView() {
         setLoading(false);
       }
     },
-    [filtroEstado, filtroEquipo, filtroAsignado, conFlota]
+    [filtroEstado, filtroEquipo, filtroAsignado, conUnidades]
   );
 
   const cargarEquipos = useCallback(async () => {
-    const res = await apiFetch("/api/erp/equipos?page=1&pageSize=200");
+    const res = await apiFetch("/api/erp/ordenes_trabajo/unidades?page=1&pageSize=200");
     const body = await res.json();
     setEquipos(Array.isArray(body.data) ? body.data : []);
   }, []);
@@ -171,10 +171,10 @@ export default function OrdenesTrabajoView() {
     // el efecto de arriba).
     // Sin Flota no se pide la lista de unidades (el servidor la negaría).
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (conFlota) cargarEquipos();
+    if (conUnidades) cargarEquipos();
     cargarIpercs();
     cargarUsuariosAsignables();
-  }, [conFlota, cargarEquipos, cargarIpercs, cargarUsuariosAsignables]);
+  }, [conUnidades, cargarEquipos, cargarIpercs, cargarUsuariosAsignables]);
 
   // Cuando la cola offline termina de drenar, las OT que se crearon sin
   // señal ya existen del lado del servidor -- recargar es lo que hace que
@@ -202,7 +202,7 @@ export default function OrdenesTrabajoView() {
     }
     if (!formData.equipo_id && !activoTexto) {
       alert(
-        conFlota
+        conUnidades
           ? "Elegí la unidad o escribí el activo o lugar de la orden."
           : "Escribí el activo o lugar de la orden."
       );
@@ -365,7 +365,7 @@ export default function OrdenesTrabajoView() {
             ))}
           </select>
         </div>
-        {conFlota && (
+        {conUnidades && (
           <div className="space-y-1 flex-1">
             <label
               htmlFor="ot-filtro-equipo"
@@ -576,7 +576,7 @@ export default function OrdenesTrabajoView() {
               </button>
             </div>
             <form onSubmit={handleCrear} className="p-6 space-y-4">
-              {conFlota && (
+              {conUnidades && (
                 <div className="space-y-1">
                   <label htmlFor="ot-equipo" className="text-xs font-bold text-slate-500 uppercase">
                     Equipo (opcional)
@@ -599,7 +599,7 @@ export default function OrdenesTrabajoView() {
 
               <div className="space-y-1">
                 <label htmlFor="ot-activo" className="text-xs font-bold text-slate-500 uppercase">
-                  {conFlota ? "Activo o lugar (si no es una unidad)" : "Activo o lugar"}
+                  {conUnidades ? "Activo o lugar (si no es una unidad)" : "Activo o lugar"}
                 </label>
                 <input
                   id="ot-activo"

@@ -92,6 +92,10 @@ export default defineConfig({
             urlPattern: ({ url, request }) =>
               request.method === "GET" &&
               (url.pathname === "/api/erp/equipos" ||
+                // Las unidades para elegir en Checklists, Órdenes de trabajo e IPERC: salen del
+                // maestro (Flota o Mantenimiento), no de /api/erp/equipos, que es solo de Flota.
+                // Sin esta regla esos selectores quedan vacíos sin señal.
+                /^\/api\/erp\/(checklists|ordenes_trabajo|iperc)\/unidades$/.test(url.pathname) ||
                 /^\/api\/erp\/checklists\/plantillas(\/\d+)?$/.test(url.pathname) ||
                 // IPERC reutiliza este mismo caché: solo lectura del
                 // catálogo de líneas base aprobadas, no participa de la

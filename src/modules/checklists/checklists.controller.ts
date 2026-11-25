@@ -2,7 +2,7 @@
 
 import { Request, Response } from "express";
 import { withTenant } from "../../server/config/database";
-import { tieneModulo } from "../../server/shared/utils/modulos";
+import { tieneUnidades } from "../../server/shared/utils/modulos";
 import { getTenantId } from "../../server/shared/utils/request";
 import {
   parsePaginacion,
@@ -102,7 +102,7 @@ export const ChecklistsController = {
       const tenantId = getTenantId(req);
       const paginacion = parseCursorPaginacion(req.query);
       const filas = await withTenant(tenantId, (client) =>
-        ChecklistsService.getAll(client, tenantId, paginacion, tieneModulo(req.usuario, "flota"))
+        ChecklistsService.getAll(client, tenantId, paginacion, tieneUnidades(req.usuario))
       );
       res.json(armarRespuestaCursor(filas, paginacion.pageSize));
     } catch {
@@ -118,7 +118,7 @@ export const ChecklistsController = {
           client,
           tenantId,
           Number(req.params.id),
-          tieneModulo(req.usuario, "flota")
+          tieneUnidades(req.usuario)
         )
       );
       if (!checklist) {
@@ -135,9 +135,9 @@ export const ChecklistsController = {
     try {
       const tenantId = getTenantId(req);
       const data = req.validatedBody as CrearChecklistInput;
-      // La unidad viene de Flota: sin ese módulo el checklist se identifica por el texto
+      // La unidad viene del maestro (Flota o Mantenimiento): sin ninguno de los dos el checklist se identifica por el texto
       // (`opcionales` en registry.ts). Se rechaza en vez de ignorarla, para que el cliente se entere.
-      const conUnidades = tieneModulo(req.usuario, "flota");
+      const conUnidades = tieneUnidades(req.usuario);
       if (data.equipo_id !== undefined && !conUnidades) {
         res.status(400).json({
           message: "Esta empresa no tiene Registro de unidades: escribe el activo o lugar en texto",
