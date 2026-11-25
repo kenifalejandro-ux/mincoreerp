@@ -116,8 +116,11 @@ export function useImportacionExcel<T>({
     // onChange (el value no cambió) -- justo lo que querría hacer alguien
     // que corrigió su planilla y la vuelve a subir con el mismo nombre.
     e.target.value = "";
-    if (!file) return;
+    if (file) leerArchivo(file);
+  };
 
+  /** Lee un archivo que ya se tiene (por ejemplo uno soltado en una zona de arrastre). */
+  const leerArchivo = (file: File) => {
     limpiarMensajes();
     setCargando(true);
 
@@ -196,6 +199,7 @@ export function useImportacionExcel<T>({
     resultado,
     filasPendientes,
     handleFile,
+    leerArchivo,
     confirmar,
     cancelar,
     limpiarMensajes,

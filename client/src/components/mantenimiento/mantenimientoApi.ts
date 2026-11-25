@@ -93,5 +93,17 @@ export interface ResumenMantenimiento {
   alquilados: number;
   sin_area: number;
   areas: AreaMantenimiento[];
+  /** Unidades que registró Operaciones (Flota) y Mantenimiento aún no completó. 0 sin Flota. */
+  por_importar: number;
 }
 export const resumenMantenimiento = () => leer<ResumenMantenimiento>("/resumen");
+
+/** Las unidades de Operaciones sin completar: comparten el maestro de equipos, solo les falta su área y su propiedad. */
+export const listarPendientes = () =>
+  leer<{ equipos: EquipoMantenimiento[] }>("/equipos/pendientes").then((d) => d.equipos);
+/** Les da el área y la propiedad. Repetirla no hace nada (devuelve 0 completadas). */
+export const completarEquipos = (datos: {
+  ids: number[];
+  propiedad: "propia" | "alquilada";
+  area_id: number | null;
+}) => escribir<{ completados: number; ids: number[] }>("POST", "/equipos/completar", datos);

@@ -3,7 +3,7 @@
  * El ecosistema «Gestión de mantenimiento» (M1, etapa 1), por navegador, con una empresa que tiene SOLO el
  * módulo `mantenimiento` (regla de autonomía): sin Flota, Checklists, Órdenes de trabajo ni Almacén.
  *
- * 1. Abre desde el menú del ERP, con su propio menú y su Centro de control.
+ * 1. Abre desde el menú del ERP, con su propio menú y su Centro de mantenimiento.
  * 2. Equipos se abre, dice que todavía no hay equipos y la dirección es /mantenimiento/equipos; F5 se queda ahí.
  * 3. Con un solo módulo no hay ERP al que volver: no hay botón «Volver al ERP».
  * 4. Una empresa que no tiene el módulo no ve la entrada ni entra escribiendo la dirección.
@@ -40,10 +40,12 @@ test("con solo el módulo Mantenimiento, el ecosistema abre y lista sus equipos"
   // Con un solo módulo la app puede abrir directo dentro del ecosistema o dejar la entrada en el menú del ERP.
   if (!(await menu.isVisible())) {
     await entrada.click();
-    await page.getByRole("button", { name: "Centro de control" }).click();
+    await page.getByRole("button", { name: "Centro de mantenimiento" }).click();
   }
   await expect(menu).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByRole("heading", { name: "Centro de control", level: 1 })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /^(Buenos días|Buenas tardes|Buenas noches)$/, level: 1 })
+  ).toBeVisible();
   await expect(page).toHaveURL(/\/mantenimiento$/);
 
   // Equipos: vacío, con su propia dirección.
@@ -61,7 +63,7 @@ test("con solo el módulo Mantenimiento, el ecosistema abre y lista sus equipos"
   await expect(page).toHaveURL(/\/mantenimiento\/equipos$/);
 
   // Sin equipos, el Centro invita a registrarlos y lleva a Equipos.
-  await menu.getByRole("button", { name: "Centro de control" }).click();
+  await menu.getByRole("button", { name: "Centro de mantenimiento" }).click();
   await expect(page.getByRole("heading", { name: "Todavía no hay equipos" })).toBeVisible();
   await page.getByRole("button", { name: "Ir a Equipos" }).click();
   await expect(page.getByRole("heading", { name: "Equipos", level: 1 })).toBeVisible();

@@ -20,10 +20,12 @@ import { validate, validateQuery } from "../../server/middleware/validate";
 import {
   actualizarEquipoMantenimientoSchema,
   crearAreaMantenimientoSchema,
+  completarEquiposMantenimientoSchema,
   crearEquipoMantenimientoSchema,
   importarEquiposMantenimientoSchema,
   quitarEquipoMantenimientoSchema,
   type ActualizarEquipoMantenimientoInput,
+  type CompletarEquiposMantenimientoInput,
   type CrearAreaMantenimientoInput,
   type CrearEquipoMantenimientoInput,
   type ImportarEquiposMantenimientoInput,
@@ -128,6 +130,43 @@ router.post(
       contexto: contextoAuditoriaModulo(req),
     });
     res.status(201).json(resultado);
+  })
+);
+
+// «Desde Operaciones»: las unidades que registró Flota y Mantenimiento aún no completó. ANTES de /:id.
+router.get(
+  "/equipos/pendientes",
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    res.json({
+      equipos: await withTenant(tenantId, (client) =>
+        service.pendientesDeOperaciones(client, tenantId)
+      ),
+    });
+  })
+);
+
+router.post(
+  "/equipos/completar",
+  escribe,
+  validate(completarEquiposMantenimientoSchema),
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    const data = req.validatedBody as CompletarEquiposMantenimientoInput;
+    const resultado = await withTenant(tenantId, (client) =>
+      service.completarEquipos(client, tenantId, req.usuario!.id, data)
+    );
+    // Solo ids y cuántas: no se copian los datos de las unidades.
+    if (resultado.completados > 0) {
+      await registrarAuditoria({
+        accion: "mantenimiento.equipos_completar",
+        tenantId,
+        usuarioId: req.usuario!.id,
+        detalle: { cantidad: resultado.completados, ids: resultado.ids },
+        contexto: contextoAuditoriaModulo(req),
+      });
+    }
+    res.json(resultado);
   })
 );
 

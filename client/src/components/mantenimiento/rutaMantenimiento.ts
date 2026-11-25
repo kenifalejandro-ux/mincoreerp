@@ -3,7 +3,7 @@
 // La dirección (URL) del ecosistema «Gestión de mantenimiento». Una por sección, para que F5 deje a la
 // persona donde estaba, el botón «atrás» funcione y un enlace se pueda guardar o mandar:
 //
-//   /mantenimiento            Centro de control
+//   /mantenimiento            Centro de mantenimiento
 //   /mantenimiento/equipos    Equipos
 //
 // Lógica pura, sin React ni `window`. Una dirección que no se entiende se lee como el Centro, nunca rompe.
@@ -24,7 +24,7 @@ const SLUG_DE_SECCION: Record<SeccionDeRuta, string> = {
 };
 
 const ETIQUETA_DE_SECCION: Record<SeccionDeRuta, string> = {
-  centro: "Centro de control",
+  centro: "Centro de mantenimiento",
   equipos: "Equipos",
 };
 

@@ -5,7 +5,7 @@
 // equiposMantenimiento.ts). Admin y operador registran, editan y quitan equipos y manejan las áreas; Lectura
 // solo mira. El estado de cada unidad (Detenida, En mantenimiento, Operativa) llega cuando
 // existan las órdenes de trabajo y los checklists: hoy no se inventa.
-import { MapPin, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { ChevronRight, MapPin, Pencil, Plus, Search, Trash2, Truck, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import AreasDeMantenimiento from "./AreasDeMantenimiento";
@@ -25,6 +25,7 @@ import {
   mensajeDeImportacion,
   type FilaImportacionEquipo,
 } from "./importarEquipos";
+import ImportarEquiposModal, { type PestaniaDeImportar } from "./ImportarEquiposModal";
 import {
   listarAreas,
   listarEquipos,
@@ -36,7 +37,6 @@ import { parsearPlanillaEquipos } from "./parsearPlanillaEquipos";
 import QuitarEquipo from "./QuitarEquipo";
 import {
   BannerImportacion,
-  BotonImportarExcel,
   ModalVistaPreviaImportacion,
   type ColumnaVistaPreviaExcel,
 } from "../comunes/ImportarExcel";
@@ -46,17 +46,32 @@ import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 const control =
   "h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#84cc16]";
 
-export default function EquiposMantenimiento() {
+export default function EquiposMantenimiento({
+  busquedaInicial = "",
+  porImportar = 0,
+  onCambio,
+}: {
+  /** Texto con el que abre el buscador de la lista (viene del buscador de la barra superior). */
+  busquedaInicial?: string;
+  /** Unidades de Operaciones por completar (0 sin Flota). */
+  porImportar?: number;
+  /** Algo cambió en los equipos: el ecosistema vuelve a leer su resumen (el contador del menú). */
+  onCambio?: () => void;
+}) {
   const [datos, setDatos] = useState<ListaDeEquipos | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [areasLista, setAreasLista] = useState<AreaMantenimiento[]>([]);
-  const [filtros, setFiltros] = useState<FiltrosDeEquipos>(FILTROS_VACIOS);
+  const [filtros, setFiltros] = useState<FiltrosDeEquipos>({
+    ...FILTROS_VACIOS,
+    busqueda: busquedaInicial,
+  });
   const puedeEscribir = usePuedeEscribir("mantenimiento");
   // Lo que hay abierto encima de la lista: el formulario (nuevo o de un equipo), quitar o las áreas.
   const [ventana, setVentana] = useState<
     | { tipo: "formulario"; equipo?: EquipoMantenimiento }
     | { tipo: "quitar"; equipo: EquipoMantenimiento }
     | { tipo: "areas" }
+    | { tipo: "importar"; pestania: PestaniaDeImportar }
     | null
   >(null);
 
@@ -67,9 +82,10 @@ export default function EquiposMantenimiento() {
       .then(([d, a]) => {
         setDatos(d);
         setAreasLista(a);
+        onCambio?.();
       })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : "Error"));
-  }, []);
+  }, [onCambio]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -135,7 +151,13 @@ export default function EquiposMantenimiento() {
             <MapPin size={16} /> Áreas
           </button>
           {puedeEscribir && (
-            <BotonImportarExcel cargando={importacion.cargando} onFile={importacion.handleFile} />
+            <button
+              onClick={() => setVentana({ tipo: "importar", pestania: "excel" })}
+              disabled={importacion.cargando}
+              className="flex items-center gap-2 h-10 px-4 rounded-lg border border-slate-300 bg-white text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              <Upload size={16} /> {importacion.cargando ? "Leyendo..." : "Importar"}
+            </button>
           )}
           {puedeEscribir && (
             <button
@@ -149,6 +171,34 @@ export default function EquiposMantenimiento() {
       </header>
 
       <BannerImportacion error={importacion.error} resultado={importacion.resultado} />
+
+      {puedeEscribir && porImportar > 0 && (
+        <section
+          aria-label="Unidades de Operaciones por completar"
+          className="flex flex-wrap items-center gap-4 rounded-xl border border-blue-200 bg-blue-50 px-5 py-4"
+        >
+          <span className="w-10 h-10 rounded-xl bg-white text-blue-600 grid place-items-center shrink-0">
+            <Truck size={18} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <b className="block text-sm text-slate-900">
+              {porImportar === 1
+                ? "1 unidad de Operaciones por completar"
+                : `${porImportar} unidades de Operaciones por completar`}
+            </b>
+            <span className="text-xs text-slate-600">
+              Ya están en esta lista; falta darles su área y su propiedad. La ficha completa sigue
+              en Operaciones.
+            </span>
+          </div>
+          <button
+            onClick={() => setVentana({ tipo: "importar", pestania: "operaciones" })}
+            className="flex items-center gap-1 h-10 px-4 rounded-lg bg-[#BADC1E] text-[#0A1014] text-sm font-semibold hover:brightness-95"
+          >
+            Revisar e importar <ChevronRight size={16} />
+          </button>
+        </section>
+      )}
 
       <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
         <div className="flex flex-wrap items-center gap-3 p-4 border-b border-slate-200">
@@ -317,6 +367,15 @@ export default function EquiposMantenimiento() {
           confirmando={importacion.importando}
           onConfirmar={importacion.confirmar}
           onCancelar={importacion.cancelar}
+        />
+      )}
+      {ventana?.tipo === "importar" && (
+        <ImportarEquiposModal
+          inicial={ventana.pestania}
+          areas={areasLista}
+          onArchivo={importacion.leerArchivo}
+          onCompletado={() => void cargar()}
+          onCerrar={() => setVentana(null)}
         />
       )}
       {ventana?.tipo === "formulario" && (

@@ -69,3 +69,20 @@ export const importarEquiposMantenimientoSchema = z
     `El archivo supera el máximo de ${MAX_FILAS_IMPORTACION_EQUIPOS} equipos`
   );
 export type ImportarEquiposMantenimientoInput = z.infer<typeof importarEquiposMantenimientoSchema>;
+
+/** Tope de unidades que se completan en una sola vez desde «Desde Operaciones». */
+export const MAX_UNIDADES_A_COMPLETAR = 500;
+
+/** Completar unidades que registró otro módulo (Flota): se les da el área y la propiedad con que
+ *  Mantenimiento las lleva. Lo demás (placa, tipo, marca, lectura) ya está en el maestro y no se copia. */
+export const completarEquiposMantenimientoSchema = z.object({
+  ids: z
+    .array(z.number().int().positive())
+    .min(1, "Elige al menos una unidad")
+    .max(MAX_UNIDADES_A_COMPLETAR, `Máximo ${MAX_UNIDADES_A_COMPLETAR} unidades por vez`),
+  propiedad: camposDelEquipo.propiedad,
+  area_id: camposDelEquipo.area_id,
+});
+export type CompletarEquiposMantenimientoInput = z.infer<
+  typeof completarEquiposMantenimientoSchema
+>;

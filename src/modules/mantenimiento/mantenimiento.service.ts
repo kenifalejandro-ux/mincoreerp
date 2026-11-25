@@ -16,6 +16,7 @@ import type {
 } from "../../server/schemas/mantenimiento.schema";
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { huellaDeRegistro, idempotentInsert } from "../../server/shared/utils/idempotentInsert";
+import { empresaTieneModulo } from "../../server/shared/utils/modulosEmpresa";
 
 export interface FiltrosEquipos {
   /** Busca en placa o código, tipo, marca, modelo y área. */
@@ -361,6 +362,62 @@ export class MantenimientoService {
     ]);
   }
 
+  /**
+   * Las unidades que otro módulo (Flota) registró y Mantenimiento todavía no revisó: equipos activos sin fila
+   * en `mantenimiento_equipo_datos`. Todo equipo que nace en Mantenimiento la trae desde el alta, así que estas
+   * vienen de fuera. Comparten el maestro `equipos`: no hay nada que copiar, solo darles su área y su propiedad.
+   *
+   * Es un dato de Flota: sin ese módulo en la EMPRESA la lista sale vacía (la lectura no se ejecuta aunque las
+   * filas sigan en la base), sin 403 ni pantalla rota.
+   */
+  async pendientesDeOperaciones(client: PoolClient, tenantId: string) {
+    if (!(await empresaTieneModulo(client, tenantId, "flota"))) return [];
+    const r = await client.query<EquipoMantenimiento>(
+      `SELECT ${COLUMNAS_EQUIPO} ${DESDE_EQUIPO}
+        WHERE e.tenant_id = $1 AND e.activo AND d.equipo_id IS NULL
+        ORDER BY lower(e.placa_codigo), e.id`,
+      [tenantId]
+    );
+    return r.rows;
+  }
+
+  /**
+   * Completa unidades de Operaciones: les da el área y la propiedad con que Mantenimiento las lleva. Todo o
+   * nada: si alguna ya no existe (o se quitó) no se completa ninguna. Las que ya estaban completas se omiten,
+   * así un doble clic o un reintento no repite nada ni falla. Devuelve las que de verdad se completaron.
+   */
+  async completarEquipos(
+    client: PoolClient,
+    tenantId: string,
+    usuarioId: string,
+    data: { ids: number[]; propiedad: "propia" | "alquilada"; area_id?: number | null }
+  ): Promise<{ completados: number; ids: number[] }> {
+    await this.validarArea(client, tenantId, data.area_id);
+    const pedidos = [...new Set(data.ids)];
+    const r = await client.query<{ id: number; completo: boolean }>(
+      `SELECT e.id::int AS id, (d.equipo_id IS NOT NULL) AS completo
+         FROM equipos e
+         LEFT JOIN mantenimiento_equipo_datos d ON d.tenant_id = e.tenant_id AND d.equipo_id = e.id
+        WHERE e.tenant_id = $1 AND e.activo AND e.id = ANY($2::int[])`,
+      [tenantId, pedidos]
+    );
+    if (r.rows.length !== pedidos.length) {
+      throw new AppError(404, "Alguna unidad ya no existe: actualiza la lista");
+    }
+    const porCompletar = r.rows.filter((f) => !f.completo).map((f) => f.id);
+    for (const id of porCompletar) {
+      await this.guardarDatos(
+        client,
+        tenantId,
+        usuarioId,
+        id,
+        data.area_id ?? null,
+        data.propiedad
+      );
+    }
+    return { completados: porCompletar.length, ids: porCompletar };
+  }
+
   /** Cuántos equipos tiene la empresa y cómo se reparten por área (para el Centro de control). */
   async resumen(client: PoolClient, tenantId: string) {
     const totales = await client.query<{
@@ -379,7 +436,8 @@ export class MantenimientoService {
       [tenantId]
     );
     const areas = await this.listarAreas(client, tenantId);
-    return { ...totales.rows[0], areas };
+    const por_importar = (await this.pendientesDeOperaciones(client, tenantId)).length;
+    return { ...totales.rows[0], areas, por_importar };
   }
 
   /**
