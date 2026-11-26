@@ -39,6 +39,8 @@ import {
   modulosIntegrados,
   type IconoDeMenu,
 } from "./menuMantenimiento";
+import type { FiltrosDeOrdenes } from "./ordenesMantenimiento";
+import OrdenesMantenimiento from "./OrdenesMantenimiento";
 import {
   esRutaDeMantenimiento,
   leerRuta,
@@ -80,6 +82,11 @@ const NOVEDAD_CHECKLISTS = "mantenimiento-checklists-2026-11";
 const checklistsEsNuevo = () => novedadVigente(Date.now(), undefined, NOVEDAD_CHECKLISTS);
 const marcarChecklistsVisto = () => marcarNovedadVista(Date.now(), undefined, NOVEDAD_CHECKLISTS);
 
+/** La etiqueta «Nuevo» de Órdenes de trabajo, 24 horas desde el primer clic. */
+const NOVEDAD_ORDENES = "mantenimiento-ordenes-2026-11";
+const ordenesEsNuevo = () => novedadVigente(Date.now(), undefined, NOVEDAD_ORDENES);
+const marcarOrdenesVisto = () => marcarNovedadVista(Date.now(), undefined, NOVEDAD_ORDENES);
+
 export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => void }) {
   const { usuario } = useAuth();
   useBarraLima();
@@ -101,9 +108,17 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
     filtros?: Partial<FiltrosDeRegistros>;
     veces: number;
   }>({ veces: 0 });
-  // Escribir la dirección de Checklists sin tener el módulo no abre la pantalla: se ve el Centro.
-  const conChecklists = tieneModulo(usuario, "checklists");
-  const visible: SeccionDeRuta = seccion === "checklists" && !conChecklists ? "centro" : seccion;
+  // Con qué abre Órdenes: filtros desde el Centro o la orden que se tocó en un checklist.
+  const [deOrdenes, setDeOrdenes] = useState<{
+    filtros?: Partial<FiltrosDeOrdenes>;
+    orden?: number;
+    veces: number;
+  }>({ veces: 0 });
+  // Escribir la dirección de un módulo que no se tiene no abre su pantalla: se ve el Centro.
+  const sinModulo =
+    (seccion === "checklists" && !tieneModulo(usuario, "checklists")) ||
+    (seccion === "ordenes" && !tieneModulo(usuario, "ordenes_trabajo"));
+  const visible: SeccionDeRuta = sinModulo ? "centro" : seccion;
 
   // Solo vale la última lectura pedida: una respuesta lenta de antes no pisa a la nueva.
   const ultimaLectura = useRef(0);
@@ -175,6 +190,7 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
   const irA = (id: string) => {
     setEntrada((e) => ({ ...e, area: undefined }));
     setDeRegistros((d) => ({ veces: d.veces }));
+    setDeOrdenes((d) => ({ veces: d.veces }));
     mostrar(esSeccion(id) ? id : "centro");
   };
 
@@ -183,11 +199,16 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
     mostrar("equipos");
   };
 
-  /** Un botón del Centro: abre una sección de aquí o, si es de otro módulo, su pantalla en el ERP. */
+  const abrirOrdenes = (con: { filtros?: Partial<FiltrosDeOrdenes>; orden?: number }) => {
+    setDeOrdenes((d) => ({ ...con, veces: d.veces + 1 }));
+    mostrar("ordenes");
+  };
+
+  /** Un botón del Centro: abre una sección de aquí. */
   const irDesdeElCentro = (destino: DestinoDelCentro) => {
     marcarCentroVisto();
-    if ("modulo" in destino) {
-      window.dispatchEvent(new CustomEvent("mincore:ir-a-pestana", { detail: destino.modulo }));
+    if (destino.seccion === "ordenes") {
+      abrirOrdenes({ filtros: destino.filtros });
     } else if (destino.seccion === "checklists") {
       setDeRegistros((d) => ({ filtros: destino.filtros, veces: d.veces + 1 }));
       mostrar("checklists");
@@ -268,6 +289,7 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
                       if (e.pronto) return;
                       if (e.id === "centro") marcarCentroVisto();
                       if (e.id === "checklists") marcarChecklistsVisto();
+                      if (e.id === "ordenes") marcarOrdenesVisto();
                       irA(e.id);
                     }}
                     disabled={e.pronto}
@@ -298,7 +320,8 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
                       </span>
                     )}
                     {((e.id === "centro" && centroEsNuevo()) ||
-                      (e.id === "checklists" && checklistsEsNuevo())) && (
+                      (e.id === "checklists" && checklistsEsNuevo()) ||
+                      (e.id === "ordenes" && ordenesEsNuevo())) && (
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
                           activo ? "bg-[#0A1014] text-[#BADC1E]" : "bg-[#BADC1E] text-[#0A1014]"
@@ -385,6 +408,15 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
               key={deRegistros.veces}
               filtrosIniciales={deRegistros.filtros}
               resumen={resumen}
+              onCambio={cargarResumen}
+              onVerOrden={(orden) => abrirOrdenes({ orden })}
+            />
+          )}
+          {visible === "ordenes" && (
+            <OrdenesMantenimiento
+              key={deOrdenes.veces}
+              filtrosIniciales={deOrdenes.filtros}
+              ordenInicial={deOrdenes.orden}
               onCambio={cargarResumen}
             />
           )}

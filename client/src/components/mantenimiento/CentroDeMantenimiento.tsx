@@ -51,7 +51,7 @@ export default function CentroDeMantenimiento({
   const ordenes = resumen?.ordenes ?? null;
   const checklists = resumen?.checklists ?? null;
   const aEquipos = () => onIr({ seccion: "equipos" });
-  const aOrdenes = () => onIr({ modulo: "ordenes_trabajo" });
+  const aOrdenes = () => onIr({ seccion: "ordenes" });
 
   return (
     <div className="space-y-5">

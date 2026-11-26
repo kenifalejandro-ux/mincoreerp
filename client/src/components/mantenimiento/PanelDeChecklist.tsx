@@ -34,10 +34,12 @@ export default function PanelDeChecklist({
   id,
   onCerrar,
   onDecidida,
+  onVerOrden,
 }: {
   id: number;
   onCerrar: () => void;
   onDecidida: () => void;
+  onVerOrden: (orden: number) => void;
 }) {
   const { usuario } = useAuth();
   const puedeEscribir = usePuedeEscribir("checklists");
@@ -190,11 +192,7 @@ export default function PanelDeChecklist({
                       </p>
                       <button
                         type="button"
-                        onClick={() =>
-                          window.dispatchEvent(
-                            new CustomEvent("mincore:ir-a-pestana", { detail: "ordenes_trabajo" })
-                          )
-                        }
+                        onClick={() => onVerOrden(c.ordenes_trabajo[0])}
                         className="mt-2 flex min-h-[44px] sm:min-h-9 items-center gap-1.5 text-sm font-semibold text-[#4d7c0f] hover:underline"
                       >
                         Ver órdenes de trabajo <ArrowRight size={15} />
