@@ -101,3 +101,10 @@ export const decidirSalidaSchema = z.object({
   crear_orden: z.boolean().default(false),
 });
 export type DecidirSalidaInput = z.infer<typeof decidirSalidaSchema>;
+
+/** Filtros de la lista de checklists llenados (la paginación y «salida» se leen aparte). */
+export const filtrosDeListaSchema = z.object({
+  q: z.string().trim().max(80).optional(),
+  resultado: z.enum(["bien", "observado", "no_apta"]).optional(),
+});
+export type FiltrosDeListaInput = z.infer<typeof filtrosDeListaSchema>;

@@ -11,7 +11,7 @@ import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { CuotaExcedidaError, verificarCuota } from "../../server/services/platformCuotas.service";
 import { registrarLectura } from "../equipos/equipos.lecturas";
 import { ordenarFallas, pideOrdenAutomatica } from "../ordenes_trabajo/ordenDeHallazgo";
-import { ChecklistsRepository } from "./checklists.repository";
+import { ChecklistsRepository, type FiltrosDeChecklists } from "./checklists.repository";
 import { preguntasCriticas } from "./checklists.criticas";
 
 /** El checklist y lo que arrastra, en la misma transacción: la lectura del medidor y, si falló un punto
@@ -117,8 +117,17 @@ async function dejarLectura(
 }
 
 export const ChecklistsService = {
-  getPlantillas(client: PoolClient, tenantId: string, paginacion: Paginacion) {
-    return ChecklistsRepository.findPlantillas(client, tenantId, paginacion);
+  getPlantillas(
+    client: PoolClient,
+    tenantId: string,
+    paginacion: Paginacion,
+    conUnidades: boolean
+  ) {
+    return ChecklistsRepository.findPlantillas(client, tenantId, paginacion, conUnidades);
+  },
+
+  deHoy(client: PoolClient, tenantId: string) {
+    return ChecklistsRepository.deHoy(client, tenantId);
   },
 
   getPlantilla(client: PoolClient, tenantId: string, id: number) {
@@ -139,15 +148,9 @@ export const ChecklistsService = {
     tenantId: string,
     paginacion: CursorPaginacion,
     conUnidades = true,
-    soloPorAutorizar = false
+    filtros: FiltrosDeChecklists = {}
   ) {
-    return ChecklistsRepository.findAll(
-      client,
-      tenantId,
-      paginacion,
-      conUnidades,
-      soloPorAutorizar
-    );
+    return ChecklistsRepository.findAll(client, tenantId, paginacion, conUnidades, filtros);
   },
 
   getById(client: PoolClient, tenantId: string, id: number, conUnidades = true) {
