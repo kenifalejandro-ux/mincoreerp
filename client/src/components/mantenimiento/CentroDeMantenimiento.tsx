@@ -2,11 +2,12 @@
 //
 // El Centro de mantenimiento, con la disposición de la maqueta aprobada: saludo y botones de acción, las cuatro
 // cifras, «Requieren tu atención», «Estado de la flota», la actividad del turno, las órdenes por tipo y el
-// estado por área. Lo que viene de Checklists u Órdenes de trabajo solo se dibuja si la persona tiene el módulo
+// estado por área. La actividad se lee aparte (ActividadDelTurno.tsx). Lo que viene de Checklists u Órdenes de trabajo solo se dibuja si la persona tiene el módulo
 // (el servidor lo manda en null si no); lo que aún no se construye ocupa su sitio con «Pronto» y no inventa
 // cifras. Las piezas están en PanelesDelCentro.tsx.
 import { CalendarClock, ClipboardCheck, Clock, Plus, Tractor, Truck, Wrench } from "lucide-react";
 
+import ActividadDelTurno from "./ActividadDelTurno";
 import {
   avisosDelCentro,
   fechaLarga,
@@ -18,7 +19,6 @@ import {
 } from "./centroDeMantenimiento";
 import type { ResumenMantenimiento } from "./mantenimientoApi";
 import {
-  ActividadProxima,
   EstadoDeLaFlota,
   EstadoPorArea,
   OrdenesPorTipo,
@@ -166,7 +166,7 @@ export default function CentroDeMantenimiento({
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-4">
-            <ActividadProxima />
+            <ActividadDelTurno />
             {ordenes ? (
               <OrdenesPorTipo delMes={ordenes.del_mes} onVer={aOrdenes} />
             ) : (

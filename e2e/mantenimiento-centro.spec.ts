@@ -10,6 +10,8 @@
  * 4. Lectura mira y no recibe «Asignar».
  * 5. En el celular, con textos largos y muchas unidades, nada se sale de la pantalla.
  *
+ * 6. «Actividad del turno» cuenta cada paso con su efecto; si su lectura falla, avisa y deja reintentar.
+ *
  * Cada test crea su propia empresa (no hay API para borrarlas: la base de los e2e es efímera en CI).
  */
 import { randomBytes } from "node:crypto";
@@ -30,6 +32,7 @@ const irA = (page: Page, seccion: string) =>
 const cifras = (page: Page) => page.getByRole("region", { name: "Resumen del mantenimiento" });
 const panel = (page: Page, titulo: string) =>
   page.getByRole("heading", { name: titulo }).locator("xpath=ancestor::section[1]");
+const actividad = (page: Page) => panel(page, "Actividad del turno");
 const area = (page: Page, nombre: string) =>
   page.getByRole("button", { name: new RegExp(`^${nombre} \\d+ %`) });
 /** La lista se lee al abrir la sección: se sale y se vuelve (recargar pediría otra vez la clave). */
@@ -137,6 +140,14 @@ test("las cifras y los avisos salen de datos reales y cada botón lleva a donde 
   await expect(area(page, "Cantera")).toContainText("0 %");
   await expect(area(page, "Cantera")).toContainText("2 equipos · 2 detenidos");
 
+  const pasos = actividad(page).getByRole("listitem");
+  await expect(pasos).toHaveCount(3);
+  await expect(pasos).toContainText([
+    "Espera autorización para salir",
+    "Falta asignar mecánico: la unidad sigue detenida",
+    `Generó la OT #${orden}`,
+  ]);
+
   // ── Un área abre Equipos filtrado; «atrás» vuelve; por el menú, sin filtro ─
   const filas = page.locator("tbody tr");
   await area(page, "Cantera").click();
@@ -171,6 +182,7 @@ test("las cifras y los avisos salen de datos reales y cada botón lleva a donde 
   await expect(cifras(page)).toBeVisible({ timeout: 20_000 });
   await expect(atencion).not.toContainText("sin mecánico");
   await expect(cifras(page)).toContainText("Órdenes abiertas1");
+  await expect(actividad(page)).not.toContainText("Falta asignar mecánico");
 
   // ── Los botones de checklists abren su módulo ─────────────────────────
   await atencion.getByRole("button", { name: "Ver checklists" }).first().click();
@@ -224,6 +236,12 @@ for (const caso of [
     await expect(page.getByRole("button", { name: "Ver checklists" })).toHaveCount(caso.ck ? 1 : 0);
     await expect(page.getByRole("button", { name: "Asignar" })).toHaveCount(caso.ot ? 1 : 0);
     await expect(page.getByText("todas figuran operativas")).toHaveCount(detenida ? 0 : 1);
+    await expect(actividad(page).getByRole("listitem")).toHaveCount(detenida ? 1 : 0);
+    if (!detenida)
+      await expect(actividad(page)).toContainText("Sin movimientos en los últimos 7 días.");
+    if (caso.ck) await expect(actividad(page)).toContainText("La unidad no puede salir");
+    if (caso.ot) await expect(actividad(page)).toContainText("OT #");
+    if (!caso.ot) await expect(actividad(page)).not.toContainText("OT #");
     await expect(page.getByRole("alert")).toHaveCount(0);
     expect(fallos).toEqual([]);
   });
@@ -292,6 +310,32 @@ test("una lectura fallida no muestra ceros y una lenta de antes no pisa a la nue
   await (await llega).finished();
   await page.waitForTimeout(500);
   await expect(cifras(page)).toContainText("2 de 2");
+});
+
+test("si la actividad no se puede leer, avisa sin tumbar el Centro y deja reintentar", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(180_000);
+  const modulos = ["mantenimiento", "checklists"];
+  const placa = `ACT-${randomBytes(2).toString("hex").toUpperCase()}`;
+  const empresa = await crearEmpresaSola(request, modulos, "centro-actividad");
+  const ruta = "**/api/erp/mantenimiento/actividad";
+  await page.route(ruta, (r) => r.fulfill({ status: 500, body: "{}" }));
+  await alCentro(page, empresa, modulos, async () => {
+    const { id } = await equipo(page, placa);
+    await llenar(page, (await formato(page)).id, { equipo_id: id });
+  });
+
+  await expect(actividad(page).getByRole("alert")).toContainText("No se pudo leer la actividad");
+  await expect(actividad(page)).not.toContainText("Sin movimientos");
+  await expect(cifras(page)).toContainText("1 de 1");
+  await page.unroute(ruta);
+  await actividad(page).getByRole("button", { name: "Reintentar" }).click();
+  await expect(actividad(page).getByRole("listitem")).toContainText(["Checklist sin fallas"]);
+  await expect(actividad(page).getByRole("listitem")).toContainText([placa]);
+  await expect(actividad(page).getByText(/^Hoy \d{2}:\d{2}$/)).toBeVisible();
+  await expect(actividad(page).getByRole("alert")).toHaveCount(0);
 });
 
 test("Lectura ve el Centro y recibe «Ver órdenes», no «Asignar»", async ({ page, request }) => {
@@ -369,6 +413,7 @@ test("en el celular, con textos largos y muchas unidades, nada se sale", async (
   for (const width of [393, 1366]) {
     await page.setViewportSize({ width, height: 850 });
     await expect(panel(page, "Requieren tu atención")).toBeVisible();
+    await expect(actividad(page).getByRole("listitem")).toHaveCount(3);
     await expect
       .poll(() =>
         page.evaluate(

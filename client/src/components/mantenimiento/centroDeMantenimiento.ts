@@ -153,6 +153,15 @@ export function avisosDelCentro(
   return avisos;
 }
 
+export type Tono = "green" | "amber" | "red" | "blue";
+/** El recuadro de color detrás de un ícono. */
+export const TONOS: Record<Tono, string> = {
+  green: "bg-emerald-50 text-emerald-600",
+  amber: "bg-amber-50 text-amber-600",
+  red: "bg-red-50 text-red-600",
+  blue: "bg-blue-50 text-blue-600",
+};
+
 export type TonoDeArea = "green" | "amber" | "red";
 
 /** Verde si cumple la meta, ámbar si le faltan hasta 15 puntos, rojo si le faltan más. */
