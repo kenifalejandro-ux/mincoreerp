@@ -27,6 +27,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import BarraSuperiorMantenimiento from "./BarraSuperiorMantenimiento";
 import type { DestinoDelCentro } from "./centroDeMantenimiento";
 import CentroDeMantenimiento from "./CentroDeMantenimiento";
+import type { FiltrosDeRegistros } from "./checklistsMantenimiento";
+import ChecklistsMantenimiento from "./ChecklistsMantenimiento";
 import ConfiguracionMantenimiento from "./ConfiguracionMantenimiento";
 import EquiposMantenimiento from "./EquiposMantenimiento";
 import { resumenMantenimiento, type ResumenMantenimiento } from "./mantenimientoApi";
@@ -46,6 +48,7 @@ import {
   type SeccionDeRuta,
 } from "./rutaMantenimiento";
 import { useAuth } from "../../context/AuthContext";
+import { tieneModulo } from "../../modules/tieneModulo";
 import { useBarraLima } from "../comunes/useBarraLima";
 import { marcarNovedadVista, novedadVigente } from "../controlTv/novedad";
 
@@ -72,6 +75,11 @@ const NOVEDAD_CENTRO = "mantenimiento-centro-2026-11";
 const centroEsNuevo = () => novedadVigente(Date.now(), undefined, NOVEDAD_CENTRO);
 const marcarCentroVisto = () => marcarNovedadVista(Date.now(), undefined, NOVEDAD_CENTRO);
 
+/** La etiqueta «Nuevo» de Checklists, 24 horas desde el primer clic. */
+const NOVEDAD_CHECKLISTS = "mantenimiento-checklists-2026-11";
+const checklistsEsNuevo = () => novedadVigente(Date.now(), undefined, NOVEDAD_CHECKLISTS);
+const marcarChecklistsVisto = () => marcarNovedadVista(Date.now(), undefined, NOVEDAD_CHECKLISTS);
+
 export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => void }) {
   const { usuario } = useAuth();
   useBarraLima();
@@ -87,6 +95,15 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
     texto: "",
     veces: 0,
   });
+
+  // Con qué filtros abre Checklists cuando se llega desde un aviso del Centro.
+  const [deRegistros, setDeRegistros] = useState<{
+    filtros?: Partial<FiltrosDeRegistros>;
+    veces: number;
+  }>({ veces: 0 });
+  // Escribir la dirección de Checklists sin tener el módulo no abre la pantalla: se ve el Centro.
+  const conChecklists = tieneModulo(usuario, "checklists");
+  const visible: SeccionDeRuta = seccion === "checklists" && !conChecklists ? "centro" : seccion;
 
   // Solo vale la última lectura pedida: una respuesta lenta de antes no pisa a la nueva.
   const ultimaLectura = useRef(0);
@@ -157,6 +174,7 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
   /** Ir por el menú: Equipos abre sin el área que se haya tocado antes. */
   const irA = (id: string) => {
     setEntrada((e) => ({ ...e, area: undefined }));
+    setDeRegistros((d) => ({ veces: d.veces }));
     mostrar(esSeccion(id) ? id : "centro");
   };
 
@@ -168,10 +186,12 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
   /** Un botón del Centro: abre una sección de aquí o, si es de otro módulo, su pantalla en el ERP. */
   const irDesdeElCentro = (destino: DestinoDelCentro) => {
     marcarCentroVisto();
-    if ("seccion" in destino) irA(destino.seccion);
-    else {
+    if ("modulo" in destino) {
       window.dispatchEvent(new CustomEvent("mincore:ir-a-pestana", { detail: destino.modulo }));
-    }
+    } else if (destino.seccion === "checklists") {
+      setDeRegistros((d) => ({ filtros: destino.filtros, veces: d.veces + 1 }));
+      mostrar("checklists");
+    } else irA(destino.seccion);
   };
 
   const grupos = gruposDelMenu(usuario);
@@ -239,7 +259,7 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
               </p>
               {g.entradas.map((e) => {
                 const Icono = ICONOS[e.icono];
-                const activo = !e.pronto && seccion === e.id;
+                const activo = !e.pronto && visible === e.id;
                 const insignia = insigniaDe(e.id, resumen?.por_importar ?? 0);
                 return (
                   <button
@@ -247,6 +267,7 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
                     onClick={() => {
                       if (e.pronto) return;
                       if (e.id === "centro") marcarCentroVisto();
+                      if (e.id === "checklists") marcarChecklistsVisto();
                       irA(e.id);
                     }}
                     disabled={e.pronto}
@@ -276,7 +297,8 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
                         Pronto
                       </span>
                     )}
-                    {e.id === "centro" && centroEsNuevo() && (
+                    {((e.id === "centro" && centroEsNuevo()) ||
+                      (e.id === "checklists" && checklistsEsNuevo())) && (
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
                           activo ? "bg-[#0A1014] text-[#BADC1E]" : "bg-[#BADC1E] text-[#0A1014]"
@@ -346,7 +368,7 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
 
       <main className="pt-16 lg:pl-64">
         <div className="p-4 sm:p-6 lg:p-8 max-w-[1500px]">
-          {seccion === "centro" && (
+          {visible === "centro" && (
             <CentroDeMantenimiento
               resumen={resumen}
               error={errorDelResumen}
@@ -357,8 +379,16 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
               }}
             />
           )}
-          {seccion === "configuracion" && <ConfiguracionMantenimiento />}
-          {seccion === "equipos" && (
+          {visible === "configuracion" && <ConfiguracionMantenimiento />}
+          {visible === "checklists" && (
+            <ChecklistsMantenimiento
+              key={deRegistros.veces}
+              filtrosIniciales={deRegistros.filtros}
+              resumen={resumen}
+              onCambio={cargarResumen}
+            />
+          )}
+          {visible === "equipos" && (
             <EquiposMantenimiento
               key={entrada.veces}
               busquedaInicial={entrada.texto}

@@ -155,7 +155,7 @@ export default function CentroDeMantenimiento({
                 nota={notaDeSinChecklist(checklists.sin_checklist_hoy.total)}
                 Icono={ClipboardCheck}
                 tono="blue"
-                onClick={() => onIr({ modulo: "checklists" })}
+                onClick={() => onIr({ seccion: "checklists" })}
               />
             )}
           </section>

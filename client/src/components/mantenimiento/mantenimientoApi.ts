@@ -1,6 +1,11 @@
 // client/src/components/mantenimiento/mantenimientoApi.ts
 //
 // Lectura del ecosistema «Gestión de mantenimiento» (/api/erp/mantenimiento).
+import type {
+  ChecklistsDeHoy,
+  DetalleDeChecklist,
+  RegistroDeChecklist,
+} from "./checklistsMantenimiento";
 import { apiFetch } from "../../services/apiClient";
 
 export interface EquipoMantenimiento {
@@ -212,3 +217,20 @@ export type Movimiento =
   | MovimientoDeOrden;
 export const actividadDelTurno = () =>
   leer<{ movimientos: Movimiento[] }>("/actividad").then((d) => d.movimientos);
+
+// ── Checklists (datos del módulo Checklists) ────────────────────────────
+async function leerChecklists<T>(ruta: string): Promise<T> {
+  const res = await apiFetch(`/api/erp/checklists${ruta}`);
+  if (!res.ok) throw new Error(await mensajeDeError(res));
+  return (await res.json()) as T;
+}
+export const listarRegistros = (consulta: string) =>
+  leerChecklists<{
+    data: RegistroDeChecklist[];
+    pagination: { nextCursor: number | null; hasMore: boolean };
+  }>(consulta).then((r) => ({
+    filas: r.data,
+    siguiente: r.pagination.hasMore ? r.pagination.nextCursor : null,
+  }));
+export const registrosDeHoy = () => leerChecklists<ChecklistsDeHoy>("/hoy");
+export const leerRegistro = (id: number) => leerChecklists<DetalleDeChecklist>(`/${id}`);
