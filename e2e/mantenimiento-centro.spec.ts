@@ -117,6 +117,12 @@ test("las cifras y los avisos salen de datos reales y cada botón lleva a donde 
     const f = await formato(page);
     orden = (await llenar(page, f.id, { equipo_id: a.id }, "Frenos")).orden_trabajo_id;
     await llenar(page, f.id, { equipo_id: b.id }, "Luces");
+    await crear(page, "/api/erp/usuarios", {
+      nombre: `Mecánico ${marca}`,
+      dni: `95${randomBytes(3).readUIntBE(0, 3).toString().padStart(6, "0").slice(0, 6)}`,
+      password: `Mecanico-${marca}-9x`,
+      rol: "mecanico",
+    });
   });
 
   // ── Cifras, atención, flota, órdenes y áreas ──────────────────────────
@@ -172,12 +178,22 @@ test("las cifras y los avisos salen de datos reales y cada botón lleva a donde 
   await expect(filas).toHaveCount(3);
   await irA(page, "Centro de mantenimiento");
 
-  // ── «Asignar» abre las órdenes; al asignar y volver, el aviso se va ────
+  // ── «Asignar» abre las órdenes sin asignar; al asignar y volver, el aviso se va ─
   await atencion.getByRole("button", { name: "Asignar" }).click();
-  const asignado = page.getByRole("combobox", { name: `Reasignar orden de trabajo #${orden}` });
-  await expect(asignado).toBeVisible({ timeout: 20_000 });
-  await asignado.selectOption({ index: 1 });
-  await expect(asignado).not.toHaveValue("");
+  await expect(page).toHaveURL(/\/mantenimiento\/ordenes$/);
+  await expect(page.getByRole("combobox", { name: "Mecánico", exact: true })).toHaveValue(
+    "sin_asignar"
+  );
+  await page.getByRole("button", { name: `Ver la orden ${orden}` }).click();
+  const detalle = page.getByRole("dialog", { name: "Detalle de la orden" });
+  await detalle.getByRole("button", { name: "Asignar mecánico" }).click();
+  const ventana = page.getByRole("dialog", { name: "Asignar mecánico" });
+  await ventana.getByRole("checkbox", { name: new RegExp(`Mecánico ${marca}`) }).click();
+  await ventana.getByRole("button", { name: `Asignar a Mecánico ${marca}` }).click();
+  await expect(detalle).toContainText("Lista para iniciar");
+  await detalle.getByRole("button", { name: "Cerrar el panel" }).click();
+  // Ya asignada, sale del filtro «Sin asignar».
+  await expect(filas).toContainText(["Sin resultados"]);
   await page.goBack();
   await expect(cifras(page)).toBeVisible({ timeout: 20_000 });
   await expect(atencion).not.toContainText("sin mecánico");
@@ -384,9 +400,10 @@ test("Lectura ve el Centro y recibe «Ver órdenes», no «Asignar»", async ({ 
   await expect(cifras(page)).toContainText("Órdenes abiertas1", { timeout: 20_000 });
   await expect(page.getByRole("button", { name: "Asignar" })).toHaveCount(0);
   await page.getByRole("button", { name: "Ver órdenes", exact: true }).click();
-  await expect(
-    page.getByRole("combobox", { name: `Reasignar orden de trabajo #${orden.id}` })
-  ).toBeDisabled({ timeout: 20_000 });
+  await page.getByRole("button", { name: `Ver la orden ${orden.id}` }).click();
+  const detalle = page.getByRole("dialog", { name: "Detalle de la orden" });
+  await expect(detalle).toContainText("Falta asignar un mecánico");
+  await expect(detalle.getByRole("button", { name: "Asignar mecánico" })).toHaveCount(0);
 });
 
 test("en el celular, con textos largos y muchas unidades, nada se sale", async ({

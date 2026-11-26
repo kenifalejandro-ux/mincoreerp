@@ -7,6 +7,12 @@ import type {
   RegistroDeChecklist,
 } from "./checklistsMantenimiento";
 import type { FilaDeFormato } from "./formatosMantenimiento";
+import type {
+  CifrasDeOrdenes,
+  DetalleDeOrdenEnOficina,
+  FilaDeOrden,
+  MecanicoConCarga,
+} from "./ordenesMantenimiento";
 import { apiFetch } from "../../services/apiClient";
 
 export interface EquipoMantenimiento {
@@ -240,3 +246,45 @@ export const listarFormatos = () =>
   leerChecklists<{ data: FilaDeFormato[]; pagination: { total: number } }>(
     "/plantillas?pageSize=200"
   ).then((r) => ({ filas: r.data, total: r.pagination.total }));
+
+// ── Órdenes de trabajo (datos del módulo Órdenes de trabajo) ────────────
+async function pedirOrdenes<T>(ruta: string, init?: RequestInit): Promise<T> {
+  const res = await apiFetch(`/api/erp/ordenes_trabajo${ruta}`, init);
+  if (!res.ok) throw new Error(await mensajeDeError(res));
+  return (await res.json()) as T;
+}
+export const listarOrdenes = (consulta: string) =>
+  pedirOrdenes<{ data: FilaDeOrden[]; pagination: { total: number; totalPages: number } }>(
+    consulta
+  ).then((r) => ({
+    filas: r.data,
+    total: r.pagination.total,
+    paginas: Math.max(1, r.pagination.totalPages),
+  }));
+export const cifrasDeOrdenes = () => pedirOrdenes<CifrasDeOrdenes>("/resumen");
+export const leerOrden = (id: number) => pedirOrdenes<DetalleDeOrdenEnOficina>(`/${id}`);
+export const listarMecanicos = () => pedirOrdenes<MecanicoConCarga[]>("/mecanicos");
+/** Solo con señal: asignar no queda en la cola del equipo. */
+export async function asignarMecanico(id: number, asignadoA: string | null) {
+  try {
+    return await pedirOrdenes<{ asignado_a: string | null }>(`/${id}/asignado`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asignado_a: asignadoA }),
+    });
+  } catch (e) {
+    if (e instanceof TypeError) {
+      throw new Error("Sin conexión: asignar un mecánico necesita señal.", { cause: e });
+    }
+    throw e;
+  }
+}
+/** El estado del IPERC vinculado (datos del módulo IPERC); null si no se pudo leer. */
+export async function estadoDelIperc(id: number): Promise<string | null> {
+  try {
+    const res = await apiFetch(`/api/erp/iperc/${id}`);
+    return res.ok ? ((await res.json()).estado ?? null) : null;
+  } catch {
+    return null;
+  }
+}

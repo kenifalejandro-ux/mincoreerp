@@ -531,7 +531,7 @@ describe("Centro: lo que requiere atención", () => {
       ["sin-area", "amber", "Ver equipos"],
     ]);
     expect(avisos.map((a) => a.destino)).toEqual([
-      { modulo: "ordenes_trabajo" },
+      { seccion: "ordenes", filtros: { mecanico: "sin_asignar" } },
       { seccion: "checklists", filtros: { resultado: "no_apta" } },
       { seccion: "checklists", filtros: { porAutorizar: true } },
       { seccion: "equipos" },

@@ -60,12 +60,15 @@ export default function ChecklistsMantenimiento({
   filtrosIniciales,
   resumen,
   onCambio,
+  onVerOrden,
 }: {
   /** Con qué abre filtrada (viene de un aviso del Centro). */
   filtrosIniciales?: Partial<FiltrosDeRegistros>;
   resumen: ResumenMantenimiento | null;
   /** Se decidió una salida: el ecosistema vuelve a leer su resumen. */
   onCambio: () => void;
+  /** Abrir una orden en la sección Órdenes de trabajo del ecosistema. */
+  onVerOrden: (orden: number) => void;
 }) {
   const { usuario } = useAuth();
   const conOrdenes = tieneModulo(usuario, "ordenes_trabajo");
@@ -373,6 +376,7 @@ export default function ChecklistsMantenimiento({
           key={abierto}
           id={abierto}
           onCerrar={() => setAbierto(null)}
+          onVerOrden={onVerOrden}
           onDecidida={() => {
             cargar();
             cargarHoy();

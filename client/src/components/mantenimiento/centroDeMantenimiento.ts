@@ -5,6 +5,7 @@
 import type { FiltrosDeRegistros } from "./checklistsMantenimiento";
 import { ESTADOS, SIN_AREA } from "./equiposMantenimiento";
 import type { AreaDelCentro, Aviso, ResumenMantenimiento } from "./mantenimientoApi";
+import { SIN_ASIGNAR, type FiltrosDeOrdenes } from "./ordenesMantenimiento";
 
 /** El saludo del Centro según la hora (0-23). */
 export function saludoSegunHora(hora: number): string {
@@ -40,11 +41,11 @@ export const notaDeSinChecklist = (faltan: number) =>
     ? plural(faltan, "unidad sin checklist", "unidades sin checklist")
     : "Ninguna pendiente";
 
-/** A dónde lleva un aviso: a una sección del ecosistema o a un módulo del ERP. */
+/** A dónde lleva un aviso: a una sección del ecosistema. */
 export type DestinoDelCentro =
   | { seccion: "equipos" }
   | { seccion: "checklists"; filtros?: Partial<FiltrosDeRegistros> }
-  | { modulo: "ordenes_trabajo" };
+  | { seccion: "ordenes"; filtros?: Partial<FiltrosDeOrdenes> };
 
 export interface AvisoDelCentro {
   id: string;
@@ -94,7 +95,7 @@ export function avisosDelCentro(
         "; "
       ),
       accion: puedeAsignar ? "Asignar" : "Ver órdenes",
-      destino: { modulo: "ordenes_trabajo" },
+      destino: { seccion: "ordenes", filtros: { mecanico: SIN_ASIGNAR } },
     });
   }
   const ck = resumen.checklists;

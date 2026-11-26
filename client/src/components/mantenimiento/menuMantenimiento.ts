@@ -53,7 +53,7 @@ const GRUPOS: GrupoDelMenu[] = [
         id: "ordenes",
         label: "Órdenes de trabajo",
         icono: "ordenes",
-        pronto: true,
+        pronto: false,
         requiereModulo: "ordenes_trabajo",
       },
       { id: "preventivo", label: "Mantenimiento preventivo", icono: "preventivo", pronto: true },
@@ -97,7 +97,7 @@ export function gruposDelMenu(usuario: { modulosPermitidos: string[] } | null | 
 
 /** ¿Esta entrada abre una pantalla? Solo las secciones que existen. */
 export function esSeccion(id: string): id is SeccionDeRuta {
-  return id === "centro" || id === "equipos" || id === "checklists" || id === "configuracion";
+  return ["centro", "equipos", "checklists", "ordenes", "configuracion"].includes(id);
 }
 
 /** La insignia numérica de una entrada, o null si no lleva. Hoy solo Equipos: las unidades de Operaciones por
