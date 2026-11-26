@@ -5,6 +5,7 @@
  */
 import { describe, it, expect } from "vitest";
 
+import { cuandoFue, pasoDelTurno } from "../client/src/components/mantenimiento/actividadDelTurno";
 import {
   MAXIMO_DE_BARRAS,
   anilloDeOrdenes,
@@ -651,5 +652,69 @@ describe("Configuración: reglas y metas", () => {
     }
     expect(REGLAS).toHaveLength(4);
     expect(METAS).toHaveLength(4);
+  });
+});
+
+describe("Centro: actividad del turno", () => {
+  const orden = {
+    en: "2026-11-25T15:00:00Z",
+    unidad: "TFS-883",
+    tipo: "orden_creada",
+    orden_id: 7,
+    titulo: "Frenos",
+    estado: "abierta",
+    detiene: true,
+    sin_mecanico: true,
+    desde_checklist: true,
+    unidad_hoy: "detenida",
+  } as const;
+  const checklist = {
+    en: "2026-11-25T15:00:00Z",
+    unidad: "TFS-883",
+    tipo: "checklist",
+    checklist_id: 3,
+    resultado: "no_apta",
+    fallas: "Frenos",
+    por_autorizar: false,
+    orden: { id: 7, nueva: true },
+  } as const;
+
+  it("dice la hora de Perú: hoy, ayer o la fecha", () => {
+    const ahora = new Date("2026-11-25T17:00:00Z");
+    expect(cuandoFue("2026-11-25T10:40:00Z", ahora)).toBe("Hoy 05:40");
+    // 20:00 de ayer en Perú, aunque en UTC ya sea hoy.
+    expect(cuandoFue("2026-11-25T01:00:00Z", ahora)).toBe("Ayer 20:00");
+    expect(cuandoFue("2026-11-22T16:20:00Z", ahora)).toBe("22/11 11:20");
+  });
+
+  it("el checklist cuenta qué pasó con su falla", () => {
+    expect(pasoDelTurno(checklist)).toMatchObject({
+      tono: "red",
+      detalle: "TFS-883 · Frenos",
+      efecto: "Generó la OT #7",
+    });
+    expect(pasoDelTurno({ ...checklist, orden: { id: 7, nueva: false } }).efecto).toContain(
+      "ya existía"
+    );
+    expect(pasoDelTurno({ ...checklist, orden: null }).efecto).toBe("La unidad no puede salir");
+    expect(
+      pasoDelTurno({ ...checklist, resultado: "observado", orden: null, por_autorizar: true })
+        .efecto
+    ).toBe("Espera autorización para salir");
+  });
+
+  it("la orden cuenta cómo está hoy", () => {
+    expect(pasoDelTurno(orden)).toMatchObject({
+      titulo: "OT #7 creada",
+      efecto: "Falta asignar mecánico: la unidad sigue detenida",
+    });
+    expect(pasoDelTurno({ ...orden, estado: "cancelada" }).efecto).toBe("Después se canceló");
+    const cerrada = { ...orden, tipo: "orden_cerrada", estado: "completada" } as const;
+    expect(pasoDelTurno({ ...cerrada, unidad_hoy: "operativa" })).toMatchObject({
+      titulo: "OT #7 completada",
+      tono: "green",
+      efecto: "La unidad está operativa",
+    });
+    expect(pasoDelTurno({ ...cerrada, unidad_hoy: null }).efecto).toBe("La orden quedó cerrada");
   });
 });

@@ -26,16 +26,11 @@ import {
   type ColorDeBarra,
   type DestinoDelCentro,
   type TonoDeArea,
+  TONOS,
+  type Tono,
 } from "./centroDeMantenimiento";
 import type { ResumenMantenimiento } from "./mantenimientoApi";
 
-export type Tono = "green" | "amber" | "red" | "blue";
-const TONOS: Record<Tono, string> = {
-  green: "bg-emerald-50 text-emerald-600",
-  amber: "bg-amber-50 text-amber-600",
-  red: "bg-red-50 text-red-600",
-  blue: "bg-blue-50 text-blue-600",
-};
 const PUNTO: Record<TonoDeArea, string> = {
   green: "bg-[#84cc16]",
   amber: "bg-amber-500",
@@ -63,7 +58,7 @@ export function Pronto() {
   );
 }
 
-function Panel({
+export function Panel({
   kicker,
   titulo,
   extra,
@@ -239,21 +234,6 @@ export function EstadoDeLaFlota({ resumen }: { resumen: ResumenMantenimiento }) 
           <Medida nombre="Checklists hechos hoy" valor={porcentaje(checklists.hechos_hoy, total)} />
         )}
         <Medida nombre="Preventivos al día (propias)" valor={null} />
-      </div>
-    </Panel>
-  );
-}
-
-export function ActividadProxima() {
-  return (
-    <Panel kicker="Flujo integrado" titulo="Actividad del turno" extra={<Pronto />}>
-      <div className="px-5 py-8 text-center">
-        <span className="mx-auto mb-2 grid h-10 w-10 place-items-center rounded-full bg-slate-100 text-slate-400">
-          <ClipboardCheck size={18} />
-        </span>
-        <p className="text-sm text-slate-500 max-w-xs mx-auto">
-          Lo que pasó hoy: checklists, órdenes y preventivos en una sola línea de tiempo.
-        </p>
       </div>
     </Panel>
   );

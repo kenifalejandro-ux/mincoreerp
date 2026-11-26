@@ -178,3 +178,37 @@ export const leerConfig = () => leer<ConfigMantenimiento>("/config");
 /** Se manda solo lo que cambia; devuelve cómo quedó. Solo el admin. */
 export const guardarConfig = (cambios: Partial<ConfigMantenimiento>) =>
   escribir<ConfigMantenimiento>("PUT", "/config", cambios);
+
+interface MovimientoComun {
+  /** Cuándo pasó (ISO). */
+  en: string;
+  unidad: string | null;
+}
+export interface MovimientoDeOrden extends MovimientoComun {
+  tipo: "orden_creada" | "orden_iniciada" | "orden_cerrada";
+  orden_id: number;
+  titulo: string;
+  estado: "abierta" | "en_progreso" | "completada" | "cancelada";
+  detiene: boolean;
+  sin_mecanico: boolean;
+  desde_checklist: boolean;
+  unidad_hoy: EstadoDeUnidad | null;
+}
+export type Movimiento =
+  | (MovimientoComun & {
+      tipo: "checklist";
+      checklist_id: number;
+      resultado: "bien" | "observado" | "no_apta";
+      fallas: string | null;
+      por_autorizar: boolean;
+      orden: { id: number; nueva: boolean } | null;
+    })
+  | (MovimientoComun & {
+      tipo: "salida";
+      checklist_id: number;
+      autorizada: boolean;
+      fallas: string | null;
+    })
+  | MovimientoDeOrden;
+export const actividadDelTurno = () =>
+  leer<{ movimientos: Movimiento[] }>("/actividad").then((d) => d.movimientos);

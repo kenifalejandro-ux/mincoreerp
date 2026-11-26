@@ -1,7 +1,7 @@
 /** src/modules/mantenimiento/mantenimiento.routes.ts
  *
  * Ecosistema «Gestión de mantenimiento». Equipos (lista, alta, edición, quitar, importar desde Excel), áreas
- * (lista, alta, quitar), el resumen del Centro y la configuración (reglas y metas). Los equipos son del maestro
+ * (lista, alta, quitar), el resumen y la actividad del Centro y la configuración (reglas y metas). Los equipos son del maestro
  * de unidades (`equipos`, tabla base de la empresa): ver mantenimiento.service.ts.
  *
  * Sin permiso de pestaña a propósito (igual que Proveedores): el acceso lo da el MÓDULO asignado a cada
@@ -40,6 +40,7 @@ import { asyncHandler } from "../../server/shared/utils/asyncHandler";
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
 import { tieneModulo } from "../../server/shared/utils/modulos";
 import { getTenantId } from "../../server/shared/utils/request";
+import { actividadReciente } from "./mantenimiento.actividad";
 import { MantenimientoService } from "./mantenimiento.service";
 
 const router = Router();
@@ -234,6 +235,16 @@ router.get(
     const tenantId = getTenantId(req);
     res.json(
       await withTenant(tenantId, (client) => service.resumen(client, tenantId, fuentesDe(req)))
+    );
+  })
+);
+
+router.get(
+  "/actividad",
+  asyncHandler(async (req: Request, res: Response) => {
+    const tenantId = getTenantId(req);
+    res.json(
+      await withTenant(tenantId, (client) => actividadReciente(client, tenantId, fuentesDe(req)))
     );
   })
 );
