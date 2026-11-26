@@ -19,6 +19,7 @@ import type {
   CrearPlantillaInput,
   CrearChecklistInput,
   DecidirSalidaInput,
+  FiltrosDeListaInput,
 } from "../../server/schemas/checklists.schema";
 import { ChecklistsService } from "./checklists.service";
 import { decidirSalida } from "./checklists.salida";
@@ -29,7 +30,7 @@ export const ChecklistsController = {
       const tenantId = getTenantId(req);
       const paginacion = parsePaginacion(req.query);
       const filas = await withTenant(tenantId, (client) =>
-        ChecklistsService.getPlantillas(client, tenantId, paginacion)
+        ChecklistsService.getPlantillas(client, tenantId, paginacion, tieneUnidades(req.usuario))
       );
       res.json(armarRespuestaPaginada(filas, paginacion));
     } catch {
@@ -112,18 +113,26 @@ export const ChecklistsController = {
     try {
       const tenantId = getTenantId(req);
       const paginacion = parseCursorPaginacion(req.query);
+      const { q, resultado } = req.validatedQuery as FiltrosDeListaInput;
       const filas = await withTenant(tenantId, (client) =>
-        ChecklistsService.getAll(
-          client,
-          tenantId,
-          paginacion,
-          tieneUnidades(req.usuario),
-          req.query.salida === "por_autorizar"
-        )
+        ChecklistsService.getAll(client, tenantId, paginacion, tieneUnidades(req.usuario), {
+          soloPorAutorizar: req.query.salida === "por_autorizar",
+          q: q || undefined,
+          resultado,
+        })
       );
       res.json(armarRespuestaCursor(filas, paginacion.pageSize));
     } catch {
       res.status(500).json({ message: "Error al obtener checklists" });
+    }
+  },
+
+  async getDeHoy(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      res.json(await withTenant(tenantId, (client) => ChecklistsService.deHoy(client, tenantId)));
+    } catch {
+      res.status(500).json({ message: "Error al obtener los checklists de hoy" });
     }
   },
 

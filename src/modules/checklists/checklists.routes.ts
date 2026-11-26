@@ -1,11 +1,12 @@
 /** src/modules/checklists/checklists.routes.ts */
 
 import { Router } from "express";
-import { validate } from "../../server/middleware/validate";
+import { validate, validateQuery } from "../../server/middleware/validate";
 import { requireRole } from "../../server/shared/middlewares/roles.middleware";
 import { asyncHandler } from "../../server/shared/utils/asyncHandler";
 import { requirePestana } from "../../server/shared/middlewares/pestana.middleware";
 import {
+  filtrosDeListaSchema,
   crearPlantillaSchema,
   crearChecklistSchema,
   editarPlantillaSchema,
@@ -59,7 +60,9 @@ router.delete(
 router.get("/unidades", asyncHandler(listarUnidadesParaElegir));
 
 // Checklists llenados
-router.get("/", asyncHandler(ChecklistsController.getAll));
+router.get("/", validateQuery(filtrosDeListaSchema), asyncHandler(ChecklistsController.getAll));
+// ANTES de "/:id" para que "hoy" no se tome por un id.
+router.get("/hoy", asyncHandler(ChecklistsController.getDeHoy));
 router.get("/:id", asyncHandler(ChecklistsController.getById));
 router.post(
   "/",
