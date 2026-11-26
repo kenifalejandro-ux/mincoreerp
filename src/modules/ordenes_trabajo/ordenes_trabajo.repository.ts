@@ -7,6 +7,12 @@ import type {
   ActualizarOrdenTrabajoInput,
   CambiarEstadoOrdenTrabajoInput,
 } from "../../server/schemas/ordenes_trabajo.schema";
+import {
+  columnasVecinas,
+  condicionDeLista,
+  type FiltrosDeOrdenes,
+  type Vecinos,
+} from "./ordenes_trabajo.consulta";
 import { agregarTareas, listarTareas } from "./ordenes_trabajo.tareas";
 
 interface FilaEstadoCambiado {
@@ -82,30 +88,16 @@ export const OrdenesTrabajoRepository = {
     client: PoolClient,
     tenantId: string,
     { pageSize, offset }: Paginacion,
-    filtros: { estado?: string; equipoId?: number; asignadoA?: string },
-    conUnidades = true
+    filtros: FiltrosDeOrdenes,
+    vecinos: Vecinos
   ) {
-    const unidad = unidadDeLaOrden(conUnidades);
-    const params: (string | number)[] = [tenantId];
-    let filtro = "";
-    if (filtros.estado) {
-      params.push(filtros.estado);
-      filtro += ` AND ot.estado = $${params.length}`;
-    }
-    // Sin Flota el filtro por unidad no existe: se ignora, no es un error.
-    if (filtros.equipoId && conUnidades) {
-      params.push(filtros.equipoId);
-      filtro += ` AND ot.equipo_id = $${params.length}`;
-    }
-    if (filtros.asignadoA) {
-      params.push(filtros.asignadoA);
-      filtro += ` AND ot.asignado_a = $${params.length}`;
-    }
+    const extra = columnasVecinas(vecinos);
+    const { where, params } = condicionDeLista(tenantId, filtros, vecinos);
     params.push(pageSize, offset);
 
     const result = await client.query(
       `
-      SELECT ot.id, ot.equipo_id, ${unidad.columna}, ot.activo_texto, ot.titulo, ot.descripcion,
+      SELECT ot.id, ot.equipo_id, ${extra.columnas}, ot.activo_texto, ot.titulo, ot.descripcion,
         ot.tipo, ot.prioridad, ot.estado, ot.iperc_id, ot.creado_por,
         u.nombre AS creado_por_nombre, ot.asignado_a, asig.nombre AS asignado_a_nombre,
         ot.fecha_programada, ot.fecha_cierre, ot.observaciones_cierre, ot.creado_en, ot.origen,
@@ -116,10 +108,10 @@ export const OrdenesTrabajoRepository = {
           WHERE t.tenant_id = ot.tenant_id AND t.orden_trabajo_id = ot.id AND t.hecha) AS tareas_hechas,
         COUNT(*) OVER() AS total_count
       FROM ordenes_trabajo ot
-      ${unidad.join}
+      ${extra.joins}
       JOIN usuarios u ON u.id = ot.creado_por
       LEFT JOIN usuarios asig ON asig.id = ot.asignado_a
-      WHERE ot.tenant_id = $1${filtro}
+      WHERE ${where}
       ORDER BY ot.id DESC
       LIMIT $${params.length - 1} OFFSET $${params.length}
     `,

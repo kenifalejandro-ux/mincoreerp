@@ -2,7 +2,7 @@
 
 import { Request, Response } from "express";
 import { withTenant } from "../../server/config/database";
-import { tieneUnidades } from "../../server/shared/utils/modulos";
+import { tieneModulo, tieneUnidades } from "../../server/shared/utils/modulos";
 import { getTenantId } from "../../server/shared/utils/request";
 import { parsePaginacion, armarRespuestaPaginada } from "../../server/shared/utils/pagination";
 import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
@@ -14,6 +14,8 @@ import type {
   ActualizarOrdenTrabajoInput,
   CambiarEstadoOrdenTrabajoInput,
   CambiarTareasInput,
+  AsignarOrdenInput,
+  FiltrosDeOrdenesInput,
 } from "../../server/schemas/ordenes_trabajo.schema";
 import { HorasInvalidasError, OrdenSinActivoError } from "./ordenes_trabajo.repository";
 import { OrdenesTrabajoService } from "./ordenes_trabajo.service";
@@ -41,24 +43,81 @@ export const OrdenesTrabajoController = {
     }
   },
 
+  async getResumen(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      res.json(
+        await withTenant(tenantId, (client) => OrdenesTrabajoService.resumen(client, tenantId))
+      );
+    } catch {
+      res.status(500).json({ message: "Error al obtener el resumen de órdenes" });
+    }
+  },
+
+  async getMecanicos(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      res.json(
+        await withTenant(tenantId, (client) => OrdenesTrabajoService.mecanicos(client, tenantId))
+      );
+    } catch {
+      res.status(500).json({ message: "Error al obtener los mecánicos" });
+    }
+  },
+
+  async asignar(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const id = Number(req.params.id);
+      const { asignado_a } = req.validatedBody as AsignarOrdenInput;
+      const resultado = await withTenant(tenantId, (client) =>
+        OrdenesTrabajoService.asignar(client, tenantId, id, asignado_a)
+      );
+      if (!resultado) {
+        res.status(404).json({ message: "Orden de trabajo no encontrada" });
+        return;
+      }
+      if (resultado.cambio) {
+        await registrarAuditoria({
+          accion: "ordenes_trabajo.asignar",
+          tenantId,
+          usuarioId: req.usuario!.id,
+          detalle: { ordenTrabajoId: id, antes: resultado.antes, asignadoA: asignado_a },
+          contexto: contextoAuditoriaModulo(req),
+        });
+        await publicarEventoTenant(tenantId, "ordenes_trabajo.actualizada", { ordenTrabajoId: id });
+      }
+      res.json(resultado.orden);
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ message: err.message });
+        return;
+      }
+      res.status(500).json({ message: "Error al asignar la orden de trabajo" });
+    }
+  },
+
   async getAll(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);
       const paginacion = parsePaginacion(req.query);
-      const estado = typeof req.query.estado === "string" ? req.query.estado : undefined;
       const equipoIdRaw = req.query.equipo_id;
       const equipoId =
         typeof equipoIdRaw === "string" && equipoIdRaw.trim() !== ""
           ? Number(equipoIdRaw)
           : undefined;
-      const asignadoA = typeof req.query.asignado_a === "string" ? req.query.asignado_a : undefined;
+      const filtros = req.validatedQuery as FiltrosDeOrdenesInput;
       const filas = await withTenant(tenantId, (client) =>
         OrdenesTrabajoService.getAll(
           client,
           tenantId,
           paginacion,
-          { estado, equipoId, asignadoA },
-          tieneUnidades(req.usuario)
+          { ...filtros, equipoId },
+          {
+            conUnidades: tieneUnidades(req.usuario),
+            conAreas: tieneModulo(req.usuario, "mantenimiento"),
+            conIperc: tieneModulo(req.usuario, "iperc"),
+          }
         )
       );
       res.json(armarRespuestaPaginada(filas, paginacion));

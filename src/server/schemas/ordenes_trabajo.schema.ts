@@ -102,3 +102,23 @@ export const cambiarEstadoOrdenTrabajoSchema = z
   });
 
 export type CambiarEstadoOrdenTrabajoInput = z.infer<typeof cambiarEstadoOrdenTrabajoSchema>;
+
+/** Un filtro vacío en la dirección es «sin filtro». */
+const opcional = <T extends z.ZodTypeAny>(esquema: T) =>
+  z.preprocess((v) => (v === "" ? undefined : v), esquema.optional());
+
+/** Filtros de la lista de órdenes (la paginación y `equipo_id` se leen aparte). */
+export const filtrosDeOrdenesSchema = z.object({
+  q: opcional(z.string().trim().max(80)),
+  estado: opcional(z.enum(["abierta", "en_progreso", "completada", "cancelada"])),
+  tipo: opcional(z.enum(["correctivo", "preventivo"])),
+  prioridad: opcional(z.enum(["baja", "media", "alta", "urgente"])),
+  asignado_a: opcional(z.string().uuid("Mecánico no válido")),
+  sin_asignar: opcional(z.enum(["true", "false"])),
+  area_id: opcional(z.coerce.number().int().positive().max(2_000_000_000)),
+});
+export type FiltrosDeOrdenesInput = z.infer<typeof filtrosDeOrdenesSchema>;
+
+/** Asignar un mecánico, o quitarlo con null. Hay que mandarlo siempre: un cuerpo vacío no desasigna. */
+export const asignarOrdenSchema = z.object({ asignado_a: z.string().uuid().nullable() });
+export type AsignarOrdenInput = z.infer<typeof asignarOrdenSchema>;
