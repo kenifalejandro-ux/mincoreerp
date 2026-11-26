@@ -11,6 +11,12 @@ import {
   SIN_FILTROS,
   unidadDelRegistro,
 } from "../client/src/components/mantenimiento/checklistsMantenimiento";
+import {
+  fechaDeEdicion,
+  tipoDelFormato,
+  unidadesDelFormato,
+  usoDelFormato,
+} from "../client/src/components/mantenimiento/formatosMantenimiento";
 import { cuandoFue, pasoDelTurno } from "../client/src/components/mantenimiento/actividadDelTurno";
 import {
   MAXIMO_DE_BARRAS,
@@ -773,5 +779,27 @@ describe("Checklists: registros en el ecosistema", () => {
     expect(unidadDelRegistro({ ...u, activo_texto: "Compresora" })).toBe("Compresora");
     expect(unidadDelRegistro({ ...u, equipo_id: 7 })).toBe("Unidad 7");
     expect(unidadDelRegistro(u)).toBe("Sin unidad");
+  });
+});
+
+describe("Checklists: formatos en el ecosistema", () => {
+  const unidades = [equipo({}), equipo({ id: 2, tipo: "Retroexcavadora" })];
+
+  it("sin tipo es de uso general y lo usan todas; con tipo, las suyas sin mirar mayúsculas", () => {
+    expect(tipoDelFormato({ tipo_equipo: "  " })).toBe("Uso general");
+    expect(unidadesDelFormato({ tipo_equipo: null }, unidades)).toHaveLength(2);
+    expect(unidadesDelFormato({ tipo_equipo: " VOLQUETE " }, unidades).map((u) => u.id)).toEqual([
+      1,
+    ]);
+  });
+
+  it("dice cuántas lo usan, y nada si no se sabe", () => {
+    expect(usoDelFormato(null)).toBeNull();
+    expect(usoDelFormato(0)).toBe("0 unidades lo usan");
+    expect(usoDelFormato(1)).toBe("1 unidad lo usa");
+  });
+
+  it("la fecha de edición es la de Perú", () => {
+    expect(fechaDeEdicion("2026-11-26T02:00:00Z")).toBe("25/11/2026");
   });
 });

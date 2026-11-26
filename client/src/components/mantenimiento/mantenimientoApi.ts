@@ -6,6 +6,7 @@ import type {
   DetalleDeChecklist,
   RegistroDeChecklist,
 } from "./checklistsMantenimiento";
+import type { FilaDeFormato } from "./formatosMantenimiento";
 import { apiFetch } from "../../services/apiClient";
 
 export interface EquipoMantenimiento {
@@ -234,3 +235,8 @@ export const listarRegistros = (consulta: string) =>
   }));
 export const registrosDeHoy = () => leerChecklists<ChecklistsDeHoy>("/hoy");
 export const leerRegistro = (id: number) => leerChecklists<DetalleDeChecklist>(`/${id}`);
+/** Hasta 200 formatos, el tope por página del servidor. */
+export const listarFormatos = () =>
+  leerChecklists<{ data: FilaDeFormato[]; pagination: { total: number } }>(
+    "/plantillas?pageSize=200"
+  ).then((r) => ({ filas: r.data, total: r.pagination.total }));
