@@ -184,17 +184,27 @@ test("las cifras y los avisos salen de datos reales y cada botón lleva a donde 
   await expect(cifras(page)).toContainText("Órdenes abiertas1");
   await expect(actividad(page)).not.toContainText("Falta asignar mecánico");
 
-  // ── Los botones de checklists abren su módulo ─────────────────────────
+  // ── Los botones de checklists abren Registros, ya filtrados ───────────
+  const resultado = page.getByRole("combobox", { name: "Resultado" });
   await atencion.getByRole("button", { name: "Ver checklists" }).first().click();
-  await expect(page).not.toHaveURL(/\/mantenimiento/);
-  await expect(menu(page)).toHaveCount(0);
-  await expect(page.getByText(observada).first()).toBeVisible({ timeout: 20_000 });
-  await page.goBack();
-  await expect(cifras(page)).toBeVisible({ timeout: 20_000 });
+  await expect(page).toHaveURL(/\/mantenimiento\/checklists$/);
+  await expect(resultado).toHaveValue("no_apta");
+  await expect(filas).toHaveCount(1);
+  await expect(filas).toContainText(detenida);
+  await irA(page, "Centro de mantenimiento");
+  await atencion.getByRole("button", { name: "Ver checklists" }).last().click();
+  await expect(page.getByRole("button", { name: "Por autorizar" })).toHaveAttribute(
+    "aria-pressed",
+    "true"
+  );
+  await expect(filas).toHaveCount(1);
+  await expect(filas).toContainText(observada);
+  await irA(page, "Centro de mantenimiento");
   await cifras(page)
     .getByRole("button", { name: /Checklists de hoy/ })
     .click();
-  await expect(page.getByText(observada).first()).toBeVisible({ timeout: 20_000 });
+  await expect(resultado).toHaveValue("");
+  await expect(filas).toHaveCount(2);
   expect(fallos).toEqual([]);
 });
 

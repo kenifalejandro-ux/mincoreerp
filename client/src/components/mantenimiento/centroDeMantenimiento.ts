@@ -2,6 +2,7 @@
 //
 // La lógica del Centro de control, sin React: qué pide atención, cómo se resume cada área y cómo se reparten las
 // órdenes del mes. Un bloque en `null` es un módulo que la persona no tiene: no aparece, no vale cero.
+import type { FiltrosDeRegistros } from "./checklistsMantenimiento";
 import { ESTADOS, SIN_AREA } from "./equiposMantenimiento";
 import type { AreaDelCentro, Aviso, ResumenMantenimiento } from "./mantenimientoApi";
 
@@ -41,7 +42,9 @@ export const notaDeSinChecklist = (faltan: number) =>
 
 /** A dónde lleva un aviso: a una sección del ecosistema o a un módulo del ERP. */
 export type DestinoDelCentro =
-  { seccion: "equipos" } | { modulo: "checklists" | "ordenes_trabajo" };
+  | { seccion: "equipos" }
+  | { seccion: "checklists"; filtros?: Partial<FiltrosDeRegistros> }
+  | { modulo: "ordenes_trabajo" };
 
 export interface AvisoDelCentro {
   id: string;
@@ -103,7 +106,7 @@ export function avisosDelCentro(
       titulo: `${plural(ck.no_aptos_hoy.total, "checklist", "checklists")} «No apta» hoy`,
       detalle: nombrar(ck.no_aptos_hoy, unidadYFallas, "; "),
       accion: "Ver checklists",
-      destino: { modulo: "checklists" },
+      destino: { seccion: "checklists", filtros: { resultado: "no_apta" } },
     });
   }
   if (ck && ck.por_autorizar.total > 0) {
@@ -114,7 +117,7 @@ export function avisosDelCentro(
       titulo: plural(ck.por_autorizar.total, "salida por autorizar", "salidas por autorizar"),
       detalle: nombrar(ck.por_autorizar, unidadYFallas, "; "),
       accion: "Ver checklists",
-      destino: { modulo: "checklists" },
+      destino: { seccion: "checklists", filtros: { porAutorizar: true } },
     });
   }
   if (ck && ck.sin_checklist_hoy.total > 0) {

@@ -5,6 +5,12 @@
  */
 import { describe, it, expect } from "vitest";
 
+import {
+  consecuencia,
+  consultaDeRegistros,
+  SIN_FILTROS,
+  unidadDelRegistro,
+} from "../client/src/components/mantenimiento/checklistsMantenimiento";
 import { cuandoFue, pasoDelTurno } from "../client/src/components/mantenimiento/actividadDelTurno";
 import {
   MAXIMO_DE_BARRAS,
@@ -520,8 +526,8 @@ describe("Centro: lo que requiere atención", () => {
     ]);
     expect(avisos.map((a) => a.destino)).toEqual([
       { modulo: "ordenes_trabajo" },
-      { modulo: "checklists" },
-      { modulo: "checklists" },
+      { seccion: "checklists", filtros: { resultado: "no_apta" } },
+      { seccion: "checklists", filtros: { porAutorizar: true } },
       { seccion: "equipos" },
       { seccion: "equipos" },
     ]);
@@ -584,11 +590,12 @@ describe("menú del ecosistema (como la maqueta)", () => {
     ).toContain("Recursos conectados");
   });
 
-  it("solo Centro y Equipos son secciones; la insignia de Equipos cuenta las unidades por completar", () => {
+  it("lo construido es sección; la insignia de Equipos cuenta las unidades por completar", () => {
     expect(esSeccion("centro")).toBe(true);
     expect(esSeccion("equipos")).toBe(true);
     expect(esSeccion("configuracion")).toBe(true);
-    expect(esSeccion("checklists")).toBe(false);
+    expect(esSeccion("checklists")).toBe(true);
+    expect(esSeccion("preventivo")).toBe(false);
     expect(insigniaDe("equipos", 3)).toBe(3);
     expect(insigniaDe("equipos", 0)).toBeNull();
     expect(insigniaDe("centro", 3)).toBeNull();
@@ -716,5 +723,55 @@ describe("Centro: actividad del turno", () => {
       efecto: "La unidad está operativa",
     });
     expect(pasoDelTurno({ ...cerrada, unidad_hoy: null }).efecto).toBe("La orden quedó cerrada");
+  });
+});
+
+describe("Checklists: registros en el ecosistema", () => {
+  it("la dirección de Checklists va y vuelve", () => {
+    expect(rutaDe({ seccion: "checklists" })).toBe("/mantenimiento/checklists");
+    expect(leerRuta("/mantenimiento/checklists")).toEqual({ seccion: "checklists" });
+  });
+
+  it("solo pide lo que se filtró, y escribe bien los caracteres raros", () => {
+    expect(consultaDeRegistros(SIN_FILTROS, null)).toBe("?pageSize=25");
+    const con = new URLSearchParams(
+      consultaDeRegistros(
+        { busqueda: "  faja & 100% ", resultado: "no_apta", porAutorizar: true },
+        40
+      )
+    );
+    expect(Object.fromEntries(con)).toEqual({
+      pageSize: "25",
+      q: "faja & 100%",
+      resultado: "no_apta",
+      salida: "por_autorizar",
+      cursor: "40",
+    });
+  });
+
+  it("la franja del panel dice si la unidad sale, y manda la decisión sobre el resultado", () => {
+    const base = { salida_motivo: null, salida_por_nombre: null };
+    expect(consecuencia({ ...base, resultado: "bien", salida: "libre" }).tono).toBe("green");
+    expect(consecuencia({ ...base, resultado: "no_apta", salida: "no_sale" }).tono).toBe("red");
+    expect(consecuencia({ ...base, resultado: "observado", salida: "por_autorizar" }).tono).toBe(
+      "amber"
+    );
+    expect(
+      consecuencia({
+        resultado: "observado",
+        salida: "autorizada",
+        salida_motivo: "Revisado",
+        salida_por_nombre: "Ana",
+      })
+    ).toMatchObject({ tono: "green", detalle: "Ana: Revisado" });
+    expect(consecuencia({ ...base, resultado: "observado", salida: "rechazada" }).tono).toBe("red");
+  });
+
+  it("nombra la unidad con la placa, el activo o su número", () => {
+    const u = { placa_codigo: null, activo_texto: null, equipo_id: null };
+    expect(unidadDelRegistro({ ...u, placa_codigo: "ABC-1", activo_texto: "x" })).toBe("ABC-1");
+    expect(unidadDelRegistro({ ...u, activo_texto: "Compresora" })).toBe("Compresora");
+    expect(unidadDelRegistro({ ...u, equipo_id: 7 })).toBe("Unidad 7");
+    expect(unidadDelRegistro(u)).toBe("Sin unidad");
   });
 });
