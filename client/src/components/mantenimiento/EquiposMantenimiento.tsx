@@ -57,11 +57,14 @@ const control =
 
 export default function EquiposMantenimiento({
   busquedaInicial = "",
+  areaInicial,
   porImportar = 0,
   onCambio,
 }: {
   /** Texto con el que abre el buscador de la lista (viene del buscador de la barra superior). */
   busquedaInicial?: string;
+  /** El área con la que abre filtrada (viene de «Estado por área» del Centro). */
+  areaInicial?: string;
   /** Unidades de Operaciones por completar (0 sin Flota). */
   porImportar?: number;
   /** Algo cambió en los equipos: el ecosistema vuelve a leer su resumen (el contador del menú). */
@@ -73,6 +76,7 @@ export default function EquiposMantenimiento({
   const [filtros, setFiltros] = useState<FiltrosDeEquipos>({
     ...FILTROS_VACIOS,
     busqueda: busquedaInicial,
+    area: areaInicial ?? TODAS_LAS_AREAS,
   });
   const puedeEscribir = usePuedeEscribir("mantenimiento");
   // Lo que hay abierto encima de la lista: el formulario (nuevo o de un equipo), quitar o importar.

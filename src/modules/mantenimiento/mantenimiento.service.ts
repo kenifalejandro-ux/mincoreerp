@@ -17,6 +17,7 @@ import type {
 import { AppError } from "../../server/shared/middlewares/error.middleware";
 import { huellaDeRegistro, idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { empresaTieneModulo } from "../../server/shared/utils/modulosEmpresa";
+import { centroDeControl } from "./mantenimiento.centro";
 import { estadosDeUnidades, type EstadoDeUnidad, type Fuentes } from "./mantenimiento.estado";
 
 export interface FiltrosEquipos {
@@ -497,8 +498,13 @@ export class MantenimientoService {
     return { completados: porCompletar.length, ids: porCompletar };
   }
 
-  /** Cuántos equipos tiene la empresa y cómo se reparten por área (para el Centro de control). */
-  async resumen(client: PoolClient, tenantId: string) {
+  /** Lo que muestra el Centro de control: los equipos y su reparto, la meta de disponibilidad y lo que sale de
+   *  órdenes y checklists (ver mantenimiento.centro.ts). */
+  async resumen(
+    client: PoolClient,
+    tenantId: string,
+    fuentes: Fuentes = { conOrdenes: false, conChecklists: false }
+  ) {
     const totales = await client.query<{
       total: number;
       propios: number;
@@ -516,7 +522,9 @@ export class MantenimientoService {
     );
     const areas = await this.listarAreas(client, tenantId);
     const por_importar = (await this.pendientesDeOperaciones(client, tenantId)).length;
-    return { ...totales.rows[0], areas, por_importar };
+    const { meta_disponibilidad } = await this.obtenerConfig(client, tenantId);
+    const centro = await centroDeControl(client, tenantId, fuentes);
+    return { ...totales.rows[0], areas, por_importar, meta_disponibilidad, ...centro };
   }
 
   /**
