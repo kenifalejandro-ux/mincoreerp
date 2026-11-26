@@ -5,7 +5,7 @@
  *
  * 1. Con cero equipos el Centro invita a registrarlos; el Excel se lee, muestra la vista previa y al confirmar
  *    los equipos entran con su área (y las áreas nuevas se crean y se avisan).
- * 2. El Centro refleja lo importado: totales y reparto por área.
+ * 2. El Centro refleja lo importado: total y estado por área.
  * 3. Un archivo con una placa ya registrada se rechaza ENTERO, diciendo la fila y la columna, y no entra nada.
  * 4. Un archivo sin los encabezados pide las columnas, y uno con una lectura que no es número dice en qué fila.
  *
@@ -108,14 +108,14 @@ test("importar un Excel crea los equipos y el Centro los cuenta por área", asyn
   // El Centro refleja lo importado.
   await menu.getByRole("button", { name: "Centro de mantenimiento" }).click();
   const resumen = page.getByRole("region", { name: "Resumen del mantenimiento" });
-  await expect(resumen).toContainText("Equipos registrados4");
-  await expect(resumen).toContainText("3 propios · 1 alquilado");
+  await expect(resumen).toContainText("Unidades operativas4 de 4");
   await expect(page.getByText("1 equipo sin área")).toBeVisible();
-  const reparto = page
-    .getByRole("heading", { name: "Equipos por área" })
-    .locator("xpath=ancestor::section[1]");
-  await expect(reparto.getByRole("listitem").first()).toContainText("Cantera");
-  await expect(reparto.getByRole("listitem").first()).toContainText("2");
+  const area = (nombre: string) => page.getByRole("button", { name: new RegExp(`^${nombre} `) });
+  await expect(area("Cantera")).toContainText("2 equipos");
+  await expect(area("Taller")).toContainText("1 equipo");
+  await expect(area("Sin área")).toContainText("1 equipo");
+  // La alquilada se distingue en su barra.
+  await expect(area("Taller").getByTitle(`CEB-${marca} · Operativa · Alquilada`)).toHaveCount(1);
 });
 
 test("un archivo con una placa repetida se rechaza entero, con su fila y su columna", async ({

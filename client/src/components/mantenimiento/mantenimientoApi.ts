@@ -101,6 +101,55 @@ export interface ResumenMantenimiento {
   areas: AreaMantenimiento[];
   /** Unidades que registró Operaciones (Flota) y Mantenimiento aún no completó. 0 sin Flota. */
   por_importar: number;
+  /** La meta de Configuración: tiñe cada área en el Centro. */
+  meta_disponibilidad: number;
+  estados: { operativas: number; en_mantenimiento: number; detenidas: number };
+  /** Solo las áreas con equipos, por nombre; «sin área» al final. */
+  estado_por_area: AreaDelCentro[];
+  /** null si la persona no tiene Órdenes de trabajo. */
+  ordenes: OrdenesDelCentro | null;
+  /** null si la persona no tiene Checklists. */
+  checklists: ChecklistsDelCentro | null;
+}
+
+export interface UnidadDelCentro {
+  id: number;
+  placa: string;
+  estado: EstadoDeUnidad;
+  alquilada: boolean;
+}
+export interface AreaDelCentro {
+  area_id: number | null;
+  nombre: string | null;
+  unidades: UnidadDelCentro[];
+}
+/** Cuántos casos hay y los primeros que se nombran. */
+export interface Aviso<T> {
+  total: number;
+  casos: T[];
+}
+export interface OrdenSinMecanico {
+  id: number;
+  unidad: string | null;
+  titulo: string;
+  urgente: boolean;
+}
+export interface OrdenesDelCentro {
+  abiertas: number;
+  urgentes: number;
+  sin_mecanico: Aviso<OrdenSinMecanico> & { urgentes: number };
+  del_mes: { correctivo: number; preventivo: number };
+}
+export interface ChecklistDelCentro {
+  id: number;
+  unidad: string | null;
+  fallas: string | null;
+}
+export interface ChecklistsDelCentro {
+  hechos_hoy: number;
+  sin_checklist_hoy: Aviso<string>;
+  no_aptos_hoy: Aviso<ChecklistDelCentro>;
+  por_autorizar: Aviso<ChecklistDelCentro>;
 }
 export const resumenMantenimiento = () => leer<ResumenMantenimiento>("/resumen");
 

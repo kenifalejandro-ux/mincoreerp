@@ -206,6 +206,12 @@ describe("Mantenimiento: importar equipos y resumen del Centro", () => {
       sin_area: 0,
       areas: [],
       por_importar: 0, // sin Flota no hay unidades de Operaciones que importar
+      meta_disponibilidad: 90,
+      estados: { operativas: 0, en_mantenimiento: 0, detenidas: 0 },
+      estado_por_area: [],
+      // Sin esos módulos los bloques van en null, no en cero.
+      ordenes: null,
+      checklists: null,
     });
 
     await ag

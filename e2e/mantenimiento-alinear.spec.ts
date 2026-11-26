@@ -89,16 +89,24 @@ test("la barra, el menú y «Desde Operaciones» siguen la maqueta con Mantenimi
   await expect(
     page.getByRole("heading", { name: /^(Buenos días|Buenas tardes|Buenas noches)$/, level: 1 })
   ).toBeVisible();
-  await expect(page.getByRole("button", { name: "Nueva OT" })).toBeDisabled();
+  // Sin Órdenes de trabajo no hay «Nueva OT».
+  await expect(page.getByRole("button", { name: "Nueva OT" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /Programar MP/ })).toBeDisabled();
   await expect(page.getByRole("region", { name: "Resumen del mantenimiento" })).toContainText(
-    "Equipos registrados3"
+    "Unidades operativas3 de 3"
   );
   await expect(page.getByText("Requieren tu atención")).toBeVisible();
   await expect(page.getByText("2 unidades de Operaciones por completar")).toBeVisible();
-  for (const panel of ["Estado de la flota", "Actividad del turno", "Órdenes por tipo"]) {
+  // Sin Órdenes de trabajo, en el sitio de «Órdenes por tipo» va «Por estado».
+  for (const panel of [
+    "Estado de la flota",
+    "Actividad del turno",
+    "Por estado",
+    "Estado por área",
+  ]) {
     await expect(page.getByRole("heading", { name: panel })).toBeVisible();
   }
+  await expect(page.getByRole("heading", { name: "Órdenes por tipo" })).toHaveCount(0);
 
   // ── Equipos: insignia en el menú y franja azul ────────────────────────
   await expect(menu.getByLabel("2 por completar")).toBeVisible();

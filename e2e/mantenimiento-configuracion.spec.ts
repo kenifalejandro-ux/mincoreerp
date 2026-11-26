@@ -84,8 +84,8 @@ test("las reglas y las metas se ven, se guardan solas y aguantan los fallos", as
   expect(equipo.status(), await equipo.text()).toBe(201);
   await abrirSeccion(page, "Centro de mantenimiento");
   const resumen = page.getByRole("region", { name: "Resumen del mantenimiento" });
-  await expect(resumen).toContainText("Equipos registrados1");
-  await expect(resumen).toContainText("1 propio · 0 alquilados");
+  await expect(resumen).toContainText("Unidades operativas1 de 1");
+  await expect(resumen).toContainText("Ninguna detenida ni en mantenimiento");
   await abrirSeccion(page, "Configuración");
 
   // ── 3. Fallos ─────────────────────────────────────────────────────────

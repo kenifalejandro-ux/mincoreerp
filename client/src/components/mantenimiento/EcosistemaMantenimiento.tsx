@@ -22,9 +22,10 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import BarraSuperiorMantenimiento from "./BarraSuperiorMantenimiento";
+import type { DestinoDelCentro } from "./centroDeMantenimiento";
 import CentroDeMantenimiento from "./CentroDeMantenimiento";
 import ConfiguracionMantenimiento from "./ConfiguracionMantenimiento";
 import EquiposMantenimiento from "./EquiposMantenimiento";
@@ -66,6 +67,11 @@ const configuracionEsNueva = () => novedadVigente(Date.now(), undefined, NOVEDAD
 const marcarConfiguracionVista = () =>
   marcarNovedadVista(Date.now(), undefined, NOVEDAD_CONFIGURACION);
 
+/** La etiqueta «Nuevo» del Centro de control, 24 horas desde el primer clic en el menú o dentro de él. */
+const NOVEDAD_CENTRO = "mantenimiento-centro-2026-11";
+const centroEsNuevo = () => novedadVigente(Date.now(), undefined, NOVEDAD_CENTRO);
+const marcarCentroVisto = () => marcarNovedadVista(Date.now(), undefined, NOVEDAD_CENTRO);
+
 export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => void }) {
   const { usuario } = useAuth();
   useBarraLima();
@@ -76,17 +82,25 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
   // El resumen vive aquí porque lo usan el menú (la insignia de Equipos) y el Centro.
   const [resumen, setResumen] = useState<ResumenMantenimiento | null>(null);
   const [errorDelResumen, setErrorDelResumen] = useState<string | null>(null);
-  // Lo que se escribió en el buscador de la barra: lleva a Equipos con el texto ya puesto.
-  const [busqueda, setBusqueda] = useState<{ texto: string; veces: number }>({
+  // Con qué abre Equipos: el texto del buscador de la barra o el área que se tocó en el Centro.
+  const [entrada, setEntrada] = useState<{ texto: string; area?: string; veces: number }>({
     texto: "",
     veces: 0,
   });
 
+  // Solo vale la última lectura pedida: una respuesta lenta de antes no pisa a la nueva.
+  const ultimaLectura = useRef(0);
   const cargarResumen = useCallback(() => {
+    const esta = ++ultimaLectura.current;
     setErrorDelResumen(null);
     return resumenMantenimiento()
-      .then(setResumen)
-      .catch((e: unknown) => setErrorDelResumen(e instanceof Error ? e.message : "Error"));
+      .then((r) => {
+        if (esta === ultimaLectura.current) setResumen(r);
+      })
+      .catch((e: unknown) => {
+        if (esta !== ultimaLectura.current) return;
+        setErrorDelResumen(e instanceof Error ? e.message : "Error");
+      });
   }, []);
 
   // Se lee al abrir y cada vez que se cambia de sección: el Centro y la insignia no se quedan con lo de antes
@@ -134,16 +148,30 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
     return () => window.removeEventListener("popstate", alVolver);
   }, []);
 
-  const irA = (id: string) => {
-    const destino: SeccionDeRuta = esSeccion(id) ? id : "centro";
+  const mostrar = (destino: SeccionDeRuta) => {
     setSeccion(destino);
     setMenuAbierto(false);
     publicar({ seccion: destino });
   };
 
-  const buscar = (texto: string) => {
-    setBusqueda((b) => ({ texto, veces: b.veces + 1 }));
-    irA("equipos");
+  /** Ir por el menú: Equipos abre sin el área que se haya tocado antes. */
+  const irA = (id: string) => {
+    setEntrada((e) => ({ ...e, area: undefined }));
+    mostrar(esSeccion(id) ? id : "centro");
+  };
+
+  const abrirEquipos = (filtro: { texto?: string; area?: string }) => {
+    setEntrada((e) => ({ texto: filtro.texto ?? "", area: filtro.area, veces: e.veces + 1 }));
+    mostrar("equipos");
+  };
+
+  /** Un botón del Centro: abre una sección de aquí o, si es de otro módulo, su pantalla en el ERP. */
+  const irDesdeElCentro = (destino: DestinoDelCentro) => {
+    marcarCentroVisto();
+    if ("seccion" in destino) irA(destino.seccion);
+    else {
+      window.dispatchEvent(new CustomEvent("mincore:ir-a-pestana", { detail: destino.modulo }));
+    }
   };
 
   const grupos = gruposDelMenu(usuario);
@@ -151,7 +179,10 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
 
   return (
     <div className="min-h-screen bg-[#f4f6f9] text-slate-700 font-sans">
-      <BarraSuperiorMantenimiento onAbrirMenu={() => setMenuAbierto(true)} onBuscar={buscar} />
+      <BarraSuperiorMantenimiento
+        onAbrirMenu={() => setMenuAbierto(true)}
+        onBuscar={(texto) => abrirEquipos({ texto })}
+      />
 
       {menuAbierto && (
         <button
@@ -213,7 +244,11 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
                 return (
                   <button
                     key={e.id}
-                    onClick={() => !e.pronto && irA(e.id)}
+                    onClick={() => {
+                      if (e.pronto) return;
+                      if (e.id === "centro") marcarCentroVisto();
+                      irA(e.id);
+                    }}
                     disabled={e.pronto}
                     aria-current={activo ? "page" : undefined}
                     className={`group w-full text-left px-6 py-3 flex items-center gap-3 text-sm transition-all ${
@@ -239,6 +274,15 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
                     {e.pronto && (
                       <span className="px-2 py-0.5 rounded-full bg-white/10 text-[10px] font-bold text-slate-300">
                         Pronto
+                      </span>
+                    )}
+                    {e.id === "centro" && centroEsNuevo() && (
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                          activo ? "bg-[#0A1014] text-[#BADC1E]" : "bg-[#BADC1E] text-[#0A1014]"
+                        }`}
+                      >
+                        Nuevo
                       </span>
                     )}
                     {insignia !== null && (
@@ -303,13 +347,22 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
       <main className="pt-16 lg:pl-64">
         <div className="p-4 sm:p-6 lg:p-8 max-w-[1500px]">
           {seccion === "centro" && (
-            <CentroDeMantenimiento resumen={resumen} error={errorDelResumen} onIr={irA} />
+            <CentroDeMantenimiento
+              resumen={resumen}
+              error={errorDelResumen}
+              onIr={irDesdeElCentro}
+              onAbrirArea={(area) => {
+                marcarCentroVisto();
+                abrirEquipos({ area });
+              }}
+            />
           )}
           {seccion === "configuracion" && <ConfiguracionMantenimiento />}
           {seccion === "equipos" && (
             <EquiposMantenimiento
-              key={busqueda.veces}
-              busquedaInicial={busqueda.texto}
+              key={entrada.veces}
+              busquedaInicial={entrada.texto}
+              areaInicial={entrada.area}
               porImportar={resumen?.por_importar ?? 0}
               onCambio={cargarResumen}
             />

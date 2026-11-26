@@ -70,20 +70,21 @@ async function sinChoques<T>(trabajo: () => Promise<T>, mensaje: string): Promis
 
 const idDe = (req: Request) => Number(req.params.id);
 
+/** Lo de otros módulos se calcula con lo que ESTA persona tiene: sin el módulo no se lee su tabla. */
+const fuentesDe = (req: Request) => ({
+  conOrdenes: tieneModulo(req.usuario, "ordenes_trabajo"),
+  conChecklists: tieneModulo(req.usuario, "checklists"),
+});
+
 router.get(
   "/equipos",
   validateQuery(filtrosEquiposSchema),
   asyncHandler(async (req: Request, res: Response) => {
     const tenantId = getTenantId(req);
     const filtros = req.validatedQuery as z.infer<typeof filtrosEquiposSchema>;
-    // El estado se calcula con lo que ESTA persona tiene: sin el módulo no se lee su tabla.
-    const fuentes = {
-      conOrdenes: tieneModulo(req.usuario, "ordenes_trabajo"),
-      conChecklists: tieneModulo(req.usuario, "checklists"),
-    };
     res.json(
       await withTenant(tenantId, (client) =>
-        service.listarEquipos(client, tenantId, filtros, fuentes)
+        service.listarEquipos(client, tenantId, filtros, fuentesDe(req))
       )
     );
   })
@@ -231,7 +232,9 @@ router.get(
   "/resumen",
   asyncHandler(async (req: Request, res: Response) => {
     const tenantId = getTenantId(req);
-    res.json(await withTenant(tenantId, (client) => service.resumen(client, tenantId)));
+    res.json(
+      await withTenant(tenantId, (client) => service.resumen(client, tenantId, fuentesDe(req)))
+    );
   })
 );
 

@@ -6,11 +6,16 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  MAXIMO_DE_BARRAS,
+  anilloDeOrdenes,
   avisosDelCentro,
+  barrasDeArea,
   fechaLarga,
-  propiosYAlquilados,
-  repartoPorArea,
+  notaDeEstados,
+  porcentaje,
+  resumenDeArea,
   saludoSegunHora,
+  tonoDeArea,
 } from "../client/src/components/mantenimiento/centroDeMantenimiento";
 import {
   FILTROS_VACIOS,
@@ -48,7 +53,11 @@ import {
   etiquetaDelPerfil,
   inicialesDe,
 } from "../client/src/components/mantenimiento/perfilMantenimiento";
-import type { EquipoMantenimiento } from "../client/src/components/mantenimiento/mantenimientoApi";
+import type {
+  EquipoMantenimiento,
+  ResumenMantenimiento,
+  UnidadDelCentro,
+} from "../client/src/components/mantenimiento/mantenimientoApi";
 import {
   esRutaDeMantenimiento,
   leerRuta,
@@ -370,28 +379,183 @@ describe("importar equipos desde Excel", () => {
   });
 });
 
-describe("Centro: reparto de equipos por área", () => {
-  it("ordena de más a menos, omite las áreas vacías y suma «Sin área»", () => {
-    const reparto = repartoPorArea({
-      areas: [
-        { id: 1, nombre: "Taller", equipos: 1 },
-        { id: 2, nombre: "Cantera", equipos: 4 },
-        { id: 3, nombre: "Vacía", equipos: 0 },
-      ],
-      sin_area: 2,
+const unidad = (extra: Partial<UnidadDelCentro> = {}): UnidadDelCentro => ({
+  id: 1,
+  placa: "AKM-739",
+  estado: "operativa",
+  alquilada: false,
+  ...extra,
+});
+const nada = { total: 0, casos: [] };
+/** Un resumen sin nada pendiente y sin los módulos vecinos. */
+const centro = (
+  extra: Partial<ResumenMantenimiento> = {}
+): Parameters<typeof avisosDelCentro>[0] => ({
+  sin_area: 0,
+  por_importar: 0,
+  ordenes: null,
+  checklists: null,
+  ...extra,
+});
+
+describe("Centro: cifras y estado por área", () => {
+  it("el porcentaje de nada es 0 y las notas dicen cuando no hay nada", () => {
+    expect(porcentaje(0, 0)).toBe(0);
+    expect(porcentaje(2, 3)).toBe(67);
+    expect(notaDeEstados({ operativas: 3, detenidas: 0, en_mantenimiento: 0 })).toBe(
+      "Ninguna detenida ni en mantenimiento"
+    );
+    expect(notaDeEstados({ operativas: 6, detenidas: 1, en_mantenimiento: 2 })).toBe(
+      "1 detenida · 2 en mantenimiento"
+    );
+  });
+
+  it("el color del área sigue la meta de la empresa: cumple, a 15 puntos o menos, o más lejos", () => {
+    expect(tonoDeArea(90, 90)).toBe("green");
+    expect(tonoDeArea(89, 90)).toBe("amber");
+    expect(tonoDeArea(75, 90)).toBe("amber");
+    expect(tonoDeArea(74, 90)).toBe("red");
+  });
+
+  it("resume un área: disponibilidad, detenidos, en taller y «Sin área» para las que no tienen", () => {
+    const area = resumenDeArea(
+      {
+        area_id: null,
+        nombre: null,
+        unidades: [
+          unidad(),
+          unidad({ id: 2, estado: "detenida" }),
+          unidad({ id: 3, estado: "en_mantenimiento" }),
+          unidad({ id: 4, estado: "en_mantenimiento" }),
+        ],
+      },
+      90
+    );
+    expect(area).toMatchObject({
+      clave: "sin_area",
+      nombre: SIN_AREA,
+      disponibilidad: 25,
+      tono: "red",
+      equipos: "4 equipos",
+      detenidos: "1 detenido",
+      enTaller: "2 en taller",
     });
-    expect(reparto).toEqual([
-      { nombre: "Cantera", equipos: 4, porcentaje: 100 },
-      { nombre: "Sin área", equipos: 2, porcentaje: 50 },
-      { nombre: "Taller", equipos: 1, porcentaje: 25 },
+    expect(resumenDeArea({ area_id: 7, nombre: "Taller", unidades: [unidad()] }, 90)).toMatchObject(
+      { nombre: "Taller", disponibilidad: 100, detenidos: null, enTaller: null }
+    );
+  });
+
+  it("una barra por unidad; la alquilada va en gris aunque esté detenida", () => {
+    const barras = barrasDeArea([
+      unidad(),
+      unidad({ id: 2, placa: "ALQ-1", estado: "detenida", alquilada: true }),
+    ]);
+    expect(barras).toEqual([
+      { color: "operativa", peso: 1, titulo: "AKM-739 · Operativa" },
+      { color: "alquilada", peso: 1, titulo: "ALQ-1 · Detenida · Alquilada" },
     ]);
   });
 
-  it("sin equipos no reparte nada, y sin «sin área» no la dibuja", () => {
-    expect(repartoPorArea({ areas: [], sin_area: 0 })).toEqual([]);
+  it("con muchas unidades junta las barras por color, sin perder ninguna", () => {
+    const muchas = Array.from({ length: MAXIMO_DE_BARRAS + 10 }, (_, i) =>
+      unidad({ id: i + 1, estado: i < 3 ? "detenida" : "operativa" })
+    );
+    const barras = barrasDeArea(muchas);
+    expect(barras.map((b) => [b.color, b.peso])).toEqual([
+      ["operativa", MAXIMO_DE_BARRAS + 7],
+      ["detenida", 3],
+    ]);
+    expect(barras[1].titulo).toBe("3 detenidas");
+  });
+
+  it("el anillo de órdenes reparte el mes y queda gris sin ninguna", () => {
+    expect(anilloDeOrdenes({ correctivo: 0, preventivo: 0 })).toEqual({
+      total: 0,
+      fondo: "#e2e8f0",
+    });
+    const anillo = anilloDeOrdenes({ correctivo: 5, preventivo: 2 });
+    expect(anillo.total).toBe(7);
+    expect(anillo.fondo).toContain("0 71%");
+  });
+});
+
+describe("Centro: lo que requiere atención", () => {
+  const ordenes = {
+    abiertas: 8,
+    urgentes: 1,
+    del_mes: { correctivo: 0, preventivo: 0 },
+    sin_mecanico: {
+      total: 3,
+      urgentes: 1,
+      casos: [
+        { id: 12, unidad: "TFS-883", titulo: "Frenos", urgente: true },
+        { id: 9, unidad: null, titulo: "Faja", urgente: false },
+      ],
+    },
+  };
+  const checklists = {
+    hechos_hoy: 4,
+    sin_checklist_hoy: { total: 2, casos: ["AKM-739", "REX-003"] },
+    no_aptos_hoy: { total: 1, casos: [{ id: 1, unidad: "TFS-883", fallas: "Frenos" }] },
+    por_autorizar: { total: 1, casos: [{ id: 2, unidad: "REX-002", fallas: null }] },
+  };
+
+  it("sin los módulos vecinos solo avisa lo propio", () => {
+    expect(avisosDelCentro(centro())).toEqual([]);
+    const avisos = avisosDelCentro(centro({ sin_area: 1, por_importar: 2 }));
+    expect(avisos.map((a) => a.id)).toEqual(["por-importar", "sin-area"]);
+    expect(avisos[0].titulo).toBe("2 unidades de Operaciones por completar");
+    expect(avisos[1].titulo).toBe("1 equipo sin área");
+  });
+
+  it("ordena de lo urgente a lo administrativo y manda cada aviso a su módulo", () => {
+    const avisos = avisosDelCentro(centro({ ordenes, checklists, sin_area: 1 }), true);
+    expect(avisos.map((a) => [a.id, a.tono, a.accion])).toEqual([
+      ["sin-mecanico", "red", "Asignar"],
+      ["no-aptos", "red", "Ver checklists"],
+      ["por-autorizar", "amber", "Ver checklists"],
+      ["sin-checklist", "amber", "Ver unidades"],
+      ["sin-area", "amber", "Ver equipos"],
+    ]);
+    expect(avisos.map((a) => a.destino)).toEqual([
+      { modulo: "ordenes_trabajo" },
+      { modulo: "checklists" },
+      { modulo: "checklists" },
+      { seccion: "equipos" },
+      { seccion: "equipos" },
+    ]);
+    expect(avisos[0].titulo).toBe("3 órdenes sin mecánico asignado (1 urgente)");
+    expect(avisos[0].detalle).toBe("OT #12 · TFS-883 · Frenos · urgente; OT #9 · Faja y 1 más");
+    expect(avisos[1].titulo).toBe("1 checklist «No apta» hoy");
+    expect(avisos[2].detalle).toBe("REX-002");
+    expect(avisos[3].titulo).toBe("2 unidades sin checklist hoy");
+    expect(avisos[3].detalle).toBe("AKM-739, REX-003");
+  });
+
+  it("quien solo mira no recibe «Asignar», y sin urgentes el aviso es ámbar", () => {
+    const [aviso] = avisosDelCentro(
+      centro({
+        ordenes: { ...ordenes, sin_mecanico: { ...ordenes.sin_mecanico, urgentes: 0 } },
+      })
+    );
+    expect(aviso).toMatchObject({ accion: "Ver órdenes", tono: "amber" });
+    expect(aviso.titulo).toBe("3 órdenes sin mecánico asignado");
+  });
+
+  it("un bloque sin casos no genera aviso", () => {
     expect(
-      repartoPorArea({ areas: [{ id: 1, nombre: "Taller", equipos: 2 }], sin_area: 0 })
-    ).toEqual([{ nombre: "Taller", equipos: 2, porcentaje: 100 }]);
+      avisosDelCentro(
+        centro({
+          ordenes: { ...ordenes, sin_mecanico: { ...nada, urgentes: 0 } },
+          checklists: {
+            hechos_hoy: 0,
+            sin_checklist_hoy: nada,
+            no_aptos_hoy: nada,
+            por_autorizar: nada,
+          },
+        })
+      )
+    ).toEqual([]);
   });
 });
 
@@ -451,20 +615,6 @@ describe("barra superior y Centro", () => {
     expect(saludoSegunHora(21)).toBe("Buenas noches");
     expect(fechaLarga(new Date(2026, 10, 24))).toContain("24");
     expect(fechaLarga(new Date(2026, 10, 24))).toContain("2026");
-  });
-
-  it("escribe en singular o en plural los propios y los alquilados", () => {
-    expect(propiosYAlquilados(1, 0)).toBe("1 propio · 0 alquilados");
-    expect(propiosYAlquilados(3, 1)).toBe("3 propios · 1 alquilado");
-  });
-
-  it("los avisos salen solo de lo que se sabe: unidades por completar y equipos sin área", () => {
-    expect(avisosDelCentro({ total: 5, sin_area: 0, por_importar: 0 })).toEqual([]);
-    const avisos = avisosDelCentro({ total: 5, sin_area: 1, por_importar: 2 });
-    expect(avisos.map((a) => a.id)).toEqual(["por-importar", "sin-area"]);
-    expect(avisos[0].titulo).toBe("2 unidades de Operaciones por completar");
-    expect(avisos[1].titulo).toBe("1 equipo sin área");
-    expect(avisos.every((a) => a.destino === "equipos")).toBe(true);
   });
 });
 
