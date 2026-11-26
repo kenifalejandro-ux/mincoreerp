@@ -1,7 +1,7 @@
 /** src/modules/ordenes_trabajo/ordenes_trabajo.routes.ts */
 
 import { Router } from "express";
-import { validate } from "../../server/middleware/validate";
+import { validate, validateQuery } from "../../server/middleware/validate";
 import { requireRole } from "../../server/shared/middlewares/roles.middleware";
 import { asyncHandler } from "../../server/shared/utils/asyncHandler";
 import {
@@ -9,6 +9,8 @@ import {
   actualizarOrdenTrabajoSchema,
   cambiarEstadoOrdenTrabajoSchema,
   cambiarTareasSchema,
+  asignarOrdenSchema,
+  filtrosDeOrdenesSchema,
 } from "../../server/schemas/ordenes_trabajo.schema";
 import { OrdenesTrabajoController } from "./ordenes_trabajo.controller";
 import { listarUnidadesParaElegir } from "../equipos/unidadesParaElegir";
@@ -19,7 +21,18 @@ const router = Router();
 // `/api/erp/equipos`. ANTES de "/:id" para que "unidades" no se tome por un id.
 router.get("/unidades", asyncHandler(listarUnidadesParaElegir));
 
-router.get("/", asyncHandler(OrdenesTrabajoController.getAll));
+router.get(
+  "/",
+  validateQuery(filtrosDeOrdenesSchema),
+  asyncHandler(OrdenesTrabajoController.getAll)
+);
+// «resumen» y «mecanicos» van ANTES de "/:id" para que no se tomen por un id.
+router.get("/resumen", asyncHandler(OrdenesTrabajoController.getResumen));
+router.get(
+  "/mecanicos",
+  requireRole("admin", "operador"),
+  asyncHandler(OrdenesTrabajoController.getMecanicos)
+);
 // Va ANTES que GET /:id a propósito -- si no, Express matchea
 // "usuarios-asignables" como si fuera un :id.
 router.get(
@@ -61,6 +74,14 @@ router.patch(
   requireRole("admin", "operador"),
   validate(cambiarTareasSchema),
   asyncHandler(OrdenesTrabajoController.cambiarTareas)
+);
+
+// Asignar o quitar el mecánico, sin tocar el resto de la orden (solo con señal).
+router.patch(
+  "/:id(\\d{1,9})/asignado",
+  requireRole("admin", "operador"),
+  validate(asignarOrdenSchema),
+  asyncHandler(OrdenesTrabajoController.asignar)
 );
 
 router.delete("/:id", requireRole("admin"), asyncHandler(OrdenesTrabajoController.eliminar));

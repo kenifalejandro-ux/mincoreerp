@@ -9,6 +9,13 @@ import type {
   CambiarTareasInput,
 } from "../../server/schemas/ordenes_trabajo.schema";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
+import { asignarOrden } from "./ordenes_trabajo.asignacion";
+import {
+  mecanicosConCarga,
+  resumenDeOrdenes,
+  type FiltrosDeOrdenes,
+  type Vecinos,
+} from "./ordenes_trabajo.consulta";
 import { OrdenesTrabajoRepository } from "./ordenes_trabajo.repository";
 import { cambiarTareas } from "./ordenes_trabajo.tareas";
 
@@ -17,10 +24,22 @@ export const OrdenesTrabajoService = {
     client: PoolClient,
     tenantId: string,
     paginacion: Paginacion,
-    filtros: { estado?: string; equipoId?: number; asignadoA?: string },
-    conUnidades = true
+    filtros: FiltrosDeOrdenes,
+    vecinos: Vecinos
   ) {
-    return OrdenesTrabajoRepository.findAll(client, tenantId, paginacion, filtros, conUnidades);
+    return OrdenesTrabajoRepository.findAll(client, tenantId, paginacion, filtros, vecinos);
+  },
+
+  resumen(client: PoolClient, tenantId: string) {
+    return resumenDeOrdenes(client, tenantId);
+  },
+
+  mecanicos(client: PoolClient, tenantId: string) {
+    return mecanicosConCarga(client, tenantId);
+  },
+
+  asignar(client: PoolClient, tenantId: string, id: number, asignadoA: string | null) {
+    return asignarOrden(client, tenantId, id, asignadoA);
   },
 
   /** `conUnidades`: el usuario tiene un módulo que mantiene unidades (Flota o Mantenimiento). Sin él no se lee `equipos` (ver `opcionales`). */
