@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight, Plus, Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { cuandoFue } from "./actividadDelTurno";
+import { conformidadEsNueva, marcarConformidadVista } from "./conformidad";
 import {
   cifrasDeOrdenes,
   listarAreas,
@@ -16,6 +17,7 @@ import {
 import {
   consultaDeOrdenes,
   ESTADO_DE_ORDEN,
+  faltaConformidad,
   fechaProgramada,
   origenDeLaOrden,
   PRIORIDAD,
@@ -69,6 +71,7 @@ export default function OrdenesMantenimiento({
   filtrosIniciales,
   ordenInicial,
   onCambio,
+  exigeConformidad,
 }: {
   /** Con qué abre filtrada (viene de un aviso del Centro). */
   filtrosIniciales?: Partial<FiltrosDeOrdenes>;
@@ -76,6 +79,8 @@ export default function OrdenesMantenimiento({
   ordenInicial?: number;
   /** Cambió una orden: el ecosistema vuelve a leer su resumen. */
   onCambio: () => void;
+  /** La regla de conformidad está encendida (lo dice el resumen del ecosistema). */
+  exigeConformidad: boolean;
 }) {
   const { usuario } = useAuth();
   const puedeEscribir = usePuedeEscribir("ordenes_trabajo");
@@ -299,6 +304,28 @@ export default function OrdenesMantenimiento({
               ))}
             </select>
           )}
+          {(exigeConformidad || filtros.porConformar) && (
+            <button
+              type="button"
+              aria-pressed={filtros.porConformar}
+              onClick={() => {
+                marcarConformidadVista();
+                filtrar({ porConformar: !filtros.porConformar });
+              }}
+              className={`flex min-h-[44px] sm:min-h-10 items-center gap-2 rounded-lg border px-4 text-sm font-semibold ${
+                filtros.porConformar
+                  ? "bg-[#BADC1E] border-[#BADC1E] text-[#0A1014]"
+                  : "bg-white border-slate-300 text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              Por conformar
+              {conformidadEsNueva() && (
+                <span className="rounded-full bg-[#0A1014] px-2 py-0.5 text-[10px] font-extrabold text-[#BADC1E]">
+                  Nuevo
+                </span>
+              )}
+            </button>
+          )}
         </div>
 
         {error ? (
@@ -376,6 +403,11 @@ export default function OrdenesMantenimiento({
                       <span className={`${chip} ${ESTADO_DE_ORDEN[o.estado].clase}`}>
                         {ESTADO_DE_ORDEN[o.estado].texto}
                       </span>
+                      {faltaConformidad(o, exigeConformidad) && (
+                        <span className="mt-1.5 block text-xs font-bold text-blue-700">
+                          Sin conformidad
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 max-w-[160px] break-words text-slate-700">
                       {o.asignado_a_nombre ?? (
@@ -406,7 +438,7 @@ export default function OrdenesMantenimiento({
 
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-slate-200">
           <p className="text-xs text-slate-500">
-            Iniciar, completar, cancelar y eliminar se hacen en el módulo Órdenes de trabajo.
+            Eliminar una orden se hace en el módulo Órdenes de trabajo.
           </p>
           <div className="flex items-center gap-2">
             {datos && (

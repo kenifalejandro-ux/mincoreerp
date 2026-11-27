@@ -248,6 +248,15 @@ export const PESTANAS_CONFIGURABLES: DefinicionPestana[] = [
     nivel: "submenu",
     padre: null,
   },
+  // Conformidad de una orden de trabajo (0210): probar el equipo y liberar la unidad. No nace para nadie, ni
+  // para el admin: se le marca a quien firma (SSOMA).
+  {
+    modulo: "ordenes_trabajo",
+    pestana: "conformidad:dar",
+    nombre: "Da la conformidad y libera la unidad",
+    nivel: "submenu",
+    padre: null,
+  },
   {
     modulo: "proveedores",
     pestana: "cuentas",
@@ -299,11 +308,14 @@ export function claveDePestana(modulo: string, pestana: string): string {
  *  tener habilitado el check". */
 /** Para el admin no es parte de su «acceso total»: se le muestra como está y se la puede quitar. Sin esto, al
  *  guardar sus permisos la pantalla la mandaría marcada y quedaría eximido sin que nadie lo decidiera. */
-const OPCIONAL_TAMBIEN_PARA_ADMIN = "salida:omitir_criticas";
+const OPCIONALES_TAMBIEN_PARA_ADMIN: ReadonlySet<string> = new Set([
+  "salida:omitir_criticas",
+  "conformidad:dar",
+]);
 
 const NACEN_APAGADAS: ReadonlySet<string> = new Set([
   "urea:corregir_litros",
-  OPCIONAL_TAMBIEN_PARA_ADMIN,
+  ...OPCIONALES_TAMBIEN_PARA_ADMIN,
 ]);
 
 export function pestanaPermitida(
@@ -495,6 +507,28 @@ export async function mapaPermisosPestanas(
   );
 }
 
+/** Cuántas personas pueden usar hoy una casilla que se marca a mano: activas, admin u operador, con la casilla
+ *  y con su módulo en «Operar» (en «Consultas» o sin el módulo la ruta las rechaza). Vive aquí porque lee las
+ *  tablas de permisos: un módulo no las consulta por su cuenta. Va dentro de `withTenant`. */
+export async function cuantosOperanConCasilla(
+  client: PoolClient,
+  tenantId: string,
+  modulo: string,
+  pestana: string
+): Promise<number> {
+  const r = await client.query<{ total: number }>(
+    `SELECT count(*)::int AS total
+       FROM usuario_permisos_pestana p
+       JOIN usuarios u ON u.id = p.usuario_id AND u.tenant_id = p.tenant_id
+       JOIN usuario_modulos um
+         ON um.usuario_id = u.id AND um.modulo::text = p.modulo AND um.nivel = 'operar'
+      WHERE p.tenant_id = $1 AND p.modulo = $2 AND p.pestana = $3
+        AND p.permitido AND u.activo AND u.rol IN ('admin', 'operador')`,
+    [tenantId, modulo, pestana]
+  );
+  return r.rows[0].total;
+}
+
 /** Los permisos de pestaña puestos a mano de una persona, para armar `req.usuario` en cada request: del
  *  cache de 60 s o, si falta, de la base (y se vuelve a guardar). */
 export async function permisosPestanasDe(
@@ -556,7 +590,7 @@ export async function listarPermisosPestanasEnTransaccion(
       pestana,
       nombre,
       permitido:
-        rol === "admin" && pestana !== OPCIONAL_TAMBIEN_PARA_ADMIN
+        rol === "admin" && !OPCIONALES_TAMBIEN_PARA_ADMIN.has(pestana)
           ? true
           : padrePermitido && permitidoDirecto,
       predeterminado,
@@ -584,7 +618,7 @@ export async function guardarPermisosPestanas(
   const rol = usuario.rows[0].rol;
   if (
     rol === "admin" &&
-    permisos.some((p) => !p.permitido && p.pestana !== OPCIONAL_TAMBIEN_PARA_ADMIN)
+    permisos.some((p) => !p.permitido && !OPCIONALES_TAMBIEN_PARA_ADMIN.has(p.pestana))
   ) {
     throw new AppError(400, "El perfil Admin conserva acceso total a todos los módulos y pestañas");
   }

@@ -1,17 +1,26 @@
 // client/src/components/mantenimiento/PanelDeOrden.tsx
 //
 // El panel de una orden de trabajo, como la maqueta: qué falta, su resumen, el recorrido, los repuestos y el
-// cierre. Aquí se asigna el mecánico y se anotan horas y tareas; iniciar, completar y cancelar siguen en el
-// módulo Órdenes de trabajo.
+// cierre. Aquí se asigna el mecánico, se anotan horas y tareas, se inicia, completa o cancela y se da la
+// conformidad. Eliminar sigue en el módulo Órdenes de trabajo.
 import { Check, ClipboardList, Users, Wrench } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { cuandoFue } from "./actividadDelTurno";
 import AsignarMecanico from "./AsignarMecanico";
-import { estadoDelIperc, leerOrden } from "./mantenimientoApi";
+import CambiarEstadoDeOrden from "./CambiarEstadoDeOrden";
+import { tieneCasillaDeConformidad } from "./conformidad";
+import {
+  cambiarEstadoDeOrden,
+  darConformidad,
+  estadoDelIperc,
+  leerConfig,
+  leerOrden,
+} from "./mantenimientoApi";
 import {
   estaAbierta,
   ESTADO_DE_ORDEN,
+  faltaConformidad,
   fechaProgramada,
   origenDeLaOrden,
   pasosDeLaOrden,
@@ -31,9 +40,6 @@ const caja = "rounded-xl border border-slate-200 bg-white shadow-sm";
 const boton =
   "min-h-[44px] sm:min-h-10 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50";
 const chip = "rounded-full px-2.5 py-0.5 text-xs font-bold whitespace-nowrap";
-
-const abrirModulo = () =>
-  window.dispatchEvent(new CustomEvent("mincore:ir-a-pestana", { detail: "ordenes_trabajo" }));
 
 function Banda({
   tono,
@@ -87,9 +93,14 @@ export default function PanelDeOrden({
   const [datos, setDatos] = useState<{
     orden: DetalleDeOrdenEnOficina;
     iperc: string | null;
+    exigeConformidad: boolean;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [ventana, setVentana] = useState<"asignar" | "trabajo" | null>(null);
+  const [ventana, setVentana] = useState<"asignar" | "trabajo" | "completada" | "cancelada" | null>(
+    null
+  );
+  const [errorDeAccion, setErrorDeAccion] = useState<string | null>(null);
+  const [actuando, setActuando] = useState(false);
 
   // Solo vale la última lectura pedida.
   const ultima = useRef(0);
@@ -99,7 +110,13 @@ export default function PanelDeOrden({
     leerOrden(id)
       .then(async (orden) => {
         const iperc = conIperc && orden.iperc_id ? await estadoDelIperc(orden.iperc_id) : null;
-        if (esta === ultima.current) setDatos({ orden, iperc });
+        // Con la regla apagada la unidad ya está libre. Si no se puede leer, manda lo que dice la orden.
+        const exigeConformidad = orden.requiere_conformidad
+          ? await leerConfig()
+              .then((c) => c.exige_conformidad)
+              .catch(() => true)
+          : false;
+        if (esta === ultima.current) setDatos({ orden, iperc, exigeConformidad });
       })
       .catch((e: unknown) => {
         if (esta === ultima.current) setError(e instanceof Error ? e.message : "Error");
@@ -114,18 +131,46 @@ export default function PanelDeOrden({
     cargar();
     onCambio();
   };
-  const cerrarAsignar = useCallback(() => setVentana(null), []);
+  const cerrarVentana = useCallback(() => setVentana(null), []);
+  /** Algo salió bien desde una ventana: el aviso de un intento anterior ya no vale. */
+  const salioBien = () => {
+    setErrorDeAccion(null);
+    cambiado();
+  };
+  /** Iniciar o dar la conformidad: una acción a la vez; si el servidor rechaza, se relee. */
+  const actuar = (accion: () => Promise<unknown>) => {
+    if (actuando) return;
+    setActuando(true);
+    setErrorDeAccion(null);
+    accion()
+      .then(cambiado)
+      .catch((e: unknown) => {
+        setErrorDeAccion(e instanceof Error ? e.message : "Error");
+        if (navigator.onLine) cambiado();
+      })
+      .finally(() => setActuando(false));
+  };
 
   const o = datos?.orden;
-  const pasos = o ? pasosDeLaOrden(o, conIperc ? { estado: datos.iperc } : null) : [];
+  // Con la regla apagada, una conformidad que nunca se dio ya no es un paso pendiente.
+  const pasos = o
+    ? pasosDeLaOrden(
+        {
+          ...o,
+          requiere_conformidad:
+            o.requiere_conformidad && (datos.exigeConformidad || !!o.conformidad_en),
+        },
+        conIperc ? { estado: datos.iperc } : null
+      )
+    : [];
   const falta = pasos.find((p) => p.actual)?.clave;
   const abierta = !!o && estaAbierta(o.estado);
   const hechas = o?.tareas.filter((t) => t.hecha).length ?? 0;
-  const irAlModulo = (
-    <button type="button" onClick={abrirModulo} className={boton}>
-      Abrir en Órdenes de trabajo
-    </button>
-  );
+  const porConformar = !!o && faltaConformidad(o, datos.exigeConformidad);
+  const puedeConformar =
+    puedeEscribir && tieneCasillaDeConformidad(usuario) && o?.asignado_a !== usuario?.id;
+  const principal =
+    "min-h-[44px] sm:min-h-10 rounded-lg bg-[#BADC1E] px-4 text-sm font-semibold text-[#0A1014] hover:brightness-95 disabled:opacity-50";
 
   return (
     <PanelDeDetalle etiqueta="Detalle de la orden" titulo="Orden de trabajo" onCerrar={onCerrar}>
@@ -154,9 +199,62 @@ export default function PanelDeOrden({
             <p className="mt-1 break-words text-sm text-slate-600">
               {o.titulo} · {TIPO[o.tipo]} · {origenDeLaOrden(o)}
             </p>
+            {puedeEscribir && abierta && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {o.estado === "abierta" ? (
+                  <button
+                    type="button"
+                    disabled={actuando}
+                    onClick={() => actuar(() => cambiarEstadoDeOrden(id, "en_progreso"))}
+                    className={principal}
+                  >
+                    Iniciar
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setVentana("completada")}
+                    className={principal}
+                  >
+                    Completar
+                  </button>
+                )}
+                <button type="button" onClick={() => setVentana("cancelada")} className={boton}>
+                  Cancelar orden
+                </button>
+              </div>
+            )}
           </header>
 
-          {o.estado === "completada" && (
+          {errorDeAccion && (
+            <p role="alert" className="rounded-xl bg-red-50 p-4 text-sm text-red-700">
+              {errorDeAccion}
+            </p>
+          )}
+          {porConformar && (
+            <Banda
+              tono="blue"
+              icono={<Check size={22} />}
+              titulo="Pendiente de conformidad"
+              texto={
+                puedeConformar
+                  ? "El trabajo terminó. Prueba el equipo y da la conformidad para liberarlo."
+                  : "El trabajo terminó. Falta que la dé quien tiene esa casilla (no el mecánico de la orden)."
+              }
+            >
+              {puedeConformar && (
+                <button
+                  type="button"
+                  disabled={actuando}
+                  onClick={() => actuar(() => darConformidad(id))}
+                  className={principal}
+                >
+                  Dar conformidad
+                </button>
+              )}
+            </Banda>
+          )}
+          {o.estado === "completada" && !porConformar && (
             <Banda
               tono="green"
               icono={<Check size={22} />}
@@ -195,20 +293,16 @@ export default function PanelDeOrden({
               tono="blue"
               icono={<Wrench size={22} />}
               titulo="Lista para iniciar"
-              texto="Se inicia desde el módulo Órdenes de trabajo."
-            >
-              {puedeEscribir && irAlModulo}
-            </Banda>
+              texto="Se inicia cuando empieza el trabajo."
+            />
           )}
           {falta === "cierre" && (
             <Banda
               tono="blue"
               icono={<Wrench size={22} />}
               titulo="Trabajo en curso"
-              texto="Se completa desde el módulo Órdenes de trabajo."
-            >
-              {puedeEscribir && irAlModulo}
-            </Banda>
+              texto="Se completa cuando termina."
+            />
           )}
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
@@ -327,11 +421,23 @@ export default function PanelDeOrden({
       {ventana === "asignar" && o && (
         <AsignarMecanico
           orden={o}
-          onCerrar={cerrarAsignar}
+          onCerrar={cerrarVentana}
           onRechazo={cambiado}
           onAsignado={() => {
             setVentana(null);
-            cambiado();
+            salioBien();
+          }}
+        />
+      )}
+      {(ventana === "completada" || ventana === "cancelada") && (
+        <CambiarEstadoDeOrden
+          id={id}
+          estado={ventana}
+          onCerrar={cerrarVentana}
+          onRechazo={cambiado}
+          onCambiado={() => {
+            setVentana(null);
+            salioBien();
           }}
         />
       )}
@@ -339,7 +445,7 @@ export default function PanelDeOrden({
         <DetalleDeOrden
           id={id}
           puedeEscribir={puedeEscribir}
-          onCambio={cambiado}
+          onCambio={salioBien}
           onCerrar={() => setVentana(null)}
         />
       )}

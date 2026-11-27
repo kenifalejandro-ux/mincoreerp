@@ -4,7 +4,7 @@
 // lee lo que se escribe en una meta y qué se avisa de cada regla.
 //
 // Las reglas se guardan siempre, pero cada una ACTÚA solo cuando el módulo dueño de su flujo la aplica: hoy, la de
-// «OT desde un hallazgo crítico» (Checklists). Las demás lo dicen (`llegaCon`); la pantalla no puede prometer algo
+// «OT desde un hallazgo crítico» (Checklists) y la de conformidad (Órdenes de trabajo). Las demás lo dicen (`llegaCon`); la pantalla no puede prometer algo
 // que no ocurre, ni negar algo que sí.
 import { tieneModulo } from "../../modules/tieneModulo";
 
@@ -38,7 +38,7 @@ export const REGLAS: Regla[] = [
     titulo: "Bloquear el inicio sin IPERC autorizado",
     descripcion:
       "Impide iniciar una OT mientras no exista la autorización de seguridad. Si se apaga, el IPERC queda como recomendado.",
-    llegaCon: "Órdenes de trabajo",
+    llegaCon: "el perfil de Supervisor de SSOMA",
     necesita: [OT, { id: "iperc", nombre: "IPERC" }],
   },
   {
@@ -54,7 +54,6 @@ export const REGLAS: Regla[] = [
     titulo: "Exigir conformidad antes de liberar la unidad",
     descripcion:
       "Después de que el mecánico cierra la OT, alguien prueba el equipo y da la conformidad. Apagado: la unidad vuelve a operar al cerrar.",
-    llegaCon: "Órdenes de trabajo",
     necesita: [OT],
   },
 ];

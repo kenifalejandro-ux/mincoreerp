@@ -97,6 +97,49 @@ export const OrdenesTrabajoController = {
     }
   },
 
+  async getQuienesConforman(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const total = await withTenant(tenantId, (client) =>
+        OrdenesTrabajoService.cuantosDanConformidad(client, tenantId)
+      );
+      res.json({ total });
+    } catch {
+      res.status(500).json({ message: "Error al obtener quién da la conformidad" });
+    }
+  },
+
+  async darConformidad(req: Request, res: Response) {
+    try {
+      const tenantId = getTenantId(req);
+      const id = Number(req.params.id);
+      const resultado = await withTenant(tenantId, (client) =>
+        OrdenesTrabajoService.darConformidad(client, tenantId, id, req.usuario!.id)
+      );
+      if (!resultado) {
+        res.status(404).json({ message: "Orden de trabajo no encontrada" });
+        return;
+      }
+      if (resultado.cambio) {
+        await registrarAuditoria({
+          accion: "ordenes_trabajo.conformidad",
+          tenantId,
+          usuarioId: req.usuario!.id,
+          detalle: { ordenTrabajoId: id },
+          contexto: contextoAuditoriaModulo(req),
+        });
+        await publicarEventoTenant(tenantId, "ordenes_trabajo.actualizada", { ordenTrabajoId: id });
+      }
+      res.json(resultado.orden);
+    } catch (err) {
+      if (err instanceof AppError) {
+        res.status(err.statusCode).json({ message: err.message });
+        return;
+      }
+      res.status(500).json({ message: "Error al dar la conformidad" });
+    }
+  },
+
   async getAll(req: Request, res: Response) {
     try {
       const tenantId = getTenantId(req);

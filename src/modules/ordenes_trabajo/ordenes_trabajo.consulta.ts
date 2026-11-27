@@ -58,6 +58,9 @@ export function condicionDeLista(tenantId: string, f: FiltrosDeOrdenes, vecinos:
   if (f.prioridad) agregar(f.prioridad, (p) => `ot.prioridad = ${p}`);
   if (f.asignado_a) agregar(f.asignado_a, (p) => `ot.asignado_a = ${p}`);
   if (f.sin_asignar === "true") condiciones.push("ot.asignado_a IS NULL");
+  if (f.por_conformar === "true") {
+    condiciones.push("ot.requiere_conformidad AND ot.conformidad_en IS NULL");
+  }
   if (f.equipoId && vecinos.conUnidades) agregar(f.equipoId, (p) => `ot.equipo_id = ${p}`);
   if (f.area_id && vecinos.conUnidades && vecinos.conAreas) {
     agregar(f.area_id, (p) => `md.area_id = ${p}`);

@@ -10,8 +10,14 @@ import { useCallback, useEffect, useState } from "react";
 
 import AreasDeMantenimiento from "./AreasDeMantenimiento";
 import { METAS, REGLAS, avisoDeRegla, leerMeta, type Meta } from "./configMantenimiento";
-import { guardarConfig, leerConfig, type ConfigMantenimiento } from "./mantenimientoApi";
+import {
+  guardarConfig,
+  leerConfig,
+  quienesDanConformidad,
+  type ConfigMantenimiento,
+} from "./mantenimientoApi";
 import { useAuth } from "../../context/AuthContext";
+import { tieneModulo } from "../../modules/tieneModulo";
 import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 
 export default function ConfiguracionMantenimiento() {
@@ -38,6 +44,23 @@ export default function ConfiguracionMantenimiento() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     cargar();
   }, [cargar]);
+
+  // La regla encendida sin nadie con la casilla deja las unidades sin liberar: se avisa.
+  const [sinQuienConforme, setSinQuienConforme] = useState(false);
+  const preguntar =
+    !!config?.exige_conformidad &&
+    usuario?.rol === "admin" &&
+    tieneModulo(usuario, "ordenes_trabajo");
+  useEffect(() => {
+    if (!preguntar) return;
+    let vigente = true;
+    quienesDanConformidad()
+      .then((total) => vigente && setSinQuienConforme(total === 0))
+      .catch(() => vigente && setSinQuienConforme(false));
+    return () => {
+      vigente = false;
+    };
+  }, [preguntar]);
 
   const quitarBorrador = (clave: string) =>
     setBorradores((b) => {
@@ -148,6 +171,16 @@ export default function ConfiguracionMantenimiento() {
                         {avisoDeRegla(r, usuario) && (
                           <span className="mt-1 block text-[11px] font-semibold text-amber-700">
                             {avisoDeRegla(r, usuario)}
+                          </span>
+                        )}
+                        {r.clave === "exige_conformidad" && preguntar && sinQuienConforme && (
+                          <span
+                            role="status"
+                            className="mt-2 block rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs font-semibold text-amber-900"
+                          >
+                            Nadie puede dar la conformidad: las unidades no se van a liberar. Marca
+                            la casilla «Da la conformidad y libera la unidad» a una persona en
+                            Administración → Usuarios.
                           </span>
                         )}
                       </div>

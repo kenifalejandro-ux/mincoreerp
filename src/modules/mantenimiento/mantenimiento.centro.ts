@@ -45,10 +45,18 @@ export interface OrdenSinMecanico {
   urgente: boolean;
 }
 
+export interface OrdenPorConformar {
+  id: number;
+  unidad: string | null;
+  titulo: string;
+}
+
 export interface OrdenesDelCentro {
   abiertas: number;
   urgentes: number;
   sin_mecanico: Aviso<OrdenSinMecanico> & { urgentes: number };
+  /** Completadas que esperan conformidad. Solo con la regla encendida. */
+  por_conformar?: Aviso<OrdenPorConformar>;
   /** Creadas este mes, sin contar las canceladas. */
   del_mes: { correctivo: number; preventivo: number };
 }
@@ -102,6 +110,33 @@ async function unidadesPorArea(
   return [...areas.values()];
 }
 
+/** Las completadas sin conformidad, la más antigua primero; null con la regla apagada. */
+async function ordenesPorConformar(
+  client: PoolClient,
+  tenantId: string
+): Promise<Aviso<OrdenPorConformar> | null> {
+  const regla = await client.query(
+    `SELECT 1 FROM mantenimiento_config WHERE tenant_id = $1 AND exige_conformidad`,
+    [tenantId]
+  );
+  if (regla.rows.length === 0) return null;
+  const r = await client.query<OrdenPorConformar & { total: number }>(
+    `SELECT o.id::int AS id, COALESCE(e.placa_codigo, o.activo_texto) AS unidad, o.titulo,
+            count(*) OVER ()::int AS total
+       FROM ordenes_trabajo o
+       LEFT JOIN equipos e ON e.tenant_id = o.tenant_id AND e.id = o.equipo_id
+      WHERE o.tenant_id = $1 AND o.requiere_conformidad AND o.conformidad_en IS NULL
+        AND o.estado = 'completada'
+      ORDER BY o.fecha_cierre, o.id
+      LIMIT ${CASOS_POR_AVISO}`,
+    [tenantId]
+  );
+  return {
+    total: r.rows[0]?.total ?? 0,
+    casos: r.rows.map(({ id, unidad, titulo }) => ({ id, unidad, titulo })),
+  };
+}
+
 /** Cuenta todas las órdenes de la empresa, también las de un activo escrito a mano (sin equipo). */
 async function ordenesDelCentro(client: PoolClient, tenantId: string): Promise<OrdenesDelCentro> {
   const cifras = await client.query<{
@@ -136,7 +171,9 @@ async function ordenesDelCentro(client: PoolClient, tenantId: string): Promise<O
     [tenantId]
   );
   const c = cifras.rows[0];
+  const por_conformar = await ordenesPorConformar(client, tenantId);
   return {
+    ...(por_conformar ? { por_conformar } : {}),
     abiertas: c.abiertas,
     urgentes: c.urgentes,
     sin_mecanico: { total: c.sin_mecanico, urgentes: c.sin_mecanico_urgentes, casos: casos.rows },
