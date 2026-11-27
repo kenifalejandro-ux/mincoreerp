@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const sanitizeSingleLine = (value: string) =>
+export const sanitizeSingleLine = (value: string) =>
   value
     // eslint-disable-next-line no-control-regex -- a propósito: despoja caracteres de control de un input de usuario, no es un typo.
     .replace(/[\u0000-\u001f\u007f]/g, " ")

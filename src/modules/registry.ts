@@ -268,10 +268,21 @@ export const MODULOS: ModuloDefinicion[] = [
       },
       // Reglas y metas de la empresa (0205): una fila, o ninguna si nunca guardó.
       { nombre: "mantenimiento_config", pk: "serial", fks: { actualizado_por: "usuarios" } },
+      // Planes de mantenimiento preventivo (0211): uno por tipo de equipo.
+      {
+        nombre: "mantenimiento_planes",
+        pk: "serial",
+        fks: { creado_por: "usuarios", actualizado_por: "usuarios" },
+      },
     ],
     // Los datos apuntan al área con ON DELETE SET NULL (no cascadea): las dos se vacían explícitamente, y la
     // configuración, que no cuelga de ninguna, también.
-    raices: ["mantenimiento_areas", "mantenimiento_equipo_datos", "mantenimiento_config"],
+    raices: [
+      "mantenimiento_areas",
+      "mantenimiento_equipo_datos",
+      "mantenimiento_config",
+      "mantenimiento_planes",
+    ],
     // Los equipos que se registran desde aquí cuentan contra el tope de unidades de la empresa, igual que los
     // de «Registro de unidades»: es la misma tabla. Recurso propio (no el de Flota) para que cada puerta mida con
     // su límite. Sin `cuota` base a propósito: áreas y demás POST no crecen ese recurso. `/equipos/bulk` cuenta
