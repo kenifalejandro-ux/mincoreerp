@@ -75,10 +75,11 @@ test("la barra, el menú y «Desde Operaciones» siguen la maqueta con Mantenimi
   // ── Menú: lo que existe abre; lo que llega sale apagado con «Pronto» ──
   await expect(menu.getByText("Operación", { exact: true })).toBeVisible();
   await expect(menu.getByText("Seguimiento", { exact: true })).toBeVisible();
-  for (const pronto of ["Mantenimiento preventivo", "Indicadores", "Historial"]) {
+  for (const pronto of ["Indicadores", "Historial"]) {
     const entrada = menu.getByRole("button", { name: new RegExp(`^${pronto}.*Pronto`) });
     await expect(entrada, `${pronto} debería salir apagada con «Pronto»`).toBeDisabled();
   }
+  await expect(menu.getByRole("button", { name: /^Mantenimiento preventivo/ })).toBeEnabled();
   await expect(menu.getByRole("button", { name: /^Configuración/ })).toBeEnabled();
   await expect(menu.getByRole("button", { name: /^Checklists/ })).toBeEnabled();
   // Órdenes de trabajo, Almacén e IPERC: la persona no tiene esos módulos, no hay entrada.
