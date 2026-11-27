@@ -2,7 +2,7 @@
 //
 // Lo que se ve de un plan elegido, como la maqueta: cómo funciona (la regla del ciclo), qué se hace en cada
 // servicio (toca un nivel para abrirlo) y quién usa el plan, con lo que le toca a cada equipo.
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Pencil, Trash2 } from "lucide-react";
 
 import { ChipDeEstado, ChipDeNivel } from "./PiezasDePreventivo";
 import {
@@ -31,16 +31,43 @@ const BARRA = {
   sin_datos: "bg-slate-300",
 };
 
-function ComoFunciona({ plan }: { plan: PlanPreventivo }) {
+interface Acciones {
+  /** Solo para quien puede escribir. */
+  onEditar?: () => void;
+  onQuitar?: () => void;
+}
+
+const accion =
+  "flex min-h-[44px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 sm:min-h-10";
+
+function ComoFunciona({ plan, onEditar, onQuitar }: { plan: PlanPreventivo } & Acciones) {
   const un = unidadDe(plan.medida);
   const marcas = marcasDelCiclo(plan);
   const ultima = marcas[marcas.length - 1];
   return (
     <section aria-label="Cómo funciona" className={`${caja} p-5`}>
-      <p className={antetitulo}>Cómo funciona</p>
-      <h2 className="break-words font-semibold text-slate-900">
-        {plan.tipo_equipo}: un servicio cada {numero(plan.intervalo)} {un}
-      </h2>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className={antetitulo}>Cómo funciona</p>
+          <h2 className="break-words font-semibold text-slate-900">
+            {plan.tipo_equipo}: un servicio cada {numero(plan.intervalo)} {un}
+          </h2>
+        </div>
+        {(onEditar || onQuitar) && (
+          <div className="flex gap-2">
+            {onEditar && (
+              <button type="button" onClick={onEditar} className={accion}>
+                <Pencil size={15} /> Editar
+              </button>
+            )}
+            {onQuitar && (
+              <button type="button" onClick={onQuitar} className={accion}>
+                <Trash2 size={15} /> Quitar
+              </button>
+            )}
+          </div>
+        )}
+      </div>
       {/* Con ciclos largos la regla se desplaza dentro de su caja: la página no se ensancha. */}
       <div className="mt-4 overflow-x-auto pb-1">
         <ol className="relative flex" style={{ minWidth: `${(marcas.length + 1) * 80}px` }}>
@@ -240,14 +267,16 @@ export default function DetalleDelPlan({
   plan,
   equipos,
   onAbrirNivel,
+  onEditar,
+  onQuitar,
 }: {
   plan: PlanPreventivo;
   equipos: EquipoConPlan[];
   onAbrirNivel: (n: Nivel) => void;
-}) {
+} & Acciones) {
   return (
     <div className="min-w-0 space-y-4">
-      <ComoFunciona plan={plan} />
+      <ComoFunciona plan={plan} onEditar={onEditar} onQuitar={onQuitar} />
       <Niveles plan={plan} onAbrir={onAbrirNivel} />
       <QuienUsa plan={plan} equipos={equipos} />
     </div>

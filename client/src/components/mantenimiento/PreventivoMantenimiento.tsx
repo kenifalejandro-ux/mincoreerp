@@ -2,16 +2,21 @@
 //
 // «Mantenimiento preventivo» dentro del ecosistema, pestaña Planes (como la maqueta): a la izquierda los planes,
 // uno por tipo de equipo; a la derecha cómo funciona el elegido, sus niveles y quién lo usa. Resumen y
-// Calendario salen con «Pronto». Es propio de Mantenimiento: no necesita ningún otro módulo. Se lee con señal.
+// Calendario salen con «Pronto». Es propio de Mantenimiento: no necesita ningún otro módulo. Admin y operador
+// crean, editan y quitan planes. Se lee y se guarda con señal.
+import { Plus } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import DetalleDelPlan from "./DetalleDelPlan";
+import FormularioPlan from "./FormularioPlan";
 import { listarPlanes, resumenPreventivo } from "./mantenimientoApi";
 import PanelDeNivel from "./PanelDeNivel";
 import {
   antetitulo,
   caja,
   cantidad,
+  editarPlanesEsNuevo,
+  marcarEditarPlanesVisto,
   numero,
   preventivoEsNuevo,
   unidadDe,
@@ -19,6 +24,9 @@ import {
   type ListaDePlanes,
   type Nivel,
 } from "./planesPreventivo";
+import QuitarPlan from "./QuitarPlan";
+import { useAuth } from "../../context/AuthContext";
+import { usePuedeEscribir } from "../comunes/usePuedeEscribir";
 
 /** En el celular las tres pestañas caben en una línea. */
 const PESTANA =
@@ -48,18 +56,48 @@ export default function PreventivoMantenimiento() {
     cargar();
   }, [cargar]);
 
+  const { usuario } = useAuth();
+  // Escriben admin y operador con el módulo en «operar» (el servidor es la barrera real).
+  const puede =
+    usePuedeEscribir("mantenimiento") && (usuario?.rol === "admin" || usuario?.rol === "operador");
+  // Qué formulario está abierto: uno nuevo (quizá para un tipo) o la edición del plan elegido.
+  const [formulario, setFormulario] = useState<{ editar?: number; tipo?: string } | null>(null);
+  const [quitando, setQuitando] = useState<number | null>(null);
+  const abrirFormulario = (con: { editar?: number; tipo?: string }) => {
+    marcarEditarPlanesVisto();
+    setNivel(null);
+    setFormulario(con);
+  };
+
   const plan = datos?.planes.find((p) => p.id === elegido) ?? datos?.planes[0];
   const suyos = datos?.equipos.filter((e) => e.plan_id === plan?.id) ?? [];
 
   return (
     <div className="space-y-4">
-      <header>
-        <p className={antetitulo}>Preventivo / Planes</p>
-        <h1 className="text-2xl font-semibold text-slate-900">Planes MP1 · MP2 · MP3</h1>
-        <p className="text-sm text-slate-600">
-          Elige un tipo de equipo para ver cada cuánto le toca servicio. Toca un nivel para ver sus
-          tareas y repuestos.
-        </p>
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className={antetitulo}>Preventivo / Planes</p>
+          <h1 className="text-2xl font-semibold text-slate-900">Planes MP1 · MP2 · MP3</h1>
+          <p className="text-sm text-slate-600">
+            Elige un tipo de equipo para ver cada cuánto le toca servicio. Toca un nivel para ver
+            sus tareas y repuestos.
+          </p>
+        </div>
+        {puede && (
+          <button
+            type="button"
+            disabled={!datos}
+            onClick={() => abrirFormulario({})}
+            className="flex min-h-[44px] items-center gap-1.5 rounded-lg bg-[#a3e635] px-4 text-sm font-semibold text-black hover:bg-[#bef264] disabled:opacity-50"
+          >
+            <Plus size={16} /> Nuevo plan
+            {editarPlanesEsNuevo() && (
+              <span className="rounded-full bg-[#0A1014] px-2 py-0.5 text-[10px] font-extrabold text-[#BADC1E]">
+                Nuevo
+              </span>
+            )}
+          </button>
+        )}
       </header>
 
       <div
@@ -123,9 +161,11 @@ export default function PreventivoMantenimiento() {
         <section className={`${caja} p-8 text-center`}>
           <h2 className="font-semibold text-slate-900">Todavía no hay planes</h2>
           <p className="mt-1 text-sm text-slate-600">
-            {datos.tiposSinPlan.length === 0
-              ? "Primero registra tus equipos: cada plan es para un tipo de equipo."
-              : "Crear planes desde esta pantalla llega en la próxima entrega."}
+            {!puede
+              ? "Los crea un administrador u operador."
+              : datos.tiposSinPlan.length === 0
+                ? "Crea uno con «Nuevo plan». Cada plan es para un tipo de equipo."
+                : "Crea el primero con «Nuevo plan» o toca un tipo de equipo de abajo."}
           </p>
         </section>
       )}
@@ -165,7 +205,14 @@ export default function PreventivoMantenimiento() {
               );
             })}
           </nav>
-          <DetalleDelPlan key={plan.id} plan={plan} equipos={suyos} onAbrirNivel={setNivel} />
+          <DetalleDelPlan
+            key={plan.id}
+            plan={plan}
+            equipos={suyos}
+            onAbrirNivel={setNivel}
+            onEditar={puede ? () => abrirFormulario({ editar: plan.id }) : undefined}
+            onQuitar={puede ? () => setQuitando(plan.id) : undefined}
+          />
         </div>
       )}
 
@@ -173,21 +220,69 @@ export default function PreventivoMantenimiento() {
         <section aria-label="Tipos sin plan" className={`${caja} p-4`}>
           <p className={antetitulo}>Tipos de equipo sin plan</p>
           <ul className="mt-2 flex flex-wrap gap-2">
-            {datos.tiposSinPlan.map((t) => (
-              <li
-                key={t.tipo}
-                className="max-w-full break-words rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800"
-              >
-                {t.tipo} · {cantidad(t.equipos, "equipo", "equipos")}
-              </li>
-            ))}
+            {datos.tiposSinPlan.map((t) => {
+              const texto = `${t.tipo} · ${cantidad(t.equipos, "equipo", "equipos")}`;
+              const tono =
+                "max-w-full break-words rounded-lg bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800";
+              return (
+                <li key={t.tipo} className="max-w-full">
+                  {puede ? (
+                    <button
+                      type="button"
+                      aria-label={`Crear el plan de ${t.tipo}`}
+                      onClick={() => abrirFormulario({ tipo: t.tipo })}
+                      className={`${tono} flex min-h-[44px] items-center gap-1.5 text-left hover:bg-amber-100 sm:min-h-9`}
+                    >
+                      <Plus size={13} className="shrink-0" />
+                      <span className="min-w-0 break-words">{texto}</span>
+                    </button>
+                  ) : (
+                    <span className={`${tono} inline-block`}>{texto}</span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </section>
       )}
 
       {plan && nivel && (
-        <PanelDeNivel plan={plan} nivel={nivel} equipos={suyos} onCerrar={() => setNivel(null)} />
+        <PanelDeNivel
+          plan={plan}
+          nivel={nivel}
+          equipos={suyos}
+          onCerrar={() => setNivel(null)}
+          onEditar={puede ? () => abrirFormulario({ editar: plan.id }) : undefined}
+        />
       )}
+      {datos && formulario && (
+        <FormularioPlan
+          plan={datos.planes.find((p) => p.id === formulario.editar)}
+          tipoInicial={formulario.tipo}
+          tiposSinPlan={datos.tiposSinPlan.map((t) => t.tipo)}
+          onGuardado={(id) => {
+            setFormulario(null);
+            setElegido(id);
+            cargar();
+          }}
+          onRechazado={cargar}
+          onCerrar={() => setFormulario(null)}
+        />
+      )}
+      {datos?.planes
+        .filter((p) => p.id === quitando)
+        .map((p) => (
+          <QuitarPlan
+            key={p.id}
+            plan={p}
+            onQuitado={() => {
+              setQuitando(null);
+              cargar();
+            }}
+            onRechazado={cargar}
+            onCerrar={() => setQuitando(null)}
+          />
+        ))}
     </div>
   );
 }
