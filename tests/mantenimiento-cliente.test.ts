@@ -576,11 +576,15 @@ describe("menú del ecosistema (como la maqueta)", () => {
   const entradas = (modulos: string[]) =>
     gruposDelMenu({ modulosPermitidos: modulos }).flatMap((g) => g.entradas.map((e) => e.id));
 
-  it("con solo Mantenimiento: Centro y Equipos abren; el resto sale como «Pronto», sin módulos ajenos", () => {
+  it("con solo Mantenimiento: Centro, Equipos y Preventivo abren; el resto sale como «Pronto»", () => {
     const grupos = gruposDelMenu({ modulosPermitidos: ["mantenimiento"] });
     expect(grupos.map((g) => g.etiqueta)).toEqual(["Operación", "Seguimiento"]);
     const todas = grupos.flatMap((g) => g.entradas);
-    expect(todas.filter((e) => !e.pronto).map((e) => e.id)).toEqual(["centro", "equipos"]);
+    expect(todas.filter((e) => !e.pronto).map((e) => e.id)).toEqual([
+      "centro",
+      "equipos",
+      "preventivo",
+    ]);
     expect(entradas(["mantenimiento"])).toEqual(
       expect.arrayContaining(["preventivo", "indicadores", "historial"])
     );
@@ -601,7 +605,8 @@ describe("menú del ecosistema (como la maqueta)", () => {
     expect(esSeccion("equipos")).toBe(true);
     expect(esSeccion("configuracion")).toBe(true);
     expect(esSeccion("checklists")).toBe(true);
-    expect(esSeccion("preventivo")).toBe(false);
+    expect(esSeccion("preventivo")).toBe(true);
+    expect(esSeccion("indicadores")).toBe(false);
     expect(insigniaDe("equipos", 3)).toBe(3);
     expect(insigniaDe("equipos", 0)).toBeNull();
     expect(insigniaDe("centro", 3)).toBeNull();

@@ -41,6 +41,8 @@ import {
 } from "./menuMantenimiento";
 import type { FiltrosDeOrdenes } from "./ordenesMantenimiento";
 import OrdenesMantenimiento from "./OrdenesMantenimiento";
+import { marcarPreventivoVisto, preventivoEsNuevo } from "./planesPreventivo";
+import PreventivoMantenimiento from "./PreventivoMantenimiento";
 import {
   esRutaDeMantenimiento,
   leerRuta,
@@ -290,6 +292,7 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
                       if (e.id === "centro") marcarCentroVisto();
                       if (e.id === "checklists") marcarChecklistsVisto();
                       if (e.id === "ordenes") marcarOrdenesVisto();
+                      if (e.id === "preventivo") marcarPreventivoVisto();
                       irA(e.id);
                     }}
                     disabled={e.pronto}
@@ -321,7 +324,8 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
                     )}
                     {((e.id === "centro" && centroEsNuevo()) ||
                       (e.id === "checklists" && checklistsEsNuevo()) ||
-                      (e.id === "ordenes" && ordenesEsNuevo())) && (
+                      (e.id === "ordenes" && ordenesEsNuevo()) ||
+                      (e.id === "preventivo" && preventivoEsNuevo())) && (
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
                           activo ? "bg-[#0A1014] text-[#BADC1E]" : "bg-[#BADC1E] text-[#0A1014]"
@@ -421,6 +425,7 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
               onCambio={cargarResumen}
             />
           )}
+          {visible === "preventivo" && <PreventivoMantenimiento />}
           {visible === "equipos" && (
             <EquiposMantenimiento
               key={entrada.veces}

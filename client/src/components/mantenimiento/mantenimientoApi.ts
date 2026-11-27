@@ -13,6 +13,7 @@ import type {
   FilaDeOrden,
   MecanicoConCarga,
 } from "./ordenesMantenimiento";
+import type { EquipoConPlan, ListaDePlanes } from "./planesPreventivo";
 import { apiFetch } from "../../services/apiClient";
 
 export interface EquipoMantenimiento {
@@ -316,3 +317,8 @@ export async function estadoDelIperc(id: number): Promise<string | null> {
     return null;
   }
 }
+
+/** Preventivo (M9): se lee con señal. */
+export const listarPlanes = () => conSenal("ver los planes", () => leer<ListaDePlanes>("/planes"));
+export const resumenPreventivo = () =>
+  conSenal("ver los planes", () => leer<{ equipos: EquipoConPlan[] }>("/preventivo"));

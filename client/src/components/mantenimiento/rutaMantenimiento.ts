@@ -7,12 +7,14 @@
 //   /mantenimiento/equipos    Equipos
 //   /mantenimiento/checklists  Checklists (registros)
 //   /mantenimiento/ordenes  Órdenes de trabajo
+//   /mantenimiento/preventivo  Mantenimiento preventivo
 //   /mantenimiento/configuracion  Configuración
 //
 // Lógica pura, sin React ni `window`. Una dirección que no se entiende se lee como el Centro, nunca rompe.
 // Qué sección puede ver cada persona NO se decide acá: lo decide el ecosistema.
 
-export type SeccionDeRuta = "centro" | "equipos" | "checklists" | "ordenes" | "configuracion";
+export type SeccionDeRuta =
+  "centro" | "equipos" | "checklists" | "ordenes" | "preventivo" | "configuracion";
 
 export interface EstadoDeRuta {
   seccion: SeccionDeRuta;
@@ -26,6 +28,7 @@ const SLUG_DE_SECCION: Record<SeccionDeRuta, string> = {
   equipos: "equipos",
   checklists: "checklists",
   ordenes: "ordenes",
+  preventivo: "preventivo",
   configuracion: "configuracion",
 };
 
@@ -34,6 +37,7 @@ const ETIQUETA_DE_SECCION: Record<SeccionDeRuta, string> = {
   equipos: "Equipos",
   checklists: "Checklists",
   ordenes: "Órdenes de trabajo",
+  preventivo: "Mantenimiento preventivo",
   configuracion: "Configuración",
 };
 
