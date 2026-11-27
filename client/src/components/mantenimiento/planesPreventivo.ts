@@ -104,3 +104,8 @@ export const avanceDelIntervalo = (faltan: number, intervalo: number) =>
 const NOVEDAD = "mantenimiento-preventivo-2026-11";
 export const preventivoEsNuevo = () => novedadVigente(Date.now(), undefined, NOVEDAD);
 export const marcarPreventivoVisto = () => marcarNovedadVista(Date.now(), undefined, NOVEDAD);
+
+const NOVEDAD_EDITAR = "mantenimiento-planes-editar-2026-11";
+export const editarPlanesEsNuevo = () => novedadVigente(Date.now(), undefined, NOVEDAD_EDITAR);
+export const marcarEditarPlanesVisto = () =>
+  marcarNovedadVista(Date.now(), undefined, NOVEDAD_EDITAR);

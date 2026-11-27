@@ -2,7 +2,7 @@
 //
 // El panel de un nivel del plan, como la maqueta: qué se hace, el kit sugerido y los equipos que usan el plan.
 // Solo lectura. Los repuestos son texto del plan: no se revisa stock.
-import { Check, Settings, Tractor } from "lucide-react";
+import { Check, Pencil, Settings, Tractor } from "lucide-react";
 
 import { ChipDeNivel } from "./PiezasDePreventivo";
 import {
@@ -26,11 +26,14 @@ export default function PanelDeNivel({
   nivel,
   equipos,
   onCerrar,
+  onEditar,
 }: {
   plan: PlanPreventivo;
   nivel: Nivel;
   equipos: EquipoConPlan[];
   onCerrar: () => void;
+  /** Solo para quien puede escribir. */
+  onEditar?: () => void;
 }) {
   const detalle = plan.niveles[`${nivel}`];
   const incluye = nivelQueIncluye(plan, nivel);
@@ -58,6 +61,24 @@ export default function PanelDeNivel({
             </p>
           </div>
         </header>
+
+        {onEditar && (
+          <div className={`${caja} flex flex-wrap items-center justify-between gap-3 p-4`}>
+            <div className="min-w-0">
+              <h3 className="font-semibold text-slate-900">Este plan se edita aquí</h3>
+              <p className="text-sm text-slate-600">
+                Cambiar las tareas o los repuestos cambia lo que se ve de ahora en adelante.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onEditar}
+              className="flex min-h-[44px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 sm:min-h-10"
+            >
+              <Pencil size={15} /> Editar plan
+            </button>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
           <section className={`${caja} p-5`}>

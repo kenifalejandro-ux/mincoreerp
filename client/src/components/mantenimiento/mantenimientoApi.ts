@@ -13,7 +13,8 @@ import type {
   FilaDeOrden,
   MecanicoConCarga,
 } from "./ordenesMantenimiento";
-import type { EquipoConPlan, ListaDePlanes } from "./planesPreventivo";
+import type { CuerpoDelPlan } from "./planesFormulario";
+import type { EquipoConPlan, ListaDePlanes, PlanPreventivo } from "./planesPreventivo";
 import { apiFetch } from "../../services/apiClient";
 
 export interface EquipoMantenimiento {
@@ -322,3 +323,10 @@ export async function estadoDelIperc(id: number): Promise<string | null> {
 export const listarPlanes = () => conSenal("ver los planes", () => leer<ListaDePlanes>("/planes"));
 export const resumenPreventivo = () =>
   conSenal("ver los planes", () => leer<{ equipos: EquipoConPlan[] }>("/preventivo"));
+/** Solo con señal: los planes no quedan en la cola del equipo. */
+export const crearPlan = (cuerpo: CuerpoDelPlan) =>
+  conSenal("guardar el plan", () => escribir<PlanPreventivo>("POST", "/planes", cuerpo));
+export const actualizarPlan = (id: number, cuerpo: CuerpoDelPlan & { version: number }) =>
+  conSenal("guardar el plan", () => escribir<PlanPreventivo>("PUT", `/planes/${id}`, cuerpo));
+export const quitarPlan = (id: number) =>
+  conSenal("quitar el plan", () => escribir<{ ok: true }>("DELETE", `/planes/${id}`));

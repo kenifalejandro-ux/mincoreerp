@@ -132,7 +132,7 @@ test("vacía avisa qué falta y con un plan muestra la regla, los niveles y qui�
   await aPlanes(page);
   await expect(page).toHaveURL(/\/mantenimiento\/preventivo$/);
   await expect(page).toHaveTitle("Mantenimiento preventivo · Gestión de mantenimiento");
-  await expect(page.getByText("Primero registra tus equipos")).toBeVisible();
+  await expect(page.getByText("Crea uno con «Nuevo plan»")).toBeVisible();
   await expect(lista(page)).toHaveCount(0);
   await expect(sinPlan(page)).toHaveCount(0);
   for (const pronto of ["Resumen", "Calendario"]) {
@@ -141,7 +141,7 @@ test("vacía avisa qué falta y con un plan muestra la regla, los niveles y qui�
 
   await equipo(page, { placa_codigo: "H-9", tipo: "Horno" });
   await aPlanes(page);
-  await expect(page.getByText("llega en la próxima entrega")).toBeVisible();
+  await expect(page.getByText("Crea el primero con «Nuevo plan»")).toBeVisible();
   await expect(sinPlan(page)).toContainText("Horno · 1 equipo");
 
   await sembrarVolquetes(page);
@@ -441,4 +441,335 @@ test("con datos corrientes se lee entero en celular, tablet y laptop chica", asy
       .evaluate((el) => el.scrollWidth - el.clientWidth);
     expect.soft(sobra, `${ancho}: pestañas cortadas`).toBeLessThanOrEqual(0);
   }
+});
+
+const formulario = (page: Page) => page.getByRole("dialog", { name: /^(Nuevo|Editar) plan$/ });
+const guardar = (page: Page) => formulario(page).getByRole("button", { name: "Guardar plan" });
+const dialogoQuitar = (page: Page) => page.getByRole("dialog", { name: "Quitar plan" });
+const nuevoPlan = (page: Page) => page.getByRole("button", { name: /^Nuevo plan/ });
+const editar = (page: Page) => page.getByRole("button", { name: "Editar", exact: true });
+const tareas = (page: Page, n: number) =>
+  formulario(page).getByLabel(`Tareas del MP${n} (una por renglón)`);
+const leerPlanes = async (page: Page) =>
+  (await (await page.request.get(`${API}/planes`)).json()).planes as Array<Record<string, never>>;
+
+async function llenar(page: Page, tipo: string, intervalo = "250") {
+  await formulario(page).getByLabel("Tipo de equipo").fill(tipo);
+  await formulario(page)
+    .getByLabel(/^Un servicio cada/)
+    .fill(intervalo);
+  await tareas(page, 1).fill("Aceite");
+}
+
+test("crear: valida, no duplica con doble clic y envía solo los niveles del ciclo", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(240_000);
+  const empresa = await crearEmpresaSola(request, "mantenimiento", "pm-crear");
+  await alEcosistema(page, empresa);
+  await aPlanes(page);
+  const envios: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "POST" && PLANES.test(r.url())) envios.push(r.postData() ?? "");
+  });
+
+  // Sin equipos también se puede crear.
+  await nuevoPlan(page).click();
+  const error = formulario(page).getByRole("alert");
+  const rechaza = async (texto: string | RegExp) => {
+    await guardar(page).click();
+    await expect(error).toContainText(texto);
+  };
+  await rechaza("Escribe el tipo");
+  await formulario(page).getByLabel("Tipo de equipo").fill("   ");
+  await rechaza("Escribe el tipo");
+  await formulario(page).getByLabel("Tipo de equipo").fill("Grúa");
+  for (const malo of ["", "0", "-5", "2.5", "1,000", "abc", "1000001"]) {
+    await formulario(page)
+      .getByLabel(/^Un servicio cada/)
+      .fill(malo);
+    await rechaza("intervalo");
+  }
+  await formulario(page)
+    .getByLabel(/^Un servicio cada/)
+    .fill("100");
+  await formulario(page)
+    .getByLabel(/^Avisar/)
+    .fill("100");
+  await rechaza("menor que el intervalo");
+  await formulario(page)
+    .getByLabel(/^Avisar/)
+    .fill("0");
+  await rechaza("tarea del MP1");
+  await tareas(page, 1).fill(" \n  \n");
+  await rechaza("tarea del MP1");
+  await tareas(page, 1).fill("x".repeat(161));
+  await rechaza("160 caracteres");
+  await tareas(page, 1).fill(Array(41).fill("a").join("\n"));
+  await rechaza("40 renglones");
+  await tareas(page, 1).fill("Aceite");
+  await formulario(page).getByRole("button", { name: "Quitar el paso 1 (MP1)" }).click();
+  await rechaza("al menos un servicio");
+  // Un nivel que sale del ciclo conserva lo escrito al volver.
+  await formulario(page).getByRole("button", { name: "MP1", exact: true }).click();
+  await expect(tareas(page, 1)).toHaveValue("Aceite");
+  await formulario(page).getByRole("button", { name: "MP3", exact: true }).click();
+  await tareas(page, 3).fill("Mayor");
+  await formulario(page).getByRole("button", { name: "Quitar el paso 2 (MP3)" }).click();
+  for (let i = 1; i < 12; i++)
+    await formulario(page).getByRole("button", { name: "MP1", exact: true }).click();
+  await expect(formulario(page).getByRole("button", { name: "MP2", exact: true })).toBeDisabled();
+  expect(envios).toEqual([]);
+
+  await guardar(page).dblclick();
+  await expect(formulario(page)).toHaveCount(0);
+  await expect(regla(page)).toContainText("Grúa: un servicio cada 100 h");
+  await expect(regla(page)).toContainText("pasa directo a «Vencido»");
+  expect(envios).toHaveLength(1);
+  expect(Object.keys(JSON.parse(envios[0]).niveles)).toEqual(["1"]);
+  expect(await leerPlanes(page)).toHaveLength(1);
+
+  // El plan nuevo queda elegido aunque no sea el primero; y un tipo repetido se dice.
+  await nuevoPlan(page).click();
+  await llenar(page, "Zaranda");
+  await guardar(page).click();
+  await expect(regla(page)).toContainText("Zaranda");
+  await nuevoPlan(page).click();
+  await llenar(page, " grúa ");
+  await guardar(page).click();
+  await expect(formulario(page).getByRole("alert")).toContainText("Ya hay un plan");
+  await expect(tareas(page, 1)).toHaveValue("Aceite");
+});
+
+test("cerrar pregunta si hay cambios; fallos y falta de señal no pierden lo escrito", async ({
+  page,
+  request,
+  context,
+}) => {
+  test.setTimeout(240_000);
+  const empresa = await crearEmpresaSola(request, "mantenimiento", "pm-cerrar");
+  await alEcosistema(page, empresa);
+  await aPlanes(page);
+  let aceptar = false;
+  const preguntas: string[] = [];
+  page.on("dialog", (d) => {
+    preguntas.push(d.message());
+    void (aceptar ? d.accept() : d.dismiss());
+  });
+
+  // Sin cambios cierra sin preguntar, y el foco vuelve al botón.
+  await nuevoPlan(page).click();
+  await page.keyboard.press("Escape");
+  await expect(formulario(page)).toHaveCount(0);
+  await expect(nuevoPlan(page)).toBeFocused();
+  expect(preguntas).toEqual([]);
+
+  await nuevoPlan(page).click();
+  await llenar(page, "Horno");
+  await page.mouse.click(5, 300);
+  await expect(formulario(page)).toBeVisible();
+  for (const cerrar of [
+    () => page.keyboard.press("Escape"),
+    () => formulario(page).getByRole("button", { name: "Cancelar" }).click(),
+    () => formulario(page).getByRole("button", { name: "Cerrar" }).click(),
+  ]) {
+    await cerrar();
+    await expect(tareas(page, 1)).toHaveValue("Aceite");
+  }
+  expect(preguntas).toHaveLength(3);
+
+  await page.route(PLANES, (r) =>
+    r.request().method() === "POST"
+      ? r.fulfill({ status: 500, contentType: "application/json", body: '{"message":"Se cayó"}' })
+      : r.continue()
+  );
+  await guardar(page).click();
+  await expect(formulario(page).getByRole("alert")).toContainText("Se cayó");
+  await page.unroute(PLANES);
+
+  await context.setOffline(true);
+  await guardar(page).click();
+  await expect(formulario(page).getByRole("alert")).toContainText(
+    "Sin conexión: guardar el plan necesita señal."
+  );
+  await expect(tareas(page, 1)).toHaveValue("Aceite");
+  await context.setOffline(false);
+  await guardar(page).click();
+  await expect(formulario(page)).toHaveCount(0);
+  await expect(regla(page)).toContainText("Horno");
+  await expect(aviso(page)).toHaveCount(0);
+
+  await nuevoPlan(page).click();
+  await llenar(page, "Otro");
+  aceptar = true;
+  await page.keyboard.press("Escape");
+  await expect(formulario(page)).toHaveCount(0);
+  expect(await leerPlanes(page)).toHaveLength(1);
+});
+
+test("editar sobre un plan que otra persona cambió no lo pisa; quitar se confirma", async ({
+  page,
+  request,
+  context,
+}) => {
+  test.setTimeout(240_000);
+  const empresa = await crearEmpresaSola(request, "mantenimiento", "pm-choque");
+  await alEcosistema(page, empresa, () => sembrarVolquetes(page));
+  await aPlanes(page);
+  const [original] = await leerPlanes(page);
+
+  await editar(page).click();
+  await expect(formulario(page).getByLabel(/^Avisar/)).toHaveValue("25");
+  await expect(tareas(page, 1)).toHaveValue("Cambio de aceite\nEngrase general");
+  await formulario(page)
+    .getByLabel(/^Avisar/)
+    .fill("");
+  await guardar(page).click();
+  await expect(formulario(page).getByRole("alert")).toContainText("aviso");
+
+  // Otra persona guarda mientras tanto.
+  const otra = await page.request.put(`${API}/planes/${original.id}`, {
+    data: {
+      tipo_equipo: "Volquete",
+      medida: "horometro",
+      intervalo: 500,
+      aviso_antes: 50,
+      ciclo: [1, 2, 1, 3],
+      niveles: TAREAS,
+      version: 1,
+    },
+  });
+  expect(otra.status(), await otra.text()).toBe(200);
+  await formulario(page)
+    .getByLabel(/^Avisar/)
+    .fill("10");
+  await guardar(page).click();
+  await expect(formulario(page).getByRole("alert")).toContainText("Alguien cambió este plan");
+  await expect(regla(page)).toContainText("cada 500 h");
+  // Reintentar sin reabrir tampoco pisa.
+  await guardar(page).click();
+  await expect(formulario(page).getByRole("alert")).toContainText("Alguien cambió");
+  expect((await leerPlanes(page))[0]).toMatchObject({ intervalo: 500, aviso_antes: 50 });
+  page.once("dialog", (d) => void d.accept());
+  await page.keyboard.press("Escape");
+  await editar(page).click();
+  await expect(formulario(page).getByLabel(/^Un servicio cada/)).toHaveValue("500");
+  await formulario(page)
+    .getByLabel(/^Un servicio cada/)
+    .fill("300");
+  await guardar(page).click();
+  await expect(regla(page)).toContainText("cada 300 h");
+
+  const quitar = page.getByRole("button", { name: "Quitar", exact: true });
+  await quitar.click();
+  await expect(dialogoQuitar(page)).toContainText("no se borran");
+  await expect(dialogoQuitar(page).getByRole("button", { name: "Cancelar" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialogoQuitar(page)).toHaveCount(0);
+  await quitar.click();
+  await context.setOffline(true);
+  await dialogoQuitar(page).getByRole("button", { name: "Quitar plan" }).click();
+  await expect(dialogoQuitar(page).getByRole("alert")).toContainText("necesita señal");
+  await context.setOffline(false);
+  await dialogoQuitar(page).getByRole("button", { name: "Quitar plan" }).dblclick();
+  await expect(dialogoQuitar(page)).toHaveCount(0);
+  await expect(page.getByText("Todavía no hay planes")).toBeVisible();
+  await expect(sinPlan(page)).toContainText("Volquete · 4 equipos");
+
+  // Editar un plan que otra persona quitó lo dice.
+  await page.getByRole("button", { name: "Crear el plan de Volquete" }).click();
+  await llenar(page, "Volquete");
+  await guardar(page).click();
+  await editar(page).click();
+  const [nuevo] = await leerPlanes(page);
+  expect((await page.request.delete(`${API}/planes/${nuevo.id}`)).status()).toBe(200);
+  await guardar(page).click();
+  await expect(formulario(page).getByRole("alert")).toContainText("El plan no existe");
+});
+
+test("el formulario y sus botones caben en celular y laptop chica; el operador edita", async ({
+  page,
+  request,
+}) => {
+  test.setTimeout(240_000);
+  const m = marca();
+  const largo = "W".repeat(60);
+  const empresa = await crearEmpresaSola(request, "mantenimiento", "pm-operador");
+  await entrarPorPrimeraVez(
+    page,
+    empresa,
+    page
+      .getByRole("button", { name: /^Gestión de mantenimiento/ })
+      .or(menu(page))
+      .first()
+  );
+  await plan(page, largo);
+  await equipo(page, { placa_codigo: "Q-1", tipo: "Q".repeat(60) });
+  const documento = dni();
+  const password = `Operador-${m}-9x`;
+  const alta = await page.request.post("/api/erp/usuarios", {
+    data: { nombre: `Operador ${m}`, dni: documento, password, rol: "operador" },
+  });
+  expect(alta.status(), await alta.text()).toBe(201);
+  await page.request.post("/api/auth/logout");
+  const login = await page.request.post("/api/auth/login", {
+    data: { identificador: documento, password },
+  });
+  expect(login.status(), await login.text()).toBe(200);
+  await page.goto("/mantenimiento/preventivo");
+  await page.getByLabel("Contraseña temporal").fill(password);
+  await page.getByLabel("Nueva contraseña", { exact: true }).fill(`Nueva-${m}-7y`);
+  await page.getByLabel("Confirmar nueva contraseña").fill(`Nueva-${m}-7y`);
+  await page.getByRole("button", { name: "Guardar y continuar" }).click();
+  await expect(titulo(page)).toBeVisible({ timeout: 20_000 });
+
+  const sobraEn = (donde: ReturnType<typeof formulario>) =>
+    donde.evaluate(
+      (raiz) =>
+        [raiz, ...raiz.querySelectorAll<HTMLElement>("div, fieldset, footer, header")].filter(
+          (d) => d.scrollWidth > d.clientWidth + 1 && !d.closest(".overflow-x-auto")
+        ).length
+    );
+  for (const [ancho, alto] of [
+    [360, 640],
+    [1024, 600],
+  ]) {
+    await page.setViewportSize({ width: ancho, height: alto });
+    const pagina = () =>
+      page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect.soft(await pagina(), `${ancho}: página`).toBeLessThanOrEqual(0);
+    await editar(page).click();
+    for (let i = 0; i < 8; i++)
+      await formulario(page).getByRole("button", { name: "MP2", exact: true }).click();
+    expect.soft(await sobraEn(formulario(page)), `${ancho}: formulario`).toBe(0);
+    await expect(guardar(page)).toBeInViewport();
+    page.once("dialog", (d) => void d.accept());
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "Quitar", exact: true }).click();
+    expect.soft(await sobraEn(dialogoQuitar(page)), `${ancho}: quitar`).toBe(0);
+    await expect(dialogoQuitar(page).getByRole("button", { name: "Quitar plan" })).toBeInViewport();
+    await dialogoQuitar(page).getByRole("button", { name: "Cancelar" }).click();
+  }
+  // Con teclado, el Tab no se escapa a la página de atrás: del último control vuelve al primero.
+  await editar(page).click();
+  const dentro = () => formulario(page).evaluate((f) => f.contains(document.activeElement));
+  await guardar(page).focus();
+  await page.keyboard.press("Tab");
+  expect.soft(await dentro(), "Tab desde «Guardar plan»").toBe(true);
+  await formulario(page).getByRole("button", { name: "Cerrar", exact: true }).focus();
+  await page.keyboard.press("Shift+Tab");
+  expect.soft(await dentro(), "Mayús+Tab desde «Cerrar»").toBe(true);
+  await guardar(page).click();
+  await expect(formulario(page)).toHaveCount(0);
+
+  // Lo mismo en la ventana de quitar.
+  await page.getByRole("button", { name: "Quitar", exact: true }).click();
+  const cancelar = dialogoQuitar(page).getByRole("button", { name: "Cancelar" });
+  const confirmar = dialogoQuitar(page).getByRole("button", { name: "Quitar plan" });
+  await confirmar.focus();
+  await page.keyboard.press("Tab");
+  await expect(cancelar).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(confirmar).toBeFocused();
 });
