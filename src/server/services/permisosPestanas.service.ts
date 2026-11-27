@@ -507,6 +507,28 @@ export async function mapaPermisosPestanas(
   );
 }
 
+/** Cuántas personas pueden usar hoy una casilla que se marca a mano: activas, admin u operador, con la casilla
+ *  y con su módulo en «Operar» (en «Consultas» o sin el módulo la ruta las rechaza). Vive aquí porque lee las
+ *  tablas de permisos: un módulo no las consulta por su cuenta. Va dentro de `withTenant`. */
+export async function cuantosOperanConCasilla(
+  client: PoolClient,
+  tenantId: string,
+  modulo: string,
+  pestana: string
+): Promise<number> {
+  const r = await client.query<{ total: number }>(
+    `SELECT count(*)::int AS total
+       FROM usuario_permisos_pestana p
+       JOIN usuarios u ON u.id = p.usuario_id AND u.tenant_id = p.tenant_id
+       JOIN usuario_modulos um
+         ON um.usuario_id = u.id AND um.modulo::text = p.modulo AND um.nivel = 'operar'
+      WHERE p.tenant_id = $1 AND p.modulo = $2 AND p.pestana = $3
+        AND p.permitido AND u.activo AND u.rol IN ('admin', 'operador')`,
+    [tenantId, modulo, pestana]
+  );
+  return r.rows[0].total;
+}
+
 /** Los permisos de pestaña puestos a mano de una persona, para armar `req.usuario` en cada request: del
  *  cache de 60 s o, si falta, de la base (y se vuelve a guardar). */
 export async function permisosPestanasDe(

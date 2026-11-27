@@ -8,9 +8,10 @@ import type {
   CambiarEstadoOrdenTrabajoInput,
   CambiarTareasInput,
 } from "../../server/schemas/ordenes_trabajo.schema";
+import { cuantosOperanConCasilla } from "../../server/services/permisosPestanas.service";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { asignarOrden } from "./ordenes_trabajo.asignacion";
-import { cuantosDanConformidad, darConformidad } from "./ordenes_trabajo.conformidad";
+import { darConformidad } from "./ordenes_trabajo.conformidad";
 import {
   mecanicosConCarga,
   resumenDeOrdenes,
@@ -96,7 +97,8 @@ export const OrdenesTrabajoService = {
   },
 
   cuantosDanConformidad(client: PoolClient, tenantId: string) {
-    return cuantosDanConformidad(client, tenantId);
+    // Con ninguna, las unidades no se liberan.
+    return cuantosOperanConCasilla(client, tenantId, "ordenes_trabajo", "conformidad:dar");
   },
 
   eliminar(client: PoolClient, tenantId: string, id: number) {

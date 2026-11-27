@@ -65,20 +65,3 @@ export async function darConformidad(
   );
   return { cambio, orden: fila.rows[0] };
 }
-
-/** Cuántas personas pueden dar la conformidad hoy: activas, admin u operador, con la casilla y con Órdenes de
- *  trabajo en «Operar» (en «Consultas» o sin el módulo la ruta las rechaza). Con ninguna, las unidades no se
- *  liberan. */
-export async function cuantosDanConformidad(client: PoolClient, tenantId: string) {
-  const r = await client.query<{ total: number }>(
-    `SELECT count(*)::int AS total
-       FROM usuario_permisos_pestana p
-       JOIN usuarios u ON u.id = p.usuario_id AND u.tenant_id = p.tenant_id
-       JOIN usuario_modulos um
-         ON um.usuario_id = u.id AND um.modulo = 'ordenes_trabajo' AND um.nivel = 'operar'
-      WHERE p.tenant_id = $1 AND p.modulo = 'ordenes_trabajo' AND p.pestana = 'conformidad:dar'
-        AND p.permitido AND u.activo AND u.rol IN ('admin', 'operador')`,
-    [tenantId]
-  );
-  return r.rows[0].total;
-}
