@@ -41,6 +41,7 @@ import { contextoAuditoriaModulo } from "../../server/shared/utils/moduleAudit";
 import { tieneModulo } from "../../server/shared/utils/modulos";
 import { getTenantId } from "../../server/shared/utils/request";
 import { actividadReciente } from "./mantenimiento.actividad";
+import planesRouter from "./mantenimiento.planes.routes";
 import { MantenimientoService } from "./mantenimiento.service";
 
 const router = Router();
@@ -330,5 +331,7 @@ router.delete(
     res.json({ ok: true });
   })
 );
+
+router.use("/planes", planesRouter);
 
 export default router;
