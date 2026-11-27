@@ -38,7 +38,7 @@ const ESPACIOS = "[\\s\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\
 
 /** El tipo escrito en un equipo, con la misma limpieza que el de un plan. `columna` es un nombre fijo del
  *  código, nunca un dato. */
-const tipoLimpio = (columna: string) =>
+export const tipoLimpio = (columna: string) =>
   `btrim(regexp_replace(${columna}, '${ESPACIOS}', ' ', 'g'))`;
 
 const COLUMNAS = `p.id::int AS id, p.tipo_equipo, p.medida, p.intervalo, p.aviso_antes,

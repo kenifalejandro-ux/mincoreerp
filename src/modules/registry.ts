@@ -274,6 +274,17 @@ export const MODULOS: ModuloDefinicion[] = [
         pk: "serial",
         fks: { creado_por: "usuarios", actualizado_por: "usuarios" },
       },
+      // Servicios de preventivo realizados (0212). El equipo y su lectura son de las tablas base.
+      {
+        nombre: "mantenimiento_servicios",
+        pk: "serial",
+        fks: {
+          equipo_id: "equipos",
+          lectura_id: "equipo_lecturas",
+          creado_por: "usuarios",
+          anulado_por: "usuarios",
+        },
+      },
     ],
     // Los datos apuntan al área con ON DELETE SET NULL (no cascadea): las dos se vacían explícitamente, y la
     // configuración, que no cuelga de ninguna, también.
@@ -282,6 +293,7 @@ export const MODULOS: ModuloDefinicion[] = [
       "mantenimiento_equipo_datos",
       "mantenimiento_config",
       "mantenimiento_planes",
+      "mantenimiento_servicios",
     ],
     // Los equipos que se registran desde aquí cuentan contra el tope de unidades de la empresa, igual que los
     // de «Registro de unidades»: es la misma tabla. Recurso propio (no el de Flota) para que cada puerta mida con

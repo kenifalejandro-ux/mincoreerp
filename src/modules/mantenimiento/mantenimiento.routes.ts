@@ -42,6 +42,7 @@ import { tieneModulo } from "../../server/shared/utils/modulos";
 import { getTenantId } from "../../server/shared/utils/request";
 import { actividadReciente } from "./mantenimiento.actividad";
 import planesRouter from "./mantenimiento.planes.routes";
+import preventivoRouter from "./mantenimiento.preventivo.routes";
 import { MantenimientoService } from "./mantenimiento.service";
 
 const router = Router();
@@ -333,5 +334,6 @@ router.delete(
 );
 
 router.use("/planes", planesRouter);
+router.use("/preventivo", preventivoRouter);
 
 export default router;
