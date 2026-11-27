@@ -1079,6 +1079,7 @@ export const MODULOS: ModuloDefinicion[] = [
           checklist_id: "checklists",
           creado_por: "usuarios",
           asignado_a: "usuarios",
+          conformidad_por: "usuarios",
         },
       },
       // Cascadea desde su orden (0208): no necesita raíz.

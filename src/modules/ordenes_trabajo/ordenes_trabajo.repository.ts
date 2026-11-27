@@ -7,6 +7,7 @@ import type {
   ActualizarOrdenTrabajoInput,
   CambiarEstadoOrdenTrabajoInput,
 } from "../../server/schemas/ordenes_trabajo.schema";
+import { exigeConformidad } from "./ordenes_trabajo.conformidad";
 import {
   columnasVecinas,
   condicionDeLista,
@@ -22,6 +23,7 @@ interface FilaEstadoCambiado {
   fecha_cierre: string | null;
   observaciones_cierre: string | null;
   duracion_minutos: number | null;
+  requiere_conformidad: boolean;
 }
 
 /** Transiciones válidas: destino -> orígenes permitidos. 'abierta' no
@@ -56,6 +58,10 @@ export class OrdenSinActivoError extends Error {
 /** Las horas no cuadran, o se quiso poner cierre a una orden que sigue abierta. El controller la responde
  *  con 400. */
 export class HorasInvalidasError extends Error {}
+
+const CONFORMIDAD = `ot.requiere_conformidad, ot.conformidad_en,
+  (SELECT c.nombre FROM usuarios c WHERE c.id = ot.conformidad_por AND c.tenant_id = ot.tenant_id)
+    AS conformidad_por_nombre`;
 
 /** La duración en minutos: se calcula, no se guarda. */
 const DURACION = (t: string) =>
@@ -101,7 +107,7 @@ export const OrdenesTrabajoRepository = {
         ot.tipo, ot.prioridad, ot.estado, ot.iperc_id, ot.creado_por,
         u.nombre AS creado_por_nombre, ot.asignado_a, asig.nombre AS asignado_a_nombre,
         ot.fecha_programada, ot.fecha_cierre, ot.observaciones_cierre, ot.creado_en, ot.origen,
-        ot.checklist_id, ot.inicio_en, ot.unidad_no_opera, ${DURACION("ot")},
+        ot.checklist_id, ot.inicio_en, ot.unidad_no_opera, ${DURACION("ot")}, ${CONFORMIDAD},
         (SELECT count(*)::int FROM orden_trabajo_tareas t
           WHERE t.tenant_id = ot.tenant_id AND t.orden_trabajo_id = ot.id) AS tareas_total,
         (SELECT count(*)::int FROM orden_trabajo_tareas t
@@ -127,7 +133,7 @@ export const OrdenesTrabajoRepository = {
          ot.tipo, ot.prioridad, ot.estado, ot.iperc_id, ot.creado_por,
          u.nombre AS creado_por_nombre, ot.asignado_a, asig.nombre AS asignado_a_nombre,
          ot.fecha_programada, ot.fecha_cierre, ot.observaciones_cierre, ot.creado_en, ot.origen,
-        ot.checklist_id, ot.inicio_en, ot.unidad_no_opera, ${DURACION("ot")}
+        ot.checklist_id, ot.inicio_en, ot.unidad_no_opera, ${DURACION("ot")}, ${CONFORMIDAD}
        FROM ordenes_trabajo ot
        ${unidad.join}
        JOIN usuarios u ON u.id = ot.creado_por
@@ -345,15 +351,19 @@ export const OrdenesTrabajoRepository = {
     const cierre = esCierre ? (fecha_cierre ? new Date(fecha_cierre) : antes.ahora) : null;
     exigirInicioAntesDelCierre(inicio, cierre);
 
+    // Se fija al completar: encender o apagar la regla después no cambia las órdenes ya cerradas.
+    const conConformidad = estado === "completada" && (await exigeConformidad(client, tenantId));
+
     const result = await client.query<FilaEstadoCambiado>(
       `UPDATE ordenes_trabajo
        SET estado = $1,
          inicio_en = $2,
          fecha_cierre = CASE WHEN $3 THEN $4::timestamptz ELSE fecha_cierre END,
-         observaciones_cierre = CASE WHEN $3 THEN $5 ELSE observaciones_cierre END
+         observaciones_cierre = CASE WHEN $3 THEN $5 ELSE observaciones_cierre END,
+         requiere_conformidad = $8
        WHERE id = $6 AND tenant_id = $7
-       RETURNING id, estado, inicio_en, fecha_cierre, observaciones_cierre, ${DURACION("ordenes_trabajo")}`,
-      [estado, inicio, esCierre, cierre, observaciones_cierre ?? null, id, tenantId]
+       RETURNING id, estado, inicio_en, fecha_cierre, observaciones_cierre, requiere_conformidad, ${DURACION("ordenes_trabajo")}`,
+      [estado, inicio, esCierre, cierre, observaciones_cierre ?? null, id, tenantId, conConformidad]
     );
     return { ok: true, fila: result.rows[0] };
   },

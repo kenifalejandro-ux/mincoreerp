@@ -417,6 +417,7 @@ export default function EcosistemaMantenimiento({ onSalir }: { onSalir?: () => v
               key={deOrdenes.veces}
               filtrosIniciales={deOrdenes.filtros}
               ordenInicial={deOrdenes.orden}
+              exigeConformidad={!!resumen?.ordenes?.por_conformar}
               onCambio={cargarResumen}
             />
           )}

@@ -10,6 +10,9 @@
  *  3. EN MANTENIMIENTO: tiene una orden en progreso.
  *  4. OPERATIVA.
  *
+ * Con la regla «exigir conformidad» encendida, una orden completada que la espera sigue pesando hasta que se
+ * dé: detiene si detenía; si no, la unidad queda en mantenimiento.
+ *
  * Sin Órdenes de trabajo cuentan solo los checklists, y al revés; sin ninguno, todas operativas. La lectura
  * del módulo que falta no se ejecuta. */
 import type { PoolClient } from "pg";
@@ -37,7 +40,8 @@ interface Orden {
   detiene: boolean;
 }
 
-/** La orden que más pesa de cada unidad: primero las que la detienen, luego las en progreso. */
+/** La orden que más pesa de cada unidad: primero las que la detienen, luego las en progreso y al final las
+ *  completadas que esperan conformidad. */
 async function ordenesQuePesan(client: PoolClient, tenantId: string) {
   const r = await client.query<Orden>(
     `SELECT DISTINCT ON (equipo_id) equipo_id, id, titulo, estado, detiene
@@ -45,9 +49,12 @@ async function ordenesQuePesan(client: PoolClient, tenantId: string) {
                     (prioridad = 'urgente' OR unidad_no_opera) AS detiene
                FROM ordenes_trabajo
               WHERE tenant_id = $1 AND equipo_id IS NOT NULL
-                AND estado IN ('abierta', 'en_progreso')) o
-      WHERE detiene OR estado = 'en_progreso'
-      ORDER BY equipo_id, detiene DESC, id DESC`,
+                AND (estado IN ('abierta', 'en_progreso')
+                     OR (requiere_conformidad AND conformidad_en IS NULL AND estado = 'completada'
+                         AND EXISTS (SELECT 1 FROM mantenimiento_config m
+                                      WHERE m.tenant_id = $1 AND m.exige_conformidad)))) o
+      WHERE detiene OR estado <> 'abierta'
+      ORDER BY equipo_id, detiene DESC, (estado = 'completada'), id DESC`,
     [tenantId]
   );
   return new Map(r.rows.map((o) => [o.equipo_id, o]));
@@ -99,8 +106,9 @@ export async function estadosDeUnidades(client: PoolClient, tenantId: string, fu
 
   return (equipoId: number): Estado => {
     const orden = ordenes.get(equipoId);
+    const falta = orden?.estado === "completada" ? " (falta conformidad)" : "";
     if (orden?.detiene) {
-      return { estado: "detenida", motivo: `OT #${orden.id}: ${orden.titulo}` };
+      return { estado: "detenida", motivo: `OT #${orden.id}${falta}: ${orden.titulo}` };
     }
     const checklist = checklists.get(equipoId);
     const motivo = checklist?.salida ? MOTIVO_DE_SALIDA[checklist.salida] : undefined;
@@ -111,7 +119,8 @@ export async function estadosDeUnidades(client: PoolClient, tenantId: string, fu
       };
     }
     if (orden) {
-      return { estado: "en_mantenimiento", motivo: `OT #${orden.id} en progreso: ${orden.titulo}` };
+      const paso = falta || " en progreso";
+      return { estado: "en_mantenimiento", motivo: `OT #${orden.id}${paso}: ${orden.titulo}` };
     }
     return OPERATIVA;
   };

@@ -149,6 +149,8 @@ export interface OrdenSinMecanico {
 export interface OrdenesDelCentro {
   abiertas: number;
   urgentes: number;
+  /** Completadas que esperan conformidad; solo viene con la regla encendida. */
+  por_conformar?: Aviso<{ id: number; unidad: string | null; titulo: string }>;
   sin_mecanico: Aviso<OrdenSinMecanico> & { urgentes: number };
   del_mes: { correctivo: number; preventivo: number };
 }
@@ -264,21 +266,47 @@ export const listarOrdenes = (consulta: string) =>
 export const cifrasDeOrdenes = () => pedirOrdenes<CifrasDeOrdenes>("/resumen");
 export const leerOrden = (id: number) => pedirOrdenes<DetalleDeOrdenEnOficina>(`/${id}`);
 export const listarMecanicos = () => pedirOrdenes<MecanicoConCarga[]>("/mecanicos");
-/** Solo con señal: asignar no queda en la cola del equipo. */
-export async function asignarMecanico(id: number, asignadoA: string | null) {
+/** Para lo que no se encola: sin red lo dice en palabras. */
+async function conSenal<T>(accion: string, pedir: () => Promise<T>): Promise<T> {
   try {
-    return await pedirOrdenes<{ asignado_a: string | null }>(`/${id}/asignado`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ asignado_a: asignadoA }),
-    });
+    return await pedir();
   } catch (e) {
     if (e instanceof TypeError) {
-      throw new Error("Sin conexión: asignar un mecánico necesita señal.", { cause: e });
+      throw new Error(`Sin conexión: ${accion} necesita señal.`, { cause: e });
     }
     throw e;
   }
 }
+/** Solo con señal: asignar no queda en la cola del equipo. */
+export const asignarMecanico = (id: number, asignadoA: string | null) =>
+  conSenal("asignar un mecánico", () =>
+    pedirOrdenes<{ asignado_a: string | null }>(`/${id}/asignado`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ asignado_a: asignadoA }),
+    })
+  );
+/** Solo con señal: iniciar, completar y cancelar no quedan en la cola del equipo. */
+export async function cambiarEstadoDeOrden(
+  id: number,
+  estado: "en_progreso" | "completada" | "cancelada",
+  observaciones_cierre?: string
+) {
+  await conSenal("cambiar el estado de la orden", () =>
+    pedirOrdenes<{ id: number }>(`/${id}/estado`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ estado, observaciones_cierre }),
+    })
+  );
+}
+export const darConformidad = (id: number) =>
+  conSenal("dar la conformidad", () =>
+    pedirOrdenes<{ id: number }>(`/${id}/conformidad`, { method: "PATCH" })
+  );
+/** Cuántas personas tienen la casilla (solo lo puede preguntar el administrador). */
+export const quienesDanConformidad = () =>
+  pedirOrdenes<{ total: number }>("/conformidad/personas").then((r) => r.total);
 /** El estado del IPERC vinculado (datos del módulo IPERC); null si no se pudo leer. */
 export async function estadoDelIperc(id: number): Promise<string | null> {
   try {

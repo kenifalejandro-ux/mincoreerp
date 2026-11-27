@@ -98,6 +98,22 @@ export function avisosDelCentro(
       destino: { seccion: "ordenes", filtros: { mecanico: SIN_ASIGNAR } },
     });
   }
+  const porConformar = resumen.ordenes?.por_conformar;
+  if (porConformar && porConformar.total > 0) {
+    avisos.push({
+      id: "por-conformar",
+      icono: "orden",
+      tono: "blue",
+      titulo: `${plural(porConformar.total, "orden espera", "órdenes esperan")} conformidad`,
+      detalle: nombrar(
+        porConformar,
+        (o) => [`OT #${o.id}`, o.unidad, o.titulo].filter(Boolean).join(" · "),
+        "; "
+      ),
+      accion: "Ver órdenes",
+      destino: { seccion: "ordenes", filtros: { porConformar: true } },
+    });
+  }
   const ck = resumen.checklists;
   if (ck && ck.no_aptos_hoy.total > 0) {
     avisos.push({

@@ -27,6 +27,10 @@ export interface FilaDeOrden {
   asignado_a_nombre: string | null;
   fecha_programada: string | null;
   creado_en: string;
+  /** Se completó con la regla de conformidad encendida. */
+  requiere_conformidad?: boolean;
+  conformidad_en?: string | null;
+  conformidad_por_nombre?: string | null;
 }
 
 export interface DetalleDeOrdenEnOficina extends Omit<
@@ -86,6 +90,7 @@ export interface FiltrosDeOrdenes {
   /** "" = todos, SIN_ASIGNAR o el id de un mecánico. */
   mecanico: string;
   area: string;
+  porConformar: boolean;
 }
 
 export const SIN_FILTROS_DE_ORDENES: FiltrosDeOrdenes = {
@@ -94,6 +99,7 @@ export const SIN_FILTROS_DE_ORDENES: FiltrosDeOrdenes = {
   tipo: "",
   mecanico: "",
   area: "",
+  porConformar: false,
 };
 
 export const ORDENES_POR_PAGINA = 25;
@@ -106,6 +112,7 @@ export function consultaDeOrdenes(f: FiltrosDeOrdenes, pagina: number): string {
   if (f.mecanico === SIN_ASIGNAR) q.set("sin_asignar", "true");
   else if (f.mecanico) q.set("asignado_a", f.mecanico);
   if (f.area) q.set("area_id", f.area);
+  if (f.porConformar) q.set("por_conformar", "true");
   return `?${q}`;
 }
 
@@ -122,7 +129,13 @@ export const fechaProgramada = (f: string | null) =>
 export const estaAbierta = (estado: EstadoDeOrden) =>
   estado === "abierta" || estado === "en_progreso";
 
-export type ClaveDePaso = "origen" | "mecanico" | "iperc" | "trabajo" | "cierre";
+export type ClaveDePaso = "origen" | "mecanico" | "iperc" | "trabajo" | "cierre" | "liberacion";
+
+/** Completada y todavía sin la conformidad. `exigida` es false con la regla apagada: la unidad ya está libre. */
+export const faltaConformidad = (
+  o: { estado: EstadoDeOrden; requiere_conformidad?: boolean; conformidad_en?: string | null },
+  exigida = true
+) => exigida && o.estado === "completada" && !!o.requiere_conformidad && !o.conformidad_en;
 
 export interface Paso {
   clave: ClaveDePaso;
@@ -187,8 +200,24 @@ export function pasosDeLaOrden(
       cerrada ? "hecho" : "pendiente"
     )
   );
-  // En una orden cerrada ya no falta nada: lo que no se hizo queda como estaba, sin señalarlo.
-  const actual = cerrada ? undefined : pasos.find((p) => p.estado === "pendiente");
+  if (o.estado === "completada" && o.requiere_conformidad) {
+    pasos.push(
+      paso(
+        "liberacion",
+        "Prueba y liberación",
+        o.conformidad_en
+          ? [o.conformidad_por_nombre, cuandoFue(o.conformidad_en, ahora)]
+              .filter(Boolean)
+              .join(" · ")
+          : "Pendiente de conformidad",
+        o.conformidad_en ? "hecho" : "pendiente"
+      )
+    );
+  }
+  // En una orden cerrada solo puede faltar la conformidad: lo que no se hizo queda como estaba.
+  const actual = cerrada
+    ? pasos.find((p) => p.clave === "liberacion" && p.estado === "pendiente")
+    : pasos.find((p) => p.estado === "pendiente");
   if (actual) actual.actual = true;
   return pasos;
 }

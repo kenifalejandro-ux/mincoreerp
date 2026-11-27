@@ -115,6 +115,7 @@ export const filtrosDeOrdenesSchema = z.object({
   prioridad: opcional(z.enum(["baja", "media", "alta", "urgente"])),
   asignado_a: opcional(z.string().uuid("Mecánico no válido")),
   sin_asignar: opcional(z.enum(["true", "false"])),
+  por_conformar: opcional(z.enum(["true", "false"])),
   area_id: opcional(z.coerce.number().int().positive().max(2_000_000_000)),
 });
 export type FiltrosDeOrdenesInput = z.infer<typeof filtrosDeOrdenesSchema>;

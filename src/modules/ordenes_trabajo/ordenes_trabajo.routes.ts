@@ -2,6 +2,7 @@
 
 import { Router } from "express";
 import { validate, validateQuery } from "../../server/middleware/validate";
+import { requirePestana } from "../../server/shared/middlewares/pestana.middleware";
 import { requireRole } from "../../server/shared/middlewares/roles.middleware";
 import { asyncHandler } from "../../server/shared/utils/asyncHandler";
 import {
@@ -39,6 +40,11 @@ router.get(
   "/usuarios-asignables",
   requireRole("admin", "operador"),
   asyncHandler(OrdenesTrabajoController.getUsuariosAsignables)
+);
+router.get(
+  "/conformidad/personas",
+  requireRole("admin"),
+  asyncHandler(OrdenesTrabajoController.getQuienesConforman)
 );
 router.get("/:id", asyncHandler(OrdenesTrabajoController.getById));
 
@@ -82,6 +88,14 @@ router.patch(
   requireRole("admin", "operador"),
   validate(asignarOrdenSchema),
   asyncHandler(OrdenesTrabajoController.asignar)
+);
+
+// La conformidad manda la casilla, no el rol (ni el administrador la trae por defecto). PATCH: solo con
+// señal.
+router.patch(
+  "/:id(\\d{1,9})/conformidad",
+  requirePestana("ordenes_trabajo", "conformidad:dar"),
+  asyncHandler(OrdenesTrabajoController.darConformidad)
 );
 
 router.delete("/:id", requireRole("admin"), asyncHandler(OrdenesTrabajoController.eliminar));

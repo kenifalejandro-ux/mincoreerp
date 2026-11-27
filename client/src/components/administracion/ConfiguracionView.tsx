@@ -309,6 +309,9 @@ export default function ConfiguracionView() {
   const pestañasFacturacion = pestanas.filter((item) => item.modulo === "facturacion");
   const pestañasProveedores = pestanas.filter((item) => item.modulo === "proveedores");
   // Las casillas de salida de unidades solo tienen sentido para quien tiene Checklists.
+  const casillasDeOrdenes = modulos.some((m) => m.modulo === "ordenes_trabajo" && m.asignado)
+    ? pestanas.filter((item) => item.modulo === "ordenes_trabajo")
+    : [];
   const casillasDeChecklists = modulos.some((m) => m.modulo === "checklists" && m.asignado)
     ? pestanas.filter((item) => item.modulo === "checklists")
     : [];
@@ -552,6 +555,36 @@ export default function ConfiguracionView() {
                             checked={item.permitido}
                             // El admin ya autoriza; omitir preguntas sí se le puede dar o quitar.
                             disabled={esAdmin && item.pestana !== "salida:omitir_criticas"}
+                            onChange={(event) =>
+                              cambiarPestana(item.modulo, item.pestana, event.target.checked)
+                            }
+                            className="h-5 w-5 accent-lime-500"
+                          />
+                          {item.nombre}
+                        </label>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
+
+              {casillasDeOrdenes.length > 0 && (
+                <section aria-label="Conformidad" className="border-t border-slate-200 pt-5">
+                  <h4 className="text-sm font-bold text-slate-800">
+                    Órdenes de trabajo: conformidad
+                  </h4>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Quien la tenga prueba el equipo y lo libera cuando Mantenimiento exige
+                    conformidad. Nadie la trae por defecto. Los cambios rigen desde que la persona
+                    vuelve a entrar.
+                  </p>
+                  <ul className="mt-2">
+                    {casillasDeOrdenes.map((item) => (
+                      <li key={item.pestana}>
+                        <label className="flex items-center gap-3 min-h-[44px] text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={item.permitido}
                             onChange={(event) =>
                               cambiarPestana(item.modulo, item.pestana, event.target.checked)
                             }

@@ -658,7 +658,9 @@ describe("Configuración: reglas y metas", () => {
     expect(avisoDeRegla(hallazgo, { modulosPermitidos: ["checklists"] })).toBe(
       "Necesita el módulo Órdenes de Trabajo."
     );
-    for (const regla of REGLAS.filter((r) => r !== hallazgo)) {
+    const conformidad = REGLAS.find((r) => r.clave === "exige_conformidad")!;
+    expect(avisoDeRegla(conformidad, { modulosPermitidos: ["ordenes_trabajo"] })).toBe("");
+    for (const regla of REGLAS.filter((r) => r !== hallazgo && r !== conformidad)) {
       expect(avisoDeRegla(regla, { modulosPermitidos: [] }), regla.clave).toMatch(
         /^Aún no actúa: llega con .+\. Necesita /
       );

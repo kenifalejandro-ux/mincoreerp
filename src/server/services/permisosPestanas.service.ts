@@ -248,6 +248,15 @@ export const PESTANAS_CONFIGURABLES: DefinicionPestana[] = [
     nivel: "submenu",
     padre: null,
   },
+  // Conformidad de una orden de trabajo (0210): probar el equipo y liberar la unidad. No nace para nadie, ni
+  // para el admin: se le marca a quien firma (SSOMA).
+  {
+    modulo: "ordenes_trabajo",
+    pestana: "conformidad:dar",
+    nombre: "Da la conformidad y libera la unidad",
+    nivel: "submenu",
+    padre: null,
+  },
   {
     modulo: "proveedores",
     pestana: "cuentas",
@@ -299,11 +308,14 @@ export function claveDePestana(modulo: string, pestana: string): string {
  *  tener habilitado el check". */
 /** Para el admin no es parte de su «acceso total»: se le muestra como está y se la puede quitar. Sin esto, al
  *  guardar sus permisos la pantalla la mandaría marcada y quedaría eximido sin que nadie lo decidiera. */
-const OPCIONAL_TAMBIEN_PARA_ADMIN = "salida:omitir_criticas";
+const OPCIONALES_TAMBIEN_PARA_ADMIN: ReadonlySet<string> = new Set([
+  "salida:omitir_criticas",
+  "conformidad:dar",
+]);
 
 const NACEN_APAGADAS: ReadonlySet<string> = new Set([
   "urea:corregir_litros",
-  OPCIONAL_TAMBIEN_PARA_ADMIN,
+  ...OPCIONALES_TAMBIEN_PARA_ADMIN,
 ]);
 
 export function pestanaPermitida(
@@ -556,7 +568,7 @@ export async function listarPermisosPestanasEnTransaccion(
       pestana,
       nombre,
       permitido:
-        rol === "admin" && pestana !== OPCIONAL_TAMBIEN_PARA_ADMIN
+        rol === "admin" && !OPCIONALES_TAMBIEN_PARA_ADMIN.has(pestana)
           ? true
           : padrePermitido && permitidoDirecto,
       predeterminado,
@@ -584,7 +596,7 @@ export async function guardarPermisosPestanas(
   const rol = usuario.rows[0].rol;
   if (
     rol === "admin" &&
-    permisos.some((p) => !p.permitido && p.pestana !== OPCIONAL_TAMBIEN_PARA_ADMIN)
+    permisos.some((p) => !p.permitido && !OPCIONALES_TAMBIEN_PARA_ADMIN.has(p.pestana))
   ) {
     throw new AppError(400, "El perfil Admin conserva acceso total a todos los módulos y pestañas");
   }

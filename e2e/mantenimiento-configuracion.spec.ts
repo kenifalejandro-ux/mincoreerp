@@ -51,8 +51,8 @@ test("las reglas y las metas se ven, se guardan solas y aguantan los fallos", as
   await expect(meta(page, /Cumplimiento del preventivo/)).toHaveValue("90");
   await expect(meta(page, /MTTR/)).toHaveValue("24");
   await expect(meta(page, /MTBF/)).toHaveValue("300");
-  // La de hallazgo ya actúa (E5-2); las otras tres todavía no.
-  await expect(page.getByText(/Aún no actúa/)).toHaveCount(3);
+  // La de hallazgo (E5-2) y la de conformidad (M8) ya actúan; las otras dos todavía no.
+  await expect(page.getByText(/Aún no actúa/)).toHaveCount(2);
   await expect(page.getByText(/Necesita el módulo Almacén/).first()).toBeVisible();
 
   // ── 2. Se guarda al momento y sigue al volver ─────────────────────────

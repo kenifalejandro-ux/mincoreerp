@@ -10,6 +10,7 @@ import type {
 } from "../../server/schemas/ordenes_trabajo.schema";
 import { idempotentInsert } from "../../server/shared/utils/idempotentInsert";
 import { asignarOrden } from "./ordenes_trabajo.asignacion";
+import { cuantosDanConformidad, darConformidad } from "./ordenes_trabajo.conformidad";
 import {
   mecanicosConCarga,
   resumenDeOrdenes,
@@ -88,6 +89,14 @@ export const OrdenesTrabajoService = {
 
   cambiarTareas(client: PoolClient, tenantId: string, id: number, data: CambiarTareasInput) {
     return cambiarTareas(client, tenantId, id, data);
+  },
+
+  darConformidad(client: PoolClient, tenantId: string, id: number, usuarioId: string) {
+    return darConformidad(client, tenantId, id, usuarioId);
+  },
+
+  cuantosDanConformidad(client: PoolClient, tenantId: string) {
+    return cuantosDanConformidad(client, tenantId);
   },
 
   eliminar(client: PoolClient, tenantId: string, id: number) {
