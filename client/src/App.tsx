@@ -1,4 +1,5 @@
 // client/src/App.tsx
+
 import {
   Suspense,
   lazy,
@@ -42,18 +43,19 @@ import { MODULOS_CLIENTE } from "./modules/registry";
 import CambiarPasswordObligatoria from "./pages/CambiarPasswordObligatoria";
 import LoginPage from "./pages/LoginPage";
 
-// Facturación no es un módulo del registry (ver Sidebar.tsx) -- se resuelve
-// aparte, no vía MODULOS_CLIENTE.find().
+// -----------------------------------------------------------------------------
+// COMPONENTES QUE NO FORMAN PARTE DEL REGISTRY
+// -----------------------------------------------------------------------------
+
 const FacturacionView = lazy(() => import("./components/facturacion/FacturacionView"));
 
-// Administración tampoco: la gente de la empresa no se contrata ni se
-// factura, y un tenant sin ningún módulo habilitado igual tiene que poder dar
-// de alta a su personal. Es la única pestaña que además depende del ROL -- el
-// Sidebar no la muestra si no sos admin, y el backend la rechaza igual
-// (requireRole).
 const AdministracionView = lazy(() => import("./components/administracion/AdministracionView"));
 
 const BandejaView = lazy(() => import("./components/bandeja/BandejaView"));
+
+// -----------------------------------------------------------------------------
+// TIPOS
+// -----------------------------------------------------------------------------
 
 type UsuarioDeSesion = {
   rol: string;
@@ -61,85 +63,160 @@ type UsuarioDeSesion = {
   permisosPestanas?: Record<string, boolean>;
 } | null;
 
-/** El id del MÓDULO detrás de un activeTab, sin la sub-pestaña. Solo
- *  Combustible tiene submenú hoy ("combustible:historico" -- ver
- *  Sidebar.tsx); el permiso y el componente a cargar dependen del módulo,
- *  no de cuál de sus sub-pestañas esté abierta. */
+// -----------------------------------------------------------------------------
+// DISPONIBILIDAD DE PESTAÑAS
+// -----------------------------------------------------------------------------
+
+/**
+ * Obtiene el identificador del módulo detrás de una pestaña.
+ */
 function moduloIdDe(tab: string): string {
   return moduloDeLaPestana(tab);
 }
 
-/** Si esta pestaña existe PARA ESTE usuario. Las dos que no son módulos van
- *  primero: Facturación la ve cualquiera, Administración solo el admin. */
+/**
+ * Determina si una pestaña está disponible para el usuario actual.
+ *
+ * Las pestañas especiales se resuelven antes de consultar
+ * los módulos convencionales.
+ */
 function pestaniaDisponible(tab: string, usuario: UsuarioDeSesion): boolean {
   const moduloId = moduloIdDe(tab);
+  // Facturación.
   if (moduloId === "facturacion") {
     if (usuario?.rol === "admin") return true;
+
     const override = usuario?.permisosPestanas?.["facturacion:principal"];
+
     if (override !== undefined) return override;
-    // Exclusiva de Admin por defecto (confirmado por Kenif, 2026-10-01); el
-    // admin del tenant puede habilitarla por usuario desde Configuración.
+
     return false;
   }
-  if (moduloId === "administracion") return usuario?.rol === "admin";
-  // Los módulos de un ecosistema (ver ecosistemas/ecosistemas.ts) los ve quien ve el ecosistema.
+
+  // Administración.
+  if (moduloId === "administracion") {
+    return usuario?.rol === "admin";
+  }
+
+  // Ecosistemas.
   const ecosistema = ecosistemaDeModulo(moduloId);
-  if (ecosistema) return ecosistema.puedeVer(usuario);
-  // La Bandeja no es un módulo: junta las alertas de los que sí lo son.
-  if (moduloId === "bandeja") return puedeVerBandeja(usuario);
-  // Gestión operacional de flota: "flota" es Registro de unidades y
-  // "flota:viajes" la lista de viajes (mismas reglas que el menú).
+
+  if (ecosistema) {
+    return ecosistema.puedeVer(usuario);
+  }
+
+  // Bandeja.
+  if (moduloId === "bandeja") {
+    return puedeVerBandeja(usuario);
+  }
+
+  // ---------------------------------------------------------------------------
+  // FLOTA
+  // ---------------------------------------------------------------------------
+
   if (moduloId === "flota") {
-    if (tab === "flota:mi_viaje") return miViajeVaEnFlota(usuario);
+    if (tab === "flota:mi_viaje") {
+      return miViajeVaEnFlota(usuario);
+    }
+
     return tab === "flota:viajes" ? puedeVerViajes(usuario) : puedeVerUnidades(usuario);
   }
+
+  // ---------------------------------------------------------------------------
+  // COMBUSTIBLE
+  // ---------------------------------------------------------------------------
+
   if (moduloId === "combustible") {
-    // Compra en ruta junta dos permisos (combustible y urea): mismos que el menú.
-    if (tab === "combustible:compra_ruta") return puedeCompraEnRuta(usuario);
-    // Cisternas: mismo permiso que el menú.
-    if (tab === "combustible:cisternas") return puedeVerCisternas(usuario);
-    // Precios une combustible y urea: mismos dos permisos que el menú.
-    if (tab === "combustible:precios") return puedeVerPrecios(usuario);
-    // Mi viaje llama al módulo Viajes: sin él no se abre (el servidor daría 403).
-    if (tab === "combustible:mi_viaje") return puedeVerMiViaje(usuario);
-    if (tab === "combustible:despacho_grifo") return puedeVerDespachoGrifo(usuario);
-    // Con Gestión de proveedores (y permiso para escribir en él) los proveedores se manejan allá: la
-    // pestaña de Combustible se oculta, aunque tuviera un permiso puesto a mano.
-    if (tab === "combustible:proveedores" && edicionDeProveedoresEnElEcosistema(usuario))
+    if (tab === "combustible:compra_ruta") {
+      return puedeCompraEnRuta(usuario);
+    }
+
+    if (tab === "combustible:cisternas") {
+      return puedeVerCisternas(usuario);
+    }
+
+    if (tab === "combustible:precios") {
+      return puedeVerPrecios(usuario);
+    }
+
+    if (tab === "combustible:mi_viaje") {
+      return puedeVerMiViaje(usuario);
+    }
+
+    if (tab === "combustible:despacho_grifo") {
+      return puedeVerDespachoGrifo(usuario);
+    }
+
+    // Si el usuario administra proveedores desde el ecosistema,
+    // no debe seguir apareciendo la antigua pestaña de combustible.
+    if (tab === "combustible:proveedores" && edicionDeProveedoresEnElEcosistema(usuario)) {
       return false;
+    }
+
     const pestana = tab === "combustible" ? "tanques" : tab.split(":")[1];
+
     const override = usuario?.permisosPestanas?.[`combustible:${pestana}`];
-    if (override !== undefined) return override;
-    // "Mi viaje" (0124) es del conductor: el resto gestiona desde Viajes.
+
+    if (override !== undefined) {
+      return override;
+    }
+
+    // Compatibilidad con permisos anteriores.
     if (tab === "combustible:proveedores") {
       const antiguo = usuario?.permisosPestanas?.["combustible:tanques:proveedores"];
+
       return antiguo ?? (usuario?.rol === "admin" || usuario?.rol === "operador");
     }
-    // Operador y Lectura parten con acceso amplio a Combustible (matriz
-    // robusta de perfiles): sin override, caen al fallback de abajo (ve
-    // cualquier sub-pestaña mientras tenga el módulo asignado).
-    if (usuario?.rol === "grifero") return tab === "combustible" || tab === "combustible:tanquetas";
-    // El conductor compra y consulta sus compras (urea incluida) en "Compra en
-    // ruta": no ve la pestaña Urea, que es del almacén. Un permiso que el admin
-    // le dio a mano sí manda (más arriba).
-    if (usuario?.rol === "conductor_ruta") return tab === "combustible";
-    if (usuario?.rol === "encargado_urea") return tab === "combustible:urea";
+
+    // Grifero.
+    if (usuario?.rol === "grifero") {
+      return tab === "combustible" || tab === "combustible:tanquetas";
+    }
+
+    // Conductor.
+    if (usuario?.rol === "conductor_ruta") {
+      return tab === "combustible";
+    }
+
+    // Encargado de Urea.
+    if (usuario?.rol === "encargado_urea") {
+      return tab === "combustible:urea";
+    }
   }
+
   return (usuario?.modulosPermitidos ?? []).includes(moduloId);
 }
 
-/** Con qué abre la app: el dashboard si lo tiene, y si no el primer módulo
- *  que sí, en el orden del menú. */
+// -----------------------------------------------------------------------------
+// PESTAÑA INICIAL
+// -----------------------------------------------------------------------------
+
+/**
+ * Determina la primera pestaña que puede abrir el usuario.
+ */
 function primeraPestania(usuario: UsuarioDeSesion): string {
   const override = (pestana: string) => usuario?.permisosPestanas?.[`combustible:${pestana}`];
-  if (usuario?.rol === "conductor_ruta" && puedeVerMiViaje(usuario))
+
+  if (usuario?.rol === "conductor_ruta" && puedeVerMiViaje(usuario)) {
     return miViajeVaEnFlota(usuario) ? "flota:mi_viaje" : "combustible:mi_viaje";
-  if (usuario?.rol === "conductor_ruta" && override("tanques") !== false) return "combustible";
-  // Sin Mi viaje ni Tanquetas, la pantalla que le queda es Compra en ruta.
-  if (usuario?.rol === "conductor_ruta" && puedeCompraEnRuta(usuario))
+  }
+
+  if (usuario?.rol === "conductor_ruta" && override("tanques") !== false) {
+    return "combustible";
+  }
+
+  if (usuario?.rol === "conductor_ruta" && puedeCompraEnRuta(usuario)) {
     return "combustible:compra_ruta";
-  if (usuario?.rol === "encargado_urea" && override("urea") !== false) return "combustible:urea";
-  if (usuario?.rol === "grifero" && override("tanques") !== false) return "combustible";
+  }
+
+  if (usuario?.rol === "encargado_urea" && override("urea") !== false) {
+    return "combustible:urea";
+  }
+
+  if (usuario?.rol === "grifero" && override("tanques") !== false) {
+    return "combustible";
+  }
+
   if (
     usuario?.rol === "operador" &&
     override("tanques") !== false &&
@@ -147,109 +224,173 @@ function primeraPestania(usuario: UsuarioDeSesion): string {
   ) {
     return "combustible";
   }
+
   const permitidos = usuario?.modulosPermitidos ?? [];
-  if (permitidos.includes("dashboard")) return "dashboard";
+
+  if (permitidos.includes("dashboard")) {
+    return "dashboard";
+  }
+
   return MODULOS_CLIENTE.find((m) => permitidos.includes(m.id))?.id ?? "dashboard";
 }
 
+// -----------------------------------------------------------------------------
+// APP
+// -----------------------------------------------------------------------------
+
 function App() {
   const { usuario, cargando, estaAutenticado, login } = useAuth();
-  // Una dirección de un ecosistema (p. ej. `/proveedores/…`) lo abre: si la persona no tiene acceso, o
-  // todavía no inició sesión, la pestaña activa se calcula más abajo con lo que sí le corresponde.
+
+  // ---------------------------------------------------------------------------
+  // ESTADO DE NAVEGACIÓN
+  // ---------------------------------------------------------------------------
+
   const [activeTab, setActiveTab] = useState(
     () => ecosistemaDeLaRuta(window.location.pathname)?.pestaniaDeEntrada ?? "dashboard"
   );
-  // De dónde vino la persona al entrar al ecosistema: «atrás» la devuelve ahí.
+
+  // Pestaña desde la cual se ingresó al ecosistema.
   const pestaniaAnterior = useRef<string | null>(null);
-  // Entrar a un ecosistema (o volver al ERP) cambia de menú, de colores y de cabecera: una pantalla
-  // de carga cubre el salto y el cambio se hace por debajo.
+
+  // ---------------------------------------------------------------------------
+  // TRANSICIONES
+  // ---------------------------------------------------------------------------
+
   const [transicion, setTransicion] = useState<{
     tipo: TransicionDeEcosistema;
-    /** A cuál se entra; al volver al ERP no hay. */
     ecosistema?: DefinicionDeEcosistema;
   } | null>(null);
+
   const temporizador = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(temporizador.current), []);
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(temporizador.current);
+    };
+  }, []);
+
+  /**
+   * Navegación centralizada entre ERP y ecosistemas.
+   */
   const irA = useCallback(
     (destino: string) => {
-      // Entrar a un ecosistema, salir de él o pasar de uno a otro cambia de menú y de cabecera: lleva
-      // transición. Moverse dentro del mismo lado, no.
       const alDestino = ecosistemaDeLaPestana(destino);
       const delOrigen = ecosistemaDeLaPestana(activeTab);
+
+      // Movimiento dentro del mismo ecosistema:
+      // no necesita pantalla de transición.
       if (alDestino?.id === delOrigen?.id) {
         setActiveTab(destino);
         return;
       }
+
       const entra = alDestino !== undefined;
       const vuelve = !entra;
-      if (temporizador.current !== undefined) return; // ya hay una transición en curso
-      // «Atrás» devuelve al ERP: solo se recuerda de dónde se vino cuando se sale del ERP, no entre ecosistemas.
-      if (entra && delOrigen === undefined) pestaniaAnterior.current = activeTab;
-      setTransicion({ tipo: entra ? "entrar" : "volver", ecosistema: alDestino });
+
+      // Evitar dobles transiciones.
+      if (temporizador.current !== undefined) {
+        return;
+      }
+
+      // Recordar el origen solo cuando se entra desde el ERP.
+      if (entra && delOrigen === undefined) {
+        pestaniaAnterior.current = activeTab;
+      }
+
+      setTransicion({
+        tipo: entra ? "entrar" : "volver",
+        ecosistema: alDestino ?? delOrigen,
+      });
+
       temporizador.current = window.setTimeout(() => {
-        // Al salir del ecosistema la dirección vuelve a la raíz (al entrar la escribe el propio ecosistema).
-        if (vuelve) window.history.pushState(null, "", "/");
+        // Al salir del ecosistema se vuelve a la raíz.
+        if (vuelve) {
+          window.history.pushState(null, "", "/");
+        }
+
         setActiveTab(destino);
         setTransicion(null);
+
         temporizador.current = undefined;
       }, duracionDeTransicion());
     },
     [activeTab]
   );
 
-  // "dashboard" fijo dejaba la pantalla EN BLANCO a cualquiera que no tuviera
-  // ese módulo: el Sidebar no le dibuja el botón, activeTab queda apuntando a
-  // un módulo que no está en su lista y no se renderiza nada. Era latente
-  // --hasta ahora todo usuario tenía todos los módulos-- y dejó de serlo con
-  // los roles de cancha (0085), que solo ven Combustible.
-  //
-  // Se corrige DERIVANDO en cada render en vez de con un efecto que corrija
-  // el estado: el usuario llega asincrónicamente (AuthContext pregunta al
-  // backend), así que en el primer render todavía es null y cualquier valor
-  // inicial calculado ahí sería el equivocado. Derivar no tiene ese problema
-  // ni pinta un frame en blanco antes de acomodarse.
-  // Un panel interno pide cambiar de pestaña (p. ej. el aviso de "Registrar
-  // recepción" que lleva a Proveedores).
-  // Pasa por `irA` (y no por `setActiveTab`) para que entrar a un ecosistema muestre la pantalla de carga,
-  // como cuando se entra por el menú.
+  // ---------------------------------------------------------------------------
+  // EVENTOS DE NAVEGACIÓN INTERNA
+  // ---------------------------------------------------------------------------
+
   useEffect(() => {
-    const alPedir = (e: Event) => irA((e as CustomEvent<string>).detail);
+    const alPedir = (e: Event) => {
+      irA((e as CustomEvent<string>).detail);
+    };
+
     window.addEventListener("mincore:ir-a-pestana", alPedir);
-    return () => window.removeEventListener("mincore:ir-a-pestana", alPedir);
+
+    return () => {
+      window.removeEventListener("mincore:ir-a-pestana", alPedir);
+    };
   }, [irA]);
 
-  // «Atrás» y «adelante» del navegador al cruzar entre el ERP y un ecosistema (dentro del ecosistema los
-  // atiende él mismo). Al volver al ERP, la persona regresa a la pantalla de donde venía.
+  // ---------------------------------------------------------------------------
+  // ATRÁS Y ADELANTE DEL NAVEGADOR
+  // ---------------------------------------------------------------------------
+
   useEffect(() => {
     const alVolver = () => {
       if (!usuario) return;
+
       const deLaRuta = ecosistemaDeLaRuta(window.location.pathname);
+
       const enEcosistema =
         ecosistemaDeLaPestana(activeTab) !== undefined && pestaniaDisponible(activeTab, usuario);
-      if (deLaRuta && !enEcosistema) setActiveTab(deLaRuta.pestaniaDeEntrada);
-      else if (!deLaRuta && enEcosistema) {
+
+      if (deLaRuta && !enEcosistema) {
+        setActiveTab(deLaRuta.pestaniaDeEntrada);
+      } else if (!deLaRuta && enEcosistema) {
         const anterior = pestaniaAnterior.current;
+
         setActiveTab(
           anterior && pestaniaDisponible(anterior, usuario) ? anterior : primeraPestania(usuario)
         );
       }
     };
+
     window.addEventListener("popstate", alVolver);
-    return () => window.removeEventListener("popstate", alVolver);
+
+    return () => {
+      window.removeEventListener("popstate", alVolver);
+    };
   }, [activeTab, usuario]);
 
-  // Una dirección de un ecosistema sin acceso a él (el módulo no está asignado, o no hay ecosistema para esa
-  // persona) se corrige en silencio a la raíz: la persona queda en su pantalla de inicio.
+  // ---------------------------------------------------------------------------
+  // VALIDACIÓN DE ACCESO A RUTAS
+  // ---------------------------------------------------------------------------
+
   useEffect(() => {
-    if (cargando || !estaAutenticado || !usuario) return;
+    if (cargando || !estaAutenticado || !usuario) {
+      return;
+    }
+
     const enEcosistema =
       ecosistemaDeLaPestana(activeTab) !== undefined && pestaniaDisponible(activeTab, usuario);
+
+    // Una dirección de ecosistema sin permisos vuelve a la raíz.
     if (!enEcosistema && ecosistemaDeLaRuta(window.location.pathname)) {
       window.history.replaceState(null, "", "/");
     }
   }, [cargando, estaAutenticado, usuario, activeTab]);
 
+  // ---------------------------------------------------------------------------
+  // PESTAÑA EFECTIVAMENTE DISPONIBLE
+  // ---------------------------------------------------------------------------
+
   const tabActiva = pestaniaDisponible(activeTab, usuario) ? activeTab : primeraPestania(usuario);
+
+  // ---------------------------------------------------------------------------
+  // CARGA Y AUTENTICACIÓN
+  // ---------------------------------------------------------------------------
 
   if (cargando) {
     return (
@@ -264,21 +405,26 @@ function App() {
   }
 
   if (usuario!.debeCambiarPassword) {
-    // Actualiza el usuario en memoria en vez de re-pedir /api/auth/me: el
-    // JWT actual seguiría diciendo `true` hasta el próximo login/refresh
-    // (ver el comentario de cambiarMiPasswordApi en services/authApi.ts).
     return (
       <CambiarPasswordObligatoria
-        onListo={() => login({ ...usuario!, debeCambiarPassword: false })}
+        onListo={() =>
+          login({
+            ...usuario!,
+            debeCambiarPassword: false,
+          })
+        }
       />
     );
   }
 
-  // El componente de cada módulo viaja al navegador recién cuando se abre
-  // (React.lazy, ver modules/registry.tsx) — agregar un módulo nuevo no
-  // infla el chunk inicial de los que ya existen.
+  // ---------------------------------------------------------------------------
+  // RESOLUCIÓN DEL MÓDULO ACTIVO
+  // ---------------------------------------------------------------------------
+
   const moduloIdActivo = moduloIdDe(tabActiva);
+
   const moduloActivo = MODULOS_CLIENTE.find((m) => m.id === moduloIdActivo);
+
   const ComponenteActivo =
     moduloIdActivo === "facturacion"
       ? FacturacionView
@@ -287,10 +433,11 @@ function App() {
         : moduloIdActivo === "bandeja"
           ? BandejaView
           : moduloActivo?.componente;
-  // Combustible y Gestión operacional de flota son los módulos con sub-pestaña (ver
-  // Sidebar.tsx) -- se la pasamos como prop en vez de que el panel la lea
-  // de activeTab directamente, para no acoplar ese componente al formato
-  // "modulo:subpestaña" del sidebar.
+
+  // ---------------------------------------------------------------------------
+  // PROPIEDADES INTERNAS DE LOS MÓDULOS
+  // ---------------------------------------------------------------------------
+
   const propsExtra =
     moduloIdActivo === "combustible"
       ? {
@@ -330,20 +477,26 @@ function App() {
           }
         : {};
 
-  // El registry tipa cada componente sin props (ComponentType<{}>) porque la
-  // gran mayoría no las recibe -- Combustible es la única excepción, así que
-  // el cast queda acá, localizado, en vez de aflojar el tipo para todos.
+  // ---------------------------------------------------------------------------
+  // TIPADO DEL COMPONENTE ACTIVO
+  // ---------------------------------------------------------------------------
+
   const ComponenteConProps = ComponenteActivo as ComponentType<Record<string, unknown>> | undefined;
+
+  // ---------------------------------------------------------------------------
+  // RENDER PRINCIPAL
+  // ---------------------------------------------------------------------------
 
   return (
     <>
       {ecosistemaDeLaPestana(tabActiva) ? (
-        // Un ecosistema va fuera del Layout: tiene su propia cabecera y su propio menú.
+        // ---------------------------------------------------------------------
+        // ENTORNO DEL ECOSISTEMA
+        // ---------------------------------------------------------------------
+
         <Suspense fallback={<div className="p-20 text-center text-slate-500">Cargando...</div>}>
           {ComponenteConProps && (
             <ComponenteConProps
-              // Una empresa cuyo único módulo es un ecosistema no tiene un ERP al que volver: sin
-              // botón, en vez de uno que no lleva a ningún lado.
               onSalir={
                 ecosistemaDeLaPestana(primeraPestania(usuario))
                   ? undefined
@@ -353,19 +506,35 @@ function App() {
           )}
         </Suspense>
       ) : (
+        // ---------------------------------------------------------------------
+        // ENTORNO PRINCIPAL DEL ERP
+        // ---------------------------------------------------------------------
+
         <Layout activeTab={tabActiva} setActiveTab={irA}>
           <Suspense fallback={<div className="p-20 text-center text-slate-500">Cargando...</div>}>
             {ComponenteConProps && <ComponenteConProps {...propsExtra} />}
           </Suspense>
         </Layout>
       )}
+
+      {/* ------------------------------------------------------------------- */}
+      {/* TRANSICIÓN ENTRE ENTORNOS                                            */}
+      {/* ------------------------------------------------------------------- */}
+
       {transicion && (
         <PantallaDeCarga
           tipo={transicion.tipo}
           ecosistema={
             transicion.ecosistema && {
               titulo: transicion.ecosistema.titulo,
+
               Icono: iconoDe(transicion.ecosistema.icono),
+
+              imagen: transicion.ecosistema.imagen,
+
+              // NUEVO:
+              // Cada ecosistema conserva su identidad cromática.
+              acento: transicion.ecosistema.acento,
             }
           }
         />
